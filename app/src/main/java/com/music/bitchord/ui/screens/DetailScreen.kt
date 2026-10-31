@@ -51,6 +51,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
 import com.music.bitchord.data.model.LibraryState
@@ -201,6 +202,7 @@ import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
 import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.ui.player.CanvasArtworkPlayer
+import com.music.bitchord.ui.theme.AppType
 import com.music.bitchord.ui.theme.ArtworkPalette
 import com.music.bitchord.ui.theme.rememberArtworkPalette
 import com.music.bitchord.ui.theme.trackingFor
@@ -477,6 +479,13 @@ fun DetailScreen(
     // nobody, so a title that reads as several artists waits for that swap; any
     // other name starts the moment the page opens.
     val nameSettled = !page.title.looksLikeCredit() || page.songs !is UiState.Loading
+    LaunchedEffect(page.browseId, page.title, nameSettled) {
+        if (isArtist && nameSettled) appleArt = AppleArtistArtRepository.artFor(
+            browseId = page.browseId,
+            artistName = page.title,
+            catalogue = { (page.songs as? UiState.Success)?.data.orEmpty().map { it.title } },
+        ) ?: appleArt
+    }
     LaunchedEffect(page.browseId, page.title, nameSettled, signatureEnabled, signatureBaseUrl, signatureUpdates) {
         if (!isArtist || !nameSettled) return@LaunchedEffect
         val base = ArtistSignatureRepository.effectiveBaseUrl(signatureEnabled, signatureBaseUrl)
@@ -2465,6 +2474,11 @@ private fun TopReleaseCard(
             ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        val shape = if (item.isArtist || item.browseId?.startsWith("UC") == true) {
+            CircleShape
+        } else {
+            RoundedCornerShape(LARGE_CARD_CORNER)
+        }
         AsyncImage(
             model = item.thumbnailUrl.artworkAt(CARD_ART_PX),
             contentDescription = null,
@@ -2576,6 +2590,11 @@ private fun SectionCard(
             placeholderColor = palette.elevated,
         )
         return
+    }
+    val shape = if (item.isArtist || item.browseId?.startsWith("UC") == true) {
+        CircleShape
+    } else {
+        RoundedCornerShape(LARGE_CARD_CORNER)
     }
     Column(
         modifier = modifier

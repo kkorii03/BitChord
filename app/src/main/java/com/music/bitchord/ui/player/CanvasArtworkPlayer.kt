@@ -238,6 +238,7 @@ internal fun AndroidCanvasArtworkPlayer(
     val currentAlignPortraitTop by rememberUpdatedState(alignPortraitTop)
     val currentPortraitRevealBounds by rememberUpdatedState(portraitRevealBounds)
     val currentPresentationAlpha by rememberUpdatedState(presentationAlpha)
+    val currentFrameCapturePx by rememberUpdatedState(frameCapturePx)
     val currentPausedForTransition by rememberUpdatedState(pausedForTransition)
     val reportAspect by rememberUpdatedState(onAspectRatioChanged)
     val currentStartPositionMs by rememberUpdatedState(startPositionMs)

@@ -1,6 +1,5 @@
 package com.music.bitchord.ui.components
 
-import androidx.compose.ui.layout.ContentScale
 import com.music.bitchord.ui.LocalPullToRefreshEnabled
 import com.music.bitchord.ui.theme.AppType
 import com.music.bitchord.ui.theme.AppSpacing
@@ -29,9 +28,6 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.withFrameNanos
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import kotlinx.coroutines.delay
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.DownloadDone

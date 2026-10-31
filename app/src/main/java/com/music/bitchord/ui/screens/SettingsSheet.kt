@@ -1,13 +1,12 @@
 package com.music.bitchord.ui.screens
 
-import com.music.bitchord.ui.icons.SfIcons
+import com.music.bitchord.ui.theme.AppSpacing
+
 import com.music.bitchord.wear.WatchInstaller
 import android.content.Context
-import androidx.annotation.StringRes
 import android.content.Intent
 import android.media.audiofx.AudioEffect
 import android.net.Uri
-import android.os.Build
 import android.provider.Settings
 import android.widget.Toast
 import androidx.compose.animation.animateColorAsState
@@ -49,7 +48,9 @@ import androidx.compose.material.icons.rounded.Brightness4
 import androidx.compose.material.icons.rounded.Cached
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.DeleteSweep
+import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.FileDownload
 import androidx.compose.material.icons.rounded.FileUpload
@@ -77,10 +78,10 @@ import androidx.compose.material.icons.rounded.Draw
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.SignalCellularAlt
+import androidx.compose.material.icons.rounded.SmartDisplay
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.SurroundSound
 import androidx.compose.material.icons.rounded.Tune
-import androidx.compose.material.icons.rounded.Usb
 import androidx.compose.material.icons.rounded.VolumeOff
 import androidx.compose.material.icons.rounded.WebAssetOff
 import androidx.compose.material.icons.rounded.VolumeUp
@@ -96,10 +97,12 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
-import com.music.bitchord.ui.components.IosSwitch
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -113,16 +116,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
-import androidx.compose.ui.input.pointer.positionChange
-import androidx.compose.ui.input.pointer.positionChanged
-import kotlin.math.abs
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
@@ -154,12 +147,13 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.SingletonImageLoader
 import coil3.compose.AsyncImage
-import com.music.bitchord.ui.components.PillSegmentedControl
+import com.music.bitchord.ui.FriendlyError
 import com.music.bitchord.ui.components.isGlassSupported
 import com.music.bitchord.ui.components.languageDisplayNameRes
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.SearchField
 import com.music.bitchord.ui.components.thumbnailBorder
+import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.ui.performance.resolvePerformanceRefreshRate
 import com.music.bitchord.ui.performance.supportedPerformanceRefreshRates
 import com.music.bitchord.data.model.Account
@@ -172,9 +166,9 @@ import com.music.bitchord.data.settings.SettingsTransfer
 import com.music.bitchord.data.settings.SettingsTransferInbox
 import com.music.bitchord.data.settings.TransferCategory
 import com.music.bitchord.data.settings.OutputPcmMode
-import com.music.bitchord.data.settings.BitPerfectMode
+import com.music.bitchord.data.settings.PrivateListeningSource
 import com.music.bitchord.playback.AudioOutputStatus
-import com.music.bitchord.playback.audio.bitperfect.BitPerfectOutput
+import com.music.bitchord.playback.AudioRouting
 import com.music.bitchord.data.settings.AutomixPerformanceMode
 import com.music.bitchord.R
 import com.music.bitchord.data.sources.DeviceCodecs
@@ -182,7 +176,6 @@ import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.settings.DownloadQuality
 import com.music.bitchord.data.settings.LowPowerMode
 import com.music.bitchord.data.settings.ThemeMode
-import com.music.bitchord.data.settings.AppFont
 import com.music.bitchord.data.stats.Backup
 import com.music.bitchord.data.spotify.PlaylistImportMode
 import com.music.bitchord.playback.AudioCache
@@ -226,25 +219,8 @@ fun SettingsScreen(
     /** Forgets downloaded songs' sync-check versions; each is checked again on its next play. */
     onResetDownloadSync: () -> Unit = {},
     onEditSignatureApi: () -> Unit,
-    /**
-     * Asks before [mode] is turned on: it hands volume to the DAC at full
-     * scale. Shown in the app's frosted alert, which needs the app's blur.
-     */
-    onConfirmBitPerfect: (BitPerfectMode) -> Unit,
-    /** Asks before a DAC with no settable volume may play at full scale. */
-    onConfirmFixedVolume: () -> Unit,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
-    /**
-     * The category this page is, or null for the main page — which lists the
-     * categories rather than their rows, until something is typed into its
-     * search field.
-     */
-    section: SettingsCategory? = null,
-    /** Opens one category as a page of its own. */
-    onOpenSection: (SettingsCategory) -> Unit = {},
-    /** Opens a choice with more options than its row can show, as a page. */
-    onOpenChoice: (SettingsChoiceKind) -> Unit = {},
 ) {
     val context = LocalContext.current
 
@@ -257,19 +233,16 @@ fun SettingsScreen(
     val skipSilence by AppSettings.skipSilence.collectAsStateWithLifecycle()
     val privateListening by AppSettings.privateListening.collectAsStateWithLifecycle()
     val dolbyAtmos by AppSettings.dolbyAtmos.collectAsStateWithLifecycle()
-    val directSourceStream by AppSettings.directSourceStream.collectAsStateWithLifecycle()
     // A property of the hardware, so it is read once rather than remembered
     // against a key that can never change — see [DeviceCodecs.playsDolbyAtmos],
     // which caches the codec-list walk for the life of the process.
     val dolbyAtmosSupported = DeviceCodecs.playsDolbyAtmos
     val spatialAudio by AppSettings.spatialAudio.collectAsStateWithLifecycle()
     val nerdStats by AppSettings.showNerdStats.collectAsStateWithLifecycle()
-    val listenTogetherButton by AppSettings.showListenTogetherButton.collectAsStateWithLifecycle()
     val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
     val lowPowerMode by AppSettings.lowPowerMode.collectAsStateWithLifecycle()
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
     val liquidGlass by AppSettings.liquidGlass.collectAsStateWithLifecycle()
-    val progressiveBlur by AppSettings.progressiveBlur.collectAsStateWithLifecycle()
     val liquidGlassSupported = isGlassSupported()
     val lyricsBlur by AppSettings.lyricsBlur.collectAsStateWithLifecycle()
     val animatedCanvas by AppSettings.animatedCanvas.collectAsStateWithLifecycle()
@@ -317,16 +290,9 @@ fun SettingsScreen(
     val geminiKeyRejected by com.music.bitchord.data.lyrics.LyricsTranslation.geminiKeyRejected
         .collectAsStateWithLifecycle()
     val theme by AppSettings.themeMode.collectAsStateWithLifecycle()
-    val appFont by AppSettings.appFont.collectAsStateWithLifecycle()
     val sessionId by AppSettings.audioSessionId.collectAsStateWithLifecycle()
     val outputPcmMode by AppSettings.outputPcmMode.collectAsStateWithLifecycle()
     val preferUsbDac by AppSettings.preferUsbDac.collectAsStateWithLifecycle()
-    val bitPerfectMode by AppSettings.bitPerfectMode.collectAsStateWithLifecycle()
-    val bitPerfectStatus by BitPerfectOutput.status.collectAsStateWithLifecycle()
-    val bitPerfectReady by BitPerfectOutput.ready.collectAsStateWithLifecycle()
-    val dacVolume by BitPerfectOutput.hardwareVolume.collectAsStateWithLifecycle()
-    val usbAllowFixedVolume by AppSettings.usbAllowFixedVolume.collectAsStateWithLifecycle()
-    val convertForLimitedDac by AppSettings.convertForLimitedDac.collectAsStateWithLifecycle()
     val loudnessNormalization by AppSettings.loudnessNormalization.collectAsStateWithLifecycle()
     val loudnessOffOnSpeaker by AppSettings.loudnessOffOnSpeaker.collectAsStateWithLifecycle()
     val outputStatus by AudioOutputStatus.current.collectAsStateWithLifecycle()
@@ -342,7 +308,6 @@ fun SettingsScreen(
     val hqPrefetchLimit by AppSettings.hqPrefetchLimit.collectAsStateWithLifecycle()
     val autoDownloadLiked by AppSettings.autoDownloadLiked.collectAsStateWithLifecycle()
     val exportDownloads by AppSettings.exportDownloads.collectAsStateWithLifecycle()
-    val syncDownloadedPlaylists by AppSettings.syncDownloadedPlaylists.collectAsStateWithLifecycle()
     val stopOnTaskRemoved by AppSettings.stopOnTaskRemoved.collectAsStateWithLifecycle()
     val hideVolumeBar by AppSettings.hideVolumeBar.collectAsStateWithLifecycle()
     val hideStatusBarInPlayer by AppSettings.hideStatusBarInPlayer.collectAsStateWithLifecycle()
@@ -352,6 +317,9 @@ fun SettingsScreen(
     val showQueueHistory by AppSettings.showQueueHistory.collectAsStateWithLifecycle()
     val swipeToPlayNext by AppSettings.swipeToPlayNext.collectAsStateWithLifecycle()
     val dontRepeatSuggestions by AppSettings.dontRepeatSuggestions.collectAsStateWithLifecycle()
+    val preferMusicOnly by AppSettings.preferMusicOnly.collectAsStateWithLifecycle()
+    val skipNonMusicParts by AppSettings.skipNonMusicParts.collectAsStateWithLifecycle()
+    val skipSponsorParts by AppSettings.skipSponsorParts.collectAsStateWithLifecycle()
     val smartVersionAlignment by AppSettings.smartVersionAlignment.collectAsStateWithLifecycle()
     val filterNonMusicAudio by AppSettings.filterNonMusicAudio.collectAsStateWithLifecycle()
     val localMusicFolderUri by AppSettings.localMusicFolderUri.collectAsStateWithLifecycle()
@@ -394,6 +362,9 @@ fun SettingsScreen(
     // exactly as if the field weren't there.
     // Saveable so a search survives a trip into one of the pages it found.
     var searchQuery by rememberSaveable { mutableStateOf("") }
+    var picking by remember { mutableStateOf<QualityTarget?>(null) }
+    var pickingDownloadQuality by remember { mutableStateOf(false) }
+    var pickingAutomixPerformance by remember { mutableStateOf(false) }
     // What the last export or import did, shown on the row that did it rather
     // than as a toast: a backup is the one action here whose outcome nobody can
     // check by looking at the app afterwards. Held per direction, or an import's
@@ -591,14 +562,7 @@ fun SettingsScreen(
     // Made fresh on every pass rather than remembered: it tallies the rows
     // that answered to the query, and that tally has to start from zero each
     // time the query changes.
-    //
-    // A category page shows all of its rows, so it searches for nothing. The
-    // main page searches every category at once: typed into, it lays out the
-    // rows that answer from all of them, as the single page Settings once was.
-    val search = SettingsSearch(if (section == null) searchQuery else "", inPage = section != null)
-    val searching = section == null && searchQuery.isNotBlank()
-    fun shows(category: SettingsCategory) = section == category || searching
-    val watchAvailable = remember { WatchInstaller.available(context) }
+    val search = SettingsSearch(searchQuery)
 
     // What is left after a keystroke is a different list, and the offset the
     // last one was scrolled to means nothing in it.
@@ -622,146 +586,121 @@ fun SettingsScreen(
             .verticalScroll(scrollState)
             .padding(contentPadding),
     ) {
-        SettingsPageTitle(stringResource(section?.title ?: R.string.settings))
-        if (section == null) {
-            SearchField(
-                query = searchQuery,
-                onQueryChange = { searchQuery = it },
-                onSubmit = {},
-                placeholder = stringResource(R.string.settings_search_hint),
-                modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 4.dp),
-            )
+        Text(
+            text = stringResource(R.string.settings),
+            style = MaterialTheme.typography.displayLarge,
+            color = MaterialTheme.colorScheme.onBackground,
+            modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 14.dp),
+        )
+        SearchField(
+            query = searchQuery,
+            onQueryChange = { searchQuery = it },
+            onSubmit = {},
+            placeholder = stringResource(R.string.settings_search_hint),
+            modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 4.dp),
+        )
 
-            SearchableSettingsGroup(search) {
-                val accountTitle = stringResource(R.string.account_integrations)
-                // What the row opens is the scrobbling screen, so the services it
-                // signs into are worth typing at this field even though none of
-                // them is named on the row itself.
-                row(accountTitle, "scrobbling", "last.fm", "listenbrainz") {
-                    SettingsRow(
-                        icon = SfIcons.Person,
-                        title = accountTitle,
-                        subtitle = account?.email?.takeIf { it.isNotBlank() }
-                            ?: stringResource(if (signedIn) R.string.signed_in else R.string.not_signed_in),
-                        onClick = onAccountScrobbling,
-                    )
-                }
-                // Sits with the account rather than with Playback: a party is up to
-                // five signed-in people, and being signed in is the whole of what
-                // the row needs before it will do anything.
-                val listenTogetherTitle = stringResource(R.string.listen_together)
-                row(listenTogetherTitle, "jam", "party", "sync", "friends") {
-                    SettingsRow(
-                        icon = SfIcons.Groups,
-                        title = listenTogetherTitle,
-                        subtitle = party.code?.let {
-                            stringResource(R.string.listen_together_in_party, it)
-                        } ?: stringResource(R.string.listen_together_subtitle),
-                        badge = party.members.size.takeIf { party.inParty && it > 1 }?.toString(),
-                        onClick = onListenTogether,
-                    )
-                }
+        SearchableSettingsGroup(search) {
+            val accountTitle = stringResource(R.string.account_integrations)
+            // What the row opens is the scrobbling screen, so the services it
+            // signs into are worth typing at this field even though none of
+            // them is named on the row itself.
+            row(accountTitle, "scrobbling", "last.fm", "listenbrainz") {
+                SettingsRow(
+                    icon = Icons.Rounded.Person,
+                    title = accountTitle,
+                    subtitle = account?.email?.takeIf { it.isNotBlank() }
+                        ?: stringResource(if (signedIn) R.string.signed_in else R.string.not_signed_in),
+                    onClick = onAccountScrobbling,
+                )
             }
+            // Sits with the account rather than with Playback: a party is up to
+            // five signed-in people, and being signed in is the whole of what
+            // the row needs before it will do anything.
+            val listenTogetherTitle = stringResource(R.string.listen_together)
+            row(listenTogetherTitle, "jam", "party", "sync", "friends") {
+                SettingsRow(
+                    icon = Icons.Rounded.Groups,
+                    title = listenTogetherTitle,
+                    subtitle = party.code?.let {
+                        stringResource(R.string.listen_together_in_party, it)
+                    } ?: stringResource(R.string.listen_together_subtitle),
+                    badge = party.members.size.takeIf { party.inParty && it > 1 }?.toString(),
+                    onClick = onListenTogether,
+                )
+            }
+        }
 
-            // The row that used to sit at the top of this group was called
-            // "Lossless / HQ Audio" and toggled `SourceRegistry.setModuleEnabled` —
-            // it switched the *module source* on and off, not lossless. Sources
-            // above lists that as the module's own row now. Lossless itself is no
-            // longer a setting at all — see
-            // [SourceResolver.requestForNow][com.music.bitchord.data.sources.SourceResolver.requestForNow].
-            SearchableSettingsGroup(search, header = stringResource(R.string.audio_quality)) {
-                val sourceTitle = stringResource(R.string.source)
-                val sourceSubtitle = stringResource(R.string.sources_subtitle)
-                row(sourceTitle, sourceSubtitle, "addon", "lossless") {
-                    SettingsRow(
-                        icon = SfIcons.Extension,
-                        title = sourceTitle,
-                        subtitle = sourceSubtitle,
-                        onClick = onSources,
-                    )
-                }
-                // One line on purpose: it qualifies the row above rather than
-                // being a setting of its own, so it reads as part of Sources.
-                val directSourceTitle = stringResource(R.string.direct_source_stream)
-                // Drawn like the animated-cover cellular line: no icon, no divider.
-                row(directSourceTitle, "addon", "direct", "prefetch", "read-ahead", divided = false) {
-                    // Off for the length of a party: holding every fetch until a
-                    // track is about to play would leave this phone behind the
-                    // others at each sync — see [DirectSourceGate.isActive].
-                    SettingsSubRow(
-                        title = directSourceTitle,
-                        checked = directSourceStream && !party.inParty,
-                        onCheckedChange = AppSettings::setDirectSourceStream,
-                        subtitle = stringResource(R.string.direct_source_stream_in_party).takeIf { party.inParty },
-                        enabled = !party.inParty,
-                    )
-                }
-                val onWifiTitle = stringResource(R.string.on_wifi)
-                row(onWifiTitle, "wi-fi", "streaming quality") {
-                    SettingsRow(
-                        icon = SfIcons.Wifi,
-                        title = onWifiTitle,
-                        badge = stringResource(R.string.in_use).takeIf { metered == false },
-                        value = wifiQuality.localizedLabel(),
-                        onClick = { onOpenChoice(SettingsChoiceKind.AUDIO_QUALITY_WIFI) },
-                    )
-                }
-                val onMobileDataTitle = stringResource(R.string.on_mobile_data)
-                row(onMobileDataTitle, "cellular", "streaming quality") {
-                    SettingsRow(
-                        icon = SfIcons.SignalCellularAlt,
-                        title = onMobileDataTitle,
-                        badge = stringResource(R.string.in_use).takeIf { metered == true },
-                        value = cellularQuality.localizedLabel(),
-                        onClick = { onOpenChoice(SettingsChoiceKind.AUDIO_QUALITY_CELLULAR) },
-                    )
-                }
-                // Sits with the quality ceilings rather than with Playback: it
-                // decides which version of a track gets fetched, the same question
-                // the two rows above answer, and not how one is played back.
-                //
-                // Greyed rather than hidden where the device can't decode E-AC-3.
-                // A missing row reads as a feature the app doesn't have; a disabled
-                // one with a reason under it is the difference between "BitChord
-                // has no Atmos" and "this phone has no Dolby decoder", and only the
-                // second is true. The stored preference is left untouched either
-                // way — see [AppSettings.dolbyAtmos].
-                val dolbyAtmosTitle = stringResource(R.string.dolby_atmos)
-                row(dolbyAtmosTitle, "surround", "e-ac-3") {
-                    BypassedByBitPerfect(bitPerfectReady) {
-                        SettingsRow(
-                            iconPainter = painterResource(R.drawable.ic_dolby_atmos),
-                            title = dolbyAtmosTitle,
-                            subtitle = stringResource(
-                                if (dolbyAtmosSupported) {
-                                    R.string.dolby_atmos_subtitle
-                                } else {
-                                    R.string.dolby_atmos_unavailable
-                                },
-                            ),
+        // The row that used to sit at the top of this group was called
+        // "Lossless / HQ Audio" and toggled `SourceRegistry.setModuleEnabled` —
+        // it switched the *module source* on and off, not lossless. Sources
+        // above lists that as the module's own row now. Lossless itself is no
+        // longer a setting at all — see
+        // [SourceResolver.requestForNow][com.music.bitchord.data.sources.SourceResolver.requestForNow].
+        SearchableSettingsGroup(search, header = stringResource(R.string.audio_quality)) {
+            val sourceTitle = stringResource(R.string.source)
+            val sourceSubtitle = stringResource(R.string.sources_subtitle)
+            row(sourceTitle, sourceSubtitle, "addon", "lossless") {
+                SettingsRow(
+                    icon = Icons.Rounded.Extension,
+                    title = sourceTitle,
+                    subtitle = sourceSubtitle,
+                    onClick = onSources,
+                )
+            }
+            val onWifiTitle = stringResource(R.string.on_wifi)
+            row(onWifiTitle, "wi-fi", "streaming quality") {
+                SettingsRow(
+                    icon = Icons.Rounded.Wifi,
+                    title = onWifiTitle,
+                    // No "in use" badge: Apple Music's settings carry none, and
+                    // beside a long quality value it was clipped mid-word.
+                    value = wifiQuality.localizedLabel(),
+                    onClick = { picking = QualityTarget.WIFI },
+                )
+            }
+            val onMobileDataTitle = stringResource(R.string.on_mobile_data)
+            row(onMobileDataTitle, "cellular", "streaming quality") {
+                SettingsRow(
+                    icon = Icons.Rounded.SignalCellularAlt,
+                    title = onMobileDataTitle,
+                    value = cellularQuality.localizedLabel(),
+                    onClick = { picking = QualityTarget.CELLULAR },
+                )
+            }
+            // Sits with the quality ceilings rather than with Playback: it
+            // decides which version of a track gets fetched, the same question
+            // the two rows above answer, and not how one is played back.
+            //
+            // Greyed rather than hidden where the device can't decode E-AC-3.
+            // A missing row reads as a feature the app doesn't have; a disabled
+            // one with a reason under it is the difference between "BitChord
+            // has no Atmos" and "this phone has no Dolby decoder", and only the
+            // second is true. The stored preference is left untouched either
+            // way — see [AppSettings.dolbyAtmos].
+            val dolbyAtmosTitle = stringResource(R.string.dolby_atmos)
+            row(dolbyAtmosTitle, "surround", "e-ac-3") {
+                SettingsRow(
+                    iconPainter = painterResource(R.drawable.ic_dolby_atmos),
+                    title = dolbyAtmosTitle,
+                    subtitle = stringResource(
+                        if (dolbyAtmosSupported) {
+                            R.string.dolby_atmos_subtitle
+                        } else {
+                            R.string.dolby_atmos_unavailable
+                        },
+                    ),
+                    enabled = dolbyAtmosSupported,
+                    trailing = {
+                        Switch(
+                            checked = dolbyAtmos && dolbyAtmosSupported,
+                            onCheckedChange = AppSettings::setDolbyAtmos,
                             enabled = dolbyAtmosSupported,
-                            trailing = {
-                                IosSwitch(
-                                    checked = dolbyAtmos && dolbyAtmosSupported,
-                                    onCheckedChange = AppSettings::setDolbyAtmos,
-                                    enabled = dolbyAtmosSupported,
-                                )
-                            },
-                            onClick = { AppSettings.setDolbyAtmos(!dolbyAtmos) },
+                            colors = settingsSwitchColors(),
                         )
-                    }
-                }
-            }
-
-            // The categories, each a page of its own — until there is a query,
-            // when their rows answer here instead (below).
-            if (!searching) {
-                SettingsCategoryList(onOpen = onOpenSection)
-                if (watchAvailable) {
-                    SettingsGroup {
-                        WearOsSettingsRow(onClick = onWearOs)
-                    }
-                }
+                    },
+                    onClick = { AppSettings.setDolbyAtmos(!dolbyAtmos) },
+                )
             }
         }
 
@@ -770,15 +709,19 @@ fun SettingsScreen(
         // does this minute cost"; these answer "what am I keeping, and when may
         // it be fetched" — and those two questions only make sense read
         // together, which is what puts them side by side here.
-        if (shows(SettingsCategory.DOWNLOADS)) SearchableSettingsGroup(search, header = stringResource(R.string.downloads)) {
+        SearchableSettingsGroup(
+            search,
+            header = stringResource(R.string.downloads),
+            footer = stringResource(R.string.settings_footer_downloads),
+        ) {
             val downloadQualityTitle = stringResource(R.string.download_quality)
             row(downloadQualityTitle, "offline", "lossless") {
                 SettingsRow(
-                    icon = SfIcons.Download,
+                    icon = Icons.Rounded.Download,
                     title = downloadQualityTitle,
                     subtitle = stringResource(R.string.download_quality_subtitle, downloadQuality.perTrack),
                     value = downloadQuality.localizedLabel(),
-                    onClick = { onOpenChoice(SettingsChoiceKind.DOWNLOAD_QUALITY) },
+                    onClick = { pickingDownloadQuality = true },
                 )
             }
             // Reads as part of Download quality above it, not as a setting
@@ -851,7 +794,7 @@ fun SettingsScreen(
                 )
             }
             val exportDownloadsTitle = stringResource(R.string.export_compatible_downloads)
-            row(exportDownloadsTitle, "music folder") {
+            row(exportDownloadsTitle, "music folder", divided = false) {
                 SettingsSubRow(
                     title = exportDownloadsTitle,
                     checked = exportDownloads,
@@ -859,22 +802,112 @@ fun SettingsScreen(
                     subtitle = "Music/BitChord".takeIf { exportDownloads },
                 )
             }
-            val syncPlaylistsTitle = stringResource(R.string.sync_downloaded_playlists)
-            row(syncPlaylistsTitle, "playlist", "new songs", "background", "automatic") {
+            val autoDownloadLikedTitle = stringResource(R.string.auto_download_liked)
+            val autoDownloadLikedSubtitle =
+                stringResource(R.string.auto_download_liked_subtitle)
+            row(autoDownloadLikedTitle, "like", "heart", "offline", divided = false) {
                 SettingsSubRow(
-                    title = syncPlaylistsTitle,
-                    checked = syncDownloadedPlaylists,
-                    onCheckedChange = AppSettings::setSyncDownloadedPlaylists,
-                    subtitle = stringResource(R.string.sync_downloaded_playlists_subtitle),
+                    title = autoDownloadLikedTitle,
+                    subtitle = autoDownloadLikedSubtitle,
+                    checked = autoDownloadLiked,
+                    onCheckedChange = AppSettings::setAutoDownloadLiked,
                 )
             }
         }
 
-        if (shows(SettingsCategory.PLAYBACK)) SearchableSettingsGroup(
+        SearchableSettingsGroup(
             search,
             header = stringResource(R.string.playback),
-            footer = stringResource(R.string.bit_perfect_bypassed_footer).takeIf { bitPerfectReady },
+            footer = stringResource(R.string.settings_footer_playback),
         ) {
+            val resumeOnHeadphonesTitle = stringResource(R.string.resume_on_headphones)
+            row(resumeOnHeadphonesTitle, "headphones", "earbuds", "bluetooth", "resume", "이어폰") {
+                SettingsRow(
+                    icon = Icons.Rounded.Headphones,
+                    title = resumeOnHeadphonesTitle,
+                    trailing = {
+                        Switch(
+                            checked = resumeOnHeadphones,
+                            onCheckedChange = { AppSettings.setResumeOnHeadphones(it) },
+                            colors = settingsSwitchColors(),
+                        )
+                    },
+                    onClick = { AppSettings.setResumeOnHeadphones(!resumeOnHeadphones) },
+                )
+            }
+            val personalisedAutoplayTitle = stringResource(R.string.personalised_autoplay)
+            row(personalisedAutoplayTitle, "autoplay", "radio", "recommend", "추천") {
+                SettingsRow(
+                    icon = Icons.Rounded.AutoAwesome,
+                    title = personalisedAutoplayTitle,
+                    trailing = {
+                        Switch(
+                            checked = personalisedAutoplay,
+                            onCheckedChange = AppSettings::setPersonalisedAutoplay,
+                            colors = settingsSwitchColors(),
+                        )
+                    },
+                    onClick = { AppSettings.setPersonalisedAutoplay(!personalisedAutoplay) },
+                )
+            }
+            val videoRadioTitle = stringResource(R.string.video_radio_continue)
+            row(videoRadioTitle, "video", "radio", "cover", "비디오") {
+                SettingsRow(
+                    icon = Icons.Rounded.SmartDisplay,
+                    title = videoRadioTitle,
+                    trailing = {
+                        Switch(
+                            checked = videoRadio,
+                            onCheckedChange = AppSettings::setVideoRadio,
+                            colors = settingsSwitchColors(),
+                        )
+                    },
+                    onClick = { AppSettings.setVideoRadio(!videoRadio) },
+                )
+            }
+            val preferMusicOnlyTitle = stringResource(R.string.prefer_music_only)
+            row(preferMusicOnlyTitle, "video", "audio", "music video") {
+                SettingsRow(
+                    icon = Icons.Rounded.SmartDisplay,
+                    title = preferMusicOnlyTitle,
+                    subtitle = stringResource(R.string.prefer_music_only_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = preferMusicOnly,
+                            onCheckedChange = AppSettings::setPreferMusicOnly,
+                            colors = settingsSwitchColors(),
+                        )
+                    },
+                    onClick = { AppSettings.setPreferMusicOnly(!preferMusicOnly) },
+                )
+            }
+            val skipNonMusicPartsTitle = stringResource(R.string.skip_non_music_parts)
+            row(skipNonMusicPartsTitle, "sponsor", "skip", "intro", "outro", "건너뛰기") {
+                SettingsRow(
+                    icon = Icons.Rounded.MusicOff,
+                    title = skipNonMusicPartsTitle,
+                    subtitle = stringResource(R.string.skip_non_music_parts_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = skipNonMusicParts,
+                            onCheckedChange = AppSettings::setSkipNonMusicParts,
+                            colors = settingsSwitchColors(),
+                        )
+                    },
+                    onClick = { AppSettings.setSkipNonMusicParts(!skipNonMusicParts) },
+                )
+            }
+            if (skipNonMusicParts) {
+                val skipSponsorPartsTitle = stringResource(R.string.skip_sponsor_parts)
+                row(skipSponsorPartsTitle, "sponsor", "self promo", "intro", "outro", divided = false) {
+                    SettingsSubRow(
+                        title = skipSponsorPartsTitle,
+                        subtitle = stringResource(R.string.skip_sponsor_parts_subtitle),
+                        checked = skipSponsorParts,
+                        onCheckedChange = AppSettings::setSkipSponsorParts,
+                    )
+                }
+            }
             val outputPrecisionTitle = stringResource(R.string.output_precision)
             val outputRouteLabel = stringResource(
                 when (outputStatus.routeKind) {
@@ -888,7 +921,7 @@ fun SettingsScreen(
             )
             row(outputPrecisionTitle, "pcm", "bit depth", "sample rate", "dac") {
                 SettingsRow(
-                    icon = SfIcons.GraphicEq,
+                    icon = Icons.Rounded.GraphicEq,
                     title = outputPrecisionTitle,
                     subtitle = buildString {
                         append(outputRouteLabel)
@@ -918,101 +951,29 @@ fun SettingsScreen(
                     onCheckedChange = AppSettings::setPreferUsbDac,
                 )
             }
-            val bitPerfectTitle = stringResource(R.string.bit_perfect_output)
-            row(bitPerfectTitle, "usb", "dac", "exclusive", "hi-res", "bitperfect") {
-                // The mode and the device it names can both be long, so they
-                // go under the title rather than beside it, where they left
-                // the title and status no room.
-                SettingsRow(
-                    icon = SfIcons.Usb,
-                    title = bitPerfectTitle,
-                    subtitleContent = {
-                        Column {
-                            Text(
-                                text = bitPerfectSubtitle(bitPerfectMode, bitPerfectStatus),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            Text(
-                                text = bitPerfectMode.localizedLabel(),
-                                modifier = Modifier.padding(top = 2.dp),
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.Medium,
-                                color = MaterialTheme.colorScheme.primary,
-                            )
-                        }
-                    },
-                    onClick = { onOpenChoice(SettingsChoiceKind.BIT_PERFECT) },
-                )
-            }
-            // The DAC's own attenuator: the only volume direct USB has, since
-            // nothing upstream may scale a sample. It and the row after it
-            // belong to Bit-perfect output, so neither is divided from it.
-            dacVolume?.let { volume ->
-                val dacVolumeTitle = stringResource(R.string.dac_volume)
-                row(dacVolumeTitle, "volume", "usb", "dac", divided = false) {
-                    SliderRow(
-                        icon = SfIcons.VolumeUp,
-                        title = dacVolumeTitle,
-                        subtitle = stringResource(R.string.dac_volume_subtitle),
-                        value = "%.1f dB".format(volume.currentDb),
-                        sliderValue = volume.currentDb.toFloat(),
-                        onSliderValue = { BitPerfectOutput.setHardwareVolume(it.toDouble()) },
-                        valueRange = volume.minDb.toFloat()..volume.maxDb.toFloat(),
-                        steps = 0,
-                    )
-                }
-            }
-            if (bitPerfectMode == BitPerfectMode.USB_DIRECT) {
-                val fixedVolumeTitle = stringResource(R.string.usb_allow_fixed_volume)
-                row(fixedVolumeTitle, "volume", "usb", "dac", divided = false) {
-                    SettingsSubRow(
-                        title = fixedVolumeTitle,
-                        subtitle = stringResource(R.string.usb_allow_fixed_volume_subtitle),
-                        checked = usbAllowFixedVolume,
-                        onCheckedChange = { on ->
-                            if (on) onConfirmFixedVolume() else AppSettings.setUsbAllowFixedVolume(false)
-                        },
-                    )
-                }
-            }
-            if (bitPerfectMode != BitPerfectMode.OFF && bitPerfectMode.isSupported) {
-                val convertTitle = stringResource(R.string.convert_for_limited_dac)
-                row(convertTitle, "convert", "resample", "usb", "dac", "bitperfect", divided = false) {
-                    SettingsSubRow(
-                        title = convertTitle,
-                        subtitle = stringResource(R.string.convert_for_limited_dac_subtitle),
-                        checked = convertForLimitedDac,
-                        onCheckedChange = AppSettings::setConvertForLimitedDac,
-                    )
-                }
-            }
             val loudnessTitle = stringResource(R.string.loudness_normalization)
             row(loudnessTitle, "loudness", "volume", "normalize", "replaygain", "lufs") {
-                BypassedByBitPerfect(bitPerfectReady) {
-                    SettingsRow(
-                        icon = SfIcons.VolumeUp,
-                        title = loudnessTitle,
-                        subtitle = stringResource(R.string.loudness_normalization_subtitle),
-                        trailing = {
-                            IosSwitch(
-                                checked = loudnessNormalization,
-                                onCheckedChange = AppSettings::setLoudnessNormalization,
-                            )
-                        },
-                        onClick = { AppSettings.setLoudnessNormalization(!loudnessNormalization) },
-                    )
-                }
+                SettingsRow(
+                    icon = Icons.Rounded.VolumeUp,
+                    title = loudnessTitle,
+                    subtitle = stringResource(R.string.loudness_normalization_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = loudnessNormalization,
+                            onCheckedChange = AppSettings::setLoudnessNormalization,
+                            colors = settingsSwitchColors(),
+                        )
+                    },
+                    onClick = { AppSettings.setLoudnessNormalization(!loudnessNormalization) },
+                )
             }
             val loudnessSpeakerTitle = stringResource(R.string.loudness_off_on_speaker)
             row(loudnessSpeakerTitle, "loudness", "speaker", "normalize") {
-                BypassedByBitPerfect(bitPerfectReady) {
-                    SettingsSubRow(
-                        title = loudnessSpeakerTitle,
-                        checked = loudnessOffOnSpeaker,
-                        onCheckedChange = AppSettings::setLoudnessOffOnSpeaker,
-                    )
-                }
+                SettingsSubRow(
+                    title = loudnessSpeakerTitle,
+                    checked = loudnessOffOnSpeaker,
+                    onCheckedChange = AppSettings::setLoudnessOffOnSpeaker,
+                )
             }
             // Automix decides its own length from each pair of tracks —
             // tempo, key, structure — so it replaces the manual slider rather
@@ -1020,40 +981,32 @@ fun SettingsScreen(
             if (!smartFade) {
                 val crossfadeTitle = stringResource(R.string.crossfade)
                 row(crossfadeTitle, "fade", "gapless") {
-                    BypassedByBitPerfect(bitPerfectReady) {
-                        SliderRow(
-                            icon = SfIcons.Waves,
-                            title = crossfadeTitle,
-                            subtitle = stringResource(R.string.crossfade_subtitle),
-                            value = if (crossfade == 0) stringResource(R.string.off) else "${crossfade}s",
-                            sliderValue = crossfade.toFloat(),
-                            onSliderValue = { AppSettings.setCrossfadeSeconds(it.roundToInt()) },
-                            valueRange = 0f..12f,
-                            steps = 11,
-                        )
-                    }
+                    SliderRow(
+                        icon = Icons.Rounded.Waves,
+                        title = crossfadeTitle,
+                        subtitle = stringResource(R.string.crossfade_subtitle),
+                        value = if (crossfade == 0) stringResource(R.string.off) else "${crossfade}s",
+                        sliderValue = crossfade.toFloat(),
+                        onSliderValue = { AppSettings.setCrossfadeSeconds(it.roundToInt()) },
+                        valueRange = 0f..12f,
+                        steps = 11,
+                    )
                 }
             }
             val automixTitle = stringResource(R.string.automix)
             row(automixTitle, "crossfade", "smart fade", "mix") {
-                BypassedByBitPerfect(bitPerfectReady) {
-                    SettingsRow(
-                        icon = SfIcons.AutoAwesome,
-                        title = automixTitle,
-                        subtitle = if (smartFade) {
-                            stringResource(R.string.automix_enabled_subtitle)
-                        } else {
-                            stringResource(R.string.automix_disabled_subtitle)
-                        },
-                        trailing = {
-                            IosSwitch(
-                                checked = smartFade,
-                                onCheckedChange = AppSettings::setSmartFadeEnabled,
-                            )
-                        },
-                        onClick = { AppSettings.setSmartFadeEnabled(!smartFade) },
-                    )
-                }
+                SettingsRow(
+                    icon = Icons.Rounded.AutoAwesome,
+                    title = automixTitle,
+                    trailing = {
+                        Switch(
+                            checked = smartFade,
+                            onCheckedChange = AppSettings::setSmartFadeEnabled,
+                            colors = settingsSwitchColors(),
+                        )
+                    },
+                    onClick = { AppSettings.setSmartFadeEnabled(!smartFade) },
+                )
             }
             if (smartFade) {
                 val automixVideosTitle = stringResource(R.string.automix_videos)
@@ -1068,43 +1021,33 @@ fun SettingsScreen(
             }
             val automixPerformanceTitle = stringResource(R.string.automix_performance)
             row(automixPerformanceTitle, "cpu", "battery") {
-                BypassedByBitPerfect(bitPerfectReady) {
-                    SettingsRow(
-                        icon = SfIcons.Tune,
-                        title = automixPerformanceTitle,
-                        subtitle = stringResource(R.string.automix_performance_subtitle),
-                        value = automixPerformance.localizedLabel(),
-                        onClick = { onOpenChoice(SettingsChoiceKind.AUTOMIX_PERFORMANCE) },
-                    )
-                }
+                SettingsRow(
+                    icon = Icons.Rounded.Tune,
+                    title = automixPerformanceTitle,
+                    subtitle = stringResource(R.string.automix_performance_subtitle),
+                    value = automixPerformance.localizedLabel(),
+                    onClick = { pickingAutomixPerformance = true },
+                )
             }
             val skipSilenceTitle = stringResource(R.string.skip_silence)
             row(skipSilenceTitle, "silence") {
-                BypassedByBitPerfect(bitPerfectReady) {
-                    SettingsRow(
-                        icon = SfIcons.VolumeOff,
-                        title = skipSilenceTitle,
-                        // Silence skipping is Media3's own processor, and
-                        // `DefaultAudioSink.configure` appends that processor list
-                        // only on its 16-bit branch — the float branch gets the
-                        // format converter and nothing else. So on a float track
-                        // this switch really does nothing, and the row says so
-                        // rather than letting someone toggle it and wonder. The
-                        // equaliser is unaffected: it runs upstream of that sink.
-                        subtitle = if (outputStatus.actualEncoding == AudioFormat.ENCODING_PCM_FLOAT) {
-                            stringResource(R.string.skip_silence_float_subtitle)
-                        } else {
-                            stringResource(R.string.skip_silence_subtitle)
-                        },
-                        trailing = {
-                            IosSwitch(
-                                checked = skipSilence,
-                                onCheckedChange = AppSettings::setSkipSilence,
-                            )
-                        },
-                        onClick = { AppSettings.setSkipSilence(!skipSilence) },
-                    )
-                }
+                SettingsRow(
+                    icon = Icons.AutoMirrored.Rounded.VolumeOff,
+                    title = skipSilenceTitle,
+                    // The low-level Media3 processor only runs on its 16-bit
+                    // branch, so the precision sink now trims float and direct
+                    // output itself before the DSP chain. The switch is live on
+                    // both paths; only the implementation differs.
+                    subtitle = stringResource(R.string.skip_silence_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = skipSilence,
+                            onCheckedChange = AppSettings::setSkipSilence,
+                            colors = settingsSwitchColors(),
+                        )
+                    },
+                    onClick = { AppSettings.setSkipSilence(!skipSilence) },
+                )
             }
             val privateListeningTitle = stringResource(R.string.private_listening)
             row(privateListeningTitle, "private", "incognito", "history", "privacy") {
@@ -1147,32 +1090,31 @@ fun SettingsScreen(
             }
             val spatialAudioTitle = stringResource(R.string.spatial_audio)
             row(spatialAudioTitle, "surround", "3d") {
-                BypassedByBitPerfect(bitPerfectReady) {
-                    SettingsRow(
-                        icon = SfIcons.SurroundSound,
-                        title = spatialAudioTitle,
-                        // Widening a JOC stream would fight the object-based mix
-                        // Dolby has already spatialized, so the service holds this
-                        // off for the duration of an Atmos track — see
-                        // `PlaybackService.applySpatialAudioEnabled`. Said on the
-                        // row because the switch stays where the listener left it,
-                        // and a switch reading "on" over an effect that is not
-                        // running is the same silent lie the equaliser screen used
-                        // to tell.
-                        subtitle = if (playingDolbyAtmos) {
-                            stringResource(R.string.spatial_audio_atmos_subtitle)
-                        } else {
-                            stringResource(R.string.spatial_audio_subtitle)
-                        },
-                        trailing = {
-                            IosSwitch(
-                                checked = spatialAudio,
-                                onCheckedChange = AppSettings::setSpatialAudio,
-                            )
-                        },
-                        onClick = { AppSettings.setSpatialAudio(!spatialAudio) },
-                    )
-                }
+                SettingsRow(
+                    icon = Icons.Rounded.SurroundSound,
+                    title = spatialAudioTitle,
+                    // Widening a JOC stream would fight the object-based mix
+                    // Dolby has already spatialized, so the service holds this
+                    // off for the duration of an Atmos track — see
+                    // `PlaybackService.applySpatialAudioEnabled`. Said on the
+                    // row because the switch stays where the listener left it,
+                    // and a switch reading "on" over an effect that is not
+                    // running is the same silent lie the equaliser screen used
+                    // to tell.
+                    subtitle = if (playingDolbyAtmos) {
+                        stringResource(R.string.spatial_audio_atmos_subtitle)
+                    } else {
+                        stringResource(R.string.spatial_audio_subtitle)
+                    },
+                    trailing = {
+                        Switch(
+                            checked = spatialAudio,
+                            onCheckedChange = AppSettings::setSpatialAudio,
+                            colors = settingsSwitchColors(),
+                        )
+                    },
+                    onClick = { AppSettings.setSpatialAudio(!spatialAudio) },
+                )
             }
             // The system panel is not listed here as well. A device with a
             // Dolby or Dirac panel has something BitChord cannot reproduce and
@@ -1180,18 +1122,16 @@ fun SettingsScreen(
             // screen, rather than as a second equaliser entry alongside ours.
             val equalizerTitle = stringResource(R.string.equalizer)
             row(equalizerTitle, "eq", "bass", "treble") {
-                BypassedByBitPerfect(bitPerfectReady) {
-                    SettingsRow(
-                        icon = SfIcons.Tune,
-                        title = equalizerTitle,
-                        subtitle = stringResource(R.string.equalizer_subtitle),
-                        onClick = onEqualizer,
-                    )
-                }
+                SettingsRow(
+                    icon = Icons.Rounded.Tune,
+                    title = equalizerTitle,
+                    subtitle = stringResource(R.string.equalizer_subtitle),
+                    onClick = onEqualizer,
+                )
             }
         }
 
-        if (shows(SettingsCategory.APPEARANCE)) SearchableSettingsGroup(search, header = stringResource(R.string.appearance)) {
+        SearchableSettingsGroup(search, header = stringResource(R.string.appearance)) {
             val themeTitle = stringResource(R.string.theme)
             row(themeTitle, "dark mode", "light mode") {
                 SettingsRow(icon = Icons.Rounded.Brightness4, title = themeTitle)
@@ -1202,26 +1142,17 @@ fun SettingsScreen(
                     modifier = Modifier.padding(start = ROW_INSET, end = ROW_INSET, bottom = 14.dp),
                 )
             }
-            val fontTitle = stringResource(R.string.font)
-            row(fontTitle, "typeface", "sf pro", "legacy") {
-                SettingsRow(
-                    icon = SfIcons.Font,
-                    title = fontTitle,
-                    subtitle = appFont.description(),
-                    value = appFont.localizedLabel(),
-                    onClick = { onOpenChoice(SettingsChoiceKind.FONT) },
-                )
-            }
             val reduceAnimationTitle = stringResource(R.string.reduce_animation)
             row(reduceAnimationTitle, "motion") {
                 SettingsRow(
-                    icon = SfIcons.MotionPhotosOff,
+                    icon = Icons.Rounded.MotionPhotosOff,
                     title = reduceAnimationTitle,
                     subtitle = stringResource(R.string.reduce_animation_subtitle),
                     trailing = {
-                        IosSwitch(
+                        Switch(
                             checked = reduceAnimation,
                             onCheckedChange = AppSettings::setReduceAnimation,
+                            colors = settingsSwitchColors(),
                         )
                     },
                     onClick = { AppSettings.setReduceAnimation(!reduceAnimation) },
@@ -1244,13 +1175,14 @@ fun SettingsScreen(
             val reduceDynamicBlurTitle = stringResource(R.string.reduce_dynamic_blur)
             row(reduceDynamicBlurTitle, "blur", "performance") {
                 SettingsRow(
-                    icon = SfIcons.BlurOff,
+                    icon = Icons.Rounded.BlurOff,
                     title = reduceDynamicBlurTitle,
                     subtitle = stringResource(R.string.reduce_dynamic_blur_subtitle),
                     trailing = {
-                        IosSwitch(
+                        Switch(
                             checked = reduceDynamicBlur,
                             onCheckedChange = AppSettings::setReduceDynamicBlur,
+                            colors = settingsSwitchColors(),
                         )
                     },
                     onClick = { AppSettings.setReduceDynamicBlur(!reduceDynamicBlur) },
@@ -1259,7 +1191,7 @@ fun SettingsScreen(
             val liquidGlassTitle = stringResource(R.string.liquid_glass)
             row(liquidGlassTitle, "glass", "blur") {
                 SettingsRow(
-                    icon = SfIcons.AutoAwesome,
+                    icon = Icons.Rounded.AutoAwesome,
                     title = liquidGlassTitle,
                     subtitle = stringResource(
                         if (liquidGlassSupported) {
@@ -1270,28 +1202,15 @@ fun SettingsScreen(
                     ),
                     enabled = liquidGlassSupported,
                     trailing = {
-                        IosSwitch(
+                        Switch(
                             checked = liquidGlass,
                             onCheckedChange = AppSettings::setLiquidGlass,
                             enabled = liquidGlassSupported,
+                            colors = settingsSwitchColors(),
                         )
                     },
                     onClick = { AppSettings.setLiquidGlass(!liquidGlass) },
                 )
-            }
-            // One line, like Direct Source Stream under Sources, and only while
-            // Liquid Glass is on: it qualifies the glass rather than standing on
-            // its own. Its own switch because it costs frames of its own. Reduce
-            // dynamic blur turns it off.
-            if (liquidGlass && liquidGlassSupported) {
-                val progressiveBlurTitle = stringResource(R.string.progressive_blur)
-                row(progressiveBlurTitle, "blur", "status bar", "top", divided = false) {
-                    SettingsSubRow(
-                        title = progressiveBlurTitle,
-                        checked = progressiveBlur,
-                        onCheckedChange = AppSettings::setProgressiveBlur,
-                    )
-                }
             }
             // Left out where the player won't honour it: a window too wide for
             // the player to fill and too narrow to stand a page beside it keeps
@@ -1301,13 +1220,14 @@ fun SettingsScreen(
                 val fullScreenCoverArtTitle = stringResource(R.string.full_screen_cover_art)
                 row(fullScreenCoverArtTitle, "artwork", "player") {
                     SettingsRow(
-                        icon = SfIcons.Fullscreen,
+                        icon = Icons.Rounded.Fullscreen,
                         title = fullScreenCoverArtTitle,
                         subtitle = stringResource(R.string.full_screen_cover_art_subtitle),
                         trailing = {
-                            IosSwitch(
+                            Switch(
                                 checked = fullBleedArtwork,
                                 onCheckedChange = AppSettings::setFullBleedArtwork,
+                                colors = settingsSwitchColors(),
                             )
                         },
                         onClick = { AppSettings.setFullBleedArtwork(!fullBleedArtwork) },
@@ -1317,13 +1237,14 @@ fun SettingsScreen(
             val legacyMeshGradientTitle = stringResource(R.string.legacy_mesh_gradient)
             row(legacyMeshGradientTitle, "background", "player") {
                 SettingsRow(
-                    icon = SfIcons.Gradient,
+                    icon = Icons.Rounded.Gradient,
                     title = legacyMeshGradientTitle,
                     subtitle = stringResource(R.string.legacy_mesh_gradient_subtitle),
                     trailing = {
-                        IosSwitch(
+                        Switch(
                             checked = legacyMeshGradient,
                             onCheckedChange = AppSettings::setLegacyMeshGradient,
+                            colors = settingsSwitchColors(),
                         )
                     },
                     onClick = { AppSettings.setLegacyMeshGradient(!legacyMeshGradient) },
@@ -1335,13 +1256,14 @@ fun SettingsScreen(
             // the switch that brings the Spotify row back rather than nothing.
             row(animatedCoverArtTitle, "canvas", "video", "spotify") {
                 SettingsRow(
-                    icon = SfIcons.Animation,
+                    icon = Icons.Rounded.Animation,
                     title = animatedCoverArtTitle,
                     subtitle = stringResource(R.string.animated_cover_art_subtitle),
                     trailing = {
-                        IosSwitch(
+                        Switch(
                             checked = animatedCanvas,
                             onCheckedChange = AppSettings::setAnimatedCanvas,
+                            colors = settingsSwitchColors(),
                         )
                     },
                     onClick = { AppSettings.setAnimatedCanvas(!animatedCanvas) },
@@ -1393,13 +1315,14 @@ fun SettingsScreen(
             val artistSignaturesTitle = stringResource(R.string.artist_signatures)
             row(artistSignaturesTitle, "signature", "artist", "logo") {
                 SettingsRow(
-                    icon = SfIcons.Draw,
+                    icon = Icons.Rounded.Draw,
                     title = artistSignaturesTitle,
                     subtitle = stringResource(R.string.artist_signatures_subtitle),
                     trailing = {
-                        IosSwitch(
+                        Switch(
                             checked = signatureApiEnabled,
                             onCheckedChange = AppSettings::setSignatureApiEnabled,
+                            colors = settingsSwitchColors(),
                         )
                     },
                     onClick = { AppSettings.setSignatureApiEnabled(!signatureApiEnabled) },
@@ -1454,13 +1377,14 @@ fun SettingsScreen(
             // translation rows are only here while this is on.
             row(syncedLyricsTitle, "lyrics", "translation", "lrclib", "musixmatch") {
                 SettingsRow(
-                    icon = SfIcons.Notes,
+                    icon = Icons.AutoMirrored.Rounded.Notes,
                     title = syncedLyricsTitle,
                     subtitle = stringResource(R.string.synced_lyrics_subtitle),
                     trailing = {
-                        IosSwitch(
+                        Switch(
                             checked = syncedLyrics,
                             onCheckedChange = AppSettings::setSyncedLyrics,
+                            colors = settingsSwitchColors(),
                         )
                     },
                     onClick = { AppSettings.setSyncedLyrics(!syncedLyrics) },
@@ -1473,13 +1397,14 @@ fun SettingsScreen(
                 val lyricsBlurTitle = stringResource(R.string.blur_unfocused_lyrics)
                 row(lyricsBlurTitle, "lyrics", "blur") {
                     SettingsRow(
-                        icon = SfIcons.BlurOn,
+                        icon = Icons.Rounded.BlurOn,
                         title = lyricsBlurTitle,
                         subtitle = stringResource(R.string.blur_unfocused_lyrics_subtitle),
                         trailing = {
-                            IosSwitch(
+                            Switch(
                                 checked = lyricsBlur,
                                 onCheckedChange = AppSettings::setLyricsBlur,
+                                colors = settingsSwitchColors(),
                             )
                         },
                         onClick = { AppSettings.setLyricsBlur(!lyricsBlur) },
@@ -1488,7 +1413,7 @@ fun SettingsScreen(
                 val lyricsSourcesTitle = stringResource(R.string.lyrics_sources)
                 row(lyricsSourcesTitle, "lyrics", "lrclib", "musixmatch") {
                     SettingsRow(
-                        icon = SfIcons.Language,
+                        icon = Icons.Rounded.Language,
                         title = lyricsSourcesTitle,
                         subtitle = lyricsSources
                             .sortedBy { it.ordinal }
@@ -1501,7 +1426,7 @@ fun SettingsScreen(
                 val translationLanguageTitle = stringResource(R.string.translation_language)
                 row(translationLanguageTitle, "lyrics", "translate") {
                     SettingsRow(
-                        icon = SfIcons.Translate,
+                        icon = Icons.Rounded.Translate,
                         title = translationLanguageTitle,
                         subtitle = if (translationLanguage.isBlank()) {
                             stringResource(R.string.translation_language_subtitle)
@@ -1699,11 +1624,11 @@ fun SettingsScreen(
             }
         }
 
-        if (shows(SettingsCategory.PERFORMANCE)) SearchableSettingsGroup(search, header = stringResource(R.string.performance)) {
+        SearchableSettingsGroup(search, header = stringResource(R.string.performance)) {
             val highPerformanceModeTitle = stringResource(R.string.high_performance_mode)
             row(highPerformanceModeTitle, "frame rate", "refresh rate", "hz", "battery", "smooth") {
                 SettingsRow(
-                    icon = SfIcons.Performance,
+                    icon = BitChordIcons.Performance,
                     title = highPerformanceModeTitle,
                     subtitle = if (highPerformanceMode) {
                         stringResource(R.string.high_performance_active, selectedPerformanceRefreshRate)
@@ -1711,7 +1636,7 @@ fun SettingsScreen(
                         stringResource(R.string.high_performance_subtitle)
                     },
                     trailing = {
-                        IosSwitch(
+                        Switch(
                             checked = highPerformanceMode,
                             onCheckedChange = { enabled ->
                                 if (enabled) {
@@ -1720,6 +1645,7 @@ fun SettingsScreen(
                                     AppSettings.setHighPerformanceMode(false)
                                 }
                             },
+                            colors = settingsSwitchColors(),
                         )
                     },
                     onClick = {
@@ -1735,7 +1661,7 @@ fun SettingsScreen(
                 val refreshRateTitle = stringResource(R.string.refresh_rate)
                 row(refreshRateTitle, "hz", "frame rate") {
                     SettingsRow(
-                        icon = SfIcons.FrameRate,
+                        icon = BitChordIcons.FrameRate,
                         title = refreshRateTitle,
                     )
                     SettingsSegmentedControl(
@@ -1754,11 +1680,11 @@ fun SettingsScreen(
             }
         }
 
-        if (shows(SettingsCategory.LOCAL_MUSIC)) SearchableSettingsGroup(search, header = stringResource(R.string.local_music)) {
+        SearchableSettingsGroup(search, header = stringResource(R.string.local_music)) {
             val localMusicFolderTitle = stringResource(R.string.local_music_folder)
             row(localMusicFolderTitle, "folder", "offline", "files") {
                 SettingsRow(
-                    icon = SfIcons.Folder,
+                    icon = Icons.Rounded.Folder,
                     title = localMusicFolderTitle,
                     subtitle = LocalMediaRepository.selectedFolderLabel(localMusicFolderUri)
                         ?: stringResource(R.string.all_audio_folders),
@@ -1769,7 +1695,7 @@ fun SettingsScreen(
                 val useAllAudioFoldersTitle = stringResource(R.string.use_all_audio_folders)
                 row(useAllAudioFoldersTitle, "folder") {
                     SettingsRow(
-                        icon = SfIcons.LibraryMusic,
+                        icon = Icons.Rounded.LibraryMusic,
                         title = useAllAudioFoldersTitle,
                         subtitle = stringResource(R.string.use_all_audio_folders_subtitle),
                         onClick = { AppSettings.setLocalMusicFolderUri("") },
@@ -1779,13 +1705,14 @@ fun SettingsScreen(
             val filterNonMusicAudioTitle = stringResource(R.string.filter_non_music_audio)
             row(filterNonMusicAudioTitle, "podcast", "recording") {
                 SettingsRow(
-                    icon = SfIcons.FilterAlt,
+                    icon = Icons.Rounded.FilterAlt,
                     title = filterNonMusicAudioTitle,
                     subtitle = stringResource(R.string.filter_non_music_audio_subtitle),
                     trailing = {
-                        IosSwitch(
+                        Switch(
                             checked = filterNonMusicAudio,
                             onCheckedChange = AppSettings::setFilterNonMusicAudio,
+                            colors = settingsSwitchColors(),
                         )
                     },
                     onClick = { AppSettings.setFilterNonMusicAudio(!filterNonMusicAudio) },
@@ -1799,16 +1726,21 @@ fun SettingsScreen(
         val cacheLimitMb = if (cacheUnlimited) CACHE_UNLIMITED_STOP_MB else (cacheLimitBytes / (1024 * 1024)).toInt()
         val unlimitedLabel = stringResource(R.string.song_cache_unlimited)
         val cacheLimitLabel = if (cacheUnlimited) unlimitedLabel else formatCacheSize(cacheLimitMb)
-        if (shows(SettingsCategory.STORAGE)) SearchableSettingsGroup(search, header = stringResource(R.string.storage)) {
+        SearchableSettingsGroup(
+            search,
+            header = stringResource(R.string.storage),
+            footer = stringResource(R.string.show_cache_folder_subtitle),
+        ) {
             val showCacheFolderTitle = stringResource(R.string.show_cache_folder)
             row(showCacheFolderTitle, "cache", "cached songs", "library", "folder") {
                 SettingsRow(
-                    icon = SfIcons.Cached,
+                    icon = Icons.Rounded.Cached,
                     title = showCacheFolderTitle,
                     trailing = {
-                        IosSwitch(
+                        Switch(
                             checked = showCacheFolder,
                             onCheckedChange = AppSettings::setShowCacheFolder,
+                            colors = settingsSwitchColors(),
                         )
                     },
                     onClick = { AppSettings.setShowCacheFolder(!showCacheFolder) },
@@ -1817,7 +1749,7 @@ fun SettingsScreen(
             val songCacheLimitTitle = stringResource(R.string.song_cache_limit)
             row(songCacheLimitTitle, "cache", "space", "unlimited") {
                 SliderRow(
-                    icon = SfIcons.Storage,
+                    icon = Icons.Rounded.Storage,
                     title = songCacheLimitTitle,
                     subtitle = when {
                         cacheUnlimited -> stringResource(R.string.song_cache_unlimited_subtitle)
@@ -1838,7 +1770,7 @@ fun SettingsScreen(
             val clearSongCacheTitle = stringResource(R.string.clear_song_cache)
             row(clearSongCacheTitle, "cache", "free space") {
                 SettingsRow(
-                    icon = SfIcons.DeleteSweep,
+                    icon = Icons.Rounded.DeleteSweep,
                     title = clearSongCacheTitle,
                     subtitle = stringResource(R.string.clear_song_cache_subtitle),
                     onClick = { confirmClearSongCache = true },
@@ -1847,7 +1779,7 @@ fun SettingsScreen(
             val clearImageCacheTitle = stringResource(R.string.clear_image_cache)
             row(clearImageCacheTitle, "cache", "artwork", "free space") {
                 SettingsRow(
-                    icon = SfIcons.DeleteSweep,
+                    icon = Icons.Rounded.DeleteSweep,
                     title = clearImageCacheTitle,
                     subtitle = stringResource(R.string.clear_image_cache_subtitle),
                     onClick = {
@@ -1861,9 +1793,7 @@ fun SettingsScreen(
         }
 
         // Only in a build that carries the watch app — see app/build.gradle.kts.
-        // On the main page it is listed with the categories; here it answers
-        // a search.
-        if (searching && watchAvailable) {
+        if (remember { WatchInstaller.available(context) }) {
             SearchableSettingsGroup(search) {
                 row(stringResource(R.string.wear_os_section), "watch", "wear os", "galaxy watch", "pixel watch", "install") {
                     WearOsSettingsRow(onClick = onWearOs)
@@ -1871,11 +1801,11 @@ fun SettingsScreen(
             }
         }
 
-        if (shows(SettingsCategory.YOUR_DATA)) SearchableSettingsGroup(search, header = stringResource(R.string.your_data)) {
+        SearchableSettingsGroup(search, header = stringResource(R.string.your_data)) {
             val replayTitle = stringResource(R.string.replay)
             row(replayTitle, "stats", "history", "wrapped") {
                 SettingsRow(
-                    icon = SfIcons.BarChart,
+                    icon = Icons.Rounded.BarChart,
                     title = replayTitle,
                     subtitle = stringResource(R.string.replay_subtitle),
                     onClick = onOpenReplay,
@@ -1885,7 +1815,7 @@ fun SettingsScreen(
             row(workOutGenresTitle, "genre", "replay") {
                 val genresSupported = lastfmApiKey.isNotBlank()
                 SettingsRow(
-                    icon = SfIcons.LocalOffer,
+                    icon = Icons.Rounded.LocalOffer,
                     title = workOutGenresTitle,
                     subtitle = stringResource(
                         when {
@@ -1896,9 +1826,11 @@ fun SettingsScreen(
                     ),
                     enabled = genresSupported,
                     trailing = {
-                        IosSwitch(
-                            checked = replayGenres,
+                        Switch(
+                            checked = replayGenres && genresSupported,
                             onCheckedChange = AppSettings::setReplayGenres,
+                            enabled = genresSupported,
+                            colors = settingsSwitchColors(),
                         )
                     },
                     onClick = { AppSettings.setReplayGenres(!replayGenres) },
@@ -1907,7 +1839,7 @@ fun SettingsScreen(
             val exportDataTitle = stringResource(R.string.export_data)
             row(exportDataTitle, "backup") {
                 SettingsRow(
-                    icon = SfIcons.FileUpload,
+                    icon = Icons.Rounded.FileUpload,
                     title = exportDataTitle,
                     subtitle = exportStatus ?: stringResource(R.string.export_data_subtitle),
                     onClick = { exportPicker.launch(Backup.suggestedName()) },
@@ -1916,7 +1848,7 @@ fun SettingsScreen(
             val importDataTitle = stringResource(R.string.import_data)
             row(importDataTitle, "backup", "restore") {
                 SettingsRow(
-                    icon = SfIcons.FileDownload,
+                    icon = Icons.Rounded.FileDownload,
                     title = importDataTitle,
                     subtitle = importStatus ?: stringResource(R.string.import_data_subtitle),
                     onClick = { confirmImport = true },
@@ -1950,11 +1882,11 @@ fun SettingsScreen(
 
         // No footer: it only restated the stop-on-close row's own subtitle,
         // which sits four rows above it and says the same thing in fewer words.
-        if (shows(SettingsCategory.MISCELLANEOUS)) SearchableSettingsGroup(search, header = stringResource(R.string.miscellaneous)) {
+        SearchableSettingsGroup(search, header = stringResource(R.string.miscellaneous)) {
             val playNextOnSwipeTitle = stringResource(R.string.play_next_on_swipe)
             row(playNextOnSwipeTitle, "swipe", "queue") {
                 SettingsRow(
-                    icon = SfIcons.PlaylistPlay,
+                    icon = Icons.Rounded.PlaylistPlay,
                     title = playNextOnSwipeTitle,
                     subtitle = if (swipeToPlayNext) {
                         stringResource(R.string.swipe_plays_next)
@@ -1962,9 +1894,10 @@ fun SettingsScreen(
                         stringResource(R.string.swipe_adds_to_queue)
                     },
                     trailing = {
-                        IosSwitch(
+                        Switch(
                             checked = swipeToPlayNext,
                             onCheckedChange = AppSettings::setSwipeToPlayNext,
+                            colors = settingsSwitchColors(),
                         )
                     },
                     onClick = { AppSettings.setSwipeToPlayNext(!swipeToPlayNext) },
@@ -1973,13 +1906,14 @@ fun SettingsScreen(
             val dontRepeatSongsTitle = stringResource(R.string.dont_repeat_songs)
             row(dontRepeatSongsTitle, "radio", "suggestions") {
                 SettingsRow(
-                    icon = SfIcons.History,
+                    icon = Icons.Rounded.History,
                     title = dontRepeatSongsTitle,
                     subtitle = stringResource(R.string.dont_repeat_songs_subtitle),
                     trailing = {
-                        IosSwitch(
+                        Switch(
                             checked = dontRepeatSuggestions,
                             onCheckedChange = AppSettings::setDontRepeatSuggestions,
+                            colors = settingsSwitchColors(),
                         )
                     },
                     onClick = { AppSettings.setDontRepeatSuggestions(!dontRepeatSuggestions) },
@@ -1988,13 +1922,14 @@ fun SettingsScreen(
             val stopMusicOnCloseTitle = stringResource(R.string.stop_music_on_close)
             row(stopMusicOnCloseTitle, "notification", "background") {
                 SettingsRow(
-                    icon = SfIcons.MusicOff,
+                    icon = Icons.Rounded.MusicOff,
                     title = stopMusicOnCloseTitle,
                     subtitle = stringResource(R.string.stop_music_on_close_subtitle),
                     trailing = {
-                        IosSwitch(
+                        Switch(
                             checked = stopOnTaskRemoved,
                             onCheckedChange = AppSettings::setStopOnTaskRemoved,
+                            colors = settingsSwitchColors(),
                         )
                     },
                     onClick = { AppSettings.setStopOnTaskRemoved(!stopOnTaskRemoved) },
@@ -2003,43 +1938,30 @@ fun SettingsScreen(
             val hideVolumeBarTitle = stringResource(R.string.hide_volume_bar)
             row(hideVolumeBarTitle, "volume", "player") {
                 SettingsRow(
-                    icon = SfIcons.VolumeOff,
+                    icon = Icons.Rounded.VolumeOff,
                     title = hideVolumeBarTitle,
                     subtitle = stringResource(R.string.hide_volume_bar_subtitle),
                     trailing = {
-                        IosSwitch(
+                        Switch(
                             checked = hideVolumeBar,
                             onCheckedChange = AppSettings::setHideVolumeBar,
+                            colors = settingsSwitchColors(),
                         )
                     },
                     onClick = { AppSettings.setHideVolumeBar(!hideVolumeBar) },
                 )
             }
-            val listenTogetherButtonTitle = stringResource(R.string.show_listen_together_button)
-            row(listenTogetherButtonTitle, "party", "jam", "output", "headphones", "player") {
-                SettingsRow(
-                    icon = SfIcons.Groups,
-                    title = listenTogetherButtonTitle,
-                    subtitle = stringResource(R.string.show_listen_together_button_subtitle),
-                    trailing = {
-                        IosSwitch(
-                            checked = listenTogetherButton,
-                            onCheckedChange = AppSettings::setShowListenTogetherButton,
-                        )
-                    },
-                    onClick = { AppSettings.setShowListenTogetherButton(!listenTogetherButton) },
-                )
-            }
             val hideStatusBarTitle = stringResource(R.string.hide_status_bar_in_player)
             row(hideStatusBarTitle, "status bar", "immersive", "fullscreen", "player") {
                 SettingsRow(
-                    icon = SfIcons.WebAssetOff,
+                    icon = Icons.Rounded.WebAssetOff,
                     title = hideStatusBarTitle,
                     subtitle = stringResource(R.string.hide_status_bar_in_player_subtitle),
                     trailing = {
-                        IosSwitch(
+                        Switch(
                             checked = hideStatusBarInPlayer,
                             onCheckedChange = AppSettings::setHideStatusBarInPlayer,
+                            colors = settingsSwitchColors(),
                         )
                     },
                     onClick = { AppSettings.setHideStatusBarInPlayer(!hideStatusBarInPlayer) },
@@ -2048,13 +1970,14 @@ fun SettingsScreen(
             val showQueueHistoryTitle = stringResource(R.string.show_queue_history)
             row(showQueueHistoryTitle, "player", "queue", "history", "previously played") {
                 SettingsRow(
-                    icon = SfIcons.History,
+                    icon = Icons.Rounded.History,
                     title = showQueueHistoryTitle,
                     subtitle = stringResource(R.string.show_queue_history_subtitle),
                     trailing = {
-                        IosSwitch(
+                        Switch(
                             checked = showQueueHistory,
                             onCheckedChange = AppSettings::setShowQueueHistory,
+                            colors = settingsSwitchColors(),
                         )
                     },
                     onClick = { AppSettings.setShowQueueHistory(!showQueueHistory) },
@@ -2063,13 +1986,14 @@ fun SettingsScreen(
             val hideSongStatusTitle = stringResource(R.string.hide_song_status)
             row(hideSongStatusTitle, "player", "playing from", "played by") {
                 SettingsRow(
-                    icon = SfIcons.VisibilityOff,
+                    icon = Icons.Rounded.VisibilityOff,
                     title = hideSongStatusTitle,
                     subtitle = stringResource(R.string.hide_song_status_subtitle),
                     trailing = {
-                        IosSwitch(
+                        Switch(
                             checked = hideSongStatus,
                             onCheckedChange = AppSettings::setHideSongStatus,
+                            colors = settingsSwitchColors(),
                         )
                     },
                     onClick = { AppSettings.setHideSongStatus(!hideSongStatus) },
@@ -2077,13 +2001,13 @@ fun SettingsScreen(
             }
         }
 
-        if (shows(SettingsCategory.LANGUAGE)) SearchableSettingsGroup(search, header = stringResource(R.string.language)) {
+        SearchableSettingsGroup(search, header = stringResource(R.string.language)) {
             val appLanguageTitle = stringResource(R.string.app_language)
             row(appLanguageTitle, "locale", "translate") {
                 val selectedLanguage = AppCompatDelegate.getApplicationLocales().get(0)?.toLanguageTag()
                     ?: Locale.getDefault().toLanguageTag()
                 SettingsRow(
-                    icon = SfIcons.Language,
+                    icon = Icons.Rounded.Language,
                     title = appLanguageTitle,
                     subtitle = stringResource(languageDisplayNameRes(selectedLanguage)),
                     onClick = onAppLanguage,
@@ -2101,17 +2025,22 @@ fun SettingsScreen(
             }
         }
 
-        if (shows(SettingsCategory.ADVANCED)) SearchableSettingsGroup(search, header = stringResource(R.string.advanced_options)) {
+        SearchableSettingsGroup(
+            search,
+            header = stringResource(R.string.advanced_options),
+            footer = stringResource(R.string.settings_footer_advanced),
+        ) {
             val smartAlignmentTitle = stringResource(R.string.smart_version_alignment)
             row(smartAlignmentTitle, "alignment", "sync", "waveform", "video", "audio", "skit", "intro") {
                 SettingsRow(
-                    icon = SfIcons.GraphicEq,
+                    icon = Icons.Rounded.GraphicEq,
                     title = smartAlignmentTitle,
                     subtitle = stringResource(R.string.smart_version_alignment_subtitle),
                     trailing = {
-                        IosSwitch(
+                        Switch(
                             checked = smartVersionAlignment,
                             onCheckedChange = AppSettings::setSmartVersionAlignment,
+                            colors = settingsSwitchColors(),
                         )
                     },
                     onClick = { AppSettings.setSmartVersionAlignment(!smartVersionAlignment) },
@@ -2165,13 +2094,14 @@ fun SettingsScreen(
             val showNerdStatsTitle = stringResource(R.string.show_nerd_stats)
             row(showNerdStatsTitle, "debug", "bitrate", "codec") {
                 SettingsRow(
-                    icon = SfIcons.BarChart,
+                    icon = Icons.Rounded.BarChart,
                     title = showNerdStatsTitle,
                     subtitle = stringResource(R.string.show_nerd_stats_subtitle),
                     trailing = {
-                        IosSwitch(
+                        Switch(
                             checked = nerdStats,
                             onCheckedChange = AppSettings::setShowNerdStats,
+                            colors = settingsSwitchColors(),
                         )
                     },
                     onClick = { AppSettings.setShowNerdStats(!nerdStats) },
@@ -2180,7 +2110,7 @@ fun SettingsScreen(
             val appIconTitle = stringResource(R.string.app_icon)
             row(appIconTitle, "icon", "launcher", "logo") {
                 var selectedIcon by remember { mutableStateOf(AppIcon.current(context)) }
-                SettingsRow(icon = SfIcons.Apps, title = appIconTitle)
+                SettingsRow(icon = Icons.Rounded.Apps, title = appIconTitle)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -2242,13 +2172,13 @@ fun SettingsScreen(
 
         // Read after every group above has had its turn at the query, which is
         // what makes this an accurate "nothing here" rather than a guess.
-        if (searching && !search.anyMatch) {
+        if (!search.anyMatch) {
             MessageState(stringResource(R.string.settings_search_empty, searchQuery))
         }
 
         // The version line is the page's colophon, not a setting: it belongs to
         // the whole list, so it goes when the list is narrowed to a few rows.
-        if (section == null && searchQuery.isBlank()) {
+        if (searchQuery.isBlank()) {
         Text(
             text = buildAnnotatedString {
                 append("bitchord $version  ")
@@ -2282,6 +2212,66 @@ fun SettingsScreen(
                 .fillMaxWidth()
                 .padding(top = 24.dp, bottom = 8.dp),
         )
+        }
+    }
+
+    picking?.let { target ->
+        ModalBottomSheet(
+            onDismissRequest = { picking = null },
+            containerColor = MaterialTheme.colorScheme.background,
+        ) {
+            QualitySheet(
+                target = target,
+                selected = when (target) {
+                    QualityTarget.WIFI -> wifiQuality
+                    QualityTarget.CELLULAR -> cellularQuality
+                },
+                // Writes the one ceiling that was being edited and nothing
+                // else. There used to be a `SourceRegistry.applyQualityPreset`
+                // call here that flipped the module and JioSaavn switches to
+                // match — which meant budgeting *mobile data* switched those
+                // sources off while sitting on Wi-Fi, and coming back to Wi-Fi
+                // never switched them on again. Which sources a rung consults
+                // is now read per stream off the connection in force; see
+                // [AudioQuality.permits].
+                onSelect = { quality ->
+                    when (target) {
+                        QualityTarget.WIFI -> AppSettings.setAudioQualityWifi(quality)
+                        QualityTarget.CELLULAR -> AppSettings.setAudioQualityCellular(quality)
+                    }
+                    picking = null
+                },
+            )
+        }
+    }
+
+    if (pickingDownloadQuality) {
+        ModalBottomSheet(
+            onDismissRequest = { pickingDownloadQuality = false },
+            containerColor = MaterialTheme.colorScheme.background,
+        ) {
+            DownloadQualitySheet(
+                selected = downloadQuality,
+                onSelect = { quality ->
+                    AppSettings.setDownloadQuality(quality)
+                    pickingDownloadQuality = false
+                },
+            )
+        }
+    }
+
+    if (pickingAutomixPerformance) {
+        ModalBottomSheet(
+            onDismissRequest = { pickingAutomixPerformance = false },
+            containerColor = MaterialTheme.colorScheme.background,
+        ) {
+            AutomixPerformanceSheet(
+                selected = automixPerformance,
+                onSelect = { mode ->
+                    AppSettings.setAutomixPerformanceMode(mode)
+                    pickingAutomixPerformance = false
+                },
+            )
         }
     }
 
@@ -2677,6 +2667,17 @@ private fun Context.countOfMonths(months: Int): String = if (months == 0) {
     resources.getQuantityString(R.plurals.listening_month_count, months, months)
 }
 
+/** Which ceiling the open picker is editing. */
+private enum class QualityTarget(val icon: ImageVector) {
+    WIFI(Icons.Rounded.Wifi),
+    CELLULAR(Icons.Rounded.SignalCellularAlt),
+}
+
+@Composable
+private fun QualityTarget.localizedTitle(): String = stringResource(
+    if (this == QualityTarget.WIFI) R.string.wifi else R.string.mobile_data,
+)
+
 @Composable
 private fun AudioQuality.localizedLabel(): String = stringResource(
     when (this) {
@@ -2716,19 +2717,11 @@ private fun ThemeMode.localizedLabel(): String = stringResource(
 )
 
 @Composable
-private fun AppFont.localizedLabel(): String = stringResource(
+private fun LowPowerMode.localizedLabel(): String = stringResource(
     when (this) {
-        AppFont.DEFAULT -> R.string.font_default
-        AppFont.LEGACY -> R.string.font_legacy
-    },
-)
-
-/** The typeface each [AppFont] sets, named under its label. */
-@Composable
-private fun AppFont.description(): String = stringResource(
-    when (this) {
-        AppFont.DEFAULT -> R.string.font_default_subtitle
-        AppFont.LEGACY -> R.string.font_legacy_subtitle
+        LowPowerMode.AUTO -> R.string.low_power_auto
+        LowPowerMode.ON -> R.string.low_power_on
+        LowPowerMode.OFF -> R.string.low_power_off
     },
 )
 
@@ -2823,7 +2816,7 @@ internal fun AccountCard(
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    SfIcons.Person,
+                    Icons.Rounded.Person,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -2858,114 +2851,240 @@ internal fun AccountCard(
     }
 }
 
-/**
- * A setting the bit-perfect output bypasses, faded and closed to touch while
- * that output is ready. With the mode on but its DAC unplugged the setting
- * works, and looks it.
- *
- * Only the touches that would change something are taken, so the page still
- * scrolls when a swipe starts on one of these rows: the press and the
- * release (no ripple, no click, no switch flip) and a sideways drag (no
- * slider). A vertical drag is left alone, and the list's scrolling still
- * starts from a press that was taken, so it scrolls as from any other row.
- */
+/** The quality options for one connection, with what each costs in data. */
 @Composable
-private fun BypassedByBitPerfect(bypassed: Boolean, content: @Composable () -> Unit) {
-    val alpha by animateFloatAsState(if (bypassed) 0.38f else 1f, label = "bypassed")
-    // A Column, not a Box: a row can be several stacked pieces (a title row
-    // and its control), and a Box would draw them over one another.
-    Column(
-        Modifier
-            .alpha(alpha)
-            .then(
-                if (bypassed) {
-                    Modifier.pointerInput(Unit) {
-                        awaitEachGesture {
-                            awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial).consume()
-                            var sideways: Boolean? = null
-                            var travel = Offset.Zero
-                            do {
-                                val event = awaitPointerEvent(PointerEventPass.Initial)
-                                event.changes.forEach { change ->
-                                    when {
-                                        change.changedToUpIgnoreConsumed() -> change.consume()
-                                        change.positionChanged() -> {
-                                            travel += change.positionChange()
-                                            if (sideways == null && travel.getDistance() > viewConfiguration.touchSlop / 2) {
-                                                sideways = abs(travel.x) > abs(travel.y)
-                                            }
-                                            if (sideways == true) change.consume()
-                                        }
-                                    }
-                                }
-                            } while (event.changes.any { it.pressed })
-                        }
+private fun QualitySheet(
+    target: QualityTarget,
+    selected: AudioQuality,
+    onSelect: (AudioQuality) -> Unit,
+) {
+    val haptics = LocalHapticFeedback.current
+    Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 24.dp)) {
+        Row(
+            modifier = Modifier.padding(start = 22.dp, end = 22.dp, bottom = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = target.icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.size(22.dp),
+            )
+            Spacer(Modifier.width(14.dp))
+            Column {
+                Text(
+                    text = stringResource(R.string.audio_quality),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onBackground,
+                )
+                Text(
+                    text = stringResource(
+                        R.string.audio_quality_connection,
+                        target.localizedTitle(),
+                    ),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline)
+
+        // Best first — the option most people want shouldn't be last.
+        AudioQuality.entries.reversed().forEach { quality ->
+            val chosen = quality == selected
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onSelect(quality)
                     }
-                } else {
-                    Modifier
-                },
-            ),
-    ) {
-        content()
+                    .padding(horizontal = 22.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = quality.localizedLabel(),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                    Text(
+                        text = quality.localizedDetail(),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (chosen) {
+                    Spacer(Modifier.width(12.dp))
+                    Icon(
+                        Icons.Rounded.Check,
+                        contentDescription = stringResource(R.string.selected),
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
+            }
+        }
     }
 }
 
+/** CPU budget picker for the background models that prepare Automix. */
 @Composable
-private fun BitPerfectMode.localizedLabel(): String = stringResource(
-    when (this) {
-        BitPerfectMode.OFF -> R.string.off
-        BitPerfectMode.USB_ANDROID -> R.string.bit_perfect_mode_usb_android
-        BitPerfectMode.DAP_EXCLUSIVE -> R.string.bit_perfect_mode_dap_exclusive
-        BitPerfectMode.USB_DIRECT -> R.string.bit_perfect_mode_usb_direct
-    },
-)
-
-/** Whether this phone can use [this] at all, independent of what is plugged in. */
-private val BitPerfectMode.isSupported: Boolean
-    get() = when (this) {
-        BitPerfectMode.OFF -> true
-        BitPerfectMode.USB_ANDROID -> Build.VERSION.SDK_INT >= 34
-        BitPerfectMode.DAP_EXCLUSIVE -> Build.VERSION.SDK_INT >= 27
-        BitPerfectMode.USB_DIRECT -> true
+private fun AutomixPerformanceSheet(
+    selected: AutomixPerformanceMode,
+    onSelect: (AutomixPerformanceMode) -> Unit,
+) {
+    val haptics = LocalHapticFeedback.current
+    Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 24.dp)) {
+        Row(
+            modifier = Modifier.padding(start = 22.dp, end = 22.dp, bottom = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Tune,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.size(22.dp),
+            )
+            Spacer(Modifier.width(14.dp))
+            Column {
+                Text(
+                    text = stringResource(R.string.automix_performance),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onBackground,
+                )
+                Text(
+                    text = stringResource(R.string.automix_performance_warning),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline)
+        AutomixPerformanceMode.entries.forEach { mode ->
+            val chosen = mode == selected
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onSelect(mode)
+                    }
+                    .padding(horizontal = 22.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = mode.localizedLabel(),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                    Text(
+                        text = stringResource(
+                            when (mode) {
+                                AutomixPerformanceMode.EFFICIENT -> R.string.automix_mode_efficient_subtitle
+                                AutomixPerformanceMode.BALANCED -> R.string.automix_mode_balanced_subtitle
+                                AutomixPerformanceMode.PERFORMANCE -> R.string.automix_mode_performance_subtitle
+                            },
+                        ),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (chosen) {
+                    Spacer(Modifier.width(12.dp))
+                    Icon(
+                        Icons.Rounded.Check,
+                        contentDescription = stringResource(R.string.selected),
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
+            }
+        }
     }
-
-@Composable
-private fun BitPerfectMode.description(): String = stringResource(
-    when {
-        this == BitPerfectMode.USB_ANDROID && !isSupported -> R.string.bit_perfect_requires_android_14
-        this == BitPerfectMode.DAP_EXCLUSIVE && !isSupported -> R.string.bit_perfect_requires_android_8_1
-        this == BitPerfectMode.OFF -> R.string.bit_perfect_mode_off_subtitle
-        this == BitPerfectMode.USB_ANDROID -> R.string.bit_perfect_mode_usb_android_subtitle
-        this == BitPerfectMode.USB_DIRECT -> R.string.bit_perfect_mode_usb_direct_subtitle
-        else -> R.string.bit_perfect_mode_dap_exclusive_subtitle
-    },
-)
+}
 
 /**
- * What the exclusive output is doing now, rather than what was asked of it:
- * a mode can be on while the playing track still goes through the mixer.
+ * What to keep when a track is saved, with what each rung costs on disk.
+ *
+ * Priced per track rather than per hour, the way [QualitySheet] is. That sheet
+ * is answering "what will listening cost me this hour", because a stream is
+ * spent again on every replay; this one is answering "what will keeping this
+ * cost me", and the answer is charged once. Same widget, different question, so
+ * the numbers beside the options are in different units on purpose.
  */
 @Composable
-private fun bitPerfectSubtitle(mode: BitPerfectMode, status: BitPerfectOutput.Status): String = when {
-    mode == BitPerfectMode.OFF || !mode.isSupported -> mode.description()
-    status.active && status.dacLimited -> stringResource(
-        R.string.bit_perfect_status_dac_limited,
-        status.deviceName.orEmpty(),
-        "%.1f".format(status.sampleRateHz / 1000.0),
-        status.outputBits,
-    )
-    status.active && !status.exact -> stringResource(
-        R.string.bit_perfect_status_inexact,
-        status.deviceName.orEmpty(),
-    )
-    status.active -> stringResource(
-        R.string.bit_perfect_status_active,
-        status.deviceName.orEmpty(),
-        "%.1f".format(status.sampleRateHz / 1000.0),
-        status.outputBits,
-    )
-    status.fallbackReason != null -> stringResource(R.string.bit_perfect_status_unavailable, status.fallbackReason)
-    else -> stringResource(R.string.bit_perfect_status_waiting)
+private fun DownloadQualitySheet(
+    selected: DownloadQuality,
+    onSelect: (DownloadQuality) -> Unit,
+) {
+    val haptics = LocalHapticFeedback.current
+    Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 24.dp)) {
+        Row(
+            modifier = Modifier.padding(start = 22.dp, end = 22.dp, bottom = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Download,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.size(22.dp),
+            )
+            Spacer(Modifier.width(14.dp))
+            Column {
+                Text(
+                    text = stringResource(R.string.download_quality),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onBackground,
+                )
+                Text(
+                    text = stringResource(R.string.download_quality_dialog_subtitle),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline)
+
+        // Best first, matching [QualitySheet] — and here the best rung is also
+        // the default, so the checkmark starts where the eye does.
+        DownloadQuality.entries.reversed().forEach { quality ->
+            val chosen = quality == selected
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onSelect(quality)
+                    }
+                    .padding(horizontal = 22.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = quality.localizedLabel(),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                    Text(
+                        text = stringResource(R.string.quality_per_track, quality.detail, quality.perTrack),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (chosen) {
+                    Spacer(Modifier.width(12.dp))
+                    Icon(
+                        Icons.Rounded.Check,
+                        contentDescription = stringResource(R.string.selected),
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
+            }
+        }
+    }
 }
 
 // ---- Building blocks --------------------------------------------------------
@@ -2989,11 +3108,7 @@ internal val TEXT_INSET = ROW_INSET + ICON_SIZE + ICON_GAP
  * every group has had its turn, which is why this is made fresh on each pass
  * rather than remembered.
  */
-private class SettingsSearch(
-    query: String,
-    /** Drawing one category's page rather than the main one: its top bar names it. */
-    val inPage: Boolean = false,
-) {
+private class SettingsSearch(query: String) {
     // Trimmed, because a trailing space is a typo rather than a search for
     // something ending in one — and on a phone keyboard it is one keystroke
     // away from every word typed.
@@ -3045,15 +3160,9 @@ private class SettingsGroupScope(
  * takes itself off the screen when none of them are left. Dividers fall
  * between the rows that survived rather than around the gaps left by the ones
  * that didn't, so a filtered card is indistinguishable from a hand-written one.
- *
- * Inline so [content] is not a restartable lambda of its own. It only collects
- * rows into [SettingsGroupScope.entries], and drawing them happens here: as its
- * own recompose scope, a setting it reads — Automix hiding the crossfade
- * slider, say — re-ran it alone, filling a list nothing redrew, and the row
- * only came or went whenever something else recomposed the screen.
  */
 @Composable
-private inline fun SearchableSettingsGroup(
+private fun SearchableSettingsGroup(
     search: SettingsSearch,
     header: String? = null,
     footer: String? = null,
@@ -3063,15 +3172,7 @@ private inline fun SearchableSettingsGroup(
     val scope = SettingsGroupScope(search, header)
     scope.content()
     if (scope.entries.isEmpty()) return
-    // A category's page is titled by its large heading; the header over its
-    // first card would only say the same word again. The card takes the
-    // header's place, straight under the heading, as on Account's page.
-    val inPageHeader = header != null && search.inPage
-    SettingsGroup(
-        header = header.takeUnless { inPageHeader },
-        footer = footer,
-        topSpacing = if (inPageHeader) 0.dp else topSpacing,
-    ) {
+    SettingsGroup(header = header, footer = footer, topSpacing = topSpacing) {
         scope.entries.forEachIndexed { index, entry ->
             when {
                 index > 0 && entry.divided -> RowDivider()
@@ -3083,20 +3184,6 @@ private inline fun SearchableSettingsGroup(
             entry.content()
         }
     }
-}
-
-/**
- * The large heading a Settings page leads with, under the bar's own small one —
- * the main page's "Settings", and every page opened from it.
- */
-@Composable
-internal fun SettingsPageTitle(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.displayLarge,
-        color = MaterialTheme.colorScheme.onBackground,
-        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 14.dp),
-    )
 }
 
 /**
@@ -3298,13 +3385,11 @@ internal fun SettingsSubRow(
     onCheckedChange: (Boolean) -> Unit,
     badge: String? = null,
     subtitle: String? = null,
-    enabled: Boolean = true,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(enabled = enabled) { onCheckedChange(!checked) }
-            .alpha(if (enabled) 1f else 0.45f)
+            .clickable { onCheckedChange(!checked) }
             .padding(start = ROW_INSET, end = ROW_INSET, top = 0.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -3335,10 +3420,10 @@ internal fun SettingsSubRow(
                 )
             }
         }
-        IosSwitch(
+        Switch(
             checked = checked,
             onCheckedChange = onCheckedChange,
-            enabled = enabled,
+            colors = settingsSwitchColors(),
         )
     }
 }
@@ -3364,7 +3449,7 @@ internal fun Badge(text: String) {
 @Composable
 internal fun Chevron() {
     Icon(
-        SfIcons.ChevronRight,
+        Icons.Rounded.ChevronRight,
         contentDescription = null,
         tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
         modifier = Modifier.size(20.dp),
@@ -3464,10 +3549,7 @@ internal fun DestructiveRow(
     }
 }
 
-/**
- * Sliding pill selector, for the handful of settings with two or three states —
- * and the Search tab's source switcher. See [PillSegmentedControl].
- */
+/** Sliding pill selector, for the handful of settings with two or three states. */
 @Composable
 internal fun SettingsSegmentedControl(
     options: List<String>,
@@ -3476,253 +3558,71 @@ internal fun SettingsSegmentedControl(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
 ) {
-    PillSegmentedControl(options, selectedIndex, onSelect, modifier, enabled)
-}
-
-// ---- Pages ------------------------------------------------------------------
-
-/**
- * The groups of Settings that are pages of their own, in the order the main
- * page lists them. Account, Listen Together and Audio quality aren't here:
- * they stay on the main page, where they always were.
- */
-enum class SettingsCategory(@param:StringRes val title: Int) {
-    DOWNLOADS(R.string.downloads),
-    PLAYBACK(R.string.playback),
-    APPEARANCE(R.string.appearance),
-    PERFORMANCE(R.string.performance),
-    LOCAL_MUSIC(R.string.local_music),
-    STORAGE(R.string.storage),
-    YOUR_DATA(R.string.your_data),
-    MISCELLANEOUS(R.string.miscellaneous),
-    LANGUAGE(R.string.language),
-    ADVANCED(R.string.advanced_options),
-    ;
-
-    val icon: ImageVector
-        get() = when (this) {
-            DOWNLOADS -> SfIcons.Download
-            PLAYBACK -> SfIcons.PlayCircle
-            APPEARANCE -> SfIcons.Appearance
-            PERFORMANCE -> SfIcons.Performance
-            LOCAL_MUSIC -> SfIcons.LibraryMusic
-            STORAGE -> SfIcons.Storage
-            YOUR_DATA -> SfIcons.YourData
-            MISCELLANEOUS -> SfIcons.Miscellaneous
-            LANGUAGE -> SfIcons.Language
-            ADVANCED -> SfIcons.Advanced
-        }
-}
-
-/** The settings whose options are a page of their own — see [SettingsChoicePage]. */
-enum class SettingsChoiceKind(@param:StringRes val title: Int) {
-    AUDIO_QUALITY_WIFI(R.string.on_wifi),
-    AUDIO_QUALITY_CELLULAR(R.string.on_mobile_data),
-    DOWNLOAD_QUALITY(R.string.download_quality),
-    AUTOMIX_PERFORMANCE(R.string.automix_performance),
-    BIT_PERFECT(R.string.bit_perfect_output),
-    FONT(R.string.font),
-}
-
-/** The main page's list of categories: a glyph and a name each, and a chevron into it. */
-@Composable
-private fun SettingsCategoryList(onOpen: (SettingsCategory) -> Unit) {
-    SettingsGroup {
-        SettingsCategory.entries.forEachIndexed { index, category ->
-            if (index > 0) RowDivider()
-            SettingsRow(
-                icon = category.icon,
-                title = stringResource(category.title),
-                onClick = { onOpen(category) },
-            )
-        }
-    }
-}
-
-/**
- * One of [SettingsChoiceKind]'s settings as a page: its options in a card,
- * the one in force ticked, and what the choice is about in the footer. A pick
- * is saved at once and [onChosen] then leaves the page, as the drawer this
- * replaces closed on one.
- */
-@Composable
-fun SettingsChoicePage(
-    choice: SettingsChoiceKind,
-    onChosen: () -> Unit,
-    /** Asks before a bit-perfect mode is turned on — see [SettingsScreen]. */
-    onConfirmBitPerfect: (BitPerfectMode) -> Unit,
-    contentPadding: PaddingValues,
-    modifier: Modifier = Modifier,
-) {
-    Column(
-        modifier
-            .fillMaxWidth()
-            .verticalScroll(rememberScrollState())
-            .padding(contentPadding),
-    ) {
-        SettingsPageTitle(stringResource(choice.title))
-        when (choice) {
-            SettingsChoiceKind.AUDIO_QUALITY_WIFI, SettingsChoiceKind.AUDIO_QUALITY_CELLULAR -> {
-                val wifi = choice == SettingsChoiceKind.AUDIO_QUALITY_WIFI
-                val wifiQuality by AppSettings.audioQualityWifi.collectAsStateWithLifecycle()
-                val cellularQuality by AppSettings.audioQualityCellular.collectAsStateWithLifecycle()
-                ChoiceGroup(
-                    // Best first — the option most people want shouldn't be last.
-                    options = AudioQuality.entries.reversed(),
-                    selected = if (wifi) wifiQuality else cellularQuality,
-                    label = { it.localizedLabel() },
-                    detail = { stringResource(R.string.quality_hourly, it.detail, it.hourly) },
-                    footer = stringResource(
-                        R.string.audio_quality_connection,
-                        stringResource(if (wifi) R.string.wifi else R.string.mobile_data).lowercase(Locale.getDefault()),
-                    ),
-                ) { quality ->
-                    // Writes the one ceiling being edited and nothing else —
-                    // which sources a rung consults is read per stream off the
-                    // connection in force; see [AudioQuality.permits].
-                    if (wifi) AppSettings.setAudioQualityWifi(quality) else AppSettings.setAudioQualityCellular(quality)
-                    onChosen()
-                }
-            }
-
-            // Priced per track rather than per hour, unlike the streaming
-            // ceilings: a stream is paid for again on every replay, a download
-            // once. Same list, different question.
-            SettingsChoiceKind.DOWNLOAD_QUALITY -> {
-                val selected by AppSettings.downloadQuality.collectAsStateWithLifecycle()
-                ChoiceGroup(
-                    options = DownloadQuality.entries.reversed(),
-                    selected = selected,
-                    label = { it.localizedLabel() },
-                    detail = { stringResource(R.string.quality_per_track, it.detail, it.perTrack) },
-                    footer = stringResource(R.string.download_quality_dialog_subtitle),
-                ) { quality ->
-                    AppSettings.setDownloadQuality(quality)
-                    onChosen()
-                }
-            }
-
-            SettingsChoiceKind.AUTOMIX_PERFORMANCE -> {
-                val selected by AppSettings.automixPerformanceMode.collectAsStateWithLifecycle()
-                ChoiceGroup(
-                    options = AutomixPerformanceMode.entries,
-                    selected = selected,
-                    label = { it.localizedLabel() },
-                    detail = {
-                        stringResource(
-                            when (it) {
-                                AutomixPerformanceMode.EFFICIENT -> R.string.automix_mode_efficient_subtitle
-                                AutomixPerformanceMode.BALANCED -> R.string.automix_mode_balanced_subtitle
-                                AutomixPerformanceMode.PERFORMANCE -> R.string.automix_mode_performance_subtitle
-                            },
-                        )
-                    },
-                    footer = stringResource(R.string.automix_performance_warning),
-                ) { mode ->
-                    AppSettings.setAutomixPerformanceMode(mode)
-                    onChosen()
-                }
-            }
-
-            SettingsChoiceKind.BIT_PERFECT -> {
-                val selected by AppSettings.bitPerfectMode.collectAsStateWithLifecycle()
-                ChoiceGroup(
-                    options = BitPerfectMode.entries,
-                    selected = selected,
-                    label = { it.localizedLabel() },
-                    detail = { it.description() },
-                    footer = stringResource(R.string.bit_perfect_sheet_warning),
-                    enabled = { it.isSupported },
-                ) { mode ->
-                    onChosen()
-                    // Leaving the mode needs no warning; entering it hands
-                    // volume to the DAC, at full scale.
-                    if (mode == BitPerfectMode.OFF) AppSettings.setBitPerfectMode(mode) else onConfirmBitPerfect(mode)
-                }
-            }
-
-            SettingsChoiceKind.FONT -> {
-                val selected by AppSettings.appFont.collectAsStateWithLifecycle()
-                ChoiceGroup(
-                    options = AppFont.entries,
-                    selected = selected,
-                    label = { it.localizedLabel() },
-                    detail = { it.description() },
-                    footer = stringResource(R.string.font_footer),
-                ) { font ->
-                    AppSettings.setAppFont(font)
-                    onChosen()
-                }
-            }
-        }
-        Spacer(Modifier.height(32.dp))
-    }
-}
-
-/**
- * A card of options, one of them ticked: the body of every choice page. A
- * label and a dimmer line under it per option; [enabled] greys out the ones
- * this device can't take.
- */
-@Composable
-internal fun <T> ChoiceGroup(
-    options: List<T>,
-    selected: T,
-    label: @Composable (T) -> String,
-    footer: String?,
-    detail: (@Composable (T) -> String)? = null,
-    enabled: (T) -> Boolean = { true },
-    onSelect: (T) -> Unit,
-) {
     val haptics = LocalHapticFeedback.current
-    // Every page it is the body of leads with its large heading — see
-    // [SettingsPageTitle], whose own bottom padding is all the room it needs.
-    SettingsGroup(footer = footer, topSpacing = 0.dp) {
-        options.forEachIndexed { index, option ->
-            if (index > 0) {
-                HorizontalDivider(
-                    modifier = Modifier.padding(start = ROW_INSET),
-                    thickness = 0.5.dp,
-                    color = MaterialTheme.colorScheme.outline,
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(MaterialTheme.colorScheme.outline)
+            // Enough of a margin for the track to read as a track. At 2dp the
+            // selected pill sat all but flush against the container's own edge,
+            // so the two rounded rectangles merged into one shape and the
+            // control stopped looking like something with a position in it.
+            .padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        options.forEachIndexed { index, label ->
+            val chosen = index == selectedIndex
+            val pill by animateColorAsState(
+                targetValue = if (chosen) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    Color.Transparent
+                },
+                animationSpec = tween(160),
+                label = "segmentPill",
+            )
+            val labelColor by animateColorAsState(
+                targetValue = if (chosen) {
+                    MaterialTheme.colorScheme.onPrimary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                animationSpec = tween(160),
+                label = "segmentLabel",
+            )
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(pill)
+                    .clickable(enabled = enabled) {
+                        if (!chosen) {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onSelect(index)
+                        }
+                    }
+                    .padding(vertical = 9.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = labelColor,
+                    maxLines = 1,
                 )
             }
-            val available = enabled(option)
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(enabled = available) {
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onSelect(option)
-                    }
-                    .alpha(if (available) 1f else 0.45f)
-                    .heightIn(min = 52.dp)
-                    .padding(horizontal = ROW_INSET, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        text = label(option),
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onBackground,
-                    )
-                    detail?.let {
-                        Text(
-                            text = it(option),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-                if (option == selected) {
-                    Spacer(Modifier.width(12.dp))
-                    Icon(
-                        SfIcons.Check,
-                        contentDescription = stringResource(R.string.selected),
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
-            }
         }
     }
 }
+
+@Composable
+internal fun SettingsPageTitle(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.displayLarge,
+        color = MaterialTheme.colorScheme.onBackground,
+        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 14.dp),
+    )
+}
+

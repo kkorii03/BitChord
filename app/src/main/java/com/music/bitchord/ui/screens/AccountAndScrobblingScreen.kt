@@ -1,5 +1,9 @@
 package com.music.bitchord.ui.screens
 
+import androidx.compose.material3.SwitchDefaults
+
+import androidx.compose.material.icons.Icons
+
 import com.music.bitchord.ui.icons.SfIcons
 import com.music.bitchord.auth.clearSpotifyWebSession
 import androidx.compose.foundation.layout.Column
@@ -216,6 +220,10 @@ fun AccountAndScrobblingScreen(
                                     AppSettings.setListenBrainzEnabled(checked)
                                 }
                             },
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                            ),
                         )
                     },
                     onClick = onOpenListenBrainzLogin,
@@ -254,6 +262,10 @@ fun AccountAndScrobblingScreen(
                                     AppSettings.setLastfmEnabled(checked)
                                 }
                             },
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                            ),
                         )
                     },
                     onClick = {

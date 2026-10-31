@@ -69,6 +69,7 @@ import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.lyrics.LyricLine
+import com.music.bitchord.ko.ui.SongLyricsSync // [KO] lyrics-sync correction
 import com.music.bitchord.sharedui.resources.*
 import com.music.bitchord.ui.utils.containSheetGestures
 import com.music.bitchord.ui.components.MENU_FROST_ALPHA

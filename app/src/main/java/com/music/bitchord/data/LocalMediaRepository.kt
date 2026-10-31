@@ -1,5 +1,7 @@
 package com.music.bitchord.data
 
+import com.music.bitchord.R
+
 import android.Manifest
 import android.content.ContentUris
 import android.content.Context
@@ -234,6 +236,19 @@ object LocalMediaRepository {
         // here really are just local files with nothing to sync.
         Downloads.ensureOpen()
         val videoIdByUri = Downloads.saved.value.entries.associate { (id, uri) -> uri to id }
+        val projection = arrayOf(
+            MediaStore.Audio.Media._ID,
+            MediaStore.Audio.Media.DISPLAY_NAME,
+            MediaStore.Audio.Media.TITLE,
+            MediaStore.Audio.Media.ARTIST,
+            MediaStore.Audio.Media.ALBUM,
+            MediaStore.Audio.Media.ALBUM_ID,
+            MediaStore.Audio.Media.DURATION,
+            MediaStore.Audio.Media.DATA,
+            MediaStore.Audio.Media.DATE_ADDED,
+            MediaStore.Audio.Media.DATE_MODIFIED,
+            MediaStore.Audio.Media.TRACK,
+        )
 
         val filterNonMusic = AppSettings.filterNonMusicAudio.value
         val folderUri = AppSettings.localMusicFolderUri.value

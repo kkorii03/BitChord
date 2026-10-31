@@ -497,27 +497,30 @@ internal fun SleeveNerdStats(
             AutomixStatusLine.Hidden -> null
             AutomixStatusLine.StoppedInParty -> stringResource(Res.string.automix_stopped_in_party)
             AutomixStatusLine.VideoCrossfade -> stringResource(Res.string.automix_not_supported_video)
-            is AutomixStatusLine.Analysis -> stringResource(
+            is AutomixStatusLine.Analysis -> when {
+                // Ahead of the video case because it is the broader one:
+                // in a party nothing is analysed for any song, video or
+                // not, so naming the video limitation there would describe
+                // a rule that is not the one in force.
+                inParty -> stringResource(Res.string.automix_stopped_in_party)
+                song.isVideoOrigin ->
+                    stringResource(Res.string.automix_not_supported_video)
+                // The detailed line once the controller has one: each song's
+                // grid, then the planned mix — the loops and what cleared them.
+                automixDetail != null -> automixDetail!!
+                else -> stringResource(
+                    Res.string.automix_analysis_status,
+                    statusLine.current.localizedLabel(),
+                    statusLine.next.localizedLabel(),
+                )
+            }
+        }
+        if (statusText != null) {
+            Text(
                 // Both sides always named, even when they agree, so the line
                 // reads the same way every time and the eye can find the half
                 // it wants without re-parsing the sentence.
-                text = when {
-                    // Ahead of the video case because it is the broader one:
-                    // in a party nothing is analysed for any song, video or
-                    // not, so naming the video limitation there would describe
-                    // a rule that is not the one in force.
-                    inParty -> stringResource(Res.string.automix_stopped_in_party)
-                    song.isVideoOrigin ->
-                        stringResource(Res.string.automix_not_supported_video)
-                    // The detailed line once the controller has one: each song's
-                    // grid, then the planned mix — the loops and what cleared them.
-                    automixDetail != null -> automixDetail!!
-                    else -> stringResource(
-                        Res.string.automix_analysis_status,
-                        smartAnalysis.current.localizedLabel(),
-                        smartAnalysis.next.localizedLabel(),
-                    )
-                },
+                text = statusText,
                 style = nerdStyle,
                 // Dimmer than the measured line above it: that one describes
                 // the audio, this one describes the app, and the ranking
@@ -674,9 +677,15 @@ internal fun PlayerActionRow(
     onCycleRepeat: () -> Unit,
     onToggleAutoplay: () -> Unit,
     onOpenOutput: () -> Unit,
+    onListenTogether: () -> Unit,
+    /** Opens [ListenTogetherMembersSheet] rather than settings directly. */
+    onOpenListenTogetherMembers: () -> Unit,
 ) {
     val showPartyButton by PlayerSettings.showListenTogetherButton.collectAsStateWithLifecycle()
     val inParty = rememberPartyBadge().inParty
+    val shuffle = shuffleModeControl(shuffleEnabled)
+    val repeat = repeatModeControl(repeatMode)
+    val autoplay = autoplayModeControl(autoplayEnabled)
     // Just the output glyph in the middle.
     val compact = !queueOpen && !showPartyButton && !inParty
     BoxWithConstraints(Modifier.fillMaxWidth()) {
@@ -766,7 +775,11 @@ internal fun PlayerActionRow(
                         )
                     }
                 } else {
-                    OutputPill(onOutput = onOpenOutput)
+                    OutputPartyPill(
+                        onOutput = onOpenOutput,
+                        onParty = onListenTogether,
+                        onOpenMembers = onOpenListenTogetherMembers,
+                    )
                 }
             }
             Box(
@@ -1236,15 +1249,16 @@ internal fun OutputCaption(
         ShimmerText(
             text = outputName,
             style = MaterialTheme.typography.labelSmall.copy(
-                fontSize = AppType.Micro,
+                fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold,
                 textAlign = TextAlign.Center,
             ),
             modifier = captionModifier,
         )
-        else -> Text(
-            text = outputName,
-            style = MaterialTheme.typography.labelSmall.copy(fontSize = AppType.Micro),
+    } else {
+        Text(
+            text = if (badge.inParty) jamName else outputName,
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
             color = LocalPlayerTint.current.copy(alpha = 0.55f),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,

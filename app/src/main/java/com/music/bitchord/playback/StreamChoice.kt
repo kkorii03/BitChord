@@ -257,4 +257,10 @@ object StreamChoice {
     private const val MAX_REMEMBERED = 32
 
     private const val TAG = "BitChord"
+
+
+    fun forgetUrl(url: String) {
+        chosen.entries.removeIf { it.value.stream.url == url }
+    }
+
 }

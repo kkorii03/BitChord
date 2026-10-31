@@ -186,3 +186,5 @@ private class HoldCapture {
 }
 
 private val NoLiftPadding = PaddingValues()
+
+private const val MAX_CAPTURE_PX = 1024f

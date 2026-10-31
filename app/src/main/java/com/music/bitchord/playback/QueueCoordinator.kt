@@ -99,9 +99,9 @@ object QueueCoordinator {
             removeMediaItems(indices[start], indices[end - 1] + 1)
             end = start
         }
-        if (userQueueIndices.isNotEmpty()) {
-            TrackLog.d("BitChord", "queue: remove n=${userQueueIndices.size} at=${userQueueIndices.first()} " +
-                "size=${player.mediaItemCount} by=clear-user-queue")
+        if (indices.isNotEmpty()) {
+            TrackLog.d("BitChord", "queue: remove n=${indices.size} at=${indices.first()} " +
+                "size=$mediaItemCount by=clear-user-queue")
         }
     }
 

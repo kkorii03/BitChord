@@ -307,16 +307,6 @@ object AudioCache {
             // see [dropForeignEntries].
             dropForeignEntries(keep = emptySet())
         }
-        if (format != CACHE_FORMAT) state.edit().putInt(KEY_CACHE_FORMAT, CACHE_FORMAT).apply()
-        if (state.getInt(KEY_MATCHING_SCHEMA, 0) < MATCHING_SCHEMA) {
-            val stale = cache.keys.filter { it.endsWith(ALT_SUFFIX) }
-            stale.forEach { runCatching { cache.removeResource(it) } }
-            state.edit().putInt(KEY_MATCHING_SCHEMA, MATCHING_SCHEMA).apply()
-            TrackLog.d(TAG, "invalidated ${stale.size} source cache entries after matcher upgrade")
-        }
-        // Nothing is playing yet, so a partial addon file has nobody to finish
-        // it — see [dropForeignEntries]. Whole ones stay.
-        dropForeignEntries(keep = emptySet())
         // A SimpleCache can only be opened once per process, so the ceiling
         // moves by mutating this evictor rather than reopening the cache —
         // see [DynamicLruCacheEvictor].
@@ -642,7 +632,7 @@ object AudioCache {
      * resolved at all.
      */
     fun originOf(uri: Uri): Origin? {
-        if (!::cache.isInitialized || uri.scheme != "bitchord") return null
+        if (openedCache == null || uri.scheme != "bitchord") return null
         val key = keyFactory.buildCacheKey(DataSpec(uri))
         return runCatching { cache.getContentMetadata(key).get(META_ORIGIN, null as String?) }
             .getOrNull()
@@ -660,7 +650,7 @@ object AudioCache {
      * after a restart, or once its choice has expired.
      */
     fun heldByYouTube(key: String?): Boolean {
-        if (key == null || !::cache.isInitialized) return false
+        if (key == null || openedCache == null) return false
         return runCatching {
             cache.getCachedSpans(key).isNotEmpty() &&
                 cache.getContentMetadata(key).get(META_ORIGIN, null as String?) == Origin.YOUTUBE.name
@@ -1127,6 +1117,7 @@ object AudioCache {
             val origin = meta.get(META_ORIGIN, null as String?)
                 ?.let { runCatching { Origin.valueOf(it) }.getOrNull() }
                 ?: continue
+            if (origin == Origin.OTHER) continue
             if (meta.get(META_PLAYED, null as String?) == null) continue
             val mediaId = meta.get(META_MEDIA_ID, null as String?) ?: continue
             val spans = cache.getCachedSpans(key).filter { it.isCached && it.file?.exists() == true }
@@ -1378,7 +1369,7 @@ object AudioCache {
      *   says nothing about Automix's YouTube Opus heads for the tracks ahead.
      */
     fun dropForeignEntries(keep: Set<String>, keepAnalysis: Boolean = false) {
-        if (!::cache.isInitialized) return
+        if (openedCache == null) return
         scope.launch {
             if (!purgeIndexBuilt) rebuildPurgeIndex()
             var dropped = 0
@@ -3512,6 +3503,135 @@ object AudioCache {
         }.exceptionOrNull()
         return length to failure?.message
     }
+
+    private fun anotherWriterHas(videoId: String): Boolean =
+        playerHoldsVideo(videoId) || (readAheadWrites[videoId] ?: 0) > 0
+
+    private fun completeUpgradeRendition(videoId: String): String? {
+        if (openedCache == null) return null
+        // A copy prefetched during this play must not take over its key until
+        // the queue moves on: a seek reopens the plain URI, and handing it the
+        // FLAC entry at the Opus entry's byte offset breaks the extractor.
+        if (videoId in upgradeKeyDeferred) return null
+        val candidates = renditionKeysFor(videoId).mapNotNull { key ->
+            if (key.endsWith("#watch")) return@mapNotNull null
+            val suffix = key.removePrefix("$videoId#")
+            if (suffix == key) return@mapNotNull null
+            val order = QualityUpgrade.upgradeGeneration(suffix)
+            if (order <= 0) return@mapNotNull null
+            CachedRendition(
+                key = key,
+                complete = isComplete(key),
+                lossless = isLosslessRendition(key),
+                upgradeOrder = order,
+            )
+        }
+        if (candidates.isEmpty()) return null
+        return CacheRenditionChoice.choose(videoId, candidates).takeIf { it != videoId }
+    }
+
+    private var currentMediaId: String? = null
+
+    private fun forgetPurgeCandidate(key: String) {
+        purgeCandidates.remove(key)
+    }
+
+    private fun isLosslessRendition(key: String): Boolean = runCatching {
+        cache.getContentMetadata(key).get(META_HQ_LOSSLESS, null as String?) == "1"
+    }.getOrDefault(false)
+
+    private fun keptForTiming(videoId: String): Boolean = synchronized(timingKeep) {
+        val at = timingKeep[videoId] ?: return false
+        SystemClock.elapsedRealtime() - at < TIMING_KEEP_MS
+    }
+
+    private val keyIdleSignals = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
+
+    private val losslessPrefetchAttempted = ConcurrentHashMap.newKeySet<String>()
+
+    private var losslessPrefetchFor: String? = null
+
+    private var losslessPrefetchJob: Job? = null
+
+    private val pendingLowQualityDrops = ConcurrentHashMap<String, String>()
+
+    private val playbackKeysInUse = ConcurrentHashMap<String, Int>()
+
+    private val playbackVideoIdsInUse = ConcurrentHashMap<String, Int>()
+
+    private fun playerHoldsKey(cacheKey: String): Boolean =
+        (playbackKeysInUse[cacheKey] ?: 0) > 0
+
+    private fun playerHoldsVideo(videoId: String): Boolean =
+        (playbackVideoIdsInUse[videoId] ?: 0) > 0
+
+    private fun purgeCandidate(meta: ContentMetadata): Boolean = BatteryPolicy.cacheEntryNeedsPurge(
+        origin = meta.get(META_ORIGIN, null as String?),
+        foreignOrigin = Origin.OTHER.name,
+        hasAnalysis = meta.get(META_ANALYSIS, null as String?) != null,
+        hasPlayback = meta.get(META_PLAYBACK, null as String?) != null,
+        hasPlayed = meta.get(META_PLAYED, null as String?) != null,
+    )
+
+    private val purgeCandidates = ConcurrentHashMap.newKeySet<String>()
+
+    private var purgeIndexBuilt = false
+
+    private val readAheadWrites = ConcurrentHashMap<String, Int>()
+
+    private fun rebuildPurgeIndex() {
+        if (openedCache == null) {
+            purgeIndexBuilt = true
+            return
+        }
+        // Only adds: a concurrent [recordServed] may have put a newer key in
+        // the set while this scan was running, and it must not be lost.
+        cache.keys.forEach { key ->
+            val meta = runCatching { cache.getContentMetadata(key) }.getOrNull() ?: return@forEach
+            if (purgeCandidate(meta)) purgeCandidates.add(key)
+        }
+        purgeIndexBuilt = true
+    }
+
+    private fun release(counts: ConcurrentHashMap<String, Int>, key: String) {
+        counts.compute(key) { _, open -> if (open == null || open <= 1) null else open - 1 }
+    }
+
+    private fun retain(counts: ConcurrentHashMap<String, Int>, key: String) {
+        counts.merge(key, 1) { open, added -> open + added }
+    }
+
+    private fun retryAnalysisHeadIfReaderReleased(videoId: String) {
+        if (videoId !in analysisHeadsHeldElsewhere) return
+        if (anotherWriterHas(videoId)) return
+        analysisHeadsHeldElsewhere.remove(videoId)
+        analysisHeads.remove(videoId)
+        analysisHeadDeferredLogged.remove(videoId)
+        requestAnalysisHead(Uri.parse(AutomixAnalysisSource.opusUri(videoId)))
+    }
+
+    private fun updatePurgeCandidate(key: String, candidate: Boolean) {
+        if (candidate) purgeCandidates.add(key) else purgeCandidates.remove(key)
+    }
+
+    private val upgradeKeyDeferred = ConcurrentHashMap.newKeySet<String>()
+
+    private val wholeRenditionJobs = ConcurrentHashMap<String, Job>()
+
+
+    private val timingKeep = LinkedHashMap<String, Long>()
+
+    private const val TIMING_KEEP_MS = 15 * 60_000L
+
+    private const val TIMING_KEEP_MAX = 16
+
+
+    fun keepForTiming(videoId: String) = synchronized(timingKeep) {
+        timingKeep.remove(videoId)
+        timingKeep[videoId] = SystemClock.elapsedRealtime()
+        while (timingKeep.size > TIMING_KEEP_MAX) timingKeep.remove(timingKeep.keys.first())
+    }
+
 }
 
 /** How many leading bytes [cachedContainerOf] needs to tell the containers apart. */

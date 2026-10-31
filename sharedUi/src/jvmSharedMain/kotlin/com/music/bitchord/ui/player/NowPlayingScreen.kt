@@ -22,6 +22,7 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.core.Animatable
 import com.music.bitchord.ui.theme.rememberPlayerTint
 import com.music.bitchord.ui.theme.AppType
+import com.music.bitchord.ko.ui.SongLyricsSync // [KO] lyrics-sync correction
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.channels.Channel
 import androidx.compose.animation.core.AnimationVector1D
@@ -80,6 +81,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.MutableFloatState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -977,7 +979,8 @@ fun NowPlayingScreen(
     // A music video plays its own picture where the sleeve is — see
     // [MusicVideoSurface] — and takes the place of any animated cover.
     val videoMode = showsMusicVideo(song)
-    val canvas = rememberCanvasArtwork(song)?.takeUnless { videoMode }?.let {
+    val lowPower by PlayerSettings.lowPower.collectAsStateWithLifecycle() // [KO] low power artwork
+    val canvas = rememberCanvasArtwork(song, audible = isPlaying)?.takeUnless { videoMode }?.let {
         // Apple's 3:4 rendition runs under the whole phone screen, the way its
         // own player shows it; the square one stays the fallback.
         val tall = it.portraitUrl
@@ -1759,6 +1762,8 @@ fun NowPlayingScreen(
             onCycleRepeat = onCycleRepeat,
             onToggleAutoplay = onToggleAutoplay,
             onOpenOutput = openAudioOutput,
+            onListenTogether = onListenTogether,
+            onOpenListenTogetherMembers = openListenTogetherMembers,
         )
         // Keep the external-output or party caption visible in every state.
         Spacer(Modifier.height(18.dp))

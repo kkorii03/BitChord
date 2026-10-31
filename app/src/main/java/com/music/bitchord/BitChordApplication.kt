@@ -46,6 +46,9 @@ import com.music.bitchord.data.stats.ArtistFacts
 import com.music.bitchord.data.stats.ListeningStats
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.download.PlaylistSync
+import com.music.bitchord.startup.StartupWork
+import com.music.bitchord.startup.StartupTrace
+import com.music.bitchord.startup.AppForeground
 import androidx.work.Configuration
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -427,6 +430,41 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory, Configu
     private val emulatedGpu: Boolean by lazy {
         listOf("/vendor/lib64", "/vendor/lib", "/system/lib64", "/system/lib")
             .any { java.io.File("$it/egl/libEGL_emulation.so").exists() }
+    }
+
+    /**
+     * Chains the platform's own handler rather than replacing it.
+     *
+     * The app's line goes to the trail synchronously before the process dies —
+     * the writer thread will not get a turn — and the previous handler still
+     * runs so the crash is reported to the system exactly as before.
+     */
+    private fun installCrashHandler() {
+        val previous = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            runCatching { TrackLog.crash(thread, throwable) }
+            previous?.uncaughtException(thread, throwable)
+        }
+    }
+
+    /**
+     * One line per process start. "Warm" is a previous process seen in the last
+     * ten minutes: Android's own cold/warm distinction is not visible from an
+     * Application, and for reading a crash trail what matters is whether this
+     * is a fresh launch or a restart of something that was just running.
+     */
+    private fun logProcessStart(directory: File) {
+        val marker = File(directory, "process.txt")
+        val now = System.currentTimeMillis()
+        val previousAt = runCatching {
+            processMarkerTimestamp(marker.readText())
+        }.getOrDefault(0L)
+        val warm = isWarmProcessRestart(now, previousAt, WARM_RESTART_MS)
+        TrackLog.i(
+            "BitChord",
+            "lifecycle: process start pid=${android.os.Process.myPid()} ${if (warm) "warm" else "cold"}",
+        )
+        runCatching { marker.writeText(processMarkerLine(android.os.Process.myPid(), now)) }
     }
 
     private fun initLastfm() {

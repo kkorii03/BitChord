@@ -210,6 +210,7 @@ object AudioOutputStatus {
         preferred: AudioDeviceInfo?,
         floatEnabled: Boolean,
         routeKind: AudioRouting.Kind? = null,
+        directUsbProbe: com.music.bitchord.playback.audio.usb.DirectUsbProbeResult? = null,
         directSupport: DirectAudioProbe.DirectSupport? = null,
         bluetoothTelemetry: BluetoothTelemetry? = null,
         systemMixerRateHz: Int? = null,

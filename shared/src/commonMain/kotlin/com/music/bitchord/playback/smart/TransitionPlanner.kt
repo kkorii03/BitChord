@@ -172,6 +172,10 @@ enum class FilterTransitionVariant {
  * may want to draw the upcoming transition before it begins. When [blocked]
  * is true nothing should happen at all and [reason] says why.
  */
+enum class TransitionCharacter(val wire: String) { NEUTRAL("neutral") }
+
+enum class KeyRelation(val wire: String) { UNKNOWN("unknown") }
+
 data class TransitionPlan(
     val shouldStart: Boolean = false,
     val markerVisible: Boolean = false,
@@ -247,6 +251,14 @@ data class TransitionPlan(
     val echoSeconds: Double = 0.0,
     /** Why the policy landed where it did, when it declined to be more ambitious. */
     val policyReasons: List<String> = emptyList(),
+    val character: TransitionCharacter = TransitionCharacter.NEUTRAL,
+    val keyRelation: KeyRelation = KeyRelation.UNKNOWN,
+    val keyCompatible: Boolean = true,
+    val beatAligned: Boolean = false,
+    val phraseAligned: Boolean = false,
+    val loudnessGainDb: Double = 0.0,
+    val incomingGain: Double = 1.0,
+    val outgoingGain: Double = 1.0,
 ) {
     /** Convenience for the engine, which schedules in milliseconds. */
     val fadeMs: Long get() = (fadeSeconds * 1000).roundToLong()

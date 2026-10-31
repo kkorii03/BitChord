@@ -164,10 +164,16 @@ class ModuleSource(
     ): List<Song> {
         val loaded = manager.loadModule(module) { baseUrl }.getOrElse { e ->
             TrackLog.w(TAG, "${config.displayName}: load failed for ${module.id} — ${e.message}")
+            if (SourceResolver.isNetworkFault(e)) {
+                SourceResolver.reportSourceFailure(config.id, network = true)
+            }
             return emptyList()
         }
         val searchResponse = manager.searchTracks(loaded, query, limit).getOrElse { e ->
             TrackLog.w(TAG, "${config.displayName}: search failed for ${module.id} — ${e.message}")
+            if (SourceResolver.isNetworkFault(e)) {
+                SourceResolver.reportSourceFailure(config.id, network = true)
+            }
             return emptyList()
         }
         return searchResponse.tracks.map { track ->

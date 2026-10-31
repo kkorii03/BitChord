@@ -129,7 +129,7 @@ object AudioDecoder {
         label: String = "analysis",
     ): Pair<Pcm, Double>? {
         val chunks = ArrayList<FloatArray>()
-        val decoded = decodeRaw(source, startSeconds, endSeconds, abort) { buffer, info, channels, _ ->
+        val decoded = decodeRaw(source, startSeconds, endSeconds, abort, label) { buffer, info, channels, _ ->
             chunks += toMono(buffer, info, channels)
         } ?: return null
         return Pcm(flatten(chunks), decoded.first) to decoded.second
@@ -201,27 +201,11 @@ object AudioDecoder {
     ): Pair<StereoPcm, Double>? {
         val left = ArrayList<FloatArray>()
         val right = ArrayList<FloatArray>()
-        val decoded = decodeRaw(source, startSeconds, endSeconds, abort) { buffer, info, channels, _ ->
+        val decoded = decodeRaw(source, startSeconds, endSeconds, abort, label) { buffer, info, channels, _ ->
             toStereo(buffer, info, channels, left, right)
         } ?: return null
         return StereoPcm(flatten(left), flatten(right), decoded.first) to decoded.second
     }
-
-    /**
-     * As [decodeRegion], but handing each decoded mono chunk to [onChunk] instead
-     * of keeping it, so a caller that only reduces the audio never holds the
-     * region. Returns the output rate paired with the region's real start.
-     */
-    fun streamRegion(
-        source: MediaDataSource,
-        startSeconds: Double,
-        endSeconds: Double,
-        abort: () -> Boolean = { false },
-        onChunk: (samples: FloatArray, atSeconds: Double, sampleRate: Int) -> Unit,
-    ): Pair<Double, Double>? =
-        decodeRaw(source, startSeconds, endSeconds, abort) { buffer, info, channels, rate ->
-            onChunk(toMono(buffer, info, channels), info.presentationTimeUs / 1_000_000.0, rate)
-        }
 
     /** Concatenates the decoded chunks into one contiguous buffer. */
     private fun flatten(chunks: List<FloatArray>): FloatArray {
@@ -247,6 +231,39 @@ object AudioDecoder {
         startSeconds: Double,
         endSeconds: Double,
         abort: () -> Boolean,
+        label: String,
+        onBuffer: (ByteBuffer, MediaCodec.BufferInfo, Int, Int) -> Unit,
+    ): Pair<Double, Double>? = decodeRawWith(
+        openSource = { extractor -> extractor.setDataSource(source) },
+        startSeconds = startSeconds,
+        endSeconds = endSeconds,
+        abort = abort,
+        label = label,
+        onBuffer = onBuffer,
+    )
+
+    private fun decodeRaw(
+        file: File,
+        startSeconds: Double,
+        endSeconds: Double,
+        abort: () -> Boolean,
+        label: String,
+        onBuffer: (ByteBuffer, MediaCodec.BufferInfo, Int, Int) -> Unit,
+    ): Pair<Double, Double>? = decodeRawWith(
+        openSource = { extractor -> extractor.setDataSource(file.absolutePath) },
+        startSeconds = startSeconds,
+        endSeconds = endSeconds,
+        abort = abort,
+        label = label,
+        onBuffer = onBuffer,
+    )
+
+    private fun decodeRawWith(
+        openSource: (MediaExtractor) -> Unit,
+        startSeconds: Double,
+        endSeconds: Double,
+        abort: () -> Boolean,
+        label: String,
         onBuffer: (ByteBuffer, MediaCodec.BufferInfo, Int, Int) -> Unit,
     ): Pair<Double, Double>? {
         if (endSeconds <= startSeconds) {
@@ -337,57 +354,48 @@ object AudioDecoder {
                 // and extractor down.
                 //
                 if (abort()) return null
-                // Every free input slot is filled, and every ready output
-                // drained, before anything waits. Feeding one packet and then
-                // blocking for its frame left the loop waiting on the codec's
-                // latency once per 20 ms Opus frame: about 6 ms each, which is
-                // most of what decoding a region cost. It only blocks now when
-                // neither side could move.
-                var progressed = false
-                while (!inputDone) {
-                    val inputIndex = codec.dequeueInputBuffer(0L)
-                    if (inputIndex < 0) break
-                    val inputBuffer = codec.getInputBuffer(inputIndex) ?: break
-                    progressed = true
-                    val sampleSize = extractor.readSampleData(inputBuffer, 0)
-                    val sampleTimeUs = extractor.sampleTime
-                    if (sampleSize < 0 || (sampleTimeUs in 0..Long.MAX_VALUE && sampleTimeUs > endUs)) {
-                        codec.queueInputBuffer(inputIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
-                        inputDone = true
-                    } else {
-                        codec.queueInputBuffer(inputIndex, 0, sampleSize, sampleTimeUs, 0)
-                        extractor.advance()
+                if (!inputDone) {
+                    val inputIndex = codec.dequeueInputBuffer(TIMEOUT_US)
+                    if (inputIndex >= 0) {
+                        val inputBuffer = codec.getInputBuffer(inputIndex)
+                        if (inputBuffer == null) {
+                            // Nothing to feed this cycle; try again next iteration.
+                        } else {
+                            val sampleSize = extractor.readSampleData(inputBuffer, 0)
+                            val sampleTimeUs = extractor.sampleTime
+                            if (sampleSize < 0 || (sampleTimeUs in 0..Long.MAX_VALUE && sampleTimeUs > endUs)) {
+                                codec.queueInputBuffer(inputIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                                inputDone = true
+                            } else {
+                                codec.queueInputBuffer(inputIndex, 0, sampleSize, sampleTimeUs, 0)
+                                extractor.advance()
+                            }
+                        }
                     }
                 }
 
-                var timeout = if (progressed) 0L else TIMEOUT_US
-                while (!outputDone) {
-                    val outputIndex = codec.dequeueOutputBuffer(bufferInfo, timeout)
-                    if (outputIndex == MediaCodec.INFO_TRY_AGAIN_LATER) break
-                    timeout = 0L
-                    when (outputIndex) {
-                        MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-                            val newFormat = codec.outputFormat
-                            outputRate = newFormat.intOrNull(MediaFormat.KEY_SAMPLE_RATE) ?: outputRate
-                            outputChannels = newFormat.intOrNull(MediaFormat.KEY_CHANNEL_COUNT) ?: outputChannels
+                when (val outputIndex = codec.dequeueOutputBuffer(bufferInfo, TIMEOUT_US)) {
+                    MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                        val newFormat = codec.outputFormat
+                        outputRate = newFormat.intOrNull(MediaFormat.KEY_SAMPLE_RATE) ?: outputRate
+                        outputChannels = newFormat.intOrNull(MediaFormat.KEY_CHANNEL_COUNT) ?: outputChannels
+                    }
+                    MediaCodec.INFO_TRY_AGAIN_LATER, MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED -> Unit
+                    else -> if (outputIndex >= 0) {
+                        if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
+                            outputDone = true
                         }
-                        MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED -> Unit
-                        else -> if (outputIndex >= 0) {
-                            if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
-                                outputDone = true
+                        if (bufferInfo.size > 0) {
+                            if (!sawFirstSample) {
+                                actualStartSeconds = bufferInfo.presentationTimeUs / 1_000_000.0
+                                sawFirstSample = true
                             }
-                            if (bufferInfo.size > 0) {
-                                if (!sawFirstSample) {
-                                    actualStartSeconds = bufferInfo.presentationTimeUs / 1_000_000.0
-                                    sawFirstSample = true
-                                }
-                                codec.getOutputBuffer(outputIndex)?.let { output ->
-                                    onBuffer(output, bufferInfo, outputChannels, outputRate)
-                                }
-                                if (bufferInfo.presentationTimeUs > endUs) outputDone = true
+                            codec.getOutputBuffer(outputIndex)?.let { output ->
+                                onBuffer(output, bufferInfo, outputChannels, outputRate)
                             }
-                            codec.releaseOutputBuffer(outputIndex, false)
+                            if (bufferInfo.presentationTimeUs > endUs) outputDone = true
                         }
+                        codec.releaseOutputBuffer(outputIndex, false)
                     }
                 }
             }
@@ -477,4 +485,17 @@ object AudioDecoder {
     }
 
     private fun MediaFormat.intOrNull(key: String): Int? = if (containsKey(key)) getInteger(key) else null
+
+
+    fun streamRegion(
+        source: MediaDataSource,
+        startSeconds: Double,
+        endSeconds: Double,
+        abort: () -> Boolean = { false },
+        onChunk: (samples: FloatArray, atSeconds: Double, sampleRate: Int) -> Unit,
+    ): Pair<Double, Double>? =
+        decodeRaw(source, startSeconds, endSeconds, abort, label = "stream-region") { buffer, info, channels, rate ->
+            onChunk(toMono(buffer, info, channels), info.presentationTimeUs / 1_000_000.0, rate)
+        }
+
 }

@@ -1,7 +1,6 @@
 package com.music.bitchord.ui.screens
 
 import com.music.bitchord.ui.components.trackArtSize
-import androidx.compose.ui.layout.ContentScale
 import com.music.bitchord.data.model.toSong
 import com.music.bitchord.ui.components.SwipeToQueueBox
 import com.music.bitchord.ui.components.contextClick
@@ -1169,6 +1168,7 @@ private fun RecentSearchEntityRow(
                     EntityType.ALBUM -> com.music.bitchord.data.model.AppleCardKind.ALBUM
                     EntityType.ARTIST -> com.music.bitchord.data.model.AppleCardKind.ARTIST
                     EntityType.PLAYLIST -> com.music.bitchord.data.model.AppleCardKind.PLAYLIST
+                    EntityType.OTHER -> com.music.bitchord.data.model.AppleCardKind.SONG
                 }
                 Text(
                     text = appleSubtitleText(entity.subtitle, kind),
@@ -1257,6 +1257,44 @@ private fun BrowseRow(item: BrowseItem, onClick: () -> Unit, onLongPress: (() ->
             )
         }
     }
+}
+
+/**
+ * The type noun a search row falls back to when YouTube gave it no subtitle.
+ *
+ * The row still has to name what it is in the app's language; using the enum
+ * name made every blank-subtitle album or playlist read "Album"/"Playlist"
+ * even in Korean. OTHER is a plain song/video card, so it takes the song noun.
+ */
+internal fun browseFallbackLabel(type: BrowseType): StringResource = when (type) {
+    BrowseType.ALBUM -> Res.string.album
+    BrowseType.ARTIST -> Res.string.artist
+    BrowseType.PLAYLIST -> Res.string.playlist
+    BrowseType.OTHER -> Res.string.song
+}
+
+/**
+ * Whether a completed search holds no rows at all.
+ *
+ * `UiState.Success(emptyList())` is a real answer — YouTube, an addon or the
+ * device folder all say "nothing matched" that way — and it must not render as
+ * the same blank page as a request that never finished. Null and Loading are
+ * "still asking"; Error has its own message.
+ */
+internal fun <T> UiState<List<T>>?.hasNoResults(): Boolean =
+    this is UiState.Success && data.isEmpty()
+
+/**
+ * The tab names follow the app's language, not the enum's hardcoded Korean.
+ * The Korean wording is unchanged; other locales no longer see Korean pills.
+ */
+internal fun SearchFilter.labelResource(): StringResource = when (this) {
+    SearchFilter.ALL -> Res.string.search_filter_all
+    SearchFilter.SONGS -> Res.string.songs
+    SearchFilter.VIDEOS -> Res.string.search_filter_videos
+    SearchFilter.ALBUMS -> Res.string.albums
+    SearchFilter.ARTISTS -> Res.string.artists
+    SearchFilter.PLAYLISTS -> Res.string.playlists
 }
 
 /** How far an addon row the quality setting won't play is dimmed; Material's disabled level. */

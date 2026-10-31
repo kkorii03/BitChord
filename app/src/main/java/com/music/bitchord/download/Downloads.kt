@@ -20,6 +20,11 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.DownloadQuality
+import com.music.bitchord.playback.smart.HqAudioVerify
+import com.music.bitchord.playback.smart.HqVerificationStore
+import com.music.bitchord.data.sources.DownloadHealthPolicy
+import com.music.bitchord.data.sources.HqQuality
+import com.music.bitchord.data.sources.HqTier
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
@@ -2595,7 +2600,99 @@ object Downloads {
      *   than to the middle of this one. [Downloader.fetch] resolves again after
      *   a mid-download refusal and has to ask for the same rung it started on.
      */
-    private suspend fun routeFor(context: Context, track: Song, quality: DownloadQuality): Route {
+    private suspend fun routeForVerified(
+        context: Context,
+        track: Song,
+        quality: DownloadQuality,
+        hq: HqDownloadSource,
+    ): Route {
+        val stream = SourceResolver.forDownloadVerified(
+            sourceConfigId = hq.sourceConfigId,
+            trackId = hq.trackId,
+            request = SourceResolver.requestForDownload(quality),
+        ) ?: error("검증된 고음질 음원을 받을 수 없습니다")
+        val served = HqQuality.tierOf(stream.format)
+        if (served.rank > hq.tier.rank) {
+            error("검증된 고음질 음원이 더 낮은 등급으로 응답했습니다 (${served.label})")
+        }
+        val storable = DownloadStore.storable(stream.format.codec)
+            ?: error("이 기기에 저장할 수 없는 형식입니다 (${stream.format.codec})")
+        return routeFromSource(context, track, stream, storable)
+            ?: error("고음질 음원을 내보낼 수 없습니다")
+    }
+
+    private fun routeFromSource(
+        context: Context,
+        track: Song,
+        stream: SourceStream,
+        storable: DownloadStore.Storable,
+    ): Route? {
+        // A manifest is an index, not audio. Whichever kind it is, fetching
+        // it as a file writes the index into something named `.flac` —
+        // which is exactly what a `.mpd` did until [OfflineDash] existed:
+        // a 2.7 KB download that reported success and could never play.
+        // Read off the URL rather than off `stream.format`, which describes
+        // the audio inside and says nothing about the envelope.
+        val dash = OfflineDash.handles(stream.url)
+        val hls = stream.url.substringBefore('?').endsWith(".m3u8", ignoreCase = true)
+        val packaged = hls || dash
+        // A manifest's segments are joined back into one ordinary file —
+        // see [ManifestFile] — exported or not, so a lossless download is
+        // a `.flac` wherever it lands. Exports used to decline manifests
+        // instead, which meant YouTube: Tidal serves every lossless tier
+        // as a manifest, so an exporting user heard FLAC and saved 131kbps
+        // AAC. Only a codec the assembler can't file falls through to the
+        // package (in-app) or YouTube (export) below.
+        if (packaged && storable.extension in ManifestFile.EXTENSIONS) {
+            return Route(
+                extension = storable.extension,
+                mimeType = storable.mimeType,
+                describe = "${stream.format.summary} (assembled from ${if (dash) "DASH" else "HLS"})",
+                host = HqHostTracker.hostOf(stream.url),
+                downloadFormat = stream.format.downloadBadge(),
+                tier = HqQuality.tierOf(stream.format),
+                sourceTitle = stream.trackTitle,
+                sourceArtist = stream.trackArtist,
+                write = { sink, onProgress ->
+                    ManifestFile.write(
+                        context.cacheDir, stream.url, stream.headers, dash,
+                        storable.extension, sink, onProgress,
+                    )
+                },
+            )
+        }
+        if (packaged && AppSettings.exportDownloads.value) {
+            Log.d(TAG, "can't export a .${storable.extension} manifest; taking YouTube for ${track.videoId}")
+            return null
+        }
+        return Route(
+            // DASH is saved *as* HLS — see [OfflineDash] for why — so both
+            // kinds land as the same package and are named for what was
+            // written rather than for what was fetched.
+            extension = if (packaged) "m3u8" else storable.extension,
+            mimeType = if (packaged) "application/vnd.apple.mpegurl" else storable.mimeType,
+            describe = stream.format.summary,
+            host = HqHostTracker.hostOf(stream.url),
+            downloadFormat = stream.format.downloadBadge(),
+            tier = HqQuality.tierOf(stream.format),
+            sourceTitle = stream.trackTitle,
+            sourceArtist = stream.trackArtist,
+            taggable = true,
+            offlineHls = Manifest(stream.url, stream.headers, dash = dash).takeIf { packaged },
+            write = { sink, onProgress ->
+                Downloader.fetchDirect(stream.url, stream.headers, sink, onProgress)
+            },
+        )
+    }
+
+
+    private suspend fun routeFor(
+        context: Context,
+        track: Song,
+        quality: DownloadQuality,
+        avoidSource: String? = null,
+        youtubeOnly: Boolean = false,
+    ): Route {
         val row = SourceRegistry.parseTrackKey(track.videoId)
         row?.let { (configId, trackId) ->
             fromRow(track, configId, trackId, quality)?.let { kept ->

@@ -19,6 +19,7 @@ internal data class LyricsLoadKey(
     val order: List<LyricsSource>,
     val prioritizeSyllableSync: Boolean,
 ) {
+
     companion object {
         fun of(
             videoId: String,
@@ -36,3 +37,14 @@ internal data class LyricsLoadKey(
         )
     }
 }
+
+/**
+ * The four settings that pick a lyrics answer. A change in any of them is a new
+ * lookup for the playing track, never the previous answer standing.
+ */
+internal fun lyricsLookupKey(
+    videoId: String,
+    sources: Set<LyricsSource>,
+    order: List<LyricsSource>,
+    prioritizeSyllableSync: Boolean,
+): List<Any> = listOf(videoId, sources, order, prioritizeSyllableSync)

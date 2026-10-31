@@ -2336,4 +2336,54 @@ object TrackMatcher {
 
     /** Dropped from the core so that "Jack and Jill" and "Jack & Jill" are one title. */
     private val JOINING_WORDS = setOf("and")
+
+    fun isArtistUnverifiedOriginal(
+        candidate: Song,
+        target: Target,
+        maxDriftSec: Int = ARTIST_UNVERIFIED_DRIFT_SEC,
+    ): Boolean {
+        if (target.artist.isBlank() || candidate.artist.isBlank()) return false
+        if (!artistScriptsDiffer(target.artist, candidate.artist)) return false
+        // A channel or release identity that proves the same act is a normal
+        // match, not an unverified one.
+        if (namesTheSameArtist(target.artist, candidate.artist) ||
+            sharesArtistChannel(target, candidate) ||
+            sharesRelease(target, candidate)
+        ) {
+            return false
+        }
+        if (isCoverOf(candidate, target)) return false
+        val wanted = parseTitle(target.title, target.artist)
+        val got = parseTitle(candidate.title, candidate.artist)
+        if (wanted.core.isBlank() || got.core.isBlank()) return false
+        if (!coresEqual(wanted.cores(), got.cores())) return false
+        val albumMarks = albumVersionMarkers(candidate.albumName)
+        val effectiveVersions = got.versions + (albumMarks intersect NOVOCAL_TAKES) +
+            (albumMarks intersect wanted.versions)
+        if (wanted.versions != effectiveVersions) return false
+        val wantedSec = target.durationSec ?: return false
+        val gotSec = secondsOf(candidate.durationText) ?: return false
+        return abs(wantedSec - gotSec) <= maxDriftSec
+    }
+
+    fun artistScriptsDiffer(wanted: String, got: String): Boolean {
+        val want = artistScripts(wanted)
+        val have = artistScripts(got)
+        return want.isNotEmpty() && have.isNotEmpty() && want.intersect(have).isEmpty()
+    }
+
+    private fun artistScripts(text: String): Set<Character.UnicodeScript> {
+        val out = mutableSetOf<Character.UnicodeScript>()
+        for (ch in normalize(text)) {
+            if (!ch.isLetter()) continue
+            when (val script = Character.UnicodeScript.of(ch.code)) {
+                Character.UnicodeScript.COMMON, Character.UnicodeScript.INHERITED -> Unit
+                else -> out += script
+            }
+        }
+        return out
+    }
+
+    const val ARTIST_UNVERIFIED_DRIFT_SEC = 3
+
 }
