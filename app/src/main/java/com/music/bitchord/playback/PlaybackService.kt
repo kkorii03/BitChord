@@ -9469,16 +9469,9 @@ class PlaybackService : MediaLibraryService() {
             )
             silenceCheckFrames = -1L
             recoverAudibleGains()
-            if (silenceStepInFlight == null) {
-                silenceStepInFlight = AudioSilenceRecovery.Step.REBUILD
-                silenceStepAtMs = now
-                silenceRecoveries = maxOf(silenceRecoveries, 1)
-                TrackLog.w(
-                    "AUDIO_OUT",
-                    "silence recover: $id step=rebuild result=still-silent",
-                    about = id,
-                )
-            }
+            // A gain-only restore is not a ladder rung: leaving it unspent
+            // means a path that stays silent still gets the real AudioTrack
+            // rebuild instead of escalating straight to re-prepare.
             return
         }
 
@@ -9507,10 +9500,23 @@ class PlaybackService : MediaLibraryService() {
             msSinceLastRecovery = msSinceStep,
         )
         if (decision.action != AudioSilenceRecovery.Action.RECOVER) {
+            // The ladder gave up only after the last step's recheck window
+            // expired; that is the point at which its outcome is known.
+            if (decision.reason == "steps-exhausted") {
+                silenceStepInFlight?.let { step ->
+                    logSilentStepOutcome(id, step)
+                    silenceStepInFlight = null
+                }
+            }
             silenceCheckFrames = frames
             return
         }
         val step = decision.step ?: return
+        // A decision to climb again after the recheck window is the outcome of
+        // the step that was in flight; log it before starting the next one.
+        silenceStepInFlight?.let { previous ->
+            logSilentStepOutcome(id, previous)
+        }
         TrackLog.w(
             "AUDIO_OUT",
             "silence detected id=$id stalled=$stalled silent=${outputSilentFor > 0L} " +
@@ -9521,13 +9527,21 @@ class PlaybackService : MediaLibraryService() {
         silenceRecoveries++
         silenceStepAtMs = now
         silenceStepInFlight = step
+        performSilenceRecoveryStep(step)
+        silenceCheckFrames = -1L
+    }
+
+    /**
+     * Reports a finished rung that did not bring sound back. Called only after
+     * its recheck window (or when the ladder is out of steps), so the logged
+     * result describes the step rather than the moment it started.
+     */
+    private fun logSilentStepOutcome(id: String?, step: AudioSilenceRecovery.Step) {
         TrackLog.w(
             "AUDIO_OUT",
             "silence recover: $id step=${step.wire} result=still-silent",
             about = id,
         )
-        performSilenceRecoveryStep(step)
-        silenceCheckFrames = -1L
     }
 
     /** Climbs one rung of the output-recovery ladder selected by [AudioSilenceRecovery]. */
@@ -9564,14 +9578,13 @@ class PlaybackService : MediaLibraryService() {
         val live = player ?: return
         val item = live.currentMediaItem ?: return
         val mediaId = item.mediaId
-        val at = live.currentPosition.coerceAtLeast(0L)
         val index = live.currentMediaItemIndex
         if (index == C.INDEX_UNSET) return
         val uri = item.localConfiguration?.uri
         // A local file has no alternate stream to resolve; re-preparing it is
         // the only thing this rung can do.
         if (item.toSong()?.localUri != null || uri?.scheme == "file") {
-            live.seekTo(index, at)
+            live.seekTo(index, live.currentPosition.coerceAtLeast(0L))
             live.prepare()
             return
         }
@@ -9593,6 +9606,13 @@ class PlaybackService : MediaLibraryService() {
             withContext(Dispatchers.Main) {
                 val current = this@PlaybackService.player ?: return@withContext
                 if (current.currentMediaItem?.mediaId != mediaId) return@withContext
+                // The queue may have been edited while the lookup was in
+                // flight; the index captured before it is then stale.
+                if (current.currentMediaItemIndex != index) return@withContext
+                // Read the position after the lookup, not before it: normal
+                // playback (or a seek) moved on during those seconds, and
+                // re-seeking to the captured value would undo it.
+                val at = current.currentPosition.coerceAtLeast(0L)
                 if (recovered != null) {
                     StreamChoice.remember(
                         mediaId,
@@ -9609,7 +9629,7 @@ class PlaybackService : MediaLibraryService() {
                     )
                 }
                 retryingMediaId = mediaId
-                current.seekTo(current.currentMediaItemIndex, at)
+                current.seekTo(index, at)
                 current.prepare()
             }
         }

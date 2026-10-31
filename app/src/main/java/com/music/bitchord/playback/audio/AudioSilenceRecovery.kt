@@ -76,19 +76,27 @@ object AudioSilenceRecovery {
         recoveries: Int,
         msSinceLastRecovery: Long,
     ): Decision {
+        // A step already in flight gets its own window to bring sound back;
+        // the next tick must not immediately jump another rung, or give up on
+        // one, before it has had a chance. This applies to a stalled sink too.
+        if (recoveries > 0 && msSinceLastRecovery < STEP_RECHECK_MS) {
+            return Decision(Action.NONE, reason = "waiting-for-step")
+        }
         if (recoveries >= MAX_STEPS) {
             return Decision(Action.NONE, reason = "steps-exhausted")
         }
         if (stalled) {
+            // Skip-silence can make a genuinely quiet passage look stalled:
+            // the processor emits a 0-frame block instead of frames, so the
+            // sink's counter freezes without anything being wrong. If the
+            // decoder itself was quiet too, this is the file, not the output.
+            if (decoderSilentThroughoutOutput) {
+                return Decision(Action.NONE, reason = "decoder-silent-too")
+            }
             return Decision(Action.RECOVER, nextStep(recoveries), "stalled")
         }
         if (outputSilentForMs < OUTPUT_SILENT_MS) {
             return Decision(Action.NONE, reason = "short")
-        }
-        // A step in flight gets its own window to bring sound back; the next
-        // tick must not immediately jump another rung before then.
-        if (recoveries > 0 && msSinceLastRecovery < STEP_RECHECK_MS) {
-            return Decision(Action.NONE, reason = "waiting-for-step")
         }
         // The decoder was already quiet when the output went quiet: this is the
         // track's own silence, not a broken fader or AudioTrack.

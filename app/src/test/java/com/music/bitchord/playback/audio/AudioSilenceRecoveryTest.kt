@@ -67,6 +67,46 @@ class AudioSilenceRecoveryTest {
     }
 
     @Test
+    fun aQuietPassageWithSkipSilenceFrozenFramesIsNotAFault() {
+        // SilenceSkipper emits a 0-frame block for a long quiet run, which
+        // freezes the sink's frame counter exactly like a stalled AudioTrack.
+        // The decoder-level meter says the file itself is quiet, so the ladder
+        // must not climb and swap in a different stream.
+        val decision = AudioSilenceRecovery.decide(
+            stalled = true,
+            outputSilentForMs = 30_000L,
+            decoderSilentThroughoutOutput = true,
+            recoveries = 0,
+            msSinceLastRecovery = Long.MAX_VALUE,
+        )
+        assertEquals(AudioSilenceRecovery.Action.NONE, decision.action)
+        assertEquals("decoder-silent-too", decision.reason)
+    }
+
+    @Test
+    fun aFrozenSinkEscalatesOnlyAfterItsRecheckWindow() {
+        val tooSoon = AudioSilenceRecovery.decide(
+            stalled = true,
+            outputSilentForMs = 0L,
+            decoderSilentThroughoutOutput = false,
+            recoveries = 1,
+            msSinceLastRecovery = AudioSilenceRecovery.STEP_RECHECK_MS - 1L,
+        )
+        assertEquals(AudioSilenceRecovery.Action.NONE, tooSoon.action)
+        assertEquals("waiting-for-step", tooSoon.reason)
+
+        val escalated = AudioSilenceRecovery.decide(
+            stalled = true,
+            outputSilentForMs = 0L,
+            decoderSilentThroughoutOutput = false,
+            recoveries = 1,
+            msSinceLastRecovery = AudioSilenceRecovery.STEP_RECHECK_MS,
+        )
+        assertEquals(AudioSilenceRecovery.Action.RECOVER, escalated.action)
+        assertEquals(AudioSilenceRecovery.Step.REPREPARE, escalated.step)
+    }
+
+    @Test
     fun silenceShorterThanTheWindowIsLeftAlone() {
         val decision = AudioSilenceRecovery.decide(
             stalled = false,
