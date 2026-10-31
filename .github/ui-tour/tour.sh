@@ -43,6 +43,23 @@ if [ "${TOUR_GATED:-1}" = "1" ]; then
   adb shell am force-stop $PKG
   sleep 2
 fi
+# The listener's own settings, imported the way scripts/smoke/run.sh does it:
+# the debuggable app copies the file into its own files dir with run-as (it
+# cannot read one adb pushed under /sdcard), then a debug broadcast applies it.
+if [ -n "${SMOKE_SETTINGS_FILE:-}" ] && [ -f "$SMOKE_SETTINGS_FILE" ]; then
+  if adb push "$SMOKE_SETTINGS_FILE" /data/local/tmp/smoke.bitchord-settings >/dev/null 2>&1 &&
+    adb shell "run-as $PKG sh -c 'mkdir -p files && cat /data/local/tmp/smoke.bitchord-settings > files/smoke.bitchord-settings'" </dev/null; then
+    adb shell am broadcast -a com.music.bitchord.debug.IMPORT_SETTINGS \
+      -n "$PKG/com.music.bitchord.debug.DebugSettingsImportReceiver" \
+      --es path "/data/data/$PKG/files/smoke.bitchord-settings" </dev/null || true
+    sleep 8
+    adb logcat -d | grep -m1 -o 'debug-import:.*' || echo "tour: no debug-import line"
+    adb shell am force-stop $PKG
+    sleep 2
+  else
+    echo "tour: could not hand the settings file to the app"
+  fi
+fi
 adb shell monkey -p $PKG -c android.intent.category.LAUNCHER 1
 sleep 30
 
