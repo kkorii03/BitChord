@@ -150,6 +150,16 @@ class BlockedStartOutcomeTest {
             ),
             "a repeat of the same row is a new play, not a refresh",
         )
+        assertNull(
+            BlockedStartPolicy.summaryFirstAudioMs(
+                previousVideoId = "e2T_MvOVapI",
+                currentVideoId = "e2T_MvOVapI",
+                previousFirstAudioMs = previous,
+                alreadyAudible = true,
+                previousEnded = true,
+            ),
+            "the gapless handoff's audible hint must not turn repeat-one into a 0 ms start",
+        )
     }
 
     @Test

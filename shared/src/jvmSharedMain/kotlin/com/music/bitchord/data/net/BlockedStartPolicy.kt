@@ -156,14 +156,27 @@ object BlockedStartPolicy {
         previousEnded: Boolean = false,
     ): Long? = when {
         // A repeat of the same row is a new play, not a refresh: the outgoing
-        // track ran to its end and the next one has not sounded yet.
+        // track ran to its end and the next one has not sounded yet, even
+        // though the gapless handoff can make the caller report it audible.
         currentVideoId != null &&
             currentVideoId == previousVideoId &&
-            !previousEnded &&
+            previousEnded -> null
+        // A same-row refresh keeps the measurement already taken.
+        currentVideoId != null &&
+            currentVideoId == previousVideoId &&
             previousFirstAudioMs != null -> previousFirstAudioMs
         alreadyAudible -> 0L
         else -> null
     }
+
+    /**
+     * Whether a direct client's refusal is the blocked-start signal that starts
+     * the resolver's shared budget. Only a refusal in a gated region counts: an
+     * ordinary refusal outside the gate must keep the old unbounded race, so
+     * this is the one condition every direct route uses.
+     */
+    fun directRefusalStartsRescue(gated: Boolean, refused: Boolean): Boolean =
+        gated && refused
 
     /**
      * Whether a direct refusal should start the proxy beside InnerTubeX now.

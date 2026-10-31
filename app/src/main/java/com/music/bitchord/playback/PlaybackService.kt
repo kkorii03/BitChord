@@ -4580,6 +4580,18 @@ class PlaybackService : MediaLibraryService() {
         alreadyAudible: Boolean = false,
     ) {
         val exoPlayer = player ?: return
+        // A crossfade hands over a track that has been sounding already, and a
+        // gapless auto advance keeps the same decoder running across the item
+        // boundary: Media3 never reports isPlaying false there, so
+        // onIsPlayingChanged cannot mark the new row. Treat both as already
+        // sounding so read-ahead and the next-row bundle are not held back
+        // until some later event. A skip into a buffering row is not ended, so
+        // it still waits for its first sound.
+        var alreadySounding = rowAlreadySounding(
+            alreadyAudible = alreadyAudible,
+            previousEnded = previousEnded,
+            isPlaying = exoPlayer.isPlaying,
+        )
         // Any transition settles the pending refill: the queue either moved
         // on, or the same id is current again and must not stay armed. Left
         // set, a later replay of the failed track with something queued after
@@ -4684,6 +4696,15 @@ class PlaybackService : MediaLibraryService() {
         }
         scheduleBoundedContextTopUp()
         resolveSongVersionBeforeAudio(exoPlayer, mediaItem, alreadyAudible)
+        // A song-version hold pauses a row that a gapless advance otherwise
+        // looks and sounds like it has already started. The hold is decided
+        // above, so the audibility hint has to be settled afterwards: a held
+        // row must not be marked audible, must not lose its wait clock, and
+        // must not start read-ahead until its first real sound.
+        alreadySounding = rowSoundingAfterVersionHold(
+            alreadySounding = alreadySounding,
+            versionHeld = songVersionController.isHoldingFirstSound,
+        )
         scheduleUpcomingSongVersions(exoPlayer)
         // A *different* track is a clean slate for [recoverFrom], and so is the
         // same track becoming current for any reason other than that method's
@@ -4724,7 +4745,7 @@ class PlaybackService : MediaLibraryService() {
         // cannot overwrite it with zero.
         startTrackSummary(
             played,
-            alreadyAudible,
+            alreadySounding,
             previousId = outgoingSummaryId,
             previousFirstAudio = outgoingFirstAudioMs,
             previousEnded = previousEnded,
@@ -4753,7 +4774,7 @@ class PlaybackService : MediaLibraryService() {
         val sameUnheardSelection = selectionId != null &&
             selectionId == selectedTrackMediaId &&
             trackSelectedAt != null
-        if (alreadyAudible) {
+        if (alreadySounding) {
             // A same-row source/version refresh can arrive with the audible
             // hint while the row has still never sounded. Keeping its clock is
             // what makes the eventual first-audio figure describe the whole
@@ -4764,7 +4785,7 @@ class PlaybackService : MediaLibraryService() {
             selectedTrackMediaId = selectionId
             trackSelectedAt = SystemClock.elapsedRealtime()
         }
-        if (alreadyAudible) {
+        if (alreadySounding) {
             TrackLog.d(
                 "BitChord",
                 "TIMING first audio: 0ms, the crossfade covered it",
@@ -4887,7 +4908,7 @@ class PlaybackService : MediaLibraryService() {
         // start reaches here with isPlaying still false and is picked up by
         // [playbackListener]'s first-sound callback; a gapless advance and a
         // crossfade are already sounding, so they prefetch here as before.
-        val currentAudible = alreadyAudible ||
+        val currentAudible = alreadySounding ||
             (exoPlayer.isPlaying && exoPlayer.currentMediaItem?.mediaId == audibleMediaId)
         if (currentAudible) prefetchAround(exoPlayer)
         // The second look belongs to the track it was started for; the
@@ -13823,3 +13844,32 @@ private fun missingMeta(song: com.music.bitchord.data.model.Song?): String {
  */
 internal fun songCacheEvictionCount(size: Int, max: Int): Int =
     if (size >= max) size - max + 1 else 0
+
+/**
+ * Whether the row that just became current is already producing sound.
+ *
+ * A crossfade says so directly. A gapless auto advance does not: Media3 keeps
+ * the player READY across the item boundary, so [Player.Listener.onIsPlayingChanged]
+ * never fires and [PlaybackService.audibleMediaId] would still name the
+ * outgoing row. Requiring an ended track and a playing player is what separates
+ * that continuous handoff from a skip into a row that is still buffering
+ * (isPlaying can be true for one event while the incoming row has not sounded).
+ */
+internal fun rowAlreadySounding(
+    alreadyAudible: Boolean,
+    previousEnded: Boolean,
+    isPlaying: Boolean,
+): Boolean = alreadyAudible || (previousEnded && isPlaying)
+
+/**
+ * Whether that row is still audible once the song-version decision has run.
+ *
+ * A gapless advance into a video row is paused by [SongVersionController]'s
+ * first-sound hold, so the transition's playing state no longer describes it;
+ * treating it as audible there would write firstAudio=0 and start read-ahead
+ * for a row nobody can hear yet.
+ */
+internal fun rowSoundingAfterVersionHold(
+    alreadySounding: Boolean,
+    versionHeld: Boolean,
+): Boolean = alreadySounding && !versionHeld

@@ -73,6 +73,14 @@ internal class SongVersionController(
     private var versionHoldHeld = false
 
     /**
+     * Whether the row that just became current is being held silent for its
+     * song version. A gapless auto advance looks audible to the player even
+     * though [beginVersionHold] has paused it, so the caller has to ask this
+     * after resolving rather than trusting the transition's playing state.
+     */
+    val isHoldingFirstSound: Boolean get() = versionHoldHeld
+
+    /**
      * Tracks whose before-audio lookup timed out or was cancelled, so the one
      * retry after the first sound is still due. The gate is thread-safe,
      * because the timeout and the player callback can land on different
