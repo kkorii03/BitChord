@@ -488,14 +488,29 @@ object LyricsTiming {
         // The refine suspends on store I/O. A track switch or a newer timing
         // pass may have landed meanwhile, so do not let these stale facts
         // clear or overwrite the newer correction before publishing them.
-        if (!stillCurrent()) return result
-        store(context).update(videoId) {
+        if (!stillCurrent()) {
+            TrackLog.i(
+                "BitChord",
+                "lyrics-refine: $videoId stale result dropped (track changed)",
+                videoId,
+            )
+            return result
+        }
+        val saved = store(context).updateIfUnchanged(videoId, entry) {
             it.copy(
                 refineMs = appliedMs,
                 refineSlopePerMin = appliedSlope,
                 refineLines = result.lines,
                 refineMad = result.madMs,
             )
+        }
+        if (!saved) {
+            TrackLog.i(
+                "BitChord",
+                "lyrics-refine: $videoId stale result dropped (stored entry changed)",
+                videoId,
+            )
+            return result
         }
         val baseLabel = when {
             base == null -> "none"
@@ -3032,6 +3047,34 @@ object LyricsTiming {
                 dirty = true
             }
             scheduleSave()
+        }
+
+        /**
+         * [update], but only when the entry still equals [expected].
+         *
+         * A refine reads the entry, computes away from the lock and writes
+         * back later; another path (a newer refine, an AI answer, a hand
+         * correction) may have saved this video meanwhile. The comparison and
+         * the write share [update]'s lock, so an older result cannot clear or
+         * overwrite the newer correction. False means nothing was written.
+         */
+        suspend fun updateIfUnchanged(
+            videoId: String,
+            expected: Entry,
+            change: (Entry) -> Entry,
+        ): Boolean {
+            var saved = false
+            mutex.withLock {
+                val map = loaded()
+                val current = map[videoId] ?: Entry()
+                if (current != expected) return@withLock
+                map[videoId] = change(current)
+                while (map.size > MAX_ENTRIES) map.remove(map.keys.first())
+                dirty = true
+                saved = true
+            }
+            if (saved) scheduleSave()
+            return saved
         }
 
         /** Forgets every file's sync-check version, leaving the stored sync itself in place. */
