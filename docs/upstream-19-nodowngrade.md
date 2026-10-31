@@ -23,7 +23,7 @@
 | 한국 차단 곡 대체·프록시 재생·다른 ATV 사본 (D8-unplayable) | 우리 | MusicGateFallback* 테스트 + 에뮬레이터(집 IP 경로) 재생 | shared 컴파일 통과, 테스트 대기 |
 | 비디오 라디오 (D4-video, D4-modes) | 우리 | VideoRadio* 테스트 + `radioCache` 복원 | 대기 |
 | 품질 업그레이드 (D1-hq) | 1.9 (Direct Source) | 1.9 `direct:` 로그를 featurehealth 가 세게 수정 → 사용자 로그 성공률이 우리 이전 수치 이상 | 대기. HqAudioVerify 는 증거 나올 때까지 미연결 |
-| 애드온 건강 관리 (Direct Source 도 같은 addon 사용): ① 401/403 거부 addon 을 곡마다 다시 묻지 않기 ② 기기 오프라인이면 addon 을 30분 쉬게 하지 않기 ③ 실패가 섞인 '없음' 답을 캐시하지 않기 | 1.9+우리 | 10-31 실제 장애(Qobuz 19시부터 401 45회, 나머지 두 곳 매번 4초 timeout)를 시험으로 재현: 1.9 Direct Source 경로에서 같은 addon 을 다시 기다리지 않음. HqNetworkFailureTest·AddonAuth*Test 를 1.9 addon 클라이언트 기준으로 되살림 | 대기(테스트 4개 CI 목록에서 잠시 뺌, 파일 유지) |
+| 애드온 건강 관리 (Direct Source 도 같은 addon 사용): ① 401/403 거부 addon 을 곡마다 다시 묻지 않기 ② 기기 오프라인이면 addon 을 30분 쉬게 하지 않기 ③ 실패가 섞인 '없음' 답을 캐시하지 않기 | 1.9+우리 | 10-31 실제 장애(Qobuz 19시부터 401 45회, 나머지 두 곳 매번 4초 timeout)를 시험으로 재현: 1.9 Direct Source 경로에서 같은 addon 을 다시 기다리지 않음. HqNetworkFailureTest·AddonAuth*Test 를 1.9 addon 클라이언트 기준으로 되살림 | 확인됨 11-01: HQ 교체 1단계(459794aa) 후 ko/SourceSearchKo.kt 로 유지, HqNetworkFailure·AddonAuth* 16개 CI 통과(41215515417). 남은 것: 1.9 directStream 에서도 같은 SourceCooldown 을 타는지 에뮬레이터 로그 확인 |
 | 자동 믹스·크로스페이드 (D1-mix, D7-*) | 1.9 | 지운 우리 테스트 2개를 1.9 플래너 기준으로 다시 돌려 비교; 떨어지는 항목만 얹기. featurehealth D7 패턴을 1.9 로그에 맞춤 | 대기 |
 | 다음 곡 준비·첫 소리까지 시간 (D8-firstaudio, D1-time) | 1.9+우리 | NextPrep* 테스트 + 에뮬레이터 로그 | 대기 |
 | 자동재생 (autoplay) | 1.9+우리 | Autoplay* 테스트 | 대기 |
