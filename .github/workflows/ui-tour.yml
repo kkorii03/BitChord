@@ -43,6 +43,21 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      # The listener's own exported settings (sources, proxy, quality, lyrics),
+      # so the tour shows the app as they use it — same hand-off as smoke-play.
+      - name: Listener settings
+        env:
+          SMOKE_SETTINGS_B64: ${{ secrets.SMOKE_SETTINGS_B64 }}
+        run: |
+          if [ -n "$SMOKE_SETTINGS_B64" ]; then
+            echo "$SMOKE_SETTINGS_B64" | base64 -d | sed '1s/^\xEF\xBB\xBF//' > "$RUNNER_TEMP/smoke.bitchord-settings"
+            python3 scripts/smoke/set_proxy_port.py "$RUNNER_TEMP/smoke.bitchord-settings" "${SMOKE_PROXY_PORT:-8889}" --emulator
+            echo "SMOKE_SETTINGS_FILE=$RUNNER_TEMP/smoke.bitchord-settings" >> "$GITHUB_ENV"
+            echo "::notice title=tour::listener settings loaded"
+          else
+            echo "::warning title=tour::no SMOKE_SETTINGS_B64 secret - touring a fresh install"
+          fi
+
       - name: Tour
         uses: reactivecircus/android-emulator-runner@v2
         env:
@@ -55,7 +70,10 @@ jobs:
           profile: pixel_7
           disable-animations: false
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: bash .github/ui-tour/tour.sh
+          # Device-wide proxy through the runner's authfwd (see set_proxy_port.py).
+          script: |
+            if [ -n "$SMOKE_UPSTREAM_PROXY" ]; then (nohup python3 scripts/smoke/authfwd.py "$SMOKE_UPSTREAM_PROXY" > "$RUNNER_TEMP/authfwd.log" 2>&1 &) ; sleep 2; adb shell settings put global http_proxy 10.0.2.2:3128; fi
+            bash .github/ui-tour/tour.sh
 
       - name: Upload
         if: always()
