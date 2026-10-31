@@ -1,0 +1,9 @@
+BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/fix-1030.
+버그(FIXLIST 116 남은 MEDIUM): 고음질 소스 검색(hq-none-cache 수정분)에서 HTTP 오류는 failureMark 를 올려 '실패 섞인 없음'으로 처리되지만, 소켓 시간초과(SocketTimeoutException)·DNS 실패(UnknownHostException)·SSL 실패(SSLException)·연결 거부(ConnectException) 같은 네트워크 예외는 failureMark 를 올리지 않는다. 그래서 바깥 시간 한도에만 의존하고, 이런 실패가 섞인 '없음'이 확정 캐시될 수 있다.
+할 일:
+① 원인 확정(파일:줄): failureMark(또는 같은 역할 표시)를 올리는 곳과, 네트워크 예외가 잡히는 catch 블록(애드온 검색·소스 요청 경로).
+② IOException 계열 네트워크 예외도 failureMark 를 올리고, 소스별 로그 'hq-search: ... verdict=error|timeout' 이 찍히게. CancellationException 은 실패로 세지 말고 그대로 다시 던질 것.
+③ 쉬기(resting) 규칙: 네트워크 예외도 기존 실패 횟수 규칙에 들어가되, 기기 자체가 오프라인이면(모든 소스가 동시에 같은 네트워크 예외) 소스를 쉬게 만들지 않는다. 재시도 루프·타이머 추가 금지(배터리 우선).
+테스트: 네트워크 예외 섞인 '없음'은 캐시 안 됨, 취소는 실패로 안 셈, 오프라인은 쉬기 안 됨 — 단위 테스트(고치기 전 실패). 새 테스트 클래스 이름 요약에 적을 것.
+제약: .github/, keys, 서명 수정 금지. 바꾼 함수의 모든 호출부와 타입 재확인. 기존 주석·의도를 지우면 요약에 이유.
+마지막 10줄 이내 요약: 원인(파일:줄) / 수정 파일 / 핵심 변경 / 테스트 결과 / 미해결.
