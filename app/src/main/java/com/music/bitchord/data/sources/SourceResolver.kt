@@ -1684,7 +1684,12 @@ object SourceResolver {
             // it would mark this walk inconclusive and retry the track.
             val localisedIsAlternate =
                 verifiedOpened != null && !verifiedOpened.second.belowRequest
-            val localisedOpened = if (unverifiedMatches.isEmpty()) {
+            val localisedOpened = if (
+                unverifiedMatches.isEmpty() ||
+                // A refused credential already stopped the credited rows; the
+                // localised ones would only be refused again.
+                SourceCooldown.authMark(source.configId) != authMark
+            ) {
                 null
             } else {
                 // These are already ordered closest-runtime-first; do not let
@@ -1887,9 +1892,16 @@ object SourceResolver {
         val wantsLossless = request is StreamRequest.Lossless
         val ordered = if (preserveOrder) matches else preferred(matches, target, wantsLossless)
         var settleFor: Pair<Song, SourceStream>? = null
+        // A credential refusal is not a property of this row: every other row
+        // will be refused the same way. Stop after the first refusal instead of
+        // spending up to three `/stream` calls (and raising the source's
+        // failure mark each time) against a source that just said no.
+        val authMark = SourceCooldown.authMark(source.configId)
         for (match in ordered.take(STREAM_ATTEMPTS)) {
             val trackId = SourceRegistry.parseTrackKey(match.videoId)?.second ?: match.videoId
-            val opened = attempt(source, countFailure) { source.stream(trackId, request) } ?: continue
+            val opened = attempt(source, countFailure) { source.stream(trackId, request) }
+            if (SourceCooldown.authMark(source.configId) != authMark) return settleFor
+            if (opened == null) continue
             // The row this URL came from knows how long the recording is; the
             // URL itself doesn't. Carried along so a caller swapping this into
             // a track already playing can check it — see [SourceStream.durationSec].

@@ -134,6 +134,15 @@ class AddonSource(
                 if (authRecentlyRejected()) {
                     return@fold SourceHealth.Rejected(authRejectedReason())
                 }
+                // A healthy manifest only says the host is reachable: the
+                // token is spent on `/search`, and a fresh instance (after a
+                // restart or a registry rebuild) has no local auth mark yet.
+                // Ask once so a refused credential cannot hide behind the
+                // ten-minute manifest cache and still report `Ok`.
+                if (client.probeSearch().exceptionOrNull() is AddonAuthException) {
+                    noteAuthFailure()
+                    return@fold SourceHealth.Rejected(authRejectedReason())
+                }
                 SourceHealth.Ok(
                     listOfNotNull(
                         manifest.displayName.takeIf { it.isNotBlank() },
