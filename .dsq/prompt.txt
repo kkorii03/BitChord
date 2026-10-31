@@ -1,0 +1,5 @@
+﻿BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep, 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/fix-1030.
+버그(에뮬레이터 C5 로그로 증명): 저작권 차단 곡 7QihqRWMrz8 재생 시 StreamResolver 가 학습된 순서대로 InnerTubeX 를 먼저 13.4초 돌린 뒤에야 직접 경로(DirectClient IOS/ANDROID, 568ms)를 시도하고, 직접 경로가 'SME님이 소유권 주장을 제기한 콘텐츠로 인해 차단되었습니다'(곡 고유 확정 사유)를 바로 알려 줌 → 확정까지 14초 + 대체 2.6초 = 17초 무음. 로그: 'TIMING 7Q InnerTubeX: 13396ms' → 'direct IOS UNPLAYABLE ... 소유권 주장' → 'TIMING 7Q direct: 568ms' → 'unplayable timing: ... after 2568ms'.
+수정: 직접 경로의 가벼운 판정(DirectClient, 보통 1초 미만)을 InnerTubeX 와 동시에(경주) 또는 먼저 시작해, 곡 고유 확정 사유(UnplayableReason.isDefinitelyGone)가 나오면 진행 중인 InnerTubeX·추출을 즉시 취소하고 PermanentlyUnplayable 로 끝냄. 확정이 아닌 결과(봇 확인·지역 차단·일반 실패)는 지금 순서·학습 경로 그대로. 정상 곡의 첫 소리 속도가 느려지지 않게(직접 경로가 성공하면 그대로 쓰거나, InnerTubeX 를 기다리는 기존 우선순위 유지 — 요약에 설계와 근거). 'resolve: <id> definitive by direct in <ms>' 로그.
+테스트: 직접 확정이 InnerTubeX 를 취소하고 끝나는지, 확정이 아니면 기존 순서인지 — 가짜 클라이언트로 단위 테스트.
+반드시: 배터리·요청 수(직접 요청 1회 추가만 허용). 바꾼 함수 호출부 확인. 제약: .github/, keys, 서명 수정 금지. 마지막 10줄 요약.
