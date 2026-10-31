@@ -1,0 +1,183 @@
+﻿[NO-FIX-LOOP]
+You are fixing compile errors in the APP module after merging upstream BitChord v1.9 into our Korean fork, and re-attaching lost Korean-fork features. rg is NOT installed: use grep.
+
+How the merge was done: every conflict hunk took the UPSTREAM v1.9 side; our non-conflicting changes stayed. Our code that lived in conflict hunks is gone, and our remaining code references things that no longer exist or whose upstream signature changed. The shared and sharedUi modules already compile (do not edit shared/ or sharedUi/ main code).
+Reference versions (fetch first):
+  git fetch origin task/fix-1030 ; then use commit 724fd5ef = our fork right before the merge (git show 724fd5ef:<path>)
+  git fetch https://github.com/kushagrasinghx/BitChord.git refs/tags/v1.9:refs/tags/v1.9   (pure upstream, read only, never push there)
+Lost-feature inventory: docs/upstream-19-lost.md (rows give fork file:line, identifiers, where to re-attach). Feature decisions: docs/upstream-19-plan.md and docs/upstream-19-nodowngrade.md.
+
+USER POLICY (strict): upgrade to v1.9 with NO functional downgrade. Where v1.9 has its own implementation of a feature, v1.9's is used: quality upgrade / hq-swap / HQ prefetch / HqAudioVerify wiring -> v1.9 Direct Source Stream (DirectSourceGate); automix/crossfade -> v1.9 Automix; downloads, settings screen layout, menus, video playback, tab bar, mini player -> v1.9. For those, adapt or delete OUR now-dead caller code (list every deletion with reason in the summary) — never delete v1.9 code.
+KEEP and RE-ATTACH every Korean-fork feature v1.9 does not have, for rows of docs/upstream-19-lost.md buckets A-E, I, J that touch your files: lyrics sync correction (incl. AudioCache timingKeep), song-version verdict / no music video / audio instead of MV (musicOnlyTried, alternateVersionCache), settings prefer_music_only, skip_non_music_parts, skip_sponsor_parts (keys, setters, and the PlaybackService collectors that apply them), Korea-blocked fallback + proxy (recheckGateNow), video radio, Korean UI labels, diagnostic logs (installCrashHandler/logProcessStart/onTrimMemory, release TrackLog.echo, DebugLog->TrackLog, crossfade skipped line, consume-user-queue line, audio switch refusal detail), withPhraseLineBreak, close player when queue empties, TrackAnalyzer.awaitWindow (event-driven, no polling).
+
+Separation rule (docs/ko-fork-layout.md): restored Korean code goes in NEW files under app/src/main/java/com/music/bitchord/ko/ (package com.music.bitchord.ko), not back inside upstream files. Inside a file that exists in v1.9, add only short calls marked with a trailing comment // [KO] <feature>. Prefer extension/top-level functions. When an upstream signature changed, adapt OUR code to it.
+
+HARD RULES (results are machine-checked; a violating result is thrown away):
+- never restore a whole file from 724fd5ef / task/fix-1030; never delete or empty a file that exists in v1.9; never revert v1.9 hunks to the fork version.
+- edit only YOUR files (list below) plus new files under app/src/main/java/com/music/bitchord/ko/ (name them <LaneName>*.kt). If you need a declaration that belongs in another lane's file, do NOT edit that file: write 'NEEDS: <file>: <declaration>' in the summary and, if you can, provide it as a function in your own ko/ file.
+- do not edit .github/, keys/, signing, gradle files.
+Check your own errors with: ./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain -q 2>&1 | grep '^e: ' | grep -E '<your file names>' . Other lanes fix the other files in parallel, so errors elsewhere are expected — ignore them. Goal: zero errors in your files.
+Battery first (no polling/timers, event-driven). Re-read every caller and type of a function you change.
+
+At the end, summarize in 12 lines or less: modified files / new ko files / Korean features restored / our code dropped in favour of v1.9 (with reason) / NEEDS lines / remaining errors in your files / unresolved questions.
+
+LaneName=cache. YOUR FILES:
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt
+app/src/main/java/com/music/bitchord/download/Downloads.kt
+app/src/main/java/com/music/bitchord/download/Downloader.kt
+app/src/main/java/com/music/bitchord/playback/QualityUpgrade.kt
+app/src/main/java/com/music/bitchord/data/LocalMediaRepository.kt
+
+Current compile errors in your files (152):
+app/src/main/java/com/music/bitchord/data/LocalMediaRepository.kt:566:40 Unresolved reference 'R'.
+app/src/main/java/com/music/bitchord/download/Downloader.kt:508:52 Cannot infer type for type parameter 'R'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/download/Downloader.kt:509:9 Unresolved reference 'ProxyPlayback'.
+app/src/main/java/com/music/bitchord/download/Downloader.kt:520:14 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/download/Downloader.kt:520:14 Cannot infer type for type parameter 'R'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/download/Downloader.kt:520:20 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/download/Downloader.kt:522:26 Unresolved reference 'header'.
+app/src/main/java/com/music/bitchord/download/Downloader.kt:526:33 Unresolved reference 'header'.
+app/src/main/java/com/music/bitchord/download/Downloader.kt:530:7 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/download/Downloads.kt:92:15 Unresolved reference 'HqTier'.
+app/src/main/java/com/music/bitchord/download/Downloads.kt:281:48 Unresolved reference 'HqTier'.
+app/src/main/java/com/music/bitchord/download/Downloads.kt:453:22 Unresolved reference 'HqTier'.
+app/src/main/java/com/music/bitchord/download/Downloads.kt:865:36 Unresolved reference 'name'.
+app/src/main/java/com/music/bitchord/download/Downloads.kt:899:22 Unresolved reference 'DownloadHealthPolicy'.
+app/src/main/java/com/music/bitchord/download/Downloads.kt:914:22 Unresolved reference 'DownloadHealthPolicy'.
+app/src/main/java/com/music/bitchord/download/Downloads.kt:925:13 Unresolved reference 'HqVerificationStore'.
+app/src/main/java/com/music/bitchord/download/Downloads.kt:931:38 Unresolved reference 'HqTier'.
+app/src/main/java/com/music/bitchord/download/Downloads.kt:932:48 Cannot infer type for type parameter 'R'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/download/Downloads.kt:932:62 Cannot infer type for type parameter 'R'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/download/Downloads.kt:932:76 Unresolved reference 'HqTier'.
+app/src/main/java/com/music/bitchord/download/Downloads.kt:1696:32 Unresolved reference 'name'.
+app/src/main/java/com/music/bitchord/download/Downloads.kt:1717:32 Unresolved reference 'name'.
+app/src/main/java/com/music/bitchord/download/Downloads.kt:2087:17 Unresolved reference 'HqAudioVerify'.
+app/src/main/java/com/music/bitchord/download/Downloads.kt:2087:57 Suspension functions can only be called within coroutine body.
+app/src/main/java/com/music/bitchord/download/Downloads.kt:2248:27 Cannot infer type for type parameter 'R'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/download/Downloads.kt:2288:17 Unresolved reference 'routeForVerified'.
+app/src/main/java/com/music/bitchord/download/Downloads.kt:2290:51 Too many arguments for 'suspend fun routeFor(context: Context, track: Song, quality: DownloadQuality): Downloads.Route'.
+app/src/main/java/com/music/bitchord/download/Downloads.kt:2290:64 Too many arguments for 'suspend fun routeFor(context: Context, track: Song, quality: DownloadQuality): Downloads.Route'.
+app/src/main/java/com/music/bitchord/download/Downloads.kt:2310:42 Unresolved reference 'rank'.
+app/src/main/java/com/music/bitchord/download/Downloads.kt:2310:61 Unresolved reference 'rank'.
+app/src/main/java/com/music/bitchord/download/Downloads.kt:2313:37 Unresolved reference 'label'.
+app/src/main/java/com/music/bitchord/download/Downloads.kt:2313:72 Unresolved reference 'label'.
+app/src/main/java/com/music/bitchord/download/Downloads.kt:2559:19 Unresolved reference 'HqTier'.
+app/src/main/java/com/music/bitchord/download/Downloads.kt:2623:20 Unresolved reference 'HqQuality'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:310:13 Unresolved reference 'format'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:310:37 Unresolved reference 'state'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:310:89 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:311:13 Unresolved reference 'state'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:314:13 Unresolved reference 'state'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:314:71 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:368:9 Unresolved reference 'purgeCandidates'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:369:9 Unresolved reference 'purgeIndexBuilt'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:420:21 Unresolved reference 'forgetPurgeCandidate'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:452:17 Unresolved reference 'forgetPurgeCandidate'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:491:17 Unresolved reference 'forgetPurgeCandidate'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:555:25 Unresolved reference 'completeUpgradeRendition'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:557:29 Unresolved reference 'completeUpgradeRendition'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:645:22 This declaration can only be called on a reference to a 'lateinit' property.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:663:37 This declaration can only be called on a reference to a 'lateinit' property.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:978:21 Unresolved reference 'updatePurgeCandidate'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:978:47 Unresolved reference 'purgeCandidate'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:985:17 Unresolved reference 'updatePurgeCandidate'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:1025:9 Cannot infer type for type parameter 'R'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:1038:17 Unresolved reference 'updatePurgeCandidate'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:1038:43 Unresolved reference 'purgeCandidate'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:1051:13 Unresolved reference 'updatePurgeCandidate'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:1061:11 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:1225:21 Unresolved reference 'forgetPurgeCandidate'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:1298:32 Unresolved reference 'isLosslessRendition'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:1381:22 This declaration can only be called on a reference to a 'lateinit' property.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:1383:18 Unresolved reference 'purgeIndexBuilt'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:1383:35 Unresolved reference 'rebuildPurgeIndex'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:1395:60 Unresolved reference 'keptForTiming'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:1399:25 Unresolved reference 'forgetPurgeCandidate'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:1537:21 Unresolved reference 'retain'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:1537:28 Unresolved reference 'playbackKeysInUse'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:1538:30 Cannot infer type for type parameter 'R'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:1538:36 Unresolved reference 'retain'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:1538:43 Unresolved reference 'playbackVideoIdsInUse'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:1566:21 Unresolved reference 'release'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:1566:29 Unresolved reference 'playbackKeysInUse'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:1567:26 Unresolved reference 'playerHoldsKey'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:1567:47 Unresolved reference 'keyIdleSignals'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:1567:75 Unresolved reference 'complete'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:1570:21 Unresolved reference 'release'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:1570:29 Unresolved reference 'playbackVideoIdsInUse'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:1576:44 Unresolved reference 'retryAnalysisHeadIfReaderReleased'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:1784:26 Unresolved reference 'playerHoldsVideo'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:1901:25 Unresolved reference 'retain'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:1901:32 Unresolved reference 'readAheadWrites'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:1922:29 Unresolved reference 'release'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:1922:37 Unresolved reference 'readAheadWrites'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:1923:29 Unresolved reference 'retryAnalysisHeadIfReaderReleased'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2076:17 Unresolved reference 'playerHoldsVideo'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2113:17 Unresolved reference 'playerHoldsVideo'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2124:28 Unresolved reference 'playerHoldsVideo'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2185:39 Unresolved reference 'keyIdleSignals'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2186:21 Unresolved reference 'playerHoldsKey'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2187:21 Unresolved reference 'keyIdleSignals'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2187:52 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2192:20 Unresolved reference 'await'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2224:24 Unresolved reference 'wholeRenditionJobs'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2282:21 Unresolved reference 'wholeRenditionJobs'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2303:14 Unresolved reference 'losslessPrefetchAttempted'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2304:9 Unresolved reference 'upgradeKeyDeferred'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2305:9 Unresolved reference 'losslessPrefetchJob'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2312:9 Unresolved reference 'losslessPrefetchFor'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2313:9 Unresolved reference 'losslessPrefetchJob'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2316:13 Unresolved reference 'pendingLowQualityDrops'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2317:17 Unresolved reference 'currentMediaId'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2317:43 Unresolved reference 'currentMediaId'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2318:17 Unresolved reference 'pendingLowQualityDrops'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2332:32 Unresolved reference 'losslessPrefetchFor'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2337:24 Unresolved reference 'currentMediaId'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2338:22 Unresolved reference 'losslessPrefetchJob'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2339:21 Unresolved reference 'losslessPrefetchJob'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2340:9 Unresolved reference 'losslessPrefetchJob'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2341:9 Unresolved reference 'losslessPrefetchFor'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2342:21 Unresolved reference 'losslessPrefetchAttempted'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2360:9 Unresolved reference 'losslessPrefetchJob'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2360:30 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2360:37 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2360:42 Unresolved reference 'isActive'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2360:54 Unresolved reference 'join'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2370:9 Unresolved reference 'upgradeKeyDeferred'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2375:17 Unresolved reference 'losslessPrefetchAttempted'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2378:17 Unresolved reference 'losslessPrefetchAttempted'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2425:28 Unresolved reference 'losslessPrefetchAttempted'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2438:9 Unresolved reference 'pendingLowQualityDrops'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2453:9 Unresolved reference 'currentMediaId'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2454:9 Unresolved reference 'upgradeKeyDeferred'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2454:28 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2454:38 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2455:21 Unresolved reference 'pendingLowQualityDrops'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2456:23 Unresolved reference 'it'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2457:20 Unresolved reference 'it'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2457:27 Cannot infer type for type parameter 'A'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2457:27 Cannot infer type for type parameter 'B'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2457:30 Unresolved reference 'it'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2458:25 Cannot infer type for implicit value parameter 'it'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2458:25 Operator call 'component1()' is ambiguous for destructuring of type '??? (Unknown type for value parameter <destruct>)'. Applicable candidates:
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2458:25 Operator call 'component2()' is ambiguous for destructuring of type '??? (Unknown type for value parameter <destruct>)'. Applicable candidates:
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2459:17 Unresolved reference 'pendingLowQualityDrops'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2459:40 Cannot infer type for type parameter 'K'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2459:40 Cannot infer type for type parameter 'V'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2485:21 Unresolved reference 'forgetPurgeCandidate'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2505:9 Unresolved reference 'wholeRenditionJobs'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2506:23 Unresolved reference 'it'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2507:24 Cannot infer type for value parameter 'entry'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2508:23 Unresolved reference 'value'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2509:17 Unresolved reference 'wholeRenditionJobs'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2509:36 Cannot infer type for type parameter 'K'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2509:36 Cannot infer type for type parameter 'V'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2509:49 Unresolved reference 'key'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2509:60 Unresolved reference 'value'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2680:31 Unresolved reference 'anotherWriterHas'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2683:17 Unresolved reference 'anotherWriterHas'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2877:29 Unresolved reference 'anotherWriterHas'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2938:29 Unresolved reference 'anotherWriterHas'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:3062:17 Unresolved reference 'forgetPurgeCandidate'.
+app/src/main/java/com/music/bitchord/playback/AudioCache.kt:3397:13 Unresolved reference 'playerHoldsKey'.
+app/src/main/java/com/music/bitchord/playback/QualityUpgrade.kt:563:37 Unresolved reference 'SearchReport'.
