@@ -1,0 +1,20 @@
+Task: make 6 failing shared JVM tests pass again after the upstream v1.9 merge. rg is NOT installed: use grep.
+
+Context: Korean fork of BitChord merged upstream v1.9; every conflict hunk took the v1.9 side, so some of OUR title-parsing rules in TrackMatcher (Korean fork feature: song-version verdict, OST/cover title handling, Korean target matching) were lost. The tests are ours and describe the behaviour we want to keep.
+Reference versions (fetch first):
+  git fetch origin task/fix-1030   (our fork before the merge; tests passed there)
+  git fetch https://github.com/kushagrasinghx/BitChord.git refs/tags/v1.9:refs/tags/v1.9   (pure upstream, read only)
+Compare: git diff v1.9 origin/task/fix-1030 -- shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt and the current file.
+
+Failing tests (./gradlew :shared:jvmTest --tests '<class>' --console=plain):
+- AudioSwitchOstTitleTest: 'official video tails and cover titles still parse as before', 'a take marker after a trailing soundtrack label is kept'
+- TitleNormalizationTest: 'an english catalogue row matches the korean target that names it'
+- TrackMatcherOstReviewTest: 'a VEVO channel credit still inverts an artist-title upload', 'a mid-title OST tail is not part of the core', 'a bracketed take followed by packaging keeps the take and drops the packaging'
+
+Rules:
+- Do NOT change the tests. Do NOT restore whole files from origin/task/fix-1030. Do NOT delete or rewrite upstream v1.9 code; v1.9 behaviour for its own tests must stay (run ./gradlew :shared:jvmTest --tests 'com.music.bitchord.data.sources.*' and keep everything else green).
+- Put the restored Korean rules in a NEW file shared/src/jvmSharedMain/kotlin/com/music/bitchord/ko/KoTitleRules.kt (package com.music.bitchord.ko) as functions; inside TrackMatcher.kt only add one-line calls marked with trailing comment // [KO] title-rules (see docs/ko-fork-layout.md). Making a private TrackMatcher helper internal is allowed (mark // [KO]).
+- Only edit TrackMatcher.kt (and other files under shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/ if strictly needed) plus the new ko file. The app module may not compile yet - that is other work; ignore app errors, do not edit app/ or sharedUi/.
+- Battery first (no polling/timers). Re-read all callers of anything you change.
+
+At the end, summarize in 10 lines or less: modified files / new ko file / which rules restored / test results (all 6 + data.sources.* ) / unresolved questions.
