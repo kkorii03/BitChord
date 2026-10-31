@@ -72,7 +72,6 @@ object TelegramClientManager {
 
     /** True only while this process has seen an actual phone/code/password login. */
     private var interactiveLogin = false
-    private val streamReaders = AtomicInteger()
 
     /** Called once from Application.onCreate; it only installs listeners. */
     fun init(context: Context) {
@@ -108,8 +107,9 @@ object TelegramClientManager {
 
     /**
      * The Telegram source calls this when its own playback starts or stops.
-     * Global playback (local, YouTube, add-ons) must not reach here: this stage
-     * has no Telegram playback yet, so no caller is wired.
+     * Global playback (local, YouTube, add-ons) must not reach here. Streams
+     * and metadata lookups use the counted [beginStream]/[streamMetadata]
+     * leases instead, so they cannot close one another.
      */
     fun onTelegramPlayback(active: Boolean) {
         if (context == null) return
@@ -128,24 +128,29 @@ object TelegramClientManager {
         // Synchronous so the reader that is about to ask for bytes cannot get
         // ahead of the gate that keeps the client open for them.
         runOnWorker {
-            val first = streamReaders.getAndIncrement() == 0
-            gate.acquire(STREAM_HOLDER)
-            if (first) gate.onTelegramPlaybackActive(true)
-            applyGate("stream open")
+            acquireStreamLease("stream open")
         }
     }
 
     fun endStream(trackId: String) {
         if (context == null) return
         runOnWorker {
-            val left = streamReaders.decrementAndGet()
-            if (left <= 0) {
-                streamReaders.set(0)
-                gate.release(STREAM_HOLDER)
-                gate.onTelegramPlaybackActive(false)
-            }
-            applyGate("stream close")
+            releaseStreamLease("stream close")
         }
+    }
+
+    /** Runs on [work]. A metadata lookup is a lease just like an open stream. */
+    private fun acquireStreamLease(reason: String) {
+        val first = gate.beginStreamLease()
+        if (first) gate.acquire(STREAM_HOLDER)
+        applyGate(reason)
+    }
+
+    /** Runs on [work]. Only the last lease releases playback and the holder. */
+    private fun releaseStreamLease(reason: String) {
+        val last = gate.endStreamLease()
+        if (last) gate.release(STREAM_HOLDER)
+        applyGate(reason)
     }
 
     private fun runOnWorker(block: () -> Unit) {
@@ -222,17 +227,19 @@ object TelegramClientManager {
      * needs to describe a stream, resolved while holding the gate.
      *
      * A search has already released its client when its rows are played, so
-     * looking this up without a holder finds no client. The holder is released
-     * before the DataSource opens; [beginStream] acquires its own and waits for
-     * the session again, which is the event that keeps it open for playback.
+     * looking this up without a lease finds no client. This takes the same
+     * counted lease as [beginStream]: preparing a queue transition must work
+     * while the screen is off, and concurrent lookups must not close the
+     * client under one another. The lease ends before the DataSource opens;
+     * [beginStream] takes its own and waits for the session again.
      */
     suspend fun streamMetadata(trackId: String): TelegramTrack {
-        acquire(STREAM_METADATA_HOLDER)
+        runOnWorker { acquireStreamLease("stream metadata open") }
         return try {
             awaitReady()
             withContext(Dispatchers.IO) { trackForStream(trackId) }
         } finally {
-            release(STREAM_METADATA_HOLDER)
+            runOnWorker { releaseStreamLease("stream metadata close") }
         }
     }
 
@@ -926,7 +933,6 @@ object TelegramClientManager {
     private const val SEARCH_HOLDER = "search"
     private const val CHATS_HOLDER = "chats"
     private const val STREAM_HOLDER = "stream"
-    private const val STREAM_METADATA_HOLDER = "stream metadata"
     private const val MAX_CHATS = 500
     private const val MAX_CHAT_PAGES = MAX_CHATS / 100
 }
