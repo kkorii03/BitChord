@@ -31,6 +31,25 @@ class RefinePolicyTest {
     }
 
     @Test
+    fun aSmallTightMedianVerifiesWithoutMovingTheLines() {
+        val lines = lines(8)
+        val result = RefinePolicy.compute(lines, heardFor(lines, 68L))
+
+        assertFalse(result.applied)
+        assertEquals(68L, result.medianMs)
+        assertTrue(result.verified)
+    }
+
+    @Test
+    fun aLargeMoveThatWasAppliedIsNotReportedAsVerified() {
+        val lines = lines(8)
+        val result = RefinePolicy.compute(lines, heardFor(lines, 200L))
+
+        assertTrue(result.applied)
+        assertFalse(result.verified)
+    }
+
+    @Test
     fun fewerThanSixLinesIsNotASongWideAnswer() {
         val lines = lines(5)
         val result = RefinePolicy.compute(lines, heardFor(lines, 200L))

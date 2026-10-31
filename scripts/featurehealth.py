@@ -814,19 +814,45 @@ def analyze(log: Log) -> Report:
             return "answered"
         return "skipped:" + _sync_skip_reason(row["sync"])
 
+    # A later playback can verify the provider's own clock without moving it.
+    # The next-prep step may have skipped the file as `file-timed`, but the
+    # summary's `sync=verified` is the answer the listener actually got.
+    verified_summary_at: dict[str, list[datetime]] = defaultdict(list)
+    for row in summaries:
+        if row["sync"] == "verified":
+            verified_summary_at[row["id"]].append(row["at"])
+
+    def verified_after(row: dict[str, Any]) -> bool:
+        return any(
+            at >= row["at"] for at in verified_summary_at.get(row["version"], ())
+        )
+
+    def row_sync_success(row: dict[str, Any]) -> bool:
+        return row_sync_result(row) == "answered" or (
+            row["lyrics"] != "none" and verified_after(row)
+        )
+
     def sync_result_reason(result: str) -> str:
         for prefix in ("skipped:", "failed:"):
             if result.startswith(prefix):
                 return result[len(prefix):]
         return result
 
-    d1_sync = sum(1 for row in d1_with_lyrics if row_sync_result(row) == "answered")
-    d1_sync_skips = [row for row in next_preps if row_sync_result(row) != "answered"]
+    d1_sync = sum(1 for row in d1_with_lyrics if row_sync_success(row))
+    d1_sync_skips = [row for row in next_preps if not row_sync_success(row)]
     d1_sync_skip_reasons = Counter(
         sync_result_reason(row_sync_result(row)) for row in d1_sync_skips
     )
+    d1_sync_verified = sum(
+        1
+        for row in d1_with_lyrics
+        if row_sync_result(row) != "answered" and verified_after(row)
+    )
     d1_sync_failed = sum(
-        1 for row in d1_with_lyrics if row_sync_result(row).startswith("failed:")
+        1
+        for row in d1_with_lyrics
+        if not row_sync_success(row)
+        and row_sync_result(row).startswith("failed:")
     )
     d1_sync_failures = [
         _failure(
@@ -865,7 +891,7 @@ def analyze(log: Log) -> Report:
                 "D1 다음 곡 준비 · 가사 싱크",
                 len(d1_with_lyrics),
                 d1_sync,
-                "가사 있는 곡 sync applied ≥80%"
+                "가사 있는 곡 sync applied/verified ≥80%"
                 + (
                     f" (skipped {d1_skipped_ratio:.0%})"
                     if d1_skipped_ratio is not None
@@ -918,6 +944,7 @@ def analyze(log: Log) -> Report:
         "lyrics": d1_lyrics,
         "hq": d1_hq,
         "sync": d1_sync,
+        "sync_verified": d1_sync_verified,
         "sync_skipped": len(d1_sync_skips),
         "sync_failed": d1_sync_failed,
         "sync_skip_reasons": dict(d1_sync_skip_reasons),
@@ -932,17 +959,10 @@ def analyze(log: Log) -> Report:
     for video_id, title in title_by_id.items():
         title_to_ids[_norm_title(title)].add(video_id)
 
+    # Non-decode evidence that the song reached lossless. DECODE lines are
+    # judged by their last format below, so an earlier FLAC cannot hide a later
+    # Opus fallback.
     flac_evidence: list[dict[str, Any]] = []
-    for row in decodes:
-        if _is_flac(row["mime"]):
-            video_id = row["id"]
-            flac_evidence.append(
-                {
-                    "at": row["at"],
-                    "id": video_id,
-                    "title": title_by_id.get(video_id, ""),
-                }
-            )
     for row in hq_swaps:
         if row["state"] != "done":
             continue
@@ -951,6 +971,7 @@ def analyze(log: Log) -> Report:
                 "at": row["at"],
                 "id": row["id"],
                 "title": title_by_id.get(row["id"], ""),
+                "kind": "swap-done",
             }
         )
     for row in hq_aheads:
@@ -959,12 +980,18 @@ def analyze(log: Log) -> Report:
                 "at": row["at"],
                 "id": row["id"],
                 "title": title_by_id.get(row["id"], ""),
+                "kind": "hq-ahead",
             }
         )
     for row in already_playing:
         if _is_flac(row["mime"]):
             flac_evidence.append(
-                {"at": row["at"], "id": None, "title": row["title"]}
+                {
+                    "at": row["at"],
+                    "id": None,
+                    "title": row["title"],
+                    "kind": "already-playing",
+                }
             )
     for row in bracket_formats:
         if _is_flac(row["format"]):
@@ -973,6 +1000,7 @@ def analyze(log: Log) -> Report:
                     "at": row["at"],
                     "id": row["id"],
                     "title": row["title"] or title_by_id.get(row["id"] or "", ""),
+                    "kind": "format",
                 }
             )
 
@@ -998,29 +1026,72 @@ def analyze(log: Log) -> Report:
                 }
             )
 
+    def d2_belongs(
+        video_id: str | None,
+        title: str,
+        wanted: str,
+        ids: set[str],
+        event_id: str | None,
+    ) -> bool:
+        if event_id is not None:
+            return video_id == event_id
+        if video_id is not None and video_id in ids:
+            return True
+        return _norm_title(title) == wanted
+
     d2_success = 0
     d2_failures: list[Failure] = []
     for event in d2_events:
         wanted = _norm_title(event["title"])
         ids = title_to_ids.get(wanted, set())
         event_id = event["id"]
-        played = any(
+        # A completed swap is the strongest per-song evidence: from that point
+        # the track is playing the verified lossless copy, even when the verify
+        # line that opened the event was logged after (or before) the swap and
+        # the only DECODE line was the low-quality one it replaced.
+        swapped = any(
+            row["state"] == "done"
+            and d2_belongs(
+                row["id"],
+                title_by_id.get(row["id"], ""),
+                wanted,
+                ids,
+                event_id,
+            )
+            for row in hq_swaps
+        )
+        decodes_after = [
+            row
+            for row in decodes
+            if row["at"] >= event["at"]
+            and d2_belongs(
+                row["id"],
+                title_by_id.get(row["id"], ""),
+                wanted,
+                ids,
+                event_id,
+            )
+        ]
+        last_decode = max(decodes_after, key=lambda row: row["at"], default=None)
+        other_played = any(
             evidence["at"] >= event["at"]
-            and (
-                (
-                    event_id is not None
-                    and evidence["id"] == event_id
-                )
-                or (
-                    event_id is None
-                    and (
-                        _norm_title(evidence["title"]) == wanted
-                        or (evidence["id"] is not None and evidence["id"] in ids)
-                    )
-                )
+            and d2_belongs(
+                evidence["id"],
+                evidence["title"],
+                wanted,
+                ids,
+                event_id,
             )
             for evidence in flac_evidence
         )
+        if swapped:
+            played = True
+        elif last_decode is not None:
+            # The last DECODE line for this song is what actually played; an
+            # earlier FLAC from the same track is not the final format.
+            played = _is_flac(last_decode["mime"])
+        else:
+            played = other_played
         if played:
             d2_success += 1
         else:

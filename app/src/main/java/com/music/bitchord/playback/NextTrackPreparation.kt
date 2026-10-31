@@ -527,10 +527,16 @@ internal class NextTrackPreparation(
         } else {
             NextPrepPolicy.syncStatus(syncFacts)
         }
-        val hqLabel = hq?.name?.lowercase(Locale.ROOT)
-            ?: NextPrepPolicy.noneWithReason(
-                if (deadlineHit) "deadline" else hqSkipReason(song),
-            )
+        // Read-ahead can pin the lossless stream after this bundle's HQ step
+        // already answered null (its flight is registered by prefetchQueue a
+        // moment later). The summary is written at the end, so report the
+        // latest answer rather than the one captured at the start.
+        val hqLabel = nextPrepHqLabel(
+            prepared = hq,
+            latest = existingHq(song),
+            deadlineHit = deadlineHit,
+            skipReason = hqSkipReason(song),
+        )
         val mixLabel = if (mix) {
             "ready"
         } else {
@@ -908,6 +914,23 @@ internal class NextTrackPreparation(
         /** A player message at 30 s is the gate; this only covers a seek/pause race. */
         const val AI_GATE_GRACE_MS = 5_000L
     }
+}
+
+/**
+ * The `hq=` token for the next-prep summary. The answer already prepared wins
+ * unless a newer one has landed since (read-ahead may pin the lossless stream
+ * while the step is still being reported); with neither, the old skip reason
+ * is kept, including the end-of-track deadline.
+ */
+internal fun nextPrepHqLabel(
+    prepared: HqTier?,
+    latest: HqTier?,
+    deadlineHit: Boolean,
+    skipReason: String?,
+): String {
+    val hq = latest ?: prepared
+    return hq?.name?.lowercase(Locale.ROOT)
+        ?: NextPrepPolicy.noneWithReason(if (deadlineHit) "deadline" else skipReason)
 }
 
 /**

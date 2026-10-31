@@ -234,6 +234,39 @@ class NextPrepTests(unittest.TestCase):
         self.assertEqual(1, report.stats["next_prep"]["sync_failed"])
 
 
+    def test_verified_refine_after_file_timed_skip_counts_as_sync(self) -> None:
+        text = log_text(
+            line(
+                "13:09:00.000",
+                "next-prep: Dynamite version=HaEYUJ2aRHs lyrics=lrc.red hq=none "
+                "sync=skipped(file-timed) mix=none in 100ms",
+            ),
+            line(
+                "13:09:00.001",
+                "next-prep sync: HaEYUJ2aRHs result=skipped:file-timed reason=file-timed",
+            ),
+            line(
+                "13:09:03.000",
+                "lyrics-refine: HaEYUJ2aRHs lines=26 median=68ms mad=51ms "
+                "slope=0 model=const applied=n base=none",
+            ),
+            line(
+                "13:11:03.000",
+                "track-summary: HaEYUJ2aRHs 'Dynamite' video=n source=browse:MPREb_x "
+                "resolve=direct firstAudio=1200 played=210 lyrics=lrc.red "
+                "sync=verified shift=68 match=- manualOffset=0 ended=natural",
+            ),
+        )
+        report = analyze(text)
+        sync = metric(report, "D1-sync")
+        self.assertEqual(1, sync.attempts)
+        self.assertEqual(1, sync.successes)
+        self.assertTrue(sync.passed)
+        self.assertEqual(0, metric(report, "D1-sync-skip").attempts)
+        self.assertEqual(1, report.stats["next_prep"]["sync_verified"])
+        self.assertEqual(1, metric(report, "D6-sync").successes)
+
+
 class LosslessTests(unittest.TestCase):
     def test_accepted_verify_needs_actual_flac_playback(self) -> None:
         text = log_text(
@@ -325,6 +358,31 @@ class LosslessTests(unittest.TestCase):
         self.assertEqual(1, report.stats["lossless"]["hq_ahead"])
         self.assertEqual(2, metric(report, "D2-swap").attempts)
         self.assertEqual(1, metric(report, "D2-swap").successes)
+
+
+    def test_hq_swap_done_counts_playback_after_the_verify_line(self) -> None:
+        text = log_text(
+            line(
+                "13:07:50.000",
+                "play: -> Dynamite - BTS (HaEYUJ2aRHs) idx=0/10 reason=AUTO",
+            ),
+            line(
+                "13:07:50.100",
+                "HaEYUJ2aRHs <- audio/opus 48kHz 160kbps ?-bit 2ch",
+                tag="DECODE",
+            ),
+            line("13:07:58.000", "hq-swap: HaEYUJ2aRHs start at=12509 offset=1"),
+            line("13:07:59.000", "hq-swap: HaEYUJ2aRHs done"),
+            line(
+                "13:08:00.000",
+                "hq-verify: Dynamite Qobuz match=95% offset=1 -> accepted",
+            ),
+        )
+        report = analyze(text)
+        playback = metric(report, "D2-playback")
+        self.assertEqual(1, playback.attempts)
+        self.assertEqual(1, playback.successes)
+        self.assertTrue(playback.passed)
 
 
 class AutoplayTests(unittest.TestCase):
