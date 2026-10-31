@@ -83,6 +83,6 @@ sealed interface SearchHistoryAction {
 fun SearchHistoryEntity.historyAction(): SearchHistoryAction = when (entityType) {
     EntityType.TRACK -> toSong()?.let(SearchHistoryAction::Play)
         ?: SearchHistoryAction.Search(title.ifBlank { id.removePrefix("q:") })
-    EntityType.ALBUM, EntityType.ARTIST, EntityType.PLAYLIST ->
+    EntityType.ALBUM, EntityType.ARTIST, EntityType.PLAYLIST, EntityType.OTHER ->
         SearchHistoryAction.Open(id, title, subtitle, artworkUrl, entityType)
 }

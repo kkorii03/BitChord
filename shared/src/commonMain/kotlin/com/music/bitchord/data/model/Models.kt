@@ -159,6 +159,24 @@ data class Song(
     /** Browse id for an album, playlist, or other source page. */
     val playbackSourceId: String? = null,
     /**
+     * A cover upload shown as its song (see CoverTitles): the upload's own
+     * title and channel, kept for the menu and for matching, while [title]
+     * and [artist] read "곡명" and "원곡자 · 부른사람 커버". Null on everything
+     * else.
+     */
+    val originalTitle: String? = null,
+    val originalArtist: String? = null,
+    /** Who sings a cover — what its plays are counted under. */
+    val coverSinger: String? = null,
+    /** Whose song a cover is, when its title says. */
+    val coverOriginalArtist: String? = null,
+    /**
+     * Queued by video radio as a video song, so it must keep playing as the
+     * upload the listener chose. This suppresses the automatic MV-to-song
+     * version swap; the upload type itself stays in [isVideo].
+     */
+    val videoRadio: Boolean = false,
+    /**
      * Feedback token extracted from the watch-queue row's menu — used to remove
      * this entry from the account's listening history on YouTube Music. Null on
      * non-history rows (e.g. search results, library).
@@ -453,8 +471,16 @@ data class ShelfItem(
     val videoId: String?,
     val browseId: String?,
     /**
-     * A music-video upload rather than a catalogue track: widescreen art, and a
-     * picture the player can show. Drawn as a 16:9 card, as the web player does.
+     * True when the card opens an artist page, whatever its browse id looks
+     * like. YouTube's library artist feed sometimes serves a card whose id is
+     * not the usual `UC…`, and an artist is drawn round wherever it appears —
+     * including when its picture had to fall back to an album cover.
+     */
+    val isArtist: Boolean = false,
+    /**
+     * A music-video upload rather than a catalogue track, when the card is a
+     * track card at all. Read off its widescreen still; a release or artist
+     * card is never one.
      */
     val isVideo: Boolean = false,
 )

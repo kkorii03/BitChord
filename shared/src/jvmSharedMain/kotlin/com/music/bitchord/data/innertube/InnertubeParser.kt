@@ -737,7 +737,6 @@ object InnertubeParser {
                     item.thumbnailUrl,
                     null,
                     item.browseId,
-                    isArtist = item.type == BrowseType.ARTIST,
                 ),
             )
         }
@@ -1100,7 +1099,6 @@ object InnertubeParser {
             thumbnailUrl = thumbnails.best(),
             videoId = null,
             browseId = browseId,
-            isArtist = true,
         )
     }
 
@@ -1424,6 +1422,59 @@ object InnertubeParser {
     private const val MUSIC_VIDEO_TYPE_ATV = "MUSIC_VIDEO_TYPE_ATV"
 
     /**
+     * The music video YouTube Music pairs with the catalogue track [videoId] —
+     * what its own Song/Video switch plays — or null when it has none. Read
+     * off the queue row's `counterpart`, which only ever names the release's
+     * official video, never a fan upload or a lyric video found by search.
+     */
+    fun parseCounterpart(root: JsonElement, videoId: String): String? =
+        parseCounterpartSong(root, videoId)?.videoId
+
+    /**
+     * How many song/video pairing rows a `next` response carries.
+     *
+     * A signed-out response has none at all, which is the signal the caller
+     * uses to stop asking for the rest of the session rather than pay for a
+     * request that can only answer null.
+     */
+    fun countCounterpartWrappers(root: JsonElement): Int =
+        collectRenderers(root, "playlistPanelVideoWrapperRenderer").size
+
+    /**
+     * The catalogue release a music-video row is paired with, as a full row.
+     *
+     * The `next` response wraps an OMV row in a
+     * `playlistPanelVideoWrapperRenderer` whose `counterpart` is the ATV row
+     * YouTube Music switches to. Reading the whole row rather than just its id
+     * is what lets a queue be built with the song version up front: title,
+     * credits, artwork and runtime all come from YouTube's own pairing instead
+     * of a search guess.
+     */
+    fun parseCounterpartSong(root: JsonElement, videoId: String): Song? =
+        collectRenderers(root, "playlistPanelVideoWrapperRenderer").firstNotNullOfOrNull { wrapper ->
+            val primary = wrapper.o("primaryRenderer").o("playlistPanelVideoRenderer").s("videoId")
+            if (primary != videoId) return@firstNotNullOfOrNull null
+            wrapper.a("counterpart")?.firstNotNullOfOrNull { entry ->
+                entry.o("counterpartRenderer").o("playlistPanelVideoRenderer")
+                    ?.let { panelSong(it) }
+            }?.takeIf { it.videoId.isNotBlank() && it.videoId != videoId }
+        }?.copy(isVideo = false, isVideoOrigin = true)
+
+    /**
+     * The uploader channel id a player response states.
+     *
+     * A `next`/search row can omit the owner id, and searching the uploader's
+     * name can open a different channel that shares it. `videoDetails.channelId`
+     * is the upload's own owner, so video radio can fetch that channel directly.
+     * The microformat's `externalChannelId` is the same fact for responses that
+     * omit `videoDetails`.
+     */
+    fun videoChannelId(player: JsonElement?): String? =
+        player?.o("videoDetails")?.s("channelId")?.takeIf { it.isNotBlank() }
+            ?: player?.o("microformat")?.o("playerMicroformatRenderer")
+                ?.s("externalChannelId")?.takeIf { it.isNotBlank() }
+
+    /**
      * Tracks of a watch queue (`next` response) — the AutoPlay radio mix.
      *
      * With [preferAudio], a row YouTube pairs with its other version — an
@@ -1474,6 +1525,13 @@ object InnertubeParser {
         // Those same runs link out to the artist and album pages, which is
         // how a track started from the queue knows where it came from.
         val credits = creditsOf(bylineRuns)
+        // youtube.com bylines carry the uploader's channel endpoint without a
+        // Music page type, so read the first linked browse id directly. This is
+        // the id video radio must use instead of searching the uploader name.
+        val bylineChannelId = bylineRuns.firstNotNullOfOrNull { run ->
+            run.o("navigationEndpoint").o("browseEndpoint").s("browseId")
+                ?.takeIf { it.isNotBlank() }
+        }
         return Song(
             videoId = videoId,
             title = title,
@@ -1481,6 +1539,7 @@ object InnertubeParser {
             thumbnailUrl = renderer.o("thumbnail").a("thumbnails").best(),
             durationText = renderer.o("lengthText").runs().takeIf { it.isNotBlank() },
             artistId = credits.artistId,
+            channelId = bylineChannelId ?: credits.artistId,
             artists = completeArtistCredits(artist.orEmpty(), credits.artists),
             albumId = credits.albumId,
             albumName = credits.albumName,

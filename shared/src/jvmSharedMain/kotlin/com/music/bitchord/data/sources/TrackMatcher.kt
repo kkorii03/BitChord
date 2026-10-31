@@ -196,9 +196,38 @@ object TrackMatcher {
         parseTitle(title, artist).let { (it.words + it.versions).joinToString(" ") }
 
     /** The first credited artist — who a catalogue is most likely to file the track under. */
-    internal fun primaryArtist(artist: String): String {
-        val primary = normalize(artist).split(ARTIST_SEPARATORS).firstOrNull()?.trim().orEmpty()
-        return primary.takeUnless { it in YOUTUBE_TYPE_LABELS }.orEmpty()
+    internal fun primaryArtist(artist: String): String =
+        artistVariants(artist).firstOrNull().orEmpty()
+
+    /**
+     * Every name a credit line carries, in the order it reads.
+     *
+     * A byline is not one string: it joins collaborators with commas, `&`,
+     * `및`, `x`, `feat.` and the rest, and a Korean act often writes its stage
+     * name in brackets after the legal one — "강현준(Lil tachi)" answers to
+     * either. Both halves are returned, base first, because a catalogue may
+     * file the track under either and searching only the printed whole finds
+     * neither. A bracket that is not a name ("f(x)", whose base is one letter)
+     * is left alone rather than cut into nonsense.
+     */
+    internal fun artistVariants(artist: String): List<String> =
+        artistMemo.getOrPut(artist) { artistVariantsUncached(artist) }
+
+    private fun artistVariantsUncached(artist: String): List<String> {
+        val out = LinkedHashSet<String>()
+        splitTopLevel(normalize(artist), ARTIST_SEPARATORS).forEach { part ->
+            // youtube.com's fallback search credits album audio to the
+            // auto-generated channel ("5 Seconds of Summer - Topic"), not to a
+            // different act. The suffix is the channel's, not the artist's, so
+            // leaving it on made the exact-name check refuse the official song.
+            // A VEVO channel is the same plumbing ("ArtistVEVO" is "Artist").
+            expandArtistName(
+                part.replace(TOPIC_CHANNEL_SUFFIX, "").replace(VEVO_CHANNEL_SUFFIX, ""),
+            ).forEach { name ->
+                out += name
+            }
+        }
+        return out.filter { it.isNotBlank() }
     }
 
     /** Whether both credits name at least one of the same artists. */
@@ -1669,6 +1698,9 @@ object TrackMatcher {
         if ((wantedCJK && gotLatin) || (gotCJK && wantedLatin)) {
             if (wanted.context.joinToString("") == got.core) return true
             if (got.context.joinToString("") == wanted.core) return true
+            // A row states the translation outright ("여수밤바다 - Yeosu Night
+            // Sea"); the catalogue may file the song under either spelling.
+            if (got.core in wanted.altCores || wanted.core in got.altCores) return true
         }
         return false
     }
@@ -2092,6 +2124,40 @@ object TrackMatcher {
     private val DASH = Regex("""\s+[-–—|]+\s+""")
     private val WHITESPACE = Regex("""\s+""")
     private val FEATURING = Regex("""\b(feat|ft|featuring|with)\b.*""")
+    /** "(From \"Joker\")", the other way a soundtrack upload names its work. */
+    private val FROM_BRACKET = Regex("""\(\s*from\s+([^)]*)\)""", RegexOption.IGNORE_CASE)
+    /** The last pipe-separated segment, where a fan upload puts "Joker OST". */
+    private val PIPE_TAIL = Regex("""\s*\|\s*([^|]+)\s*$""")
+    private val SOUNDTRACK_WORD = Regex(
+        """(?<![a-z])ost(?![a-z])|\bsoundtracks?\b""",
+        RegexOption.IGNORE_CASE,
+    )
+    /** " - Original Soundtrack", " - OST" as a label, without eating a take marker after it. */
+    private val TRAILING_SOUNDTRACK = Regex(
+        """\s+[-–—]\s+(?:(?:original\s+(?:motion\s+picture\s+)?)?soundtracks?|ost)\b""",
+        RegexOption.IGNORE_CASE,
+    )
+    /** A bare "OST"/"Soundtrack" label hung on the end without a dash. */
+    private val TRAILING_BARE_OST = Regex(
+        """\s+(?:(?:original\s+(?:motion\s+picture\s+)?)?soundtracks?|ost)\s*$""",
+        RegexOption.IGNORE_CASE,
+    )
+    private val SOUNDTRACK_WORK_TAIL = Regex(
+        """(?:\s*[-–—|]\s*)?(?:(?<!\p{L})(?:original\s+(?:motion\s+picture\s+)?)?soundtracks?|(?<!\p{L})ost)\s*$""",
+        RegexOption.IGNORE_CASE,
+    )
+    /**
+     * A listing's track number in front of the name: "3.", "03 ", "3) ",
+     * "Track 3 - ". A bare number followed by a word ("7 Rings") is a title
+     * and is left alone; so is "3 Nights". The leading-zero form is accepted
+     * because a zero-padded number is never how a title starts.
+     */
+    private val LEADING_TRACK_NUMBER = Regex(
+        """^\s*(?:track\s+\d{1,3}\s*[-–—.:)]\s*|\d{1,3}\s*[.)\]\-–—]\s*(?=\D|$)|0\d{1,2}\s+)\s*""",
+        RegexOption.IGNORE_CASE,
+    )
+    /** A trailing "(stage name)" that can be split off an artist credit. */
+    private val TRAILING_ALIAS = Regex("""^(.*?)[(\[（【]([^)\]）】]*)[)\]）】]\s*$""")
     /**
      * The Portuguese spelling of the same credit, see [parseTitle]. Only the
      * dotted form and an explicit `part esp.` count: an undotted `part` is
@@ -2237,6 +2303,9 @@ object TrackMatcher {
         "studioversion", "fullversion", "standardversion", "explicitversion",
         "deluxeversion", "originaltrack",
     )
+
+    /** Packaging words that follow a soundtrack label without naming a take. */
+    private val NEUTRAL_SUFFIX_WORDS = setOf("version", "edition")
 
     /** Where YouTube Music prints a type instead of an artist: "… — Música". */
     private val YOUTUBE_TYPE_LABELS = setOf(

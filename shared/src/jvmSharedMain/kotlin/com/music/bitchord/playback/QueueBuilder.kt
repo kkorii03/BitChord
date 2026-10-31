@@ -46,7 +46,13 @@ object QueueBuilder {
      * just before the seed — and the seed's own artist then got the ordinary
      * two-track cap instead of the four a station is seeded on.
      */
-    fun extend(existing: List<Song>, candidates: List<Song>, limit: Int, preferVideos: Boolean = false): List<Song> {
+    fun extend(
+        existing: List<Song>,
+        candidates: List<Song>,
+        limit: Int,
+        preferVideos: Boolean = false,
+        seedArtist: String? = null,
+    ): List<Song> {
         val taken = existing.toMutableList()
         val perArtist = mutableMapOf<String, Int>()
         val seedArtists = (seedArtist?.takeIf { it.isNotBlank() } ?: existing.lastOrNull()?.artist)

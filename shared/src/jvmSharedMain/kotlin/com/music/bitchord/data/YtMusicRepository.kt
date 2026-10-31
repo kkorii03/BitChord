@@ -54,6 +54,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonObject
@@ -102,6 +103,16 @@ object YtMusicRepository {
     // share one search instead of sending the same request twice at once.
     private val audioLookups = ConcurrentHashMap<String, CompletableDeferred<Song>>()
     private val videoVersionLookups = ConcurrentHashMap<String, CompletableDeferred<Song?>>()
+    /** YouTube Music's own counterpart row for a video, plus "no counterpart". */
+    private val counterpartAudioCache = ConcurrentHashMap<String, Song>()
+    private val counterpartMissing: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private val counterpartLookups = ConcurrentHashMap<String, CompletableDeferred<Song?>>()
+    /**
+     * Signed-out `next` responses carry no pairing rows at all, so a run of
+     * empty answers is a property of the session, not of one track. Counted
+     * across requests; any response that does carry one resets the run.
+     */
+    private val counterpartEmptyRun = AtomicInteger(0)
     /** Liked Music's continuation tokens, whose later pages need the same split. */
     private val likedContinuations = ConcurrentHashMap.newKeySet<String>()
 
@@ -898,10 +909,17 @@ object YtMusicRepository {
             audioVersionCache[song.videoId] = audio
             return audio
         }
-        val target = TrackMatcher.targetOf(song)
-        for (query in TrackMatcher.queries(target)) {
-            val candidates = search(query, SearchFilter.SONGS)
-                .getOrNull()
+        val target = TrackMatcher.audioSwitchTargetOf(song)
+            .copy(isVideo = song.isVideo || song.typeUnknown)
+        var queriesRun = 0
+        var failedQueries = 0
+        var videoRowsOnly = false
+        val loggedRejects = HashSet<String>()
+        for (query in TrackMatcher.audioSwitchQueries(song)) {
+            queriesRun++
+            val page = search(query, SearchFilter.SONGS, SearchKind.AUDIO_SWITCH)
+            if (page.isFailure) failedQueries++
+            val rows = page.getOrNull()
                 ?.filterIsInstance<SearchResult.Track>()
                 ?.map { it.song }
                 .orEmpty()
@@ -1057,31 +1075,25 @@ object YtMusicRepository {
     }
 
     /**
-     * The inverse of [resolveAudio]: finds the video/music-video version of an
-     * audio-only track, used when switching back from audio to video.
-     * Resolves an audio-only track to its video version.
+     * The catalogue release YouTube Music pairs with music-video [videoId], as
+     * its own Song/Video switch does, or null when it pairs none.
      *
-     * This is the inverse of [resolveAudio] - it finds the music video
-     * for a catalogue track. Returns null when no video version is found.
+     * Read whole rather than by id: a queue built with the song version up
+     * front needs the counterpart's title, credits, art and runtime, not just
+     * its id. Only a successful `next` response is cached, so an offline
+     * attempt can be retried later.
      */
-    suspend fun resolveVideo(song: Song): Song? {
-        if (song.isVideo) return null
-        videoVersionCache[song.videoId]?.let { return it }
-        officialVersion(song, wantAudio = false)?.let { video ->
-            videoVersionCache[song.videoId] = video
-            return video
-        }
-        val target = TrackMatcher.targetOf(song)
-        for (query in TrackMatcher.queries(target)) {
-            val candidates = search(query, SearchFilter.VIDEOS)
-                .getOrNull()
-                ?.filterIsInstance<SearchResult.Track>()
-                ?.map { it.song }
-                .orEmpty()
-            TrackMatcher.best(candidates, target)?.let { match ->
-                Log.d(TAG, "video switch: '${song.title}' -> '${match.title}' ($query)")
-                videoVersionCache[song.videoId] = match
-                return match
+    suspend fun counterpartAudio(videoId: String): Song? {
+        if (videoId.isBlank()) return null
+        counterpartAudioCache[videoId]?.let { return it }
+        if (videoId in counterpartMissing) return null
+        if (CounterpartSwitch.isSuppressed()) return null
+        val mine = CompletableDeferred<Song?>()
+        counterpartLookups.putIfAbsent(videoId, mine)?.let {
+            return try {
+                it.await()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             }
         }
         try {
@@ -2062,11 +2074,13 @@ object YtMusicRepository {
         val podcast = InnertubeParser.podcastShow(response) ?: show
         val continuation = InnertubeParser.continuationToken(response)
         if (podcast != null && continuation != null) showByToken[continuation] = podcast
+        val songs = InnertubeParser.collectSongsDeep(response, podcast).distinctBy { it.videoId }
+        val shown = songs.map(StoredSongDisplay::clean)
         return SongPage(
             // One response can name the same track twice — an album page that
             // also carries a "you might also like" shelf, say. Collecting into a
             // map used to take care of that; paging by hand means saying so.
-            songs = InnertubeParser.collectSongsDeep(response, podcast).distinctBy { it.videoId },
+            songs = shown,
             continuation = continuation,
             library = library,
             header = parsedHeader.withArtworkFallback(shown),
@@ -2485,6 +2499,61 @@ object YtMusicRepository {
     private var historyMemo: HistoryMemo? = null
 
     private const val HISTORY_MEMO_MS = 120_000L
+
+    /**
+     * Whether the Music gate is active, settling an UNKNOWN verdict first.
+     *
+     * Called by entry points that can be the first thing opened in a process
+     * (Explore, Library, a shared link). It costs one browse only while the
+     * verdict is unknown and not backing off, or when a stored verdict is due
+     * for re-check; after that the persisted answer decides.
+     */
+    private suspend fun ensureGateKnown(): Boolean {
+        ensureSessionForGate()
+        val key = Innertube.sessionKey()
+        if (MusicGateFallback.needsRecheck(key)) {
+            // Signed for the same reason as Home's re-check.
+            runCatching { Innertube.browse("FEmusic_home", forceSigned = true) }
+                // A failure is still a check that happened: move checkedAt so
+                // every entry point does not repeat the same failing browse
+                // until the window opens again.
+                .onFailure { MusicGateFallback.touch(key) }
+        }
+        return MusicGateFallback.isActive(key)
+    }
+
+    /**
+     * One immediate gate re-check after the proxy settings moved.
+     *
+     * [MusicGateFallback.resetAll] has already made every identity UNKNOWN, so
+     * [ensureGateKnown] performs exactly one browse through the new route.
+     */
+    suspend fun recheckGateNow(): Boolean = ensureGateKnown()
+
+    /** The gate's own refusal, as opposed to a network or proxy failure. */
+    private fun isMusicGateSignal(failure: Exception): Boolean {
+        val status = (failure as? ResponseException)?.response?.status?.value
+        return status == 401 || status == 403
+    }
+
+    /**
+     * Resolves the account identity before reading the persisted verdict.
+     *
+     * Without this a restored cookie is keyed by its hash until the shell
+     * answers, and the verdict saved under the account's `dataSyncId` would be
+     * missed for the first request of every process.
+     */
+    private suspend fun ensureSessionForGate() {
+        if (Innertube.cookie != null) runCatching { Innertube.ensureSessionScope() }
+    }
+
+    private suspend fun fallbackActive(): Boolean {
+        ensureSessionForGate()
+        return MusicGateFallback.isActive()
+    }
+
+    private fun isYouTubePlaylistId(browseId: String): Boolean =
+        browseId.startsWith("VL") || browseId.startsWith("RD")
 
     private suspend fun <T> call(label: String, block: suspend () -> T): Result<T> =
         withContext(Dispatchers.IO) {

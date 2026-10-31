@@ -16,6 +16,7 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.positionInWindow
@@ -150,16 +151,23 @@ fun Modifier.longPressMenuClickable(
             capture.handled = request
             val item = capture.pending ?: return@drawWithContent
             capture.pending = null
-            val scaleFactor = (MAX_CAPTURE_PX / maxOf(size.width, size.height, 1f)).coerceAtMost(1f)
-            val captureSize = IntSize(
-                (size.width * scaleFactor).roundToInt().coerceAtLeast(1),
-                (size.height * scaleFactor).roundToInt().coerceAtLeast(1),
-            )
-            val layer = graphicsContext.createGraphicsLayer()
             val trimLeft = capture.trimLeft
             val width = (size.width - trimLeft - capture.trimRight).roundToInt().coerceAtLeast(1)
-            layer.record(size = IntSize(width, size.height.roundToInt())) {
-                translate(left = -trimLeft) { this@drawWithContent.drawContent() }
+            val height = size.height.roundToInt().coerceAtLeast(1)
+            val scaleFactor = (MAX_CAPTURE_PX / maxOf(width.toFloat(), height.toFloat(), 1f)).coerceAtMost(1f)
+            val captureSize = IntSize(
+                (width * scaleFactor).roundToInt().coerceAtLeast(1),
+                (height * scaleFactor).roundToInt().coerceAtLeast(1),
+            )
+            val layer = graphicsContext.createGraphicsLayer()
+            layer.record(size = captureSize) {
+                if (scaleFactor < 1f) {
+                    scale(scaleFactor, scaleFactor, pivot = Offset.Zero) {
+                        translate(left = -trimLeft) { this@drawWithContent.drawContent() }
+                    }
+                } else {
+                    translate(left = -trimLeft) { this@drawWithContent.drawContent() }
+                }
             }
             scope.launch {
                 try {
@@ -186,3 +194,6 @@ private class HoldCapture {
 }
 
 private val NoLiftPadding = PaddingValues()
+
+/** Longest edge of the held-item bitmap, in pixels. See [longPressMenuClickable]. */
+private const val MAX_CAPTURE_PX = 1024f

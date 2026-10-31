@@ -1121,14 +1121,29 @@ object Innertube {
         put("params", Base64.getEncoder().encodeToString(bytes))
     }
 
-    suspend fun search(query: String, params: String? = null, anonymous: Boolean = true): JsonObject =
+    suspend fun search(
+        query: String,
+        params: String? = null,
+        anonymous: Boolean = true,
+        kind: SearchKind = SearchKind.TYPED,
+    ): JsonObject =
         if (anonymous) {
-            postMusicAnonymous("search", region = searchRegion) {
+            postMusicAnonymous(
+                "search",
+                region = searchRegion,
+                searchKind = kind,
+                searchQueryLength = query.length,
+            ) {
                 put("query", query)
                 params?.let { put("params", it) }
             }
         } else {
-            postMusic("search", region = searchRegion) {
+            postMusic(
+                "search",
+                region = searchRegion,
+                searchKind = kind,
+                searchQueryLength = query.length,
+            ) {
                 put("query", query)
                 params?.let { put("params", it) }
             }
@@ -1142,6 +1157,7 @@ object Innertube {
         endpoint = "search",
         query = mapOf("ctoken" to token, "continuation" to token, "type" to "next"),
         region = searchRegion,
+        searchKind = kind,
     ) {
         put("continuation", token)
     }
@@ -1175,7 +1191,12 @@ object Innertube {
      * recorded against the listener as one they searched for.
      */
     suspend fun searchSuggestions(input: String): JsonObject =
-        postMusic("music/get_search_suggestions", region = searchRegion) {
+        postMusic(
+            "music/get_search_suggestions",
+            region = searchRegion,
+            searchKind = SearchKind.SUGGEST,
+            searchQueryLength = input.length,
+        ) {
             put("input", input)
         }
 
@@ -1185,7 +1206,12 @@ object Innertube {
      * to the account's server-side search history.
      */
     suspend fun searchTypeahead(query: String): JsonObject =
-        postMusicAnonymous("search", region = searchRegion) {
+        postMusicAnonymous(
+            "search",
+            region = searchRegion,
+            searchKind = SearchKind.TYPEAHEAD,
+            searchQueryLength = query.length,
+        ) {
             put("query", query)
         }
 
@@ -1763,8 +1789,16 @@ object Innertube {
     private suspend fun postMusic(
         endpoint: String,
         query: Map<String, String> = emptyMap(),
-        /** The context's `gl`; null sends none. */
-        region: String? = currentRegion,
+        hl: String = currentLanguage,
+        gl: String = currentCountry,
+        /** v1.9 call sites pass this; null sends no gl, otherwise it wins over [gl]. */
+        region: String? = gl,
+        forceAnonymous: Boolean = false,
+        forceSigned: Boolean = false,
+        browseId: String? = null,
+        directRetryOnProxyFailure: Boolean = true,
+        searchKind: SearchKind? = null,
+        searchQueryLength: Int? = null,
         bodyExtras: JsonObjectBuilder.() -> Unit,
     ): JsonObject {
         // In Korea without Premium the signed-in Music session is refused
@@ -1843,7 +1877,7 @@ object Innertube {
                                     put("clientName", "WEB_REMIX")
                                     put("clientVersion", clientVersion)
                                     put("hl", hl)
-                                    put("gl", gl)
+                                    region?.let { put("gl", it) }
                                     visitor?.let { put("visitorData", it) }
                                 }
                                 putJsonObject("user") {
@@ -1937,6 +1971,28 @@ object Innertube {
     }
 
     /**
+     * Like [postMusic] but deliberately strips the session cookie so YouTube
+     * Music does not record the call against any account. [KO] innertube-anonymous-search
+     *
+     * Kept as a delegate so the v1.9 call sites stay untouched while the
+     * account-free visitor id, proxy route and search log line still apply.
+     */
+    private suspend fun postMusicAnonymous(
+        endpoint: String,
+        region: String? = currentRegion,
+        searchKind: SearchKind? = null,
+        searchQueryLength: Int? = null,
+        bodyExtras: JsonObjectBuilder.() -> Unit,
+    ): JsonObject = postMusic(
+        endpoint = endpoint,
+        region = region,
+        forceAnonymous = true,
+        searchKind = searchKind,
+        searchQueryLength = searchQueryLength,
+        bodyExtras = bodyExtras,
+    )
+
+    /**
      * The one youtube.com request path, for the no-Premium fallback and the
      * history tracking block.
      *
@@ -2018,8 +2074,8 @@ object Innertube {
                             putJsonObject("client") {
                                 put("clientName", if (ios) "IOS" else "WEB")
                                 put("clientVersion", clientVersion)
-                                put("hl", currentLanguage)
-                                region?.let { put("gl", it) }
+                                put("hl", hl)
+                                put("gl", gl)
                                 visitorData?.let { put("visitorData", it) }
                             }
                             putJsonObject("user") {
@@ -2079,46 +2135,71 @@ object Innertube {
      */
     internal fun musicRequestIsAnonymous(
         endpoint: String,
-        /** The context's `gl`; null sends none. */
-        region: String? = currentRegion,
-        bodyExtras: JsonObjectBuilder.() -> Unit,
-    ): JsonObject {
-        val clientVersion = webRemixVersion
-        return withRetry {
-            client.post("$MUSIC_BASE/$endpoint") {
-                contentType(ContentType.Application.Json)
-                parameter("prettyPrint", "false")
-                header("X-Origin", MUSIC_ORIGIN)
-                header("Origin", MUSIC_ORIGIN)
-                header("Referer", "$MUSIC_ORIGIN/")
-                header("X-YouTube-Client-Name", WEB_REMIX_CLIENT_ID)
-                header("X-YouTube-Client-Version", clientVersion)
-                header("Accept-Language", acceptLanguageHeader)
-                parameter("hl", currentLanguage)
-                visitorData?.let { header("X-Goog-Visitor-Id", it) }
-                // No Cookie / Authorization headers — anonymous request.
-                setBody(
-                    buildJsonObject {
-                        putJsonObject("context") {
-                            putJsonObject("client") {
-                                put("clientName", "WEB_REMIX")
-                                put("clientVersion", clientVersion)
-                                put("hl", currentLanguage)
-                                region?.let { put("gl", it) }
-                                visitorData?.let { put("visitorData", it) }
-                            }
-                            putJsonObject("user") {
-                                put("lockedSafetyMode", false)
-                                // No onBehalfOfUser — no account context.
-                            }
-                            putJsonObject("request") { put("useSsl", true) }
-                        }
-                        bodyExtras()
-                    },
-                )
-            }.body<JsonObject>()
-        }
-    }
+        browseId: String? = null,
+        forceAnonymous: Boolean = false,
+        forceSigned: Boolean = false,
+    ): Boolean = com.music.bitchord.ko.musicRequestIsAnonymous(
+        endpoint,
+        browseId,
+        forceAnonymous,
+        forceSigned,
+    ) // [KO] innertube-request-policy
+
+    internal fun isSearchEndpoint(endpoint: String): Boolean =
+        com.music.bitchord.ko.isSearchEndpoint(endpoint) // [KO] innertube-request-policy
+
+    internal fun defaultSearchKind(endpoint: String): SearchKind =
+        com.music.bitchord.ko.defaultSearchKind(endpoint) // [KO] innertube-request-policy
+
+    internal fun searchLogLine(
+        host: String,
+        endpoint: String,
+        kind: SearchKind,
+        queryLength: Int?,
+    ): String = com.music.bitchord.ko.searchLogLine(
+        host,
+        endpoint,
+        kind,
+        queryLength,
+    ) // [KO] innertube-search-log
+
+    internal fun isAnonymousYouTubeRequest(endpoint: String, anonymous: Boolean): Boolean =
+        com.music.bitchord.ko.isAnonymousYouTubeRequest(endpoint, anonymous) // [KO] innertube-request-policy
+
+    internal fun isAnonymousBrowseId(browseId: String): Boolean =
+        com.music.bitchord.ko.isAnonymousBrowseId(browseId) // [KO] innertube-request-policy
+
+    internal fun isAccountWrite(endpoint: String): Boolean =
+        com.music.bitchord.ko.isAccountWrite(endpoint) // [KO] innertube-request-policy
+
+    internal fun visitorIdFor(
+        endpoint: String,
+        sessionVisitorData: String?,
+        anonymousVisitorData: String?,
+    ): String? = com.music.bitchord.ko.visitorIdFor(
+        endpoint,
+        sessionVisitorData,
+        anonymousVisitorData,
+    ) // [KO] innertube-request-policy
+
+    internal fun dataSyncIdForRequest(endpoint: String, dataSyncId: String?): String? =
+        com.music.bitchord.ko.dataSyncIdForRequest(endpoint, dataSyncId) // [KO] innertube-request-policy
+
+    internal fun accountHeadersFor(
+        endpoint: String,
+        cookie: String?,
+        authUser: String,
+        pageId: String?,
+        authorization: () -> String?,
+        anonymous: Boolean = false,
+    ): Map<String, String> = com.music.bitchord.ko.accountHeadersFor(
+        endpoint,
+        cookie,
+        authUser,
+        pageId,
+        authorization,
+        anonymous,
+    ) // [KO] innertube-request-policy
 
     /** First string value under [key] anywhere in [element], depth-first. */
     private fun findString(element: JsonElement, key: String): String? = when (element) {
