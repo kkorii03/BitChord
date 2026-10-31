@@ -164,9 +164,8 @@ object TelegramClientManager {
                 finishClosed(deleteLocalSession = true)
                 TelegramLog.authState("closed")
             } else {
-                // Never delete files under an unconfirmed close. Drop the stale
-                // handle and generation after the timeout so startClient is not
-                // latched shut forever; a retry can then reset the session.
+                // Never delete files under an unconfirmed close. The handle is
+                // kept and the late Closed update finishes the logout.
                 resetAfterCloseTimeout("logout")
             }
             applyGate("logged out")
@@ -302,11 +301,9 @@ object TelegramClientManager {
 
     /**
      * Sends Close and waits for TDLib's Closed confirmation. Returns true only
-     * when the native client is really gone. On timeout the session files stay
-     * in place so nothing is deleted under an open client, but the stale handle
-     * and its generation are dropped: otherwise `closing`/`client` would latch
-     * [startClient] shut forever after one hung Close. Stale callbacks from the
-     * abandoned client fail the generation check.
+     * when the native client is really gone. On timeout nothing is dropped or
+     * deleted (see [resetAfterCloseTimeout]); the client stays the only one
+     * until TDLib's own Closed update arrives.
      *
      * Runs on [work] only.
      */
@@ -337,24 +334,20 @@ object TelegramClientManager {
     }
 
     /**
-     * Drops a client that did not confirm Closed in time without touching its
-     * files. Bumping the generation makes queued updates from that client
-     * unusable, and clearing [closing]/[client] lets a later gate event start
-     * again instead of staying latched. Runs on [work] only.
+     * A Close that TDLib has not confirmed in time. The native client may
+     * still be alive and holding its database, so its handle, its generation
+     * and [closing] are all kept: [startClient] stays shut (no second client
+     * on the same files), nothing is deleted, and [logoutRequested] survives.
+     * When TDLib does report Closed, [onUpdate] runs [finishClosed] through the
+     * normal path — still the same generation — and only then is the session
+     * deleted (for a logout) and the gate re-applied. No retry or timer: the
+     * late Closed update is the event. Runs on [work] only.
      */
     private fun resetAfterCloseTimeout(reason: String) {
-        generation.incrementAndGet()
-        client = null
-        clientClosed = null
-        closing = false
-        auth = null
-        paramsSent = false
-        appliedCredentials = TelegramApplicationCredentials.EMPTY
-        logoutRequested = false
-        TelegramLog.clientClosed("$reason timeout")
+        TelegramLog.clientClosed("$reason timeout; waiting for Closed")
         update {
             it.copy(
-                stage = TelegramAuthStage.CLOSED,
+                stage = TelegramAuthStage.CLOSING,
                 clientOpen = false,
                 accountName = null,
                 error = TelegramError.GENERIC,
