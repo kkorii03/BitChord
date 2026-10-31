@@ -1,0 +1,77 @@
+﻿You are fixing compile errors after merging upstream BitChord v1.9 into our Korean fork. Branch base = task/upstream-19. rg is NOT installed: use grep.
+
+How the merge was done: every conflict hunk took the UPSTREAM v1.9 side; our non-conflicting changes stayed. So our code that lived in conflict hunks is gone, and our remaining code references things that no longer exist (or upstream renamed/changed signatures).
+Reference versions (fetch them first):
+  git fetch origin task/fix-1030            -> origin/task/fix-1030 = our fork BEFORE the merge
+  git fetch https://github.com/kushagrasinghx/BitChord.git refs/tags/v1.9:refs/tags/v1.9   -> pure upstream v1.9 (read only, never push there)
+Use `git show origin/task/fix-1030:<path>` and `git show v1.9:<path>` to see what each side had.
+
+Policy (user order): adopt v1.9 maximally. Where v1.9 has its own implementation of the same feature, USE v1.9's and delete our now-dead caller code instead of restoring ours: quality upgrade / hq-swap / HQ prefetch -> v1.9 Direct Source Stream (DirectSourceGate); automix/crossfade -> v1.9 Automix; downloads, settings, menus, video playback, tab bar, mini player -> v1.9.
+KEEP (restore if lost) only Korean-fork features v1.9 does not have: lyrics sync correction, song-version verdict / no music-video / audio instead of MV / cover-piano rejection, Korea-blocked song fallback + proxy playback + alternate ATV copy, video radio, Korean strings, diagnostic log lines (DiagLog / featurehealth lines).
+
+Separation rule (read docs/ko-fork-layout.md): when you restore a lost Korean declaration, put it in a NEW file under package com.music.bitchord.ko (sharedUi: sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ko/ui/<LaneName>Restored*.kt, package com.music.bitchord.ko.ui), NOT back inside an upstream file. Inside an upstream file (one that exists in v1.9) add only one-line calls marked with a trailing comment // [KO] <feature>. Prefer extension functions / top-level functions over editing upstream classes. Never split or delete upstream v1.9 code. When an upstream signature changed, adapt OUR code to the new upstream signature, not the other way round.
+
+Scope: fix the errors in YOUR files only (list below). The shared module already compiles (do not edit shared/). Other lanes fix the other sharedUi files in parallel, so the full build will still show errors in files outside your list - ignore those, do not edit files outside your list except new files under .../ko/. Check with: ./gradlew :sharedUi:compileReleaseKotlinAndroid --console=plain -q 2>&1 | grep '^e: ' | grep -E '<your file names>' ; your goal is ZERO errors in your files. Do not edit .github/, keys/, signing, gradle files.
+Battery first (no polling/timers, event-driven). Re-read every caller and type of a function you change. If you delete our code because v1.9 replaces it, list it in the summary with the reason.
+If you delete a test of a removed feature, list it in the summary.
+
+At the end, summarize in 10 lines or less: modified files / new ko files / what was restored (Korean features) / what was dropped in favour of v1.9 / remaining errors in your files / unresolved questions.
+
+HARD RULES (results are checked; violating results are thrown away): never restore a whole file from origin/task/fix-1030, never delete or empty a file that exists in v1.9, never edit app/ (the app module is fixed after sharedUi). Only your listed files and new files under ko/ui/ are taken from your result.
+
+YOUR FILES: sharedUi/.../ui/player/PlayerControls.kt, ui/player/NowPlayingScreen.kt, ui/player/PlayerQueue.kt (LaneName=Player)
+
+Current compile errors in your files (from CI):
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/NowPlayingScreen.kt:542:9 Unresolved reference 'key'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/NowPlayingScreen.kt:542:25 @Composable invocations can only happen from the context of a @Composable function
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/NowPlayingScreen.kt:980:40 No value passed for parameter 'audible'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/NowPlayingScreen.kt:1840:17 Unresolved reference 'SongLyricsSync'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/NowPlayingScreen.kt:2515:26 Unresolved reference 'lowPower'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:504:17 No parameter with name 'text' found.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:521:17 No parameter with name 'style' found.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:525:17 No parameter with name 'color' found.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:528:17 No parameter with name 'maxLines' found.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:529:17 No parameter with name 'overflow' found.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:530:17 No parameter with name 'textAlign' found.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:530:17 No value passed for parameter 'resource'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:734:51 None of the following candidates is applicable:
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:734:59 Unresolved reference 'glyph'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:735:72 None of the following candidates is applicable:
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:735:80 Unresolved reference 'description'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:737:43 None of the following candidates is applicable:
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:737:51 Unresolved reference 'highlight'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:743:51 Unresolved reference. None of the following candidates is applicable because of a receiver type mismatch:
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:743:58 Unresolved reference 'glyph'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:744:45 Unresolved reference. None of the following candidates is applicable because of a receiver type mismatch:
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:744:45 Argument type mismatch: actual type is 'PartyBadge', but 'String?' was expected.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:744:52 Unresolved reference. None of the following candidates is applicable because of a receiver type mismatch:
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:745:72 Unresolved reference. None of the following candidates is applicable because of a receiver type mismatch:
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:745:79 Unresolved reference 'description'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:747:43 Unresolved reference. None of the following candidates is applicable because of a receiver type mismatch:
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:747:50 Unresolved reference 'highlight'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:760:51 Unresolved reference. None of the following candidates is applicable because of a receiver type mismatch:
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:760:60 Unresolved reference 'glyph'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:761:72 Unresolved reference. None of the following candidates is applicable because of a receiver type mismatch:
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:761:81 Unresolved reference 'description'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:763:43 Unresolved reference. None of the following candidates is applicable because of a receiver type mismatch:
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:763:52 Unresolved reference 'highlight'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:769:21 Unresolved reference 'OutputPill'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:1245:9 Syntax error: Expecting an element.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:1245:14 Syntax error: Unexpected tokens (use ';' to separate expressions on the same line).
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:1246:13 Unresolved reference 'text'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:1246:30 Syntax error: Unexpected tokens (use ';' to separate expressions on the same line).
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:1247:13 Unresolved reference 'style'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:1247:87 Syntax error: Unexpected tokens (use ';' to separate expressions on the same line).
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:1248:13 Unresolved reference 'color'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:1248:64 Syntax error: Unexpected tokens (use ';' to separate expressions on the same line).
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:1249:13 Unresolved reference 'maxLines'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:1249:25 Syntax error: Unexpected tokens (use ';' to separate expressions on the same line).
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:1250:13 Unresolved reference 'overflow'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:1250:45 Syntax error: Unexpected tokens (use ';' to separate expressions on the same line).
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:1251:13 Unresolved reference 'textAlign'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:1251:41 Syntax error: Unexpected tokens (use ';' to separate expressions on the same line).
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:1252:13 Unresolved reference 'modifier'.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:1252:39 Syntax error: Unexpected tokens (use ';' to separate expressions on the same line).
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerControls.kt:1253:9 Syntax error: Expecting an element.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerQueue.kt:4:35 Conflicting import: imported name 'ContentScale' is ambiguous.
+sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerQueue.kt:68:35 Conflicting import: imported name 'ContentScale' is ambiguous.
