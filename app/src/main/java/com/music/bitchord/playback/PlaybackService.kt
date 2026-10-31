@@ -110,6 +110,7 @@ import com.music.bitchord.data.net.UnplayableAlternate
 import com.music.bitchord.data.net.HqRetryPolicy
 import com.music.bitchord.data.net.sessionScopedCacheHit
 import com.music.bitchord.data.net.AUTOPLAY_MIN_QUEUED_AHEAD
+import com.music.bitchord.data.net.AutoplayQueueStatus
 import com.music.bitchord.data.net.autoplayTopUpNeeded
 import com.music.bitchord.data.net.autoplayTopUpSelection
 import com.music.bitchord.data.net.autoplayToggleResult
@@ -1452,6 +1453,7 @@ class PlaybackService : MediaLibraryService() {
             autoplayLoadJob?.cancel()
             autoplayLoadJob = null
             autoplaySeed = null
+            AutoplayQueueStatus.clear()
             loadAutoplayForCurrentTrack()
             // Lyrics are loaded by [onTrackBecameCurrent], which every way a
             // track becomes current goes through. Asking again here started a
@@ -1607,13 +1609,15 @@ class PlaybackService : MediaLibraryService() {
             }
             // Turning repeat-all back off can leave the current item at the end
             // of the queue, which is the same trigger as a normal transition.
-            // Leaving repeat-one has to release the seed first: it is still
-            // latched to the track that was looping, and the reload below would
-            // otherwise be skipped as same-seed, leaving the queue empty.
-            if (repeatOneSeedShouldClear(previous, repeatMode)) {
+            // Leaving repeat-one or repeat-all has to release the seed first:
+            // it is still latched to the track that was looping, and the reload
+            // below would otherwise be skipped as same-seed, leaving the queue
+            // empty even though AutoPlay is on again.
+            if (repeatModeSeedShouldClear(previous, repeatMode)) {
                 autoplayLoadJob?.cancel()
                 autoplayLoadJob = null
                 autoplaySeed = null
+                AutoplayQueueStatus.clear()
             }
             loadAutoplayForCurrentTrack()
         }
@@ -2357,6 +2361,7 @@ class PlaybackService : MediaLibraryService() {
                         autoplayLoadJob?.cancel()
                         autoplayLoadJob = null
                         autoplaySeed = null
+                        AutoplayQueueStatus.clear()
                         loadAutoplayForCurrentTrack()
                     }
                 }
@@ -3704,11 +3709,13 @@ class PlaybackService : MediaLibraryService() {
             autoplayLoadJob?.cancel()
             autoplayLoadJob = null
             autoplaySeed = null
+            AutoplayQueueStatus.clear()
             loadAutoplayForCurrentTrack()
         } else if (!party.inParty) {
             autoplayLoadJob?.cancel()
             autoplayLoadJob = null
             autoplaySeed = null
+            AutoplayQueueStatus.clear()
             dropAutoplayTracksFromQueue()
         }
         refreshCustomLayouts()
@@ -3874,6 +3881,14 @@ class PlaybackService : MediaLibraryService() {
                     (latestParty.inParty && autoplaySupplierId(latestParty) != latestParty.you?.memberId)
                 ) {
                     return@launch
+                }
+                // The row only reports a miss after a request really came back
+                // with nothing. A network failure is not a zero-song answer,
+                // and an earlier miss stops holding as soon as songs arrive.
+                if (result.isSuccess && resolved.isEmpty()) {
+                    AutoplayQueueStatus.markEmpty(current.videoId)
+                } else {
+                    AutoplayQueueStatus.clearEmpty(current.videoId)
                 }
                 if (resolved.isNotEmpty()) {
                     if (latestParty.inParty) {
@@ -4086,6 +4101,7 @@ class PlaybackService : MediaLibraryService() {
         }
         autoplayLoadJob = null
         autoplaySeed = null
+        AutoplayQueueStatus.clear()
         loadAutoplayForCurrentTrack()
     }
 

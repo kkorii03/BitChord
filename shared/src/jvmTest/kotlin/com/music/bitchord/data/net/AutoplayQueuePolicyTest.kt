@@ -185,4 +185,58 @@ class AutoplayQueuePolicyTest {
         )
         assertTrue(selected.isEmpty())
     }
+
+    @Test
+    fun `the queue subtitle reports a miss only for a real zero-song request`() {
+        assertEquals(
+            AutoplayQueueDescription.QUEUED,
+            autoplayQueueDescription(
+                hasTracks = true,
+                autoplayEnabled = true,
+                currentSeedId = "current",
+                emptyRequestSeedId = "current",
+            ),
+        )
+        assertEquals(
+            AutoplayQueueDescription.EMPTY,
+            autoplayQueueDescription(
+                hasTracks = false,
+                autoplayEnabled = true,
+                currentSeedId = "current",
+                emptyRequestSeedId = "current",
+            ),
+        )
+        assertEquals(
+            AutoplayQueueDescription.WAITING,
+            autoplayQueueDescription(
+                hasTracks = false,
+                autoplayEnabled = true,
+                currentSeedId = "current",
+                emptyRequestSeedId = null,
+            ),
+        )
+        // A miss recorded for the previous track must not describe this one.
+        assertEquals(
+            AutoplayQueueDescription.WAITING,
+            autoplayQueueDescription(
+                hasTracks = false,
+                autoplayEnabled = true,
+                currentSeedId = "next",
+                emptyRequestSeedId = "previous",
+            ),
+        )
+    }
+
+    @Test
+    fun `the queue subtitle says autoplay is off regardless of an old miss`() {
+        assertEquals(
+            AutoplayQueueDescription.DISABLED,
+            autoplayQueueDescription(
+                hasTracks = false,
+                autoplayEnabled = false,
+                currentSeedId = "current",
+                emptyRequestSeedId = "current",
+            ),
+        )
+    }
 }

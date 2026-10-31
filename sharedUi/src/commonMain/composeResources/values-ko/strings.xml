@@ -12,6 +12,7 @@
     <string name="autoplay">자동 재생</string>
     <string name="autoplay_empty_description">추천 곡을 찾지 못했습니다</string>
     <string name="autoplay_disabled_description">자동 재생이 꺼져 있습니다</string>
+    <string name="autoplay_waiting_description">자동 재생 곡을 준비하고 있습니다</string>
     <string name="autoplay_off">자동 재생: 끔</string>
     <string name="autoplay_on">자동 재생: 켬</string>
     <string name="video_radio_continue">비디오 노래 이어 듣기</string>

@@ -54,6 +54,29 @@ fun autoplayTopUpNeeded(
 fun autoplayShownEnabled(autoplay: Boolean, repeatMode: Int): Boolean =
     autoplay && repeatMode != AUTOPLAY_REPEAT_MODE_ALL
 
+/** What the queue's AutoPlay row says beneath its heading. */
+enum class AutoplayQueueDescription { QUEUED, EMPTY, DISABLED, WAITING }
+
+/**
+ * Chooses the AutoPlay row's subtitle.
+ *
+ * "No recommendations found" is reserved for a request that really finished
+ * with zero songs for the track now playing. An empty tail on its own means
+ * nothing — it is also what the queue looks like before the first request has
+ * finished — so anything else reads as waiting rather than as a failure.
+ */
+fun autoplayQueueDescription(
+    hasTracks: Boolean,
+    autoplayEnabled: Boolean,
+    currentSeedId: String?,
+    emptyRequestSeedId: String?,
+): AutoplayQueueDescription = when {
+    hasTracks -> AutoplayQueueDescription.QUEUED
+    !autoplayEnabled -> AutoplayQueueDescription.DISABLED
+    currentSeedId != null && currentSeedId == emptyRequestSeedId -> AutoplayQueueDescription.EMPTY
+    else -> AutoplayQueueDescription.WAITING
+}
+
 /** The state AutoPlay and repeat-all take when the AutoPlay switch is pressed. */
 data class AutoplayToggleResult(
     val autoplay: Boolean,

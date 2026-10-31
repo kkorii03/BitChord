@@ -1650,6 +1650,13 @@ object AppSettings {
     }
 
     fun setAutoplay(value: Boolean) {
+        // The switch and repeat-all are mutually exclusive on every surface,
+        // not only in the playback service. Turning AutoPlay on releases the
+        // loop and drops what it was holding; turning it off is a deliberate
+        // choice, so repeat-all must not restore it later either.
+        if (value && repeatMode.value == Player.REPEAT_MODE_ALL) {
+            setRepeatMode(Player.REPEAT_MODE_OFF)
+        }
         applyAutoplayState(value, null)
     }
 
