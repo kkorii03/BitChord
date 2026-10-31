@@ -12,6 +12,7 @@ class NextPrepSkipReasonTest {
         lyricsOff: Boolean = false,
         syncedLyrics: Boolean = true,
         hasLyrics: Boolean = true,
+        hasTimedLines: Boolean = true,
         fileTimed: Boolean = false,
         recordTimed: Boolean = true,
         timedToVideo: Boolean = false,
@@ -25,6 +26,7 @@ class NextPrepSkipReasonTest {
         lyricsOff = lyricsOff,
         syncedLyrics = syncedLyrics,
         hasLyrics = hasLyrics,
+        hasTimedLines = hasTimedLines,
         fileTimed = fileTimed,
         recordTimed = recordTimed,
         timedToVideo = timedToVideo,
@@ -69,6 +71,10 @@ class NextPrepSkipReasonTest {
             NextPrepPolicy.syncStatus(facts(hasLyrics = false)),
         )
         assertEquals(
+            "skipped(no-timed-lines)",
+            NextPrepPolicy.syncStatus(facts(hasTimedLines = false)),
+        )
+        assertEquals(
             "skipped(deadline)",
             NextPrepPolicy.syncStatus(facts(remainingMs = 0L)),
         )
@@ -79,6 +85,7 @@ class NextPrepSkipReasonTest {
         assertEquals("lyrics-off", NextPrepPolicy.syncSkipReason(facts(lyricsOff = true, hasLyrics = false)))
         assertEquals("synced-off", NextPrepPolicy.syncSkipReason(facts(syncedLyrics = false, hasLyrics = false)))
         assertEquals("no-lyrics", NextPrepPolicy.syncSkipReason(facts(hasLyrics = false, fileTimed = true)))
+        assertEquals("no-timed-lines", NextPrepPolicy.syncSkipReason(facts(hasTimedLines = false)))
         assertEquals("timed-to-video", NextPrepPolicy.syncSkipReason(facts(timedToVideo = true)))
         assertEquals("file-timed", NextPrepPolicy.syncSkipReason(facts(fileTimed = true)))
         assertEquals("file-timed", NextPrepPolicy.syncSkipReason(facts(recordTimed = false)))
@@ -112,6 +119,7 @@ class NextPrepSkipReasonTest {
             facts(lyricsOff = true, hasLyrics = false) to "lyrics-off",
             facts(syncedLyrics = false, hasLyrics = false) to "synced-off",
             facts(hasLyrics = false) to "no-lyrics",
+            facts(hasTimedLines = false) to "no-timed-lines",
             facts(timedToVideo = true) to "timed-to-video",
             facts(fileTimed = true) to "file-timed",
             facts(heavyWorkAllowed = false) to "heavy-off",

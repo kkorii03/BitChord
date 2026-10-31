@@ -492,6 +492,7 @@ internal class NextTrackPreparation(
             lyricsOff = !switches.nextPrepLyrics,
             syncedLyrics = AppSettings.syncedLyrics.value,
             hasLyrics = lines != null,
+            hasTimedLines = lines?.any { it.timeMs > 0L } == true,
             fileTimed = fileTimed,
             recordTimed = recordTimed,
             timedToVideo = timedToVideo,
