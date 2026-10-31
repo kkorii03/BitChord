@@ -20,6 +20,9 @@ internal enum class UnplayableRecoveryAction {
 
     /** Definitive, and there is nothing else to play. */
     SKIP_NEXT,
+
+    /** Definitive, but the same id has been skipped too many times in a row. */
+    STOP,
 }
 
 internal object UnplayableRecovery {
@@ -32,9 +35,29 @@ internal object UnplayableRecovery {
     fun isDefinitive(permanentReason: String?, alreadyMarkedUnplayable: Boolean): Boolean =
         alreadyMarkedUnplayable || UnplayableReason.isDefinitive(permanentReason)
 
-    fun decide(definitive: Boolean, hasAlternate: Boolean): UnplayableRecoveryAction = when {
+    fun decide(
+        definitive: Boolean,
+        hasAlternate: Boolean,
+        consecutiveVerdictSkips: Int = 0,
+    ): UnplayableRecoveryAction = when {
         definitive && hasAlternate -> UnplayableRecoveryAction.SWAP_ALTERNATE
-        definitive -> UnplayableRecoveryAction.SKIP_NEXT
+        definitive && allowsVerdictSkip(consecutiveVerdictSkips) -> UnplayableRecoveryAction.SKIP_NEXT
+        definitive -> UnplayableRecoveryAction.STOP
         else -> UnplayableRecoveryAction.RETRY
     }
+
+    /**
+     * How far a run of definitive refusals may carry the queue before it
+     * stops. Verdicts are normally allowed to walk straight through a queue
+     * of region-locked or age-gated tracks, but a repeated queue row (or
+     * repeat-one) gives the same media id back after every skip, and without a
+     * bound that is an endless error/skip loop rather than progress. The
+     * allowance is deliberately larger than [PlaybackService.MAX_CONSECUTIVE_SKIPS]:
+     * a whole album of unavailable rows is still a run a listener expects to pass.
+     */
+    const val MAX_CONSECUTIVE_VERDICT_SKIPS = 20
+
+    /** Whether one more definitive skip is still progress rather than a loop. */
+    fun allowsVerdictSkip(consecutiveVerdictSkips: Int): Boolean =
+        consecutiveVerdictSkips < MAX_CONSECUTIVE_VERDICT_SKIPS
 }

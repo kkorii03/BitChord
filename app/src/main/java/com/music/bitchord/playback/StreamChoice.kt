@@ -61,6 +61,16 @@ object StreamChoice {
     private val chosen = ConcurrentHashMap<String, Choice>()
 
     /**
+     * Tracks whose choice expired just now. The resolver consumes one before
+     * resolving afresh so the bytes the old URL had already put into the
+     * cache are not continued by a different rendition under the same key.
+     * Only [consumeExpired] clears it: a read-ahead or mid-play recovery may
+     * [remember] a fresh choice for the same id before playback opens it, and
+     * clearing the marker there would let the old partial prefix be continued.
+     */
+    private val expired = ConcurrentHashMap.newKeySet<String>()
+
+    /**
      * Bumped whenever a choice is recorded, so a player that is already
      * preparing the next track can be re-armed on the event rather than by a
      * timer. The value is a revision, not the stream itself: collectors read
@@ -75,14 +85,38 @@ object StreamChoice {
      * for it — or the last one was long enough ago that its URL is no longer
      * worth trusting.
      */
-    fun of(videoId: String): SourceStream? {
+    fun of(videoId: String): SourceStream? = of(videoId, SystemClock.elapsedRealtime())
+
+    /**
+     * [of] with the clock supplied, for the expiry test.
+     *
+     * An expired choice is not merely forgotten: it is marked so the caller can
+     * throw away a partial cache entry before a fresh resolve might choose a
+     * different rendition and append it to the old bytes.
+     */
+    internal fun of(videoId: String, nowMs: Long): SourceStream? {
         val choice = chosen[videoId] ?: return null
-        if (SystemClock.elapsedRealtime() - choice.at > TTL_MS) {
+        if (nowMs - choice.at > TTL_MS) {
             chosen.remove(videoId)
+            expired.add(videoId)
             return null
         }
         return choice.stream
     }
+
+    /**
+     * Whether [videoId] still needs the partial cache entry from an expired
+     * choice cleared. Unlike [consumeExpired] this leaves the marker in place,
+     * so a discard that could not run yet is retried on the next open.
+     */
+    fun hasExpired(videoId: String): Boolean = videoId in expired
+
+    /**
+     * Whether the last [of] call for [videoId] dropped an expired choice. True
+     * at most once: the caller that resolves the track is the one that has to
+     * clear its partial cache entry.
+     */
+    fun consumeExpired(videoId: String): Boolean = expired.remove(videoId)
 
     /**
      * Records [stream] as the one copy of [videoId] this play is reading.

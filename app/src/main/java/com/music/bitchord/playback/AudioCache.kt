@@ -387,13 +387,17 @@ object AudioCache {
      *   never written to again, so it cannot be the half-filled seam this
      *   exists to clear, and throwing it away for a network error is how
      *   playing offline used to delete the very songs it was playing.
+     * @return true when every entry this was asked to remove is gone. A key
+     *   still held by a live reader is a false, so a caller that must not
+     *   continue a partial prefix can retry rather than assume it was cleared.
      */
-    fun discard(uri: Uri, keepComplete: Boolean = false) {
+    fun discard(uri: Uri, keepComplete: Boolean = false): Boolean {
         val exact = keyFactory.buildCacheKey(DataSpec(uri))
         val about = mediaIdIn(uri)
         val family = uri.getQueryParameter("v")?.let { videoId ->
             cache.keys.filter { it == videoId || it.startsWith("$videoId#") }
         } ?: emptyList()
+        var cleared = true
         (family + exact).distinct().forEach { key ->
             if (keepComplete && isComplete(key)) {
                 TrackLog.d(TAG, "kept complete cache entry $key through a network failure", about = about)
@@ -404,8 +408,12 @@ object AudioCache {
                     forgetPurgeCandidate(key)
                     TrackLog.d(TAG, "discarded cache entry $key", about = about)
                 }
-                .onFailure { TrackLog.d(TAG, "cache entry $key still in use: ${it.message}", about = about) }
+                .onFailure {
+                    cleared = false
+                    TrackLog.d(TAG, "cache entry $key still in use: ${it.message}", about = about)
+                }
         }
+        return cleared
     }
 
     /**

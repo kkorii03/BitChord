@@ -840,6 +840,14 @@ class PlaybackService : MediaLibraryService() {
     private var consecutiveErrorSkips = 0
 
     /**
+     * How many definitive refusals in a row have moved the queue, reset the
+     * moment anything actually plays. A verdict is normally allowed straight
+     * past a bad row, but a duplicated row or repeat-one can hand the same id
+     * back after every skip — see [UnplayableRecovery.allowsVerdictSkip].
+     */
+    private var consecutiveVerdictSkips = 0
+
+    /**
      * The track whose playback failure has already been shown to the listener.
      *
      * One failed track raises its error several times on the way to being
@@ -1266,6 +1274,7 @@ class PlaybackService : MediaLibraryService() {
                 // say the queue is not simply unplayable end to end.
                 audibleMediaId = exoPlayer.currentMediaItem?.mediaId
                 consecutiveErrorSkips = 0
+                consecutiveVerdictSkips = 0
                 // Sound is out, so the rows after this one can be prepared
                 // without competing with the current row's own lookup.
                 scheduleUpcomingSongVersions(exoPlayer)
@@ -2087,7 +2096,27 @@ class PlaybackService : MediaLibraryService() {
             // the end of the cached bytes. Deciding afresh each time is how
             // the middle of an MP4 ended up appended to a WebM. See
             // [StreamChoice].
-            StreamChoice.of(videoId)?.let { serving ->
+            val serving = StreamChoice.of(videoId)
+            // The pinned URL is too old to trust, and the entry it was filling
+            // may be only part of a file. Check the marker even when a
+            // read-ahead has already remembered a replacement: consuming it
+            // only after a successful discard keeps a key still held by a live
+            // reader from being continued by the next rendition.
+            if (StreamChoice.hasExpired(videoId)) {
+                val discarded = runBlocking(about) {
+                    AudioCache.discard(
+                        Uri.parse("bitchord://watch?v=$videoId"),
+                        keepComplete = true,
+                    )
+                }
+                if (!discarded) {
+                    throw java.io.IOException(
+                        "cache entry for $videoId is still in use after its stream choice expired",
+                    )
+                }
+                StreamChoice.consumeExpired(videoId)
+            }
+            if (serving != null) {
                 // What the stream claims to be, restated on every open rather
                 // than only on the one that chose it.
                 //
@@ -4654,6 +4683,7 @@ class PlaybackService : MediaLibraryService() {
             // advance would leave every track looking like it never started.
             audibleMediaId = mediaItem?.mediaId
             consecutiveErrorSkips = 0
+            consecutiveVerdictSkips = 0
             // The crossfaded track never reports playing, so its look-ahead
             // is scheduled here instead.
             scheduleUpcomingSongVersions(exoPlayer)
@@ -5648,8 +5678,15 @@ class PlaybackService : MediaLibraryService() {
      * leaves the error on the player, which is what puts a message on screen,
      * and leaves the queue where it was. The count only resets when something
      * actually plays, so a working track anywhere in a bad patch restores the
-     * full allowance. Verdicts are exempt: they are a statement about one track
-     * rather than a guess, and their skipping is behaviour that already works.
+     * full allowance.
+     *
+     * A verdict is normally a statement about one track rather than a guess,
+     * so the plain error allowance above does not apply to it and a run of
+     * region-locked rows still walks through. It has its own, much larger
+     * bound ([UnplayableRecovery.MAX_CONSECUTIVE_VERDICT_SKIPS]) only to stop
+     * a duplicated row or repeat-one from handing the same id back after every
+     * skip for ever — see [verdictSkipReason], which the definitive branch
+     * calls too rather than skipping around it.
      */
     private fun skipReason(
         verdict: String?,
@@ -5657,7 +5694,7 @@ class PlaybackService : MediaLibraryService() {
         neverStarted: Boolean,
         attempts: Int,
     ): String? {
-        if (verdict != null) return verdict
+        if (verdict != null) return verdictSkipReason(verdict)
         if (isBotChallenge(error)) {
             TrackLog.w(
                 "BitChord",
@@ -5676,6 +5713,27 @@ class PlaybackService : MediaLibraryService() {
         }
         consecutiveErrorSkips++
         return "failed to start after $attempts attempts (${error.errorCodeName})"
+    }
+
+    /**
+     * The single gate for a definitive refusal, used both by [skipReason] and
+     * by the alternate/skip path so that path cannot bypass the verdict cap.
+     *
+     * @return the reason to skip with, or null when the same id has already
+     *   been handed back [UnplayableRecovery.MAX_CONSECUTIVE_VERDICT_SKIPS]
+     *   times in a row and the queue should stay where it is.
+     */
+    private fun verdictSkipReason(reason: String): String? {
+        if (!UnplayableRecovery.allowsVerdictSkip(consecutiveVerdictSkips)) {
+            TrackLog.w(
+                "BitChord",
+                "${UnplayableRecovery.MAX_CONSECUTIVE_VERDICT_SKIPS} unplayable rows in a row; " +
+                    "this id keeps coming back — stopping here",
+            )
+            return null
+        }
+        consecutiveVerdictSkips++
+        return reason
     }
 
     /**
@@ -5911,15 +5969,26 @@ class PlaybackService : MediaLibraryService() {
                     val decision = UnplayableRecovery.decide(
                         definitive = true,
                         hasAlternate = alternate != null,
+                        consecutiveVerdictSkips = consecutiveVerdictSkips,
                     )
                     if (decision != UnplayableRecoveryAction.SWAP_ALTERNATE || alternate == null) {
+                        val skipReason = verdictSkipReason(reason)
+                        if (skipReason == null) {
+                            TrackLog.w(
+                                "BitChord",
+                                "unplayable: $mediaId $reason -> verdict cap reached, staying",
+                                about = mediaId,
+                            )
+                            reportPlaybackFailure(mediaId, R.string.playback_error)
+                            return@withContext
+                        }
                         TrackLog.w("BitChord", "unplayable: $mediaId $reason -> skip", about = mediaId)
                         TrackLog.i(
                             "BitChord",
                             "unplayable timing: $mediaId skip after ${elapsedMs}ms",
                             about = mediaId,
                         )
-                        skipPastUnplayable(mediaId, reason)
+                        skipPastUnplayable(mediaId, skipReason)
                         return@withContext
                     }
                     TrackLog.w(
