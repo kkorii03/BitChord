@@ -1,6 +1,9 @@
 package com.music.bitchord.ui.screens
 
 import com.music.bitchord.ui.components.trackArtSize
+import com.music.bitchord.ui.components.appleSubtitleText
+import com.music.bitchord.ui.components.LikedMusicCover
+import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.ui.components.contextClick
 import com.music.bitchord.ui.AppUi
 import com.music.bitchord.sharedui.resources.*
@@ -55,6 +58,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
+import java.util.Locale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
@@ -281,7 +286,7 @@ fun HomeScreen(
                     }
                 }
                 is UiState.Error -> item {
-                    MessageState(state.message, actionLabel = stringResource(Res.string.retry), onAction = retry)
+                    MessageState(state.message, actionLabel = stringResource(Res.string.retry), onAction = onRetry)
                 }
                 is UiState.Success -> {
                     if (recentlyPlayedLoading) {
@@ -370,14 +375,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
                     currentSong = currentSong,
                     isPlaying = isPlaying,
                 )
-                index == 0 && firstIsHero -> HeroShelf(
-                    shelf = shelf,
-                    onItemClick = openItem,
-                    onItemLongPress = onItemLongPress,
-                    currentSong = currentSong,
-                    isPlaying = isPlaying,
-                )
-                else -> Shelf(
+            } else {
+                Shelf(
                     shelf = shelf,
                     onItemClick = openItem,
                     onItemLongPress = onItemLongPress,
@@ -641,27 +640,48 @@ fun CompactTrackRow(
  * line — the account avatar, as Apple Music places it.
  */
 @Composable
-private fun HomeTitle(title: String, modifier: Modifier = Modifier) {
+private fun HomeTitle(
+    title: String,
+    modifier: Modifier = Modifier,
+    accessory: (@Composable () -> Unit)? = null,
+) {
     val style = MaterialTheme.typography.displayLarge
     val logoHeight = with(LocalDensity.current) { (style.fontSize * LOGO_TO_FONT).toDp() }
-    Column(modifier = modifier.padding(horizontal = PAGE_GUTTER, vertical = 8.dp)) {
-        Icon(
-            painter = painterResource(Res.drawable.ic_logo),
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier
-                .padding(bottom = 14.dp)
-                .height(logoHeight)
-                .aspectRatio(LOGO_ASPECT),
-        )
-        // "Listen now" is hidden for now; the wordmark above stays.
-        // Text(
-        //     text = title,
-        //     style = style,
-        //     color = MaterialTheme.colorScheme.onBackground,
-        // )
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = PAGE_GUTTER, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Icon(
+                painter = painterResource(Res.drawable.ic_logo),
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier
+                    .padding(bottom = 14.dp)
+                    .height(logoHeight)
+                    .aspectRatio(LOGO_ASPECT),
+            )
+            // "Listen now" is hidden for now; the wordmark above stays.
+            // Text(
+            //     text = title,
+            //     style = style,
+            //     color = MaterialTheme.colorScheme.onBackground,
+            // )
+        }
+        if (accessory != null) {
+            Spacer(Modifier.width(8.dp))
+            accessory()
+        }
     }
 }
+
+/** The wordmark's height against the heading's font size. */
+private const val LOGO_TO_FONT = 0.9f
+
+/** ic_logo's viewport, 730 x 484. */
+private const val LOGO_ASPECT = 730f / 484f
 
 /**
  * Shared by the home feed, Explore and Library so headings line up across tabs.

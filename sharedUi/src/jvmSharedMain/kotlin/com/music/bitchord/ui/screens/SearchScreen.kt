@@ -64,7 +64,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -89,6 +88,8 @@ import com.music.bitchord.data.model.MoodGenreSection
 import com.music.bitchord.data.model.appleCardKind
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.ui.components.LikedMusicCover
+import com.music.bitchord.ko.ui.koBrowseFallbackLabel
+import com.music.bitchord.ko.ui.koHasNoResults
 import com.music.bitchord.ui.components.appleSubtitleText
 import com.music.bitchord.ui.components.artworkCorner
 import com.music.bitchord.ui.components.LIST_ROW_VERTICAL_PADDING
@@ -1169,6 +1170,7 @@ private fun RecentSearchEntityRow(
                     EntityType.ALBUM -> com.music.bitchord.data.model.AppleCardKind.ALBUM
                     EntityType.ARTIST -> com.music.bitchord.data.model.AppleCardKind.ARTIST
                     EntityType.PLAYLIST -> com.music.bitchord.data.model.AppleCardKind.PLAYLIST
+                    EntityType.OTHER -> null
                 }
                 Text(
                     text = appleSubtitleText(entity.subtitle, kind),
@@ -1261,3 +1263,9 @@ private fun BrowseRow(item: BrowseItem, onClick: () -> Unit, onLongPress: (() ->
 
 /** How far an addon row the quality setting won't play is dimmed; Material's disabled level. */
 private const val BLOCKED_ROW_ALPHA = 0.38f
+
+// [KO] search-empty-state — restored Korean-fork helpers, now in ko/ui.
+internal fun <T> UiState<List<T>>?.hasNoResults(): Boolean = koHasNoResults(this)
+
+// [KO] search-browse-label — restored Korean-fork helper, now in ko/ui.
+internal fun browseFallbackLabel(type: BrowseType): StringResource = koBrowseFallbackLabel(type)
