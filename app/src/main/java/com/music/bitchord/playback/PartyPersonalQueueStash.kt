@@ -3,6 +3,7 @@ package com.music.bitchord.playback
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.media3.common.Player
+import com.music.bitchord.data.StoredSongDisplay
 import com.music.bitchord.data.model.Song
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -145,28 +146,30 @@ object PartyPersonalQueueStash {
         fun toSong(): Song {
             val resolvedTier = tier?.let { runCatching { com.music.bitchord.data.model.QueueTier.valueOf(it) }.getOrNull() }
                 ?: if (auto) com.music.bitchord.data.model.QueueTier.AUTOPLAY else com.music.bitchord.data.model.QueueTier.CONTEXT
-            return Song(
-                videoId = id,
-                title = title,
-                artist = artist,
-                thumbnailUrl = artwork,
-                durationText = duration,
-                albumName = album,
-                isExplicit = explicit,
-                channelId = channelId,
-                isVideo = video,
-                isVideoOrigin = videoOrigin ?: video,
-                videoRadio = videoRadio,
-                queueTier = resolvedTier,
-                queueEntryId = entryId,
-                radioName = radio,
-                playbackSource = source,
-                playbackSourceType = sourceType?.let {
-                    runCatching { com.music.bitchord.data.model.PlaybackSourceType.valueOf(it) }.getOrNull()
-                },
-                playbackSourceId = sourceId,
-                localUri = local,
-                localPath = path,
+            return StoredSongDisplay.clean(
+                Song(
+                    videoId = id,
+                    title = title,
+                    artist = artist,
+                    thumbnailUrl = artwork,
+                    durationText = duration,
+                    albumName = album,
+                    isExplicit = explicit,
+                    channelId = channelId,
+                    isVideo = video,
+                    isVideoOrigin = videoOrigin ?: video,
+                    videoRadio = videoRadio,
+                    queueTier = resolvedTier,
+                    queueEntryId = entryId,
+                    radioName = radio,
+                    playbackSource = source,
+                    playbackSourceType = sourceType?.let {
+                        runCatching { com.music.bitchord.data.model.PlaybackSourceType.valueOf(it) }.getOrNull()
+                    },
+                    playbackSourceId = sourceId,
+                    localUri = local,
+                    localPath = path,
+                ),
             )
         }
 

@@ -7,6 +7,7 @@ import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.SystemClock
 import com.music.bitchord.R
+import com.music.bitchord.data.StoredSongDisplay
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.playback.smart.AutomixAnalysisSource
 import com.music.bitchord.playback.smart.HqAudioVerify
@@ -1136,22 +1137,24 @@ object AudioCache {
                 ?: mediaId.takeIf { SourceRegistry.parseTrackKey(it) == null }
                     ?.let { "https://i.ytimg.com/vi/$it/hqdefault.jpg" }
             CachedSong(
-                song = Song(
-                    videoId = mediaId,
-                    title = field(META_TITLE) ?: noted?.title?.takeIf(String::isNotBlank) ?: mediaId,
-                    artist = field(META_ARTIST) ?: noted?.artist.orEmpty(),
-                    thumbnailUrl = art,
-                    durationText = field(META_DURATION) ?: noted?.durationText,
-                    albumName = field(META_ALBUM) ?: noted?.albumName,
-                    // The row's second line: where the copy came from, what
-                    // it costs on disk, and — when only part of it is there —
-                    // that it will need a connection to play to the end.
-                    downloadFormat = listOfNotNull(
-                        origin.label,
-                        formatBytes(bytes),
-                        appContext?.getString(R.string.cached_song_partial)?.takeUnless { complete },
-                    ).joinToString(" · "),
-                    localDateAddedSeconds = lastUsed / 1000,
+                song = StoredSongDisplay.clean(
+                    Song(
+                        videoId = mediaId,
+                        title = field(META_TITLE) ?: noted?.title?.takeIf(String::isNotBlank) ?: mediaId,
+                        artist = field(META_ARTIST) ?: noted?.artist.orEmpty(),
+                        thumbnailUrl = art,
+                        durationText = field(META_DURATION) ?: noted?.durationText,
+                        albumName = field(META_ALBUM) ?: noted?.albumName,
+                        // The row's second line: where the copy came from, what
+                        // it costs on disk, and — when only part of it is there —
+                        // that it will need a connection to play to the end.
+                        downloadFormat = listOfNotNull(
+                            origin.label,
+                            formatBytes(bytes),
+                            appContext?.getString(R.string.cached_song_partial)?.takeUnless { complete },
+                        ).joinToString(" · "),
+                        localDateAddedSeconds = lastUsed / 1000,
+                    ),
                 ),
                 origin = origin,
                 bytes = bytes,

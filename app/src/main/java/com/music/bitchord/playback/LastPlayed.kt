@@ -2,6 +2,7 @@ package com.music.bitchord.playback
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.music.bitchord.data.StoredSongDisplay
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.withVideoThumbnailFallback
 import kotlinx.serialization.Serializable
@@ -251,33 +252,35 @@ object LastPlayed {
                 "AUTOPLAY" -> com.music.bitchord.data.model.QueueTier.AUTOPLAY
                 else -> if (auto) com.music.bitchord.data.model.QueueTier.AUTOPLAY else com.music.bitchord.data.model.QueueTier.CONTEXT
             }
-            return Song(
-                videoId = id,
-                title = title,
-                artist = artist,
-                thumbnailUrl = artwork,
-                durationText = duration,
-                albumName = album,
-                isExplicit = explicit,
-                isVideo = video,
-                isVideoOrigin = videoOrigin ?: video,
-                queueTier = resolvedTier,
-                queueEntryId = entryId,
-                radioName = radio,
-                playbackSource = source,
-                playbackSourceType = sourceType?.let {
-                    runCatching { com.music.bitchord.data.model.PlaybackSourceType.valueOf(it) }.getOrNull()
-                },
-                playbackSourceId = sourceId,
-                localUri = local,
-                localPath = path,
-                artistId = channelId,
-                channelId = uploaderChannelId,
-                originalTitle = originalTitle,
-                originalArtist = originalArtist,
-                coverSinger = coverSinger,
-                coverOriginalArtist = coverOriginalArtist,
-                videoRadio = videoRadio,
+            return StoredSongDisplay.clean(
+                Song(
+                    videoId = id,
+                    title = title,
+                    artist = artist,
+                    thumbnailUrl = artwork,
+                    durationText = duration,
+                    albumName = album,
+                    isExplicit = explicit,
+                    isVideo = video,
+                    isVideoOrigin = videoOrigin ?: video,
+                    queueTier = resolvedTier,
+                    queueEntryId = entryId,
+                    radioName = radio,
+                    playbackSource = source,
+                    playbackSourceType = sourceType?.let {
+                        runCatching { com.music.bitchord.data.model.PlaybackSourceType.valueOf(it) }.getOrNull()
+                    },
+                    playbackSourceId = sourceId,
+                    localUri = local,
+                    localPath = path,
+                    artistId = channelId,
+                    channelId = uploaderChannelId,
+                    originalTitle = originalTitle,
+                    originalArtist = originalArtist,
+                    coverSinger = coverSinger,
+                    coverOriginalArtist = coverOriginalArtist,
+                    videoRadio = videoRadio,
+                ),
             ).withVideoThumbnailFallback()
         }
 
