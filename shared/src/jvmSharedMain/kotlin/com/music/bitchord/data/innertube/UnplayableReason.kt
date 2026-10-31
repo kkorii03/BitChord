@@ -93,6 +93,37 @@ object UnplayableReason {
     )
 
     /**
+     * A private upload. Unlike a deletion, this can still be the signed-in
+     * user's own track: the anonymous direct clients cannot see it, while the
+     * cookie-authenticated walk may. Callers use [isPrivateOnly] to keep such
+     * an anonymous answer from settling the track.
+     */
+    private val privateUpload = listOf(
+        "private video",
+        "private content",
+        "is private",
+        "비공개",
+    )
+
+    /** A gone verdict stronger than privacy, which even a signed-in session cannot recover. */
+    private val irreversibleGone = listOf(
+        "claimed content",
+        "blocked due to the claimed",
+        "copyright claim",
+        "copyright",
+        "copyrighted",
+        "has been removed",
+        "was removed",
+        "deleted",
+        "account terminated",
+        "소유권 주장",
+        "저작권",
+        "삭제",
+        "해지되었",
+        "채널이 해지",
+    )
+
+    /**
      * Wording that scopes a refusal to the listener's country. A claim or a
      * takedown is still a fact about the recording wherever it is read; a
      * copyright notice carrying one of these is a region gate first.
@@ -311,6 +342,21 @@ object UnplayableReason {
         if (isRegionGate(existing) && !isRegionGate(incoming)) return existing
         if (isBotChallenge(existing) && !isBotChallenge(incoming)) return existing
         return incoming
+    }
+
+    /**
+     * Whether [message] says only that the upload is private. A deletion, a
+     * takedown or a claim is stronger: those stay gone even for the account
+     * that owns the video, so this returns false when one of them is present.
+     * The anonymous direct clients cannot see a signed-in user's private
+     * upload, so their private answer must not pre-empt the cookie-backed
+     * walk; see [isDefinitelyGone] for the verdict itself.
+     */
+    fun isPrivateOnly(message: String?): Boolean {
+        val lower = message?.trim()?.lowercase().orEmpty()
+        if (lower.isEmpty()) return false
+        if (privateUpload.none { it in lower }) return false
+        return irreversibleGone.none { it in lower }
     }
 
     /**

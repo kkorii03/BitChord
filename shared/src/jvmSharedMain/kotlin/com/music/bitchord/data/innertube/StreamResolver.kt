@@ -20,6 +20,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -589,6 +590,9 @@ object StreamResolver {
         val onAllScope: Boolean,
     )
 
+    /** A direct-built stream and the client that minted it; [client] is null for an InnerTubeX result. */
+    private class DirectRun(val stream: Stream, val client: String?)
+
     /** Whether ALL_YOUTUBE is actually in force now — not merely selected. */
     private fun allScopeInForce(): Boolean = ProxyPlaybackPolicy.allScopeNow(
         configUsable = com.music.bitchord.data.net.YouTubeProxy.config.usable,
@@ -674,6 +678,23 @@ object StreamResolver {
 
         fun goneRefusal(): Boolean = goneReason() != null
 
+        // When InnerTubeX leads (a learned InnerTubeX path, or the default
+        // non-gated ladder), its walk can take thirteen seconds on a track the
+        // sub-second direct ask can already pronounce gone. The direct probe
+        // therefore starts beside it; only a definitive recording verdict may
+        // cancel the walk. See [raceDirectDefinitive].
+        val itxLeads = preferredItx != null || (!preferDirect && !gated)
+        var directPrecheck: Deferred<DirectProbe<DirectRun>>? =
+            if (itxLeads && order.directAllowed()) {
+                resolverScope.async(TrackLog.about(videoId)) {
+                    timed("$videoId direct") {
+                        directProbe(videoId, checkActive = { ensureActive() })
+                    }
+                }
+            } else {
+                null
+            }
+
         suspend fun tryDirect(): Stream? {
             if (directTried) return null
             directTried = true
@@ -681,35 +702,43 @@ object StreamResolver {
                 // Five refusals in the last six tracks: each one costs about
                 // 400ms before InnerTubeX even starts, so stop paying it until
                 // the bench expires or the process restarts.
+                directPrecheck?.cancel()
                 TrackLog.d(TAG, "resolve: direct path is benched, skipping it for $videoId")
                 return null
             }
-            val found = timed("$videoId direct") {
-                directStream(
-                    videoId,
-                    onUnplayable = { reason ->
-                        directUnplayable = true
-                        directUnplayableReason =
-                            UnplayableReason.keepTrackSpecific(directUnplayableReason, reason)
-                    },
-                ) { client ->
-                    served(ResolutionOrder.DIRECT, "direct $client")
-                }
+            val probe = try {
+                directPrecheck?.also { directPrecheck = null }?.await()
+                    ?: timed("$videoId direct") { directProbe(videoId) }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (e: Exception) {
+                TrackLog.w(TAG, "direct probe failed for $videoId: ${e.javaClass.simpleName}: ${e.message}")
+                DirectProbe.Other(refused = false, reason = null)
             }
-            if (found == null) {
-                // A takedown, a claim or a deleted upload is a fact about this
-                // recording, not about the direct path. Counting it would
-                // bench that path for the next, perfectly playable track — the
-                // report shows exactly that: one blocked song and the
-                // following start lost its learned order.
-                if (!UnplayableReason.isTrackSpecific(directUnplayableReason)) {
-                    order.noteDirectRefused()
-                    order.noteRefused(ResolutionOrder.DIRECT)
-                }
-            } else {
+            if (probe is DirectProbe.Stream) {
+                served(ResolutionOrder.DIRECT, "direct ${probe.value.client}")
                 order.noteDirectServed()
+                return probe.value.stream
             }
-            return found
+            if (probe is DirectProbe.Gone) {
+                directUnplayable = true
+                directUnplayableReason =
+                    UnplayableReason.keepTrackSpecific(directUnplayableReason, probe.reason)
+            } else if (probe is DirectProbe.Other) {
+                if (probe.refused) directUnplayable = true
+                directUnplayableReason =
+                    UnplayableReason.keepTrackSpecific(directUnplayableReason, probe.reason)
+            }
+            // A takedown, a claim or a deleted upload is a fact about this
+            // recording, not about the direct path. Counting it would bench
+            // that path for the next, perfectly playable track — the report
+            // shows exactly that: one blocked song and the following start
+            // lost its learned order.
+            if (!UnplayableReason.isTrackSpecific(directUnplayableReason)) {
+                order.noteDirectRefused()
+                order.noteRefused(ResolutionOrder.DIRECT)
+            }
+            return null
         }
 
         suspend fun tryInnerTubeX(preferredManifest: String?): Stream? {
@@ -736,13 +765,41 @@ object StreamResolver {
             return found
         }
 
+        suspend fun tryInnerTubeXWatchingDirect(preferredManifest: String?): Stream? {
+            val precheck = directPrecheck ?: return tryInnerTubeX(preferredManifest)
+            val itx = resolverScope.async(TrackLog.about(videoId)) {
+                tryInnerTubeX(preferredManifest)?.let { DirectRun(it, client = null) }
+            }
+            val outcome = try {
+                raceDirectDefinitive(precheck, itx)
+            } catch (cancelled: CancellationException) {
+                itx.cancel()
+                throw cancelled
+            }
+            return when (outcome) {
+                is DirectVerdictRace.Gone -> {
+                    directUnplayable = true
+                    directUnplayableReason =
+                        UnplayableReason.keepTrackSpecific(directUnplayableReason, outcome.reason)
+                    TrackLog.d(
+                        TAG,
+                        "resolve: $videoId definitive by direct in ${MonotonicClock.nowMs() - resolveStart}ms",
+                    )
+                    throw PermanentlyUnplayableException(outcome.reason)
+                }
+                is DirectVerdictRace.ViaInnerTubeX -> outcome.value.stream
+                DirectVerdictRace.None -> null
+            }
+        }
+
+        try {
         val stream = try {
             // The first ask is the cheap one (the learned or preferred route,
             // ~0.3 s). Most tracks are served right there and never involve the
             // proxy; racing every track would double the player requests and
             // send playable tracks through Tokyo.
             val first = when {
-                preferredItx != null -> tryInnerTubeX(preferredItx)
+                preferredItx != null -> tryInnerTubeXWatchingDirect(preferredItx)
                 preferDirect -> tryDirect()
                 else -> null
             }
@@ -830,7 +887,7 @@ object StreamResolver {
                     tryInnerTubeX(null)
                 }
             } else {
-                tryInnerTubeX(null) ?: tryDirect()
+                tryInnerTubeXWatchingDirect(null) ?: tryDirect()
             }) ?: if (goneRefusal()) {
                 // The direct ladder may have been the one to name the claim or
                 // the deletion. Extraction reads the same watch page and would
@@ -945,6 +1002,13 @@ object StreamResolver {
         TrackLog.d(TAG, "TIMING $videoId total resolve: $took ms")
         ResolutionFacts.note(videoId, "direct")
         return stream
+        } finally {
+            // The precheck belongs to this walk only. If an early exit — a
+            // vanished recording, an extraction failsafe or a caller's
+            // cancellation — leaves it unconsumed, stop its HTTP/probe work
+            // rather than letting it finish out on resolverScope.
+            directPrecheck?.cancel()
+        }
     }
 
     /**
@@ -1185,16 +1249,72 @@ object StreamResolver {
         viaProxy: Boolean = false,
         onUnplayable: (String?) -> Unit = {},
         onServed: (client: String) -> Unit = {},
-    ): Stream? {
-        for (found in DirectClientResolver.candidates(videoId, maxKbps, viaProxy, onUnplayable)) {
+    ): Stream? = when (val probe = directProbe(videoId, maxKbps, viaProxy)) {
+        is DirectProbe.Stream -> {
+            onServed(probe.value.client.orEmpty())
+            probe.value.stream
+        }
+        is DirectProbe.Gone -> {
+            onUnplayable(probe.reason)
+            null
+        }
+        is DirectProbe.Other -> {
+            if (probe.refused) onUnplayable(probe.reason)
+            null
+        }
+    }
+
+    /**
+     * The unprobed direct answer, kept separate from [directStream] so the
+     * learned-InnerTubeX walk can watch it without touching the caller's
+     * path-learning state. See [raceDirectDefinitive].
+     */
+    private fun directProbe(
+        videoId: String,
+        maxKbps: Int = maxKbps(),
+        viaProxy: Boolean = false,
+        checkActive: () -> Unit = {},
+    ): DirectProbe<DirectRun> {
+        var refused = false
+        var refusedReason: String? = null
+        for (found in DirectClientResolver.candidates(
+            videoId,
+            maxKbps,
+            viaProxy,
+            onRefused = { reason ->
+                refused = true
+                refusedReason = UnplayableReason.keepTrackSpecific(refusedReason, reason)
+            },
+            checkActive = checkActive,
+        )) {
+            checkActive()
             if (probe(found.url, viaProxy) == Probe.OK) {
                 TrackLog.d(TAG, "resolved $videoId via direct ${found.client} @ ${found.kbps}kbps")
-                onServed(found.client)
-                return Stream(found.url, found.kbps, found.mimeType)
+                return DirectProbe.Stream(
+                    DirectRun(
+                        stream = Stream(found.url, found.kbps, found.mimeType),
+                        client = found.client,
+                    ),
+                )
             }
             TrackLog.w(TAG, "direct ${found.client} URL for $videoId failed the probe")
         }
-        return null
+        // These clients carry no cookie, so "private" may only mean the
+        // signed-in account owns it. Let the cookie-backed walk decide instead
+        // of cancelling it and caching the track as permanently unplayable.
+        val privateForSession = anonymousPrivateMayBeOwned(
+            refusedReason,
+            mayBeOwnPrivateUpload = UploadedTracks.contains(videoId) ||
+                !Innertube.cookie.isNullOrBlank(),
+        )
+        return when {
+            UnplayableReason.isDefinitelyGone(refusedReason) && !privateForSession ->
+                DirectProbe.Gone(refusedReason.orEmpty())
+            privateForSession ->
+                DirectProbe.Other(refused = true, reason = null)
+            else ->
+                DirectProbe.Other(refused, refusedReason)
+        }
     }
 
     /** One ask for [videoId] as the user's own upload; a hit is remembered in [UploadedTracks]. */

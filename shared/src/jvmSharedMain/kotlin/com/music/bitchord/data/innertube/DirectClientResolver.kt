@@ -113,8 +113,10 @@ internal object DirectClientResolver {
         maxKbps: Int,
         viaProxy: Boolean = false,
         onRefused: (String?) -> Unit = {},
+        checkActive: () -> Unit = {},
     ): Sequence<Found> = sequence {
         for (spec in SPECS) {
+            checkActive()
             val found = runCatching { ask(spec, videoId, maxKbps, viaProxy, onRefused) }
                 .onFailure {
                     if (it is CancellationException) throw it
