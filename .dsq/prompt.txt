@@ -1,0 +1,14 @@
+[NO-FIX-LOOP]
+Repo: BitChord (Kotlin). Branch = upstream v1.9 (git tag v1.9) merged into a Korean fork. Priority 1: always play the RIGHT song, never a cover/tribute/karaoke/instrumental/remix/live take.
+Facts (verified by the supervisor):
+- v1.9 SourceResolver.directStream calls bestAcross WITHOUT requireSharedArtist, so a row is accepted by TrackMatcher.ranked/score alone.
+- In shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt score(), when the credits disagree, CREDITS_DISAGREE is allowed if runtime is within CREDIT_OVERRIDE_SEC (2 s). This admits 'Cruel Summer' / Midnite String Quartet (a string cover, same 2:58) and 'Uptown Funk - Tribute to Mark Ronson and Bruno Mars' / Billboard Shakers.
+- shared/src/jvmTest/kotlin/com/music/bitchord/data/sources/TrackMatcherTrapCasesTest.kt (already on this branch) pins the cases; 3 are @Ignore('BUG: ...').
+Required change (Korean-fork rule, keep it small, put the new logic in the existing ko package: shared/src/jvmSharedMain/kotlin/com/music/bitchord/ko/ (see KoTitleRules.kt) and call it from TrackMatcher with ONE line marked // [KO] artist-script override):
+1) The CREDITS_DISAGREE runtime override applies only when the two artist credits are written in different scripts (e.g. Latin vs katakana/hiragana/kanji/hangul/Cyrillic). Same-script different artists are refused as before the override existed. Compare scripts on letters only (ignore digits, punctuation, spaces, parentheses). A credit that CONTAINS the target name in the same script, e.g. 'BTS (防弾少年団)' for 'BTS', must still match normally (check sharesArtist first; keep it working).
+2) Treat tribute-style titles as non-original takes the same way existing cover/karaoke/instrumental markers are treated: 'tribute to', 'originally performed by', 'in the style of', 'made famous by', 'karaoke' (check which already exist; add only missing ones, in the same marker list/mechanism the code already uses, via the ko file if possible).
+3) Remove the 3 @Ignore lines in TrackMatcherTrapCasesTest so all cases run.
+4) Find every existing test that relied on a same-script different-artist runtime override (e.g. a 'Jhak Maar Ke' / Pritam / Neeraj Shridhar case) with grep. Do NOT delete it: change its expectation and add a comment '// [KO] same-script credit override refused: cover risk outweighs composer-vs-singer credits for this fork'. List each such test in the summary.
+Rules: Do NOT touch app/, .github/, keys/, gradle files. Do NOT revert files or checkout other branches. Re-read all callers of any function you change. Use grep / Select-String, not rg.
+Verify: ./gradlew :shared:jvmTest (whole shared test suite must pass).
+At the end, summary in 10 lines or fewer: changed files / key changes / list of tests whose expectation changed / test result / unresolved problems.
