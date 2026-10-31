@@ -38,8 +38,12 @@ data class SourceConfig(
     /** What the user called it. Blank falls back to the server's host, or the kind's own label. */
     val label: String = "",
     val baseUrl: String = "",
-    /** JioSaavn is opt-in because catalogue matches can select the wrong recording. */
-    val enabled: Boolean = kind != SourceKind.JIOSAAVN,
+    /**
+     * JioSaavn is opt-in because catalogue matches can select the wrong
+     * recording. Telegram is off until the account is signed in and the
+     * listener chooses chats: without a session it has nothing to ask.
+     */
+    val enabled: Boolean = kind != SourceKind.JIOSAAVN && kind != SourceKind.TELEGRAM,
     /**
      * The addon's `allowDownloads`, as its manifest last said. Stored rather
      * than asked each time so the answer is there without a request — see
@@ -77,7 +81,8 @@ data class SourceConfig(
 
 /**
  * The user's sources, always tried in the fixed order [SourceKind] declares:
- * their own addons first, then JioSaavn, then YouTube Music.
+ * their own addons first, then Telegram and the module kind, then JioSaavn,
+ * then YouTube Music.
  *
  * [SourceKind.YOUTUBE] is seeded on first run and cannot be deleted, only
  * disabled — it needs no configuration, so a "remove" would delete something
@@ -589,6 +594,7 @@ object SourceRegistry {
         SourceKind.CUSTOM_MODULE -> ModuleSource(config)
         SourceKind.MODULE -> ModuleSource(config)
         SourceKind.JIOSAAVN -> JioSaavnSource(config)
+        SourceKind.TELEGRAM -> TelegramSource(config)
         SourceKind.YOUTUBE -> YouTubeSource(config)
     }
 
@@ -633,7 +639,11 @@ object SourceRegistry {
             .build()
             .toString()
 
-    private val BUILT_IN_KINDS = listOf(SourceKind.JIOSAAVN, SourceKind.YOUTUBE)
+    private val BUILT_IN_KINDS = listOf(
+        SourceKind.TELEGRAM,
+        SourceKind.JIOSAAVN,
+        SourceKind.YOUTUBE,
+    )
 
     private const val KEY_SOURCES = "sources"
     /** One-shot migration: existing users must explicitly opt in again. */

@@ -5,8 +5,8 @@ package com.music.bitchord.data.sources
  *
  * Fixed and small on purpose. **[rank] is the order sources are tried** — see
  * `SourceRegistry.active()`, which sorts on it — so the sources a user added
- * come first, then the legacy built-in module kind, then JioSaavn, then
- * YouTube Music. Adding a source means adding a [MusicSource]
+ * come first, then Telegram and the legacy built-in module kind, then
+ * JioSaavn, then YouTube Music. Adding a source means adding a [MusicSource]
  * implementation and an entry here, which is the point — every protocol the
  * app speaks is one someone can read in this repo, and a source can't teach
  * the app a new way to behave after it ships.
@@ -123,6 +123,25 @@ enum class SourceKind(
             "검색 및 스트리밍할 수 있는 JS 플러그인입니다.",
         labels = listOf("FLAC", "무손실", "Hi-Res", "플러그인"),
         needsServer = true,
+        canServeLossless = true,
+        rank = 1,
+    ),
+
+    /**
+     * Music files the listener's own Telegram account can reach.
+     *
+     * Ported from Hexclyde/bitchord-morphe-patches (GPL-3.0-or-later), reduced
+     * to server-side search and progressive playback. It ranks above YouTube
+     * because a Telegram channel usually holds the FLAC/ALAC the catalogue
+     * streams lossily; it ships switched off until the listener signs in and
+     * chooses the chats to search.
+     */
+    TELEGRAM(
+        label = "텔레그램",
+        detail = "로그인한 텔레그램 계정에서 선택한 채팅의 오디오 파일을 검색합니다. " +
+            "FLAC·WAV·ALAC 원본을 스트리밍하며, 검색할 때만 연결합니다.",
+        labels = listOf("FLAC", "무손실", "채팅 검색"),
+        needsServer = false,
         canServeLossless = true,
         rank = 1,
     ),

@@ -12,6 +12,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -29,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.R
 import com.music.bitchord.telegram.TelegramAuthStage
+import com.music.bitchord.telegram.TelegramChat
 import com.music.bitchord.telegram.TelegramClientManager
 import com.music.bitchord.telegram.TelegramError
 
@@ -50,6 +52,16 @@ fun TelegramSettingsScreen(
     var phone by remember { mutableStateOf("") }
     var code by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var chats by remember { mutableStateOf<List<TelegramChat>>(emptyList()) }
+    var loadingChats by remember { mutableStateOf(false) }
+    val selectedChats by TelegramClientManager.selectedChats.collectAsStateWithLifecycle()
+
+    LaunchedEffect(state.stage) {
+        if (state.stage != TelegramAuthStage.READY) return@LaunchedEffect
+        loadingChats = true
+        chats = runCatching { TelegramClientManager.chats() }.getOrDefault(emptyList())
+        loadingChats = false
+    }
 
     LaunchedEffect(Unit) { TelegramClientManager.acquire("settings") }
     DisposableEffect(Unit) {
@@ -162,6 +174,36 @@ fun TelegramSettingsScreen(
             )
 
             TelegramAuthStage.READY -> {
+                SettingsGroup(
+                    header = stringResource(R.string.telegram_search_chats),
+                    footer = stringResource(R.string.telegram_search_chats_footer),
+                ) {
+                    if (loadingChats) {
+                        SettingsRow(
+                            title = stringResource(R.string.telegram_chats_loading),
+                        )
+                    } else if (chats.isEmpty()) {
+                        SettingsRow(
+                            title = stringResource(R.string.telegram_chats_empty),
+                        )
+                    } else {
+                        chats.forEachIndexed { index, chat ->
+                            if (index > 0) RowDivider()
+                            SettingsRow(
+                                title = chat.title,
+                                subtitle = chatKindLabel(chat.kind),
+                                trailing = {
+                                    Switch(
+                                        checked = chat.id in selectedChats,
+                                        onCheckedChange = { checked ->
+                                            TelegramClientManager.setChatSelected(chat.id, checked)
+                                        },
+                                    )
+                                },
+                            )
+                        }
+                    }
+                }
                 SettingsGroup {
                     DestructiveRow(
                         label = stringResource(R.string.telegram_log_out),
@@ -243,3 +285,13 @@ private fun errorText(error: TelegramError): Int = when (error) {
     TelegramError.UNSUPPORTED -> R.string.telegram_error_unsupported
     TelegramError.GENERIC -> R.string.telegram_error_generic
 }
+
+@Composable
+private fun chatKindLabel(kind: String): String = stringResource(
+    when (kind) {
+        "channel" -> R.string.telegram_chat_channel
+        "group" -> R.string.telegram_chat_group
+        "private" -> R.string.telegram_chat_private
+        else -> R.string.telegram_chat_other
+    },
+)

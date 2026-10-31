@@ -1,0 +1,89 @@
+package com.music.bitchord.telegram
+
+import org.drinkless.tdlib.TdApi
+import java.util.Locale
+
+/**
+ * Turns TDLib messages into [TelegramTrack]s.
+ *
+ * Ported from Hexclyde/bitchord-morphe-patches (GPL-3.0-or-later) TrackMetadata
+ * and MediaPolicy, reduced to the audio/document filters this stage uses. The
+ * safety checks are kept: protected, secret and self-destructing messages are
+ * never offered, since they must not be cached or saved.
+ */
+object TelegramMessageMapper {
+
+    private val FILE_NAME = Regex(
+        ".*\\.(flac|mp3|m4a|aac|ogg|opus|wav|wave|alac|aiff|aif|ac3|eac3|ec3|ac4|mka)$",
+        RegexOption.IGNORE_CASE,
+    )
+
+    fun chatAllowed(chat: TdApi.Chat?): Boolean =
+        chat != null &&
+            chat.type != null &&
+            !chat.hasProtectedContent &&
+            chat.type !is TdApi.ChatTypeSecret
+
+    fun savable(message: TdApi.Message?): Boolean =
+        message != null &&
+            message.canBeSaved &&
+            message.selfDestructType == null &&
+            message.selfDestructIn <= 0 &&
+            message.ephemeralContent == null &&
+            message.restrictionInfo == null
+
+    fun from(message: TdApi.Message?): TelegramTrack? {
+        if (message == null || message.chatId == 0L || message.id <= 0 || !savable(message)) return null
+        val file: TdApi.File
+        var title = ""
+        var artist = ""
+        var fileName = ""
+        var mimeType = ""
+        var duration = 0
+        when (val content = message.content) {
+            is TdApi.MessageAudio -> {
+                val audio = content.audio ?: return null
+                file = audio.audio ?: return null
+                title = audio.title.orEmpty()
+                artist = audio.performer.orEmpty()
+                fileName = audio.fileName.orEmpty()
+                mimeType = audio.mimeType.orEmpty()
+                duration = audio.duration
+            }
+            is TdApi.MessageDocument -> {
+                val document = content.document ?: return null
+                file = document.document ?: return null
+                fileName = document.fileName.orEmpty()
+                mimeType = document.mimeType.orEmpty()
+                if (!FILE_NAME.matches(fileName.lowercase(Locale.ROOT))) return null
+            }
+            else -> return null
+        }
+        if (file.id == 0) return null
+        val format = fileName.substringAfterLast('.', "").lowercase(Locale.ROOT)
+        return TelegramTrack(
+            id = "${message.chatId}_${message.id}",
+            chatId = message.chatId,
+            messageId = message.id,
+            fileId = file.id,
+            size = file.size,
+            title = title.ifBlank { fileName },
+            artist = artist,
+            durationSec = duration,
+            format = format,
+            mimeType = mimeType,
+            fileName = fileName,
+            uniqueId = file.remote?.uniqueId,
+        )
+    }
+
+    /** The chat/message pair inside a track id, or null when it is not one. */
+    fun parseId(id: String): Pair<Long, Long>? {
+        if (id.length > 42 || !id.matches(Regex("-?[0-9]+_[0-9]+"))) return null
+        val split = id.indexOf('_')
+        val chat = id.substring(0, split).toLongOrNull() ?: return null
+        val message = id.substring(split + 1).toLongOrNull() ?: return null
+        if (chat == 0L || message <= 0L || id != "${chat}_$message") return null
+        return chat to message
+    }
+}

@@ -36,6 +36,7 @@ import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.PlayCircle
+import androidx.compose.material.icons.rounded.Send
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -77,6 +78,8 @@ import com.music.bitchord.data.sources.SourceConfig
 import com.music.bitchord.data.sources.SourceHealth
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
+import com.music.bitchord.telegram.TelegramAuthStage
+import com.music.bitchord.telegram.TelegramClientManager
 import com.music.bitchord.ui.FriendlyError
 import com.music.bitchord.ui.components.AddonEditorAlert
 import dev.chrisbanes.haze.HazeState
@@ -796,6 +799,7 @@ private fun SourceRow(
                 SourceKind.CUSTOM_MODULE -> Icons.Rounded.Extension
                 SourceKind.MODULE -> Icons.Rounded.Extension
                 SourceKind.JIOSAAVN -> Icons.Rounded.GraphicEq // or some other icon
+                SourceKind.TELEGRAM -> Icons.Rounded.Send
                 SourceKind.YOUTUBE -> Icons.Rounded.PlayCircle
             },
             contentDescription = null,
@@ -897,6 +901,7 @@ private fun AudioQuality.localizedLabel(): String = stringResource(
 private fun SourceConfig.statusLine(health: SourceHealth?): String = when {
     !isComplete -> stringResource(R.string.source_setup_required)
     kind == SourceKind.JIOSAAVN -> stringResource(R.string.jiosaavn_mismatch_warning)
+    kind == SourceKind.TELEGRAM -> telegramStatusLine(health)
     health is SourceHealth.Ok -> listOfNotNull(
         health.detail,
         kind.labels.take(3).joinToString(" · "),
@@ -909,6 +914,28 @@ private fun SourceConfig.statusLine(health: SourceHealth?): String = when {
         stringResource(R.string.source_unreachable, FriendlyError.message(LocalContext.current, health.reason))
     kind.needsServer -> stringResource(R.string.checking)
     else -> kind.labels.take(3).joinToString(" · ")
+}
+
+@Composable
+private fun SourceConfig.telegramStatusLine(health: SourceHealth?): String {
+    val state = TelegramClientManager.state.value
+    return when {
+        state.stage == TelegramAuthStage.WAIT_CREDENTIALS ->
+            stringResource(R.string.telegram_source_setup_required)
+        state.stage == TelegramAuthStage.WAIT_PHONE ||
+            state.stage == TelegramAuthStage.WAIT_CODE ||
+            state.stage == TelegramAuthStage.WAIT_PASSWORD ->
+            stringResource(R.string.telegram_source_login_required)
+        state.stage == TelegramAuthStage.CLOSED && state.configured ->
+            stringResource(R.string.telegram_source_connects_on_search)
+        state.stage != TelegramAuthStage.READY ->
+            stringResource(R.string.telegram_source_login_required)
+        TelegramClientManager.selectedChats.value.isEmpty() ->
+            stringResource(R.string.telegram_source_no_chats)
+        health is SourceHealth.Rejected -> FriendlyError.reason(LocalContext.current, health.reason)
+        else -> (health as? SourceHealth.Ok)?.detail
+            ?: kind.labels.take(3).joinToString(" · ")
+    }
 }
 
 /**

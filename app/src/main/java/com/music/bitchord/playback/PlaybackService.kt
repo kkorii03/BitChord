@@ -2324,7 +2324,10 @@ class PlaybackService : MediaLibraryService() {
             // above has already substituted in — see [ChunkedDataSource] for
             // why an open-ended read of one is worth avoiding.
             ChunkedDataSource.Factory(
-                ProxyAwareDataSourceFactory(),
+                // Telegram streams arrive here as an internal scheme after the
+                // resolver above has chosen them, so they are routed before
+                // any HTTP client sees the URI.
+                TelegramDataSource.RoutingFactory(ProxyAwareDataSourceFactory()),
                 STREAM_CHUNK_BYTES,
             ) { videoId ->
                 player?.takeIf { it.currentMediaItem?.mediaId == videoId }?.currentPosition

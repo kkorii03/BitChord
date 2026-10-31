@@ -2,11 +2,18 @@ package com.music.bitchord.telegram
 
 import android.content.Context
 import android.os.Build
+import com.music.bitchord.data.sources.SourceKind
+import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.startup.AppForeground
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import java.io.IOException
 import org.drinkless.tdlib.Client
 import org.drinkless.tdlib.TdApi
 import java.io.File
@@ -37,6 +44,10 @@ object TelegramClientManager {
     private val _state = MutableStateFlow(TelegramState())
     val state: StateFlow<TelegramState> = _state.asStateFlow()
 
+    /** Chats search may look in, as the settings screen toggles them. */
+    private val _selectedChats = MutableStateFlow<Set<Long>>(emptySet())
+    val selectedChats: StateFlow<Set<Long>> = _selectedChats.asStateFlow()
+
     private val gate = TelegramClientGate()
     private val generation = AtomicInteger()
 
@@ -44,6 +55,7 @@ object TelegramClientManager {
     private var context: Context? = null
     private var credentialStore: TelegramCredentialStore? = null
     private var databaseKeyStore: TelegramDatabaseKeyStore? = null
+    private var chatSelection: TelegramChatSelection? = null
     private var home: File? = null
 
     private var credentials = TelegramApplicationCredentials.EMPTY
@@ -58,10 +70,21 @@ object TelegramClientManager {
     private var logoutRequested = false
     private var librariesLoaded = false
 
+    /** True only while this process has seen an actual phone/code/password login. */
+    private var interactiveLogin = false
+    private val streamReaders = AtomicInteger()
+
     /** Called once from Application.onCreate; it only installs listeners. */
     fun init(context: Context) {
         if (this.context != null) return
         this.context = context.applicationContext
+        // Cheap presence check only: the encrypted credential file is not
+        // decrypted and no client is opened at startup. It lets Settings say
+        // "connects when you search" instead of wrongly claiming a login is
+        // missing for a session that is still on disk.
+        if (File(context.noBackupFilesDir, "telegram-native/application.sealed").isFile) {
+            _state.update { it.copy(configured = true) }
+        }
         gate.onForeground(AppForeground.isForeground)
         AppForeground.onForeground { sync("foreground") }
         AppForeground.onBackground { sync("background") }
@@ -94,6 +117,237 @@ object TelegramClientManager {
             gate.onTelegramPlaybackActive(active)
             applyGate(if (active) "telegram playback started" else "telegram playback stopped")
         }
+    }
+
+    /**
+     * A Telegram stream has opened. The first one also keeps the client alive
+     * in the background; the last close gives it back, all as events.
+     */
+    fun beginStream(trackId: String) {
+        if (context == null) return
+        // Synchronous so the reader that is about to ask for bytes cannot get
+        // ahead of the gate that keeps the client open for them.
+        runOnWorker {
+            val first = streamReaders.getAndIncrement() == 0
+            gate.acquire(STREAM_HOLDER)
+            if (first) gate.onTelegramPlaybackActive(true)
+            applyGate("stream open")
+        }
+    }
+
+    fun endStream(trackId: String) {
+        if (context == null) return
+        runOnWorker {
+            val left = streamReaders.decrementAndGet()
+            if (left <= 0) {
+                streamReaders.set(0)
+                gate.release(STREAM_HOLDER)
+                gate.onTelegramPlaybackActive(false)
+            }
+            applyGate("stream close")
+        }
+    }
+
+    private fun runOnWorker(block: () -> Unit) {
+        val done = CompletableFuture<Unit>()
+        work.execute {
+            runCatching(block)
+                .onSuccess { done.complete(Unit) }
+                .onFailure { done.completeExceptionally(it) }
+        }
+        runCatching { done.get(10, TimeUnit.SECONDS) }
+    }
+
+    /** The chats search may look in. */
+    fun selectedChatIds(): Set<Long> = _selectedChats.value
+
+    fun setChatSelected(chatId: Long, selected: Boolean) {
+        ensureCredentialsLoaded()
+        val next = if (selected) _selectedChats.value + chatId else _selectedChats.value - chatId
+        _selectedChats.value = next
+        runCatching { chatSelection?.save(next) }
+    }
+
+    fun setSelectedChatIds(ids: Set<Long>) {
+        ensureCredentialsLoaded()
+        _selectedChats.value = ids
+        runCatching { chatSelection?.save(ids) }
+    }
+
+    /**
+     * Searches the selected chats for [query].
+     *
+     * There is no index and no background pass: this asks TDLib only because
+     * someone submitted a search, opens the client for that request (through
+     * [TelegramClientGate]) and releases it afterwards. Audio messages are
+     * searched first, then documents filtered to music formats, in selected
+     * order; duplicates across chats are dropped by chat/message id.
+     */
+    suspend fun searchTracks(query: String, limit: Int): List<TelegramTrack> {
+        ensureCredentialsLoaded()
+        val chats = selectedChatIds().toList().sorted()
+        if (chats.isEmpty()) return emptyList()
+        acquire(SEARCH_HOLDER)
+        val started = System.nanoTime()
+        return try {
+            awaitReady()
+            val rows = withContext(Dispatchers.IO) { searchSelected(chats, query, limit) }
+            val millis = (System.nanoTime() - started) / 1_000_000
+            TelegramLog.search(query.length, chats.size, rows.size, millis)
+            rows
+        } finally {
+            release(SEARCH_HOLDER)
+        }
+    }
+
+    /**
+     * The account's chats, for the selection screen. Read only when that
+     * screen asks; names are never written to the log.
+     */
+    suspend fun chats(): List<TelegramChat> {
+        acquire(CHATS_HOLDER)
+        return try {
+            awaitReady()
+            withContext(Dispatchers.IO) { loadChats() }
+        } finally {
+            release(CHATS_HOLDER)
+        }
+    }
+
+    /** A file's current details for playback, re-checked against the selected chats. */
+    internal fun trackForStream(trackId: String): TelegramTrack {
+        val (chatId, messageId) = TelegramMessageMapper.parseId(trackId)
+            ?: throw IOException("Invalid Telegram track id.")
+        if (chatId !in selectedChatIds()) throw IOException("The Telegram music chat was deselected.")
+        val chat = request(TdApi.GetChat(chatId), 15_000)
+        if (!TelegramMessageMapper.chatAllowed(chat)) {
+            throw IOException("Telegram does not allow this chat's files to be played.")
+        }
+        val message = request(TdApi.GetMessage(chatId, messageId), 15_000)
+        if (message.chatId != chatId || message.id != messageId) {
+            throw IOException("The Telegram message is no longer available.")
+        }
+        val properties = request(TdApi.GetMessageProperties(chatId, messageId), 15_000)
+        if (properties == null || !properties.canBeSaved) {
+            throw IOException("Telegram does not allow this message to be saved.")
+        }
+        return TelegramMessageMapper.from(message)
+            ?: throw IOException("The Telegram file is no longer available.")
+    }
+
+    /** One TDLib request from a caller already holding this client (search or a stream). */
+    internal fun <T : TdApi.Object> request(
+        function: TdApi.Function<T>,
+        timeoutMs: Long = 40_000,
+    ): T {
+        val target = client ?: throw IOException("The Telegram client is not open.")
+        return call(target, function, timeoutMs)
+    }
+
+    internal suspend fun awaitReady() {
+        if (_state.value.stage == TelegramAuthStage.READY) return
+        val reached = withTimeoutOrNull(45_000) {
+            _state.first { state ->
+                state.stage == TelegramAuthStage.READY ||
+                    state.error != null ||
+                    state.stage == TelegramAuthStage.WAIT_CREDENTIALS ||
+                    state.stage == TelegramAuthStage.WAIT_PHONE ||
+                    state.stage == TelegramAuthStage.WAIT_CODE ||
+                    state.stage == TelegramAuthStage.WAIT_PASSWORD ||
+                    state.stage == TelegramAuthStage.UNSUPPORTED
+            }
+        }
+        if (reached?.stage != TelegramAuthStage.READY) {
+            throw IOException("Telegram is not signed in.")
+        }
+    }
+
+    /** Runs on IO, with the client held by a search. */
+    private fun searchSelected(
+        chats: List<Long>,
+        query: String,
+        limit: Int,
+    ): List<TelegramTrack> {
+        val wanted = query.trim()
+        if (wanted.isEmpty()) return emptyList()
+        val rows = LinkedHashMap<String, TelegramTrack>()
+        var firstFailure: Throwable? = null
+        val filters = listOf<TdApi.SearchMessagesFilter>(
+            TdApi.SearchMessagesFilterAudio(),
+            TdApi.SearchMessagesFilterDocument(),
+        )
+        for (filter in filters) {
+            for (chat in chats) {
+                if (rows.size >= limit) break
+                try {
+                    val found = request(
+                        TdApi.SearchChatMessages(
+                            chat,
+                            null,
+                            wanted,
+                            null,
+                            0,
+                            0,
+                            100,
+                            filter,
+                        ),
+                        15_000,
+                    )
+                    found.messages?.forEach { message ->
+                        if (rows.size < limit) {
+                            TelegramMessageMapper.from(message)?.let { rows.putIfAbsent(it.id, it) }
+                        }
+                    }
+                } catch (failure: Throwable) {
+                    if (firstFailure == null) firstFailure = failure
+                }
+            }
+        }
+        if (rows.isEmpty() && firstFailure != null) {
+            throw IOException("Telegram search is unavailable.", firstFailure)
+        }
+        return rows.values.toList()
+    }
+
+    /** Runs on IO, with the client held by the settings screen. */
+    private fun loadChats(): List<TelegramChat> {
+        val found = LinkedHashMap<Long, TelegramChat>()
+        for (list in listOf<TdApi.ChatList>(TdApi.ChatListMain(), TdApi.ChatListArchive())) {
+            for (page in 0 until MAX_CHAT_PAGES) {
+                try {
+                    request(TdApi.LoadChats(list, 100), 15_000)
+                } catch (failure: Throwable) {
+                    // TDLib answers 404 when a list has no more pages.
+                    if (failure.message?.contains("404") == true) break
+                    break
+                }
+            }
+            val ids = runCatching { request(TdApi.GetChats(list, MAX_CHATS), 15_000).chatIds }
+                .getOrNull()
+                ?: continue
+            for (id in ids) {
+                if (found.size >= MAX_CHATS) break
+                val chat = runCatching { request(TdApi.GetChat(id), 15_000) }.getOrNull() ?: continue
+                if (!TelegramMessageMapper.chatAllowed(chat)) continue
+                found.putIfAbsent(
+                    chat.id,
+                    TelegramChat(
+                        id = chat.id,
+                        title = chat.title.orEmpty().ifBlank { chat.id.toString() },
+                        kind = chatKind(chat),
+                    ),
+                )
+            }
+        }
+        return found.values.toList()
+    }
+
+    private fun chatKind(chat: TdApi.Chat): String = when (chat.type) {
+        is TdApi.ChatTypePrivate -> "private"
+        is TdApi.ChatTypeBasicGroup -> "group"
+        is TdApi.ChatTypeSupergroup ->
+            if ((chat.type as TdApi.ChatTypeSupergroup).isChannel) "channel" else "group"
+        else -> "chat"
     }
 
     fun saveCredentials(apiId: String, apiHash: String) {
@@ -370,6 +624,7 @@ object TelegramClientManager {
         auth = null
         paramsSent = false
         appliedCredentials = TelegramApplicationCredentials.EMPTY
+        interactiveLogin = false
         if (deleteLocalSession) deleteSession()
         logoutRequested = false
         update {
@@ -405,6 +660,8 @@ object TelegramClientManager {
         val dir = File(app.noBackupFilesDir, "telegram-native")
         home = dir
         credentialStore = TelegramCredentialStore(app)
+        chatSelection = TelegramChatSelection(app)
+        _selectedChats.value = runCatching { chatSelection?.load() }.getOrNull().orEmpty()
         databaseKeyStore = TelegramDatabaseKeyStore(
             File(dir, "database.key.sealed"),
             { TelegramKeystore.key(app, "database") },
@@ -438,21 +695,28 @@ object TelegramClientManager {
                 configure()
             }
 
-            is TdApi.AuthorizationStateWaitPhoneNumber -> update {
-                it.copy(stage = TelegramAuthStage.WAIT_PHONE, error = null)
+            is TdApi.AuthorizationStateWaitPhoneNumber -> {
+                interactiveLogin = true
+                update { it.copy(stage = TelegramAuthStage.WAIT_PHONE, error = null) }
             }
 
-            is TdApi.AuthorizationStateWaitCode -> update {
-                it.copy(stage = TelegramAuthStage.WAIT_CODE, error = null)
+            is TdApi.AuthorizationStateWaitCode -> {
+                interactiveLogin = true
+                update { it.copy(stage = TelegramAuthStage.WAIT_CODE, error = null) }
             }
 
-            is TdApi.AuthorizationStateWaitPassword -> update {
-                it.copy(stage = TelegramAuthStage.WAIT_PASSWORD, error = null)
+            is TdApi.AuthorizationStateWaitPassword -> {
+                interactiveLogin = true
+                update { it.copy(stage = TelegramAuthStage.WAIT_PASSWORD, error = null) }
             }
 
             is TdApi.AuthorizationStateReady -> {
                 update {
                     it.copy(stage = TelegramAuthStage.READY, error = null)
+                }
+                if (interactiveLogin) {
+                    interactiveLogin = false
+                    enableSourceAfterLogin()
                 }
                 loadAccountName()
             }
@@ -524,6 +788,28 @@ object TelegramClientManager {
         }
     }
 
+    /**
+     * A successful interactive login turns the Telegram source on, which is
+     * the one moment the listener has clearly asked for it. Reopening an
+     * existing session does not: their switch stays where they left it.
+     * Runs on [work] only.
+     */
+    private fun enableSourceAfterLogin() {
+        val config = telegramConfig() ?: return
+        if (!config.enabled) SourceRegistry.setEnabled(config.id, true)
+    }
+
+    /**
+     * The Telegram source config, opening the registry if login or logout got
+     * here before its background open finished. Never opens the TDLib client.
+     */
+    private fun telegramConfig() = run {
+        SourceRegistry.configs.value.firstOrNull { it.kind == SourceKind.TELEGRAM }
+            ?: runCatching { SourceRegistry.active() }.let {
+                SourceRegistry.configs.value.firstOrNull { it.kind == SourceKind.TELEGRAM }
+            }
+    }
+
     /** Runs on [work] only. */
     private fun loadAccountName() {
         val target = client ?: return
@@ -545,6 +831,13 @@ object TelegramClientManager {
         val files = File(dir, "files")
         runCatching { database.deleteRecursively() }
         runCatching { files.deleteRecursively() }
+        // Chats were chosen for this account's session; a new login starts
+        // with none rather than searching chats it may not belong to.
+        _selectedChats.value = emptySet()
+        runCatching { chatSelection?.clear() }
+        // With no session the source has nothing to answer, so leave it off
+        // until the next interactive login turns it back on.
+        telegramConfig()?.takeIf { it.enabled }?.let { SourceRegistry.setEnabled(it.id, false) }
         // Keep the key if anything survived: a keyless leftover session could
         // never be opened again.
         if (!database.exists() && !files.exists()) databaseKeyStore?.clear()
@@ -607,4 +900,17 @@ object TelegramClientManager {
     private class TelegramFailure(val error: TdApi.Error) : java.io.IOException() {
         override val message: String get() = "Telegram ${error.code}"
     }
+
+    private const val SEARCH_HOLDER = "search"
+    private const val CHATS_HOLDER = "chats"
+    private const val STREAM_HOLDER = "stream"
+    private const val MAX_CHATS = 500
+    private const val MAX_CHAT_PAGES = MAX_CHATS / 100
 }
+
+/** A chat the listener may choose as a search source. */
+data class TelegramChat(
+    val id: Long,
+    val title: String,
+    val kind: String,
+)

@@ -36,6 +36,16 @@ object TelegramLog {
     fun clientClosed(reason: String) = write(line("client close reason=$reason"))
     fun authState(state: String) = write(line("auth state=$state"))
 
+    /** Query text, chat names and phone numbers never reach this line. */
+    fun search(queryLength: Int, chats: Int, results: Int, millis: Long) =
+        write(line("search q=$queryLength chats=$chats results=$results ms=$millis"))
+
+    fun stream(event: String, fileId: Int) = write(line("stream ${fileHash(fileId)} $event"))
+
+    /** A stable short hash, so log lines can be matched without naming a file id. */
+    fun fileHash(fileId: Int): String =
+        Integer.toHexString(fileId * -1640531535).padStart(8, '0')
+
     private fun write(message: String) {
         runCatching { TrackLog.d(TAG, message, null) }
     }

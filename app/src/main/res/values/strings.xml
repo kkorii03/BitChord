@@ -1569,4 +1569,16 @@
     <string name="telegram_error_rate_limited">Telegram asked us to wait before trying again.</string>
     <string name="telegram_error_unsupported">This login step is not supported.</string>
     <string name="telegram_error_generic">Telegram could not complete the request. Try again.</string>
+    <string name="telegram_search_chats">Chats to search</string>
+    <string name="telegram_search_chats_footer">Choose the channels and conversations BitChord may search. Nothing is indexed, and no chat is contacted until you search.</string>
+    <string name="telegram_chats_loading">Loading chats.</string>
+    <string name="telegram_chats_empty">No chats available. Sign in again or check your Telegram account.</string>
+    <string name="telegram_chat_channel">Channel</string>
+    <string name="telegram_chat_group">Group</string>
+    <string name="telegram_chat_private">Conversation</string>
+    <string name="telegram_chat_other">Chat</string>
+    <string name="telegram_source_setup_required">Add App API credentials in Telegram settings.</string>
+    <string name="telegram_source_login_required">Sign in to Telegram to use this source.</string>
+    <string name="telegram_source_no_chats">Choose chats to search in Telegram settings.</string>
+    <string name="telegram_source_connects_on_search">Connects to Telegram when you search.</string>
 </resources>

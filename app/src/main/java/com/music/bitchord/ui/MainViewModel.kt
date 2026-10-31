@@ -101,7 +101,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
-import com.music.bitchord.data.sources.AddonSource
+import com.music.bitchord.data.sources.SearchTabSources
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
@@ -2404,7 +2404,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (record) SearchHistory.recordAddonQuery(q)
         addonSearchJob?.cancel()
         _searchScrollReset.value += 1
-        val addons = SourceRegistry.active().filterIsInstance<AddonSource>()
+        // Not only AddonSource: Telegram is not an addon but answers the same
+        // search box and belongs on this same page. See [SearchTabSources].
+        val addons = SearchTabSources.searchable(SourceRegistry.active())
         if (addons.isEmpty()) {
             _addonResults.value = UiState.Error(text(R.string.search_addons_none))
             return

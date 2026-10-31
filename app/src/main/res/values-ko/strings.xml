@@ -1474,4 +1474,16 @@
     <string name="telegram_error_rate_limited">텔레그램에서 잠시 후 다시 시도하라고 요청했습니다.</string>
     <string name="telegram_error_unsupported">이 로그인 단계는 지원하지 않습니다.</string>
     <string name="telegram_error_generic">텔레그램 요청을 완료하지 못했습니다. 다시 시도합니다.</string>
+    <string name="telegram_search_chats">검색할 채팅</string>
+    <string name="telegram_search_chats_footer">BitChord가 검색할 채널과 대화방을 선택합니다. 색인하지 않으며, 검색하기 전에는 채팅에 접속하지 않습니다.</string>
+    <string name="telegram_chats_loading">채팅을 불러오는 중입니다.</string>
+    <string name="telegram_chats_empty">표시할 채팅이 없습니다. 다시 로그인하거나 텔레그램 계정을 확인합니다.</string>
+    <string name="telegram_chat_channel">채널</string>
+    <string name="telegram_chat_group">그룹</string>
+    <string name="telegram_chat_private">대화방</string>
+    <string name="telegram_chat_other">채팅</string>
+    <string name="telegram_source_setup_required">텔레그램 설정에서 앱 API 자격 증명을 입력합니다.</string>
+    <string name="telegram_source_login_required">이 소스를 사용하려면 텔레그램에 로그인합니다.</string>
+    <string name="telegram_source_no_chats">텔레그램 설정에서 검색할 채팅을 선택합니다.</string>
+    <string name="telegram_source_connects_on_search">검색할 때 텔레그램에 연결합니다.</string>
 </resources>
