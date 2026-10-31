@@ -1,0 +1,136 @@
+﻿[NO-FIX-LOOP]
+You are fixing compile errors in the APP module after merging upstream BitChord v1.9 into our Korean fork, and re-attaching lost Korean-fork features. rg is NOT installed: use grep.
+
+How the merge was done: every conflict hunk took the UPSTREAM v1.9 side; our non-conflicting changes stayed. Our code that lived in conflict hunks is gone, and our remaining code references things that no longer exist or whose upstream signature changed. The shared and sharedUi modules already compile (do not edit shared/ or sharedUi/ main code).
+Reference versions (fetch first):
+  git fetch origin task/fix-1030 ; then use commit 724fd5ef = our fork right before the merge (git show 724fd5ef:<path>)
+  git fetch https://github.com/kushagrasinghx/BitChord.git refs/tags/v1.9:refs/tags/v1.9   (pure upstream, read only, never push there)
+Lost-feature inventory: docs/upstream-19-lost.md (rows give fork file:line, identifiers, where to re-attach). Feature decisions: docs/upstream-19-plan.md and docs/upstream-19-nodowngrade.md.
+
+USER POLICY (strict): upgrade to v1.9 with NO functional downgrade. Where v1.9 has its own implementation of a feature, v1.9's is used: quality upgrade / hq-swap / HQ prefetch / HqAudioVerify wiring -> v1.9 Direct Source Stream (DirectSourceGate); automix/crossfade -> v1.9 Automix; downloads, settings screen layout, menus, video playback, tab bar, mini player -> v1.9. For those, adapt or delete OUR now-dead caller code (list every deletion with reason in the summary) — never delete v1.9 code.
+KEEP and RE-ATTACH every Korean-fork feature v1.9 does not have, for rows of docs/upstream-19-lost.md buckets A-E, I, J that touch your files: lyrics sync correction (incl. AudioCache timingKeep), song-version verdict / no music video / audio instead of MV (musicOnlyTried, alternateVersionCache), settings prefer_music_only, skip_non_music_parts, skip_sponsor_parts (keys, setters, and the PlaybackService collectors that apply them), Korea-blocked fallback + proxy (recheckGateNow), video radio, Korean UI labels, diagnostic logs (installCrashHandler/logProcessStart/onTrimMemory, release TrackLog.echo, DebugLog->TrackLog, crossfade skipped line, consume-user-queue line, audio switch refusal detail), withPhraseLineBreak, close player when queue empties, TrackAnalyzer.awaitWindow (event-driven, no polling).
+
+Separation rule (docs/ko-fork-layout.md): restored Korean code goes in NEW files under app/src/main/java/com/music/bitchord/ko/ (package com.music.bitchord.ko), not back inside upstream files. Inside a file that exists in v1.9, add only short calls marked with a trailing comment // [KO] <feature>. Prefer extension/top-level functions. When an upstream signature changed, adapt OUR code to it.
+
+HARD RULES (results are machine-checked; a violating result is thrown away):
+- never restore a whole file from 724fd5ef / task/fix-1030; never delete or empty a file that exists in v1.9; never revert v1.9 hunks to the fork version.
+- edit only YOUR files (list below) plus new files under app/src/main/java/com/music/bitchord/ko/ (name them <LaneName>*.kt). If you need a declaration that belongs in another lane's file, do NOT edit that file: write 'NEEDS: <file>: <declaration>' in the summary and, if you can, provide it as a function in your own ko/ file.
+- do not edit .github/, keys/, signing, gradle files.
+Check your own errors with: ./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain -q 2>&1 | grep '^e: ' | grep -E '<your file names>' . Other lanes fix the other files in parallel, so errors elsewhere are expected — ignore them. Goal: zero errors in your files.
+Battery first (no polling/timers, event-driven). Re-read every caller and type of a function you change.
+
+At the end, summarize in 12 lines or less: modified files / new ko files / Korean features restored / our code dropped in favour of v1.9 (with reason) / NEEDS lines / remaining errors in your files / unresolved questions.
+
+Also fix sharedUi/src/jvmTest/.../ui/screens/SearchBrowseLabelTest.kt (6 errors; the helper now lives in sharedUi ko/ui/HomeRestoredSearch.kt as koBrowseFallbackLabel / SearchScreen browseFallbackLabel) - test file only, check with ./gradlew :sharedUi:compileTestKotlinJvm -q.
+
+LaneName=audio. YOUR FILES:
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt
+app/src/main/java/com/music/bitchord/playback/smart/AudioDecoder.kt
+app/src/main/java/com/music/bitchord/playback/smart/TrackAnalyzer.kt
+app/src/main/java/com/music/bitchord/playback/smart/LyricsTiming.kt
+app/src/main/java/com/music/bitchord/playback/smart/VideoAudio.kt
+app/src/main/java/com/music/bitchord/ui/components/AudioPipelineDialog.kt
+app/src/main/java/com/music/bitchord/playback/audio/OutputNegotiator.kt
+app/src/main/java/com/music/bitchord/playback/audio/PrecisionAudioSink.kt
+app/src/main/java/com/music/bitchord/playback/AudioOutputStatus.kt
+sharedUi/src/jvmTest/kotlin/com/music/bitchord/ui/screens/SearchBrowseLabelTest.kt
+
+Current compile errors in your files (98):
+sharedUi/src/jvmTest/kotlin/com/music/bitchord/ui/screens/SearchBrowseLabelTest.kt:31:69 Unresolved reference 'labelResource'.
+sharedUi/src/jvmTest/kotlin/com/music/bitchord/ui/screens/SearchBrowseLabelTest.kt:32:59 Unresolved reference 'labelResource'.
+sharedUi/src/jvmTest/kotlin/com/music/bitchord/ui/screens/SearchBrowseLabelTest.kt:33:75 Unresolved reference 'labelResource'.
+sharedUi/src/jvmTest/kotlin/com/music/bitchord/ui/screens/SearchBrowseLabelTest.kt:34:61 Unresolved reference 'labelResource'.
+sharedUi/src/jvmTest/kotlin/com/music/bitchord/ui/screens/SearchBrowseLabelTest.kt:35:63 Unresolved reference 'labelResource'.
+sharedUi/src/jvmTest/kotlin/com/music/bitchord/ui/screens/SearchBrowseLabelTest.kt:36:67 Unresolved reference 'labelResource'.
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:166:52 Unresolved reference 'AnalysisWindow'.
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:166:86 Unresolved reference 'AnalysisWindow'.
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:191:53 Unresolved reference 'AnalysisWindow'.
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:191:87 Unresolved reference 'AnalysisWindow'.
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:810:38 Unresolved reference 'AutomixWorkPolicy'.
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:1003:38 'when' expression must be exhaustive. Add the 'LOOP_ARMING', 'LOOP_RUNNING' branches or an 'else' branch.
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:1254:13 Unresolved reference 'rememberSkipped'.
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:1261:13 Unresolved reference 'rememberSkipped'.
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:1340:14 Unresolved reference 'AutomixWorkPolicy'.
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:1342:54 No parameter with name 'automixFallback' found.
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:1427:45 Unresolved reference 'beatAligned'.
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:1428:40 Unresolved reference 'phraseAligned'.
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:1429:33 Unresolved reference 'keyRelation'.
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:1433:66 Unresolved reference 'loudnessGainDb'.
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:1440:40 Unresolved reference 'character'.
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:1559:14 Unresolved reference 'AutomixWorkPolicy'.
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:1580:37 Unresolved reference 'incomingGain'.
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:1581:37 Unresolved reference 'outgoingGain'.
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:1623:26 Unresolved reference 'AutomixWorkPolicy'.
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:1625:61 Unresolved reference 'AnalysisWindow'.
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:1628:21 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:1628:21 Cannot infer type for type parameter 'R'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:1628:25 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:1629:83 Unresolved reference 'window'.
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:1631:30 Unresolved reference 'AutomixWorkPolicy'.
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:1633:67 Unresolved reference 'AnalysisWindow'.
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:1636:25 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:1636:25 Cannot infer type for type parameter 'R'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:1636:29 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:1636:73 Unresolved reference 'window'.
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:1775:13 Unresolved reference 'rememberSkipped'.
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:1791:31 Unresolved reference 'automixFallback'.
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:1801:55 Unresolved reference 'ARM_TIMEOUT_MS'.
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:2948:9 Unresolved reference 'queuedItemCount'.
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:3296:36 Unresolved reference 'outId'.
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:3296:46 Unresolved reference 'inId'.
+app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:3439:37 Unresolved reference 'AutomixWorkPolicy'.
+app/src/main/java/com/music/bitchord/playback/audio/OutputNegotiator.kt:318:36 Operator call 'component1()' is ambiguous for destructuring of type 'uninferred ??? (Unknown type for type parameter K)'. Applicable candidates:
+app/src/main/java/com/music/bitchord/playback/audio/OutputNegotiator.kt:318:36 Operator call 'component2()' is ambiguous for destructuring of type 'uninferred ??? (Unknown type for type parameter K)'. Applicable candidates:
+app/src/main/java/com/music/bitchord/playback/audio/OutputNegotiator.kt:319:55 Unresolved reference 'directUsbProbe'.
+app/src/main/java/com/music/bitchord/playback/audio/OutputNegotiator.kt:321:32 Unresolved reference 'DIRECT_USB_UNAVAILABLE'.
+app/src/main/java/com/music/bitchord/playback/audio/OutputNegotiator.kt:321:55 Cannot infer type for type parameter 'A'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/audio/OutputNegotiator.kt:321:55 Cannot infer type for type parameter 'B'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/audio/OutputNegotiator.kt:322:22 Unresolved reference 'directUsbProbe'.
+app/src/main/java/com/music/bitchord/playback/audio/PrecisionAudioSink.kt:442:17 Unresolved reference 'health'.
+app/src/main/java/com/music/bitchord/playback/audio/PrecisionAudioSink.kt:443:59 Unresolved reference 'decodedPeak'.
+app/src/main/java/com/music/bitchord/playback/audio/PrecisionAudioSink.kt:450:17 Unresolved reference 'outputFrameOffset'.
+app/src/main/java/com/music/bitchord/playback/audio/PrecisionAudioSink.kt:454:60 Unresolved reference 'outputFrameOffset'.
+app/src/main/java/com/music/bitchord/playback/audio/PrecisionAudioSink.kt:521:42 Unresolved reference 'HEALTH_SAMPLE_STRIDE'.
+app/src/main/java/com/music/bitchord/playback/audio/PrecisionAudioSink.kt:580:63 Unresolved reference 'directAudioOutput'.
+app/src/main/java/com/music/bitchord/playback/smart/AudioDecoder.kt:158:74 Argument type mismatch: actual type is 'String', but '(ByteBuffer, MediaCodec.BufferInfo, Int, Int) -> Unit' was expected.
+app/src/main/java/com/music/bitchord/playback/smart/AudioDecoder.kt:158:81 Too many arguments for 'fun decodeRaw(source: MediaDataSource, startSeconds: Double, endSeconds: Double, abort: () -> Boolean, onBuffer: (ByteBuffer, MediaCodec.BufferInfo, Int, Int) -> Unit): Pair<Double, Double>?'.
+app/src/main/java/com/music/bitchord/playback/smart/AudioDecoder.kt:158:83 Cannot infer type for value parameter 'buffer'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/smart/AudioDecoder.kt:158:91 Cannot infer type for value parameter 'info'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/smart/AudioDecoder.kt:158:97 Cannot infer type for value parameter 'channels'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/smart/AudioDecoder.kt:158:107 Cannot infer type for value parameter 'rate'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/smart/AudioDecoder.kt:159:64 Unresolved reference 'presentationTimeUs'.
+app/src/main/java/com/music/bitchord/playback/smart/AudioDecoder.kt:181:33 Argument type mismatch: actual type is 'File', but 'MediaDataSource' was expected.
+app/src/main/java/com/music/bitchord/playback/smart/AudioDecoder.kt:181:72 Argument type mismatch: actual type is 'String', but '(ByteBuffer, MediaCodec.BufferInfo, Int, Int) -> Unit' was expected.
+app/src/main/java/com/music/bitchord/playback/smart/AudioDecoder.kt:181:79 Too many arguments for 'fun decodeRaw(source: MediaDataSource, startSeconds: Double, endSeconds: Double, abort: () -> Boolean, onBuffer: (ByteBuffer, MediaCodec.BufferInfo, Int, Int) -> Unit): Pair<Double, Double>?'.
+app/src/main/java/com/music/bitchord/playback/smart/AudioDecoder.kt:181:81 Cannot infer type for value parameter 'buffer'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/smart/AudioDecoder.kt:181:89 Cannot infer type for value parameter 'info'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/smart/AudioDecoder.kt:181:95 Cannot infer type for value parameter 'channels'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/smart/AudioDecoder.kt:181:105 Cannot infer type for value parameter 'rate'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/playback/smart/AudioDecoder.kt:182:64 Unresolved reference 'presentationTimeUs'.
+app/src/main/java/com/music/bitchord/playback/smart/AudioDecoder.kt:253:18 Unresolved reference 'label'.
+app/src/main/java/com/music/bitchord/playback/smart/AudioDecoder.kt:264:18 Unresolved reference 'label'.
+app/src/main/java/com/music/bitchord/playback/smart/AudioDecoder.kt:268:36 Unresolved reference 'openSource'.
+app/src/main/java/com/music/bitchord/playback/smart/AudioDecoder.kt:268:81 Unresolved reference 'label'.
+app/src/main/java/com/music/bitchord/playback/smart/LyricsTiming.kt:933:32 Unresolved reference 'keepForTiming'.
+app/src/main/java/com/music/bitchord/playback/smart/LyricsTiming.kt:938:20 Unresolved reference 'keepForTiming'.
+app/src/main/java/com/music/bitchord/playback/smart/LyricsTiming.kt:1044:24 Unresolved reference 'keepForTiming'.
+app/src/main/java/com/music/bitchord/playback/smart/TrackAnalyzer.kt:27:19 Conflicting import: imported name 'SystemClock' is ambiguous.
+app/src/main/java/com/music/bitchord/playback/smart/TrackAnalyzer.kt:33:19 Conflicting import: imported name 'SystemClock' is ambiguous.
+app/src/main/java/com/music/bitchord/playback/smart/TrackAnalyzer.kt:321:17 Unresolved reference 'completeWindow'.
+app/src/main/java/com/music/bitchord/playback/smart/TrackAnalyzer.kt:322:17 Unresolved reference 'completeWindow'.
+app/src/main/java/com/music/bitchord/playback/smart/TrackAnalyzer.kt:458:28 Unresolved reference 'hasWindow'.
+app/src/main/java/com/music/bitchord/playback/smart/TrackAnalyzer.kt:506:9 Unresolved reference 'completeWindow'.
+app/src/main/java/com/music/bitchord/playback/smart/TrackAnalyzer.kt:510:13 Unresolved reference 'hasWindow'.
+app/src/main/java/com/music/bitchord/playback/smart/TrackAnalyzer.kt:510:56 Unresolved reference 'hasWindow'.
+app/src/main/java/com/music/bitchord/playback/smart/TrackAnalyzer.kt:533:9 Unresolved reference 'completeWindow'.
+app/src/main/java/com/music/bitchord/playback/smart/TrackAnalyzer.kt:1702:87 Argument type mismatch: actual type is '() -> Boolean', but 'String' was expected.
+app/src/main/java/com/music/bitchord/playback/smart/VideoAudio.kt:68:20 Unresolved reference 'keepForTiming'.
+app/src/main/java/com/music/bitchord/playback/smart/VideoAudio.kt:187:24 Unresolved reference 'keepForTiming'.
+app/src/main/java/com/music/bitchord/ui/components/AudioPipelineDialog.kt:136:22 Return type mismatch: expected 'BitExactVerdict', actual 'String'.
+app/src/main/java/com/music/bitchord/ui/components/AudioPipelineDialog.kt:151:26 Unresolved reference 'outputExactDetail'.
+app/src/main/java/com/music/bitchord/ui/components/AudioPipelineDialog.kt:151:45 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/ui/components/AudioPipelineDialog.kt:151:45 Cannot infer type for type parameter 'R'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/ui/components/AudioPipelineDialog.kt:151:49 Cannot infer type for type parameter 'T'. Specify it explicitly.
+app/src/main/java/com/music/bitchord/ui/components/AudioPipelineDialog.kt:152:21 Unresolved reference 'outputExactDetail'.
+app/src/main/java/com/music/bitchord/ui/components/AudioPipelineDialog.kt:447:26 Unresolved reference 'localizedLabel'.
+app/src/main/java/com/music/bitchord/ui/components/AudioPipelineDialog.kt:516:23 Unresolved reference 'label'.
