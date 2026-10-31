@@ -1152,12 +1152,29 @@ class LyricsController(
             downloaded = request.localUri != null && !request.isVideo,
             providerUnknown = !request.fileProviderKnown,
         )
+        // A song version usually has no base and so no timing at all; its
+        // provider's clock is refined from the same empty starting point. Run
+        // the refine before the summary fact so a measurement that confirms
+        // the clock without moving it (|median| below RefinePolicy.MIN_SHIFT_MS)
+        // can be reported as `sync=verified` with that median.
+        val refineFrom = timing ?: LyricsTiming.Timing(base = null, manualMs = 0L).takeIf { baseAllowed }
+        val refine = refineFrom?.let {
+            LyricsTiming.refine(app, request.videoId, lines, it, audioSource)
+        }
+        // Refine suspends on store I/O. A track switch or a newer timing pass
+        // may have landed meanwhile; do not publish its stale facts then.
+        if (generation != lyricsGeneration || timingLines !== lines) return
+        val verifiedShift = refine?.takeIf { it.verified }?.medianMs
         TrackDiagnostics.noteLyricsSync(
             videoId = request.videoId,
             provider = provider,
             base = baseLabel,
-            sync = TrackDiagnostics.syncLabel(baseLabel, manualMs),
-            shiftMs = shiftMs,
+            sync = if (verifiedShift != null) {
+                "verified"
+            } else {
+                TrackDiagnostics.syncLabel(baseLabel, manualMs)
+            },
+            shiftMs = verifiedShift ?: shiftMs,
             matchPercent = matchPercent,
             biasMs = timing?.aiBiasMs ?: 0L,
             manualOffsetMs = manualMs,
@@ -1190,11 +1207,7 @@ class LyricsController(
                 heardWords = timing?.heardWords.orEmpty(),
             )
         }
-        // A song version usually has no base and so no timing at all; its
-        // provider's clock is refined from the same empty starting point.
-        val refineFrom = timing ?: LyricsTiming.Timing(base = null, manualMs = 0L).takeIf { baseAllowed }
         if (refineFrom != null) {
-            LyricsTiming.refine(app, request.videoId, lines, refineFrom, audioSource)
             startRefineHeardIfNeeded(request, lines, refineFrom, audioSource, generation)
         }
     }
