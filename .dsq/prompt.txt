@@ -1,0 +1,5 @@
+﻿BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep, 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/fix-1030.
+버그(사용자 폰 스크린샷, 시험판 test19 설치 후): 홈 '최근 재생한 항목'과 미니 플레이어에 Joker OST 곡이 여전히 제목 'Call Me Joker | Joker OST', 'Gary Glitter - Rock & Roll Part II | J...', 가수 'Original Soundtrack' 로 표시. YouTubeDisplayCleaner.clean(song) 에 OST 정리(cleanSoundtrack, TrackMatcher.isSoundtrackCredit)가 들어갔지만 업데이트 전에 저장된 곡 정보(최근 재생 기록·청취 기록·저장된 재생 대기열·재생목록 캐시·다운로드 메타데이터·좋아요)는 옛 제목·가수 그대로 읽혀 화면에 나옴. 새로 받는 재생목록 행에 정리가 실제로 적용되는지도 확인(적용 지점을 grep 으로 확인해 요약에).
+수정: ① 저장된 곡을 읽어 화면·큐에 올리는 모든 경로(최근 재생 local read, 기록, 큐 복원, 재생목록/앨범 캐시, 다운로드 목록, 위젯·알림·미디어 세션 메타데이터)에서 표시용 정리를 거치게 — 저장 형식은 바꾸지 말고 읽을 때 정리(또는 한 번만 저장값 마이그레이션, 둘 중 안전한 쪽 — 이유를 요약에). ② 'Original Soundtrack'·'OST'·'Soundtrack' 이 가수 칸에 남는 경로 0. ③ 커버 곡(오화요·아카네 리제 등)·공식 곡 표시 회귀 없게(기존 테스트 통과).
+테스트: 옛 형식 저장값(제목 '<가수> - <곡> | <작품> OST - Original Soundtrack', 가수 'Original Soundtrack')을 읽으면 제목 '<곡>', 가수 '<가수>' 로 나오는지 — 최근 재생·큐 복원 경로 단위 테스트.
+반드시: 배터리(읽을 때 정리는 가볍게, 캐시). 제약: .github/, keys, 서명 수정 금지. 마지막 10줄 요약.
