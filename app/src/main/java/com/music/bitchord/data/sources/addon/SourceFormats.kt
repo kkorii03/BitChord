@@ -170,9 +170,12 @@ object SourceFormats {
         val segments = url.pathSegments.filter { it.isNotEmpty() }
         if (segments.size < 2) return null
         val rawDocument = if (isGitLab) {
+            // A project can sit in nested groups (`/group/sub/repo/-/raw/...`),
+            // so the `-/raw` marker is looked for anywhere after the owner.
             (segments.size >= 3 && segments[2].equals("raw", ignoreCase = true)) ||
-                (segments.size >= 4 && segments[2] == "-" &&
-                    segments[3].equals("raw", ignoreCase = true))
+                segments.drop(2).zipWithNext().any { (dash, raw) ->
+                    dash == "-" && raw.equals("raw", ignoreCase = true)
+                }
         } else {
             segments.size >= 3 && segments[2].equals("raw", ignoreCase = true)
         }
