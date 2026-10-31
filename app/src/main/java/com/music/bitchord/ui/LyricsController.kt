@@ -1159,7 +1159,9 @@ class LyricsController(
         // can be reported as `sync=verified` with that median.
         val refineFrom = timing ?: LyricsTiming.Timing(base = null, manualMs = 0L).takeIf { baseAllowed }
         val refine = refineFrom?.let {
-            LyricsTiming.refine(app, request.videoId, lines, it, audioSource)
+            LyricsTiming.refine(app, request.videoId, lines, it, audioSource) {
+                generation == lyricsGeneration && timingLines === lines
+            }
         }
         // Refine suspends on store I/O. A track switch or a newer timing pass
         // may have landed meanwhile; do not publish its stale facts then.

@@ -466,6 +466,7 @@ object LyricsTiming {
         lines: List<LyricLine>,
         timing: Timing,
         audioSource: String? = null,
+        stillCurrent: () -> Boolean = { true },
     ): RefinePolicy.Result {
         // No base is a song version shown on its lyric provider's own clock —
         // the commonest case of all. That provider can still sit a fifth of a
@@ -484,6 +485,10 @@ object LyricsTiming {
         ) {
             return result
         }
+        // The refine suspends on store I/O. A track switch or a newer timing
+        // pass may have landed meanwhile, so do not let these stale facts
+        // clear or overwrite the newer correction before publishing them.
+        if (!stillCurrent()) return result
         store(context).update(videoId) {
             it.copy(
                 refineMs = appliedMs,

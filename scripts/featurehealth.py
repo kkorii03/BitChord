@@ -1070,6 +1070,17 @@ def analyze(log: Log) -> Report:
         ]
         if prior_plays:
             anchor = max(prior_plays, key=lambda row: row["at"])
+            # A TRACK-SUMMARY between that PLAY and the event closed the older
+            # playback. The event belongs to the next PLAY, not to the one the
+            # summary already ended.
+            if any(
+                anchor["at"] < row["at"] <= event["at"]
+                and belongs(row["id"], row["title"])
+                for row in summaries
+            ):
+                prior_plays = []
+        if prior_plays:
+            anchor = max(prior_plays, key=lambda row: row["at"])
             window_start = anchor["at"]
         else:
             upcoming = [

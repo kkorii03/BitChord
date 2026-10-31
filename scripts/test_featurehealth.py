@@ -464,6 +464,33 @@ class LosslessTests(unittest.TestCase):
         self.assertEqual(0, playback.successes)
         self.assertFalse(playback.passed)
 
+    def test_upgrade_ahead_after_a_summary_anchors_to_the_next_play(self) -> None:
+        text = log_text(
+            play("13:03:00.000", "MUny_GDYIDM", "404 (New Era)"),
+            summary("13:03:10.000", "MUny_GDYIDM", "404 (New Era)"),
+            line(
+                "13:03:21.000",
+                "upgrade ahead: '404 (New Era)' ready at FLAC · 16-bit · 44.1 kHz "
+                "from Qobuz [Heisenbergg]",
+            ),
+            line(
+                "13:03:38.000",
+                "next-prep: 404 (New Era) version=MUny_GDYIDM lyrics=lrc_red hq=none "
+                "sync=applied mix=ready in 33285ms",
+            ),
+            play("13:03:40.000", "MUny_GDYIDM", "404 (New Era)"),
+            line(
+                "13:03:41.000",
+                "MUny_GDYIDM <- audio/flac 44.1kHz 900kbps 16-bit 2ch",
+                tag="DECODE",
+            ),
+        )
+        report = analyze(text)
+        playback = metric(report, "D2-playback")
+        self.assertEqual(1, playback.attempts)
+        self.assertEqual(1, playback.successes)
+        self.assertTrue(playback.passed)
+
     def test_a_later_replay_does_not_fail_an_earlier_flac_playback(self) -> None:
         text = log_text(
             play("19:00:00.000", "id1", "Replay Song"),
