@@ -73,6 +73,77 @@ internal class SongVersionController(
     private var versionHoldHeld = false
 
     /**
+     * Tracks whose before-audio lookup timed out or was cancelled, so the one
+     * retry after the first sound is still due. The gate is thread-safe,
+     * because the timeout and the player callback can land on different
+     * threads.
+     */
+    private val versionRetryGate = SongVersionRetryGate()
+
+    private fun markVersionRetryPending(song: Song) {
+        versionRetryGate.markPending(song)
+    }
+
+    /**
+     * The one background retry of a before-audio lookup that timed out.
+     *
+     * Runs only after this track has made its first sound (the player callback
+     * that schedules the look-ahead also calls this), and at most once per
+     * track. A found release is cached for the next playback and used as the
+     * lyrics reference; it never replaces a recording that is already audible.
+     * Covers, live rows and other deliberate performances stay exactly as the
+     * existing [SongVersionPolicy.mayInstallSongVersion] says.
+     */
+    private fun retryTimedOutVersion(exoPlayer: ExoPlayer) {
+        val item = exoPlayer.currentMediaItem ?: return
+        val id = item.mediaId
+        // The pending row is the exact lookup row the before-audio pass used,
+        // so a synthetic typeUnknown / stripped local file / stored upload type
+        // is not lost by rebuilding it from the raw MediaItem.
+        val song = versionRetryGate.takePending(id) ?: return
+        if (song.videoId != id) return
+        if (song.videoRadio) return
+        if (!SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown)) return
+        if (!SongVersionPolicy.mayInstallSongVersion(song)) return
+        if (YtMusicRepository.cachedSongVersionFor(song) != null) return
+        scope.launch(TrackLog.about(song.videoId)) {
+            val found = try {
+                YtMusicRepository.songVersion(song, retryTimedOut = true)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                TrackLog.w(
+                    "BitChord",
+                    "song version retry failed: ${failure.message}",
+                    about = song.videoId,
+                )
+                return@launch
+            } ?: return@launch
+            if (found.videoId == song.videoId) return@launch
+            if (!SongVersionPolicy.mayInstallSongVersion(song)) return@launch
+            TrackLog.i(
+                "BitChord",
+                "song version: ${song.videoId} -> ${found.videoId} via retry",
+                about = song.videoId,
+            )
+            // The track is audible, so the recording is not swapped under the
+            // listener. The cached answer is what the next playback installs;
+            // the lyrics measurement is the one thing useful right now.
+            if (currentPlayer() === exoPlayer &&
+                exoPlayer.currentMediaItem?.mediaId == id &&
+                TrackDiagnostics.lyricsFor(song.videoId) != null
+            ) {
+                LyricsTiming.measureLateVersion(
+                    context,
+                    song.copy(isVideo = true),
+                    found,
+                    song.durationMillis(),
+                )
+            }
+        }
+    }
+
+    /**
      * The version lookup outlived the first-sound budget. This video is
      * playing and stays playing; if the shared lookup still lands while it is
      * current, its lyrics are measured against that release.
@@ -123,6 +194,9 @@ internal class SongVersionController(
         // second pass over the same rows.
         val currentId = exoPlayer.currentMediaItem?.mediaId ?: return
         if (currentId != currentAudibleMediaId()) return
+        // The first-sound callback is where a timed-out before-audio lookup
+        // earns its one retry. It is an event, never a poll.
+        retryTimedOutVersion(exoPlayer)
         // Only a pass for this same track is a duplicate. A pass left over from
         // the previous track is walking the wrong rows and is replaced; the
         // lookups it started live in the repository's own scope, so cancelling
@@ -542,6 +616,11 @@ internal class SongVersionController(
             releaseVersionHold(exoPlayer)
             return
         }
+        // A miss that a caller's deadline cut short is not a verdict. It keeps
+        // its own id for now and schedules the single post-audio retry.
+        if (YtMusicRepository.isSongVersionRetrySuggested(lookupSong.videoId)) {
+            markVersionRetryPending(lookupSong)
+        }
         // A hold a transition interrupted keeps the listener's play intent, so
         // a skip made during the wait does not leave the player paused.
         beforeAudioVersionJob?.cancel()
@@ -567,6 +646,13 @@ internal class SongVersionController(
                 // scope. If it lands while this video is still playing, use it
                 // as the lyrics reference (never as a mid-song swap).
                 watchForLateVersion(exoPlayer, mediaId, lookupSong)
+                // A timeout is not "no version": one retry is due after the
+                // first sound. If the track is already sounding, run it now,
+                // otherwise the first-sound callback starts it.
+                markVersionRetryPending(lookupSong)
+                if (SongVersionPolicy.hasMadeFirstSound(mediaId, currentAudibleMediaId())) {
+                    retryTimedOutVersion(exoPlayer)
+                }
                 null
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -624,6 +710,15 @@ internal class SongVersionController(
                         version,
                         forceStream = streamOnly,
                     )
+                } else if (resolved == null && !lookupFailed &&
+                    YtMusicRepository.isSongVersionRetrySuggested(lookupSong.videoId)
+                ) {
+                    // Another caller timed out on this lookup while this one
+                    // waited; the answer is provisional, so owe the retry.
+                    markVersionRetryPending(lookupSong)
+                    if (SongVersionPolicy.hasMadeFirstSound(mediaId, currentAudibleMediaId())) {
+                        retryTimedOutVersion(exoPlayer)
+                    }
                 } else if (resolved == null && localFile && !lookupFailed) {
                     // The lookup answered "there is no version" rather than
                     // failing; keep the downloaded video with a reason that

@@ -30,6 +30,13 @@ import kotlinx.serialization.json.putJsonObject
 internal class StoredVerdictCache(
     private val storeKey: String,
     private val limit: Int,
+    /**
+     * A superseded key whose settled "found" answers are still valid. A
+     * version bump must not throw those away; only the old "no answer" values
+     * are dropped so they are looked up once under the new rules.
+     */
+    private val legacyKey: String? = null,
+    private val legacyDropValue: String? = null,
 ) {
 
     class Entry(val value: String, val at: Long)
@@ -72,24 +79,49 @@ internal class StoredVerdictCache(
         }
         loadedStore = store
         entries.clear()
-        val raw = runCatching { store.getString(storeKey) }.getOrNull() ?: return
-        runCatching {
-            val root = json.parseToJsonElement(raw).jsonObject
-            root["entries"]?.jsonObject?.forEach { (key, value) ->
-                val objectValue = value as? JsonObject ?: return@forEach
-                val text = (objectValue["value"] as? JsonPrimitive)?.contentOrNull
-                    ?: return@forEach
-                val at = (objectValue["at"] as? JsonPrimitive)?.contentOrNull
-                    ?.toLongOrNull() ?: 0L
-                entries[key] = Entry(text, at)
+        val raw = runCatching { store.getString(storeKey) }.getOrNull()
+        val legacyStoreKey = legacyKey
+        if (raw != null) {
+            readEntries(raw)
+        } else if (legacyStoreKey != null) {
+            // The new key has nothing yet, so carry the old settled hits over
+            // and let the old misses be looked up once under the new rules.
+            val legacy = runCatching { store.getString(legacyStoreKey) }.getOrNull()
+            if (legacy != null && readEntries(legacy, dropValue = legacyDropValue)) {
+                persist()
             }
-        }.onFailure { Log.w(TAG, "could not read $storeKey: ${it.message}") }
+        }
         // A file written by an older, larger build is trimmed to this one's cap.
         val iterator = entries.keys.iterator()
         while (entries.size > limit && iterator.hasNext()) {
             iterator.next()
             iterator.remove()
         }
+    }
+
+    /**
+     * Reads one stored payload into [entries]. A missing or unreadable payload
+     * leaves them empty; the caller then looks the rows up again.
+     *
+     * @return true when at least one entry was kept, so a migration is worth
+     *   writing back under the new key.
+     */
+    private fun readEntries(raw: String, dropValue: String? = null): Boolean {
+        var kept = false
+        runCatching {
+            val root = json.parseToJsonElement(raw).jsonObject
+            root["entries"]?.jsonObject?.forEach { (key, value) ->
+                val objectValue = value as? JsonObject ?: return@forEach
+                val text = (objectValue["value"] as? JsonPrimitive)?.contentOrNull
+                    ?: return@forEach
+                if (text == dropValue) return@forEach
+                val at = (objectValue["at"] as? JsonPrimitive)?.contentOrNull
+                    ?.toLongOrNull() ?: 0L
+                entries[key] = Entry(text, at)
+                kept = true
+            }
+        }.onFailure { Log.w(TAG, "could not read $storeKey: ${it.message}") }
+        return kept
     }
 
     @Synchronized

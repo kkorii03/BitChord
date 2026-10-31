@@ -1,5 +1,6 @@
 package com.music.bitchord.data.net
 
+import com.music.bitchord.data.model.Song
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -573,6 +574,73 @@ class SongVersionPolicyTest {
                 found = true,
             ),
         )
+    }
+
+    @Test
+    fun `a lookup that timed out is never a definitive no-version verdict`() {
+        assertFalse(
+            SongVersionPolicy.songVersionVerdictIsDefinitive(
+                searchSucceeded = true,
+                answered = true,
+                found = false,
+                waitedOut = true,
+            ),
+        )
+        // A found recording is still usable even when the waiter gave up.
+        assertTrue(
+            SongVersionPolicy.songVersionVerdictIsDefinitive(
+                searchSucceeded = true,
+                answered = true,
+                found = true,
+                waitedOut = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `a completed search with no candidates is cached`() {
+        assertTrue(
+            SongVersionPolicy.songVersionVerdictIsDefinitive(
+                searchSucceeded = true,
+                answered = true,
+                found = false,
+                waitedOut = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `the post-audio retry runs once and only after a timeout`() {
+        assertTrue(
+            SongVersionPolicy.shouldRetrySongVersionAfterAudio(
+                timedOutOrCancelled = true,
+                alreadyRetried = false,
+            ),
+        )
+        assertFalse(
+            SongVersionPolicy.shouldRetrySongVersionAfterAudio(
+                timedOutOrCancelled = true,
+                alreadyRetried = true,
+            ),
+        )
+        assertFalse(
+            SongVersionPolicy.shouldRetrySongVersionAfterAudio(
+                timedOutOrCancelled = false,
+                alreadyRetried = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `a cover is never replaced by the song it covers`() {
+        val cover = Song(
+            videoId = "COVER",
+            title = "Nanana (Cover)",
+            artist = "Some Cover Band",
+            thumbnailUrl = null,
+            isVideo = true,
+        )
+        assertFalse(SongVersionPolicy.mayInstallSongVersion(cover))
     }
 
     @Test
