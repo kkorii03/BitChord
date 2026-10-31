@@ -435,7 +435,9 @@ section_settings() {
     scroll_top
     for spec in "계정 및 연동:settings-account-group" "오디오 품질:settings-audio-quality" "다운로드:settings-downloads" "재생:settings-playback" "화면 표시:settings-appearance" "성능:settings-performance" "로컬 음악:settings-local-music" "저장 공간:settings-storage" "나의 데이터:settings-your-data" "기타:settings-miscellaneous" "언어:settings-language" "고급 및 실험적 기능:settings-advanced"; do
       label=${spec%%:*}; key=${spec#*:}
-      at=$(scroll_to "$label" 14)
+      # The compact settings page dropped several of these headers; a short
+      # search keeps each missing one from spending a minute of the timeout.
+      at=$(scroll_to "$label" 6)
       if [ -n "$at" ]; then
         sleep 1
         shot "$key" "Settings section: $label"

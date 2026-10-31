@@ -5,6 +5,7 @@ import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.net.BlockedStartPolicy
+import com.music.bitchord.data.net.BlockedStartRescue
 import com.music.bitchord.data.net.BlockedStartStep
 import com.music.bitchord.data.net.LogUrl
 import com.music.bitchord.data.net.ProxyFailure
@@ -621,6 +622,27 @@ object StreamResolver {
 
     private suspend fun resolveUncached(videoId: String): Stream {
         val resolveStart = MonotonicClock.nowMs()
+        // A blocked start is one budget, not one timeout per stage. The first
+        // real refusal starts this clock; every later rescue rung asks it how
+        // much is left, and a stream that arrives after it is dropped. The
+        // report spent 24 s in this method alone (a 9 s InnerTubeX walk, an
+        // upload retry and a 14.9 s proxy walk), then another 7 s extracting,
+        // before the first sound at 32 s.
+        val blockedBudget = BlockedStartRescue(
+            startedAtMs = resolveStart,
+            totalBudgetMs = BlockedStartPolicy.RESOLVER_BUDGET_MS,
+        )
+        var blockedSignal = false
+        fun noteBlockedSignal(source: String) {
+            if (!blockedSignal) {
+                blockedSignal = true
+                TrackLog.w(
+                    TAG,
+                    "blocked-start: $videoId first refusal from $source at " +
+                        "${MonotonicClock.nowMs() - resolveStart}ms",
+                )
+            }
+        }
         // A track that has already played through the proxy is known to be
         // refused here, so asking the direct clients again only spends the
         // eleven seconds this memory exists to save. A proxy miss falls
@@ -670,6 +692,10 @@ object StreamResolver {
         var directUnplayable = false
         var directUnplayableReason: String? = null
         var itxUnplayableReason: String? = null
+
+        fun blockedReason(): String =
+            directUnplayableReason ?: itxUnplayableReason
+                ?: "이 국가에서는 이용할 수 없는 트랙입니다"
 
         // A claim, a takedown or a private upload names the recording itself.
         // A region/Premium gate, an age-restricted or a paid track is not gone:
@@ -729,7 +755,10 @@ object StreamResolver {
                 directUnplayableReason =
                     UnplayableReason.keepTrackSpecific(directUnplayableReason, probe.reason)
             } else if (probe is DirectProbe.Other) {
-                if (probe.refused) directUnplayable = true
+                if (probe.refused) {
+                    directUnplayable = true
+                    if (gated) noteBlockedSignal("direct")
+                }
                 directUnplayableReason =
                     UnplayableReason.keepTrackSpecific(directUnplayableReason, probe.reason)
             }
@@ -756,6 +785,12 @@ object StreamResolver {
                     onFailure = {
                         itxUnplayableReason = UnplayableReason.keepTrackSpecific(itxUnplayableReason, it)
                     },
+                    onBlocked = { if (gated) noteBlockedSignal("InnerTubeX") },
+                    // In a gated region the first 403 is the answer, not a
+                    // reason to ask the same client as an upload. Hand the
+                    // track to the proxy immediately when one is configured;
+                    // with no proxy the old walk is kept.
+                    abortAfterFirstRefusal = gated && ProxyPlayback.canResolveViaProxy(),
                 )
             }
             // A claim or a deleted upload says nothing about the learned path:
@@ -834,7 +869,18 @@ object StreamResolver {
                     TAG,
                     BlockedStartPolicy.logLine(videoId, BlockedStartStep.PROXY, "start", elapsed),
                 )
-                val proxyTimeout = BlockedStartPolicy.timeoutFor(BlockedStartStep.PROXY, elapsed)
+                // Only a real blocked-start signal earns the short proxy
+                // ceiling. An ordinary refusal outside a gated region keeps the
+                // old unbounded race: cutting it at the 2.5 s policy window
+                // would change a path that was not the one being fixed.
+                val proxyTimeout = if (blockedSignal) {
+                    minOf(
+                        BlockedStartPolicy.timeoutFor(BlockedStartStep.PROXY, elapsed),
+                        blockedBudget.remainingMs(),
+                    )
+                } else {
+                    Long.MAX_VALUE
+                }
                 val itxStream = resolverScope.async(TrackLog.about(videoId)) { itx.await()?.stream }
                 // The whole race is bounded, not just the proxy leg. A proxy
                 // failure that landed first used to leave the race waiting on
@@ -976,29 +1022,54 @@ object StreamResolver {
                 // the proxy got its turn (Sorry, 9.4 s to first sound), so the
                 // proxy starts beside the rest of it and the first stream wins.
                 proxyAttempted = true
+                val elapsedNow = MonotonicClock.nowMs() - resolveStart
                 TrackLog.i(
                     TAG,
-                    "proxy-playback: $videoId early race (first refusal at ${MonotonicClock.nowMs() - resolveStart}ms)",
+                    "proxy-playback: $videoId early race (first refusal at ${elapsedNow}ms)",
                 )
-                val (winner, won) = raceForFirstSuccess(
-                    direct = {
-                        if (gated) tryDirect() ?: tryInnerTubeX(null) else tryInnerTubeX(null) ?: tryDirect()
-                    },
-                    proxy = {
-                        try {
-                            resolveViaProxy(videoId)
-                        } catch (cancelled: CancellationException) {
-                            throw cancelled
-                        } catch (e: Exception) {
-                            null
-                        }
-                    },
-                )
+                // This race used to have no ceiling at all. The InnerTubeX walk
+                // could run its full upload retry and the proxy could run its
+                // own fourteen seconds, and the track waited for both even
+                // though the first refusal was already in hand. The same
+                // budget the rest of the rescue obeys applies here.
+                val proxyTimeout = if (blockedSignal) {
+                    minOf(
+                        BlockedStartPolicy.timeoutFor(BlockedStartStep.PROXY, elapsedNow),
+                        blockedBudget.remainingMs(),
+                    )
+                } else {
+                    Long.MAX_VALUE
+                }
+                val raced = if (proxyTimeout <= 0L) {
+                    null
+                } else {
+                    withTimeoutOrNull(proxyTimeout) {
+                        raceForFirstSuccess(
+                            direct = {
+                                if (gated) {
+                                    tryDirect() ?: tryInnerTubeX(null)
+                                } else {
+                                    tryInnerTubeX(null) ?: tryDirect()
+                                }
+                            },
+                            proxy = {
+                                try {
+                                    resolveViaProxy(videoId)
+                                } catch (cancelled: CancellationException) {
+                                    throw cancelled
+                                } catch (e: Exception) {
+                                    null
+                                }
+                            },
+                        )
+                    }
+                }
                 TrackLog.i(
                     TAG,
-                    "proxy-playback: $videoId race won by $winner in ${MonotonicClock.nowMs() - resolveStart}ms",
+                    "proxy-playback: $videoId race won by ${raced?.first ?: "timeout"} in " +
+                        "${MonotonicClock.nowMs() - resolveStart}ms",
                 )
-                won
+                raced?.second
             } else if (gated) {
                 // With no learned route the gated ladder asks the anonymous
                 // IOS/ANDROID player first (~0.3 s). When it answers UNPLAYABLE
@@ -1011,27 +1082,43 @@ object StreamResolver {
                     ProxyPlayback.canResolveViaProxy() && !proxyAttempted
                 ) {
                     proxyAttempted = true
+                    val elapsedNow = MonotonicClock.nowMs() - resolveStart
                     TrackLog.i(
                         TAG,
-                        "proxy-playback: $videoId early race (direct refused at ${MonotonicClock.nowMs() - resolveStart}ms)",
+                        "proxy-playback: $videoId early race (direct refused at ${elapsedNow}ms)",
                     )
-                    val (winner, won) = raceForFirstSuccess(
-                        direct = { tryInnerTubeX(null) },
-                        proxy = {
-                            try {
-                                resolveViaProxy(videoId)
-                            } catch (cancelled: CancellationException) {
-                                throw cancelled
-                            } catch (e: Exception) {
-                                null
-                            }
-                        },
-                    )
+                    val proxyTimeout = if (blockedSignal) {
+                        minOf(
+                            BlockedStartPolicy.timeoutFor(BlockedStartStep.PROXY, elapsedNow),
+                            blockedBudget.remainingMs(),
+                        )
+                    } else {
+                        Long.MAX_VALUE
+                    }
+                    val raced = if (proxyTimeout <= 0L) {
+                        null
+                    } else {
+                        withTimeoutOrNull(proxyTimeout) {
+                            raceForFirstSuccess(
+                                direct = { tryInnerTubeX(null) },
+                                proxy = {
+                                    try {
+                                        resolveViaProxy(videoId)
+                                    } catch (cancelled: CancellationException) {
+                                        throw cancelled
+                                    } catch (e: Exception) {
+                                        null
+                                    }
+                                },
+                            )
+                        }
+                    }
                     TrackLog.i(
                         TAG,
-                        "proxy-playback: $videoId race won by $winner in ${MonotonicClock.nowMs() - resolveStart}ms",
+                        "proxy-playback: $videoId race won by ${raced?.first ?: "timeout"} in " +
+                            "${MonotonicClock.nowMs() - resolveStart}ms",
                     )
-                    won
+                    raced?.second
                 } else {
                     tryInnerTubeX(null)
                 }
@@ -1044,6 +1131,18 @@ object StreamResolver {
                 throw PermanentlyUnplayableException(
                     goneReason() ?: "이 트랙은 재생할 수 없습니다",
                 )
+            } else if (blockedSignal) {
+                // The first region/refusal signal already said what extraction
+                // will say: it reads the same watch page. Spending its three
+                // attempts is the remaining silence in the report, so stop here
+                // and let playback spend the reserved budget on a catalogue
+                // copy or the next row.
+                TrackLog.w(
+                    TAG,
+                    "blocked-start: $videoId extraction skipped after the first refusal at " +
+                        "${MonotonicClock.nowMs() - resolveStart}ms",
+                )
+                throw PermanentlyUnplayableException(blockedReason())
             } else run {
                 TrackLog.w(TAG, "InnerTubeX found no usable stream for $videoId; falling back to extraction")
                 timed("$videoId newPipeStream") { newPipeStream(videoId, ::pickForQuality) }
@@ -1090,6 +1189,7 @@ object StreamResolver {
             // and the media fetch follows it there.
             if (!proxyAttempted &&
                 !goneRefusal() &&
+                !(blockedSignal && blockedBudget.isExpired()) &&
                 !UnplayableReason.isDefinitelyGone(permanentReason(e)) &&
                 ProxyPlayback.canResolveViaProxy() &&
                 ProxyPlaybackPolicy.isRegionRefusal(
@@ -1100,7 +1200,16 @@ object StreamResolver {
                 proxyAttempted = true
                 TrackLog.i(TAG, "proxy-playback: $videoId refused direct -> via proxy")
                 try {
-                    return resolveViaProxy(videoId)
+                    val proxyTimeout = if (blockedSignal) blockedBudget.remainingMs() else 0L
+                    if (blockedSignal && proxyTimeout <= 0L) {
+                        throw PermanentlyUnplayableException(blockedReason())
+                    }
+                    return if (blockedSignal) {
+                        withTimeoutOrNull(proxyTimeout) { resolveViaProxy(videoId) }
+                            ?: throw PermanentlyUnplayableException(blockedReason())
+                    } else {
+                        resolveViaProxy(videoId)
+                    }
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (proxyFailure: Exception) {
@@ -1281,6 +1390,8 @@ object StreamResolver {
         viaProxy: Boolean = false,
         onServed: (pathKey: String, label: String) -> Unit = { _, _ -> },
         onFailure: (String?) -> Unit = {},
+        onBlocked: () -> Unit = {},
+        abortAfterFirstRefusal: Boolean = false,
     ): Stream? {
         val skip = mutableSetOf<String>()
         // In a gated region WEB_REMIX is the identity that answers UNPLAYABLE
@@ -1307,6 +1418,16 @@ object StreamResolver {
             } catch (e: Exception) {
                 TrackLog.w(TAG, "InnerTubeX $preferredManifest preferred ask failed for $videoId: ${e.javaClass.simpleName}: ${e.message}")
                 onFailure(e.message)
+                // The preferred client can answer "This track is unavailable"
+                // just as the walk below can. In a gated region that is the
+                // first refusal, and repeating the same client (or walking the
+                // catalog as an upload) is the silence this rescue exists to
+                // cut: hand the track straight to the next rescue step.
+                if (abortAfterFirstRefusal && UnplayableReason.isDefinitive(e.message)) {
+                    onBlocked()
+                    TrackLog.w(TAG, "InnerTubeX $preferredManifest refused $videoId: ${e.message}; not repeating the client")
+                    return null
+                }
                 null
             }
             if (found != null) {
@@ -1321,6 +1442,13 @@ object StreamResolver {
                     TrackLog.w(TAG, "playing $videoId's upload stream despite the probe: it is the only copy")
                     onServed(ResolutionOrder.itx(preferredManifest), "InnerTubeX ${found.profileId}")
                     return Stream(found.url, found.kbps, found.mimeType, found.loudnessDb)
+                }
+                if (verdict == Probe.REFUSED) {
+                    onBlocked()
+                    if (abortAfterFirstRefusal) {
+                        TrackLog.w(TAG, "InnerTubeX ${found.profileId} refused $videoId; not repeating the client")
+                        return null
+                    }
                 }
                 skip += found.profileId
             }
@@ -1354,6 +1482,13 @@ object StreamResolver {
                     TrackLog.w(TAG, "InnerTubeX will not succeed for $videoId: ${e.message}")
                     throw e
                 }
+                if (UnplayableReason.isDefinitive(e.message)) {
+                    onBlocked()
+                    if (abortAfterFirstRefusal) {
+                        TrackLog.w(TAG, "InnerTubeX refused $videoId: ${e.message}; not repeating the client")
+                        return null
+                    }
+                }
                 if (MusicGateFallback.isActive() && "WEB_REMIX" !in skip) {
                     // One more walk, now with the gated web profile excluded.
                     skip += "WEB_REMIX"
@@ -1375,6 +1510,13 @@ object StreamResolver {
                 val manifest = InnerTubeXResolver.manifestIdForProfile(found.profileId)
                 if (manifest != null) onServed(ResolutionOrder.itx(manifest), "InnerTubeX ${found.profileId}")
                 return Stream(found.url, found.kbps, found.mimeType, found.loudnessDb)
+            }
+            if (verdict == Probe.REFUSED) {
+                onBlocked()
+                if (abortAfterFirstRefusal) {
+                    TrackLog.w(TAG, "InnerTubeX ${found.profileId} refused $videoId; not repeating the client")
+                    return null
+                }
             }
             skip += found.profileId
 
@@ -1521,6 +1663,8 @@ object StreamResolver {
         viaProxy: Boolean = false,
         onServed: (pathKey: String, label: String) -> Unit = { _, _ -> },
         onFailure: (String?) -> Unit = {},
+        onBlocked: () -> Unit = {},
+        abortAfterFirstRefusal: Boolean = false,
     ): Stream? {
         val known = UploadedTracks.contains(videoId)
         if (known) {
@@ -1534,6 +1678,8 @@ object StreamResolver {
                 viaProxy = viaProxy,
                 onServed = onServed,
                 onFailure = onFailure,
+                onBlocked = onBlocked,
+                abortAfterFirstRefusal = abortAfterFirstRefusal,
             )
                 ?.let { return it }
             TrackLog.w(TAG, "$videoId is marked as an upload but did not resolve as one; trying an ordinary ask")
@@ -1547,6 +1693,8 @@ object StreamResolver {
                 viaProxy = viaProxy,
                 onServed = onServed,
                 onFailure = onFailure,
+                onBlocked = onBlocked,
+                abortAfterFirstRefusal = abortAfterFirstRefusal,
             )
         }
         return innerTubeXStream(
@@ -1557,6 +1705,8 @@ object StreamResolver {
             viaProxy = viaProxy,
             onServed = onServed,
             onFailure = onFailure,
+            onBlocked = onBlocked,
+            abortAfterFirstRefusal = abortAfterFirstRefusal,
         )
     }
 
