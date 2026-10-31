@@ -43,6 +43,20 @@ class AddonSource(
     private val client = AddonClient(config.baseUrl)
 
     /**
+     * When this addon last refused the credential, so [health] can say so even
+     * while the manifest is cached and still answers.
+     *
+     * A manifest is public metadata and is cached for ten minutes; the search
+     * and stream endpoints are where the token is actually spent. Without this
+     * mark a 401 on `/search` would leave the sources screen reporting `Ok`
+     * until the manifest cache expired, hiding the only fix the listener has.
+     * Cleared by any successful request, and treated as stale after
+     * [AUTH_FAILURE_MEMORY_MS].
+     */
+    @Volatile
+    private var lastAuthFailureAtMs: Long = 0L
+
+    /**
      * Rows this addon has recently handed over, by their own track id.
      *
      * Two things need them after the fact and neither is reachable from a bare
@@ -117,6 +131,9 @@ class AddonSource(
         client.manifest().fold(
             onSuccess = { manifest ->
                 recordPolicy(manifest)
+                if (authRecentlyRejected()) {
+                    return@fold SourceHealth.Rejected(authRejectedReason())
+                }
                 SourceHealth.Ok(
                     listOfNotNull(
                         manifest.displayName.takeIf { it.isNotBlank() },
@@ -199,12 +216,13 @@ class AddonSource(
             val tracks = client.search(query, tier).getOrElse { failure ->
                 TrackLog.w(TAG, "${config.displayName}: search failed — ${failure.message}")
                 if (failure is AddonAuthException) {
-                    SourceResolver.reportSourceAuthFailure(config.id)
+                    noteAuthFailure()
                 } else if (failure is AddonUnavailable) {
                     SourceResolver.reportSourceFailure(config.id, network = failure.transport)
                 }
                 return@withContext emptyList()
             }
+            lastAuthFailureAtMs = 0L
             tracks.asSequence()
                 .filter { it.id.isNotBlank() && it.title.isNotBlank() }
                 .take(limit)
@@ -267,8 +285,14 @@ class AddonSource(
                     TrackLog.w(TAG, "${config.displayName}: stream failed for $trackId — ${failure?.message}")
                 }
                 if (failure is AddonAuthException) {
-                    SourceResolver.reportSourceAuthFailure(config.id)
-                } else if (failure is AddonUnavailable) {
+                    noteAuthFailure()
+                    // The row's own URL is not a way around a refused
+                    // credential: handing it back would make this look like a
+                    // successful match and clear the source's rest, hiding the
+                    // refusal from the resolver and the listener.
+                    return@withContext null
+                }
+                if (failure is AddonUnavailable) {
                     SourceResolver.reportSourceFailure(config.id, network = failure.transport)
                 }
                 return@withContext fromRow(trackId, tier)
@@ -288,6 +312,7 @@ class AddonSource(
                 return@withContext fromRow(trackId, tier)
             }
 
+            lastAuthFailureAtMs = 0L
             openable(url, answer, trackId, tier).also { stream ->
                 if (stereoOnly && stream?.format?.isDolbyAtmos == true) {
                     TrackLog.w(
@@ -447,6 +472,15 @@ class AddonSource(
     private fun authRejectedReason(): String =
         "${config.displayName} 애드온 인증이 거부되었습니다. 설정에서 애드온을 다시 연결해 주십시오."
 
+    private fun noteAuthFailure() {
+        lastAuthFailureAtMs = System.currentTimeMillis()
+        SourceResolver.reportSourceAuthFailure(config.id)
+    }
+
+    private fun authRecentlyRejected(): Boolean =
+        lastAuthFailureAtMs != 0L &&
+            System.currentTimeMillis() - lastAuthFailureAtMs < AUTH_FAILURE_MEMORY_MS
+
     private companion object {
         const val TAG = "BitChord"
 
@@ -456,6 +490,13 @@ class AddonSource(
 
         /** How many search rows to remember. A long queue's worth, several times over. */
         const val MAX_ROWS = 256
+
+        /**
+         * How long a refused credential is remembered for [health]. Matches the
+         * source rest rule: long enough to keep pointing at Settings, short
+         * enough that a fixed token is not hidden by an old failure.
+         */
+        const val AUTH_FAILURE_MEMORY_MS = 30 * 60 * 1000L
 
         /**
          * Containers that name their own codec. A `.flac` holds FLAC and
