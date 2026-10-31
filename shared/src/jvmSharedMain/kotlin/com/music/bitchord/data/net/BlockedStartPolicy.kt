@@ -166,6 +166,15 @@ object BlockedStartPolicy {
     }
 
     /**
+     * Whether a direct client's refusal is the blocked-start signal that starts
+     * the resolver's shared budget. Only a refusal in a gated region counts: an
+     * ordinary refusal outside the gate must keep the old unbounded race, so
+     * this is the one condition every direct route uses.
+     */
+    fun directRefusalStartsRescue(gated: Boolean, refused: Boolean): Boolean =
+        gated && refused
+
+    /**
      * Whether a direct refusal should start the proxy beside InnerTubeX now.
      *
      * Keeping InnerTubeX in front of an ordinary refusal is deliberate (a
