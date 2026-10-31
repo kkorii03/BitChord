@@ -271,7 +271,7 @@ class AddonClient(rawBaseUrl: String) {
      * nothing on the IO thread it already runs on.
      */
     private fun atmosHint(): String? {
-        val wanted = DeviceCodecs.atmosWanted
+        val wanted = DeviceCodecs.playsDolbyAtmos && AppSettings.dolbyAtmos.value
         return if (wanted) ATMOS_AUTO else null
     }
 
@@ -363,7 +363,10 @@ class AddonClient(rawBaseUrl: String) {
                 HqHostTracker.noteResponse(host, System.currentTimeMillis() - startedAtMs, ok = false)
                 HqHostTracker.rest(host, TRANSPORT_REST_MS)
                 TrackLog.w(TAG, "  ✗ addon transport failed ${redact(url)}: ${failure.message}")
-                throw AddonUnavailable(failure.message ?: "애드온에 연결할 수 없습니다")
+                throw AddonUnavailable(
+                    failure.message ?: "애드온에 연결할 수 없습니다",
+                    transport = true,
+                )
             }
 
             val wait = try {
@@ -444,7 +447,10 @@ class AddonClient(rawBaseUrl: String) {
                 HqHostTracker.noteResponse(host, System.currentTimeMillis() - startedAtMs, ok = false)
                 HqHostTracker.rest(host, TRANSPORT_REST_MS)
                 TrackLog.w(TAG, "  ✗ addon body failed ${redact(url)}: ${failure.message}")
-                throw AddonUnavailable(failure.message ?: "애드온에 연결할 수 없습니다")
+                throw AddonUnavailable(
+                    failure.message ?: "애드온에 연결할 수 없습니다",
+                    transport = true,
+                )
             }
             quietUntilMs = System.currentTimeMillis() + wait
             attempt++
@@ -603,19 +609,11 @@ class AddonClient(rawBaseUrl: String) {
          * client bounds each *read*, which a server dribbling a byte at a time
          * never trips, and an addon doing that would otherwise hold a
          * source-resolution slot indefinitely. The spec asks addons to answer
-         * search in under five seconds and streams in under three; the ceiling
-         * is wider than that because a TorBox-backed addon cold-caching a long
-         * FLAC spends twenty to thirty seconds before it can answer at all —
-         * thirty-two was the worst a real Nebula addon took, and 35 s left no
-         * room once the call itself is added to the wait. The read timeout is
-         * lifted above the ceiling for the same reason: that wait is silence,
-         * not a slow trickle, so an inherited read timeout would fire first and
-         * the ceiling here would never be reached.
+         * search in under five seconds and streams in under three.
          */
         private val client: OkHttpClient by lazy {
             Http.client.newBuilder()
-                .readTimeout(60, TimeUnit.SECONDS)
-                .callTimeout(45, TimeUnit.SECONDS)
+                .callTimeout(20, TimeUnit.SECONDS)
                 .build()
         }
     }
@@ -635,8 +633,15 @@ class AddonException(message: String) : Exception(message)
  * Worth keeping switched on and worth asking again on the next track, which is
  * the whole distinction
  * [SourceHealth][com.music.bitchord.data.sources.SourceHealth] draws.
+ *
+ * [transport] is true when the addon could not be reached at all (DNS, TLS, a
+ * refused connection, a body read that timed out). That still counts against
+ * the source, but an offline device must not be parked for it.
  */
-class AddonUnavailable(message: String) : Exception(message)
+class AddonUnavailable(
+    message: String,
+    val transport: Boolean = false,
+) : Exception(message)
 
 /** The addon answered, and does not have what was asked for. A miss, not a fault. */
 class AddonNotFound : Exception("이 애드온에 없음")

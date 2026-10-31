@@ -39,26 +39,21 @@ internal object AudioOutputPolicy {
     /**
      * Route-aware float output decision.
      *
-     * - Built-in phone speaker (PHONE) must remain capped at 16-bit to prevent OEM mixer
-     *   issues and distortion on affected device paths.
-     * - External routes (USB, Bluetooth, Wired, HDMI) are allowed to use Float32 output
-     *   if requested and actively advertised by the route's AudioDeviceInfo encodings.
-     * - A Bluetooth route whose negotiated A2DP codec carries more than 16 bits
-     *   (LDAC / aptX HD at 24 or 32 bits) uses float regardless of the requested mode.
-     *   A2DP devices almost never list PCM_FLOAT in their encodings, and without a
-     *   float track Media3 truncates a hi-res source to 16 bits before the codec
-     *   ever sees it. [bluetoothCodecBitDepth] must come from authoritative telemetry.
+     * The phone speaker is always PCM16: some OEM speaker paths accept float
+     * and then distort it inside AudioFlinger, so the sink's rejection
+     * fallback cannot help. Every external mix path (BLUETOOTH, WIRED, USB,
+     * HDMI) takes float whenever float was requested; the route's advertised
+     * encodings are accepted for compatibility but deliberately do not gate
+     * the answer — see the class comment. The sink falls back to PCM16 if the
+     * device rejects the track.
      */
     fun shouldUseFloatOutput(
         requestedMode: OutputPcmMode,
         routeKind: AudioRouting.Kind,
         advertisesPcmFloat: Boolean,
-        bluetoothCodecBitDepth: Int? = null,
     ): Boolean {
         if (routeKind == AudioRouting.Kind.PHONE) return false
-        if (routeKind == AudioRouting.Kind.BLUETOOTH && (bluetoothCodecBitDepth ?: 0) > 16) return true
-        if (requestedMode != OutputPcmMode.FLOAT_32) return false
-        return advertisesPcmFloat
+        return requestedMode == OutputPcmMode.FLOAT_32
     }
 
     /** Samsung's vendor FLAC decoder emits invalid timestamps with PCM float. */

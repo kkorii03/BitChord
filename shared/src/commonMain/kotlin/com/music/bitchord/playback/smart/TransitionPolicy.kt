@@ -25,6 +25,7 @@ import kotlin.math.abs
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.pow
 
 /**
  * The confidence-aware transition policy.
@@ -57,62 +58,42 @@ const val MIN_DJ_CONFIDENCE = 0.2
 const val MIN_BPM = 40.0
 const val MAX_BPM = 220.0
 
-/**
- * The blend's stretch window: the incoming song may be slowed down by at most
- * 10% and sped up by at most 25% to meet the outgoing tempo. Asymmetric
- * because the two directions fail differently: a stretch that speeds up drops
- * slivers of audio and stays clean far past 10%, while one that slows down has
- * to repeat them, which is where the metallic smear comes from. Past either
- * end the pair is not beatmatched (the filter mix). The web player uses the
- * same window.
- */
-const val MIN_INCOMING_RATE = 0.9
-const val MAX_INCOMING_RATE = 1.25
+/** How far a tempo pairing may drift from unity and still be considered transparent to stretch. */
+const val MAX_STRETCH_DEVIATION = 0.04
 
 /**
- * The rate the incoming song plays at to meet [outgoingBpm] (its tempo folded
- * into the outgoing octave first): above 1 speeds it up.
+ * Advanced Automix's window: how far either track may be *sped up* to meet
+ * the other. Only ever up — a time-stretch that speeds up drops slivers of
+ * audio, which stays clean well past 4%, while one that slows down has to
+ * repeat them, which is where the metallic smear comes from. So the slower
+ * track is always the one moved: the incoming one when it is slower, the
+ * outgoing one (over its last beats, before the blend) when it is.
  */
-fun incomingRateBetween(outgoingBpm: Double, incomingBpm: Double): Double {
-    if (outgoingBpm <= 0 || incomingBpm <= 0) return Double.NaN
-    return outgoingBpm / alignTempoOctave(outgoingBpm, incomingBpm)
+const val MAX_SPEED_UP = 0.10
+
+/**
+ * The symmetric fine-tune window: inside this, either track may be moved to
+ * meet the other because pitch is preserved. Outside it the slower incoming
+ * track may still be sped up to [MAX_SPEED_UP]; a faster one is not slowed.
+ */
+const val MAX_ALIGN_STRETCH = 0.06
+
+/**
+ * The speed-up that meets [outgoingBpm] and [incomingBpm] (octave-aligned),
+ * as a factor above 1 — whichever track it applies to.
+ */
+fun speedUpBetween(outgoingBpm: Double, incomingBpm: Double): Double {
+    if (outgoingBpm <= 0 || incomingBpm <= 0) return Double.POSITIVE_INFINITY
+    val ratio = outgoingBpm / alignTempoOctave(outgoingBpm, incomingBpm)
+    return max(ratio, 1 / ratio)
 }
 
-/** Whether a blend can beatmatch this pair inside [MIN_INCOMING_RATE]..[MAX_INCOMING_RATE]. */
-fun stretchReachable(outgoingBpm: Double, incomingBpm: Double): Boolean {
-    val rate = incomingRateBetween(outgoingBpm, incomingBpm)
-    return rate.isFinite() && rate >= MIN_INCOMING_RATE - 1e-9 && rate <= MAX_INCOMING_RATE + 1e-9
-}
-
 /**
- * A vocal-activity mask value at or above this counts as singing.
- *
- * Measured on the open-unmix mask (Hymn for the Weekend, 2026-10-23): a clear
- * chorus reads 0.57–0.71, a soft verse over the music 0.2–0.4, an instrumental
- * break 0.02–0.15. The old 0.6 called a soft verse instrumental. The DSP
- * fallback mask is rescaled onto this scale when it is stored (see
- * [heuristicVocalOnModelScale]), and unmeasured instants are stored just under
- * it, so neither trips vocal logic on its own.
+ * A vocal-activity mask value at or above this counts as singing. A fallback
+ * analyzer that emits a flat 0.5 mask never trips vocal logic; only a real
+ * mask can.
  */
-const val VOCAL_ACTIVE_THRESHOLD = 0.25
-
-/**
- * The DSP heuristic's vocal value, moved onto the model's scale: its own
- * decision boundary (0.6, where it was tuned) lands on [VOCAL_ACTIVE_THRESHOLD],
- * linearly on either side, so it decides exactly what it used to.
- */
-fun heuristicVocalOnModelScale(value: Double): Double {
-    if (!value.isFinite()) return value
-    val v = value.coerceIn(0.0, 1.0)
-    return if (v < HEURISTIC_VOCAL_THRESHOLD) {
-        v / HEURISTIC_VOCAL_THRESHOLD * VOCAL_ACTIVE_THRESHOLD
-    } else {
-        VOCAL_ACTIVE_THRESHOLD + (v - HEURISTIC_VOCAL_THRESHOLD) / (1 - HEURISTIC_VOCAL_THRESHOLD) * (1 - VOCAL_ACTIVE_THRESHOLD)
-    }
-}
-
-/** Where the DSP heuristic was tuned to call a frame sung. */
-private const val HEURISTIC_VOCAL_THRESHOLD = 0.6
+const val VOCAL_ACTIVE_THRESHOLD = 0.6
 
 /**
  * How much of the outgoing track's remaining *music* a transition may skip by
@@ -120,6 +101,9 @@ private const val HEURISTIC_VOCAL_THRESHOLD = 0.6
  * tail unplayed; it is not allowed to cut the song short.
  */
 const val MAX_DISCARDED_MUSIC_SECONDS = 12.0
+
+/** Slack for a mix-out anchor that sits exactly on the analysed content end. */
+private const val MIX_ANCHOR_EPSILON = 0.05
 
 /**
  * Fraction of a track's own loud-end reference below which a sample counts as
@@ -157,6 +141,158 @@ private val MIX_OUT_TYPE_SCORE = mapOf(
 
  fun clamp(value: Double, min: Double, max: Double): Double =
     if (value.isFinite()) max(min, min(max, value)) else min
+
+/**
+ * How two analysed keys relate. [SAME], [PARALLEL], [RELATIVE], [FIFTH] and
+ * [NEAR] are the moves a DJ will make without thinking; [CLASH] is the one
+ * worth keeping short.
+ */
+enum class KeyRelation(val wire: String) {
+    /** At least one side has no trusted key, so there is nothing to clash. */
+    UNKNOWN("unknown"),
+    SAME("same"),
+    /** Same tonic, opposite mode: C major against C minor. */
+    PARALLEL("parallel"),
+    /** Relative major/minor: C major against A minor. */
+    RELATIVE("relative"),
+    /** A fourth or a fifth: C against F or G. */
+    FIFTH("fifth"),
+    /** One or two semitones apart, which still mixes cleanly enough. */
+    NEAR("near"),
+    /** Everything else, including the tritone. */
+    CLASH("clash"),
+}
+
+private val KEY_INDEX = mapOf(
+    "C" to 0, "C♯" to 1, "D♭" to 1, "D" to 2, "D♯" to 3, "E♭" to 3,
+    "E" to 4, "F" to 5, "F♯" to 6, "G♭" to 6, "G" to 7, "G♯" to 8,
+    "A♭" to 8, "A" to 9, "A♯" to 10, "B♭" to 10, "B" to 11,
+)
+
+/** Splits an analyzer key like `"C♯ minor"` into pitch class and mode. */
+ fun splitKey(key: String): Pair<Int?, String?> {
+    val parts = key.trim().split(' ')
+    return KEY_INDEX[parts.firstOrNull()] to parts.getOrNull(1)
+}
+
+/** Pitch-class distance with a mode penalty, used by the classic overlap rule. */
+ fun keyDistance(left: String, right: String): Int? {
+    val (leftIndex, leftMode) = splitKey(left)
+    val (rightIndex, rightMode) = splitKey(right)
+    if (leftIndex == null || rightIndex == null) return null
+    val pitchDistance = min((leftIndex - rightIndex + 12) % 12, (rightIndex - leftIndex + 12) % 12)
+    return pitchDistance + if (leftMode != null && rightMode != null && leftMode != rightMode) 1 else 0
+}
+
+/** Classifies a pair of analyzer keys without requiring either to be trusted. */
+fun keyRelation(left: String, right: String): KeyRelation {
+    val (leftIndex, leftMode) = splitKey(left)
+    val (rightIndex, rightMode) = splitKey(right)
+    if (leftIndex == null || rightIndex == null) return KeyRelation.UNKNOWN
+    val distance = min((leftIndex - rightIndex + 12) % 12, (rightIndex - leftIndex + 12) % 12)
+    val sameMode = leftMode == null || rightMode == null || leftMode == rightMode
+    return when {
+        distance == 0 && sameMode -> KeyRelation.SAME
+        distance == 0 -> KeyRelation.PARALLEL
+        distance == 3 && !sameMode -> KeyRelation.RELATIVE
+        distance == 5 || distance == 7 -> KeyRelation.FIFTH
+        distance <= 2 -> KeyRelation.NEAR
+        else -> KeyRelation.CLASH
+    }
+}
+
+/**
+ * Whether two trusted keys may be blended without shortening the overlap.
+ * [KeyRelation.UNKNOWN] fails: this is the strict test used before committing
+ * to an ambitious phrase switch, where a missing key is not evidence of
+ * compatibility.
+ */
+fun keysCompatible(left: String, right: String): Boolean = when (keyRelation(left, right)) {
+    KeyRelation.SAME,
+    KeyRelation.PARALLEL,
+    KeyRelation.RELATIVE,
+    KeyRelation.FIFTH,
+    KeyRelation.NEAR -> true
+    KeyRelation.UNKNOWN,
+    KeyRelation.CLASH -> false
+}
+
+/**
+ * The incoming track's playback rate that aligns its beats with [outgoingBpm].
+ *
+ * Symmetric inside [MAX_ALIGN_STRETCH] because pitch is preserved on both
+ * sides of unity. A slower incoming track may still be sped up by up to
+ * [MAX_SPEED_UP] even when that is wider than the symmetric window; a faster
+ * one outside it is left alone rather than slowed far enough to smear.
+ * Returns 1.0 when the pair cannot be aligned transparently.
+ */
+fun beatAlignmentRate(outgoingBpm: Double, incomingBpm: Double): Double {
+    if (outgoingBpm <= 0 || incomingBpm <= 0) return 1.0
+    val aligned = alignTempoOctave(outgoingBpm, incomingBpm)
+    if (aligned <= 0) return 1.0
+    val deviation = aligned / outgoingBpm - 1.0
+    if (!deviation.isFinite()) return 1.0
+    val alignable = abs(deviation) <= MAX_ALIGN_STRETCH ||
+        (deviation < 0 && -deviation <= MAX_SPEED_UP)
+    if (!alignable) return 1.0
+    val rate = outgoingBpm / aligned
+    return if (rate.isFinite() && rate > 0) kotlin.math.round(rate * 10000.0) / 10000.0 else 1.0
+}
+
+/** Whether the tempi can share a grid under [beatAlignmentRate]'s rules. */
+fun beatMatchable(outgoingBpm: Double, incomingBpm: Double): Boolean {
+    if (outgoingBpm <= 0 || incomingBpm <= 0) return false
+    val aligned = alignTempoOctave(outgoingBpm, incomingBpm)
+    val deviation = aligned / outgoingBpm - 1.0
+    return deviation.isFinite() && (
+        abs(deviation) <= MAX_ALIGN_STRETCH ||
+            (deviation < 0 && -deviation <= MAX_SPEED_UP)
+        )
+}
+
+/** How far two tracks' perceived loudness may be matched, in dB. */
+const val MAX_LOUDNESS_MATCH_DB = 6.0
+
+/** Per-side gains for a transition-only loudness match, plus the incoming side's dB correction. */
+data class LoudnessMatch(
+    val incomingGain: Double = 1.0,
+    val outgoingGain: Double = 1.0,
+    /** Positive means the incoming track is quieter and the outgoing side is trimmed instead. */
+    val gainDb: Double = 0.0,
+)
+
+/**
+ * Matches the two sides of a blend to each other without ever boosting.
+ *
+ * A player's volume cannot exceed unity, so a quieter incoming track is
+ * matched by trimming the louder outgoing one instead. The result is the same
+ * relative balance, it needs no extra headroom, and both gains are back at 1
+ * the moment the transition ends.
+ */
+fun loudnessMatch(outgoingLufs: Double, incomingLufs: Double): LoudnessMatch {
+    if (!outgoingLufs.isFinite() || !incomingLufs.isFinite()) return LoudnessMatch()
+    // Zero is the model's "not measured" default (old caches and unanalysed
+    // tracks); real programme loudness is always negative. Treating it as a
+    // value would trim the other side by up to 6 dB while one analysis is
+    // still pending.
+    if (outgoingLufs >= 0.0 || incomingLufs >= 0.0) return LoudnessMatch()
+    if (outgoingLufs <= -69.0 || incomingLufs <= -69.0) return LoudnessMatch()
+    val db = (outgoingLufs - incomingLufs).coerceIn(-MAX_LOUDNESS_MATCH_DB, MAX_LOUDNESS_MATCH_DB)
+    if (abs(db) < 0.5) return LoudnessMatch()
+    return if (db < 0) {
+        LoudnessMatch(
+            incomingGain = 10.0.pow(db / 20.0).coerceIn(0.5, 1.0),
+            outgoingGain = 1.0,
+            gainDb = db,
+        )
+    } else {
+        LoudnessMatch(
+            incomingGain = 1.0,
+            outgoingGain = 10.0.pow(-db / 20.0).coerceIn(0.5, 1.0),
+            gainDb = db,
+        )
+    }
+}
 
 /**
  * Halves or doubles [incomingBpm] until it is as close as possible to
@@ -382,7 +518,12 @@ fun rankMixInCandidates(analysis: TrackAnalysis): List<RankedMixCandidate> {
 
 /** Falls back to the scalar mix-out fields when the analysis carries no candidate list. */
 private fun mixOutCandidatesOf(analysis: TrackAnalysis, contentEnd: Double): List<MixCandidate> {
-    val supplied = analysis.mixOutCandidates.filter { it.time.isFinite() && it.time > 0 }
+    // An exit after the content end is not an exit: it would fade the song out
+    // in its trailing silence (or past the file), and because a point beyond the
+    // end has no measurable remaining music it used to score as costing nothing.
+    val supplied = analysis.mixOutCandidates.filter {
+        it.time.isFinite() && it.time > 0 && it.time <= contentEnd + MIX_ANCHOR_EPSILON
+    }
     val candidates = supplied.map {
         MixCandidate(time = it.time, score = it.score.orZero(), type = it.type)
     }.toMutableList()
@@ -445,6 +586,7 @@ fun rankMixOutCandidates(
                 measured = measured != null,
             )
         }
+        .filter { it.time <= end + MIX_ANCHOR_EPSILON }
         .filter { it.discardedMusicSeconds <= MAX_DISCARDED_MUSIC_SECONDS }
         .sortedWith(compareByDescending<RankedMixCandidate> { it.rankScore }.thenByDescending { it.time })
 }
@@ -477,7 +619,7 @@ fun resolveMixOutAnchor(
 fun assessTransitionTier(
     analysis: TrackAnalysis,
     nextAnalysis: TrackAnalysis,
-    /** Advanced Automix: the same stretch window as classic ([stretchReachable]); kept for callers. */
+    /** Advanced Automix: tempi within [MAX_SPEED_UP] of each other may beat-match, by speeding one up. */
     advanced: Boolean = false,
 ): TransitionPolicyVerdict {
     val outgoingBpm = analysis.bpm.orZero()
@@ -501,7 +643,13 @@ fun assessTransitionTier(
         )
     }
 
-    if (!stretchReachable(outgoingBpm, incomingBpm)) reasons += "tempo-distance"
+    val stretchRatio = outgoingBpm / alignTempoOctave(outgoingBpm, incomingBpm)
+    val tempoTooFar = if (advanced) {
+        !beatMatchable(outgoingBpm, incomingBpm)
+    } else {
+        abs(stretchRatio - 1) > MAX_STRETCH_DEVIATION
+    }
+    if (tempoTooFar) reasons += "tempo-distance"
     if (outgoingConfidence < MIN_BEATMATCH_CONFIDENCE || incomingConfidence < MIN_BEATMATCH_CONFIDENCE) {
         reasons += "beat-confidence"
     }

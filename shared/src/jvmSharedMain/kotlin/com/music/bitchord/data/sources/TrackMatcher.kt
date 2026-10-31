@@ -3,6 +3,7 @@ package com.music.bitchord.data.sources
 import com.music.bitchord.data.BoundedMemo
 import com.music.bitchord.data.model.ArtistNameIndex
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.ko.* // [KO] matcher-restored
 import kotlin.math.abs
 import java.text.Normalizer
 import java.util.Locale
@@ -200,6 +201,8 @@ object TrackMatcher {
         val primary = normalize(artist).split(ARTIST_SEPARATORS).firstOrNull()?.trim().orEmpty()
         return primary.takeUnless { it in YOUTUBE_TYPE_LABELS }.orEmpty()
     }
+
+    internal fun artistVariants(artist: String): List<String> = koArtistVariants(artist) // [KO] matcher-restored
 
     /** Whether both credits name at least one of the same artists. */
     fun sharesArtist(wanted: String, got: String): Boolean {

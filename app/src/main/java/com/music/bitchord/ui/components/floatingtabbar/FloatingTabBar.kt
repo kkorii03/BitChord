@@ -426,11 +426,10 @@ private fun SharedTransitionScope.InlineBar(
     // With an accessory the row spans the full width ([tab][accessory][standalone],
     // iOS 26 Apple Music style); without one, the cluster is packed and centered.
     Row(
-        horizontalArrangement = Arrangement.spacedBy(sizes.inlineComponentSpacing),
+        horizontalArrangement = Arrangement.spacedBy(sizes.componentSpacing),
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(sizes.inlineBarPadding)
             .then(if (accessory == null) Modifier.wrapContentWidth() else Modifier)
             .height(IntrinsicSize.Max)
     ) {
@@ -784,10 +783,6 @@ private fun SharedTransitionScope.ExpandedTabs(
         0f
     }
     pill.stepDp = tabStepPx / density.density
-    // For the row's drag, which runs in one coroutine for the life of the row
-    // and would otherwise keep the step from its first touch.
-    val currentTabStepPx by rememberUpdatedState(tabStepPx)
-    val currentIsRtl by rememberUpdatedState(isRtl)
 
     // The pill rests in its tab's cell and lifts to stand [PILL_GROW_HEIGHT]
     // taller than the whole bar, keeping the cell's proportions as it grows.
@@ -870,33 +865,27 @@ private fun SharedTransitionScope.ExpandedTabs(
                         .onSizeChanged { rowSize = it }
                         .layerBackdrop(tabRow)
                         .pointerInput(Unit) {
+                            if (currentSelectedTabIndex < 0 || tabStepPx <= 0f) return@pointerInput
+
+                            // In tab order, whichever way the row runs.
+                            val direction = if (isRtl) -1f else 1f
                             var totalDrag = 0f
                             var dragStartIndex = currentSelectedTabIndex
-                            var direction = 1f
-                            var step = 0f
-                            // Decided per drag, not once for the coroutine: on the
-                            // standalone tab there is no pill in this row to pick up,
-                            // but that is no reason to stop listening for good.
-                            var holding = false
                             detectHorizontalDragGestures(
                                 onDragStart = {
-                                    step = currentTabStepPx
-                                    holding = currentSelectedTabIndex >= 0 && step > 0f
-                                    if (!holding) return@detectHorizontalDragGestures
-                                    // In tab order, whichever way the row runs.
-                                    direction = if (currentIsRtl) -1f else 1f
                                     totalDrag = 0f
                                     dragStartIndex = currentSelectedTabIndex
                                     pill.startDrag()
                                 },
-                                onDragCancel = {
-                                    if (holding) pill.release(currentSelectedTabIndex)
-                                    holding = false
-                                },
+                                onDragCancel = { pill.release(currentSelectedTabIndex) },
                                 onDragEnd = {
-                                    if (!holding) return@detectHorizontalDragGestures
-                                    holding = false
-                                    val absoluteIndexFloat = (dragStartIndex + totalDrag / step)
+                                    val ratio = totalDrag / tabStepPx
+                                    val shift = when {
+                                        ratio > 0.35f -> maxOf(1, ratio.roundToInt())
+                                        ratio < -0.35f -> minOf(-1, ratio.roundToInt())
+                                        else -> 0
+                                    }
+                                    val absoluteIndexFloat = (dragStartIndex + totalDrag / tabStepPx)
                                         .coerceIn(0f, scope.tabs.lastIndex.toFloat())
                                     val newIndex = absoluteIndexFloat.roundToInt()
                                     pill.release(newIndex)
@@ -905,9 +894,8 @@ private fun SharedTransitionScope.ExpandedTabs(
                                     }
                                 },
                                 onHorizontalDrag = { _, delta ->
-                                    if (!holding) return@detectHorizontalDragGestures
                                     totalDrag += delta * direction
-                                    val absoluteIndexFloat = (dragStartIndex + totalDrag / step)
+                                    val absoluteIndexFloat = (dragStartIndex + totalDrag / tabStepPx)
                                         .coerceIn(0f, scope.tabs.lastIndex.toFloat())
                                     pill.dragTo(absoluteIndexFloat)
 
@@ -1111,7 +1099,7 @@ private fun Modifier.animateEnterExitTab(
             }
         }
 
-        // 12dp, down from the library's 50. A tab glyph is 28dp across, so a 50dp
+        // 12dp, down from the library's 50. A tab glyph is 25dp across, so a 50dp
         // radius is twice the thing it is blurring — everything past about half
         // the element's width has already dissolved it to nothing and is spent
         // on a wider and wider sample of empty space. 12 reaches the same nothing
@@ -1251,8 +1239,6 @@ data class FloatingTabBarSizes(
     val tabExpandedContentPadding: PaddingValues,
     val componentSpacing: Dp,
     val tabSpacing: Dp,
-    val inlineComponentSpacing: Dp = componentSpacing,
-    val inlineBarPadding: PaddingValues = PaddingValues(),
 )
 
 /**
@@ -1306,8 +1292,6 @@ object FloatingTabBarDefaults {
      * @param tabExpandedContentPadding the padding applied to tabs in expanded state
      * @param componentSpacing the spacing between components
      * @param tabSpacing the spacing between tabs in expanded state
-     * @param inlineComponentSpacing the spacing between components in inline state
-     * @param inlineBarPadding padding around the whole bar in inline state, inside the bar's own
      */
     @Composable
     fun sizes(
@@ -1316,16 +1300,12 @@ object FloatingTabBarDefaults {
         tabExpandedContentPadding: PaddingValues = PaddingValues(vertical = 6.dp, horizontal = 20.dp),
         componentSpacing: Dp = 8.dp,
         tabSpacing: Dp = 0.dp,
-        inlineComponentSpacing: Dp = componentSpacing,
-        inlineBarPadding: PaddingValues = PaddingValues(),
     ): FloatingTabBarSizes = FloatingTabBarSizes(
         tabBarContentPadding = tabBarContentPadding,
         tabInlineContentPadding = tabInlineContentPadding,
         tabExpandedContentPadding = tabExpandedContentPadding,
         componentSpacing = componentSpacing,
         tabSpacing = tabSpacing,
-        inlineComponentSpacing = inlineComponentSpacing,
-        inlineBarPadding = inlineBarPadding,
     )
 
     /**

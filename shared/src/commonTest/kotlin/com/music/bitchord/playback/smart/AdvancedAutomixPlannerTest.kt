@@ -14,7 +14,6 @@ class AdvancedAutomixPlannerTest {
         key: String,
         vocal: Double,
         duration: Double = 200.0,
-        bass: Double? = null,
     ): TrackAnalysis {
         val beat = 60.0 / bpm
         val downbeats = generateSequence(0.5) { it + 4 * beat }.takeWhile { it < duration - 1 }.toList()
@@ -36,7 +35,6 @@ class AdvancedAutomixPlannerTest {
             mixInTime = downbeats[4],
             energyCurve = energy,
             vocalProbability = vocal,
-            lowEnergyCurve = if (bass == null) emptyList() else energy.map { EnergySample(it.time, bass) },
         )
     }
 
@@ -54,7 +52,7 @@ class AdvancedAutomixPlannerTest {
     @Test
     fun offLeavesEveryPlanAsItWas() {
         val current = track("a", 120.0, "C major", vocal = 0.9)
-        val next = track("b", 94.0, "F♯ major", vocal = 0.9)
+        val next = track("b", 97.0, "F♯ major", vocal = 0.9)
         assertEquals(
             planTransition(
                 analysis = current,
@@ -70,70 +68,64 @@ class AdvancedAutomixPlannerTest {
     }
 
     @Test
-    fun anUnmixablePairIsCrossfadedAtTheEndIntoTheIntro() {
-        // Tempo out of reach, clashing keys, both sung: every DJ gesture put two
-        // loud unsynced songs on top of each other. The plain crossfade wins.
+    fun aPairThatCannotBeatMatchIsFilteredNotCut() {
+        // Tempo out of reach, clashing keys, both sung: once a cut, which was
+        // heard as the outgoing song glitching. Now always a filter ride.
         val current = track("a", 120.0, "C major", vocal = 0.9)
-        val next = track("b", 94.0, "F♯ major", vocal = 0.9)
-        val plan = plan(current, next, advanced = true)
-        assertEquals(TransitionStyle.EQUAL_POWER, plan.transitionStyle)
-        assertEquals(current.contentEndTime, plan.transitionEnd, 1e-6)
-        assertEquals(next.audibleStartTime!!, plan.incomingCueTime, 1e-6)
-        assertEquals(1.0, plan.incomingPlaybackRate)
-        assertEquals(0.0, plan.echoSeconds)
-        assertTrue("unmixable-pair" in plan.policyReasons)
-        assertEquals(TransitionStyle.EQUAL_POWER, plan(current, next, advanced = false).transitionStyle)
-    }
-
-    @Test
-    fun aTempoOnlyMismatchIsStillFiltered() {
-        val current = track("a", 120.0, "C major", vocal = 0.1)
-        val next = track("b", 94.0, "C major", vocal = 0.1)
+        val next = track("b", 97.0, "F♯ major", vocal = 0.9)
         val plan = plan(current, next, advanced = true)
         assertEquals(TransitionStyle.DJ_FILTER, plan.transitionStyle)
+        assertEquals(1.0, plan.incomingPlaybackRate)
+        assertEquals(1.0, plan.outgoingPlaybackRate)
+        assertTrue(plan.fadeSeconds >= 4 * 0.5 * 2, "a filter ride, not a two-bar cut: ${plan.fadeSeconds}s")
         assertTrue(plan.fadeSeconds <= 8.0, "fallback should stay compact: ${plan.fadeSeconds}s")
     }
 
     @Test
-    fun theFallbackGestureFollowsTheLowEnd() {
-        val kicks = plan(
-            track("a", 120.0, "C major", vocal = 0.1, bass = 1.0),
-            track("b", 94.0, "C major", vocal = 0.1, bass = 1.0),
-            advanced = true,
+    fun fallbackGestureIsStablePerPairButVariesAcrossPairs() {
+        val current = track("stable-out", 120.0, "C major", vocal = 0.5)
+        val variants = (0 until 24).map { index ->
+            val next = track("incoming-$index", 97.0, "F♯ major", vocal = 0.5)
+            val first = plan(current, next, advanced = true)
+            val replay = plan(current, next, advanced = true)
+            assertEquals(first.filterVariant, replay.filterVariant)
+            assertTrue(first.fadeSeconds <= 8.0)
+            first.filterVariant
+        }.toSet()
+        assertEquals(
+            setOf(FilterTransitionVariant.SWEEP, FilterTransitionVariant.BASS_HANDOFF),
+            variants,
+            "only variants the renderer actually plays may be advertised",
         )
-        assertEquals(FilterTransitionVariant.BASS_HANDOFF, kicks.filterVariant)
-        val sparse = plan(
-            track("a", 120.0, "C major", vocal = 0.1, bass = 1.0),
-            track("b", 94.0, "C major", vocal = 0.1),
-            advanced = true,
-        )
-        assertEquals(FilterTransitionVariant.SWEEP, sparse.filterVariant)
     }
 
     @Test
-    fun anUnmatchedPairNeverEchoesAndEntersAtItsIntro() {
+    fun anInstrumentalFilterExitUsesTheRenderedBassHandoffNotAnEcho() {
+        // Echo rendering is off in the controller, so the planner must not
+        // advertise ECHO_RIDE or an echo tail the renderer will never play.
         val current = track("a", 120.0, "C major", vocal = 0.1).let {
             it.copy(contentEndTime = it.duration - 20, vocalActivityMask = it.energyCurve.map { 0.0 })
         }
-        for (index in 0 until 24) {
-            val next = track("echo-$index", 94.0, "C major", vocal = 0.1, bass = 1.0)
+        val plans = (0 until 100).map { index ->
+            val next = track("echo-$index", 97.0, "F♯ major", vocal = 0.1)
                 .let { it.copy(vocalActivityMask = it.energyCurve.map { 0.0 }) }
-            val plan = plan(current, next, advanced = true)
-            assertEquals(TransitionStyle.DJ_FILTER, plan.transitionStyle)
-            assertEquals(0.0, plan.echoSeconds)
-            assertNotEquals(FilterTransitionVariant.ECHO_RIDE, plan.filterVariant)
-            assertEquals(next.audibleStartTime!!, plan.incomingCueTime, 1e-6, "cued into the intro, not the drop")
+            plan(current, next, advanced = true)
         }
+        assertTrue(
+            plans.none { it.filterVariant == FilterTransitionVariant.ECHO_RIDE },
+            "ECHO_RIDE was advertised although the renderer keeps echo off",
+        )
+        assertTrue(plans.none { it.echoSeconds > 0.0 }, "an echo tail was advertised")
+        val plan = plans.first { it.transitionStyle == TransitionStyle.DJ_FILTER }
+        assertEquals(FilterTransitionVariant.BASS_HANDOFF, plan.filterVariant)
+        assertEquals(0.0, plan.echoSeconds)
     }
 
     @Test
-    fun twoVocalTracksOverrideTheGestureWithVocalSafeSweep() {
-        // Within the stretch window, but the incoming grid is too weak to
-        // beatmatch on, so this is a filter ride — with two singers on it.
-        val current = track("vocal-out", 120.0, "C major", vocal = 0.9, bass = 1.0)
-        val next = track("vocal-in", 130.0, "C major", vocal = 0.9, bass = 1.0).copy(beatConfidence = 0.4)
+    fun twoVocalTracksOverrideRandomFallbackWithVocalSafeSweep() {
+        val current = track("vocal-out", 120.0, "C major", vocal = 0.9)
+        val next = track("vocal-in", 97.0, "F♯ major", vocal = 0.9)
         val plan = plan(current, next, advanced = true)
-        assertEquals(TransitionStyle.DJ_FILTER, plan.transitionStyle)
         assertEquals(FilterTransitionVariant.SWEEP, plan.filterVariant)
         assertTrue(plan.vocalOverlap >= 0.5, "missing masks must be treated conservatively")
         assertEquals(0.0, plan.echoSeconds)
@@ -151,23 +143,20 @@ class AdvancedAutomixPlannerTest {
 
     @Test
     fun aFasterIncomingSongDoesNotRetempoTheAudibleOutgoingDeck() {
-        // 135 against 120 would need the incoming song slowed by 11%: past the 10% window.
         val current = track("a", 120.0, "C major", vocal = 0.1)
-        val next = track("b", 135.0, "C major", vocal = 0.1)
+        val next = track("b", 130.0, "C major", vocal = 0.1)
         val plan = plan(current, next, advanced = true)
         assertEquals(TransitionStyle.DJ_FILTER, plan.transitionStyle)
-        assertEquals(1.0, plan.incomingPlaybackRate, "past the window the incoming song keeps its tempo")
+        assertEquals(1.0, plan.incomingPlaybackRate, "the incoming song is never slowed")
         assertEquals(1.0, plan.outgoingPlaybackRate, "an audible deck must never change speed")
-        // Inside the window (130: slowed by 7.7%) both modes slow the incoming song down.
-        val near = track("c", 130.0, "C major", vocal = 0.1)
-        assertTrue(plan(current, near, advanced = false).incomingPlaybackRate < 1.0)
-        assertEquals(1.0, plan(current, near, advanced = true).outgoingPlaybackRate)
+        // Classic keeps its old answer: slow the incoming track down.
+        assertTrue(plan(current, next, advanced = false).incomingPlaybackRate < 1.0)
     }
 
     @Test
-    fun tempiPastTheStretchWindowAreNotBeatMatched() {
+    fun tempiMoreThanTenPercentApartAreNotBeatMatched() {
         val current = track("a", 120.0, "C major", vocal = 0.1)
-        val next = track("b", 136.0, "C major", vocal = 0.1)
+        val next = track("b", 134.0, "C major", vocal = 0.1)
         val plan = plan(current, next, advanced = true)
         assertNotEquals(TransitionStyle.DJ_BLEND, plan.transitionStyle)
         assertEquals(1.0, plan.incomingPlaybackRate)

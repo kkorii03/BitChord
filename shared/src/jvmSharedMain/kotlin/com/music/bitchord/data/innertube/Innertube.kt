@@ -120,10 +120,6 @@ object Innertube {
     val currentRegion: String
         get() = com.music.bitchord.data.LocaleTags.ytGl(currentLocaleTag)
 
-    /** [currentRegion] for search, where null lets YouTube place us — see [LocaleTags.ytSearchGl]. */
-    private val searchRegion: String?
-        get() = com.music.bitchord.data.LocaleTags.ytSearchGl(currentLocaleTag)
-
     private val acceptLanguageHeader: String
         get() = com.music.bitchord.data.LocaleTags.acceptLanguage(currentLocaleTag)
 
@@ -1101,19 +1097,6 @@ object Innertube {
         put("isAudioOnly", true)
     }
 
-    /**
-     * A watch queue started from a playlist rather than a track: a mix such as
-     * My Supermix, a playlist radio (`RDAMPL…`), or an artist's Mix / Shuffle
-     * button, which also carry their own seed [videoId] and [params].
-     */
-    suspend fun nextPlaylist(playlistId: String, videoId: String? = null, params: String? = null): JsonObject =
-        postMusic("next") {
-            videoId?.let { put("videoId", it) }
-            put("playlistId", playlistId)
-            params?.let { put("params", it) }
-            put("isAudioOnly", true)
-        }
-
     /** Timed caption transcript used as a last-resort lyrics source. */
     suspend fun transcript(videoId: String): JsonObject = postMusic("get_transcript") {
         // get_transcript expects a tiny protobuf: field 1, length, video id.
@@ -1121,17 +1104,24 @@ object Innertube {
         put("params", Base64.getEncoder().encodeToString(bytes))
     }
 
-    suspend fun search(query: String, params: String? = null, anonymous: Boolean = true): JsonObject =
-        if (anonymous) {
-            postMusicAnonymous("search", region = searchRegion) {
-                put("query", query)
-                params?.let { put("params", it) }
-            }
-        } else {
-            postMusic("search", region = searchRegion) {
-                put("query", query)
-                params?.let { put("params", it) }
-            }
+    /**
+     * A search page. Never sent as the listener's account — see
+     * [isAnonymousRequest] and [postMusic]'s endpoint check — so no query the
+     * app or the listener runs here reaches YouTube's search history.
+     *
+     * Upstream 1.8.1 accepts a flag for an explicit submit that would be
+     * recorded in YT Music history; this fork keeps every search anonymous,
+     * so the flag is accepted for call-site compatibility and ignored.
+     */
+    suspend fun search(
+        query: String,
+        params: String? = null,
+        anonymous: Boolean = true,
+        kind: SearchKind = SearchKind.TYPED,
+    ): JsonObject =
+        postMusic("search", searchKind = kind, searchQueryLength = query.length) {
+            put("query", query)
+            params?.let { put("params", it) }
         }
 
     /** The next page of a filtered search result; anonymous by the same rule. */
@@ -1141,7 +1131,7 @@ object Innertube {
     ): JsonObject = postMusic(
         endpoint = "search",
         query = mapOf("ctoken" to token, "continuation" to token, "type" to "next"),
-        region = searchRegion,
+        searchKind = kind,
     ) {
         put("continuation", token)
     }
@@ -1175,7 +1165,11 @@ object Innertube {
      * recorded against the listener as one they searched for.
      */
     suspend fun searchSuggestions(input: String): JsonObject =
-        postMusic("music/get_search_suggestions", region = searchRegion) {
+        postMusic(
+            "music/get_search_suggestions",
+            searchKind = SearchKind.SUGGEST,
+            searchQueryLength = input.length,
+        ) {
             put("input", input)
         }
 
@@ -1185,7 +1179,11 @@ object Innertube {
      * to the account's server-side search history.
      */
     suspend fun searchTypeahead(query: String): JsonObject =
-        postMusicAnonymous("search", region = searchRegion) {
+        postMusic(
+            "search",
+            searchKind = SearchKind.TYPEAHEAD,
+            searchQueryLength = query.length,
+        ) {
             put("query", query)
         }
 
@@ -1763,8 +1761,14 @@ object Innertube {
     private suspend fun postMusic(
         endpoint: String,
         query: Map<String, String> = emptyMap(),
-        /** The context's `gl`; null sends none. */
-        region: String? = currentRegion,
+        hl: String = currentLanguage,
+        gl: String = currentCountry,
+        forceAnonymous: Boolean = false,
+        forceSigned: Boolean = false,
+        browseId: String? = null,
+        directRetryOnProxyFailure: Boolean = true,
+        searchKind: SearchKind? = null,
+        searchQueryLength: Int? = null,
         bodyExtras: JsonObjectBuilder.() -> Unit,
     ): JsonObject {
         // In Korea without Premium the signed-in Music session is refused
@@ -2018,9 +2022,16 @@ object Innertube {
                             putJsonObject("client") {
                                 put("clientName", if (ios) "IOS" else "WEB")
                                 put("clientVersion", clientVersion)
-                                put("hl", currentLanguage)
-                                region?.let { put("gl", it) }
-                                visitorData?.let { put("visitorData", it) }
+                                put("hl", hl)
+                                put("gl", gl)
+                                visitor?.let { put("visitorData", it) }
+                                if (ios) {
+                                    put("deviceMake", IOS_DEVICE_MAKE)
+                                    put("deviceModel", IOS_DEVICE_MODEL)
+                                    put("osName", IOS_OS_NAME)
+                                    put("osVersion", IOS_OS_VERSION)
+                                    put("userAgent", IOS_USER_AGENT)
+                                }
                             }
                             putJsonObject("user") {
                                 put("lockedSafetyMode", false)
@@ -2079,44 +2090,108 @@ object Innertube {
      */
     internal fun musicRequestIsAnonymous(
         endpoint: String,
-        /** The context's `gl`; null sends none. */
-        region: String? = currentRegion,
-        bodyExtras: JsonObjectBuilder.() -> Unit,
-    ): JsonObject {
-        val clientVersion = webRemixVersion
-        return withRetry {
-            client.post("$MUSIC_BASE/$endpoint") {
-                contentType(ContentType.Application.Json)
-                parameter("prettyPrint", "false")
-                header("X-Origin", MUSIC_ORIGIN)
-                header("Origin", MUSIC_ORIGIN)
-                header("Referer", "$MUSIC_ORIGIN/")
-                header("X-YouTube-Client-Name", WEB_REMIX_CLIENT_ID)
-                header("X-YouTube-Client-Version", clientVersion)
-                header("Accept-Language", acceptLanguageHeader)
-                parameter("hl", currentLanguage)
-                visitorData?.let { header("X-Goog-Visitor-Id", it) }
-                // No Cookie / Authorization headers — anonymous request.
-                setBody(
-                    buildJsonObject {
-                        putJsonObject("context") {
-                            putJsonObject("client") {
-                                put("clientName", "WEB_REMIX")
-                                put("clientVersion", clientVersion)
-                                put("hl", currentLanguage)
-                                region?.let { put("gl", it) }
-                                visitorData?.let { put("visitorData", it) }
-                            }
-                            putJsonObject("user") {
-                                put("lockedSafetyMode", false)
-                                // No onBehalfOfUser — no account context.
-                            }
-                            putJsonObject("request") { put("useSsl", true) }
-                        }
-                        bodyExtras()
-                    },
-                )
-            }.body<JsonObject>()
+        browseId: String? = null,
+        forceAnonymous: Boolean = false,
+        forceSigned: Boolean = false,
+    ): Boolean = !forceSigned &&
+        (forceAnonymous || isAnonymousRequest(endpoint, browseId) ||
+            (MusicGateFallback.isActive() && !isAccountWrite(endpoint)))
+
+    /** Endpoints that carry a search query, on either host. */
+    internal fun isSearchEndpoint(endpoint: String): Boolean =
+        endpoint == "search" || endpoint == "music/get_search_suggestions"
+
+    /** The kind logged when a caller did not state why it searched. */
+    internal fun defaultSearchKind(endpoint: String): SearchKind =
+        if (endpoint == "music/get_search_suggestions") SearchKind.SUGGEST else SearchKind.TYPED
+
+    /**
+     * The one line every search request writes.
+     *
+     * The query never appears here — only its length — and `account=no` is not
+     * a parameter: a search request that could say yes is the bug this rule
+     * exists to prevent, so the logger cannot record one.
+     */
+    internal fun searchLogLine(
+        host: String,
+        endpoint: String,
+        kind: SearchKind,
+        queryLength: Int?,
+    ): String = buildString {
+        append("search: ").append(host).append('/').append(endpoint)
+        append(" kind=").append(kind.label)
+        append(" account=no")
+        queryLength?.let { append(" length=").append(it) }
+    }
+
+    /**
+     * Whether a youtube.com request is anonymous, including an explicit
+     * request for the session on a search endpoint.
+     */
+    internal fun isAnonymousYouTubeRequest(endpoint: String, anonymous: Boolean): Boolean =
+        anonymous || isAnonymousRequest(endpoint)
+
+    /**
+     * Browse pages that are not personal: the mood/genre grid and its
+     * categories, new releases, charts (params select the country) and
+     * Explore. Home, library, history, likes, playlists and radio are not
+     * here and keep the session.
+     */
+    internal fun isAnonymousBrowseId(browseId: String): Boolean =
+        browseId == "FEmusic_moods_and_genres" ||
+            browseId.startsWith("FEmusic_moods_and_genres_category") ||
+            browseId.startsWith("FEmusic_new_releases") ||
+            browseId == CHARTS_BROWSE_ID ||
+            browseId == "FEmusic_explore"
+
+    /** Endpoints that change the account; never sent signed out. */
+    internal fun isAccountWrite(endpoint: String): Boolean =
+        endpoint.startsWith("like/") || endpoint.startsWith("playlist/") ||
+            endpoint.startsWith("browse/edit_playlist") || endpoint.startsWith("account/") ||
+            endpoint.startsWith("subscription/") || endpoint.startsWith("feedback")
+
+    /**
+     * The visitor id a request may carry: the account-free one for a search,
+     * the session's one for everything else.
+     *
+     * [sessionVisitorData] is the signed-in shell's id, and sending it with a
+     * credential-free search would hand Google the account association the
+     * missing cookie was meant to remove.
+     */
+    internal fun visitorIdFor(
+        endpoint: String,
+        sessionVisitorData: String?,
+        anonymousVisitorData: String?,
+    ): String? = if (isAnonymousRequest(endpoint)) anonymousVisitorData else sessionVisitorData
+
+    /** The `onBehalfOfUser` a request may name — never one for a search. */
+    internal fun dataSyncIdForRequest(endpoint: String, dataSyncId: String?): String? =
+        dataSyncId.takeUnless { isAnonymousRequest(endpoint) }
+
+    /**
+     * The account-specific headers a request to [endpoint] may carry, as a
+     * pure decision so it can be tested without a socket.
+     *
+     * Empty for an anonymous request even when a cookie is present; that is
+     * the whole privacy guarantee. [anonymous] is the caller's explicit
+     * decision, so a force-anonymous browse of a normally signed endpoint
+     * cannot leak the session. [authorization] is lazy so an anonymous
+     * request never even computes a SAPISID hash.
+     */
+    internal fun accountHeadersFor(
+        endpoint: String,
+        cookie: String?,
+        authUser: String,
+        pageId: String?,
+        authorization: () -> String?,
+        anonymous: Boolean = false,
+    ): Map<String, String> {
+        if (anonymous || cookie == null || isAnonymousRequest(endpoint)) return emptyMap()
+        return buildMap {
+            put("Cookie", cookie)
+            put("X-Goog-AuthUser", authUser)
+            pageId?.let { put("X-Goog-PageId", it) }
+            authorization()?.let { put("Authorization", it) }
         }
     }
 

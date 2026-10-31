@@ -71,12 +71,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.sharedui.resources.*
 import com.music.bitchord.ui.utils.containSheetGestures
-import com.music.bitchord.ui.components.MENU_FROST_ALPHA
-import com.music.bitchord.ui.components.MenuFrostDark
-import com.music.bitchord.ui.components.liveMenuFrost
+import com.music.bitchord.ui.components.optimizedHazeEffect
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
 import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
+import dev.chrisbanes.haze.materials.HazeMaterials
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -87,7 +87,28 @@ private val DrawerMaxWidth = 640.dp
 private const val StepMs = 100
 private const val DismissDragFraction = 0.25f
 
-/** A player drawer for shifting all synced lyrics against the playback clock. */
+/**
+ * What the sync drawer needs to correct the song playing on its own: its
+ * correction now, the lines as they are showing (that correction included),
+ * where the lyrics clock is, and where to send a new correction.
+ */
+internal class SongLyricsSync(
+    val offsetMs: Long,
+    /** How the lines were moved onto the video's clock, for the figures shown here. */
+    val timing: LyricsTimingUi,
+    /** Asks Gemini to time the lines (or takes its answer back); null where it can't. */
+    val onAiTiming: (() -> Unit)?,
+    val lines: List<LyricLine>,
+    /** The lyrics clock now: the playhead with the all-songs offset applied, ms. */
+    val lyricPositionMs: () -> Long,
+    val onOffset: (Long) -> Unit,
+)
+
+/**
+ * A player drawer for shifting synced lyrics against the playback clock: for
+ * this song alone (by step, or by tapping as a line starts) and for every song.
+ */
+@OptIn(ExperimentalHazeMaterialsApi::class)
 @Composable
 internal fun LyricsOffsetSheet(
     hazeState: HazeState,
@@ -112,7 +133,6 @@ internal fun LyricsOffsetSheet(
     var shown by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { shown = true }
     val reduceDynamicBlur by PlayerSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
-    val frost = LocalPlayerFrost.current
 
     // The body scrolls, so its scroll owns the gesture before the drag
     // detector below sees it. A pull past the top has to move the drawer
@@ -173,15 +193,16 @@ internal fun LyricsOffsetSheet(
                     .onSizeChanged { height = it.height }
                     .offset { IntOffset(0, drawerOffset.roundToInt()) }
                     .clip(DrawerShape)
-                    // The ⋯ menu's frost, as every drawer over the player — see
-                    // [PlayerDrawer].
                     .then(
-                        when {
-                            reduceDynamicBlur -> Modifier.background(MenuFrostDark)
-                            frost != null -> with(frost) {
-                                Modifier.frostPanel(DrawerShape, MenuFrostDark.copy(alpha = MENU_FROST_ALPHA))
-                            }
-                            else -> Modifier.liveMenuFrost(hazeState, MenuFrostDark)
+                        if (reduceDynamicBlur) {
+                            Modifier.background(Color(0xFF121212))
+                        } else {
+                            Modifier
+                                .optimizedHazeEffect(
+                                    state = hazeState,
+                                    style = HazeMaterials.regular(Color(0xFF141414)),
+                                )
+                                .background(Color(0xFF121212).copy(alpha = 0.9f))
                         },
                     )
                     .clickable(

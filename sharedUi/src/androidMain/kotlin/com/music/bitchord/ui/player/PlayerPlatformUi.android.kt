@@ -57,7 +57,7 @@ internal actual fun appLanguageTag(): String {
  * reaches first while both are enabled.
  */
 @Composable
-actual fun PlayerBackHandler(enabled: Boolean, onBack: () -> Unit) {
+internal actual fun PlayerBackHandler(enabled: Boolean, onBack: () -> Unit) {
     BackHandler(enabled = enabled, onBack = onBack)
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         val view = LocalView.current

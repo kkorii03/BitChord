@@ -61,7 +61,6 @@ import coil3.compose.AsyncImage
 import coil3.compose.AsyncImagePainter
 import coil3.request.ImageRequest
 import com.music.bitchord.ui.components.ExplicitBadge
-import com.music.bitchord.ui.components.menuAnchor
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.ui.theme.stableStatusBarInsets
@@ -436,16 +435,14 @@ internal fun LandscapeCredits(
         ) {
             Column {
                 var titleOverflowing by remember { mutableStateOf(false) }
-                val artistColor = LocalPlayerTint.current.copy(alpha = 0.55f)
                 MarqueeText(
                     text = song.title,
                     style = MaterialTheme.typography.titleLarge,
                     color = Color.White,
                     running = running,
                     onOverflowChange = { titleOverflowing = it },
-                    // Before the title, in the artist line's colour.
                     leading = if (song.isExplicit == true) {
-                        { ExplicitBadge(artistColor) }
+                        { ExplicitBadge(Color.White) }
                     } else {
                         null
                     },
@@ -458,7 +455,7 @@ internal fun LandscapeCredits(
                         songArtistCredits(song)
                     },
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.W500),
-                    color = artistColor,
+                    color = LocalPlayerTint.current.copy(alpha = 0.55f),
                     // A title that's also scrolling gets to go first — starting
                     // together reads as clutter, so the artist waits a beat.
                     startDelayMillis = if (titleOverflowing) MARQUEE_ARTIST_STAGGER_MS else 0L,
@@ -469,9 +466,9 @@ internal fun LandscapeCredits(
         }
         Spacer(Modifier.width(10.dp))
         // Same gate as the portrait player's: no account to like against for a
-        // guest — but a local file or a finished download is liked on the
-        // device, which needs none.
-        if (signedIn || song.localUri != null) {
+        // guest, and no YouTube identity to rate a plain local file against.
+        // A finished download keeps its identity, so it keeps its star.
+        if (signedIn && !SongOrigins.isLocalFile(song)) {
             val liked = likeStatus == LikeStatus.LIKE
             CircleGlyph(
                 icon = if (liked) BitChordIcons.StarFilled else BitChordIcons.Star,
@@ -488,7 +485,6 @@ internal fun LandscapeCredits(
             icon = if (showRevertCue) Icons.AutoMirrored.Rounded.Undo else Icons.Rounded.MoreHoriz,
             contentDescription = stringResource(Res.string.more),
             onClick = onOpenMenu,
-            modifier = Modifier.menuAnchor(),
         )
     }
 }

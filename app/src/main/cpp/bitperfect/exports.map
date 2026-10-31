@@ -1,5 +1,0 @@
-{
-    global:
-        Java_com_music_bitchord_playback_audio_bitperfect_*;
-    local: *;
-};
