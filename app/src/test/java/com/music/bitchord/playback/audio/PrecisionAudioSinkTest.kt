@@ -432,11 +432,11 @@ class PrecisionAudioSinkTest {
     }
 
     /**
-     * The float branch has no Media3 silence processor, so the sink trims the
-     * block itself and folds the cut into the delegate's output stream offset.
+     * v1.9 leaves silence skipping to Media3 on the float branch too: the sink
+     * does not trim frames itself and never moves the delegate's stream offset.
      */
     @Test
-    fun `float output trims silence and advances the stream offset`() {
+    fun `float output leaves silence skipping to the delegate`() {
         val fakeDelegate = FakeAudioSink()
         val sink = createSink(fakeDelegate, enableFloatOutput = true)
         val format = Format.Builder()
@@ -456,11 +456,8 @@ class PrecisionAudioSinkTest {
         input.flip()
 
         assertTrue(sink.handleBuffer(input, 0L, 1))
-        assertTrue(fakeDelegate.lastOutputStreamOffsetUs > 1_000_000L)
-        assertTrue(
-            "the cut should move the offset by most of the input duration",
-            fakeDelegate.lastOutputStreamOffsetUs >= 1_000_000L + 2_000_000L,
-        )
+        assertEquals(1_000_000L, fakeDelegate.lastOutputStreamOffsetUs)
+        assertEquals(6, fakeDelegate.handleBufferCallCount)
     }
 
     /** On the PCM16 precision route Media3 still owns silence skipping. */
