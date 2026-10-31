@@ -105,6 +105,12 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory, Configu
         TrackLog.initPersistence(logDirectory)
         com.music.bitchord.data.FeatureHealthCounters.init(File(logDirectory, "feature-health"))
         installCrashHandler()
+        // [KO] exit-reasons: an ANR/crash leaves no line in this process's own
+        // log, because the process that hung is gone. Android's historical exit
+        // reasons are the only record, read once per start off the main thread.
+        CoroutineScope(Dispatchers.IO).launch {
+            com.music.bitchord.ko.ExitReasonsKo.report(this@BitChordApplication)
+        }
         // Reading and rewriting the warm-start marker is disk I/O on the launch
         // path. The line it emits is diagnostic, so it can land a moment later
         // without holding up the first frame.
