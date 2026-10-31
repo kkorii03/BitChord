@@ -38,7 +38,7 @@ object AudioOutputStatus {
     data class Snapshot(
         val sink: String = "AudioTrack",
         val requestedPcmMode: OutputPcmMode = OutputPcmMode.PCM_16,
-        val deviceName: String = "System default",
+        val deviceName: String = "시스템 기본값",
         /**
          * The [AudioDeviceInfo.getId] of whatever [deviceName] names — the exact
          * device the player resolved and is rendering to, not a second guess at
@@ -249,7 +249,7 @@ object AudioOutputStatus {
             AudioDeviceInfo.TYPE_BLE_SPEAKER,
             AudioDeviceInfo.TYPE_BLE_BROADCAST,
             -> "LE Audio"
-            AudioDeviceInfo.TYPE_HEARING_AID -> "Hearing Aid"
+            AudioDeviceInfo.TYPE_HEARING_AID -> "보청기"
             else -> null
         }
 
@@ -262,9 +262,9 @@ object AudioOutputStatus {
         val fallback = requestedPcmMode == OutputPcmMode.FLOAT_32 && !floatEnabled
         val (reason, detail) = when {
             computedRouteKind == AudioRouting.Kind.PHONE && fallback ->
-                Pair(FallbackReason.ROUTE_LIMITATION, "Speaker output capped at 16-bit to avoid OEM mixer distortion")
+                Pair(FallbackReason.ROUTE_LIMITATION, "제조사 믹서 왜곡 방지를 위해 스피커 출력을 16비트로 제한")
             computedRouteKind == AudioRouting.Kind.USB && fallback ->
-                Pair(FallbackReason.ROUTE_LIMITATION, "USB route does not advertise Float32 output")
+                Pair(FallbackReason.ROUTE_LIMITATION, "USB 경로가 Float32 출력을 지원하지 않음")
             computedRouteKind == AudioRouting.Kind.BLUETOOTH && fallback -> {
                 val btCode = bluetoothTelemetry?.codecName?.let { " ($it)" }.orEmpty()
                 Pair(FallbackReason.ROUTE_LIMITATION, "Bluetooth route$btCode does not advertise Float32 output")
@@ -277,7 +277,7 @@ object AudioOutputStatus {
 
         val baseSnapshot = current.value.copy(
             requestedPcmMode = requestedPcmMode,
-            deviceName = device?.productName?.toString()?.ifBlank { null } ?: "System default",
+            deviceName = device?.productName?.toString()?.ifBlank { null } ?: "시스템 기본값",
             activeDeviceId = device?.id,
             sampleRatesHz = device?.sampleRates ?: IntArray(0),
             encodings = device?.encodings ?: IntArray(0),

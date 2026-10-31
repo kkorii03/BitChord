@@ -25,6 +25,8 @@ import com.music.bitchord.playback.loopmix.LoopMixPort
 import com.music.bitchord.playback.loopmix.LoopMixRenderer
 import com.music.bitchord.playback.loopmix.LoopMixSession
 import com.music.bitchord.playback.loopmix.LoopRegion
+import com.music.bitchord.playback.smart.AnalysisWindow
+import com.music.bitchord.playback.smart.AutomixWorkPolicy
 import com.music.bitchord.playback.smart.CrossfadeMode
 import com.music.bitchord.playback.smart.LoopMix
 import com.music.bitchord.playback.smart.FILTER_ECHO_AT
@@ -348,6 +350,14 @@ class CrossfadeController(
      * fading in — see [ranOn].
      */
     private var outgoingItemIndex = C.INDEX_UNSET
+
+    /**
+     * How many items the queue held when the standby was loaded with a copy of
+     * it. AutoPlay appending mid-transition is explicitly allowed, so the
+     * difference is reconciled onto the standby before the swap rather than
+     * being allowed to lose the appended tracks.
+     */
+    private var queuedItemCount = 0
 
     /**
      * The queue index the incoming track occupied when the standby was loaded.
@@ -1014,6 +1024,8 @@ class CrossfadeController(
         Phase.FADING -> FADE_STEP_MS
         Phase.SLEEP_FADE -> FADE_STEP_MS
         Phase.BAILING -> BAIL_STEP_MS
+        Phase.LOOP_ARMING -> ARM_STEP_MS
+        Phase.LOOP_RUNNING -> LOOP_STEP_MS
     }
 
     fun release() {
@@ -1424,20 +1436,15 @@ class CrossfadeController(
             Log.d(
                 TAG,
                 "automix: ${currentItem.mediaId}->${nextItem.mediaId} " +
-                    "beatAligned=${if (plan.beatAligned) "y" else "n"} " +
-                    "phrase=${if (plan.phraseAligned) "y" else "n"} " +
-                    "key=${plan.keyRelation.wire} " +
                     "keyRaw=${currentAnalysis.key}/${nextAnalysis.key} " +
                     "keyConf=${"%.2f".format(Locale.ROOT, currentAnalysis.keyConfidence)}/" +
                     "${"%.2f".format(Locale.ROOT, nextAnalysis.keyConfidence)} " +
-                    "loudness=${"%+.1f".format(Locale.ROOT, plan.loudnessGainDb)}dB " +
                     "style=${plan.transitionStyle.name.lowercase(Locale.ROOT)}" +
                     (if (plan.transitionStyle == TransitionStyle.DJ_FILTER) {
                         "/${plan.filterVariant.name.lowercase(Locale.ROOT)}"
                     } else {
                         ""
-                    }) +
-                    " character=${plan.character.wire}",
+                    }),
             )
         }
 
@@ -1577,8 +1584,6 @@ class CrossfadeController(
                 beats = if (plan.beatSeconds > 0) plan.fadeSeconds / plan.beatSeconds else 0.0,
                 lockPhase = plan.phaseLock,
                 echoSeconds = plan.echoSeconds,
-                incomingGain = plan.incomingGain,
-                outgoingGain = plan.outgoingGain,
             ),
             plan = plan,
         )
@@ -1760,6 +1765,7 @@ class CrossfadeController(
         beatMs: Long = 0L,
         renderStyle: Render = Render(),
         plan: TransitionPlan? = null,
+        automixFallback: Boolean = false,
     ): Boolean {
         val out = active()
         val into = standby()
@@ -1798,7 +1804,7 @@ class CrossfadeController(
         rampStep = 0
         render = renderStyle
         planInFlight = plan
-        armDeadline = SystemClock.elapsedRealtime() + ARM_TIMEOUT_MS + rampSteps * beatMs
+        armDeadline = SystemClock.elapsedRealtime() + CrossfadeArmPolicy.armTimeoutMs(rampSteps * beatMs)
         handedOff = false
         outgoing = out
         incoming = into
@@ -3273,6 +3279,27 @@ class CrossfadeController(
 
     // ---- Lifecycle of a transition -----------------------------------------
 
+    /** Records the pair a skip was logged for, so it is logged once and never retried. */
+    private fun rememberSkipped(
+        pair: Pair<String?, String?>,
+        reason: CrossfadeSkipReason,
+        outgoing: MediaItem?,
+        incoming: MediaItem?,
+    ) {
+        skippedPair = pair
+        logSkipped(outgoing?.mediaId, incoming?.mediaId, reason)
+    }
+
+    /** One line for every transition abandoned before it became audible. */
+    private fun logSkipped(outgoingId: String?, incomingId: String?, reason: CrossfadeSkipReason) {
+        Log.d(TAG, "crossfade: skipped $outgoingId->$incomingId reason=${reason.wire}")
+        TrackLog.d(
+            "BitChord",
+            "crossfade: skipped $outgoingId->$incomingId reason=${reason.wire}",
+            about = incomingId,
+        )
+    }
+
     /**
      * Abandons whatever is in flight.
      *
@@ -3289,6 +3316,20 @@ class CrossfadeController(
         if (phase == Phase.LOOP_ARMING || phase == Phase.LOOP_RUNNING) {
             loopBail("interrupted", settle = false)
             return
+        }
+        val outId = outgoing?.currentMediaItem?.mediaId
+        val inId = incoming?.currentMediaItem?.mediaId
+        if (reason != null) {
+            if (phase == Phase.ARMING && outId != null && inId != null) {
+                rememberSkipped(
+                    outId to inId,
+                    reason,
+                    outgoing?.currentMediaItem,
+                    incoming?.currentMediaItem,
+                )
+            } else {
+                logSkipped(outId, inId, reason)
+            }
         }
         Log.d(TAG, "bail from $phase")
         TrackLog.d(

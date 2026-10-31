@@ -73,6 +73,7 @@ import com.music.bitchord.playback.audio.bitperfect.BitPerfectOutput
 import com.music.bitchord.playback.dsd.DsdFilter
 import com.music.bitchord.playback.dsd.DsdFormat
 import com.music.bitchord.playback.smart.HqVerificationStore
+import com.music.bitchord.ui.screens.localizedLabel
 import com.music.bitchord.data.sources.SourceTrackKeys
 import dev.chrisbanes.haze.HazeState
 import kotlinx.coroutines.Dispatchers
@@ -128,7 +129,6 @@ internal enum class BitExactVerdict {
  */
 internal fun bitExactVerdict(
     dsd: Boolean,
-    bitPerfect: BitPerfectOutput.Status,
     outputExact: Boolean,
     loudnessActive: Boolean,
     eqActive: Boolean,
@@ -137,12 +137,48 @@ internal fun bitExactVerdict(
     // Not a fault to fix: there is no DSD output path (native DSD or DoP)
     // here, so the PCM conversion is a deviation every DSD track carries,
     // whatever the stages after it do.
+    dsd -> BitExactVerdict.DsdToPcm
+    loudnessActive -> BitExactVerdict.Loudness
+    eqActive -> BitExactVerdict.Equalizer
+    spatialActive -> BitExactVerdict.Spatial
+    outputExact -> BitExactVerdict.Exact
+    else -> BitExactVerdict.Downstream
+}
+
+@Composable
+private fun BitExactVerdict.label(outputExactDetail: String?): String = when (this) {
+    BitExactVerdict.DsdToPcm -> stringResource(R.string.pipeline_bit_exact_dsd)
+    BitExactVerdict.Loudness -> stringResource(R.string.pipeline_bit_exact_loudness)
+    BitExactVerdict.Equalizer -> stringResource(R.string.pipeline_bit_exact_eq)
+    BitExactVerdict.Spatial -> stringResource(R.string.pipeline_bit_exact_spatial)
+    BitExactVerdict.Exact -> {
+        val yes = stringResource(R.string.pipeline_bit_exact_yes)
+        if (outputExactDetail.isNullOrBlank()) yes else "$yes ($outputExactDetail)"
+    }
+    BitExactVerdict.Downstream -> stringResource(
+        R.string.pipeline_bit_exact_downstream,
+        outputExactDetail ?: stringResource(R.string.pipeline_bit_exact_downstream_unknown),
+    )
+}
+
+/**
+ * v1.9's bit-perfect-aware wording: the exclusive output bypasses every DSP
+ * stage, so the only question left there is the source and the DAC. Kept as a
+ * separate overload so the shared verdict enum stays usable from tests.
+ */
+internal fun bitExactVerdict(
+    dsd: Boolean,
+    bitPerfect: BitPerfectOutput.Status,
+    outputExact: Boolean,
+    outputExactDetail: String?,
+    loudnessActive: Boolean,
+    eqActive: Boolean,
+    spatialActive: Boolean,
+): String = when {
     dsd -> "No — DSD converted to PCM"
     bitPerfect.active && bitPerfect.dacLimited ->
         "No — ${bitPerfect.sourceBits}-bit / ${rateText(bitPerfect.sourceRateHz)} converted to " +
             "${bitPerfect.deviceName}'s max"
-    // Every DSP stage is bypassed on the exclusive output, so the only
-    // question left is whether the source itself was integer PCM.
     bitPerfect.active && bitPerfect.exact -> "Yes — bit-perfect to ${bitPerfect.deviceName}"
     bitPerfect.active -> "No — source isn't lossless PCM"
     loudnessActive -> "No — loudness normalization"
@@ -510,10 +546,11 @@ fun AudioPipelineDialog(
                         dsd = dsdRateHz != null,
                         bitPerfect = bitPerfect,
                         outputExact = outputStatus.outputExact,
+                        outputExactDetail = outputStatus.outputExactDetail,
                         loudnessActive = loudnessNormalization && outputStatus.loudnessGainDb != null,
                         eqActive = eqEnabled,
                         spatialActive = spatialAudio,
-                    ).label(outputStatus.outputExactDetail),
+                    ),
                 )
             }
 
