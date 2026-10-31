@@ -2971,10 +2971,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // inside the race so a refused cover does not hide a slower
                 // source's real recording.
                 // [KO] v1.9 Direct Source owns pinning; prefetch only warms the tap path.
-                val warmed = SourceResolver.prefetchSubstitute(target, remember = true) { _, candidate ->
-                    com.music.bitchord.playback.smart.HqAudioVerify
-                        .verify(getApplication(), playSong.videoId, target, candidate) != null
-                }
+                val warmed = SourceResolver.prefetchSubstitute(
+                    target,
+                    remember = true,
+                    accept = { _, candidate ->
+                        com.music.bitchord.playback.smart.HqAudioVerify
+                            .verify(getApplication(), playSong.videoId, target, candidate) != null
+                    },
+                    allowArtistUnverified = true,
+                )
                 if (warmed != null) {
                     StreamChoice.remember(playSong.videoId, warmed, substituted = true)
                     return@runCatching

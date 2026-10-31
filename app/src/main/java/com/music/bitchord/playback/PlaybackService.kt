@@ -7256,6 +7256,29 @@ class PlaybackService : MediaLibraryService() {
             val better = withContext(Dispatchers.IO) {
                 QualityUpgrade.lookAgain(mediaId, playingSeconds)
             } ?: return@launch
+            // [KO] artist-unverified: a localised credit is only a search
+            // candidate. The audio has to prove it is the same recording before
+            // any of it is cut in. One comparison per candidate, driven by this
+            // playback event; normal streams keep the existing path.
+            if (better.artistUnverified) {
+                val target = uri?.let { SourceResolver.targetIn(it) }
+                // Bounded like the 429 resume check: a comparison that cannot
+                // finish counts as a refusal, never as a pass.
+                val verified = target != null && withContext(Dispatchers.IO) {
+                    withTimeoutOrNull(RESUME_VERIFY_TIMEOUT_MS) {
+                        HqAudioVerify.verify(this@PlaybackService, mediaId, target, better)
+                    } != null
+                }
+                if (!verified) {
+                    TrackLog.w(
+                        "BitChord",
+                        "hq-verify: artist-unverified refused '${target?.title.orEmpty()}' " +
+                            "from ${better.sourceConfigId ?: "source"}",
+                        about = mediaId,
+                    )
+                    return@launch
+                }
+            }
             try {
                 swapIn(mediaId, better)
             } finally {

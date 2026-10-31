@@ -229,6 +229,38 @@ object SourceSearchKo {
         }
     }
 
+
+    /**
+     * [KO] artist-unverified: rows whose only disagreement with [target] is an
+     * artist credit written in another script. They are kept *after* every
+     * normally credited match, closest runtime first, and are never ranked by
+     * [TrackMatcher.score]. The caller must still have the sound comparison
+     * accept the chosen stream before it may play.
+     */
+    fun artistUnverifiedCandidates(
+        candidates: List<Song>,
+        target: TrackMatcher.Target,
+        alreadyMatched: List<Song>,
+    ): List<Song> {
+        val matchedIds = alreadyMatched.mapTo(mutableSetOf()) { it.videoId }
+        return candidates
+            .asSequence()
+            .filterNot { it.videoId in matchedIds }
+            .distinctBy { it.videoId }
+            .filter {
+                TrackMatcher.isArtistUnverifiedOriginal(
+                    it,
+                    target,
+                    TrackMatcher.ARTIST_UNVERIFIED_DRIFT_SEC,
+                )
+            }
+            .sortedBy { candidate ->
+                val got = TrackMatcher.secondsOf(candidate.durationText) ?: Int.MAX_VALUE
+                kotlin.math.abs((target.durationSec ?: 0) - got)
+            }
+            .toList()
+    }
+
     fun originalOnly(
         rows: List<Song>,
         target: TrackMatcher.Target,
