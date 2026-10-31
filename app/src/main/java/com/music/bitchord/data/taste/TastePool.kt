@@ -1,5 +1,6 @@
 package com.music.bitchord.data.taste
 
+import com.music.bitchord.data.StoredSongDisplay
 import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.playback.QueueBuilder
@@ -202,10 +203,12 @@ object TastePool {
  * every video row when a batch has any catalogue track, so guessing "video"
  * here would quietly remove the listener's own songs from the station.
  */
-fun LocalTrack.asSong(): Song = Song(
-    videoId = videoId,
-    title = title,
-    artist = artist,
-    thumbnailUrl = thumbnailUrl,
-    durationText = durationText,
+fun LocalTrack.asSong(): Song = StoredSongDisplay.clean(
+    Song(
+        videoId = videoId,
+        title = title,
+        artist = artist,
+        thumbnailUrl = thumbnailUrl,
+        durationText = durationText,
+    ),
 )

@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import com.music.bitchord.BuildConfig
 import com.music.bitchord.data.LikeState
+import com.music.bitchord.data.StoredSongDisplay
 import com.music.bitchord.data.lyrics.LyricsOverrideFile
 import com.music.bitchord.data.lyrics.LyricsOverrideStore
 import com.music.bitchord.data.model.LikeStatus
@@ -689,24 +690,26 @@ object Backup {
         val sourceQuality: String? = null,
         val isExplicit: Boolean? = null,
     ) {
-        fun toSong(): Song = Song(
-            videoId = videoId,
-            title = title,
-            artist = artist,
-            thumbnailUrl = thumbnailUrl,
-            durationText = durationText,
-            artistId = artistId,
-            channelId = channelId,
-            albumId = albumId,
-            albumName = albumName,
-            isVideo = isVideo,
-            isVideoOrigin = isVideoOrigin || isVideo,
-            setVideoId = setVideoId,
-            localUri = localUri,
-            localPath = localPath,
-            downloadFormat = downloadFormat,
-            sourceQuality = sourceQuality,
-            isExplicit = isExplicit,
+        fun toSong(): Song = StoredSongDisplay.clean(
+            Song(
+                videoId = videoId,
+                title = title,
+                artist = artist,
+                thumbnailUrl = thumbnailUrl,
+                durationText = durationText,
+                artistId = artistId,
+                channelId = channelId,
+                albumId = albumId,
+                albumName = albumName,
+                isVideo = isVideo,
+                isVideoOrigin = isVideoOrigin || isVideo,
+                setVideoId = setVideoId,
+                localUri = localUri,
+                localPath = localPath,
+                downloadFormat = downloadFormat,
+                sourceQuality = sourceQuality,
+                isExplicit = isExplicit,
+            ),
         ).withVideoThumbnailFallback()
 
         companion object {

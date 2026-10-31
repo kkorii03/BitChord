@@ -6,6 +6,7 @@ import com.music.bitchord.data.DebugLog as Debug
 import com.music.bitchord.data.HomeFallbackRules
 import com.music.bitchord.data.LocalArtist
 import com.music.bitchord.data.LocalPlay
+import com.music.bitchord.data.StoredSongDisplay
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.normalizedArtistName
 import kotlinx.coroutines.CoroutineScope
@@ -1188,14 +1189,16 @@ object ListeningStats {
                     .map { (entry, msPlays) ->
                         val (ms, plays) = msPlays
                         RankedSong(
-                            song = Song(
-                                videoId = entry.id,
-                                title = entry.title,
-                                artist = entry.artist,
-                                thumbnailUrl = entry.art,
-                                artistId = entry.artistId,
-                                albumId = entry.albumId,
-                                albumName = entry.album,
+                            song = StoredSongDisplay.clean(
+                                Song(
+                                    videoId = entry.id,
+                                    title = entry.title,
+                                    artist = entry.artist,
+                                    thumbnailUrl = entry.art,
+                                    artistId = entry.artistId,
+                                    albumId = entry.albumId,
+                                    albumName = entry.album,
+                                ),
                             ),
                             ms = ms,
                             plays = plays,
@@ -1206,14 +1209,16 @@ object ListeningStats {
                     .sortedWith(compareByDescending<TrackEntry> { it.ms }.thenByDescending { it.plays })
                     .map {
                         RankedSong(
-                            song = Song(
-                                videoId = it.id,
-                                title = it.title,
-                                artist = it.artist,
-                                thumbnailUrl = it.art,
-                                artistId = it.artistId,
-                                albumId = it.albumId,
-                                albumName = it.album,
+                            song = StoredSongDisplay.clean(
+                                Song(
+                                    videoId = it.id,
+                                    title = it.title,
+                                    artist = it.artist,
+                                    thumbnailUrl = it.art,
+                                    artistId = it.artistId,
+                                    albumId = it.albumId,
+                                    albumName = it.album,
+                                ),
                             ),
                             ms = it.ms,
                             plays = it.plays,
@@ -1466,16 +1471,18 @@ data class TrackEntry(
      * byline is what [com.music.bitchord.data.cover.CoverTitles] reads a
      * cover back from, for its lyrics, timing and moving cover.
      */
-    fun asSong(): Song = Song(
-        videoId = id,
-        title = title,
-        artist = artist,
-        thumbnailUrl = art,
-        durationText = durationText,
-        artistId = artistId,
-        albumId = albumId,
-        albumName = album,
-        isVideo = artist.endsWith(" 커버"),
+    fun asSong(): Song = StoredSongDisplay.clean(
+        Song(
+            videoId = id,
+            title = title,
+            artist = artist,
+            thumbnailUrl = art,
+            durationText = durationText,
+            artistId = artistId,
+            albumId = albumId,
+            albumName = album,
+            isVideo = artist.endsWith(" 커버"),
+        ),
     )
 
     fun absorb(other: TrackEntry) {

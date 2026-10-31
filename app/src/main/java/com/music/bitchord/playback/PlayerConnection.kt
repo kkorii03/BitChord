@@ -1,5 +1,6 @@
 package com.music.bitchord.playback
 
+import com.music.bitchord.data.StoredSongDisplay
 import com.music.bitchord.data.cover.CoverTitles
 import android.content.ComponentName
 import android.net.Uri
@@ -694,8 +695,10 @@ private fun Song.pickedMixQuery(configId: String): String {
  */
 fun Song.toMediaItem(useDownloadedFile: Boolean = true): MediaItem {
     // A cover upload is shown as its song — see [CoverTitles]. Only what the
-    // item *shows* changes; the URI below is still built from the upload.
-    val shown = CoverTitles.applyTo(this)
+    // item *shows* changes; the URI below is still built from the upload. A
+    // row restored from an older build is cleaned here as well, so the lock
+    // screen, notification and Android Auto never draw its stale upload title.
+    val shown = CoverTitles.applyTo(StoredSongDisplay.clean(this))
     val sourceTrack = SourceRegistry.parseTrackKey(videoId)
     // A row from search or a playlist carries no file of its own, but the track
     // may still be on disk from a download — see [Downloads.saved].

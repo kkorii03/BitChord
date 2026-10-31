@@ -70,6 +70,23 @@ class LastPlayedRestoreTest {
         assertEquals(5_000L, restored.positionMs)
     }
 
+    @Test
+    fun `a stored soundtrack queue row is cleaned when it is restored`() {
+        val raw = """
+            {"version":2,"tracks":[{
+              "id":"joker-1",
+              "title":"Gary Glitter - Rock & Roll Part II | Joker OST - Original Soundtrack",
+              "artist":"Original Soundtrack"
+            }],"index":0,"positionMs":0}
+        """.trimIndent()
+        LastPlayed.initForTesting(FakePreferences(mapOf("queue" to raw)).prefs)
+
+        val restored = LastPlayed.load()!!
+
+        assertEquals("Rock & Roll Part II", restored.songs.single().title)
+        assertEquals("Gary Glitter", restored.songs.single().artist)
+    }
+
     private fun song(id: String) = Song(
         videoId = id,
         title = "Title $id",

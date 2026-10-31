@@ -466,8 +466,11 @@ object YtMusicRepository {
     /** [songs] as the Recents shelf, with covers shown the way the player shows them. */
     private fun recentsShelf(songs: List<Song>): HomeShelf {
         // A cover reads as its song here too, as it does in the player, not as
-        // the upload's own title.
-        val items = songs.map { com.music.bitchord.data.cover.CoverTitles.applyTo(it) }.map {
+        // the upload's own title. A row from an older build is cleaned first,
+        // so its stored OST title and "Original Soundtrack" credit never reach
+        // the shelf.
+        val items = songs.map(StoredSongDisplay::clean)
+            .map { com.music.bitchord.data.cover.CoverTitles.applyTo(it) }.map {
             ShelfItem(
                 title = it.title,
                 subtitle = it.artist,
@@ -491,7 +494,9 @@ object YtMusicRepository {
      * through either.
      */
     private suspend fun fetchHistory(): List<Song> =
-        InnertubeParser.collectSongsDeep(Innertube.browse(HISTORY)).distinctBy { it.videoId }
+        InnertubeParser.collectSongsDeep(Innertube.browse(HISTORY))
+            .distinctBy { it.videoId }
+            .map(StoredSongDisplay::clean)
 
     /**
      * The account's listening history, in the order YouTube Music keeps it.
@@ -1935,23 +1940,28 @@ object YtMusicRepository {
         // parsePlaylistShelf. Anything else (album, library, history) has no
         // such shelf, and falls back to the layout-agnostic walk.
         InnertubeParser.parsePlaylistShelf(response)?.let { shelf ->
+            // A signed playlist/album row arrives as the upload's own title
+            // and channel. Clean it here, where every browse page is read, so
+            // a fresh playlist row matches a replayed one.
+            val shown = shelf.songs.map(StoredSongDisplay::clean)
             return SongPage(
-                songs = shelf.songs,
+                songs = shown,
                 continuation = shelf.continuation,
                 suggested = shelf.suggested,
                 library = library,
-                header = parsedHeader.withArtworkFallback(shelf.songs),
+                header = parsedHeader.withArtworkFallback(shown),
             )
         }
         val songs = InnertubeParser.collectSongsDeep(response).distinctBy { it.videoId }
+        val shown = songs.map(StoredSongDisplay::clean)
         return SongPage(
             // One response can name the same track twice — an album page that
             // also carries a "you might also like" shelf, say. Collecting into a
             // map used to take care of that; paging by hand means saying so.
-            songs = songs,
+            songs = shown,
             continuation = InnertubeParser.continuationToken(response),
             library = library,
-            header = parsedHeader.withArtworkFallback(songs),
+            header = parsedHeader.withArtworkFallback(shown),
             description = InnertubeParser.parseDescription(response),
         )
     }
@@ -2034,7 +2044,7 @@ object YtMusicRepository {
                 anonymous = runCatching { Innertube.browseContinuationMusicAnonymous(token) }.getOrNull()
             }
         }
-        return out.values.toList()
+        return out.values.map(StoredSongDisplay::clean)
     }
 
     /**
@@ -2229,7 +2239,7 @@ object YtMusicRepository {
             if (page++ >= MAX_PAGES) error("playlist too long to reorder")
             response = Innertube.browseContinuation(token)
         }
-        out.values.toList()
+        out.values.map(StoredSongDisplay::clean)
     }
 
     /**

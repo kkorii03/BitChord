@@ -7,6 +7,7 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import com.music.bitchord.data.DebugLog as Log
 import androidx.core.content.ContextCompat
+import com.music.bitchord.data.StoredSongDisplay
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.net.DownloadedMvPolicy
@@ -769,17 +770,19 @@ object Downloads {
     internal fun savedSongFor(videoId: String): Song? {
         open()
         val meta = _savedMetadata.value[videoId] ?: return null
-        return Song(
-            videoId = meta.videoId,
-            title = meta.title,
-            artist = meta.artist,
-            thumbnailUrl = meta.thumbnailUrl,
-            durationText = meta.durationText,
-            albumName = meta.albumName,
-            localUri = _saved.value[videoId] ?: meta.uri,
-            downloadFormat = meta.downloadFormat,
-            isVideo = meta.wasVideoRow(),
-            typeUnknown = meta.typeUnknown,
+        return StoredSongDisplay.clean(
+            Song(
+                videoId = meta.videoId,
+                title = meta.title,
+                artist = meta.artist,
+                thumbnailUrl = meta.thumbnailUrl,
+                durationText = meta.durationText,
+                albumName = meta.albumName,
+                localUri = _saved.value[videoId] ?: meta.uri,
+                downloadFormat = meta.downloadFormat,
+                isVideo = meta.wasVideoRow(),
+                typeUnknown = meta.typeUnknown,
+            ),
         )
     }
 
@@ -1772,19 +1775,21 @@ object Downloads {
                         migratedFormatByUri[meta.uri] = it
                     }
                 result.add(
-                    Song(
-                        videoId = meta.videoId,
-                        title = meta.title,
-                        artist = meta.artist,
-                        thumbnailUrl = meta.thumbnailUrl,
-                        durationText = meta.durationText,
-                        albumName = meta.albumName,
-                        localUri = meta.uri,
-                        downloadFormat = downloadFormat,
-                        localDateAddedSeconds = dateAddedSeconds,
-                        localDateModifiedSeconds = dateModifiedSeconds,
-                        isVideo = meta.wasVideoRow(),
-                        typeUnknown = meta.typeUnknown,
+                    StoredSongDisplay.clean(
+                        Song(
+                            videoId = meta.videoId,
+                            title = meta.title,
+                            artist = meta.artist,
+                            thumbnailUrl = meta.thumbnailUrl,
+                            durationText = meta.durationText,
+                            albumName = meta.albumName,
+                            localUri = meta.uri,
+                            downloadFormat = downloadFormat,
+                            localDateAddedSeconds = dateAddedSeconds,
+                            localDateModifiedSeconds = dateModifiedSeconds,
+                            isVideo = meta.wasVideoRow(),
+                            typeUnknown = meta.typeUnknown,
+                        ),
                     )
                 )
             } else {
@@ -1854,19 +1859,21 @@ object Downloads {
                     persistedAddedSeconds = meta.dateAddedSeconds,
                     fileModifiedMillis = fileModifiedMillis,
                 )
-                Song(
-                    videoId = videoId,
-                    title = meta.title,
-                    artist = meta.artist,
-                    thumbnailUrl = meta.thumbnailUrl,
-                    durationText = meta.durationText,
-                    albumName = meta.albumName,
-                    localUri = uriString,
-                    downloadFormat = meta.downloadFormat ?: legacyYoutubeDownloadBadge(context, uri),
-                    localDateAddedSeconds = dateAddedSeconds,
-                    localDateModifiedSeconds = dateModifiedSeconds,
-                    isVideo = meta.wasVideoRow(),
-                    typeUnknown = meta.typeUnknown,
+                StoredSongDisplay.clean(
+                    Song(
+                        videoId = videoId,
+                        title = meta.title,
+                        artist = meta.artist,
+                        thumbnailUrl = meta.thumbnailUrl,
+                        durationText = meta.durationText,
+                        albumName = meta.albumName,
+                        localUri = uriString,
+                        downloadFormat = meta.downloadFormat ?: legacyYoutubeDownloadBadge(context, uri),
+                        localDateAddedSeconds = dateAddedSeconds,
+                        localDateModifiedSeconds = dateModifiedSeconds,
+                        isVideo = meta.wasVideoRow(),
+                        typeUnknown = meta.typeUnknown,
+                    ),
                 )
             }
         }

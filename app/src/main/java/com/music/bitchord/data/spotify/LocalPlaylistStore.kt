@@ -3,6 +3,7 @@ package com.music.bitchord.data.spotify
 import android.content.Context
 import android.content.SharedPreferences
 import com.music.bitchord.data.DebugLog as Log
+import com.music.bitchord.data.StoredSongDisplay
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.withVideoThumbnailFallback
 import com.music.bitchord.startup.StartupWork
@@ -380,23 +381,25 @@ private fun parsePlaylist(obj: JsonObject): ParsedPlaylist {
 
 private fun parseSong(obj: JsonObject): Song {
     val isVideo = (obj["isVideo"] as? JsonPrimitive)?.booleanOrNull == true
-    return Song(
-        videoId = obj.requiredString("videoId"),
-        title = obj.stringOrNull("title").orEmpty(),
-        artist = obj.stringOrNull("artist").orEmpty(),
-        thumbnailUrl = obj.stringOrNull("thumbnailUrl"),
-        durationText = obj.stringOrNull("durationText"),
-        artistId = obj.stringOrNull("artistId"),
-        albumId = obj.stringOrNull("albumId"),
-        albumName = obj.stringOrNull("albumName"),
-        isVideo = isVideo,
-        isVideoOrigin = (obj["isVideoOrigin"] as? JsonPrimitive)?.booleanOrNull ?: isVideo,
-        setVideoId = obj.stringOrNull("setVideoId"),
-        localUri = obj.stringOrNull("localUri"),
-        localPath = obj.stringOrNull("localPath"),
-        downloadFormat = obj.stringOrNull("downloadFormat"),
-        sourceQuality = obj.stringOrNull("sourceQuality"),
-        isExplicit = (obj["isExplicit"] as? JsonPrimitive)?.booleanOrNull,
+    return StoredSongDisplay.clean(
+        Song(
+            videoId = obj.requiredString("videoId"),
+            title = obj.stringOrNull("title").orEmpty(),
+            artist = obj.stringOrNull("artist").orEmpty(),
+            thumbnailUrl = obj.stringOrNull("thumbnailUrl"),
+            durationText = obj.stringOrNull("durationText"),
+            artistId = obj.stringOrNull("artistId"),
+            albumId = obj.stringOrNull("albumId"),
+            albumName = obj.stringOrNull("albumName"),
+            isVideo = isVideo,
+            isVideoOrigin = (obj["isVideoOrigin"] as? JsonPrimitive)?.booleanOrNull ?: isVideo,
+            setVideoId = obj.stringOrNull("setVideoId"),
+            localUri = obj.stringOrNull("localUri"),
+            localPath = obj.stringOrNull("localPath"),
+            downloadFormat = obj.stringOrNull("downloadFormat"),
+            sourceQuality = obj.stringOrNull("sourceQuality"),
+            isExplicit = (obj["isExplicit"] as? JsonPrimitive)?.booleanOrNull,
+        ),
     ).withVideoThumbnailFallback()
 }
 

@@ -75,6 +75,23 @@ class LocalPlaylistStoreTest {
         assertNull(parsePlaylists("not json at all"))
     }
 
+    @Test
+    fun `a stored soundtrack row is cleaned when the playlist is read`() {
+        val raw = """
+            [{"id":"a","title":"Alpha","songs":[{
+              "videoId":"joker-1",
+              "title":"Gary Glitter - Rock & Roll Part II | Joker OST - Original Soundtrack",
+              "artist":"Original Soundtrack"
+            }]}]
+        """.trimIndent()
+
+        val song = parsePlaylists(raw)!!.playlists.single().songs.single()
+
+        assertEquals("Rock & Roll Part II", song.title)
+        assertEquals("Gary Glitter", song.artist)
+        assertEquals("Joker OST", song.albumName)
+    }
+
     private fun playlist(id: String, title: String = "Title $id") = LocalPlaylist(
         id = id,
         title = title,

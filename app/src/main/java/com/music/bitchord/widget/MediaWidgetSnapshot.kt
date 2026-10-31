@@ -1,6 +1,7 @@
 package com.music.bitchord.widget
 
 import android.content.Context
+import com.music.bitchord.data.StoredSongDisplay
 import com.music.bitchord.data.cover.videoThumbnailUrl
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.SongOrigins
@@ -82,11 +83,12 @@ internal data class MediaWidgetSnapshot(
             shuffleEnabled: Boolean,
         ): MediaWidgetSnapshot {
             if (song == null) return EMPTY
+            val shown = StoredSongDisplay.clean(song)
             return MediaWidgetSnapshot(
-                mediaId = song.videoId,
-                title = song.title,
-                artist = song.artist,
-                artworkUrl = artworkUrlFor(song),
+                mediaId = shown.videoId,
+                title = shown.title,
+                artist = shown.artist,
+                artworkUrl = artworkUrlFor(shown),
                 isPlaying = isPlaying,
                 hasPrevious = hasPrevious,
                 hasNext = hasNext,
@@ -141,10 +143,21 @@ internal data class MediaWidgetSnapshot(
             val prefs = prefs(context)
             val mediaId = prefs.getString(KEY_MEDIA_ID, null)
             if (mediaId != null) {
+                // A snapshot written before the display cleaner learned about
+                // soundtrack labels still holds the old title and artist on
+                // the launcher until the next play publishes a new one.
+                val stored = StoredSongDisplay.clean(
+                    Song(
+                        videoId = mediaId,
+                        title = prefs.getString(KEY_TITLE, "").orEmpty(),
+                        artist = prefs.getString(KEY_ARTIST, "").orEmpty(),
+                        thumbnailUrl = null,
+                    ),
+                )
                 return MediaWidgetSnapshot(
                     mediaId = mediaId,
-                    title = prefs.getString(KEY_TITLE, "").orEmpty(),
-                    artist = prefs.getString(KEY_ARTIST, "").orEmpty(),
+                    title = stored.title,
+                    artist = stored.artist,
                     artworkUrl = prefs.getString(KEY_ARTWORK, null),
                     isPlaying = prefs.getBoolean(KEY_PLAYING, false),
                     hasPrevious = prefs.getBoolean(KEY_HAS_PREVIOUS, false),

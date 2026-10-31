@@ -2,6 +2,7 @@ package com.music.bitchord.playback
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.music.bitchord.data.StoredSongDisplay
 import com.music.bitchord.data.model.ArtistRef
 import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.QueueTier
@@ -485,34 +486,36 @@ object BoundedContextPersistence {
                 runCatching { PlaybackSourceType.valueOf(it) }.getOrNull()
             }
             if (playbackSourceType != null && sourceType == null) return null
-            return Song(
-                videoId = videoId,
-                title = title,
-                artist = artist,
-                thumbnailUrl = thumbnailUrl,
-                durationText = durationText,
-                artistId = artistId,
-                channelId = channelId,
-                artists = artists.map { ArtistRef(it.name, it.browseId) },
-                albumId = albumId,
-                albumName = albumName,
-                isVideo = isVideo,
-                isVideoOrigin = isVideoOrigin,
-                setVideoId = setVideoId,
-                queueTier = tier,
-                queueEntryId = queueEntryId,
-                radioName = radioName,
-                localUri = localUri,
-                downloadFormat = downloadFormat,
-                localPath = localPath,
-                localDateAddedSeconds = localDateAddedSeconds,
-                localDateModifiedSeconds = localDateModifiedSeconds,
-                sourceQuality = sourceQuality,
-                isExplicit = isExplicit,
-                playbackSource = playbackSource,
-                playbackSourceType = sourceType,
-                playbackSourceId = playbackSourceId,
-                videoRadio = videoRadio,
+            return StoredSongDisplay.clean(
+                Song(
+                    videoId = videoId,
+                    title = title,
+                    artist = artist,
+                    thumbnailUrl = thumbnailUrl,
+                    durationText = durationText,
+                    artistId = artistId,
+                    channelId = channelId,
+                    artists = artists.map { ArtistRef(it.name, it.browseId) },
+                    albumId = albumId,
+                    albumName = albumName,
+                    isVideo = isVideo,
+                    isVideoOrigin = isVideoOrigin,
+                    setVideoId = setVideoId,
+                    queueTier = tier,
+                    queueEntryId = queueEntryId,
+                    radioName = radioName,
+                    localUri = localUri,
+                    downloadFormat = downloadFormat,
+                    localPath = localPath,
+                    localDateAddedSeconds = localDateAddedSeconds,
+                    localDateModifiedSeconds = localDateModifiedSeconds,
+                    sourceQuality = sourceQuality,
+                    isExplicit = isExplicit,
+                    playbackSource = playbackSource,
+                    playbackSourceType = sourceType,
+                    playbackSourceId = playbackSourceId,
+                    videoRadio = videoRadio,
+                ),
             ).withVideoThumbnailFallback()
         }
 

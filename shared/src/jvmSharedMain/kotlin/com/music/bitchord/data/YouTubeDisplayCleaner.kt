@@ -386,3 +386,83 @@ internal object YouTubeDisplayCleaner {
     /** `YG`, `KQ` and `JYP` alone, without matching the letters inside a name. */
     private val SHORT_LABEL = Regex("""(?<![a-z])(?:yg|kq|jyp)(?![a-z])""")
 }
+
+/**
+ * Display cleaning for a row that was already stored on this device.
+ *
+ * [YouTubeDisplayCleaner] cleans a row when it arrives; a row saved by an
+ * older build keeps the upload's title and channel forever. This applies the
+ * same cleaner on the way out, without rewriting the stored record, so a
+ * recent play, a restored queue, a local playlist or a downloaded row reads
+ * the way a fresh row does.
+ *
+ * A small bounded cache keeps repeated UI reads cheap: the same row is cleaned
+ * once per process, and entries are evicted least-recently-used. A row that
+ * already carries catalogue metadata is left alone unless its artist is a
+ * soundtrack label, which must never reach a display field.
+ */
+object StoredSongDisplay {
+
+    private const val MAX_CACHE = 512
+
+    /**
+     * Only the display fields the cleaner rewrites are cached. Queue identity
+     * and playback fields are never part of a cached row, so the same track
+     * reaching two queues keeps each queue's own entry id.
+     */
+    private data class Display(
+        val title: String,
+        val artist: String,
+        val albumName: String?,
+        val originalTitle: String?,
+        val originalArtist: String?,
+        val coverSinger: String?,
+        val coverOriginalArtist: String?,
+    )
+
+    private val cache = object : LinkedHashMap<String, Display>(MAX_CACHE, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Display>?): Boolean =
+            size > MAX_CACHE
+    }
+
+    fun clean(song: Song): Song {
+        if (song.videoId.isBlank()) return song
+        if (song.albumId != null && !TrackMatcher.isSoundtrackCredit(song.artist)) return song
+        val key = keyOf(song)
+        val display = synchronized(cache) { cache[key] } ?: run {
+            val cleaned = YouTubeDisplayCleaner.clean(song)
+            Display(
+                title = cleaned.title,
+                artist = cleaned.artist,
+                albumName = cleaned.albumName,
+                originalTitle = cleaned.originalTitle,
+                originalArtist = cleaned.originalArtist,
+                coverSinger = cleaned.coverSinger,
+                coverOriginalArtist = cleaned.coverOriginalArtist,
+            ).also { synchronized(cache) { cache[key] = it } }
+        }
+        return song.copy(
+            title = display.title,
+            artist = display.artist,
+            albumName = display.albumName,
+            originalTitle = display.originalTitle,
+            originalArtist = display.originalArtist,
+            coverSinger = display.coverSinger,
+            coverOriginalArtist = display.coverOriginalArtist,
+        )
+    }
+
+    /** The stored strings that decide the result; other fields are copied through. */
+    private fun keyOf(song: Song): String = buildString {
+        append(song.videoId).append('\u0000')
+        append(song.title).append('\u0000')
+        append(song.artist).append('\u0000')
+        append(song.albumId).append('\u0000')
+        append(song.albumName).append('\u0000')
+        append(song.originalTitle).append('\u0000')
+        append(song.originalArtist).append('\u0000')
+        append(song.coverSinger).append('\u0000')
+        append(song.coverOriginalArtist).append('\u0000')
+        append(song.isVideo)
+    }
+}
