@@ -7,6 +7,7 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.settings.DownloadQuality
+import com.music.bitchord.ko.SourceSearchKo
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.HqHostTracker
 import kotlinx.coroutines.CancellationException
@@ -45,108 +46,28 @@ object SourceResolver {
 
     private const val TAG = "BitChord"
 
-    /**
-     * Sources that have failed repeatedly, and when they may be asked again.
-     *
-     * A dead addon must not cost every track in the queue its full timeout.
-     * The rest is a timestamp comparison rather than a timer: nothing runs in
-     * the background, and the source simply becomes eligible again on the
-     * first request after [COOLDOWN_MS].
-     */
+    /** [KO] addon-health: forwarding object kept for the public API. */
     internal object SourceCooldown {
-        private class State(var failures: Int = 0, var untilMs: Long = 0L)
-
-        private val states = ConcurrentHashMap<String, State>()
-
-        /**
-         * A monotonic mark for each source's failures, so a caller can tell
-         * whether *its* search failed without the source having to throw.
-         */
-        private val failureMarks = ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>()
-
         internal fun failureMark(configId: String): Long =
-            failureMarks[configId]?.get() ?: 0L
+            SourceSearchKo.SourceCooldown.failureMark(configId)
 
-        fun isResting(configId: String): Boolean {
-            val state = states[configId] ?: return false
-            if (state.untilMs > System.currentTimeMillis()) return true
-            if (state.untilMs != 0L) states.remove(configId)
-            return false
-        }
-
-        /**
-         * A monotonic mark for credential refusals, kept apart from the
-         * generic failure mark so a search can say *why* it produced nothing.
-         */
-        private val authMarks = ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>()
+        fun isResting(configId: String): Boolean =
+            SourceSearchKo.SourceCooldown.isResting(configId)
 
         internal fun authMark(configId: String): Long =
-            authMarks[configId]?.get() ?: 0L
+            SourceSearchKo.SourceCooldown.authMark(configId)
 
-        fun failed(configId: String) {
-            recordFailure(configId, countForRest = true)
-        }
+        fun failed(configId: String) = SourceSearchKo.SourceCooldown.failed(configId)
 
-        /**
-         * A transport fault. The mark is always raised so the empty answer is
-         * not memoised; it only counts toward the rest while the device is
-         * online, because an offline device fails every source at once.
-         */
-        internal fun networkFailed(configId: String, online: Boolean) {
-            recordFailure(configId, countForRest = online)
-        }
+        internal fun networkFailed(configId: String, online: Boolean) =
+            SourceSearchKo.SourceCooldown.networkFailed(configId, online)
 
-        /** The addon answered 401/402/403: its credential is refused. */
-        internal fun authFailed(configId: String) {
-            authMarks.computeIfAbsent(configId) { java.util.concurrent.atomic.AtomicLong() }
-                .incrementAndGet()
-            recordFailure(configId, countForRest = true)
-        }
+        internal fun authFailed(configId: String) = SourceSearchKo.SourceCooldown.authFailed(configId)
 
-        private fun recordFailure(configId: String, countForRest: Boolean) {
-            failureMarks.computeIfAbsent(configId) { java.util.concurrent.atomic.AtomicLong() }
-                .incrementAndGet()
-            if (!countForRest) return
-            val state = states.computeIfAbsent(configId) { State() }
-            state.failures += 1
-            if (state.failures >= FAILURES_BEFORE_REST) {
-                state.untilMs = System.currentTimeMillis() + COOLDOWN_MS
-                TrackLog.w(
-                    "BitChord",
-                    "source $configId failed ${state.failures} times; resting for ${COOLDOWN_MS / 60_000} minutes",
-                )
-            }
-        }
+        fun succeeded(configId: String) = SourceSearchKo.SourceCooldown.succeeded(configId)
 
-        fun succeeded(configId: String) {
-            states.remove(configId)
-        }
-
-        internal fun resetForTest() {
-            states.clear()
-            failureMarks.clear()
-            authMarks.clear()
-        }
-
-        private const val FAILURES_BEFORE_REST = 2
-        private const val COOLDOWN_MS = 30 * 60 * 1000L
+        internal fun resetForTest() = SourceSearchKo.SourceCooldown.resetForTest()
     }
-
-    /**
-     * Search answers already in hand, so the same source is not asked the same
-     * question again for the same track.
-     */
-    private data class SearchKey(
-        val sourceId: String,
-        val target: String,
-        val request: String,
-        val waitForAll: Boolean,
-        val query: String,
-    )
-
-    private class SearchAnswer(val rows: List<Song>, val at: Long)
-
-    private val searchAnswers = ConcurrentHashMap<SearchKey, SearchAnswer>()
 
     /**
      * The per-source detail of one search, for the `hq-search` line.
@@ -193,7 +114,7 @@ object SourceResolver {
     private val remembered = ConcurrentHashMap<String, Remembered>()
 
     internal fun clearSearchAnswers() {
-        searchAnswers.clear()
+        SourceSearchKo.clearSearchAnswers() // [KO] addon-health
         remembered.clear()
     }
 
@@ -1315,30 +1236,10 @@ object SourceResolver {
         accept: suspend (MusicSource, SourceStream) -> Boolean = { _, _ -> true },
     ): Pair<MusicSource, SourceStream>? = coroutineScope {
         val until = timeoutMs?.let { System.nanoTime() + it * 1_000_000 }
-        val lookupTimeoutMs = sourceLookupTimeoutMs(manual, sourceTimeoutMs)
-        val usable = sources.filterNot { source ->
-            val resting = SourceCooldown.isResting(source.configId)
-            if (resting && !manual) {
-                TrackLog.d(
-                    TAG,
-                    "${source.displayName} is resting after repeated failures; skipping for this track",
-                )
-                val skipped = SearchOutcome(verdict = "resting", conclusive = false)
-                report?.record(skipped)
-                TrackLog.d(TAG, hqSearchLine(target, source, skipped))
-                true
-            } else {
-                if (resting) {
-                    TrackLog.d(
-                        TAG,
-                        "${source.displayName} is resting; asking it once because this upgrade was requested by hand",
-                    )
-                }
-                false
-            }
-        }
+        val lookupTimeoutMs = sourceLookupTimeoutMs(manual, sourceTimeoutMs) // [KO] manual-window
+        val usable = SourceSearchKo.withoutResting(sources, manual, target, report) // [KO] addon-health
         if (usable.isEmpty()) return@coroutineScope null
-        val order = usable.mapIndexed { index, source -> source.configId to index }.toMap()
+        val rank = usable.withIndex().associate { (index, source) -> source to index }
         val running: MutableList<Deferred<Pair<MusicSource, SearchOutcome>>> = usable
             .map { source ->
                 async {
@@ -1369,7 +1270,7 @@ object SourceResolver {
                         // A timeout while the device is offline (or behind a
                         // captive portal) is the connection, not the source.
                         // A global budget running out is the caller's clock.
-                        if (budget > 0L && !AudioCache.isOffline()) SourceCooldown.failed(source.configId)
+                        if (budget > 0L && !AudioCache.isOffline()) SourceSearchKo.noteTimeout(source.configId) // [KO] addon-health
                         TrackLog.d(
                             TAG,
                             "${source.displayName} timed out after ${budget}ms; " +
@@ -1381,11 +1282,11 @@ object SourceResolver {
                     } else {
                         // A stream is proof the source is healthy. A miss is
                         // neither proof of health nor a failure: it answered.
-                        if (answer.stream != null) SourceCooldown.succeeded(source.configId)
+                        if (answer.stream != null) SourceSearchKo.noteSucceeded(source.configId) // [KO] addon-health
                         // A hand-made request is also the one chance a resting
                         // source gets to prove it is back. A complete answer is
                         // enough evidence, even when the catalogue held nothing.
-                        if (manual && answer.conclusive) SourceCooldown.succeeded(source.configId)
+                        if (manual && answer.conclusive) SourceSearchKo.noteSucceeded(source.configId) // [KO] addon-health
                         answer
                     }
                     val refined = if (outcome.stream != null) {
@@ -1417,52 +1318,21 @@ object SourceResolver {
                 val readyDeferred = listOf(first) + running.filter { it !== first && it.isCompleted }
                 running -= readyDeferred.toSet()
                 val ready = readyDeferred.map { it.await() }
-                ready.forEach { (_, outcome) -> report?.record(outcome) }
-                // A song with another addon answer must try the healthy host
-                // first; a resting one is still kept as the last resort rather
-                // than dropped. The loop below also refuses a resting host, so
-                // this order only decides which healthy answer is seen first.
-                val candidateOrder = HqVerifyPolicy.candidateOrder(
-                    ready.map { HqHostTracker.hostOf(it.second.stream?.url) },
-                ) { HqHostTracker.isResting(it) }
-                for (index in candidateOrder) {
-                    val (source, outcome) = ready[index]
+                ready.forEach { (source, outcome) -> report?.record(outcome, source.displayName) }
+                for ((source, outcome) in ready) {
                     val stream = outcome.stream ?: continue
                     val host = HqHostTracker.hostOf(stream.url)
                     if (host != null && host in excludeHosts) continue
-                    // A host that just rate-limited us is not asked again for
-                    // this track. SourceCooldown still handles the source-level
-                    // failure; this is the narrower server-level rest.
-                    if (host != null && HqHostTracker.isResting(host)) {
-                        TrackLog.d(TAG, "${source.displayName}'s $host is resting; skipping for this track")
-                        continue
-                    }
-                    val current = best
-                    val earlierSource = current != null &&
-                        (order[source.configId] ?: Int.MAX_VALUE) <
-                        (order[current.first.configId] ?: Int.MAX_VALUE)
-                    // Only an answer that could actually win needs the expensive
-                    // gate. That gate is the ninety-second sound comparison for
-                    // the read-ahead, and running it for a candidate already
-                    // beaten on rendition cost a decode *and* added it to the
-                    // tail of the race, after even the slowest search had
-                    // finished — see [HqQuality.couldWin].
-                    val couldWin = HqQuality.couldWin(stream.format, current?.second?.format, earlierSource)
-                    // A host with a recent 429, a poor success rate or very
-                    // slow transfers sorts behind a healthy one at the same
-                    // rendition. The format still decides first.
-                    val hostPreferred = current != null && !couldWin &&
-                        !HqQuality.isBetter(current.second.format, stream.format) &&
-                        HqHostTracker.penalty(host) <
-                        HqHostTracker.penalty(HqHostTracker.hostOf(current.second.url))
-                    if (!couldWin && !hostPreferred) continue
-                    if (!accept(source, stream)) continue
                     val held = best
                     val wins = held == null || isBetter(stream.format, held.second.format) ||
                         (!isBetter(held.second.format, stream.format) &&
-                            (order[source.configId] ?: Int.MAX_VALUE) <
-                            (order[held.first.configId] ?: Int.MAX_VALUE))
-                    if (wins) best = source to stream
+                            rank.getValue(source) < rank.getValue(held.first))
+                    // [KO] Only an answer that would win is put through [accept]:
+                    // for the read-ahead that gate is the 90-second sound check,
+                    // and running it on an already-beaten copy costs a decode.
+                    if (!wins) continue
+                    if (!accept(source, stream)) continue
+                    best = source to stream
                 }
                 // Playback needs the first usable answer so sound can start.
                 // An upgrade is different: it runs while audio is already
@@ -1516,25 +1386,18 @@ object SourceResolver {
     ): SearchOutcome {
         var last = SearchOutcome()
         for (query in TrackMatcher.queries(target)) {
-            val key = SearchKey(
-                sourceId = source.configId,
-                target = targetKey(target),
-                request = requestKey(request),
-                waitForAll = waitForAll,
-                query = query,
-            )
-            val now = System.currentTimeMillis()
-            // Taken before either the search or the stream calls below, so the
-            // same comparison covers both. A stream open that 500s or times out
-            // is a failure of the whole answer even when the search itself
-            // looked healthy — see [SourceCooldown.failureMark].
-            val mark = SourceCooldown.failureMark(source.configId)
+            val guard = SourceSearchKo.beginSearch(source.configId) // [KO] addon-health
             // A hand-made request is evidence that the cached "none" was wrong.
             // Leave it unread, so the source is asked again; the fresh answer
             // then replaces the memo below.
-            val cached = if (manual) null else {
-                searchAnswers[key]?.takeIf { now - it.at < SEARCH_MEMO_TTL_MS }?.rows
-            }
+            val cached = SourceSearchKo.cachedRows( // [KO] addon-health
+                source.configId,
+                targetKey(target),
+                requestKey(request),
+                waitForAll,
+                query,
+                manual,
+            )
             var conclusive = true
             val candidates = if (cached != null) {
                 cached
@@ -1549,24 +1412,28 @@ object SourceResolver {
                         // them at the tier this is about to ask for.
                         request = request,
                     )
-                } ?: return SearchOutcome(verdict = "error", conclusive = false).also {
+                } ?: return SearchOutcome(
+                    verdict = SourceSearchKo.verdictAfterFailure(guard),
+                    conclusive = false,
+                ).also {
                     TrackLog.d(TAG, hqSearchLine(target, source, it))
                 }
                 // Some sources swallow a transport fault and return an empty
                 // list. An answer produced while this source reported a failure
                 // is not a confirmed miss, and must not be memoised — see
                 // [SourceCooldown.failureMark].
-                conclusive = SourceCooldown.failureMark(source.configId) == mark
-                if (conclusive) {
-                    if (searchAnswers.size >= SEARCH_MEMO_MAX) searchAnswers.clear()
-                    searchAnswers[key] = SearchAnswer(rows, System.currentTimeMillis())
-                }
+                conclusive = SourceSearchKo.rememberRows( // [KO] addon-health
+                    guard,
+                    targetKey(target),
+                    requestKey(request),
+                    waitForAll,
+                    query,
+                    rows,
+                )
                 rows
             }
             var matches = TrackMatcher.ranked(candidates, target)
-            if (strictOriginal) {
-                matches = matches.filter { TrackMatcher.isOriginalRecording(it, target) }
-            }
+            matches = SourceSearchKo.originalOnly(matches, target, strictOriginal) // [KO] original-recording
             if (requireSharedArtist) {
                 matches = matches.filter { TrackMatcher.sharesArtist(target.artist, it.artist) }
             }
@@ -1627,6 +1494,8 @@ object SourceResolver {
                 val bestMatch = matches.firstOrNull() ?: TrackMatcher.ranked(candidates, target).firstOrNull()
                     ?: candidates.firstOrNull()
                 val verdict = when {
+                    // A refused credential is the reason, not the title.
+                    SourceSearchKo.authChanged(guard) -> "auth" // [KO] addon-health
                     // A source that failed while producing this answer said
                     // nothing about the catalogue, even when the rows it sent
                     // back were empty — see the `error` contract in
@@ -1668,6 +1537,7 @@ object SourceResolver {
                 sameLengthSec = if (strictLength) maxOf(SAME_RECORDING_SEC, driftSec) else SAME_RECORDING_SEC,
                 // Only the patient lookups can afford to open more than one row.
                 compareRows = waitForAll,
+                guard = guard,
             )
             // Every stream open can fail — a 500, a timeout, a host that went
             // away between the search and the open — and [attempt] counts each
@@ -1677,14 +1547,18 @@ object SourceResolver {
             // when a stream did open: [streamBest] falls back to a row below the
             // request when the better one failed (10-31 Flowers: HTTP 500), and
             // the copy it settled for is still played, just not taken as final.
-            if (SourceCooldown.failureMark(source.configId) != mark) {
+            if (SourceSearchKo.failureChanged(guard) || SourceSearchKo.authChanged(guard)) { // [KO] addon-health
                 conclusive = false
             }
             last = SearchOutcome(
                 stream = stream,
                 results = candidates.size,
                 best = matches.firstOrNull(),
-                verdict = if (stream != null) "match" else "error",
+                verdict = when {
+                    SourceSearchKo.authChanged(guard) -> "auth" // [KO] addon-health
+                    stream != null -> "match"
+                    else -> "error"
+                },
                 conclusive = conclusive,
             )
             TrackLog.d(TAG, hqSearchLine(target, source, last))
@@ -1700,13 +1574,7 @@ object SourceResolver {
         target: TrackMatcher.Target,
         source: MusicSource,
         outcome: SearchOutcome,
-    ): String {
-        val best = outcome.best?.let {
-            "${it.title}/${it.artist}/${it.durationText ?: "?"}"
-        } ?: "-"
-        return "hq-search: '${target.title}' ${source.displayName} " +
-            "results=${outcome.results} best=$best verdict=${outcome.verdict}"
-    }
+    ): String = SourceSearchKo.hqSearchLine(target, source, outcome) // [KO] hq-search-line
 
     /**
      * Opens the best of [matches] that can actually serve [request].
@@ -1822,6 +1690,7 @@ object SourceResolver {
         request: StreamRequest,
         sameLengthSec: Int = SAME_RECORDING_SEC,
         compareRows: Boolean = false,
+        guard: SourceSearchKo.SearchGuard,
     ): SourceStream? {
         val wantsLossless = request is StreamRequest.Lossless
         val ordered = preferred(matches, target, wantsLossless, sameLengthSec)
@@ -1834,7 +1703,12 @@ object SourceResolver {
                 if (best.format.isDolbyAtmos || match.sourceQuality != ModuleSource.LOSSLESS) break
             }
             val trackId = SourceRegistry.parseTrackKey(match.videoId)?.second ?: match.videoId
-            val opened = attempt(source) { source.stream(trackId, request) } ?: continue
+            val opened = attempt(source) { source.stream(trackId, request) }
+            if (opened == null) {
+                // A refused credential will refuse every other row too.
+                if (SourceSearchKo.authChanged(guard)) break // [KO] addon-health
+                continue
+            }
             // The row this URL came from knows how long the recording is; the
             // URL itself doesn't. Carried along so a caller swapping this into
             // a track already playing can check it — see [SourceStream.durationSec].
@@ -1951,8 +1825,8 @@ object SourceResolver {
         // A transport fault says nothing about the catalogue's health. A DNS
         // failure, a refused connection or a dead proxy during a handover must
         // not put the source on a 30-minute rest once the network returns.
-        if (source.kind != SourceKind.YOUTUBE && !e.isNetworkFailure()) {
-            SourceCooldown.failed(source.configId)
+        if (source.kind != SourceKind.YOUTUBE) {
+            SourceSearchKo.noteThrown(source.configId, e.isNetworkFailure(), online = !offlineCheck()) // [KO] addon-health
         }
         TrackLog.w(TAG, "${source.displayName} failed: ${e.javaClass.simpleName}: ${e.message}")
         null
@@ -2081,23 +1955,16 @@ object SourceResolver {
      */
     private const val SOURCE_LOOKUP_TIMEOUT_MS = 4_000L
 
-    /** A search the listener asked for by hand may wait longer per source. */
-    private const val MANUAL_SOURCE_LOOKUP_TIMEOUT_MS = 12_000L
-
     internal fun sourceLookupTimeoutMs(
         manual: Boolean,
         configured: Long = SOURCE_LOOKUP_TIMEOUT_MS,
-    ): Long = if (manual) MANUAL_SOURCE_LOOKUP_TIMEOUT_MS else configured
+    ): Long = SourceSearchKo.sourceLookupTimeoutMs(manual, configured) // [KO] manual-window
 
     /**
      * The same ceiling for a download, where nobody is waiting on a first note
      * and a module's patient window is worth using.
      */
     private const val DOWNLOAD_SOURCE_TIMEOUT_MS = 25_000L
-
-    /** How long a source's search answer is reused for the same track. */
-    private const val SEARCH_MEMO_TTL_MS = 10 * 60 * 1000L
-    private const val SEARCH_MEMO_MAX = 256
 
     /** How long a verified original is kept for a later play of the same track. */
     private const val REMEMBERED_TTL_MS = 30 * 60 * 1000L
