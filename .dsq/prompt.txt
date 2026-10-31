@@ -1,0 +1,15 @@
+﻿BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep, 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/fix-1030.
+버그(에뮬레이터 C5 로그로 증명): 저작권 차단 곡 7QihqRWMrz8 재생 시 StreamResolver 가 학습된 순서대로 InnerTubeX 를 먼저 13.4초 돌린 뒤에야 직접 경로(DirectClient IOS/ANDROID, 568ms)를 시도하고, 직접 경로가 'SME님이 소유권 주장을 제기한 콘텐츠로 인해 차단되었습니다'(곡 고유 확정 사유)를 바로 알려 줌 → 확정까지 14초 + 대체 2.6초 = 17초 무음. 로그: 'TIMING 7Q InnerTubeX: 13396ms' → 'direct IOS UNPLAYABLE ... 소유권 주장' → 'TIMING 7Q direct: 568ms' → 'unplayable timing: ... after 2568ms'.
+수정: 직접 경로의 가벼운 판정(DirectClient, 보통 1초 미만)을 InnerTubeX 와 동시에(경주) 또는 먼저 시작해, 곡 고유 확정 사유(UnplayableReason.isDefinitelyGone)가 나오면 진행 중인 InnerTubeX·추출을 즉시 취소하고 PermanentlyUnplayable 로 끝냄. 확정이 아닌 결과(봇 확인·지역 차단·일반 실패)는 지금 순서·학습 경로 그대로. 정상 곡의 첫 소리 속도가 느려지지 않게(직접 경로가 성공하면 그대로 쓰거나, InnerTubeX 를 기다리는 기존 우선순위 유지 — 요약에 설계와 근거). 'resolve: <id> definitive by direct in <ms>' 로그.
+테스트: 직접 확정이 InnerTubeX 를 취소하고 끝나는지, 확정이 아니면 기존 순서인지 — 가짜 클라이언트로 단위 테스트.
+반드시: 배터리·요청 수(직접 요청 1회 추가만 허용). 바꾼 함수 호출부 확인. 제약: .github/, keys, 서명 수정 금지. 마지막 10줄 요약.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 3
+- HIGH — shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt:1283 (see DirectClientResolver.kt:83): the direct probe is anonymous (NO_COOKIES), yet a "private/deleted" reason is classified definitively gone and at line 777 cancels the cookie-authenticated InnerTubeX walk, so a signed-in user's own private upload can be cached as PermanentlyUnplayable. Fix: don't let the anonymous direct verdict preempt InnerTubeX for `UploadedTracks`/signed-in sessions, or exclude private-upload reasons from this preemption.
+- MEDIUM — StreamResolver.kt:686-693, 765-775: the direct precheck is launched in `resolverScope` but is never cancelled on early exits (itx gone-refusal throw at line 807, itx exception, caller cancellation), so its blocking HTTP/probe work keeps running after the resolve has finished. Fix: own the precheck with a `try/finally` over `resolveUncached` and cancel it whenever it is not consumed.
+- LOW — shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/DirectVerdictRace.kt:69 / StreamResolver.kt:1261: `direct.cancel()` cannot stop the non-suspending, blocking `directProbe` loop (no cancellation checkpoints), so the "cancelled" direct ladder still completes its player asks and media probes on every InnerTubeX win, wasting battery/data. Fix: add `ensureActive()` between candidates or make the direct calls cancellable.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
