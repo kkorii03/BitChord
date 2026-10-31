@@ -64,4 +64,48 @@ class UnplayableRecoveryTest {
         )
         assertFalse(UnplayableRecovery.isDefinitive(null, alreadyMarkedUnplayable = false))
     }
+
+    @Test
+    fun `a definitive run is bounded so a repeated row cannot loop for ever`() {
+        assertTrue(UnplayableRecovery.allowsVerdictSkip(0))
+        assertTrue(
+            UnplayableRecovery.allowsVerdictSkip(
+                UnplayableRecovery.MAX_CONSECUTIVE_VERDICT_SKIPS - 1,
+            ),
+        )
+        assertFalse(
+            UnplayableRecovery.allowsVerdictSkip(
+                UnplayableRecovery.MAX_CONSECUTIVE_VERDICT_SKIPS,
+            ),
+        )
+    }
+
+    @Test
+    fun `the definitive skip path itself stops at the verdict cap`() {
+        assertEquals(
+            UnplayableRecoveryAction.SKIP_NEXT,
+            UnplayableRecovery.decide(
+                definitive = true,
+                hasAlternate = false,
+                consecutiveVerdictSkips = 0,
+            ),
+        )
+        assertEquals(
+            UnplayableRecoveryAction.STOP,
+            UnplayableRecovery.decide(
+                definitive = true,
+                hasAlternate = false,
+                consecutiveVerdictSkips = UnplayableRecovery.MAX_CONSECUTIVE_VERDICT_SKIPS,
+            ),
+        )
+        // Another upload is a different id, so it may still rescue the row.
+        assertEquals(
+            UnplayableRecoveryAction.SWAP_ALTERNATE,
+            UnplayableRecovery.decide(
+                definitive = true,
+                hasAlternate = true,
+                consecutiveVerdictSkips = UnplayableRecovery.MAX_CONSECUTIVE_VERDICT_SKIPS,
+            ),
+        )
+    }
 }
