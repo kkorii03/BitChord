@@ -77,6 +77,7 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
                 // of sight; the writer would get there anyway, but a process
                 // killed in the background may not leave it that long.
                 TrackLog.flush()
+                com.music.bitchord.data.FeatureHealthCounters.flush()
             }
         }
 
@@ -92,6 +93,7 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // leave the same evidence as one while a track plays.
         val logDirectory = File(filesDir, "logs")
         TrackLog.initPersistence(logDirectory)
+        com.music.bitchord.data.FeatureHealthCounters.init(File(logDirectory, "feature-health"))
         installCrashHandler()
         // Reading and rewriting the warm-start marker is disk I/O on the launch
         // path. The line it emits is diagnostic, so it can land a moment later
@@ -494,12 +496,14 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
             -> TrackLog.w("BitChord", "lifecycle: trim memory level=$level")
         }
         TrackLog.flush()
+        com.music.bitchord.data.FeatureHealthCounters.flush()
     }
 
     override fun onLowMemory() {
         super.onLowMemory()
         TrackLog.w("BitChord", "lifecycle: low memory")
         TrackLog.flush()
+        com.music.bitchord.data.FeatureHealthCounters.flush()
     }
 
     private fun initLastfm() {
