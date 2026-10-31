@@ -1498,6 +1498,14 @@ object LyricsTiming {
                 probe.failure = NextPrepPolicy.SyncFailure.RATE_LIMIT
                 return null
             }
+            // The 429 wait is account-wide, not per song: another video's
+            // turn-away holds this one too, as it does for song checks.
+            val quietUntil = songQuietUntilMs
+            if (quietUntil > System.currentTimeMillis()) {
+                TrackLog.d(TAG, "AI timing deferred until $quietUntil", videoId)
+                probe.failure = NextPrepPolicy.SyncFailure.RATE_LIMIT
+                return null
+            }
         }
         // The sound the phone already has, when it has all of it; the YouTube
         // address (Gemini fetching and watching the video) otherwise.
