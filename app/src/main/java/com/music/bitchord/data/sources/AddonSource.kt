@@ -131,6 +131,12 @@ class AddonSource(
         client.manifest().fold(
             onSuccess = { manifest ->
                 recordPolicy(manifest)
+                // The manifest just read may itself be what asks not to be
+                // contacted without a lossless output; honour it before the
+                // `/search` probe below.
+                if (shutOut("a health check")) {
+                    return@fold SourceHealth.Rejected(NEEDS_LOSSLESS_OUTPUT)
+                }
                 if (authRecentlyRejected()) {
                     return@fold SourceHealth.Rejected(authRejectedReason())
                 }
