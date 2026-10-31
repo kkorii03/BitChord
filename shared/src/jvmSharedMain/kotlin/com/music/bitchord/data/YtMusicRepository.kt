@@ -41,6 +41,7 @@ import com.music.bitchord.data.model.UserPlaylist
 import com.music.bitchord.data.model.VersionTimeMap
 import com.music.bitchord.data.model.WatchTarget
 import com.music.bitchord.data.sources.TrackMatcher
+import com.music.bitchord.ko.KoRepoGate
 import io.ktor.client.plugins.ResponseException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -54,6 +55,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonObject
@@ -750,7 +752,7 @@ object YtMusicRepository {
         call("search:${filter.name}") {
             val music = runCatching {
                 InnertubeParser.parseSearchPage(
-                    Innertube.search(query, filter.params, anonymous = anonymous, kind = kind),
+                    Innertube.search(query, filter.params, anonymous = anonymous),
                     includeVideos = filter == SearchFilter.VIDEOS,
                 ).let { page ->
                     SearchPage(page.rows.distinctBy { it.identityKey() }, page.continuation)
@@ -894,14 +896,48 @@ object YtMusicRepository {
         // recording. A cover plays as itself.
         if (CoverTitles.isCover(song)) return song
         audioVersionCache[song.videoId]?.let { return it }
+        val mine = CompletableDeferred<Song>()
+        audioLookups.putIfAbsent(song.videoId, mine)?.let {
+            return try {
+                it.await()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            }
+        }
+        try {
+            val resolved = resolveAudioUncached(song)
+            mine.complete(resolved)
+            return resolved
+        } catch (failure: Throwable) {
+            mine.completeExceptionally(failure)
+            throw failure
+        } finally {
+            audioLookups.remove(song.videoId, mine)
+        }
+    }
+
+    private suspend fun resolveAudioUncached(song: Song): Song {
+        // v1.9's own Song/Video pairing is an answer, not a guess, so it is
+        // asked before any search.
         officialVersion(song, wantAudio = true)?.let { audio ->
             audioVersionCache[song.videoId] = audio
             return audio
         }
-        val target = TrackMatcher.targetOf(song)
-        for (query in TrackMatcher.queries(target)) {
-            val candidates = search(query, SearchFilter.SONGS)
-                .getOrNull()
+        // A row whose type is still unknown is treated as a video for timing:
+        // its runtime may already include a visual intro/outro, and refusing
+        // that drift is how the song version was written off.
+        val target = TrackMatcher.audioSwitchTargetOf(song)
+            .copy(isVideo = song.isVideo || song.typeUnknown)
+        var queriesRun = 0
+        var failedQueries = 0
+        var videoRowsOnly = false
+        val loggedRejects = HashSet<String>()
+        for (query in TrackMatcher.audioSwitchQueries(song)) {
+            queriesRun++
+            Log.d(TAG, "audio switch: query=$query")
+            val page = search(query, SearchFilter.SONGS, SearchKind.AUDIO_SWITCH)
+            if (page.isFailure) failedQueries++
+            val rows = page.getOrNull()
                 ?.filterIsInstance<SearchResult.Track>()
                 ?.map { it.song }
                 .orEmpty()
@@ -1084,38 +1120,9 @@ object YtMusicRepository {
                 return match
             }
         }
-        try {
-            val found = call("counterpart:$videoId") {
-                val response = Innertube.next(videoId)
-                val wrappers = InnertubeParser.countCounterpartWrappers(response)
-                val song = InnertubeParser.parseCounterpartSong(response, videoId)
-                TrackLog.i(
-                    TAG,
-                    "counterpart: $videoId wrappers=$wrappers found=${song?.videoId ?: "none"}",
-                    about = videoId,
-                )
-                if (wrappers > 0) {
-                    counterpartEmptyRun.set(0)
-                } else if (SongVersionPolicy.counterpartDisabled(counterpartEmptyRun.incrementAndGet()) &&
-                    !CounterpartSwitch.isSuppressed()
-                ) {
-                    CounterpartSwitch.suppress()
-                    TrackLog.i(TAG, "counterpart: off for a week (no wrappers)")
-                }
-                song
-            }
-            found.onSuccess { song ->
-                if (song == null) counterpartMissing.add(videoId) else counterpartAudioCache[videoId] = song
-            }
-            val answer = found.getOrNull()
-            mine.complete(answer)
-            return answer
-        } catch (failure: Throwable) {
-            mine.completeExceptionally(failure)
-            throw failure
-        } finally {
-            counterpartLookups.remove(videoId, mine)
-        }
+        Log.w(TAG, "video switch: no video match for '${song.title}' by '${song.artist}'")
+        synchronized(videoVersionMissing) { videoVersionMissing[song.videoId] = true }
+        return null
     }
 
     /**
@@ -1124,8 +1131,13 @@ object YtMusicRepository {
      * [resolveVideo] nothing is searched for, so nothing else — a lyric
      * video, a fan upload with a translation — can be picked by mistake.
      */
-    suspend fun officialVideo(videoId: String): String? =
-        counterpartAudio(videoId)?.videoId
+    suspend fun officialVideo(videoId: String): String? {
+        if (videoId.isBlank()) return null
+        return officialVersion(
+            Song(videoId = videoId, title = "", artist = "", thumbnailUrl = null),
+            wantAudio = false,
+        )?.videoId
+    }
 
     /**
      * Song-version answers by music-video id, with "no version" cached too.
@@ -1531,60 +1543,6 @@ object YtMusicRepository {
         "sped up", "slowed", "1 hour", "loop", "teaser", "\uD2F0\uC800", "behind", "making",
     )
 
-    suspend fun resolveVideo(song: Song): Song? {
-        if (song.isVideo) return null
-        if (song.title.isBlank() || song.artist.isBlank()) {
-            // Seen on a queue entry that had lost its header: searching the
-            // empty string can only return something unrelated. The play line
-            // names the missing fields; this says the lookup was skipped.
-            Log.w(TAG, "video switch skipped: ${song.videoId} has empty title/artist")
-            return null
-        }
-        videoVersionCache[song.videoId]?.let { return it }
-        if (synchronized(videoVersionMissing) { song.videoId in videoVersionMissing }) return null
-
-        // The alternate-version check and a manual switch can ask for the same
-        // track at once; one search answers both.
-        val mine = CompletableDeferred<Song?>()
-        videoVersionLookups.putIfAbsent(song.videoId, mine)?.let {
-            return try {
-                it.await()
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            }
-        }
-        try {
-            val target = TrackMatcher.targetOf(song)
-            for (query in TrackMatcher.queries(target)) {
-                val candidates = search(query, SearchFilter.VIDEOS, SearchKind.VIDEO_SWITCH)
-                    .getOrNull()
-                    ?.filterIsInstance<SearchResult.Track>()
-                    ?.map { it.song }
-                    .orEmpty()
-                TrackMatcher.bestForVideoSwitch(candidates, target)?.let { match ->
-                    Log.d(
-                        TAG,
-                        "video switch: '${song.title}' -> '${match.title}' (queryLength=${query.length})",
-                    )
-                    videoVersionCache[song.videoId] = match
-                    mine.complete(match)
-                    return match
-                }
-            }
-            Log.w(TAG, "video switch: no video match for '${song.title}' by '${song.artist}'")
-            // Cached for the run, like a hit: a second search would ask the
-            // same question of the same index and get the same answer.
-            synchronized(videoVersionMissing) { videoVersionMissing[song.videoId] = true }
-            mine.complete(null)
-            return null
-        } catch (failure: Throwable) {
-            mine.completeExceptionally(failure)
-            throw failure
-        } finally {
-            videoVersionLookups.remove(song.videoId, mine)
-        }
-    }
-
     /**
      * The other version of [song] as YouTube Music pairs it — the pairing
      * behind its own Song/Video switch — or null when it offers none. Asked
@@ -1798,7 +1756,7 @@ object YtMusicRepository {
             if (normalizedArtistName(name).isEmpty()) return@call null
             val filter = SearchFilter.ARTISTS
             val candidates = InnertubeParser.parseSearchPage(
-                Innertube.search(name, filter.params, kind = SearchKind.ARTIST),
+                Innertube.search(name, filter.params),
             ).rows
                 .filterIsInstance<SearchResult.Browse>()
                 .map { it.item }
@@ -2062,11 +2020,13 @@ object YtMusicRepository {
         val podcast = InnertubeParser.podcastShow(response) ?: show
         val continuation = InnertubeParser.continuationToken(response)
         if (podcast != null && continuation != null) showByToken[continuation] = podcast
+        val songs = InnertubeParser.collectSongsDeep(response, podcast).distinctBy { it.videoId }
+        val shown = songs.map(StoredSongDisplay::clean)
         return SongPage(
             // One response can name the same track twice — an album page that
             // also carries a "you might also like" shelf, say. Collecting into a
             // map used to take care of that; paging by hand means saying so.
-            songs = InnertubeParser.collectSongsDeep(response, podcast).distinctBy { it.videoId },
+            songs = shown,
             continuation = continuation,
             library = library,
             header = parsedHeader.withArtworkFallback(shown),
@@ -2485,6 +2445,19 @@ object YtMusicRepository {
     private var historyMemo: HistoryMemo? = null
 
     private const val HISTORY_MEMO_MS = 120_000L
+
+    private suspend fun ensureGateKnown(): Boolean = KoRepoGate.ensureGateKnown() // [KO] korea-gate
+
+    /** One immediate gate re-check after the proxy settings moved. */
+    suspend fun recheckGateNow(): Boolean = ensureGateKnown() // [KO] korea-gate
+
+    private fun isMusicGateSignal(failure: Exception): Boolean =
+        KoRepoGate.isMusicGateSignal(failure) // [KO] korea-gate
+
+    private suspend fun fallbackActive(): Boolean = KoRepoGate.fallbackActive() // [KO] korea-gate
+
+    private fun isYouTubePlaylistId(browseId: String): Boolean =
+        KoRepoGate.isYouTubePlaylistId(browseId) // [KO] korea-gate
 
     private suspend fun <T> call(label: String, block: suspend () -> T): Result<T> =
         withContext(Dispatchers.IO) {
