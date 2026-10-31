@@ -7,6 +7,7 @@ import com.music.bitchord.startup.AppForeground
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import org.drinkless.tdlib.Client
 import org.drinkless.tdlib.TdApi
 import java.io.File
@@ -53,6 +54,7 @@ object TelegramClientManager {
     private var client: Client? = null
     private var auth: TdApi.AuthorizationState? = null
     private var clientClosed: CompletableFuture<Unit>? = null
+    private var closing = false
     private var paramsSent = false
     private var logoutRequested = false
     private var librariesLoaded = false
@@ -123,6 +125,7 @@ object TelegramClientManager {
 
     fun logOut() {
         work.execute {
+            ensureCredentialsLoaded()
             val target = client
             if (target == null) {
                 deleteSession()
@@ -140,27 +143,26 @@ object TelegramClientManager {
             logoutRequested = true
             update { it.copy(stage = TelegramAuthStage.CLOSING, error = null) }
             TelegramLog.authState("loggingOut")
-            try {
+            val sent = try {
                 call(target, TdApi.LogOut())
+                true
             } catch (_: Throwable) {
                 // Closing the client below is still the right cleanup.
+                false
             }
+            if (!sent) runCatching { target.send(TdApi.Close(), null) }
             val closed = clientClosed
-            val finished = runCatching { closed?.get(20, TimeUnit.SECONDS) }.isSuccess
-            if (!finished) runCatching { target.send(TdApi.Close(), null) }
-            client = null
-            auth = null
-            deleteSession()
-            logoutRequested = false
-            update {
-                it.copy(
-                    stage = TelegramAuthStage.CLOSED,
-                    clientOpen = false,
-                    accountName = null,
-                    error = null,
-                )
+            val confirmed = runCatching { closed?.get(20, TimeUnit.SECONDS) }.isSuccess
+            if (confirmed) {
+                // Only drop the native handle and delete the session once TDLib
+                // has confirmed Closed. Deleting under an open client corrupts it.
+                finishClosed(deleteLocalSession = true)
+                TelegramLog.authState("closed")
+            } else {
+                // Keep the client and its files: the Closed update finishes the
+                // logout later instead of opening/deleting underneath it.
+                update { it.copy(stage = TelegramAuthStage.CLOSING, error = TelegramError.GENERIC) }
             }
-            TelegramLog.authState("closed")
             applyGate("logged out")
         }
     }
@@ -192,7 +194,11 @@ object TelegramClientManager {
     /** Runs on [work] only. */
     private fun applyGate(reason: String) {
         if (gate.shouldBeOpen) {
-            if (client == null) startClient(gate.openReasons.joinToString(","))
+            if (client == null) {
+                val reasons = gate.openReasons.toMutableList()
+                if (gate.playbackActive) reasons += "playback"
+                startClient(reasons.joinToString(","))
+            }
         } else {
             if (client != null) closeNow(reason)
         }
@@ -200,6 +206,7 @@ object TelegramClientManager {
 
     /** Runs on [work] only. */
     private fun startClient(reason: String) {
+        if (client != null || closing) return
         val app = context ?: return
         ensureCredentialsLoaded()
         if (!ensureLibraries()) return
@@ -208,6 +215,7 @@ object TelegramClientManager {
         clientClosed = closed
         auth = null
         paramsSent = false
+        closing = false
         appliedCredentials = TelegramApplicationCredentials.EMPTY
         logoutRequested = false
         try {
@@ -218,7 +226,14 @@ object TelegramClientManager {
                     ) {
                         closed.complete(Unit)
                     }
-                    if (current == generation.get()) onUpdate(obj)
+                    if (current == generation.get()) {
+                        // TDLib callbacks arrive on their own thread. Serialize all
+                        // auth/state mutations through the worker; re-check the
+                        // generation there so a stale client cannot touch a newer one.
+                        work.execute {
+                            if (current == generation.get()) onUpdate(obj)
+                        }
+                    }
                 },
                 { TelegramLog.authState("updateFailed") },
                 { TelegramLog.authState("callbackFailed") },
@@ -250,23 +265,61 @@ object TelegramClientManager {
         }
     }
 
-    /** Runs on [work] only. */
-    private fun closeNow(reason: String) {
-        val target = client ?: return
+    /**
+     * Sends Close and waits for TDLib's Closed confirmation. Returns true only
+     * when the native client is really gone. On timeout the handle and session
+     * files stay in place so no second client can share the database and no
+     * files are deleted under an open client; the Closed update finishes later.
+     *
+     * Runs on [work] only.
+     */
+    private fun closeNow(reason: String): Boolean {
+        val target = client ?: return true
+        if (!closing) {
+            closing = true
+            auth = null
+            paramsSent = false
+            TelegramLog.clientClosed(reason)
+            update {
+                it.copy(
+                    stage = TelegramAuthStage.CLOSED,
+                    clientOpen = false,
+                    accountName = null,
+                )
+            }
+        }
+        val closed = clientClosed
+        runCatching { target.send(TdApi.Close(), null) }
+        val confirmed = runCatching { closed?.get(5, TimeUnit.SECONDS) }.isSuccess
+        if (confirmed) {
+            finishClosed(deleteLocalSession = logoutRequested)
+            return true
+        }
+        update { it.copy(stage = TelegramAuthStage.CLOSED, error = TelegramError.GENERIC) }
+        return false
+    }
+
+    /**
+     * Drops the native handle after TDLib confirmed Closed, and optionally
+     * clears the local session. Runs on [work] only, never while the client is open.
+     */
+    private fun finishClosed(deleteLocalSession: Boolean) {
         client = null
+        clientClosed = null
+        closing = false
         auth = null
         paramsSent = false
-        TelegramLog.clientClosed(reason)
+        appliedCredentials = TelegramApplicationCredentials.EMPTY
+        if (deleteLocalSession) deleteSession()
+        logoutRequested = false
         update {
             it.copy(
                 stage = TelegramAuthStage.CLOSED,
                 clientOpen = false,
                 accountName = null,
+                error = null,
             )
         }
-        val closed = clientClosed
-        runCatching { target.send(TdApi.Close(), null) }
-        runCatching { closed?.get(5, TimeUnit.SECONDS) }
     }
 
     private fun ensureLibraries(): Boolean {
@@ -294,7 +347,8 @@ object TelegramClientManager {
         credentialStore = TelegramCredentialStore(app)
         databaseKeyStore = TelegramDatabaseKeyStore(
             File(dir, "database.key.sealed"),
-        ) { TelegramKeystore.key(app, "database") }
+            { TelegramKeystore.key(app, "database") },
+        ) { File(dir, "db").exists() || File(dir, "files").exists() }
         credentials = try {
             credentialStore?.load() ?: TelegramApplicationCredentials.EMPTY
         } catch (_: Throwable) {
@@ -321,7 +375,7 @@ object TelegramClientManager {
                         error = null,
                     )
                 }
-                work.execute { configure() }
+                configure()
             }
 
             is TdApi.AuthorizationStateWaitPhoneNumber -> update {
@@ -340,7 +394,7 @@ object TelegramClientManager {
                 update {
                     it.copy(stage = TelegramAuthStage.READY, error = null)
                 }
-                work.execute { loadAccountName() }
+                loadAccountName()
             }
 
             is TdApi.AuthorizationStateLoggingOut,
@@ -348,14 +402,9 @@ object TelegramClientManager {
             -> update { it.copy(stage = TelegramAuthStage.CLOSING) }
 
             is TdApi.AuthorizationStateClosed -> {
-                update {
-                    it.copy(
-                        stage = TelegramAuthStage.CLOSED,
-                        clientOpen = false,
-                        accountName = null,
-                    )
-                }
-                if (logoutRequested) deleteSession()
+                finishClosed(deleteLocalSession = logoutRequested)
+                TelegramLog.authState("closed")
+                applyGate("client closed")
             }
 
             else -> update {
@@ -375,7 +424,15 @@ object TelegramClientManager {
         }
         val app = context ?: return
         val dir = home ?: File(app.noBackupFilesDir, "telegram-native")
-        val databaseKey = databaseKeyStore?.loadOrCreate() ?: return
+        val databaseKey = try {
+            databaseKeyStore?.loadOrCreate()
+                ?: throw IllegalStateException("Telegram storage is not ready.")
+        } catch (_: Throwable) {
+            // A Keystore or disk failure must become a visible error, not an
+            // uncaught worker exception that can take the process down.
+            update { it.copy(error = TelegramError.GENERIC) }
+            return
+        }
         paramsSent = true
         try {
             call(
@@ -424,9 +481,13 @@ object TelegramClientManager {
 
     private fun deleteSession() {
         val dir = home ?: return
-        runCatching { File(dir, "db").deleteRecursively() }
-        runCatching { File(dir, "files").deleteRecursively() }
-        databaseKeyStore?.clear()
+        val database = File(dir, "db")
+        val files = File(dir, "files")
+        runCatching { database.deleteRecursively() }
+        runCatching { files.deleteRecursively() }
+        // Keep the key if anything survived: a keyless leftover session could
+        // never be opened again.
+        if (!database.exists() && !files.exists()) databaseKeyStore?.clear()
     }
 
     private fun <T : TdApi.Object> call(target: Client, fn: TdApi.Function<T>, timeoutMs: Long = 40_000): T {
@@ -480,7 +541,7 @@ object TelegramClientManager {
     }
 
     private fun update(transform: (TelegramState) -> TelegramState) {
-        _state.value = transform(_state.value)
+        _state.update(transform)
     }
 
     private class TelegramFailure(val error: TdApi.Error) : java.io.IOException() {

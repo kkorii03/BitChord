@@ -50,6 +50,28 @@ class TelegramClientGateTest {
     }
 
     @Test
+    fun playbackAloneOpensAndKeepsTheClientOpen() {
+        val gate = TelegramClientGate()
+        // Playback is its own reason: no screen holder is required, and the
+        // background does not close a playing client.
+        assertTrue(gate.onPlaybackActive(true))
+        assertTrue(gate.shouldBeOpen)
+        gate.onForeground(false)
+        assertTrue(gate.shouldBeOpen)
+        assertFalse(gate.onPlaybackActive(false))
+        assertFalse(gate.shouldBeOpen)
+    }
+
+    @Test
+    fun foregroundHolderDoesNotKeepTheClientOpenWithoutForeground() {
+        val gate = TelegramClientGate()
+        gate.acquire("settings")
+        assertFalse(gate.shouldBeOpen)
+        assertTrue(gate.onForeground(true))
+        assertTrue(gate.shouldBeOpen)
+    }
+
+    @Test
     fun returningToForegroundReopensAHeldClient() {
         val gate = TelegramClientGate()
         gate.onForeground(true)

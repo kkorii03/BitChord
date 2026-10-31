@@ -15,11 +15,32 @@ import javax.crypto.SecretKey
 internal class TelegramDatabaseKeyStore(
     private val file: File,
     private val keyProvider: () -> SecretKey,
+    private val sessionExists: () -> Boolean = { false },
 ) {
     fun loadOrCreate(): ByteArray {
         if (file.isFile) {
-            return runCatching { TelegramSealedBox.open(file.readText(), keyProvider()) }
-                .getOrElse { replace() }
+            return try {
+                TelegramSealedBox.open(file.readText(), keyProvider())
+            } catch (error: Throwable) {
+                // Never rotate a key that already protects a session: replacing
+                // it would make the encrypted db/files permanently unreadable.
+                if (sessionExists()) {
+                    throw TelegramDatabaseKeyException(
+                        "The Telegram database key cannot be opened.",
+                        error,
+                    )
+                }
+                // With no session on disk there is nothing to strand, so a
+                // corrupt leftover key may be replaced.
+                return replace()
+            }
+        }
+        // A session without its key can never be opened, and minting a fresh
+        // key would strand it silently. Surface the loss instead of rotating.
+        if (sessionExists()) {
+            throw TelegramDatabaseKeyException(
+                "The Telegram session exists without its database key.",
+            )
         }
         return replace()
     }
@@ -41,3 +62,9 @@ internal class TelegramDatabaseKeyStore(
         return key
     }
 }
+
+/** A sealed key that exists but cannot be read, so no session can be opened. */
+internal class TelegramDatabaseKeyException(
+    message: String,
+    cause: Throwable? = null,
+) : java.io.IOException(message, cause)
