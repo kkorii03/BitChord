@@ -385,6 +385,49 @@ object SourceResolver {
     }
 
     /**
+     * A source that has the same recording as a YouTube row which this network
+     * refuses, found under a deadline instead of after the first note.
+     *
+     * [substituteForYouTube] deliberately never searches before playback: on a
+     * playable track a catalogue walk would compete for the radio and delay the
+     * first note. A *blocked* track has no first note to protect, so this is the
+     * one place the live path may spend a bounded search before sound. The
+     * result is matched by [TrackMatcher] (title, artist, runtime, original
+     * arrangement) exactly as the upgrade path matches; the existing
+     * `hq-verify` comparison still runs afterwards, during playback, so a cover
+     * that slipped through can be refused by the same rule as any upgrade.
+     *
+     * Null is a normal answer: the caller moves on to the next row.
+     */
+    suspend fun blockedStartStream(
+        target: TrackMatcher.Target,
+        timeoutMs: Long,
+    ): SourceStream? {
+        if (target.title.isBlank() || target.isVideo || timeoutMs <= 0L) return null
+        val active = SourceRegistry.activeForPlayback()
+        val youtube = active.firstOrNull { it.kind == SourceKind.YOUTUBE } ?: return null
+        val candidates = rankedAbove(youtube.configId, active)
+        if (candidates.isEmpty()) return null
+        val found = withTimeoutOrNull(timeoutMs) {
+            bestAcross(
+                candidates,
+                target,
+                requestForNow(),
+                waitForAll = false,
+                strictLength = target.durationSec != null,
+                requireSharedArtist = true,
+                strictOriginal = true,
+            )
+        } ?: return null
+        TrackLog.d(
+            TAG,
+            "blocked start: '${target.title}' served by ${found.first.displayName} " +
+                "at ${found.second.format.summary}",
+        )
+        return found.second
+    }
+
+    /**
      * The reliable last rung for a source-backed queue item whose chosen stream
      * failed in the player.
      *
