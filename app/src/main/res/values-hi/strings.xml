@@ -1671,4 +1671,13 @@
     <string name="pipeline_none">None</string>
     <string name="pipeline_dsd_full_band">DSD to PCM, full band below the cutoff</string>
     <string name="pipeline_surround">%1$s (Surround)</string>
+    <string name="settings_lyrics">Lyrics</string>
+    <string name="quality_efficient">Efficient</string>
+    <string name="quality_high">High quality</string>
+    <string name="quality_lossless">Lossless</string>
+    <string name="quality_hi_res">Hi-Res Lossless</string>
+    <string name="quality_efficient_detail">Smallest size · about 30MB/hour</string>
+    <string name="quality_high_detail">Everyday quality · about 80MB/hour</string>
+    <string name="quality_lossless_detail">Close to the original · about 150MB/hour</string>
+    <string name="quality_hi_res_detail">Best quality · about 300MB/hour or more</string>
 </resources>
