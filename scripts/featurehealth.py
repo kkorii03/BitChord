@@ -46,6 +46,9 @@ LOGCAT_LINE_RE = re.compile(
     r"(?P<level>[VDIWEF])\s+(?P<tag>[^:]+):\s?(?P<text>.*)$"
 )
 HEADER_RE = re.compile(r"^(?P<key>[A-Za-z][A-Za-z0-9 _-]*):\s*(?P<value>.*)$")
+# The app's own counters, accepted under a few spellings so an older or newer
+# export still pairs with the lines below it.
+FEATURE_HEALTH_RE = re.compile(r"^(?i:feature[-_ ]?health)\b")
 
 NEXT_PREP_RE = re.compile(
     r"^next-prep:\s+(?P<title>.*?)\s+version=(?P<version>\S+)\s+"
@@ -184,6 +187,7 @@ class LogLine:
 class Log:
     header: dict[str, str]
     lines: list[LogLine]
+    feature_health: list[str] = field(default_factory=list)
 
     @property
     def version(self) -> str:
@@ -257,6 +261,7 @@ class Report:
 
 def parse_log_text(text: str, since: datetime | None = None) -> Log:
     header: dict[str, str] = {}
+    feature_health: list[str] = []
     lines: list[LogLine] = []
     for raw in text.splitlines():
         raw = raw.rstrip("\r")
@@ -273,6 +278,8 @@ def parse_log_text(text: str, since: datetime | None = None) -> Log:
                     continue
             else:
                 if not lines:
+                    if FEATURE_HEALTH_RE.match(raw):
+                        feature_health.append(raw)
                     header_match = HEADER_RE.match(raw)
                     if header_match is not None:
                         header[header_match.group("key").strip().lower()] = (
@@ -291,7 +298,7 @@ def parse_log_text(text: str, since: datetime | None = None) -> Log:
                 text=match.group("text").strip(),
             )
         )
-    return Log(header=header, lines=lines)
+    return Log(header=header, lines=lines, feature_health=feature_health)
 
 
 def parse_log_file(path: Path, since: datetime | None = None) -> Log:
@@ -390,8 +397,26 @@ def _failure(at: datetime, title: str, detail: str = "") -> Failure:
 # ---------------------------------------------------------------------------
 
 
+def _parse_feature_health(lines: Iterable[str]) -> dict[str, dict[str, str]]:
+    """The app's own 24-hour counters, keyed the same way as the metrics."""
+    counters: dict[str, dict[str, str]] = {}
+    for raw in lines:
+        body = raw.split(":", 1)[1].strip() if ":" in raw else raw
+        parts = body.split()
+        if not parts or not parts[0].startswith("D"):
+            continue
+        fields: dict[str, str] = {}
+        for token in parts[1:]:
+            if "=" in token:
+                key, value = token.split("=", 1)
+                fields[key] = value
+        counters[parts[0]] = fields
+    return counters
+
+
 def analyze(log: Log) -> Report:
     lines = log.lines
+    app_counters = _parse_feature_health(log.feature_health)
 
     next_preps: list[dict[str, Any]] = []
     summaries: list[dict[str, Any]] = []
@@ -1756,6 +1781,7 @@ def analyze(log: Log) -> Report:
         "opus": quality_bad,
     }
 
+    stats["feature_health"] = app_counters
     stats["played_songs"] = len(plays) if plays else len(summaries)
     stats["play_lines"] = len(plays)
     stats["summaries"] = len(summaries)
@@ -1833,8 +1859,25 @@ def _header_lines(report: Report) -> list[str]:
     ]
 
 
+def _app_counter_text(report: Report, metric: Metric) -> str:
+    counters = report.stats.get("feature_health", {})
+    fields = counters.get(metric.key)
+    if not fields:
+        return "—"
+    attempts = fields.get("attempts")
+    successes = fields.get("successes")
+    if attempts is not None and successes is not None:
+        return f"{attempts}/{successes}"
+    if attempts is not None:
+        return attempts
+    failures = fields.get("failures")
+    if failures is not None:
+        return f"실패 {failures}"
+    return "—"
+
+
 def render_console(report: Report) -> str:
-    headers = ["기능", "시도", "성공", "성공률", "기준", "판정", "대표 실패 예"]
+    headers = ["기능", "시도", "성공", "성공률", "앱 24h 시도/성공", "기준", "판정", "대표 실패 예"]
     rows: list[list[str]] = []
     for metric in report.metrics:
         rows.append(
@@ -1843,6 +1886,7 @@ def render_console(report: Report) -> str:
                 _attempts_text(metric),
                 _successes_text(metric),
                 _rate_text(metric),
+                _app_counter_text(report, metric),
                 metric.criterion,
                 metric.verdict,
                 _failure_text(metric, limit=80),
@@ -1874,14 +1918,15 @@ def render_markdown(report: Report) -> str:
     out = ["# BitChord 기능 건강 검사", ""]
     out.extend(f"- {line}" for line in _header_lines(report))
     out.append("")
-    out.append("| 기능 | 시도 | 성공 | 성공률 | 기준 | 판정 | 대표 실패 예 |")
-    out.append("| --- | ---: | ---: | ---: | --- | --- | --- |")
+    out.append("| 기능 | 시도 | 성공 | 성공률 | 앱 24h 시도/성공 | 기준 | 판정 | 대표 실패 예 |")
+    out.append("| --- | ---: | ---: | ---: | ---: | --- | --- | --- |")
     for metric in report.metrics:
         cells = [
             metric.label,
             _attempts_text(metric),
             _successes_text(metric),
             _rate_text(metric),
+            _app_counter_text(report, metric),
             metric.criterion,
             metric.verdict,
             _failure_text(metric).replace("|", "\\|"),

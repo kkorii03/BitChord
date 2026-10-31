@@ -137,6 +137,9 @@ object TrackLog {
         about: String? = working.get(),
     ) {
         echo?.invoke(level, tag, message, error)
+        // Counted from the same line the export will carry, so the summary at
+        // the top of the file and the lines below it always describe one run.
+        FeatureHealthCounters.observe(tag, message)
         record(level, tag, if (error == null) message else "$message\n${error.stackTraceToString()}", about)
     }
 

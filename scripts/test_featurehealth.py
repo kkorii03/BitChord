@@ -585,6 +585,43 @@ class DownloadLifecycleQualityTests(unittest.TestCase):
         self.assertEqual(1, report.stats["quality"]["opus"])
 
 
+class FeatureHealthHeaderTests(unittest.TestCase):
+    def test_app_counters_are_read_and_shown_beside_log_counts(self) -> None:
+        text = (
+            HEADER
+            + "feature health (last 24h):\n"
+            + "feature-health: D1-lyrics attempts=3 successes=2\n"
+            + "feature-health: D1-sync attempts=2 successes=1 reasons=timeout=1\n"
+            + "feature-health: D9-download failures=1\n"
+            + line(
+                "19:00:00.000",
+                "next-prep: A version=a lyrics=lrc.red hq=none sync=applied mix=none in 100ms",
+            )
+            + "\n"
+        )
+        report = analyze(text)
+        self.assertEqual("3", report.stats["feature_health"]["D1-lyrics"]["attempts"])
+        self.assertEqual("2", report.stats["feature_health"]["D1-lyrics"]["successes"])
+        self.assertEqual(
+            "timeout=1",
+            report.stats["feature_health"]["D1-sync"]["reasons"],
+        )
+
+        console = featurehealth.render_console(report)
+        self.assertIn("앱 24h 시도/성공", console)
+        self.assertIn("3/2", console)
+        self.assertIn("실패 1", console)
+
+        markdown = featurehealth.render_markdown(report)
+        self.assertIn("앱 24h 시도/성공", markdown)
+        self.assertIn("3/2", markdown)
+
+    def test_log_without_app_counters_renders_dashes(self) -> None:
+        report = analyze(log_text(play("19:00:00.000", "id1", "Song")))
+        self.assertEqual({}, report.stats["feature_health"])
+        self.assertIn("—", featurehealth.render_console(report))
+
+
 class RenderingTests(unittest.TestCase):
     def test_markdown_has_table_and_verdicts(self) -> None:
         report = analyze(
@@ -595,7 +632,10 @@ class RenderingTests(unittest.TestCase):
             )
         )
         markdown = featurehealth.render_markdown(report)
-        self.assertIn("| 기능 | 시도 | 성공 | 성공률 | 기준 | 판정 | 대표 실패 예 |", markdown)
+        self.assertIn(
+            "| 기능 | 시도 | 성공 | 성공률 | 앱 24h 시도/성공 | 기준 | 판정 | 대표 실패 예 |",
+            markdown,
+        )
         self.assertIn("PASS", markdown)
         self.assertIn("FAIL", markdown)
         self.assertIn("버전: 1.2.3 (123) release", markdown)

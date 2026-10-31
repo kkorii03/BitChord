@@ -158,6 +158,8 @@ object DiagnosticsExport {
                     appendLine("proxy memory: ${ProxyPlayback.rememberedCount()} tracks")
                     appendLine("song pairing: ${counterpartState(now)}")
                     appendLine("log retention: ~5 MB across 3 files, oldest $oldestLine")
+                    appendLine("feature health (last 24h):")
+                    FeatureHealthCounters.headerLines().forEach { appendLine(it) }
                     DiagnosticsState.describe().forEach { appendLine(it) }
                     appendLine("power: ${powerState(context)}")
                     appendLine("network: ${networkType(context)}")
