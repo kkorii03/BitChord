@@ -698,6 +698,7 @@ object SourceResolver {
             strictLength = true,
             requireSharedArtist = true,
             strictOriginal = true,
+            allowArtistUnverified = true,
             excludeHosts = excludeHosts,
             manual = manual,
             report = report,
@@ -1130,6 +1131,12 @@ object SourceResolver {
         strictLength: Boolean = false,
         requireSharedArtist: Boolean = false,
         strictOriginal: Boolean = false,
+        /**
+         * Keep a row whose artist is localised into another script as an
+         * `artist-unverified` candidate. Only the upgrade path sets this: the
+         * caller then has `hq-verify` accept it before it may play.
+         */
+        allowArtistUnverified: Boolean = false,
         excludeHosts: Set<String> = emptySet(),
         sourceTimeoutMs: Long = SOURCE_LOOKUP_TIMEOUT_MS,
         /**
@@ -1179,6 +1186,7 @@ object SourceResolver {
                             requireSharedArtist,
                             strictOriginal,
                             manual,
+                            allowArtistUnverified,
                         )
                     }
                     if (answer == null) {
@@ -1307,6 +1315,7 @@ object SourceResolver {
         requireSharedArtist: Boolean = false,
         strictOriginal: Boolean = false,
         manual: Boolean = false,
+        allowArtistUnverified: Boolean = false,
     ): SearchOutcome {
         var last = SearchOutcome()
         for (query in TrackMatcher.queries(target)) {
@@ -1357,12 +1366,37 @@ object SourceResolver {
                 }
                 rows
             }
-            var matches = TrackMatcher.ranked(candidates, target)
-            if (strictOriginal) {
-                matches = matches.filter { TrackMatcher.isOriginalRecording(it, target) }
+            val ranked = TrackMatcher.ranked(candidates, target)
+            // Rows whose only disagreement is an artist credit in another
+            // script are kept apart so the ordinary match order still wins.
+            // Judged over every result, not just the top row: the localised
+            // copy is often not what the search backend puts first.
+            val artistUnverified = mutableSetOf<Song>()
+            var matches: List<Song> = if (strictOriginal) {
+                val verified = ranked.filter { TrackMatcher.isOriginalRecording(it, target) }
+                if (allowArtistUnverified) {
+                    val localised = (ranked + candidates)
+                        .distinct()
+                        .filterNot { it in verified }
+                        .filter { TrackMatcher.isArtistUnverifiedOriginal(it, target, UPGRADE_DRIFT_SEC) }
+                        .sortedBy { candidate ->
+                            val got = TrackMatcher.secondsOf(candidate.durationText)
+                                ?: Int.MAX_VALUE
+                            kotlin.math.abs((target.durationSec ?: 0) - got)
+                        }
+                    artistUnverified += localised
+                    verified + localised
+                } else {
+                    verified
+                }
+            } else {
+                ranked
             }
             if (requireSharedArtist) {
-                matches = matches.filter { TrackMatcher.sharesArtist(target.artist, it.artist) }
+                matches = matches.filter {
+                    it in artistUnverified ||
+                        TrackMatcher.sharesArtist(target.artist, it.artist)
+                }
             }
             // JioSaavn can return different audio under the same title and
             // artist on different releases. With no album on the requested
@@ -1370,10 +1404,15 @@ object SourceResolver {
             // duration is not enough when the wrong recording is only a
             // second away. Treat it as this source missing and retain the
             // known-correct fallback.
+            // Only normally credited rows take part in the JioSaavn release
+            // collision rule. A localised-artist row is already waiting for
+            // the sound comparison, and letting its album veto a verified copy
+            // would reinstate the failure this fallback exists to remove.
+            val verifiedForConflict = matches.filterNot { it in artistUnverified }
             if (source.kind == SourceKind.JIOSAAVN &&
-                TrackMatcher.hasConflictingAlbums(matches, target)
+                TrackMatcher.hasConflictingAlbums(verifiedForConflict, target)
             ) {
-                val canonical = TrackMatcher.uniquelyMostCreditedCloseMatch(matches, target)
+                val canonical = TrackMatcher.uniquelyMostCreditedCloseMatch(verifiedForConflict, target)
                 if (canonical == null) {
                     TrackLog.w(
                         TAG,
@@ -1401,10 +1440,17 @@ object SourceResolver {
             // nothing else is worth cutting a listener's audio for — or filing
             // on their device under the name of the track they asked for.
             if (strictLength) {
-                matches = matches.filter { TrackMatcher.withinSeconds(it, target, UPGRADE_DRIFT_SEC) }
+                matches = matches.filter {
+                    val drift = if (it in artistUnverified) {
+                        TrackMatcher.ARTIST_UNVERIFIED_DRIFT_SEC
+                    } else {
+                        UPGRADE_DRIFT_SEC
+                    }
+                    TrackMatcher.withinSeconds(it, target, drift)
+                }
             }
             if (matches.isEmpty()) {
-                val best = matches.firstOrNull() ?: TrackMatcher.ranked(candidates, target).firstOrNull()
+                val best = matches.firstOrNull() ?: ranked.firstOrNull()
                     ?: candidates.firstOrNull()
                 val verdict = when {
                     // A source that failed while producing this answer said
@@ -1421,6 +1467,7 @@ object SourceResolver {
                         requireSharedArtist = requireSharedArtist,
                         strictLength = strictLength,
                         driftSec = UPGRADE_DRIFT_SEC,
+                        allowArtistUnverified = allowArtistUnverified,
                     )
                 }
                 last = SearchOutcome(
@@ -1437,7 +1484,25 @@ object SourceResolver {
                 }
                 continue
             }
-            val stream = streamBest(source, matches, target, request)
+            // A normal artist match always goes first. The localised rows are
+            // the fallback only when nothing properly credited could open a
+            // stream, so a lossless-flavoured unverified row cannot jump ahead
+            // of a verified one merely on [preferred]'s quality ordering.
+            val verifiedMatches = matches.filterNot { it in artistUnverified }
+            val unverifiedMatches = matches.filter { it in artistUnverified }
+            var chosenMatches = verifiedMatches.ifEmpty { unverifiedMatches }
+            var stream = if (chosenMatches.isEmpty()) {
+                null
+            } else {
+                streamBest(source, chosenMatches, target, request)
+            }
+            if (stream == null && verifiedMatches.isNotEmpty() && unverifiedMatches.isNotEmpty()) {
+                val localised = streamBest(source, unverifiedMatches, target, request)
+                if (localised != null) {
+                    chosenMatches = unverifiedMatches
+                    stream = localised
+                }
+            }
             // Every stream open can fail — a 500, a timeout, a host that went
             // away between the search and the open — and [attempt] counts each
             // one against the source. A search that looked healthy but could
@@ -1449,11 +1514,16 @@ object SourceResolver {
             if (SourceCooldown.failureMark(source.configId) != mark) {
                 conclusive = false
             }
+            val chosen = chosenMatches.firstOrNull()
             last = SearchOutcome(
                 stream = stream,
                 results = candidates.size,
-                best = matches.firstOrNull(),
-                verdict = if (stream != null) "match" else "error",
+                best = chosen,
+                verdict = when {
+                    stream == null -> "error"
+                    chosen in artistUnverified -> "artist-unverified"
+                    else -> "match"
+                },
                 conclusive = conclusive,
             )
             TrackLog.d(TAG, hqSearchLine(target, source, last))
