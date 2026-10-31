@@ -46,6 +46,12 @@ object SourceResolver {
     private const val TAG = "BitChord"
 
     /**
+     * Whether the device itself has no usable connection. Overridable so the
+     * offline half of the rest rule can be tested without an Android context.
+     */
+    internal var offlineCheck: () -> Boolean = { AudioCache.isOffline() }
+
+    /**
      * Sources that have failed repeatedly, and when they may be asked again.
      *
      * A dead addon must not cost every track in the queue its full timeout.
@@ -81,8 +87,29 @@ object SourceResolver {
         }
 
         fun failed(configId: String) {
+            recordFailure(configId, countForRest = true)
+        }
+
+        /**
+         * A transport fault — DNS, TLS, a refused connection, a read timeout.
+         *
+         * The mark is always raised, because a source that swallowed this fault
+         * and returned an empty answer has *not* said the catalogue lacks the
+         * track. Whether it also counts toward the rest depends on the device:
+         * when the whole device is offline (or behind a captive portal), every
+         * source fails the same way at once, and parking them all for 30
+         * minutes would outlast the outage. The mark still keeps that empty
+         * answer from being memoised as final, so it is asked again on the
+         * first request after the link returns.
+         */
+        internal fun networkFailed(configId: String, online: Boolean) {
+            recordFailure(configId, countForRest = online)
+        }
+
+        private fun recordFailure(configId: String, countForRest: Boolean) {
             failureMarks.computeIfAbsent(configId) { java.util.concurrent.atomic.AtomicLong() }
                 .incrementAndGet()
+            if (!countForRest) return
             val state = states.computeIfAbsent(configId) { State() }
             state.failures += 1
             if (state.failures >= FAILURES_BEFORE_REST) {
@@ -180,9 +207,15 @@ object SourceResolver {
      * A source's own failure path, for sources that turn a transport fault into
      * an empty answer instead of throwing. A 5xx or a timeout that reaches
      * [attempt] is counted there; this is for the ones swallowed before it.
+     *
+     * [network] is set when the addon could not be reached at all rather than
+     * when it answered with an error. Such a fault still raises the failure
+     * mark so its empty answer is not cached, but an offline device only asks
+     * for the mark: the connection, not the source, is what failed.
      */
-    internal fun reportSourceFailure(configId: String) {
-        SourceCooldown.failed(configId)
+    internal fun reportSourceFailure(configId: String, network: Boolean = false) {
+        if (network) SourceCooldown.networkFailed(configId, online = !offlineCheck())
+        else SourceCooldown.failed(configId)
     }
 
     /** Keeps [stream] as the verified original for [target], for a later play. */
@@ -1187,7 +1220,7 @@ object SourceResolver {
                         // Counting it here parked every source for 30 minutes
                         // after a dorm Wi-Fi drop, long after the link was
                         // back.
-                        if (!AudioCache.isOffline()) SourceCooldown.failed(source.configId)
+                        if (!offlineCheck()) SourceCooldown.failed(source.configId)
                         TrackLog.d(
                             TAG,
                             "${source.displayName} timed out after ${sourceTimeoutMs}ms; " +
@@ -1663,11 +1696,17 @@ object SourceResolver {
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
-        // A transport fault says nothing about the catalogue's health. A DNS
-        // failure, a refused connection or a dead proxy during a handover must
-        // not put the source on a 30-minute rest once the network returns.
-        if (source.kind != SourceKind.YOUTUBE && !e.isNetworkFailure()) {
-            SourceCooldown.failed(source.configId)
+        // A transport fault raises the failure mark just like an HTTP error:
+        // an empty answer produced after it is not proof that the catalogue
+        // lacks the track, so it must not be memoised as a confirmed miss. It
+        // counts toward the rest only when the device is online — during an
+        // outage every source fails at once and parking them would outlast it.
+        if (source.kind != SourceKind.YOUTUBE) {
+            if (e.isNetworkFailure()) {
+                SourceCooldown.networkFailed(source.configId, online = !offlineCheck())
+            } else {
+                SourceCooldown.failed(source.configId)
+            }
         }
         TrackLog.w(TAG, "${source.displayName} failed: ${e.javaClass.simpleName}: ${e.message}")
         null
@@ -1682,7 +1721,9 @@ object SourceResolver {
      * module. A server's own 4xx/5xx is not in here: that is the source
      * answering, and it stays a source failure.
      */
-    private fun Throwable.isNetworkFailure(): Boolean {
+    internal fun isNetworkFault(failure: Throwable): Boolean = failure.isNetworkFailure()
+
+    internal fun Throwable.isNetworkFailure(): Boolean {
         var cause: Throwable? = this
         var depth = 0
         while (cause != null && depth++ < 8) {

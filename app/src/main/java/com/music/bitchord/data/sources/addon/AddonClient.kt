@@ -363,7 +363,10 @@ class AddonClient(rawBaseUrl: String) {
                 HqHostTracker.noteResponse(host, System.currentTimeMillis() - startedAtMs, ok = false)
                 HqHostTracker.rest(host, TRANSPORT_REST_MS)
                 TrackLog.w(TAG, "  ✗ addon transport failed ${redact(url)}: ${failure.message}")
-                throw AddonUnavailable(failure.message ?: "애드온에 연결할 수 없습니다")
+                throw AddonUnavailable(
+                    failure.message ?: "애드온에 연결할 수 없습니다",
+                    transport = true,
+                )
             }
 
             val wait = try {
@@ -444,7 +447,10 @@ class AddonClient(rawBaseUrl: String) {
                 HqHostTracker.noteResponse(host, System.currentTimeMillis() - startedAtMs, ok = false)
                 HqHostTracker.rest(host, TRANSPORT_REST_MS)
                 TrackLog.w(TAG, "  ✗ addon body failed ${redact(url)}: ${failure.message}")
-                throw AddonUnavailable(failure.message ?: "애드온에 연결할 수 없습니다")
+                throw AddonUnavailable(
+                    failure.message ?: "애드온에 연결할 수 없습니다",
+                    transport = true,
+                )
             }
             quietUntilMs = System.currentTimeMillis() + wait
             attempt++
@@ -627,8 +633,15 @@ class AddonException(message: String) : Exception(message)
  * Worth keeping switched on and worth asking again on the next track, which is
  * the whole distinction
  * [SourceHealth][com.music.bitchord.data.sources.SourceHealth] draws.
+ *
+ * [transport] is true when the addon could not be reached at all (DNS, TLS, a
+ * refused connection, a body read that timed out). That still counts against
+ * the source, but an offline device must not be parked for it.
  */
-class AddonUnavailable(message: String) : Exception(message)
+class AddonUnavailable(
+    message: String,
+    val transport: Boolean = false,
+) : Exception(message)
 
 /** The addon answered, and does not have what was asked for. A miss, not a fault. */
 class AddonNotFound : Exception("이 애드온에 없음")
