@@ -16,8 +16,6 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -43,64 +41,35 @@ object DownloadedArtworkResolver {
      */
     private const val RESOLVED_ENTRIES = 512
 
-    private val resolved = BoundedMemo<String, String>(RESOLVED_ENTRIES)
-    private val inFlight = ConcurrentHashMap<String, CompletableDeferred<String>>()
-    private val claimed = ConcurrentHashMap.newKeySet<String>()
-    private val inFlightLock = Mutex()
+    private val answers = ArtworkAnswerMemo(RESOLVED_ENTRIES)
 
     suspend fun resolve(context: Context, song: Song): String? = withContext(Dispatchers.IO) {
-        val key = keyOf(song)
-        val cached = resolved.get(key)
-        if (!cached.isNullOrEmpty()) return@withContext cached
-        // A remembered miss is not timed. It is dropped only when the cover
-        // save reports itself (see [invalidate]), so a row recomposing on every
-        // frame still never re-opens a dead path, while a sidecar written later
-        // no longer has to wait for an unrelated redraw to be seen.
-        if (cached != null) return@withContext null
-        val job = inFlightLock.withLock { inFlight.getOrPut(key) { CompletableDeferred() } }
-        if (claimed.add(key)) {
-            try {
-                val value = resolveNow(context.applicationContext, song) ?: ""
-                // A real URI replaces an earlier "none" for the same key. The
-                // first attempt can fail before the download has finished
-                // writing its sidecar; a miss is kept until the save event
-                // drops it (see [invalidate]), rather than for a fixed delay.
-                if (value.isEmpty()) {
-                    resolved.getOrPut(key) { value }
-                } else {
-                    resolved.put(key, value)
-                }
-                job.complete(value)
-            } catch (cancelled: CancellationException) {
-                job.complete("")
-                throw cancelled
-            } catch (error: Throwable) {
-                Log.d(TAG, "cover lookup failed for ${song.videoId}: ${error.message}")
-                resolved.getOrPut(key) { "" }
-                job.complete("")
-            } finally {
-                claimed.remove(key)
-                inFlightLock.withLock { inFlight.remove(key, job) }
-            }
-        }
-        val value = try {
-            job.await()
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Throwable) {
-            ""
-        }
-        value.takeIf { it.isNotEmpty() }
+        answers.resolve(keyOf(song)) { resolveNow(context.applicationContext, song) }
     }
 
     /**
      * Forget what was resolved for [song] so the next ask reads the disk again.
      *
      * Called for the id whose cover save event just arrived. Only that row's
-     * answer is dropped; every other resolved cover stays in the memo.
+     * answer is dropped; every other resolved cover stays in the memo. A read
+     * already running for the same key is retired too, so it cannot put its
+     * pre-save answer back.
      */
     fun invalidate(song: Song) {
-        resolved.remove(keyOf(song))
+        answers.invalidateKey(keyOf(song))
+    }
+
+    /**
+     * Forget every answer for [videoId], including one currently being read.
+     *
+     * The save event carries only the video id, while answers are filed under
+     * every field that can change the picture. It also arrives at save time,
+     * not when a row happens to compose, so a row that was off-screen when the
+     * cover landed still cannot read the earlier miss.
+     */
+    fun invalidateForVideoId(videoId: String?) {
+        if (videoId.isNullOrBlank()) return
+        answers.invalidatePrefix("$videoId\u0001")
     }
 
     private fun resolveNow(context: Context, song: Song): String? {
@@ -213,4 +182,107 @@ object DownloadedArtworkResolver {
             song.thumbnailUrl.orEmpty(),
             song.localDateModifiedSeconds?.toString().orEmpty(),
         ).joinToString("\u0001")
+}
+
+/**
+ * Remembered answers plus the one read that is allowed to produce each.
+ *
+ * A remembered miss is not timed: it is dropped only when a cover save retires
+ * it, so a row recomposing on every frame never re-opens a dead path while a
+ * sidecar written later no longer waits for an unrelated redraw. Retiring also
+ * reaches a read that is already running, so the answer that started before
+ * the save cannot finish afterwards and put the old miss back.
+ */
+internal class ArtworkAnswerMemo(private val limit: Int) {
+
+    private val resolved = BoundedMemo<String, String>(limit)
+    private val inFlight = ConcurrentHashMap<String, Flight>()
+    private val lock = Any()
+
+    private class Flight(val job: CompletableDeferred<String> = CompletableDeferred()) {
+        val owned = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        @Volatile
+        var retired = false
+    }
+
+    suspend fun resolve(key: String, compute: suspend () -> String?): String? {
+        while (true) {
+            val cached = synchronized(lock) { resolved.get(key) }
+            if (!cached.isNullOrEmpty()) return cached
+            if (cached != null) return null
+            val flight = synchronized(lock) {
+                inFlight[key] ?: Flight().also { inFlight[key] = it }
+            }
+            if (flight.owned.compareAndSet(false, true)) {
+                try {
+                    val value = compute() ?: ""
+                    // A save that landed while this read was running retired
+                    // the flight; its answer is the pre-save one and must not
+                    // be written back over the fresh read.
+                    commit(key, flight, value)
+                    flight.job.complete(value)
+                } catch (cancelled: CancellationException) {
+                    flight.job.complete("")
+                    throw cancelled
+                } catch (error: Throwable) {
+                    Log.d("BitChord", "cover lookup failed for $key: ${error.message}")
+                    commit(key, flight, "")
+                    flight.job.complete("")
+                } finally {
+                    synchronized(lock) {
+                        if (inFlight[key] === flight) inFlight.remove(key)
+                    }
+                }
+            }
+            val value = try {
+                flight.job.await()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                ""
+            }
+            if (!flight.retired) return value.takeIf { it.isNotEmpty() }
+            // The read this caller waited on started before the save. Ask
+            // again so it receives the answer that includes the saved cover.
+        }
+    }
+
+    fun invalidateKey(key: String) {
+        synchronized(lock) {
+            // Retire the flight before dropping the memo: a read that is
+            // finishing right now must not write its pre-save answer back in
+            // between the two, and the other order would let a new read see
+            // the old answer while the flight is already gone.
+            inFlight.remove(key)?.retired = true
+            resolved.remove(key)
+        }
+    }
+
+    fun invalidatePrefix(prefix: String) {
+        synchronized(lock) {
+            val iterator = inFlight.entries.iterator()
+            while (iterator.hasNext()) {
+                val entry = iterator.next()
+                if (entry.key.startsWith(prefix)) {
+                    entry.value.retired = true
+                    iterator.remove()
+                }
+            }
+            resolved.removeMatching { it.startsWith(prefix) }
+        }
+    }
+
+    private fun commit(key: String, flight: Flight, value: String) {
+        synchronized(lock) {
+            if (flight.retired || inFlight[key] !== flight) return
+            // A real URI replaces an earlier "none" for the same key. A miss
+            // is kept until a save event retires it, rather than for a delay.
+            if (value.isEmpty()) {
+                resolved.getOrPut(key) { value }
+            } else {
+                resolved.put(key, value)
+            }
+        }
+    }
 }

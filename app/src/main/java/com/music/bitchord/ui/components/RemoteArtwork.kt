@@ -53,13 +53,13 @@ fun rememberRemoteArtworkUrl(song: Song?): String? {
         if (song == null) return@LaunchedEffect
         if (downloaded) {
             // Subscribe before the first read, so a cover that lands while the
-            // read is running is not missed. Only this song's save wakes this
-            // row; nothing polls the disk.
+            // read is running is not missed. The save itself retires the
+            // remembered answer (see [DownloadedArtworkEvents]); this row only
+            // asks again. Nothing polls the disk.
             launch {
                 DownloadedArtworkEvents.saved
                     .filter { it == song.videoId }
                     .collect {
-                        DownloadedArtworkResolver.invalidate(song)
                         resolved = versionedFileArtwork(
                             DownloadedArtworkResolver.resolve(context, song) ?: still,
                         )

@@ -23,6 +23,10 @@ object DownloadedArtworkEvents {
     /** Report that the cover for [videoId] has finished writing. */
     fun coverSaved(videoId: String?) {
         if (videoId.isNullOrBlank()) return
+        // Retire the remembered answer now, not in the row's collector: the row
+        // may be off-screen or recycled when the file lands, and there is no
+        // replay to deliver the event when it comes back.
+        DownloadedArtworkResolver.invalidateForVideoId(videoId)
         _saved.tryEmit(videoId)
     }
 
