@@ -1,0 +1,135 @@
+﻿You are fixing compile errors after merging upstream BitChord v1.9 into our Korean fork. Branch base = task/upstream-19. rg is NOT installed: use grep.
+
+How the merge was done: every conflict hunk took the UPSTREAM v1.9 side; our non-conflicting changes stayed. So our code that lived in conflict hunks is gone, and our remaining code references things that no longer exist (or upstream renamed/changed signatures).
+Reference versions (fetch them first):
+  git fetch origin task/fix-1030            -> origin/task/fix-1030 = our fork BEFORE the merge
+  git fetch https://github.com/kushagrasinghx/BitChord.git refs/tags/v1.9:refs/tags/v1.9   -> pure upstream v1.9 (read only, never push there)
+Use `git show origin/task/fix-1030:<path>` and `git show v1.9:<path>` to see what each side had.
+
+Policy (user order): adopt v1.9 maximally. Where v1.9 has its own implementation of the same feature, USE v1.9's and delete our now-dead caller code instead of restoring ours: quality upgrade / hq-swap / HQ prefetch -> v1.9 Direct Source Stream (DirectSourceGate); automix/crossfade -> v1.9 Automix; downloads, settings, menus, video playback, tab bar, mini player -> v1.9.
+KEEP (restore if lost) only Korean-fork features v1.9 does not have: lyrics sync correction, song-version verdict / no music-video / audio instead of MV / cover-piano rejection, Korea-blocked song fallback + proxy playback + alternate ATV copy, video radio, Korean strings, diagnostic log lines (DiagLog / featurehealth lines).
+
+Separation rule (read docs/ko-fork-layout.md): when you restore a lost Korean declaration, put it in a NEW file under package com.music.bitchord.ko (shared: shared/src/jvmSharedMain/kotlin/com/music/bitchord/ko/<LaneName>Restored*.kt; use commonMain/ko only if commonMain code needs it), NOT back inside an upstream file. Inside an upstream file (one that exists in v1.9) add only one-line calls marked with a trailing comment // [KO] <feature>. Prefer extension functions / top-level functions over editing upstream classes. Never split or delete upstream v1.9 code. When an upstream signature changed, adapt OUR code to the new upstream signature, not the other way round.
+
+Scope: fix the errors in YOUR files only (list below). Other lanes fix the other shared files in parallel, so the full build will still show errors in files outside your list - ignore those, do not edit files outside your list except new files under .../ko/. Check with: ./gradlew :shared:compileKotlinJvm --console=plain -q 2>&1 | grep '^e: ' | grep -E '<your file names>' ; your goal is ZERO errors in your files. Do not edit .github/, keys/, signing, gradle files.
+Battery first (no polling/timers, event-driven). Re-read every caller and type of a function you change. If you delete our code because v1.9 replaces it, list it in the summary with the reason.
+If you delete a test of a removed feature, list it in the summary.
+
+At the end, summarize in 10 lines or less: modified files / new ko files / what was restored (Korean features) / what was dropped in favour of v1.9 / remaining errors in your files / unresolved questions.
+
+YOUR FILES: shared/.../data/sources/TrackMatcher.kt, data/YouTubeDisplayCleaner.kt, data/cover/CoverTitles.kt, data/cover/YouTubeCoverResolver.kt, data/lyrics/LyricsQueryVariants.kt (LaneName=Matcher)
+
+Current compile errors in your files (from CI):
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YouTubeDisplayCleaner.kt:97:13 No parameter with name 'originalTitle' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YouTubeDisplayCleaner.kt:97:34 Unresolved reference 'originalTitle'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YouTubeDisplayCleaner.kt:98:13 No parameter with name 'originalArtist' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YouTubeDisplayCleaner.kt:98:35 Unresolved reference 'originalArtist'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YouTubeDisplayCleaner.kt:99:13 No parameter with name 'coverSinger' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YouTubeDisplayCleaner.kt:99:32 Unresolved reference 'coverSinger'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YouTubeDisplayCleaner.kt:100:13 No parameter with name 'coverOriginalArtist' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YouTubeDisplayCleaner.kt:100:40 Unresolved reference 'coverOriginalArtist'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YouTubeDisplayCleaner.kt:124:13 No parameter with name 'originalTitle' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YouTubeDisplayCleaner.kt:124:34 Unresolved reference 'originalTitle'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YouTubeDisplayCleaner.kt:125:13 No parameter with name 'originalArtist' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YouTubeDisplayCleaner.kt:125:35 Unresolved reference 'originalArtist'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YouTubeDisplayCleaner.kt:126:13 No parameter with name 'coverSinger' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YouTubeDisplayCleaner.kt:126:32 Unresolved reference 'coverSinger'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YouTubeDisplayCleaner.kt:438:41 Unresolved reference 'originalTitle'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YouTubeDisplayCleaner.kt:439:42 Unresolved reference 'originalArtist'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YouTubeDisplayCleaner.kt:440:39 Unresolved reference 'coverSinger'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YouTubeDisplayCleaner.kt:441:47 Unresolved reference 'coverOriginalArtist'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YouTubeDisplayCleaner.kt:448:13 No parameter with name 'originalTitle' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YouTubeDisplayCleaner.kt:449:13 No parameter with name 'originalArtist' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YouTubeDisplayCleaner.kt:450:13 No parameter with name 'coverSinger' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YouTubeDisplayCleaner.kt:451:13 No parameter with name 'coverOriginalArtist' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YouTubeDisplayCleaner.kt:463:21 Unresolved reference 'originalTitle'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YouTubeDisplayCleaner.kt:464:21 Unresolved reference 'originalArtist'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YouTubeDisplayCleaner.kt:465:21 Unresolved reference 'coverSinger'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YouTubeDisplayCleaner.kt:466:21 Unresolved reference 'coverOriginalArtist'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/cover/CoverTitles.kt:298:18 Unresolved reference 'originalTitle'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/cover/CoverTitles.kt:311:31 Unresolved reference 'originalTitle'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/cover/CoverTitles.kt:313:30 Unresolved reference 'originalTitle'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/cover/CoverTitles.kt:314:31 Unresolved reference 'originalArtist'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/cover/CoverTitles.kt:315:17 No parameter with name 'originalTitle' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/cover/CoverTitles.kt:316:17 No parameter with name 'originalArtist' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/cover/CoverTitles.kt:340:18 Unresolved reference 'originalTitle'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/cover/CoverTitles.kt:345:13 No parameter with name 'originalTitle' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/cover/CoverTitles.kt:346:13 No parameter with name 'originalArtist' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/cover/CoverTitles.kt:347:13 No parameter with name 'coverSinger' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/cover/CoverTitles.kt:348:13 No parameter with name 'coverOriginalArtist' found.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/cover/CoverTitles.kt:358:14 Unresolved reference 'originalTitle'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/cover/CoverTitles.kt:358:44 Unresolved reference 'coverSinger'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/cover/CoverTitles.kt:367:14 Unresolved reference 'coverSinger'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/cover/CoverTitles.kt:367:27 Cannot infer type for type parameter 'T'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/cover/CoverTitles.kt:367:34 Cannot infer type for type parameter 'T'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/cover/CoverTitles.kt:367:55 Cannot infer type for type parameter 'T'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/cover/CoverTitles.kt:367:55 Cannot infer type for type parameter 'R'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/cover/CoverTitles.kt:367:59 Cannot infer type for type parameter 'T'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/cover/CoverTitles.kt:382:30 Unresolved reference 'coverOriginalArtist'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/cover/CoverTitles.kt:382:51 Cannot infer type for type parameter 'T'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/cover/CoverTitles.kt:382:58 Cannot infer type for type parameter 'T'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/cover/YouTubeCoverResolver.kt:336:26 Unresolved reference 'searchLogLine'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/cover/YouTubeCoverResolver.kt:366:26 Unresolved reference 'searchLogLine'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/lyrics/LyricsQueryVariants.kt:83:26 Unresolved reference 'artistVariants'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/lyrics/LyricsQueryVariants.kt:83:61 Unresolved reference 'it'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/lyrics/LyricsQueryVariants.kt:83:85 Unresolved reference 'it'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/lyrics/LyricsQueryVariants.kt:87:22 Unresolved reference 'artistVariants'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/lyrics/LyricsQueryVariants.kt:87:55 Cannot infer type for value parameter 'name'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:83:14 Unresolved reference 'originalTitle'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:84:14 Unresolved reference 'originalArtist'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:192:9 Unresolved reference 'LEADING_TRACK_NUMBER'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:264:25 Unresolved reference 'artistVariants'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:264:84 Unresolved reference 'it'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:266:16 Unresolved reference 'artistVariants'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:266:42 Cannot infer type for value parameter 'name'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1110:9 Unresolved reference 'FROM_BRACKET'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1110:34 Cannot infer type for type parameter 'T'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1110:34 Cannot infer type for type parameter 'R'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1110:34 Unresolved reference. None of the following candidates is applicable because of a receiver type mismatch:
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1110:40 Cannot infer type for type parameter 'T'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1112:58 Argument type mismatch: actual type is 'V? (of fun <K, V> Map<out K, V>.get)', but 'String' was expected.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1112:58 Cannot infer type for type parameter 'V'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1112:64 Unresolved reference 'groupValues'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1115:9 Unresolved reference 'PIPE_TAIL'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1115:31 Cannot infer type for type parameter 'T'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1115:31 Cannot infer type for type parameter 'R'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1115:31 Unresolved reference. None of the following candidates is applicable because of a receiver type mismatch:
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1115:37 Cannot infer type for type parameter 'T'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1116:24 Cannot infer type for type parameter 'V'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1116:30 Unresolved reference 'groupValues'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1117:17 Unresolved reference 'SOUNDTRACK_WORD'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1122:48 Function invocation 'range()' expected.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1126:9 Unresolved reference 'TRAILING_SOUNDTRACK'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1126:41 Cannot infer type for type parameter 'T'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1126:41 Cannot infer type for type parameter 'R'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1126:41 Unresolved reference. None of the following candidates is applicable because of a receiver type mismatch:
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1126:47 Cannot infer type for type parameter 'T'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1127:50 Function invocation 'range()' expected.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1128:46 Function invocation 'range()' expected.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1180:9 Unresolved reference 'TRAILING_BARE_OST'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1180:39 Cannot infer type for type parameter 'T'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1180:39 Cannot infer type for type parameter 'R'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1180:39 Unresolved reference. None of the following candidates is applicable because of a receiver type mismatch:
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1180:45 Cannot infer type for type parameter 'T'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1184:23 Function invocation 'range()' expected.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1187:48 Function invocation 'range()' expected.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1217:37 Unresolved reference 'SOUNDTRACK_WORD'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1230:27 Unresolved reference 'NEUTRAL_SUFFIX_WORDS'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1244:26 Unresolved reference 'NEUTRAL_SUFFIX_WORDS'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1261:44 Unresolved reference 'NEUTRAL_SUFFIX_WORDS'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1324:37 Unresolved reference 'SOUNDTRACK_WORK_TAIL'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1368:20 Unresolved reference 'LEADING_TRACK_NUMBER'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1501:51 Unresolved reference 'NEUTRAL_SUFFIX_WORDS'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1710:17 Unresolved reference 'artistVariants'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1710:50 Unresolved reference 'it'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1712:20 Unresolved reference 'it'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1713:23 Unresolved reference 'it'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1868:73 Unresolved reference 'artistVariants'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1869:16 Cannot infer type for value parameter 'name'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1874:19 Unresolved reference 'it'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1915:24 Unresolved reference 'TRAILING_ALIAS'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1916:20 Cannot infer type for type parameter 'V'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1916:29 Unresolved reference 'groupValues'.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1917:21 Cannot infer type for type parameter 'V'. Specify it explicitly.
+shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:1917:30 Unresolved reference 'groupValues'.
+
