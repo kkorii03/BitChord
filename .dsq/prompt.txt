@@ -1,0 +1,15 @@
+﻿BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep, 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/fix-1030.
+버그(사용자 폰 스크린샷, 시험판 test19 설치 후): 홈 '최근 재생한 항목'과 미니 플레이어에 Joker OST 곡이 여전히 제목 'Call Me Joker | Joker OST', 'Gary Glitter - Rock & Roll Part II | J...', 가수 'Original Soundtrack' 로 표시. YouTubeDisplayCleaner.clean(song) 에 OST 정리(cleanSoundtrack, TrackMatcher.isSoundtrackCredit)가 들어갔지만 업데이트 전에 저장된 곡 정보(최근 재생 기록·청취 기록·저장된 재생 대기열·재생목록 캐시·다운로드 메타데이터·좋아요)는 옛 제목·가수 그대로 읽혀 화면에 나옴. 새로 받는 재생목록 행에 정리가 실제로 적용되는지도 확인(적용 지점을 grep 으로 확인해 요약에).
+수정: ① 저장된 곡을 읽어 화면·큐에 올리는 모든 경로(최근 재생 local read, 기록, 큐 복원, 재생목록/앨범 캐시, 다운로드 목록, 위젯·알림·미디어 세션 메타데이터)에서 표시용 정리를 거치게 — 저장 형식은 바꾸지 말고 읽을 때 정리(또는 한 번만 저장값 마이그레이션, 둘 중 안전한 쪽 — 이유를 요약에). ② 'Original Soundtrack'·'OST'·'Soundtrack' 이 가수 칸에 남는 경로 0. ③ 커버 곡(오화요·아카네 리제 등)·공식 곡 표시 회귀 없게(기존 테스트 통과).
+테스트: 옛 형식 저장값(제목 '<가수> - <곡> | <작품> OST - Original Soundtrack', 가수 'Original Soundtrack')을 읽으면 제목 '<곡>', 가수 '<가수>' 로 나오는지 — 최근 재생·큐 복원 경로 단위 테스트.
+반드시: 배터리(읽을 때 정리는 가볍게, 캐시). 제약: .github/, keys, 서명 수정 금지. 마지막 10줄 요약.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 3
+- MEDIUM `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:1950`: `shelf.suggested` is passed through raw while `shelf.songs` is cleaned, so the detail page's “Suggested” rows still show stale OST titles and “Original Soundtrack.” Fix: map `shelf.suggested` through `StoredSongDisplay.clean` as well.
+- MEDIUM `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt:1762` (also 1903, 2014): the `YouTubeFallback` playlist branches return rows uncleaned, so when the music gate/cookie path is used, fresh and continued playlist rows still display the upload packaging. Fix: clean `result.songs`/`hiddenSongs` and `YouTubeFallback.allSongs` results at these fallback exits.
+- MEDIUM `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YouTubeDisplayCleaner.kt:431`: the cache key omits `artistId` and all live cover facts (`designatedChannels`, `knownSingers`, `knownOriginal`), so the first read can permanently cache a non-cover/stale display for a cover row and later reads cannot correct it. Fix: include the cover-fact revision and `artistId` in the key, or bypass/clear the cache when those facts change.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
