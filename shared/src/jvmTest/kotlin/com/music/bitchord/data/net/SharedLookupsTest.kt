@@ -65,6 +65,9 @@ class SharedLookupsTest {
             "the waiter's own budget ends the wait",
         )
         assertEquals("late-answer", withTimeout(5_000) { finished.await() })
+        // `finished` completes inside the lookup's own block, a moment before
+        // the job itself does; asking at once raced it (CI 41182258936).
+        withTimeout(5_000) { while (lookups.isRunning("v2")) delay(10) }
         assertFalse(lookups.isRunning("v2"), "the finished lookup leaves the way clear")
     }
 
