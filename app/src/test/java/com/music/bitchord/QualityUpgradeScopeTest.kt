@@ -67,6 +67,27 @@ class QualityUpgradeScopeTest {
         assertTrue(QualityUpgrade.hasAnsweredFor(mediaId))
     }
 
+
+    /**
+     * A hand-made request overrules a previous "nothing better" verdict, even
+     * when that verdict was reached while a source was down. See
+     * [QualityUpgrade.askByHand].
+     */
+    @Test
+    fun `a manual request reopens an answered track`() {
+        val manualId = "manual-reopen"
+        QualityUpgrade.markAnsweredForTest(manualId)
+        assertTrue(QualityUpgrade.hasAnsweredFor(manualId))
+
+        QualityUpgrade.askByHand(manualId)
+
+        assertFalse(
+            "the listener contradicting a cached none must start the search again",
+            QualityUpgrade.hasAnsweredFor(manualId),
+        )
+        QualityUpgrade.forget(manualId)
+    }
+
     /** One track's replay says nothing about another's. */
     @Test
     fun `re-opening one track leaves the rest alone`() {

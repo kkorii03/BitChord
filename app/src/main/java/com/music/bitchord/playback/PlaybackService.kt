@@ -7083,6 +7083,14 @@ class PlaybackService : MediaLibraryService() {
         if (upgradeJob?.isActive == true && upgradeFor == mediaId) {
             manualUpgradeFor = mediaId
             manualJoinedRunningUpgrade = true
+            // Joining the running check must not turn the manual request back
+            // into the automatic one. Completed catalogue answers are dropped
+            // (in-flight work is kept) and the track's "already asked" verdict
+            // is reopened, so the pass that follows this join asks the sources
+            // again instead of replaying the empty answer that started it. The
+            // running job is left to finish; only completed entries go.
+            SourceRegistry.clearCompletedAddonTrackCalls()
+            QualityUpgrade.askByHand(mediaId)
             val running = upgradeJob
             TrackLog.d(
                 "BitChord",
@@ -7095,6 +7103,12 @@ class PlaybackService : MediaLibraryService() {
                     manualJoinedRunningUpgrade = false
                     val live = player
                     if (live?.currentMediaItem?.mediaId == mediaId) {
+                        // The automatic pass may have written its "nothing"
+                        // verdict while this waiter was parked. Reopen both the
+                        // verdict and the catalogue answers now, immediately
+                        // before the manual pass, so it really asks again.
+                        SourceRegistry.clearCompletedAddonTrackCalls()
+                        QualityUpgrade.askByHand(mediaId)
                         lookForBetterCopy(live)
                     } else {
                         manualUpgradeFor = null

@@ -457,6 +457,57 @@ object TrackMatcher {
         return true
     }
 
+    /**
+     * Why [candidate] was or was not accepted for [target], in one word.
+     *
+     * The same checks [isOriginalRecording], [sharesArtist] and
+     * [withinSeconds] apply, in the order [SourceResolver] applies them, so
+     * the `hq-search` log line can name the term that rejected a row instead
+     * of leaving "results=12, no match" as the only evidence. It judges one
+     * candidate; a caller with several passes the best-ranked one.
+     *
+     * The vocabulary is deliberately small and stable:
+     * `match`, `title`, `version`, `artist`, `duration`.
+     */
+    fun rejectionReason(
+        candidate: Song,
+        target: Target,
+        strictOriginal: Boolean = false,
+        requireSharedArtist: Boolean = false,
+        strictLength: Boolean = false,
+    ): String {
+        if (strictOriginal) {
+            if (isCoverOf(candidate, target)) return "version"
+            val wanted = parseTitle(target.title, target.artist)
+            val got = parseTitle(candidate.title, candidate.artist)
+            if (wanted.core.isBlank() || got.core.isBlank()) return "title"
+            if (!coresEqual(wanted.cores(), got.cores())) return "title"
+            val albumMarks = albumVersionMarkers(candidate.albumName)
+            val effectiveVersions = got.versions + (albumMarks intersect NOVOCAL_TAKES) +
+                (albumMarks intersect wanted.versions)
+            if (wanted.versions != effectiveVersions) return "version"
+            if (target.artist.isNotBlank()) {
+                val sameArtist = (candidate.artist.isNotBlank() &&
+                    namesTheSameArtist(target.artist, candidate.artist)) ||
+                    sharesArtistChannel(target, candidate) ||
+                    sharesRelease(target, candidate)
+                if (!sameArtist) return "artist"
+            }
+            if (strictLength && target.durationSec != null) {
+                val gotSec = secondsOf(candidate.durationText) ?: return "duration"
+                if (abs(target.durationSec - gotSec) > SUBSTITUTE_DRIFT_SEC) return "duration"
+            }
+            return "match"
+        }
+        if (requireSharedArtist && !sharesArtist(target.artist, candidate.artist)) {
+            return "artist"
+        }
+        if (strictLength && !withinSeconds(candidate, target, SUBSTITUTE_DRIFT_SEC)) {
+            return "duration"
+        }
+        return "match"
+    }
+
     /** Whether [text] carries Latin letters, the script catalogues file in. */
     fun hasLatinLetters(text: String): Boolean =
         text.any { it in 'a'..'z' || it in 'A'..'Z' }
