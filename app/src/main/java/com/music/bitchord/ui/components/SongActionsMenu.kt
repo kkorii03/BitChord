@@ -21,8 +21,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.Undo
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ErrorOutline
+import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -52,7 +57,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import com.music.bitchord.ui.player.ThinSlider
@@ -221,10 +225,9 @@ fun SongActionsMenu(
     val palette = neutralMenuPalette()
     val liked = likeStatus == LikeStatus.LIKE
     val disliked = likeStatus == LikeStatus.DISLIKE
-    // A plain device or file-library row has no YouTube identity behind it to
-    // rate, save, queue into a playlist, fetch again, or share a link for. A
-    // downloaded YouTube track does, and keeps every account row.
-    val isLocalFile = SongOrigins.isLocalFile(song)
+    // A local file or a finished download has no YouTube identity behind it to
+    // rate, save, queue into a playlist, fetch again, or share a link for.
+    val isOffline = song.localUri != null
 
     val rows: @Composable ColumnScope.() -> Unit = {
         // Groups are drawn as they turn out to have something in them, and the
@@ -590,10 +593,11 @@ private fun DownloadRow(song: Song, palette: ArtworkPalette, isLocalFile: Boolea
 private fun WebDavUploadRow(
     song: Song,
     palette: ArtworkPalette,
+    isOffline: Boolean,
     onUpload: (() -> Unit)?,
 ) {
     onUpload ?: return
-    if (!WebDavUploads.isUploadable(song)) return
+    if (!isOffline || !WebDavUploads.isUploadable(song)) return
     val active by WebDavUploads.active.collectAsStateWithLifecycle()
     when (val state = active[song.videoId]) {
         is WebDavUploads.TrackState.Running -> ActionRow(

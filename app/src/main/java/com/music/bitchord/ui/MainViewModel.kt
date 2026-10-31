@@ -208,6 +208,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val homeRecentlyPlayedLoading: StateFlow<Boolean> = _homeRecentlyPlayedLoading.asStateFlow()
     private val homeLoadGeneration = AtomicLong(0L)
 
+    /** The launch doing a full Home load, so a refresh joins it. */ // [KO] home load dedupe
+    private var homeLoadJob: Job? = null
+
     /**
      * Home's "Top Picks for You" row: null until built, empty if there was
      * nothing to build it from. Declared ahead of [init] for the same reason
@@ -440,30 +443,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val lyricsChecked: StateFlow<Boolean> = lyricsController.lyricsChecked
 
     val lyricsProviderStates: StateFlow<Map<LyricsSource, LyricsProviderState>> =
-        _lyricsProviderStates.asStateFlow()
-
-    /** Completed hits are retained for the playing track so choosing one is instant. */
-    private val lyricsProviderResults = ConcurrentHashMap<LyricsSource, LyricsRepository.Result>()
-
-    private data class LyricsRequest(
-        val videoId: String,
-        val title: String,
-        val artist: String,
-        val durationMs: Long,
-        val album: String?,
-    )
-
-    private var currentLyricsRequest: LyricsRequest? = null
-    private var lyricsGeneration = 0L
-    private var selectedLyricsSource: LyricsSource? = null
-
-    /**
-     * What the loaded lyrics are for. Both the track *and* the settings that
-     * chose them, so switching a source on or off re-runs the lookup rather
-     * than leaving the last answer sitting on a player that would now find a
-     * different one.
-     */
-    private var lyricsFor: List<Any>? = null
+        lyricsController.lyricsProviderStates
 
     /**
      * Called as the playing track changes; cheap no-op when already loaded.
@@ -476,80 +456,29 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         durationMs: Long,
         album: String? = null,
         localUri: String? = null,
-    ) {
-        val sources = if (AppSettings.syncedLyrics.value) {
-            AppSettings.lyricsSources.value
-        } else {
-            emptySet()
-        }
-        val key = lyricsLookupKey(
-            videoId, sources, AppSettings.lyricsSourceOrder.value, AppSettings.prioritizeSyllableSync.value,
-        )
-        if (lyricsFor == key) return
-        // The duration lands a beat after the track, and a database match needs
-        // it. Turned away here rather than inside the job below: claiming the
-        // lookup first and giving it up asynchronously means the very re-trigger
-        // that carries the duration can arrive while the claim still stands, be
-        // dropped as a duplicate, and leave the track marked as being looked up
-        // by nobody — which is what left a paused track loading for ever, since
-        // pausing is when the duration is most likely to arrive a frame late.
-        if (localUri == null && durationMs <= 0L) return
-        lyricsFor = key
-        lyricsGeneration += 1
-        val generation = lyricsGeneration
-        currentLyricsRequest = LyricsRequest(videoId, title, artist, durationMs, album)
-        selectedLyricsSource = null
-        manualLyricsJobs.values.forEach(Job::cancel)
-        manualLyricsJobs.clear()
-        lyricsProviderResults.clear()
-        _lyricsProviderStates.value =
-            LyricsSource.entries.associateWith { LyricsProviderState.NOT_FETCHED }
-        _lyrics.value = null
-        _lyricsSource.value = null
-        lyricsJob?.cancel()
-        if (sources.isEmpty()) {
-            // Switched off, or every source unticked. Nothing to look up, and
-            // nothing to say about it — the player drops the lyric strip
-            // rather than reporting a track with no lyrics.
-            _lyricsChecked.value = true
-            return
-        }
-        _lyricsChecked.value = false
-        lyricsJob = viewModelScope.launch {
-            // The file first, and without the duration gate below: a length is
-            // only needed to *match* a track against a stranger's database, and
-            // nothing is being matched here — these lyrics were written into
-            // this exact file, for this exact recording.
-            if (localUri != null) {
-                EmbeddedLyrics.forUri(getApplication(), localUri)?.let { embedded ->
-                    _lyrics.value = embedded
-                    // No source to name: what the file records is the lyrics,
-                    // not which of the eight services they came from months ago.
-                    _lyricsSource.value = null
-                    _lyricsChecked.value = true
-                    return@launch
-                }
-            }
-            if (durationMs <= 0L) {
-                // Duration arrives a beat after the track does; wait for it.
-                lyricsFor = null
-                return@launch
-            }
-            val found = LyricsRepository.lyrics(
-                videoId, title, artist, durationMs, album, sources,
-                AppSettings.lyricsSourceOrder.value, AppSettings.prioritizeSyllableSync.value,
-                onSourceStarted = { source -> providerStarted(generation, source) },
-                onSourceResult = { source, result ->
-                    providerFinished(generation, source, result)
-                },
-                onSourceCancelled = { source -> providerCancelled(generation, source) },
-            )
-            val selected = selectedLyricsSource?.let(lyricsProviderResults::get) ?: found
-            _lyrics.value = selected?.lines
-            _lyricsSource.value = selected?.source
-            _lyricsChecked.value = true
-        }
-    }
+        /** A video upload: its captions are asked first. */
+        isVideo: Boolean = false,
+        /** Other readings of a cover's title to search under — see CoverTitles. */
+        alternatives: List<Pair<String, String>> = emptyList(),
+        /** False when [artist] is only a cover's singer — see CoverTitles.LyricsQuery. */
+        artistKnown: Boolean = true,
+        /** Other names the row's artist is known by — see CoverTitles.LyricsQuery. */
+        artistAliases: List<String> = emptyList(),
+    ) = lyricsController.loadLyrics(
+        videoId = videoId,
+        title = title,
+        artist = artist,
+        durationMs = durationMs,
+        album = album,
+        localUri = localUri,
+        isVideo = isVideo,
+        alternatives = alternatives,
+        artistKnown = artistKnown,
+        artistAliases = artistAliases,
+    )
+
+    /** Selects a provider from the player drawer — see [LyricsController.selectLyricsProvider]. */
+    fun selectLyricsProvider(source: LyricsSource) = lyricsController.selectLyricsProvider(source)
 
     /**
      * Reopens the panel after a transient miss — see
@@ -1973,7 +1902,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // one at the tail.
         _homePendingShelves.value = 1 + YtMusicRepository.HOME_SUPPLEMENT_BROWSE_IDS.size
         loadTopPicks(identity, rebuild = false)
-        viewModelScope.launch {
+        homeLoadJob = viewModelScope.launch {
             launch {
                 try {
                     YtMusicRepository.home()
@@ -2213,13 +2142,32 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Refreshes the core feed without blanking the current Play page first. */
-    private suspend fun refreshHome(identity: String?) = coroutineScope {
+    private suspend fun refreshHome(
+        identity: String?,
+        force: Boolean = false,
+        replaceShelves: Boolean = false,
+        reason: String = "tab",
+    ) = coroutineScope {
+        com.music.bitchord.data.TrackLog.d("BitChord", "home: refresh by $reason")
+        val generation = homeLoadGeneration.incrementAndGet()
+        homeContinuation = null
+        _homeLoadingMore.value = false
+        _homePendingShelves.value = 0
+        _homeRecentlyPlayedLoading.value = false
+        val previous = (_home.value as? UiState.Success)?.data.orEmpty()
         val recent = if (_signedIn.value) async { YtMusicRepository.homeRecentlyPlayed() } else null
         // Top Picks keeps to its hour; a pull refreshes the feed, not the
         // picks, unless the hour has already turned over.
         if (topPicksJob?.isActive != true) loadTopPicks(identity, rebuild = false)
-        YtMusicRepository.home().onSuccess { feed ->
-            if (identity != listenerKey()) return@onSuccess
+        YtMusicRepository.home(force = force).onSuccess { feed ->
+            if (!isCurrentHomeLoad(identity, generation)) return@onSuccess
+            val merge = mergeHomeShelves(
+                previous = previous,
+                fetched = feed.shelves.withoutRepeatsOf(emptyList()),
+                source = feed.source,
+                previousSource = homeSource.takeUnless { replaceShelves },
+            )
+            homeSource = feed.source
             homeContinuation = feed.continuation
             homeSeenTitles.clear()
             homeSeenTitles.addAll(merge.shelves.map { it.title.lowercase(Locale.ROOT) })
@@ -2244,7 +2192,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
         }
-        recent.await().onSuccess { shelf ->
+        recent?.await()?.onSuccess { shelf ->
             if (isCurrentHomeLoad(identity, generation)) {
                 shelf?.let {
                     publishHomeShelves(listOf(it), prepend = true)
@@ -3022,12 +2970,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // The same sound check the queue's read-ahead runs, applied
                 // inside the race so a refused cover does not hide a slower
                 // source's real recording.
-                val warmed = SourceResolver.prefetchSubstitute(target, remember = false) { _, candidate ->
+                // [KO] v1.9 Direct Source owns pinning; prefetch only warms the tap path.
+                val warmed = SourceResolver.prefetchSubstitute(target, remember = true) { _, candidate ->
                     com.music.bitchord.playback.smart.HqAudioVerify
                         .verify(getApplication(), playSong.videoId, target, candidate) != null
                 }
                 if (warmed != null) {
-                    SourceResolver.rememberOriginal(target, warmed)
                     StreamChoice.remember(playSong.videoId, warmed, substituted = true)
                     return@runCatching
                 }
@@ -3039,6 +2987,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     companion object {
+        /** The app's own Recents key, as the feed and the shelf-title localiser use it. */ // [KO]
+        private const val RECENTS_TITLE = "Recents"
+
         /** Today's Top Picks row, kept so the next launch paints it before any request. */
         private const val TOP_PICKS_FILE = "top_picks_v4.json"
 

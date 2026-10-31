@@ -5,6 +5,7 @@ import com.music.bitchord.wear.WatchInstaller
 import android.content.Context
 import androidx.annotation.StringRes
 import android.content.Intent
+import android.media.AudioFormat
 import android.media.audiofx.AudioEffect
 import android.net.Uri
 import android.os.Build
@@ -77,6 +78,7 @@ import androidx.compose.material.icons.rounded.Draw
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.SignalCellularAlt
+import androidx.compose.material.icons.rounded.SmartDisplay
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.SurroundSound
 import androidx.compose.material.icons.rounded.Tune
@@ -99,7 +101,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import com.music.bitchord.ui.components.IosSwitch
+import com.music.bitchord.ui.FriendlyError
+import com.music.bitchord.ui.theme.AppSpacing
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -172,8 +178,10 @@ import com.music.bitchord.data.settings.SettingsTransfer
 import com.music.bitchord.data.settings.SettingsTransferInbox
 import com.music.bitchord.data.settings.TransferCategory
 import com.music.bitchord.data.settings.OutputPcmMode
+import com.music.bitchord.data.settings.PrivateListeningSource
 import com.music.bitchord.data.settings.BitPerfectMode
 import com.music.bitchord.playback.AudioOutputStatus
+import com.music.bitchord.playback.AudioRouting
 import com.music.bitchord.playback.audio.bitperfect.BitPerfectOutput
 import com.music.bitchord.data.settings.AutomixPerformanceMode
 import com.music.bitchord.R
@@ -248,6 +256,7 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
 
+    val metered by AppSettings.meteredConnection.collectAsStateWithLifecycle()
     val wifiQuality by AppSettings.audioQualityWifi.collectAsStateWithLifecycle()
     val cellularQuality by AppSettings.audioQualityCellular.collectAsStateWithLifecycle()
     val crossfade by AppSettings.crossfadeSeconds.collectAsStateWithLifecycle()
@@ -300,6 +309,10 @@ fun SettingsScreen(
     val resumeOnHeadphones by AppSettings.resumeOnHeadphones.collectAsStateWithLifecycle()
     val personalisedAutoplay by AppSettings.personalisedAutoplay.collectAsStateWithLifecycle()
     val videoRadio by AppSettings.videoRadio.collectAsStateWithLifecycle()
+    // [KO] prefer music-only / non-music + sponsor skipping
+    val preferMusicOnly by AppSettings.preferMusicOnly.collectAsStateWithLifecycle()
+    val skipNonMusicParts by AppSettings.skipNonMusicParts.collectAsStateWithLifecycle()
+    val skipSponsorParts by AppSettings.skipSponsorParts.collectAsStateWithLifecycle()
     // Read again whenever the page comes back, which is how a grant made in
     // the system's own screen shows up here.
     val settingsForeground = com.music.bitchord.ui.rememberIsForeground()
@@ -875,6 +888,95 @@ fun SettingsScreen(
             header = stringResource(R.string.playback),
             footer = stringResource(R.string.bit_perfect_bypassed_footer).takeIf { bitPerfectReady },
         ) {
+            // [KO] fork-only playback rows restored over v1.9.
+            val resumeOnHeadphonesTitle = stringResource(R.string.resume_on_headphones)
+            row(resumeOnHeadphonesTitle, "headphones", "earbuds", "bluetooth", "resume", "이어폰") {
+                SettingsRow(
+                    icon = Icons.Rounded.Headphones,
+                    title = resumeOnHeadphonesTitle,
+                    trailing = {
+                        Switch(
+                            checked = resumeOnHeadphones,
+                            onCheckedChange = { AppSettings.setResumeOnHeadphones(it) },
+                            colors = settingsSwitchColors(),
+                        )
+                    },
+                    onClick = { AppSettings.setResumeOnHeadphones(!resumeOnHeadphones) },
+                )
+            }
+            val personalisedAutoplayTitle = stringResource(R.string.personalised_autoplay)
+            row(personalisedAutoplayTitle, "autoplay", "radio", "recommend", "추천") {
+                SettingsRow(
+                    icon = Icons.Rounded.AutoAwesome,
+                    title = personalisedAutoplayTitle,
+                    trailing = {
+                        Switch(
+                            checked = personalisedAutoplay,
+                            onCheckedChange = AppSettings::setPersonalisedAutoplay,
+                            colors = settingsSwitchColors(),
+                        )
+                    },
+                    onClick = { AppSettings.setPersonalisedAutoplay(!personalisedAutoplay) },
+                )
+            }
+            val videoRadioTitle = stringResource(R.string.video_radio_continue)
+            row(videoRadioTitle, "video", "radio", "cover", "비디오") {
+                SettingsRow(
+                    icon = Icons.Rounded.SmartDisplay,
+                    title = videoRadioTitle,
+                    trailing = {
+                        Switch(
+                            checked = videoRadio,
+                            onCheckedChange = AppSettings::setVideoRadio,
+                            colors = settingsSwitchColors(),
+                        )
+                    },
+                    onClick = { AppSettings.setVideoRadio(!videoRadio) },
+                )
+            }
+            val preferMusicOnlyTitle = stringResource(R.string.prefer_music_only)
+            row(preferMusicOnlyTitle, "video", "audio", "music video") {
+                SettingsRow(
+                    icon = Icons.Rounded.SmartDisplay,
+                    title = preferMusicOnlyTitle,
+                    subtitle = stringResource(R.string.prefer_music_only_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = preferMusicOnly,
+                            onCheckedChange = AppSettings::setPreferMusicOnly,
+                            colors = settingsSwitchColors(),
+                        )
+                    },
+                    onClick = { AppSettings.setPreferMusicOnly(!preferMusicOnly) },
+                )
+            }
+            val skipNonMusicPartsTitle = stringResource(R.string.skip_non_music_parts)
+            row(skipNonMusicPartsTitle, "sponsor", "skip", "intro", "outro", "건너뛰기") {
+                SettingsRow(
+                    icon = Icons.Rounded.MusicOff,
+                    title = skipNonMusicPartsTitle,
+                    subtitle = stringResource(R.string.skip_non_music_parts_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = skipNonMusicParts,
+                            onCheckedChange = AppSettings::setSkipNonMusicParts,
+                            colors = settingsSwitchColors(),
+                        )
+                    },
+                    onClick = { AppSettings.setSkipNonMusicParts(!skipNonMusicParts) },
+                )
+            }
+            if (skipNonMusicParts) {
+                val skipSponsorPartsTitle = stringResource(R.string.skip_sponsor_parts)
+                row(skipSponsorPartsTitle, "sponsor", "self promo", "intro", "outro", divided = false) {
+                    SettingsSubRow(
+                        title = skipSponsorPartsTitle,
+                        subtitle = stringResource(R.string.skip_sponsor_parts_subtitle),
+                        checked = skipSponsorParts,
+                        onCheckedChange = AppSettings::setSkipSponsorParts,
+                    )
+                }
+            }
             val outputPrecisionTitle = stringResource(R.string.output_precision)
             val outputRouteLabel = stringResource(
                 when (outputStatus.routeKind) {
@@ -2729,6 +2831,15 @@ private fun AppFont.description(): String = stringResource(
     when (this) {
         AppFont.DEFAULT -> R.string.font_default_subtitle
         AppFont.LEGACY -> R.string.font_legacy_subtitle
+    },
+)
+
+@Composable
+private fun LowPowerMode.localizedLabel(): String = stringResource(
+    when (this) {
+        LowPowerMode.AUTO -> R.string.low_power_auto
+        LowPowerMode.ON -> R.string.low_power_on
+        LowPowerMode.OFF -> R.string.low_power_off
     },
 )
 
