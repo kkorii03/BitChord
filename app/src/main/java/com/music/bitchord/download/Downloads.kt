@@ -20,6 +20,11 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.DownloadQuality
+import com.music.bitchord.data.sources.DownloadHealthPolicy
+import com.music.bitchord.data.sources.HqQuality
+import com.music.bitchord.data.sources.HqTier
+import com.music.bitchord.playback.smart.HqAudioVerify
+import com.music.bitchord.playback.smart.HqVerificationStore
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
@@ -2284,11 +2289,7 @@ object Downloads {
             }
         }
         val route = try {
-            if (hq != null) {
-                routeForVerified(context, track, quality, hq)
-            } else {
-                routeFor(context, track, quality, avoidSource, youtubeOnly)
-            }
+            routeFor(context, track, quality)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

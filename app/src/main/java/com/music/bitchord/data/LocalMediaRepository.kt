@@ -12,6 +12,7 @@ import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import com.music.bitchord.data.DebugLog as Log
+import com.music.bitchord.R
 import androidx.core.content.ContextCompat
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings

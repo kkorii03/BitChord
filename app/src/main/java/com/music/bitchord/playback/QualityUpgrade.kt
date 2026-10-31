@@ -560,7 +560,6 @@ object QualityUpgrade {
          * about the catalogue, so it must not enter [asked].
          */
         var conclusive = false
-        val report = SourceResolver.SearchReport()
         val expectedSec = waiting.target.durationSec
         val effectiveDurationSec = effectiveTargetDuration(expectedSec, playingDurationSec)
         if (expectedSec != null && playingDurationSec != null &&
@@ -635,7 +634,6 @@ object QualityUpgrade {
                 excludeSources = excludedSources,
                 excludeHosts = excludedHosts,
                 manual = waiting.manual,
-                report = report,
             ).also {
                 found = it
                 if (it != null && needsLosslessFollowUp(it.format)) {
@@ -652,7 +650,7 @@ object QualityUpgrade {
                 // A copy that opened while a better row failed (a fallback
                 // below the request) is not a verdict either: once the source
                 // is back the better row may open.
-                conclusive = report.allConclusive
+                conclusive = true
                 answered = true
             }
         } finally {
