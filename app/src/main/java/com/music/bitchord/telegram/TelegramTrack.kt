@@ -67,6 +67,53 @@ object TelegramFormatProbe {
         }
     }
 
+    /** What the name and the file's size say about depth and rate; nulls mean "not said". */
+    data class Estimate(val bitDepth: Int?, val sampleRateHz: Int?, val kbps: Int?)
+
+    private val DEPTH = Regex("""(?<![0-9])(16|24|32)[\s_-]?bits?(?![a-z])""", RegexOption.IGNORE_CASE)
+    private val RATE = Regex("""(?<![0-9.])(44[.,]1|48|88[.,]2|96|176[.,]4|192|352[.,]8|384)\s?khz""", RegexOption.IGNORE_CASE)
+
+    /**
+     * Bit depth and sample rate for a lossless file, from what the channel
+     * already printed — `24bit`, `96kHz` in the file name or title — or, when
+     * the name is silent, from its average bitrate. Telegram files were all
+     * ranked as plain 16-bit FLAC, so a 24-bit upload could never beat a
+     * 24-bit addon row. The bitrate fallback is deliberately cautious: a loud
+     * 16-bit master can pass 1100 kbps, so only clearly hi-res rates count,
+     * and a claim the audio does not back is still caught by the existing
+     * fake-hi-res rule on [kbps] and by the sound comparison.
+     */
+    fun estimate(track: TelegramTrack, format: TelegramFormat): Estimate {
+        if (!format.lossless) return Estimate(null, null, null)
+        val kbps = if (track.durationSec > 0 && track.size > 0) {
+            (track.size * 8 / 1000 / track.durationSec).toInt()
+        } else {
+            null
+        }
+        val text = "${track.fileName} ${track.title}"
+        val namedDepth = DEPTH.find(text)?.groupValues?.get(1)?.toIntOrNull()
+        val namedRate = RATE.find(text)?.groupValues?.get(1)
+            ?.replace(',', '.')?.toDoubleOrNull()
+            ?.let { (it * 1000).toInt() }
+        if (namedDepth != null || namedRate != null) {
+            val depth = namedDepth ?: if (namedRate != null && namedRate >= 88_200) 24 else null
+            val rate = namedRate ?: if (depth != null) 44_100 else null
+            return Estimate(depth, rate, kbps)
+        }
+        return when {
+            kbps == null -> Estimate(null, null, null)
+            kbps >= HI_RES_HIGH_RATE_KBPS -> Estimate(24, 96_000, kbps)
+            kbps >= HI_RES_BASE_RATE_KBPS -> Estimate(24, 44_100, kbps)
+            else -> Estimate(16, 44_100, kbps)
+        }
+    }
+
+    /** Above anything 16-bit/44.1 stereo FLAC reaches, cover art included. */
+    private const val HI_RES_BASE_RATE_KBPS = 1_600
+
+    /** 24-bit at 88.2 kHz and up; 24/44.1 rarely passes about 2300. */
+    private const val HI_RES_HIGH_RATE_KBPS = 2_900
+
     /** The extension Telegram printed, else the mime type's own name for the audio. */
     fun codecOf(fileName: String, mimeType: String): String? {
         // ALAC usually lives in an .m4a container; when its name or mime says
@@ -98,6 +145,7 @@ object TelegramTrackMapper {
 
     fun toSong(track: TelegramTrack, configId: String): Song {
         val format = TelegramFormatProbe.of(track.fileName, track.mimeType)
+        val estimate = TelegramFormatProbe.estimate(track, format)
         return Song(
             videoId = SourceRegistry.trackKey(configId, track.id),
             title = track.title.ifBlank { track.fileName.ifBlank { "Telegram audio" } },
@@ -105,12 +153,19 @@ object TelegramTrackMapper {
             thumbnailUrl = null,
             durationText = durationText(track.durationSec),
             sourceQuality = format.quality,
+            sourceHiRes = (estimate.bitDepth ?: 0) >= 24,
         )
     }
 
     fun streamFormat(track: TelegramTrack): StreamFormat {
         val format = TelegramFormatProbe.of(track.fileName, track.mimeType)
-        return StreamFormat(codec = format.codec)
+        val estimate = TelegramFormatProbe.estimate(track, format)
+        return StreamFormat(
+            codec = format.codec,
+            kbps = estimate.kbps,
+            sampleRateHz = estimate.sampleRateHz,
+            bitDepth = estimate.bitDepth,
+        )
     }
 
     fun durationText(seconds: Int): String? {
