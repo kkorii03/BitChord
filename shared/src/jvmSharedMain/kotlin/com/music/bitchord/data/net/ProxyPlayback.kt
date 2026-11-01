@@ -113,9 +113,12 @@ object ProxyPlaybackPolicy {
      * caller's start; null means "not captured" (a URL handed back by a retry)
      * and keeps the previous live-read behaviour.
      *
-     * [registeredGeneration] is the authoritative stamp for a Music-only URL
-     * that went through [ProxyPlayback.markResolved]; it is never replaced by
-     * the captured ALL value.
+     * When the caller captured the start, the captured generation is the
+     * answer: for a Music-only URL that went through
+     * [ProxyPlayback.markResolved] it is that registered generation, and for a
+     * direct URL it is null. Falling back to the live [registeredGeneration]
+     * here relabelled a pre-ALL direct URL with the route that ALL had just
+     * enabled, which the next open then treated as proxy-minted.
      */
     fun stampFor(
         capturedGeneration: Long?,
@@ -127,7 +130,7 @@ object ProxyPlaybackPolicy {
             return ResolvedUrlStamp(capturedGeneration, true)
         }
         if (capturedOnAllScope == false) {
-            return ResolvedUrlStamp(registeredGeneration, false)
+            return ResolvedUrlStamp(capturedGeneration, false)
         }
         return ResolvedUrlStamp(
             proxyGeneration = registeredGeneration,
@@ -307,17 +310,25 @@ object ProxyPlayback {
      * went direct, so no stamp is given and the URL is allowed to survive.
      */
     fun generationFor(url: String): Long? {
-        val key = canonical(url)
-        proxiedUrls[key]?.let { return it.generation }
+        registeredGenerationFor(url)?.let { return it }
         val config = YouTubeProxy.config
         if (!config.usable || config.scope != ProxyScope.ALL_YOUTUBE) return null
         if (ProxyHealthMonitor.shouldBypassProxy()) return null
-        val parsed = key.toHttpUrlOrNull() ?: return null
+        val parsed = canonical(url).toHttpUrlOrNull() ?: return null
         if (!ProxyScopeMatcher.matches(parsed.host, parsed.encodedPath, ProxyScope.ALL_YOUTUBE)) {
             return null
         }
         return YouTubeProxy.routeGeneration
     }
+
+    /**
+     * The generation [markResolved] recorded for [url], or null when the URL
+     * was not minted through the Music-only fallback.
+     *
+     * Unlike [generationFor] this never reports a live ALL route, so a direct
+     * URL is not mistaken for one when the scope changes around it.
+     */
+    fun registeredGenerationFor(url: String): Long? = proxiedUrls[canonical(url)]?.generation
 
     /** The route generation in force now. */
     val currentRouteGeneration: Long get() = YouTubeProxy.routeGeneration

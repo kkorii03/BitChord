@@ -182,7 +182,7 @@ class ProxyRouteGenerationTest {
         YouTubeProxy.update(withBackup.copy(scope = ProxyScope.ALL_YOUTUBE))
 
         val stamp = ProxyPlaybackPolicy.stampFor(
-            capturedGeneration = YouTubeProxy.routeGeneration,
+            capturedGeneration = null,
             capturedOnAllScope = false,
             registeredGeneration = null,
             currentAllScope = true,
@@ -200,6 +200,24 @@ class ProxyRouteGenerationTest {
             ),
             "a URL minted directly must not be fetched through a proxy that was enabled mid-resolve",
         )
+    }
+
+    @Test
+    fun `a pre-all direct url is not given the live all-scope generation`() {
+        YouTubeProxy.update(withBackup.copy(scope = ProxyScope.ALL_YOUTUBE))
+
+        val stamp = ProxyPlaybackPolicy.stampFor(
+            capturedGeneration = null,
+            capturedOnAllScope = false,
+            registeredGeneration = YouTubeProxy.routeGeneration,
+            currentAllScope = true,
+        )
+
+        assertNull(
+            stamp.proxyGeneration,
+            "a direct URL minted before ALL must not be relabelled with the live proxy generation",
+        )
+        assertFalse(stamp.mintedOnAllScope)
     }
 
     @Test

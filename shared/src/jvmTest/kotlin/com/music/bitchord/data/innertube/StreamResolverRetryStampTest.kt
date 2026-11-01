@@ -8,8 +8,10 @@ import com.music.bitchord.data.net.ProxyScope
 import com.music.bitchord.data.net.YouTubeProxy
 import kotlin.test.AfterTest
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -50,6 +52,10 @@ class StreamResolverRetryStampTest {
         StreamResolver.rememberServed(id, url)
 
         val stamp = assertNotNull(StreamResolver.cachedProxyStampForTest(id))
+        assertNull(
+            stamp.proxyGeneration,
+            "a direct URL must stay unstamped; the live ALL route must not be written onto it",
+        )
         assertFalse(
             stamp.mintedOnAllScope,
             "a URL minted directly must stay direct after ALL is enabled mid-track",
@@ -88,6 +94,42 @@ class StreamResolverRetryStampTest {
         assertFalse(
             stamp.proxyGeneration == YouTubeProxy.routeGeneration,
             "a retried URL must keep its minting route, not the route current after the switch",
+        )
+    }
+
+    @Test
+    fun `a refused url does not inherit another url's stamp for the same track`() {
+        YouTubeProxy.update(allConfig)
+        val id = "retry-mismatch-${System.nanoTime()}"
+        val cachedUrl = "https://rr8.googlevideo.com/videoplayback?cached=$id"
+        val refusedUrl = "https://rr9.googlevideo.com/videoplayback?refused=$id"
+
+        StreamResolver.rememberServed(id, cachedUrl)
+        val cachedStamp = assertNotNull(StreamResolver.cachedProxyStampForTest(id))
+        assertNotNull(cachedStamp.proxyGeneration)
+
+        InnerTubeXResolver.rememberForTest(
+            InnerTubeXResolver.Extracted(
+                videoId = id,
+                url = refusedUrl,
+                kbps = 128,
+                mimeType = "audio/mp4",
+                loudnessDb = null,
+                clientName = "TEST",
+                profileId = "TEST__po",
+                headers = emptyMap(),
+            ),
+        )
+
+        val refused = assertNotNull(StreamResolver.refuseMidPlay(refusedUrl, 403))
+        assertEquals(id, refused.videoId)
+        assertNull(
+            refused.proxyGeneration,
+            "a URL that was never cached must not inherit the cached URL's route",
+        )
+        assertFalse(
+            refused.mintedOnAllScope,
+            "the refused URL's scope must not be taken from a different URL on the same track",
         )
     }
 }
