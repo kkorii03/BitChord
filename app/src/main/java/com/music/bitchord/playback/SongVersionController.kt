@@ -243,8 +243,16 @@ internal class SongVersionController(
                 if (index >= exoPlayer.mediaItemCount) continue
                 val now = exoPlayer.getMediaItemAt(index)
                 if (now.mediaId != song.videoId) continue
+                // A file saved under the release id can be the video's sound.
+                // Online it must not be attached to the upcoming row; stream
+                // the release instead, exactly as the current-row path does.
+                val streamOnly = SongVersionPolicy.replacementStreamsSong(
+                    resolved.videoId,
+                    Downloads.savedSoundSourceFor(resolved.videoId),
+                    online = !AudioCache.isOffline(),
+                )
                 val replacement = QueueShuffle.withQueueMetadata(
-                    resolved.toMediaItem(),
+                    resolved.toMediaItem(useDownloadedFile = !streamOnly),
                     newEntryId = now.queueEntryId,
                     newCanonicalIndex = now.canonicalIndex,
                     newTier = now.queueTier,

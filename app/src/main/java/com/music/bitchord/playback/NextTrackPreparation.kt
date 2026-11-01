@@ -709,8 +709,16 @@ internal class NextTrackPreparation(
         val item = player.getMediaItemAt(index)
         if ((item.queueEntryId ?: item.mediaId) != rowId) return null
         if (item.mediaId != song.videoId) return null
+        // A file saved under the release id can be the video's sound. Online
+        // it must not be attached to the row; stream the release instead,
+        // exactly as the current-row path does.
+        val streamOnly = SongVersionPolicy.replacementStreamsSong(
+            resolved.videoId,
+            Downloads.savedSoundSourceFor(resolved.videoId),
+            online = !AudioCache.isOffline(),
+        )
         val replacement = QueueShuffle.withQueueMetadata(
-            resolved.toMediaItem(),
+            resolved.toMediaItem(useDownloadedFile = !streamOnly),
             newEntryId = item.queueEntryId,
             newCanonicalIndex = item.canonicalIndex,
             newTier = item.queueTier,

@@ -286,6 +286,24 @@ object SongVersionPolicy {
     }
 
     /**
+     * Whether a version installed into an upcoming row must stream even when a
+     * file is saved under its id.
+     *
+     * The queue look-ahead replaces the next rows before they play. Building
+     * those replacements with the default `useDownloadedFile = true` attached
+     * a file whose recorded source is another upload (a music video's sound
+     * saved under the song id), so the next track could start with the wrong
+     * recording. This is the same provenance question the current-row path
+     * asks through [downloadedFileUse].
+     */
+    fun replacementStreamsSong(
+        playId: String,
+        soundSourceId: String?,
+        online: Boolean,
+    ): Boolean =
+        downloadedFileUse(playId, soundSourceId, online) == DownloadedFileUse.STREAM_SONG
+
+    /**
      * Whether an existing file may be adopted as [targetId]'s download.
      *
      * Only a file this app recorded as having been fetched from [targetId]'s

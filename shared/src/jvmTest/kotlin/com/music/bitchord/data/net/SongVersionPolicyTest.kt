@@ -545,6 +545,31 @@ class SongVersionPolicyTest {
     }
 
     @Test
+    fun `an upcoming version streams when its saved file is the video's sound`() {
+        assertTrue(
+            SongVersionPolicy.replacementStreamsSong(
+                playId = "song",
+                soundSourceId = "video",
+                online = true,
+            ),
+        )
+        assertFalse(
+            SongVersionPolicy.replacementStreamsSong(
+                playId = "song",
+                soundSourceId = "song",
+                online = true,
+            ),
+        )
+        assertFalse(
+            SongVersionPolicy.replacementStreamsSong(
+                playId = "song",
+                soundSourceId = "video",
+                online = false,
+            ),
+        )
+    }
+
+    @Test
     fun `a failed search is not a definitive no-version verdict`() {
         assertFalse(
             SongVersionPolicy.songVersionVerdictIsDefinitive(

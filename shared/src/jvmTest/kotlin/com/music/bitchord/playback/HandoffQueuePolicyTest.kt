@@ -242,4 +242,56 @@ class HandoffQueuePolicyTest {
             ),
         )
     }
+
+    @Test
+    fun aVersionSwapKeepsTheKeyButChangesTheRecording() {
+        assertTrue(
+            HandoffQueuePolicy.incomingRecordingChanged(
+                outgoingKeys = listOf("a_0", "b_0", "c_0"),
+                outgoingCurrentIndex = 0,
+                incomingKey = "b_0",
+                incomingMediaId = "OLD_VIDEO",
+                outgoingMediaIds = listOf("a", "NEW_VIDEO", "c"),
+                wrapsToStart = false,
+            ),
+        )
+    }
+
+    @Test
+    fun anUnchangedRecordingDoesNotForceARearm() {
+        assertFalse(
+            HandoffQueuePolicy.incomingRecordingChanged(
+                outgoingKeys = listOf("a_0", "b_0", "c_0"),
+                outgoingCurrentIndex = 0,
+                incomingKey = "b_0",
+                incomingMediaId = "SAME",
+                outgoingMediaIds = listOf("a", "SAME", "c"),
+                wrapsToStart = false,
+            ),
+        )
+    }
+
+    @Test
+    fun aTailEditBehindTheIncomingRowIsNotARecordingChange() {
+        assertFalse(
+            HandoffQueuePolicy.incomingRecordingChanged(
+                outgoingKeys = listOf("a_0", "b_0", "d_0"),
+                outgoingCurrentIndex = 0,
+                incomingKey = "b_0",
+                incomingMediaId = "B",
+                outgoingMediaIds = listOf("a", "B", "D"),
+                wrapsToStart = false,
+            ),
+        )
+        assertFalse(
+            HandoffQueuePolicy.incomingRecordingChanged(
+                outgoingKeys = listOf("a_0", "c_0", "d_0"),
+                outgoingCurrentIndex = 0,
+                incomingKey = "b_0",
+                incomingMediaId = "B",
+                outgoingMediaIds = listOf("a", "C", "D"),
+                wrapsToStart = false,
+            ),
+        )
+    }
 }
