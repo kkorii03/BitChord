@@ -20,11 +20,13 @@ internal object VersionReplacementFilePolicy {
         source: SavedSongMetadata?,
         catalogDurationMs: Long?,
         online: Boolean,
+        mvSoundSuspectMs: Long? = null,
+        fileDurationMs: Long? = null,
     ): Boolean = SongVersionPolicy.versionReplacementUsesDownloadedFile(
         playId = playId,
         soundSourceId = saved?.soundSourceVideoId,
         online = online,
-        fileDurationMs = saved?.durationText?.durationMillis(),
+        fileDurationMs = fileDurationMs ?: saved?.durationText?.durationMillis(),
         catalogDurationMs = catalogDurationMs,
         title = saved?.title.orEmpty(),
         isVideo = saved?.isVideo,
@@ -32,5 +34,6 @@ internal object VersionReplacementFilePolicy {
         artist = saved?.artist.orEmpty(),
         sourceIsVideo = source?.isVideo,
         sourceTitle = source?.title.orEmpty(),
+        mvSoundSuspectMs = mvSoundSuspectMs,
     )
 }

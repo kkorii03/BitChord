@@ -247,19 +247,55 @@ internal class SongVersionController(
                 val savedSource = savedFile?.soundSourceVideoId
                     ?.takeIf { it != resolved.videoId }
                     ?.let { Downloads.savedMetadataFor(it) }
+                val soundSourceId = savedFile?.soundSourceVideoId
+                val suspectMs = Downloads.mvSoundSuspectMs(Downloads.songIdForFile(resolved.videoId))
+                val catalogMs = Downloads.catalogDurationMs(
+                    resolved.videoId,
+                    resolved.durationMillis(),
+                )
+                // Only a legacy record with no provenance needs the file's own
+                // length; the read opens the container, so it must not happen
+                // when the answer is already known (and would be discarded).
+                val fileMs = if (SongVersionPolicy.needsFileDurationForReplacement(
+                        soundSourceId = soundSourceId,
+                        mvSoundSuspectMs = suspectMs,
+                        catalogDurationMs = catalogMs,
+                    )
+                ) {
+                    Downloads.savedUri(context, resolved.videoId)?.let {
+                        Downloads.localDurationMsOffMain(context, it.toString())
+                    }
+                } else {
+                    null
+                }
                 val useDownloadedFile = VersionReplacementFilePolicy.usesDownloadedFile(
                     playId = resolved.videoId,
                     saved = savedFile,
                     source = savedSource,
-                    catalogDurationMs = resolved.durationMillis(),
+                    catalogDurationMs = catalogMs,
                     online = !AudioCache.isOffline(),
+                    mvSoundSuspectMs = suspectMs,
+                    fileDurationMs = fileMs,
                 )
+                // The saved URI above suspends off the main thread; a queue
+                // edit can land in that window. Do not replace a row that is
+                // no longer the one this version was resolved for.
+                if (index !in 0 until exoPlayer.mediaItemCount) continue
+                val live = exoPlayer.getMediaItemAt(index)
+                if (!SongVersionPolicy.replacementRowStillMatches(
+                        expectedIndex = index,
+                        expectedMediaId = song.videoId,
+                        itemCount = exoPlayer.mediaItemCount,
+                        actualMediaId = live.mediaId,
+                        playingIndex = exoPlayer.currentMediaItemIndex,
+                    )
+                ) continue
                 val replacement = QueueShuffle.withQueueMetadata(
                     resolved.toMediaItem(useDownloadedFile = useDownloadedFile),
-                    newEntryId = now.queueEntryId,
-                    newCanonicalIndex = now.canonicalIndex,
-                    newTier = now.queueTier,
-                    newContextCycleId = now.contextCycleId,
+                    newEntryId = live.queueEntryId,
+                    newCanonicalIndex = live.canonicalIndex,
+                    newTier = live.queueTier,
+                    newContextCycleId = live.contextCycleId,
                 )
                 runCatching { exoPlayer.replaceMediaItem(index, replacement) }
                     .onFailure {

@@ -733,11 +733,10 @@ class CrossfadeController(
      *
      * @return whether the standby was reloaded.
      */
-    fun rearmIncoming(replacement: MediaItem): Boolean {
+    fun rearmIncoming(replacement: MediaItem, index: Int = incomingItemIndex): Boolean {
         if (!isArming()) return false
         val out = outgoing ?: return false
         val into = incoming ?: return false
-        val index = incomingItemIndex
         if (index !in 0 until out.mediaItemCount) return false
         if (out.getMediaItemAt(index).mediaId != replacement.mediaId) return false
         if (into.currentMediaItem?.localConfiguration?.uri == replacement.localConfiguration?.uri) {
@@ -754,6 +753,7 @@ class CrossfadeController(
         into.applyPlaybackSpeed((AppSettings.playbackSpeed.value * incomingPlaybackRate).toFloat())
         into.volume = 0f
         into.setMediaItems(items, index, incomingCueTimeMs)
+        incomingItemIndex = index
         val after = into.nextMediaItemIndex
         val afterId = if (after == C.INDEX_UNSET) null else items.getOrNull(after)?.mediaId
         onArmIncoming(replacement, afterId)
@@ -852,8 +852,8 @@ class CrossfadeController(
                     // A song-version swap keeps the queue key and changes only
                     // the recording. The standby still holds the old upload, so
                     // handing it over would play the video the queue no longer
-                    // names. Abandon the blend and let the session play the new
-                    // row plainly instead.
+                    // names. Reload the standby while it is still silent, and
+                    // abandon the blend once the fade is already audible.
                     val mediaIds = (0 until out.mediaItemCount).map { out.getMediaItemAt(it).mediaId }
                     if (HandoffQueuePolicy.incomingMediaReplaced(
                             outgoingKeys = keys,
@@ -864,6 +864,19 @@ class CrossfadeController(
                             outgoingCurrentIndex = out.currentMediaItemIndex,
                         )
                     ) {
+                        val index = HandoffQueuePolicy.incomingIndex(
+                            outgoingKeys = keys,
+                            incomingKey = incomingKey,
+                            incomingIndexHint = incomingItemIndex,
+                            outgoingCurrentIndex = out.currentMediaItemIndex,
+                        )
+                        val replacement = index?.let { out.getMediaItemAt(it) }
+                        if (phase == Phase.ARMING && index != null && replacement != null &&
+                            rearmIncoming(replacement, index)
+                        ) {
+                            wakeTicker()
+                            return
+                        }
                         bail()
                         return
                     }

@@ -834,4 +834,49 @@ class SongVersionPolicyTest {
             ),
         )
     }
+
+    @Test
+    fun `an upcoming version streams when its saved file is the video's sound`() {
+        assertTrue(
+            SongVersionPolicy.replacementStreamsSong(
+                playId = "song",
+                soundSourceId = "video",
+                online = true,
+            ),
+        )
+        assertFalse(
+            SongVersionPolicy.replacementStreamsSong(
+                playId = "song",
+                soundSourceId = "song",
+                online = true,
+            ),
+        )
+        assertFalse(
+            SongVersionPolicy.replacementStreamsSong(
+                playId = "song",
+                soundSourceId = "video",
+                online = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `a remembered video-sound verdict streams the upcoming version`() {
+        assertFalse(
+            SongVersionPolicy.versionReplacementUsesDownloadedFile(
+                playId = "song",
+                soundSourceId = null,
+                online = true,
+                mvSoundSuspectMs = 0L,
+            ),
+        )
+        assertTrue(
+            SongVersionPolicy.versionReplacementUsesDownloadedFile(
+                playId = "song",
+                soundSourceId = null,
+                online = false,
+                mvSoundSuspectMs = 0L,
+            ),
+        )
+    }
 }
