@@ -290,6 +290,7 @@ internal class SongVersionController(
                         expectedMediaId = song.videoId,
                         itemCount = exoPlayer.mediaItemCount,
                         actualMediaId = live.mediaId,
+                        playingIndex = exoPlayer.currentMediaItemIndex,
                     )
                 ) continue
                 val replacement = QueueShuffle.withQueueMetadata(

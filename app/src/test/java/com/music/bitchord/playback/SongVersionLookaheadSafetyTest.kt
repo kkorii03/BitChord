@@ -94,4 +94,30 @@ class SongVersionLookaheadSafetyTest {
             ),
         )
     }
+
+    @Test
+    fun `a row that started playing during the read is not replaced`() {
+        assertFalse(
+            SongVersionPolicy.replacementRowStillMatches(
+                expectedIndex = 3,
+                expectedMediaId = "video",
+                itemCount = 5,
+                actualMediaId = "video",
+                playingIndex = 3,
+            ),
+        )
+    }
+
+    @Test
+    fun `a row still ahead of the playhead may be replaced`() {
+        assertTrue(
+            SongVersionPolicy.replacementRowStillMatches(
+                expectedIndex = 3,
+                expectedMediaId = "video",
+                itemCount = 5,
+                actualMediaId = "video",
+                playingIndex = 1,
+            ),
+        )
+    }
 }

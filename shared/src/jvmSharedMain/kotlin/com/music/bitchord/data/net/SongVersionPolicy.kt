@@ -279,13 +279,21 @@ object SongVersionPolicy {
      * the prepared replacement then would overwrite the wrong entry, so the
      * index is checked against the current count and the media id is checked
      * again right before replacing.
+     *
+     * Playback can also advance during the same window. The look-ahead must
+     * never replace the row that started playing, so [playingIndex] is checked
+     * together with the media id immediately before the replacement.
      */
     fun replacementRowStillMatches(
         expectedIndex: Int,
         expectedMediaId: String,
         itemCount: Int,
         actualMediaId: String?,
-    ): Boolean = expectedIndex in 0 until itemCount && actualMediaId == expectedMediaId
+        playingIndex: Int? = null,
+    ): Boolean =
+        expectedIndex in 0 until itemCount &&
+            actualMediaId == expectedMediaId &&
+            expectedIndex != playingIndex
 
     /** What a downloaded file may be used for, once its sound source is known. */
     enum class DownloadedFileUse {
