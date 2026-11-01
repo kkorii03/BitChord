@@ -376,8 +376,12 @@ class PlaybackService : MediaLibraryService() {
     @Volatile
     private var stoppedPlayingAt = 0L
 
+    /** Whether the last is-playing callback reported playing, for pause transitions only. */
+    @Volatile
+    private var wasPlaying = false
+
     /** How recent a pause headphones connecting may resume — see [headphoneResume]. */
-    private val headphoneResumeWindowMs = 30L * 60L * 1000L
+    private val headphoneResumeWindowMs = HeadphoneResumePolicy.WINDOW_MS
 
     private val headphoneResume: HeadphoneResume by lazy {
         HeadphoneResume(this) resume@{
@@ -1257,7 +1261,20 @@ class PlaybackService : MediaLibraryService() {
             if (!isPlaying && !PlaybackActivity.active) {
                 com.music.bitchord.download.HqLibraryUpgrade.onPlaybackStopped(this@PlaybackService)
             }
-            stoppedPlayingAt = if (isPlaying) 0L else android.os.SystemClock.elapsedRealtime()
+            val now = android.os.SystemClock.elapsedRealtime()
+            if (isPlaying) {
+                stoppedPlayingAt = 0L
+                LastPlayed.clearPausedAt()
+            } else if (wasPlaying) {
+                stoppedPlayingAt = now
+                // The pause time is what lets headphones resume a queue restored
+                // after the process died. Only a real playing-to-paused
+                // transition is written, so the service coming up paused does
+                // not overwrite the timestamp saved by the process that was
+                // killed.
+                LastPlayed.savePausedAt(now)
+            }
+            wasPlaying = isPlaying
             // Wakes or parks the sampler; see [samplerPlaying].
             samplerPlaying.value = isPlaying
             // The player this fired on, which is by definition the one the
@@ -2417,6 +2434,14 @@ class PlaybackService : MediaLibraryService() {
             restoreBoundedQueueOrLast(exoPlayer)
         }
         if (restored) {
+            // A queue restored paused is the same pause the previous process
+            // saved, not a track that never started. Without the saved time
+            // headphones connecting after a restart could never resume it.
+            stoppedPlayingAt = HeadphoneResumePolicy.restoredPauseAt(
+                savedElapsedRealtimeMs = LastPlayed.pausedAt(),
+                nowElapsedRealtimeMs = android.os.SystemClock.elapsedRealtime(),
+                windowMs = headphoneResumeWindowMs,
+            ) ?: 0L
             publishWidgetState()
         } else {
             MediaWidgetSnapshot.save(this, MediaWidgetSnapshot.EMPTY)

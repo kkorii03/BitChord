@@ -330,6 +330,9 @@ object Downloads {
 
     fun init(context: Context) {
         appContext = context.applicationContext
+        // Opened here so an early enqueue can still record itself; the waiting
+        // queue itself is read on the startup thread with the other records.
+        prefs = context.getSharedPreferences("bitchord_settings", Context.MODE_PRIVATE)
         // Three JSON maps that grow with the listener's Downloads folder. None
         // of them is needed for the first frame, so they are parsed on the
         // startup thread; a caller that gets here first runs [open] itself.
@@ -339,9 +342,79 @@ object Downloads {
         // download started by the foreground or liked event safe beside it.
         StartupWork.background("downloads") {
             open()
+            // The queue has to be back before the first drain can resume it. A
+            // process killed while the app was backgrounded used to lose the
+            // whole queue, because it lived only in [pending].
+            restorePending()
             DownloadStore.cleanupAbandoned(context, offlinePackageRoots())
+            // The foreground event may have run before this thread finished
+            // opening the store; when there is still a window, let it drain the
+            // restored rows now.
+            if (AppForeground.isForeground) onForeground(context)
         }
     }
+
+    /** Read the queue written by the process that died; see [persistPendingLocked]. */
+    private fun restorePending() {
+        val entries = PendingDownloadsStore.decode(
+            prefs.getString(PendingDownloadsStore.key(), null),
+        )
+        if (entries.isEmpty()) return
+        var restored = 0
+        synchronized(lock) {
+            for (entry in entries) {
+                val song = PendingDownloadsStore.restoredSong(entry.song)
+                val id = song.videoId
+                if (id.isBlank() || id in pending || id in running) continue
+                pending[id] = song
+                enqueueGenerations[id] = ++generationCounter
+                entry.quality?.let { name ->
+                    runCatching { DownloadQuality.valueOf(name) }.getOrNull()
+                        ?.let { qualityOverrides[id] = it }
+                }
+                entry.hq?.let { stored ->
+                    PendingDownloadsStore.restoredHq(stored)?.let { hqOverrides[id] = it }
+                }
+                entry.avoidSource?.let { avoidSources[id] = it }
+                if (entry.forceReplace) forceReplaceIds.add(id)
+                if (entry.youtubeOnly) youtubeOnlyIds.add(id)
+                entry.minimumTier?.let { name ->
+                    runCatching { HqTier.valueOf(name) }.getOrNull()
+                        ?.let { minimumTiers[id] = it }
+                }
+                if (entry.automatic) automaticIds.add(id)
+                if (entry.mvSoundRepair) mvSoundRepairIds.add(id)
+                restored++
+            }
+        }
+        if (restored > 0) Log.i(TAG, "downloads: restored $restored queued item(s)")
+    }
+
+    /** Write the small waiting queue, with each row's pinned options, to disk. */
+    private fun persistPendingLocked() {
+        if (!::prefs.isInitialized) return
+        val entries = pending.map { (id, song) -> pendingEntryLocked(id, song) }
+        val editor = prefs.edit()
+        if (entries.isEmpty()) {
+            editor.remove(PendingDownloadsStore.key())
+        } else {
+            editor.putString(PendingDownloadsStore.key(), PendingDownloadsStore.encode(entries))
+        }
+        editor.apply()
+    }
+
+    private fun pendingEntryLocked(id: String, song: Song) =
+        PendingDownloadsStore.PendingEntry(
+            song = PendingDownloadsStore.storedSong(song),
+            quality = qualityOverrides[id]?.name,
+            hq = hqOverrides[id]?.let(PendingDownloadsStore::storedHq),
+            avoidSource = avoidSources[id],
+            forceReplace = id in forceReplaceIds,
+            youtubeOnly = id in youtubeOnlyIds,
+            minimumTier = minimumTiers[id]?.name,
+            automatic = id in automaticIds,
+            mvSoundRepair = id in mvSoundRepairIds,
+        )
 
     /**
      * Directories the recorded offline packages still point at.
@@ -494,6 +567,7 @@ object Downloads {
                 from = from,
                 publishSession = HqAutoDownloadPolicy.countsAsUserFailure(automatic),
             )
+            persistPendingLocked()
         }
         wakeWorkers()
 
@@ -608,6 +682,7 @@ object Downloads {
         mvSoundRepairIds.remove(videoId)
         enqueueGenerations.remove(videoId)
         claimedGenerations.remove(videoId)
+        persistPendingLocked()
         wakeWorkers()
         true
     }
@@ -657,6 +732,7 @@ object Downloads {
             pending.remove(videoId)
             enqueueGenerations.remove(videoId)
             claimedGenerations.remove(videoId)
+            persistPendingLocked()
             if (videoId !in running) return@synchronized null
             running.remove(videoId)
         }
@@ -1901,6 +1977,9 @@ object Downloads {
         pending.remove(entry.key)
         running[entry.key] = null
         enqueueGenerations[entry.key]?.let { claimedGenerations[entry.key] = it }
+        // Claiming is the point after which a restart must not re-fetch this
+        // row: the running download is not part of the waiting record.
+        persistPendingLocked()
         entry.value
     }
 

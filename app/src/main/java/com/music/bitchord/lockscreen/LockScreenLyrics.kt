@@ -25,8 +25,29 @@ object NowPlayingLyrics {
     private val _current = MutableStateFlow<Entry?>(null)
     val current: StateFlow<Entry?> = _current.asStateFlow()
 
+    /**
+     * Whether the playback service has gone away.
+     *
+     * The lock-screen activity can outlive the service: a MediaController that
+     * loses its session may not update the song quickly, so the screen used to
+     * sit there showing lyrics for a player that no longer existed. This is the
+     * explicit end signal it closes on.
+     */
+    private val _ended = MutableStateFlow(false)
+    val ended: StateFlow<Boolean> = _ended.asStateFlow()
+
     fun publish(videoId: String?, lines: List<LyricLine>?) {
         _current.value = if (videoId == null || lines.isNullOrEmpty()) null else Entry(videoId, lines)
+        _ended.value = false
+    }
+
+    fun serviceStarted() {
+        _ended.value = false
+    }
+
+    fun serviceEnded() {
+        _current.value = null
+        _ended.value = true
     }
 }
 
@@ -51,6 +72,7 @@ object LockScreenLyrics {
 
     /** Called by the playback service as it starts; [hasTrack] reads its player. */
     fun attach(context: Context, hasTrack: () -> Boolean) {
+        NowPlayingLyrics.serviceStarted()
         if (receiver != null) return
         val screen = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
@@ -74,6 +96,9 @@ object LockScreenLyrics {
     }
 
     fun detach(context: Context) {
+        // The service is gone even if the receiver was never registered or has
+        // already been torn down; the activity still has to close.
+        NowPlayingLyrics.serviceEnded()
         val registered = receiver ?: return
         receiver = null
         runCatching { context.unregisterReceiver(registered) }

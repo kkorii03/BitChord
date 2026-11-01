@@ -197,6 +197,14 @@ private fun LockScreenLyricsScreen(onUnlock: () -> Unit, onClose: () -> Unit) {
     val state = rememberPlayerState(controller)
     val song = state.song
     val entry by NowPlayingLyrics.current.collectAsStateWithLifecycle()
+    val serviceEnded by NowPlayingLyrics.ended.collectAsStateWithLifecycle()
+
+    // The service's explicit end signal: the controller can keep reporting the
+    // last song for a while after its session has gone, so waiting for a null
+    // song is not enough. See [NowPlayingLyrics.serviceEnded].
+    LaunchedEffect(serviceEnded) {
+        if (serviceEnded) onClose()
+    }
 
     // Nothing loaded any more — the queue was cleared, the service stopped.
     LaunchedEffect(controller, song?.videoId) {

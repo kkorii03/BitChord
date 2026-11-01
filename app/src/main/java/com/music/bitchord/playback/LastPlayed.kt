@@ -148,6 +148,31 @@ object LastPlayed {
         }
     }
 
+    /**
+     * When playback last paused, on the boot clock, so a restarted service can
+     * still tell whether headphones connecting are asking to carry on.
+     *
+     * This is a scalar beside the restored queue: a process that comes back
+     * with the queue paused has no in-memory pause time, and without this it
+     * treated every restored pause as "never paused" and refused to resume.
+     */
+    fun savePausedAt(elapsedRealtimeMs: Long) {
+        if (!::prefs.isInitialized) return
+        synchronized(stateLock) {
+            prefs.edit().putLong(KEY_PAUSED_AT, elapsedRealtimeMs.coerceAtLeast(0L)).apply()
+        }
+    }
+
+    fun pausedAt(): Long? {
+        if (!::prefs.isInitialized) return null
+        return prefs.getLong(KEY_PAUSED_AT, 0L).takeIf { it > 0L }
+    }
+
+    fun clearPausedAt() {
+        if (!::prefs.isInitialized) return
+        synchronized(stateLock) { prefs.edit().remove(KEY_PAUSED_AT).apply() }
+    }
+
     fun load(): Snapshot? {
         val raw = prefs.getString(KEY_QUEUE, null) ?: return null
         val stored = runCatching { json.decodeFromString<StoredQueue>(raw) }.getOrNull()
@@ -323,4 +348,5 @@ object LastPlayed {
     private const val KEY_QUEUE = "queue"
     private const val KEY_INDEX = "index"
     private const val KEY_POSITION = "position"
+    private const val KEY_PAUSED_AT = "paused_at_elapsed"
 }

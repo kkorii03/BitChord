@@ -3689,6 +3689,7 @@ object AppSettings {
         "downloaded_tracks_metadata",
         "downloaded_collections",
         "downloaded_mv_sound_suspects",
+        "downloaded_pending",
         "liked_download_pending",
         "lock_screen_lyrics_page",
         "ko_update_checked_at",
