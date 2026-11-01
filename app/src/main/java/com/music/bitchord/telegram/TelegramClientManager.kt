@@ -296,7 +296,8 @@ object TelegramClientManager {
         // Callers include main-thread prefetch: the wait for the worker happens
         // on IO, never on the caller's thread. The release must still run when
         // the search is cancelled, or the lease (and the client) would leak.
-        withContext(Dispatchers.IO) { runOnWorker { acquireSearchLease("search open") } }
+        // Not cancellable: a lease taken by the worker must reach the finally below.
+        withContext(NonCancellable + Dispatchers.IO) { runOnWorker { acquireSearchLease("search open") } }
         val started = System.nanoTime()
         return try {
             awaitReady()
@@ -340,7 +341,8 @@ object TelegramClientManager {
         // Callers include main-thread prefetch: the wait for the worker happens
         // on IO, never on the caller's thread. The release must still run when
         // the lookup is cancelled, or the lease (and the client) would leak.
-        withContext(Dispatchers.IO) { runOnWorker { acquireStreamLease("stream metadata open") } }
+        // Not cancellable: a lease taken by the worker must reach the finally below.
+        withContext(NonCancellable + Dispatchers.IO) { runOnWorker { acquireStreamLease("stream metadata open") } }
         return try {
             awaitReady()
             withContext(Dispatchers.IO) { trackForStream(trackId) }
