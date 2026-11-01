@@ -1209,11 +1209,16 @@ object HqAudioVerify {
 
     private suspend fun candidateFetch(
         directory: File,
-        stream: SourceStream,
+        original: SourceStream,
         client: OkHttpClient,
         epoch: PlaybackEpoch,
         refreshStream: (suspend (SourceStream) -> SourceStream?)?,
     ): CandidateFetch {
+        // The comparison only needs the recording, not its resolution: the
+        // same source row at a lossy tier is a fraction of a 24-bit head, and
+        // a 24/96 head took ~30 s on the listener's 2 MB/s link. Playback and
+        // the stored verdict still use [original].
+        val stream = lighterForComparison(original) ?: original
         val needed = HqVerifyPolicy.bytesToFetch(stream.format, FETCH_SECONDS)
         if (needed <= 0L) return CandidateFetch.Failed
         if (!ensureCandidateDirectory(directory)) {
@@ -1455,6 +1460,49 @@ object HqAudioVerify {
             else -> source.stream(trackId, request)
         }
     }
+
+    /**
+     * The same row at a lossy tier, for the sound comparison only.
+     *
+     * Asked only for a hi-res candidate from a non-Telegram source; anything
+     * that is not clearly smaller (a source ignoring the cap, a failure, a
+     * different row) is dropped and the original head is fetched as before.
+     */
+    private suspend fun lighterForComparison(
+        stream: SourceStream,
+        sourceOf: (String) -> MusicSource? = { SourceRegistry.instance(it) },
+    ): SourceStream? {
+        if (!worthLighterComparison(stream)) return null
+        val sourceId = stream.sourceConfigId ?: return null
+        val trackId = stream.trackId?.takeIf { it.isNotBlank() } ?: return null
+        val source = sourceOf(sourceId) ?: return null
+        if (source.kind == SourceKind.YOUTUBE || source.kind == SourceKind.TELEGRAM) return null
+        val lighter = try {
+            withTimeoutOrNull(LIGHTER_LOOKUP_MS) { source.stream(trackId, StreamRequest.Capped(LIGHTER_KBPS)) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            null
+        } ?: return null
+        if (!lighterIsUsable(stream, lighter)) return null
+        TrackLog.d(
+            TAG,
+            "hq-verify: comparing on ${HqQuality.tierOf(lighter.format)} (play=${HqQuality.tierOf(stream.format)})",
+        )
+        return lighter.copy(sourceConfigId = stream.sourceConfigId, trackId = stream.trackId)
+    }
+
+    /** Hi-res heads are the slow ones; a 16-bit head is already small enough. */
+    internal fun worthLighterComparison(stream: SourceStream): Boolean =
+        !stream.url.startsWith("${TelegramStreamUri.SCHEME}:") &&
+            HqQuality.tierOf(stream.format).rank <= HqTier.HI_RES_24_44.rank &&
+            stream.format.isDolbyAtmos != true
+
+    /** A lighter stream counts only when it is really a lower, lossy tier at another URL. */
+    internal fun lighterIsUsable(original: SourceStream, lighter: SourceStream): Boolean =
+        lighter.url.isNotBlank() &&
+            lighter.url != original.url &&
+            HqQuality.tierOf(lighter.format).rank > HqTier.LOSSLESS_16.rank
 
     /** Kept for callers and tests that name the addon path explicitly. */
     internal suspend fun freshAddonStream(
@@ -1930,6 +1978,12 @@ object HqAudioVerify {
     }
 
     private const val MAX_UNMEASURED_ROWS = 256
+
+    /** The lossy tier the comparison asks for; 91 s of it is about 3.6 MB. */
+    private const val LIGHTER_KBPS = 320
+
+    /** One `/stream` answer; longer than that and the original head is the faster path. */
+    private const val LIGHTER_LOOKUP_MS = 3_000L
 
     private fun millisSince(startedNanos: Long): Long =
         (System.nanoTime() - startedNanos) / 1_000_000L
