@@ -1,5 +1,6 @@
 package com.music.bitchord.playback
 
+import com.music.bitchord.data.net.SongVersionPolicy
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -86,6 +87,62 @@ class NextPrepDownloadedFileTest {
                 storedIsVideo = null,
                 lengthSuspect = false,
                 online = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `offline keeps a file even when it was recorded as the video sound`() {
+        assertTrue(
+            nextPrepUseDownloadedFile(
+                playId = "song",
+                soundSourceId = "song",
+                storedIsVideo = true,
+                lengthSuspect = false,
+                online = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `offline keeps a length-suspect file because it is the only sound`() {
+        assertTrue(
+            nextPrepUseDownloadedFile(
+                playId = "song",
+                soundSourceId = "song",
+                storedIsVideo = false,
+                lengthSuspect = true,
+                online = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `a legacy file longer than the catalogue song is not attached`() {
+        assertFalse(
+            nextPrepUseDownloadedFile(
+                playId = "song",
+                soundSourceId = null,
+                storedIsVideo = null,
+                lengthSuspect = false,
+                online = true,
+                fileDurationMs = 300_000L,
+                catalogDurationMs = 300_000L - SongVersionPolicy.MV_SOUND_SLACK_MS,
+            ),
+        )
+    }
+
+    @Test
+    fun `a legacy file inside the length slack may still be attached`() {
+        assertTrue(
+            nextPrepUseDownloadedFile(
+                playId = "song",
+                soundSourceId = null,
+                storedIsVideo = null,
+                lengthSuspect = false,
+                online = true,
+                fileDurationMs = 300_000L,
+                catalogDurationMs = 300_000L - SongVersionPolicy.MV_SOUND_SLACK_MS + 1L,
             ),
         )
     }

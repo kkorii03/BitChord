@@ -13,6 +13,7 @@ import com.music.bitchord.data.lyrics.Deepgram
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.net.SongVersionPolicy
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.HqQuality
@@ -717,6 +718,14 @@ internal class NextTrackPreparation(
             storedIsVideo = Downloads.savedIsVideoFor(resolved.videoId),
             lengthSuspect = Downloads.mvSoundSuspectMs(resolved.videoId) != null,
             online = !AudioCache.isOffline(),
+            // The next row's own length is the file's when it was downloaded;
+            // the resolved release is the catalogue song. A legacy file whose
+            // only difference is this length must not play under the song.
+            fileDurationMs = song.durationMillis(),
+            catalogDurationMs = Downloads.catalogDurationMs(
+                resolved.videoId,
+                resolved.durationMillis(),
+            ),
         )
         val replacement = QueueShuffle.withQueueMetadata(
             resolved.toMediaItem(useDownloadedFile = useDownloadedFile),
@@ -957,9 +966,27 @@ internal fun nextPrepUseDownloadedFile(
     storedIsVideo: Boolean?,
     lengthSuspect: Boolean,
     online: Boolean,
+    fileDurationMs: Long? = null,
+    catalogDurationMs: Long? = null,
 ): Boolean {
+    // Offline the file is the only sound there is. A network URI cannot play,
+    // so the provenance/type rules below must not take it away — that left the
+    // offline queue with a row that could not start. Checked first on purpose.
+    if (!online) return true
     if (storedIsVideo == true) return false
     if (lengthSuspect) return false
+    // A legacy file has no recorded provenance, so the persisted suspect map
+    // may not know it yet (only the Downloads detail scan fills that). Its own
+    // length beside the resolved catalogue release is the evidence that it is
+    // the music video's sound; attaching it would play the wrong recording.
+    val lengthDelta = SongVersionPolicy.mvSoundDeltaMs(
+        fileDurationMs = fileDurationMs,
+        catalogDurationMs = catalogDurationMs,
+        isVideo = false,
+        localFile = true,
+        soundSourceId = soundSourceId,
+    )
+    if (lengthDelta != null) return false
     val use = SongVersionPolicy.downloadedFileUse(
         playId = playId,
         soundSourceId = soundSourceId,
