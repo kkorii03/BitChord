@@ -1,0 +1,14 @@
+[NO-FIX-LOOP]
+Repo: BitChord (Kotlin, Android, Compose). Branch = upstream v1.9 merged into a Korean fork.
+Problem: ANR / long freezes, mostly on Home. Emulator main-thread samples (debuggerd -j) during start show the main thread inside Application.onCreate (app/src/main/java/com/music/bitchord/BitChordApplication.kt) running:
+ - com.music.bitchord.auth.EncryptedPrefs.create/open (Tink KeyManagerRegistry registration) via AuthStore(this) (~line 176) and SourceRegistry.init (EncryptedPrefs.open 'bitchord_sources')
+ - com.music.bitchord.data.stats.ArtistFacts.init (line ~381)
+onCreate takes 3.7 s on the emulator. During Home the main thread waits on RenderThread (heavy drawing).
+Task 1 (main goal): get these off the main thread without breaking anything.
+ - ArtistFacts.init: read what it does; if it is only a disk load / index build, run it on Dispatchers.IO (or lazily on first use) and make every reader safe before it finishes (return empty/unknown, never block the main thread waiting).
+ - EncryptedPrefs / Tink: the AuthStore is read synchronously in onCreate (activeSession, cookie, AppSettings.init(this, authStore)). Find the smallest safe change: e.g. start Tink's one-time registration (AeadConfig.register / KeyManagerRegistry warm-up) on a background thread at the very start of onCreate so the later synchronous open finds it done, or move code that only needs the store later off the critical path. Do NOT change where data is stored, keys, or file names (users' logins must survive). Keep behaviour identical when the warm-up has not finished (it must still work, just slower).
+ - Look for other synchronous disk/JSON work in onCreate that can safely move to IO; list each with a one-line reason; move only clearly safe ones.
+Task 2 (Home drawing): in the Home screen composables (search ui/screens/Home*.kt and sharedUi Home*), look for draw-heavy items created per frame: unbounded image sizes (no size()/precision on Coil requests for small tiles), blur/RenderEffect or graphicsLayer effects on every item, infinite animations on off-screen items, remember-less allocations in draw lambdas. Fix only clear issues; list suspects you leave.
+Rules: Do NOT touch .github/, keys/, gradle files, strings. Do NOT revert unrelated files; do not checkout other branches. Battery first: no polling/timers. Re-read every caller of changed functions. Use grep / Select-String, not rg.
+Verify: ./gradlew :app:compileProdDebugKotlin and ./gradlew :app:testProdDebugUnitTest --tests '*ArtistFacts*' --tests '*AuthStore*' --tests '*EncryptedPrefs*' --tests '*SettingsTransfer*'.
+At the end, summary in 10 lines or fewer: changed files / what moved off the main thread and why it is safe / Home changes / test results / unresolved problems.
