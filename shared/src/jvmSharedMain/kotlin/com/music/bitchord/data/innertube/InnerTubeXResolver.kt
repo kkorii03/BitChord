@@ -412,6 +412,27 @@ object InnerTubeXResolver {
         minted[extracted.url] = extracted
     }
 
+    /** [KO] warmup-deferral — whether a session change may start the cold walk. */
+    internal fun shouldWarmOnSessionChanged(warmStarted: Boolean): Boolean = warmStarted
+
+    /** Test seam: whether the cold warm-up has been started. */
+    internal fun warmStartedForTest(): Boolean = synchronized(warmLock) { warmStarted }
+
+    /** Test seam: forget the warm-up wiring without starting any network work. */
+    internal fun resetWarmForTest() {
+        warmup?.cancel()
+        warmup = null
+        cacheLink?.cancel()
+        cacheLink = null
+        synchronized(warmLock) { warmStarted = false }
+        prefs = null
+        poTokens = null
+        poTokenPrewarm = null
+        playerDir = null
+        minted.clear()
+        excluded.clear()
+    }
+
     /**
      * Records that googlevideo refused [url] mid-playback.
      *
@@ -435,8 +456,12 @@ object InnerTubeXResolver {
     fun onSessionChanged() {
         excluded.clear()
         minted.clear()
-        // A new cookie or visitor means a new player config and PoToken binding.
-        if (prefs != null) warm(0)
+        // A new cookie or visitor means a new player config and PoToken binding,
+        // but only for a walk that was already justified by a screen or a play.
+        // Starting one here would make a background session refresh pay the
+        // 3-10s cold walk with nothing on screen to show for it.
+        val started = synchronized(warmLock) { warmStarted }
+        if (prefs != null && shouldWarmOnSessionChanged(started)) warm(0)
     }
 
     private fun excludedFor(videoId: String): Set<String> {
