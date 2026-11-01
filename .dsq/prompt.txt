@@ -1,0 +1,17 @@
+BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/telegram. 대상: VideoAudio(songWav, song check), LyricsTiming 의 song-check, HqAudioVerify.referenceFor(1110~1145행 부근).
+버그(폰 tg10 git dcc4d98, 11-01): 19:12~20:01 약 50분 동안 모든 곡에서 YouTube 기준 소리(reference)를 못 얻음 → 품질 업그레이드 대조 전부 불가, 가사 싱크도 전부 실패. 20:08 부터 저절로 회복.
+ 19:12:11.620 play: -> Starman (aBKEt3MhNMM) ... 다음 곡 준비 w369aBf5SF4 'Midnight Confessions'
+ 19:12:12.838 TIMING w369aBf5SF4 direct: 1189ms
+ 19:12:12.839 hq-verify: 'Midnight Confessions' no reference reason=decode-failed   ← 검색 직후 ms 단위로 즉시 실패(다운로드 시도 흔적 없음), 같은 곡에 6번
+ 19:12:34.288 LyricsTiming lyrics-sync: song-check skipped (no entry)
+ 19:12:34.291 song-sync: w369aBf5SF4 result=no-audio
+ 이후 19:16, 19:18, 19:35, 19:49, 20:01 곡마다 같은 패턴(no reference decode-failed 여러 번 + song-sync no-audio). 이 동안 VideoAudio 'song check: stream 90s' 로그가 한 줄도 없음.
+ 20:08:37 VideoAudio song check: stream 90s 2812KB 부터 정상.
+ 그 직전 19:08:57~19:09:17 정상 동작(hq-verify accepted).
+할 일:
+① 원인 확정(파일:줄): songWav 가 다운로드 시도 없이 null 을 돌려주는 경로 — 'no entry'(VideoAudio 항목/캐시가 없을 때), 실패 후 쉬기(cooldown)·회로 차단, 동시 요청 단일화(in-flight)가 실패 결과를 공유·기억, YouTube 스트림 URL 해석 실패를 기억하는 곳, 다음 곡 준비(next-prep)가 재생 중이 아닌 곡이라 항목이 없는 경우 등. 50분 지속 + 저절로 회복을 설명할 수 있어야 함.
+② 수정: 일시 실패가 다른 곡 전체를 막지 않게; 기억한다면 곡(videoId)별·짧게(예: 다음 재생 이벤트까지). 'no entry' 면 항목을 만들어 받거나 즉시 받기 시도. 실패 시 이유 로그: 'video-audio: no wav for <id> reason=..'.
+③ hq-verify 가 같은 곡에 no reference 를 6번 반복하지 않게(같은 재생 동안 1회 시도 후 다음 재생 이벤트까지 대기).
+테스트(고치기 전 실패): 한 곡 실패 후 다른 곡은 받기 시도함, no entry 에서도 받기 시도, 같은 곡 반복 시도 제한. 새 테스트 클래스 이름 요약에.
+제약: .github/, keys, *.jks, 서명 수정 금지. 판정 기준 변경 금지. 타이머·폴링 금지(배터리). 프록시 설정·쿠키 처리 변경 금지. 바꾼 함수의 모든 호출부 재확인. 기존 주석·의도를 지우면 요약에 이유.
+마지막 10줄 이내 요약: 원인(파일:줄) / 수정 / 테스트 / 미해결.
