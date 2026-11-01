@@ -1330,6 +1330,7 @@ object AudioCache {
         keysOf = ::keysOf,
         isComplete = ::isComplete,
         isLosslessRendition = ::isLosslessRendition,
+        isKeptOrigin = ::isKeptOrigin,
         containerOf = ::containerOf,
         forgetPurgeCandidate = ::forgetPurgeCandidate,
         discardRendition = ::discardRendition,

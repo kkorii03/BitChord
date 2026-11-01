@@ -46,6 +46,7 @@ class KoLosslessCache(
     private val keysOf: (String) -> List<String>,
     private val isComplete: (String) -> Boolean,
     private val isLosslessRendition: (String) -> Boolean,
+    private val isKeptOrigin: (String) -> Boolean,
     private val containerOf: (String) -> Pair<String, String>?,
     private val forgetPurgeCandidate: (String) -> Unit,
     private val discardRendition: (Uri) -> Unit,
@@ -100,18 +101,27 @@ class KoLosslessCache(
             if (key.endsWith("#watch")) return@mapNotNull null
             val suffix = key.removePrefix("$videoId#")
             if (suffix == key) return@mapNotNull null
-            CachedRendition(
+            val upgradeOrder = QualityUpgrade.upgradeGeneration(suffix)
+            losslessCacheCandidate(
                 key = key,
                 complete = isComplete(key),
-                lossless = isLosslessRendition(key),
-                upgradeOrder = QualityUpgrade.upgradeGeneration(suffix),
+                markedLossless = isLosslessRendition(key),
+                // The marker is written only by a completed `#hifi` fetch. A
+                // FLAC/WAV under `#alt` has none, so read the copy's own
+                // container or it stays invisible after a restart.
+                container = if (upgradeOrder == 0) containerOf(key)?.first else null,
+                // An order-0 lossless `#alt` may be a different cut or an
+                // addon that is no longer configured. Only a kept origin may
+                // replace the configured copy, as [completeSibling] requires.
+                keptOrigin = upgradeOrder > 0 || isKeptOrigin(key),
+                upgradeOrder = upgradeOrder,
             )
         }
 
     /** Whether [key] is lossless by its marker or by the container it holds. */
     private fun isLosslessCopy(key: String): Boolean =
         isLosslessRendition(key) ||
-            containerOf(key)?.first?.let { it in LOSSLESS_CONTAINERS } == true
+            containerOf(key)?.first?.let { it in KO_LOSSLESS_CONTAINERS } == true
 
     fun hasCompleteLosslessCopy(mediaId: String): Boolean {
         val cache = cache() ?: return false
@@ -380,8 +390,5 @@ class KoLosslessCache(
 
     private companion object {
         private const val META_HQ_LOSSLESS = "bc_hq_lossless"
-
-        /** Containers that are lossless whatever their metadata says. */
-        private val LOSSLESS_CONTAINERS = setOf("flac", "wav")
     }
 }
