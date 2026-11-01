@@ -8,6 +8,7 @@ import com.music.bitchord.data.net.BlockedStartPolicy
 import com.music.bitchord.data.net.BlockedStartRescue
 import com.music.bitchord.data.net.BlockedStartStep
 import com.music.bitchord.data.net.LogUrl
+import com.music.bitchord.data.net.NetworkReadiness
 import com.music.bitchord.data.net.ProxyFailure
 import com.music.bitchord.data.net.ProxyHealthMonitor
 import com.music.bitchord.data.net.ProxyPlayback
@@ -277,6 +278,7 @@ object StreamResolver {
      * outside the buffer, and each range the cache fills in.
      */
     suspend fun resolve(videoId: String): String {
+        NetworkReadiness.await()
         init
         // The first playback request is the event that pays the cold warm-up.
         InnerTubeXResolver.ensureWarm()
@@ -2004,6 +2006,7 @@ object StreamResolver {
         maxKbps: Int,
         requireM4a: Boolean = false,
     ): Stream {
+        NetworkReadiness.await()
         // A download is a playback request too: it must not wait on a warm-up
         // that was deliberately deferred until someone asked for a track.
         InnerTubeXResolver.ensureWarm()

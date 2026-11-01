@@ -1223,6 +1223,15 @@ object AppSettings {
         )
         readProxy()
         discordToken.value = authStore.discordToken.orEmpty()
+        markSignedInInstallOnboarded()
+    }
+
+    private fun markSignedInInstallOnboarded() {
+        if (prefs.getBoolean(KEY_ONBOARDING_COMPLETE, false)) return
+        if (onboardingComplete.value) return
+        if (!runCatching { authStore.isSignedIn }.getOrDefault(false)) return
+        onboardingComplete.value = true
+        prefs.edit().putBoolean(KEY_ONBOARDING_COMPLETE, true).apply()
     }
 
     /**

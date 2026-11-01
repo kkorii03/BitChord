@@ -1,11 +1,18 @@
 package com.music.bitchord.data.innertube
 
+import com.music.bitchord.data.net.NetworkReadiness
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Before
 import org.junit.Test
 
 class VisitorDataPersistenceTest {
+
+    @Before
+    fun openStartupGate() {
+        NetworkReadiness.markReady()
+    }
 
     private class FakeStore : Innertube.VisitorStore {
         val values = HashMap<String, String>()

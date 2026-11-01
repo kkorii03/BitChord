@@ -4,8 +4,10 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.music.bitchord.R
+import com.music.bitchord.BitChordApplication
 import com.music.bitchord.auth.AuthStore
 import com.music.bitchord.auth.SignedIn
+import com.music.bitchord.auth.StartupCredentialState
 import com.music.bitchord.auth.GoogleAccountSession
 import com.music.bitchord.auth.YouTubeProfile
 import com.music.bitchord.auth.profileId
@@ -73,6 +75,8 @@ import com.music.bitchord.data.model.EntityType
 import com.music.bitchord.data.settings.SearchHistory
 import com.music.bitchord.download.Downloads
 import android.util.LruCache
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.FlowPreview
@@ -147,7 +151,13 @@ internal fun retrySearchAllowed(source: SearchSource, query: String): Boolean =
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
 
-    private val authStore = AuthStore(app)
+    private val authStore = if (app is BitChordApplication) {
+        BitChordApplication.authStore
+    } else {
+        AuthStore(app)
+    }
+    private val startupCredentials = StartupCredentialState(authStore)
+    private val credentialsReady = CompletableDeferred<Unit>()
 
     // Process-wide, so the playback service offers Like on the same tracks.
     private val _signedIn = SignedIn.state(app)
@@ -493,22 +503,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * The chosen channel's [AccountChannel.key], or null while the app is
      * acting as whichever channel YouTube Music serves by default.
      */
-    private val _selectedChannelKey = MutableStateFlow(
-        authStore.activeSession?.activeProfileId ?: authStore.channelPageId ?: authStore.channelDataSyncId,
-    )
+    private val _selectedChannelKey = MutableStateFlow<String?>(null)
 
-    private val _selectedChannelName = MutableStateFlow(
-        authStore.activeSession?.profiles?.firstOrNull { it.profileId == authStore.activeProfileId }?.name
-            ?: authStore.channelName,
-    )
+    private val _selectedChannelName = MutableStateFlow<String?>(null)
     val selectedChannelName: StateFlow<String?> = _selectedChannelName.asStateFlow()
 
     /** Source of truth for Google sessions and their YouTube identities. */
-    private val _googleAccounts = MutableStateFlow(authStore.sessions)
+    private val _googleAccounts = MutableStateFlow<List<GoogleAccountSession>>(emptyList())
     val googleAccounts: StateFlow<List<GoogleAccountSession>> = _googleAccounts.asStateFlow()
-    private val _activeAccountId = MutableStateFlow(authStore.activeSession?.accountId)
+    private val _activeAccountId = MutableStateFlow<String?>(null)
     val activeAccountId: StateFlow<String?> = _activeAccountId.asStateFlow()
-    private val _activeProfileId = MutableStateFlow(authStore.activeProfileId)
+    private val _activeProfileId = MutableStateFlow<String?>(null)
     val activeProfileId: StateFlow<String?> = _activeProfileId.asStateFlow()
 
     private val _history = MutableStateFlow<UiState<List<Song>>>(UiState.Loading)
@@ -1462,6 +1467,24 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         startSearchPipeline()
         startSuggestPipeline()
         startTypeaheadMediaPipeline()
+        viewModelScope.launch {
+            try {
+                val credentials = startupCredentials.load()
+                _googleAccounts.value = credentials.sessions
+                _activeAccountId.value = credentials.activeAccountId
+                _activeProfileId.value = credentials.activeProfileId
+                _selectedChannelKey.value = credentials.selectedChannelKey
+                _selectedChannelName.value = credentials.selectedChannelName
+            } catch (failure: Throwable) {
+                if (failure is CancellationException) throw failure
+                com.music.bitchord.data.DebugLog.w(
+                    "BitChord",
+                    "startup credentials unavailable: ${failure.message}",
+                )
+            } finally {
+                credentialsReady.complete(Unit)
+            }
+        }
         loadHome()
         // Explore, Library and the account menus are none of them on the first
         // screen, and each one starts network work. The two feeds load only
@@ -1872,7 +1895,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** A full load; [reason] names the trigger in the log — see [refreshHome]. */
     fun loadHome(reason: String = "startup") {
         com.music.bitchord.data.TrackLog.d("BitChord", "home: refresh by $reason")
-        val identity = listenerKey()
         val generation = homeLoadGeneration.incrementAndGet()
         _home.value = UiState.Loading
         homeContinuation = null
@@ -1885,6 +1907,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // one at the tail.
         _homePendingShelves.value = 1 + YtMusicRepository.HOME_SUPPLEMENT_BROWSE_IDS.size
         homeLoadJob = viewModelScope.launch {
+            credentialsReady.await()
+            val identity = listenerKey()
             launch {
                 try {
                     YtMusicRepository.home()

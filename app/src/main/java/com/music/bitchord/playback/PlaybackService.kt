@@ -1917,10 +1917,6 @@ class PlaybackService : MediaLibraryService() {
     override fun onCreate() {
         super.onCreate()
 
-        if (com.music.bitchord.data.innertube.Innertube.cookie == null) {
-            com.music.bitchord.data.innertube.Innertube.cookie = com.music.bitchord.auth.AuthStore(this).cookie
-        }
-
         // First, because everything below assumes it is standing up fresh and
         // one of the two ways this service starts does not give it that.
         //

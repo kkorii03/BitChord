@@ -21,6 +21,7 @@ import com.metrolist.innertubex.extraction.generateClientPlaybackNonce
 import com.metrolist.innertubex.models.YouTubeLocale
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.TrackLog
+import com.music.bitchord.data.net.NetworkReadiness
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpTimeout
@@ -132,6 +133,7 @@ object InnerTubeXResolver {
         synchronized(warmLock) { warmStarted = true }
         warmup?.cancel()
         warmup = scope.launch {
+            NetworkReadiness.await()
             cacheLink?.join()
             delay(delayMs)
             // Settle the shell's visitor first: [ensureVisitorData] otherwise
@@ -345,6 +347,7 @@ object InnerTubeXResolver {
         preferredClientId: String? = null,
         viaProxy: Boolean = false,
     ): Extracted? {
+        NetworkReadiness.await()
         val itx = if (viaProxy) proxyInnerTube else innerTube
         val walker = if (viaProxy) proxyExtractor else extractor
         if (viaProxy) linkProxyPlayerCache()

@@ -263,6 +263,7 @@ object Innertube {
      *   since an id can be burned while the session around it is fine.
      */
     suspend fun ensureVisitorData(refresh: Boolean = false): String? {
+        NetworkReadiness.await()
         if (!refresh && visitorData != null) {
             persistVisitor()
             return visitorData
@@ -338,6 +339,7 @@ object Innertube {
      * so the id is found by shape rather than by a path that would rot.
      */
     private suspend fun fetchVisitorData(): String? {
+        NetworkReadiness.await()
         val body = client.get("https://www.youtube.com/sw.js_data") {
             header("User-Agent", WEB_USER_AGENT)
         }.bodyAsText()
