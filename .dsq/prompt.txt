@@ -1,0 +1,12 @@
+BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/telegram.
+버그(사용자 폰 tg5 vc108, 11-01 13:30~13:33): 사용자가 추가한 Deezer 애드온(https://deezer.nom.deno.net/…)이 FLAC 16-bit 후보를 찾지만, 소리 대조(hq-verify)가 후보 파일을 받을 때 매번 HTTP 403 → 'unmeasured' → 업그레이드 거절(6회). 같은 시각 JioSaavn 후보는 대조 100% accepted.
+ 13:31:54.287 upgrade found: 'golden boy' at FLAC · 16-bit · 44.1 kHz from Deezer
+ 13:31:56.029 decode: hq-verify failed at=download HTTP 403
+ 13:31:56.030 hq-verify: golden boy Deezer match=0% offset=0 -> unmeasured
+할 일:
+① 원인 확정(파일:줄): hq-verify(HqAudioVerify.candidateFeatures 등)가 후보를 받는 HTTP 요청과, 재생(DataSource) 요청의 차이 — 클라이언트(프록시·헤더·User-Agent·Range·Referer), 애드온 /stream 응답의 headers 필드를 재생만 쓰고 검증은 안 쓰는지, 스트림 URL 이 1회용/만료인지.
+② 수정: 검증 다운로드가 재생과 같은 클라이언트·헤더·Range 방식을 쓰게 한다. 403/410 이면 애드온 /stream 을 한 번 다시 불러 새 URL 로 1회 재시도(요청 수 최소). 그래도 실패면 지금처럼 unmeasured 로 거절(엉뚱한 곡 방지 규칙은 그대로).
+③ 로그: 'decode: hq-verify failed at=download HTTP 403 (retried with fresh url: ok|403)'.
+테스트(고치기 전 실패): 검증 요청에 재생과 같은 헤더가 실림, 403 후 새 URL 1회 재시도, 두 번째도 403 이면 unmeasured — 단위 테스트(가짜 서버/MockWebServer 있으면 사용). 새 테스트 클래스 이름 요약에 적을 것.
+제약: .github/, keys, *.jks, 서명 수정 금지. 판정·소리 대조 기준 변경 금지. 타이머·폴링 금지. 바꾼 함수의 모든 호출부 재확인. 기존 주석·의도를 지우면 요약에 이유.
+마지막 10줄 이내 요약: 원인(파일:줄) / 수정 / 테스트 / 미해결.
