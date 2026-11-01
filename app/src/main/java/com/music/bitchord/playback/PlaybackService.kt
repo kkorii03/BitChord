@@ -9722,7 +9722,14 @@ class PlaybackService : MediaLibraryService() {
         scope.launch {
             AppSettings.skipSilence.collect { on -> eachPlayer { it.skipSilenceEnabled = on } }
         }
-        koObservePlaybackPreferences() // [KO] playback-preferences
+        scope.launch {
+            // Re-evaluate the already queued next track immediately when this
+            // preference changes, instead of waiting for another timeline event.
+            AppSettings.preferMusicOnly.drop(1).collect {
+                cancelPrefetch()
+                player?.takeIf { it.isPlaying }?.let(::prefetchAround)
+            }
+        }
         scope.launch {
             AppSettings.preferUsbDac.drop(1).collect { requestOutputReconfiguration() }
         }
@@ -9802,6 +9809,7 @@ class PlaybackService : MediaLibraryService() {
                 AppSettings.equalizerBands,
             ) { }.collect { applyEqualizer() }
         }
+        koObservePlaybackPreferences() // [KO] playback-preferences
     }
 
     /**

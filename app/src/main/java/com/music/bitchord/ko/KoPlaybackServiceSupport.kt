@@ -197,12 +197,6 @@ internal fun PlaybackService.koObservePlaybackPreferences() {
             }
         }
     }
-    scope.launch {
-        AppSettings.preferMusicOnly.drop(1).collect {
-            cancelPrefetch()
-            player?.takeIf { it.isPlaying }?.let { prefetchAround(it) }
-        }
-    }
 }
 
 /** The short reason names a diagnostic log reads without the Media3 constants. */
