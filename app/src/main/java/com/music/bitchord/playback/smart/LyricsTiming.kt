@@ -7,6 +7,7 @@ import androidx.media3.common.util.UnstableApi
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.YtMusicRepository
+import com.music.bitchord.data.lyrics.BaseChoicePolicy
 import com.music.bitchord.data.lyrics.ChromaAlignment
 import com.music.bitchord.data.lyrics.DownloadedSyncCheck
 import com.music.bitchord.data.lyrics.LyricLine
@@ -230,10 +231,14 @@ object LyricsTiming {
         // verified high-quality copy whose clock differs from YouTube's, and
         // that map applies even when no measurement or AI answer exists.
         val entry = store(context).get(videoId) ?: Entry()
-        val base = if (baseAllowed) baseOf(entry, lines, measuredAllowed, isVideo, audioSource) else null
+        val key = textKey(lines, audioSource)
+        val base = if (baseAllowed) {
+            baseOf(entry, lines, measuredAllowed, isVideo, audioSource, key, videoId)
+        } else {
+            null
+        }
         val engine = if (base?.byAi == true) entry.aiEngine ?: ENGINE_GEMINI else null
         val bias = engine?.let { aiBias(context, it) } ?: 0L
-        val key = textKey(lines, audioSource)
         val timing = Timing(
             base = base,
             manualMs = entry.manualMs ?: 0L,
@@ -323,20 +328,82 @@ object LyricsTiming {
         measuredAllowed: Boolean = true,
         isVideo: Boolean = false,
         audioSource: String? = null,
+        key: Int = textKey(lines, audioSource),
+        videoId: String? = null,
     ): Adjustment? {
-        val measured = entry.auto?.takeIf { measuredAllowed && entry.autoVersion == AUTO_VERSION }
-        // Asked for by hand, over a measurement the listener saw was off: Gemini's.
-        if (entry.aiPreferred) aiOf(entry, lines, isVideo, audioSource)?.let { return it }
-        // Otherwise the measurement first: when it lines the two up it is right
-        // to a tenth of a second, which Gemini's answers never are.
-        measured?.toAdjustment(byAi = false)?.let { return it }
-        // A measurement that found the video already on the record's clock is
-        // an answer too: no shift. Falling through to the AI answer here moved
-        // lyrics the record had just shown were in place.
-        if (measuredAllowed && entry.autoVersion == AUTO_VERSION && entry.autoNoChange) {
-            return Adjustment.Shift(0L, byAi = false)
+        val measuredAdjustment = entry.auto
+            ?.takeIf { measuredAllowed && entry.autoVersion == AUTO_VERSION }
+            ?.toAdjustment(byAi = false)
+        val noChange = if (measuredAllowed && entry.autoVersion == AUTO_VERSION && entry.autoNoChange) {
+            Adjustment.Shift(0L, byAi = false)
+        } else {
+            null
         }
-        return aiOf(entry, lines, isVideo, audioSource)
+        val ai = aiOf(entry, lines, isVideo, audioSource)
+        // Asked for by hand, over a measurement the listener saw was off: Gemini's.
+        val manualAi = ai.takeIf { entry.aiPreferred }
+        if (manualAi != null) return manualAi
+        // The fixed order: measurement, then a measurement that found no
+        // change, then the AI answer. Kept when the heard words cannot tell
+        // the candidates apart or there are too few of them.
+        val measured = measuredAdjustment ?: noChange
+        val defaultName = when {
+            measured != null -> BaseChoicePolicy.MEASURED
+            ai != null -> BaseChoicePolicy.AI
+            else -> return null
+        }
+        val default = measured ?: ai ?: return null
+        val heard = savedHeardWords(entry, key)
+        if (heard.isEmpty()) return default
+        val heardStarts = BaseChoicePolicy.heardStarts(lines.map { it.text }, heard)
+        val candidates = buildList {
+            add(BaseChoicePolicy.Candidate(BaseChoicePolicy.NONE, lines.map { it.timeMs }))
+            ai?.let { add(BaseChoicePolicy.Candidate(BaseChoicePolicy.AI, choiceStarts(lines, it))) }
+            measured?.let {
+                add(BaseChoicePolicy.Candidate(BaseChoicePolicy.MEASURED, choiceStarts(lines, it)))
+            }
+        }
+        val choice = BaseChoicePolicy.choose(
+            defaultName = defaultName,
+            heardStarts = heardStarts,
+            candidates = candidates,
+            manual = entry.aiPreferred,
+        )
+        if (videoId != null) {
+            val detail = choice.scores.joinToString(" ") { (name, score) ->
+                "$name:${score.medianAbsMs}/${(score.withinRatio * 100).roundToInt()}%"
+            }
+            TrackLog.d(TAG, "base-choice: $detail -> ${choice.name}", videoId)
+        }
+        return when (choice.name) {
+            BaseChoicePolicy.MEASURED -> measured
+            BaseChoicePolicy.AI -> ai
+            BaseChoicePolicy.NONE -> null
+            else -> default
+        }
+    }
+
+    /** [lines]' starts as [adjustment] puts them, for the base-choice comparison. */
+    private fun choiceStarts(lines: List<LyricLine>, adjustment: Adjustment): List<Long?> =
+        lines.map { line ->
+            when (adjustment) {
+                is Adjustment.Shift -> line.timeMs + adjustment.ms
+                is Adjustment.Mapped -> adjustment.map.map(line.timeMs)
+            }
+        }
+
+    /**
+     * The words heard for [key], whichever transcript kept them: the refine's
+     * own listen first, then the AI answer's. Empty means the base can only
+     * follow the fixed order.
+     */
+    private fun savedHeardWords(entry: Entry, key: Int): List<LyricsWordAlign.Heard> {
+        val saved = when {
+            entry.refineHeardKey == key && entry.refineHeardWords.isNotEmpty() -> entry.refineHeardWords
+            entry.aiTextKey == key && entry.heardWords.isNotEmpty() -> entry.heardWords
+            else -> emptyList()
+        }
+        return saved.map { LyricsWordAlign.Heard(it.t, it.s, it.e) }
     }
 
     private fun aiOf(
@@ -870,6 +937,8 @@ object LyricsTiming {
          * closes.
          */
         cancelWithCaller: Boolean = false,
+        /** The sung lines, when the caller has them, for the lateness sample. */
+        lines: List<LyricLine>? = null,
     ) {
         // The song version already resolved for this row. Measuring against
         // the right recording first is what stops a karaoke arrangement or a
@@ -892,7 +961,9 @@ object LyricsTiming {
                         // (more of the video has arrived) must not trade an answer from
                         // the whole record for one from its opening, even for a minute.
                         val had = store(context).get(video.videoId)
-                        if (had?.autoVersion != AUTO_VERSION || had.auto == null) keep(context, video.videoId, early)
+                        if (had?.autoVersion != AUTO_VERSION || had.auto == null) {
+                            keep(context, video.videoId, early, lines)
+                        }
                     }
                 } catch (cancelled: CancellationException) {
                     throw cancelled
@@ -904,7 +975,7 @@ object LyricsTiming {
                 // a decoder that wouldn't open is worth trying again, a refusal is
                 // not (until more of the video, or of the record, is there to look at).
                 if (outcome !is Measured.Done) return@withLock
-                keep(context, video.videoId, outcome)
+                keep(context, video.videoId, outcome, lines)
             }
         }
         if (cancelWithCaller) {
@@ -937,7 +1008,12 @@ object LyricsTiming {
         )
     }
 
-    private suspend fun keep(context: Context, videoId: String, done: Measured.Done) {
+    private suspend fun keep(
+        context: Context,
+        videoId: String,
+        done: Measured.Done,
+        lines: List<LyricLine>? = null,
+    ) {
         store(context).update(videoId) {
             it.copy(
                 autoVersion = AUTO_VERSION,
@@ -957,7 +1033,7 @@ object LyricsTiming {
                 biasSampled = false,
             )
         }
-        sampleBias(context, videoId)
+        sampleBias(context, videoId, lines, lines?.let { textKey(it) })
         _changes.tryEmit(videoId)
     }
 
@@ -1619,13 +1695,13 @@ object LyricsTiming {
         // address (Gemini fetching and watching the video) otherwise.
         val audio = runCatching { VideoAudio.wav(context, videoId) }.getOrNull()
         val texts = sung.map { it.value.text }
-        // Deepgram first: every word it hears comes with its time to the
-        // hundredth of a second, in a few seconds. It hears singing badly,
-        // but the lyrics only need some of it heard right to be pinned.
-        // Then Whisper through the same key: a minute or two, but it hears the
-        // singing that nova-3 mostly can't (measured on real covers: nova-3
-        // placed 3 of 25 lines, Whisper 22, within a tenth of a second).
-        var engine = ENGINE_DEEPGRAM
+        // Deepgram's Whisper first: every word it hears comes with its time to
+        // the hundredth of a second, and it hears the singing nova-3 mostly
+        // can't (measured on real covers: nova-3 placed 3 of 25 lines, Whisper
+        // 22, within a tenth of a second). The song check uses the same
+        // request and key; a later accepted Gemini answer may still get the
+        // separate one-time Whisper upgrade below.
+        var engine = ENGINE_DEEPGRAM_WHISPER
         var adjustment: Adjustment.Mapped? = null
         // The words behind the answer that is kept, so the panel can use their
         // real per-word times instead of guessing them from the line's slot.
@@ -1677,7 +1753,7 @@ object LyricsTiming {
         if (audio != null && deepgramWanted && com.music.bitchord.data.lyrics.Deepgram.usable) {
             val language = com.music.bitchord.data.lyrics.Deepgram.languageFor(texts)
             for ((model, name) in listOf(
-                com.music.bitchord.data.lyrics.Deepgram.MODEL_NOVA to ENGINE_DEEPGRAM,
+                com.music.bitchord.data.lyrics.Deepgram.MODEL_WHISPER to ENGINE_DEEPGRAM_WHISPER,
                 com.music.bitchord.data.lyrics.Deepgram.MODEL_WHISPER to ENGINE_WHISPER,
             ).filter { it.second in engines }) {
                 noteAttempt(name)
@@ -1799,7 +1875,7 @@ object LyricsTiming {
                 aiEngine = engine,
             )
         }
-        sampleBias(context, videoId)
+        sampleBias(context, videoId, lines, key)
         _changes.tryEmit(videoId)
         return adjustment
     }
@@ -1979,6 +2055,7 @@ object LyricsTiming {
                 videoMs = song.durationMillis(),
                 awaitCacheSignal = true,
                 cancelWithCaller = true,
+                lines = lines,
             )
         }
         return timing(
@@ -2774,13 +2851,38 @@ object LyricsTiming {
      * answer from then on. Nothing is taken off until [BIAS_MIN_SAMPLES] songs
      * agree, and never more than [BIAS_MAX_MS].
      */
-    private suspend fun sampleBias(context: Context, videoId: String) {
+    private suspend fun sampleBias(
+        context: Context,
+        videoId: String,
+        lines: List<LyricLine>? = null,
+        linesKey: Int? = null,
+    ) {
         val entry = store(context).get(videoId) ?: return
         if (entry.biasSampled || entry.autoVersion != AUTO_VERSION) return
         val measured = entry.auto?.toAdjustment(byAi = false) ?: return
         val ai = entry.ai?.toAdjustment(byAi = true) ?: return
         // Only a measurement that clearly held: most of the song agreeing.
         if ((measured.matchPercent ?: 0) < 60 || (ai.matchPercent ?: 0) < 50) return
+        // The words must belong to the lines being scored: after a lyrics-source
+        // change aiTextKey names another transcript, and comparing it with these
+        // starts would record or skip a bias sample for the wrong reason.
+        val heard = linesKey?.let { savedHeardWords(entry, it) }.orEmpty()
+        val measuredScore = if (lines != null && heard.isNotEmpty()) {
+            BaseChoicePolicy.score(
+                choiceStarts(lines, measured),
+                BaseChoicePolicy.heardStarts(lines.map { it.text }, heard),
+            )
+        } else {
+            null
+        }
+        // A measurement that disagrees with the words actually heard is not
+        // the reference Gemini's lateness is measured against: qzXa kept a
+        // measured +1.77 s that disagreed with the transcript and taught the
+        // bias -1.72 s. Only a measurement on time with the words may sample.
+        if (measuredScore == null || !BaseChoicePolicy.latenessSampleAllowed(measuredScore)) {
+            TrackLog.d(TAG, "lateness sample skipped: measured disagrees with heard words", videoId)
+            return
+        }
         val gaps = (BIAS_FROM_MS..BIAS_TO_MS step BIAS_STEP_MS).map { t -> ai.map.map(t) - measured.map.map(t) }.sorted()
         if (gaps.isEmpty()) return
         val median = gaps[gaps.size / 2]
