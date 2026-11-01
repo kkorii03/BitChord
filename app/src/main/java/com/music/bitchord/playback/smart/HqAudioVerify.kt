@@ -22,6 +22,7 @@ import com.music.bitchord.data.sources.ModuleSource
 import com.music.bitchord.data.sources.MusicSource
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
+import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.SourceTrackKeys
 import com.music.bitchord.data.sources.StreamRequest
@@ -591,6 +592,8 @@ object HqAudioVerify {
                         bytes = candidate.bytes,
                     )
                     logTiming(youtubeId, candidate, alignMs)
+                    // Downloaded and compared: the source is measurable, whatever the verdict.
+                    sourceId?.let(SourceResolver.SourceCooldown::measured)
                     if (!verdict.accepted) {
                         if (HqVerifyPolicy.shouldPersistRejection(
                                 referenceAvailable = referenceComplete && candidateComplete,
@@ -1916,6 +1919,8 @@ object HqAudioVerify {
             val key = key(sourceId, trackId) ?: return
             if (rows.size >= MAX_UNMEASURED_ROWS) rows.keys.firstOrNull()?.let(rows::remove)
             rows[key] = reason
+            // Several different tracks in a row means the source, not the row.
+            SourceResolver.SourceCooldown.unmeasured(sourceId!!, trackId!!, reason)
         }
 
         fun reason(sourceId: String?, trackId: String?): String? =

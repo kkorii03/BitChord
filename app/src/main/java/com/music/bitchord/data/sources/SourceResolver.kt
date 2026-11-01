@@ -92,7 +92,61 @@ object SourceResolver {
         internal fun authMark(configId: String): Long =
             authMarks[configId]?.get() ?: 0L
 
+        /**
+         * Sources whose candidates could not be measured for several different
+         * tracks in a row: every download refused (403/410) or only a preview.
+         * Such a source answers searches fine, so the failure rule above never
+         * rests it, yet every upgrade paid a search and a download for nothing
+         * (the listener's Deezer addon 403ed on every track of 11-01). Memory
+         * only; a measured verdict or a settings change forgets it.
+         */
+        private class Unmeasurable(val tracks: LinkedHashSet<String> = LinkedHashSet(), var untilMs: Long = 0L)
+
+        private val unmeasurable = ConcurrentHashMap<String, Unmeasurable>()
+
+        /** One candidate of [configId] could not be measured for [reason]. */
+        internal fun unmeasured(
+            configId: String,
+            trackId: String,
+            reason: String,
+            nowMs: Long = System.currentTimeMillis(),
+        ) {
+            val state = unmeasurable.computeIfAbsent(configId) { Unmeasurable() }
+            synchronized(state) {
+                state.tracks.add(trackId)
+                if (state.tracks.size >= UNMEASURABLE_TRACKS_BEFORE_REST && state.untilMs <= nowMs) {
+                    state.untilMs = nowMs + UNMEASURABLE_REST_MS
+                    TrackLog.w(
+                        "BitChord",
+                        "source $configId resting ${UNMEASURABLE_REST_MS / 3_600_000}h: " +
+                            "unmeasurable x${state.tracks.size} ($reason)",
+                    )
+                }
+            }
+        }
+
+        /** A candidate of [configId] was downloaded and compared, whatever the verdict. */
+        internal fun measured(configId: String) {
+            unmeasurable.remove(configId)
+        }
+
+        /**
+         * Whether [configId] is parked for unmeasurable candidates. Unlike a
+         * failure rest, a hand-made upgrade does not probe it: its search
+         * would succeed and its download would be refused again.
+         */
+        internal fun isUnmeasurable(configId: String, nowMs: Long = System.currentTimeMillis()): Boolean {
+            val state = unmeasurable[configId] ?: return false
+            synchronized(state) {
+                if (state.untilMs == 0L) return false
+                if (state.untilMs > nowMs) return true
+                unmeasurable.remove(configId)
+                return false
+            }
+        }
+
         fun isResting(configId: String): Boolean {
+            if (isUnmeasurable(configId)) return true
             val state = states[configId] ?: return false
             if (state.untilMs > System.currentTimeMillis()) return true
             if (state.untilMs != 0L) states.remove(configId)
@@ -151,6 +205,7 @@ object SourceResolver {
         /** Forgets a rest and its failure count after the source's settings changed. */
         internal fun clear(configId: String) {
             states.remove(configId)
+            unmeasurable.remove(configId)
         }
 
         private fun recordFailure(configId: String, countForRest: Boolean) {
@@ -176,8 +231,11 @@ object SourceResolver {
             states.clear()
             failureMarks.clear()
             authMarks.clear()
+            unmeasurable.clear()
         }
 
+        private const val UNMEASURABLE_TRACKS_BEFORE_REST = 3
+        private const val UNMEASURABLE_REST_MS = 6 * 60 * 60 * 1000L
         private const val FAILURES_BEFORE_REST = 2
         private const val COOLDOWN_MS = 30 * 60 * 1000L
     }
@@ -1471,8 +1529,13 @@ object SourceResolver {
         val lookupTimeoutMs = sourceLookupTimeoutMs(manual, sourceTimeoutMs)
         val usable = sources.filterNot { source ->
             val resting = SourceCooldown.isResting(source.configId)
-            val alreadyProbed = resting && manual && manualSession != null &&
-                !manualRestingProbes.add(manualProbeKey(manualSession, source.configId, target))
+            // A source parked for unmeasurable candidates is not probed even by
+            // hand: its search works, its download is what keeps being refused.
+            val unmeasurable = resting && SourceCooldown.isUnmeasurable(source.configId)
+            val alreadyProbed = resting && manual && (
+                unmeasurable || (manualSession != null &&
+                    !manualRestingProbes.add(manualProbeKey(manualSession, source.configId, target)))
+                )
             if (alreadyProbed) {
                 val skipped = SearchOutcome(verdict = "resting", conclusive = false)
                 report?.record(skipped, source.displayName)
