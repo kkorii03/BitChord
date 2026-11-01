@@ -1413,6 +1413,8 @@
     <string name="hq_library_waiting">대기 중 (서버 혼잡)</string>
     <string name="hq_library_upgrade_all">모두 고음질로 다시 받기</string>
     <string name="hq_library_upgrade_all_subtitle">다운로드한 곡을 소리로 검증된 고음질 음원으로 지금 교체합니다. 곡마다 하나씩 진행됩니다.</string>
+    <string name="hq_library_worker_title">고음질 보관함</string>
+    <string name="hq_library_worker_text">다운로드한 곡을 고음질로 교체하고 있습니다.</string>
     <string name="download_health_recheck">다운로드 곡 다시 점검</string>
     <string name="download_health_recheck_subtitle">다음 재생 때 다운로드 확인</string>
     <string name="settings_transfer_send">다른 기기로 설정 보내기</string>

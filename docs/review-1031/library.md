@@ -26,7 +26,7 @@
 | 좋아요/좋아요 취소 | `setLike` → `rate` → `LikeState` + `dropFromLikedLists` + `forgetFromLibrary` | 하트 즉시 반영, 목록에서 제거 | 오프라인: 롤백 |
 | Liked Music 영상 숨김 | `musicOnlyLikedPage`/`YouTubeFallback.musicOnlyLiked` | 영상은 접힌 행 뒤로 | 첫 페이지·이어받기 모두 분리됨(폴백 포함) |
 | 다운로드 목록 | `Downloads.getDownloadedSongs`(파일 존재 확인) → 폴더/앨범/아티스트 그룹 | 오프라인 재생 가능 | 파일이 밖에서 지워지면 열 때 정리(단, Library 카드는 다음 열람까지 남음) |
-| 고음질 보관함 | `HqVerificationStore` → `HqLibraryPolicy.select` → `HqLibraryUpgrade` 1곡씩 | 검증된 상위 등급으로 교체/미리 저장 | 화면 꺼짐·백그라운드·재생 중에는 시작하지 않음 — 아래 H2 |
+| 고음질 보관함 | `HqVerificationStore` → `HqLibraryPolicy.select` → `HqLibraryUpgrade` 1곡씩 | 검증된 상위 등급으로 교체/미리 저장 | 화면 꺼짐·백그라운드에서도 포그라운드 워커로 진행(재생 중에는 시작하지 않음) — 아래 H2 |
 | 보관함 정렬 | `LibrarySort` | "Show all" 그리드에 적용 | 메인 카드 행에는 미적용(L1, 낮음) |
 | 백업 가져오기 | `Backup.importFrom` | 설정/청취/플레이리스트/좋아요 복원 | 좋아요는 **합쳐짐**(문서는 교체라고 함) — 아래 M1 |
 
@@ -48,8 +48,8 @@
   쓰도록 연결. 순서 변경은 서버 `setVideoId`가 없으므로 원격 목록에만 남겼다.
 - 회귀 방지: `LocalPlaylistStoreTest`의 browse-id 삭제/이름 변경 테스트.
 
-### H2 (HIGH, 미수정) — 고음질 보관함은 화면이 켜져 있고 재생이 멈춘 동안에만 돈다
-- 증거: `HqLibraryUpgrade.kt:237,241,590,595,981` — `!AppForeground`, `PlaybackActivity.active`,
+### H2 (HIGH, 수정함 — 2026-11-02) — 고음질 보관함은 화면이 켜져 있고 재생이 멈춘 동안에만 돈다
+- 증거(수정 전): `HqLibraryUpgrade.kt:237,241,590,595,981` — `!AppForeground`, `PlaybackActivity.active`,
   포그라운드 서비스 시작 가능 여부에서 모두 return. 다운로드 파일의 검증은
   `DownloadHealth.onPlayback`(`DownloadHealth.kt:108`)이 재생 전환 때만 수행하고,
   `HqAudioVerify.verifyDownloaded`가 `Unavailable`이면(`DownloadHealth.kt:116-119`)
@@ -65,6 +65,14 @@
   WorkManager 포그라운드 작업으로 1곡씩 처리한다. (3) `Unavailable` 판정을
   영구 실패로 저장하지 않는 현재 규칙은 유지한다. 오디오 디코드 비용 때문에
   재생 중 동시 실행은 계속 금지해야 한다.
+- 2026-11-02 수정: `HqLibraryUpgradeWorker`가 `setForeground`로 자체 알림을
+  올린 뒤 `workerStarted(foregroundStartable = true)`를 넘긴다. 게이트는
+  `hqLibraryMayRun`/`hqLibraryServiceStartable`로 분리해 "창이 있음"과
+  "포그라운드 워커가 서비스를 시작할 수 있음"을 같은 조건으로 다룬다.
+  `enqueue`는 창을 요구하지 않고, `Downloads.enqueue`는 포그라운드 워커가
+  실행 중일 때도 다운로드 서비스를 시작한다. `onBackground`는 더 이상 고유
+  작업을 취소하지 않는다. 재생 중 금지·Wi-Fi 전용·`Unavailable` 미저장 규칙은
+  그대로다. 회귀 방지: `HqLibraryBackgroundRunTest`.
 
 ### M1 (MEDIUM, 미수정) — 백업 복원이 좋아요/싫어요를 "교체"가 아니라 "병합"
 - 증거: `Backup.kt:144-145` — `file.likedVideoIds.forEach { LikeState.set(...) }`,
@@ -218,7 +226,7 @@
 | 지적 | 판정 | 현재 근거 |
 |---|---|---|
 | H1 로컬 목록 이름 변경·삭제 | 이미 고쳐짐 | `MainViewModel.kt:1326,1336`, `MainActivity.kt:5722,5761` |
-| H2 고음질 보관함 포그라운드·비재생 게이트 | 남음 | `HqLibraryUpgrade.kt:313`(`runAllowed`), `:317`(포그라운드), `:321`(재생 중) |
+| H2 고음질 보관함 포그라운드·비재생 게이트 | 이미 고쳐짐 (2026-11-02) | `HqLibraryUpgrade.kt:138`(`hqLibraryMayRun`), `:1022`(워커 게이트), `:1751`(`setForeground`), `Downloads.kt:505-508`(포그라운드 워커의 서비스 시작) |
 | M1 백업 좋아요 병합 | 이미 고쳐짐 | `Backup.kt:295`(`LikeState.clear()`), `:299-304` |
 | M2 같은 ms 로컬 목록 덮어쓰기 | 이미 고쳐짐 | `LocalPlaylistStore.kt:138,251` |
 | M3 Spotify 51곡 이후 실패 은폐 | 이미 고쳐짐 | `MainViewModel.kt:1088,1112`, `MainActivity.kt:5535` |
@@ -226,5 +234,6 @@
 | M5 setVideoId 없는 행 삭제 | 오진/이미 고쳐짐 | `MainActivity.kt:5139`가 삭제 행을 숨김; 도달 불가 helper/test 제거 |
 
 이번 보완: `spotify_import_partial`이 `values/`·`values-ko/`에만 있어 16개
-언어에서 영어로 폴백되던 문제를 각 로케일에 추가(H2는 이번에도 미수정).
+언어에서 영어로 폴백되던 문제를 각 로케일에 추가했고, H2 게이트를
+`HqLibraryBackgroundRunTest`와 함께 수정했다.
 

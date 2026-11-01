@@ -498,10 +498,14 @@ object Downloads {
         wakeWorkers()
 
         val app = context.applicationContext
-        // Android refuses a foreground service started from a background
-        // process. Leave the track queued and let [onForeground] start the
-        // drain when the app next has a window; there is no timer.
-        if (AppForeground.isForeground) {
+        // Android refuses a foreground service started from a plain background
+        // process. A high-quality worker promoted to the foreground may start
+        // it with the screen off; otherwise leave the track queued and let
+        // [onForeground] start the drain when the app next has a window. There
+        // is no timer.
+        val canStartService = AppForeground.isForeground ||
+            HqLibraryUpgrade.foregroundWorkerRunning
+        if (canStartService) {
             val startFailure = startService(app)
             if (startFailure != null) {
                 // Refused only when the app has no window and no exemption,

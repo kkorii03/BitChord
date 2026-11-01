@@ -1,11 +1,17 @@
 package com.music.bitchord.download
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
 import android.content.SharedPreferences
+import android.content.pm.ServiceInfo
+import android.os.Build
 import com.music.bitchord.R
+import androidx.core.app.NotificationCompat
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
+import androidx.work.ForegroundInfo
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
@@ -109,6 +115,36 @@ internal fun hqSavedCopyAnswersTarget(
 }
 
 /**
+ * Whether the high-quality pass may start [Downloads]' foreground service now.
+ *
+ * A worker raised to a foreground service has its own notification and is
+ * allowed to start another foreground service even without a window. That is
+ * the path the pass uses with the screen off; an ordinary background process
+ * still has no such permission, so it stays parked as before.
+ */
+internal fun hqLibraryServiceStartable(
+    appForeground: Boolean,
+    foregroundWorker: Boolean,
+): Boolean = appForeground || foregroundWorker
+
+/**
+ * Whether one high-quality pass step may run with the facts known now.
+ *
+ * Playback keeps the pass out whatever the window state: decoding and fetching
+ * alongside the player competed for the same servers and battery. The two ways
+ * to start the download service — an app window or a foreground worker — are
+ * otherwise equivalent.
+ */
+internal fun hqLibraryMayRun(
+    passAllowed: Boolean,
+    playbackActive: Boolean,
+    appForeground: Boolean,
+    foregroundWorker: Boolean,
+): Boolean = passAllowed &&
+    !playbackActive &&
+    hqLibraryServiceStartable(appForeground, foregroundWorker)
+
+/**
  * The automatic high-quality pass over the listener's library.
  *
  * Two jobs, both fed by [HqVerificationStore]'s accepted pairs:
@@ -204,10 +240,13 @@ object HqLibraryUpgrade {
         failure: Failure?,
         nowMs: Long,
         downloaded: Map<String, SavedSongMetadata>,
-        foreground: Boolean = AppForeground.isForeground,
+        serviceStartable: Boolean = hqLibraryServiceStartable(
+            AppForeground.isForeground,
+            foregroundWorkerActive,
+        ),
     ): Boolean = HqLibraryAutoRetryPolicy.shouldAttempt(
         manual = manualPass,
-        foreground = foreground,
+        foreground = serviceStartable,
         alreadyAtTargetTier = hasCopyAtLeastAsGood(videoId, downloaded[videoId], verifiedTier),
         attempts = failure?.attempts ?: 0,
         lastFailureMs = failure?.lastFailureMs ?: 0L,
@@ -227,10 +266,13 @@ object HqLibraryUpgrade {
         verifiedTier: HqTier,
         nowMs: Long,
         downloaded: Map<String, SavedSongMetadata>,
-        foreground: Boolean = AppForeground.isForeground,
+        serviceStartable: Boolean = hqLibraryServiceStartable(
+            AppForeground.isForeground,
+            foregroundWorkerActive,
+        ),
     ): Boolean = HqLibraryAutoRetryPolicy.shouldAttempt(
         manual = manualPass,
-        foreground = foreground,
+        foreground = serviceStartable,
         alreadyAtTargetTier = hasCopyAtLeastAsGood(videoId, downloaded[videoId], verifiedTier),
         attempts = 0,
         lastFailureMs = 0L,
@@ -282,6 +324,18 @@ object HqLibraryUpgrade {
     private var workerRunning: Boolean = false
 
     /**
+     * The worker currently inside [runOne] raised its own foreground
+     * notification, so it may start the download service without a window.
+     *
+     * Read by [Downloads.enqueue] on the download thread; written by the
+     * worker on its own thread.
+     */
+    @Volatile
+    private var foregroundWorkerActive: Boolean = false
+
+    internal val foregroundWorkerRunning: Boolean get() = foregroundWorkerActive
+
+    /**
      * A pass the listener asked for with "모두 고음질로 다시 받기".
      *
      * The automatic switches decide whether the background pass may run at
@@ -311,10 +365,9 @@ object HqLibraryUpgrade {
     fun scheduleIfEnabled(context: Context) {
         ensureLoaded(context)
         if (!runAllowed()) return
-        // Android refuses a foreground service started without a window, so
-        // the pass waits for the next [onForeground] event instead of trying
-        // and failing on every process start.
-        if (!AppForeground.isForeground) return
+        // The worker raises its own foreground notification, so a schedule no
+        // longer needs an app window. [runOne] decides whether this process
+        // can start the download service; there is no retry loop here.
         // Nothing is fetched while the player is using the same servers. The
         // pause (or buffer-idle) event calls [onPlaybackStopped], so this is
         // event-driven rather than a retry loop.
@@ -343,16 +396,13 @@ object HqLibraryUpgrade {
     /**
      * The app no longer has a window.
      *
-     * A delayed retry must not wake the process to start a service Android
-     * will refuse. Cancelling the unique work only stops the schedule; the
-     * plan and failure records stay on disk, and [onForeground] resumes them.
+     * Leaving the app used to cancel the unique work because the worker could
+     * not start the download service without a window. The worker now raises
+     * its own foreground notification, so the plan and its WorkManager chain
+     * stay in place with the screen off; [runOne] still parks a step while
+     * playback owns the servers.
      */
     fun onBackground(context: Context) {
-        runCatching {
-            WorkManager.getInstance(context.applicationContext).cancelUniqueWork(WORK_NAME)
-        }.onFailure {
-            TrackLog.w(TAG, "could not pause the high-quality pass: ${it.message}")
-        }
     }
 
     /**
@@ -965,19 +1015,24 @@ object HqLibraryUpgrade {
 
     internal suspend fun runOne(context: Context) = withContext(Dispatchers.IO) {
         ensureLoaded(context)
-        // A worker woken with no window must not try to start the download
-        // service. The foreground event schedules the pass again.
-        if (!AppForeground.isForeground) {
-            TrackLog.d(TAG, "hq-library: worker skipped; app has no window")
-            return@withContext
-        }
-        if (!runAllowed()) {
-            TrackLog.d(TAG, "hq-library: worker skipped; both automatic switches are off")
-            finishRun()
-            return@withContext
-        }
-        if (PlaybackActivity.active) {
-            TrackLog.d(TAG, "hq-library: worker skipped; playback is using the same servers")
+        val passAllowed = runAllowed()
+        if (!hqLibraryMayRun(
+                passAllowed = passAllowed,
+                playbackActive = PlaybackActivity.active,
+                appForeground = AppForeground.isForeground,
+                foregroundWorker = foregroundWorkerActive,
+            )
+        ) {
+            when {
+                !passAllowed -> {
+                    TrackLog.d(TAG, "hq-library: worker skipped; both automatic switches are off")
+                    finishRun()
+                }
+                PlaybackActivity.active ->
+                    TrackLog.d(TAG, "hq-library: worker skipped; playback is using the same servers")
+                else ->
+                    TrackLog.d(TAG, "hq-library: worker skipped; no window and no foreground worker")
+            }
             return@withContext
         }
         if (recoverActive(context)) return@withContext
@@ -1516,9 +1571,9 @@ object HqLibraryUpgrade {
         delayMs: Long = 0L,
     ) {
         if (!runAllowed()) return
-        // A worker scheduled here would only be woken to start a service
-        // Android refuses. [onForeground] schedules the pass instead.
-        if (!AppForeground.isForeground) return
+        // The worker raises its own foreground notification before touching
+        // the download queue, so it can be scheduled with the screen off. The
+        // download service start still checks [foregroundWorkerRunning].
         val request = OneTimeWorkRequestBuilder<HqLibraryUpgradeWorker>()
             .setConstraints(
                 Constraints.Builder()
@@ -1537,13 +1592,25 @@ object HqLibraryUpgrade {
         }
     }
 
-    /** Marks a worker as using the plan; see [workerRunning]. */
-    internal fun workerStarted() {
-        synchronized(lock) { workerRunning = true }
+    /**
+     * Marks a worker as using the plan; see [workerRunning].
+     *
+     * [foregroundStartable] is true when the worker successfully raised its own
+     * foreground notification, which is what lets it start the download
+     * service without an app window.
+     */
+    internal fun workerStarted(foregroundStartable: Boolean = false) {
+        synchronized(lock) {
+            workerRunning = true
+            foregroundWorkerActive = foregroundStartable
+        }
     }
 
     internal fun workerStopped() {
-        synchronized(lock) { workerRunning = false }
+        synchronized(lock) {
+            workerRunning = false
+            foregroundWorkerActive = false
+        }
     }
 
     private fun ensureLoaded(context: Context) {
@@ -1675,12 +1742,57 @@ class HqLibraryUpgradeWorker(
             TrackLog.d("BitChord", "hq-library: worker skipped; pass is off")
             return Result.success()
         }
-        HqLibraryUpgrade.workerStarted()
+        // A foreground worker may start the download service without an app
+        // window. If Android refuses the promotion, fall back to the old
+        // window-only rule instead of trying a service that would be refused.
+        val foreground = runCatching { setForeground(foregroundInfo()) }
+            .onFailure {
+                TrackLog.w("BitChord", "hq-library: could not raise foreground: ${it.message}")
+            }
+            .isSuccess
+        HqLibraryUpgrade.workerStarted(foreground)
         try {
             HqLibraryUpgrade.runOne(applicationContext)
         } finally {
             HqLibraryUpgrade.workerStopped()
         }
         return Result.success()
+    }
+
+    private fun foregroundInfo(): ForegroundInfo {
+        val context = applicationContext
+        context.getSystemService(NotificationManager::class.java)?.createNotificationChannel(
+            NotificationChannel(
+                CHANNEL_ID,
+                context.getString(R.string.download_channel_name),
+                NotificationManager.IMPORTANCE_LOW,
+            ).apply {
+                description = context.getString(R.string.download_channel_description)
+                setShowBadge(false)
+            },
+        )
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_notification_logo)
+            .setContentTitle(context.getString(R.string.hq_library_worker_title))
+            .setContentText(context.getString(R.string.hq_library_worker_text))
+            .setOngoing(true)
+            .setSilent(true)
+            .setOnlyAlertOnce(true)
+            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+            .build()
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ForegroundInfo(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+            )
+        } else {
+            ForegroundInfo(NOTIFICATION_ID, notification)
+        }
+    }
+
+    private companion object {
+        const val CHANNEL_ID = "downloads"
+        const val NOTIFICATION_ID = 0x8176
     }
 }

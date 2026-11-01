@@ -509,6 +509,16 @@
             android:foregroundServiceType="dataSync" />
 
         <!--
+          WorkManager's foreground worker for the high-quality library pass.
+          Merged onto the library's declaration so Android 14+ can promote it
+          with the dataSync type the worker asks for.
+        -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
+
+        <!--
           Home-screen widgets. Two providers so the picker lists a 2×2 and a 4×2,
           both of which are the same widget resized — see MediaWidget.
 

@@ -7,8 +7,8 @@ import com.music.bitchord.data.net.AutomaticRetryPolicy
  *
  * Three things park a target without asking the network:
  *
- *  - the app has no window, so Android would refuse the download service that
- *    the pass needs to fetch anything;
+ *  - the pass has no way to start the download service (neither an app window
+ *    nor a foreground worker), so Android would refuse it;
  *  - a copy already on disk is at least as good as the target's verified rung,
  *    so there is nothing worth fetching for it;
  *  - its automatic retries are exhausted, and only a pass the listener started

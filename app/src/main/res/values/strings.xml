@@ -199,6 +199,8 @@
     <string name="hq_library_waiting">Waiting — server busy</string>
     <string name="hq_library_upgrade_all">Redownload all in high quality</string>
     <string name="hq_library_upgrade_all_subtitle">Replaces downloaded files with sound-verified higher-quality copies. One song at a time.</string>
+    <string name="hq_library_worker_title">High-quality library</string>
+    <string name="hq_library_worker_text">Replacing downloaded songs with higher-quality copies.</string>
     <string name="download_health_recheck">Re-check downloaded songs</string>
     <string name="download_health_recheck_subtitle">Checks each downloaded file once more the next time it plays, and repairs a wrong recording or a lower-quality copy. Nothing runs now.</string>
     <string name="auto_redownload_mv_sound_subtitle">When a download turns out to hold the music video\'s sound, fetch the song version automatically. Wi-Fi only does not apply.</string>
