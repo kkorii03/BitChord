@@ -1,0 +1,15 @@
+﻿BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/telegram (업스트림 v1.8.1 기반 한국어 포크).
+목표: 다음 업스트림 버전을 쉽게 합치도록, 업스트림 파일 app/src/main/java/com/music/bitchord/data/settings/AppSettings.kt 안에 섞인 우리(포크) 코드를 com.music.bitchord.ko 패키지의 새 파일로 옮긴다. 규칙 문서: `git show origin/task/upstream-19:docs/ko-fork-layout.md`.
+방법: `git diff v1.8.1 HEAD -- app/src/main/java/com/music/bitchord/data/settings/AppSettings.kt` 로 우리가 더한 부분을 찾는다. 우리 기능 단위(함수·클래스·상태)로 ko/<기능>.kt 에 옮기고, 원래 자리에는 `// [KO] <기능>` 주석이 붙은 호출 한 줄(또는 최소 줄)만 남긴다. 업스트림이 원래 갖고 있던 코드는 한 글자도 옮기거나 바꾸지 않는다(업스트림 코드 쪼개기·삭제·이동 금지). 동작은 완전히 같아야 한다(순수 이동 리팩터링, 로직 변경 금지).
+완료 조건: ① `git diff v1.8.1 HEAD -- app/src/main/java/com/music/bitchord/data/settings/AppSettings.kt` 의 추가 줄 수가 크게 줄어든다(전후 숫자를 요약에) ② 컴파일 ③ 기존 단위 테스트 전부 통과(동작 동일). private 접근이 필요하면 internal 로 최소 변경.
+제약: .github/, keys, *.jks, 서명·빌드 설정 수정 금지. 다른 업스트림 파일은 호출부 수정에 꼭 필요한 최소만. 가사 싱크·타이밍 로직은 옮기기만 하고 수치·순서 변경 금지. 배터리: 폴링·타이머 추가 금지.
+마지막 10줄 이내 요약: app/src/main/java/com/music/bitchord/data/settings/AppSettings.kt 추가 줄 수 전→후 / 새 ko 파일 / 남긴 [KO] 훅 수 / 미해결.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 2
+HIGH | app/src/main/java/com/music/bitchord/ko/KoAppSettingsTransfer.kt:57 | `KEY_AUTOPLAY` is `"AppSettings.autoplay"` instead of `"autoplay"`, so the real key is no longer validated by `KNOWN_PREFS` (a wrong-typed `autoplay` in an imported backup reaches `readAll`'s `getBoolean` and throws) and is no longer exported/imported by `TRANSFERABLE_KEYS`. | Change it to `"autoplay"` (or use `AppSettings.KEY_AUTOPLAY`).
+MEDIUM | app/src/main/java/com/music/bitchord/ko/KoAppSettings.kt:304 | `checkPrivateListeningExpiry` dereferences `AppSettings.prefs` before the `prefsReady()` check, so calling it before `init` now throws `UninitializedPropertyAccessException`, whereas the original code guarded with `this::prefs.isInitialized` first. | Move `val prefs = AppSettings.prefs` below the `prefsReady()` early return.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
