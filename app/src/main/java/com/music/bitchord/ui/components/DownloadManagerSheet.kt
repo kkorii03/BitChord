@@ -293,7 +293,7 @@ fun DownloadManagerSheet(onDismiss: () -> Unit, modifier: Modifier = Modifier) {
                 DownloadManagerRow(
                     item = item,
                     onCancel = { Downloads.cancel(item.videoId) },
-                    onRetry = { Downloads.enqueue(context, item.song, item.from) },
+                    onRetry = { Downloads.retry(context, item) },
                 )
             }
         }

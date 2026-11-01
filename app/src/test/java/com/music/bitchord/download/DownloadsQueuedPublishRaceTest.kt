@@ -193,7 +193,8 @@ class DownloadsQueuedPublishRaceTest {
             Song::class.java,
             String::class.java,
             Boolean::class.javaPrimitiveType,
+            DownloadRetryPlan::class.java,
         ).apply { isAccessible = true }
-        method.invoke(Downloads, song, null, true)
+        method.invoke(Downloads, song, null, true, null)
     }
 }

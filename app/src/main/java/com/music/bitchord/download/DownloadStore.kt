@@ -137,6 +137,46 @@ object DownloadStore {
     }
 
     /**
+     * The name a replacing download is written under before the old row is gone.
+     *
+     * The media store silently renames a second row with the same
+     * `DISPLAY_NAME` to `… (1).ext`. A replacement cannot delete the old file
+     * before the new one is committed — that is the safety rule the whole
+     * pending-row dance exists for — so it writes under this temporary name and
+     * [renamePublished] gives it the real one after `remember` has removed the
+     * old row. The old file therefore never has to be destroyed to make room.
+     */
+    internal fun stagingFileName(finalName: String, videoId: String): String {
+        val dot = finalName.lastIndexOf('.')
+        val stem = if (dot > 0) finalName.substring(0, dot) else finalName
+        val extension = if (dot > 0) finalName.substring(dot) else ""
+        val suffix = sanitise(videoId).replace(WHITESPACE, "").ifEmpty { "replacement" }
+        return "$stem ($suffix)$extension"
+    }
+
+    /**
+     * Give a committed replacement row its real display name.
+     *
+     * Only a media-store row is renamed; app-private and legacy files were
+     * already written under the final name. The old row must be gone first, or
+     * the media store would append `(1)` again.
+     */
+    fun renamePublished(context: Context, uri: Uri, finalName: String): Boolean {
+        if (uri.scheme == "file") return true
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return true
+        return runCatching {
+            context.contentResolver.update(
+                uri,
+                ContentValues().apply { put(MediaStore.MediaColumns.DISPLAY_NAME, finalName) },
+                null,
+                null,
+            ) > 0
+        }.onFailure {
+            Log.w(TAG, "could not rename $uri to $finalName: ${it.message}")
+        }.getOrDefault(false)
+    }
+
+    /**
      * Everything a FAT32 volume, the media store or a shell would each object
      * to for its own reasons, plus the whitespace that survives them.
      */

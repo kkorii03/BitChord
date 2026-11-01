@@ -68,6 +68,12 @@ object DownloadSession {
         val from: String? = null,
         /** Ask order, so the list reads the way the queue drains. */
         val sequence: Long,
+        /**
+         * The replacement terms this row was asked with, so Retry repeats the
+         * same errand instead of an ordinary download. Null for rows made
+         * before the plan was recorded.
+         */
+        val retry: DownloadRetryPlan? = null,
     )
 
     data class State(
@@ -141,7 +147,11 @@ object DownloadSession {
      * and two rows for one song would leave the failure on screen next to its
      * own retry.
      */
-    fun queued(song: Song, from: String? = null) {
+    fun queued(
+        song: Song,
+        from: String? = null,
+        retry: DownloadRetryPlan? = null,
+    ) {
         update { state ->
             val existing = state.items.indexOfFirst { it.videoId == song.videoId }
             val item = Item(
@@ -150,6 +160,7 @@ object DownloadSession {
                 progress = DownloadProgress.Queued,
                 from = from ?: state.items.getOrNull(existing)?.from,
                 sequence = if (existing >= 0) state.items[existing].sequence else tick(),
+                retry = retry ?: state.items.getOrNull(existing)?.retry,
             )
             val items = if (existing >= 0) {
                 state.items.toMutableList().also { it[existing] = item }
