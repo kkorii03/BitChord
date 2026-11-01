@@ -767,6 +767,44 @@ object Downloads {
         return _savedMetadata.value
     }
 
+    /**
+     * The length recorded for the file saved under [videoId], or null.
+     *
+     * This is the file's own length as written when the download landed, not
+     * the duration of whichever queue row later asks about it. A music video
+     * and its catalogue release share one file, so the record that produced
+     * the bytes ([SavedSongMetadata.soundSourceVideoId]) wins; for a legacy
+     * record with no provenance, the record filed under [videoId] and then any
+     * other record naming the same URI are accepted.
+     */
+    internal fun savedFileDurationMs(videoId: String): Long? {
+        open()
+        val uri = _saved.value[videoId] ?: _savedMetadata.value[videoId]?.uri ?: return null
+        return savedFileDurationMs(_savedMetadata.value, uri, videoId)
+    }
+
+    /**
+     * The pure half of [savedFileDurationMs], so the same-file selection can be
+     * tested without Android storage.
+     */
+    internal fun savedFileDurationMs(
+        metadata: Map<String, SavedSongMetadata>,
+        fileUri: String,
+        videoId: String,
+    ): Long? {
+        val source = metadata[videoId]?.soundSourceVideoId
+        val ids = buildList {
+            if (source != null) add(source)
+            add(videoId)
+            metadata.values.forEach { if (it.uri == fileUri) add(it.videoId) }
+        }
+        return ids.distinct()
+            .asSequence()
+            .mapNotNull { id -> metadata[id]?.takeIf { it.uri == fileUri }?.durationText }
+            .map { it.durationMillis() }
+            .firstOrNull { it > 0L }
+    }
+
     /** A downloaded row as a playable [Song], or null when it was never saved. */
     internal fun savedSongFor(videoId: String): Song? {
         open()

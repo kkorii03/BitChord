@@ -712,16 +712,23 @@ internal class NextTrackPreparation(
         val item = player.getMediaItemAt(index)
         if ((item.queueEntryId ?: item.mediaId) != rowId) return null
         if (item.mediaId != song.videoId) return null
+        val soundSourceId = Downloads.savedSoundSourceFor(resolved.videoId)
         val useDownloadedFile = nextPrepUseDownloadedFile(
             playId = resolved.videoId,
-            soundSourceId = Downloads.savedSoundSourceFor(resolved.videoId),
+            soundSourceId = soundSourceId,
             storedIsVideo = Downloads.savedIsVideoFor(resolved.videoId),
             lengthSuspect = Downloads.mvSoundSuspectMs(resolved.videoId) != null,
             online = !AudioCache.isOffline(),
-            // The next row's own length is the file's when it was downloaded;
-            // the resolved release is the catalogue song. A legacy file whose
-            // only difference is this length must not play under the song.
-            fileDurationMs = song.durationMillis(),
+            // The file's own length, not the pre-resolution row's: that row may
+            // omit its duration or carry the video's while the file is the
+            // song's (or the other way round). Only an id that owns the file
+            // may lend its row duration.
+            fileDurationMs = nextPrepFileDurationMs(
+                savedFileDurationMs = Downloads.savedFileDurationMs(resolved.videoId),
+                rowVideoId = song.videoId,
+                rowDurationMs = song.durationMillis(),
+                fileOwnerVideoId = soundSourceId ?: resolved.videoId,
+            ),
             catalogDurationMs = Downloads.catalogDurationMs(
                 resolved.videoId,
                 resolved.durationMillis(),
@@ -948,6 +955,26 @@ internal class NextTrackPreparation(
  */
 internal suspend fun <T> nextPrepOffMain(block: () -> T): T =
     withContext(Dispatchers.IO) { block() }
+
+/**
+ * The length of the file that may be attached to the resolved row.
+ *
+ * The saved record is the file's own length: the stream the download wrote is
+ * what its metadata was taken from. The queue row is the row *before*
+ * resolution, so its duration may be missing or belong to the video id; using
+ * it as if it were the file's length both missed legacy MV files and rejected
+ * valid song files. It is kept only as a fallback when that row owns the file.
+ */
+internal fun nextPrepFileDurationMs(
+    savedFileDurationMs: Long?,
+    rowVideoId: String,
+    rowDurationMs: Long?,
+    fileOwnerVideoId: String?,
+): Long? {
+    savedFileDurationMs?.takeIf { it > 0L }?.let { return it }
+    if (fileOwnerVideoId == null || fileOwnerVideoId != rowVideoId) return null
+    return rowDurationMs?.takeIf { it > 0L }
+}
 
 /**
  * Whether a file already saved for the next row's resolved recording may be
