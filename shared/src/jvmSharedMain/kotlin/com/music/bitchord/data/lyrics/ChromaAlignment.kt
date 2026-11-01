@@ -105,8 +105,10 @@ object ChromaAlignment {
      * The warp must cost at most this share of what it costs against the
      * video played backwards — see the significance test in [align].
      * Different songs come out at 1.00; covers measured at 0.03–0.85.
+     * 0.88, not 0.92 (11-02): AMILJn51YBk passed at 0.92 with a 0.823 warp
+     * that put its lyrics 59 s early — none of the 19 lines was ever heard.
      */
-    private const val MAX_CHANCE_RATIO = 0.92
+    private const val MAX_CHANCE_RATIO = 0.88
 
     /** A video holding only part of the record: what it holds must match this well. */
     private const val MIN_PART_MATCHED = 0.2

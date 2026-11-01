@@ -168,6 +168,13 @@ object LyricsTiming {
         val refineMs: Long = 0L,
         /** The refine's drift in ms per minute; 0 for a constant move. */
         val refineSlopePerMin: Double = 0.0,
+        /**
+         * The last moment the refine's words were heard (video clock). A drift
+         * is only known up to here; past it the move is held, not extended
+         * (11-02: an opening's 333 ms/min, carried on to the end, left wN7 0.3 s
+         * late with a fresh drift the song never had).
+         */
+        val refineUntilMs: Long = Long.MAX_VALUE,
     ) {
         val isEmpty: Boolean
             get() = base == null && manualMs == 0L && hq == null &&
@@ -178,7 +185,7 @@ object LyricsTiming {
 
         /** The refine's move at [atMs], capped at the narrow or wide limit it belongs to. */
         fun refineAt(atMs: Long): Long {
-            val move = refineMs + refineSlopePerMin / 60_000.0 * atMs
+            val move = refineMs + refineSlopePerMin / 60_000.0 * minOf(atMs, refineUntilMs)
             // A constant move larger than the narrow cap can only be the wide
             // window's arrangement-sized shift; a drift and every narrow move
             // keep the ±[RefinePolicy.MAX_SHIFT_MS] guard.
@@ -264,6 +271,7 @@ object LyricsTiming {
         val refined = timing.copy(
             refineMs = if (refine.applied) refine.medianMs else 0L,
             refineSlopePerMin = if (refine.applied) refine.slopePerMin else 0.0,
+            refineUntilMs = refineClock.maxOfOrNull { it.endMs } ?: Long.MAX_VALUE,
         )
         // The transcript is kept on the video's own clock, and a displayed line
         // is map(record) + refine + extraMs; the words are already video time,
