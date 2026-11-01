@@ -838,6 +838,24 @@ class CrossfadeController(
                         bail()
                         return
                     }
+                    // A song-version swap keeps the queue key and changes only
+                    // the recording. The standby still holds the old upload, so
+                    // handing it over would play the video the queue no longer
+                    // names. Abandon the blend and let the session play the new
+                    // row plainly instead.
+                    val mediaIds = (0 until out.mediaItemCount).map { out.getMediaItemAt(it).mediaId }
+                    if (HandoffQueuePolicy.incomingMediaReplaced(
+                            outgoingKeys = keys,
+                            outgoingMediaIds = mediaIds,
+                            incomingKey = incomingKey,
+                            incomingMediaId = into?.currentMediaItem?.mediaId,
+                            incomingIndexHint = incomingItemIndex,
+                            outgoingCurrentIndex = out.currentMediaItemIndex,
+                        )
+                    ) {
+                        bail()
+                        return
+                    }
                 }
             }
             wakeTicker()

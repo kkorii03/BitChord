@@ -95,4 +95,32 @@ object HandoffQueuePolicy {
         outgoingKeys.getOrNull(outgoingCurrentIndex) == incomingKey ||
             outgoingKeys.getOrNull(outgoingCurrentIndex + 1) == incomingKey ||
             (wrapsToStart && outgoingKeys.getOrNull(0) == incomingKey)
+
+    /**
+     * Whether the row the standby loaded has since been replaced by a different
+     * recording under the same queue key.
+     *
+     * A song-version swap keeps the queue entry and its tier and changes only
+     * the media id and URI, so [incomingStillNext] cannot see it. The standby
+     * would then hand over the old recording — the video the queue no longer
+     * names. False when the row cannot be located or either side is missing.
+     */
+    fun incomingMediaReplaced(
+        outgoingKeys: List<String>,
+        outgoingMediaIds: List<String>,
+        incomingKey: String,
+        incomingMediaId: String?,
+        incomingIndexHint: Int,
+        outgoingCurrentIndex: Int,
+    ): Boolean {
+        if (incomingMediaId == null) return false
+        if (outgoingKeys.size != outgoingMediaIds.size) return false
+        val index = incomingIndex(
+            outgoingKeys = outgoingKeys,
+            incomingKey = incomingKey,
+            incomingIndexHint = incomingIndexHint,
+            outgoingCurrentIndex = outgoingCurrentIndex,
+        ) ?: return false
+        return outgoingMediaIds.getOrNull(index) != incomingMediaId
+    }
 }

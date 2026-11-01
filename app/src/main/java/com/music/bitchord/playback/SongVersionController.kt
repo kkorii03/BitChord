@@ -243,8 +243,16 @@ internal class SongVersionController(
                 if (index >= exoPlayer.mediaItemCount) continue
                 val now = exoPlayer.getMediaItemAt(index)
                 if (now.mediaId != song.videoId) continue
+                val useDownloadedFile = SongVersionPolicy.versionReplacementUsesDownloadedFile(
+                    playId = resolved.videoId,
+                    soundSourceId = Downloads.savedSoundSourceFor(resolved.videoId),
+                    online = !AudioCache.isOffline(),
+                    fileDurationMs = Downloads.savedMetadataFor(resolved.videoId)
+                        ?.durationText?.durationMillis(),
+                    catalogDurationMs = resolved.durationMillis(),
+                )
                 val replacement = QueueShuffle.withQueueMetadata(
-                    resolved.toMediaItem(),
+                    resolved.toMediaItem(useDownloadedFile = useDownloadedFile),
                     newEntryId = now.queueEntryId,
                     newCanonicalIndex = now.canonicalIndex,
                     newTier = now.queueTier,

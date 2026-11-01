@@ -286,6 +286,37 @@ object SongVersionPolicy {
     }
 
     /**
+     * Whether a queue row replaced by its catalogue release may open the file
+     * already recorded for that release.
+     *
+     * Read-ahead swaps the row before it is audible, so it never passes through
+     * the ordinary playback path that asks [downloadedFileUse]. Without this
+     * the replacement would attach a file whose recorded source is another
+     * upload — the music video's sound under the song's id — and the listener
+     * would hear the video even though the queue now names the release. A
+     * legacy record with no source is refused only when its longer run time
+     * says it is the video's sound, and never when a length is missing.
+     */
+    fun versionReplacementUsesDownloadedFile(
+        playId: String,
+        soundSourceId: String?,
+        online: Boolean,
+        fileDurationMs: Long? = null,
+        catalogDurationMs: Long? = null,
+    ): Boolean = when (downloadedFileUse(playId, soundSourceId, online)) {
+        DownloadedFileUse.STREAM_SONG -> false
+        DownloadedFileUse.PLAY_FILE -> true
+        DownloadedFileUse.UNKNOWN_PLAY_FILE ->
+            mvSoundDeltaMs(
+                fileDurationMs = fileDurationMs,
+                catalogDurationMs = catalogDurationMs,
+                isVideo = false,
+                localFile = true,
+                soundSourceId = null,
+            ) == null
+    }
+
+    /**
      * Whether an existing file may be adopted as [targetId]'s download.
      *
      * Only a file this app recorded as having been fetched from [targetId]'s
