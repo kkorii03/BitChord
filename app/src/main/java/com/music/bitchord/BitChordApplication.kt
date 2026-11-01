@@ -95,6 +95,12 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         TrackLog.initPersistence(logDirectory)
         com.music.bitchord.data.FeatureHealthCounters.init(File(logDirectory, "feature-health"))
         installCrashHandler()
+        // The encrypted credential store costs a Keystore/Tink open. Start it
+        // here, before the rest of onCreate, so it overlaps the other setup;
+        // every credential read below joins this same one-shot open instead of
+        // opening it again or seeing an empty store.
+        authStore = AuthStore(this)
+        StartupWork.background("auth-store") { authStore.ensureReady() }
         // Reading and rewriting the warm-start marker is disk I/O on the launch
         // path. The line it emits is diagnostic, so it can land a moment later
         // without holding up the first frame.
@@ -142,9 +148,6 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         com.music.bitchord.playback.smart.AiLyrics.init(this)
         LyricsTranslation.cacheDir = cacheDir
         LyricsTranslation.keepDir = filesDir
-        // PlaybackService shares this process, so seeding the cookie here means
-        // stream resolution is authenticated from the first play onwards.
-        authStore = AuthStore(this)
         // The proxy route has to be in YouTubeProxy before this process makes
         // its first YouTube request. Everything below can start such a request
         // — a source open or the session-scope lookup a few lines down — while
@@ -192,28 +195,33 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // all — it is the fix for canvas clips re-fetching the same few
         // seconds of video from the network on every loop.
         CanvasCache.init(this)
+        AppSettings.init(this, authStore)
         // Migration-safe: an old single cookie becomes the first encrypted
         // session, while newer installs restore the profile the listener chose.
-        val restoredSession = authStore.activeSession
-        if (restoredSession != null && authStore.activeAccountId == null) {
-            authStore.select(restoredSession.accountId, restoredSession.activeProfileId)
+        // This reads credentials, so it joins the startup open; registering it
+        // after AppSettings' own callback means the proxy route (including its
+        // password) is published before any session-scope request can start.
+        authStore.onReady {
+            val restoredSession = authStore.activeSession
+            if (restoredSession != null && authStore.activeAccountId == null) {
+                authStore.select(restoredSession.accountId, restoredSession.activeProfileId)
+            }
+            authStore.cookie = restoredSession?.cookie
+            Innertube.cookie = restoredSession?.cookie
+            // Which account that cookie actually acts as. Read here rather than on
+            // demand so the answer is usually in hand before the first request needs
+            // it: a play registered under the wrong account is indistinguishable, to
+            // the listener, from one that was never registered at all. Fire and
+            // forget — every caller works without it, just less precisely.
+            if (restoredSession != null) {
+                // After the cookie, never before: setting the cookie clears any
+                // channel the last session was acting as, so restoring the choice
+                // first would restore it into the value about to be wiped.
+                restoredSession.profiles.firstOrNull { it.profileId == restoredSession.activeProfileId }
+                    ?.let { Innertube.selectChannel(it.pageId, it.dataSyncId, it.authUser) }
+                CoroutineScope(Dispatchers.IO).launch { Innertube.ensureSessionScope() }
+            }
         }
-        authStore.cookie = restoredSession?.cookie
-        Innertube.cookie = restoredSession?.cookie
-        // Which account that cookie actually acts as. Read here rather than on
-        // demand so the answer is usually in hand before the first request needs
-        // it: a play registered under the wrong account is indistinguishable, to
-        // the listener, from one that was never registered at all. Fire and
-        // forget — every caller works without it, just less precisely.
-        if (restoredSession != null) {
-            // After the cookie, never before: setting the cookie clears any
-            // channel the last session was acting as, so restoring the choice
-            // first would restore it into the value about to be wiped.
-            restoredSession.profiles.firstOrNull { it.profileId == restoredSession.activeProfileId }
-                ?.let { Innertube.selectChannel(it.pageId, it.dataSyncId, it.authUser) }
-            CoroutineScope(Dispatchers.IO).launch { Innertube.ensureSessionScope() }
-        }
-        AppSettings.init(this, authStore)
         // After AppSettings, whose flows it feeds: the power-save switch and
         // the battery can change while the app is in the background.
         com.music.bitchord.playback.LowPowerDevice.start(this)
@@ -347,7 +355,9 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // read only by the AutoPlay top-up that is already off the main thread.
         com.music.bitchord.data.taste.SimilarCandidates.init(this)
         // After AppSettings, whose switch decides whether half of it runs.
-        ArtistFacts.init(this)
+        // Opening the cache is a disk read on the launch path, so it happens on
+        // the startup thread; reads before then keep their existing empty answer.
+        StartupWork.background("artist-facts") { ArtistFacts.init(this) }
         // One cache directory can only be opened once per process, and
         // PlaybackService shares this one — so it's opened here, not there.
         AudioCache.init(this)
@@ -377,8 +387,9 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
                 CoroutineScope(Dispatchers.IO).launch { loader.diskCache?.clear() }
             }
         }
-        // Initialize LastFM with saved settings if available
-        initLastfm()
+        // Initialize LastFM with the credentials AppSettings just published
+        // from the encrypted store, not with the empty defaults before it.
+        authStore.onReady { initLastfm() }
         // The public "apps open right now" count; see Presence.
         com.music.bitchord.data.presence.AndroidPresence.install(this)
         StartupTrace.applicationCreated()
