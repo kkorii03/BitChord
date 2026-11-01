@@ -8,9 +8,9 @@ import org.junit.Test
 
 /**
  * Scheduling, not just planning: the next-prep bundle's completed marker is
- * what [NextPrepPolicy.alreadyHandled] reads before it starts a run. Clearing
- * only the mix attempt on a deadline therefore was not enough — the completed
- * marker still told the next event that the row was done.
+ * what [NextPrepPolicy.alreadyHandled] reads before it starts a run. The marker
+ * must be absent for every unanswered mix, including one that never started
+ * because an earlier step used the remaining time.
  */
 class NextPrepScheduleAfterTimeoutTest {
 
@@ -18,12 +18,18 @@ class NextPrepScheduleAfterTimeoutTest {
     private val queueKey = "row|video"
 
     private fun scheduleAfterRun(
+        deadlineHit: Boolean,
         mixTimedOut: Boolean,
+        mixPlanned: Boolean = true,
+        wanted: Set<Step> = setOf(Step.MIX),
         attempted: Set<Step>,
     ): Pair<Boolean, List<Step>> {
-        val completedQueueKey = queueKey.takeIf {
-            NextPrepPolicy.keepCompletedAfter(mixTimedOut)
-        }
+        val completedQueueKey = NextPrepPolicy.completedQueueKeyAfterRun(
+            queueKey = queueKey,
+            mixTimedOut = mixTimedOut,
+            deadlineHit = deadlineHit,
+            mixPlanned = mixPlanned,
+        )
         val handled = NextPrepPolicy.alreadyHandled(
             startedRowId = rowId,
             startedQueueKey = queueKey,
@@ -36,7 +42,7 @@ class NextPrepScheduleAfterTimeoutTest {
             NextPrepPolicy.Request(
                 rowId = rowId,
                 queueKey = queueKey,
-                wanted = setOf(Step.MIX),
+                wanted = wanted,
                 attempted = attempted,
             ),
         )
@@ -44,8 +50,26 @@ class NextPrepScheduleAfterTimeoutTest {
     }
 
     @Test
-    fun `a timed-out mix lets the same row be scheduled again`() {
-        val (handled, steps) = scheduleAfterRun(mixTimedOut = true, attempted = emptySet())
+    fun `a mix skipped by an earlier step deadline lets the same row be scheduled again`() {
+        // The real post-timeout set is not empty: the sync step was attempted
+        // before the deadline, and MIX was never added because it never ran.
+        val (handled, steps) = scheduleAfterRun(
+            deadlineHit = true,
+            mixTimedOut = false,
+            attempted = setOf(Step.SYNC),
+        )
+
+        assertFalse(handled)
+        assertEquals(listOf(Step.MIX), steps)
+    }
+
+    @Test
+    fun `a mix cut off in its own wait is retried`() {
+        val (handled, steps) = scheduleAfterRun(
+            deadlineHit = true,
+            mixTimedOut = true,
+            attempted = setOf(Step.SYNC),
+        )
 
         assertFalse(handled)
         assertEquals(listOf(Step.MIX), steps)
@@ -53,7 +77,24 @@ class NextPrepScheduleAfterTimeoutTest {
 
     @Test
     fun `a finished run still skips the same row on the next event`() {
-        val (handled, _) = scheduleAfterRun(mixTimedOut = false, attempted = setOf(Step.MIX))
+        val (handled, _) = scheduleAfterRun(
+            deadlineHit = false,
+            mixTimedOut = false,
+            attempted = setOf(Step.MIX),
+        )
+
+        assertTrue(handled)
+    }
+
+    @Test
+    fun `a deadline without a planned mix still completes the row`() {
+        val (handled, _) = scheduleAfterRun(
+            deadlineHit = true,
+            mixTimedOut = false,
+            mixPlanned = false,
+            wanted = setOf(Step.SYNC),
+            attempted = setOf(Step.SYNC),
+        )
 
         assertTrue(handled)
     }

@@ -122,14 +122,36 @@ object NextPrepPolicy {
     /**
      * Whether a finished run may mark its row as handled.
      *
-     * A mix that the deadline cut off is not a completion: the row is still
-     * next and the mix attempt was dropped above, so the resume/queue event
-     * that schedules the bundle again must be allowed to re-plan this row.
-     * Marking it completed here made [alreadyHandled] skip the retry even
-     * though the attempt mark had been cleared. A run that really finished
-     * (or refused the mix) keeps the mark so events do not start it again.
+     * [mixTimedOut] is a mix that started but the deadline cut off.
+     * [mixSkippedByDeadline] is a planned MIX that never started because an
+     * earlier step (or the lossless download) used the remaining time. Both
+     * mean the row's mix is unanswered, so the resume/queue event that
+     * schedules the bundle again must be allowed to re-plan this row. Marking
+     * it completed here made [alreadyHandled] skip the retry. A run that
+     * really finished (or refused the mix) keeps the mark so events do not
+     * start it again.
      */
-    fun keepCompletedAfter(mixTimedOut: Boolean): Boolean = !mixTimedOut
+    fun keepCompletedAfter(mixTimedOut: Boolean, mixSkippedByDeadline: Boolean): Boolean =
+        !mixTimedOut && !mixSkippedByDeadline
+
+    /**
+     * The completed marker a run leaves for the caller to pass to
+     * [alreadyHandled], or null when the row must stay schedulable.
+     *
+     * The whole decision lives here so a scheduling test exercises production
+     * code rather than reproducing the caller's `if`.
+     */
+    fun completedQueueKeyAfterRun(
+        queueKey: String,
+        mixTimedOut: Boolean,
+        deadlineHit: Boolean,
+        mixPlanned: Boolean,
+    ): String? = queueKey.takeIf {
+        keepCompletedAfter(
+            mixTimedOut = mixTimedOut,
+            mixSkippedByDeadline = deadlineHit && mixPlanned,
+        )
+    }
 
     /** Whether the paid engines may be asked after [playedMs] of the current track. */
     fun aiGateOpen(playedMs: Long): Boolean = playedMs >= AI_MIN_PLAYED_MS

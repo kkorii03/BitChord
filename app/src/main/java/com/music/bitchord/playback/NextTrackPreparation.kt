@@ -501,12 +501,20 @@ internal class NextTrackPreparation(
             }
         }
 
-        // A timed-out mix must not leave the row marked as handled: [schedule]
-        // consults [NextPrepPolicy.alreadyHandled] before re-planning, and that
-        // mark alone would stop the retry the cleared attempt above enables.
-        if (NextPrepPolicy.keepCompletedAfter(mixTimedOut)) {
+        // A timed-out mix — or a planned mix that an earlier step or the
+        // lossless download pushed past the deadline — must not leave the row
+        // marked as handled: [schedule] consults [NextPrepPolicy.alreadyHandled]
+        // before re-planning, and that mark alone would stop the retry the
+        // cleared/never-taken attempt enables.
+        val completedKey = NextPrepPolicy.completedQueueKeyAfterRun(
+            queueKey = expectedQueueKey,
+            mixTimedOut = mixTimedOut,
+            deadlineHit = deadlineHit,
+            mixPlanned = Step.MIX in plan.steps,
+        )
+        if (completedKey != null) {
             completedRowId = snapshot.rowId
-            completedQueueKey = expectedQueueKey
+            completedQueueKey = completedKey
         }
         val playerNow = currentPlayer()
         val playedMs = playerNow?.currentPosition ?: 0L
