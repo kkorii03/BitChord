@@ -1,0 +1,15 @@
+BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/telegram.
+버그(사용자 폰 tg4 vc106, 11-01 12:47~12:49): 텔레그램 로그인 성공 후, 품질 업그레이드/다음 곡 준비가 텔레그램을 검색하는 도중 앱이 백그라운드로 가면 클라이언트가 닫혀 검색이 실패한다.
+ 12:49:42.018 telegram: client open reason=search
+ 12:49:42.050 telegram: auth state=ready
+ 12:49:42.294 telegram: client close reason=background
+ 12:49:42.303 telegram: search failed (IOException) / 텔레그램 failed: IOException: Telegram search is unavailable.
+ (11회 검색 중 3회 이렇게 실패. 검색은 매번 open→ready→close 를 반복.)
+할 일:
+① TelegramClientManager.searchTracks 가 일반 holder(SEARCH_HOLDER)를 쓰는데 게이트는 일반 holder 를 포그라운드에서만 인정 → 백그라운드 전환 시 즉시 닫힘. 검색도 streamMetadata 와 같은 counted lease(백그라운드에서도 유지, 마지막 해제 때만 닫힘)를 쓰게 고친다. 화면 꺼짐 중 다음 곡 준비 검색도 동작해야 함.
+② 동시 검색이 같은 holder 키를 써서 먼저 끝난 쪽이 클라이언트를 닫는 문제가 있으면 같은 방식으로 해결.
+③ 연속 검색마다 클라이언트를 닫았다 여는 대신, 마지막 lease 해제 후 바로 닫는 지금 정책은 유지(타이머·지연 닫기 금지 — 배터리 원칙).
+④ 로그 유지: 'telegram: search failed (원인 클래스)'.
+테스트(고치기 전 실패): 검색 lease 중 백그라운드 전환 → 클라이언트 유지, 마지막 해제 후 닫힘, 동시 검색 2개 중 하나 끝나도 유지 — 단위 테스트(TelegramClientGate/StreamLease 테스트 확장 가능). 새 테스트 클래스 이름 요약에 적을 것.
+제약: .github/, keys, *.jks, 서명 수정 금지. 타이머·폴링 금지. 바꾼 함수의 모든 호출부 재확인. 기존 주석·의도를 지우면 요약에 이유.
+마지막 10줄 이내 요약: 원인(파일:줄) / 수정 / 테스트 / 미해결.
