@@ -355,7 +355,7 @@ class AddonSource(
                 if (failure is AddonUnavailable) {
                     SourceResolver.reportSourceFailure(config.id, network = failure.transport)
                 }
-                return@withContext fromRow(trackId, tier)
+                return@withContext fromRow(trackId, tier, request, stereoOnly)
             }
 
             val url = answer.url.ifBlank { null } ?: run {
@@ -369,11 +369,11 @@ class AddonSource(
                     "${config.displayName}: no stream for $trackId" +
                         (answer.error?.ifBlank { null }?.let { " — $it" } ?: ""),
                 )
-                return@withContext fromRow(trackId, tier)
+                return@withContext fromRow(trackId, tier, request, stereoOnly)
             }
 
             lastAuthFailureAtMs = 0L
-            openable(url, answer, trackId, tier).also { stream ->
+            openable(url, answer, trackId, tier, request, stereoOnly).also { stream ->
                 if (stereoOnly && stream?.format?.isDolbyAtmos == true) {
                     TrackLog.w(
                         TAG,
@@ -395,11 +395,23 @@ class AddonSource(
      * addon that serves permanent direct links and treats `/stream` as optional
      * is otherwise unplayable here for no good reason.
      */
-    private fun fromRow(trackId: String, tier: String): SourceStream? {
+    private fun fromRow(
+        trackId: String,
+        tier: String,
+        request: StreamRequest,
+        stereoOnly: Boolean,
+    ): SourceStream? {
         val row = rows[trackId] ?: return null
         val url = row.streamURL?.ifBlank { null } ?: return null
         TrackLog.d(TAG, "${config.displayName}: using the search row's own URL for $trackId")
-        return openable(url, AddonStream(url = url, format = row.format), trackId, tier)
+        return openable(
+            url,
+            AddonStream(url = url, format = row.format),
+            trackId,
+            tier,
+            request,
+            stereoOnly,
+        )
     }
 
     /**
@@ -417,7 +429,14 @@ class AddonSource(
      *    the *only* one offered for a track, so there is no lower sibling to
      *    fall back to and refusing is what lets another source be heard.
      */
-    private fun openable(url: String, answer: AddonStream, trackId: String, tier: String): SourceStream? {
+    private fun openable(
+        url: String,
+        answer: AddonStream,
+        trackId: String,
+        tier: String,
+        request: StreamRequest,
+        stereoOnly: Boolean,
+    ): SourceStream? {
         if (ModuleSource.malformed(url)) {
             TrackLog.w(
                 TAG,
@@ -460,6 +479,8 @@ class AddonSource(
             format = format,
             headers = answer.requestHeaders,
             durationSec = rows[trackId]?.durationSec,
+            request = request,
+            stereoOnly = stereoOnly,
         )
     }
 

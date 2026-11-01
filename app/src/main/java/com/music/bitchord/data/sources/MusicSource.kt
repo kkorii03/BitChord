@@ -71,6 +71,21 @@ data class SourceStream(
      */
     val trackTitle: String? = null,
     val trackArtist: String? = null,
+    /**
+     * The request this URL was resolved for, when the resolver knows.
+     *
+     * Carried so a URL refused on its first fetch can be re-asked at exactly
+     * the same tier. Reconstructing the request from [format] guessed a
+     * different rung — a capped row's FLAC read back as a lossless ask — and
+     * could fetch a higher tier than the listener's data cap allowed.
+     */
+    val request: StreamRequest? = null,
+    /**
+     * Whether the listener picked a stereo row rather than whichever mix the
+     * catalogue prefers. A fresh URL for a refused one must stay on that row;
+     * asking again without the hint can swap in its Atmos sibling.
+     */
+    val stereoOnly: Boolean = false,
 )
 
 /**

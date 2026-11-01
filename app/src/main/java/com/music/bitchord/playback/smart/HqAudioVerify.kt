@@ -5,7 +5,6 @@ import android.media.MediaDataSource
 import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
 import com.music.bitchord.data.TrackLog
-import com.music.bitchord.data.innertube.PlayerClient
 import com.music.bitchord.data.net.HqRetryPolicy
 import com.music.bitchord.data.net.ProxyPlayback
 import com.music.bitchord.download.HqLibraryUpgrade
@@ -19,6 +18,7 @@ import com.music.bitchord.data.sources.HqQuality
 import com.music.bitchord.data.sources.HqReferenceCache
 import com.music.bitchord.data.sources.HqTier
 import com.music.bitchord.data.sources.HqVerifyPolicy
+import com.music.bitchord.data.sources.MusicSource
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceStream
@@ -43,6 +43,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
@@ -1242,18 +1243,47 @@ object HqAudioVerify {
      * serve a stable URL or have their own recovery; asking them here would
      * spend a request without a way to mint a new link.
      */
-    private suspend fun freshAddonStream(stream: SourceStream): SourceStream? {
+    private suspend fun freshAddonStream(stream: SourceStream): SourceStream? =
+        freshAddonStream(stream) { SourceRegistry.instance(it) }
+
+    internal suspend fun freshAddonStream(
+        stream: SourceStream,
+        sourceOf: (String) -> MusicSource?,
+    ): SourceStream? {
         val sourceId = stream.sourceConfigId ?: return null
         val trackId = stream.trackId?.takeIf { it.isNotBlank() } ?: return null
-        val source = SourceRegistry.instance(sourceId) as? AddonSource ?: return null
-        val request = when {
+        val source = sourceOf(sourceId) as? AddonSource ?: return null
+        return source.streamFresh(trackId, freshRequestFor(stream), stream.stereoOnly)
+    }
+
+    /**
+     * The tier a fresh URL is asked for: the one the refused stream was
+     * resolved at, not one guessed back from what it happened to serve.
+     *
+     * A capped request that came back lossless (a catalogue ignoring the cap)
+     * must still be re-asked capped, or the retry spends the listener's data
+     * on the very tier the cap was there to avoid. Older streams that predate
+     * the carried request keep the old best-effort reconstruction.
+     */
+    internal fun freshRequestFor(stream: SourceStream): StreamRequest =
+        stream.request ?: when {
             HqQuality.isLosslessTier(stream.format) -> StreamRequest.Lossless
             else -> stream.format.kbps?.takeIf { it > 0 }
                 ?.let { StreamRequest.Capped(it) }
                 ?: StreamRequest.Best
         }
-        return source.streamFresh(trackId, request)
-    }
+
+    /**
+     * Whether playback would range-chunk this URL.
+     *
+     * Mirrors [com.music.bitchord.playback.ChunkedDataSource.open]: the
+     * decision is the presence of a numeric `clen`, not the host. Deciding by
+     * host made verification omit the Range header that playback sent for an
+     * addon/proxied URL carrying `clen`, and the edge refused the un-ranged
+     * head with 403 while the same URL played.
+     */
+    internal fun rangeChunked(url: String): Boolean =
+        url.toHttpUrlOrNull()?.queryParameter("clen")?.toLongOrNull() != null
 
     /**
      * Whether [directory] is ready for a candidate head.
@@ -1386,12 +1416,12 @@ object HqAudioVerify {
             .url(stream.url)
             .apply { stream.headers.forEach { (name, value) -> header(name, value) } }
             .also { builder ->
-                // A source URL is opened by playback as one continuous read:
-                // only googlevideo is range-chunked. Sending a Range header to
-                // an addon whose URL was minted for a plain GET is enough for
-                // some edges to refuse the request, which is how verification
-                // 403ed while playback worked.
-                if (PlayerClient.rangeBytesFor(stream.url) != Long.MAX_VALUE) {
+                // Ask for the range exactly when playback does. ChunkedDataSource
+                // range-chunks a URL carrying a numeric `clen` and passes every
+                // other URL through as one continuous read; keying off the host
+                // instead sent no Range for an addon URL with `clen`, which is
+                // how verification 403ed while the same URL played.
+                if (rangeChunked(stream.url)) {
                     builder.header("Range", "bytes=0-")
                 }
             }
