@@ -32,14 +32,42 @@ object LyricsMismatch {
     )
 
     fun judgeSheet(lines: List<LyricLine>, heard: List<LyricsWordAlign.Heard>): Verdict =
-        judge(lines.filter { !it.isGap && it.text.isNotBlank() }.map { it.text }, heard)
+        judgeTexts(withinHeardSpan(lines, heard).map { it.text }, heard)
 
-    fun judge(lines: List<String>, heard: List<LyricsWordAlign.Heard>): Verdict {
-        val texts = lines.filter { it.isNotBlank() }
+    fun judge(lines: List<String>, heard: List<LyricsWordAlign.Heard>): Verdict =
+        judgeTexts(lines.filter { it.isNotBlank() }, heard)
+
+    /**
+     * Lines the transcript could have covered. A song check hears only the
+     * opening, so the rest of a correct long song must not be counted against
+     * it. An untimed sheet has no span to compare and is judged whole.
+     */
+    private fun withinHeardSpan(
+        lines: List<LyricLine>,
+        heard: List<LyricsWordAlign.Heard>,
+    ): List<LyricLine> {
+        val texts = lines.filter { !it.isGap && it.text.isNotBlank() }
+        if (heard.isEmpty() || texts.isEmpty()) return texts
+        val first = texts.first().timeMs
+        val last = texts.last().timeMs
+        if (last <= first || last <= 0L) return texts
+        val from = heard.minOf { it.startMs }
+        val to = heard.maxOf { it.endMs }
+        return texts.filter { it.timeMs in from..to }.ifEmpty { texts }
+    }
+
+    private fun judgeTexts(texts: List<String>, heard: List<LyricsWordAlign.Heard>): Verdict {
         if (heard.size < MIN_HEARD_WORDS || texts.isEmpty()) {
             return Verdict(heard.size, 0, texts.size, rejected = false)
         }
-        val matched = LyricsWordAlign.placeLines(texts, heard).count { it != null }
+        // A sheet and a transcript too long to align were not judged at all;
+        // treating that as "no line matched" would throw a correct sheet away
+        // (and delete its cached copy).
+        val placement = LyricsWordAlign.placeLinesDetailed(texts, heard)
+        if (!placement.attempted) {
+            return Verdict(heard.size, 0, texts.size, rejected = false)
+        }
+        val matched = placement.starts.count { it != null }
         return Verdict(
             heardWords = heard.size,
             matchedLines = matched,

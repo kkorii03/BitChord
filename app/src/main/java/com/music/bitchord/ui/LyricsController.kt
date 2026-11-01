@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
@@ -1250,7 +1251,12 @@ class LyricsController(
         scope.launch {
             val heard = LyricsTiming.heardWordsFor(app, request.videoId)
             if (generation != lyricsGeneration || timingLines !== lines) return@launch
-            val verdict = com.music.bitchord.data.lyrics.LyricsMismatch.judgeSheet(lines, heard)
+            // Lining a long sheet up with a long transcript is a full DP table;
+            // it must not run on the main thread while the screen is drawing.
+            val verdict = withContext(Dispatchers.Default) {
+                com.music.bitchord.data.lyrics.LyricsMismatch.judgeSheet(lines, heard)
+            }
+            if (generation != lyricsGeneration || timingLines !== lines) return@launch
             if (!verdict.rejected) return@launch
             mismatchReloadedFor = key
             TrackLog.i(

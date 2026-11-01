@@ -36,6 +36,9 @@ object LyricsWordAlign {
     /** A letter's typical length when sung, for stepping back from the first heard one to the line's start. */
     private const val LETTER_MS = 180L
 
+    /** Where [placeLinesDetailed] found lines, and whether it could look at all. */
+    data class Placement(val starts: List<Long?>, val attempted: Boolean)
+
     /**
      * When each of [lines] starts, by [words]: the lyrics' letters and the
      * heard letters aligned end to end (match, mismatch and gaps, ends free),
@@ -44,7 +47,16 @@ object LyricsWordAlign {
      * of its opening was heard has no answer (null); TimingFit draws the
      * line through the rest.
      */
-    fun placeLines(lines: List<String>, words: List<Heard>): List<Long?> {
+    fun placeLines(lines: List<String>, words: List<Heard>): List<Long?> =
+        placeLinesDetailed(lines, words).starts
+
+    /**
+     * [placeLines], plus whether the alignment actually ran. Too long a song
+     * and transcript together exceed [MAX_CELLS] and are not attempted; that
+     * is not the same answer as "none of the lines were heard", and callers
+     * judging a wrong song must not read it as one.
+     */
+    fun placeLinesDetailed(lines: List<String>, words: List<Heard>): Placement {
         val lyricChars = StringBuilder()
         val lyricLine = ArrayList<Int>()
         val lyricPos = ArrayList<Int>()
@@ -69,7 +81,7 @@ object LyricsWordAlign {
         val n = lyricChars.length
         val m = heardChars.length
         val none = List<Long?>(lines.size) { null }
-        if (n == 0 || m == 0 || n.toLong() * m > MAX_CELLS) return none
+        if (n == 0 || m == 0 || n.toLong() * m > MAX_CELLS) return Placement(none, attempted = false)
 
         // Semi-global: leading and trailing gaps on either side cost nothing —
         // the video may sing only part of the lyrics, and say things besides.
@@ -125,6 +137,6 @@ object LyricsWordAlign {
             }
             k = end
         }
-        return starts.toList()
+        return Placement(starts.toList(), attempted = true)
     }
 }

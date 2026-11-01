@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
@@ -849,7 +850,7 @@ object LyricsRepository {
      * rejected by it: it is the sound's own words, however few a lyric line
      * was recognised. A rejection is remembered per song, provider and sheet.
      */
-    private fun soundRejects(
+    private suspend fun soundRejects(
         videoId: String,
         result: Result,
         heard: List<LyricsWordAlign.Heard>,
@@ -857,7 +858,11 @@ object LyricsRepository {
         if (result.source == LyricsSource.GEMINI_TRANSCRIPT) return false
         if (heard.size < LyricsMismatch.MIN_HEARD_WORDS) return false
         if (LyricsMismatch.isRejected(videoId, result.source, result.lines)) return true
-        val verdict = LyricsMismatch.judgeSheet(result.lines, heard)
+        // The alignment is a full DP table; keep it off the main thread even
+        // for an in-memory answer the caller asked for on Main.
+        val verdict = withContext(Dispatchers.Default) {
+            LyricsMismatch.judgeSheet(result.lines, heard)
+        }
         if (!verdict.rejected) return false
         LyricsMismatch.rememberRejected(videoId, result.source, result.lines)
         TrackLog.i(TAG, LyricsMismatch.logLine(result.source, verdict), about = videoId)

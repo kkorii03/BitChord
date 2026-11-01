@@ -2443,6 +2443,8 @@ object LyricsTiming {
                 aiStarts = null,
                 aiFailedKey = null,
                 heardWords = emptyList(),
+                heardCheckKey = null,
+                heardCheckWords = emptyList(),
                 aiPreferred = false,
                 aiEngine = null,
                 aiAttemptedKey = null,
@@ -2704,6 +2706,8 @@ object LyricsTiming {
                         aiFailedKey = null,
                         heardWords = result.heard.take(MAX_HEARD_WORDS)
                             .map { word -> SavedWord(t = word.text, s = word.startMs, e = word.endMs) },
+                        heardCheckKey = null,
+                        heardCheckWords = emptyList(),
                         aiPreferred = false,
                         biasSampled = false,
                         aiEngine = ENGINE_DEEPGRAM_WHISPER,
