@@ -46,6 +46,40 @@ fun String.artistForLyricsSearch(): String {
     return name.trim().ifBlank { trim() }
 }
 
+/**
+ * Whether a title is short and built around a symbol that a catalogue search
+ * strips — "0+0", "2!3!", "7/11", "#1". Identity filtering removes every
+ * character that is not a letter or digit, which turns "0+0" into "00" and
+ * asks for a different song. Such a title keeps its original spelling as the
+ * first name to search, straight after [forLyricsSearch] has taken off the
+ * packaging.
+ */
+internal fun String.isSymbolicLyricsTitle(): Boolean {
+    val text = trim()
+    if (text.isEmpty() || text.length > 24) return false
+    if (text.count { it == ' ' } > 2) return false
+    // A title made only of symbols ("+") has nothing else to go on.
+    if (text.all { it in LYRICS_TITLE_SYMBOLS || it.isWhitespace() }) {
+        return text.any { it in LYRICS_TITLE_SYMBOLS }
+    }
+    return text.indices.any { i ->
+        val c = text[i]
+        when {
+            // "7/11", "24/7" — digits joined by the slash, not "IU / Blueming".
+            c == '/' -> i > 0 && i + 1 < text.length &&
+                text[i - 1].isDigit() && text[i + 1].isDigit()
+            // Every other symbol counts only when it touches part of the name,
+            // never as a spaced separator ("IU # Blueming").
+            c in LYRICS_TITLE_SYMBOLS ->
+                (i > 0 && !text[i - 1].isWhitespace()) ||
+                    (i + 1 < text.length && !text[i + 1].isWhitespace())
+            else -> false
+        }
+    }
+}
+
+private val LYRICS_TITLE_SYMBOLS = setOf('+', '#', '/', '!', '?', '@', '%', '=', '*')
+
 private val WHITESPACE = Regex("""\s+""")
 
 private val CREDITS = listOf(

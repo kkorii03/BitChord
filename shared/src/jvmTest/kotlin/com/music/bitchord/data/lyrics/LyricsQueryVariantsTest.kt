@@ -124,4 +124,40 @@ class LyricsQueryVariantsTest {
         val names = LyricsQueryVariants.names("Song", "IU - Topic")
         assertEquals("iu", names.first().artist)
     }
+
+    @Test
+    fun aShortSymbolicTitleKeepsItsSymbolsBeforeTheCleanedSpelling() {
+        listOf("0+0", "+", "1+1", "7/11", "#1", "24/7", "#Hashtag").forEach { title ->
+            val names = LyricsQueryVariants.names(title, "IU")
+            assertEquals(title, names.first().title, title)
+            assertEquals("iu", names.first().artist, title)
+        }
+    }
+
+    @Test
+    fun aSymbolicTitleAfterAnArtistDashIsStillPreserved() {
+        val names = LyricsQueryVariants.names("BTS - 2!3!", "BTS")
+        assertEquals("2!3!", names.first().title)
+        assertEquals("bts", names.first().artist)
+        assertTrue(names.any { it.title == "23" && it.artist == "bts" })
+    }
+
+    @Test
+    fun aSpacedSlashSeparatesInsteadOfBecomingPartOfTheTitle() {
+        val names = LyricsQueryVariants.names("IU / Blueming", "IU")
+        assertEquals("iu blueming", names.first().title)
+        assertEquals("iu", names.first().artist)
+        assertFalse(names.any { it.title == "IU / Blueming" })
+    }
+
+    @Test
+    fun aCoverTitleSearchesTheSymbolicTitleUnderTheOriginalArtist() {
+        val names = LyricsQueryVariants.names("정승환 '0+0' Cover (원곡 : 한로로)", "정승환")
+        assertEquals("0+0", names.first().title)
+        assertEquals("한로로", names.first().artist)
+
+        val noChannel = LyricsQueryVariants.names("정승환 '0+0' Cover (원곡 : 한로로)", "")
+        assertEquals("0+0", noChannel.first().title)
+        assertEquals("한로로", noChannel.first().artist)
+    }
 }

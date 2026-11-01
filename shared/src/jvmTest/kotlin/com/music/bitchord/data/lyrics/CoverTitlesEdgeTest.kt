@@ -165,6 +165,56 @@ class CoverTitlesEdgeTest {
     }
 
     @Test
+    fun aCoverTitleWithAnOriginalCreditAndNoDashReadsTheOriginal() {
+        val read = cover("정승환 '0+0' Cover (원곡 : 한로로)", "정승환")
+        assertEquals("0+0", read.title)
+        assertEquals("한로로", read.originalArtist)
+        assertEquals("정승환", read.singer)
+    }
+
+    @Test
+    fun anOriginalArtistWhoseNameContainsAMarkerWordIsStillAName() {
+        listOf("Mr. Big", "The Piano Guys", "AI").forEach { artist ->
+            val read = cover("Singer - Song (원곡 : $artist)", "channel")
+            assertEquals(artist, read.originalArtist, artist)
+            val noDash = cover("Singer 'Song' Cover (원곡 : $artist)", "Singer")
+            assertEquals(artist, noDash.originalArtist, artist)
+        }
+    }
+
+    @Test
+    fun aBareVersionOrDescriptorOriginalCreditIsNotAnArtist() {
+        listOf("Live", "Acoustic").forEach { marker ->
+            assertNull(CoverTitles.read("Singer - Song (원곡 : $marker)", "channel", null), marker)
+            assertNull(CoverTitles.read("Singer 'Song' Cover (원곡 : $marker)", "Singer", null), marker)
+        }
+    }
+
+    @Test
+    fun englishOriginalCreditsNameTheOriginalArtist() {
+        listOf(
+            "Singer - Song (Original by Writer)",
+            "Singer - Song (orig. Writer)",
+            "Singer - Song Cover orig. Writer",
+        ).forEach { title ->
+            val read = cover(title, "channel")
+            assertEquals("Writer", read.originalArtist, title)
+        }
+    }
+
+    @Test
+    fun originalVersionBracketsAreNotOriginalArtistCredits() {
+        listOf(
+            "IU - Blueming (Original Mix)",
+            "IU - Blueming (Original Version)",
+            "IU - Blueming (Original Soundtrack)",
+        ).forEach { title ->
+            assertNull(CoverTitles.read(title, "IU", null), title)
+            assertFalse(CoverTitles.isCover(song(title, "IU")), title)
+        }
+    }
+
+    @Test
     fun aTranslationBracketOnADatedBTitleIsNotAnArtist() {
         val read = cover("가수 - 봄날(Spring Day) [24.10.10]", "channel")
         assertEquals("봄날", read.title)
