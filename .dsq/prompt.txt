@@ -1,0 +1,18 @@
+﻿BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/telegram.
+폰 실측(11-02, 연속 재생 25분, 6번 곡 전환): 자동 믹스 자체는 동작(blend start/handoff/finish, DJ_FILTER 5~7.6초 4번, GAPLESS 2번). 그런데 모든 전환에서 조성 판정 실패: 'automix: A->B beatAligned=n phrase=n key=unknown keyRaw=C minor/ keyConf=0.00/0.02 …', keyConf 최대 0.09. beatAligned=n, phrase=n 도 전부. 즉 화성 맞춤 믹스·박자/프레이즈 맞춤이 사실상 꺼져 있다.
+할 일:
+① 원인 증명: 조성(key)·keyConf 계산(TrackAnalyzer / 크로마·조성 템플릿 상관)과 beat/phrase 판정 경로를 찾아, 왜 신뢰도가 0 근처인지 단위 테스트로 재현한다. 합성 신호(예: C장조 I-IV-V-I 화음 사인파 30초, A단조, 120BPM 킥)를 만들어 현재 코드가 key/conf/beat 를 어떻게 내는지 확인. 의심: 정규화 누락, 짧은 분석 구간, 샘플레이트 가정, 크로마 접기 오류, 임계값 단위 오류.
+② 원인을 고치고, 합성 신호에서 올바른 조성·높은 신뢰도(≥0.5)·박자 검출이 나오게 한다. 실제 음악에서 과신하지 않도록 기존 임계값의 의미는 유지(수치 변경 시 근거를 요약에).
+③ 로그는 그대로 두되 keyConf 가 실제 값을 내야 함.
+테스트(고치기 전 실패): 합성 C장조/A단조 조성, 신뢰도 하한, 120BPM 박자 검출.
+제약: .github/, keys, *.jks, 서명 수정 금지. 크로스페이드 계획(스타일 선택 규칙) 변경은 조성/박자 입력이 고쳐져서 생기는 변화만 허용. 배터리: 분석 구간 늘리기 금지(같은 디코드 데이터로). 폴링·타이머 금지. 업스트림 파일 쪼개기 금지.
+마지막 10줄 이내 요약: 원인(파일:줄) / 수정 / 새 테스트 / 미해결.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 2
+- HIGH — shared/src/jvmTest/kotlin/com/music/bitchord/playback/smart/SyntheticKeyAndBeatTest.kt:43 — The added beat test exercises the native analyzer (which passes on the pre-change code) rather than the production BeatTracker/grid path, and no beat/phrase code was changed, so the reported `beatAligned=n`/`phrase=n` failure remains untested and unfixed. Fix: reproduce the failing grid/phrase path against BeatTracker/gridConfidence, fix it, and make that test fail before the fix.
+- MEDIUM — native/analyzer/audio_analysis.cpp:457 — The `max(0.01, top)` floor was calibrated for raw dot products but `top` is now a correlation, so near-zero fits get inflated confidence (30 s white noise produced `C minor` with keyConf 0.52, well above the 0.25 trusted-key threshold). Fix: gate confidence on an absolute correlation floor or rescale the floor to correlation units, and add an atonal-noise regression test.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
