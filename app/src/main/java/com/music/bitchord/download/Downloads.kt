@@ -1128,6 +1128,14 @@ object Downloads {
         }
     }.getOrNull()?.takeIf { it > 0L }
 
+    /**
+     * [localDurationMs] on the IO dispatcher. Opening and parsing a media file
+     * can take long enough to stall the main thread, so the queue look-ahead
+     * never calls the synchronous reader directly.
+     */
+    internal suspend fun localDurationMsOffMain(context: Context, uriString: String): Long? =
+        withContext(Dispatchers.IO) { localDurationMs(context, uriString) }
+
     /** The downloaded rows still on disk that are remembered as the video's sound. */
     suspend fun suspectedSongs(context: Context): List<Song> = withContext(Dispatchers.IO) {
         open()

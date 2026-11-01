@@ -252,6 +252,41 @@ object SongVersionPolicy {
         return (file - catalog).takeIf { it >= MV_SOUND_SLACK_MS }
     }
 
+    /**
+     * Whether a saved file's own length still has to be read before its
+     * upcoming row is replaced.
+     *
+     * The length is only evidence for a legacy record whose provenance was
+     * never recorded: a recorded source is already answered by
+     * [downloadedFileUse], and a remembered video-sound verdict already
+     * decides the row. Reading the container metadata opens and parses the
+     * file, so it must not happen when the answer is already known.
+     */
+    fun needsFileDurationForReplacement(
+        soundSourceId: String?,
+        mvSoundSuspectMs: Long?,
+        catalogDurationMs: Long?,
+    ): Boolean =
+        soundSourceId == null && mvSoundSuspectMs == null && catalogDurationMs != null
+
+    /**
+     * Whether the row a version was resolved for is still the row at
+     * [expectedIndex].
+     *
+     * Resolving and preparing an upcoming version suspends (the saved file's
+     * URI and length are read off the main thread). A queue edit in that
+     * window can remove the row or move another entry into the index; applying
+     * the prepared replacement then would overwrite the wrong entry, so the
+     * index is checked against the current count and the media id is checked
+     * again right before replacing.
+     */
+    fun replacementRowStillMatches(
+        expectedIndex: Int,
+        expectedMediaId: String,
+        itemCount: Int,
+        actualMediaId: String?,
+    ): Boolean = expectedIndex in 0 until itemCount && actualMediaId == expectedMediaId
+
     /** What a downloaded file may be used for, once its sound source is known. */
     enum class DownloadedFileUse {
         /** The file's recorded source is the recording being played. */

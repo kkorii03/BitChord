@@ -717,34 +717,59 @@ internal class NextTrackPreparation(
         // sound, or be longer than the catalogue release. This row is replaced
         // before it plays, so the crossfade can mark it audible and the later
         // repair would never run.
+        val soundSourceId = Downloads.savedSoundSourceFor(resolved.videoId)
         val suspectId = Downloads.songIdForFile(resolved.videoId)
         val suspectMs = Downloads.mvSoundSuspectMs(suspectId)
         val catalogMs = Downloads.catalogDurationMs(
             resolved.videoId,
             resolved.durationMillis(),
         )
-        val fileMs = if (suspectMs == null && catalogMs != null) {
+        // Only a legacy record with no provenance needs the file's own length;
+        // the read opens the container, so it must not happen when the answer
+        // is already known (and would be discarded).
+        val fileMs = if (SongVersionPolicy.needsFileDurationForReplacement(
+                soundSourceId = soundSourceId,
+                mvSoundSuspectMs = suspectMs,
+                catalogDurationMs = catalogMs,
+            )
+        ) {
             Downloads.savedUri(context, resolved.videoId)?.let {
-                Downloads.localDurationMs(context, it.toString())
+                Downloads.localDurationMsOffMain(context, it.toString())
             }
         } else {
             null
         }
         val streamOnly = SongVersionPolicy.replacementStreamsSong(
             playId = resolved.videoId,
-            soundSourceId = Downloads.savedSoundSourceFor(resolved.videoId),
+            soundSourceId = soundSourceId,
             online = !AudioCache.isOffline(),
             mvSoundSuspectMs = suspectMs,
             fileDurationMs = fileMs,
             catalogDurationMs = catalogMs,
             isVideo = resolved.isVideo,
         )
+        // The saved URI above suspends off the main thread; a queue edit can
+        // land in that window. Do not replace the row unless it is still the
+        // next entry and still the one this version was resolved for.
+        if (player.nextMediaItemIndex != index) return null
+        if (!SongVersionPolicy.replacementRowStillMatches(
+                expectedIndex = index,
+                expectedMediaId = song.videoId,
+                itemCount = player.mediaItemCount,
+                actualMediaId = if (index in 0 until player.mediaItemCount) {
+                    player.getMediaItemAt(index).mediaId
+                } else {
+                    null
+                },
+            )
+        ) return null
+        val live = player.getMediaItemAt(index)
         val replacement = QueueShuffle.withQueueMetadata(
             resolved.toMediaItem(useDownloadedFile = !streamOnly),
-            newEntryId = item.queueEntryId,
-            newCanonicalIndex = item.canonicalIndex,
-            newTier = item.queueTier,
-            newContextCycleId = item.contextCycleId,
+            newEntryId = live.queueEntryId,
+            newCanonicalIndex = live.canonicalIndex,
+            newTier = live.queueTier,
+            newContextCycleId = live.contextCycleId,
         )
         // Announce the new id before the timeline callback fires, so this
         // bundle is not mistaken for one the queue replaced.
