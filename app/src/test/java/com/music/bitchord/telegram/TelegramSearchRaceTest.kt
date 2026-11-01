@@ -13,6 +13,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.io.IOException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.CyclicBarrier
 import java.util.concurrent.TimeUnit
@@ -56,6 +57,12 @@ class TelegramSearchRaceTest {
                     if (search.query == "second") {
                         releaseSecond.await(5, TimeUnit.SECONDS)
                     }
+                }
+                // The real request() cannot run without an open client. The
+                // gate must still hold the lease taken by the other search
+                // after this one's caller has finished.
+                if (!TelegramClientManager.searchGateOpenForTest()) {
+                    throw IOException("The Telegram client is not open.")
                 }
                 TdApi.FoundMessages(0, emptyArray<TdApi.Message>(), "")
             },

@@ -18,6 +18,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -90,7 +92,6 @@ object TelegramClientManager {
     private class GlobalSearch(
         val tracks: List<TelegramTrack>,
         val exhausted: Boolean,
-        val sawRows: Boolean,
     )
 
     private class SearchFlight(val key: SearchKey, val deferred: CompletableDeferred<SearchResult>) {
@@ -500,6 +501,13 @@ object TelegramClientManager {
     }
 
     /**
+     * Test seam: whether the gate still holds a client for the searches in
+     * flight. A fake transport uses this to behave like the real [request],
+     * which throws once the last lease closed the client.
+     */
+    internal fun searchGateOpenForTest(): Boolean = gate.shouldBeOpen
+
+    /**
      * The account's chats, for the selection screen. Read only when that
      * screen asks; names are never written to the log.
      */
@@ -611,12 +619,12 @@ object TelegramClientManager {
             // in-flight requests instead of the old one-at-a-time loop.
             return searchFallback(chats, wanted, limit, globalFailure)
         }
-        // A global page is not the whole answer: other chats can fill the page
-        // while a selected chat's matches sit behind nextOffset. If the page
-        // cap stopped us, or rows were found in other chats but none in the
-        // selected ones, ask the selected chats directly instead of reporting
-        // a false empty result.
-        if (global.tracks.isEmpty() && (global.sawRows || !global.exhausted)) {
+        // A global page is not the whole answer: selected chats can fill the
+        // page while a selected chat's matches sit behind nextOffset. If the
+        // page cap stopped us before TDLib exhausted the result, ask the
+        // selected chats directly instead of reporting a partial answer. Once
+        // TDLib says it is exhausted, no per-chat request can find more.
+        if (!global.exhausted) {
             return searchFallback(chats, wanted, limit, null)
         }
         return SearchResult(global.tracks, "global")
@@ -642,7 +650,7 @@ object TelegramClientManager {
      * Audio and documents across all chats, paging on [TdApi.FoundMessages.nextOffset]
      * until the selected chats have enough rows or there is no next page.
      */
-    private fun searchGlobal(
+    private suspend fun searchGlobal(
         selected: Set<Long>,
         query: String,
         limit: Int,
@@ -650,12 +658,16 @@ object TelegramClientManager {
         val rows = LinkedHashMap<String, TelegramTrack>()
         var firstFailure: Throwable? = null
         var exhausted = true
-        var sawRows = false
         filters@ for (filter in SEARCH_FILTERS) {
+            // An abandoned flight must stop between blocking TDLib requests;
+            // request() cannot be interrupted, but no further page or filter
+            // may start once every caller has gone.
+            currentCoroutineContext().ensureActive()
             if (rows.size >= limit) break@filters
             var offset = ""
             var pages = 0
             while (rows.size < limit) {
+                currentCoroutineContext().ensureActive()
                 val found = try {
                     request(
                         TdApi.SearchMessages(
@@ -676,7 +688,6 @@ object TelegramClientManager {
                     if (firstFailure == null) firstFailure = failure
                     break
                 }
-                if (!found.messages.isNullOrEmpty()) sawRows = true
                 found.messages?.forEach { message ->
                     if (message.chatId !in selected) return@forEach
                     if (rows.size < limit) {
@@ -698,7 +709,7 @@ object TelegramClientManager {
         if (rows.isEmpty() && firstFailure != null) {
             throw IOException("Telegram global search is unavailable.", firstFailure)
         }
-        return GlobalSearch(rows.values.toList(), exhausted, sawRows)
+        return GlobalSearch(rows.values.toList(), exhausted)
     }
 
     /** Fallback only: selected chats, at most [MAX_PARALLEL_CHAT_SEARCHES] at once. */
@@ -710,11 +721,15 @@ object TelegramClientManager {
         val rows = LinkedHashMap<String, TelegramTrack>()
         var firstFailure: Throwable? = null
         for (chunk in chats.chunked(MAX_PARALLEL_CHAT_SEARCHES)) {
+            currentCoroutineContext().ensureActive()
             if (synchronized(rows) { rows.size >= limit }) break
             chunk.map { chat ->
                 async(Dispatchers.IO) {
                     try {
                         for (filter in SEARCH_FILTERS) {
+                            // Awaiting children cannot interrupt a blocked
+                            // TDLib call, so stop before starting another one.
+                            currentCoroutineContext().ensureActive()
                             val found = request(
                                 TdApi.SearchChatMessages(
                                     chat,
@@ -1071,7 +1086,10 @@ object TelegramClientManager {
         auth = null
         paramsSent = false
         appliedCredentials = TelegramApplicationCredentials.EMPTY
-        interactiveLogin = false
+        // A pending interactive login survives a close/reopen: the login may
+        // complete after the client was released, and that Ready must still
+        // clear the rest earned by the previous settings. deleteSession()
+        // clears it when the login itself is abandoned or logged out.
         if (deleteLocalSession) deleteSession()
         logoutRequested = false
         update {
@@ -1283,6 +1301,8 @@ object TelegramClientManager {
     }
 
     private fun deleteSession() {
+        // No account is left to finish an interactive login for.
+        interactiveLogin = false
         val dir = home ?: return
         val database = File(dir, "db")
         val files = File(dir, "files")
