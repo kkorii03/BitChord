@@ -146,6 +146,7 @@ object StreamResolver {
             // was one shaped watch page, a player POST, or the player
             // JavaScript. Naming the request and its size is what makes the
             // difference between measuring the step and guessing at it.
+            // [KO] log-redaction: signed extractor URLs never reach [TrackLog].
             val requestStart = MonotonicClock.nowMs()
             val response = try {
                 extractorClient.newCall(builder.build()).execute()
@@ -158,15 +159,16 @@ object StreamResolver {
                 TrackLog.w(
                     TAG,
                     "extractor fetch FAILED after ${MonotonicClock.nowMs() - requestStart}ms " +
-                        "${request.httpMethod()} ${request.url()}: ${e.javaClass.simpleName}: ${e.message}",
+                        "${request.httpMethod()} ${KoStreamResolver.logUrl(request.url())}: " +
+                        "${e.javaClass.simpleName}: ${e.message}",
                 )
                 throw e
             }
             val took = MonotonicClock.nowMs() - requestStart
             if (took > SLOW_FETCH_MS) {
-                TrackLog.w(TAG, "extractor fetch ${took}ms ${request.httpMethod()} ${request.url()}")
+                TrackLog.w(TAG, "extractor fetch ${took}ms ${request.httpMethod()} ${KoStreamResolver.logUrl(request.url())}")
             } else {
-                TrackLog.d(TAG, "extractor fetch ${took}ms ${request.httpMethod()} ${request.url()}")
+                TrackLog.d(TAG, "extractor fetch ${took}ms ${request.httpMethod()} ${KoStreamResolver.logUrl(request.url())}")
             }
             if (response.code == 429) {
                 response.close()
@@ -881,7 +883,7 @@ object StreamResolver {
      * [PlayerClient.forStreamUrl] — so this tests the request that matters
      * rather than a more favourable version of it.
      */
-    internal fun probe(url: String, viaProxy: Boolean = false): Probe { // [KO] probe-via-proxy
+    internal fun probe(url: String): Probe { // [KO] shared-with-ko
         val length = url.toHttpUrlOrNull()?.queryParameter("clen")?.toLongOrNull()
         val start = if (length != null && length > AUTH_BOUNDARY_BYTES + PROBE_READ_BYTES) AUTH_BOUNDARY_BYTES else 0L
         // A host with no range cap of its own reports Long.MAX_VALUE, which
@@ -899,7 +901,7 @@ object StreamResolver {
         val sentHeaders = mediaHeadersFor(url)
         sentHeaders.forEach { (name, value) -> builder.header(name, value) }
         return try {
-            (if (viaProxy) KoStreamResolver.proxyProber else prober).newCall(builder.build()).execute().use { response ->
+            prober.newCall(builder.build()).execute().use { response ->
                 val contentType = response.header("Content-Type")
                 val verdict = when {
                     response.code in REFUSAL_CODES -> Probe.REFUSED

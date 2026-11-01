@@ -1228,7 +1228,7 @@ internal object KoStreamResolver {
                 null
             }
             if (found != null) {
-                val verdict = timed("$videoId InnerTubeX ${found.profileId} probe") { StreamResolver.probe(found.url, viaProxy) }
+                val verdict = timed("$videoId InnerTubeX ${found.profileId} probe") { probe(found.url, viaProxy) }
                 if (verdict == Probe.OK) {
                     TrackLog.d(TAG, "resolved $videoId via InnerTubeX ${found.profileId} @ ${found.kbps}kbps")
                     onServed(ResolutionOrder.itx(preferredManifest), "InnerTubeX ${found.profileId}")
@@ -1293,7 +1293,7 @@ internal object KoStreamResolver {
                 }
                 return null
             } ?: return null
-            val verdict = timed("$videoId InnerTubeX ${found.profileId} probe") { StreamResolver.probe(found.url, viaProxy) }
+            val verdict = timed("$videoId InnerTubeX ${found.profileId} probe") { probe(found.url, viaProxy) }
             if (verdict == Probe.OK) {
                 TrackLog.d(TAG, "resolved $videoId via InnerTubeX ${found.profileId} @ ${found.kbps}kbps")
                 val manifest = InnerTubeXResolver.manifestIdForProfile(found.profileId)
@@ -1376,7 +1376,7 @@ internal object KoStreamResolver {
             checkActive = checkActive,
         )) {
             checkActive()
-            if (StreamResolver.probe(found.url, viaProxy) == Probe.OK) {
+            if (probe(found.url, viaProxy) == Probe.OK) {
                 TrackLog.d(TAG, "resolved $videoId via direct ${found.client} @ ${found.kbps}kbps")
                 return DirectProbe.Stream(
                     DirectRun(
@@ -1433,7 +1433,7 @@ internal object KoStreamResolver {
             TrackLog.w(TAG, "no stream for $videoId when asked as an upload")
             return null
         }
-        val verdict = timed("$videoId InnerTubeX ${found.profileId} upload probe") { StreamResolver.probe(found.url, viaProxy) }
+        val verdict = timed("$videoId InnerTubeX ${found.profileId} upload probe") { probe(found.url, viaProxy) }
         if (verdict != Probe.OK) {
             TrackLog.w(TAG, "InnerTubeX ${found.profileId} as an upload for $videoId: $verdict")
             return null
@@ -1933,8 +1933,73 @@ internal object KoStreamResolver {
         return found
     }
 
+    /** A URL as safe to log: no query, no signature, no fragment. */
+    internal fun logUrl(url: String): String = LogUrl.of(url)
+
     /** Back-pressure, not a refusal: forget the URL but keep the client. */
     private val RATE_LIMIT_CODES = setOf(429, 503)
+
+    /**
+     * The upstream [StreamResolver.probe] for direct URLs, or the same test
+     * through [proxyProber] for a URL that only the proxy may fetch.
+     */
+    internal fun probe(url: String, viaProxy: Boolean): Probe =
+        if (viaProxy) proxyProbe(url) else StreamResolver.probe(url)
+
+    private fun proxyProbe(url: String): Probe {
+        val length = url.toHttpUrlOrNull()?.queryParameter("clen")?.toLongOrNull()
+        val start = if (length != null &&
+            length > StreamResolver.AUTH_BOUNDARY_BYTES + StreamResolver.PROBE_READ_BYTES
+        ) {
+            StreamResolver.AUTH_BOUNDARY_BYTES
+        } else {
+            0L
+        }
+        // A host with no range cap of its own reports Long.MAX_VALUE, which
+        // must not be added to [start]: that overflowed into a negative end
+        // and a 416 read as a refusal. Its real fetch asks for the rest of
+        // the file, so the probe does too.
+        val window = PlayerClient.rangeBytesFor(url)
+        val range = when {
+            window != Long.MAX_VALUE -> "bytes=$start-${minOf(start + window, length ?: Long.MAX_VALUE) - 1}"
+            length != null -> "bytes=$start-${length - 1}"
+            else -> "bytes=$start-"
+        }
+        val builder = okhttp3.Request.Builder().url(url)
+            .header("Range", range)
+        val sentHeaders = StreamResolver.mediaHeadersFor(url)
+        sentHeaders.forEach { (name, value) -> builder.header(name, value) }
+        return try {
+            proxyProber.newCall(builder.build()).execute().use { response ->
+                val contentType = response.header("Content-Type")
+                val verdict = when {
+                    response.code in REFUSAL_CODES -> Probe.REFUSED
+                    response.code !in 200..299 && response.code != 416 -> Probe.UNREACHABLE
+                    // A refusal dressed as a success: an error page, or the
+                    // consent/captcha interstitial, rather than audio.
+                    contentType?.startsWith("audio/") != true -> Probe.REFUSED
+                    // Headers can arrive long before a body that never does —
+                    // exactly the shaping this whole path exists to sidestep.
+                    // Insisting on the bytes is the point: a trickle that
+                    // yields its first byte and stalls is a failure too.
+                    response.body?.source()?.request(StreamResolver.PROBE_READ_BYTES) != true -> Probe.UNREACHABLE
+                    else -> Probe.OK
+                }
+                if (verdict != Probe.OK) {
+                    TrackLog.w(
+                        TAG,
+                        "probe $verdict: HTTP ${response.code} type=$contentType " +
+                            "range=$range ${StreamResolver.describeMediaUrl(url)} " +
+                            "sent=${sentHeaders.keys.sorted()}",
+                    )
+                }
+                verdict
+            }
+        } catch (e: Exception) {
+            TrackLog.w(TAG, "probe failed: ${e.message}")
+            Probe.UNREACHABLE
+        }
+    }
 
     /**
      * The probe for a URL minted through the proxy. googlevideo authorises it
