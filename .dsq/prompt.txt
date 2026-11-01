@@ -1,0 +1,8 @@
+BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/telegram (업스트림 v1.8.1 기반 한국어 포크).
+목표: 업스트림 v1.9(곧 1.9.1)를 합칠 때 app/src/main/java/com/music/bitchord/ui/components/SongActionsMenu.kt 에서 나는 충돌을 줄인다. 규칙 문서: `git show origin/task/upstream-19:docs/ko-fork-layout.md`.
+준비: `git fetch https://github.com/kushagrasinghx/BitChord.git tag v1.9 --no-tags` 후 FETCH_HEAD 를 v19 로 태그(로컬만, 푸시 금지). v1.8.1 태그가 없으면 같은 방법으로 받는다.
+측정(전·후 같은 방법): 임시 브랜치에서 `git merge --no-commit --no-ff v19` → app/src/main/java/com/music/bitchord/ui/components/SongActionsMenu.kt 의 충돌 덩어리에서 우리 쪽(<<<<<<< 와 ======= 사이) 줄 수를 센다 → `git merge --abort`. 커밋에 합치기 결과를 남기지 말 것.
+방법: `git diff v1.8.1 v19 -- app/src/main/java/com/music/bitchord/ui/components/SongActionsMenu.kt`(업스트림이 바꾼 자리)와 `git diff v1.8.1 HEAD -- app/src/main/java/com/music/bitchord/ui/components/SongActionsMenu.kt`(우리가 바꾼 자리)가 겹치는 곳이 충돌이다. 그 겹치는 자리에 있는 우리 코드를 com.music.bitchord.ko 패키지(이미 있는 Ko*.kt 가 있으면 그곳)로 옮기고, 원래 자리에는 `// [KO] <기능>` 표시 호출 한 줄만 남긴다. 업스트림 원래 코드는 한 글자도 바꾸거나 옮기지 않는다. 동작은 완전히 같아야 한다(순수 이동).
+완료 조건: ① 우리 쪽 충돌 줄 수 전→후 감소(요약에 숫자) ② 컴파일 ③ 기존 단위 테스트 통과.
+제약: .github/, keys, *.jks, 서명·빌드 설정 수정 금지. 다른 업스트림 파일은 최소. 싱크·곡 판정 로직은 옮기기만, 수치·순서 변경 금지. 폴링·타이머 추가 금지.
+마지막 10줄 이내 요약: app/src/main/java/com/music/bitchord/ui/components/SongActionsMenu.kt 우리 쪽 충돌 줄 전→후 / 새·수정 ko 파일 / [KO] 훅 수 / 미해결.
