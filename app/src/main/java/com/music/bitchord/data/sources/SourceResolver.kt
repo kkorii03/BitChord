@@ -212,6 +212,22 @@ object SourceResolver {
         System.identityHashCode(session).toString() + '\u0001' + sourceId + '\u0001' + targetKey(target)
 
     /**
+     * Releases the resting-probe budget of one finished manual request.
+     *
+     * The set otherwise outlives the request it describes and every press
+     * leaves a source/target/key string behind for the life of the process.
+     */
+    internal fun clearManualProbes(session: Any) {
+        val prefix = System.identityHashCode(session).toString() + '\u0001'
+        manualRestingProbes.removeIf { it.startsWith(prefix) }
+    }
+
+    /** Releases every manual request's probe budget — see [clearManualProbes]. */
+    internal fun clearManualProbes() {
+        manualRestingProbes.clear()
+    }
+
+    /**
      * The per-source detail of one search, for the `hq-search` line.
      *
      * [verdict] is why a result was or was not usable:
@@ -252,6 +268,21 @@ object SourceResolver {
         @Volatile
         var allConclusive: Boolean = true
             private set
+
+        /**
+         * Time this walk spent searching, excluding the proof callback.
+         *
+         * Filled by [QualityUpgrade.lookAgain][com.music.bitchord.playback.QualityUpgrade]
+         * so the upgrade timing line can name the search and the decode
+         * separately; a 14s Qobuz decode belongs to verification, not to the
+         * catalogue.
+         */
+        @Volatile
+        var searchMs: Long = 0L
+
+        /** Time this walk spent inside the proof callback. */
+        @Volatile
+        var verifyMs: Long = 0L
 
         fun record(outcome: SearchOutcome, sourceName: String? = null) {
             synchronized(entries) {

@@ -224,6 +224,22 @@ class ModuleSource(
     // ── Stream ────────────────────────────────────────────────────────────
 
     override suspend fun stream(trackId: String, request: StreamRequest): SourceStream? =
+        streamInternal(trackId, request, fresh = false)
+
+    /**
+     * As [stream], but forces the module to mint a new URL instead of reusing
+     * a completed answer. A URL that was refused on its first fetch must be
+     * asked for again; a module-backed row is not a [AddonSource], so the
+     * addon-only retry path never reached it and the 403 stayed final.
+     */
+    internal suspend fun streamFresh(trackId: String, request: StreamRequest): SourceStream? =
+        streamInternal(trackId, request, fresh = true)
+
+    private suspend fun streamInternal(
+        trackId: String,
+        request: StreamRequest,
+        fresh: Boolean,
+    ): SourceStream? =
         withContext(Dispatchers.IO) {
             // trackId is "<moduleId>::<upstreamId>"
             val cut = trackId.indexOf(MOD_SEPARATOR)
@@ -251,12 +267,22 @@ class ModuleSource(
                 SourceResolver.reportSourceFailure(config.id, network = SourceResolver.isNetworkFault(e))
                 return@withContext null
             }
-            val streamResponse = manager.getStreamUrl(
-                loaded = loaded,
-                trackId = upstreamId,
-                quality = request.tier,
-                settings = settingsFor(request),
-            ).getOrElse { e ->
+            val requestSettings = settingsFor(request)
+            val streamResponse = (if (fresh) {
+                manager.getStreamUrlFresh(
+                    loaded = loaded,
+                    trackId = upstreamId,
+                    quality = request.tier,
+                    settings = requestSettings,
+                )
+            } else {
+                manager.getStreamUrl(
+                    loaded = loaded,
+                    trackId = upstreamId,
+                    quality = request.tier,
+                    settings = requestSettings,
+                )
+            }).getOrElse { e ->
                 TrackLog.w(TAG, "${config.displayName}: getStreamUrl failed for $upstreamId — ${e.message}")
                 SourceResolver.reportSourceFailure(config.id, network = SourceResolver.isNetworkFault(e))
                 return@withContext null

@@ -7239,10 +7239,20 @@ class PlaybackService : MediaLibraryService() {
                         HqAudioVerify.verify(this@PlaybackService, mediaId, target, stream) != null
                     }
                 }
-                var searchMs = SystemClock.elapsedRealtime() - upgradeStarted
+                // Search and proof are measured apart by lookAgain; the outer
+                // elapsed time also contains the decode, so using it as the
+                // search cost misattributed e.g. a 14s Qobuz proof.
+                var searchMs = upgradeReport.searchMs
+                var searchVerifyMs = upgradeReport.verifyMs
                 var attemptStarted = upgradeStarted
                 if (better == null) {
                     TrackLog.d("BitChord", "upgrade search for $mediaId: no better copy on any source", about = mediaId)
+                    TrackLog.d(
+                        "BitChord",
+                        "upgrade timing: search=${searchMs}ms verify=${searchVerifyMs}ms " +
+                            "total=${SystemClock.elapsedRealtime() - attemptStarted}ms source=-",
+                        about = mediaId,
+                    )
                     val message = noBetterUpgradeMessage(mediaId, upgradeReport)
                     if (deferManualAnswer()) {
                         TrackLog.d(
@@ -7262,6 +7272,13 @@ class PlaybackService : MediaLibraryService() {
                 // player, so the current song no longer plays Opus to its end
                 // because a FLAC was proved ten seconds in.
                 if (manualUpgradeFor != mediaId) {
+                    TrackLog.d(
+                        "BitChord",
+                        "upgrade timing: search=${searchMs}ms verify=${searchVerifyMs}ms " +
+                            "total=${SystemClock.elapsedRealtime() - attemptStarted}ms " +
+                            "source=${better.sourceConfigId ?: "?"}",
+                        about = mediaId,
+                    )
                     var targetTitle: String? = null
                     var verified: HqVerificationStore.Verified? = null
                     uri?.let { SourceResolver.targetIn(it) }?.let { target ->
@@ -7312,7 +7329,7 @@ class PlaybackService : MediaLibraryService() {
                     val totalMs = SystemClock.elapsedRealtime() - attemptStarted
                     TrackLog.d(
                         "BitChord",
-                        "upgrade timing: search=${searchMs}ms verify=${verifyMs}ms total=${totalMs}ms " +
+                        "upgrade timing: search=${searchMs}ms verify=${searchVerifyMs + verifyMs}ms total=${totalMs}ms " +
                             "source=${candidate.sourceConfigId ?: "?"}",
                         about = mediaId,
                     )
@@ -7345,7 +7362,8 @@ class PlaybackService : MediaLibraryService() {
                     }
                     // A queued candidate is a list pop; a real search here is
                     // only possible when the first one found nothing further.
-                    searchMs = SystemClock.elapsedRealtime() - retryStarted
+                    searchMs = retryReport.searchMs
+                    searchVerifyMs = retryReport.verifyMs
                     attemptStarted = retryStarted
                     if (next == null) {
                         if (deferManualAnswer()) {

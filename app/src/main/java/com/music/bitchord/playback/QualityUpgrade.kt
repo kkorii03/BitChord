@@ -580,6 +580,23 @@ object QualityUpgrade {
     ): SourceStream? {
         val waiting = pending[mediaId] ?: return null
         lastPending[mediaId] = waiting
+        // Search and proof are timed apart here because they are the two costs
+        // the listener actually pays: a 12s slow-source window, then a 14s
+        // Qobuz decode. Measuring only the outer call attributed the decode to
+        // the search and made the timing line point at the wrong one.
+        val timingStartedNs = System.nanoTime()
+        var verifyNanos = 0L
+        val measuredVerify: (suspend (TrackMatcher.Target, SourceStream) -> Boolean)? =
+            verify?.let { check ->
+                { target: TrackMatcher.Target, stream: SourceStream ->
+                    val started = System.nanoTime()
+                    try {
+                        check(target, stream)
+                    } finally {
+                        verifyNanos += System.nanoTime() - started
+                    }
+                }
+            }
         val excludedSources = failedSources[mediaId].orEmpty().toSet()
         val excludedHosts = failedHosts[mediaId].orEmpty().toSet()
         var found: SourceStream? = null
@@ -656,8 +673,17 @@ object QualityUpgrade {
             if (waiting.manual) {
                 val queued = candidateQueue[mediaId]
                 if (queued != null) {
+                    // The queue was built against the floor that was playing
+                    // when it was collected. A candidate popped after the floor
+                    // moved on (a lossy swap armed a lossless follow-up) must be
+                    // weighed again, or a copy that only beat the old stream can
+                    // be swapped in as a downgrade. The source already serving
+                    // the track is out for the same reason the first search
+                    // leaves it out.
                     val next = queued.firstOrNull {
                         it.sourceConfigId !in excludedSources &&
+                            it.sourceConfigId != waiting.servedBy &&
+                            SourceResolver.worthSwapping(it.format, waiting.playing) &&
                             (it.url.let(HqHostTracker::hostOf)?.let { host -> host !in excludedHosts } ?: true)
                     }
                     if (next != null) {
@@ -684,7 +710,9 @@ object QualityUpgrade {
                     manual = true,
                     report = report,
                     manualSession = waiting.manualSession,
-                    verify = verify?.let { check -> { _, stream -> check(effectiveTarget, stream) } },
+                    verify = measuredVerify?.let { check ->
+                        { _, stream -> check(effectiveTarget, stream) }
+                    },
                 )
                 val queue = searched.map { it.second }.toMutableList()
                 candidateQueue[mediaId] = queue
@@ -735,6 +763,9 @@ object QualityUpgrade {
                 answered = true
             }
         } finally {
+            val elapsedNs = System.nanoTime() - timingStartedNs
+            report.verifyMs = verifyNanos / 1_000_000L
+            report.searchMs = ((elapsedNs - verifyNanos).coerceAtLeast(0L)) / 1_000_000L
             if (answered) {
                 // The question has now been asked, whatever the answer. Leaving
                 // it pending would re-run the whole search on every pause and
@@ -906,7 +937,7 @@ object QualityUpgrade {
         failedHosts.remove(mediaId)
         retryAfter.remove(mediaId)
         candidateQueue.remove(mediaId)
-        manualSessions.remove(mediaId)
+        manualSessions.remove(mediaId)?.let(SourceResolver::clearManualProbes)
         // A request made by hand is about the track the listener was listening
         // to. Once the queue has moved off it there is nothing left to honour,
         // and an exemption that outlived its moment would let the next visit to
@@ -1031,7 +1062,7 @@ object QualityUpgrade {
         // A new press is a new request: its resting-source probe budget and
         // its candidate list start empty, even if an earlier press left some.
         val session = Any()
-        manualSessions[mediaId] = session
+        manualSessions.put(mediaId, session)?.let(SourceResolver::clearManualProbes)
         candidateQueue.remove(mediaId)
         // A lookup already pending for this track inherited the automatic
         // path's view of the world. Mark it manual so it ignores the search
@@ -1102,6 +1133,8 @@ object QualityUpgrade {
         // auditioned or still holding a live lookup is torn down properly — and
         // so the badge for it goes out with it.
         (pending.keys + followUps.keys + forced.keys + shelved.keys + auditioning).forEach(::forget)
+        manualSessions.clear()
+        SourceResolver.clearManualProbes()
         asked.clear()
         refused.clear()
         retryAfter.clear()
@@ -1121,6 +1154,13 @@ object QualityUpgrade {
      */
     fun continueAfterLossySwap(mediaId: String): Boolean {
         val next = followUps.remove(mediaId) ?: return false
+        // The lossy swap has landed, so the floor is now that lossy stream and
+        // the candidates collected against the old floor are no longer valid:
+        // popping them would either repeat a copy at or below what is playing
+        // or, worse, swap in one that only beat the stream that was replaced.
+        // The follow-up must search again at the new floor; the reported
+        // upgrade was spending that on stale candidates instead.
+        candidateQueue.remove(mediaId)
         pending[mediaId] = next
         asked -= mediaId
         NerdStats.onLosslessRaceStart(mediaId)

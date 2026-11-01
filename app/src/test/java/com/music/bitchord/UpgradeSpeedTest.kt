@@ -3,17 +3,21 @@ package com.music.bitchord
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.MusicSource
 import com.music.bitchord.data.sources.SourceHealth
+import com.music.bitchord.data.sources.SourceConfig
 import com.music.bitchord.data.sources.SourceKind
+import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.StreamRequest
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.playback.HqHostTracker
+import com.music.bitchord.playback.QualityUpgrade
 import com.music.bitchord.playback.smart.HqAudioVerify
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.After
 import org.junit.Before
 import org.junit.Test
 
@@ -34,6 +38,31 @@ class UpgradeSpeedTest {
         SourceResolver.SourceCooldown.resetForTest()
         HqHostTracker.resetForTest()
         HqAudioVerify.UnmeasuredMemory.clearForTest()
+        install(emptyList())
+    }
+
+    @After
+    fun tearDown() {
+        install(emptyList())
+        SourceResolver.clearSearchAnswers()
+        SourceResolver.SourceCooldown.resetForTest()
+    }
+
+    private val instancesField = SourceRegistry::class.java
+        .getDeclaredField("instances")
+        .apply { isAccessible = true }
+
+    /** Puts just these sources in the registry, in this order. */
+    private fun install(sources: List<FakeSource>) {
+        SourceRegistry.configs.value = sources.map { source ->
+            SourceConfig(
+                id = source.configId,
+                kind = source.kind,
+                label = source.configId,
+                baseUrl = if (source.kind == SourceKind.YOUTUBE) "" else "https://${source.configId}",
+            )
+        }
+        instancesField.set(SourceRegistry, sources.associateBy { it.configId })
     }
 
     private class FakeSource(
@@ -41,9 +70,9 @@ class UpgradeSpeedTest {
         private val rows: List<Song> = emptyList(),
         private val format: StreamFormat = StreamFormat("flac"),
         private val failSearch: Boolean = false,
+        override val kind: SourceKind = SourceKind.ADDON,
     ) : MusicSource {
         override val displayName: String get() = configId
-        override val kind: SourceKind get() = SourceKind.ADDON
         var asked = 0
             private set
 
@@ -135,6 +164,54 @@ class UpgradeSpeedTest {
             afterFirst,
             resting.asked,
         )
+    }
+
+    @Test
+    fun `the next candidate is a list pop and the highest tier is proved first`() = runBlocking {
+        val qobuz = FakeSource(
+            "Qobuz",
+            listOf(row("qobuz-1")),
+            StreamFormat("flac", bitDepth = 24, sampleRateHz = 96_000),
+        )
+        val deezer = FakeSource(
+            "Deezer",
+            listOf(row("deezer-1")),
+            StreamFormat("flac", bitDepth = 16, sampleRateHz = 44_100),
+        )
+        val youtube = FakeSource("YouTube", kind = SourceKind.YOUTUBE)
+        install(listOf(qobuz, deezer, youtube))
+        val mediaId = "one-manual-search"
+
+        QualityUpgrade.askByHand(mediaId)
+        assertTrue(
+            QualityUpgrade.settledForLess(
+                mediaId,
+                target(),
+                playing = StreamFormat("opus", kbps = 160),
+            ),
+        )
+
+        val proved = mutableListOf<String>()
+        val first = QualityUpgrade.lookAgain(mediaId, 200) { _, stream ->
+            proved += stream.url
+            true
+        }
+
+        assertEquals("https://Qobuz/qobuz-1", first?.url)
+        assertEquals("the one search asks each source once", 1, qobuz.asked)
+        assertEquals(1, deezer.asked)
+        assertTrue(
+            "the 24-bit copy must be proved before the 16-bit one: $proved",
+            proved.first().contains("Qobuz"),
+        )
+
+        assertTrue(QualityUpgrade.retryNext(mediaId))
+        val second = QualityUpgrade.lookAgain(mediaId, 200) { _, _ -> true }
+
+        assertEquals("https://Deezer/deezer-1", second?.url)
+        assertEquals("moving to the next candidate must not search again", 1, qobuz.asked)
+        assertEquals(1, deezer.asked)
+        QualityUpgrade.forget(mediaId)
     }
 
     @Test

@@ -18,6 +18,7 @@ import com.music.bitchord.data.sources.HqQuality
 import com.music.bitchord.data.sources.HqReferenceCache
 import com.music.bitchord.data.sources.HqTier
 import com.music.bitchord.data.sources.HqVerifyPolicy
+import com.music.bitchord.data.sources.ModuleSource
 import com.music.bitchord.data.sources.MusicSource
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
@@ -239,8 +240,17 @@ object HqAudioVerify {
     /** A definitive refusal (403/410), which a fresh URL may get past. */
     private class DownloadRefused(val code: Int) : IOException("HTTP $code")
 
-    /** A fresh-URL retry failed after it was already logged. */
-    private class FreshRetryFailed : IOException()
+    /**
+     * A fresh-URL retry failed after it was already logged.
+     *
+     * The retry's own answer is carried rather than flattened to 403: a
+     * timeout, a 404 or a 500 against the fresh URL says nothing definitive
+     * about the source row and must not suppress it for the rest of the run.
+     */
+    private class FreshRetryFailed(
+        val code: Int?,
+        val reason: String,
+    ) : IOException("HTTP ${code ?: reason}")
 
     /** The candidate head's download answer, keeping the 429 apart from other failures. */
     private sealed interface DownloadFetch {
@@ -1186,9 +1196,12 @@ object HqAudioVerify {
             currentCoroutineContext().ensureActive()
             // 403/410 is a definitive refusal, not a slow edge: remember it
             // for this source row so the next candidate does not re-download
-            // the same dead URL during this run.
+            // the same dead URL during this run. The fresh-URL retry carries
+            // its own outcome — a timeout or a 5xx is not evidence that the
+            // row is permanently unmeasurable, so only a definitive code is
+            // memoized.
             val refusal = (e as? DownloadRefused)?.code?.takeIf { it == 403 || it == 410 }
-                ?: if (e is FreshRetryFailed) 403 else null
+                ?: (e as? FreshRetryFailed)?.code?.takeIf { it == 403 || it == 410 }
             if (refusal != null) {
                 UnmeasuredMemory.note(stream.sourceConfigId, stream.trackId, "HTTP $refusal")
             }
@@ -1257,7 +1270,8 @@ object HqAudioVerify {
         } catch (second: Exception) {
             currentCoroutineContext().ensureActive()
             HqHostTracker.noteFailure(HqHostTracker.hostOf(fresh.url))
-            val outcome = (second as? DownloadRefused)?.code?.toString()
+            val secondCode = (second as? DownloadRefused)?.code
+            val outcome = secondCode?.toString()
                 ?: second.message
                 ?: "failed"
             TrackLog.w(
@@ -1265,7 +1279,10 @@ object HqAudioVerify {
                 "decode: hq-verify failed at=download HTTP ${refused.code} " +
                     "(retried with fresh url: $outcome)",
             )
-            throw FreshRetryFailed()
+            // Carry the retry's real answer. A transient timeout or a 5xx on
+            // the fresh URL is not a definitive refusal and must not be
+            // remembered as one.
+            throw FreshRetryFailed(secondCode, outcome)
         }
         val outcome = when (retried) {
             is DownloadFetch.Bytes -> "ok"
@@ -1309,10 +1326,13 @@ object HqAudioVerify {
         val source = sourceOf(sourceId) ?: return null
         if (source.kind == SourceKind.YOUTUBE) return null
         val request = freshRequestFor(stream)
-        return if (source is AddonSource) {
-            source.streamFresh(trackId, request, stream.stereoOnly)
-        } else {
-            source.stream(trackId, request)
+        return when (source) {
+            is AddonSource -> source.streamFresh(trackId, request, stream.stereoOnly)
+            // A module caches its `/stream` answer the same way an addon does.
+            // Calling plain [MusicSource.stream] handed back the very URL that
+            // had just been refused, so the retry never reached the module.
+            is ModuleSource -> source.streamFresh(trackId, request)
+            else -> source.stream(trackId, request)
         }
     }
 

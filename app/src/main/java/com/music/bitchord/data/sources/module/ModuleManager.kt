@@ -300,6 +300,24 @@ class ModuleManager {
         getStreamUrlNow(loaded, trackId, quality, settings)
     }
 
+    /**
+     * As [getStreamUrl], but drops a completed answer first.
+     *
+     * A module's URL is as refuse-prone as any other host: a 403 on the first
+     * fetch means the row must be asked again, not handed the same cached URL.
+     * Work already in flight is still joined, so a retry on the wire costs no
+     * extra request.
+     */
+    suspend fun getStreamUrlFresh(
+        loaded: LoadedModule,
+        trackId: String,
+        quality: String = "",
+        settings: Map<String, String> = emptyMap(),
+    ): Result<ModuleStreamResponse> {
+        streams.clearCompleted(keyOf(loaded.module.id, trackId, quality, contextArg(settings)))
+        return getStreamUrl(loaded, trackId, quality, settings)
+    }
+
     private suspend fun getStreamUrlNow(
         loaded: LoadedModule,
         trackId: String,
