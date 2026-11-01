@@ -6,7 +6,9 @@
 ## 0. 한 줄 현황
 - 1.9 고침판 **ko-102-u19-2 (vc97)** 서명만 됨, 다운로드 페이지 **미게시**(사용자 폰 확인 전 금지). 사용자 폰에는 1.8 기반 되돌림판 **ko-102-test25r (vc96)**.
 - 1.9 작업은 **정지 상태**(밤 방침): 업스트림 **v1.9.1 핫픽스**가 나오면 그때 같이 합친다.
-- 첫 할 일: §5 의 "fix-1030 미반영 15커밋 합치기"(사용자 지시: 1.8.1 수정은 모두 1.9 에도 적용).
+- **11-01 07:30 갱신:** fix-1030 15커밋 합침 완료(39e43cf5, 018c841b 까지). 사용자 요청 '가사' 설정 묶기는 1.9 방식(`SettingsCategory.LYRICS` 분류 페이지, cf749036)으로 넣고 1.8 용 LyricsSettingsScreen 은 지움; 가사 페이지 스위치 iOS 식 통일(f8315bb2, CI 41273372130 결과 확인 필요). ui-tour 41270559428(cf749036) 성공: 화면 81, 앱 크래시 0(FATAL 2건은 uiautomator), '가사' 페이지 스크린샷 확인. 이 변경들은 vc97 이후라 **서명본 없음** — 다음 1.9 시험판은 vc99.
+- 이 계정 주간 한도 89%에서 정지(사용자 지시: 99% 전 인수인계).
+- 첫 할 일: fix-1030 에 새로 들어온 커밋이 있으면 합치기(`git log HEAD..origin/task/fix-1030`), 사용자 폰 로그 확인(§5-2).
 
 ## 1. 어디에 무엇이 있나
 | 항목 | 값 |
@@ -51,7 +53,7 @@
 - 폰 검증은 사용자 폰 확인 후에만 "완료". 1.9 시험판은 사용자 폰 확인 전 기본 다운로드판 금지.
 
 ## 5. 남은 일 (순서)
-1. **fix-1030 미반영 15커밋 합치기**(70f7443a 이후, 마지막 018c841b): 가사 설정을 '가사' 한 줄+하위 화면으로(사용자 요청), 재생목록 표지 대체, gapless 자동 넘김 판정, 홈/둘러보기 IO(1.9 의 a9cd79f7 와 같은 수정), ui-tour 가사 행 탭. **충돌 예상 5파일**: `ko-wip-check.yml`(테스트 목록 합집합), `MainActivity.kt`(downloadedReleases — 1.9 쪽 produceState 유지), `PlaybackService.kt`, `SettingsSheet.kt`(1.9 설정 화면 구조에 '가사' 하위 화면을 새로 얹어야 함 — 포크 화면을 그대로 가져오지 말 것), `YtMusicRepository.kt`. 합친 뒤 CI → merge-guard.
+1. ~~fix-1030 미반영 15커밋 합치기~~ **완료(39e43cf5)**. 합칠 때 발견: 앞선 병합이 `YtMusicRepository.moreSongs` 의 한국 차단 대체(YouTubeFallback)·로그아웃·좋아요 음원만 이어 불러오기를 빠뜨렸었음 → 복원. 아래는 당시 메모(70f7443a 이후, 마지막 018c841b): 가사 설정을 '가사' 한 줄+하위 화면으로(사용자 요청), 재생목록 표지 대체, gapless 자동 넘김 판정, 홈/둘러보기 IO(1.9 의 a9cd79f7 와 같은 수정), ui-tour 가사 행 탭. **충돌 예상 5파일**: `ko-wip-check.yml`(테스트 목록 합집합), `MainActivity.kt`(downloadedReleases — 1.9 쪽 produceState 유지), `PlaybackService.kt`, `SettingsSheet.kt`(1.9 설정 화면 구조에 '가사' 하위 화면을 새로 얹어야 함 — 포크 화면을 그대로 가져오지 말 것), `YtMusicRepository.kt`. 합친 뒤 CI → merge-guard.
 2. 사용자가 vc97 을 폰에서 써 보면 진단 로그로 확인: `TIMING first audio`, `crossfade: arm/start`(곡 끝 근처인지), `crossfade: refused early plan`, `exit:`/`exit-anr:` 줄, `song version: ... ->`(MV 교체), track-summary.
 3. **v1.9.1 나오면 합치기**: 같은 절차(merge -X theirs → strings 합집합 → `ko-hooks.ps1 diff` 로 [KO] 훅 재삽입 → merge-guard → CI → 에뮬). 겹침 주의: 1.9.1 "오디오 버전 기본 재생" vs 우리 musicOnly 교체(비교해서 더 나은 쪽, 우리 쪽에 커버 방지 장치 있음), bit-perfect 배터리 수정(그 전까지 bit-perfect 직접 출력은 끄라고 안내함), 홈 렉(liquid glass).
 4. `docs/upstream-19-nodowngrade.md` 확인표의 '대기' 줄 마무리(에뮬/폰 근거로).
