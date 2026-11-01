@@ -1975,10 +1975,15 @@ object AudioCache {
                         }
                     }
                 }
-                // Metered, only the immediate next track's URL is worth
-                // minting: it is the one a skip most likely lands on, and every
-                // resolve past it is a request the listener pays for.
-                val urlLookahead = if (metered) 1 else QUEUE_LOOKAHEAD + 1
+                // Metered or saving power, only the immediate next track's URL
+                // is worth minting: it is the one a skip most likely lands on.
+                // Every resolve past it is either a request the listener pays
+                // for or work done while the phone is trying to save battery.
+                val urlLookahead = BatteryPolicy.cacheUrlLookaheadCount(
+                    metered = metered,
+                    lowPower = AppSettings.lowPower.value,
+                    queueLookahead = QUEUE_LOOKAHEAD,
+                )
                 launch {
                     delay(PREFETCH_DELAY_MS)
                     for (id in videoIds.take(urlLookahead).let { if (cacheBytes) it.drop(1) else it }) {

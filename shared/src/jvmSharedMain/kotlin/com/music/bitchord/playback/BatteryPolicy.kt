@@ -67,6 +67,22 @@ object BatteryPolicy {
         !metered && !lowPower
 
     /**
+     * How many queue entries may have their stream URL minted ahead of the
+     * immediate next track.
+     *
+     * Minting the next track's URL is what keeps a transition instant, so it
+     * still happens in low power. Walking the queue past it is work the
+     * listener did not ask for while saving power, and on a metered connection
+     * every extra resolve is a request they pay for. Both therefore stop at
+     * the one entry a skip is most likely to land on.
+     */
+    fun cacheUrlLookaheadCount(
+        metered: Boolean,
+        lowPower: Boolean,
+        queueLookahead: Int,
+    ): Int = if (metered || lowPower) 1 else queueLookahead + 1
+
+    /**
      * Whether the background artist backfill may spend a request right now.
      *
      * The Replay is a page, so an answer nobody is looking at can wait. Running

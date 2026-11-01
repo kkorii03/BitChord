@@ -55,6 +55,17 @@ import java.util.concurrent.TimeUnit
 internal fun hqPassAllowsMeteredData(manualPass: Boolean): Boolean = manualPass
 
 /**
+ * Whether a high-quality pass may run while the phone is saving power.
+ *
+ * A pass the listener started with the button is a one-off instruction and
+ * keeps going. The automatic switches are background work, and fetching,
+ * verifying and decoding a whole track is exactly the heavy job low power
+ * exists to defer; it resumes on the next event once power saving is off.
+ */
+internal fun hqPassAllowsLowPower(manualPass: Boolean, lowPower: Boolean): Boolean =
+    manualPass || !lowPower
+
+/**
  * Whether an upgrade requested through [HqLibraryUpgrade.requestUpgrade] may
  * use the connection in hand.
  *
@@ -305,7 +316,9 @@ object HqLibraryUpgrade {
         AppSettings.autoReplaceHqDownloads.value || AppSettings.autoPrefetchHq.value
 
     /** Whether this run may proceed: either switch is on, or the listener asked. */
-    internal fun runAllowed(): Boolean = enabled() || manualPass
+    internal fun runAllowed(): Boolean =
+        (enabled() || manualPass) &&
+            hqPassAllowsLowPower(manualPass = manualPass, lowPower = AppSettings.lowPower.value)
 
     /** Called at app start, on playback and on the foreground event; safe to call repeatedly. */
     fun scheduleIfEnabled(context: Context) {
@@ -336,6 +349,18 @@ object HqLibraryUpgrade {
 
     /** The app is on screen again: resume a pass that was parked in the background. */
     fun onForeground(context: Context) {
+        lastScheduleRequestMs = 0L
+        scheduleIfEnabled(context)
+    }
+
+    /**
+     * Power saving ended: schedule the automatic pass again.
+     *
+     * The debounce is cleared because the request that was refused during
+     * power saving must not delay this one; the pass itself is still the same
+     * event-driven worker, not a timer.
+     */
+    fun onPowerSaveEnded(context: Context) {
         lastScheduleRequestMs = 0L
         scheduleIfEnabled(context)
     }

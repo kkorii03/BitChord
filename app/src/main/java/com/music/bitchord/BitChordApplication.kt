@@ -305,6 +305,21 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
                     mvRepairAllowed = allowedNow
                 }
         }
+        // Power saving pauses the automatic high-quality pass, so leaving it is
+        // an event like the connection change above: schedule the pass again
+        // then, never on a timer. A running download is left to finish; only
+        // the next target waits.
+        var hqLowPower = AppSettings.lowPower.value
+        CoroutineScope(Dispatchers.Default).launch {
+            AppSettings.lowPower.collect { lowPower ->
+                if (hqLowPower && !lowPower) {
+                    com.music.bitchord.download.HqLibraryUpgrade.onPowerSaveEnded(
+                        this@BitChordApplication,
+                    )
+                }
+                hqLowPower = lowPower
+            }
+        }
         // One-time cleanup of legacy HQ rejections that were written when an
         // unmeasurable candidate looked like a mismatch. On IO because it reads
         // the whole verdict file, and lazy because nothing needs it this frame.
