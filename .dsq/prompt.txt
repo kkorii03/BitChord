@@ -1,0 +1,10 @@
+BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/telegram. 대상: data/sources/SourceResolver.kt·SourceCooldown, playback/smart/HqAudioVerify.kt 의 UnmeasuredMemory, 설정의 소스 목록 화면(상태 표시 문자열만).
+문제: 사용자 Deezer 애드온(deezer.nom.deno.net)은 검색은 되지만 후보 다운로드가 항상 HTTP 403(새 URL 재시도 후에도: 'decode: hq-verify failed at=download HTTP 403 (retried with fresh url: 403)'). 곡마다 검색·다운로드 시도로 시간·배터리 낭비. LastWave 는 항상 30초 미리듣기(unmeasured).
+할 일:
+① 소스 단위 기억: 한 소스가 서로 다른 곡 3개 연속으로 '측정 불가(403/410 또는 미리듣기)'면 그 소스를 업그레이드 후보에서 6시간 쉬게(메모리+앱 재시작 후에도 유지되는 가벼운 저장, 기존 SourceCooldown 저장 방식 재사용). 한 번이라도 accepted 가 나오면 카운트 0.
+② 수동 업그레이드('asked for by hand')에서도 이 쉬는 소스는 '한 번만 물어보기'에서 제외(측정 불가가 확정된 소스).
+③ 설정의 소스 목록에서 해당 소스 아래에 '최근 다운로드가 거부되어 쉬는 중' 같은 짧은 상태(합니다체, Apple Music 한국어 톤) 표시 — 기존 상태 표시가 있으면 그 방식으로.
+④ 로그: 'source <name> resting 6h: unmeasurable x3 (403|preview)'.
+테스트(고치기 전 실패): 3연속 측정 불가 → 쉼, accepted 가 끼면 리셋, 수동 요청에서도 제외, 6시간 뒤 복귀(시계 주입). 새 테스트 클래스 이름 요약에.
+제약: .github/, keys, *.jks, 서명 수정 금지. 판정 기준 변경 금지. 타이머·폴링 금지(시간 비교는 다음 요청 때). 다른 쿨다운 규칙 변경 금지. 바꾼 함수의 모든 호출부 재확인.
+마지막 10줄 이내 요약: 수정 / 테스트 / 미해결.
