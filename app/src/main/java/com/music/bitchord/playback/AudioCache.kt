@@ -10,8 +10,6 @@ import com.music.bitchord.R
 import com.music.bitchord.data.StoredSongDisplay
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.playback.smart.AutomixAnalysisSource
-import com.music.bitchord.playback.smart.HqAudioVerify
-import com.music.bitchord.playback.smart.HqVerificationStore
 import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
@@ -21,7 +19,6 @@ import androidx.media3.datasource.TransferListener
 import androidx.media3.datasource.cache.Cache
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.CacheKeyFactory
-import androidx.media3.datasource.cache.CacheSpan
 import androidx.media3.datasource.cache.CacheWriter
 import androidx.media3.datasource.cache.ContentMetadata
 import androidx.media3.datasource.cache.ContentMetadataMutations
@@ -50,25 +47,20 @@ import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.startup.StartupWork
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
@@ -1217,31 +1209,6 @@ object AudioCache {
             stalledAnalysisHeads.remove(mediaId)
             renditionKeys.remove(mediaId)
         }
-        return
-        scope.launch {
-            var dropped = 0
-            cache.keys.toList().forEach { key ->
-                val meta = runCatching { cache.getContentMetadata(key) }.getOrNull() ?: return@forEach
-                val foreign = meta.get(META_ORIGIN, null as String?) == Origin.OTHER.name
-                val analysisOnly = meta.get(META_ANALYSIS, null as String?) != null &&
-                    meta.get(META_PLAYBACK, null as String?) == null &&
-                    meta.get(META_PLAYED, null as String?) == null
-                if (!foreign && !analysisOnly) return@forEach
-                val mediaId = meta.get(META_MEDIA_ID, null as String?)
-                if (mediaId != null && mediaId in keep) return@forEach
-                runCatching { cache.removeResource(key) }
-                    .onSuccess {
-                        dropped++
-                        mediaId?.let { id ->
-                            analysisHeads.remove(id)
-                            analysisHeadWant.remove(id)
-                            renditionKeys.remove(id)
-                        }
-                    }
-                    .onFailure { TrackLog.d(TAG, "unkept cache entry $key still in use: ${it.message}") }
-            }
-            if (dropped > 0) TrackLog.d(TAG, "dropped $dropped addon / analysis-only cache entries")
-        }
     }
 
     /** The part of a cache key that names the track, before any `#rendition`; see [keyFactory]. */
@@ -1307,12 +1274,9 @@ object AudioCache {
      * through, and anything already there is served without a request.
      * Local file and content URIs bypass disk caching to prevent redundant writes.
      */
-    /** [KO] reader-lock */
-    private fun koPlaybackFactoryEnabled(): Boolean = true
-
     fun playbackFactory(upstream: DataSource.Factory): DataSource.Factory = DataSource.Factory {
         // [KO] reader-lock
-        if (koPlaybackFactoryEnabled()) return@Factory KoCachingDataSource( // [KO] reader-lock
+        KoCachingDataSource( // [KO] reader-lock
             cacheDs = cacheFactory(upstream).createDataSource(),
             upstreamDs = upstream.createDataSource(),
             cacheKeyOf = ::cacheKeyOf,
@@ -1320,35 +1284,6 @@ object AudioCache {
             tracker = koTracker, // [KO] reader-lock
             onReaderReleased = ::retryAnalysisHeadIfReaderReleased,
         )
-        val cacheDs = cacheFactory(upstream).createDataSource()
-        val upstreamDs = upstream.createDataSource()
-        object : DataSource {
-            private var activeDs: DataSource = cacheDs
-
-            override fun addTransferListener(transferListener: androidx.media3.datasource.TransferListener) {
-                cacheDs.addTransferListener(transferListener)
-                upstreamDs.addTransferListener(transferListener)
-            }
-
-            override fun open(dataSpec: DataSpec): Long {
-                val scheme = dataSpec.uri.scheme
-                activeDs = if (scheme == "file" || scheme == "content") {
-                    upstreamDs
-                } else {
-                    cacheDs
-                }
-                return activeDs.open(dataSpec)
-            }
-
-            override fun read(buffer: ByteArray, offset: Int, length: Int): Int =
-                activeDs.read(buffer, offset, length)
-
-            override fun getUri(): Uri? = activeDs.uri
-
-            override fun close() {
-                activeDs.close()
-            }
-        }
     }
 
     private fun cacheFactory(upstream: DataSource.Factory) = CacheDataSource.Factory()
@@ -1433,13 +1368,6 @@ object AudioCache {
     private var job: Job? = null
     private var pendingQueue: List<String> = emptyList()
 
-    /**
-     * The next row's high-quality answer, completed by read-ahead once it has
-     * been searched and (when one exists) pinned. The next-song bundle waits
-     * on this instead of running the same search a second time.
-     */
-    private val hqHeadReady = ConcurrentHashMap<String, CompletableDeferred<SourceStream?>>()
-
     private val koPrefetch = KoPrefetchQueue( // [KO] prefetch-queue
         scope = scope,
         appContext = { appContext },
@@ -1488,107 +1416,6 @@ object AudioCache {
     fun prefetchQueue(upcoming: List<Upcoming>) {
         // [KO] prefetch-queue
         koPrefetch.prefetchQueue(upcoming) // [KO] prefetch-queue
-        return
-        val mediaIds = upcoming.map { it.mediaId }
-        if (mediaIds == pendingQueue) return
-        android.util.Log.d("BCFetchDebug", "prefetchQueue: head ${pendingQueue.firstOrNull()} -> ${mediaIds.firstOrNull()}")
-        pendingQueue = mediaIds
-        job?.cancel()
-        // Both halves of the read-ahead below go through [StreamResolver],
-        // which speaks YouTube ids and nothing else. A source-backed track
-        // handed to it resolves to a failure, so filtering here saves a dead
-        // round trip per queued track rather than changing any outcome —
-        // read-ahead for those is a separate job, and their servers are
-        // typically a good deal closer than googlevideo anyway.
-        //
-        val videoIds = mediaIds.filter { SourceRegistry.parseTrackKey(it) == null }
-            // A track already on disk needs no reading ahead, and read-ahead
-            // speaks only to googlevideo: warming one would spend mobile data
-            // fetching a second copy of a file the listener deliberately saved,
-            // then cache it under a key playback is never going to ask for —
-            // it plays the download instead. See [Song.toMediaItem].
-            .filter { it !in Downloads.saved.value }
-        // With substitution possible, only the *bytes* half drops out. Read-
-        // ahead builds its own spec below from an id alone and carries none of
-        // the title and artist a substitution is matched on — so it resolves
-        // to YouTube and would write Opus bytes into the very entry playback
-        // is about to fill from a higher-ranked source, under the same key, at
-        // whatever offset each of them happened to reach. Reading ahead for a
-        // track and then corrupting it is worse than not reading ahead at all.
-        //
-        // The URL half is a different matter and was thrown out with it, at
-        // real cost. Warming [StreamResolver]'s own cache writes nothing to
-        // disk and cannot corrupt anything, and it is the difference between
-        // the fallback starting instantly and starting with a full client walk
-        // — measured at 7.9s. Since the fallback now races the module lookup
-        // rather than waiting behind it, that walk is what a track waits on
-        // whenever the modules are slow, and warming it here is what makes the
-        // race worth running at all.
-        val substitutable = SourceResolver.canSubstituteForYouTube()
-        job = videoIds.firstOrNull()?.let { next ->
-            val target = upcoming.firstOrNull { it.mediaId == next }?.target
-            // A track the listener reverted plays from its own `#original`
-            // rendition — see [OriginalVersion] — while read-ahead builds its
-            // spec from an id alone and so writes under the plain key. Every
-            // byte of that would land in an entry playback is never going to
-            // read, and pinning a substitute for it would pin a source it is
-            // never going to use. The URL half below is still worth having: a
-            // reverted track resolves through YouTube, which is what it warms.
-            val pinnedToYouTube = OriginalVersion.isPinned(next)
-            scope.launch {
-                // With substitution on, the *bytes* half above used to be
-                // switched off outright, and the paragraph explaining why is
-                // still correct as far as it goes: read-ahead resolving to
-                // YouTube on its own would write Opus into the entry a
-                // higher-ranked source is about to fill.
-                //
-                // What it treated as impossible was knowing the answer in
-                // advance. A quick source can be asked *here* — see
-                // [SourceResolver.prefetchSubstitute] — and once its stream is
-                // recorded in [StreamChoice], the question stops being open:
-                // every later resolve for this track, read-ahead's own included,
-                // is held to that one stream. Both writers then agree on the
-                // file and on the `#alt` key it lands under, which is exactly
-                // the condition the byte half was missing.
-                //
-                // A source that is disabled, doesn't have the track, or fails
-                // leaves nothing pinned, and this falls through to the same
-                // URL-only warm-up it did before — YouTube resolves the track at
-                // playback time as usual.
-                val warmed = if (substitutable && target != null && !pinnedToYouTube) {
-                    runCatching { SourceResolver.prefetchSubstitute(target) }
-                        .onFailure { TrackLog.d(TAG, "warm-up substitute failed for $next: ${it.message}", about = next) }
-                        .getOrNull()
-                        ?.also { StreamChoice.remember(next, it, substituted = true) }
-                } else {
-                    null
-                }
-                // Safe to fill for the same reason in both cases: either nothing
-                // outranks YouTube and read-ahead is the only writer, or a
-                // source has been pinned and every writer now resolves to it.
-                val cacheBytes = (!substitutable || warmed != null) && !pinnedToYouTube
-                if (cacheBytes) {
-                    launch(TrackLog.about(next)) {
-                        delay(PREFETCH_DELAY_MS)
-                        fetch(next, 0, PRELOAD_BYTES)
-                        fetchWhole(next)
-                    }
-                }
-                launch {
-                    delay(PREFETCH_DELAY_MS)
-                    for (id in videoIds.take(QUEUE_LOOKAHEAD + 1).let { if (cacheBytes) it.drop(1) else it }) {
-                        // A track already pinned to another source has no use
-                        // for a YouTube URL: nothing will ask for one, and
-                        // minting it spends a client walk to fill a cache entry
-                        // that is never read.
-                        if (id == next && warmed != null) continue
-                        runCatching { StreamResolver.resolve(id) }
-                            .onFailure { TrackLog.d(TAG, "queue warm-up skipped $id: ${it.message}", about = id) }
-                        delay(QUEUE_RESOLVE_STAGGER_MS)
-                    }
-                }
-            }
-        }
     }
 
     /**
@@ -2062,34 +1889,6 @@ object AudioCache {
      */
     private fun analysisHeadSize(total: Long): Long =
         if (total > 0) minOf(total, MAX_ANALYSIS_TRACK_BYTES) else MAX_ANALYSIS_HEAD_BYTES
-
-    /**
-     * Makes sure [videoId]'s entry is either empty or already covers [want]
-     * before anything writes to it.
-     *
-     * A part-filled entry is the seam hazard in [analysisHeadSize] waiting to
-     * happen: whatever is there came from an earlier resolve — a fetch this
-     * session cancelled, or a round from a build that still escalated — and
-     * filling the gap would splice a second encoding onto it. Cheaper to throw
-     * the prefix away and pull one clean copy.
-     *
-     * @return [AnalysisHeadClear.Proceed] when the caller may fetch, or why it
-     *   must not: the entry is already complete enough, or it is held by a live
-     *   reader and a partial write would create the very seam this avoids.
-     */
-    private fun clearPartialHead(videoId: String, want: Long): Boolean {
-        val held = cache.getCachedBytes(videoId, 0, want)
-        if (held <= 0L) return true
-        if (held >= want) return false
-        return runCatching { cache.removeResource(videoId) }
-            .onSuccess {
-                TrackLog.d(TAG, "cleared partial analysis head for $videoId ($held of $want)", about = videoId)
-            }
-            .onFailure {
-                TrackLog.d(TAG, "partial head for $videoId is in use: ${it.message}", about = videoId)
-            }
-            .isSuccess
-    }
 
     /**
      * Writes [videoId]'s real size into its cache metadata, which a bounded
