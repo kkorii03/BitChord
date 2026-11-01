@@ -1449,8 +1449,10 @@
     <string name="video_canvas">Loop part of the video when there is no animated cover</string>
     <string name="ai_lyrics">Write lyrics with AI when none are found</string>
     <string name="ai_lyrics_subtitle">When no lyrics source has the song, Gemini listens to the video and writes the lyrics down with their timing. Takes up to a minute.</string>
+    <string name="ai_lyrics_missing_key_subtitle">A Gemini API key is required for AI lyrics</string>
     <string name="ai_timing_ahead">Time video lyrics with AI ahead</string>
     <string name="ai_timing_ahead_subtitle">Gemini times a video\'s lyrics as it starts, and the next song\'s ahead, so they are ready if the automatic measurement can\'t. Uses one Gemini request per video.</string>
+    <string name="ai_timing_missing_key_subtitle">A Gemini or Deepgram API key is required for AI timing</string>
     <string name="reset_download_sync">Re-sync downloaded lyrics</string>
     <string name="reset_download_sync_subtitle">Checks each downloaded song\'s saved lyrics and sync once more the next time it plays, and keeps a better result. Nothing runs now.</string>
     <string name="deepgram_api_key">Deepgram API key</string>

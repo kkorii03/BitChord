@@ -9,6 +9,23 @@ import com.music.bitchord.data.settings.AppSettings
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 
+/** Why the AI transcription did not run, kept apart from "no lyrics found". */
+internal enum class AiLyricsSkipReason { DISABLED, NO_KEY }
+
+/**
+ * The switch and the key are different reasons for staying silent. Without
+ * this split the transcription returned null with no clue whether the listener
+ * turned it off or the build simply has no Gemini key.
+ */
+internal fun aiLyricsSkipReason(
+    enabled: Boolean,
+    geminiKeyUsable: Boolean,
+): AiLyricsSkipReason? = when {
+    !enabled -> AiLyricsSkipReason.DISABLED
+    !geminiKeyUsable -> AiLyricsSkipReason.NO_KEY
+    else -> null
+}
+
 /**
  * "가사 못 찾으면 AI 받아쓰기": when no lyrics source has anything for a
  * track, Gemini listens to its video and writes down what is sung, timed by
@@ -39,6 +56,7 @@ object AiLyrics {
 
     private var context: Context? = null
     private val failedThisSession = Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
+    private val loggedSkips = Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
 
     fun init(context: Context) {
         this.context = context.applicationContext
@@ -46,7 +64,22 @@ object AiLyrics {
     }
 
     private suspend fun transcribe(videoId: String, durationMs: Long): List<LyricLine>? {
-        if (!AppSettings.aiLyrics.value || !LyricsTranslation.geminiKeyUsable) return null
+        val skip = aiLyricsSkipReason(AppSettings.aiLyrics.value, LyricsTranslation.geminiKeyUsable)
+        if (skip != null) {
+            // Once per process is enough: a new install would otherwise write
+            // this line for every song that has no lyrics yet.
+            if (loggedSkips.add(skip.name)) {
+                TrackLog.d(
+                    TAG,
+                    when (skip) {
+                        AiLyricsSkipReason.DISABLED -> "AI lyrics skipped: switch is off"
+                        AiLyricsSkipReason.NO_KEY -> "AI lyrics skipped: no usable Gemini key"
+                    },
+                    videoId,
+                )
+            }
+            return null
+        }
         if (durationMs > MAX_DURATION_MS || videoId in failedThisSession || videoId in silent()) return null
         TrackLog.d(TAG, "no lyrics anywhere; asking Gemini to write them down", videoId)
         // The panel is told from here, not from the player's own lookup: the

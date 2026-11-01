@@ -109,6 +109,16 @@ fun LyricsSettingsScreen(
     }
     val geminiKeyRejected by com.music.bitchord.data.lyrics.LyricsTranslation.geminiKeyRejected
         .collectAsStateWithLifecycle()
+    // Both AI rows silently did nothing without a speech key; the switch now
+    // says why instead of looking on. The key flow carries the bundled key too,
+    // so a personal build with a baked-in key keeps the rows live.
+    val aiLyricsMissingKey = aiLyricsKeyMissing(geminiApiKey, geminiKeyRejected)
+    val aiTimingMissingKey = aiTimingKeyMissing(
+        geminiApiKey,
+        deepgramApiKey,
+        geminiKeyRejected,
+        deepgramKeyRejected,
+    )
 
     Column(
         modifier = modifier
@@ -231,30 +241,48 @@ fun LyricsSettingsScreen(
                 SettingsRow(
                     icon = Icons.Rounded.Timer,
                     title = autoLyricsTimingTitle,
-                    subtitle = stringResource(R.string.auto_lyrics_timing_subtitle),
+                    subtitle = stringResource(
+                        if (aiTimingMissingKey) R.string.ai_timing_missing_key_subtitle
+                        else R.string.auto_lyrics_timing_subtitle,
+                    ),
+                    enabled = !aiTimingMissingKey,
                     trailing = {
                         Switch(
-                            checked = autoLyricsTiming,
-                            onCheckedChange = { AppSettings.setAutoLyricsTiming(it) },
+                            checked = autoLyricsTiming && !aiTimingMissingKey,
+                            onCheckedChange = {
+                                if (!aiTimingMissingKey) AppSettings.setAutoLyricsTiming(it)
+                            },
+                            enabled = !aiTimingMissingKey,
                             colors = settingsSwitchColors(),
                         )
                     },
-                    onClick = { AppSettings.setAutoLyricsTiming(!autoLyricsTiming) },
+                    onClick = {
+                        if (!aiTimingMissingKey) AppSettings.setAutoLyricsTiming(!autoLyricsTiming)
+                    },
                 )
                 RowDivider()
                 val aiTimingAheadTitle = stringResource(R.string.ai_timing_ahead)
                 SettingsRow(
                     icon = Icons.Rounded.Timer,
                     title = aiTimingAheadTitle,
-                    subtitle = stringResource(R.string.ai_timing_ahead_subtitle),
+                    subtitle = stringResource(
+                        if (aiTimingMissingKey) R.string.ai_timing_missing_key_subtitle
+                        else R.string.ai_timing_ahead_subtitle,
+                    ),
+                    enabled = !aiTimingMissingKey,
                     trailing = {
                         Switch(
-                            checked = aiTimingAhead,
-                            onCheckedChange = { AppSettings.setAiTimingAhead(it) },
+                            checked = aiTimingAhead && !aiTimingMissingKey,
+                            onCheckedChange = {
+                                if (!aiTimingMissingKey) AppSettings.setAiTimingAhead(it)
+                            },
+                            enabled = !aiTimingMissingKey,
                             colors = settingsSwitchColors(),
                         )
                     },
-                    onClick = { AppSettings.setAiTimingAhead(!aiTimingAhead) },
+                    onClick = {
+                        if (!aiTimingMissingKey) AppSettings.setAiTimingAhead(!aiTimingAhead)
+                    },
                 )
                 RowDivider()
                 val resetDownloadSyncTitle = stringResource(R.string.reset_download_sync)
@@ -286,15 +314,24 @@ fun LyricsSettingsScreen(
                 SettingsRow(
                     icon = Icons.Rounded.Timer,
                     title = aiLyricsTitle,
-                    subtitle = stringResource(R.string.ai_lyrics_subtitle),
+                    subtitle = stringResource(
+                        if (aiLyricsMissingKey) R.string.ai_lyrics_missing_key_subtitle
+                        else R.string.ai_lyrics_subtitle,
+                    ),
+                    enabled = !aiLyricsMissingKey,
                     trailing = {
                         Switch(
-                            checked = aiLyrics,
-                            onCheckedChange = { AppSettings.setAiLyrics(it) },
+                            checked = aiLyrics && !aiLyricsMissingKey,
+                            onCheckedChange = {
+                                if (!aiLyricsMissingKey) AppSettings.setAiLyrics(it)
+                            },
+                            enabled = !aiLyricsMissingKey,
                             colors = settingsSwitchColors(),
                         )
                     },
-                    onClick = { AppSettings.setAiLyrics(!aiLyrics) },
+                    onClick = {
+                        if (!aiLyricsMissingKey) AppSettings.setAiLyrics(!aiLyrics)
+                    },
                 )
                 RowDivider()
                 val prefetchTranslationTitle = stringResource(R.string.prefetch_translation)
@@ -362,3 +399,19 @@ fun LyricsSettingsScreen(
         }
     }
 }
+
+/** Gemini writes AI lyrics; without a usable key the row would be a silent no-op. */
+internal fun aiLyricsKeyMissing(
+    geminiKey: String,
+    geminiKeyRejected: Boolean = false,
+): Boolean = geminiKey.isBlank() || geminiKeyRejected
+
+/** AI timing runs on Gemini or Deepgram; either usable key keeps both rows live. */
+internal fun aiTimingKeyMissing(
+    geminiKey: String,
+    deepgramKey: String,
+    geminiKeyRejected: Boolean = false,
+    deepgramKeyRejected: Boolean = false,
+): Boolean =
+    (geminiKey.isBlank() || geminiKeyRejected) &&
+        (deepgramKey.isBlank() || deepgramKeyRejected)
