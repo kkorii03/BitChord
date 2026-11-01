@@ -143,6 +143,7 @@ import com.music.bitchord.data.DiagnosticsState
 import com.music.bitchord.data.innertube.InnerTubeXResolver
 import com.music.bitchord.data.innertube.InnertubeParser
 import com.music.bitchord.data.innertube.MusicGateFallback
+import com.music.bitchord.data.model.BrowseItem
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.LikeStatus
@@ -205,6 +206,7 @@ import com.music.bitchord.ui.screens.SignatureApiEditor
 import com.music.bitchord.ui.screens.SettingsScreen
 import com.music.bitchord.ui.screens.SourceEditorAlert
 import com.music.bitchord.ui.screens.SourcesScreen
+import com.music.bitchord.data.model.isExactArtistMatch
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.ui.screens.SpotifyCanvasAuthScreen
 import com.music.bitchord.ui.screens.SpotifyLibraryScreen
@@ -2219,9 +2221,7 @@ private fun BitChordApp(
             }
             val query = listOfNotNull(name, subtitle).joinToString(" ")
             val hit = YtMusicRepository.search(query, SearchFilter.ALBUMS).getOrNull()
-                ?.filterIsInstance<SearchResult.Browse>()
-                ?.firstOrNull()
-                ?.item
+                ?.let { chooseAlbumSearchHit(it, name, subtitle) }
             if (hit == null) {
                 Toast.makeText(
                     context,
@@ -6628,3 +6628,33 @@ private fun List<Song>.asTypeUnknown(): List<Song> =
             it
         }
     }
+
+/**
+ * The album search result that actually answers a name-and-artist lookup.
+ *
+ * A search for an album title routinely returns covers, tributes and other
+ * acts' releases with the same title first. Opening the first row played the
+ * wrong album; only an exact title plus a matching credited artist is the
+ * release the listener asked for. With no artist stated, an unambiguous title
+ * is still safe to open, but several candidates are not.
+ */
+internal fun chooseAlbumSearchHit(
+    results: List<SearchResult>,
+    title: String,
+    artist: String?,
+): BrowseItem? {
+    val candidates = results.filterIsInstance<SearchResult.Browse>()
+        .map { it.item }
+        .filter { it.type == BrowseType.ALBUM && isExactArtistMatch(it.title, title) }
+    if (candidates.isEmpty()) return null
+    if (artist.isNullOrBlank()) return candidates.singleOrNull()
+    return candidates.firstOrNull { albumSubtitleCredits(it.subtitle, artist) }
+}
+
+/** Whether an album row's subtitle ("Album • IU • 2019") names [artist]. */
+private fun albumSubtitleCredits(subtitle: String, artist: String): Boolean =
+    subtitle.split('•', '·', '|')
+        .asSequence()
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+        .any { TrackMatcher.sharesArtist(artist, it) || isExactArtistMatch(it, artist) }
