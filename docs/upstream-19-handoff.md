@@ -66,6 +66,8 @@
 - 메인 스레드 표본(41278808885): `Application.onCreate` 안에서 **EncryptedPrefs(Tink 암호 초기화, AuthStore)** 와 **ArtistFacts.init**(BitChordApplication.kt:381) 가 메인에서 돈다(에뮬 onCreate 3.7초). 홈 로딩 중에는 메인이 RenderThread 그리기를 기다림.
 - **1.8 줄(task/telegram, 읽기만)도 같은 원인**: onCreate 에서 AuthStore 147행·ArtistFacts.init 350행이 메인. 1.9 수정이 확인되면 같은 방식으로 1.8 에도(그쪽은 원래 세션 담당, 직접 push 금지).
 - **11-01 07:45 1.9 수정 a6d8249a**: AuthStore(EncryptedPrefs/Tink)를 시작 직후 백그라운드에서 미리 열기(EncryptedPrefs 는 @Synchronized+캐시라 안전, 로그인 데이터·파일 이름 변경 없음), 홈 폴더 카드가 홈이 안 보일 때(LocalArtworkMotion) 블러 애니메이션 멈춤(재생 중 매 프레임 다시 블러하던 것). ArtistFacts.init 은 아직 메인(다음 할 일). 검증: CI 41285079189, quick ui-tour 41285081536 — 비교 기준 quick 41277161386(Home 0.7초 이상 28번, max 5.2s).
+- **측정 결과(11-01 08:10, 41285081536, a6d8249a): 개선 확인 안 됨.** Home 0.7초 이상 28번(수정 전 28~31번), skipped 2578(전 1216~1336), max 9.3s; onCreate 4.2~7.3초(전 3.7초). CI 41285079189 는 통과. 에뮬레이터(소프트웨어 그리기, 공용 러너)는 같은 코드로도 값이 크게 흔들려서 이 정도 변경은 구분이 안 됨 — **에뮬 수치로 판단하지 말 것.** 수정 자체는 해롭지 않아 남겨 둠(로그인 데이터 변경 없음).
+- 다음 방법: ① 메인 스레드 표본을 홈 진입 후 5~20초 구간에서, 40줄 제한 없이 여러 번 찍어 앱 코드(com.music.bitchord) 가 몇 번 나오는지 센다 ② ArtistFacts.init 을 IO 로 ③ 사용자 폰에서 vc99 이상의 `exit-anr:` 스택이 가장 확실한 근거.
 - 주의: PowerShell 로 이 파일을 고칠 때 `Get-Content` 에 `-Encoding UTF8` 을 빼면 한글이 깨진다(11-01 515b519f 에서 실제로 깨져 복구함). Edit 도구나 `-Encoding UTF8` 사용.
 
 ## 6. 사용자 지시 원문 요약 (우선순위)
