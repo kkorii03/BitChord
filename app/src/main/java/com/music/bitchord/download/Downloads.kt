@@ -227,6 +227,17 @@ object Downloads {
     private val pending = LinkedHashMap<String, Song>()
 
     /**
+     * Whether the queue written by the previous process has been read into
+     * [pending].
+     *
+     * A foreground event can enqueue before the startup thread gets to
+     * [restorePending]. Persisting then would write only the new row and erase
+     * the dead process's whole waiting queue, so any persist or enqueue that
+     * arrives first restores under the same lock. Guarded by [lock].
+     */
+    private var pendingRestored = false
+
+    /**
      * The enqueue generation each waiting id was inserted under, and the
      * generation a worker has since claimed.
      *
@@ -293,6 +304,26 @@ object Downloads {
     private val automaticIds = HashSet<String>()
 
     /**
+     * Downloads the listener explicitly allowed on a metered connection.
+     *
+     * The Wi-Fi-only rule is checked when a track is queued, but a row
+     * restored after a restart has no listener beside it to ask again. This
+     * keeps the original answer with the row so [takeNext] can leave an
+     * ordinary restored row waiting on cellular instead of fetching it.
+     * Guarded by [lock].
+     */
+    private val meteredAllowedIds = HashSet<String>()
+
+    /**
+     * Rows the song cache can serve without spending data.
+     *
+     * Marked when [enqueue] lets one in on a metered connection. [takeNext]
+     * reads this instead of asking the cache while holding [lock] on the
+     * service's thread. Guarded by [lock].
+     */
+    private val cacheServableIds = HashSet<String>()
+
+    /**
      * Downloads that are repairing a file judged to be a music video's sound.
      *
      * Their whole point is to fetch a *different* upload. If the catalogue has
@@ -356,43 +387,60 @@ object Downloads {
 
     /** Read the queue written by the process that died; see [persistPendingLocked]. */
     private fun restorePending() {
+        val restored = synchronized(lock) { restorePendingLocked() }
+        if (restored > 0) Log.i(TAG, "downloads: restored $restored queued item(s)")
+    }
+
+    /**
+     * The body of [restorePending], under [lock].
+     *
+     * Called by [enqueue] and [persistPendingLocked] when they win the race
+     * against the startup thread: whichever reaches the queue first reads the
+     * saved rows before it changes or rewrites them, so the previous process's
+     * waiting queue is never replaced by just the new row.
+     */
+    private fun restorePendingLocked(): Int {
+        if (pendingRestored) return 0
+        pendingRestored = true
+        if (!::prefs.isInitialized) return 0
         val entries = PendingDownloadsStore.decode(
             prefs.getString(PendingDownloadsStore.key(), null),
         )
-        if (entries.isEmpty()) return
+        if (entries.isEmpty()) return 0
         var restored = 0
-        synchronized(lock) {
-            for (entry in entries) {
-                val song = PendingDownloadsStore.restoredSong(entry.song)
-                val id = song.videoId
-                if (id.isBlank() || id in pending || id in running) continue
-                pending[id] = song
-                enqueueGenerations[id] = ++generationCounter
-                entry.quality?.let { name ->
-                    runCatching { DownloadQuality.valueOf(name) }.getOrNull()
-                        ?.let { qualityOverrides[id] = it }
-                }
-                entry.hq?.let { stored ->
-                    PendingDownloadsStore.restoredHq(stored)?.let { hqOverrides[id] = it }
-                }
-                entry.avoidSource?.let { avoidSources[id] = it }
-                if (entry.forceReplace) forceReplaceIds.add(id)
-                if (entry.youtubeOnly) youtubeOnlyIds.add(id)
-                entry.minimumTier?.let { name ->
-                    runCatching { HqTier.valueOf(name) }.getOrNull()
-                        ?.let { minimumTiers[id] = it }
-                }
-                if (entry.automatic) automaticIds.add(id)
-                if (entry.mvSoundRepair) mvSoundRepairIds.add(id)
-                restored++
+        for (entry in entries) {
+            val song = PendingDownloadsStore.restoredSong(entry.song)
+            val id = song.videoId
+            if (id.isBlank() || id in pending || id in running) continue
+            pending[id] = song
+            enqueueGenerations[id] = ++generationCounter
+            entry.quality?.let { name ->
+                runCatching { DownloadQuality.valueOf(name) }.getOrNull()
+                    ?.let { qualityOverrides[id] = it }
             }
+            entry.hq?.let { stored ->
+                PendingDownloadsStore.restoredHq(stored)?.let { hqOverrides[id] = it }
+            }
+            entry.avoidSource?.let { avoidSources[id] = it }
+            if (entry.forceReplace) forceReplaceIds.add(id)
+            if (entry.youtubeOnly) youtubeOnlyIds.add(id)
+            entry.minimumTier?.let { name ->
+                runCatching { HqTier.valueOf(name) }.getOrNull()
+                    ?.let { minimumTiers[id] = it }
+            }
+            if (entry.automatic) automaticIds.add(id)
+            if (entry.mvSoundRepair) mvSoundRepairIds.add(id)
+            if (entry.allowMetered) meteredAllowedIds.add(id)
+            restored++
         }
-        if (restored > 0) Log.i(TAG, "downloads: restored $restored queued item(s)")
+        return restored
     }
 
     /** Write the small waiting queue, with each row's pinned options, to disk. */
     private fun persistPendingLocked() {
         if (!::prefs.isInitialized) return
+        // Nothing may overwrite the saved queue before it has been read back.
+        restorePendingLocked()
         val entries = pending.map { (id, song) -> pendingEntryLocked(id, song) }
         val editor = prefs.edit()
         if (entries.isEmpty()) {
@@ -413,6 +461,7 @@ object Downloads {
             youtubeOnly = id in youtubeOnlyIds,
             minimumTier = minimumTiers[id]?.name,
             automatic = id in automaticIds,
+            allowMetered = id in meteredAllowedIds,
             mvSoundRepair = id in mvSoundRepairIds,
         )
 
@@ -532,7 +581,9 @@ object Downloads {
         val id = song.videoId
         // A copy straight out of the song cache spends no data, so the Wi-Fi
         // rule has nothing to say about it.
-        if (!allowMetered && !AppSettings.downloadsAllowedNow && !servableFromCache(id)) {
+        val metered = !allowMetered && !AppSettings.downloadsAllowedNow
+        val cacheServable = metered && servableFromCache(id)
+        if (metered && !cacheServable) {
             // Distinct from the duplicate-tap no-op below: nothing is in flight
             // here to leave alone, and a refusal nobody is told about reads as a
             // dead button. A download already queued or running started on a
@@ -547,6 +598,9 @@ object Downloads {
             return
         }
         synchronized(lock) {
+            // The startup thread may not have read the previous process's
+            // queue yet. Restore it before this row joins or replaces it.
+            restorePendingLocked()
             if (id in pending || id in running) return
             pending[id] = song
             enqueueGenerations[id] = ++generationCounter
@@ -558,6 +612,8 @@ object Downloads {
             if (minimumTier != null) minimumTiers[id] = minimumTier
             if (automatic) automaticIds.add(id)
             if (mvSoundRepair) mvSoundRepairIds.add(id)
+            if (allowMetered) meteredAllowedIds.add(id)
+            if (cacheServable) cacheServableIds.add(id)
             // Publish while the row is still ours: a worker can only claim it
             // through [takeNext], which needs this same lock. Publishing after
             // the lock is what let a claimed row finish first and then be
@@ -680,6 +736,8 @@ object Downloads {
         minimumTiers.remove(videoId)
         automaticIds.remove(videoId)
         mvSoundRepairIds.remove(videoId)
+        meteredAllowedIds.remove(videoId)
+        cacheServableIds.remove(videoId)
         enqueueGenerations.remove(videoId)
         claimedGenerations.remove(videoId)
         persistPendingLocked()
@@ -1973,7 +2031,15 @@ object Downloads {
      * [cancel] for it would quietly do nothing.
      */
     internal fun takeNext(): Song? = synchronized(lock) {
-        val entry = pending.entries.firstOrNull() ?: return null
+        // A row restored after a restart never met the Wi-Fi-only check that
+        // [enqueue] makes. Leave an ordinary row waiting on a metered
+        // connection instead of spending data the listener saved; a cache copy
+        // and a replacement the listener explicitly allowed on cellular still
+        // start, exactly as they do at enqueue time.
+        val allowedNow = AppSettings.downloadsAllowedNow
+        val entry = pending.entries.firstOrNull { (id, _) ->
+            allowedNow || id in meteredAllowedIds || id in cacheServableIds
+        } ?: return null
         pending.remove(entry.key)
         running[entry.key] = null
         enqueueGenerations[entry.key]?.let { claimedGenerations[entry.key] = it }
@@ -2836,6 +2902,8 @@ object Downloads {
             minimumTiers.remove(videoId)
             automaticIds.remove(videoId)
             mvSoundRepairIds.remove(videoId)
+            meteredAllowedIds.remove(videoId)
+            cacheServableIds.remove(videoId)
             enqueueGenerations.remove(videoId)
             claimedGenerations.remove(videoId)
         }

@@ -54,6 +54,7 @@ internal object PendingDownloadsStore {
         val minimumTier: String? = null,
         val automatic: Boolean = false,
         val mvSoundRepair: Boolean = false,
+        val allowMetered: Boolean = false,
     )
 
     @Serializable

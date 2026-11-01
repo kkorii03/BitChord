@@ -48,6 +48,7 @@ class PendingDownloadsStoreTest {
             minimumTier = HqTier.LOSSLESS_16.name,
             automatic = true,
             mvSoundRepair = true,
+            allowMetered = true,
         )
 
         val decoded = PendingDownloadsStore.decode(
@@ -73,6 +74,7 @@ class PendingDownloadsStoreTest {
         assertTrue(restored.youtubeOnly)
         assertTrue(restored.automatic)
         assertTrue(restored.mvSoundRepair)
+        assertTrue(restored.allowMetered)
         assertEquals(HqTier.LOSSLESS_16.name, restored.minimumTier)
         val restoredHq = PendingDownloadsStore.restoredHq(restored.hq!!)!!
         assertEquals(hq.sourceConfigId, restoredHq.sourceConfigId)

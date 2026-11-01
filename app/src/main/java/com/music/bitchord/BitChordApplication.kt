@@ -290,6 +290,15 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
             }
                 .distinctUntilChanged()
                 .collect { allowedNow ->
+                    if (allowedNow) {
+                        // A queue restored after a restart leaves its ordinary
+                        // rows waiting on a metered connection (see
+                        // [com.music.bitchord.download.Downloads.takeNext]) and
+                        // the save service is only started by an event. This
+                        // transition is that event; nothing polls for it.
+                        com.music.bitchord.download.Downloads.signalWork()
+                        com.music.bitchord.download.Downloads.onForeground(this@BitChordApplication)
+                    }
                     if (com.music.bitchord.download.mvRepairShouldReschedule(
                             wasAllowed = mvRepairAllowed,
                             allowedNow = allowedNow,
