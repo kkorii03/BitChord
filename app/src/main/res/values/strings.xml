@@ -60,6 +60,8 @@
     <string name="auto_empty_liked_subtitle">Tap the heart on a song to save it here</string>
     <string name="auto_empty_offline_title">No offline songs</string>
     <string name="auto_empty_offline_subtitle">Download songs on your phone to listen here</string>
+    <string name="auto_empty_songs_title">No songs</string>
+    <string name="auto_empty_songs_subtitle">This folder has no songs</string>
     <string name="auto_unavailable_title">Content unavailable</string>
     <string name="auto_unavailable_subtitle">Reopen the folder and try again</string>
     <string name="add_to_playlist">Add to playlist</string>

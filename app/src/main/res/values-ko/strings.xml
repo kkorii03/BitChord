@@ -56,6 +56,8 @@
     <string name="auto_empty_liked_subtitle">노래의 하트를 탭하면 여기에 저장됩니다.</string>
     <string name="auto_empty_offline_title">오프라인 노래 없음</string>
     <string name="auto_empty_offline_subtitle">휴대폰에서 노래를 다운로드하면 여기에서 들을 수 있습니다.</string>
+    <string name="auto_empty_songs_title">노래 없음</string>
+    <string name="auto_empty_songs_subtitle">이 폴더에 노래가 없습니다.</string>
     <string name="auto_unavailable_title">콘텐츠를 사용할 수 없음</string>
     <string name="auto_unavailable_subtitle">폴더를 다시 연 뒤 시도하십시오.</string>
     <string name="add_to_playlist">플레이리스트에 추가</string>

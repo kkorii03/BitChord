@@ -12918,42 +12918,64 @@ class PlaybackService : MediaLibraryService() {
                     when {
                         parentId.startsWith("playlist:") -> {
                             val playlistId = parentId.removePrefix("playlist:")
-                            val songs = try {
+                            // null means the fetch failed or timed out; an empty
+                            // list means the playlist really has no songs.
+                            val songs: List<Song>? = try {
                                 withTimeoutOrNull(2500L) {
                                     YtMusicRepository.browseSongs("VL$playlistId").getOrNull()?.songs
                                         ?: YtMusicRepository.browseSongs(playlistId).getOrNull()?.songs
-                                } ?: emptyList()
+                                }
                             } catch (_: Exception) {
-                                emptyList()
+                                null
                             }
-                            cacheSongs(songs)
-                            AutoBrowseFallback.items(songs.map { it.toMediaItem() }) {
-                                TrackLog.w("BitChord", "auto: playlist browse empty id=$playlistId")
-                                createInfoItem(
-                                    "msg:unavailable|$parentId",
-                                    getString(R.string.auto_unavailable_title),
-                                    getString(R.string.auto_unavailable_subtitle),
-                                )
-                            }
+                            cacheSongs(songs.orEmpty())
+                            AutoBrowseFallback.items(
+                                songs = songs?.map { it.toMediaItem() },
+                                unavailable = {
+                                    TrackLog.w("BitChord", "auto: playlist browse failed id=$playlistId")
+                                    createInfoItem(
+                                        "msg:unavailable|$parentId",
+                                        getString(R.string.auto_unavailable_title),
+                                        getString(R.string.auto_unavailable_subtitle),
+                                    )
+                                },
+                                empty = {
+                                    createInfoItem(
+                                        "msg:empty|$parentId",
+                                        getString(R.string.auto_empty_songs_title),
+                                        getString(R.string.auto_empty_songs_subtitle),
+                                    )
+                                },
+                            )
                         }
                         parentId.startsWith("browse:") -> {
                             val browseId = parentId.removePrefix("browse:")
-                            val songs = try {
+                            val songs: List<Song>? = try {
                                 withTimeoutOrNull(2500L) {
                                     YtMusicRepository.browseSongs(browseId).getOrNull()?.songs
-                                } ?: emptyList()
+                                }
                             } catch (_: Exception) {
-                                emptyList()
+                                null
                             }
-                            cacheSongs(songs)
-                            AutoBrowseFallback.items(songs.map { it.toMediaItem() }) {
-                                TrackLog.w("BitChord", "auto: browse empty id=$browseId")
-                                createInfoItem(
-                                    "msg:unavailable|$parentId",
-                                    getString(R.string.auto_unavailable_title),
-                                    getString(R.string.auto_unavailable_subtitle),
-                                )
-                            }
+                            cacheSongs(songs.orEmpty())
+                            AutoBrowseFallback.items(
+                                songs = songs?.map { it.toMediaItem() },
+                                unavailable = {
+                                    TrackLog.w("BitChord", "auto: browse failed id=$browseId")
+                                    createInfoItem(
+                                        "msg:unavailable|$parentId",
+                                        getString(R.string.auto_unavailable_title),
+                                        getString(R.string.auto_unavailable_subtitle),
+                                    )
+                                },
+                                empty = {
+                                    createInfoItem(
+                                        "msg:empty|$parentId",
+                                        getString(R.string.auto_empty_songs_title),
+                                        getString(R.string.auto_empty_songs_subtitle),
+                                    )
+                                },
+                            )
                         }
                         else -> {
                             val cachedSong = songCache[parentId]
