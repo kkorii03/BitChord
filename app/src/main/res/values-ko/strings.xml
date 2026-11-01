@@ -1212,8 +1212,10 @@
     <string name="video_canvas">움직이는 아트워크가 없으면 영상 일부를 반복 재생</string>
     <string name="ai_lyrics">가사를 못 찾으면 AI 받아쓰기</string>
     <string name="ai_lyrics_subtitle">가사를 못 찾으면 AI가 받아쓰기</string>
+    <string name="ai_lyrics_missing_key_subtitle">AI 받아쓰기에는 Gemini 키가 필요합니다</string>
     <string name="ai_timing_ahead">AI 싱크 미리 맞추기</string>
     <string name="ai_timing_ahead_subtitle">다음 노래 가사를 미리 준비</string>
+    <string name="ai_timing_missing_key_subtitle">AI 싱크에는 Gemini 또는 Deepgram 키가 필요합니다</string>
     <string name="reset_download_sync">다운로드 곡 싱크 다시 맞추기</string>
     <string name="reset_download_sync_subtitle">다음 재생 때 가사 싱크 확인</string>
     <string name="deepgram_api_key">Deepgram API 키</string>
