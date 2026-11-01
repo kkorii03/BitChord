@@ -53,6 +53,8 @@
 
 ## M4. 느리거나 끊긴 망에서 수동 번역이 최대 수 분간 로딩에 머문다 — 미수정
 
+> 재 검증 필요: 11-02 코드에는 전체 예산(`TRANSLATION_DEADLINE_MS`)과 Gemini 하위 예산·kept 폴백이 들어갔다. 아래 줄 번호는 수정 전 기준이다.
+
 - 파일: `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/lyrics/LyricsTranslation.kt:172-182`, `:564-625`, UI `PlayerLyrics.kt:3314-3347`
 - 증거: Gemini 모델 5개를 순서대로 시도하고 각 호출 `callTimeout(40s)`; 모두 시간 초과/실패하면 Google `callTimeout(12s)`로 폴백한다. 전체 요청 예산이나 사용자 취소 경로가 없다.
 - 사용자 영향: 망이 끊기지 않고 매우 느리기만 하면(프록시·혼잡) 버튼이 `Loading`으로 길게 남는다. 실패 안내는 그 뒤에야 온다.
@@ -61,6 +63,8 @@
 - 필요한 작업: `translate`/`romanize`에 전체 deadline(예: 45초)과 취소 UI를 넣고, deadline 초과 시 kept 캐시로 폴백. MockWebServer로 지연 응답 테스트.
 
 ## M5. 다운로드 곡의 수동 번역은 오프라인용으로 저장되지 않는다 — 미수정
+
+> 재 검증 필요: 11-02 코드에는 `AndroidPlayerHost.translateLyrics`가 다운로드 곡·설정을 보고 `keep`을 넘긴다. 아래 줄 번호는 수정 전 기준이다.
 
 - 파일: `app/src/main/java/com/music/bitchord/ui/player/AndroidPlayerHost.kt:156-168`, `LyricsTranslation.kt:241-260`(`keep` 인자)
 - 증거: 플레이어의 `translateLyrics`가 `LyricsTranslation.translate(trackId, lines, targetLanguageTag)`만 호출하고 `keep`을 넘기지 않는다. `keep=true`는 프리페치/다운로드 완료 경로에서만 쓰인다.

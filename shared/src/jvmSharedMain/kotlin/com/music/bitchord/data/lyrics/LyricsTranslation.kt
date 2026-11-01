@@ -20,6 +20,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.serialization.Serializable
@@ -92,6 +93,22 @@ object LyricsTranslation {
     private const val MAX_CACHE_BYTES = 30L * 1024L * 1024L
     private const val MAX_BATCH_CHARS = 3_500
     private const val MAX_PARALLEL_REQUESTS = 2
+    // The automatic and manual translation paths leave the button loading until
+    // one of them answers. Five Gemini models at 40 s each and then Google's
+    // 12 s is over three minutes on a slow proxy; this budget gives one Gemini
+    // attempt and the Google fallback room while still ending the wait. A kept
+    // answer is still used when the deadline passes (see [translate]).
+    internal const val TRANSLATION_DEADLINE_MS = 60_000L
+    // The Google client's own call timeout is 12 s; this reserve covers it plus
+    // request overhead so a slow model loop cannot consume the fallback's slot.
+    internal const val GOOGLE_FALLBACK_RESERVE_MS = 15_000L
+
+    internal data class TranslationDeadlines(
+        val totalMs: Long = TRANSLATION_DEADLINE_MS,
+        val googleReserveMs: Long = GOOGLE_FALLBACK_RESERVE_MS,
+    ) {
+        val geminiMs: Long get() = (totalMs - googleReserveMs).coerceAtLeast(1L)
+    }
     // Input Tools changes ASCII digits to the destination script, so match the
     // private-use wrapper rather than assuming the counter remains ASCII.
     // Translations of downloaded songs, kept out of reach of the cache trim and
@@ -211,7 +228,7 @@ object LyricsTranslation {
         }
 
     @Serializable
-    private data class CachedTranslation(
+    internal data class CachedTranslation(
         val version: Int = CACHE_VERSION,
         val sourceLanguage: String,
         val targetLanguage: String,
@@ -220,7 +237,7 @@ object LyricsTranslation {
         val engine: String = ENGINE_GOOGLE,
     )
 
-    private data class TextSlot(
+    internal data class TextSlot(
         val lineIndex: Int,
         val background: Boolean,
         val text: String,
@@ -248,6 +265,24 @@ object LyricsTranslation {
          * so its translation is there offline too.
          */
         keep: Boolean = false,
+    ): Result = translateWith(
+        trackId = trackId,
+        lines = lines,
+        targetLanguageTag = targetLanguageTag,
+        keep = keep,
+        deadlines = TranslationDeadlines(),
+        gemini = { track, slots, target -> geminiEntry(track, slots, target) },
+        google = { track, slots, target -> googleEntry(track, slots, target) },
+    )
+
+    internal suspend fun translateWith(
+        trackId: String,
+        lines: List<LyricLine>,
+        targetLanguageTag: String,
+        keep: Boolean,
+        deadlines: TranslationDeadlines,
+        gemini: suspend (String, List<TextSlot>, String) -> CachedTranslation?,
+        google: suspend (String, List<TextSlot>, String) -> CachedTranslation?,
     ): Result {
         // Sent as given rather than reduced to a base language: zh-CN and
         // zh-TW are the same language in two scripts, and canonicalising either
@@ -272,7 +307,9 @@ object LyricsTranslation {
             // Anything short of a complete, line-for-line answer from either
             // engine falls back to whatever was kept, so the button never
             // stops working offline.
-            else -> resolve(trackId, slots, target) ?: kept
+            else -> withinTranslationDeadline(deadlines.totalMs) {
+                resolve(trackId, slots, target, deadlines, gemini, google)
+            } ?: kept
         } ?: return Result.Unavailable
         if (keep && entry !== kept) writeEntry(keepDir, KEPT_DIRECTORY, keptKey, entry, MAX_KEPT_BYTES)
 
@@ -288,15 +325,30 @@ object LyricsTranslation {
         }
     }
 
+    /**
+     * Runs [block] under the translation request budget. Null means the budget
+     * ran out, which callers treat like any other unavailable answer; a kept
+     * translation is tried before this and still wins afterwards.
+     */
+    internal suspend fun <T> withinTranslationDeadline(
+        timeoutMs: Long = TRANSLATION_DEADLINE_MS,
+        block: suspend () -> T,
+    ): T? = withTimeoutOrNull(timeoutMs) { block() }
+
     /** Gemini where it is set up and answers in full, Google Translate otherwise. */
     private suspend fun resolve(
         trackId: String,
         slots: List<TextSlot>,
         target: String,
+        deadlines: TranslationDeadlines,
+        gemini: suspend (String, List<TextSlot>, String) -> CachedTranslation?,
+        google: suspend (String, List<TextSlot>, String) -> CachedTranslation?,
     ): CachedTranslation? {
         if (geminiReady) {
             val viaGemini = try {
-                geminiEntry(trackId, slots, target)
+                withinTranslationDeadline(deadlines.geminiMs) {
+                    gemini(trackId, slots, target)
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
@@ -306,7 +358,7 @@ object LyricsTranslation {
             viaGemini?.let { return it }
         }
         return try {
-            googleEntry(trackId, slots, target)
+            google(trackId, slots, target)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
@@ -408,11 +460,13 @@ object LyricsTranslation {
 
         val target = targetLanguageTag.trim().ifBlank { "en" }
         val batches = batches(slots)
-        val answers = coroutineScope {
-            batches.chunked(MAX_PARALLEL_REQUESTS).flatMap { group ->
-                group.map { batch -> async { requestRomanizationBatch(batch, target) } }.awaitAll()
+        val answers = withinTranslationDeadline {
+            coroutineScope {
+                batches.chunked(MAX_PARALLEL_REQUESTS).flatMap { group ->
+                    group.map { batch -> async { requestRomanizationBatch(batch, target) } }.awaitAll()
+                }
             }
-        }
+        } ?: return RomanizationResult.Unavailable
         if (answers.any { it == null }) return RomanizationResult.Unavailable
         val complete = answers.filterNotNull()
         val source = complete
