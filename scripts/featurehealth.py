@@ -1140,21 +1140,9 @@ def analyze(log: Log) -> Report:
                 "kind": "decoder",
             }
         )
-    # A lossless `hq=` answer is where the next track's FLAC copy comes from.
-    # Treat it as evidence for the PLAY with the same version id, so a log that
-    # only has next-prep rows (no hq-verify) still scores the format that
-    # actually played.
-    for row in next_preps:
-        if not _is_lossless_hq(row["hq"]):
-            continue
-        flac_evidence.append(
-            {
-                "at": row["at"],
-                "id": row["version"],
-                "title": row["title"],
-                "kind": "next-prep-hq",
-            }
-        )
+    # A lossless `hq=` answer says a FLAC copy was prepared, not that it played.
+    # It is kept for the D2 attempt below (paired with a real PLAY) but never
+    # used as flac_evidence: a prep row must not prove its own playback.
 
     d2_events: list[dict[str, Any]] = []
     for row in hq_verifies:
@@ -1199,11 +1187,30 @@ def analyze(log: Log) -> Report:
             seen_ids.add(video_id)
         seen_titles.add(wanted)
 
+    def prep_play(row: dict[str, Any]) -> dict[str, Any] | None:
+        """The PLAY this prep row belongs to, or None when it never played."""
+        wanted = _norm_title(row["title"])
+        matching = [
+            play for play in plays
+            if play["id"] == row["version"]
+            or _norm_title(play["title"]) == wanted
+        ]
+        if not matching:
+            return None
+        return min(
+            matching,
+            key=lambda play: abs((play["at"] - row["at"]).total_seconds()),
+        )
+
     for row in next_preps:
-        if _is_lossless_hq(row["hq"]):
-            add_fallback_event(
-                row["at"], row["version"], row["title"], "next-prep-hq"
-            )
+        if not _is_lossless_hq(row["hq"]):
+            continue
+        anchor = prep_play(row)
+        if anchor is None:
+            continue
+        add_fallback_event(
+            anchor["at"], anchor["id"], anchor["title"], "next-prep-hq"
+        )
     for row in decoder_formats:
         if not _is_flac(row["format"]):
             continue
@@ -1690,32 +1697,35 @@ def analyze(log: Log) -> Report:
     with_sync = [row for row in with_lyrics if row["sync"] != "none"]
 
     # With the screen off the lyrics engine is never asked, so the summary
-    # carries `lyrics=none` for a healthy track. There is no dedicated screen
-    # line in an export, so use the two places that do log standing down for
-    # it, and when neither is present treat a lyrics=none row as "not
-    # requested" rather than as a missing provider.
+    # carries `lyrics=none` for a healthy track. The app logs when it stands
+    # down for the screen off, and the activity foreground / screen-on line is
+    # the signal that it came back. Only rows inside a logged off interval are
+    # exempt: with no screen line at all the state is unknown, so a
+    # `lyrics=none` row still counts as a missing provider.
     screen_events: list[tuple[datetime, bool]] = []
     for line in lines:
         if SCREEN_OFF_RE.search(line.text):
             screen_events.append((line.at, True))
-        elif SCREEN_ON_RE.search(line.text):
+        elif SCREEN_ON_RE.search(line.text) or FOREGROUND_RE.match(line.text):
             screen_events.append((line.at, False))
     screen_events.sort(key=lambda event: event[0])
     screen_off_rows: list[dict[str, Any]] = []
     missing_rows: list[dict[str, Any]] = []
     if screen_events:
-        state = False
+        state: bool | None = None
         index = 0
         for row in summaries:
             while index < len(screen_events) and screen_events[index][0] <= row["at"]:
                 state = screen_events[index][1]
                 index += 1
-            if row["lyrics"] == "none" and state:
+            if row["lyrics"] != "none":
+                continue
+            if state is True:
                 screen_off_rows.append(row)
-            elif row["lyrics"] == "none":
+            else:
                 missing_rows.append(row)
     else:
-        screen_off_rows = [row for row in summaries if row["lyrics"] == "none"]
+        missing_rows = [row for row in summaries if row["lyrics"] == "none"]
     requested_rows = [row for row in summaries if row not in screen_off_rows]
 
     metrics.extend(
@@ -1773,18 +1783,27 @@ def analyze(log: Log) -> Report:
         arms = sorted(raw_crossfade_arms, key=lambda row: row["at"])
         blend_starts = sorted(raw_crossfade_starts, key=lambda row: row["at"])
 
-        def arm_for(at: datetime) -> dict[str, Any] | None:
-            for arm in reversed(arms):
-                if arm["at"] <= at:
-                    if (at - arm["at"]).total_seconds() <= 120.0:
-                        return arm
-                    break
-            return None
+        claimed_arms: set[int] = set()
+
+        def arm_for(at: datetime) -> tuple[int, dict[str, Any]] | None:
+            candidates = [
+                (index, arm)
+                for index, arm in enumerate(arms)
+                if index not in claimed_arms
+                and arm["at"] <= at
+                and (at - arm["at"]).total_seconds() <= 120.0
+            ]
+            if not candidates:
+                return None
+            return max(candidates, key=lambda item: item[1]["at"])
 
         for index, row in enumerate(blend_starts):
             if near_any(row["at"], old_start_times):
                 continue
-            arm = arm_for(row["at"])
+            claimed = arm_for(row["at"])
+            arm = claimed[1] if claimed is not None else None
+            if claimed is not None:
+                claimed_arms.add(claimed[0])
             key = f"raw#{index}"
             raw_starts.append(
                 {
@@ -1795,14 +1814,11 @@ def analyze(log: Log) -> Report:
                 }
             )
 
-        # An arm with no blend start is still an attempt (it may have bailed
-        # before the fade became audible).
+        # An arm that no blend start claimed is still an attempt (it may have
+        # bailed before the fade became audible). Only the nearest arm belongs
+        # to a start, so an earlier failed arm survives a later retry.
         for index, arm in enumerate(arms):
-            if any(
-                arm["at"] <= start["at"]
-                and (start["at"] - arm["at"]).total_seconds() <= 120.0
-                for start in blend_starts
-            ):
+            if index in claimed_arms:
                 continue
             if near_any(arm["at"], old_start_times):
                 continue
@@ -1851,10 +1867,10 @@ def analyze(log: Log) -> Report:
                     "at": finish["at"],
                     "out": start["out"],
                     "in": start["in"],
-                    # No raw line prints the measured overlap. A fade that
-                    # reached FADING overlapped for about its planned length;
-                    # that is the only value the phone log offers.
-                    "overlap": fade if fade is not None else 0,
+                    # No raw line prints the measured overlap. Leave it
+                    # unknown instead of copying the planned fade, which made
+                    # the "actual overlap" ratio tautologically 100%.
+                    "overlap": None,
                     "fade": fade,
                     "gains": {},
                 }
@@ -1864,7 +1880,10 @@ def analyze(log: Log) -> Report:
     crossfade_ends = crossfade_ends + raw_ends
 
     skip_reasons = Counter(row["reason"] for row in crossfade_skips)
-    overlaps = [row["overlap"] for row in crossfade_ends]
+    overlaps = [
+        row["overlap"] for row in crossfade_ends
+        if row["overlap"] is not None
+    ]
     remaining_ends = Counter((row["out"], row["in"]) for row in crossfade_ends)
     completed_fades = 0
     for row in crossfade_starts:
@@ -1906,7 +1925,11 @@ def analyze(log: Log) -> Report:
                 planned = pending.pop(0)
             if planned is None:
                 planned = row["fade"]
-            if planned is not None and planned > 0:
+            if (
+                row["overlap"] is not None
+                and planned is not None
+                and planned > 0
+            ):
                 overlap_pairs.append((row["overlap"], planned))
     planned_fades = [planned for _, planned in overlap_pairs]
     overlap_ratios = [overlap / planned for overlap, planned in overlap_pairs]
@@ -1943,10 +1966,12 @@ def analyze(log: Log) -> Report:
             _info_metric(
                 "D7-overlap",
                 "D7 자동 믹스 · 실제 겹침",
-                len(crossfade_ends),
+                len(overlaps),
+                f"실측 {len(overlaps)}건 · "
                 f"overlap 평균 {overlap_avg if overlap_avg is not None else '—'}ms · "
                 f"계획 fade 평균 {planned_avg if planned_avg is not None else '—'}ms · "
-                f"계획 대비 {ratio_avg if ratio_avg is not None else '—'}%",
+                f"계획 대비 {ratio_avg if ratio_avg is not None else '—'}%"
+                " · raw logcat은 계획 fade만",
             ),
             _info_metric(
                 "D7-gains",
