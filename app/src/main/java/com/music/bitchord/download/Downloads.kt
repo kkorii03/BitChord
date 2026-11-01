@@ -960,6 +960,22 @@ object Downloads {
     }
 
     /**
+     * A file already on disk for [track] at [extension], including one a failed
+     * replacement rename left under its staging name.
+     *
+     * Asking only for [DownloadStore.fileNameFor] missed that file, and the next
+     * pass downloaded the same bytes again.
+     */
+    private fun existingDownload(context: Context, track: Song, extension: String): Uri? {
+        open()
+        val baseName = DownloadStore.fileNameFor(track, extension)
+        val recordedName = _savedMetadata.value[track.videoId]?.displayName
+        return DownloadStore.lookupNames(baseName, recordedName).firstNotNullOfOrNull { name ->
+            DownloadStore.existing(context, name)
+        }
+    }
+
+    /**
      * The id whose stream produced the file saved for [videoId], when it was
      * recorded. Null for a download made before provenance was kept.
      *
@@ -1632,6 +1648,8 @@ object Downloads {
         sourceArtist: String? = null,
         /** The real name a staged media-store replacement takes after the old row goes. */
         finalName: String? = null,
+        /** The name the staged row was written under before the rename. */
+        stagedName: String? = null,
     ) {
         open()
         val ids = setOf(asked.videoId, fetched.videoId)
@@ -1790,11 +1808,30 @@ object Downloads {
                         runCatching { DownloadStore.delete(context, old.toUri()) }
                     }
                 }
-                // The old row is gone, so the media store will accept the real
-                // name instead of appending "(1)". App-private/legacy files
-                // already have it and return true without touching the disk.
+                // The old row is gone, so the media store should accept the
+                // real name instead of appending "(1)". App-private/legacy
+                // files already have it and return true without touching the
+                // disk. If the rename still fails, record the name the store
+                // actually kept; otherwise the committed file sits under a name
+                // the next lookup does not ask for and is downloaded again.
                 if (finalName != null) {
-                    DownloadStore.renamePublished(context, uri, finalName)
+                    val renamed = DownloadStore.renamePublished(context, uri, finalName)
+                    val actualName = if (renamed) null else DownloadStore.displayName(context, uri)
+                    val recordedName = DownloadStore.settledFileName(
+                        finalName = finalName,
+                        stagedName = stagedName
+                            ?: DownloadStore.stagingFileName(finalName, fetched.videoId),
+                        renamed = renamed,
+                        actualName = actualName,
+                    )
+                    record(
+                        saved = { it },
+                        meta = { meta ->
+                            meta.mapValues { (id, value) ->
+                                if (id in ids) value.copy(displayName = recordedName) else value
+                            }
+                        },
+                    )
                 }
             }
         }
@@ -2268,7 +2305,7 @@ object Downloads {
         // for lossless with a transcode.
         if (hq == null && !forceReplace && quality.keepsLossless) {
             LOSSLESS_EXTENSIONS.firstNotNullOfOrNull { extension ->
-                DownloadStore.existing(context, DownloadStore.fileNameFor(track, extension))
+                existingDownload(context, track, extension)
             }?.takeIf { Downloads.savedFileIsRecording(track.videoId, it.toString()) }?.let { uri ->
                 return@withContext Prepared(
                     song.videoId,
@@ -2419,7 +2456,7 @@ object Downloads {
                     AppSettings.exportDownloads.value &&
                     Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
                 val finalName = baseName.takeIf { stageReplacement }
-                val alreadyThere = DownloadStore.existing(context, baseName)
+                val alreadyThere = existingDownload(context, track, route.extension)
                 val existingIsRecording = alreadyThere != null &&
                     savedFileIsRecording(track.videoId, alreadyThere.toString())
                 if (plan.hq == null &&
@@ -2540,6 +2577,7 @@ object Downloads {
                     sourceTitle = route.sourceTitle,
                     sourceArtist = route.sourceArtist,
                     finalName = finalName,
+                    stagedName = name,
                 )
                 TranslationAhead.downloaded(context, track, savedUri.toString())
                 DownloadSession.done(id)
@@ -2875,6 +2913,10 @@ object Downloads {
     private fun fail(videoId: String, reason: String, keepVerifiedPair: Boolean) {
         if (!keepVerifiedPair) {
             synchronized(lock) { hqOverrides.remove(videoId) }
+            // Retry rebuilds the ask from the manager row's plan, so clearing
+            // only the in-memory override left the same pinned pair on it and
+            // every tap failed again before a fresh search could run.
+            DownloadSession.forgetPinnedRetryPair(videoId)
         }
         _active.update { it + (videoId to DownloadState.Failed(reason)) }
         DownloadSession.failed(videoId, reason)
@@ -2984,6 +3026,12 @@ internal data class SavedSongMetadata(
      */
     val albumName: String? = null,
     val uri: String,
+    /**
+     * The name the media store actually kept, when a replacement could not take
+     * its final one. Defaulted so older records still decode; lookups fall back
+     * to [DownloadStore.fileNameFor] when it is absent.
+     */
+    val displayName: String? = null,
     val downloadFormat: String? = null,
     /** Stable creation time for downloads that MediaStore does not index. */
     val dateAddedSeconds: Long? = null,

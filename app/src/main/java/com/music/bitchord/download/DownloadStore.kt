@@ -177,6 +177,70 @@ object DownloadStore {
     }
 
     /**
+     * The name the committed row actually carries now.
+     *
+     * Used only when [renamePublished] reports failure: the store may have kept
+     * the staging name, or appended `(1)` because another row still owned the
+     * requested one. Recording that name is what lets the next lookup find the
+     * file instead of downloading a second copy.
+     */
+    fun displayName(context: Context, uri: Uri): String? {
+        if (uri.scheme == "file") return uri.lastPathSegment
+        return runCatching {
+            context.contentResolver.query(
+                uri,
+                arrayOf(MediaStore.MediaColumns.DISPLAY_NAME),
+                null,
+                null,
+                null,
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            }
+        }.onFailure {
+            Log.w(TAG, "could not read the name of $uri: ${it.message}")
+        }.getOrNull()
+    }
+
+    /**
+     * The name to record after a rename attempt.
+     *
+     * A successful rename took the final name. A failed one leaves the row
+     * under whatever the store actually kept (the staging name, or the
+     * disambiguated name it appended), and recording that is the difference
+     * between finding the file on the next pass and downloading it again.
+     */
+    internal fun settledFileName(
+        finalName: String,
+        stagedName: String,
+        renamed: Boolean,
+        actualName: String?,
+    ): String = when {
+        renamed -> finalName
+        !actualName.isNullOrBlank() -> actualName
+        else -> stagedName
+    }
+
+    /**
+     * Names a later download lookup may use for a file written under [baseName].
+     *
+     * Normally just the base name. When a replacement could not take it and was
+     * recorded under another name, that recorded name is checked first — it is
+     * this track's own committed file, while the base name may still be the old
+     * row that caused the rename to fail. Only names with the same extension
+     * are considered, so a stale lossless record cannot answer a request for a
+     * different container.
+     */
+    internal fun lookupNames(baseName: String, recordedName: String?): List<String> {
+        if (recordedName.isNullOrBlank() || recordedName == baseName) return listOf(baseName)
+        val baseExtension = baseName.substringAfterLast('.', "")
+        val recordedExtension = recordedName.substringAfterLast('.', "")
+        if (baseExtension.isNotEmpty() && !baseExtension.equals(recordedExtension, ignoreCase = true)) {
+            return listOf(baseName)
+        }
+        return listOf(recordedName, baseName)
+    }
+
+    /**
      * Everything a FAT32 volume, the media store or a shell would each object
      * to for its own reasons, plus the whitespace that survives them.
      */

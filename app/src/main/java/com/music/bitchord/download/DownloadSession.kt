@@ -185,6 +185,32 @@ object DownloadSession {
     fun failed(videoId: String, reason: String) = set(videoId, DownloadProgress.Failed(reason))
 
     /**
+     * Forget the pinned source/track pair on a permanently failed row.
+     *
+     * The in-memory override is dropped by [Downloads.fail] so the next attempt
+     * can search again, but Retry rebuilds the ask from this plan. Keeping the
+     * pair here re-pinned the same dead source on every tap and the row could
+     * never fall back. The quality and replace intent still describe what the
+     * listener asked for, so they stay.
+     */
+    fun forgetPinnedRetryPair(videoId: String) {
+        update { state ->
+            val index = state.items.indexOfFirst { it.videoId == videoId }
+            if (index < 0) return@update state
+            val item = state.items[index]
+            val plan = item.retry ?: return@update state
+            if (plan.hq == null && plan.avoidSourceConfigId == null) return@update state
+            state.copy(
+                items = state.items.toMutableList().also {
+                    it[index] = item.copy(
+                        retry = plan.copy(hq = null, avoidSourceConfigId = null),
+                    )
+                },
+            )
+        }
+    }
+
+    /**
      * Swap in the track that is actually being fetched.
      *
      * A music-video row is replaced by the catalogue track behind it on the way
