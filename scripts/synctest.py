@@ -396,6 +396,10 @@ def run_song(vid, seconds, dry):
         logf.write_bytes(adb("logcat", "-d", timeout=120, binary=True))
         wav.unlink(missing_ok=True)
         adb("pull", f"{APP_DIR}/synctest/{vid}.wav", str(wav), timeout=120)
+        # A hi-res substitute playing: its own head, kept under the id it plays as.
+        played = parse_dump(logf.read_text(encoding="utf-8", errors="replace"), vid)
+        if played and played[0].get("playing", "").startswith("src:"):
+            adb("pull", f"{APP_DIR}/synctest/{played[0]['playing']}.wav", str(OUT / f"{vid}.play.wav"), timeout=120)
     if not logf.exists():
         return dict(error="no log")
     text = logf.read_text(encoding="utf-8", errors="replace")
@@ -413,11 +417,19 @@ def run_song(vid, seconds, dry):
                resolve=resolve, stored="y" if stored else "n")
     if not lines:
         return dict(row, error="lyrics shown without timed lines", app_fail=True)
-    if row["playing"].startswith("src:"):
-        # A hi-res copy from another source is playing; the kept WAV is the YouTube
-        # reference, whose timeline may differ. Scoring it would test the wrong audio.
-        return dict(row, error="hi-res substitute playing (its audio is not kept yet)")
     lang = language_for(lines)
+    if row["playing"].startswith("src:"):
+        # A hi-res copy from another source is playing; the song check's WAV is the
+        # YouTube reference, whose clock may differ by seconds. The app (sync-test
+        # mode, 11-02 build on) keeps that copy's verified head under its own id.
+        play = OUT / f"{vid}.play.wav"
+        if not play.exists() or play.stat().st_size < 1000:
+            return dict(row, error="hi-res substitute playing, its head was not kept (app before 11-02?)")
+        per_model = [hear(f"{vid}.play", play, "audio/wav", lang, m) for m in MODELS]
+        if None in per_model:
+            return dict(row, error="deepgram failed")
+        row["audio"] = "hi-res copy's own head (hq-verify, 90 s)"
+        return finish(vid, row, lines, per_model)
     app_words = None
     if wav.exists() and wav.stat().st_size > 1000:
         app_words = hear(f"{vid}.app", wav, "audio/wav", lang, MODELS[0])
@@ -456,6 +468,11 @@ def run_song(vid, seconds, dry):
         if second is None:
             return dict(row, error="deepgram failed")
         per_model, row["audio"] = [app_words, second], "app wav only (first 90 s; YouTube copy did not line up)"
+    return finish(vid, row, lines, per_model)
+
+
+def finish(vid, row, lines, per_model):
+    """Scores the lines against what both hearing models heard in the played audio."""
     per = [align(lines, words) for words in per_model]
     both, either, gap = agreed(per)
     heard_until = min(words[-1][1] for words in per_model if words) if all(per_model) else 0

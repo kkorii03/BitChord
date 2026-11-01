@@ -10,6 +10,7 @@ import com.music.bitchord.playback.PowerState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.ConcurrentHashMap
@@ -234,6 +235,28 @@ object VideoAudio {
             TrackLog.d(TAG, "too long to send inline", videoId)
             return null
         }
+        return header(data.size) + data
+    }
+
+    /**
+     * Sync-test only: the first [untilSeconds] of an audio [file] as the same
+     * mono WAV a song check sends — for a downloaded hi-res candidate head, so
+     * a phone scoring run can hear that copy's own clock. See
+     * [SyncTestMode.keepCandidate].
+     */
+    internal fun wavOfFile(file: File, untilSeconds: Double = SONG_CHECK_SECONDS): ByteArray? {
+        val resampler = Resampler(minOf(RATE * 2 * untilSeconds.toInt(), RATE * 2 * 120))
+        try {
+            AudioDecoder.decodeMonoStream(file, 0.0, untilSeconds + 1, label = "synctest-wav") { samples, sampleRate, _ ->
+                if (!resampler.push(samples, sampleRate)) return@decodeMonoStream
+            } ?: return null
+        } catch (e: Exception) {
+            return null
+        }
+        val pcm = resampler.bytes()
+        if (pcm.size < RATE * 2 * 10) return null
+        val limit = (RATE * 2 * untilSeconds).toInt().let { it - it % 2 }
+        val data = if (pcm.size > limit) pcm.copyOf(limit) else pcm
         return header(data.size) + data
     }
 

@@ -27,11 +27,16 @@ object SyncTestMode {
     private var checkedVideoId: String? = null
     private var checkedEnabled = false
 
+    /** Kept from the last [enabled] call, for [keepCandidate], which runs without one. */
+    @Volatile
+    private var appContext: Context? = null
+
     /** The last block written, so a refresh that changes nothing is not logged twice. */
     private var lastSignature: String? = null
 
     /** Whether sync-test mode is on for [videoId]; the flag file is checked once per song. */
     fun enabled(context: Context, videoId: String): Boolean = synchronized(this) {
+        appContext = context.applicationContext
         if (checkedVideoId != videoId) {
             checkedVideoId = videoId
             checkedEnabled = runCatching {
@@ -80,10 +85,30 @@ object SyncTestMode {
     /** Keeps [wav] as `synctest/<videoId>.wav`; one file per song, replaced on a later check. */
     fun saveWav(context: Context, videoId: String, wav: ByteArray) {
         if (!enabled(context, videoId)) return
+        write(context, videoId, wav)
+    }
+
+    /**
+     * Keeps the head of a downloaded hi-res candidate as `synctest/<id>.wav`,
+     * where `<id>` is what [playingId] logs once that copy plays. The song
+     * check's WAV is always YouTube's copy, so without this a substitute's
+     * lyrics could only be scored on the wrong clock. Decodes the head a second
+     * time; only test runs (flag file present) pay for it.
+     */
+    fun keepCandidate(sourceConfigId: String?, trackId: String?, head: File) {
+        val context = appContext ?: return
+        if (sourceConfigId == null || trackId == null) return
+        val on = runCatching { externalRoot(context)?.let { File(it, FLAG_NAME).isFile } == true }.getOrDefault(false)
+        if (!on) return
+        val wav = VideoAudio.wavOfFile(head) ?: return
+        write(context, "${SourceTrackKeys.PREFIX}$sourceConfigId${SourceTrackKeys.SEPARATOR}$trackId", wav)
+    }
+
+    private fun write(context: Context, id: String, wav: ByteArray) {
         runCatching {
             val root = externalRoot(context) ?: return@runCatching
             val dir = File(root, WAV_DIR).apply { mkdirs() }
-            val file = File(dir, "${safeName(videoId)}.wav")
+            val file = File(dir, "${safeName(id)}.wav")
             val temporary = File(dir, "${file.name}.tmp")
             try {
                 temporary.writeBytes(wav)

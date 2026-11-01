@@ -1302,6 +1302,10 @@ object HqAudioVerify {
                 TrackLog.w(TAG, "decode: hq-verify failed at=candidate-decode bytes=$bytes")
                 return CandidateFetch.Failed
             }
+            // Sync-test mode only (no-op otherwise): this head, under the id the
+            // substitute plays as. A lighter tier of the same row is the same
+            // recording, so its clock is the one the listener hears.
+            SyncTestMode.keepCandidate(original.sourceConfigId, original.trackId, file)
             CandidateFetch.Ready(
                 Candidate(
                     features = features,
