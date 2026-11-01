@@ -159,7 +159,7 @@ object CoverTitles {
         (
             readE(raw) ?: readCoveredBy(raw) ?: readLeadingCoverTag(raw, channel) ?: readG(raw, channel) ?: readC(raw, channel)
                 ?: (if (tidy.live) readLive(raw) else null) ?: readF(raw)
-                ?: readA(raw, channel, allowBareTag = false) ?: readCredit(raw) ?: readSlashCredit(raw)
+                ?: readA(raw, channel, allowBareTag = false) ?: readCredit(raw, channel) ?: readSlashCredit(raw)
             )?.let {
             runCatching { onSingerSeen(it.singer) }
             return it
@@ -535,14 +535,46 @@ object CoverTitles {
     }
 
     /** "조별하 & 오화요 - All For You | 원곡: 서인국 정은지": a credited original makes it a cover. */
-    private fun readCredit(raw: String): Cover? {
-        val match = ORIGINAL_CREDIT.find(raw) ?: return null
+    private fun readCredit(raw: String, channel: String): Cover? {
+        val match = ORIGINAL_CREDIT.find(raw) ?: ORIGINAL_CREDIT_TAIL.find(raw) ?: return null
         val credit = cleanName(match.groupValues[1].ifEmpty { match.groupValues[2] }) ?: return null
         val head = raw.removeRange(match.range).trim().trimEnd('|', '/', ' ')
-        val (left, right) = splitTopLevelDash(head) ?: return null
+        val (left, right) = splitTopLevelDash(head) ?: return readCreditWithoutDash(head, credit, channel)
         val singer = cleanName(left)?.takeUnless { isVersionWord(it) } ?: return null
         val title = cleanTitle(right) ?: return null
         return Cover(title = title, originalArtist = artistInCredit(credit, title), singer = singer)
+    }
+
+    /**
+     * A cover whose title names the singer and the song without a dash —
+     * "정승환 '0+0' Cover (원곡 : 한로로)". The channel is the singer when its
+     * name leads the title; otherwise the whole head is the song.
+     */
+    private fun readCreditWithoutDash(head: String, credit: String, channel: String): Cover? {
+        if (!ANY_COVER_WORD.containsMatchIn(head)) return null
+        val withoutCover = ANY_COVER_WORD.replace(head, " ")
+            .replace(Regex("""\s{2,}"""), " ")
+            .trim()
+        if (withoutCover.isEmpty()) return null
+        val singer = cleanName(channel)?.takeUnless { isVersionWord(it) || isDescriptor(it) }
+        val quoted = QUOTED_TITLE.find(withoutCover)?.groupValues?.get(1)?.trim()
+        val titleText = singer?.let { stripChannelPrefix(withoutCover, it) }
+            ?: quoted?.takeIf { it.isNotEmpty() }
+            ?: withoutCover
+        val title = cleanTitle(titleText) ?: return null
+        return Cover(title = title, originalArtist = artistInCredit(credit, title), singer = singer.orEmpty())
+    }
+
+    /** A title a cover upload puts in quotes after the singer's name. */
+    private val QUOTED_TITLE = Regex("""['"“”「」『』]([^'"“”「」『』]+)['"“”「」『』]""")
+
+    private fun stripChannelPrefix(text: String, channel: String): String? {
+        val name = cleanName(channel) ?: return null
+        if (!text.startsWith(name, ignoreCase = true)) return null
+        return text.substring(name.length)
+            .trimStart(' ', '-', '–', '—', ':', '·', '|', ',')
+            .trim()
+            .takeIf { it.isNotEmpty() }
     }
 
     /** "A - 곡 / 원곡가수": the slash credits the original when it isn't a tag. */
@@ -817,9 +849,16 @@ object CoverTitles {
         return Cover(title = title, originalArtist = artist, singer = singer)
     }
 
-    /** "(원곡: Vaundy)", "(원곡 Vaundy)", "/ 원곡 Vaundy". */
+    /** "(원곡: Vaundy)", "(원곡 Vaundy)", "(Original by X)", "/ 원곡 Vaundy", "orig. X". */
     private val ORIGINAL_CREDIT = Regex(
-        """\s*(?:[(\[（【]\s*원곡\s*[:：]?\s*([^()\[\]（）【】]+?)\s*[)\]）】]|[/|｜]\s*원곡\s*[:：]?\s*(.+)$)""",
+        """\s*(?:[(\[（【]\s*(?:원곡자|원곡|original\s+by|original\s+(?:artist|song)|original(?![a-z])|orig\.?(?![a-z]))\s*[:：]?\s*([^()\[\]（）【】]+?)\s*[)\]）】]|[/|｜]\s*(?:원곡자|원곡|original\s+by|original\s+(?:artist|song)|original(?![a-z])|orig\.?(?![a-z]))\s*[:：]?\s*(.+)$)""",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /** An unbracketed trailing credit: "Song Cover orig. X", "… original by X". */
+    private val ORIGINAL_CREDIT_TAIL = Regex(
+        """\s+(?:orig\.?(?![a-z])|original\s+by|original\s+artist)\s*[:：]?\s*(.+)$""",
+        RegexOption.IGNORE_CASE,
     )
 
     /**
