@@ -310,6 +310,19 @@ class BeatTracker(
         }
 
         /**
+         * Phrase boundaries implied by a tracked downbeat grid: the first downbeat of every
+         * eight 4/4 bars.
+         *
+         * The DSP analyzer also emits phrase times, but they are built from its own beat
+         * interval. When the model supplies the grid the planner snaps to model downbeats, so
+         * reusing the DSP phrase times leaves `phraseAligned` comparing two different clocks
+         * and it reads false on a perfectly musical boundary. Deriving both from the same grid
+         * keeps the flag meaningful.
+         */
+        fun phraseBoundaries(downbeats: List<Double>): List<Double> =
+            downbeats.filterIndexed { index, time -> index % 8 == 0 && time.isFinite() }
+
+        /**
          * How far the grid can be trusted, 0..1: regularity of the spacing and decisiveness of
          * the peaks. This is the number the whole transition policy gates on, so it is deliberately
          * capped below 1: a model is evidence, not proof.

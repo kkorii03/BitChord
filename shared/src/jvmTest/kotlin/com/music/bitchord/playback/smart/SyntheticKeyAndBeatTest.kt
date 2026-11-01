@@ -46,6 +46,15 @@ class SyntheticKeyAndBeatTest {
         assertTrue(result.beatConfidence >= 0.5, "beatConfidence was ${result.beatConfidence}")
     }
 
+    @Test
+    fun `atonal white noise is not given a trusted key`() {
+        val result = analyze().getValue("white-noise")
+        assertTrue(
+            result.keyConfidence < 0.25,
+            "white noise read as ${result.key} with keyConfidence ${result.keyConfidence}",
+        )
+    }
+
     private fun analyze(): Map<String, Measured> {
         val root = generateSequence(File(System.getProperty("user.dir")).canonicalFile) { it.parentFile }
             .firstOrNull { File(it, "native/analyzer/audio_analysis.cpp").isFile }
@@ -156,6 +165,21 @@ std::vector<float> Kick(double sample_rate) {
   return samples;
 }
 
+// Deterministic white noise: no pitch-class structure at all, so any key
+// confidence above the policy's trusted floor is a false positive.
+std::vector<float> WhiteNoise(double sample_rate) {
+  constexpr double kSeconds = 30.0;
+  const size_t length = static_cast<size_t>(sample_rate * kSeconds);
+  std::vector<float> samples(length, 0.0f);
+  unsigned state = 123456789u;
+  for (size_t index = 0; index < length; ++index) {
+    state = state * 1664525u + 1013904223u;
+    const double white = ((state >> 8) / 16777216.0) * 2.0 - 1.0;
+    samples[index] = static_cast<float>(0.2 * white);
+  }
+  return samples;
+}
+
 void Report(const char* label, const std::vector<float>& samples, double sample_rate) {
   const auto result = bitchord::smart::AnalyzeAudio(samples, sample_rate, samples.size() / sample_rate);
   std::printf(
@@ -177,6 +201,7 @@ int main() {
   Report("cmajor", Progression(c_major, kRate), kRate);
   Report("aminor", Progression(a_minor, kRate), kRate);
   Report("kick120", Kick(kRate), kRate);
+  Report("white-noise", WhiteNoise(kRate), kRate);
   return 0;
 }
 """

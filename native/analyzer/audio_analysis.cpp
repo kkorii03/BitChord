@@ -450,11 +450,21 @@ void AnalyzeKeyAndTimbre(
     result.key = candidates[0].second;
     // The old margin scale (4x the relative gap) is kept so the policy's
     // 0.25 trusted-key threshold still means the same degree of separation.
-    // A non-positive top correlation means no profile fits at all, so that
-    // reads as no confidence rather than as a large relative gap.
+    // Margin alone, however, is a relative measure: on atonal material both
+    // the best and the runner-up correlate near zero, and any tiny difference
+    // between them used to read as a full confidence. The absolute fit below
+    // gates that -- a top correlation under kMinKeyCorrelation is no key at
+    // all, and above it the confidence is scaled by how much of a real fit the
+    // winning profile actually is. Both the synthetic C major progression and
+    // white noise are covered by SyntheticKeyAndBeatTest.
+    constexpr double kMinKeyCorrelation = 0.35;
     const double top = candidates[0].first;
-    result.key_confidence = top > 0.0
-      ? Clamp((top - candidates[1].first) / std::max(0.01, top) * 4.0, 0, 1)
+    // Square root so a clean but not perfect tonal fit keeps most of its
+    // margin score, while noise just above the floor is still scaled down
+    // hard enough to stay below the policy's 0.25 trusted-key threshold.
+    const double fit = std::sqrt(Clamp((top - kMinKeyCorrelation) / (1.0 - kMinKeyCorrelation), 0, 1));
+    result.key_confidence = top > kMinKeyCorrelation
+      ? Clamp((top - candidates[1].first) / std::max(0.01, top) * 4.0 * fit, 0, 1)
       : 0.0;
   }
 

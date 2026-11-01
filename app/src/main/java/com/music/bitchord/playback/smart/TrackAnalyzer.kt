@@ -75,6 +75,9 @@ internal fun headAnalysis(
     beatInterval = grid?.beatInterval ?: entry?.beatInterval ?: 0.0,
     beatConfidence = grid?.beatConfidence ?: entry?.beatConfidence ?: 0.0,
     downbeats = grid?.downbeats ?: entry?.downbeats.orEmpty(),
+    phraseBoundaries = grid?.let { BeatTracker.phraseBoundaries(it.downbeats) }
+        ?.takeIf { it.isNotEmpty() }
+        ?: entry?.phraseBoundaries.orEmpty(),
     firstBeat = grid?.firstBeat ?: entry?.firstBeat ?: 0.0,
     key = entry?.key.orEmpty(),
     keyConfidence = entry?.keyConfidence ?: 0.0,
@@ -842,7 +845,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             beatInterval = grid?.beatInterval ?: shifted.beatInterval,
             beatConfidence = grid?.beatConfidence ?: shifted.beatConfidence,
             downbeats = grid?.downbeats ?: shifted.downbeats,
-            phraseBoundaries = shifted.phraseBoundaries,
+            phraseBoundaries = grid?.let { BeatTracker.phraseBoundaries(it.downbeats) }
+                ?.takeIf { it.isNotEmpty() }
+                ?: shifted.phraseBoundaries,
             firstBeat = grid?.firstBeat ?: shifted.firstBeat,
             key = shifted.key,
             keyConfidence = shifted.keyConfidence,
@@ -1359,7 +1364,13 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                     .ifEmpty { features.downbeats }
                     .sorted(),
                 firstBeat = headGrid?.firstBeat ?: features.firstBeat,
-                phraseBoundaries = features.phraseBoundaries,
+                phraseBoundaries = (
+                    BeatTracker.phraseBoundaries(headGrid?.downbeats.orEmpty()) +
+                        BeatTracker.phraseBoundaries(tailGrid?.downbeats.orEmpty())
+                    )
+                    .distinct()
+                    .sorted()
+                    .ifEmpty { features.phraseBoundaries },
                 key = features.key,
                 keyConfidence = features.keyConfidence,
                 loudnessLufs = features.loudnessLufs,
