@@ -1975,13 +1975,25 @@ object AudioCache {
                         }
                     }
                 }
-                // Metered, only the immediate next track's URL is worth
-                // minting: it is the one a skip most likely lands on, and every
-                // resolve past it is a request the listener pays for.
-                val urlLookahead = if (metered) 1 else QUEUE_LOOKAHEAD + 1
+                // Metered or saving power, only the immediate next track's URL
+                // is worth minting: it is the one a skip most likely lands on.
+                // Every resolve past it is either a request the listener pays
+                // for or work done while the phone is trying to save battery.
                 launch {
                     delay(PREFETCH_DELAY_MS)
-                    for (id in videoIds.take(urlLookahead).let { if (cacheBytes) it.drop(1) else it }) {
+                    // Low power (or metering) can begin during the grace delay.
+                    // The byte launch above re-reads it there and skips its
+                    // fetch; this half must re-read too, or it would drop the
+                    // immediate next track as already fetched and keep walking
+                    // the old lookahead while the phone is saving power.
+                    val targets = BatteryPolicy.cacheUrlWarmupTargets(
+                        candidates = videoIds,
+                        metered = AppSettings.meteredConnection.value == true,
+                        lowPower = AppSettings.lowPower.value,
+                        queueLookahead = QUEUE_LOOKAHEAD,
+                        bytesPlanned = cacheBytes,
+                    )
+                    for (id in targets) {
                         // A track already pinned to another source has no use
                         // for a YouTube URL: nothing will ask for one, and
                         // minting it spends a client walk to fill a cache entry
