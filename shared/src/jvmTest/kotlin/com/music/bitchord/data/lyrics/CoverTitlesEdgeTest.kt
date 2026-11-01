@@ -173,6 +173,24 @@ class CoverTitlesEdgeTest {
     }
 
     @Test
+    fun anOriginalArtistWhoseNameContainsAMarkerWordIsStillAName() {
+        listOf("Mr. Big", "The Piano Guys", "AI").forEach { artist ->
+            val read = cover("Singer - Song (원곡 : $artist)", "channel")
+            assertEquals(artist, read.originalArtist, artist)
+            val noDash = cover("Singer 'Song' Cover (원곡 : $artist)", "Singer")
+            assertEquals(artist, noDash.originalArtist, artist)
+        }
+    }
+
+    @Test
+    fun aBareVersionOrDescriptorOriginalCreditIsNotAnArtist() {
+        listOf("Live", "Acoustic").forEach { marker ->
+            assertNull(CoverTitles.read("Singer - Song (원곡 : $marker)", "channel", null), marker)
+            assertNull(CoverTitles.read("Singer 'Song' Cover (원곡 : $marker)", "Singer", null), marker)
+        }
+    }
+
+    @Test
     fun englishOriginalCreditsNameTheOriginalArtist() {
         listOf(
             "Singer - Song (Original by Writer)",

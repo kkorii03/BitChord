@@ -538,9 +538,7 @@ object CoverTitles {
     private fun readCredit(raw: String, channel: String): Cover? {
         val match = ORIGINAL_CREDIT.find(raw) ?: ORIGINAL_CREDIT_TAIL.find(raw) ?: return null
         val credit = cleanName(match.groupValues[1].ifEmpty { match.groupValues[2] })
-            ?.takeUnless {
-                isVersionWord(it) || isDescriptor(it) || isGenericCredit(it) || OST.containsMatchIn(it)
-            }
+            ?.takeUnless { isCreditMarkerOnly(it) }
             ?: return null
         val head = raw.removeRange(match.range).trim().trimEnd('|', '/', ' ')
         val (left, right) = splitTopLevelDash(head) ?: return readCreditWithoutDash(head, credit, channel)
@@ -955,6 +953,19 @@ object CoverTitles {
     private fun isDescriptor(text: String): Boolean {
         val words = text.lowercase().split(' ', '　', '.', '/').filter { it.isNotBlank() }
         return words.isNotEmpty() && words.all { it in DESCRIPTOR_WORDS || it.all(Char::isDigit) }
+    }
+
+    /**
+     * Whether an original credit names no one — a bare version/descriptor tag
+     * such as "Live" or "Acoustic". A name that merely contains one of those
+     * words is still a name: "Mr. Big", "The Piano Guys", and the singer AI
+     * are not markers, and rejecting them left the cover with a blank artist.
+     */
+    private fun isCreditMarkerOnly(text: String): Boolean {
+        val name = text.trim()
+        if (name.isEmpty()) return true
+        if (isGenericCredit(name) || OST.containsMatchIn(name) || VERSION_WORDS.matches(name)) return true
+        return isDescriptor(name) && !name.equals("ai", ignoreCase = true)
     }
 
     /** The last slash between words, outside any bracket: "곡명(원곡자) / 부른사람". Not "AC/DC". */
