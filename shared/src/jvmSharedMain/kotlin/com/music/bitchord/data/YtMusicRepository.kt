@@ -733,7 +733,8 @@ object YtMusicRepository {
                     "search: youtube.com fallback length=${query.length} " +
                         "(music ${if (page == null) "failed" else "returned no rows"})",
                 )
-                val songs = YouTubeWebSearch.songs(query, kind)
+                val fallback = YouTubeWebSearch.songs(query, kind)
+                val songs = fallback.getOrNull().orEmpty()
                 if (filter == SearchFilter.SONGS) {
                     // The Songs filter is what Korea's catalogue refuses. Its
                     // album search still answers, so map the uploads to their
@@ -754,6 +755,11 @@ object YtMusicRepository {
                 } else if (songs.isNotEmpty()) {
                     return@call SearchPage(songs.map { SearchResult.Track(it) }.distinctBy { it.identityKey() }, null)
                 }
+                // Music had no rows of its own and the fallback never
+                // answered. Returning the empty Music page here would show
+                // "no results" for a broken connection; let the failure reach
+                // the screen so its retry can run.
+                fallbackFailureWhenMusicHasNoRows(music, fallback)?.let { throw it }
             }
             music.getOrThrow()
         }
@@ -788,6 +794,21 @@ object YtMusicRepository {
         is SearchResult.Track -> "v:${song.videoId}"
         is SearchResult.Browse -> "b:${item.browseId}"
     }
+
+    /**
+     * The failure to report when Music answered with an empty page and the
+     * youtube.com fallback failed.
+     *
+     * A failed fallback used to be indistinguishable from a fallback that
+     * genuinely matched nothing, so the Songs/VIDEOS tabs showed "no results"
+     * for a connection that never completed. An actual empty answer still stays
+     * a successful empty page. When Music itself failed, its own failure is the
+     * one [searchPage] reports, so nothing is chosen here.
+     */
+    internal fun fallbackFailureWhenMusicHasNoRows(
+        music: Result<SearchPage>,
+        fallback: Result<List<Song>>,
+    ): Throwable? = if (music.isSuccess && fallback.isFailure) fallback.exceptionOrNull() else null
 
     /**
      * What YouTube Music would suggest completing [input] to, for the search

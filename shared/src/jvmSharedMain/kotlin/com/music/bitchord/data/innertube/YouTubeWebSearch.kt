@@ -13,6 +13,7 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /**
@@ -52,18 +53,23 @@ internal object YouTubeWebSearch {
             .build()
     }
 
-    fun songs(query: String, kind: SearchKind = SearchKind.TYPED): List<Song> {
-        val root = response(query, VIDEOS_FILTER, kind) ?: return emptyList()
-        return YouTubeWebParser.parseHistory(root)
-    }
+    /**
+     * Rows from an anonymous youtube.com search, or the failure that stopped
+     * it. A failed fallback must stay distinguishable from a search that
+     * genuinely matched nothing: callers used to fold both into an empty list,
+     * which turned a broken connection into "no results".
+     */
+    fun songs(query: String, kind: SearchKind = SearchKind.TYPED): Result<List<Song>> =
+        response(query, VIDEOS_FILTER, kind).map(YouTubeWebParser::parseHistory)
 
     /** Playlist cards for [query] from the playlists filter, anonymous like [songs]. */
-    fun playlists(query: String, kind: SearchKind = SearchKind.TYPED): List<ShelfItem> {
-        val root = response(query, PLAYLISTS_FILTER, kind) ?: return emptyList()
-        return YouTubeWebParser.parsePlaylistResults(root)
-    }
+    fun playlists(query: String, kind: SearchKind = SearchKind.TYPED): List<ShelfItem> =
+        response(query, PLAYLISTS_FILTER, kind)
+            .getOrNull()
+            ?.let(YouTubeWebParser::parsePlaylistResults)
+            .orEmpty()
 
-    private fun response(query: String, params: String, kind: SearchKind): JsonObject? {
+    private fun response(query: String, params: String, kind: SearchKind): Result<JsonObject> {
         // Logged here too because this path builds its own request: no cookie
         // jar, no account visitor id, and never the query itself.
         DebugLog.d(
@@ -93,24 +99,33 @@ internal object YouTubeWebSearch {
             client.newCall(request).execute().use { reply ->
                 if (!reply.isSuccessful) {
                     TrackLog.w(TAG, "youtube search HTTP ${reply.code}")
-                    return null
+                    return Result.failure(IOException("youtube search HTTP ${reply.code}"))
                 }
                 reply.body?.string()
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
-            // Search is a fallback for a filter Music refused; a transport or
-            // read failure here is "no result", not a failed search page.
+            // A transport or read failure here is a failed fallback, not an
+            // empty result: the caller needs to be able to offer a retry.
             TrackLog.w(TAG, "youtube search failed: ${failure.message}")
-            return null
-        } ?: return null
+            return Result.failure(failure)
+        } ?: return Result.failure(IOException("youtube search returned no body"))
         return runCatching { json.parseToJsonElement(text) as? JsonObject }
-            .onFailure {
-                if (it is CancellationException) throw it
-                TrackLog.w(TAG, "youtube search parse failed: ${it.message}")
-            }
-            .getOrNull()
+            .fold(
+                onSuccess = { root ->
+                    if (root == null) {
+                        Result.failure(IOException("youtube search body was not an object"))
+                    } else {
+                        Result.success(root)
+                    }
+                },
+                onFailure = { failure ->
+                    if (failure is CancellationException) throw failure
+                    TrackLog.w(TAG, "youtube search parse failed: ${failure.message}")
+                    Result.failure(failure)
+                },
+            )
     }
 
     /** Reads a search response; a shape surprise is no rows, never a thrown page. */
