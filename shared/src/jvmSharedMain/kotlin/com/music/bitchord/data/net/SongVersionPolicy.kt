@@ -252,6 +252,49 @@ object SongVersionPolicy {
         return (file - catalog).takeIf { it >= MV_SOUND_SLACK_MS }
     }
 
+    /**
+     * Whether a saved file's own length still has to be read before its
+     * upcoming row is replaced.
+     *
+     * The length is only evidence for a legacy record whose provenance was
+     * never recorded: a recorded source is already answered by
+     * [downloadedFileUse], and a remembered video-sound verdict already
+     * decides the row. Reading the container metadata opens and parses the
+     * file, so it must not happen when the answer is already known.
+     */
+    fun needsFileDurationForReplacement(
+        soundSourceId: String?,
+        mvSoundSuspectMs: Long?,
+        catalogDurationMs: Long?,
+    ): Boolean =
+        soundSourceId == null && mvSoundSuspectMs == null && catalogDurationMs != null
+
+    /**
+     * Whether the row a version was resolved for is still the row at
+     * [expectedIndex].
+     *
+     * Resolving and preparing an upcoming version suspends (the saved file's
+     * URI and length are read off the main thread). A queue edit in that
+     * window can remove the row or move another entry into the index; applying
+     * the prepared replacement then would overwrite the wrong entry, so the
+     * index is checked against the current count and the media id is checked
+     * again right before replacing.
+     *
+     * Playback can also advance during the same window. The look-ahead must
+     * never replace the row that started playing, so [playingIndex] is checked
+     * together with the media id immediately before the replacement.
+     */
+    fun replacementRowStillMatches(
+        expectedIndex: Int,
+        expectedMediaId: String,
+        itemCount: Int,
+        actualMediaId: String?,
+        playingIndex: Int? = null,
+    ): Boolean =
+        expectedIndex in 0 until itemCount &&
+            actualMediaId == expectedMediaId &&
+            expectedIndex != playingIndex
+
     /** What a downloaded file may be used for, once its sound source is known. */
     enum class DownloadedFileUse {
         /** The file's recorded source is the recording being played. */
@@ -321,35 +364,85 @@ object SongVersionPolicy {
         artist: String = "",
         sourceIsVideo: Boolean? = true,
         sourceTitle: String = "",
-    ): Boolean = when (
-        downloadedFileUse(playId, soundSourceId, online, sourceIsVideo, sourceTitle)
-    ) {
-        DownloadedFileUse.STREAM_SONG -> false
-        DownloadedFileUse.PLAY_FILE -> true
-        DownloadedFileUse.UNKNOWN_PLAY_FILE -> {
-            val mvSound = DownloadedMvPolicy.isMvSound(
-                rowVideoId = playId,
-                title = title,
-                fileDurationMs = fileDurationMs,
-                storedIsVideo = isVideo,
-                storedTypeUnknown = typeUnknown,
-                soundSourceVideoId = null,
-                catalogVideoId = null,
-                catalogDurationMs = catalogDurationMs,
-                artist = artist,
-            )
-            val longerThanRelease = DownloadedMvPolicy.mvSoundSuspectDeltaMs(
-                rowVideoId = playId,
-                title = title,
-                fileDurationMs = fileDurationMs,
-                storedIsVideo = isVideo,
-                storedTypeUnknown = typeUnknown,
-                soundSourceVideoId = null,
-                catalogDurationMs = catalogDurationMs,
-                artist = artist,
-            ) != null
-            !mvSound && !longerThanRelease
+        mvSoundSuspectMs: Long? = null,
+    ): Boolean {
+        // A remembered video-sound verdict outranks provenance: the file was
+        // measured against the catalogue release and found to be the video's
+        // sound. Online the release is streamed; offline the file is the only
+        // sound there is, so it stays.
+        if (mvSoundSuspectMs != null) return !online
+        return when (
+            downloadedFileUse(playId, soundSourceId, online, sourceIsVideo, sourceTitle)
+        ) {
+            DownloadedFileUse.STREAM_SONG -> false
+            DownloadedFileUse.PLAY_FILE -> true
+            DownloadedFileUse.UNKNOWN_PLAY_FILE -> {
+                val mvSound = DownloadedMvPolicy.isMvSound(
+                    rowVideoId = playId,
+                    title = title,
+                    fileDurationMs = fileDurationMs,
+                    storedIsVideo = isVideo,
+                    storedTypeUnknown = typeUnknown,
+                    soundSourceVideoId = null,
+                    catalogVideoId = null,
+                    catalogDurationMs = catalogDurationMs,
+                    artist = artist,
+                )
+                val longerThanRelease = DownloadedMvPolicy.mvSoundSuspectDeltaMs(
+                    rowVideoId = playId,
+                    title = title,
+                    fileDurationMs = fileDurationMs,
+                    storedIsVideo = isVideo,
+                    storedTypeUnknown = typeUnknown,
+                    soundSourceVideoId = null,
+                    catalogDurationMs = catalogDurationMs,
+                    artist = artist,
+                ) != null
+                !mvSound && !longerThanRelease
+            }
         }
+    }
+
+    /**
+     * Whether a version installed into an upcoming row must stream even when a
+     * file is saved under its id.
+     *
+     * The queue look-ahead replaces the next rows before they play. Building
+     * those replacements with the default `useDownloadedFile = true` attached
+     * a file whose recorded source is another upload (a music video's sound
+     * saved under the song id), so the next track could start with the wrong
+     * recording. This is the same provenance question the current-row path
+     * asks through [downloadedFileUse].
+     *
+     * Recorded provenance is not the only evidence: a file saved before
+     * provenance existed can already be remembered as the video's sound
+     * ([mvSoundSuspectMs]) or fail the length check ([mvSoundDeltaMs]). The
+     * current-row path treats those as a stream, and the upcoming row must do
+     * the same — otherwise the crossfade marks it audible and the later repair
+     * never runs. Offline the file stays, because it is the only sound there is.
+     */
+    fun replacementStreamsSong(
+        playId: String,
+        soundSourceId: String?,
+        online: Boolean,
+        mvSoundSuspectMs: Long? = null,
+        fileDurationMs: Long? = null,
+        catalogDurationMs: Long? = null,
+        isVideo: Boolean = false,
+        localFile: Boolean = true,
+    ): Boolean {
+        if (!online) return false
+        if (mvSoundSuspectMs != null) return true
+        if (downloadedFileUse(playId, soundSourceId, online) == DownloadedFileUse.STREAM_SONG) {
+            return true
+        }
+        return mvSoundDeltaMs(
+            fileDurationMs = fileDurationMs,
+            catalogDurationMs = catalogDurationMs,
+            isVideo = isVideo,
+            localFile = localFile,
+            soundSourceId = soundSourceId,
+        ) != null
     }
 
     /**

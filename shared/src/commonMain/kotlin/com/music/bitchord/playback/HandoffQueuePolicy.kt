@@ -123,4 +123,39 @@ object HandoffQueuePolicy {
         ) ?: return false
         return outgoingMediaIds.getOrNull(index) != incomingMediaId
     }
+
+    /**
+     * Whether the queue row that is still next now holds a different recording
+     * than the standby player was armed with.
+     *
+     * A song-version lookup can replace that row while the transition is
+     * armed. The row keeps its queue key (the entry id and tier), so
+     * [incomingStillNext] says the blend is still valid, but the standby's
+     * copy still names the old media id and would hand the old recording over.
+     * Callers use this to reload the standby onto the new item before the
+     * blend starts, or to abandon it once the fade is already audible.
+     *
+     * Kept as the null-tolerant companion to [incomingMediaReplaced]: it
+     * locates the row from the outgoing player's current index and
+     * [wrapsToStart] exactly as the handoff does, and treats a missing
+     * outgoing id as no evidence rather than a change.
+     */
+    fun incomingRecordingChanged(
+        outgoingKeys: List<String>,
+        outgoingCurrentIndex: Int,
+        incomingKey: String,
+        incomingMediaId: String?,
+        outgoingMediaIds: List<String?>,
+        wrapsToStart: Boolean,
+    ): Boolean {
+        if (incomingMediaId == null) return false
+        val index = when {
+            outgoingKeys.getOrNull(outgoingCurrentIndex) == incomingKey -> outgoingCurrentIndex
+            outgoingKeys.getOrNull(outgoingCurrentIndex + 1) == incomingKey -> outgoingCurrentIndex + 1
+            wrapsToStart && outgoingKeys.getOrNull(0) == incomingKey -> 0
+            else -> return false
+        }
+        val outgoingMediaId = outgoingMediaIds.getOrNull(index) ?: return false
+        return outgoingMediaId != incomingMediaId
+    }
 }
