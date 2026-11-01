@@ -2291,7 +2291,7 @@ class CrossfadeController(
         if (!SleepTimer.afterTrack.value) {
             out.volume = 1f
             outgoing = null
-            phase = Phase.IDLE
+            endSleepFade()
             return
         }
         val elapsed = (out.currentPosition - sleepFadeStartPositionMs).coerceAtLeast(0L)
@@ -2309,7 +2309,22 @@ class CrossfadeController(
         outgoing?.volume = 1f
         SleepTimer.cancel()
         outgoing = null
+        endSleepFade()
+    }
+
+    /**
+     * Returns [Phase.SLEEP_FADE] to IDLE and reports it as settled.
+     *
+     * A sleep fade is a transition like any other to everybody outside this
+     * class: [isTransitioning] was true for its whole span, so callers parked
+     * work on [onSettled] (the output-reconfigure gate is the one that waits
+     * without polling). Ending the phase without that callback would drop a
+     * route or PCM change made during the fade until some later blend settled.
+     */
+    private fun endSleepFade() {
+        settledAt = SystemClock.elapsedRealtime()
         phase = Phase.IDLE
+        onSettled()
     }
 
     /** Ramps the outgoing track away rather than cutting it, so an interruption has no click in it. */
