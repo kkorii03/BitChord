@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.os.Build
 import com.music.bitchord.data.DebugLog as Log
 import androidx.core.content.ContextCompat
 import com.music.bitchord.data.StoredSongDisplay
@@ -97,6 +98,26 @@ data class HqDownloadSource(
     /** The source row's own names, for the arrangement check on a later play. */
     val sourceTitle: String? = null,
     val sourceArtist: String? = null,
+)
+
+/**
+ * What a failed download was actually asked for, kept with its manager row.
+ *
+ * [DownloadSession.Item] is what the Retry button has, and rebuilding the call
+ * from the song alone dropped the replacement's quality, pinned pair and
+ * force-replace flag. The retry then looked like an ordinary download: it could
+ * adopt the old lower-rung file and report success without the upgrade the
+ * listener asked for. This carries those terms until the row settles.
+ */
+data class DownloadRetryPlan(
+    val allowMetered: Boolean = false,
+    val quality: DownloadQuality? = null,
+    val hq: HqDownloadSource? = null,
+    val avoidSourceConfigId: String? = null,
+    val forceReplace: Boolean = false,
+    val youtubeOnly: Boolean = false,
+    val minimumTier: HqTier? = null,
+    val mvSoundRepair: Boolean = false,
 )
 
 /**
@@ -457,6 +478,16 @@ object Downloads {
         mvSoundRepair: Boolean = false,
     ) {
         val id = song.videoId
+        val retryPlan = DownloadRetryPlan(
+            allowMetered = allowMetered,
+            quality = quality,
+            hq = hq,
+            avoidSourceConfigId = avoidSourceConfigId,
+            forceReplace = forceReplace,
+            youtubeOnly = youtubeOnly,
+            minimumTier = minimumTier,
+            mvSoundRepair = mvSoundRepair,
+        )
         // A copy straight out of the song cache spends no data, so the Wi-Fi
         // rule has nothing to say about it.
         if (!allowMetered && !AppSettings.downloadsAllowedNow && !servableFromCache(id)) {
@@ -467,7 +498,7 @@ object Downloads {
             val inFlight = _active.value[id]
             if (inFlight !is DownloadState.Queued && inFlight !is DownloadState.Running) {
                 if (HqAutoDownloadPolicy.countsAsUserFailure(automatic)) {
-                    DownloadSession.queued(song, from)
+                    DownloadSession.queued(song, from, retryPlan)
                 }
                 fail(id, WIFI_ONLY_REFUSAL)
             }
@@ -493,6 +524,7 @@ object Downloads {
                 song = song,
                 from = from,
                 publishSession = HqAutoDownloadPolicy.countsAsUserFailure(automatic),
+                retryPlan = retryPlan,
             )
         }
         wakeWorkers()
@@ -502,17 +534,50 @@ object Downloads {
         // process. Leave the track queued and let [onForeground] start the
         // drain when the app next has a window; there is no timer.
         if (AppForeground.isForeground) {
-            val startFailure = startService(app)
-            if (startFailure != null) {
-                // Refused only when the app has no window and no exemption,
-                // which means the queue has nothing to drain it and would sit
-                // there looking accepted forever.
-                Log.w(TAG, "could not start the download service: ${startFailure.message}")
-                if (abandonPending(id)) {
-                    fail(id, "지금은 다운로드를 시작할 수 없습니다")
+            // One start request owns the drain. The remaining tracks of a batch
+            // are already in [pending] and are claimed by the workers this
+            // first start brings up; asking Android once per track only rebuilt
+            // the same foreground notification hundreds of times.
+            if (DownloadServiceStartGate.requestStart()) {
+                val startFailure = startService(app)
+                if (startFailure != null) {
+                    DownloadServiceStartGate.startFailed()
+                    // Refused only when the app has no window and no exemption,
+                    // which means the queue has nothing to drain it and would sit
+                    // there looking accepted forever.
+                    Log.w(TAG, "could not start the download service: ${startFailure.message}")
+                    if (abandonPending(id)) {
+                        fail(id, SERVICE_START_REFUSAL)
+                    }
                 }
             }
         }
+    }
+
+    /**
+     * Ask again for a failed row, with the terms it originally asked for.
+     *
+     * The manager only has a [DownloadSession.Item]; calling [enqueue] with the
+     * song alone would turn a verified high-quality replacement into an
+     * ordinary download, which can adopt the old lower-rung file and report
+     * Done. The plan recorded at enqueue time keeps the quality, pinned pair
+     * and replace intent.
+     */
+    fun retry(context: Context, item: DownloadSession.Item) {
+        val plan = item.retry
+        enqueue(
+            context = context,
+            song = item.song,
+            from = item.from,
+            allowMetered = plan?.allowMetered ?: false,
+            quality = plan?.quality,
+            hq = plan?.hq,
+            avoidSourceConfigId = plan?.avoidSourceConfigId,
+            forceReplace = plan?.forceReplace ?: false,
+            youtubeOnly = plan?.youtubeOnly ?: false,
+            minimumTier = plan?.minimumTier,
+            mvSoundRepair = plan?.mvSoundRepair ?: false,
+        )
     }
 
     /**
@@ -535,6 +600,7 @@ object Downloads {
         song: Song,
         from: String?,
         publishSession: Boolean,
+        retryPlan: DownloadRetryPlan? = null,
     ) {
         synchronized(lock) {
             val id = song.videoId
@@ -564,7 +630,7 @@ object Downloads {
                 if (alreadyAdvanced) return
             }
             _active.update { it + (id to DownloadState.Queued) }
-            if (publishSession) DownloadSession.queued(song, from)
+            if (publishSession) DownloadSession.queued(song, from, retryPlan)
             enqueueGenerations.remove(id)
             claimedGenerations.remove(id)
         }
@@ -579,14 +645,19 @@ object Downloads {
         val app = appContext ?: context.applicationContext
         val waiting = synchronized(lock) { pending.keys.toList() }
         if (waiting.isEmpty()) return
-        val startFailure = startService(app) ?: return
+        // A live service already owns the drain; its workers pick these up from
+        // the queue without another start request.
+        if (!DownloadServiceStartGate.requestStart()) return
+        val startFailure = startService(app)
+        if (startFailure == null) return
+        DownloadServiceStartGate.startFailed()
         // The service that was to drain these never started. Leaving them
         // Queued would look accepted forever, so take each back and show the
         // same refusal a foreground enqueue shows. There is no timer; the next
         // tap or foreground event can ask again.
         Log.w(TAG, "could not start the download service: ${startFailure.message}")
         for (id in waiting) {
-            if (abandonPending(id)) fail(id, "지금은 다운로드를 시작할 수 없습니다")
+            if (abandonPending(id)) fail(id, SERVICE_START_REFUSAL)
         }
     }
 
@@ -886,6 +957,22 @@ object Downloads {
     fun isDownloaded(videoId: String): Boolean {
         open()
         return videoId in _saved.value || videoId in _savedMetadata.value
+    }
+
+    /**
+     * A file already on disk for [track] at [extension], including one a failed
+     * replacement rename left under its staging name.
+     *
+     * Asking only for [DownloadStore.fileNameFor] missed that file, and the next
+     * pass downloaded the same bytes again.
+     */
+    private fun existingDownload(context: Context, track: Song, extension: String): Uri? {
+        open()
+        val baseName = DownloadStore.fileNameFor(track, extension)
+        val recordedName = _savedMetadata.value[track.videoId]?.displayName
+        return DownloadStore.lookupNames(baseName, recordedName).firstNotNullOfOrNull { name ->
+            DownloadStore.existing(context, name)
+        }
     }
 
     /**
@@ -1559,6 +1646,10 @@ object Downloads {
         hq: HqDownloadSource? = null,
         sourceTitle: String? = null,
         sourceArtist: String? = null,
+        /** The real name a staged media-store replacement takes after the old row goes. */
+        finalName: String? = null,
+        /** The name the staged row was written under before the rename. */
+        stagedName: String? = null,
     ) {
         open()
         val ids = setOf(asked.videoId, fetched.videoId)
@@ -1716,6 +1807,31 @@ object Downloads {
                     if (old != uri.toString() && _saved.value.values.none { it == old }) {
                         runCatching { DownloadStore.delete(context, old.toUri()) }
                     }
+                }
+                // The old row is gone, so the media store should accept the
+                // real name instead of appending "(1)". App-private/legacy
+                // files already have it and return true without touching the
+                // disk. Read the name back even when the update reports
+                // success: the store appends "(1)" when another row still owns
+                // the name and still counts that as success. Recording the
+                // name it kept is what lets the next lookup find the committed
+                // file instead of downloading it again.
+                if (finalName != null) {
+                    val renamed = DownloadStore.renamePublished(context, uri, finalName)
+                    val recordedName = DownloadStore.reconcilePublishedName(
+                        finalName = finalName,
+                        stagedName = stagedName
+                            ?: DownloadStore.stagingFileName(finalName, fetched.videoId),
+                        renamed = renamed,
+                    ) { DownloadStore.displayName(context, uri) }
+                    record(
+                        saved = { it },
+                        meta = { meta ->
+                            meta.mapValues { (id, value) ->
+                                if (id in ids) value.copy(displayName = recordedName) else value
+                            }
+                        },
+                    )
                 }
             }
         }
@@ -2189,7 +2305,7 @@ object Downloads {
         // for lossless with a transcode.
         if (hq == null && !forceReplace && quality.keepsLossless) {
             LOSSLESS_EXTENSIONS.firstNotNullOfOrNull { extension ->
-                DownloadStore.existing(context, DownloadStore.fileNameFor(track, extension))
+                existingDownload(context, track, extension)
             }?.takeIf { Downloads.savedFileIsRecording(track.videoId, it.toString()) }?.let { uri ->
                 return@withContext Prepared(
                     song.videoId,
@@ -2331,7 +2447,16 @@ object Downloads {
                 }
 
                 val baseName = DownloadStore.fileNameFor(track, route.extension)
-                val alreadyThere = DownloadStore.existing(context, baseName)
+                // A media-store replacement cannot reserve the final name while
+                // the old row still owns it: the store would rename the new row
+                // to `… (1).ext`, and the next pass would look for a file that
+                // is no longer under that name. Write it under a temporary name
+                // and give it the real one after the old row is removed.
+                val stageReplacement = (plan.hq != null || plan.forceReplace) &&
+                    AppSettings.exportDownloads.value &&
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+                val finalName = baseName.takeIf { stageReplacement }
+                val alreadyThere = existingDownload(context, track, route.extension)
                 val existingIsRecording = alreadyThere != null &&
                     savedFileIsRecording(track.videoId, alreadyThere.toString())
                 if (plan.hq == null &&
@@ -2347,13 +2472,17 @@ object Downloads {
                     return@coroutineScope false
                 }
                 val name = synchronized(lock) {
-                    var candidate = DownloadStore.downloadFileName(
-                        song = track,
-                        extension = route.extension,
-                        nameTaken = alreadyThere != null,
-                        existingIsRecording = existingIsRecording,
-                        replacing = plan.hq != null || plan.forceReplace,
-                    )
+                    var candidate = if (stageReplacement) {
+                        DownloadStore.stagingFileName(baseName, track.videoId)
+                    } else {
+                        DownloadStore.downloadFileName(
+                            song = track,
+                            extension = route.extension,
+                            nameTaken = alreadyThere != null,
+                            existingIsRecording = existingIsRecording,
+                            replacing = plan.hq != null || plan.forceReplace,
+                        )
+                    }
                     if (!reservedNames.add(candidate)) {
                         // A different transfer is already writing this name.
                         // Its final file does not exist yet, so `existing` could
@@ -2370,7 +2499,7 @@ object Downloads {
                     // song's name is exactly what used to be adopted here.
                     Log.d(TAG, "$baseName exists but is not ${track.videoId}'s verified recording; downloading it")
                 }
-                if (alreadyThere != null && name != baseName) {
+                if (!stageReplacement && alreadyThere != null && name != baseName) {
                     // A different upload already owns this name. Keep both
                     // files; overwriting would make the old record play these
                     // bytes under the old song's name.
@@ -2447,6 +2576,8 @@ object Downloads {
                     hq = plan.hq,
                     sourceTitle = route.sourceTitle,
                     sourceArtist = route.sourceArtist,
+                    finalName = finalName,
+                    stagedName = name,
                 )
                 TranslationAhead.downloaded(context, track, savedUri.toString())
                 DownloadSession.done(id)
@@ -2762,9 +2893,26 @@ object Downloads {
         }
     }
 
+    /**
+     * A failure before the verified pair was tried — a Wi-Fi-only or
+     * service-start refusal. The pair is still valid, so keeping it lets Retry
+     * resume the upgrade; dropping it made Retry an ordinary download that
+     * could adopt the old lower-rung file and report Done.
+     *
+     * Permanent source/track failures go through the [keepVerifiedPair]
+     * overload with false, so the next tap can search again.
+     */
     private fun fail(videoId: String, reason: String) {
-        fail(videoId, reason, keepVerifiedPair = false)
+        fail(videoId, reason, keepVerifiedPair = reason.keepsVerifiedPairAfterRefusal())
     }
+
+    /**
+     * The refusals that happen before any source or track was contacted. Their
+     * pinned pair was never tried, and a retry on an allowed connection or a
+     * started service still needs it.
+     */
+    private fun String.keepsVerifiedPairAfterRefusal(): Boolean =
+        this == WIFI_ONLY_REFUSAL || this == SERVICE_START_REFUSAL
 
     /**
      * A failed replacement leaves the old file in place, and a permanent
@@ -2773,15 +2921,20 @@ object Downloads {
      * pair, even when the caller passed `hq = null`; the row failed again
      * before it could fall back to YouTube.
      *
-     * [keepVerifiedPair] is for a transient network failure. The pair is still
-     * the answer once the connection returns, and dropping it made the retry
-     * go through `routeFor` instead — where it could adopt the existing
-     * lower-rung file (see the `already in Music` paths in [prepare] and
-     * [transfer]) and report Done without the upgrade the listener asked for.
+     * [keepVerifiedPair] is true for a transient network failure or a refusal
+     * that never contacted the pair. The pair is still the answer once the
+     * connection returns, and dropping it made the retry go through `routeFor`
+     * instead — where it could adopt the existing lower-rung file (see the
+     * `already in Music` paths in [prepare] and [transfer]) and report Done
+     * without the upgrade the listener asked for.
      */
     private fun fail(videoId: String, reason: String, keepVerifiedPair: Boolean) {
         if (!keepVerifiedPair) {
             synchronized(lock) { hqOverrides.remove(videoId) }
+            // Retry rebuilds the ask from the manager row's plan, so clearing
+            // only the in-memory override left the same pinned pair on it and
+            // every tap failed again before a fresh search could run.
+            DownloadSession.forgetPinnedRetryPair(videoId)
         }
         _active.update { it + (videoId to DownloadState.Failed(reason)) }
         DownloadSession.failed(videoId, reason)
@@ -2867,6 +3020,9 @@ object Downloads {
      */
     internal const val WIFI_ONLY_REFUSAL = "다운로드가 Wi-Fi 전용으로 설정되어 있습니다"
 
+    /** The download service could not be started; the track never left the queue. */
+    internal const val SERVICE_START_REFUSAL = "지금은 다운로드를 시작할 수 없습니다"
+
     /** Dropped when the sheet is reopened; a failure is worth showing once. */
     fun dismissFailure(videoId: String) {
         if (_active.value[videoId] is DownloadState.Failed) clear(videoId)
@@ -2891,6 +3047,12 @@ internal data class SavedSongMetadata(
      */
     val albumName: String? = null,
     val uri: String,
+    /**
+     * The name the media store actually kept, when a replacement could not take
+     * its final one. Defaulted so older records still decode; lookups fall back
+     * to [DownloadStore.fileNameFor] when it is absent.
+     */
+    val displayName: String? = null,
     val downloadFormat: String? = null,
     /** Stable creation time for downloads that MediaStore does not index. */
     val dateAddedSeconds: Long? = null,

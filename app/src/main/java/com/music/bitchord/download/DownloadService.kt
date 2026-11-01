@@ -11,9 +11,11 @@ import android.os.Build
 import android.os.IBinder
 import android.os.SystemClock
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.music.bitchord.R
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.playback.BatteryPolicy
+import com.music.bitchord.startup.AppForeground
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -248,7 +250,30 @@ class DownloadService : Service() {
         scope.cancel()
         drainGate.reset()
         Downloads.onStopped()
+        DownloadServiceStartGate.stopped()
+        restartIfBusy()
         super.onDestroy()
+    }
+
+    /**
+     * A batch that was still arriving as the old service went away must not be
+     * stranded. [Downloads.enqueue] skips a start while the gate says this
+     * service owns one, so the queue can outlive the service by the instant
+     * between `stopSelf` and [onDestroy]. Taking the gate again here — after
+     * releasing it — gives the remaining queue a drain without a new intent per
+     * batch item. Background starts are still refused; the next foreground
+     * event drains them as before.
+     */
+    private fun restartIfBusy() {
+        if (!AppForeground.isForeground || !Downloads.busy()) return
+        if (!DownloadServiceStartGate.requestStart()) return
+        val failure = runCatching {
+            ContextCompat.startForegroundService(
+                this,
+                Intent(this, DownloadService::class.java),
+            )
+        }.exceptionOrNull()
+        if (failure != null) DownloadServiceStartGate.startFailed()
     }
 
     // ---- Notification -------------------------------------------------------
@@ -376,6 +401,42 @@ class DownloadService : Service() {
          * a finished one would leave the whole batch to whoever won the race.
          */
         const val IDLE_GRACE_MS = 2_000L
+    }
+}
+
+/**
+ * Whether a foreground-service start is already on its way.
+ *
+ * A batch enqueues one track per call, and every call used to ask Android to
+ * start this service again. On a 300-track album that is 300 start requests
+ * and 300 notification rebuilds for one drain. The gate keeps the first and
+ * lets the running service pick up the rest from [Downloads]; [stopped] and
+ * [startFailed] open it again so a service that really went away can be
+ * restarted by the next enqueue (or by [DownloadService.onDestroy] when work
+ * is still queued).
+ */
+internal object DownloadServiceStartGate {
+
+    private var requested = false
+
+    /** @return true when the caller should start the service now. */
+    @Synchronized
+    fun requestStart(): Boolean {
+        if (requested) return false
+        requested = true
+        return true
+    }
+
+    /** A start request that Android refused; the next enqueue may try again. */
+    @Synchronized
+    fun startFailed() {
+        requested = false
+    }
+
+    /** The service is gone; a later enqueue owns the next start. */
+    @Synchronized
+    fun stopped() {
+        requested = false
     }
 }
 

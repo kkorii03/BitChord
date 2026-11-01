@@ -137,6 +137,129 @@ object DownloadStore {
     }
 
     /**
+     * The name a replacing download is written under before the old row is gone.
+     *
+     * The media store silently renames a second row with the same
+     * `DISPLAY_NAME` to `… (1).ext`. A replacement cannot delete the old file
+     * before the new one is committed — that is the safety rule the whole
+     * pending-row dance exists for — so it writes under this temporary name and
+     * [renamePublished] gives it the real one after `remember` has removed the
+     * old row. The old file therefore never has to be destroyed to make room.
+     */
+    internal fun stagingFileName(finalName: String, videoId: String): String {
+        val dot = finalName.lastIndexOf('.')
+        val stem = if (dot > 0) finalName.substring(0, dot) else finalName
+        val extension = if (dot > 0) finalName.substring(dot) else ""
+        val suffix = sanitise(videoId).replace(WHITESPACE, "").ifEmpty { "replacement" }
+        return "$stem ($suffix)$extension"
+    }
+
+    /**
+     * Give a committed replacement row its real display name.
+     *
+     * Only a media-store row is renamed; app-private and legacy files were
+     * already written under the final name. The old row must be gone first, or
+     * the media store would append `(1)` again.
+     */
+    fun renamePublished(context: Context, uri: Uri, finalName: String): Boolean {
+        if (uri.scheme == "file") return true
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return true
+        return runCatching {
+            context.contentResolver.update(
+                uri,
+                ContentValues().apply { put(MediaStore.MediaColumns.DISPLAY_NAME, finalName) },
+                null,
+                null,
+            ) > 0
+        }.onFailure {
+            Log.w(TAG, "could not rename $uri to $finalName: ${it.message}")
+        }.getOrDefault(false)
+    }
+
+    /**
+     * The name the committed row actually carries now.
+     *
+     * Read after every rename attempt, not only a failed one: the store appends
+     * `(1)` when another row still owns the requested name and still reports a
+     * successful update. Recording that name is what lets the next lookup find
+     * the file instead of downloading a second copy.
+     */
+    fun displayName(context: Context, uri: Uri): String? {
+        if (uri.scheme == "file") return uri.lastPathSegment
+        return runCatching {
+            context.contentResolver.query(
+                uri,
+                arrayOf(MediaStore.MediaColumns.DISPLAY_NAME),
+                null,
+                null,
+                null,
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            }
+        }.onFailure {
+            Log.w(TAG, "could not read the name of $uri: ${it.message}")
+        }.getOrNull()
+    }
+
+    /**
+     * The name to record after a rename attempt.
+     *
+     * Whatever the store says the row now carries wins: a successful update can
+     * still be disambiguated to `… (1).ext` when another row owns the requested
+     * name, and a failed one leaves the staging name behind. Recording that is
+     * the difference between finding the file on the next pass and downloading
+     * it again.
+     */
+    internal fun settledFileName(
+        finalName: String,
+        stagedName: String,
+        renamed: Boolean,
+        actualName: String?,
+    ): String = when {
+        !actualName.isNullOrBlank() -> actualName
+        renamed -> finalName
+        else -> stagedName
+    }
+
+    /**
+     * Apply [settledFileName] with the name read back from the committed row.
+     *
+     * Always reads, even when the update reported success, because the store
+     * may have appended `(1)` instead of taking [finalName].
+     */
+    internal fun reconcilePublishedName(
+        finalName: String,
+        stagedName: String,
+        renamed: Boolean,
+        readActualName: () -> String?,
+    ): String = settledFileName(
+        finalName = finalName,
+        stagedName = stagedName,
+        renamed = renamed,
+        actualName = readActualName(),
+    )
+
+    /**
+     * Names a later download lookup may use for a file written under [baseName].
+     *
+     * Normally just the base name. When a replacement could not take it and was
+     * recorded under another name, that recorded name is checked first — it is
+     * this track's own committed file, while the base name may still be the old
+     * row that caused the rename to fail. Only names with the same extension
+     * are considered, so a stale lossless record cannot answer a request for a
+     * different container.
+     */
+    internal fun lookupNames(baseName: String, recordedName: String?): List<String> {
+        if (recordedName.isNullOrBlank() || recordedName == baseName) return listOf(baseName)
+        val baseExtension = baseName.substringAfterLast('.', "")
+        val recordedExtension = recordedName.substringAfterLast('.', "")
+        if (baseExtension.isNotEmpty() && !baseExtension.equals(recordedExtension, ignoreCase = true)) {
+            return listOf(baseName)
+        }
+        return listOf(recordedName, baseName)
+    }
+
+    /**
      * Everything a FAT32 volume, the media store or a shell would each object
      * to for its own reasons, plus the whitespace that survives them.
      */

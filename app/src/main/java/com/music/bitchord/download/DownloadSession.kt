@@ -68,6 +68,12 @@ object DownloadSession {
         val from: String? = null,
         /** Ask order, so the list reads the way the queue drains. */
         val sequence: Long,
+        /**
+         * The replacement terms this row was asked with, so Retry repeats the
+         * same errand instead of an ordinary download. Null for rows made
+         * before the plan was recorded.
+         */
+        val retry: DownloadRetryPlan? = null,
     )
 
     data class State(
@@ -141,7 +147,11 @@ object DownloadSession {
      * and two rows for one song would leave the failure on screen next to its
      * own retry.
      */
-    fun queued(song: Song, from: String? = null) {
+    fun queued(
+        song: Song,
+        from: String? = null,
+        retry: DownloadRetryPlan? = null,
+    ) {
         update { state ->
             val existing = state.items.indexOfFirst { it.videoId == song.videoId }
             val item = Item(
@@ -150,6 +160,7 @@ object DownloadSession {
                 progress = DownloadProgress.Queued,
                 from = from ?: state.items.getOrNull(existing)?.from,
                 sequence = if (existing >= 0) state.items[existing].sequence else tick(),
+                retry = retry ?: state.items.getOrNull(existing)?.retry,
             )
             val items = if (existing >= 0) {
                 state.items.toMutableList().also { it[existing] = item }
@@ -172,6 +183,32 @@ object DownloadSession {
     fun done(videoId: String) = set(videoId, DownloadProgress.Done)
 
     fun failed(videoId: String, reason: String) = set(videoId, DownloadProgress.Failed(reason))
+
+    /**
+     * Forget the pinned source/track pair on a permanently failed row.
+     *
+     * The in-memory override is dropped by [Downloads.fail] so the next attempt
+     * can search again, but Retry rebuilds the ask from this plan. Keeping the
+     * pair here re-pinned the same dead source on every tap and the row could
+     * never fall back. The quality and replace intent still describe what the
+     * listener asked for, so they stay.
+     */
+    fun forgetPinnedRetryPair(videoId: String) {
+        update { state ->
+            val index = state.items.indexOfFirst { it.videoId == videoId }
+            if (index < 0) return@update state
+            val item = state.items[index]
+            val plan = item.retry ?: return@update state
+            if (plan.hq == null && plan.avoidSourceConfigId == null) return@update state
+            state.copy(
+                items = state.items.toMutableList().also {
+                    it[index] = item.copy(
+                        retry = plan.copy(hq = null, avoidSourceConfigId = null),
+                    )
+                },
+            )
+        }
+    }
 
     /**
      * Swap in the track that is actually being fetched.
