@@ -3,6 +3,7 @@ package com.music.bitchord
 import com.music.bitchord.data.model.BrowseItem
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.SearchResult
+import com.music.bitchord.ko.chooseAlbumSearchHit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
