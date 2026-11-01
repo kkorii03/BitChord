@@ -11,6 +11,7 @@ internal class StartupCredentials(
     val activeProfileId: String?,
     val selectedChannelKey: String?,
     val selectedChannelName: String?,
+    val signedIn: Boolean,
 )
 
 internal class StartupCredentialState(
@@ -32,6 +33,7 @@ internal class StartupCredentialState(
                 ?.firstOrNull { it.profileId == store.activeProfileId }
                 ?.name
                 ?: store.channelName,
+            signedIn = store.isSignedIn,
         )
     }
 }

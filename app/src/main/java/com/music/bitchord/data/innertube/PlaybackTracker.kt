@@ -1,6 +1,7 @@
 package com.music.bitchord.data.innertube
 
 import com.music.bitchord.data.TrackLog
+import com.music.bitchord.data.net.NetworkReadiness
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.ListeningSink
 import com.music.bitchord.data.settings.PrivateListening
@@ -177,7 +178,6 @@ object PlaybackTracker {
         if (!VIDEO_ID.matches(videoId)) return
         if (!trackingAllowed()) return
         if (suppressedVideoId == videoId) return
-        if (Innertube.cookie == null) return
         // A downloaded track plays perfectly well with the radio off — the
         // whole point of downloading it — so this is the one place that has
         // to ask before trying rather than let a request find out the hard
@@ -191,6 +191,12 @@ object PlaybackTracker {
         opening = videoId
         scope.launch(TrackLog.about(videoId)) {
             try {
+                // A downloaded track can start before startup finishes restoring
+                // the session. Wait for the cookie here, off the main thread, so
+                // the play is credited to the listener instead of silently
+                // skipped as an anonymous one.
+                NetworkReadiness.await()
+                if (Innertube.cookie == null) return@launch
                 openWithRetries(videoId)
             } finally {
                 if (opening == videoId) opening = null

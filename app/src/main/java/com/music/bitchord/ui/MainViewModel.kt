@@ -1456,11 +1456,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Call when the library tab becomes visible. */
     fun onLibraryShown() {
-        loadPlaylists()
-        if (_signedIn.value && _library.value is UiState.Loading && libraryLoadJob?.isActive != true) loadLibrary()
-        if (!libraryStale) return
-        libraryStale = false
-        if (_library.value is UiState.Success) refresh(Feed.LIBRARY)
+        viewModelScope.launch {
+            // The restored session may still be opening. Deciding before it
+            // lands would treat a signed-in listener as a guest for the whole
+            // visit to this tab.
+            credentialsReady.await()
+            loadPlaylists()
+            if (_signedIn.value && _library.value is UiState.Loading && libraryLoadJob?.isActive != true) loadLibrary()
+            if (!libraryStale) return@launch
+            libraryStale = false
+            if (_library.value is UiState.Success) refresh(Feed.LIBRARY)
+        }
     }
 
     init {
@@ -1475,6 +1481,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 _activeProfileId.value = credentials.activeProfileId
                 _selectedChannelKey.value = credentials.selectedChannelKey
                 _selectedChannelName.value = credentials.selectedChannelName
+                // Set from the same background read, so a listener whose
+                // session is restored late is not mistaken for a guest by the
+                // deferred account work or by a tab opened this early.
+                _signedIn.value = credentials.signedIn
             } catch (failure: Throwable) {
                 if (failure is CancellationException) throw failure
                 com.music.bitchord.data.DebugLog.w(
@@ -1494,6 +1504,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // check — neither blocks or competes with Home's first row.
         viewModelScope.launch {
             delay(STARTUP_DEFER_MS)
+            // The delay settles the first screen; it is not a deadline for the
+            // encrypted store. Awaiting the same readiness the feeds use keeps
+            // a slow open from turning a signed-in listener into a missed
+            // account refresh for this process.
+            credentialsReady.await()
             for (work in startupDeferredWork(_signedIn.value)) {
                 when (work) {
                     StartupDeferredWork.ACCOUNT -> loadAccount()
@@ -2165,6 +2180,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun loadLibrary() {
+        // A tab opened before the session finishes restoring would otherwise
+        // skip the library for the rest of the process. Wait for the same
+        // readiness the feeds use, then decide.
+        if (!credentialsReady.isCompleted) {
+            viewModelScope.launch {
+                credentialsReady.await()
+                loadLibrary()
+            }
+            return
+        }
         if (!_signedIn.value) return
         val identity = listenerKey()
         _library.value = UiState.Loading
