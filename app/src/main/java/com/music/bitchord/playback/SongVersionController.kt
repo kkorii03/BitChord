@@ -246,10 +246,30 @@ internal class SongVersionController(
                 // A file saved under the release id can be the video's sound.
                 // Online it must not be attached to the upcoming row; stream
                 // the release instead, exactly as the current-row path does.
-                val streamOnly = SongVersionPolicy.replacementStreamsSong(
+                // Provenance is not the only evidence: a legacy file may
+                // already be remembered as the video's sound, or be longer
+                // than the catalogue release.
+                val suspectId = Downloads.songIdForFile(resolved.videoId)
+                val suspectMs = Downloads.mvSoundSuspectMs(suspectId)
+                val catalogMs = Downloads.catalogDurationMs(
                     resolved.videoId,
-                    Downloads.savedSoundSourceFor(resolved.videoId),
+                    resolved.durationMillis(),
+                )
+                val fileMs = if (suspectMs == null && catalogMs != null) {
+                    Downloads.savedUri(context, resolved.videoId)?.let {
+                        Downloads.localDurationMs(context, it.toString())
+                    }
+                } else {
+                    null
+                }
+                val streamOnly = SongVersionPolicy.replacementStreamsSong(
+                    playId = resolved.videoId,
+                    soundSourceId = Downloads.savedSoundSourceFor(resolved.videoId),
                     online = !AudioCache.isOffline(),
+                    mvSoundSuspectMs = suspectMs,
+                    fileDurationMs = fileMs,
+                    catalogDurationMs = catalogMs,
+                    isVideo = resolved.isVideo,
                 )
                 val replacement = QueueShuffle.withQueueMetadata(
                     resolved.toMediaItem(useDownloadedFile = !streamOnly),

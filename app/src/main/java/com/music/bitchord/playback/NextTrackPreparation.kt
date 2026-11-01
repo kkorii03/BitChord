@@ -13,6 +13,7 @@ import com.music.bitchord.data.lyrics.Deepgram
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.net.SongVersionPolicy
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.HqQuality
@@ -711,11 +712,32 @@ internal class NextTrackPreparation(
         if (item.mediaId != song.videoId) return null
         // A file saved under the release id can be the video's sound. Online
         // it must not be attached to the row; stream the release instead,
-        // exactly as the current-row path does.
-        val streamOnly = SongVersionPolicy.replacementStreamsSong(
+        // exactly as the current-row path does. Provenance is not the only
+        // evidence: a legacy file may already be remembered as the video's
+        // sound, or be longer than the catalogue release. This row is replaced
+        // before it plays, so the crossfade can mark it audible and the later
+        // repair would never run.
+        val suspectId = Downloads.songIdForFile(resolved.videoId)
+        val suspectMs = Downloads.mvSoundSuspectMs(suspectId)
+        val catalogMs = Downloads.catalogDurationMs(
             resolved.videoId,
-            Downloads.savedSoundSourceFor(resolved.videoId),
+            resolved.durationMillis(),
+        )
+        val fileMs = if (suspectMs == null && catalogMs != null) {
+            Downloads.savedUri(context, resolved.videoId)?.let {
+                Downloads.localDurationMs(context, it.toString())
+            }
+        } else {
+            null
+        }
+        val streamOnly = SongVersionPolicy.replacementStreamsSong(
+            playId = resolved.videoId,
+            soundSourceId = Downloads.savedSoundSourceFor(resolved.videoId),
             online = !AudioCache.isOffline(),
+            mvSoundSuspectMs = suspectMs,
+            fileDurationMs = fileMs,
+            catalogDurationMs = catalogMs,
+            isVideo = resolved.isVideo,
         )
         val replacement = QueueShuffle.withQueueMetadata(
             resolved.toMediaItem(useDownloadedFile = !streamOnly),

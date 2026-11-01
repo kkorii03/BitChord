@@ -295,13 +295,37 @@ object SongVersionPolicy {
      * saved under the song id), so the next track could start with the wrong
      * recording. This is the same provenance question the current-row path
      * asks through [downloadedFileUse].
+     *
+     * Recorded provenance is not the only evidence: a file saved before
+     * provenance existed can already be remembered as the video's sound
+     * ([mvSoundSuspectMs]) or fail the length check ([mvSoundDeltaMs]). The
+     * current-row path treats those as a stream, and the upcoming row must do
+     * the same — otherwise the crossfade marks it audible and the later repair
+     * never runs. Offline the file stays, because it is the only sound there is.
      */
     fun replacementStreamsSong(
         playId: String,
         soundSourceId: String?,
         online: Boolean,
-    ): Boolean =
-        downloadedFileUse(playId, soundSourceId, online) == DownloadedFileUse.STREAM_SONG
+        mvSoundSuspectMs: Long? = null,
+        fileDurationMs: Long? = null,
+        catalogDurationMs: Long? = null,
+        isVideo: Boolean = false,
+        localFile: Boolean = true,
+    ): Boolean {
+        if (!online) return false
+        if (mvSoundSuspectMs != null) return true
+        if (downloadedFileUse(playId, soundSourceId, online) == DownloadedFileUse.STREAM_SONG) {
+            return true
+        }
+        return mvSoundDeltaMs(
+            fileDurationMs = fileDurationMs,
+            catalogDurationMs = catalogDurationMs,
+            isVideo = isVideo,
+            localFile = localFile,
+            soundSourceId = soundSourceId,
+        ) != null
+    }
 
     /**
      * Whether an existing file may be adopted as [targetId]'s download.
