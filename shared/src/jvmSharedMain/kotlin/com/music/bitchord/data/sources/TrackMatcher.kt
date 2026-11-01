@@ -162,7 +162,7 @@ object TrackMatcher {
         parseTitle(title, artist).let { (it.words + it.versions).joinToString(" ") }
 
     /** The first credited artist — who a catalogue is most likely to file the track under. */
-    internal fun primaryArtist(artist: String): String =
+    internal fun primaryArtist(artist: String): String = // [KO] track-matcher
         artistVariants(artist).firstOrNull().orEmpty()
 
     internal fun artistVariants(artist: String) = KoTrackMatcher.artistVariants(artist) // [KO] artistVariants
@@ -557,7 +557,7 @@ object TrackMatcher {
      * `(title)`. CJK letters themselves survive — stripping them is what kept
      * every non-Latin catalogue out of matching entirely.
      */
-    internal fun normalize(text: String): String =
+    internal fun normalize(text: String): String = // [KO] track-matcher
         Normalizer.normalize(text, Normalizer.Form.NFKC)
             .lowercase(Locale.ROOT)
             .replace("&", " and ")
@@ -569,7 +569,7 @@ object TrackMatcher {
      * marker ("絆ノ奇跡 -instrumental-") carries no filing — without this the
      * marker alone would keep the unmatchable script as the identity.
      */
-    internal fun hasFilingLatin(text: String): Boolean =
+    internal fun hasFilingLatin(text: String): Boolean = // [KO] track-matcher
         text.split(WORD_SPLIT)
             .map { it.replace(NON_ALNUM, "") }
             .filter { it.isNotEmpty() }
@@ -679,7 +679,7 @@ object TrackMatcher {
      * A side with no credit at all scores zero rather than failing: there is
      * nothing to disagree with, and the title has already had to match exactly.
      */
-    internal fun artistScore(wanted: String, got: String): Int? {
+    internal fun artistScore(wanted: String, got: String): Int? { // [KO] track-matcher
         val want = artistNames(wanted)
         val have = artistNames(got)
         if (want.isEmpty() || have.isEmpty()) return 0
@@ -697,7 +697,7 @@ object TrackMatcher {
      * "Atif Aslam, Tulsi Kumar". Single letters go — an initialled
      * "A. R. Rahman" and a plain "AR Rahman" are the same person.
      */
-    internal fun artistNames(value: String): Set<List<String>> =
+    internal fun artistNames(value: String): Set<List<String>> = // [KO] track-matcher
         artistNamesMemo.getOrPut(value) { artistNamesUncached(value) }
 
     private fun artistNamesUncached(value: String): Set<List<String>> = artistVariants(value)
@@ -772,7 +772,7 @@ object TrackMatcher {
      * (Remix)" as the album of a plain-titled "KALYANI"). Read with the same
      * parser, so the same version vocabulary applies on both sides.
      */
-    internal fun albumVersionMarkers(album: String?): Set<String> =
+    internal fun albumVersionMarkers(album: String?): Set<String> = // [KO] track-matcher
         if (album.isNullOrBlank()) emptySet() else parseTitle(album).versions
 
     /** Punctuation, spacing and a trailing edition label are catalogue formatting, not release identity. */
@@ -871,24 +871,24 @@ object TrackMatcher {
     }
 
     /** Visual intros/outros can make the video substantially longer than its audio master. */
-    const val VIDEO_DURATION_LIMIT_SEC = 90
+    const val VIDEO_DURATION_LIMIT_SEC = 90 // [KO] track-matcher
 
-    internal const val BRACKET_PASSES = 3
-    internal const val DASH_PASSES = 3
+    internal const val BRACKET_PASSES = 3 // [KO] track-matcher
+    internal const val DASH_PASSES = 3 // [KO] track-matcher
 
-    internal val BRACKETED = Regex("""[(\[]([^()\[\]]*)[)\]]""")
-    internal val DASH = Regex("""\s+[-–—|]+\s+""")
-    internal val FEATURING = Regex("""\b(feat|ft|featuring|with)\b.*""")
+    internal val BRACKETED = Regex("""[(\[]([^()\[\]]*)[)\]]""") // [KO] track-matcher
+    internal val DASH = Regex("""\s+[-–—|]+\s+""") // [KO] track-matcher
+    internal val FEATURING = Regex("""\b(feat|ft|featuring|with)\b.*""") // [KO] track-matcher
     /** `~` and the wave dash `〜` join words in Japanese titles ("真夜中のドア〜stay"). */
-    internal val WORD_SPLIT = Regex("""[\s.·~〜]+""")
+    internal val WORD_SPLIT = Regex("""[\s.·~〜]+""") // [KO] track-matcher
     /**
      * What survives into identity: any language's letters and digits.
      * ASCII-only (`[^a-z0-9]`) is what emptied every CJK/Devanagari title to
      * `""` — and an empty core matches nothing and asks for nothing.
      */
-    internal val NON_ALNUM = Regex("""[^\p{L}\p{N}]""")
-    internal val LATIN = Regex("[a-z0-9]")
-    internal const val LATIN_QUERY_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789 "
+    internal val NON_ALNUM = Regex("""[^\p{L}\p{N}]""") // [KO] track-matcher
+    internal val LATIN = Regex("[a-z0-9]") // [KO] track-matcher
+    internal const val LATIN_QUERY_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789 " // [KO] track-matcher
     private val KANA_ROMAJI: Map<Char, String> = run {
         fun row(consonant: String, kana: String, vowels: String = "aiueo"): Map<Char, String> =
             kana.toList().zip(vowels.toList()).associate { (k, v) -> k to "$consonant$v" }
@@ -917,11 +917,11 @@ object TrackMatcher {
     private val CONS_OVERRIDES = mapOf(
         "shi" to "sh", "chi" to "ch", "tsu" to "ts", "fu" to "f", "ji" to "j", "zu" to "z",
     )
-    internal val CJK_OPEN = Regex("[「『【〈《〔［｛]")
-    internal val CJK_CLOSE = Regex("[」』】〉》〕］｝]")
+    internal val CJK_OPEN = Regex("[「『【〈《〔［｛]") // [KO] track-matcher
+    internal val CJK_CLOSE = Regex("[」』】〉》〕］｝]") // [KO] track-matcher
     // Not the katakana middle dot `・`: it sits *inside* a transliterated
     // name (ジョン・レノン), and splitting there makes two Johns one artist.
-    internal val ARTIST_SEPARATORS =
+    internal val ARTIST_SEPARATORS = // [KO] track-matcher
         Regex("""\s*(?:[,&/;·|、，×]|\band\b|\bx\b|\bvs\.?\b|\bfeat\.?\b|\bft\.?\b|\bfeaturing\b|\bwith\b|및)\s*""")
 
     /**
@@ -929,7 +929,7 @@ object TrackMatcher {
      * listing of the same one. A title carrying one of these on one side only
      * is refused outright.
      */
-    internal val VERSION_WORDS = setOf(
+    internal val VERSION_WORDS = setOf( // [KO] track-matcher
         "remix", "remixes", "rmx", "refix", "flip", "bootleg", "mashup", "medley",
         "live", "concert", "unplugged", "acoustic", "instrumental", "karaoke",
         // A stem is not the song. "Vocals Only", "Acapella", "Backing Track"
@@ -955,7 +955,7 @@ object TrackMatcher {
      * reading them as a take would let the live or cover recording stand in
      * for the original.
      */
-    internal val TRAILING_TAKES = setOf(
+    internal val TRAILING_TAKES = setOf( // [KO] track-matcher
         "instrumental", "karaoke", "acapella", "acappella", "remix", "rmx", "nightcore",
     )
 
@@ -967,7 +967,7 @@ object TrackMatcher {
      * rescue above — which is what stops the 256s instrumental twin from
      * standing in for the 256s vocal no duration check can separate.
      */
-    internal val NOVOCAL_TAKES = setOf(
+    internal val NOVOCAL_TAKES = setOf( // [KO] track-matcher
         "instrumental", "karaoke", "acapella", "acappella", "backing", "stems", "stem",
     )
 
@@ -976,7 +976,7 @@ object TrackMatcher {
      * exception list to [VERSION_WORDS] — without it, "Song (Album Version)"
      * and "Song" would be two different recordings.
      */
-    internal val NEUTRAL_SEGMENTS = setOf(
+    internal val NEUTRAL_SEGMENTS = setOf( // [KO] track-matcher
         "albumversion", "originalversion", "originalmix", "singleversion",
         "radioversion", "radioedit", "stereoversion", "monoversion",
         "studioversion", "fullversion", "standardversion", "explicitversion",
@@ -984,7 +984,7 @@ object TrackMatcher {
     )
 
     /** Packaging words, worth nothing as a tie-break because everything has them. */
-    internal val NOISE_WORDS = setOf(
+    internal val NOISE_WORDS = setOf( // [KO] track-matcher
         "official", "video", "audio", "lyrics", "lyric", "lyrical", "visualizer",
         "song", "songs", "full", "music", "the", "and", "from", "feat", "ft",
         "featuring", "with", "new", "latest", "free", "download", "remaster",
@@ -992,13 +992,13 @@ object TrackMatcher {
         "album", "single", "hd", "hq", "4k", "mp3",
     )
 
-    internal val ALBUM_NOISE_WORDS = setOf(
+    internal val ALBUM_NOISE_WORDS = setOf( // [KO] track-matcher
         "album", "deluxe", "edition", "expanded", "remaster", "remastered",
         "version", "explicit", "clean", "bonus", "anniversary",
     )
 
     /** Trailing labels an upload hangs on a title with no brackets to hold them. */
-    internal val TRAILING_NOISE = setOf(
+    internal val TRAILING_NOISE = setOf( // [KO] track-matcher
         "song", "songs", "video", "audio", "lyrics", "lyric", "lyrical",
         "official", "full", "hd", "hq", "4k", "mp3", "ost", "soundtrack",
         // `Youngblood M/V` and `Youngblood MV` print the tag without brackets.
@@ -1007,5 +1007,5 @@ object TrackMatcher {
     )
 
     /** Dropped from the core so that "Jack and Jill" and "Jack & Jill" are one title. */
-    internal val JOINING_WORDS = setOf("and")
+    internal val JOINING_WORDS = setOf("and") // [KO] track-matcher
 }
