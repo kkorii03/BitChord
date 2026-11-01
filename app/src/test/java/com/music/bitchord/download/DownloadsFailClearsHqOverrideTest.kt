@@ -1,6 +1,7 @@
 package com.music.bitchord.download
 
 import com.music.bitchord.data.sources.HqTier
+import com.music.bitchord.ko.downloads.KoDownloadQueue
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -21,12 +22,12 @@ class DownloadsFailClearsHqOverrideTest {
     private val failedId = "video-1"
     private val untouchedId = "video-2"
 
-    private val hqField = Downloads::class.java
+    private val hqField = KoDownloadQueue::class.java
         .getDeclaredField("hqOverrides")
         .apply { isAccessible = true }
 
     @Suppress("UNCHECKED_CAST")
-    private val overrides = hqField.get(Downloads) as MutableMap<String, HqDownloadSource>
+    private val overrides = hqField.get(KoDownloadQueue) as MutableMap<String, HqDownloadSource>
 
     @Before
     fun setUp() {
@@ -85,21 +86,10 @@ class DownloadsFailClearsHqOverrideTest {
     }
 
     private fun fail(videoId: String, reason: String) {
-        val method = Downloads::class.java.getDeclaredMethod(
-            "fail",
-            String::class.java,
-            String::class.java,
-        ).apply { isAccessible = true }
-        method.invoke(Downloads, videoId, reason)
+        Downloads.fail(videoId, reason)
     }
 
     private fun fail(videoId: String, reason: String, keepVerifiedPair: Boolean) {
-        val method = Downloads::class.java.getDeclaredMethod(
-            "fail",
-            String::class.java,
-            String::class.java,
-            Boolean::class.javaPrimitiveType,
-        ).apply { isAccessible = true }
-        method.invoke(Downloads, videoId, reason, keepVerifiedPair)
+        Downloads.fail(videoId, reason, keepVerifiedPair)
     }
 }
