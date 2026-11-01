@@ -424,6 +424,10 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
             // the header is attached per request instead. See WebDavCoilAuth.
             .components {
                 add(WebDavCoilAuth())
+                // A legacy still rewritten to hq720 has no file for smaller
+                // uploads; retry at hqdefault instead of drawing an empty tile.
+                // See YouTubeArtworkFallback.
+                add(com.music.bitchord.data.cover.YouTubeArtworkFallback())
                 // Covers filed on the SMB share; anything else falls
                 // through to Coil's own fetchers. See SmbCoverFetcher.
                 add(SmbCoverFetcher.Factory())

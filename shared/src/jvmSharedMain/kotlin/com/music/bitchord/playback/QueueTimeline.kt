@@ -3,6 +3,7 @@ package com.music.bitchord.playback
 import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.withVideoThumbnailFallback
 import java.util.UUID
 
 /**
@@ -53,7 +54,7 @@ object QueueTimeline {
      * Invariant: [Song.queueEntryId] is assigned ONCE when entering the queue and is strictly
      * immutable across all transformations, upgrades, and round-trips.
      */
-    fun Song.asQueueEntry(tier: QueueTier): Song = copy(
+    fun Song.asQueueEntry(tier: QueueTier): Song = withVideoThumbnailFallback().copy(
         queueTier = tier,
         queueEntryId = queueEntryId ?: UUID.randomUUID().toString(),
     )
@@ -68,7 +69,7 @@ object QueueTimeline {
      * and shuffle/persistence can no longer tell the copies apart. A row the
      * listener is adding is a new occurrence and gets a new id.
      */
-    fun Song.asNewQueueEntry(tier: QueueTier): Song = copy(
+    fun Song.asNewQueueEntry(tier: QueueTier): Song = withVideoThumbnailFallback().copy(
         queueTier = tier,
         queueEntryId = UUID.randomUUID().toString(),
     )
