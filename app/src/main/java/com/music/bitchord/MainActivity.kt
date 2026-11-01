@@ -137,10 +137,16 @@ import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.DiagnosticsState
 import com.music.bitchord.data.innertube.InnertubeParser
+import com.music.bitchord.ko.KoAlternateVersionEffect
+import com.music.bitchord.ko.KoAutoMusicOnlyEffect
 import com.music.bitchord.ko.KoDetailCoversEffect
+import com.music.bitchord.ko.KoDismissEmptyPlayerEffect
+import com.music.bitchord.ko.KoLyricsSettingsRoute
+import com.music.bitchord.ko.KoFirstHomeContentEffect
 import com.music.bitchord.ko.KoFirstPlayNotificationPermission
 import com.music.bitchord.ko.KoForkAlerts
 import com.music.bitchord.ko.KoProxyHealthNotice
+import com.music.bitchord.ko.koSongMenuStates
 import com.music.bitchord.ko.koBrowsePlaylist
 import com.music.bitchord.ko.koPlayDetailSongs
 import com.music.bitchord.ko.koShuffleDetailSongs
@@ -148,6 +154,7 @@ import com.music.bitchord.ko.koHandleHistoryAction
 import com.music.bitchord.ko.koScreenLabel
 import com.music.bitchord.ko.koReportProblem
 import com.music.bitchord.ko.koSetPlayerShown
+import com.music.bitchord.ko.koPlayerShownSetter
 import com.music.bitchord.ko.KoMainActivity
 import com.music.bitchord.ko.KoMainActivityState
 import com.music.bitchord.ko.chooseAlbumSearchHit
@@ -600,24 +607,7 @@ private fun BitChordApp(
      * permanent pane.
      */
     var showNowPlaying by remember { mutableStateOf(false) }
-    // The one way the player is raised, whoever asks: M3 moving it, the app
-    // moving it, or a widget's deep link. A raise has to follow a touch the
-    // activity saw since it last resumed — or be that deep link — so a
-    // programmatic open while the app is coming back to the foreground cannot
-    // raise the sheet by itself (see [PlayerExpandGuard]). Every raise that
-    // does happen leaves one line in the exportable log, with the frames that
-    // asked for it, so the next report of an unexpected raise can say which
-    // path it came by.
-    val setPlayerShown: (Boolean, PlayerExpandSource) -> Unit = { shown, source ->
-        koSetPlayerShown( // [KO] player-expand-guard
-            shown = shown,
-            source = source,
-            currentlyShown = showNowPlaying,
-            touchedSinceResume = activity.touchedSinceResume(),
-            msSinceResume = activity.msSinceResume(),
-            msSinceTouch = activity.msSinceTouch(),
-        ) { showNowPlaying = it }
-    }
+    val setPlayerShown = koPlayerShownSetter({ showNowPlaying }, activity::touchedSinceResume, activity::msSinceResume, activity::msSinceTouch) { showNowPlaying = it } // [KO] player-expand-guard
     // Where the two ends of opening and closing the player meet: the mini
     // player's cover reports itself here, the sheet its offset, and the player
     // flies its artwork between them — see [PlayerDock].
@@ -847,14 +837,7 @@ private fun BitChordApp(
 
     val homeState by viewModel.home.collectAsStateWithLifecycle()
 
-    // One line, once: how long from process start to real Home content. See
-    // StartupTrace for where the other end of that measurement is. Keyed on a
-    // flag rather than the state itself so a long shelf list is not compared
-    // against the previous one on every recomposition.
-    val homeHasContent = homeState is UiState.Success
-    LaunchedEffect(homeHasContent) {
-        if (homeHasContent) com.music.bitchord.startup.StartupTrace.firstHomeContent()
-    }
+    KoFirstHomeContentEffect(homeState is UiState.Success) // [KO] first-home-content
 
     // The top bar's icon is the quiet, always-there nudge; this is the
     // once-per-launch popup version of the same news. `updateDialogShown`
@@ -1065,13 +1048,7 @@ private fun BitChordApp(
     }
     val controller = rememberMediaController()
     val player = rememberPlayerState(controller)
-    // An emptied queue — the last track removed, the queue cleared, playback
-    // stopped for good — leaves the sheet with nothing to show. Left raised, it
-    // is only hidden by `playerRaised` until the next track starts from a list,
-    // and then opens by itself over it. Event-driven: this runs on the change.
-    LaunchedEffect(player.song?.videoId) {
-        if (player.song == null && showNowPlaying) dismissPlayer()
-    }
+    KoDismissEmptyPlayerEffect(player.song?.videoId, player.song != null, showNowPlaying) { dismissPlayer() } // [KO] empty-queue-dismiss
     // A resume in a party is performed on the instant the server schedules, not
     // when it was pressed, and nothing about the player moves in between — so
     // the transport spends that round trip drawn as though the tap never landed.
@@ -1675,107 +1652,8 @@ private fun BitChordApp(
         }
     }
 
-    // Fallback for a video row that reached the player unconverted. Queues
-    // already resolve their current + next rows up front (see
-    // [YtMusicRepository.resolveQueueAhead]), and the service holds the first
-    // sound for the same decision (see its `resolveSongVersionBeforeAudio`),
-    // so this normally does nothing. It is deliberately limited to the window
-    // before the track has made a sound: once the listener is hearing it, a
-    // version swap would change the recording under them, so only the manual
-    // menu may do that. Tried marks only a definitive answer, so a cancelled
-    // or superseded lookup can be retried.
-    LaunchedEffect(autoMusicOnlyEffectKey(player.song?.videoId, preferMusicOnly, videoRadio)) {
-        val song = player.song ?: return@LaunchedEffect
-        val c = controller ?: return@LaunchedEffect
-        if (preferMusicOnly && !partyState.inParty && !videoRadioEnabledFor(song) &&
-            SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown) &&
-            (song.localUri == null || !AudioCache.isOffline()) &&
-            song.videoId != keepVideoId && song.videoId !in musicOnlyTried &&
-            SongVersionPolicy.mayAutoSwapBeforeAudio(
-                positionMs = c.currentPosition,
-                isPlaying = c.isPlaying,
-                alreadyAudible = false,
-            )
-        ) {
-            val settled = switchToMusicOnly(
-                song,
-                pauseWhileResolving = false,
-                alignVersion = false,
-                beforeAudioOnly = true,
-            )
-            if (settled) musicOnlyTried.add(song.videoId)
-        }
-    }
-
-    // Check if alternate (video vs audio) version exists, but only when the
-    // player's actions sheet is actually open on this track. This used to run
-    // on every track change while the app was composing, whether or not the
-    // player was on screen: one `next`/VIDEO_SWITCH search per song, and one
-    // of the biggest sources of YouTube requests during ordinary playback
-    // (the toggle it feeds is drawn only in that sheet).
-    //
-    // Skipped entirely in a Listen Together party: the track playing there is
-    // shared by everyone in it, and a per-listener version switch would put
-    // each member on their own cut of what is supposed to be one song — see
-    // [ListenTogether] and the matching guard server-side in
-    // [PlaybackService.smoothSwapCurrentTrackVersion].
-    LaunchedEffect(
-        player.song?.videoId,
-        songActions?.videoId,
-        menuFromPlayer,
-        showNowPlaying,
-        convertedAudioId,
-        convertedVideoId,
-        partyState.inParty,
-    ) {
-        val song = player.song
-        val sheetIsOpenForThisTrack = song != null &&
-            showNowPlaying &&
-            menuFromPlayer &&
-            songActions?.videoId == song.videoId
-        // A plain local file has no YouTube counterpart to switch to. A
-        // downloaded YouTube track does — its file is still that song's id, so
-        // the version lookup and switch are offered exactly as for a stream.
-        // A downloaded *video* row does too: it is still a music video, and
-        // the version switch is how it becomes the catalogue release.
-        if (song == null ||
-            SongVersionPolicy.keepsLocalFile(
-                SongOrigins.isLocalFile(song),
-                song.isVideo,
-                song.typeUnknown,
-            ) ||
-            partyState.inParty || !sheetIsOpenForThisTrack
-        ) {
-            hasAlternateVersion = false
-            return@LaunchedEffect
-        }
-        if ((convertedFromVideo != null && convertedAudioId == song.videoId) ||
-            (convertedFromAudio != null && convertedVideoId == song.videoId)) {
-            hasAlternateVersion = true
-            return@LaunchedEffect
-        }
-        alternateVersionCache[song.videoId]?.let { known ->
-            hasAlternateVersion = known
-            return@LaunchedEffect
-        }
-        hasAlternateVersion = false
-        val exists = withContext(Dispatchers.IO) {
-            if (SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown)) {
-                runCatching {
-                    val resolved = YtMusicRepository.songVersion(song)
-                    resolved != null && resolved.videoId != song.videoId
-                }.getOrDefault(false)
-            } else {
-                runCatching {
-                    YtMusicRepository.resolveVideo(song) != null
-                }.getOrDefault(false)
-            }
-        }
-        alternateVersionCache[song.videoId] = exists
-        if (player.song?.videoId == song.videoId && songActions?.videoId == song.videoId) {
-            hasAlternateVersion = exists
-        }
-    }
+    KoAutoMusicOnlyEffect(player, controller, preferMusicOnly, videoRadio, partyState.inParty, keepVideoId) { song, pause, align, before -> switchToMusicOnly(song, pause, align, before) } // [KO] auto-music-only-before-audio
+    KoAlternateVersionEffect(player, songActions, menuFromPlayer, showNowPlaying, convertedAudioId, convertedVideoId, convertedFromVideo, convertedFromAudio, partyState.inParty, alternateVersionCache) { hasAlternateVersion = it } // [KO] alternate-version-lookup
 
     /**
      * A song picked on its own — off a home card or a search hit — starts a
@@ -3229,18 +3107,7 @@ private fun BitChordApp(
                         } else if (pageRoute == AppRoute.Equalizer) {
                             EqualizerScreen(contentPadding = listPadding)
                         } else if (pageRoute == AppRoute.Lyrics) {
-                            LyricsSettingsScreen(
-                                onLyricsSources = { showLyricsSources = true },
-                                onTranslationLanguage = { showTranslationLanguage = true },
-                                onGeminiKey = { showGeminiKey = true },
-                                onDeepgramKey = { showDeepgramKey = true },
-                                onResetDownloadSync = {
-                                    scope.launch {
-                                        LyricsTiming.resetDownloadedSync(context.applicationContext)
-                                    }
-                                },
-                                contentPadding = listPadding,
-                            )
+                            KoLyricsSettingsRoute(listPadding, context, scope, { showLyricsSources = true }, { showTranslationLanguage = true }, { showGeminiKey = true }, { showDeepgramKey = true }) // [KO] lyrics-settings-route
                         } else if (pageRoute == AppRoute.Settings) {
                             SettingsScreen(
                                 windowWidth = windowWidth,
@@ -4650,17 +4517,7 @@ private fun BitChordApp(
         // and the player open, and the popup a held row lifts into. Every
         // callback below is the same in either; only the frame differs.
         val songMenuBody: @Composable (Song, SongActionsPresentation) -> Unit = { heldSong, presentation ->
-            // Menu-only answers, collected with the menu itself: liking,
-            // reverting, a quality race and the lyric snapshot are read here
-            // and nowhere else, so they must not invalidate the app shell.
-            val likeStatuses by viewModel.likeStatuses.collectAsStateWithLifecycle()
-            // Which tracks are being held on YouTube's own upload, so the player's menu
-            // offers the way back out of a revert rather than the revert again.
-            val pinnedToOriginal by OriginalVersion.pinned.collectAsStateWithLifecycle()
-            val qualityUpgradesInFlight by NerdStats.racingLossless.collectAsStateWithLifecycle()
-            val lyrics by viewModel.lyrics.collectAsStateWithLifecycle()
-            val lyricsTiming by viewModel.lyricsTiming.collectAsStateWithLifecycle()
-            val playlists by viewModel.playlists.collectAsStateWithLifecycle()
+            val koMenu = koSongMenuStates(viewModel) // [KO] song-menu-states
             // Set by whoever opened it — see [menuFromPlayer]. It cannot be
             // read off the player's own visibility any more, because on a
             // tablet the player is visible whatever the menu was opened from.
@@ -4841,7 +4698,7 @@ private fun BitChordApp(
                 song = song,
                 presentation = presentation,
                 signedIn = signedIn,
-                likeStatus = likeStatuses[song.videoId] ?: LikeStatus.INDIFFERENT,
+                likeStatus = koMenu.likeStatuses[song.videoId] ?: LikeStatus.INDIFFERENT,
                 // The app's library entry for a song is its liked state, so
                 // the menu's first row writes the same answer as the heart
                 // below it — one labelled as the library, one as the rating.
@@ -4850,7 +4707,7 @@ private fun BitChordApp(
                 } else {
                     null
                 },
-                inLibrary = (likeStatuses[song.videoId] ?: LikeStatus.INDIFFERENT) == LikeStatus.LIKE,
+                inLibrary = (koMenu.likeStatuses[song.videoId] ?: LikeStatus.INDIFFERENT) == LikeStatus.LIKE,
                 onPlayNext = { playNext(song); songActions = null },
                 onAddToQueue = { addToQueue(song); songActions = null },
                 onStartRadio = { startRadio(song); songActions = null },
@@ -4972,7 +4829,7 @@ private fun BitChordApp(
                     song.localUri == null &&
                     // Already there, and the menu says so with the row
                     // below instead.
-                    song.videoId !in pinnedToOriginal &&
+                    song.videoId !in koMenu.pinnedToOriginal &&
                     // And the same for a track that got back here without
                     // the listener asking: an upgrade that failed to prove
                     // itself is reverted automatically and pins nothing, so
@@ -4998,7 +4855,7 @@ private fun BitChordApp(
                 // of the session, and `askByHand` is what clears that.
                 onUpgradeQuality = if (fromPlayer &&
                     (
-                        song.videoId in pinnedToOriginal ||
+                        song.videoId in koMenu.pinnedToOriginal ||
                             playingYouTubesOwn(song.videoId, controller)
                         ) &&
                     // A track playing off a file the listener saved is not
@@ -5014,7 +4871,7 @@ private fun BitChordApp(
                 } else {
                     null
                 },
-                upgradeQualityInProgress = fromPlayer && song.videoId in qualityUpgradesInFlight,
+                upgradeQualityInProgress = fromPlayer && song.videoId in koMenu.qualityUpgradesInFlight,
                 // A downloaded track is replaced on disk, never mid-playback:
                 // this goes through the ordinary download queue, and its
                 // "replace the old file" half takes over once the new bytes
@@ -5071,7 +4928,7 @@ private fun BitChordApp(
                 // would name a moment that never happened to it.
                 onReportProblem = if (fromPlayer && controller?.currentMediaItem?.mediaId == song.videoId) {
                     {
-                        koReportProblem(context, song, player.position.positionMs, lyrics, lyricsTiming) // [KO] diagnostics
+                        koReportProblem(context, song, player.position.positionMs, koMenu.lyrics, koMenu.lyricsTiming) // [KO] diagnostics
                         songActions = null
                     }
                 } else {
