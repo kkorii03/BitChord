@@ -1271,7 +1271,17 @@ object TrackMatcher {
                 tailRemoved = true
                 labelPackaged = true
                 work = work ?: cleanSoundtrackWorkPreserving(tail)
-                text = text.substring(0, match.range.first)
+                // The label is packaging, but a take after it ("Joker OST
+                // Korean Version", "Joker OST (Live)") still names the
+                // recording. Dropping the whole pipe tail let the original
+                // stand in for that take.
+                val kept = keptSoundtrackTakeWords(tail)
+                val before = text.substring(0, match.range.first)
+                text = if (kept.isEmpty()) {
+                    before
+                } else {
+                    before + " (" + kept.joinToString(" ") + ")"
+                }
             }
         }
 
@@ -1408,7 +1418,20 @@ object TrackMatcher {
      */
     private fun keptSoundtrackTakeWords(text: String): List<String> {
         val words = wordsOf(text)
-        val languageTake = isLanguageVersion(text)
+        // A named label ("Joker OST Korean Version") puts the take after the
+        // soundtrack word, so the language check has to read that suffix.
+        // Without it only the packaging "version" survived and the original
+        // recording could stand in for the language take.
+        val label = SOUNDTRACK_WORD.findAll(text).lastOrNull()
+        val takeText = label?.let { text.substring(it.range.last + 1) } ?: text
+        // Neutral packaging after the label describes the ordinary release
+        // ("Radio Edit", "Original Mix"), so it is not a take. The dash path
+        // already applies this gate; the pipe path needs it too or splitting
+        // the tail turns an "edit"/"mix" word into a version and the plain
+        // catalogue row stops matching.
+        val takeWords = wordsOf(takeText)
+        if (takeWords.joinToString("") in NEUTRAL_SEGMENTS) return emptyList()
+        val languageTake = isLanguageVersion(takeText)
         return words.filter {
             (it in VERSION_WORDS && it !in NEUTRAL_SUFFIX_WORDS) ||
                 (languageTake && it in VERSION_LANGUAGES)
@@ -1771,12 +1794,36 @@ object TrackMatcher {
         segment: String,
         versions: MutableSet<String>,
         context: MutableSet<String>,
+        takeMarkers: Boolean = true,
     ) {
         val words = segment.split(WORD_SPLIT)
             .map { it.replace(NON_ALNUM, "") }
             .filter { it.isNotEmpty() }
         if (words.isEmpty()) return
         if (words.joinToString("") in NEUTRAL_SEGMENTS) return
+        // Text before a named soundtrack label is the work name, not the
+        // song's take: "Korean OST Drama" names a Korean-drama soundtrack,
+        // while the language of the take can only follow the label
+        // ("Joker OST Korean Version"). Reading the prefix as a take made
+        // the plain catalogue row look like a different recording.
+        if (!takeMarkers) {
+            context += words.filter { it.length > 2 && it !in NOISE_WORDS }
+            return
+        }
+        // A named soundtrack label inside a dropped tail names the release,
+        // not the take: "Joker OST Korean" keeps its language marker while
+        // "Joker" and "OST" stay context. Only segments with a take after the
+        // label are split; a bare/terminal label keeps the old reading.
+        val label = SOUNDTRACK_WORD.findAll(segment).lastOrNull()
+        if (label != null) {
+            val before = segment.substring(0, label.range.first)
+            val after = segment.substring(label.range.last + 1)
+            if (after.isNotBlank()) {
+                if (before.isNotBlank()) classify(before, versions, context, takeMarkers = false)
+                classify(after, versions, context)
+                return
+            }
+        }
         val languages = words.mapNotNull { VERSION_LANGUAGES[it] }.distinct()
         if (languages.isNotEmpty() && isLanguageVersion(segment)) {
             // A language version is a different recording. "Version"/"ver" is
