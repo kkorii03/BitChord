@@ -34,6 +34,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.R
 import com.music.bitchord.data.lyrics.translationLanguageName
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.ko.settingsSwitchColors
 import java.util.Locale
 
 /**
