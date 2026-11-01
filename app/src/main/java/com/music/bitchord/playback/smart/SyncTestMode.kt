@@ -4,6 +4,7 @@ import android.content.Context
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.SyncDump
+import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.SourceTrackKeys
 import com.music.bitchord.playback.StreamChoice
 import java.io.File
@@ -102,6 +103,19 @@ object SyncTestMode {
         if (!on) return
         val wav = VideoAudio.wavOfFile(head) ?: return
         write(context, "${SourceTrackKeys.PREFIX}$sourceConfigId${SourceTrackKeys.SEPARATOR}$trackId", wav)
+    }
+
+    /**
+     * Keeps the opening of a downloaded file [localUri] as `synctest/<videoId>.wav`
+     * — the same name a song check's WAV takes — unless one is already there.
+     */
+    suspend fun keepLocalHead(context: Context, videoId: String, localUri: String) {
+        if (!enabled(context, videoId)) return
+        val existing = externalRoot(context)?.let { File(File(it, WAV_DIR), "${safeName(videoId)}.wav") }
+        if (existing?.isFile == true) return
+        val song = Song(videoId = videoId, title = "", artist = "", thumbnailUrl = null, localUri = localUri)
+        val wav = VideoAudio.songWav(context, song) ?: return
+        write(context, videoId, wav)
     }
 
     private fun write(context: Context, id: String, wav: ByteArray) {

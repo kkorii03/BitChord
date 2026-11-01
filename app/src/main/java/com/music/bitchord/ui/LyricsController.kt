@@ -1195,6 +1195,14 @@ class LyricsController(
             matchPercent = matchPercent,
             lines = shown ?: lines,
         )
+        // Sync-test mode only: a downloaded file's own opening. With the
+        // download re-check off no song check runs for it, so nothing else
+        // keeps the audio its stored lyrics are shown against.
+        request.localUri?.let { local ->
+            if (SyncTestMode.enabled(app, request.videoId)) {
+                scope.launch(Dispatchers.IO) { SyncTestMode.keepLocalHead(app, request.videoId, local) }
+            }
+        }
         _lyricsTiming.update {
             it.copy(
                 shiftMs = shiftMs,
