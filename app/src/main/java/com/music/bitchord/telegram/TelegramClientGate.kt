@@ -29,15 +29,17 @@ class TelegramClientGate {
         private set
 
     val shouldBeOpen: Boolean
-        get() = telegramPlaybackActive || (holders.isNotEmpty() && appForeground)
+        get() = telegramPlaybackActive ||
+            streamLeases > 0 ||
+            (holders.isNotEmpty() && appForeground)
 
     val openReasons: List<String> get() = holders.toList()
 
     /**
      * A stream (or the metadata lookup that prepares one) needs the client.
      *
-     * This is the same reason as playback, so it opens and stays open even in
-     * the background. Leases are counted: resolving metadata for a queue
+     * This is its own reason, so it opens and stays open even in the
+     * background. Leases are counted: resolving metadata for a queue
      * transition must not close the client under a stream that is already
      * reading, and the last release is what lets it close.
      *
@@ -57,7 +59,6 @@ class TelegramClientGate {
     private fun beginLease(): Boolean {
         val first = streamLeases == 0
         streamLeases++
-        telegramPlaybackActive = true
         return first
     }
 
@@ -73,9 +74,7 @@ class TelegramClientGate {
 
     private fun endLease(): Boolean {
         if (streamLeases > 0) streamLeases--
-        val last = streamLeases == 0
-        if (last) telegramPlaybackActive = false
-        return last
+        return streamLeases == 0
     }
 
     fun acquire(reason: String): Boolean {
