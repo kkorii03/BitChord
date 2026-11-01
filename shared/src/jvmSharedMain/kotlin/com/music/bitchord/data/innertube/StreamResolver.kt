@@ -15,6 +15,7 @@ import com.music.bitchord.data.net.ProxyPlaybackPolicy
 import com.music.bitchord.data.net.ResolutionFacts
 import com.music.bitchord.data.net.YouTubeProxy
 import com.music.bitchord.data.net.raceForFirstSuccess
+import com.music.bitchord.ko.KoDirectBench
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -704,7 +705,7 @@ object StreamResolver {
         // A claim, a takedown or a private upload names the recording itself.
         // A region/Premium gate, an age-restricted or a paid track is not gone:
         // those still have to reach the proxy retry and extraction. Only the
-        // definitely-gone set may settle the resolve early; isTrackSpecific is
+        // definitely-gone set may settle the resolve early; KoDirectBench is
         // still used below for bench decisions, where age/paid count too.
         fun goneReason(): String? =
             directUnplayableReason?.takeIf { UnplayableReason.isDefinitelyGone(it) }
@@ -768,12 +769,12 @@ object StreamResolver {
                 directUnplayableReason =
                     UnplayableReason.keepTrackSpecific(directUnplayableReason, probe.reason)
             }
-            // A takedown, a claim or a deleted upload is a fact about this
-            // recording, not about the direct path. Counting it would bench
-            // that path for the next, perfectly playable track — the report
-            // shows exactly that: one blocked song and the following start
-            // lost its learned order.
-            if (!UnplayableReason.isTrackSpecific(directUnplayableReason)) {
+            // A takedown, a claim, a deleted upload or the player's own
+            // UNPLAYABLE answer is a fact about this recording, not about the
+            // direct path. Counting it would bench that path for the next,
+            // perfectly playable track — the report shows exactly that: one
+            // blocked song and the following start lost its learned order.
+            if (KoDirectBench.countsAgainstPath(directUnplayableReason)) { // [KO] direct-bench-scope
                 order.noteDirectRefused()
                 order.noteRefused(ResolutionOrder.DIRECT)
             }
@@ -799,11 +800,12 @@ object StreamResolver {
                     abortAfterFirstRefusal = gated && ProxyPlayback.canResolveViaProxy(),
                 )
             }
-            // A claim or a deleted upload says nothing about the learned path:
-            // benching it would make the next, playable track start on the
-            // slower default order for a refusal that was never its fault.
+            // A claim, a deleted upload or a bare UNPLAYABLE says nothing about
+            // the learned path: benching it would make the next, playable track
+            // start on the slower default order for a refusal that was never
+            // its fault.
             if (found == null && preferredManifest != null &&
-                !UnplayableReason.isTrackSpecific(itxUnplayableReason)
+                KoDirectBench.countsAgainstPath(itxUnplayableReason) // [KO] direct-bench-scope
             ) {
                 order.noteRefused(ResolutionOrder.itx(preferredManifest))
             }
