@@ -1,0 +1,8 @@
+BitChord 저장소의 scripts/featurehealth.py(표준 라이브러리 파이썬, 앱 코드 아님) 수정. 검색은 grep/git grep(rg 없음). 기준 브랜치 task/telegram.
+문제: 폰 logcat(threadtime 형식)을 넣으면 실제로 일어난 일을 0으로 센다. 실측 로그 예(줄 끝 텍스트):
+- 자동 믹스: 'arm smart fade=5644ms end=… style=DJ_FILTER …', 'blend start at cue=2150ms out=267898ms', 'handoff at in=2194ms out=267920ms', 'finish from FADING', 'finish levels inVol=1.0 outVol=0.0 handedOff=true' → D7(자동 믹스 시작/완료/겹침)이 0.
+- 무손실 실제 재생: 'power: decoders active=2 [player-b:c2.android.flac.decoder, automix]', 'next-prep: … hq=lossless_16 …' → D2 실제 FLAC 재생 0.
+- 가사 제공 비율(D6)이 화면 꺼짐 재생에서 1/7: track-summary 의 lyrics 필드가 화면 꺼짐 때 none 인지 확인하고, 그렇다면 '화면 꺼짐으로 가사 미요청'을 실패로 세지 않도록 분리 표기.
+할 일: 위 줄 형식을 인식하도록 정규식·집계를 고치고(기존 내보내기 형식도 계속 지원), scripts/test_featurehealth.py 에 이 줄들로 된 logcat 픽스처 테스트 추가(고치기 전 실패). python3 -m unittest 로 통과 확인.
+제약: 앱 코드·.github/ 수정 금지. 표준 라이브러리만.
+마지막 8줄 이내 요약: 수정 / 테스트 / 미해결.
