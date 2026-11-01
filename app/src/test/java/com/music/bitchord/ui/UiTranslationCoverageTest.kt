@@ -48,7 +48,10 @@ class UiTranslationCoverageTest {
 
     @Test
     fun userVisibleLabelsAreNotMarkedUntranslatable() {
-        val raw = File(resDir, "values/strings.xml").readText()
+        val raw = listOf("values/strings.xml", "values/strings_ko_fork.xml")
+            .map { File(resDir, it) }
+            .filter { it.exists() }
+            .joinToString("\n") { it.readText() }
         for (key in required) {
             val tag = Regex("""<string name="${Regex.escape(key)}"[^>]*>""").find(raw)
             assertNotNull("$key is missing from values/strings.xml", tag)
@@ -59,16 +62,19 @@ class UiTranslationCoverageTest {
     private fun String.hasHangul(): Boolean = any { it in '\uAC00'..'\uD7A3' }
 
     private fun strings(qualifier: String): Map<String, String> {
-        val file = File(resDir, "$qualifier/strings.xml")
-        assertTrue("${file.path} must exist", file.exists())
-        val document = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(file)
-        val nodes = document.getElementsByTagName("string")
         val result = linkedMapOf<String, String>()
-        for (index in 0 until nodes.length) {
-            val element = nodes.item(index) as Element
-            val name = element.getAttribute("name")
-            if (name.isNotEmpty()) result[name] = element.textContent
+        for (name in listOf("strings.xml", "strings_ko_fork.xml")) {
+            val file = File(resDir, "$qualifier/$name")
+            if (!file.exists()) continue
+            val document = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(file)
+            val nodes = document.getElementsByTagName("string")
+            for (index in 0 until nodes.length) {
+                val element = nodes.item(index) as Element
+                val key = element.getAttribute("name")
+                if (key.isNotEmpty()) result[key] = element.textContent
+            }
         }
+        assertTrue("$qualifier string resources must exist", result.isNotEmpty())
         return result
     }
 

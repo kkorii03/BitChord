@@ -86,18 +86,23 @@ class KoreanStringsTest {
 
     private fun strings(file: File): Map<String, String> {
         assertTrue("${file.path} must exist", file.exists())
-        val document = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(file)
         val result = linkedMapOf<String, String>()
-        val nodes = document.getElementsByTagName("string")
-        for (index in 0 until nodes.length) {
-            val element = nodes.item(index) as Element
-            val name = element.getAttribute("name")
-            if (name.isNotEmpty()) result[name] = element.textContent
-        }
-        val arrays = document.getElementsByTagName("item")
-        for (index in 0 until arrays.length) {
-            val element = arrays.item(index) as Element
-            result["item#$index"] = element.textContent
+        val files = listOf(file, File(file.parentFile, "strings_ko_fork.xml"))
+        for (current in files) {
+            if (!current.exists()) continue
+            val document = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(current)
+            val nodes = document.getElementsByTagName("string")
+            for (index in 0 until nodes.length) {
+                val element = nodes.item(index) as Element
+                val name = element.getAttribute("name")
+                if (name.isNotEmpty()) result[name] = element.textContent
+            }
+            if (current != file) continue
+            val arrays = document.getElementsByTagName("item")
+            for (index in 0 until arrays.length) {
+                val element = arrays.item(index) as Element
+                result["item#$index"] = element.textContent
+            }
         }
         return result
     }

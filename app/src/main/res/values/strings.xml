@@ -1229,30 +1229,5 @@
     <string name="wear_os_code_hint">Pairing code</string>
     <string name="wear_os_done">Done</string>
     <string name="signed_by">Signed by %1$s</string>
-    <string name="korean">Korean</string>
     <!-- Filled in only in a personal build, after it is built. Keep empty in the repository. -->
-    <string name="quality_upgrade_addon_auth">The %1$s addon\'s authentication was refused. Reconnect the addon in Settings</string>
-    <string name="pipeline_route">Route</string>
-    <string name="pipeline_bit_exact_yes">Yes</string>
-    <string name="pipeline_bit_exact_dsd">No — DSD converted to PCM</string>
-    <string name="pipeline_bit_exact_loudness">No — loudness correction</string>
-    <string name="pipeline_bit_exact_eq">No — EQ</string>
-    <string name="pipeline_bit_exact_spatial">No — spatial audio</string>
-    <string name="pipeline_bit_exact_downstream">No — %1$s</string>
-    <string name="pipeline_bit_exact_downstream_unknown">converted downstream</string>
-    <string name="route_phone">Phone speaker</string>
-    <string name="route_wired">Wired headphones</string>
-    <string name="route_usb">USB audio</string>
-    <string name="route_bluetooth">Bluetooth</string>
-    <string name="route_hdmi">HDMI</string>
-    <string name="route_other">Other output</string>
-    <string name="connection_timed_out">The connection timed out. Try again.</string>
-    <string name="connection_failed">Couldn\'t connect. Check your connection and try again.</string>
-    <string name="secure_connection_failed">Couldn\'t establish a secure connection. Try again.</string>
-    <string name="server_busy">The server is busy. Try again in a moment.</string>
-    <string name="proxy_unreachable">Couldn\'t reach the proxy. Check its settings and try again.</string>
-    <string name="error_not_found">Couldn\'t find this item. It may have been removed or moved.</string>
-    <string name="error_request_invalid">Couldn\'t handle the request. Check what you entered and try again.</string>
-    <string name="error_content_unavailable">No available version of this item was found. Try another source.</string>
-    <string name="sync_safety_hq_sync_subtitle">Developer option. Re-applies a saved HQ offset and rate to lyrics. Off shows the provider\'s own timing.</string>
 </resources>

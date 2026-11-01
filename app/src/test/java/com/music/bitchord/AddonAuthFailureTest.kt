@@ -194,8 +194,14 @@ class AddonAuthFailureTest {
         } else {
             File(root, "src/main/res")
         }
-        val english = File(res, "values/strings.xml").readText()
-        val korean = File(res, "values-ko/strings.xml").readText()
+        val english = listOf("values/strings.xml", "values/strings_ko_fork.xml")
+            .map { File(res, it) }
+            .filter { it.exists() }
+            .joinToString("\n") { it.readText() }
+        val korean = listOf("values-ko/strings.xml", "values-ko/strings_ko_fork.xml")
+            .map { File(res, it) }
+            .filter { it.exists() }
+            .joinToString("\n") { it.readText() }
         assertTrue(english.contains("quality_upgrade_addon_auth"))
         assertTrue(english.contains("authentication was refused"))
         assertTrue(korean.contains("quality_upgrade_addon_auth"))
