@@ -54,6 +54,39 @@ import kotlin.math.max
 import java.util.Locale
 
 /**
+ * The analysis a head pass publishes.
+ *
+ * Kept as a named function rather than an inline constructor so the fields a
+ * head pass deliberately leaves out stay next to the one whole-track reading
+ * it must carry over: [TrackFeatures.Features.vocalProbability] is measured
+ * over the same opening window the planner reads, and dropping it made a
+ * head-only track look like it had no vocal evidence at all.
+ */
+internal fun headAnalysis(
+    trackId: String,
+    durationSeconds: Double,
+    grid: BeatTracker.Grid?,
+    entry: TrackFeatures.Features?,
+): TrackAnalysis = TrackAnalysis(
+    status = TrackAnalysis.STATUS_READY,
+    trackId = trackId,
+    duration = durationSeconds,
+    bpm = grid?.bpm ?: entry?.bpm ?: 0.0,
+    beatInterval = grid?.beatInterval ?: entry?.beatInterval ?: 0.0,
+    beatConfidence = grid?.beatConfidence ?: entry?.beatConfidence ?: 0.0,
+    downbeats = grid?.downbeats ?: entry?.downbeats.orEmpty(),
+    firstBeat = grid?.firstBeat ?: entry?.firstBeat ?: 0.0,
+    key = entry?.key.orEmpty(),
+    keyConfidence = entry?.keyConfidence ?: 0.0,
+    audibleStartTime = entry?.audibleStartTime,
+    pickupTime = entry?.pickupTime,
+    introEndTime = entry?.introEndTime ?: 0.0,
+    mixInTime = entry?.mixInTime ?: 0.0,
+    mixInCandidates = entry?.mixInCandidates.orEmpty(),
+    vocalProbability = entry?.vocalProbability ?: 0.0,
+)
+
+/**
  * Produces [TrackAnalysis] for tracks that are about to be mixed, and hands it
  * to [TransitionPlanner].
  *
@@ -931,22 +964,11 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                 "over ${"%.1f".format(Locale.ROOT, head.seconds)}s",
         )
 
-        return TrackAnalysis(
-            status = TrackAnalysis.STATUS_READY,
+        return headAnalysis(
             trackId = trackId,
-            duration = durationSeconds,
-            bpm = grid?.bpm ?: entry?.bpm ?: 0.0,
-            beatInterval = grid?.beatInterval ?: entry?.beatInterval ?: 0.0,
-            beatConfidence = grid?.beatConfidence ?: entry?.beatConfidence ?: 0.0,
-            downbeats = grid?.downbeats ?: entry?.downbeats.orEmpty(),
-            firstBeat = grid?.firstBeat ?: entry?.firstBeat ?: 0.0,
-            key = entry?.key.orEmpty(),
-            keyConfidence = entry?.keyConfidence ?: 0.0,
-            audibleStartTime = entry?.audibleStartTime,
-            pickupTime = entry?.pickupTime,
-            introEndTime = entry?.introEndTime ?: 0.0,
-            mixInTime = entry?.mixInTime ?: 0.0,
-            mixInCandidates = entry?.mixInCandidates.orEmpty(),
+            durationSeconds = durationSeconds,
+            grid = grid,
+            entry = entry,
         )
     }
 

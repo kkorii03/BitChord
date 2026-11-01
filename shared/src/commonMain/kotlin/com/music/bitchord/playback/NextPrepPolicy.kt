@@ -107,6 +107,52 @@ object NextPrepPolicy {
     /** Whether a step may still start with [remainingMs] left. */
     fun canStartStep(remainingMs: Long): Boolean = remainingMs > 0L
 
+    /**
+     * Whether the MIX step keeps its one-attempt mark after a run that ended
+     * with [completed].
+     *
+     * A deadline timeout is null, not an answer: the row is still the next one
+     * and the bundle is scheduled again by the resume/queue events, so the mix
+     * may be asked for then with whatever time that run has. A completed false
+     * is a real refusal and must stay remembered, or every event would repeat
+     * the same failed request.
+     */
+    fun keepMixAttemptAfter(completed: Boolean?): Boolean = completed != null
+
+    /**
+     * Whether a finished run may mark its row as handled.
+     *
+     * [mixTimedOut] is a mix that started but the deadline cut off.
+     * [mixSkippedByDeadline] is a planned MIX that never started because an
+     * earlier step (or the lossless download) used the remaining time. Both
+     * mean the row's mix is unanswered, so the resume/queue event that
+     * schedules the bundle again must be allowed to re-plan this row. Marking
+     * it completed here made [alreadyHandled] skip the retry. A run that
+     * really finished (or refused the mix) keeps the mark so events do not
+     * start it again.
+     */
+    fun keepCompletedAfter(mixTimedOut: Boolean, mixSkippedByDeadline: Boolean): Boolean =
+        !mixTimedOut && !mixSkippedByDeadline
+
+    /**
+     * The completed marker a run leaves for the caller to pass to
+     * [alreadyHandled], or null when the row must stay schedulable.
+     *
+     * The whole decision lives here so a scheduling test exercises production
+     * code rather than reproducing the caller's `if`.
+     */
+    fun completedQueueKeyAfterRun(
+        queueKey: String,
+        mixTimedOut: Boolean,
+        deadlineHit: Boolean,
+        mixPlanned: Boolean,
+    ): String? = queueKey.takeIf {
+        keepCompletedAfter(
+            mixTimedOut = mixTimedOut,
+            mixSkippedByDeadline = deadlineHit && mixPlanned,
+        )
+    }
+
     /** Whether the paid engines may be asked after [playedMs] of the current track. */
     fun aiGateOpen(playedMs: Long): Boolean = playedMs >= AI_MIN_PLAYED_MS
 
