@@ -802,4 +802,36 @@ class SongVersionPolicyTest {
             ) == SongVersionPolicy.DownloadedFileUse.PLAY_FILE,
         )
     }
+
+    @Test
+    fun `a mismatched source with no metadata is streamed online, never played`() {
+        assertEquals(
+            SongVersionPolicy.DownloadedFileUse.STREAM_SONG,
+            SongVersionPolicy.downloadedFileUse(
+                playId = "song",
+                soundSourceId = "video",
+                online = true,
+                sourceIsVideo = null,
+                sourceTitle = "",
+            ),
+        )
+        assertEquals(
+            SongVersionPolicy.DownloadedFileUse.PLAY_FILE,
+            SongVersionPolicy.downloadedFileUse(
+                playId = "song",
+                soundSourceId = "quality",
+                online = true,
+                sourceIsVideo = false,
+            ),
+        )
+        assertEquals(
+            SongVersionPolicy.DownloadedFileUse.STREAM_SONG,
+            SongVersionPolicy.downloadedFileUse(
+                playId = "song",
+                soundSourceId = "video",
+                online = true,
+                sourceIsVideo = true,
+            ),
+        )
+    }
 }

@@ -268,15 +268,16 @@ object SongVersionPolicy {
      * How a saved file may be used for [playId].
      *
      * [soundSourceId] is the id whose stream produced the bytes, recorded when
-     * the download was made. A mismatch is only the music video's sound when
-     * that source was itself recorded as a video: a file fetched from another
-     * song id (a quality replacement) is still the recording this row asked
-     * for. [sourceIsVideo]/[sourceTitle] are that source's own record; their
-     * default keeps the conservative old answer for a caller that has not read
-     * the source's metadata. Online, the song is streamed and the file is kept
-     * only as the offline fallback. A null source is an older record whose
-     * provenance is unknown — it is not guessed at here; [mvSoundDeltaMs] is
-     * the length evidence that may still identify it.
+     * the download was made. A mismatch is only a quality replacement — and so
+     * the recording this row asked for — when that source was *confirmed* not
+     * to be a video ([sourceIsVideo] == false). A source whose own metadata is
+     * missing (`sourceIsVideo == null`) may itself be a music video, and an MV
+     * sound must never play under a song id, so it is streamed like a known
+     * video source. The conservative default keeps that answer for a caller
+     * that has not read the source's metadata. Online, the song is streamed
+     * and the file is kept only as the offline fallback. A null source is an
+     * older record whose provenance is unknown — it is not guessed at here;
+     * [mvSoundDeltaMs] is the length evidence that may still identify it.
      */
     fun downloadedFileUse(
         playId: String,
@@ -288,10 +289,8 @@ object SongVersionPolicy {
         soundSourceId == null -> DownloadedFileUse.UNKNOWN_PLAY_FILE
         soundSourceId == playId -> DownloadedFileUse.PLAY_FILE
         !online -> DownloadedFileUse.PLAY_FILE
-        sourceIsVideo == true ||
-            (sourceIsVideo == null && DownloadedMvPolicy.hasMvTitleMarker(sourceTitle)) ->
-            DownloadedFileUse.STREAM_SONG
-        else -> DownloadedFileUse.PLAY_FILE
+        sourceIsVideo == false -> DownloadedFileUse.PLAY_FILE
+        else -> DownloadedFileUse.STREAM_SONG
     }
 
     /**
