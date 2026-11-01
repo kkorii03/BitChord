@@ -152,7 +152,7 @@ class TelegramSearchFlightTest {
                 when (function) {
                     is TdApi.SearchMessages -> {
                         val page = pages.incrementAndGet()
-                        TdApi.FoundMessages(0, arrayOf(audioMessage(chatId = 101L, id = page.toLong())), "page$page")
+                        TdApi.FoundMessages(0, arrayOf(audioMessage(chatId = 101L, messageId = page.toLong())), "page$page")
                     }
                     is TdApi.SearchChatMessages -> {
                         perChatRequests.incrementAndGet()
@@ -169,7 +169,7 @@ class TelegramSearchFlightTest {
         assertEquals("a full answer needs no per-chat walk", 0, perChatRequests.get())
     }
 
-    private fun audioMessage(chatId: Long, id: Long = 1L): TdApi.Message {
+    private fun audioMessage(chatId: Long, messageId: Long = 1L): TdApi.Message {
         val file = TdApi.File().apply {
             id = 1
             size = 1024L
@@ -184,7 +184,7 @@ class TelegramSearchFlightTest {
         }
         return TdApi.Message().apply {
             this.chatId = chatId
-            this.id = id
+            id = messageId
             canBeSaved = true
             content = TdApi.MessageAudio(audio, null)
         }
