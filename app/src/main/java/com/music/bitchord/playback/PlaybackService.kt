@@ -738,6 +738,7 @@ class PlaybackService : MediaLibraryService() {
      */
     private var configuredFloatOutput = false
     private var outputReconfigureJob: Job? = null
+    private val outputReconfigureGate = OutputReconfigureGate()
 
     /**
      * One audio-processor set per player, because both carry per-sink state — a
@@ -2618,6 +2619,9 @@ class PlaybackService : MediaLibraryService() {
                 // the settled state a rule the recovery path can rely on rather
                 // than a side effect of one function's ordering.
                 recoverAudibleGains()
+                // A route or PCM-mode change that arrived mid-blend was parked
+                // instead of polling; this settled event is its wake-up.
+                if (outputReconfigureGate.settled()) requestOutputReconfiguration()
                 if (boundedEditState.hasPendingEdits) {
                     scope.launch {
                         applyDeferredBoundedQueueEdit()
@@ -10534,17 +10538,27 @@ class PlaybackService : MediaLibraryService() {
 
     private fun requestOutputReconfiguration() {
         outputReconfigureJob?.cancel()
+        outputReconfigureJob = null
+        // Replacing two renderers during a blend would cut one half of it. Park
+        // the request until [CrossfadeController] reports the transition has
+        // settled; that callback is the only thing that has to wake for it.
+        if (!outputReconfigureGate.request(crossfade?.isTransitioning() == true)) return
         outputReconfigureJob = scope.launch {
-            // Replacing two renderers during a blend would cut one half of it.
-            // Wait for the short transition to settle, then swap the engine.
-            while (crossfade?.isTransitioning() == true) delay(50)
-            val requestedFloat = shouldEnableFloatOutput()
-            if (requestedFloat == configuredFloatOutput) {
-                applyOutputRoute(reason = "route")
-            } else {
-                markAudioTrackReason("output-rebuild")
-                rebuildPlayersForOutput(requestedFloat)
+            if (crossfade?.isTransitioning() == true) {
+                outputReconfigureGate.request(transitioning = true)
+                return@launch
             }
+            applyOutputReconfiguration()
+        }
+    }
+
+    private fun applyOutputReconfiguration() {
+        val requestedFloat = shouldEnableFloatOutput()
+        if (requestedFloat == configuredFloatOutput) {
+            applyOutputRoute(reason = "route")
+        } else {
+            markAudioTrackReason("output-rebuild")
+            rebuildPlayersForOutput(requestedFloat)
         }
     }
 
