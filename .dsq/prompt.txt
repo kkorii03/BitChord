@@ -1,0 +1,10 @@
+BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/telegram. 대상: app/src/main/java/com/music/bitchord/telegram/ (TelegramMessageMapper, 소스 어댑터의 품질 표기), 품질 순위를 정하는 곳(HqQuality/HqTier).
+문제: 텔레그램 후보는 로그에 '→ FLAC' 로만 나오고 비트·샘플레이트가 없음(폰 로그: "텔레그램 matched 'Flowers' by 'Miley Cyrus' … → FLAC"). 그래서 24-bit 텔레그램 파일도 Qobuz 24-bit 에 항상 밀리거나 16-bit 로 취급될 수 있음.
+할 일:
+① 메시지 정보로 품질 추정: 파일명·캡션·채널 제목의 '24bit/24-bit/Hi-Res/96kHz/192kHz/16bit/44.1' 등 패턴, 파일 크기÷길이(비트레이트)로 16/24-bit 범위 추정. 확실하지 않으면 지금처럼 'FLAC'(16-bit 취급).
+② 대조 때 이미 받는 첫 조각(4MB)에서 FLAC STREAMINFO(비트 깊이·샘플레이트)를 읽어 정확한 품질로 확정·기록(추가 다운로드 없이).
+③ 품질 순위: 같은 등급이면 기존 순서 유지(텔레그램이 Qobuz 를 이유 없이 이기지 않게).
+④ 로그: "텔레그램 matched … → FLAC · 24-bit · 96 kHz (from=name|bitrate|streaminfo)".
+테스트(고치기 전 실패): 파일명 패턴 추정, 비트레이트 추정, STREAMINFO 파싱(합성 바이트), 불확실하면 16-bit. 새 테스트 클래스 이름 요약에.
+제약: .github/, keys, *.jks, 서명 수정 금지. 곡 판정(TrackMatcher) 변경 금지. 추가 네트워크 요청 금지. 타이머·폴링 금지. 바꾼 함수의 모든 호출부 재확인.
+마지막 10줄 이내 요약: 수정 / 테스트 / 미해결.
