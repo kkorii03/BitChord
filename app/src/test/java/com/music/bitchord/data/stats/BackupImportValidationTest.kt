@@ -1,5 +1,7 @@
 package com.music.bitchord.data.stats
 
+import com.music.bitchord.ko.KoBackup
+
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -12,7 +14,7 @@ import java.io.ByteArrayInputStream
  */
 class BackupImportValidationTest {
 
-    private fun backup(vararg buckets: StoredBucket) = Backup.BackupFile(
+    private fun backup(vararg buckets: StoredBucket) = KoBackup.BackupFile(
         app = "bitchord",
         version = 2,
         listening = buckets.toList(),
@@ -21,10 +23,10 @@ class BackupImportValidationTest {
     @Test
     fun `an oversized backup is refused instead of being read whole`() {
         val oversized = ByteArrayInputStream(
-            ByteArray(Backup.MAX_IMPORT_BYTES + 1) { 'x'.code.toByte() },
+            ByteArray(KoBackup.MAX_IMPORT_BYTES + 1) { 'x'.code.toByte() },
         )
 
-        val refused = runCatching { with(Backup) { oversized.readTextBounded() } }
+        val refused = runCatching { with(KoBackup) { oversized.readTextBounded() } }
 
         assertTrue(refused.isFailure)
         assertTrue(refused.exceptionOrNull() is IllegalArgumentException)
@@ -37,22 +39,22 @@ class BackupImportValidationTest {
         val text = "x".repeat(16)
         val input = ByteArrayInputStream(text.toByteArray())
 
-        assertEquals(text, with(Backup) { input.readTextBounded(maxBytes = 16) })
+        assertEquals(text, with(KoBackup) { input.readTextBounded(maxBytes = 16) })
     }
 
     @Test(expected = IllegalArgumentException::class)
     fun `an unknown older schema is refused before any write`() {
-        Backup.validate(Backup.BackupFile(app = "bitchord", version = 0))
+        KoBackup.validate(KoBackup.BackupFile(app = "bitchord", version = 0))
     }
 
     @Test(expected = IllegalArgumentException::class)
     fun `a listening bucket whose month cannot be parsed is refused`() {
-        Backup.validate(backup(StoredBucket(month = "2026-13")))
+        KoBackup.validate(backup(StoredBucket(month = "2026-13")))
     }
 
     @Test(expected = IllegalArgumentException::class)
     fun `two listening buckets for the same month are refused rather than silently merged`() {
-        Backup.validate(
+        KoBackup.validate(
             backup(
                 StoredBucket(month = "2026-10"),
                 StoredBucket(month = "2026-10"),
@@ -62,7 +64,7 @@ class BackupImportValidationTest {
 
     @Test
     fun `a valid listening month still validates`() {
-        Backup.validate(backup(StoredBucket(month = "2026-10")))
+        KoBackup.validate(backup(StoredBucket(month = "2026-10")))
     }
 
     @Test(expected = IllegalArgumentException::class)

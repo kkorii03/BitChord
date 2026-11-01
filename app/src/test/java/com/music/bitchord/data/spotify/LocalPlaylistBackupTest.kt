@@ -1,7 +1,7 @@
 package com.music.bitchord.data.spotify
 
 import com.music.bitchord.data.model.Song
-import com.music.bitchord.data.stats.Backup
+import com.music.bitchord.ko.KoBackup
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Test
@@ -96,7 +96,7 @@ class LocalPlaylistBackupTest {
             ),
         )
 
-        val restored = Backup.BackupPlaylist.from(original).toLocalPlaylist()
+        val restored = KoBackup.BackupPlaylist.from(original).toLocalPlaylist()
 
         assertEquals(original.id, restored.id)
         assertEquals(original.title, restored.title)

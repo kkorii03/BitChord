@@ -3,34 +3,14 @@ package com.music.bitchord.data.stats
 import android.content.Context
 import android.net.Uri
 import com.music.bitchord.BuildConfig
-import com.music.bitchord.data.LikeState
-import com.music.bitchord.data.StoredSongDisplay
-import com.music.bitchord.data.lyrics.LyricsOverrideFile
-import com.music.bitchord.data.lyrics.LyricsOverrideStore
-import com.music.bitchord.data.model.LikeStatus
-import com.music.bitchord.data.model.SearchHistoryEntity
-import com.music.bitchord.data.model.Song
-import com.music.bitchord.data.model.withVideoThumbnailFallback
+import com.music.bitchord.ko.KoBackup // [KO] backup-library
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.SearchHistory
-import com.music.bitchord.data.settings.SettingsTransfer
-import com.music.bitchord.data.taste.TasteSignals
-import com.music.bitchord.playback.smart.HqVerificationStore
-import com.music.bitchord.playback.smart.LyricsTiming
-import com.music.bitchord.data.spotify.LocalPlaylist
-import com.music.bitchord.data.spotify.LocalPlaylistStore
-import com.music.bitchord.data.spotify.PlaylistImportMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.decodeFromStream
-import kotlinx.serialization.json.encodeToStream
-import java.io.InputStream
-import java.io.OutputStream
 import java.time.Instant
-import java.time.YearMonth
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
@@ -44,11 +24,8 @@ import java.time.format.DateTimeFormatter
  *
  * ## What is in it
  *
- * Every preference except credentials (see [AppSettings.exportPrefs]), every
- * month of listening, the local playlists this device made, the liked and
- * disliked rows it knows, its search history, and — since schema 3 — the
- * lyric overrides, measured sync memory and high-quality verification it has
- * already paid for. Not the audio cache, the downloads or the artwork: those
+ * Every preference except credentials (see [AppSettings.exportPrefs]), and every
+ * month of listening. Not the audio cache, the downloads or the artwork: those
  * are megabytes that re-fetch themselves, and a backup that is mostly cache is
  * one nobody keeps.
  *
@@ -70,40 +47,11 @@ object Backup {
         prettyPrint = true
     }
 
-    /**
-     * Upper bound on a backup, shared by export and import.
-     *
-     * Derived from the store's retention maximum rather than picked to fit the
-     * usual file: [ListeningStats] keeps 36 months, each with up to 600 tracks
-     * and 400 artists/albums, and every row can carry a per-day map for all 31
-     * days. Pretty-printed, that worst case is well above the old 64 MiB
-     * ceiling, so a long-time listener could still export a file the app then
-     * refused to restore. 256 MiB leaves headroom for local playlists and
-     * search history on top of the listening history.
-     */
-    internal const val MAX_BACKUP_BYTES = 256 * 1024 * 1024
-
-    /**
-     * The largest backup this build will read into memory.
-     *
-     * Kept as an alias so import and export cannot drift: [MAX_BACKUP_BYTES] is
-     * the single ceiling below.
-     */
-    internal const val MAX_IMPORT_BYTES = MAX_BACKUP_BYTES
-
-    /**
-     * Reads at most [maxBytes] of UTF-8 text through the shared reader, refusing
-     * the document rather than growing the buffer without bound.
-     */
-    internal fun InputStream.readTextBounded(maxBytes: Int = MAX_IMPORT_BYTES): String =
-        readBackupText(this, maxBytes)
-
     /** A suggested filename, dated so successive exports don't collide. */
     fun suggestedName(): String =
         "bitchord-backup-${DateTimeFormatter.ofPattern("yyyy-MM-dd").format(
             Instant.now().atZone(ZoneId.systemDefault()),
         )}.json"
-
 
     /**
      * Writes a backup to [target], a document the user picked.
@@ -115,447 +63,56 @@ object Backup {
      */
     suspend fun exportTo(context: Context, target: Uri): Result<Int> = withContext(Dispatchers.IO) {
         runCatching {
+            return@runCatching KoBackup.exportTo(context, target) // [KO] backup-library
             val buckets = ListeningStats.exportAll()
-            // TasteSignals holds ratings already written to disk on an earlier
-            // run; session overrides cover one made since launch and win over
-            // an older stored value. Union them so an export after a restart
-            // still carries the listener's likes instead of only this process.
-            val ratings = mergeRatedIds(
-                session = LikeState.overrides.value,
-                persistedLiked = TasteSignals.ratedVideoIds(LikeStatus.LIKE),
-                persistedDisliked = TasteSignals.ratedVideoIds(LikeStatus.DISLIKE),
-            )
             val file = BackupFile(
-                app = APP_TAG,
-                version = SCHEMA_VERSION,
                 versionName = BuildConfig.VERSION_NAME,
                 exportedAt = Instant.now().toString(),
-                settings = AppSettings.exportPrefs()
-                    // The list has its own section below; keeping the raw pref
-                    // in here too would let two copies disagree after an edit.
-                    .filterKeys { it != SearchHistory.KEY_HISTORY }
-                    .mapNotNull { (key, value) ->
-                        PrefValue.of(value)?.let { key to it }
-                    }.toMap(),
+                settings = AppSettings.exportPrefs().mapNotNull { (key, value) ->
+                    PrefValue.of(value)?.let { key to it }
+                }.toMap(),
                 listening = buckets,
-                localPlaylists = LocalPlaylistStore.exportAll().map { BackupPlaylist.from(it) },
-                likedVideoIds = ratings.first,
-                dislikedVideoIds = ratings.second,
-                searchHistory = SearchHistory.export(),
-                lyricsOverrides = LyricsOverrideStore.exportBackupText(context),
-                lyricsTiming = LyricsTiming.exportBackupText(context),
-                hqVerified = HqVerificationStore.exportBackupRows(context).first,
-                hqRejected = HqVerificationStore.exportBackupRows(context).second,
             )
-            val output = context.contentResolver.openOutputStream(target, "wt")
+            val text = json.encodeToString(BackupFile.serializer(), file)
+            context.contentResolver.openOutputStream(target, "wt")
+                ?.use { it.write(text.toByteArray()) }
                 ?: error("Couldn't open that file for writing")
-            output.use { encodeBackupToStream(file, it) }
             buckets.size
         }
     }
 
     /**
-     * Reads [source] and replaces this device's settings, listening, search
-     * history and liked rows with it; [playlistMode] decides whether its local
-     * playlists replace this device's or are merged into them.
+     * Reads [source] and replaces this device's settings and listening with it.
      *
-     * Validated before anything is written: a file that isn't one of ours, is
-     * from a schema this build can't read, or carries a malformed playlist row
-     * is refused whole. A half-applied import is worse than a refused one — it
-     * leaves settings from two devices mixed together with nothing to say which
-     * came from where.
-     *
-     * Schema 1 files predate the library sections. They still restore settings,
-     * listening and search history (which schema 1 carried in `settings`), and
-     * leave this device's local playlists, likes and dislikes untouched.
+     * Validated before anything is written: a file that isn't one of ours, or is
+     * from a schema this build can't read, is refused whole. A half-applied
+     * import is worse than a refused one — it leaves settings from two devices
+     * mixed together with nothing to say which came from where.
      */
-    suspend fun importFrom(
-        context: Context,
-        source: Uri,
-        playlistMode: PlaylistImportMode = PlaylistImportMode.REPLACE,
-    ): Result<Summary> = withContext(Dispatchers.IO) {
+    suspend fun importFrom(context: Context, source: Uri): Result<Summary> = withContext(Dispatchers.IO) {
         runCatching {
-            val file = context.contentResolver.openInputStream(source)?.use { decodeBackupStream(it) }
-                ?: error("파일을 열 수 없습니다")
-            apply(file, playlistMode, context)
-        }
-    }
-
-    /**
-     * The body of [importFrom], after the document has been read.
-     *
-     * Split out so the rollback path can be exercised with the same stores an
-     * import uses, without a real document picker. It is still the only place
-     * that applies a backup.
-     */
-    internal suspend fun importText(
-        text: String,
-        playlistMode: PlaylistImportMode = PlaylistImportMode.REPLACE,
-        context: Context? = null,
-    ): Summary {
-        val file = decode(text)
-        return apply(file, playlistMode, context)
-    }
-
-    /**
-     * Applies an already decoded backup. Validation runs here so both the text
-     * and streaming entry points refuse a malformed file before the first
-     * write.
-     */
-    private suspend fun apply(
-        file: BackupFile,
-        playlistMode: PlaylistImportMode,
-        context: Context?,
-    ): Summary {
-        validate(file)
-        val playlists = if (file.version >= LIBRARY_SCHEMA_VERSION) {
-            file.localPlaylists.map { it.toLocalPlaylist() }
-        } else {
-            null
-        }
-        val settings = file.settings.mapValues { it.value.decoded() }
-        val library = file.version >= LIBRARY_SCHEMA_VERSION
-        // The timing/HQ memory joined the file in schema 3. Older files leave
-        // these stores alone, exactly as schema 1 left the library alone.
-        val stores = file.version >= STORES_SCHEMA_VERSION && context != null
-
-        // Everything below is applied in a rollback-able order. The listening
-        // folder goes last because it is the only store whose commit can still
-        // refuse after validation; if it does, the cheaper sections are put
-        // back from these snapshots instead of leaving the device holding half
-        // a restore.
-        val previousSettings = AppSettings.exportPrefs()
-        val previousPlaylists = LocalPlaylistStore.exportAll()
-        val previousSearch = SearchHistory.export()
-        val previousLiked = TasteSignals.ratedVideoIds(LikeStatus.LIKE)
-        val previousDisliked = TasteSignals.ratedVideoIds(LikeStatus.DISLIKE)
-        val previousOverrides = LikeState.overrides.value
-        val previousLyricsOverrides = if (stores) {
-            LyricsOverrideStore.exportBackupText(context!!)
-        } else {
-            null
-        }
-        val previousLyricsTiming = if (stores) LyricsTiming.exportBackupText(context!!) else null
-        val previousHq = if (stores) {
-            HqVerificationStore.exportBackupRows(context!!)
-        } else {
-            null to null
-        }
-
-        suspend fun rollback() {
-            runCatching { AppSettings.importPrefs(previousSettings) }
-            runCatching { SearchHistory.reload() }
-            if (library) {
-                runCatching {
-                    LocalPlaylistStore.importAll(previousPlaylists, PlaylistImportMode.REPLACE)
-                }
-                runCatching { SearchHistory.replace(previousSearch) }
-                runCatching { TasteSignals.restoreRatings(previousLiked, previousDisliked) }
-                runCatching { TasteSignals.flushAndAwait() }
+            return@runCatching KoBackup.importLegacy(context, source).getOrThrow() // [KO] backup-library
+            val text = context.contentResolver.openInputStream(source)
+                ?.use { it.readBytes().decodeToString() }
+                ?: error("Couldn't open that file")
+            val file = runCatching { json.decodeFromString(BackupFile.serializer(), text) }
+                .getOrElse { error("That doesn't look like a BitChord backup") }
+            require(file.app == APP_TAG) { "That backup is from another app" }
+            require(file.version <= SCHEMA_VERSION) {
+                "That backup was written by a newer version of BitChord"
             }
-            if (stores) {
-                runCatching {
-                    LyricsOverrideStore.restoreBackupText(context!!, previousLyricsOverrides)
-                }
-                runCatching {
-                    LyricsTiming.restoreBackupText(context!!, previousLyricsTiming)
-                }
-                runCatching {
-                    HqVerificationStore.restoreBackupRows(
-                        context!!,
-                        previousHq.first,
-                        previousHq.second,
-                    )
-                }
-            }
-            LikeState.clear()
-            previousOverrides.forEach { (id, status) -> LikeState.set(id, status) }
-        }
 
-        try {
-            check(AppSettings.importPrefs(settings)) {
-                "설정을 저장하지 못했습니다"
-            }
+            ListeningStats.importAll(file.listening)
+            AppSettings.importPrefs(file.settings.mapValues { it.value.decoded() })
             // Shares AppSettings' preference file, so it has already been
             // overwritten by the line above — it just doesn't know yet.
             SearchHistory.reload()
-            if (library) {
-                val restored = playlists?.let {
-                    LocalPlaylistStore.importAll(it, playlistMode)
-                } ?: 0
-                check(restored >= 0) { "로컬 플레이리스트를 저장하지 못했습니다" }
-                // Explicit rather than relying on the settings map: schema 2
-                // states the list itself, and an empty list is a real answer.
-                check(SearchHistory.replace(file.searchHistory)) {
-                    "검색 기록을 저장하지 못했습니다"
-                }
-                // A restore is a replacement, not a merge: the session copy
-                // from before the import would otherwise keep shadowing the
-                // restored ratings in every screen that reads LikeState.
-                LikeState.clear()
-                // The persisted rating store is what survives a restart; the
-                // optimistic session copy is set as well so the player and
-                // library repaint without waiting for a reload.
-                TasteSignals.restoreRatings(file.likedVideoIds, file.dislikedVideoIds)
-                check(TasteSignals.flushAndAwait()) {
-                    "평점을 저장하지 못했습니다"
-                }
-                file.likedVideoIds.forEach { LikeState.set(it, LikeStatus.LIKE) }
-                file.dislikedVideoIds.forEach { LikeState.set(it, LikeStatus.DISLIKE) }
-            }
-            if (stores) {
-                check(LyricsOverrideStore.restoreBackupText(context!!, file.lyricsOverrides)) {
-                    "가사 선택을 저장하지 못했습니다"
-                }
-                check(LyricsTiming.restoreBackupText(context!!, file.lyricsTiming)) {
-                    "가사 싱크를 저장하지 못했습니다"
-                }
-                check(
-                    HqVerificationStore.restoreBackupRows(
-                        context!!,
-                        file.hqVerified,
-                        file.hqRejected,
-                    ),
-                ) {
-                    "고음질 검증 기록을 저장하지 못했습니다"
-                }
-            }
-
-            // The listening folder is the last write by design. Its own import
-            // is journaled and restores the previous months if a rename fails;
-            // this check only has to roll back the sections above when it
-            // returns false.
-            check(ListeningStats.importAll(file.listening)) {
-                "청취 기록을 저장하지 못했습니다"
-            }
-        } catch (failure: Throwable) {
-            rollback()
-            throw failure
-        }
-        return Summary(
-            months = file.listening.size,
-            settings = file.settings.size,
-            from = file.versionName,
-            at = file.exportedAt,
-            playlists = playlists?.size ?: 0,
-            liked = if (library) file.likedVideoIds.size else 0,
-            searchHistory = if (library) file.searchHistory.size else 0,
-        )
-    }
-
-    internal fun encode(file: BackupFile): String =
-        json.encodeToString(BackupFile.serializer(), file)
-
-    /**
-     * Encodes an export and refuses it up front if it would exceed the same
-     * [MAX_BACKUP_BYTES] ceiling [readBackupText] applies on import. Without
-     * this check the app could write a backup it would later refuse to restore,
-     * which is the one thing an export must never do.
-     */
-    internal fun encodeBackupBytes(
-        file: BackupFile,
-        maxBytes: Int = MAX_BACKUP_BYTES,
-    ): ByteArray {
-        val bytes = encode(file).toByteArray()
-        require(bytes.size <= maxBytes) { "백업 파일이 너무 큽니다" }
-        return bytes
-    }
-
-    internal fun decode(text: String): BackupFile =
-        runCatching { json.decodeFromString(BackupFile.serializer(), text) }
-            .getOrElse { error("BitChord 백업 파일이 아닙니다") }
-
-    /**
-     * Reads a backup straight from [input] without first holding its whole text
-     * in memory.
-     *
-     * A full 36-month history is hundreds of megabytes of JSON; buffering that
-     * as a `String` before decoding needs roughly twice the file's size again
-     * on top of the decoded object graph, which is what turned a legitimate
-     * import into an out-of-memory kill on a phone. The reader runs against the
-     * same [MAX_BACKUP_BYTES] ceiling as export and refuses anything larger.
-     */
-    @OptIn(ExperimentalSerializationApi::class)
-    internal fun decodeBackupStream(input: InputStream, maxBytes: Int = MAX_BACKUP_BYTES): BackupFile =
-        runCatching {
-            val bounded = BoundedInputStream(input, maxBytes)
-            json.decodeFromStream(BackupFile.serializer(), bounded)
-        }.getOrElse { failure ->
-            if (failure is BackupTooLargeException) {
-                throw IllegalArgumentException("백업 파일이 너무 큽니다", failure)
-            }
-            error("BitChord 백업 파일이 아닙니다")
-        }
-
-    /**
-     * Writes a backup straight to [output] through the same ceiling, so export
-     * no longer materialises the encoded document as a `String` and a second
-     * `ByteArray` before writing it.
-     */
-    @OptIn(ExperimentalSerializationApi::class)
-    internal fun encodeBackupToStream(
-        file: BackupFile,
-        output: OutputStream,
-        maxBytes: Int = MAX_BACKUP_BYTES,
-    ) {
-        val bounded = BoundedOutputStream(output, maxBytes)
-        try {
-            json.encodeToStream(BackupFile.serializer(), file, bounded)
-        } catch (failure: BackupTooLargeException) {
-            throw IllegalArgumentException("백업 파일이 너무 큽니다", failure)
-        }
-    }
-
-    /** Counts bytes read and refuses the document once it passes [maxBytes]. */
-    private class BoundedInputStream(
-        private val delegate: InputStream,
-        private val maxBytes: Int,
-    ) : InputStream() {
-        private var total = 0
-
-        private fun count(read: Int) {
-            if (read <= 0) return
-            total += read
-            if (total > maxBytes) throw BackupTooLargeException()
-        }
-
-        override fun read(): Int {
-            val value = delegate.read()
-            if (value >= 0) count(1)
-            return value
-        }
-
-        override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
-            val read = delegate.read(buffer, offset, length)
-            count(read)
-            return read
-        }
-
-        override fun close() = delegate.close()
-    }
-
-    /** Counts bytes written and stops before an export can exceed [maxBytes]. */
-    private class BoundedOutputStream(
-        private val delegate: OutputStream,
-        private val maxBytes: Int,
-    ) : OutputStream() {
-        private var total = 0
-
-        private fun count(written: Int) {
-            if (written <= 0) return
-            total += written
-            if (total > maxBytes) throw BackupTooLargeException()
-        }
-
-        override fun write(value: Int) {
-            count(1)
-            delegate.write(value)
-        }
-
-        override fun write(buffer: ByteArray, offset: Int, length: Int) {
-            count(length)
-            delegate.write(buffer, offset, length)
-        }
-
-        override fun flush() = delegate.flush()
-
-        override fun close() = delegate.close()
-    }
-
-    private class BackupTooLargeException : RuntimeException()
-
-    /**
-     * Reads an imported document up to [maxBytes], refusing it rather than
-     * growing the buffer without bound. A backup is much larger than a settings
-     * share — months of listening and every local playlist ride in it — so the
-     * ceiling is generous, but it still keeps a wrongly shared multi-gigabyte
-     * file from being read into memory just to discover it is not ours.
-     */
-    internal fun readBackupText(input: InputStream, maxBytes: Int = MAX_BACKUP_BYTES): String =
-        with(SettingsTransfer) {
-            input.readTextBounded(maxBytes, tooLargeMessage = "백업 파일이 너무 큽니다")
-        }
-
-    /**
-     * Combines the ratings kept on disk with the optimistic ones made since
-     * this process started.
-     *
-     * Both lists are sorted and an id appears on exactly one side. A session
-     * tap is the newer answer, so it moves an id between lists; the persisted
-     * lists alone are already disjoint because a track stores one rating.
-     */
-    internal fun mergeRatedIds(
-        session: Map<String, LikeStatus>,
-        persistedLiked: Collection<String>,
-        persistedDisliked: Collection<String>,
-    ): Pair<List<String>, List<String>> {
-        val liked = persistedLiked.toMutableSet()
-        val disliked = persistedDisliked.toMutableSet()
-        session.forEach { (id, status) ->
-            if (id.isBlank()) return@forEach
-            when (status) {
-                LikeStatus.LIKE -> {
-                    disliked.remove(id)
-                    liked.add(id)
-                }
-                LikeStatus.DISLIKE -> {
-                    liked.remove(id)
-                    disliked.add(id)
-                }
-                LikeStatus.INDIFFERENT -> {
-                    // A rating cleared in this session is a newer answer than
-                    // the one on disk; leaving the id in either set would
-                    // export a like/dislike the listener just removed.
-                    liked.remove(id)
-                    disliked.remove(id)
-                }
-            }
-        }
-        return liked.sorted() to disliked.sorted()
-    }
-
-    /** Everything that can be checked before the first write. */
-    internal fun validate(file: BackupFile) {
-        require(file.app == APP_TAG) { "다른 앱의 백업입니다" }
-        // A file with no version is the oldest shipped shape (see
-        // [BackupFile.version]); an explicit 0 or negative one never shipped
-        // and is not something this build can claim to understand.
-        require(file.version >= MIN_SCHEMA_VERSION) {
-            "이 백업 파일의 버전을 읽을 수 없습니다"
-        }
-        require(file.version <= SCHEMA_VERSION) {
-            "더 최신 버전의 BitChord에서 만든 백업입니다"
-        }
-        // The month is the file's identity on disk. [ListeningStats.importAll]
-        // deletes the old buckets before writing the new ones, so one bad month
-        // has to be refused here rather than silently skipped after that
-        // deletion. Two buckets for one month would likewise overwrite each
-        // other and lose half the restored history.
-        val months = HashSet<String>(file.listening.size)
-        file.listening.forEach { bucket ->
-            val month = runCatching { YearMonth.parse(bucket.month).toString() }.getOrNull()
-            require(month != null) { "백업의 청취 기록에 잘못된 달이 있습니다" }
-            require(months.add(month)) { "백업의 청취 기록에 같은 달이 두 번 있습니다" }
-        }
-        if (file.version >= LIBRARY_SCHEMA_VERSION) {
-            file.localPlaylists.forEach { playlist ->
-                require(playlist.id.isNotBlank()) { "백업의 로컬 플레이리스트에 id가 없습니다" }
-                playlist.songs.forEach { song ->
-                    require(song.videoId.isNotBlank()) { "백업의 곡에 videoId가 없습니다" }
-                }
-            }
-        }
-        if (file.version >= STORES_SCHEMA_VERSION) {
-            file.lyricsOverrides?.let {
-                require(LyricsOverrideFile.readText(it)) {
-                    "백업의 가사 선택을 읽을 수 없습니다"
-                }
-            }
-            file.lyricsTiming?.let {
-                require(runCatching { json.parseToJsonElement(it) }.isSuccess) {
-                    "백업의 가사 싱크를 읽을 수 없습니다"
-                }
-            }
+            Summary(
+                months = file.listening.size,
+                settings = file.settings.size,
+                from = file.versionName,
+                at = file.exportedAt,
+            )
         }
     }
 
@@ -565,175 +122,27 @@ object Backup {
         val settings: Int,
         val from: String,
         val at: String,
-        val playlists: Int = 0,
-        val liked: Int = 0,
-        val searchHistory: Int = 0,
     )
 
     private const val APP_TAG = "bitchord"
 
     /**
-     * The stream-receiver form of [readBackupText], kept for callers/tests that
-     * already hold an [InputStream]. It delegates rather than reading again:
-     * two bounded readers could disagree about the ceiling or its message.
-     */
-    @JvmName("readBackupTextFromStream")
-    internal fun InputStream.readBackupText(maxBytes: Int = MAX_IMPORT_BYTES): String =
-        readBackupText(this, maxBytes)
-
-
-    /**
      * Bump when the shape below stops being readable by an older build. A file
      * from a *newer* schema is refused rather than partially read; one from an
      * older schema is read as-is, since every field has a default.
-     *
-     * 2 added local playlists, liked/disliked rows and an explicit search
-     * history list. A 1 file has none of those keys, so they arrive as empty
-     * lists and [importFrom] deliberately leaves the device's own library
-     * alone for it. 3 added the lyric-override, lyric-timing and HQ-verdict
-     * stores; a 1/2 file leaves those stores alone the same way.
      */
-    private const val SCHEMA_VERSION = 3
-
-    /** The oldest shape that ever shipped; 0 and below are not ours. */
-    private const val MIN_SCHEMA_VERSION = 1
-
-    /** The first schema that carries the library sections. */
-    private const val LIBRARY_SCHEMA_VERSION = 2
-
-    /** The first schema that carries lyric overrides, sync memory and HQ verdicts. */
-    private const val STORES_SCHEMA_VERSION = 3
+    private const val SCHEMA_VERSION = 1
 
     @Serializable
     data class BackupFile(
-        /**
-         * No default tag: a document that never names this app is not one of
-         * ours, and [validate] has to be able to tell the difference.
-         */
-        val app: String = "",
-        /**
-         * 1 is the oldest shape that ever shipped, so a file missing the key
-         * is treated as the cautious case rather than as a current one. Export
-         * writes [SCHEMA_VERSION] explicitly.
-         */
-        val version: Int = 1,
+        val app: String = APP_TAG,
+        val version: Int = SCHEMA_VERSION,
         /** Which build wrote it — for the reader, not for any logic here. */
         val versionName: String = "",
         val exportedAt: String = "",
         val settings: Map<String, PrefValue> = emptyMap(),
         val listening: List<StoredBucket> = emptyList(),
-        /** Local playlists, with their rows, in the order Library shows them. */
-        val localPlaylists: List<BackupPlaylist> = emptyList(),
-        /** Video ids this device is holding as liked, independent of the account. */
-        val likedVideoIds: List<String> = emptyList(),
-        /** Video ids this device is holding as disliked. */
-        val dislikedVideoIds: List<String> = emptyList(),
-        /** Newest first, the same order the search screen shows. */
-        val searchHistory: List<SearchHistoryEntity> = emptyList(),
-        /** Schema 3: the rechecked/user lyric sheets, as their own file's JSON. */
-        val lyricsOverrides: String? = null,
-        /** Schema 3: measured lyric timing memory, as its own file's JSON. */
-        val lyricsTiming: String? = null,
-        /** Schema 3: accepted HQ verification rows, one per line. */
-        val hqVerified: String? = null,
-        /** Schema 3: rejected HQ candidate rows, one per line. */
-        val hqRejected: String? = null,
     )
-
-    /** One local playlist, serializable independently of the on-disk format. */
-    @Serializable
-    data class BackupPlaylist(
-        val id: String,
-        val title: String,
-        val songs: List<BackupSong> = emptyList(),
-    ) {
-        fun toLocalPlaylist(): LocalPlaylist = LocalPlaylist(
-            id = id,
-            title = title,
-            songs = songs.map { it.toSong() },
-        )
-
-        companion object {
-            fun from(playlist: LocalPlaylist): BackupPlaylist = BackupPlaylist(
-                id = playlist.id,
-                title = playlist.title,
-                songs = playlist.songs.map { BackupSong.from(it) },
-            )
-        }
-    }
-
-    /**
-     * A playlist row's song fields.
-     *
-     * Wider than the on-disk playlist JSON because a backup may be the only
-     * copy of a row: an album name, a local file marker or a source quality
-     * cannot be re-fetched if it is dropped here. The fields that describe a
-     * queue position rather than a library row are intentionally absent.
-     */
-    @Serializable
-    data class BackupSong(
-        val videoId: String,
-        val title: String = "",
-        val artist: String = "",
-        val thumbnailUrl: String? = null,
-        val durationText: String? = null,
-        val artistId: String? = null,
-        val channelId: String? = null,
-        val albumId: String? = null,
-        val albumName: String? = null,
-        val isVideo: Boolean = false,
-        val isVideoOrigin: Boolean = false,
-        val setVideoId: String? = null,
-        val localUri: String? = null,
-        val localPath: String? = null,
-        val downloadFormat: String? = null,
-        val sourceQuality: String? = null,
-        val isExplicit: Boolean? = null,
-    ) {
-        fun toSong(): Song = StoredSongDisplay.clean(
-            Song(
-                videoId = videoId,
-                title = title,
-                artist = artist,
-                thumbnailUrl = thumbnailUrl,
-                durationText = durationText,
-                artistId = artistId,
-                channelId = channelId,
-                albumId = albumId,
-                albumName = albumName,
-                isVideo = isVideo,
-                isVideoOrigin = isVideoOrigin || isVideo,
-                setVideoId = setVideoId,
-                localUri = localUri,
-                localPath = localPath,
-                downloadFormat = downloadFormat,
-                sourceQuality = sourceQuality,
-                isExplicit = isExplicit,
-            ),
-        ).withVideoThumbnailFallback()
-
-        companion object {
-            fun from(song: Song): BackupSong = BackupSong(
-                videoId = song.videoId,
-                title = song.title,
-                artist = song.artist,
-                thumbnailUrl = song.thumbnailUrl,
-                durationText = song.durationText,
-                artistId = song.artistId,
-                channelId = song.channelId,
-                albumId = song.albumId,
-                albumName = song.albumName,
-                isVideo = song.isVideo,
-                isVideoOrigin = song.isVideoOrigin,
-                setVideoId = song.setVideoId,
-                localUri = song.localUri,
-                localPath = song.localPath,
-                downloadFormat = song.downloadFormat,
-                sourceQuality = song.sourceQuality,
-                isExplicit = song.isExplicit,
-            )
-        }
-    }
 
     /** One preference, with the type it has to be restored as. */
     @Serializable

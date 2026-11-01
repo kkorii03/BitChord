@@ -1,5 +1,7 @@
 package com.music.bitchord.data.stats
 
+import com.music.bitchord.ko.KoBackup
+
 import com.music.bitchord.auth.AuthStore
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.SearchHistory
@@ -108,8 +110,8 @@ class BackupImportRollbackTest {
     @Test
     fun `a listening failure rolls the already-applied settings back`() = runBlocking {
         assertEquals(ThemeMode.LIGHT, AppSettings.themeMode.value)
-        val text = Backup.encode(
-            Backup.BackupFile(
+        val text = KoBackup.encode(
+            KoBackup.BackupFile(
                 app = "bitchord",
                 version = 2,
                 versionName = "test",
@@ -123,7 +125,7 @@ class BackupImportRollbackTest {
             ),
         )
 
-        val result = runCatching { Backup.importText(text) }
+        val result = runCatching { KoBackup.importText(text) }
 
         assertTrue(result.isFailure)
         assertEquals("settings must not stay from the failed restore", ThemeMode.LIGHT, AppSettings.themeMode.value)

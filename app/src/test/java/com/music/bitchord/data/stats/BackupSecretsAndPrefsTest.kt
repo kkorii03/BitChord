@@ -1,5 +1,7 @@
 package com.music.bitchord.data.stats
 
+import com.music.bitchord.ko.KoBackup
+
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.testutil.FakePreferences
 import kotlinx.serialization.json.Json
@@ -94,15 +96,15 @@ class BackupSecretsAndPrefsTest {
                 Backup.PrefValue.of(value)?.let { key to it }
             }
             .toMap()
-        val file = Backup.BackupFile(
+        val file = KoBackup.BackupFile(
             version = 2,
             versionName = "test-build",
             exportedAt = "2026-10-26T00:00:00Z",
             settings = settings,
         )
 
-        val text = Backup.encode(file)
-        val decoded = Backup.decode(text)
+        val text = KoBackup.encode(file)
+        val decoded = KoBackup.decode(text)
 
         assertEquals(file, decoded)
         secrets.forEach { assertFalse("$it leaked into the backup text", it in text) }
@@ -173,8 +175,8 @@ class BackupSecretsAndPrefsTest {
             }
         """.trimIndent()
 
-        val file = Backup.decode(text)
-        Backup.validate(file)
+        val file = KoBackup.decode(text)
+        KoBackup.validate(file)
 
         assertEquals(1, file.version)
         assertEquals("LIGHT", file.settings["theme_mode"]?.decoded())
@@ -183,12 +185,12 @@ class BackupSecretsAndPrefsTest {
 
     @Test(expected = IllegalArgumentException::class)
     fun `a document without the app tag is not a backup`() {
-        Backup.validate(Backup.decode("{}"))
+        KoBackup.validate(KoBackup.decode("{}"))
     }
 
     @Test
     fun `a malformed json document is refused with the backup error`() {
-        val result = runCatching { Backup.decode("not json") }
+        val result = runCatching { KoBackup.decode("not json") }
 
         assertTrue(result.isFailure)
         assertTrue(result.exceptionOrNull()?.message.orEmpty().contains("백업"))
@@ -196,24 +198,24 @@ class BackupSecretsAndPrefsTest {
 
     @Test
     fun `a playlist row with a blank id is refused only for schema two and later`() {
-        val broken = Backup.BackupFile(
+        val broken = KoBackup.BackupFile(
             app = "bitchord",
             version = 2,
             localPlaylists = listOf(
-                Backup.BackupPlaylist(id = "", title = "Broken"),
+                KoBackup.BackupPlaylist(id = "", title = "Broken"),
             ),
         )
 
-        assertTrue(runCatching { Backup.validate(broken) }.isFailure)
+        assertTrue(runCatching { KoBackup.validate(broken) }.isFailure)
 
         val old = broken.copy(version = 1)
-        Backup.validate(old)
+        KoBackup.validate(old)
     }
 
     @Test
     fun `a backup from a newer build is refused before any write`() {
         val result = runCatching {
-            Backup.validate(Backup.BackupFile(app = "bitchord", version = 4))
+            KoBackup.validate(KoBackup.BackupFile(app = "bitchord", version = 4))
         }
 
         assertTrue(result.isFailure)
@@ -222,9 +224,9 @@ class BackupSecretsAndPrefsTest {
 
     @Test
     fun `an oversized backup is refused instead of being read whole`() {
-        val stream = ByteArrayInputStream(ByteArray(Backup.MAX_IMPORT_BYTES + 1))
+        val stream = ByteArrayInputStream(ByteArray(KoBackup.MAX_IMPORT_BYTES + 1))
 
-        val result = runCatching { with(Backup) { stream.readBackupText() } }
+        val result = runCatching { with(KoBackup) { stream.readBackupText() } }
 
         assertTrue(result.isFailure)
         assertTrue(result.exceptionOrNull()?.message.orEmpty().contains("큽니다"))
@@ -232,7 +234,7 @@ class BackupSecretsAndPrefsTest {
 
     @Test
     fun `json encodes a typed preference object not a bare number`() {
-        val file = Backup.BackupFile(
+        val file = KoBackup.BackupFile(
             version = 2,
             settings = mapOf(
                 "crossfade_seconds" to Backup.PrefValue.of(4)!!,
@@ -240,8 +242,8 @@ class BackupSecretsAndPrefsTest {
             ),
         )
 
-        val text = Backup.encode(file)
-        val decoded = Json.decodeFromString<Backup.BackupFile>(text)
+        val text = KoBackup.encode(file)
+        val decoded = Json.decodeFromString<KoBackup.BackupFile>(text)
 
         assertEquals(Backup.PrefValue.of(4), decoded.settings["crossfade_seconds"])
         assertEquals(Backup.PrefValue.of(0.5f), decoded.settings["equalizer_balance"])
