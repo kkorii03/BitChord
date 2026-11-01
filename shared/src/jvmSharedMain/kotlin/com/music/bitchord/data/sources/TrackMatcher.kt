@@ -1424,6 +1424,13 @@ object TrackMatcher {
         // recording could stand in for the language take.
         val label = SOUNDTRACK_WORD.findAll(text).lastOrNull()
         val takeText = label?.let { text.substring(it.range.last + 1) } ?: text
+        // Neutral packaging after the label describes the ordinary release
+        // ("Radio Edit", "Original Mix"), so it is not a take. The dash path
+        // already applies this gate; the pipe path needs it too or splitting
+        // the tail turns an "edit"/"mix" word into a version and the plain
+        // catalogue row stops matching.
+        val takeWords = wordsOf(takeText)
+        if (takeWords.joinToString("") in NEUTRAL_SEGMENTS) return emptyList()
         val languageTake = isLanguageVersion(takeText)
         return words.filter {
             (it in VERSION_WORDS && it !in NEUTRAL_SUFFIX_WORDS) ||
@@ -1787,12 +1794,22 @@ object TrackMatcher {
         segment: String,
         versions: MutableSet<String>,
         context: MutableSet<String>,
+        takeMarkers: Boolean = true,
     ) {
         val words = segment.split(WORD_SPLIT)
             .map { it.replace(NON_ALNUM, "") }
             .filter { it.isNotEmpty() }
         if (words.isEmpty()) return
         if (words.joinToString("") in NEUTRAL_SEGMENTS) return
+        // Text before a named soundtrack label is the work name, not the
+        // song's take: "Korean OST Drama" names a Korean-drama soundtrack,
+        // while the language of the take can only follow the label
+        // ("Joker OST Korean Version"). Reading the prefix as a take made
+        // the plain catalogue row look like a different recording.
+        if (!takeMarkers) {
+            context += words.filter { it.length > 2 && it !in NOISE_WORDS }
+            return
+        }
         // A named soundtrack label inside a dropped tail names the release,
         // not the take: "Joker OST Korean" keeps its language marker while
         // "Joker" and "OST" stay context. Only segments with a take after the
@@ -1802,7 +1819,7 @@ object TrackMatcher {
             val before = segment.substring(0, label.range.first)
             val after = segment.substring(label.range.last + 1)
             if (after.isNotBlank()) {
-                if (before.isNotBlank()) classify(before, versions, context)
+                if (before.isNotBlank()) classify(before, versions, context, takeMarkers = false)
                 classify(after, versions, context)
                 return
             }
