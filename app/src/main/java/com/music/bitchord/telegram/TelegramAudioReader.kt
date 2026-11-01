@@ -5,7 +5,10 @@ import java.io.Closeable
 import java.io.IOException
 import java.io.InterruptedIOException
 import java.io.RandomAccessFile
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.locks.ReentrantLock
 import kotlinx.coroutines.runBlocking
 
 /**
@@ -19,14 +22,29 @@ import kotlinx.coroutines.runBlocking
  *
  * Seeking is a new position within the same open reader, so the player keeps
  * its Range contract while only the requested window is fetched.
+ *
+ * TDLib keeps one download per file: a second `DownloadFile` with a different
+ * offset/limit cancels the first. Verification and playback may ask for the
+ * same file at the same time, so downloads are serialised per track here and
+ * only the reader that actually owns a download cancels it on close. A failed
+ * download is retried once after re-reading the message, which is what
+ * refreshes an expired file reference; a deleted message fails cleanly after
+ * that one retry instead of waiting forever.
  */
-class TelegramAudioReader private constructor(
-    val fileId: Int,
+class TelegramAudioReader internal constructor(
+    private val trackId: String,
+    fileId: Int,
     private val totalSize: Long,
     val mimeType: String,
     private var position: Long,
     private val endPosition: Long,
+    private val reason: String,
+    private val transport: TelegramFileTransport,
 ) : Closeable {
+
+    @Volatile
+    var fileId: Int = fileId
+        private set
 
     @Volatile
     private var closed = false
@@ -34,6 +52,7 @@ class TelegramAudioReader private constructor(
     private var localPath: String? = null
     private var downloadedFrom = 0L
     private var downloadedEnd = 0L
+    private val downloading = AtomicBoolean(false)
 
     fun remaining(): Long = endPosition - position
 
@@ -50,7 +69,10 @@ class TelegramAudioReader private constructor(
         val path = ensureDownloaded(position, wanted)
         val count = RandomAccessFile(path, "r").use { file ->
             file.seek(position)
-            val available = (file.length() - position).coerceAtLeast(0L).toInt()
+            val available = (file.length() - position)
+                .coerceAtLeast(0L)
+                .coerceAtMost(Int.MAX_VALUE.toLong())
+                .toInt()
             val read = minOf(wanted, available)
             if (read <= 0) return -1
             file.readFully(buffer, offset, read)
@@ -68,30 +90,81 @@ class TelegramAudioReader private constructor(
         localPath?.let { path ->
             if (at >= downloadedFrom && at + length <= downloadedEnd) return path
         }
-        var available = TelegramClientManager.request(
-            TdApi.GetFileDownloadedPrefixSize(fileId, at),
-            15_000,
-        ).size
-        if (available < length) {
-            val window = minOf(DOWNLOAD_WINDOW_BYTES, totalSize - at).coerceAtLeast(length.toLong())
-            TelegramClientManager.request(
-                TdApi.DownloadFile(fileId, 32, at, window, true),
-                TimeUnit.SECONDS.toMillis(40),
-            )
-            available = TelegramClientManager.request(
-                TdApi.GetFileDownloadedPrefixSize(fileId, at),
-                15_000,
-            ).size
-            if (available < length) throw IOException("Telegram download did not reach the read range.")
+        val lock = downloadLocks.computeIfAbsent(trackId) { ReentrantLock() }
+        lock.lock()
+        try {
+            checkOpen()
+            // A reader that was waiting for the per-track lock may now find the
+            // range it wanted already on disk.
+            localPath?.let { path ->
+                if (at >= downloadedFrom && at + length <= downloadedEnd) return path
+            }
+            var attempt = 0
+            while (true) {
+                checkOpen()
+                try {
+                    return downloadRange(at, length)
+                } catch (failure: Exception) {
+                    if (closed) throw InterruptedIOException("Telegram read cancelled")
+                    if (failure is InterruptedIOException) throw failure
+                    if (attempt >= MAX_DOWNLOAD_ATTEMPTS - 1) throw failure
+                    attempt++
+                    try {
+                        refreshTrack()
+                    } catch (refreshFailure: Exception) {
+                        failure.addSuppressed(refreshFailure)
+                        throw failure
+                    }
+                }
+            }
+        } finally {
+            lock.unlock()
         }
-        val file = TelegramClientManager.request(TdApi.GetFile(fileId), 15_000)
-        val path = file.local?.path
-            ?.takeIf { it.isNotBlank() }
+    }
+
+    private fun downloadRange(at: Long, length: Int): String {
+        var available = transport.downloadedPrefixSize(fileId, at)
+        if (available < length) {
+            val window = minOf(DOWNLOAD_WINDOW_BYTES, totalSize - at)
+                .coerceAtLeast(length.toLong())
+            val started = transport.nowMillis()
+            val before = available
+            downloading.set(true)
+            try {
+                checkOpen()
+                transport.download(fileId, priority(reason), at, window)
+            } finally {
+                downloading.set(false)
+                // close() may have sent its cancel before TDLib registered this
+                // DownloadFile; cancel again so the window stops with the reader.
+                if (closed) runCatching { transport.cancelDownload(fileId) }
+            }
+            checkOpen()
+            available = transport.downloadedPrefixSize(fileId, at)
+            val millis = (transport.nowMillis() - started).coerceAtLeast(0L)
+            val bytes = (available - before).coerceAtLeast(0L)
+            TelegramLog.download(fileId, bytes, millis, reason)
+            if (available < length) {
+                throw IOException("Telegram download did not reach the read range.")
+            }
+        }
+        val path = transport.localPath(fileId)
             ?: throw IOException("Telegram did not provide a local file.")
         localPath = path
         downloadedFrom = at
         downloadedEnd = at + available.coerceAtLeast(length.toLong())
         return path
+    }
+
+    /** A deleted message/channel ends the retry; a refreshed message updates [fileId]. */
+    private fun refreshTrack() {
+        val fresh = transport.resolveTrack(trackId)
+        if (fresh.fileId != fileId) {
+            fileId = fresh.fileId
+            localPath = null
+            downloadedFrom = 0L
+            downloadedEnd = 0L
+        }
     }
 
     private fun checkOpen() {
@@ -101,7 +174,7 @@ class TelegramAudioReader private constructor(
         }
         val (chat, _) = TelegramMessageMapper.parseId(trackId)
             ?: throw IOException("Invalid Telegram track id.")
-        if (chat !in TelegramClientManager.selectedChatIds()) {
+        if (!transport.isChatSelected(chat)) {
             throw IOException("The Telegram music chat was deselected.")
         }
     }
@@ -110,36 +183,80 @@ class TelegramAudioReader private constructor(
         if (released) return
         released = true
         closed = true
+        // A synchronous DownloadFile is answered by TDLib only when it is done
+        // or cancelled. The close event is what cancels the range this reader
+        // owns; a reader waiting on another download never cancels that one.
+        if (downloading.getAndSet(false)) {
+            runCatching { transport.cancelDownload(fileId) }
+        }
         TelegramLog.stream("close", fileId)
     }
 
-    private var trackId: String = ""
-
-    private constructor(
-        trackId: String,
-        fileId: Int,
-        totalSize: Long,
-        mimeType: String,
-        position: Long,
-        endPosition: Long,
-    ) : this(fileId, totalSize, mimeType, position, endPosition) {
-        this.trackId = trackId
-    }
+    private fun priority(reason: String): Int =
+        if (reason == REASON_VERIFY) VERIFY_PRIORITY else PLAY_PRIORITY
 
     companion object {
         /** Enough for a comfortable buffer, small enough never to be a whole track. */
         private const val DOWNLOAD_WINDOW_BYTES = 4L * 1024 * 1024
 
-        fun open(trackId: String, requestedPosition: Long, requestedLength: Long): TelegramAudioReader {
-            if (requestedPosition < 0 || requestedLength < -1) {
-                throw IOException("Invalid Telegram audio range.")
-            }
+        /** Playback outranks a comparison, but both remain usable at once. */
+        private const val PLAY_PRIORITY = 32
+        private const val VERIFY_PRIORITY = 16
+
+        internal const val REASON_PLAY = "play"
+        internal const val REASON_VERIFY = "verify"
+
+        /** One retry after refreshing the message; a deleted file then fails cleanly. */
+        private const val MAX_DOWNLOAD_ATTEMPTS = 2
+
+        /**
+         * TDLib has one download per file. The key is the track (the message
+         * the listener chose), so a new file id after a reference refresh still
+         * shares the same lock with the playback that was already reading it.
+         */
+        private val downloadLocks = ConcurrentHashMap<String, ReentrantLock>()
+
+        fun open(
+            trackId: String,
+            requestedPosition: Long,
+            requestedLength: Long,
+        ): TelegramAudioReader = open(trackId, requestedPosition, requestedLength, REASON_PLAY)
+
+        /**
+         * [reason] is [REASON_VERIFY] for a sound-comparison head and
+         * [REASON_PLAY] for the player. It only sets the download priority and
+         * the one diagnostic line, never the audio that is fetched.
+         */
+        fun open(
+            trackId: String,
+            requestedPosition: Long,
+            requestedLength: Long,
+            reason: String,
+        ): TelegramAudioReader {
             // The DataSource has just claimed the stream and opened the gate;
             // wait for the session to report ready rather than polling it.
             runBlocking { TelegramClientManager.awaitReady() }
-            val track = TelegramClientManager.trackForStream(trackId)
-            val file = TelegramClientManager.request(TdApi.GetFile(track.fileId), 15_000)
-            val size = file.size
+            return openWithTransport(
+                trackId,
+                requestedPosition,
+                requestedLength,
+                reason,
+                SystemTelegramFileTransport,
+            )
+        }
+
+        internal fun openWithTransport(
+            trackId: String,
+            requestedPosition: Long,
+            requestedLength: Long,
+            reason: String,
+            transport: TelegramFileTransport,
+        ): TelegramAudioReader {
+            if (requestedPosition < 0 || requestedLength < -1) {
+                throw IOException("Invalid Telegram audio range.")
+            }
+            val resolved = resolve(trackId, transport)
+            val size = resolved.info.size
             if (size < 0 || requestedPosition > size) {
                 throw IOException("Telegram audio position is outside the file.")
             }
@@ -148,14 +265,90 @@ class TelegramAudioReader private constructor(
                 if (requestedLength < 0) available else minOf(requestedLength, available)
             val reader = TelegramAudioReader(
                 trackId = trackId,
-                fileId = track.fileId,
+                fileId = resolved.track.fileId,
                 totalSize = size,
-                mimeType = track.mimeType.ifBlank { "application/octet-stream" },
+                mimeType = resolved.track.mimeType.ifBlank { "application/octet-stream" },
                 position = requestedPosition,
                 endPosition = end,
+                reason = reason,
+                transport = transport,
             )
-            TelegramLog.stream(if (requestedPosition > 0) "seek" else "open", track.fileId)
+            TelegramLog.stream(if (requestedPosition > 0) "seek" else "open", reader.fileId)
             return reader
         }
+
+        /** Re-reads the message once before giving up, refreshing its file reference. */
+        private fun resolve(
+            trackId: String,
+            transport: TelegramFileTransport,
+        ): Resolved {
+            var attempt = 0
+            while (true) {
+                try {
+                    val track = transport.resolveTrack(trackId)
+                    return Resolved(track, transport.fileInfo(track.fileId))
+                } catch (failure: Exception) {
+                    if (failure is InterruptedIOException) throw failure
+                    if (attempt >= MAX_DOWNLOAD_ATTEMPTS - 1) throw failure
+                    attempt++
+                }
+            }
+        }
+
+        private data class Resolved(val track: TelegramTrack, val info: TelegramFileInfo)
     }
+}
+
+/** The bytes TDLib currently has for one file. */
+internal data class TelegramFileInfo(val size: Long, val path: String?)
+
+/**
+ * Narrow seam over the TDLib client, so range reads, retry, cancellation and
+ * serialisation can be tested without a native session.
+ */
+internal interface TelegramFileTransport {
+    fun resolveTrack(trackId: String): TelegramTrack
+    fun fileInfo(fileId: Int): TelegramFileInfo
+    fun downloadedPrefixSize(fileId: Int, offset: Long): Long
+    fun download(fileId: Int, priority: Int, offset: Long, limit: Long)
+    fun localPath(fileId: Int): String?
+    fun isChatSelected(chatId: Long): Boolean
+    fun cancelDownload(fileId: Int)
+    fun nowMillis(): Long
+}
+
+private object SystemTelegramFileTransport : TelegramFileTransport {
+
+    override fun resolveTrack(trackId: String): TelegramTrack =
+        TelegramClientManager.trackForStream(trackId)
+
+    override fun fileInfo(fileId: Int): TelegramFileInfo {
+        val file = TelegramClientManager.request(TdApi.GetFile(fileId), 15_000)
+        return TelegramFileInfo(
+            size = file.size,
+            path = file.local?.path?.takeIf { it.isNotBlank() },
+        )
+    }
+
+    override fun downloadedPrefixSize(fileId: Int, offset: Long): Long =
+        TelegramClientManager.request(
+            TdApi.GetFileDownloadedPrefixSize(fileId, offset),
+            15_000,
+        ).size
+
+    override fun download(fileId: Int, priority: Int, offset: Long, limit: Long) {
+        TelegramClientManager.request(
+            TdApi.DownloadFile(fileId, priority, offset, limit, true),
+            TimeUnit.SECONDS.toMillis(40),
+        )
+    }
+
+    override fun localPath(fileId: Int): String? = fileInfo(fileId).path
+
+    override fun isChatSelected(chatId: Long): Boolean =
+        chatId in TelegramClientManager.selectedChatIds()
+
+    override fun cancelDownload(fileId: Int) = TelegramClientManager.cancelDownload(fileId)
+
+    override fun nowMillis(): Long = System.nanoTime() / 1_000_000
 }

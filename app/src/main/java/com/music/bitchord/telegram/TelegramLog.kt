@@ -69,6 +69,17 @@ object TelegramLog {
 
     fun stream(event: String, fileId: Int) = write(streamLine(event, fileId))
 
+    /**
+     * One range download: the file id is hashed like [streamLine], and the
+     * counts stay raw because they are measurements, not secrets. Built outside
+     * [line]'s numeric redaction so `bytes`/`ms` are not turned into `***`.
+     */
+    internal fun downloadLine(fileId: Int, bytes: Long, millis: Long, reason: String): String =
+        "telegram: download file=${fileHash(fileId)} bytes=$bytes ms=$millis reason=$reason"
+
+    fun download(fileId: Int, bytes: Long, millis: Long, reason: String) =
+        write(downloadLine(fileId, bytes, millis, reason))
+
     /** A stable short hash, so log lines can be matched without naming a file id. */
     fun fileHash(fileId: Int): String =
         Integer.toHexString(fileId * -1640531535).padStart(8, '0')

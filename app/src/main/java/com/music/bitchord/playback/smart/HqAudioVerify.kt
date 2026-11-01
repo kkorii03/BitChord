@@ -27,6 +27,9 @@ import com.music.bitchord.data.sources.StreamRequest
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.playback.HqHostTracker
 import com.music.bitchord.playback.StreamContainer
+import com.music.bitchord.telegram.TelegramAudioReader
+import com.music.bitchord.telegram.TelegramClientManager
+import com.music.bitchord.telegram.TelegramStreamUri
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -38,6 +41,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -1406,12 +1410,48 @@ object HqAudioVerify {
      * closes the connection, which is what lets the blocked read return
      * instead of waiting for the socket timeout.
      */
+    /**
+     * Reads the head of a Telegram file through the same TDLib reader the
+     * player uses, at the lower verify priority. The stream lease keeps the
+     * client open only while this read runs; cancelling interrupts the read.
+     */
+    private suspend fun downloadTelegramPrefix(url: String, file: File, limit: Long): Long =
+        runInterruptible(Dispatchers.IO) {
+            val id = TelegramStreamUri.trackId(android.net.Uri.parse(url))
+                ?: throw DownloadRefused(404)
+            TelegramClientManager.beginStream(id)
+            try {
+                TelegramAudioReader.open(id, 0L, -1L, TelegramAudioReader.REASON_VERIFY).use { reader ->
+                    FileOutputStream(file).use { output ->
+                        val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
+                        var remaining = limit
+                        while (remaining > 0L) {
+                            val want = minOf(buffer.size.toLong(), remaining).toInt()
+                            val read = reader.read(buffer, 0, want)
+                            if (read < 0) break
+                            output.write(buffer, 0, read)
+                            remaining -= read
+                        }
+                        output.flush()
+                    }
+                }
+            } finally {
+                TelegramClientManager.endStream(id)
+            }
+            file.length()
+        }
+
     private suspend fun downloadPrefix(
         stream: SourceStream,
         file: File,
         limit: Long,
         client: OkHttpClient,
     ): Long {
+        // A Telegram candidate is not an HTTP URL: OkHttp rejected the internal
+        // scheme, so no Telegram row could ever be measured or chosen.
+        if (stream.url.startsWith("${TelegramStreamUri.SCHEME}:")) {
+            return downloadTelegramPrefix(stream.url, file, limit)
+        }
         val request = Request.Builder()
             .url(stream.url)
             .apply { stream.headers.forEach { (name, value) -> header(name, value) } }

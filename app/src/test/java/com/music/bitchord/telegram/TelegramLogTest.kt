@@ -1,5 +1,6 @@
 package com.music.bitchord.telegram
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -12,6 +13,16 @@ class TelegramLogTest {
         val line = TelegramLog.line("client open reason=settings")
         assertTrue(line.startsWith("telegram: client open reason=settings"))
         assertFalse(line.contains("error"))
+    }
+
+    @Test
+    fun downloadLineKeepsItsMeasurementsAndNamesTheReason() {
+        val line = TelegramLog.downloadLine(41, bytes = 4096, millis = 87, reason = "play")
+        assertEquals(
+            "telegram: download file=${TelegramLog.fileHash(41)} bytes=4096 ms=87 reason=play",
+            line,
+        )
+        assertTrue(TelegramLog.downloadLine(41, 1, 2, "verify").endsWith("reason=verify"))
     }
 
     @Test
