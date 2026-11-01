@@ -35,6 +35,15 @@ class CachedContainerTest {
     }
 
     @Test
+    fun `a RIFF WAVE header is a WAV`() {
+        val wav = ByteArray(12).also { bytes ->
+            "RIFF".toByteArray(Charsets.US_ASCII).copyInto(bytes, 0)
+            "WAVE".toByteArray(Charsets.US_ASCII).copyInto(bytes, 8)
+        }
+        assertEquals("wav" to "audio/wav", cachedContainerOf(wav))
+    }
+
+    @Test
     fun `a manifest is refused rather than misnamed`() {
         assertNull(cachedContainerOf("<?xml versio".toByteArray(Charsets.US_ASCII)))
         assertNull(cachedContainerOf("#EXTM3U\n#EXT".toByteArray(Charsets.US_ASCII)))

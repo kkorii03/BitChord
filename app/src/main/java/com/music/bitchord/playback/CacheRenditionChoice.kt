@@ -13,6 +13,7 @@ internal data class CachedRendition(
     val complete: Boolean,
     val lossless: Boolean,
     val upgradeOrder: Int,
+    val keptOrigin: Boolean = true,
 )
 
 /**
@@ -26,6 +27,18 @@ internal data class CachedRendition(
  * again, so reading it cannot create the mixed-file seam the key split exists
  * to prevent.
  *
+ * A complete lossless copy with no upgrade generation (`#alt`, or a base entry
+ * filled from a lossless source) also beats a complete lossy one. That is the
+ * restart case: the in-memory stream choice is gone, so only the bytes on disk
+ * can say which copy the listener asked for. It is complete, so reading it is
+ * as safe as reading any other finished entry.
+ *
+ * An order-0 copy is only eligible when it came from an origin the cache keeps
+ * ([CachedRendition.keptOrigin]). Without that guard an addon's `#alt` file —
+ * possibly a different cut of the song, and possibly from an addon that is no
+ * longer configured — would replace the YouTube/base copy [completeSibling]
+ * would have chosen.
+ *
  * An incomplete upgrade is not a candidate: it would stream the rest from a
  * different URL into a half-written entry, and the complete low-quality copy is
  * still better than that.
@@ -34,7 +47,10 @@ internal object CacheRenditionChoice {
 
     fun choose(preferred: String, candidates: List<CachedRendition>): String =
         candidates
-            .filter { it.complete && it.upgradeOrder > 0 }
+            .filter {
+                it.complete &&
+                    (it.upgradeOrder > 0 || (it.lossless && it.keptOrigin))
+            }
             .maxWithOrNull(
                 compareBy<CachedRendition> { it.lossless }
                     .thenBy { it.upgradeOrder },

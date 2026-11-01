@@ -1073,7 +1073,7 @@ object AudioCache {
     class CompleteCopy(
         internal val key: String,
         val length: Long,
-        /** The file extension its container is saved under: `webm`, `m4a` or `flac`. */
+        /** The file extension its container is saved under: `webm`, `m4a`, `flac` or `wav`. */
         val extension: String,
         val mimeType: String,
     )
@@ -1330,6 +1330,7 @@ object AudioCache {
         keysOf = ::keysOf,
         isComplete = ::isComplete,
         isLosslessRendition = ::isLosslessRendition,
+        isKeptOrigin = ::isKeptOrigin,
         containerOf = ::containerOf,
         forgetPurgeCandidate = ::forgetPurgeCandidate,
         discardRendition = ::discardRendition,
@@ -2341,8 +2342,8 @@ internal const val CONTAINER_MAGIC_BYTES = 12
 /**
  * The file extension and MIME type a download of a cached file is filed under,
  * from the file's first [CONTAINER_MAGIC_BYTES] — or null for anything that is
- * not WebM, MP4 or FLAC, which a download made from the cache refuses rather
- * than misnames. See [AudioCache.completeCopyOf].
+ * not WebM, MP4, FLAC or WAV, which a download made from the cache refuses
+ * rather than misnames. See [AudioCache.completeCopyOf].
  */
 internal fun cachedContainerOf(magic: ByteArray): Pair<String, String>? {
     if (magic.size < CONTAINER_MAGIC_BYTES) return null
@@ -2352,6 +2353,9 @@ internal fun cachedContainerOf(magic: ByteArray): Pair<String, String>? {
             magic[2] == 0xDF.toByte() && magic[3] == 0xA3.toByte() -> "webm" to "audio/webm"
         ascii(4, 8) == "ftyp" -> "m4a" to "audio/mp4"
         ascii(0, 4) == "fLaC" -> "flac" to "audio/flac"
+        // [KO] hq-lossless: a RIFF/WAVE copy is lossless too, and
+        // [KO_LOSSLESS_CONTAINERS] names it.
+        ascii(0, 4) == "RIFF" && ascii(8, 12) == "WAVE" -> "wav" to "audio/wav"
         else -> null
     }
 }
