@@ -58,6 +58,17 @@ object VideoAudio {
     }
     private val songLocks = ConcurrentHashMap<String, Any>()
 
+    /**
+     * A song whose opening could not be had in this play. Only that song is
+     * remembered, and only until the next playback event: a slow head or a
+     * busy decoder says nothing about another track, and the next play (or
+     * the next track, for a next-prep row) may find the bytes on disk.
+     */
+    private val songAttempts = SongAudioAttempts()
+
+    /** Called on every playback event, before any reference for the new track. */
+    fun onPlaybackStarted() = songAttempts.onPlaybackStarted()
+
     suspend fun wav(context: Context, videoId: String): ByteArray? = withContext(Dispatchers.IO) {
         synchronized(recent) { recent[videoId] }?.let { return@withContext it }
         if (!PowerState.screenOn) {
@@ -162,14 +173,43 @@ object VideoAudio {
         val until = untilSeconds.coerceAtMost(MAX_SECONDS)
         val key = songCacheKey(song, until)
         synchronized(recentSongs) { recentSongs[key] }?.let { return@withContext it }
-        if (!PowerState.screenOn) return@withContext null
-        val opened = openSongSource(context, song) ?: return@withContext null
+        if (!PowerState.screenOn) {
+            TrackLog.d(TAG, "video-audio: no wav for ${song.videoId} reason=screen-off", song.videoId)
+            return@withContext null
+        }
+        if (!songAttempts.mayAttempt(song.videoId)) {
+            TrackLog.d(
+                TAG,
+                "video-audio: no wav for ${song.videoId} reason=already-tried-this-play",
+                song.videoId,
+            )
+            return@withContext null
+        }
+        val opened = openSongSource(context, song) ?: run {
+            songAttempts.noteFailure(song.videoId)
+            TrackLog.d(TAG, "video-audio: no wav for ${song.videoId} reason=no-source", song.videoId)
+            return@withContext null
+        }
         synchronized(songLocks.getOrPut(key) { Any() }) {
             synchronized(recentSongs) { recentSongs[key] }?.let {
                 runCatching { opened.data.close() }
                 return@synchronized it
             }
-            val bytes = decodeSong(song, opened.data, opened.fromFile, until) ?: return@synchronized null
+            // Another caller for the same song may have spent the one attempt
+            // while this one was waiting for the head; do not decode it twice.
+            if (!songAttempts.mayAttempt(song.videoId)) {
+                runCatching { opened.data.close() }
+                return@synchronized null
+            }
+            val bytes = decodeSong(song, opened.data, opened.fromFile, until) ?: run {
+                songAttempts.noteFailure(song.videoId)
+                TrackLog.d(
+                    TAG,
+                    "video-audio: no wav for ${song.videoId} reason=decode-failed",
+                    song.videoId,
+                )
+                return@synchronized null
+            }
             synchronized(recentSongs) { recentSongs[key] = bytes }
             bytes
         }
@@ -185,6 +225,11 @@ object VideoAudio {
             // than for the whole track the way the video WAV has to.
             val opus = Uri.parse(AutomixAnalysisSource.opusUri(song.videoId))
             AudioCache.keepForTiming(song.videoId)
+            // A transient round may have left this track's head stalled for
+            // the rest of the session. This call is a new event with a fresh
+            // one-attempt budget, so let it ask again instead of returning
+            // null without a download attempt.
+            AudioCache.rearmAnalysisHead(song.videoId)
             if (!AudioCache.awaitAnalysisHead(opus, HEAD_TIMEOUT_MS)) {
                 TrackLog.d(TAG, "song check: the opening is not on disk yet", song.videoId)
                 return null
@@ -311,6 +356,40 @@ object VideoAudio {
 
         fun bytes(): ByteArray = pcm.toByteArray()
     }
+
+    /**
+     * One failed opening per song per play. Keyed by videoId so a failure for
+     * one track cannot suppress another; cleared by [onPlaybackStarted] so the
+     * next play asks again. No timer, no polling: only a playback event
+     * resets it.
+     */
+    internal class SongAudioAttempts {
+        private val failed = HashSet<String>()
+
+        @Synchronized
+        fun onPlaybackStarted() {
+            failed.clear()
+        }
+
+        @Synchronized
+        fun mayAttempt(videoId: String): Boolean = videoId !in failed
+
+        @Synchronized
+        fun noteFailure(videoId: String) {
+            failed.add(videoId)
+        }
+    }
+
+    /**
+     * Whether a song opening may be asked for now. [hasEntry] is deliberately
+     * not a reason to refuse: a next-prep row usually has no cache entry yet,
+     * and the call itself is what creates it.
+     */
+    internal fun songAudioMayStart(
+        hasEntry: Boolean,
+        failedThisPlay: Boolean,
+        screenOn: Boolean,
+    ): Boolean = screenOn && !failedThisPlay
 
     private fun header(dataBytes: Int): ByteArray = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN).apply {
         put("RIFF".toByteArray())

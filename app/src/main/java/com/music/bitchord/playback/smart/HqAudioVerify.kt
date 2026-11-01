@@ -156,6 +156,14 @@ object HqAudioVerify {
      */
     private val noReference = ConcurrentHashMap<String, NoReferenceReason>()
 
+    /**
+     * The videos whose missing reference has already been logged in this play.
+     * The answer is remembered in [noReference], but each candidate that asks
+     * again used to print the same line — six times for one song during a
+     * single playback. One line per video per play is enough to explain it.
+     */
+    private val noReferenceLogged = ConcurrentHashMap.newKeySet<String>()
+
     /** A session can still reach many tracks; the map never needs to outgrow one queue. */
     private const val MAX_NO_REFERENCE = 256
 
@@ -789,6 +797,10 @@ object HqAudioVerify {
      */
     fun onPlaybackStarted() {
         noReference.clear()
+        noReferenceLogged.clear()
+        // The song check has the same one-attempt-per-play rule; a missing
+        // opening for the previous row must not follow it into this one.
+        VideoAudio.onPlaybackStarted()
         playbackEpoch.getAndSet(PlaybackEpoch()).changed.complete(Unit)
         retryPendingRateLimits()
     }
@@ -1008,6 +1020,8 @@ object HqAudioVerify {
     }
 
     private fun logNoReference(title: String, youtubeId: String, reason: NoReferenceReason) {
+        if (noReferenceLogged.size >= MAX_NO_REFERENCE) noReferenceLogged.clear()
+        if (!noReferenceLogged.add(youtubeId)) return
         TrackLog.d(
             TAG,
             "hq-verify: '$title' no reference reason=${reason.wire}",

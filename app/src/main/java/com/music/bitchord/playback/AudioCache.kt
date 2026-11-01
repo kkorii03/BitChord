@@ -2838,6 +2838,27 @@ object AudioCache {
         )
     }
 
+    /**
+     * Re-arms a head that a transient failure left stalled, so the next
+     * playback event can ask once more.
+     *
+     * [stalledAnalysisHeads] is a circuit breaker for "the same resolve and
+     * range would fail the same way", which is right inside one attempt but
+     * wrong across a network recovery: a track whose head failed during an
+     * outage stayed unretryable for the whole session, and every song check
+     * after it returned null without ever asking for a byte (11-01,
+     * 19:12-20:01). A new playback is a new event, not a poll, so it is
+     * allowed one clean round. An in-flight round is left alone.
+     */
+    fun rearmAnalysisHead(videoId: String) {
+        if (openedCache == null || videoId.isBlank()) return
+        if (videoId in analysisHeadsInFlight) return
+        stalledAnalysisHeads.remove(videoId)
+        analysisHeads.remove(videoId)
+        analysisHeadsHeldElsewhere.remove(videoId)
+        analysisHeadDeferredLogged.remove(videoId)
+    }
+
     fun requestAnalysisHead(uri: Uri) {
         // Each of these gates used to stop a head dead with nothing in the
         // log to show for it: an unwired cache or upstream looked from the
