@@ -162,7 +162,11 @@ object VideoAudio {
         val until = untilSeconds.coerceAtMost(MAX_SECONDS)
         val key = songCacheKey(song, until)
         synchronized(recentSongs) { recentSongs[key] }?.let { return@withContext it }
-        if (!PowerState.screenOn) return@withContext null
+        // Runs with the screen off too (11-01 user decision): this opening is
+        // what the song check and the quality-upgrade comparison listen to.
+        // Skipping it in a pocket let a wrong song play unchecked, and the
+        // listener then spent more battery on the screen fixing it by hand.
+        // It is one bounded opening per track, not the whole video.
         val opened = openSongSource(context, song) ?: return@withContext null
         synchronized(songLocks.getOrPut(key) { Any() }) {
             synchronized(recentSongs) { recentSongs[key] }?.let {
@@ -239,16 +243,16 @@ object VideoAudio {
         fromFile: Boolean,
         untilSeconds: Double,
     ): ByteArray? {
-        if (!PowerState.screenOn) return null
         // One second past the window, then cut at the sample: a decoded chunk
-        // that starts inside the window may run past its end.
+        // that starts inside the window may run past its end. Not stopped by
+        // the screen going off; see [songWav].
         val resampler = Resampler(minOf(RATE * 2 * untilSeconds.toInt(), RATE * 2 * 120))
         try {
             AudioDecoder.decodeMonoStream(
                 source,
                 0.0,
                 untilSeconds + 1,
-                abort = { !PowerState.screenOn },
+                abort = { false },
                 label = "video-wav",
             ) { samples, sampleRate, _ ->
                 if (!resampler.push(samples, sampleRate)) return@decodeMonoStream
