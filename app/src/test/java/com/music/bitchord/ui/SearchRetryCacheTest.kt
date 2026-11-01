@@ -1,4 +1,5 @@
 package com.music.bitchord.ui
+import com.music.bitchord.ko.ui.reuseCachedSearchPage
 
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

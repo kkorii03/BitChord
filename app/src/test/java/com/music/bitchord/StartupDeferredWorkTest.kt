@@ -1,7 +1,7 @@
 package com.music.bitchord
 
-import com.music.bitchord.ui.StartupDeferredWork
-import com.music.bitchord.ui.startupDeferredWork
+import com.music.bitchord.ko.ui.StartupDeferredWork
+import com.music.bitchord.ko.ui.startupDeferredWork
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Test

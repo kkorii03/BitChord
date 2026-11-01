@@ -2,7 +2,7 @@ package com.music.bitchord.ui.screens
 
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UiState
-import com.music.bitchord.ui.historyPageState
+import com.music.bitchord.ko.ui.historyPageState
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
