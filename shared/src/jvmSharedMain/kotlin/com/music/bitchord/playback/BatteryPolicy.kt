@@ -83,6 +83,30 @@ object BatteryPolicy {
     ): Int = if (metered || lowPower) 1 else queueLookahead + 1
 
     /**
+     * The queue entries whose stream URL may be minted once the read-ahead
+     * grace delay has passed.
+     *
+     * [bytesPlanned] is the byte fetch decided before that delay. Power saving
+     * or a metered connection can begin while it runs, and the byte launch
+     * re-reads the state and skips its fetch. This half must re-read too: if it
+     * kept the old answer it would drop the immediate next track as "already
+     * fetched" when nothing is being fetched, leaving the transition to wait on
+     * a client walk, and it would walk the old number of entries while the
+     * phone is saving power.
+     */
+    fun <T> cacheUrlWarmupTargets(
+        candidates: List<T>,
+        metered: Boolean,
+        lowPower: Boolean,
+        queueLookahead: Int,
+        bytesPlanned: Boolean,
+    ): List<T> {
+        val lookahead = cacheUrlLookaheadCount(metered, lowPower, queueLookahead)
+        val bytesNow = bytesPlanned && cachePrefetchBytesAllowed(metered, lowPower)
+        return candidates.take(lookahead).let { if (bytesNow) it.drop(1) else it }
+    }
+
+    /**
      * Whether the background artist backfill may spend a request right now.
      *
      * The Replay is a page, so an answer nobody is looking at can wait. Running
