@@ -288,8 +288,12 @@ class AnalysisStore(
          * 3 changed key confidence to a centered profile correlation. Stored
          * entries still hold the old near-zero confidence, so they are dropped
          * and re-earned instead of pinning key matching off for their lifetime.
+         * 4 (11-02): key confidence keeps its margin scale with an absolute
+         * correlation floor, and tail phrase boundaries follow the head's
+         * downbeat grid. The phone showed keyConf <= 0.09 and phrase=n on every
+         * transition, so entries written before are dropped and re-earned.
          */
-        const val SCHEMA_VERSION = 3
+        const val SCHEMA_VERSION = 4
 
         /** A few thousand tracks' worth, at tens of kilobytes each. */
         const val MAX_ENTRIES = 2_000
