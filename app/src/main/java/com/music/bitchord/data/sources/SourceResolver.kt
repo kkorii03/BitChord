@@ -7,16 +7,26 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.settings.DownloadQuality
-import com.music.bitchord.playback.AudioCache
+import com.music.bitchord.ko.DOWNLOAD_SOURCE_TIMEOUT_MS
+import com.music.bitchord.ko.MANUAL_RESTING_PROBE_TIMEOUT_MS
+import com.music.bitchord.ko.SOURCE_LOOKUP_TIMEOUT_MS
+import com.music.bitchord.ko.hqSearchLine
+import com.music.bitchord.ko.isArtistUnverifiedRank
+import com.music.bitchord.ko.isNetworkFailure
+import com.music.bitchord.ko.isTimeoutFailure
+import com.music.bitchord.ko.offerRank
+import com.music.bitchord.ko.runtimeDrift
+import com.music.bitchord.ko.sourceLookupTimeoutMsFor
 import com.music.bitchord.playback.HqHostTracker
-import com.music.bitchord.telegram.TelegramUpgradeGate
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withTimeoutOrNull
-import java.util.concurrent.ConcurrentHashMap
+
+private typealias SearchKey = com.music.bitchord.ko.KoSourceSearchMemo.SearchKey // [KO] search-memo
+private typealias SearchAnswer = com.music.bitchord.ko.KoSourceSearchMemo.SearchAnswer // [KO] search-memo
 
 /**
  * Turns a queued track into an openable stream, using whichever source can
@@ -46,257 +56,45 @@ object SourceResolver {
 
     private const val TAG = "BitChord"
 
-    /**
-     * Whether the device itself has no usable connection. Overridable so the
-     * offline half of the rest rule can be tested without an Android context.
-     */
-    internal var offlineCheck: () -> Boolean = { AudioCache.isOffline() }
+    internal var offlineCheck: () -> Boolean // [KO] offline-check
+        get() = com.music.bitchord.ko.KoSourceRuntime.offlineCheck
+        set(value) { com.music.bitchord.ko.KoSourceRuntime.offlineCheck = value }
 
-    /**
-     * Sources that have failed repeatedly, and when they may be asked again.
-     *
-     * A dead addon must not cost every track in the queue its full timeout.
-     * The rest is a timestamp comparison rather than a timer: nothing runs in
-     * the background, and the source simply becomes eligible again on the
-     * first request after [COOLDOWN_MS].
-     */
-    internal object SourceCooldown {
-        private class State(var failures: Int = 0, var untilMs: Long = 0L)
+    internal val SourceCooldown get() = com.music.bitchord.ko.KoSourceCooldown // [KO] source-cooldown
 
-        private val states = ConcurrentHashMap<String, State>()
+    internal fun sourceLookupTimeoutMs(
+        manual: Boolean,
+        configured: Long = SOURCE_LOOKUP_TIMEOUT_MS,
+    ): Long = com.music.bitchord.ko.sourceLookupTimeoutMs(manual, configured) // [KO] source-timeout
 
-        /**
-         * A monotonic mark for each source's failures, so a caller can tell
-         * whether *its* search failed without the source having to throw.
-         *
-         * Some sources turn a transport fault into an empty answer (see
-         * [MusicSource.search]), which is indistinguishable from "this
-         * catalogue does not have that recording" at the call site. Comparing
-         * this mark before and after the call is what keeps that empty answer
-         * from being memoised as a confirmed miss.
-         */
-        private val failureMarks = ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>()
+    internal suspend fun matchAndStreamForKo(
+        source: MusicSource,
+        target: TrackMatcher.Target,
+        request: StreamRequest,
+        waitForAll: Boolean = false,
+        strictLength: Boolean = false,
+        requireSharedArtist: Boolean = false,
+        strictOriginal: Boolean = false,
+        manual: Boolean = false,
+        allowArtistUnverified: Boolean = false,
+    ): SearchOutcome = matchAndStream(
+        source, target, request, waitForAll, strictLength,
+        requireSharedArtist, strictOriginal, manual, allowArtistUnverified,
+    ) // [KO] match-stream
 
-        /**
-         * A monotonic mark for credential refusals, kept apart from the
-         * generic failure mark so a search can say *why* it produced nothing.
-         * A 401/402/403 still raises [failureMarks] and follows the resting
-         * rule; this mark only decides whether the verdict reads `auth`
-         * instead of `error`.
-         */
-        private val authMarks = ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>()
+    internal suspend fun <T> attemptForKo(
+        source: MusicSource,
+        block: suspend () -> T,
+    ): T? = attempt(source, block = block) // [KO] source-attempt
 
-        internal fun failureMark(configId: String): Long =
-            failureMarks[configId]?.get() ?: 0L
-
-        internal fun authMark(configId: String): Long =
-            authMarks[configId]?.get() ?: 0L
-
-        /**
-         * Sources whose candidates could not be measured for several different
-         * tracks in a row: every download refused (403/410) or only a preview.
-         * Such a source answers searches fine, so the failure rule above never
-         * rests it, yet every upgrade paid a search and a download for nothing
-         * (the listener's Deezer addon 403ed on every track of 11-01). Memory
-         * only; a measured verdict or a settings change forgets it.
-         */
-        private class Unmeasurable(val tracks: LinkedHashSet<String> = LinkedHashSet(), var untilMs: Long = 0L)
-
-        private val unmeasurable = ConcurrentHashMap<String, Unmeasurable>()
-
-        /** One candidate of [configId] could not be measured for [reason]. */
-        internal fun unmeasured(
-            configId: String,
-            trackId: String,
-            reason: String,
-            nowMs: Long = System.currentTimeMillis(),
-        ) {
-            val state = unmeasurable.computeIfAbsent(configId) { Unmeasurable() }
-            synchronized(state) {
-                state.tracks.add(trackId)
-                if (state.tracks.size >= UNMEASURABLE_TRACKS_BEFORE_REST && state.untilMs <= nowMs) {
-                    state.untilMs = nowMs + UNMEASURABLE_REST_MS
-                    TrackLog.w(
-                        "BitChord",
-                        "source $configId resting ${UNMEASURABLE_REST_MS / 3_600_000}h: " +
-                            "unmeasurable x${state.tracks.size} ($reason)",
-                    )
-                }
-            }
-        }
-
-        /** A candidate of [configId] was downloaded and compared, whatever the verdict. */
-        internal fun measured(configId: String) {
-            unmeasurable.remove(configId)
-        }
-
-        /**
-         * Whether [configId] is parked for unmeasurable candidates. Unlike a
-         * failure rest, a hand-made upgrade does not probe it: its search
-         * would succeed and its download would be refused again.
-         */
-        internal fun isUnmeasurable(configId: String, nowMs: Long = System.currentTimeMillis()): Boolean {
-            val state = unmeasurable[configId] ?: return false
-            synchronized(state) {
-                if (state.untilMs == 0L) return false
-                if (state.untilMs > nowMs) return true
-                unmeasurable.remove(configId)
-                return false
-            }
-        }
-
-        fun isResting(configId: String, nowMs: Long = System.currentTimeMillis()): Boolean {
-            if (isUnmeasurable(configId, nowMs)) return true
-            val state = states[configId] ?: return false
-            if (state.untilMs > nowMs) return true
-            if (state.untilMs != 0L) states.remove(configId)
-            return false
-        }
-
-        /**
-         * [restUntilMs] is the host's own rest expiry when there is one, so a
-         * sleeping gateway that wakes in a minute is not written off for
-         * [COOLDOWN_MS]. Zero keeps the ordinary cooldown, which is what a
-         * transport fault or a plain 5xx still needs: the dead-addon rule
-         * exists so one unreachable source cannot cost every track its window.
-         */
-        fun failed(configId: String, restUntilMs: Long = 0L) {
-            recordFailure(configId, countForRest = true, restUntilMs = restUntilMs)
-        }
-
-        /**
-         * A transport fault — DNS, TLS, a refused connection, a read timeout.
-         *
-         * The mark is always raised, because a source that swallowed this fault
-         * and returned an empty answer has *not* said the catalogue lacks the
-         * track. Whether it also counts toward the rest depends on the device:
-         * when the whole device is offline (or behind a captive portal), every
-         * source fails the same way at once, and parking them all for 30
-         * minutes would outlast the outage. The mark still keeps that empty
-         * answer from being memoised as final, so it is asked again on the
-         * first request after the link returns.
-         */
-        internal fun networkFailed(configId: String, online: Boolean) {
-            recordFailure(configId, countForRest = online)
-        }
-
-        /**
-         * The addon answered 401/402/403: its credential or permission is
-         * refused, not its catalogue empty and not its server down.
-         *
-         * Counts toward the rest rule exactly like any other source failure,
-         * so the same refused source is not asked on every track. The separate
-         * mark lets the search verdict say `auth` instead of the misleading
-         * `title`, and keeps that empty answer out of the memo.
-         */
-        internal fun authFailed(configId: String) {
-            authMarks.computeIfAbsent(configId) { java.util.concurrent.atomic.AtomicLong() }
-                .incrementAndGet()
-            recordFailure(configId, countForRest = true)
-        }
-
-        /**
-         * A source did not answer inside its per-track window.
-         *
-         * Telegram is exempt: a cold TDLib session plus a search is slower than
-         * the race's window by design, and the source has not answered "no" —
-         * it has not finished. Counting that as a failure is what put a healthy
-         * Telegram account into a thirty-minute rest after the listener added
-         * more chats. Every other source keeps the old timeout rule.
-         */
-        internal fun timedOut(configId: String, kind: SourceKind, online: Boolean) {
-            if (kind == SourceKind.TELEGRAM) return
-            recordFailure(configId, countForRest = online)
-        }
-
-        /** Forgets a rest and its failure count after the source's settings changed. */
-        internal fun clear(configId: String) {
-            states.remove(configId)
-            unmeasurable.remove(configId)
-        }
-
-        private fun recordFailure(
-            configId: String,
-            countForRest: Boolean,
-            restUntilMs: Long = 0L,
-        ) {
-            failureMarks.computeIfAbsent(configId) { java.util.concurrent.atomic.AtomicLong() }
-                .incrementAndGet()
-            if (!countForRest) return
-            val nowMs = System.currentTimeMillis()
-            val state = states.computeIfAbsent(configId) { State() }
-            state.failures += 1
-            if (state.failures >= FAILURES_BEFORE_REST) {
-                val untilMs = if (restUntilMs > nowMs) restUntilMs else nowMs + COOLDOWN_MS
-                state.untilMs = maxOf(state.untilMs, untilMs)
-                TrackLog.w(
-                    "BitChord",
-                    "source $configId failed ${state.failures} times; resting until $untilMs",
-                )
-            }
-        }
-
-        fun succeeded(configId: String) {
-            states.remove(configId)
-        }
-
-        internal fun resetForTest() {
-            states.clear()
-            failureMarks.clear()
-            authMarks.clear()
-            unmeasurable.clear()
-        }
-
-        private const val UNMEASURABLE_TRACKS_BEFORE_REST = 3
-        private const val UNMEASURABLE_REST_MS = 6 * 60 * 60 * 1000L
-        private const val FAILURES_BEFORE_REST = 2
-        private const val COOLDOWN_MS = 30 * 60 * 1000L
-    }
-
-    /**
-     * Search answers already in hand, so the same source is not asked the same
-     * question again for the same track — the live path, the ahead-of-playback
-     * pass and the second look all arrive at the same query.
-     */
-    private data class SearchKey(
-        val sourceId: String,
-        val target: String,
-        val request: String,
-        val waitForAll: Boolean,
-        val query: String,
-    )
-
-    private class SearchAnswer(val rows: List<Song>, val at: Long)
-
-    private val searchAnswers = ConcurrentHashMap<SearchKey, SearchAnswer>()
-
-    /**
-     * Resting sources already given their one manual probe, per request.
-     *
-     * The key carries the caller's [manualSession] identity, so this says
-     * nothing across two presses of the button: a fresh request is entitled to
-     * probe a resting source once again.
-     */
-    private val manualRestingProbes = ConcurrentHashMap.newKeySet<String>()
-
+    private val searchAnswers get() = com.music.bitchord.ko.KoSourceSearchMemo.searchAnswers // [KO] search-memo
+    private val manualRestingProbes get() = com.music.bitchord.ko.KoSourceSearchMemo.manualRestingProbes // [KO] manual-probe
     private fun manualProbeKey(session: Any, sourceId: String, target: TrackMatcher.Target): String =
-        System.identityHashCode(session).toString() + '\u0001' + sourceId + '\u0001' + targetKey(target)
-
-    /**
-     * Releases the resting-probe budget of one finished manual request.
-     *
-     * The set otherwise outlives the request it describes and every press
-     * leaves a source/target/key string behind for the life of the process.
-     */
-    internal fun clearManualProbes(session: Any) {
-        val prefix = System.identityHashCode(session).toString() + '\u0001'
-        manualRestingProbes.removeIf { it.startsWith(prefix) }
-    }
-
-    /** Releases every manual request's probe budget — see [clearManualProbes]. */
-    internal fun clearManualProbes() {
-        manualRestingProbes.clear()
-    }
+        com.music.bitchord.ko.KoSourceSearchMemo.manualProbeKey(session, sourceId, target) // [KO] manual-probe
+    internal fun clearManualProbes(session: Any) =
+        com.music.bitchord.ko.KoSourceSearchMemo.clearManualProbes(session) // [KO] manual-probe
+    internal fun clearManualProbes() =
+        com.music.bitchord.ko.KoSourceSearchMemo.clearManualProbes() // [KO] manual-probe
 
     /**
      * The per-source detail of one search, for the `hq-search` line.
@@ -324,83 +122,15 @@ object SourceResolver {
         val alternateVerdict: String? = null,
     )
 
-    /**
-     * What every source in one [bestAcross] walk answered, so a caller can
-     * tell "nobody has it" from "nobody could tell us right now".
-     *
-     * Only a walk whose every source answered conclusively is a `none` worth
-     * caching. A source that timed out, failed, or was skipped for resting is
-     * exactly the case that must be asked again later.
-     */
-    class SearchReport {
-        private val entries = mutableListOf<SearchOutcome>()
-        private val authSources = mutableListOf<String>()
+    class SearchReport : com.music.bitchord.ko.KoSearchReport() // [KO] search-report
 
-        @Volatile
-        var allConclusive: Boolean = true
-            private set
-
-        /**
-         * Time this walk spent searching, excluding the proof callback.
-         *
-         * Filled by [QualityUpgrade.lookAgain][com.music.bitchord.playback.QualityUpgrade]
-         * so the upgrade timing line can name the search and the decode
-         * separately; a 14s Qobuz decode belongs to verification, not to the
-         * catalogue.
-         */
-        @Volatile
-        var searchMs: Long = 0L
-
-        /** Time this walk spent inside the proof callback. */
-        @Volatile
-        var verifyMs: Long = 0L
-
-        fun record(outcome: SearchOutcome, sourceName: String? = null) {
-            synchronized(entries) {
-                entries += outcome
-                if (outcome.verdict == "auth" && sourceName != null) authSources += sourceName
-            }
-            if (!outcome.conclusive) allConclusive = false
-        }
-
-        /** Sources whose credential was refused, for the listener-facing answer. */
-        val authSourceNames: List<String>
-            get() = synchronized(entries) { authSources.distinct() }
-
-        /** Test seam: the per-source verdicts this walk collected. */
-        internal fun outcomes(): List<SearchOutcome> = synchronized(entries) { entries.toList() }
-    }
-
-    /** A substitute stream already judged to be the original recording. */
-    private class Remembered(val stream: SourceStream, val at: Long)
-
-    private val remembered = ConcurrentHashMap<String, Remembered>()
-
-    internal fun clearSearchAnswers() {
-        searchAnswers.clear()
-        remembered.clear()
-        manualRestingProbes.clear()
-    }
+    internal fun clearSearchAnswers() =
+        com.music.bitchord.ko.KoSourceSearchMemo.clearSearchAnswers() // [KO] search-memo
 
     /** Forgets one source's memoised searches without touching any other source. */
-    internal fun clearSearchAnswersForSource(configId: String) {
-        searchAnswers.keys.removeIf { it.sourceId == configId }
-    }
+    internal fun clearSearchAnswersForSource(configId: String) =
+        com.music.bitchord.ko.KoSourceSearchMemo.clearSearchAnswersForSource(configId) // [KO] search-memo
 
-    /**
-     * A source's own failure path, for sources that turn a transport fault into
-     * an empty answer instead of throwing. A 5xx or a timeout that reaches
-     * [attempt] is counted there; this is for the ones swallowed before it.
-     *
-     * [network] is set when the addon could not be reached at all rather than
-     * when it answered with an error. Such a fault still raises the failure
-     * mark so its empty answer is not cached, but an offline device only asks
-     * for the mark: the connection, not the source, is what failed.
-     *
-     * [restUntilMs] is a host rest the addon itself recorded (429/502/503/504).
-     * Using that expiry keeps the source eligible again when the host is,
-     * instead of adding thirty minutes on top of a one-minute cold start.
-     */
     internal fun reportSourceFailure(
         configId: String,
         network: Boolean = false,
@@ -408,62 +138,29 @@ object SourceResolver {
     ) {
         if (network) SourceCooldown.networkFailed(configId, online = !offlineCheck())
         else SourceCooldown.failed(configId, restUntilMs)
-    }
+    } // [KO] source-cooldown
 
-    /**
-     * A source refused this app's credential (401/402/403). The caller turns
-     * that into an empty list, so this mark is what keeps the empty answer
-     * from being memoised as a confirmed miss and what lets the `hq-search`
-     * line say `auth`.
-     */
     internal fun reportSourceAuthFailure(configId: String) {
         SourceCooldown.authFailed(configId)
-    }
+    } // [KO] source-cooldown
 
-    /**
-     * The source's own settings changed (Telegram login or selected chats), so
-     * any rest it earned under the old settings is no longer evidence about it.
-     */
     internal fun clearCooldown(configId: String) {
         SourceCooldown.clear(configId)
-    }
+    } // [KO] source-cooldown
 
     /** Keeps [stream] as the verified original for [target], for a later play. */
-    fun rememberOriginal(target: TrackMatcher.Target, stream: SourceStream) {
-        if (target.title.isBlank()) return
-        val now = System.currentTimeMillis()
-        remembered.entries.removeIf { now - it.value.at > REMEMBERED_TTL_MS }
-        if (remembered.size >= REMEMBERED_MAX) {
-            remembered.minByOrNull { it.value.at }?.let { remembered.remove(it.key) }
-        }
-        remembered[targetKey(target)] = Remembered(stream, now)
-    }
+    fun rememberOriginal(target: TrackMatcher.Target, stream: SourceStream) =
+        com.music.bitchord.ko.KoSourceSearchMemo.rememberOriginal(target, stream) // [KO] remembered-original
 
     /** The verified original already found for [target], if it is still fresh. */
-    fun rememberedOriginal(target: TrackMatcher.Target): SourceStream? {
-        val key = targetKey(target)
-        val entry = remembered[key] ?: return null
-        if (System.currentTimeMillis() - entry.at > REMEMBERED_TTL_MS) {
-            remembered.remove(key)
-            return null
-        }
-        return entry.stream
-    }
+    fun rememberedOriginal(target: TrackMatcher.Target): SourceStream? =
+        com.music.bitchord.ko.KoSourceSearchMemo.rememberedOriginal(target) // [KO] remembered-original
 
-    private fun targetKey(target: TrackMatcher.Target): String = listOf(
-        target.title,
-        target.artist,
-        target.durationSec,
-        target.album,
-        target.isExplicit,
-        target.isVideo,
-    ).joinToString("\u0001")
+    private fun targetKey(target: TrackMatcher.Target): String =
+        com.music.bitchord.ko.KoSourceSearchMemo.targetKey(target) // [KO] search-memo
 
-    private fun requestKey(request: StreamRequest): String = when (request) {
-        is StreamRequest.Lossless -> "lossless"
-        is StreamRequest.Best -> "best"
-        is StreamRequest.Capped -> "capped:${request.maxKbps}"
-    }
+    private fun requestKey(request: StreamRequest): String =
+        com.music.bitchord.ko.KoSourceSearchMemo.requestKey(request) // [KO] search-memo
 
     /**
      * What to ask a source for, right now.
@@ -694,48 +391,10 @@ object SourceResolver {
         return remembered
     }
 
-    /**
-     * A source that has the same recording as a YouTube row which this network
-     * refuses, found under a deadline instead of after the first note.
-     *
-     * [substituteForYouTube] deliberately never searches before playback: on a
-     * playable track a catalogue walk would compete for the radio and delay the
-     * first note. A *blocked* track has no first note to protect, so this is the
-     * one place the live path may spend a bounded search before sound. The
-     * result is matched by [TrackMatcher] (title, artist, runtime, original
-     * arrangement) exactly as the upgrade path matches; the existing
-     * `hq-verify` comparison still runs afterwards, during playback, so a cover
-     * that slipped through can be refused by the same rule as any upgrade.
-     *
-     * Null is a normal answer: the caller moves on to the next row.
-     */
     suspend fun blockedStartStream(
         target: TrackMatcher.Target,
         timeoutMs: Long,
-    ): SourceStream? {
-        if (target.title.isBlank() || target.isVideo || timeoutMs <= 0L) return null
-        val active = SourceRegistry.activeForPlayback()
-        val youtube = active.firstOrNull { it.kind == SourceKind.YOUTUBE } ?: return null
-        val candidates = rankedAbove(youtube.configId, active, target)
-        if (candidates.isEmpty()) return null
-        val found = withTimeoutOrNull(timeoutMs) {
-            bestAcross(
-                candidates,
-                target,
-                requestForNow(),
-                waitForAll = false,
-                strictLength = target.durationSec != null,
-                requireSharedArtist = true,
-                strictOriginal = true,
-            )
-        } ?: return null
-        TrackLog.d(
-            TAG,
-            "blocked start: '${target.title}' served by ${found.first.displayName} " +
-                "at ${found.second.format.summary}",
-        )
-        return found.second
-    }
+    ): SourceStream? = com.music.bitchord.ko.blockedStartStream(target, timeoutMs) // [KO] blocked-start
 
     /**
      * The reliable last rung for a source-backed queue item whose chosen stream
@@ -997,21 +656,6 @@ object SourceResolver {
         return chosen
     }
 
-    /**
-     * Every worthwhile upgrade candidate, best rendition first, from **one**
-     * search.
-     *
-     * [upgradeFor] answers "what should play now". This answers "what else did
-     * the same search find", which is what a caller walking candidates after a
-     * failed verification needs. Re-running [upgradeFor] for each one asked
-     * every source again: on the reported device one hand-made upgrade spent
-     * 12s on the first search, then another 12s on the same resting source,
-     * another on the same Deezer row that had just refused, and so on.
-     *
-     * The list is ordered by [HqQuality]'s ladder: 24-bit before 16-bit
-     * lossless before lossy. Verification is expensive (a Qobuz 24-bit head
-     * measured ~14s), so the copy with the most to gain is proved first.
-     */
     internal suspend fun upgradeCandidatesFor(
         target: TrackMatcher.Target,
         playing: StreamFormat? = null,
@@ -1023,35 +667,17 @@ object SourceResolver {
         report: SearchReport? = null,
         manualSession: Any? = null,
         verify: (suspend (MusicSource, SourceStream) -> Boolean)? = null,
-    ): List<Pair<MusicSource, SourceStream>> {
-        val found = mutableListOf<Pair<MusicSource, SourceStream>>()
-        upgradeFor(
-            target = target,
-            playing = playing,
-            servedBy = servedBy,
-            excludeSources = excludeSources,
-            excludeHosts = excludeHosts,
-            allowSameRendition = allowSameRendition,
-            manual = manual,
-            report = report,
-            manualSession = manualSession,
-            collect = found,
-            verify = verify,
-        )
-        return orderUpgradeCandidates(found)
-    }
+    ): List<Pair<MusicSource, SourceStream>> =
+        com.music.bitchord.ko.upgradeCandidatesFor(
+            target, playing, servedBy, excludeSources, excludeHosts,
+            allowSameRendition, manual, report, manualSession, verify,
+        ) // [KO] upgrade-candidates
 
     /** The one place the upgrade candidate list's quality order is defined. */
     internal fun orderUpgradeCandidates(
         found: List<Pair<MusicSource, SourceStream>>,
-    ): List<Pair<MusicSource, SourceStream>> = found
-        .distinctBy { it.second.url }
-        .sortedWith(
-            compareBy<Pair<MusicSource, SourceStream>> { HqQuality.tierOf(it.second.format).rank }
-                .thenByDescending { it.second.format.kbps ?: 0 }
-                .thenByDescending { it.second.format.bitDepth ?: 0 }
-                .thenByDescending { it.second.format.sampleRateHz ?: 0 },
-        )
+    ): List<Pair<MusicSource, SourceStream>> =
+        com.music.bitchord.ko.orderUpgradeCandidates(found) // [KO] upgrade-candidates
 
     /**
      * The copy of a track about to be downloaded that is worth keeping over
@@ -1272,34 +898,12 @@ object SourceResolver {
         chosen
     }
 
-    /**
-     * Open the exact pair a sound comparison already accepted.
-     *
-     * The ordinary download path searches again, which can find a different
-     * row under the same title and make the replacement a different recording
-     * from the one that was proved. The automatic high-quality pass therefore
-     * pins both ids: [sourceConfigId] and [trackId] are the pair stored with
-     * the verdict, and this asks only that source for that row.
-     *
-     * Null when the source is disabled, no longer configured, is YouTube
-     * itself, or cannot serve the row right now. The caller keeps the old file
-     * rather than falling back to an unverified search.
-     */
     suspend fun forDownloadVerified(
         sourceConfigId: String,
         trackId: String,
         request: StreamRequest = requestForDownload(),
-    ): SourceStream? {
-        if (sourceConfigId.isBlank() || trackId.isBlank()) return null
-        val source = SourceRegistry.activeForDownload()
-            .firstOrNull { it.configId == sourceConfigId }
-            ?: return null
-        if (source.kind == SourceKind.YOUTUBE) return null
-        if (SourceCooldown.isResting(source.configId)) return null
-        val opened = attempt(source) { source.stream(trackId, request) } ?: return null
-        SourceCooldown.succeeded(source.configId)
-        return opened.copy(sourceConfigId = source.configId, trackId = trackId)
-    }
+    ): SourceStream? =
+        com.music.bitchord.ko.forDownloadVerified(sourceConfigId, trackId, request) // [KO] download-verified
 
     /**
      * Whether a lossy [candidate] is worth keeping as a file over whatever
@@ -1391,42 +995,11 @@ object SourceResolver {
         return above > 0 && automaticUpgradeCandidates(active.take(above)).isNotEmpty()
     }
 
-    /**
-     * Sources an automatic upgrade, substitute or fallback walk may ask.
-     *
-     * Telegram is ranked above YouTube and joins these walks only when
-     * [MusicSource.automaticUpgradeEligible] says there is an account and a
-     * selected chat to search. A source left on without a session stays out,
-     * which is what keeps an automatic upgrade from opening TDLib for an
-     * account that has not signed in; [target] lets that one case leave the
-     * `hq-search` line instead of disappearing silently.
-     */
     internal fun automaticUpgradeCandidates(
         sources: List<MusicSource>,
         target: TrackMatcher.Target? = null,
-    ): List<MusicSource> {
-        val kept = ArrayList<MusicSource>(sources.size)
-        for (source in sources) {
-            if (source.automaticUpgradeEligible) {
-                kept += source
-                continue
-            }
-            val reason = source.automaticUpgradeIneligibleReason
-            if (target != null && source.kind == SourceKind.TELEGRAM &&
-                reason == TelegramUpgradeGate.SIGNED_OUT
-            ) {
-                TrackLog.d(
-                    TAG,
-                    hqSearchLine(
-                        target,
-                        source,
-                        SearchOutcome(results = 0, verdict = reason),
-                    ),
-                )
-            }
-        }
-        return kept
-    }
+    ): List<MusicSource> =
+        com.music.bitchord.ko.automaticUpgradeCandidates(sources, target) // [KO] auto-upgrade-candidates
 
     /**
      * The sources ranked above [configId], in order.
@@ -1785,47 +1358,6 @@ object SourceResolver {
         best
     }
 
-    /**
-     * How the source race ranks the kinds of row it can be offered, lowest
-     * first: a normally credited match, then a localised `artist-unverified`
-     * row, then a verified copy that only opened below the request, and last a
-     * localised row that also only opened below it.
-     *
-     * Request satisfaction outranks artist verification: a copy that actually
-     * serves what was asked for must not lose to a settle-for merely because
-     * the latter's catalogue localised the credit. Otherwise a lossy localised
-     * fallback could discard the verified copy hq-verify would have accepted.
-     */
-    private fun offerRank(verdict: String, stream: SourceStream): Int = when {
-        verdict == "artist-unverified" && stream.belowRequest ->
-            ARTIST_UNVERIFIED_BELOW_REQUEST_RANK
-        verdict == "artist-unverified" -> ARTIST_UNVERIFIED_RANK
-        stream.belowRequest -> BELOW_REQUEST_RANK
-        else -> MATCH_RANK
-    }
-
-    /** Whether [rank] is one of the localised-row tiers; see [offerRank]. */
-    private fun isArtistUnverifiedRank(rank: Int): Boolean =
-        rank == ARTIST_UNVERIFIED_RANK || rank == ARTIST_UNVERIFIED_BELOW_REQUEST_RANK
-
-    /** How far an opened stream's row sits from the requested runtime. */
-    private fun runtimeDrift(stream: SourceStream, target: TrackMatcher.Target): Int {
-        val wanted = target.durationSec ?: return 0
-        val got = stream.durationSec ?: return 0
-        return kotlin.math.abs(wanted - got)
-    }
-
-    /**
-     * [matchAndStream] under the same per-source deadline the races use.
-     *
-     * The sequential walks — the stream upgrade in [resolve] and the bit-exact
-     * download ladder in [forDownload] — call [matchAndStream] directly rather
-     * than through [bestAcross]. A cold TDLib session can spend its whole
-     * search window just opening, so without this bound those walks would hold
-     * the client lease and the first note for as long as TDLib takes to open.
-     * Null means this source ran out of time and the caller steps over it
-     * exactly as it would a miss.
-     */
     private suspend fun matchAndStreamWithin(
         source: MusicSource,
         target: TrackMatcher.Target,
@@ -1834,30 +1366,9 @@ object SourceResolver {
         strictLength: Boolean = false,
         strictOriginal: Boolean = false,
         baseTimeoutMs: Long = SOURCE_LOOKUP_TIMEOUT_MS,
-    ): SearchOutcome? {
-        val timeoutMs = sourceLookupTimeoutMsFor(source, baseTimeoutMs)
-        val answer = withTimeoutOrNull(timeoutMs) {
-            matchAndStream(
-                source,
-                target,
-                request,
-                waitForAll = waitForAll,
-                strictLength = strictLength,
-                strictOriginal = strictOriginal,
-            )
-        }
-        if (answer == null) {
-            // A timeout while the device is offline is the connection, not the
-            // source — the same rule [bestAcross] follows. Telegram's cold
-            // session is not a failure either; see [SourceCooldown.timedOut].
-            SourceCooldown.timedOut(source.configId, source.kind, online = !offlineCheck())
-            TrackLog.d(TAG, "${source.displayName} timed out after ${timeoutMs}ms; skipping for this track")
-            TrackLog.d(TAG, hqSearchLine(target, source, SearchOutcome(verdict = "timeout", conclusive = false)))
-        } else if (answer.stream != null) {
-            SourceCooldown.succeeded(source.configId)
-        }
-        return answer
-    }
+    ): SearchOutcome? = com.music.bitchord.ko.matchAndStreamWithin(
+        source, target, request, waitForAll, strictLength, strictOriginal, baseTimeoutMs,
+    ) // [KO] match-stream-within
 
     /**
      * Searches [source] for the recording in [target] and streams it if one of
@@ -2175,19 +1686,6 @@ object SourceResolver {
         return last
     }
 
-    /** The one line that says why a source did or did not supply this track. */
-    private fun hqSearchLine(
-        target: TrackMatcher.Target,
-        source: MusicSource,
-        outcome: SearchOutcome,
-    ): String {
-        val best = outcome.best?.let {
-            "${it.title}/${it.artist}/${it.durationText ?: "?"}"
-        } ?: "-"
-        return "hq-search: '${target.title}' ${source.displayName} " +
-            "results=${outcome.results} best=$best verdict=${outcome.verdict}"
-    }
-
     /**
      * Opens the best of [matches] that can actually serve [request].
      *
@@ -2421,70 +1919,7 @@ object SourceResolver {
         null
     }
 
-    /**
-     * Whether [this] is the connection rather than the source's answer.
-     *
-     * The types are checked through the cause chain because HTTP clients wrap
-     * the real `UnknownHostException`/`ConnectException`; the text markers are
-     * the fallback for the same faults surfacing as a plain [Exception] from a
-     * module. A server's own 4xx/5xx is not in here: that is the source
-     * answering, and it stays a source failure.
-     */
-    internal fun isNetworkFault(failure: Throwable): Boolean = failure.isNetworkFailure()
-
-    /** Whether [this] is a deadline rather than an answer; see [SourceCooldown.timedOut]. */
-    internal fun Throwable.isTimeoutFailure(): Boolean {
-        var cause: Throwable? = this
-        var depth = 0
-        while (cause != null && depth++ < 8) {
-            if (cause is java.net.SocketTimeoutException ||
-                cause is java.io.InterruptedIOException ||
-                cause is java.util.concurrent.TimeoutException
-            ) {
-                return true
-            }
-            cause = cause.cause?.takeIf { it !== cause }
-        }
-        val text = message?.lowercase() ?: return false
-        return text.contains("timed out") || text.contains("timeout") || text.contains("time-out")
-    }
-
-    internal fun Throwable.isNetworkFailure(): Boolean {
-        var cause: Throwable? = this
-        var depth = 0
-        while (cause != null && depth++ < 8) {
-            if (cause is java.net.UnknownHostException ||
-                cause is java.net.ConnectException ||
-                cause is java.net.NoRouteToHostException ||
-                cause is java.net.SocketTimeoutException ||
-                cause is java.io.InterruptedIOException ||
-                cause is java.util.concurrent.TimeoutException ||
-                cause is javax.net.ssl.SSLException
-            ) {
-                return true
-            }
-            cause = cause.cause?.takeIf { it !== cause }
-        }
-        val text = message?.lowercase() ?: return false
-        return NETWORK_FAILURE_MARKERS.any(text::contains)
-    }
-
-    private val NETWORK_FAILURE_MARKERS = listOf(
-        "unable to resolve host",
-        "no address associated with hostname",
-        "failed to connect",
-        "connection refused",
-        "network is unreachable",
-        "no route to host",
-        "connection reset",
-        "reset by peer",
-        "broken pipe",
-        "timed out",
-        "timeout",
-        "econnrefused",
-        "ehostunreach",
-        "enetunreach",
-    )
+    internal fun isNetworkFault(failure: Throwable): Boolean = failure.isNetworkFailure() // [KO] network-fault
 
     /**
      * How many answers per query are worth weighing.
@@ -2517,12 +1952,6 @@ object SourceResolver {
      * rounding a runtime differently and nothing else.
      */
     private const val UPGRADE_DRIFT_SEC = 2
-
-    /** The source race's ordering of row kinds; see [offerRank]. */
-    private const val MATCH_RANK = 0
-    private const val ARTIST_UNVERIFIED_RANK = 1
-    private const val BELOW_REQUEST_RANK = 2
-    private const val ARTIST_UNVERIFIED_BELOW_REQUEST_RANK = 3
 
     /**
      * How close two runtimes have to be to be the same cut of a song.
@@ -2560,59 +1989,11 @@ object SourceResolver {
     private const val UPGRADE_MIN_GAIN_KBPS = 96
 
     /**
-     * How long one source may take before this track gives up on it.
-     *
-     * Sources are asked in parallel, so this is a ceiling rather than a sum.
-     * A source that needs longer is not lost for good: it is simply not part
-     * of this track's answer, and the next track asks it again.
+     * How long a source may take before this track gives up on it.
      */
-    private const val SOURCE_LOOKUP_TIMEOUT_MS = 4_000L
-    /** Enough for a cold TDLib session plus one search on the Telegram source. */
-    private const val TELEGRAM_LOOKUP_TIMEOUT_MS = 15_000L
-
-    /**
-     * A hand-made upgrade is the listener waiting for one answer, so its
-     * per-source window is three times the live path's. The automatic path
-     * keeps [SOURCE_LOOKUP_TIMEOUT_MS]: preparing the next track or improving
-     * one mid-playback must not spend twelve seconds per source.
-     */
-    private const val MANUAL_SOURCE_LOOKUP_TIMEOUT_MS = 12_000L
-
-    /**
-     * A resting source's one manual probe. It was parked for failing, so it
-     * gets one short chance beside the healthy sources rather than holding the
-     * whole request open for the full manual window.
-     */
-    private const val MANUAL_RESTING_PROBE_TIMEOUT_MS = 4_000L
-
-    internal fun sourceLookupTimeoutMs(
-        manual: Boolean,
-        configured: Long = SOURCE_LOOKUP_TIMEOUT_MS,
-    ): Long = if (manual) MANUAL_SOURCE_LOOKUP_TIMEOUT_MS else configured
-
-    /**
-     * The timeout for one source in a race.
-     *
-     * Telegram keeps its client shut between requests, so an automatic search
-     * pays the session open before its first TDLib query. Giving it the ordinary
-     * four-second window made the upgrade path give up while the client was
-     * still starting; the extra time is bounded to this source so a slow addon
-     * still loses the race as before.
-     */
-    private fun sourceLookupTimeoutMsFor(source: MusicSource, base: Long): Long =
-        if (source.kind == SourceKind.TELEGRAM) maxOf(base, TELEGRAM_LOOKUP_TIMEOUT_MS) else base
-
-    /**
-     * The same ceiling for a download, where nobody is waiting on a first note
-     * and a module's patient window is worth using.
-     */
-    private const val DOWNLOAD_SOURCE_TIMEOUT_MS = 25_000L
+    // [KO] source-timeout
 
     /** How long a source's search answer is reused for the same track. */
     private const val SEARCH_MEMO_TTL_MS = 10 * 60 * 1000L
     private const val SEARCH_MEMO_MAX = 256
-
-    /** How long a verified original is kept for a later play of the same track. */
-    private const val REMEMBERED_TTL_MS = 30 * 60 * 1000L
-    private const val REMEMBERED_MAX = 64
 }
