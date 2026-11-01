@@ -139,6 +139,14 @@ def fresh_pool(playlists, seed):
 
 def parse_dump(text, vid):
     """The last complete sync-dump block for vid: (header dict, [(n, start_ms, text)])."""
+    blocks = parse_blocks(text, vid)
+    return blocks[-1] if blocks else None
+
+
+def parse_blocks(text, vid):
+    """Every complete sync-dump block for vid, in log order: the provider's raw times,
+    then each base the app switched to (ai, measured, ...). Scoring them all shows
+    which method was right when the app replaced one answer with another."""
     blocks, cur = [], None
     for raw in text.splitlines():
         i = raw.find("sync-dump: ")
@@ -156,7 +164,7 @@ def parse_dump(text, vid):
         elif kind == "end" and cur is not None:
             blocks.append(cur)
             cur = None
-    return blocks[-1] if blocks else None
+    return blocks
 
 
 def resolve_of(text, vid):
@@ -444,7 +452,7 @@ def run_song(vid, seconds, dry):
     stored = resolve == "cache" or head.get("source", "").startswith("file:") or "@unknown" in head.get("source", "")
     row = dict(source=head.get("source", ""), base=head.get("base", ""), shift=head.get("shift", ""),
                match=head.get("match", ""), playing=head.get("playing", ""), lines=len(lines),
-               resolve=resolve, stored="y" if stored else "n")
+               resolve=resolve, stored="y" if stored else "n", blocks=parse_blocks(text, vid))
     if not lines:
         return dict(row, error="lyrics shown without timed lines", app_fail=True)
     lang = language_for(lines)
@@ -503,6 +511,16 @@ def run_song(vid, seconds, dry):
 
 def finish(vid, row, lines, per_model):
     """Scores the lines against what both hearing models heard in the played audio."""
+    # Every answer the app showed for this song, scored the same way: which base
+    # (provider's own, ai, measured, ...) was closest to what is sung.
+    alts = []
+    for head, blines in row.pop("blocks", []):
+        b, _, _ = agreed([align(blines, words) for words in per_model])
+        if len(b) >= 4:
+            e = [shown - sung for _, shown, sung, _ in b]
+            in03 = sum(abs(x) <= 0.3 for x in e) / len(e)
+            alts.append(f"{head.get('base', '?')}{head.get('shift', '')}:{statistics.median(e):+.2f}/{in03:.0%}")
+    row["alts"] = " ".join(dict.fromkeys(alts))
     per = [align(lines, words) for words in per_model]
     both, either, gap = agreed(per)
     heard_until = min(words[-1][1] for words in per_model if words) if all(per_model) else 0
@@ -526,7 +544,7 @@ def write_report(rows):
     fields = ["playlist", "video", "verdict", "why", "old_verdict", "shape", "slope_ms_min", "span_s", "median",
               "median_abs", "in02", "in03", "in05", "max_abs", "matched", "eligible", "coverage", "model_gap",
               "lines", "stored", "resolve", "source", "base", "shift", "match", "playing", "audio", "error",
-              "app_fail"]
+              "app_fail", "alts"]
     with open(OUT / "report.csv", "w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         w.writeheader()
@@ -549,15 +567,16 @@ def write_report(rows):
         s = [r for r in scored if r.get("stored") == flag]
         if s:
             md.append(f"- {label}: 합격 {sum(r['verdict'] == 'PASS' for r in s)}/{len(s)}")
-    md += ["", "| 판정 | 이전 | 못 미친 기준 | 곡 | 저장 | 모양 | 중앙값(초) | 최대(초) | 0.2/0.3/0.5초 이내 | 채점 줄/들려야 할 줄 | 모델차(초) | 제공처 | base/shift/match | 오디오 |",
-           "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    md += ["", "| 판정 | 이전 | 못 미친 기준 | 곡 | 저장 | 모양 | 중앙값(초) | 최대(초) | 0.2/0.3/0.5초 이내 | 채점 줄/들려야 할 줄 | 모델차(초) | 제공처 | base/shift/match | 앱이 보인 답 차례(기준shift:중앙값/0.3초 이내) | 오디오 |",
+           "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     order = {"FAIL": 0, "WARN": 1, "PASS": 2}
     for r in sorted(scored, key=lambda r: (order[r["verdict"]], -r["median_abs"])):
         sh = r["shape"] + (f" {r['slope_ms_min']:+}ms/분" if r["shape"] == "drift" else "")
         md.append(f"| {r['verdict']} | {r.get('old_verdict', '')} | {r.get('why', '')} | {r['video']} | "
                   f"{r.get('stored', '')} | {sh} | {r['median']:+.2f} | {r.get('max_abs', '')} | "
                   f"{r['in02']:.0%}/{r['in03']:.0%}/{r['in05']:.0%} | {r['matched']}/{r.get('eligible', '')} | "
-                  f"{r.get('model_gap', '')} | {r['source']} | {r['base']}/{r['shift']}/{r['match']} | {r['audio']} |")
+                  f"{r.get('model_gap', '')} | {r['source']} | {r['base']}/{r['shift']}/{r['match']} | "
+                  f"{r.get('alts', '')} | {r['audio']} |")
     errors = [r for r in rows if r.get("error") and not r.get("app_fail")]
     app_fails = [r for r in rows if r.get("app_fail")]
     if app_fails:
