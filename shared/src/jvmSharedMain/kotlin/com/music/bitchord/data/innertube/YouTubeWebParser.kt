@@ -3,6 +3,7 @@ package com.music.bitchord.data.innertube
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.firstArtworkOrStill
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -689,9 +690,7 @@ internal object YouTubeWebParser {
         songs: List<Song>,
     ): InnertubeParser.BrowseHeader {
         if (!thumbnailUrl.isNullOrBlank()) return this
-        val fallback = songs.firstNotNullOfOrNull {
-            it.thumbnailUrl?.takeIf(String::isNotBlank)
-        } ?: return this
+        val fallback = songs.firstArtworkOrStill() ?: return this
         return copy(thumbnailUrl = fallback)
     }
 

@@ -2,6 +2,7 @@ package com.music.bitchord.data
 
 import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.withVideoThumbnailFallback
 import com.music.bitchord.data.sources.TrackMatcher
 
 /**
@@ -426,8 +427,10 @@ object StoredSongDisplay {
     }
 
     fun clean(song: Song): Song {
-        if (song.videoId.isBlank()) return song
-        if (song.albumId != null && !TrackMatcher.isSoundtrackCredit(song.artist)) return song
+        if (song.videoId.isBlank()) return song.withVideoThumbnailFallback()
+        if (song.albumId != null && !TrackMatcher.isSoundtrackCredit(song.artist)) {
+            return song.withVideoThumbnailFallback()
+        }
         val key = keyOf(song)
         val display = synchronized(cache) { cache[key] } ?: run {
             val cleaned = YouTubeDisplayCleaner.clean(song)
@@ -449,7 +452,7 @@ object StoredSongDisplay {
             originalArtist = display.originalArtist,
             coverSinger = display.coverSinger,
             coverOriginalArtist = display.coverOriginalArtist,
-        )
+        ).withVideoThumbnailFallback()
     }
 
     /** The stored strings that decide the result; other fields are copied through. */
