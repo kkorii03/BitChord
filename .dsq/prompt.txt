@@ -9,10 +9,12 @@
 마지막 10줄 이내 요약: 판정(남음 n / 고쳐짐 n / 오진 n) / 수정 파일 / 새 테스트 클래스 이름(CI 목록 추가는 Opus 가 함) / 미해결·고치지 않은 이유.
 
 
-== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+== 3 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
 ?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
 寃??吏??
-VERDICT: ISSUES 2
-1. MEDIUM — `app/src/main/java/com/music/bitchord/download/Downloads.kt:570` — An `enqueue` that lands before the startup thread reaches `restorePending` (plausible because `init` queues that restore behind other `StartupWork` jobs and foreground Hq/MV events can enqueue first) rewrites `downloaded_pending` with only the new row, permanently erasing the dead process's waiting queue. Fix: block/merge persistence until the stored queue has been restored under the same lock (e.g. restore synchronously before accepting enqueues, or merge persisted rows in `persistPendingLocked` when not yet restored).
-2. MEDIUM — `app/src/main/java/com/music/bitchord/download/Downloads.kt:367` — Restored rows are inserted straight into `pending`, bypassing the `AppSettings.downloadsAllowedNow` Wi-Fi-only guard that `enqueue` enforces, so a queue saved on Wi-Fi resumes over metered data after restart. Fix: re-apply `downloadsAllowedNow` in `restorePending`/drain and leave metered rows waiting instead of downloading them.
+VERDICT: ISSUES 4
+1. MEDIUM — `app/src/main/java/com/music/bitchord/download/Downloads.kt:2040` — Rows held back for metered data stay in `pending`, so `Downloads.busy()` is true and the worker (`DownloadService.kt:178`) never exits its idle wait, keeping the foreground service and its notification alive indefinitely on cellular. Fix: make "waiting for network" not count as busy (or stop the service and rely on the network callback to restart it).
+2. MEDIUM — `app/src/main/java/com/music/bitchord/download/Downloads.kt:412` — `allowMetered` is persisted/restored but `cacheServableIds` is not, so a restored row that would be served from the song cache without spending data is blocked on metered, contradicting `takeNext`'s comment and stalling the queue. Fix: persist the cache-servable flag with the entry or re-evaluate `servableFromCache` for restored rows before blocking them.
+3. MEDIUM — `app/src/main/java/com/music/bitchord/download/Downloads.kt:2929` — The non-automatic `fail` path removes neither `meteredAllowedIds` nor `cacheServableIds`, so a later retry of the same videoId (even an ordinary tap) inherits the permission and can download over metered after the connection drops. Fix: clear both sets when a download fails, or tie both flags to the enqueue generation.
+4. LOW — `app/src/main/java/com/music/bitchord/download/Downloads.kt:403` — `pendingRestored` is set before the `prefs.isInitialized` check, so a restore that runs before init permanently marks the queue restored without reading it, letting the next persist overwrite the saved queue. Fix: set the flag only after `prefs` is ready and the saved entries have been read.
 留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
