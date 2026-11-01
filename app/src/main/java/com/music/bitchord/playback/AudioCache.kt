@@ -10,8 +10,6 @@ import com.music.bitchord.R
 import com.music.bitchord.data.StoredSongDisplay
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.playback.smart.AutomixAnalysisSource
-import com.music.bitchord.playback.smart.HqAudioVerify
-import com.music.bitchord.playback.smart.HqVerificationStore
 import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
@@ -21,7 +19,6 @@ import androidx.media3.datasource.TransferListener
 import androidx.media3.datasource.cache.Cache
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.CacheKeyFactory
-import androidx.media3.datasource.cache.CacheSpan
 import androidx.media3.datasource.cache.CacheWriter
 import androidx.media3.datasource.cache.ContentMetadata
 import androidx.media3.datasource.cache.ContentMetadataMutations
@@ -31,6 +28,16 @@ import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.DeviceCodecs
+import com.music.bitchord.ko.KoAnalysisHeadEngine
+import com.music.bitchord.ko.KoAnalysisWaits
+import com.music.bitchord.ko.KoCacheHolder
+import com.music.bitchord.ko.KoNetworkPolicy
+import com.music.bitchord.ko.KoCacheRetention
+import com.music.bitchord.ko.KoCachingDataSource
+import com.music.bitchord.ko.KoLosslessCache
+import com.music.bitchord.ko.KoPlaybackReadTracker
+import com.music.bitchord.ko.KoPrefetchQueue
+import com.music.bitchord.ko.KoRenditionEvents
 import com.music.bitchord.data.sources.HqQuality
 import com.music.bitchord.data.sources.HqTier
 import com.music.bitchord.data.sources.SourceKind
@@ -40,25 +47,20 @@ import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.startup.StartupWork
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
@@ -218,32 +220,19 @@ object AudioCache {
 
     private var appContext: Context? = null
 
+    private val koCache = KoCacheHolder( // [KO] cache-open
+        context = { appContext },
+        evictor = evictor,
+        cacheDirName = CACHE_DIR_NAME,
+        legacyDirName = LEGACY_CACHE_DIR_NAME,
+        migrate = ::migrateFromCacheDir,
+    )
+
     /** Set once the cache is open; null until someone needs it. See [cache]. */
-    @Volatile
-    private var openedCache: SimpleCache? = null
+    private val openedCache: SimpleCache? get() = koCache.opened // [KO] cache-open
 
-    private val openLock = Any()
-
-    /**
-     * The cache, opened on first use.
-     *
-     * Opening a [SimpleCache] is a database round trip and only one may be open
-     * per process, so [init] records where it lives and has the startup thread
-     * open it. A player built before that finished opens it here instead; both
-     * paths meet under [openLock], so exactly one `SimpleCache` is ever built.
-     */
-    private val cache: SimpleCache
-        get() = openedCache ?: synchronized(openLock) {
-            openedCache ?: openCache().also { openedCache = it }
-        }
-
-    private fun openCache(): SimpleCache {
-        val context = checkNotNull(appContext) { "AudioCache.init has not run" }
-        val dir = File(context.noBackupFilesDir, CACHE_DIR_NAME)
-        val databaseProvider = StandaloneDatabaseProvider(context)
-        migrateFromCacheDir(File(context.cacheDir, LEGACY_CACHE_DIR_NAME), dir, databaseProvider)
-        return SimpleCache(dir, evictor, databaseProvider)
-    }
+    /** [KO] cache-open */
+    private val cache: SimpleCache get() = koCache.get() // [KO] cache-open
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
@@ -354,8 +343,7 @@ object AudioCache {
         analysisHeadWant.clear()
         stalledAnalysisHeads.clear()
         renditionKeys.clear()
-        purgeCandidates.clear()
-        purgeIndexBuilt = true
+        koRetention.resetIndex() // [KO] purge-index
         scope.launch {
             cache.keys.toList().forEach { runCatching { cache.removeResource(it) } }
             _contentsChanged.value++
@@ -618,28 +606,9 @@ object AudioCache {
      * the track's life, even though the verified lossless copy sits fully
      * cached under `videoId#hifi`. See [CacheRenditionChoice].
      */
-    private fun completeUpgradeRendition(videoId: String): String? {
-        if (openedCache == null) return null
-        // A copy prefetched during this play must not take over its key until
-        // the queue moves on: a seek reopens the plain URI, and handing it the
-        // FLAC entry at the Opus entry's byte offset breaks the extractor.
-        if (videoId in upgradeKeyDeferred) return null
-        val candidates = renditionKeysFor(videoId).mapNotNull { key ->
-            if (key.endsWith("#watch")) return@mapNotNull null
-            val suffix = key.removePrefix("$videoId#")
-            if (suffix == key) return@mapNotNull null
-            val order = QualityUpgrade.upgradeGeneration(suffix)
-            if (order <= 0) return@mapNotNull null
-            CachedRendition(
-                key = key,
-                complete = isComplete(key),
-                lossless = isLosslessRendition(key),
-                upgradeOrder = order,
-            )
-        }
-        if (candidates.isEmpty()) return null
-        return CacheRenditionChoice.choose(videoId, candidates).takeIf { it != videoId }
-    }
+    /** [KO] hq-lossless */
+    private fun completeUpgradeRendition(videoId: String): String? =
+        koLossless.completeUpgradeRendition(videoId) // [KO] hq-lossless
 
     /** Whether [key] was written from a stream the quality ladder calls lossless. */
     private fun isLosslessRendition(key: String): Boolean = runCatching {
@@ -668,27 +637,8 @@ object AudioCache {
      * places that must behave differently offline — choosing a cache entry,
      * and deciding whether a failed read means the bytes on disk are bad.
      */
-    fun isOffline(): Boolean {
-        val context = appContext ?: return false
-        val connectivity = context.getSystemService(ConnectivityManager::class.java) ?: return false
-        val capabilities = runCatching { connectivity.getNetworkCapabilities(connectivity.activeNetwork) }
-            .getOrNull()
-        // A captive portal advertises INTERNET but only serves its sign-in
-        // page. Treating that as online sent every lookup into a timeout; the
-        // portal's own capability is the event-free way to tell them apart.
-        // (A proxy-only network can be unvalidated but is not a portal, so
-        // VALIDATED is deliberately not required here.)
-        //
-        // No capabilities means there is no active network — airplane mode, or
-        // a moment after Wi-Fi and cellular have both dropped. Reporting that
-        // as online skipped the cached copy and sent every lookup into a
-        // timeout instead.
-        return offlineFromCapabilities(
-            hasCapabilities = capabilities != null,
-            hasInternet = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true,
-            captivePortal = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL) == true,
-        )
-    }
+    /** [KO] offline-policy */
+    fun isOffline(): Boolean = KoNetworkPolicy.isOffline(appContext) // [KO] offline-policy
 
     /**
      * Splits the `#alt` bucket in two along whatever this process currently
@@ -752,141 +702,37 @@ object AudioCache {
     /** Bumped whenever the cache is emptied, so an open Cached songs folder can re-read itself. */
     val contentsChanged: StateFlow<Int> = _contentsChanged.asStateFlow()
 
-    private val _renditionCompleted = MutableSharedFlow<String>(extraBufferCapacity = 16)
+    private val koEvents = KoRenditionEvents( // [KO] rendition-completion
+        cache = { openedCache },
+        renditionFor = ::renditionFor,
+        renditionKeysFor = ::renditionKeysFor,
+    )
 
-    /**
-     * Video ids whose rendition just became complete on disk, one emission per
-     * rendition key. Event-driven — nothing polls — and used by the lyrics
-     * panel to offer AI timing once a stream that was still arriving when the
-     * lyrics loaded has finished caching. See [watchRenditionCompletion].
-     */
-    val renditionCompleted: SharedFlow<String> = _renditionCompleted.asSharedFlow()
+    /** [KO] rendition-completion */
+    val renditionCompleted: SharedFlow<String> get() = koEvents.renditionCompleted // [KO] rendition-completion
 
-    /**
-     * Video ids whose rendition is complete on disk, as state rather than only
-     * an event.
-     *
-     * A SharedFlow with no replay loses a completion that happened before the
-     * lyrics panel subscribed, and can drop one when its buffer is full during
-     * a burst of cache writes. This holds the same answer for a late collector,
-     * so the AI timing action still appears after the copy finished.
-     */
-    private val _completedRenditions = MutableStateFlow<Set<String>>(emptySet())
-    val completedRenditions: StateFlow<Set<String>> = _completedRenditions.asStateFlow()
+    /** [KO] rendition-completion */
+    val completedRenditions: StateFlow<Set<String>> get() = koEvents.completedRenditions // [KO] rendition-completion
 
-    /** Cache keys whose completion listener is installed, so each is watched once. */
-    private val watchedCompletionKeys = ConcurrentHashMap.newKeySet<String>()
+    /** [KO] rendition-completion */
+    fun watchRenditionCompletion(videoId: String) = koEvents.watch(videoId, ALT_SUFFIX) // [KO] rendition-completion
 
-    /** Keys already reported complete, so adding more spans does not repeat the event. */
-    private val completedKeys = ConcurrentHashMap.newKeySet<String>()
-
-    /**
-     * Watches [videoId]'s renditions for the moment one holds the whole file,
-     * then emits its video id on [renditionCompleted]. Safe to call repeatedly;
-     * a key is only watched once for the process.
-     *
-     * The plain and substitute keys are watched even before they exist, so a
-     * track whose first bytes arrive after the lyrics are shown is still
-     * caught. Callers that need an event must call this before collecting.
-     */
-    fun watchRenditionCompletion(videoId: String) {
-        if (openedCache == null) return
-        watchCompletionKey(videoId)
-        watchCompletionKey("$videoId$ALT_SUFFIX")
-        renditionKeysFor(videoId).forEach(::watchCompletionKey)
-    }
-
-    private fun watchCompletionKey(key: String) {
-        if (openedCache == null) return
-        if (!watchedCompletionKeys.add(key)) return
-        val listener = object : Cache.Listener {
-            override fun onSpanAdded(cache: Cache, span: CacheSpan) {
-                val rendition = renditionFor(key) ?: return
-                if (!rendition.isComplete) return
-                if (!completedKeys.add(key)) return
-                val mediaId = key.substringBefore('#')
-                _completedRenditions.update { it + mediaId }
-                // Only remember it as delivered when the event actually reached
-                // the buffer. A full 16-slot buffer during bulk writes must not
-                // mark the completion done and leave the AI button hidden.
-                if (!_renditionCompleted.tryEmit(mediaId)) {
-                    completedKeys.remove(key)
-                }
-            }
-
-            override fun onSpanRemoved(cache: Cache, span: CacheSpan) {
-                // The entry (or one of its spans) is gone; a later rebuild of
-                // the same key must be allowed to report completion again.
-                completedKeys.remove(key)
-                // Other renditions of the same media (the plain key, the
-                // alternate, an older quality) may still hold the whole file.
-                // Removing the media id just because this one key lost a span
-                // hid AI timing on later plays, and nothing re-added it.
-                val mediaId = key.substringBefore('#')
-                val stillComplete = completionSurvivesSpanRemoval(
-                    removedKey = key,
-                    remainingKeys = renditionKeysFor(mediaId),
-                ) { otherKey -> renditionFor(otherKey)?.isComplete == true }
-                _completedRenditions.update { current ->
-                    if (stillComplete) current + mediaId else current - mediaId
-                }
-            }
-
-            override fun onSpanTouched(cache: Cache, oldSpan: CacheSpan, newSpan: CacheSpan) = Unit
-        }
-        runCatching { cache.addListener(key, listener) }
-            .onSuccess {
-                // The copy may already be complete from before this listener
-                // existed (lyrics arriving late). State must hold that answer:
-                // no span-added event will ever be delivered for it.
-                val rendition = renditionFor(key) ?: return@onSuccess
-                if (!rendition.isComplete || !completedKeys.add(key)) return@onSuccess
-                val mediaId = key.substringBefore('#')
-                _completedRenditions.update { it + mediaId }
-                _renditionCompleted.tryEmit(mediaId)
-            }
-            .onFailure {
-                watchedCompletionKeys.remove(key)
-                TrackLog.w(TAG, "could not watch cache completion for $key: ${it.message}")
-            }
-    }
-
-    /**
-     * Whether losing [removedKey] still leaves another complete rendition of
-     * the same media.
-     *
-     * A media id has several cache keys (plain, subtitle, alternate qualities).
-     * Completion is a property of the media, not of whichever key happened to
-     * fire the removal, so the id may only be forgotten when no other key
-     * remains whole.
-     */
+    /** [KO] rendition-completion */
     internal fun completionSurvivesSpanRemoval(
         removedKey: String,
         remainingKeys: List<String>,
         isComplete: (String) -> Boolean,
-    ): Boolean = remainingKeys.any { it != removedKey && isComplete(it) }
+    ): Boolean = KoRenditionEvents.completionSurvivesSpanRemoval(
+        removedKey,
+        remainingKeys,
+        isComplete,
+    )
 
-    /**
-     * Fires the media id each time the player (or a read-ahead) opens a stream
-     * for it — the point at which more bytes are about to be written. A timing
-     * pass that is waiting for a video's opening can suspend on this instead
-     * of polling the cache on a timer.
-     */
-    private val _served = MutableSharedFlow<String>(extraBufferCapacity = 16)
+    /** [KO] served-progress */
+    val served: SharedFlow<String> get() = koEvents.served // [KO] rendition-completion
 
-    val served: SharedFlow<String> = _served.asSharedFlow()
-
-    /** How many bytes playback has read per video, so a wake-up is not sent for every buffer. */
-    private val playedProgress = ConcurrentHashMap<String, Long>()
-
-    private fun notePlayedBytes(videoId: String, bytes: Int) {
-        if (bytes <= 0) return
-        val after = playedProgress.merge(videoId, bytes.toLong(), Long::plus) ?: return
-        val before = after - bytes
-        if (before / PROGRESS_STEP_BYTES != after / PROGRESS_STEP_BYTES) _served.tryEmit(videoId)
-    }
-
-    private const val PROGRESS_STEP_BYTES = 256L * 1024
+    /** [KO] served-progress */
+    private fun notePlayedBytes(videoId: String, bytes: Int) = koEvents.notePlayedBytes(videoId, bytes) // [KO] rendition-completion
 
     /**
      * What the queue said about the tracks the cache is about to hold.
@@ -1000,7 +846,7 @@ object AudioCache {
         if (openedCache == null) return
         if (spec.uri.scheme != "bitchord") return
         val mediaId = mediaIdIn(spec.uri) ?: return
-        _served.tryEmit(mediaId)
+        koEvents.noteServed(mediaId) // [KO] served-progress
         val key = spec.key ?: keyFactory.buildCacheKey(spec)
         val origin = originOf(spec.uri, mediaId, servedUrl)
         val song = notedSongs[mediaId]
@@ -1269,20 +1115,8 @@ object AudioCache {
      * spend network and battery on bytes that are already here. A copy made
      * for the watch is excluded, exactly as in [completeCopyOf].
      */
-    fun hasCompleteLosslessCopy(mediaId: String): Boolean {
-        if (openedCache == null || mediaId.isBlank()) return false
-        return keysOf(mediaId)
-            .filterNot { it.endsWith("#watch") }
-            .any { key ->
-                val lossless = isLosslessRendition(key) ||
-                    containerOf(key)?.first?.let { it in LOSSLESS_CONTAINERS } == true
-                if (!lossless) return@any false
-                runCatching {
-                    val length = ContentMetadata.getContentLength(cache.getContentMetadata(key))
-                    length > 0 && cache.isCached(key, 0, length)
-                }.getOrDefault(false)
-            }
-    }
+    /** [KO] hq-lossless */
+    fun hasCompleteLosslessCopy(mediaId: String): Boolean = koLossless.hasCompleteLosslessCopy(mediaId) // [KO] hq-lossless
 
     /** The container of the entry [key], from the magic at its very start. */
     private fun containerOf(key: String): Pair<String, String>? {
@@ -1349,102 +1183,31 @@ object AudioCache {
      * Analysis results are kept in their own store, so the analysis-only
      * audio has done its job by then.
      */
-    /**
-     * Recordings fetched for lyric timing — a cover's original, the next video
-     * — that no queue holds. They are "analysis only" to the sweep below, which
-     * deleted them at the next track change, usually before the measurement had
-     * read them: the original was fetched and gone, every time ("원곡을 받지 못함"),
-     * which is why video lyrics were so rarely timed. Held [TIMING_KEEP_MS].
-     */
-    private val timingKeep = LinkedHashMap<String, Long>()
+    private val koRetention = KoCacheRetention() // [KO] purge-index
 
-    fun keepForTiming(videoId: String) = synchronized(timingKeep) {
-        timingKeep.remove(videoId)
-        timingKeep[videoId] = SystemClock.elapsedRealtime()
-        while (timingKeep.size > TIMING_KEEP_MAX) timingKeep.remove(timingKeep.keys.first())
-    }
+    /** [KO] timing-keep */
+    fun keepForTiming(videoId: String) = koRetention.keepForTiming(videoId) // [KO] purge-index
 
-    private fun keptForTiming(videoId: String): Boolean = synchronized(timingKeep) {
-        val at = timingKeep[videoId] ?: return false
-        SystemClock.elapsedRealtime() - at < TIMING_KEEP_MS
-    }
+    /** [KO] purge-index */
+    private fun purgeCandidate(meta: ContentMetadata): Boolean = koRetention.purgeCandidate(meta) // [KO] purge-index
 
-    private const val TIMING_KEEP_MS = 15 * 60_000L
-    private const val TIMING_KEEP_MAX = 16
+    /** [KO] purge-index */
+    private fun updatePurgeCandidate(key: String, candidate: Boolean) = koRetention.update(key, candidate) // [KO] purge-index
 
-    /**
-     * Cache keys that may need dropping, maintained as entries are written and
-     * removed rather than rediscovered by walking the whole cache on every
-     * track change.
-     *
-     * A multi-gigabyte cache holds tens of thousands of keys, and the old
-     * [dropForeignEntries] read every one's metadata after each transition.
-     * The index is seeded once from disk (see [rebuildPurgeIndex]) and then
-     * follows [recordServed], [notePlayed] and the removal paths.
-     */
-    private val purgeCandidates = ConcurrentHashMap.newKeySet<String>()
-    @Volatile
-    private var purgeIndexBuilt = false
+    /** [KO] purge-index */
+    private fun forgetPurgeCandidate(key: String) = koRetention.forget(key) // [KO] purge-index
 
-    private fun purgeCandidate(meta: ContentMetadata): Boolean = BatteryPolicy.cacheEntryNeedsPurge(
-        origin = meta.get(META_ORIGIN, null as String?),
-        foreignOrigin = Origin.OTHER.name,
-        hasAnalysis = meta.get(META_ANALYSIS, null as String?) != null,
-        hasPlayback = meta.get(META_PLAYBACK, null as String?) != null,
-        hasPlayed = meta.get(META_PLAYED, null as String?) != null,
-    )
-
-    private fun updatePurgeCandidate(key: String, candidate: Boolean) {
-        if (candidate) purgeCandidates.add(key) else purgeCandidates.remove(key)
-    }
-
-    private fun forgetPurgeCandidate(key: String) {
-        purgeCandidates.remove(key)
-    }
-
-    private fun rebuildPurgeIndex() {
-        if (openedCache == null) {
-            purgeIndexBuilt = true
-            return
-        }
-        // Only adds: a concurrent [recordServed] may have put a newer key in
-        // the set while this scan was running, and it must not be lost.
-        cache.keys.forEach { key ->
-            val meta = runCatching { cache.getContentMetadata(key) }.getOrNull() ?: return@forEach
-            if (purgeCandidate(meta)) purgeCandidates.add(key)
-        }
-        purgeIndexBuilt = true
-    }
-
+    /** [KO] purge-index */
     fun dropForeignEntries(keep: Set<String>) {
         if (openedCache == null) return
-        scope.launch {
-            if (!purgeIndexBuilt) rebuildPurgeIndex()
-            var dropped = 0
-            purgeCandidates.toList().forEach { key ->
-                val meta = runCatching { cache.getContentMetadata(key) }.getOrNull()
-                if (meta == null || !purgeCandidate(meta)) {
-                    forgetPurgeCandidate(key)
-                    return@forEach
-                }
-                val mediaId = meta.get(META_MEDIA_ID, null as String?)
-                if (mediaId != null && (mediaId in keep || keptForTiming(mediaId))) return@forEach
-                runCatching { cache.removeResource(key) }
-                    .onSuccess {
-                        dropped++
-                        forgetPurgeCandidate(key)
-                        mediaId?.let { id ->
-                            analysisHeads.remove(id)
-                            analysisHeadDeferredLogged.remove(id)
-                            analysisHeadsHeldElsewhere.remove(id)
-                            analysisHeadWant.remove(id)
-                            stalledAnalysisHeads.remove(id)
-                            renditionKeys.remove(id)
-                        }
-                    }
-                    .onFailure { TrackLog.d(TAG, "unkept cache entry $key still in use: ${it.message}") }
-            }
-            if (dropped > 0) TrackLog.d(TAG, "dropped $dropped addon / analysis-only cache entries")
+        // [KO] purge-index
+        koRetention.dropForeignEntries(openedCache!!, keep, scope) { mediaId -> // [KO] purge-index
+            analysisHeads.remove(mediaId)
+            analysisHeadDeferredLogged.remove(mediaId)
+            analysisHeadsHeldElsewhere.remove(mediaId)
+            analysisHeadWant.remove(mediaId)
+            stalledAnalysisHeads.remove(mediaId)
+            renditionKeys.remove(mediaId)
         }
     }
 
@@ -1488,9 +1251,6 @@ object AudioCache {
      */
     private const val META_HQ_LOSSLESS = "bc_hq_lossless"
 
-    /** Containers that are lossless whatever their metadata says. */
-    private val LOSSLESS_CONTAINERS = setOf("flac", "wav")
-
     private const val MAX_NOTED_SONGS = 256
     private const val COPY_BUFFER_BYTES = 64 * 1024
 
@@ -1515,187 +1275,15 @@ object AudioCache {
      * Local file and content URIs bypass disk caching to prevent redundant writes.
      */
     fun playbackFactory(upstream: DataSource.Factory): DataSource.Factory = DataSource.Factory {
-        val cacheDs = cacheFactory(upstream).createDataSource()
-        val upstreamDs = upstream.createDataSource()
-        object : DataSource {
-            private var activeDs: DataSource = cacheDs
-            private var heldKey: String? = null
-            private var heldVideoId: String? = null
-
-            override fun addTransferListener(transferListener: androidx.media3.datasource.TransferListener) {
-                cacheDs.addTransferListener(transferListener)
-                upstreamDs.addTransferListener(transferListener)
-            }
-
-            override fun open(dataSpec: DataSpec): Long {
-                // A DataSource instance is normally closed before it is opened
-                // again, but the hold must not be counted twice if it is not.
-                // This is not a terminal release: the same source is about to
-                // re-retain the key, so it must not wake a head retry that would
-                // race the reopened playback reader. A seek/reopen must not
-                // count as the reader letting go either.
-                releaseHeld(retryAnalysisHead = false)
-                val scheme = dataSpec.uri.scheme
-                activeDs = if (scheme == "file" || scheme == "content") {
-                    upstreamDs
-                } else {
-                    cacheDs
-                }
-                if (scheme != "file" && scheme != "content") {
-                    // Remember that the player — including the item it buffers
-                    // ahead in its playlist — owns this cache entry. Read-ahead
-                    // and the analysis head ask before touching it; Media3
-                    // gives an entry to one writer, so anything else spends the
-                    // listener's data writing nowhere.
-                    val key = cacheKeyOf(dataSpec.uri)
-                    val videoId = dataSpec.uri.getQueryParameter("v")
-                    heldKey = key
-                    heldVideoId = videoId
-                    retain(playbackKeysInUse, key)
-                    videoId?.let { retain(playbackVideoIdsInUse, it) }
-                }
-                return try {
-                    activeDs.open(dataSpec)
-                } catch (failure: Throwable) {
-                    releaseHeld()
-                    throw failure
-                }
-            }
-
-            override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
-                val read = activeDs.read(buffer, offset, length)
-                heldVideoId?.let { if (read > 0) notePlayedBytes(it, read) }
-                return read
-            }
-
-            override fun getUri(): Uri? = activeDs.uri
-
-            override fun close() {
-                try {
-                    activeDs.close()
-                } finally {
-                    releaseHeld()
-                }
-            }
-
-            private fun releaseHeld(retryAnalysisHead: Boolean = true) {
-                heldKey?.let { key ->
-                    release(playbackKeysInUse, key)
-                    if (!playerHoldsKey(key)) keyIdleSignals.remove(key)?.complete(Unit)
-                }
-                heldVideoId?.let { videoId ->
-                    release(playbackVideoIdsInUse, videoId)
-                    // The held analysis claim waits for this event rather than
-                    // for the next idle tick to discover the lock is gone. Only
-                    // a terminal release counts: open() releases before it
-                    // re-retains the same key, and retrying there would race
-                    // the reader it just reopened (seek/reopen).
-                    if (retryAnalysisHead) retryAnalysisHeadIfReaderReleased(videoId)
-                }
-                heldKey = null
-                heldVideoId = null
-            }
-        }
-    }
-
-    /**
-     * Cache entries the player (or its read-ahead inside ExoPlayer's playlist)
-     * is currently reading, as open counts. Tracking rather than asking
-     * `Cache.isCached` is what makes "the player already has it" visible before
-     * a competing writer has to discover it by failing to write.
-     */
-    private val playbackKeysInUse = ConcurrentHashMap<String, Int>()
-    private val playbackVideoIdsInUse = ConcurrentHashMap<String, Int>()
-
-    /**
-     * One deferred per cache key, completed when the player lets go of that
-     * entry. A whole-track fetch waits on this instead of polling: Media3 gives
-     * an entry to one writer, and the player holds it for as long as it is
-     * streaming the rendition.
-     */
-    private val keyIdleSignals = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
-
-    /** Whole-rendition downloads in flight, so a queue move can stop the old one. */
-    private val wholeRenditionJobs = ConcurrentHashMap<String, Job>()
-
-    /**
-     * Tracks whose verified lossless copy has already been asked for in the
-     * background. One attempt per track, whatever it returns: a second search
-     * for the same bytes while the first is still running would only compete
-     * with the playback it is meant to improve.
-     */
-    private val losslessPrefetchAttempted = ConcurrentHashMap.newKeySet<String>()
-
-    /** The single background lossless fetch, so two tracks never download at once. */
-    private var losslessPrefetchJob: Job? = null
-
-    /** The track [losslessPrefetchJob] belongs to, so a queue change can stop only that one. */
-    @Volatile
-    private var losslessPrefetchFor: String? = null
-
-    /**
-     * Tracks whose lossless copy finished while they were still playing, with
-     * the rendition key that must be kept.
-     *
-     * The low-quality entry cannot be removed then: the player still owns the
-     * plain URI and may reopen its cache key for a seek, which would now resolve
-     * to the lossless sibling mid-song. The drop waits for the queue to move off
-     * the track instead, where the next play already prefers the lossless copy.
-     */
-    private val pendingLowQualityDrops = ConcurrentHashMap<String, String>()
-
-    /**
-     * Tracks with a background lossless fetch started during their current
-     * play. [completeUpgradeRendition] ignores them until another track becomes
-     * current, so one play never sees its cache key change under it.
-     */
-    private val upgradeKeyDeferred = ConcurrentHashMap.newKeySet<String>()
-
-    @Volatile
-    private var currentMediaId: String? = null
-
-    /**
-     * Tracks whose bytes read-ahead is writing right now. The analysis head is
-     * another writer of the same entry, and Media3 allows one: without this it
-     * requested the range read-ahead already held, wrote nothing, and logged
-     * `held=0` over a track that was being cached at that moment.
-     */
-    private val readAheadWrites = ConcurrentHashMap<String, Int>()
-
-    private fun retain(counts: ConcurrentHashMap<String, Int>, key: String) {
-        counts.merge(key, 1) { open, added -> open + added }
-    }
-
-    private fun release(counts: ConcurrentHashMap<String, Int>, key: String) {
-        counts.compute(key) { _, open -> if (open == null || open <= 1) null else open - 1 }
-    }
-
-    private fun playerHoldsKey(cacheKey: String): Boolean =
-        (playbackKeysInUse[cacheKey] ?: 0) > 0
-
-    private fun playerHoldsVideo(videoId: String): Boolean =
-        (playbackVideoIdsInUse[videoId] ?: 0) > 0
-
-    /** Another writer — the player or read-ahead — already owns [videoId]'s entry. */
-    private fun anotherWriterHas(videoId: String): Boolean =
-        playerHoldsVideo(videoId) || (readAheadWrites[videoId] ?: 0) > 0
-
-    /**
-     * A reader just let go of [videoId]; if a head round was waiting on that
-     * lock, hand the claim back and ask again now.
-     *
-     * Called from the player's and read-ahead's own close paths, so the retry
-     * is driven by the release event rather than by the idle tick. If another
-     * holder remains, the claim and the marker stay where they are and the next
-     * release event tries again.
-     */
-    private fun retryAnalysisHeadIfReaderReleased(videoId: String) {
-        if (videoId !in analysisHeadsHeldElsewhere) return
-        if (anotherWriterHas(videoId)) return
-        analysisHeadsHeldElsewhere.remove(videoId)
-        analysisHeads.remove(videoId)
-        analysisHeadDeferredLogged.remove(videoId)
-        requestAnalysisHead(Uri.parse(AutomixAnalysisSource.opusUri(videoId)))
+        // [KO] reader-lock
+        KoCachingDataSource( // [KO] reader-lock
+            cacheDs = cacheFactory(upstream).createDataSource(),
+            upstreamDs = upstream.createDataSource(),
+            cacheKeyOf = ::cacheKeyOf,
+            notePlayedBytes = ::notePlayedBytes,
+            tracker = koTracker, // [KO] reader-lock
+            onReaderReleased = ::retryAnalysisHeadIfReaderReleased,
+        )
     }
 
     private fun cacheFactory(upstream: DataSource.Factory) = CacheDataSource.Factory()
@@ -1729,6 +1317,47 @@ object AudioCache {
         .setUpstreamDataSourceFactory(upstream)
         .setCacheKeyFactory(keyFactory)
 
+    private val koTracker = KoPlaybackReadTracker() // [KO] reader-lock
+
+    private val koLossless = KoLosslessCache( // [KO] hq-lossless
+        cache = { openedCache },
+        keyFactory = keyFactory,
+        scope = scope,
+        upstreamFactory = { upstreamFactory },
+        readAheadCacheFactory = ::readAheadCacheFactory,
+        renditionKeysFor = ::renditionKeysFor,
+        renditionKeysClear = { renditionKeys.remove(it) },
+        keysOf = ::keysOf,
+        isComplete = ::isComplete,
+        isLosslessRendition = ::isLosslessRendition,
+        containerOf = ::containerOf,
+        forgetPurgeCandidate = ::forgetPurgeCandidate,
+        discardRendition = ::discardRendition,
+        tracker = koTracker, // [KO] reader-lock
+    )
+
+    /** [KO] reader-lock */
+    private fun playerHoldsKey(cacheKey: String): Boolean = koTracker.playerHoldsKey(cacheKey) // [KO] reader-lock
+
+    /** [KO] reader-lock */
+    private fun playerHoldsVideo(videoId: String): Boolean = koTracker.playerHoldsVideo(videoId) // [KO] reader-lock
+
+    /** [KO] reader-lock */
+    private fun anotherWriterHas(videoId: String): Boolean = koTracker.anotherWriterHas(videoId) // [KO] reader-lock
+
+    /**
+     * A reader just let go of [videoId]; if a head round was waiting on that
+     * lock, hand the claim back and ask again now.
+     *
+     * Called from the player's and read-ahead's own close paths, so the retry
+     * is driven by the release event rather than by the idle tick. If another
+     * holder remains, the claim and the marker stay where they are and the next
+     * release event tries again.
+     */
+    /** [KO] analysis-head */
+    private fun retryAnalysisHeadIfReaderReleased(videoId: String) =
+        koAnalysis.retryAnalysisHeadIfReaderReleased(videoId) // [KO] analysis-head
+
     /** Set once the player exists; read-ahead resolves streams the same way. */
     private var upstreamFactory: DataSource.Factory? = null
 
@@ -1739,24 +1368,24 @@ object AudioCache {
     private var job: Job? = null
     private var pendingQueue: List<String> = emptyList()
 
-    /**
-     * The next row's high-quality answer, completed by read-ahead once it has
-     * been searched and (when one exists) pinned. The next-song bundle waits
-     * on this instead of running the same search a second time.
-     */
-    private val hqHeadReady = ConcurrentHashMap<String, CompletableDeferred<SourceStream?>>()
+    private val koPrefetch = KoPrefetchQueue( // [KO] prefetch-queue
+        scope = scope,
+        appContext = { appContext },
+        pendingQueue = { pendingQueue },
+        setPendingQueue = { pendingQueue = it },
+        job = { job },
+        setJob = { job = it },
+        fetchRange = { id, position, length -> fetch(id, position, length) },
+        fetchWhole = { id -> fetchWhole(id) },
+        logHqTier = { id, title, candidate, current -> logHqTier(id, title, candidate, current) },
+        tracker = koTracker, // [KO] reader-lock
+        retryAnalysisHead = ::retryAnalysisHeadIfReaderReleased,
+    )
 
     /** Waits for read-ahead's high-quality answer for [videoId], or null when it is not running. */
-    suspend fun awaitHqHead(videoId: String, timeoutMs: Long): SourceStream? {
-        StreamChoice.of(videoId)?.let { stream ->
-            val sourceId = stream.sourceConfigId
-            if (sourceId != null && SourceRegistry.config(sourceId)?.kind != SourceKind.YOUTUBE) {
-                return stream
-            }
-        }
-        val flight = hqHeadReady[videoId] ?: return null
-        return withTimeoutOrNull(timeoutMs) { flight.await() }
-    }
+    /** [KO] prefetch-queue */
+    suspend fun awaitHqHead(videoId: String, timeoutMs: Long): SourceStream? =
+        koPrefetch.awaitHqHead(videoId, timeoutMs) // [KO] prefetch-queue
 
     /**
      * Gets the queue ahead of the one playing warmed up, in play order.
@@ -1785,230 +1414,8 @@ object AudioCache {
      * of skips only wherever the listener actually lands is worth chasing.
      */
     fun prefetchQueue(upcoming: List<Upcoming>) {
-        val context = appContext ?: return
-        val mediaIds = upcoming.map { it.mediaId }
-        if (mediaIds == pendingQueue) return
-        android.util.Log.d("BCFetchDebug", "prefetchQueue: head ${pendingQueue.firstOrNull()} -> ${mediaIds.firstOrNull()}")
-        pendingQueue = mediaIds
-        val headId = mediaIds.firstOrNull()
-        val headFlight = if (headId != null) CompletableDeferred<SourceStream?>() else null
-        if (headId != null && headFlight != null) {
-            hqHeadReady[headId] = headFlight
-        }
-        job?.cancel()
-        // Both halves of the read-ahead below go through [StreamResolver],
-        // which speaks YouTube ids and nothing else. A source-backed track
-        // handed to it resolves to a failure, so filtering here saves a dead
-        // round trip per queued track rather than changing any outcome —
-        // read-ahead for those is a separate job, and their servers are
-        // typically a good deal closer than googlevideo anyway.
-        //
-        Downloads.ensureOpen()
-        val videoIds = mediaIds.filter { SourceRegistry.parseTrackKey(it) == null }
-            // A track already on disk needs no reading ahead, and read-ahead
-            // speaks only to googlevideo: warming one would spend mobile data
-            // fetching a second copy of a file the listener deliberately saved,
-            // then cache it under a key playback is never going to ask for —
-            // it plays the download instead. See [Song.toMediaItem].
-            .filter { it !in Downloads.saved.value }
-            // The player may already be buffering this item (it buffers the
-            // next playlist entry ahead of reach); there is no entry left for
-            // read-ahead to own. Re-checked when the fetch actually runs.
-            .filterNot(::playerHoldsVideo)
-        // The player buffering the next item is a reason not to write its
-        // bytes, never a reason to skip its high-quality lookup. Dropping it
-        // here sent the lookup to the track *after* next (10-31: 'upgrade
-        // ahead: Belly Dancer' while Breathe was next) and released the
-        // next-song bundle with no answer (next-prep hq=none(no-answer)). The
-        // pinned stream reaches the buffered item through the standby's
-        // lossless re-prepare; only its bytes are skipped below.
-        val heldHead = headId?.takeIf {
-            it !in videoIds &&
-                SourceRegistry.parseTrackKey(it) == null &&
-                it !in Downloads.saved.value
-        }
-        // A head that read-ahead will not resolve (a download, a source-backed
-        // row) has no high-quality answer coming; release anyone waiting on it.
-        if (headId != null && headId !in videoIds && headId != heldHead) {
-            headFlight?.complete(null)
-        }
-        // With substitution possible, only the *bytes* half drops out. Read-
-        // ahead builds its own spec below from an id alone and carries none of
-        // the title and artist a substitution is matched on — so it resolves
-        // to YouTube and would write Opus bytes into the very entry playback
-        // is about to fill from a higher-ranked source, under the same key, at
-        // whatever offset each of them happened to reach. Reading ahead for a
-        // track and then corrupting it is worse than not reading ahead at all.
-        //
-        // The URL half is a different matter and was thrown out with it, at
-        // real cost. Warming [StreamResolver]'s own cache writes nothing to
-        // disk and cannot corrupt anything, and it is the difference between
-        // the fallback starting instantly and starting with a full client walk
-        // — measured at 7.9s. Since the fallback now races the module lookup
-        // rather than waiting behind it, that walk is what a track waits on
-        // whenever the modules are slow, and warming it here is what makes the
-        // race worth running at all.
-        val substitutable = SourceResolver.canSubstituteForYouTube()
-        job = (heldHead ?: videoIds.firstOrNull())?.let { next ->
-            val target = upcoming.firstOrNull { it.mediaId == next }?.target
-            // A track the listener reverted plays from its own `#original`
-            // rendition — see [OriginalVersion] — while read-ahead builds its
-            // spec from an id alone and so writes under the plain key. Every
-            // byte of that would land in an entry playback is never going to
-            // read, and pinning a substitute for it would pin a source it is
-            // never going to use. The URL half below is still worth having: a
-            // reverted track resolves through YouTube, which is what it warms.
-            val pinnedToYouTube = OriginalVersion.isPinned(next)
-            val nextFlight = if (next == headId) headFlight else null
-            scope.launch {
-                // With substitution on, the *bytes* half above used to be
-                // switched off outright, and the paragraph explaining why is
-                // still correct as far as it goes: read-ahead resolving to
-                // YouTube on its own would write Opus into the entry a
-                // higher-ranked source is about to fill.
-                //
-                // What it treated as impossible was knowing the answer in
-                // advance. A quick source can be asked *here* — see
-                // [SourceResolver.prefetchSubstitute] — and once its stream is
-                // recorded in [StreamChoice], the question stops being open:
-                // every later resolve for this track, read-ahead's own included,
-                // is held to that one stream. Both writers then agree on the
-                // file and on the `#alt` key it lands under, which is exactly
-                // the condition the byte half was missing.
-                //
-                // A source that is disabled, doesn't have the track, or fails
-                // leaves nothing pinned, and this falls through to the same
-                // URL-only warm-up it did before — YouTube resolves the track at
-                // playback time as usual.
-                val warmed = if (substitutable && target != null && !pinnedToYouTube) {
-                    // The sound comparison is the gate: a candidate that is a
-                    // cover, a live take or a different edit is refused here,
-                    // before it can be pinned for the next play. Because it is
-                    // applied inside the race, a refused fast answer does not
-                    // stop a slower source's real recording from winning. The
-                    // first sound then stays YouTube if nothing passes.
-                    val currentTier = StreamChoice.of(next)?.format?.let { HqQuality.tierOf(it) }
-                        ?: HqVerificationStore.bestTier(context, next)
-                        ?: HqTier.NORMAL
-                    val found = try {
-                        SourceResolver.prefetchSubstitute(target, remember = false) { _, candidate ->
-                            HqAudioVerify.verify(context, next, target, candidate) != null
-                        }
-                    } catch (cancelled: CancellationException) {
-                        // A cancelled read-ahead is not a failed lookup: let
-                        // the job unwind instead of carrying on to the URL
-                        // warm-up after the queue has already moved on.
-                        throw cancelled
-                    } catch (failed: Exception) {
-                        TrackLog.d(TAG, "warm-up substitute failed for $next: ${failed.message}", about = next)
-                        null
-                    }
-                    found?.also { candidate ->
-                        SourceResolver.rememberOriginal(target, candidate)
-                        StreamChoice.remember(next, candidate, substituted = true)
-                        logHqTier(next, target.title, candidate, currentTier)
-                    }
-                } else {
-                    null
-                }
-                // The next-song bundle may be suspended on this; a null is a
-                // real answer too (nothing on a higher source passed).
-                nextFlight?.complete(warmed)
-                // Safe to fill for the same reason in both cases: either nothing
-                // outranks YouTube and read-ahead is the only writer, or a
-                // source has been pinned and every writer now resolves to it.
-                //
-                // Bytes are on-disk data the listener may never reach, so on a
-                // metered connection only the URL half runs: resolving the next
-                // item's stream costs a few small round trips and is what keeps
-                // the track change instant; prefetching its audio would spend
-                // mobile data on a track a skip may skip over. Low power is the
-                // same answer for the bytes half — the URL is still warmed so a
-                // transition does not wait on a client walk.
-                val metered = AppSettings.meteredConnection.value == true
-                val cacheBytes = BatteryPolicy.cachePrefetchBytesAllowed(
-                    metered = metered,
-                    lowPower = AppSettings.lowPower.value,
-                ) && (!substitutable || warmed != null) && !pinnedToYouTube &&
-                    // The player already owns this entry; see heldHead.
-                    next != heldHead
-                if (cacheBytes) {
-                    launch(TrackLog.about(next)) {
-                        delay(PREFETCH_DELAY_MS)
-                        // Low power can begin during the grace delay. Re-read
-                        // it here, where the bytes would actually be spent.
-                        if (!BatteryPolicy.cachePrefetchBytesAllowed(
-                                metered = AppSettings.meteredConnection.value == true,
-                                lowPower = AppSettings.lowPower.value,
-                            )
-                        ) {
-                            return@launch
-                        }
-                        // Visible to [requestAnalysisHead] while these bytes are
-                        // being written: an analysis round for the same track
-                        // would meet this writer's lock and come up empty. Not
-                        // set during the grace delay above, when no write exists
-                        // to collide with yet.
-                        retain(readAheadWrites, next)
-                        try {
-                            val nextHost =
-                                (warmed?.url ?: StreamChoice.of(next)?.url)?.let(HqHostTracker::hostOf)
-                            if (nextHost != null && HqHostTracker.isResting(nextHost)) {
-                                TrackLog.d(
-                                    TAG,
-                                    "read-ahead $next: $nextHost is resting; not fetching it",
-                                    about = next,
-                                )
-                                return@launch
-                            }
-                            // The current track may still be downloading from
-                            // this same host. Its bytes win: wait for that
-                            // download to finish rather than opening a second
-                            // request and tripping the server's rate limit.
-                            // Another host is unaffected and proceeds at once.
-                            HqHostTracker.awaitIdle(nextHost, exceptTrack = next)
-                            fetch(next, 0, PRELOAD_BYTES)
-                            fetchWhole(next)
-                        } finally {
-                            release(readAheadWrites, next)
-                            retryAnalysisHeadIfReaderReleased(next)
-                        }
-                    }
-                }
-                // Metered or saving power, only the immediate next track's URL
-                // is worth minting: it is the one a skip most likely lands on.
-                // Every resolve past it is either a request the listener pays
-                // for or work done while the phone is trying to save battery.
-                launch {
-                    delay(PREFETCH_DELAY_MS)
-                    // Low power (or metering) can begin during the grace delay.
-                    // The byte launch above re-reads it there and skips its
-                    // fetch; this half must re-read too, or it would drop the
-                    // immediate next track as already fetched and keep walking
-                    // the old lookahead while the phone is saving power.
-                    val targets = BatteryPolicy.cacheUrlWarmupTargets(
-                        candidates = videoIds,
-                        metered = AppSettings.meteredConnection.value == true,
-                        lowPower = AppSettings.lowPower.value,
-                        queueLookahead = QUEUE_LOOKAHEAD,
-                        bytesPlanned = cacheBytes,
-                    )
-                    for (id in targets) {
-                        // A track already pinned to another source has no use
-                        // for a YouTube URL: nothing will ask for one, and
-                        // minting it spends a client walk to fill a cache entry
-                        // that is never read.
-                        if (id == next && warmed != null) continue
-                        runCatching { StreamResolver.resolve(id) }
-                            .onFailure { TrackLog.d(TAG, "queue warm-up skipped $id: ${it.message}", about = id) }
-                        delay(QUEUE_RESOLVE_STAGGER_MS)
-                    }
-                }
-            }.also { warm ->
-                // Cancellation before the answer lands still releases waiters.
-                warm.invokeOnCompletion { nextFlight?.complete(null) }
-            }
-        }
+        // [KO] prefetch-queue
+        koPrefetch.prefetchQueue(upcoming) // [KO] prefetch-queue
     }
 
     /**
@@ -2177,20 +1584,6 @@ object AudioCache {
         fetch(key, uri, position, length, probeLock = probeLock)
     }
 
-    /** Waits, without polling, until the player no longer holds [key]'s cache entry. */
-    private suspend fun awaitPlaybackRelease(key: String) {
-        while (true) {
-            val signal = synchronized(keyIdleSignals) {
-                if (playerHoldsKey(key)) {
-                    keyIdleSignals.getOrPut(key) { CompletableDeferred() }
-                } else {
-                    null
-                }
-            } ?: return
-            signal.await()
-        }
-    }
-
     /**
      * Pulls the whole of an upgraded rendition onto disk, sequentially.
      *
@@ -2205,308 +1598,29 @@ object AudioCache {
      * until this finishes, which is what keeps the next track's read-ahead off
      * the same server until the current track is complete.
      */
-    suspend fun cacheWholeRendition(uri: Uri, title: String?) {
-        cacheWholeRenditionDetailed(uri, title)
-    }
+    /** [KO] hq-lossless */
+    suspend fun cacheWholeRendition(uri: Uri, title: String?) = koLossless.cacheWholeRendition(uri, title) // [KO] hq-lossless
 
-    private class WholeRenditionResult(
-        val complete: Boolean,
-        val bytes: Long,
-        val failure: String?,
-    )
+    /** [KO] hq-lossless */
+    fun prefetchVerifiedRendition(uri: Uri, title: String?, stream: SourceStream): Boolean =
+        koLossless.prefetchVerifiedRendition(uri, title, stream) // [KO] hq-lossless
 
-    private suspend fun cacheWholeRenditionDetailed(uri: Uri, title: String?): WholeRenditionResult {
-        val key = keyFactory.buildCacheKey(DataSpec(uri))
-        val mediaId = mediaIdIn(uri)
-        val job = coroutineContext.job
-        mediaId?.let { wholeRenditionJobs[it] = job }
-        // The cache index and its metadata are not main-thread data: callers
-        // reach this from playback on Main, and `getCachedSpans`, `isComplete`
-        // and the metadata write all take the cache's lock. The whole fetch
-        // and check therefore run on IO, whatever dispatcher asked.
-        return withContext(Dispatchers.IO) {
-            // [uri] is the virtual `bitchord://watch?…&q=hifi` item, so its own
-            // authority is not the server. The parked stream names the real host.
-            val stream = QualityUpgrade.forcedStream(uri)
-            val host = stream?.url?.let(HqHostTracker::hostOf)
-                ?: HqHostTracker.hostOf(uri.toString())
-            try {
-                var failure: String? = null
-                for (attempt in 0 until 2) {
-                    awaitPlaybackRelease(key)
-                    val upstream = upstreamFactory
-                        ?: return@withContext WholeRenditionResult(false, 0L, "no upstream")
-                    val source = readAheadCacheFactory(upstream).createDataSource()
-                    val spec = DataSpec.Builder().setUri(uri).build()
-                    val writer = CacheWriter(source, spec, /* temporaryBuffer = */ null, /* listener = */ null)
-                    failure = runCatching {
-                        val handle = coroutineContext.job.invokeOnCompletion { writer.cancel() }
-                        try {
-                            writer.cache()
-                        } finally {
-                            handle.dispose()
-                        }
-                    }.exceptionOrNull()?.let { error ->
-                        if (error is CancellationException) throw error
-                        error.message
-                    }
-                    if (failure == null) break
-                }
-                val bytes = cache.getCachedSpans(key).filter { it.isCached }.sumOf { it.length }
-                val complete = failure == null && isComplete(key)
-                if (complete && stream != null && HqQuality.isLosslessTier(stream.format)) {
-                    runCatching {
-                        cache.applyContentMetadataMutations(
-                            key,
-                            ContentMetadataMutations().set(META_HQ_LOSSLESS, "1"),
-                        )
-                    }
-                }
-                val label = title?.takeIf { it.isNotBlank() } ?: mediaId ?: key
-                if (complete) {
-                    mediaId?.let(renditionKeys::remove)
-                    TrackLog.d(TAG, "hq-cache: $label fully cached ${formatBytes(bytes)}", about = mediaId)
-                    return@withContext WholeRenditionResult(true, bytes, null)
-                }
-                val reason = failure ?: "incomplete"
-                TrackLog.d(
-                    TAG,
-                    "hq-cache: $label stopped short at ${formatBytes(bytes)}: $reason",
-                    about = mediaId,
-                )
-                WholeRenditionResult(false, bytes, reason)
-            } finally {
-                mediaId?.let {
-                    wholeRenditionJobs.remove(it, job)
-                    HqHostTracker.endDownload(it, host)
-                }
-            }
-        }
-    }
+    /** [KO] hq-lossless */
+    fun cancelLosslessPrefetchFor(mediaId: String?) = koLossless.cancelLosslessPrefetchFor(mediaId) // [KO] hq-lossless
 
-    /**
-     * Fetches a verified lossless rendition to disk in the background, so the
-     * next play of the track opens it instead of the low-quality copy that is
-     * playing now.
-     *
-     * Runs at most once per track and only one at a time. It waits on the
-     * rendition's own cache entry, never the entry playback is reading, so it
-     * cannot take Media3's single writer slot from the current track. A failure
-     * leaves every existing entry alone; only a complete copy is worth acting
-     * on, and only then is the lower-quality copy removed.
-     */
-    fun prefetchVerifiedRendition(uri: Uri, title: String?, stream: SourceStream): Boolean {
-        val mediaId = mediaIdIn(uri) ?: return false
-        if (!HqQuality.isLosslessTier(stream.format)) return false
-        if (!losslessPrefetchAttempted.add(mediaId)) return false
-        upgradeKeyDeferred += mediaId
-        losslessPrefetchJob?.cancel()
-        // Same park as a manual swap: the resolving data source reads the
-        // stream from here, so its origin and host are recorded on the entry
-        // exactly as they are for the copy a swap fills.
-        QualityUpgrade.force(mediaId, stream)
-        val key = keyFactory.buildCacheKey(DataSpec(uri))
-        val host = HqHostTracker.hostOf(stream.url)
-        losslessPrefetchFor = mediaId
-        losslessPrefetchJob = scope.launch(TrackLog.about(mediaId)) {
-            val complete = fetchLosslessRendition(uri, title, stream, mediaId, host)
-            if (!complete) return@launch
-            pendingLowQualityDrops[mediaId] = key
-            if (currentMediaId != null && currentMediaId != mediaId &&
-                pendingLowQualityDrops.remove(mediaId, key)
-            ) {
-                dropLowerQualityCopies(mediaId, keep = key)
-            }
-        }
-        return true
-    }
+    /** [KO] hq-lossless */
+    suspend fun downloadVerifiedRendition(uri: Uri, title: String?, stream: SourceStream): Boolean =
+        koLossless.downloadVerifiedRendition(uri, title, stream) // [KO] hq-lossless
 
-    /**
-     * Stops the background lossless fetch if it belongs to [mediaId] — the row
-     * that was just replaced as the next track. A fetch for any other track
-     * (the one currently playing, most importantly) is left alone.
-     */
-    fun cancelLosslessPrefetchFor(mediaId: String?) {
-        if (mediaId == null || losslessPrefetchFor != mediaId) return
-        // The row this fetch belongs to is now playing. A timed-out next-row
-        // prefetch is deliberately left running; once that row becomes current
-        // it must not be aborted by the following row's schedule, or the
-        // playing track loses its in-progress lossless copy.
-        if (mediaId == currentMediaId) return
-        val active = losslessPrefetchJob?.isActive == true
-        if (active) losslessPrefetchJob?.cancel()
-        losslessPrefetchJob = null
-        losslessPrefetchFor = null
-        if (active) losslessPrefetchAttempted.remove(mediaId)
-    }
+    /** [KO] hq-lossless */
+    fun dropLowerQualityAfterLosslessSwap(mediaId: String, keepKey: String) =
+        koLossless.dropLowerQualityAfterLosslessSwap(mediaId, keepKey) // [KO] hq-lossless
 
-    /**
-     * The same hq-prefetch path, awaited, for a swap that is about to happen
-     * rather than one being prepared for the next play.
-     *
-     * The current track keeps playing from its own cache entry while this
-     * fills the marked rendition, so the listener hears nothing until the
-     * replacement is complete. A background prefetch already running for the
-     * track is joined instead of opening a second writer on the same entry.
-     *
-     * @return true only when every byte of the rendition is on disk.
-     */
-    suspend fun downloadVerifiedRendition(uri: Uri, title: String?, stream: SourceStream): Boolean {
-        val mediaId = mediaIdIn(uri) ?: return false
-        if (!HqQuality.isLosslessTier(stream.format)) return false
-        val key = keyFactory.buildCacheKey(DataSpec(uri))
-        losslessPrefetchJob?.takeIf { it.isActive }?.join()
-        // Whether the `#hifi` entry already holds *this* stream's bytes, asked
-        // before [force] overwrites the record of what filled it. The key names
-        // a slot, not a file: a partial left by another candidate must be
-        // thrown away rather than resumed, or the two files are spliced into
-        // one entry. The same guard [PlaybackService.swapIn] uses.
-        val alreadyFilled = QualityUpgrade.forcedStream(uri)?.url == stream.url
-        // Park the stream even when the bytes are already complete: the player
-        // is about to open the marked URI and the resolving data source must
-        // hand it this exact URL rather than searching for another one.
-        upgradeKeyDeferred += mediaId
-        QualityUpgrade.force(mediaId, stream)
-        return withContext(Dispatchers.IO) {
-            if (!alreadyFilled) discardRendition(uri)
-            if (isComplete(key)) {
-                losslessPrefetchAttempted.add(mediaId)
-                true
-            } else {
-                losslessPrefetchAttempted.add(mediaId)
-                val host = HqHostTracker.hostOf(stream.url)
-                fetchLosslessRendition(uri, title, stream, mediaId, host)
-            }
-        }
-    }
+    /** [KO] hq-lossless */
+    fun onTrackBecameCurrent(mediaId: String?) = koLossless.onTrackBecameCurrent(mediaId) // [KO] hq-lossless
 
-    /**
-     * One fetch of a verified lossless rendition, shared by the background
-     * prefetch and the awaited mid-song swap. Logs under the `hq-prefetch`
-     * name both callers use, so a failed download is visible either way.
-     */
-    private suspend fun fetchLosslessRendition(
-        uri: Uri,
-        title: String?,
-        stream: SourceStream,
-        mediaId: String,
-        host: String?,
-    ): Boolean {
-        HqHostTracker.beginDownload(mediaId, host)
-        var complete = false
-        try {
-            TrackLog.d(TAG, "hq-prefetch: $mediaId start ${stream.format.summary}", about = mediaId)
-            val result = try {
-                cacheWholeRenditionDetailed(uri, title)
-            } catch (cancelled: CancellationException) {
-                TrackLog.d(TAG, "hq-prefetch: $mediaId failed cancelled", about = mediaId)
-                throw cancelled
-            } catch (failed: Exception) {
-                WholeRenditionResult(false, 0L, failed.message ?: failed.javaClass.simpleName)
-            }
-            if (!result.complete) {
-                TrackLog.d(
-                    TAG,
-                    "hq-prefetch: $mediaId failed ${result.failure ?: "incomplete"}",
-                    about = mediaId,
-                )
-                return false
-            }
-            complete = true
-            TrackLog.d(TAG, "hq-prefetch: $mediaId done ${formatBytes(result.bytes)}", about = mediaId)
-            renditionKeys.remove(mediaId)
-            return true
-        } finally {
-            // A fetch cut short — most often by the queue moving on before
-            // it finished — leaves the next play of the track free to try
-            // again; only a complete copy closes the question.
-            if (!complete) losslessPrefetchAttempted.remove(mediaId)
-            HqHostTracker.endDownload(mediaId, host)
-        }
-    }
-
-    /**
-     * Drops the copies a completed mid-song swap has left behind.
-     *
-     * Called after the session player has been handed the marked rendition,
-     * so the base entry is no longer being read. [dropLowerQualityCopies]
-     * still waits for any straggling reader to let go before removing it.
-     */
-    fun dropLowerQualityAfterLosslessSwap(mediaId: String, keepKey: String) {
-        pendingLowQualityDrops.remove(mediaId)
-        scope.launch(TrackLog.about(mediaId)) {
-            dropLowerQualityCopies(mediaId, keepKey)
-        }
-    }
-
-    /**
-     * Notes which track the player is on, and lets go of lower-quality copies
-     * whose lossless replacement finished while they were still current.
-     *
-     * Called on every track change rather than from a timer: nothing has to run
-     * while a track sits still, and a track that is played again immediately
-     * keeps its old entry until the queue actually moves away from it.
-     */
-    fun onTrackBecameCurrent(mediaId: String?) {
-        currentMediaId = mediaId
-        upgradeKeyDeferred.removeAll { it != mediaId }
-        val ready = pendingLowQualityDrops.entries
-            .filter { it.key != mediaId }
-            .map { it.key to it.value }
-        ready.forEach { (id, keep) ->
-            if (pendingLowQualityDrops.remove(id, keep)) {
-                scope.launch(TrackLog.about(id)) { dropLowerQualityCopies(id, keep) }
-            }
-        }
-    }
-
-    /**
-     * Removes the complete base/`#alt` copies of [mediaId] once [keep] holds
-     * the whole lossless recording.
-     *
-     * Waits for the player to let go of each entry rather than pulling bytes
-     * out from under the track that is still sounding. A copy that cannot be
-     * removed stays where it is; the next play already prefers [keep].
-     */
-    private suspend fun dropLowerQualityCopies(mediaId: String, keep: String) {
-        renditionKeys.remove(mediaId)
-        val keys = renditionKeysFor(mediaId).filter { key ->
-            if (key == keep || key.endsWith("#watch")) return@filter false
-            val suffix = key.removePrefix("$mediaId#")
-            suffix == key || suffix == "alt" || suffix == "alt-noatmos"
-        }
-        for (key in keys) {
-            if (!isComplete(key)) continue
-            awaitPlaybackRelease(key)
-            runCatching { cache.removeResource(key) }
-                .onSuccess {
-                    forgetPurgeCandidate(key)
-                    TrackLog.d(
-                        TAG,
-                        "hq-prefetch: $mediaId removed lower-quality copy $key",
-                        about = mediaId,
-                    )
-                }
-                .onFailure {
-                    TrackLog.d(
-                        TAG,
-                        "hq-prefetch: $mediaId kept lower-quality copy $key: ${it.message}",
-                        about = mediaId,
-                    )
-                }
-        }
-        renditionKeys.remove(mediaId)
-    }
-
-    /** Stops whole-rendition downloads for tracks other than [mediaId]. */
-    fun cancelWholeRenditionsExcept(mediaId: String?) {
-        wholeRenditionJobs.entries
-            .filter { it.key != mediaId }
-            .forEach { entry ->
-                entry.value.cancel()
-                wholeRenditionJobs.remove(entry.key, entry.value)
-            }
-    }
+    /** [KO] hq-lossless */
+    fun cancelWholeRenditionsExcept(mediaId: String?) = koLossless.cancelWholeRenditionsExcept(mediaId) // [KO] hq-lossless
 
     /**
      * Video ids whose analysis copy has already been asked for this session.
@@ -2650,85 +1764,9 @@ object AudioCache {
      *   [MAX_ALIGNMENT_HEAD_ROUNDS] rounds all came up short, or a round added
      *   no bytes (the next identical request would fail the same way).
      */
-    suspend fun awaitAnalysisHead(uri: Uri, timeoutMs: Long = 20_000L): Boolean {
-        if (openedCache == null) return false
-        val videoId = uri.getQueryParameter("v") ?: return false
-        if (alignmentHeadComplete(videoId)) return true
-        val opus = Uri.parse(AutomixAnalysisSource.opusUri(videoId))
-        // A previous round that wrote nothing would otherwise block retries
-        // for the rest of the session — but one that ended with no progress is
-        // not worth a second identical fetch either; see [stalledAnalysisHeads].
-        if (videoId !in analysisHeadsInFlight && videoId !in stalledAnalysisHeads) {
-            analysisHeads.remove(videoId)
-        }
-        // What a further round has to beat to be worth starting: taken before
-        // the round is started so its own bytes cannot count as progress.
-        var lastHeld = alignmentPrefixBytes(videoId)
-        requestAnalysisHead(opus)
-        var rounds = 1
-        var askedAt = SystemClock.elapsedRealtime()
-        val deadline = askedAt + timeoutMs
-        // The player is the likeliest writer of this track's entry — it is
-        // either playing it or buffering it ahead in its playlist — and
-        // read-ahead is the other. While either holds the entry, racing them
-        // for the same key can only fail, so wait for the bytes already being
-        // brought in and let [alignmentPrefixBytes] decide when there are
-        // enough. One round is still allowed after they let go: the entry is
-        // free then even if the other writer wrote nothing.
-        var waitedForWriter = anotherWriterHas(videoId)
-        while (SystemClock.elapsedRealtime() < deadline) {
-            if (alignmentHeadComplete(videoId)) return true
-            if (anotherWriterHas(videoId)) {
-                waitedForWriter = true
-                // Bounded by [deadline]; a quarter second is fine-grained enough
-                // for an analysis that is not on the audible path, and keeps a
-                // whole track's wait from waking the CPU 25 times a second.
-                delay(250)
-                continue
-            }
-            if (videoId !in analysisHeadsInFlight) {
-                if (rounds >= MAX_ALIGNMENT_HEAD_ROUNDS) return alignmentHeadComplete(videoId)
-                val now = SystemClock.elapsedRealtime()
-                if (now - askedAt >= HEAD_ROUND_SETTLE_MS) {
-                    // A round that got as far as its lock probe — the few
-                    // dozen kilobytes written before the stream underneath
-                    // them was refused — used to count as bytes on disk and
-                    // block every later attempt, so the wait sat out the
-                    // whole deadline against a head that was never going to
-                    // grow and the switch went ahead unaligned. Below
-                    // [MIN_ALIGNMENT_PREFIX_BYTES] there is nothing here a
-                    // measurement can act on, so the round may try again, and
-                    // each retry runs [clearPartialHead] first — which is what
-                    // keeps a part-written entry from splicing two encodings.
-                    // [MAX_ALIGNMENT_HEAD_ROUNDS] still bounds how often, and
-                    // a round that added nothing is not repeated at all: the
-                    // same resolve and range would fail the same way, which is
-                    // how one track logged three "came up short: held=0" lines
-                    // in two seconds.
-                    val held = alignmentPrefixBytes(videoId)
-                    if (held < MIN_ALIGNMENT_PREFIX_BYTES) {
-                        val progressed = analysisHeadShouldRetry(
-                            heldBefore = lastHeld,
-                            heldAfter = held,
-                            roundsStarted = rounds,
-                            maxRounds = MAX_ALIGNMENT_HEAD_ROUNDS,
-                            minBytes = MIN_ALIGNMENT_PREFIX_BYTES,
-                        )
-                        if (!progressed && !waitedForWriter) return false
-                        if (rounds >= MAX_ALIGNMENT_HEAD_ROUNDS) return false
-                        lastHeld = held
-                        analysisHeads.remove(videoId)
-                        requestAnalysisHead(opus)
-                        waitedForWriter = false
-                        rounds++
-                    }
-                    askedAt = now
-                }
-            }
-            delay(40)
-        }
-        return alignmentHeadComplete(videoId)
-    }
+    /** [KO] analysis-head */
+    suspend fun awaitAnalysisHead(uri: Uri, timeoutMs: Long = 20_000L): Boolean =
+        koAnalysis.awaitAnalysisHead(uri, timeoutMs) // [KO] analysis-head
 
     /**
      * As [awaitAnalysisHead], then on until the round that pulls the rest of
@@ -2741,74 +1779,52 @@ object AudioCache {
      *
      * @return whether at least an opening worth measuring is on disk.
      */
-    suspend fun awaitAnalysisTrack(uri: Uri, timeoutMs: Long = 60_000L): Boolean {
-        if (openedCache == null) return false
-        val videoId = uri.getQueryParameter("v") ?: return false
-        val watch = Uri.parse("bitchord://watch?v=$videoId")
-        if (renditionsOf(watch).any { it.isComplete && !it.key.endsWith(ALT_SUFFIX) }) return true
-        val deadline = SystemClock.elapsedRealtime() + timeoutMs
-        if (!awaitAnalysisHead(uri, timeoutMs)) return false
-        while (videoId in analysisHeadsInFlight && SystemClock.elapsedRealtime() < deadline) {
-            delay(100)
-        }
-        return true
-    }
+    /** [KO] analysis-waits */
+    suspend fun awaitAnalysisTrack(uri: Uri, timeoutMs: Long = 60_000L): Boolean =
+        koAnalysisWaits.awaitAnalysisTrack(uri, timeoutMs) // [KO] analysis-waits
 
-    /**
-     * Waits until [videoId]'s opening is at least [minBytes] on disk, waking on
-     * the cache's own span-added event for the keys that rendition may use.
-     *
-     * This is for a row that is not playing yet: nothing is guaranteed to be
-     * writing it on a clock, so a poll would wake the CPU for a track nobody is
-     * listening to. The listener is registered for the key family read-ahead
-     * writes under (the plain id, its `#alt` siblings, and any rendition keys
-     * already on disk) and removed when the wait ends. Returns false on the
-     * timeout, exactly like the poll it replaces.
-     */
-    suspend fun awaitRenditionPrefix(videoId: String, minBytes: Long, timeoutMs: Long): Boolean {
-        if (openedCache == null) return false
-        if (alignmentPrefixBytes(videoId) >= minBytes) {
-            refreshRenditionKeys(videoId)
-            return true
-        }
-        val keys = LinkedHashSet<String>().apply {
-            add(videoId)
-            add("$videoId#alt")
-            add("$videoId#alt-noatmos")
-            addAll(renditionKeysFor(videoId))
-        }
-        val reached = CompletableDeferred<Unit>()
-        val listener = object : Cache.Listener {
-            override fun onSpanAdded(cache: Cache, span: CacheSpan) {
-                if (alignmentPrefixBytes(videoId) >= minBytes) reached.complete(Unit)
-            }
-
-            override fun onSpanRemoved(cache: Cache, span: CacheSpan) = Unit
-
-            override fun onSpanTouched(cache: Cache, oldSpan: CacheSpan, newSpan: CacheSpan) = Unit
-        }
-        keys.forEach { key -> runCatching { cache.addListener(key, listener) } }
-        return try {
-            val ready = if (alignmentPrefixBytes(videoId) >= minBytes) {
-                true
-            } else {
-                withTimeoutOrNull(timeoutMs) { reached.await() } != null
-            }
-            // The wait can see the bytes through the direct cache-key reads
-            // while [renditionKeysFor]'s five-second memo still lacks the key
-            // they landed under. The caller re-checks through that memo, so
-            // without dropping it here the loop spins until the memo expires.
-            if (ready) refreshRenditionKeys(videoId)
-            ready
-        } finally {
-            keys.forEach { key -> runCatching { cache.removeListener(key, listener) } }
-        }
-    }
+    /** [KO] analysis-waits */
+    suspend fun awaitRenditionPrefix(videoId: String, minBytes: Long, timeoutMs: Long): Boolean =
+        koAnalysisWaits.awaitRenditionPrefix(videoId, minBytes, timeoutMs) // [KO] analysis-waits
 
     /** Drops the rendition-key memo so the next read sees a newly written key. */
     private fun refreshRenditionKeys(videoId: String) {
         renditionKeys.remove(videoId)
     }
+
+    private val koAnalysis = KoAnalysisHeadEngine(
+        cache = { openedCache },
+        scope = scope,
+        upstreamAvailable = { upstreamFactory != null },
+        keyFactory = keyFactory,
+        analysisHeads = analysisHeads,
+        deferredLogged = analysisHeadDeferredLogged,
+        heldElsewhere = analysisHeadsHeldElsewhere,
+        inFlight = analysisHeadsInFlight,
+        stalled = stalledAnalysisHeads,
+        wantMap = analysisHeadWant,
+        anotherWriterHas = ::anotherWriterHas,
+        alignmentPrefixBytes = ::alignmentPrefixBytes,
+        alignmentHeadComplete = ::alignmentHeadComplete,
+        analysisHeadSize = ::analysisHeadSize,
+        fetchRange = { cacheKey, uri, position, length, pinKey ->
+            fetch(cacheKey, uri, position, length, pinKey)
+        },
+        recordContentLength = ::recordContentLength,
+        invalidateRenditionKeys = { renditionKeys.remove(it) },
+        forgetPurgeCandidate = ::forgetPurgeCandidate,
+    )
+
+    private val koAnalysisWaits = KoAnalysisWaits( // [KO] analysis-waits
+        cache = { openedCache },
+        renditionsOf = ::renditionsOf,
+        awaitAnalysisHead = ::awaitAnalysisHead,
+        analysisHeadsInFlight = analysisHeadsInFlight,
+        alignmentPrefixBytes = ::alignmentPrefixBytes,
+        renditionKeysFor = ::renditionKeysFor,
+        refreshRenditionKeys = ::refreshRenditionKeys,
+        altSuffix = ALT_SUFFIX,
+    )
 
     /**
      * Whether [videoId]'s opening is as complete as it is ever going to be:
@@ -2850,171 +1866,8 @@ object AudioCache {
         )
     }
 
-    fun requestAnalysisHead(uri: Uri) {
-        // Each of these gates used to stop a head dead with nothing in the
-        // log to show for it: an unwired cache or upstream looked from the
-        // outside exactly like a network that refuses everything.
-        if (openedCache == null) {
-            TrackLog.w(TAG, "analysis head for $uri not started: cache is not initialised")
-            return
-        }
-        if (upstreamFactory == null) {
-            TrackLog.w(TAG, "analysis head for $uri not started: no upstream yet")
-            return
-        }
-        val videoId = uri.getQueryParameter("v") ?: return
-        // A player read, or read-ahead's own write, holds the entry and is
-        // already bringing the bytes in. Fetching the same range here would
-        // fail the write and leave this round "short" over data that went on
-        // to be cached. Deferral must not consume the one-round claim: doing
-        // that used to leave the track marked "already asked" forever, so once
-        // the other writer let go no later tick could start the fetch. A claim
-        // kept from a previous HeldElsewhere round is retried only after that
-        // writer releases, not on every tick: see
-        // [analysisHeadsHeldElsewhere].
-        val anotherWriter = anotherWriterHas(videoId)
-        val heldForReader = videoId in analysisHeadsHeldElsewhere
-        if (!analysisHeadMayClaimOrRetry(
-                alreadyRequested = analysisHeads.containsKey(videoId),
-                heldForReader = heldForReader,
-                anotherWriterHas = anotherWriter,
-                inFlight = videoId in analysisHeadsInFlight,
-            )
-        ) {
-            if (anotherWriter && analysisHeadDeferredLogged.add(videoId)) {
-                TrackLog.d(TAG, "analysis head for $videoId deferred: another writer has it", videoId)
-            }
-            return
-        }
-        // One round per track per session, and it is sized correctly up front
-        // rather than grown into. See [analysisHeadSize] for why growing it was
-        // the wrong shape. A held claim is already in the map, so reuse it
-        // instead of treating its presence as "already done".
-        if (heldForReader) {
-            analysisHeadsHeldElsewhere.remove(videoId)
-            // A concurrent release hook may have taken the claim just before
-            // this request; put it back defensively so the round still has its
-            // one claim behind it.
-            analysisHeads.putIfAbsent(videoId, true)
-        } else if (analysisHeads.putIfAbsent(videoId, true) != null) {
-            return
-        }
-        analysisHeadDeferredLogged.remove(videoId)
-        // Checked before the round is claimed, so the playback thread pays a set
-        // lookup per tick rather than queueing coroutines four times a second on
-        // top of a fetch that is still running.
-        if (!analysisHeadsInFlight.add(videoId)) {
-            // A round slipped in between the claim check and here. Never leave
-            // the claim without a round behind it: that is a permanent "asked"
-            // mark that no later tick can retry.
-            analysisHeads.remove(videoId)
-            return
-        }
-        scope.launch {
-            try {
-                val total = runCatching { StreamResolver.contentLength(videoId) }
-                    .onFailure {
-                        TrackLog.w(TAG, "contentLength failed for $videoId: ${it.message}", videoId)
-                    }
-                    .getOrNull() ?: 0L
-                val want = analysisHeadSize(total)
-                analysisHeadWant[videoId] = want
-                TrackLog.w(
-                    TAG,
-                    "analysis head round for $videoId: total=$total want=$want " +
-                        "held=${alignmentPrefixBytes(videoId)}",
-                    videoId,
-                )
-                // What this round has to beat; a round that ends no higher is
-                // the same request against the same refusal and is not worth
-                // starting again in this session.
-                val before = alignmentPrefixBytes(videoId)
-                when (clearPartialHead(videoId, want)) {
-                    AnalysisHeadClear.Proceed -> Unit
-                    AnalysisHeadClear.AlreadyComplete -> return@launch
-                    AnalysisHeadClear.HeldElsewhere -> {
-                        if (anotherWriterHas(videoId)) {
-                            // Keep the one-round claim and wait for the
-                            // reader's release event. Releasing it here made
-                            // every 250 ms idle tick launch a coroutine,
-                            // re-resolve contentLength and retry the same
-                            // locked removeResource for the minutes the
-                            // player/read-ahead held the entry.
-                            analysisHeadsHeldElsewhere.add(videoId)
-                            TrackLog.w(
-                                TAG,
-                                "analysis head round for $videoId deferred: partial is held by a reader",
-                                videoId,
-                            )
-                        } else {
-                            // The lock belongs to a writer this cache does not
-                            // track (an in-flight fetch). Release the claim so
-                            // the next request can retry; it is short-lived.
-                            analysisHeads.remove(videoId)
-                            TrackLog.w(
-                                TAG,
-                                "analysis head round for $videoId skipped: partial is held elsewhere",
-                                videoId,
-                            )
-                        }
-                        return@launch
-                    }
-                }
-                fetch(
-                    cacheKey = videoId,
-                    // Do not inherit a JioSaavn/lossless StreamChoice from
-                    // playback. The base key is reserved for the lightweight
-                    // YouTube Opus copy used by Automix analysis.
-                    uri = Uri.parse(AutomixAnalysisSource.opusUri(videoId)),
-                    position = 0,
-                    length = want,
-                    pinKey = true,
-                )
-                if (alignmentPrefixBytes(videoId) < MIN_ALIGNMENT_PREFIX_BYTES) {
-                    // The plain Opus copy would not come: on the networks where
-                    // its googlevideo resolve fails it never does, while
-                    // playback of the very same track is unbothered because it
-                    // reads whichever source the substitution chose — which is
-                    // also exactly what the direction that *works* measures
-                    // against. So when the pinned copy comes up short, pull
-                    // that copy instead: alignment opens the fullest copy on
-                    // disk anyway, and a failed head here otherwise costs the
-                    // whole switch its smart align while the swap goes ahead
-                    // regardless.
-                    // Through [fetch], so an entry the player is streaming into
-                    // costs a probe rather than the whole track read onto the floor.
-                    val watch = Uri.parse("bitchord://watch?v=$videoId")
-                    fetch(keyFactory.buildCacheKey(DataSpec(watch)), watch, 0, want)
-                }
-                if (total > 0) recordContentLength(videoId, total)
-                // The keys this video has on disk were memoized before the round
-                // wrote its own (the plain id, pinned): with substitution on the
-                // playing copy is "#alt", so the stale list held only that one and
-                // the head read as 0 bytes — "came up short" over a complete download,
-                // and no measurement ever started. Asked afresh now.
-                renditionKeys.remove(videoId)
-                val held = alignmentPrefixBytes(videoId)
-                if (held < MIN_ALIGNMENT_PREFIX_BYTES) {
-                    if (held <= before) stalledAnalysisHeads.add(videoId) else stalledAnalysisHeads.remove(videoId)
-                    // The one line that says *this* fetch failed, as opposed to
-                    // the read-ahead chatter around it: every cause below
-                    // already logs its own message at debug, but nothing said
-                    // where a round ended or what it had to work with.
-                    TrackLog.w(
-                        TAG,
-                        "analysis head for $videoId came up short: " +
-                            "held=$held want=$want total=$total " +
-                            "(cause in the read-ahead lines around this one)",
-                        videoId,
-                    )
-                } else {
-                    stalledAnalysisHeads.remove(videoId)
-                }
-            } finally {
-                analysisHeadsInFlight.remove(videoId)
-            }
-        }
-    }
+    /** [KO] analysis-head */
+    fun requestAnalysisHead(uri: Uri) = koAnalysis.requestAnalysisHead(uri) // [KO] analysis-head
 
     /**
      * How much of a track to pull for the analyzer, decided once from its real
@@ -3036,36 +1889,6 @@ object AudioCache {
      */
     private fun analysisHeadSize(total: Long): Long =
         if (total > 0) minOf(total, MAX_ANALYSIS_TRACK_BYTES) else MAX_ANALYSIS_HEAD_BYTES
-
-    /**
-     * Makes sure [videoId]'s entry is either empty or already covers [want]
-     * before anything writes to it.
-     *
-     * A part-filled entry is the seam hazard in [analysisHeadSize] waiting to
-     * happen: whatever is there came from an earlier resolve — a fetch this
-     * session cancelled, or a round from a build that still escalated — and
-     * filling the gap would splice a second encoding onto it. Cheaper to throw
-     * the prefix away and pull one clean copy.
-     *
-     * @return [AnalysisHeadClear.Proceed] when the caller may fetch, or why it
-     *   must not: the entry is already complete enough, or it is held by a live
-     *   reader and a partial write would create the very seam this avoids.
-     */
-    private fun clearPartialHead(videoId: String, want: Long): AnalysisHeadClear {
-        val held = cache.getCachedBytes(videoId, 0, want)
-        if (held <= 0L) return AnalysisHeadClear.Proceed
-        if (held >= want) return AnalysisHeadClear.AlreadyComplete
-        val removed = runCatching { cache.removeResource(videoId) }
-            .onSuccess {
-                forgetPurgeCandidate(videoId)
-                TrackLog.d(TAG, "cleared partial analysis head for $videoId ($held of $want)", about = videoId)
-            }
-            .onFailure {
-                TrackLog.d(TAG, "partial head for $videoId is in use: ${it.message}", about = videoId)
-            }
-            .isSuccess
-        return analysisHeadClearOutcome(held = held, want = want, removalSucceeded = removed)
-    }
 
     /**
      * Writes [videoId]'s real size into its cache metadata, which a bounded
@@ -3230,7 +2053,7 @@ object AudioCache {
             // A rendition key can appear after the watch started (a quality
             // upgrade is the common one); watch it as soon as the refreshed
             // list names it, so its completion is not missed.
-            keys.forEach(::watchCompletionKey)
+            keys.forEach(koEvents::watchKey) // [KO] rendition-completion
         } else {
             renditionKeys.remove(videoId)
         }
@@ -3544,4 +2367,8 @@ internal fun offlineFromCapabilities(
     hasCapabilities: Boolean,
     hasInternet: Boolean,
     captivePortal: Boolean,
-): Boolean = !hasCapabilities || !hasInternet || captivePortal
+): Boolean = com.music.bitchord.ko.offlineFromCapabilities(
+    hasCapabilities = hasCapabilities,
+    hasInternet = hasInternet,
+    captivePortal = captivePortal,
+)
