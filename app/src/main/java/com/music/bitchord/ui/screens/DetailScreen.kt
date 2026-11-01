@@ -2542,7 +2542,7 @@ private fun BrowseType.localizedLabel(): String? = when (this) {
  * in counts up with it, so the figure is never ahead of the list it sits over.
  */
 @Composable
-internal fun List<Song>.playtime(): String? {
+internal fun List<Song>.playtime(): String? { // [KO] playtime
     val minutes = sumOf { it.durationMillis() } / 60_000
     return when {
         minutes <= 0 -> null
