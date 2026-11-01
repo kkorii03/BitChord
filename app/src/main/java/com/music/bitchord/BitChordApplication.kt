@@ -103,8 +103,17 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory, Configu
         // leave the same evidence as one while a track plays.
         val logDirectory = File(filesDir, "logs")
         TrackLog.initPersistence(logDirectory)
-        com.music.bitchord.data.FeatureHealthCounters.init(File(logDirectory, "feature-health"))
         installCrashHandler()
+        // The encrypted stores cannot be opened concurrently on a first launch
+        // (they share one Keystore master key), so the open that the main thread
+        // needs below is started here, on the serial startup thread, before the
+        // thousands of other launch tasks. Tink's one-time key-manager
+        // registration is the slowest part of that open; doing it now lets
+        // AuthStore(this) find the same store already cached instead of paying
+        // it on the main thread. If the main thread still gets there first,
+        // EncryptedPrefs serialises the two opens and behaviour is unchanged.
+        StartupWork.background("auth-store") { AuthStore.prewarm(this) }
+        com.music.bitchord.data.FeatureHealthCounters.init(File(logDirectory, "feature-health"))
         // [KO] exit-reasons: an ANR/crash leaves no line in this process's own
         // log, because the process that hung is gone. Android's historical exit
         // reasons are the only record, read once per start off the main thread.
