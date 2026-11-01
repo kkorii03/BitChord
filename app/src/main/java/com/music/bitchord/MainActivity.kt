@@ -8,7 +8,6 @@ import android.content.res.Configuration
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.util.Log
 import android.view.MotionEvent
 import android.view.View
 import android.widget.Toast
@@ -101,7 +100,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.produceState
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
@@ -123,7 +121,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.music.bitchord.auth.DiscordLoginScreen
 import com.music.bitchord.auth.SpotifyLoginScreen
@@ -138,12 +135,26 @@ import com.music.bitchord.data.listentogether.partyQueueIndexOf
 import com.music.bitchord.data.lyrics.LyricsRepository
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.TrackLog
-import com.music.bitchord.data.TrackDiagnostics
 import com.music.bitchord.data.DiagnosticsState
-import com.music.bitchord.data.innertube.InnerTubeXResolver
 import com.music.bitchord.data.innertube.InnertubeParser
-import com.music.bitchord.data.innertube.MusicGateFallback
-import com.music.bitchord.data.model.BrowseItem
+import com.music.bitchord.ko.KoDetailCoversEffect
+import com.music.bitchord.ko.KoFirstPlayNotificationPermission
+import com.music.bitchord.ko.KoForkAlerts
+import com.music.bitchord.ko.KoProxyHealthNotice
+import com.music.bitchord.ko.koBrowsePlaylist
+import com.music.bitchord.ko.koPlayDetailSongs
+import com.music.bitchord.ko.koShuffleDetailSongs
+import com.music.bitchord.ko.koHandleHistoryAction
+import com.music.bitchord.ko.koScreenLabel
+import com.music.bitchord.ko.koReportProblem
+import com.music.bitchord.ko.koSetPlayerShown
+import com.music.bitchord.ko.KoMainActivity
+import com.music.bitchord.ko.KoMainActivityState
+import com.music.bitchord.ko.chooseAlbumSearchHit
+import com.music.bitchord.ko.isLaunchedFromHistory
+import com.music.bitchord.ko.koResolveQueueAhead
+import com.music.bitchord.ko.koSongBeforeAudio
+import com.music.bitchord.ko.musicOnlyTried
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.LikeStatus
@@ -159,20 +170,11 @@ import com.music.bitchord.data.model.isUnresolvedSpotify
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.UserPlaylist
 import com.music.bitchord.data.model.EntityType
-import com.music.bitchord.data.model.SearchHistoryAction
 import com.music.bitchord.data.model.SearchHistoryEntity
-import com.music.bitchord.data.model.historyAction
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import com.music.bitchord.data.model.durationMillis
-import com.music.bitchord.data.net.ProxyHealth
-import com.music.bitchord.data.net.ProxyHealthMonitor
-import com.music.bitchord.data.net.ProxyUrlParser
 import com.music.bitchord.data.net.SongVersionPolicy
 import com.music.bitchord.data.net.autoplayShownEnabled
 import com.music.bitchord.data.scrobbling.LastFM
@@ -181,7 +183,6 @@ import com.music.bitchord.data.settings.SettingsTransferInbox
 import com.music.bitchord.data.settings.LibrarySort
 import com.music.bitchord.data.settings.PrivateListeningSource
 import com.music.bitchord.data.settings.ThemeMode
-import com.music.bitchord.data.stats.ListeningStats
 import com.music.bitchord.ui.components.AccountProfileSelector
 import com.music.bitchord.ui.navigation.AppDestination
 import com.music.bitchord.ui.navigation.AppRoute
@@ -206,7 +207,6 @@ import com.music.bitchord.ui.screens.SignatureApiEditor
 import com.music.bitchord.ui.screens.SettingsScreen
 import com.music.bitchord.ui.screens.SourceEditorAlert
 import com.music.bitchord.ui.screens.SourcesScreen
-import com.music.bitchord.data.model.isExactArtistMatch
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.ui.screens.SpotifyCanvasAuthScreen
 import com.music.bitchord.ui.screens.SpotifyLibraryScreen
@@ -222,7 +222,6 @@ import com.music.bitchord.playback.QueueCoordinator.asNewQueueEntry
 import com.music.bitchord.playback.QueueEdit
 import com.music.bitchord.playback.QueueShuffle
 import com.music.bitchord.playback.QueueSource
-import com.music.bitchord.startup.LaunchReplay
 import com.music.bitchord.playback.cast.CastController
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.playback.autoplayEnabledFor
@@ -305,8 +304,6 @@ import com.music.bitchord.ui.components.TopBarDownloadButton
 import com.music.bitchord.ui.components.optimizedHazeEffect
 import com.music.bitchord.ui.components.topBarContentPadding
 import com.music.bitchord.ui.components.AppLanguageDialog
-import com.music.bitchord.ui.components.ContentCountryAlert
-import com.music.bitchord.ui.components.GeminiKeyAlert
 import com.music.bitchord.ui.components.TranslationLanguageDialog
 import com.music.bitchord.ui.components.LyricsSourcesDialog
 import com.music.bitchord.ui.components.ServerEditorHost
@@ -383,74 +380,31 @@ import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
 
-    /** When this activity last came to the foreground, for [PlayerExpandGuard]. */
-    private var resumedAtNanos = 0L
-
-    /** When the last `ACTION_DOWN` reached this window, or 0 if none since resume. */
-    private var lastTouchDownNanos = 0L
-
-    /**
-     * The composition's sheet motion, handed back here so [onResume] can drop
-     * a value a drag cancelled while the app was away left behind — see
-     * [PlayerSheetMotion.resetIfStale].
-     */
-    private var playerMotion: PlayerSheetMotion? = null
-
-    /**
-     * Every launch intent this task has served, so a process recreation cannot
-     * serve any of them a second time. A task keeps its original base intent
-     * while `setIntent` only changes the live activity's copy, so the set — not
-     * just the latest fingerprint — is what survives recreation. See
-     * [LaunchReplay].
-     */
-    private val handledLaunchFingerprints = linkedSetOf<String>()
+    private val koState = KoMainActivityState() // [KO] player-expand-guard
 
     override fun onStart() {
         super.onStart()
-        noteForeground()
-        // The first screen is an event that needs the player stack ready, but a
-        // process woken in the background does not. Starting it here keeps the
-        // cold warm-up off the background process and still ahead of the first
-        // tap; the first play calls the same no-op-once entry point.
-        InnerTubeXResolver.ensureWarm()
-        // A private session outlives the process, so coming back to the app is
-        // the other event that can find its six hours gone.
-        AppSettings.checkPrivateListeningExpiry()
+        KoMainActivity.onStart(koState) // [KO] lifecycle-warmup
     }
 
     override fun onResume() {
         super.onResume()
-        noteForeground()
-        playerMotion?.resetIfStale()
-    }
-
-    /**
-     * A new arrival at the foreground clears the touch count with it: an open
-     * must follow a press made *after* coming back, not one made before the
-     * app was left — see [PlayerExpandGuard].
-     */
-    private fun noteForeground() {
-        resumedAtNanos = System.nanoTime()
-        lastTouchDownNanos = 0L
+        KoMainActivity.onResume(koState) // [KO] player-expand-guard
     }
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
-        if (ev.actionMasked == MotionEvent.ACTION_DOWN) lastTouchDownNanos = System.nanoTime()
+        koState.noteTouch(ev) // [KO] player-expand-guard
         return super.dispatchTouchEvent(ev)
     }
 
-    /** Whether a finger has landed on this window since the activity last resumed. */
-    internal fun touchedSinceResume(): Boolean = lastTouchDownNanos != 0L
+    internal fun touchedSinceResume(): Boolean = koState.touchedSinceResume()
 
-    internal fun msSinceResume(): Long = (System.nanoTime() - resumedAtNanos) / 1_000_000L
+    internal fun msSinceResume(): Long = koState.msSinceResume()
 
-    /** Milliseconds since the last `ACTION_DOWN`, or -1 if there was none. */
-    internal fun msSinceTouch(): Long =
-        if (lastTouchDownNanos == 0L) -1L else (System.nanoTime() - lastTouchDownNanos) / 1_000_000L
+    internal fun msSinceTouch(): Long = koState.msSinceTouch()
 
-    /** Called from the composition so [onResume] has something to reset. */
     internal fun attachPlayerSheetMotion(motion: PlayerSheetMotion?) {
-        playerMotion = motion
+        koState.playerMotion = motion
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -463,38 +417,22 @@ class MainActivity : AppCompatActivity() {
         // and coming back to the app must not raise the player again. A task
         // picked out of Recents is the other replay: it starts from the old
         // intent without saved state, so its history flag is checked too.
-        val launchedFromHistory = intent.isLaunchedFromHistory()
-        val launchFingerprint = LaunchReplay.fingerprint(intent)
-        val savedFingerprints = savedInstanceState
-            ?.getStringArrayList(STATE_HANDLED_LAUNCH)
-            ?.toSet()
-        val replayingLaunch = LaunchReplay.isReplay(
-            recreating = savedInstanceState != null,
-            launchedFromHistory = launchedFromHistory,
-            savedFingerprints = savedFingerprints,
-            currentFingerprint = launchFingerprint,
-        )
-        PlayerDeepLink.consume(
-            intent,
-            recreating = replayingLaunch,
-            launchedFromHistory = launchedFromHistory,
-        )
-        // The link relays write their consumed marker into the Intent itself,
-        // which a process death loses. Without this a restored task would start
-        // the shared song again, re-join a party, or reopen an import preview
-        // with no user action.
-        if (!replayingLaunch) {
+        val launch = KoMainActivity.prepareLaunch(intent, savedInstanceState, koState) // [KO] launch-replay
+        if (!launch.replaying) {
+            PlayerDeepLink.consume(intent)
             JamInviteLink.consume(intent)
-            // A settings file shared from another device, which opens the import
-            // preview in Settings once the composition exists.
-            SettingsTransferInbox.consume(intent)
+            SettingsTransferInbox.consume(intent) // [KO] settings-transfer
             // Likewise for a link tapped or shared from another app — see [MusicLink].
             MusicLink.consume(intent)
+        } else {
+            // A replay marks the widget request spent without re-arming it.
+            PlayerDeepLink.consume(
+                intent,
+                recreating = true,
+                launchedFromHistory = launch.launchedFromHistory,
+            ) // [KO] launch-replay
         }
-        handledLaunchFingerprints.clear()
-        handledLaunchFingerprints.addAll(savedFingerprints.orEmpty())
-        handledLaunchFingerprints.add(launchFingerprint)
-        applyDebugLaunchSwitches(intent)
+        KoMainActivity.afterLaunch(this, intent) // [KO] debug-launch-switches
         setContent {
             val theme by AppSettings.themeMode.collectAsStateWithLifecycle()
             val highPerformance by AppSettings.highPerformanceMode.collectAsStateWithLifecycle()
@@ -566,12 +504,7 @@ class MainActivity : AppCompatActivity() {
      */
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        if (handledLaunchFingerprints.isNotEmpty()) {
-            outState.putStringArrayList(
-                STATE_HANDLED_LAUNCH,
-                ArrayList(handledLaunchFingerprints),
-            )
-        }
+        KoMainActivity.saveState(koState, outState) // [KO] launch-replay
     }
 
     /**
@@ -607,77 +540,18 @@ class MainActivity : AppCompatActivity() {
         // Read before the relays consume their extras: a widget's open-player
         // flag is removed by [PlayerDeepLink.consume], and a fingerprint taken
         // afterwards no longer showed that this arrival was a widget request.
-        val fingerprint = LaunchReplay.fingerprint(intent)
-        PlayerDeepLink.consume(
-            intent,
-            launchedFromHistory = intent.isLaunchedFromHistory(),
-        )
+        val launchFingerprint = KoMainActivity.newIntentFingerprint(intent) // [KO] launch-replay
+        if (intent.isLaunchedFromHistory()) {
+            PlayerDeepLink.consume(intent, launchedFromHistory = true) // [KO] launch-replay
+        } else {
+            PlayerDeepLink.consume(intent)
+        }
         JamInviteLink.consume(intent)
-        SettingsTransferInbox.consume(intent)
+        SettingsTransferInbox.consume(intent) // [KO] settings-transfer
         MusicLink.consume(intent)
-        handledLaunchFingerprints += fingerprint
-        applyDebugLaunchSwitches(intent)
-    }
-
-    /**
-     * The emulator tour's two switches, read only by a debug build.
-     *
-     * `forceMusicGate` reproduces the Korea-without-Premium Home on a network
-     * that would answer YouTube Music normally; `seedHistory` gives that Home
-     * a local listening record on a fresh install. Both are no-ops in release.
-     */
-    private fun applyDebugLaunchSwitches(intent: Intent) {
-        if (!BuildConfig.DEBUG) return
-        if (intent.hasExtra(EXTRA_FORCE_MUSIC_GATE)) {
-            val forced = intent.getBooleanExtra(EXTRA_FORCE_MUSIC_GATE, false)
-            MusicGateFallback.forceForTesting(forced)
-            if (forced) Log.d(DEBUG_TAG, "debug: music gate forced")
-        }
-        if (intent.getBooleanExtra(EXTRA_SEED_HISTORY, false)) {
-            lifecycleScope.launch(Dispatchers.IO) {
-                val seeded = runCatching { ListeningStats.seedIfEmpty() }
-                    .onFailure { Log.w(DEBUG_TAG, "debug: seed failed: ${it.message}") }
-                    .getOrDefault(0)
-                Log.d(DEBUG_TAG, "debug: seeded $seeded plays")
-            }
-        }
-        if (intent.getBooleanExtra(EXTRA_SKIP_ONBOARDING, false)) {
-            AppSettings.setOnboardingComplete()
-            Log.d(DEBUG_TAG, "debug: onboarding skipped")
-        }
-        if (intent.hasExtra(EXTRA_PROXY)) {
-            val config = ProxyUrlParser.parse(intent.getStringExtra(EXTRA_PROXY))
-            if (config != null) {
-                AppSettings.setProxyConfig(config)
-                Log.d(
-                    DEBUG_TAG,
-                    "debug: proxy ${config.mode} ${config.host}:${config.port} scope=${config.scope}",
-                )
-            } else {
-                Log.w(DEBUG_TAG, "debug: proxy URL ignored (invalid)")
-            }
-        }
-    }
-
-    private companion object {
-        const val STATE_HANDLED_LAUNCH = "bitchord.handledLaunch"
-        const val EXTRA_FORCE_MUSIC_GATE = "bitchord.debug.forceMusicGate"
-        const val EXTRA_SEED_HISTORY = "bitchord.debug.seedHistory"
-        const val EXTRA_SKIP_ONBOARDING = "bitchord.debug.skipOnboarding"
-        const val EXTRA_PROXY = "bitchord.debug.proxy"
-        const val DEBUG_TAG = "BitChord"
+        KoMainActivity.onNewIntent(this, intent, launchFingerprint, koState) // [KO] launch-replay
     }
 }
-
-/**
- * Whether the system relaunched this activity from the recents history rather
- * than starting it afresh. Such a launch re-delivers the task's original
- * intent — for a task that a widget started, that means its open-player extra
- * comes back — and it does so with no saved state, so `savedInstanceState`
- * alone cannot tell it apart from a real widget tap.
- */
-private fun Intent.isLaunchedFromHistory(): Boolean =
-    flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -734,20 +608,14 @@ private fun BitChordApp(
     // asked for it, so the next report of an unexpected raise can say which
     // path it came by.
     val setPlayerShown: (Boolean, PlayerExpandSource) -> Unit = { shown, source ->
-        if (!shown) {
-            if (showNowPlaying) {
-                showNowPlaying = false
-                TrackLog.i("BitChord", "nav: Player close source=${source.logName}")
-            }
-        } else if (!showNowPlaying) {
-            if (PlayerExpandGuard.allow(source, activity.touchedSinceResume())) {
-                showNowPlaying = true
-                TrackLog.i("BitChord", "nav: Player open source=${source.logName}")
-                PlayerExpandGuard.logExpand(source, activity.msSinceResume(), activity.msSinceTouch())
-            } else {
-                PlayerExpandGuard.logRefused(source, activity.msSinceResume())
-            }
-        }
+        koSetPlayerShown( // [KO] player-expand-guard
+            shown = shown,
+            source = source,
+            currentlyShown = showNowPlaying,
+            touchedSinceResume = activity.touchedSinceResume(),
+            msSinceResume = activity.msSinceResume(),
+            msSinceTouch = activity.msSinceTouch(),
+        ) { showNowPlaying = it }
     }
     // Where the two ends of opening and closing the player meet: the mini
     // player's cover reports itself here, the sheet its offset, and the player
@@ -1075,29 +943,13 @@ private fun BitChordApp(
     // One line per screen the listener arrives at, whether by tab, a pushed
     // page, a sheet or the player. The export's header reads the same value,
     // so a report can say where the app was when the log was taken.
-    val screenLabel = when {
-        showNowPlaying -> "Player"
-        route == AppRoute.Replay -> "Replay"
-        route == AppRoute.Settings -> "Settings"
-        route == AppRoute.Lyrics -> "Settings/lyrics"
-        route == AppRoute.AccountScrobbling -> "Settings/account_scrobbling"
-        route == AppRoute.Telegram -> "Settings/telegram"
-        route == AppRoute.Discord -> "Settings/discord"
-        route == AppRoute.Spotify -> "Settings/spotify"
-        route == AppRoute.Sources -> "Settings/sources"
-        route == AppRoute.ListenTogether -> "Settings/listen_together"
-        route == AppRoute.WearOs -> "Settings/wear_os"
-        route == AppRoute.Equalizer -> "Settings/equalizer"
-        route == AppRoute.History -> "History"
-        route is AppRoute.LibraryShowAll -> "Library/show_all"
-        detail != null -> "Detail ${detail.type.name.lowercase()}"
-        selectedMoodGenre != null -> "Explore/${selectedMoodGenre?.title.orEmpty()}"
-        selectedTab == TAB_HOME -> "Home"
-        selectedTab == TAB_EXPLORE -> "Explore"
-        selectedTab == TAB_LIBRARY -> "Library"
-        selectedTab == TAB_SEARCH -> "Search"
-        else -> "tab$selectedTab"
-    }
+    val screenLabel = koScreenLabel( // [KO] screen-label
+        showNowPlaying = showNowPlaying,
+        route = route,
+        detail = detail,
+        selectedMoodGenreTitle = selectedMoodGenre?.title,
+        selectedTab = selectedTab,
+    )
     LaunchedEffect(screenLabel) {
         TrackLog.i("BitChord", "nav: $screenLabel")
         DiagnosticsState.screen = screenLabel
@@ -1375,20 +1227,7 @@ private fun BitChordApp(
     val explorePull = rememberPullToRefreshState()
     val libraryPull = rememberPullToRefreshState()
     val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
-    val proxyHealth by ProxyHealthMonitor.state.collectAsStateWithLifecycle()
-    var proxyHealthNotified by rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(proxyHealth) {
-        if (proxyHealth == ProxyHealth.UNREACHABLE) {
-            if (!proxyHealthNotified) {
-                proxyHealthNotified = true
-                Toast.makeText(context, R.string.proxy_health_home_notice, Toast.LENGTH_LONG).show()
-            }
-        } else {
-            // Recovered (or never known): a later outage is news again. Still
-            // at most one notice per outage.
-            proxyHealthNotified = false
-        }
-    }
+    KoProxyHealthNotice(context) // [KO] proxy-health-notice
     val currentFeed = when {
         route != null || detail != null -> null
         selectedTab == TAB_HOME -> MainViewModel.Feed.HOME
@@ -1779,18 +1618,7 @@ private fun BitChordApp(
                 // rest as it approaches them. A failed lookup keeps the video
                 // row, never silence. In a party the shared queue is not
                 // version-switched.
-                val queueSongs = if (AppSettings.preferMusicOnly.value) {
-                    try {
-                        YtMusicRepository.resolveQueueAhead(songs, index, ahead = 1)
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (failure: Throwable) {
-                        TrackLog.w("BitChord", "song version look-ahead failed: ${failure.message}")
-                        songs
-                    }
-                } else {
-                    songs
-                }
+                val queueSongs = koResolveQueueAhead(songs, index) // [KO] song-version
                 // A newer tap may have landed while the look-ahead was out.
                 if (request != playRequestGeneration) return@launch
                 // A Cast session still owns the full queue on the phone so the
@@ -1964,23 +1792,7 @@ private fun BitChordApp(
             val currentTimeline = player.queue.takeIf { it.size == c.mediaItemCount }
                 ?: (0 until c.mediaItemCount).map { c.getMediaItemAt(it).toSong() }
             val currentIndex = c.currentMediaItemIndex
-            val played = if (AppSettings.preferMusicOnly.value && !videoRadioEnabledFor(song)) {
-                try {
-                    withTimeout(SongVersionPolicy.BEFORE_AUDIO_TIMEOUT_MS) {
-                        YtMusicRepository.songVersion(song, beforeAudio = true)
-                    } ?: song
-                } catch (timeout: TimeoutCancellationException) {
-                    TrackLog.i("BitChord", "song version: ${song.videoId} kept (timeout)")
-                    song
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (failure: Throwable) {
-                    TrackLog.w("BitChord", "song version failed for radio: ${failure.message}")
-                    song
-                }
-            } else {
-                song
-            }
+            val played = koSongBeforeAudio(song) // [KO] song-version
             if (request != playRequestGeneration) return@launch
             val oneOffQueue = QueueCoordinator.buildOneOffQueue(
                 currentTimeline = currentTimeline,
@@ -2067,23 +1879,7 @@ private fun BitChordApp(
                     // The station's first track is the seed, and it is about to
                     // become current. Resolve its song version here, before the
                     // queue is handed over, so the music video never starts.
-                    val played = if (AppSettings.preferMusicOnly.value && !videoRadioEnabledFor(seed)) {
-                        try {
-                            withTimeout(SongVersionPolicy.BEFORE_AUDIO_TIMEOUT_MS) {
-                                YtMusicRepository.songVersion(seed, beforeAudio = true)
-                            } ?: seed
-                        } catch (timeout: TimeoutCancellationException) {
-                            TrackLog.i("BitChord", "song version: ${seed.videoId} kept (timeout)")
-                            seed
-                        } catch (cancelled: CancellationException) {
-                            throw cancelled
-                        } catch (failure: Throwable) {
-                            TrackLog.w("BitChord", "song version failed for radio: ${failure.message}")
-                            seed
-                        }
-                    } else {
-                        seed
-                    }
+                    val played = koSongBeforeAudio(seed) // [KO] song-version
                     // A newer tap may have landed during the lookup.
                     if (request != playRequestGeneration) return@launch
                     activeController.playSongs(listOf(played) + related, 0)
@@ -2502,26 +2298,12 @@ private fun BitChordApp(
     val notifyPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { /* Refusing costs the progress notification, not the download. */ }
-    // Asked on the first play as well as on a download: the media notification
-    // is drawn the moment playback starts, and on Android 13+ none of it
-    // appears without this. Asked once per install — a denial is remembered,
-    // because only the system settings can change it afterwards, and a repeat
-    // prompt would just be an interruption.
-    LaunchedEffect(player.isPlaying) {
-        if (!player.isPlaying || AppSettings.notificationPermissionAsked.value) {
-            return@LaunchedEffect
-        }
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return@LaunchedEffect
-        if (ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.POST_NOTIFICATIONS,
-            ) == PackageManager.PERMISSION_GRANTED
-        ) {
-            return@LaunchedEffect
-        }
-        AppSettings.markNotificationPermissionAsked()
-        notifyPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-    }
+    // [KO] first-play notification permission
+    KoFirstPlayNotificationPermission(
+        context = context,
+        isPlaying = player.isPlaying,
+        requestPermission = { notifyPermission.launch(Manifest.permission.POST_NOTIFICATIONS) },
+    )
     val storagePermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
@@ -3577,51 +3359,17 @@ private fun BitChordApp(
                                 }
                             }
                             var shuffleStarting by remember(key) { mutableStateOf(false) }
-                            var detailCoversArmed by remember(key) { mutableStateOf(false) }
-                            val pageSongs = (page.songs as? UiState.Success)?.data.orEmpty()
-                            val playingFromThisPage = player.song?.let { song ->
-                                song.playbackSourceId == page.browseId ||
-                                    pageSongs.any { it.videoId == song.videoId }
-                            } == true
-                            LaunchedEffect(
-                                playingFromThisPage,
-                                player.isPlaying,
-                                page.browseId,
-                                live?.browseId == page.browseId,
-                            ) {
-                                if (playingFromThisPage && player.isPlaying &&
-                                    live?.browseId == page.browseId
-                                ) {
-                                    detailCoversArmed = true
-                                }
-                            }
-                            LaunchedEffect(
-                                page.browseId,
-                                detailCoversArmed,
-                                live?.browseId == page.browseId,
-                                pageDetailListState,
-                                pageSongs,
-                            ) {
-                                if (!detailCoversArmed || live?.browseId != page.browseId) {
-                                    return@LaunchedEffect
-                                }
-                                snapshotFlow {
-                                    val byId = pageSongs.associateBy { it.videoId }
-                                    pageDetailListState.layoutInfo.visibleItemsInfo.mapNotNull { item ->
-                                        val itemKey = item.key as? String ?: return@mapNotNull null
-                                        val videoId = if (itemKey.firstOrNull()?.isDigit() == true) {
-                                            itemKey.substringAfter('_')
-                                        } else {
-                                            itemKey
-                                        }
-                                        byId[videoId]
-                                    }.distinctBy { it.contextEntryKey() }
-                                }.collect { visible ->
-                                    if (visible.isNotEmpty()) {
-                                        viewModel.enrichVisibleDetailCovers(page.browseId, visible)
-                                    }
-                                }
-                            }
+                            KoDetailCoversEffect( // [KO] detail-covers
+                                stateKey = key,
+                                currentSongVideoId = player.song?.videoId,
+                                currentPlaybackSourceId = player.song?.playbackSourceId,
+                                isPlaying = player.isPlaying,
+                                pageBrowseId = page.browseId,
+                                liveBrowseId = live?.browseId,
+                                pageSongs = (page.songs as? UiState.Success)?.data.orEmpty(),
+                                listState = pageDetailListState,
+                                onEnrich = viewModel::enrichVisibleDetailCovers,
+                            )
                             // The visible list can be one render behind the page
                             // while fill-in is completing. For a local release
                             // handoff, cancel that fill and use the newest complete
@@ -3636,57 +3384,19 @@ private fun BitChordApp(
                                     return
                                 }
                                 showQueueNotice(playbackPreparing)
-                                val source = QueueSource(
-                                    page.title,
-                                    PlaybackSourceType.BROWSE,
-                                    page.browseId,
-                                )
-                                val selected = songs.getOrNull(index)
                                 val request = ++playRequestGeneration
                                 scope.launch {
-                                    // A page opened from its downloaded copy can be
-                                    // tapped before the network listing lands. Start
-                                    // from what is on screen; only wait when there
-                                    // is nothing to play yet.
-                                    val immediate = viewModel.takePlaybackContext(page.browseId)
-                                    val hasImmediate =
-                                        (immediate?.songs as? UiState.Success)?.data?.isNotEmpty() == true
-                                    val settled = if (hasImmediate) {
-                                        immediate
-                                    } else {
-                                        viewModel.awaitDetailListing(page.browseId)
-                                    }
-                                    if (request != playRequestGeneration) return@launch
-                                    val preview = settled?.songsArePreview == true
-                                    val settledSongs = (settled?.songs as? UiState.Success)?.data
-                                    val pageSongKeys =
-                                        (settledSongs ?: (page.songs as? UiState.Success)?.data).orEmpty()
-                                            .mapTo(HashSet()) { it.contextEntryKey() }
-                                    val useBounded =
-                                        (page.type == BrowseType.ALBUM || page.type == BrowseType.PLAYLIST) &&
-                                            selected?.contextEntryKey()?.let(pageSongKeys::contains) == true &&
-                                            !CastController.state.value.casting
-                                    // The page snapshot on screen can be one fill-in
-                                    // behind, or an older visit restored from the
-                                    // saved context. The view model's newest list
-                                    // is what the tap is meant to play.
-                                    val latestPage = viewModel.takePlaybackContext(page.browseId)
-                                    val latestSongs = latestPage
-                                        ?.let { (it.songs as? UiState.Success)?.data.orEmpty() }
-                                        ?.map(withAlbum)
-                                        ?.takeIf { it.isNotEmpty() }
-                                    val queue = latestSongs ?: songs.map(withAlbum)
-                                    if (queue.isEmpty()) return@launch
-                                    val marked = if (preview) queue.asTypeUnknown() else queue
-                                    val queueIndex = selected?.let { tapped ->
-                                        marked.indexOfFirst { it.contextEntryKey() == tapped.contextEntryKey() }
-                                    }?.takeIf { it >= 0 } ?: index
-                                    playFrom(
-                                        marked,
-                                        queueIndex.coerceIn(marked.indices),
-                                        source,
-                                        boundedContext = useBounded,
-                                        continuationToken = latestPage?.continuation ?: page.continuation,
+                                    koPlayDetailSongs( // [KO] detail-play
+                                        page = page,
+                                        songs = songs,
+                                        index = index,
+                                        isCurrentRequest = { request == playRequestGeneration },
+                                        takePlaybackContext = viewModel::takePlaybackContext,
+                                        awaitDetailListing = viewModel::awaitDetailListing,
+                                        withAlbum = withAlbum,
+                                        playFrom = { s, i, src, bounded, token ->
+                                            playFrom(s, i, src, bounded, token)
+                                        },
                                     )
                                 }
                             }
@@ -3711,38 +3421,16 @@ private fun BitChordApp(
                                 )
                                 scope.launch {
                                     try {
-                                        // A refresh that landed while the screen was
-                                        // composing has already replaced the view model's
-                                        // page; shuffle what is newest, not the list the
-                                        // button was drawn with.
-                                        val latestPage = viewModel.takePlaybackContext(page.browseId)
-                                        if (request != playRequestGeneration) return@launch
-                                        val preview = latestPage?.songsArePreview == true
-                                        val newest = (latestPage?.songs as? UiState.Success)?.data
-                                            ?.takeIf { it.isNotEmpty() }
-                                        val rows = (newest ?: loaded).map(withAlbum)
-                                        if (rows.isEmpty()) return@launch
-                                        val queue = if (preview) rows.asTypeUnknown() else rows
-                                        QueueShuffle.enableForNextQueue()
-                                        val remote =
-                                            (page.type == BrowseType.ALBUM || page.type == BrowseType.PLAYLIST) &&
-                                                !page.browseId.startsWith("local:")
-                                        val continuation = latestPage?.continuation ?: page.continuation
-                                        val bounded = remote && !preview &&
-                                            continuation != null &&
-                                            !CastController.state.value.casting
-                                        TrackLog.i(
-                                            "BitChord",
-                                            "queue: shuffle start n=${queue.size} " +
-                                                "pending pages=${if (bounded) 1 else 0}",
+                                        koShuffleDetailSongs( // [KO] detail-shuffle
+                                            page = page,
+                                            loaded = loaded,
+                                            isCurrentRequest = { request == playRequestGeneration },
+                                            takePlaybackContext = viewModel::takePlaybackContext,
+                                            withAlbum = withAlbum,
+                                            playFrom = { q, i, src, bounded, token ->
+                                                playFrom(q, i, src, bounded, token)
+                                            },
                                         )
-                                        playFrom(
-                                            queue,
-                                            queue.indices.random(),
-                                            source,
-                                            boundedContext = bounded,
-                                            continuationToken = if (bounded) continuation else null,
-                                        )?.join()
                                     } finally {
                                         shuffleStarting = false
                                     }
@@ -4105,22 +3793,24 @@ private fun BitChordApp(
                                     // Tap a history entity: navigate to it or play it directly.
                                     // Do NOT recordEntity here — tapping an existing history item
                                     // must not update its timestamp and push it to the top.
-                                    when (val action = entity.historyAction()) {
-                                        is SearchHistoryAction.Play -> playRadio(
-                                            action.song,
-                                            QueueSource(entity.title, PlaybackSourceType.SEARCH),
-                                        )
-                                        is SearchHistoryAction.Open -> viewModel.openDetail(
-                                            browseId = action.browseId,
-                                            title = action.title,
-                                            subtitle = action.subtitle,
-                                            thumbnailUrl = action.artworkUrl,
-                                        )
-                                        // An old raw-query entry ("q:…") has no track behind
-                                        // it; run the words again instead of handing the player
-                                        // an id that cannot resolve.
-                                        is SearchHistoryAction.Search -> viewModel.searchFor(action.term)
-                                    }
+                                    koHandleHistoryAction( // [KO] search-history-action
+                                        entity = entity,
+                                        onPlay = { song ->
+                                            playRadio(
+                                                song,
+                                                QueueSource(entity.title, PlaybackSourceType.SEARCH),
+                                            )
+                                        },
+                                        onOpen = { action ->
+                                            viewModel.openDetail(
+                                                browseId = action.browseId,
+                                                title = action.title,
+                                                subtitle = action.subtitle,
+                                                thumbnailUrl = action.artworkUrl,
+                                            )
+                                        },
+                                        onSearch = viewModel::searchFor,
+                                    )
                                 },
                                 onHistoryRemove = viewModel::removeSearch,
                                 onHistoryClear = viewModel::clearSearchHistory,
@@ -5380,23 +5070,7 @@ private fun BitChordApp(
                 // would name a moment that never happened to it.
                 onReportProblem = if (fromPlayer && controller?.currentMediaItem?.mediaId == song.videoId) {
                     {
-                        val positionMs = player.position.positionMs
-                        val timed = lyrics.orEmpty()
-                        val index = timed.indexOfLast { it.timeMs > 0 && it.timeMs <= positionMs }
-                        val lineTimeMs = timed.getOrNull(index)?.timeMs ?: -1L
-                        val base = when {
-                            lyricsTiming.byAi -> "ai"
-                            lyricsTiming.shiftMs != null || lyricsTiming.rate != null -> "measured"
-                            else -> "none"
-                        }
-                        TrackDiagnostics.mark(
-                            song = song,
-                            positionMs = positionMs,
-                            lyricIndex = index,
-                            lyricTimeMs = lineTimeMs,
-                            sync = TrackDiagnostics.syncLabel(base, lyricsTiming.manualMs),
-                        )
-                        Toast.makeText(context, R.string.problem_marked, Toast.LENGTH_SHORT).show()
+                        koReportProblem(context, song, player.position.positionMs, lyrics, lyricsTiming) // [KO] diagnostics
                         songActions = null
                     }
                 } else {
@@ -5589,20 +5263,14 @@ private fun BitChordApp(
             // about, but it is still the listener's to rename and delete. Its
             // row is built here so it reaches the same sheet the account's own
             // playlists do; see [renameLocalPlaylist] and [deleteLocalPlaylist].
-            val localPlaylist = target.browseId?.let { id ->
-                localPlaylists.firstOrNull { it.browseId == id }
-            }
-            val remotePlaylist = target.browseId
-                ?.takeIf { signedIn && ownedPlaylists[it] == true }
-                ?.let { id -> playlists.firstOrNull { it.browseId == id } }
-            val playlist = remotePlaylist ?: localPlaylist?.let { local ->
-                UserPlaylist(
-                    playlistId = local.browseId,
-                    title = local.title,
-                    subtitle = context.getString(R.string.local_playlist_subtitle, local.songs.size),
-                    thumbnailUrl = local.songs.firstOrNull { !it.thumbnailUrl.isNullOrBlank() }?.thumbnailUrl,
-                )
-            }
+            val (localPlaylist, remotePlaylist, playlist) = koBrowsePlaylist( // [KO] local-playlists
+                browseId = target.browseId,
+                signedIn = signedIn,
+                ownedPlaylists = ownedPlaylists,
+                playlists = playlists,
+                localPlaylists = localPlaylists,
+                context = context,
+            ).let { Triple(it.local, it.remote, it.playlist) }
             val remote = target.browseId?.startsWith("local:") == false
             // Spotify playlists saved on this device ("local:playlist:sp_local_…")
             // carry real YouTube video ids, so they download like a remote
@@ -6054,97 +5722,16 @@ private fun BitChordApp(
             )
         }
 
-        if (showContentCountry) {
-            BackHandler { showContentCountry = false }
-            val contentCountry by AppSettings.contentCountry.collectAsStateWithLifecycle()
-            ContentCountryAlert(
-                hazeState = hazeState,
-                selected = contentCountry,
-                onSelect = AppSettings::setContentCountry,
-                onDismiss = { showContentCountry = false },
-            )
-        }
-
-        if (showGeminiKey) {
-            BackHandler { showGeminiKey = false }
-            val savedKey by AppSettings.geminiApiKey.collectAsStateWithLifecycle()
-            var keyInput by remember { mutableStateOf(savedKey) }
-            GeminiKeyAlert(
-                hazeState = hazeState,
-                value = keyInput,
-                onValueChange = { keyInput = it },
-                hasSavedKey = savedKey.isNotBlank(),
-                onSave = {
-                    val key = keyInput.trim()
-                    if (key.isNotEmpty()) {
-                        AppSettings.setGeminiApiKey(key)
-                        AppSettings.setGeminiTranslation(true)
-                        showGeminiKey = false
-                    }
-                },
-                onRemove = {
-                    AppSettings.setGeminiApiKey("")
-                    AppSettings.setGeminiTranslation(false)
-                    showGeminiKey = false
-                },
-                onDismiss = { showGeminiKey = false },
-            )
-        }
-
-        if (showDeepgramKey) {
-            BackHandler { showDeepgramKey = false }
-            val savedKey by AppSettings.deepgramApiKey.collectAsStateWithLifecycle()
-            // The key in use, masked like Gemini's, so it is clear one is saved.
-            var keyInput by remember { mutableStateOf(savedKey) }
-            var keyStatus by remember { mutableStateOf<String?>(null) }
-            var checking by remember { mutableStateOf(false) }
-            val checkingText = stringResource(R.string.deepgram_key_checking)
-            val badText = stringResource(R.string.deepgram_key_bad)
-            val okText = stringResource(R.string.deepgram_key_ok)
-            val unverifiedText = stringResource(R.string.deepgram_key_unverified)
-            GeminiKeyAlert(
-                hazeState = hazeState,
-                value = keyInput,
-                onValueChange = {
-                    keyInput = it
-                    keyStatus = null
-                },
-                hasSavedKey = savedKey.isNotBlank(),
-                onSave = {
-                    val key = keyInput.trim()
-                    if (key.isNotEmpty() && !checking) {
-                        // Asked of Deepgram before it is kept: a wrong key says so here,
-                        // rather than as AI timing quietly falling back to Gemini.
-                        checking = true
-                        keyStatus = checkingText
-                        scope.launch {
-                            val accepted = com.music.bitchord.data.lyrics.Deepgram.verify(key)
-                            checking = false
-                            if (accepted == false) {
-                                keyStatus = badText
-                            } else {
-                                AppSettings.setDeepgramApiKey(key)
-                                showDeepgramKey = false
-                                android.widget.Toast.makeText(
-                                    context,
-                                    if (accepted == true) okText else unverifiedText,
-                                    android.widget.Toast.LENGTH_SHORT,
-                                ).show()
-                            }
-                        }
-                    }
-                },
-                status = keyStatus,
-                busy = checking,
-                onRemove = {
-                    AppSettings.setDeepgramApiKey("")
-                    showDeepgramKey = false
-                },
-                onDismiss = { showDeepgramKey = false },
-                title = stringResource(R.string.deepgram_api_key),
-                description = stringResource(R.string.deepgram_api_key_description),
-            )
-        }
+        KoForkAlerts( // [KO] content-country + api-key sheets
+            hazeState = hazeState,
+            scope = scope,
+            showContentCountry = showContentCountry,
+            onShowContentCountryChange = { showContentCountry = it },
+            showGeminiKey = showGeminiKey,
+            onShowGeminiKeyChange = { showGeminiKey = it },
+            showDeepgramKey = showDeepgramKey,
+            onShowDeepgramKeyChange = { showDeepgramKey = it },
+        )
 
         if (showTranslationLanguage) {
             BackHandler { showTranslationLanguage = false }
@@ -6604,57 +6191,5 @@ private fun FrostedMenuRow(
 private fun String?.isDeviceFolderPage(): Boolean =
     this != null && startsWith("local:") &&
         !startsWith(Downloads.PLAYLIST_PREFIX) && !startsWith(LocalGroups.PREFIX)
-/**
- * Video rows already offered the music-only swap in this process. The effect
- * that offers it re-runs whenever the activity's UI is rebuilt (returning to
- * the app), and a second offer would pause a song that is already playing.
- */
-private val musicOnlyTried: MutableSet<String> =
-    java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap())
-
-/**
- * Rows from a preview listing (a downloaded copy shown while the network
- * response is still on its way) do not know whether they are videos. Keep
- * them as audio rows but mark the type unknown, so the service and the
- * pre-audio lookup still ask for a song version — see [Song.typeUnknown].
- */
-private fun List<Song>.asTypeUnknown(): List<Song> =
-    map {
-        if (!it.isVideo &&
-            !SongVersionPolicy.keepsLocalFile(it.localUri != null, it.isVideo, it.typeUnknown)
-        ) {
-            it.copy(typeUnknown = true)
-        } else {
-            it
-        }
-    }
-
-/**
- * The album search result that actually answers a name-and-artist lookup.
- *
- * A search for an album title routinely returns covers, tributes and other
- * acts' releases with the same title first. Opening the first row played the
- * wrong album; only an exact title plus a matching credited artist is the
- * release the listener asked for. With no artist stated, an unambiguous title
- * is still safe to open, but several candidates are not.
- */
-internal fun chooseAlbumSearchHit(
-    results: List<SearchResult>,
-    title: String,
-    artist: String?,
-): BrowseItem? {
-    val candidates = results.filterIsInstance<SearchResult.Browse>()
-        .map { it.item }
-        .filter { it.type == BrowseType.ALBUM && isExactArtistMatch(it.title, title) }
-    if (candidates.isEmpty()) return null
-    if (artist.isNullOrBlank()) return candidates.singleOrNull()
-    return candidates.firstOrNull { albumSubtitleCredits(it.subtitle, artist) }
-}
-
-/** Whether an album row's subtitle ("Album • IU • 2019") names [artist]. */
-private fun albumSubtitleCredits(subtitle: String, artist: String): Boolean =
-    subtitle.split('•', '·', '|')
-        .asSequence()
-        .map { it.trim() }
-        .filter { it.isNotEmpty() }
-        .any { TrackMatcher.sharesArtist(artist, it) || isExactArtistMatch(it, artist) }
+// [KO] song-version helpers live in ko/SongVersionKo.kt
+// [KO] album search-hit helper lives in ko/SearchKo.kt
