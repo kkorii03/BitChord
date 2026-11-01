@@ -1,0 +1,22 @@
+Task: build an automatic merger for Android string resources so the next upstream upgrade (v1.9 now, v1.9.1 soon) has zero manual strings.xml conflicts. Do NOT change any app code or resource in this task; only add the tool + its tests. Use grep / Select-String, not rg (not installed).
+
+Context: this repo is a Korean fork. Rehearsal `git merge --no-commit --no-ff v1.9` (tag exists locally; if not, `git fetch` tags) gives 22 conflicted app/src/main/res/values*/strings.xml files = 7418 of our 11058 conflict lines. Upstream v1.9 added its own Korean translation (values-ko) that collides with ours.
+
+Build scripts/upgrade/merge_strings.py (Python 3 stdlib only, no lxml):
+- Run inside a work tree that is mid-merge. For every conflicted path matching res/values*/strings*.xml, read base/ours/theirs with `git show :1:<path>`, `:2:<path>`, `:3:<path>` (handle a missing stage = file added on one side).
+- Merge by resource identity (tag + name) for <string>, <plurals>, <string-array>; keep attributes (translatable, formatted, tools:*) and inner markup/escapes byte-exact.
+- Rules: start from THEIRS order and content. Key only in ours (fork-added) -> keep, appended in our order after a comment marker. ours changed vs base and theirs == base -> ours. ours == base and theirs changed -> theirs. Both changed differently -> values-ko: ours wins (Korean fork wording is the product decision); every other locale: theirs wins. Removed upstream (in base, not in theirs): drop if ours == base, keep if ours changed (report it). Key added on both sides with different text -> same rule as both-changed.
+- Duplicate guard: after merging, if a name now defined in the merged strings.xml is also defined in another values file of the same folder (e.g. strings_ko_fork.xml or any *.xml with <string name=...>), report it; with --fix-dupes remove it from the non-strings.xml file.
+- Write merged file (valid XML, UTF-8, keep the file's header/comments from theirs), `git add` it only with --stage. Print a per-file report: counts per rule, and list every both-changed key.
+- --dry-run prints the report without writing.
+
+Tests: scripts/upgrade/test_merge_strings.py (unittest) with small inline fixtures covering every rule, plurals/arrays, escapes like \' and %1$s, values-ko vs other locale, deletion, duplicate guard.
+
+Proof on the real rehearsal (do it in a temporary `git worktree` so the main tree stays clean, then remove it):
+1. git merge --no-commit --no-ff v1.9; note conflicted strings files count.
+2. python scripts/upgrade/merge_strings.py --stage --fix-dupes.
+3. Confirm 0 conflicted strings*.xml remain and no '<<<<<<<' in any res/values*/ file. For remaining non-strings conflicts take ours (`git checkout --ours` on res files only, ignore Kotlin) and run ./gradlew :app:processProdReleaseResources (or the nearest resources task) - it must pass (duplicate resources would fail it).
+4. Spot-check 5 values-ko keys that both sides changed: ours text kept. Spot-check 3 new upstream keys present in values-ko.
+5. git merge --abort, remove the worktree.
+
+Rules: do not touch .github/, keys/, signing. Re-read every function you call. Finish with a summary of at most 10 lines: files added / rule counts from the real rehearsal / processResources result / both-changed key count for values-ko / open problems.
