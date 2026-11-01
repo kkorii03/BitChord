@@ -1,0 +1,22 @@
+BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/telegram. 가사 싱크 핵심 변경 — Opus 가 설계했고 diff 를 한 줄씩 검토한다. 설계 밖 변경 금지.
+
+실측(11-02 폰, 곡 전체를 whisper 두 모델로 듣고 화면 가사 시각과 비교, 앱이 차례로 보인 답을 각각 채점: 중앙값 오차/0.3초 이내 비율):
+- qzXaSNyGZxY(Hello 커버): ai-1620 → +0.06초/79% (맞음) 였는데 나중 measured(chroma, 원곡 Ei8UnOPJX7w→커버 'accepted 99%') shift 100 이 덮어써 +1.77초/3%. 같은 순간 'Gemini lateness sample -1720 ms' 가 기록됨(틀린 measured 를 정답 삼아 Gemini 보정치를 오염).
+- 5YVJmhUdrp4(Lemon Tree 커버): 제공처 원래 시각 -0.03초/91% (맞음) → measured -498 이 덮어써 +0.74초/18%(+0.5초/분 드리프트).
+- 0aLisWvLk-o: measured-499 -0.15초/74% → 다음 measured-86 이 덮어써 -0.87초/17%.
+- euWjeLO-aaM: ai-1214 +0.37초 → measured300 -5.34초/0%.
+- 반대로 Fv2dYWZ1G7g, US2I6tSRjcE 는 measured 가 정답(0.00초/100%, -0.04초/94%).
+- 영상 행(커버·MV) 경로는 AiTimingPolicy.AHEAD_ENGINES 의 Deepgram(nova-3)을 쓰는데 노래에서 거의 못 들음('Deepgram timing (en, 5s): 37 words, 5 of 44 lines placed: not enough'). 같은 곡을 Deepgram whisper-large/medium 은 수백 단어, 두 모델 차 0.06초로 들음. 노래 행 song check 은 이미 DEEPGRAM_WHISPER 를 쓴다.
+
+할 일:
+① 영상 행 경로에서 nova-3(DEEPGRAM) 대신 DEEPGRAM_WHISPER 를 쓴다(song check 와 같은 요청 함수 재사용, 같은 키). AHEAD_ENGINES/nextEngines 정책과 테스트를 그에 맞게. Gemini 는 그대로 둔다.
+② 들은 단어로 기준(base) 고르기: LyricsTiming.baseOf 가 고정 순서(aiPreferred → measured → noChange → ai)로 고르던 것을, 들은 단어(entry.refineHeardWords / heardWords, 같은 가사 key)가 있을 때는 후보(provider 원래 시각=none, ai, measured)마다 LyricsWordAlign 로 줄 시작을 맞춰 '맞춘 줄 수, |오차| 중앙값, 0.3초 이내 비율'을 계산해 고른다. 순수 함수 BaseChoicePolicy(shared 또는 playback/smart, 안드로이드 의존 없음)로:
+   - 어떤 후보도 맞춘 줄 < 6 이면 기존 순서 그대로(증거 부족).
+   - 기본은 기존 순서의 후보. 다른 후보가 0.3초 이내 비율이 15%p 이상 높고 중앙값이 0.3초 이상 작으면 그 후보로 바꾼다.
+   - 수동 선택(aiPreferred)과 수동 보정(manualMs)은 그대로 최우선.
+   - 결과를 로그 한 줄: 'base-choice: <후보:중앙값/비율 ...> -> <선택>'(곡 id 태그).
+③ 'Gemini lateness sample'(aiBias 보정 표본)은 measured 자체가 들은 단어와 맞을 때(0.3초 이내 ≥ 70%, 맞춘 줄 ≥ 6)만 기록. 아니면 'lateness sample skipped: measured disagrees with heard words' 로그.
+④ refine(RefinePolicy) 은 선택된 base 위에 지금처럼 적용.
+테스트(고치기 전 실패): BaseChoicePolicy 단위 테스트 — 위 qzXa(ai 맞고 measured 1.77초 늦음)·5YVJ(none 맞음)·Fv2d(measured 맞음) 모양의 합성 데이터, 증거 부족 시 기존 순서, 수동 우선. nextEngines 영상 경로가 DEEPGRAM_WHISPER 를 내는지. lateness 표본 조건.
+제약: .github/, keys, *.jks, 서명 수정 금지. 판정 임계 외 다른 싱크 수치(RefinePolicy, chroma 수용 기준, MIN_ACCEPTED_MATCH) 변경 금지. 저장 형식(Entry) 필드 추가는 기본값 있는 nullable 만. 폴링·타이머 금지. 업스트림 파일 쪼개기 금지. 바꾼 함수의 모든 호출부 재확인.
+마지막 15줄 이내 요약: 수정 파일 / BaseChoicePolicy 규칙 그대로 구현했는지 / 영상 경로 엔진 변경 지점(파일:줄) / 새 테스트 클래스 / 미해결.
