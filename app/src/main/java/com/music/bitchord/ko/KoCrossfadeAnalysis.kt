@@ -14,13 +14,16 @@ import com.music.bitchord.playback.smart.AutomixWorkPolicy
  * Requests only the immediate transition's two useful windows: the incoming
  * track's opening and the outgoing track's tail. Each is skipped once measured,
  * so a track is decoded once rather than on every tick.
+ *
+ * Returns true once it has handled the request, so the upstream fallback in
+ * [CrossfadeController.requestAnalysisAround] stays untouched for merging.
  */
-internal fun CrossfadeController.koRequestAnalysisAround(player: ExoPlayer, duration: Long) {
-    val currentItem = player.currentMediaItem ?: return
+internal fun CrossfadeController.koRequestAnalysisAround(player: ExoPlayer, duration: Long): Boolean {
+    val currentItem = player.currentMediaItem ?: return true
     val nextIndex = player.nextMediaItemIndex
-    if (nextIndex == C.INDEX_UNSET) return
+    if (nextIndex == C.INDEX_UNSET) return true
     val nextItem = player.getMediaItemAt(nextIndex)
-    if (!AppSettings.automixVideos.value && (currentItem.isVideoOrigin || nextItem.isVideoOrigin)) return
+    if (!AppSettings.automixVideos.value && (currentItem.isVideoOrigin || nextItem.isVideoOrigin)) return true
     val automix = AppSettings.smartFadeEnabled.value
     val nextTarget = AutomixWorkPolicy.nextAnalysisTarget(
         nextId = nextItem.mediaId,
@@ -36,4 +39,5 @@ internal fun CrossfadeController.koRequestAnalysisAround(player: ExoPlayer, dura
         automixEnabled = automix,
     )
     outgoingTarget?.let { requestAnalysis(currentItem, duration, it.window) }
+    return true
 }
