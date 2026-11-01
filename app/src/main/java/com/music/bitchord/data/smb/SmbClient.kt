@@ -6,8 +6,10 @@ import com.hierynomus.mssmb2.SMB2CreateDisposition
 import com.hierynomus.mssmb2.SMB2ShareAccess
 import com.hierynomus.smbj.share.DiskShare
 import com.music.bitchord.data.DebugLog as Log
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.IOException
 import java.util.EnumSet
 
 /**
@@ -50,43 +52,78 @@ object SmbClient {
     suspend fun listLibrary(maxFiles: Int = 10_000): Result<Listing> = withContext(Dispatchers.IO) {
         runCatching {
             require(SmbAuth.isConfigured()) { "SMB가 설정되지 않았습니다" }
-            val audio = ArrayList<Entry>()
-            val images = ArrayList<Entry>()
             SmbConnection.withShare { diskShare ->
-                val stack = ArrayDeque<String>()
-                stack.add(SmbAuth.basePath)
-                val visited = HashSet<String>()
-                while (stack.isNotEmpty() && audio.size < maxFiles) {
-                    val dir = stack.removeFirst()
-                    if (!visited.add(dir.lowercase())) continue
-                    val children = try {
-                        listDir(diskShare, dir)
-                    } catch (failure: Exception) {
-                        // One unreadable folder must not hide the rest of the
-                        // share. The root is different: a refused root is a
-                        // refused library, not a folder to skip.
-                        if (dir == SmbAuth.basePath) throw failure
+                walkLibrary(
+                    root = SmbAuth.basePath,
+                    maxFiles = maxFiles,
+                    listDirectory = { dir -> listDir(diskShare, dir) },
+                    logSkip = { dir, failure ->
                         Log.w(TAG, "Skipping SMB folder $dir: ${failure.message}")
-                        continue
-                    }
-                    for (child in children) {
-                        val childPath = if (dir.isBlank()) child.path else "$dir/${child.path}"
-                        if (child.isDirectory) {
-                            if (!visited.contains(childPath.lowercase())) stack.add(childPath)
-                        } else {
-                            val name = child.path.substringAfterLast('\\').substringAfterLast('/')
-                            when {
-                                SmbConfig.isAudioFile(name) ->
-                                    if (audio.size < maxFiles) audio.add(Entry(childPath, false, child.size))
-                                SmbConfig.isImageFile(name) ->
-                                    if (images.size < maxFiles) images.add(Entry(childPath, false, child.size))
-                            }
-                        }
+                    },
+                )
+            }
+        }
+    }
+
+    /**
+     * The recursive walk over one share. Kept separate from [listLibrary] so
+     * the failure policy can be exercised without a server.
+     *
+     * A server status on one folder (access denied, gone) skips that folder
+     * and keeps the rest of the library. A transport [IOException] is not a
+     * folder to skip: it means the session is dead, so it is rethrown for
+     * [SmbConnection.withShare] to invalidate and retry. Swallowing it here
+     * returned a partial library and left every later folder on a dead
+     * session until its own 30s timeout.
+     *
+     * The lists live inside this call, so the retry after a transport failure
+     * starts a fresh walk instead of appending a second copy of the entries
+     * it already found.
+     */
+    internal fun walkLibrary(
+        root: String,
+        maxFiles: Int,
+        listDirectory: (String) -> List<Entry>,
+        logSkip: (String, Exception) -> Unit = { _, _ -> },
+    ): Listing {
+        val audio = ArrayList<Entry>()
+        val images = ArrayList<Entry>()
+        val stack = ArrayDeque<String>()
+        stack.add(root)
+        val visited = HashSet<String>()
+        while (stack.isNotEmpty() && audio.size < maxFiles) {
+            val dir = stack.removeFirst()
+            if (!visited.add(dir.lowercase())) continue
+            val children = try {
+                listDirectory(dir)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (transport: IOException) {
+                throw transport
+            } catch (failure: Exception) {
+                // One unreadable folder must not hide the rest of the
+                // share. The root is different: a refused root is a
+                // refused library, not a folder to skip.
+                if (dir == root) throw failure
+                logSkip(dir, failure)
+                continue
+            }
+            for (child in children) {
+                val childPath = if (dir.isBlank()) child.path else "$dir/${child.path}"
+                if (child.isDirectory) {
+                    if (!visited.contains(childPath.lowercase())) stack.add(childPath)
+                } else {
+                    val name = child.path.substringAfterLast('\\').substringAfterLast('/')
+                    when {
+                        SmbConfig.isAudioFile(name) ->
+                            if (audio.size < maxFiles) audio.add(Entry(childPath, false, child.size))
+                        SmbConfig.isImageFile(name) ->
+                            if (images.size < maxFiles) images.add(Entry(childPath, false, child.size))
                     }
                 }
             }
-            Listing(audio, images)
         }
+        return Listing(audio, images)
     }
 
     /**
