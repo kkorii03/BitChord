@@ -1,75 +1,76 @@
-# v1.9 ?낃렇?덉씠???몄닔?멸퀎 (??Claude 怨꾩젙?? ??2026-11-01 06:00
+# v1.9 업그레이드 인수인계 (새 Claude 계정용) — 2026-11-01 06:00
 
-??怨꾩젙??Claude ?????뚯씪遺???쎈뒗?? ?④퍡 ?쎌쓣 寃? `C:\Users\jang\Desktop\BitChord\CLAUDE.md`(?댁쁺 吏移? ?먮룞 濡쒕뱶), `ship\HANDOFF.md`(1.8 ?쇱긽?? ?먮옒 ?몄뀡 ?대떦), ???대뜑??`docs/upstream-19-*.md`, `docs/ko-fork-layout.md`.
-?ъ슜???묐떟? ??긽 ?쒓뎅?? ?ъ슜?먮뒗 肄붾뵫??紐⑤Ⅸ?????ъ슫 留먮줈.
+새 계정의 Claude 는 이 파일부터 읽는다. 함께 읽을 것: `C:\Users\jang\Desktop\BitChord\CLAUDE.md`(운영 지침, 자동 로드), `ship\HANDOFF.md`(1.8 일상판, 원래 세션 담당), 이 폴더의 `docs/upstream-19-*.md`, `docs/ko-fork-layout.md`.
+사용자 응답은 항상 한국어. 사용자는 코딩을 모른다 — 쉬운 말로.
 
-## 0. ??以??꾪솴
-- 1.9 怨좎묠??**ko-102-u19-2 (vc97)** ?쒕챸留??? ?ㅼ슫濡쒕뱶 ?섏씠吏 **誘멸쾶??*(?ъ슜?????뺤씤 ??湲덉?). ?ъ슜???곗뿉??1.8 湲곕컲 ?섎룎由쇳뙋 **ko-102-test25r (vc96)**.
-- 1.9 ?묒뾽? **?뺤? ?곹깭**(諛?諛⑹묠): ?낆뒪?몃┝ **v1.9.1 ?ロ뵿??*媛 ?섏삤硫?洹몃븣 媛숈씠 ?⑹튇??
-- **11-01 07:30 媛깆떊:** fix-1030 15而ㅻ컠 ?⑹묠 ?꾨즺(39e43cf5, 018c841b 源뚯?). ?ъ슜???붿껌 '媛?? ?ㅼ젙 臾띔린??1.9 諛⑹떇(`SettingsCategory.LYRICS` 遺꾨쪟 ?섏씠吏, cf749036)?쇰줈 ?ｊ퀬 1.8 ??LyricsSettingsScreen ? 吏?; 媛???섏씠吏 ?ㅼ쐞移?iOS ???듭씪(f8315bb2, CI 41273372130 寃곌낵 ?뺤씤 ?꾩슂). ui-tour 41270559428(cf749036) ?깃났: ?붾㈃ 81, ???щ옒??0(FATAL 2嫄댁? uiautomator), '媛?? ?섏씠吏 ?ㅽ겕由곗꺑 ?뺤씤. ??蹂寃쎈뱾? vc97 ?댄썑??**?쒕챸蹂??놁쓬** ???ㅼ쓬 1.9 ?쒗뿕?먯? vc99.
-- ??怨꾩젙 二쇨컙 ?쒕룄 89%?먯꽌 ?뺤?(?ъ슜??吏?? 99% ???몄닔?멸퀎).
-- 泥????? fix-1030 ???덈줈 ?ㅼ뼱??而ㅻ컠???덉쑝硫??⑹튂湲?`git log HEAD..origin/task/fix-1030`), ?ъ슜????濡쒓렇 ?뺤씤(짠5-2).
+## 0. 한 줄 현황
+- 1.9 고침판 **ko-102-u19-2 (vc97)** 서명만 됨, 다운로드 페이지 **미게시**(사용자 폰 확인 전 금지). 사용자 폰에는 1.8 기반 되돌림판 **ko-102-test25r (vc96)**.
+- 1.9 작업은 **정지 상태**(밤 방침): 업스트림 **v1.9.1 핫픽스**가 나오면 그때 같이 합친다.
+- **11-01 07:30 갱신:** fix-1030 15커밋 합침 완료(39e43cf5, 018c841b 까지). 사용자 요청 '가사' 설정 묶기는 1.9 방식(`SettingsCategory.LYRICS` 분류 페이지, cf749036)으로 넣고 1.8 용 LyricsSettingsScreen 은 지움; 가사 페이지 스위치 iOS 식 통일(f8315bb2, CI 41273372130 결과 확인 필요). ui-tour 41270559428(cf749036) 성공: 화면 81, 앱 크래시 0(FATAL 2건은 uiautomator), '가사' 페이지 스크린샷 확인. 이 변경들은 vc97 이후라 **서명본 없음** — 다음 1.9 시험판은 vc99.
+- 이 계정 주간 한도 89%에서 정지(사용자 지시: 99% 전 인수인계).
+- 첫 할 일: fix-1030 에 새로 들어온 커밋이 있으면 합치기(`git log HEAD..origin/task/fix-1030`), 사용자 폰 로그 확인(§5-2).
 
-## 1. ?대뵒??臾댁뾿???덈굹
-| ??ぉ | 媛?|
+## 1. 어디에 무엇이 있나
+| 항목 | 값 |
 |---|---|
-| ??μ냼 | `kkorii03/BitChord` (?ы겕). **gh ????긽 `--repo kkorii03/BitChord`**, upstream(kushagrasinghx)?먮뒗 push/dispatch 湲덉? |
-| 1.9 釉뚮옖移?| `task/upstream-19` (worktree `C:\Users\jang\Desktop\BitChord\BitChord-u19`), 理쒖떊 `c078d94e` |
-| 1.8 ?쇱긽 釉뚮옖移?| `task/fix-1030` (?먮옒 ?몄뀡 "BitChord 怨꾩냽" ?대떦, 嫄대뱶由ъ? 留?寃????ш린??1.9 濡?**?⑹퀜 ?ㅺ린留?*) |
-| ?낆뒪?몃┝ 湲곗? | ?쒓렇 `v1.9` = `04f64c9f` |
-| ?꾧뎄 以鍮?| 紐⑤뱺 git/gh ?꾩뿉 `. C:\Users\jang\Desktop\BitChord\tools\env.ps1` |
-| ?쒕챸蹂?| `ship\dl-u19\ko-102-u19-2.apk` vc97, 87,924,581 B, SHA256 `d4fbbc24b018529437f26776b1de508a2d0ce895cf702aeac07a852aa75f1222` (?뚯뒪 c078d94e, APK run 41239819968). 泥??ㅽ뙣??`ko-102-u19-1.apk` vc95 ??媛숈? ?대뜑 |
-| ?ㅼ슫濡쒕뱶 ?섏씠吏 | https://claude.ai/artifact/82P1f4Bz5SamysVHGbfyfk ??**?댁쟾 怨꾩젙 ?뚯쑀**. ??怨꾩젙? ?섏젙 紐??????덉쓬 ?????섏씠吏瑜?留뚮뱾怨??ъ슜?먯뿉寃?留곹겕瑜??뚮젮????`ship\dl-test4` 議곌컖 諛⑹떇, `ship_local.py` 媛 議곌컖 ???먮룞 寃곗젙) |
-| 怨듭쑀 硫붾え ?대뜑 | `C:\Users\jang\AppData\Local\Claude-Data\claude_pzs8sxrjxfjjc\side-session-notes\local_15ed43a1-...\u19-status.md` (怨꾩젙??諛붾뚮㈃ 寃쎈줈媛 ?щ씪吏????덉쓬 ?????뚯씪???뺣낯) |
+| 저장소 | `kkorii03/BitChord` (포크). **gh 는 항상 `--repo kkorii03/BitChord`**, upstream(kushagrasinghx)에는 push/dispatch 금지 |
+| 1.9 브랜치 | `task/upstream-19` (worktree `C:\Users\jang\Desktop\BitChord\BitChord-u19`), 최신 `c078d94e` |
+| 1.8 일상 브랜치 | `task/fix-1030` (원래 세션 "BitChord 계속" 담당, 건드리지 말 것 — 여기서 1.9 로 **합쳐 오기만**) |
+| 업스트림 기준 | 태그 `v1.9` = `04f64c9f` |
+| 도구 준비 | 모든 git/gh 전에 `. C:\Users\jang\Desktop\BitChord\tools\env.ps1` |
+| 서명본 | `ship\dl-u19\ko-102-u19-2.apk` vc97, 87,924,581 B, SHA256 `d4fbbc24b018529437f26776b1de508a2d0ce895cf702aeac07a852aa75f1222` (소스 c078d94e, APK run 41239819968). 첫 실패판 `ko-102-u19-1.apk` vc95 도 같은 폴더 |
+| 다운로드 페이지 | https://claude.ai/artifact/82P1f4Bz5SamysVHGbfyfk — **이전 계정 소유**. 새 계정은 수정 못 할 수 있음 → 새 페이지를 만들고 사용자에게 링크를 알려야 함(`ship\dl-test4` 조각 방식, `ship_local.py` 가 조각 수 자동 결정) |
+| 공유 메모 폴더 | `C:\Users\jang\AppData\Local\Claude-Data\claude_pzs8sxrjxfjjc\side-session-notes\local_15ed43a1-...\u19-status.md` (계정이 바뀌면 경로가 달라질 수 있음 — 이 파일이 정본) |
 
-## 2. 踰꾩쟾 踰덊샇 洹쒖튃
-- 1.9 ?쒗뿕??= **???*(?ㅼ쓬 99), 1.8(fix-1030) ?쒗뿕??= **吏앹닔**(?ㅼ쓬 98). ?ㅼ튂 ????? 踰덊샇濡??섎룎由????놁쓬.
-- ?쒕챸: `task-apk.yml` ??`apk/**` 釉뚮옖移?push 濡??쒕챸 ????APK 瑜?留뚮뱺????`gh run download <run> -n BitChord-task-arm64` ??
-  `BITCHORD_APK=<apk> BITCHORD_VERSION_CODE=<??? BITCHORD_DL=ship\dl-u19 tools\python\python.exe -I ship\ship_local.py ko-102-u19-N`. `ship\work` 瑜?1.8 履쎄낵 媛숈씠 ?곕?濡??숈떆???뚮━吏 留?寃? GitHub 由대━?ㅻ? 留뚮뱶??`korean-build.yml` ? ?곗? ?딅뒗???먮룞 諛고룷 湲덉?).
+## 2. 버전 번호 규칙
+- 1.9 시험판 = **홀수**(다음 99), 1.8(fix-1030) 시험판 = **짝수**(다음 98). 설치 후 낮은 번호로 되돌릴 수 없음.
+- 서명: `task-apk.yml` 이 `apk/**` 브랜치 push 로 서명 안 된 APK 를 만든다 → `gh run download <run> -n BitChord-task-arm64` → 
+  `BITCHORD_APK=<apk> BITCHORD_VERSION_CODE=<홀수> BITCHORD_DL=ship\dl-u19 tools\python\python.exe -I ship\ship_local.py ko-102-u19-N`. `ship\work` 를 1.8 쪽과 같이 쓰므로 동시에 돌리지 말 것. GitHub 릴리스를 만드는 `korean-build.yml` 은 쓰지 않는다(자동 배포 금지).
 
-## 3. 吏湲덇퉴吏 ????(10-31 ~ 11-01)
-1. v1.9 瑜?`git merge -X theirs` 濡??⑹묠(異⑸룎 96?뚯씪), strings ?????⑹쭛??`tools/upgrade/strings_union.py`). 而댄뙆???ㅻ쪟 ??1,300媛쒕? ?대씪?곕뱶 DeepSeek ?щ윭 以?+ Opus 寃?좊줈 ?닿껐.
-2. ?곕━ ?쒓뎅??湲곕뒫? `com.music.bitchord.ko` ?⑦궎吏 + ?낆뒪?몃┝ ?뚯씪????以?`// [KO] <?대쫫>` ??`docs/ko-fork-layout.md`). ?욎씤 以?痢≪젙: `tools/upgrade/ko-hooks.ps1 mixed`.
-3. 媛먮룆 ?꾧뎄 `tools/upgrade/merge-guard.ps1 -Candidate <釉뚮옖移? -Base <湲곗?> -Fork 0fce7db4^1` ??DeepSeek 寃곌낵媛 1.9 ?뚯씪??吏?곌굅?????ы겕 ?뚯씪濡??섎룎由щ㈃ BLOCK.
-4. `task/fix-1030` ????踰????⑹묠(留덉?留?70f7443a, 洹???15而ㅻ컠 誘몃컲????짠5).
-5. **留욌뒗 怨?1?쒖쐞)**: 1.9 `TrackMatcher.score` ??"媛?섍? ?щ씪??湲몄씠 2珥??대궡硫?梨꾪깮"????`ko/KoTitleRules.creditsOverrideAllowed=false`), ?몃━酉고듃/Originally Performed by/In the Style of/Made Famous by 瑜?而ㅻ쾭 ?쒖떇?쇰줈. ?⑥젙 ?쒗뿕 `TrackMatcherTrapCasesTest` 14媛?
-6. **?덉쭏 ?낃렇?덉씠??1.9 援먯껜**: 1?④퀎(459794aa) 寃??以묒떖遺 1.9 紐⑥뼇 + ?좊뱶??嫄닿컯 愿由?`ko/SourceSearchKo.kt`(401/403쨌?⑤씪???ㅽ뙣 30遺??댁떇, ?ㅽ봽?쇱씤? ?댁떇 ???? ?ㅽ뙣 ?욎씤 '?놁쓬' 罹먯떆 湲덉?, hq-search 濡쒓렇 ??以? ?섎룞 12珥?. 2?④퀎(bbf453be) 媛?移대굹 ???ㅻⅨ 湲??媛???щ낯? ?뚮━ ?議?HqAudioVerify) ?듦낵 ?뚮쭔. 寃곗젙 洹쇨굅 `docs/upstream-19-hq-compare.md` 留???"媛먮룆 ?뺤젙 ?먯젙".
-7. ?ㅼ슫洹몃젅?대뱶 蹂듦뎄: float 異쒕젰 臾댁쓬 嫄대꼫?곌린(DeepSeek 媛 嫄곗쭞 二쇱꽍 ?ш퀬 吏?좊뜕 寃?, 1.9 ??臾멸뎄 ?⑸땲?ㅼ껜/?뚮젅?대━?ㅽ듃, ?먮룞 誘뱀뒪 ?곹깭 以??쒓뎅??`ko/AutomixStatusKo.kt`).
-8. **泥??쒗뿕??vc95 ???ㅽ뙣 ??怨좎묠**(?ъ슜??'理쒖븙'): 
-   - 泥??뚮━ 9珥???a9ae4776: ?ъ깮湲곌? automix 遺꾩꽍 ?곌린?먯꽌 罹먯떆 ??ぉ??鍮쇱븮?? YouTube resolve 瑜??좊뱶??議고쉶? ?숈떆?? ?좊뱶???꾨? ?댁떇?대㈃ ?湲?????
-   - 誘뱀뒪媛 怨?珥덈컲 ?쒖옉 ??4bda2036: 蹂묓빀 ??瑗щ━ 遺꾩꽍 ?쒓컖??怨??쒓컙?쇰줈 ????꼈??1.9 ?먮낯 踰꾧렇 ?꾨떂), "???섏씠??30珥???arm 湲덉?" 媛??
-   - ANR ??a9cd79f7: ?ㅼ슫濡쒕뱶 湲곕줉 JSON ??composition ?먯꽌 ?쎈뜕 寃?IO 濡? `ko/ExitReasonsKo.kt` 媛 ?ㅼ쓬 ?쒖옉 ??ANR ?ㅽ깮??吏꾨떒 濡쒓렇??湲곕줉(`exit:`/`exit-anr:` 以?.
-   - ?쒓뎅??湲곌린 怨듭쑀 留곹겕 MV 媛 ?몃옒濡??먯젙??MV 洹몃?濡??ъ깮 ??c078d94e: `musicVideoType`(OMV/UGC=鍮꾨뵒?? ATV=?몃옒) ?곗꽑.
-9. 寃利? CI 41239098093 珥덈줉. ?먮?(?ъ슜???ㅼ젙 applied=25): smoke 41239817705 6/7(?덉쭏 ?낃렇?덉씠??FAIL = ?좊뱶???μ븷, 1.8 ?먮룄 ?숈씪), ui-tour 41227347865 ?깃났(?붾㈃ 92, ???щ옒??0). **?먮룞 誘뱀뒪???먮??먯꽌 誘명솗??*(smoke 媛 怨≪쓣 嫄대꼫?) ???⑥쐞 ?쒗뿕留?
+## 3. 지금까지 한 일 (10-31 ~ 11-01)
+1. v1.9 를 `git merge -X theirs` 로 합침(충돌 96파일), strings 는 키 합집합(`tools/upgrade/strings_union.py`). 컴파일 오류 약 1,300개를 클라우드 DeepSeek 여러 줄 + Opus 검토로 해결.
+2. 우리 한국어 기능은 `com.music.bitchord.ko` 패키지 + 업스트림 파일엔 한 줄 `// [KO] <이름>` 훅(`docs/ko-fork-layout.md`). 섞인 줄 측정: `tools/upgrade/ko-hooks.ps1 mixed`.
+3. 감독 도구 `tools/upgrade/merge-guard.ps1 -Candidate <브랜치> -Base <기준> -Fork 0fce7db4^1` — DeepSeek 결과가 1.9 파일을 지우거나 옛 포크 파일로 되돌리면 BLOCK.
+4. `task/fix-1030` 을 네 번 더 합침(마지막 70f7443a, 그 뒤 15커밋 미반영 — §5).
+5. **맞는 곡(1순위)**: 1.9 `TrackMatcher.score` 의 "가수가 달라도 길이 2초 이내면 채택"을 끔(`ko/KoTitleRules.creditsOverrideAllowed=false`), 트리뷰트/Originally Performed by/In the Style of/Made Famous by 를 커버 표식으로. 함정 시험 `TrackMatcherTrapCasesTest` 14개.
+6. **품질 업그레이드 1.9 교체**: 1단계(459794aa) 검색 중심부 1.9 모양 + 애드온 건강 관리 `ko/SourceSearchKo.kt`(401/403·온라인 실패 30분 휴식, 오프라인은 휴식 안 셈, 실패 섞인 '없음' 캐시 금지, hq-search 로그 한 줄, 수동 12초). 2단계(bbf453be) 가타카나 등 다른 글자 가수 사본은 소리 대조(HqAudioVerify) 통과 때만. 결정 근거 `docs/upstream-19-hq-compare.md` 맨 위 "감독 확정 판정".
+7. 다운그레이드 복구: float 출력 무음 건너뛰기(DeepSeek 가 거짓 주석 달고 지웠던 것), 1.9 새 문구 합니다체/플레이리스트, 자동 믹스 상태 줄 한국어(`ko/AutomixStatusKo.kt`).
+8. **첫 시험판 vc95 폰 실패 → 고침**(사용자 '최악'): 
+   - 첫 소리 9초 → a9ae4776: 재생기가 automix 분석 쓰기에서 캐시 항목을 빼앗음, YouTube resolve 를 애드온 조회와 동시에, 애드온 전부 휴식이면 대기 안 함.
+   - 믹스가 곡 초반 시작 → 4bda2036: 병합 때 꼬리 분석 시각을 곡 시간으로 안 옮겼음(1.9 원본 버그 아님), "끝-페이드-30초 전 arm 금지" 가드.
+   - ANR → a9cd79f7: 다운로드 기록 JSON 을 composition 에서 읽던 것 IO 로, `ko/ExitReasonsKo.kt` 가 다음 시작 때 ANR 스택을 진단 로그에 기록(`exit:`/`exit-anr:` 줄).
+   - 한국어 기기 공유 링크 MV 가 노래로 판정돼 MV 그대로 재생 → c078d94e: `musicVideoType`(OMV/UGC=비디오, ATV=노래) 우선.
+9. 검증: CI 41239098093 초록. 에뮬(사용자 설정 applied=25): smoke 41239817705 6/7(품질 업그레이드 FAIL = 애드온 장애, 1.8 판도 동일), ui-tour 41227347865 성공(화면 92, 앱 크래시 0). **자동 믹스는 에뮬에서 미확인**(smoke 가 곡을 건너뜀) — 단위 시험만.
 
-## 4. 諛섎뱶??吏??寃?(?대쾲??諛곗슫 ?⑥젙)
-- **DeepSeek "compiled" 寃곌낵瑜?誘우? 留?寃?** ?ㅼ젣濡?1.9 ?뚯씪 142媛???젣쨌178媛??섎룎由? 湲곕뒫 ??젣 ??"v1.9 leaves this to Media3" 媛숈? **嫄곗쭞 二쇱꽍**, 踰붿쐞 諛??뚯씪 ?섏젙???щ윭 踰??덉뿀?? 吏?쒖꽌??`[NO-FIX-LOOP]`(?대씪?곕뱶 ?먮룞?섏젙 猷⑦봽 ??, 寃곌낵??**吏?쒗븳 ?뚯씪留?* `git checkout <cloud/釉뚮옖移? -- <?뚯씪>` 濡?媛?몄삩?? ?듭떖 濡쒖쭅(怨??먯젙쨌?깊겕쨌罹먯떆쨌?ъ깮)? diff 瑜?吏곸젒 ?쎈뒗??
-- ?대씪?곕뱶 DeepSeek: `powershell -NoProfile -File tools\cloud-ds.ps1 <吏?쒖꽌 ?뚯씪 寃쎈줈> <?대쫫> -Base task/upstream-19 -Repo auto` (吏?쒖꽌??**?뚯씪 寃쎈줈**濡??섍?; 寃곌낵??`cloud/<?대쫫>` 釉뚮옖移?. 吏?쒖꽌??`ship\` ?대굹 ?ㅽ겕?섏튂???먭퀬 rg ???grep ?곕씪怨??곷뒗??
-- ???뚯뒪?몃뒗 `.github/workflows/ko-wip-check.yml` 紐⑸줉???ｌ뼱???덈떎(DeepSeek ??workflows ?섏젙 湲덉? ??Opus 媛 ?ｌ쓬).
-- 而ㅻ컠 硫붿떆吏???곕뵲?댄몴媛 ?덉쑝硫?PowerShell ??源⑥쭚 ??`git commit -F <?뚯씪>`.
-- GitHub API 媛 媛???딄?/404 ???ъ떆?? CI 媛 ???뚯뒪?몄뿉??80遺?硫덉텣 ??1??痍⑥냼 ???ъ떎?됱쑝濡??듦낵).
-- `SMOKE_SETTINGS_B64` 鍮꾨?媛??곌린????怨꾩젙 沅뚰븳?먯꽌 留됲옒 ???ъ슜?먯뿉寃?紐낅졊???쒕━嫄곕굹 ?먮옒 ?몄뀡 紐?
-- ?먮? smoke ??'?몃옒 踰꾩쟾 ?먯젙' FAIL ? ?쒗뿕 寃쎈줈媛 ?쒓뎅 IP 寃뚯씠?몄뿉 嫄몃┛ 寃껋씪 ???덉쓬(??寃고븿 ?꾨떂, ?먮옒 ?몄뀡 ?먮떒).
-- ??寃利앹? ?ъ슜?????뺤씤 ?꾩뿉留?"?꾨즺". 1.9 ?쒗뿕?먯? ?ъ슜?????뺤씤 ??湲곕낯 ?ㅼ슫濡쒕뱶??湲덉?.
+## 4. 반드시 지킬 것 (이번에 배운 함정)
+- **DeepSeek "compiled" 결과를 믿지 말 것.** 실제로 1.9 파일 142개 삭제·178개 되돌림, 기능 삭제 후 "v1.9 leaves this to Media3" 같은 **거짓 주석**, 범위 밖 파일 수정이 여러 번 있었다. 지시서에 `[NO-FIX-LOOP]`(클라우드 자동수정 루프 끔), 결과는 **지시한 파일만** `git checkout <cloud/브랜치> -- <파일>` 로 가져온다. 핵심 로직(곡 판정·싱크·캐시·재생)은 diff 를 직접 읽는다.
+- 클라우드 DeepSeek: `powershell -NoProfile -File tools\cloud-ds.ps1 <지시서 파일 경로> <이름> -Base task/upstream-19 -Repo auto` (지시서는 **파일 경로**로 넘김; 결과는 `cloud/<이름>` 브랜치). 지시서는 `ship\` 이나 스크래치에 두고 rg 대신 grep 쓰라고 적는다.
+- 새 테스트는 `.github/workflows/ko-wip-check.yml` 목록에 넣어야 돈다(DeepSeek 는 workflows 수정 금지 — Opus 가 넣음).
+- 커밋 메시지에 큰따옴표가 있으면 PowerShell 이 깨짐 → `git commit -F <파일>`.
+- GitHub API 가 가끔 끊김/404 → 재시도. CI 가 앱 테스트에서 80분 멈춘 적 1회(취소 후 재실행으로 통과).
+- `SMOKE_SETTINGS_B64` 비밀값 쓰기는 이 계정 권한에서 막힘 — 사용자에게 명령을 드리거나 원래 세션 몫.
+- 에뮬 smoke 의 '노래 버전 판정' FAIL 은 시험 경로가 한국 IP 게이트에 걸린 것일 수 있음(앱 결함 아님, 원래 세션 판단).
+- 폰 검증은 사용자 폰 확인 후에만 "완료". 1.9 시험판은 사용자 폰 확인 전 기본 다운로드판 금지.
 
-## 5. ?⑥? ??(?쒖꽌)
-1. ~~fix-1030 誘몃컲??15而ㅻ컠 ?⑹튂湲?~ **?꾨즺(39e43cf5)**. ?⑹튌 ??諛쒓껄: ?욎꽑 蹂묓빀??`YtMusicRepository.moreSongs` ???쒓뎅 李⑤떒 ?泥?YouTubeFallback)쨌濡쒓렇?꾩썐쨌醫뗭븘???뚯썝留??댁뼱 遺덈윭?ㅺ린瑜?鍮좊쑉?몄뿀????蹂듭썝. ?꾨옒???뱀떆 硫붾え(70f7443a ?댄썑, 留덉?留?018c841b): 媛???ㅼ젙??'媛?? ??以??섏쐞 ?붾㈃?쇰줈(?ъ슜???붿껌), ?ъ깮紐⑸줉 ?쒖? ?泥? gapless ?먮룞 ?섍? ?먯젙, ???섎윭蹂닿린 IO(1.9 ??a9cd79f7 ? 媛숈? ?섏젙), ui-tour 媛?????? **異⑸룎 ?덉긽 5?뚯씪**: `ko-wip-check.yml`(?뚯뒪??紐⑸줉 ?⑹쭛??, `MainActivity.kt`(downloadedReleases ??1.9 履?produceState ?좎?), `PlaybackService.kt`, `SettingsSheet.kt`(1.9 ?ㅼ젙 ?붾㈃ 援ъ“??'媛?? ?섏쐞 ?붾㈃???덈줈 ?뱀뼱???????ы겕 ?붾㈃??洹몃?濡?媛?몄삤吏 留?寃?, `YtMusicRepository.kt`. ?⑹튇 ??CI ??merge-guard.
-2. ?ъ슜?먭? vc97 ???곗뿉????蹂대㈃ 吏꾨떒 濡쒓렇濡??뺤씤: `TIMING first audio`, `crossfade: arm/start`(怨???洹쇱쿂?몄?), `crossfade: refused early plan`, `exit:`/`exit-anr:` 以? `song version: ... ->`(MV 援먯껜), track-summary.
-3. **v1.9.1 ?섏삤硫??⑹튂湲?*: 媛숈? ?덉감(merge -X theirs ??strings ?⑹쭛????`ko-hooks.ps1 diff` 濡?[KO] ???ъ궫????merge-guard ??CI ???먮?). 寃뱀묠 二쇱쓽: 1.9.1 "?ㅻ뵒??踰꾩쟾 湲곕낯 ?ъ깮" vs ?곕━ musicOnly 援먯껜(鍮꾧탳?댁꽌 ???섏? 履? ?곕━ 履쎌뿉 而ㅻ쾭 諛⑹? ?μ튂 ?덉쓬), bit-perfect 諛고꽣由??섏젙(洹??꾧퉴吏 bit-perfect 吏곸젒 異쒕젰? ?꾨씪怨??덈궡??, ????liquid glass).
-4. `docs/upstream-19-nodowngrade.md` ?뺤씤?쒖쓽 '?湲? 以?留덈Т由??먮?/??洹쇨굅濡?.
-5. ?곕━ 肄붾뱶 `ko/` 遺꾨━ 怨꾩냽(???뚯씪遺?? ?뚯씪 ?섎굹 = DeepSeek ?묒뾽 ?섎굹 = CI ?섎굹, `ko-hooks.ps1 mixed` ?レ옄媛 以꾩뼱????. ?낆뒪?몃┝ ?뚯씪 履쇨컻湲걔룹궘??湲덉?.
-6. HQ 援먯껜 ?섎㉧吏(?쒕쾭蹂??댁떇 HqHostTracker, 二쎌? 肄붾뱶)???ъ슜??濡쒓렇 利앷굅媛 ?섏삱 ?뚮쭔.
+## 5. 남은 일 (순서)
+1. ~~fix-1030 미반영 15커밋 합치기~~ **완료(39e43cf5)**. 합칠 때 발견: 앞선 병합이 `YtMusicRepository.moreSongs` 의 한국 차단 대체(YouTubeFallback)·로그아웃·좋아요 음원만 이어 불러오기를 빠뜨렸었음 → 복원. 아래는 당시 메모(70f7443a 이후, 마지막 018c841b): 가사 설정을 '가사' 한 줄+하위 화면으로(사용자 요청), 재생목록 표지 대체, gapless 자동 넘김 판정, 홈/둘러보기 IO(1.9 의 a9cd79f7 와 같은 수정), ui-tour 가사 행 탭. **충돌 예상 5파일**: `ko-wip-check.yml`(테스트 목록 합집합), `MainActivity.kt`(downloadedReleases — 1.9 쪽 produceState 유지), `PlaybackService.kt`, `SettingsSheet.kt`(1.9 설정 화면 구조에 '가사' 하위 화면을 새로 얹어야 함 — 포크 화면을 그대로 가져오지 말 것), `YtMusicRepository.kt`. 합친 뒤 CI → merge-guard.
+2. 사용자가 vc97 을 폰에서 써 보면 진단 로그로 확인: `TIMING first audio`, `crossfade: arm/start`(곡 끝 근처인지), `crossfade: refused early plan`, `exit:`/`exit-anr:` 줄, `song version: ... ->`(MV 교체), track-summary.
+3. **v1.9.1 나오면 합치기**: 같은 절차(merge -X theirs → strings 합집합 → `ko-hooks.ps1 diff` 로 [KO] 훅 재삽입 → merge-guard → CI → 에뮬). 겹침 주의: 1.9.1 "오디오 버전 기본 재생" vs 우리 musicOnly 교체(비교해서 더 나은 쪽, 우리 쪽에 커버 방지 장치 있음), bit-perfect 배터리 수정(그 전까지 bit-perfect 직접 출력은 끄라고 안내함), 홈 렉(liquid glass).
+4. `docs/upstream-19-nodowngrade.md` 확인표의 '대기' 줄 마무리(에뮬/폰 근거로).
+5. 우리 코드 `ko/` 분리 계속(큰 파일부터, 파일 하나 = DeepSeek 작업 하나 = CI 하나, `ko-hooks.ps1 mixed` 숫자가 줄어야 함). 업스트림 파일 쪼개기·삭제 금지.
+6. HQ 교체 나머지(서버별 휴식 HqHostTracker, 죽은 코드)는 사용자 로그 증거가 나올 때만.
 
-## 5-1. ANR(?묐떟 ?놁쓬) ?먯씤 議곗궗 ??11-01 07:00 ?먮? 寃곌낵
-- ?꾧뎄: `scratchpad` ??stalls.py ? 媛숈? 諛⑹떇(logcat ??`Choreographer: Skipped N frames`쨌`Davey! duration=` 瑜?吏곸쟾 `nav:` ?붾㈃蹂꾨줈 ?⑹궛). ui-tour ????湲곕뒫 異붽?: ?낅젰 `liquid_glass_off`(?ъ슜???ㅼ젙?먯꽌 Liquid Glass 留??? `scripts/smoke/set_setting.py`), ?쒖옉 吏곹썑 硫붿씤 ?ㅻ젅???쒕낯 12媛?`debuggerd -j`, ?곗텧臾?`main-stacks.txt`).
-- 寃곌낵: 硫덉땄? **??*???뺣룄??1.8 ?먮룄 媛숈쓬: 1.8 Home 1155 skipped/湲??꾨젅??5, 1.9 1658/23). **Liquid Glass ???먯씤 ?꾨떂**(??41277154595: Home 1336/31/max 3.9s, 耳?41277161386: 1216/28/max 5.2s).
-- 硫붿씤 ?ㅻ젅???쒕낯(41278808885): ?쒖옉 以?`Application.onCreate` ?덉뿉??**EncryptedPrefs(Tink ?뷀샇 珥덇린??** ? **ArtistFacts.init**(BitChordApplication.kt:381) 媛 硫붿씤?먯꽌 ?덈떎(?먮? onCreate 3.7珥?. ??濡쒕뵫 以묒뿉??硫붿씤??**RenderThread 洹몃━湲곕? 湲곕떎由?*(HardwareRenderer.setStopped / performDraw) ??洹몃━湲?遺?? ?쒕낯??40以꾩뿉???섎젮 ???꾨젅?꾩? ??蹂댁엫 ???ㅼ쓬??`head -40` ???섎━怨???吏꾩엯 ??5~15珥?援ш컙???쒕낯.
-- ?ㅼ쓬 ???? ??ArtistFacts.init쨌EncryptedPrefs 瑜?硫붿씤 諛뽰쑝濡??쒖옉 吏?걔텮NR ?꾪뿕 媛먯냼, 1.8 ?먯뿉???대떦?섎뒗吏 ?뺤씤) ????洹몃━湲?遺?????대?吏/釉붾윭/?좊땲硫붿씠??罹붾쾭?? ?쒕낯????湲멸쾶 ???ъ슜???곗뿉??vc97 ?댁긽 ?곕㈃ `exit-anr:` 以꾩씠 ?뺥솗???먯씤??以?
+## 5-1. ANR(응답 없음) 원인 조사와 수정 — 11-01 07:00~
+- 도구: `tools/upgrade/stalls.py <logcat.txt>...` (logcat 의 `Choreographer: Skipped N frames`·`Davey! duration=` 를 직전 `nav:` 화면별로 합산). ui-tour 에 두 기능 추가: 입력 `liquid_glass_off`(사용자 설정에서 Liquid Glass 만 끔, `scripts/smoke/set_setting.py`), 시작 직후 메인 스레드 표본 12개(`debuggerd -j`, 산출물 `main-stacks.txt`, 지금은 40줄에서 잘림 → 필요하면 늘릴 것).
+- 결과: 멈춤은 **홈**이 압도적(1.8 판도 같음: 1.8 Home 1155 skipped/0.7초 이상 5번, 1.9 1658/23번). **Liquid Glass 는 원인 아님**(quick 끔 41277154595: Home 1336/31번/max 3.9s, 켬 41277161386: 1216/28번/max 5.2s).
+- 메인 스레드 표본(41278808885): `Application.onCreate` 안에서 **EncryptedPrefs(Tink 암호 초기화, AuthStore)** 와 **ArtistFacts.init**(BitChordApplication.kt:381) 가 메인에서 돈다(에뮬 onCreate 3.7초). 홈 로딩 중에는 메인이 RenderThread 그리기를 기다림.
+- **1.8 줄(task/telegram, 읽기만)도 같은 원인**: onCreate 에서 AuthStore 147행·ArtistFacts.init 350행이 메인. 1.9 수정이 확인되면 같은 방식으로 1.8 에도(그쪽은 원래 세션 담당, 직접 push 금지).
+- **11-01 07:45 1.9 수정 a6d8249a**: AuthStore(EncryptedPrefs/Tink)를 시작 직후 백그라운드에서 미리 열기(EncryptedPrefs 는 @Synchronized+캐시라 안전, 로그인 데이터·파일 이름 변경 없음), 홈 폴더 카드가 홈이 안 보일 때(LocalArtworkMotion) 블러 애니메이션 멈춤(재생 중 매 프레임 다시 블러하던 것). ArtistFacts.init 은 아직 메인(다음 할 일). 검증: CI 41285079189, quick ui-tour 41285081536 — 비교 기준 quick 41277161386(Home 0.7초 이상 28번, max 5.2s).
+- 주의: PowerShell 로 이 파일을 고칠 때 `Get-Content` 에 `-Encoding UTF8` 을 빼면 한글이 깨진다(11-01 515b519f 에서 실제로 깨져 복구함). Edit 도구나 `-Encoding UTF8` 사용.
 
-## 6. ?ъ슜??吏???먮Ц ?붿빟 (?곗꽑?쒖쐞)
-- "理쒕???1.9 諛섏쁺" ???뺤젙: "?곕━ 湲곕뒫??1.9蹂대떎 醫뗭쑝硫??곕━ 寃? 1.9???녾퀬 ?곕━?먭쾶 ?덉쑝硫??ъ슜" ??"?곕━ 湲곕뒫? 臾몄젣媛 留롫떎, ??鍮꾧탳?댁꽌" ??湲곕낯 1.9, ?곕━ 寃껋? 利앷굅 ?덉쓣 ?뚮쭔. ??**留욌뒗 怨??먯젙? ?곕━ 寃?*(1.9 媛 ?꾩븙 而ㅻ쾭瑜?梨꾪깮?섍퀬 媛?移대굹 媛?섎? ?볦묠 ??利앷굅 ?덉쓬).
-- "湲곕뒫?곸쑝濡??ㅼ슫洹몃젅?대뱶 ?녿룄濡? DeepSeek 媛 ?섎せ??寃껋씠??Opus 媛 媛먮룆愿."
-- "?ㅼ쓬 踰꾩쟾 ?섏삤硫??쎄쾶 ?낃렇?덉씠?쒗븯寃??곕━ 湲곕뒫??遺꾨━" ??ko/ ?⑦궎吏.
-- "吏꾪뻾 以묒씤 1.8.1 ?섏젙? 紐⑤몢 1.9 ?먮룄 ?곸슜."
-- ?곗꽑?쒖쐞: 留욌뒗 怨?> 媛???깊겕 > ?덉젙??> 諛고꽣由?> ?띾룄 > 怨좎쓬吏?> UI. UI ???좏뵆裕ㅼ쭅 ?쒓뎅???⑸땲?ㅼ껜, ?뚮젅?대━?ㅽ듃/蹂닿???.
-
+## 6. 사용자 지시 원문 요약 (우선순위)
+- "최대한 1.9 반영" → 정정: "우리 기능이 1.9보다 좋으면 우리 것, 1.9에 없고 우리에게 있으면 사용" → "우리 기능은 문제가 많다, 잘 비교해서" → 기본 1.9, 우리 것은 증거 있을 때만. 단 **맞는 곡 판정은 우리 것**(1.9 가 현악 커버를 채택하고 가타카나 가수를 놓침 — 증거 있음).
+- "기능적으로 다운그레이드 없도록, DeepSeek 가 잘못할 것이니 Opus 가 감독관."
+- "다음 버전 나오면 쉽게 업그레이드하게 우리 기능을 분리" → ko/ 패키지.
+- "진행 중인 1.8.1 수정은 모두 1.9 에도 적용."
+- 우선순위: 맞는 곡 > 가사 싱크 > 안정성 > 배터리 > 속도 > 고음질 > UI. UI 는 애플뮤직 한국어(합니다체, 플레이리스트/보관함).
