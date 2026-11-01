@@ -1,0 +1,5 @@
+BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/telegram(최신).
+과제: 브랜치 cloud/rv-review-features-1102-r4 (`git fetch origin cloud/rv-review-features-1102-r4`, 기준과의 차이 `git diff HEAD...FETCH_HEAD`)의 수정을 현재 코드에 옮겨 적용한다. 그 사이 다른 작업(rv-data-safety-update: HandoffQueuePolicy, SongVersionPolicy.downloadedFileUse 의 sourceIsVideo 규칙, VersionReplacementFilePolicy)이 같은 파일들을 먼저 고쳐 병합 충돌이 났다.
+규칙: 현재 코드에 이미 같은 목적의 수정이 있으면 그것을 유지하고 중복 추가하지 않는다. 특히 downloadedFileUse 는 현재 규칙(소스가 확실히 영상이 아닐 때만 PLAY_FILE, 모르면 STREAM_SONG)을 절대 약하게 만들지 않는다. 옮긴 수정마다 r4 의 테스트(SongVersionLookaheadSafetyTest, SongVersionReplacementEvidenceTest, HandoffQueuePolicyTest/SongVersionPolicyTest 추가분)를 함께 옮기고 통과시킨다. MV 소리가 노래 행에서 재생될 가능성을 늘리는 변경은 하지 않는다.
+제약: .github/, keys, *.jks, 서명 수정 금지. 다른 파일 최소 변경. 바꾼 함수의 모든 호출부 재확인.
+마지막 10줄 이내 요약: 옮긴 수정 / 이미 있어 건너뛴 것 / 테스트 / 미해결.
