@@ -10,27 +10,11 @@ import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.datasource.TransferListener
 import com.music.bitchord.data.innertube.PlayerClient
-import com.music.bitchord.data.net.HqRetryPolicy
 import com.music.bitchord.data.innertube.StreamResolver
-import com.music.bitchord.data.net.ProxyPlayback
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeoutOrNull
-import java.io.IOException
+import com.music.bitchord.ko.KoChunkedHostCost
+import com.music.bitchord.ko.isTransferCancellation
+import com.music.bitchord.ko.koRecoverMidPlay
 import java.io.InterruptedIOException
-import java.net.SocketTimeoutException
-
-/**
- * Whether [e] is a cancelled transfer rather than a failed one.
- *
- * A cancelled read-ahead arrives as an [InterruptedIOException] and must not
- * count against the host. A [SocketTimeoutException] also extends
- * [InterruptedIOException], but a timeout is the network failing: leaving it
- * out of the failure record let a dead host keep its place, and [close] then
- * credited it with a success.
- */
-internal fun isTransferCancellation(e: Throwable): Boolean =
-    e is InterruptedIOException && e !is SocketTimeoutException
 
 /**
  * Fetches a stream as a run of bounded ranges instead of one open-ended read.
@@ -38,7 +22,7 @@ internal fun isTransferCancellation(e: Throwable): Boolean =
  * googlevideo paces a continuous response down to roughly playback speed:
  * ask for a whole track in one request and it arrives at about 15kB/s, barely
  * ahead of the rate it is being consumed at. Ask for the same bytes as bounded
- * ranges and each one is served at line rate ??measured on the same track,
+ * ranges and each one is served at line rate — measured on the same track,
  * over the same connection, seconds apart:
  *
  * ```
@@ -50,7 +34,7 @@ internal fun isTransferCancellation(e: Throwable): Boolean =
  * can only just keep up, and it is why a stall never recovers into a cushion:
  * there is no spare bandwidth to catch up with.
  *
- * [AudioCache] already fetches this way ??it is why read-ahead can put a whole
+ * [AudioCache] already fetches this way — it is why read-ahead can put a whole
  * track on disk in the time between songs. This puts the player's own reads on
  * the same footing, which matters for the track being listened to right now:
  * read-ahead deliberately never touches it (Media3 locks a cache entry to one
@@ -62,34 +46,19 @@ internal fun isTransferCancellation(e: Throwable): Boolean =
  */
 @UnstableApi
 class ChunkedDataSource(
-    private val upstream: DataSource,
-    private val chunkBytes: Long,
-    private val positionMsFor: ((String) -> Long?)? = null,
+    internal val upstream: DataSource, // [KO] mid-play-recovery
+    internal val chunkBytes: Long, // [KO] mid-play-recovery
+    internal val positionMsFor: ((String) -> Long?)? = null, // [KO] mid-play-recovery
 ) : DataSource {
 
-    private var baseSpec: DataSpec? = null
-    private var position = 0L
-    private var bytesRemaining = 0L
-    private var chunkRemaining = 0L
-    private var chunkOpen = false
-    private var rangeBytes = chunkBytes
+    internal var baseSpec: DataSpec? = null // [KO] mid-play-recovery
+    internal var position = 0L // [KO] mid-play-recovery
+    internal var bytesRemaining = 0L // [KO] mid-play-recovery
+    internal var chunkRemaining = 0L // [KO] mid-play-recovery
+    internal var chunkOpen = false // [KO] mid-play-recovery
+    internal var rangeBytes = chunkBytes // [KO] mid-play-recovery
 
-    /** The host currently being read, and what it has cost, for [HqHostTracker]. */
-    private var currentHost: String? = null
-    private var openedAtMs = 0L
-    private var bytesRead = 0L
-
-    /**
-     * Set when any part of this open failed before the caller was done with it.
-     *
-     * [close] used to report every open as a successful transfer, so a host
-     * that answered 403 or truncated a range still gained throughput credit
-     * and sorted ahead of a host that had actually served the bytes.
-     */
-    private var transferFailed = false
-
-    /** True when [HqHostTracker.noteFailure] already recorded this failure. */
-    private var failureNoted = false
+    internal val koHostCost = KoChunkedHostCost(upstream) // [KO] hq-host-cost
 
     /** Set when the request can't be improved on, and is simply forwarded. */
     private var passthrough = false
@@ -106,40 +75,28 @@ class ChunkedDataSource(
     override fun open(dataSpec: DataSpec): Long {
         baseSpec = dataSpec
         position = dataSpec.position
-        currentHost = HqHostTracker.hostOf(dataSpec.uri.toString())
-        openedAtMs = System.currentTimeMillis()
-        bytesRead = 0L
-        transferFailed = false
-        failureNoted = false
+        koHostCost.beginOpen(dataSpec.uri.toString()) // [KO] hq-host-cost
 
         val total = dataSpec.uri.getQueryParameter("clen")?.toLongOrNull()
         if (total == null) {
             passthrough = true
             chunkOpen = true
             // Reported, not just thrown. Nothing but googlevideo carries `clen`,
-            // so every module stream comes through this branch ??and this was
+            // so every module stream comes through this branch — and this was
             // the one open in the app whose refusal was neither logged nor
             // handed anywhere. A dead Tidal URL surfaced as a bare
             // ExoPlaybackException with not one line naming the server that
             // produced it or the status it produced.
             try {
-                return openWithRateLimitRetry(dataSpec) { upstream.open(dataSpec) }
+                return koHostCost.openWithRateLimitRetry(dataSpec) // [KO] hq-host-cost
             } catch (e: Exception) {
                 if (!isTransferCancellation(e)) {
-                    transferFailed = true
                     // `host` is null exactly when the URL was too broken to
-                    // parse, which is the case most in need of naming ??so fall
+                    // parse, which is the case most in need of naming — so fall
                     // back to the string itself rather than logging "null".
                     val who = dataSpec.uri.host ?: dataSpec.uri.toString().take(120)
                     TrackLog.w(TAG, "$who refused the stream: ${e.message}")
-                    // A 429/502/503/504 was already counted by the gate; a
-                    // second note here penalised the same host twice.
-                    val refusal = rateLimitedCause(e)
-                    val countedByGate = refusal != null &&
-                        (HqRetryPolicy.isRateLimited(refusal.responseCode) ||
-                            HqRetryPolicy.isSleepingGateway(refusal.responseCode))
-                    if (!countedByGate) HqHostTracker.noteFailure(currentHost)
-                    failureNoted = true
+                    koHostCost.noteFailedOpen(e) // [KO] hq-host-cost
                     report(dataSpec, e)
                 }
                 throw e
@@ -165,12 +122,12 @@ class ChunkedDataSource(
             .setLength(length)
             .build()
         try {
-            openWithRateLimitRetry(spec) { upstream.open(spec) }
+            koHostCost.openWithRateLimitRetry(spec) // [KO] hq-host-cost
         } catch (e: Exception) {
             // Which client minted the URL is the first thing worth knowing when
             // a range is refused, and it isn't recoverable from anywhere else by
             // the time this surfaces as a playback error. A cancelled read-ahead
-            // arrives here too and means nothing ??see [AudioCache.prefetchQueue].
+            // arrives here too and means nothing — see [AudioCache.prefetchQueue].
             if (!isTransferCancellation(e)) {
                 TrackLog.w(
                     TAG,
@@ -178,38 +135,10 @@ class ChunkedDataSource(
                         "${spec.uri.getQueryParameter("c")}: ${e.message}",
                 )
                 if (e is HttpDataSource.InvalidResponseCodeException) {
-                    val resumed = recoverMidPlay(e.responseCode, spec.uri.toString())
-                    if (resumed != null) {
-                        // Recovered from the refusal: this open is not a host
-                        // failure. Crediting it as one made a successfully
-                        // re-resolved range close as failed and never earn the
-                        // success/throughput credit the replacement deserved.
-                        transferFailed = false
-                        chunkRemaining = resumed
-                        chunkOpen = true
-                        return
-                    }
+                    val resumed = koRecoverMidPlay(e.responseCode, spec.uri.toString()) // [KO] mid-play-recovery
+                    if (resumed != null) return
                 }
-                // A 429/503 has already been counted (and the host rested) by
-                // openWithRateLimitRetry; adding another failure here would
-                // escalate the penalty twice for one refusal.
-                val refusal = rateLimitedCause(e)
-                // 502/504 are sleeping-gateway refusals too: the gate already
-                // noted them when it gave up, so do not count them again.
-                val countedByGate = refusal != null &&
-                    (HqRetryPolicy.isRateLimited(refusal.responseCode) ||
-                        HqRetryPolicy.isSleepingGateway(refusal.responseCode))
-                // Only a refusal that could not be recovered is a failed
-                // transfer; marking it before the recovery attempt made a
-                // successful re-resolve close as failed and lose its credit.
-                transferFailed = true
-                if (countedByGate) {
-                    // Recorded by [openWithRateLimitRetry] already.
-                    failureNoted = true
-                } else {
-                    HqHostTracker.noteFailure(currentHost)
-                    failureNoted = true
-                }
+                koHostCost.noteFailedOpen(e) // [KO] hq-host-cost
                 // This is the only place a refusal of the *real* fetch is seen.
                 // Left here it is just a failed track; handed back, it is the
                 // one piece of evidence that retiring the client rests on.
@@ -222,225 +151,9 @@ class ChunkedDataSource(
     }
 
     /**
-     * A range was refused after the track had started. Ask for the same
-     * videoId again and keep reading from the byte that failed.
-     *
-     * The URL that was refused is not retried first: it has already been
-     * refused, and the reported failure is exactly what a five-second retry
-     * loop against it looks like. The replacement is another direct client,
-     * then the proxy, and only then ??if neither produced a new URL ??the
-     * original URL is retried, at most [StreamRefusalRecovery.MAX_SAME_URL_RETRIES]
-     * times.
-     *
-     * @return the length opened on success, or null when the caller should let
-     *   the ordinary failure path have the exception.
-     */
-    private fun recoverMidPlay(responseCode: Int, refusedUrl: String): Long? {
-        // Position zero is the start of a load, not a mid-play continuation;
-        // the resolver and the failure path own that case.
-        if (position <= 0L) return null
-        if (!StreamRefusalRecovery.isRefusal(responseCode)) return null
-        val videoId = StreamResolver.videoIdFor(refusedUrl) ?: return null
-        if (!StreamRefusalRecovery.canAttempt(videoId)) {
-            TrackLog.w(
-                TAG,
-                "stream: $videoId refused mid-play at ${atLabel(videoId)}; " +
-                    "recovery budget spent, leaving it to the failure path",
-                about = videoId,
-            )
-            return null
-        }
-        val refused = StreamResolver.refuseMidPlay(refusedUrl, responseCode) ?: return null
-        // The pin must go before the re-resolve, or the next resolver call
-        // would hand back the same dead URL. It is restored on success.
-        StreamChoice.forget(refused.videoId)
-        StreamRefusalRecovery.noteAttempt(refused.videoId)
-
-        var state = StreamRefusalRecovery.stateFor(refused.videoId)
-        var currentUrl = refusedUrl
-        var currentCode = responseCode
-        var gaveUpReason: String? = null
-
-        for (attempt in 0 until MAX_RECOVERY_STEPS) {
-            val step = StreamRefusalRecovery.next(
-                responseCode = currentCode,
-                state = state,
-                canReresolve = true,
-                canProxy = ProxyPlayback.canResolveViaProxy(),
-            )
-            when (step) {
-                MidPlayRefusalStep.RERESOLVE_DIRECT,
-                MidPlayRefusalStep.RERESOLVE_PROXY -> {
-                    val viaProxy = step == MidPlayRefusalStep.RERESOLVE_PROXY
-                    state = state.copy(
-                        directTried = state.directTried || !viaProxy,
-                        proxyTried = state.proxyTried || viaProxy,
-                    )
-                    StreamRefusalRecovery.update(refused.videoId, state)
-                    val replacement = runBlocking {
-                        withTimeoutOrNull(MID_PLAY_RESOLVE_TIMEOUT_MS) {
-                            StreamResolver.reResolve(refused, forceProxy = viaProxy)
-                        }
-                    }
-                    if (replacement == null || replacement.url == currentUrl) {
-                        gaveUpReason = "re-resolve via ${if (viaProxy) "proxy" else "direct"} failed"
-                        continue
-                    }
-                    if (!StreamContainer.sameRendition(currentUrl, replacement.url)) {
-                        gaveUpReason = "re-resolved to a different rendition (mime/clen)"
-                        continue
-                    }
-                    baseSpec = requireNotNull(baseSpec).buildUpon()
-                        .setUri(Uri.parse(replacement.url))
-                        .setHttpRequestHeaders(replacement.headers)
-                        .build()
-                    rangeBytes = minOf(chunkBytes, PlayerClient.rangeBytesFor(replacement.url))
-                    val opened = openReplacement()
-                    if (opened != null) {
-                        adoptRecoveredHost(replacement.url)
-                        StreamResolver.rememberServed(refused.videoId, replacement.url)
-                        StreamChoice.remember(
-                            refused.videoId,
-                            com.music.bitchord.data.sources.SourceStream(
-                                replacement.url,
-                                headers = replacement.headers,
-                            ),
-                            substituted = false,
-                        )
-                        StreamContainer.served(refused.videoId, replacement.url)
-                        StreamRefusalRecovery.clear(refused.videoId)
-                        TrackLog.w(
-                            TAG,
-                            "stream: ${refused.videoId} refused mid-play at ${atLabel(refused.videoId)}; " +
-                                "re-resolved via ${if (replacement.viaProxy) "proxy" else replacement.client} " +
-                                "and resumed",
-                            about = refused.videoId,
-                        )
-                        return opened
-                    }
-                    // The replacement was refused too: forget it, so the next
-                    // step asks for a different client rather than the same one.
-                    val failure = lastOpenFailure
-                    if (failure is HttpDataSource.InvalidResponseCodeException &&
-                        StreamRefusalRecovery.isRefusal(failure.responseCode)
-                    ) {
-                        StreamResolver.refuseMidPlay(replacement.url, failure.responseCode)
-                        currentUrl = replacement.url
-                        currentCode = failure.responseCode
-                        gaveUpReason = "replacement refused with ${failure.responseCode}"
-                    } else {
-                        gaveUpReason = "replacement could not be opened"
-                        break
-                    }
-                }
-
-                MidPlayRefusalStep.RETRY_SAME_URL -> {
-                    state = state.copy(sameUrlRetries = state.sameUrlRetries + 1)
-                    StreamRefusalRecovery.update(refused.videoId, state)
-                    runBlocking { delay(StreamRefusalRecovery.backoffMs(state.sameUrlRetries)) }
-                    val opened = openReplacement()
-                    if (opened != null) {
-                        adoptRecoveredHost(currentUrl)
-                        StreamResolver.rememberServed(refused.videoId, currentUrl)
-                        StreamChoice.remember(
-                            refused.videoId,
-                            com.music.bitchord.data.sources.SourceStream(
-                                currentUrl,
-                                headers = baseSpec?.httpRequestHeaders ?: emptyMap<String, String>(),
-                            ),
-                            substituted = false,
-                        )
-                        StreamContainer.served(refused.videoId, currentUrl)
-                        StreamRefusalRecovery.clear(refused.videoId)
-                        TrackLog.w(
-                            TAG,
-                            "stream: ${refused.videoId} refused mid-play at ${atLabel(refused.videoId)}; " +
-                                "the same URL answered on retry ${state.sameUrlRetries} and resumed",
-                            about = refused.videoId,
-                        )
-                        return opened
-                    }
-                    val failure = lastOpenFailure
-                    if (failure is HttpDataSource.InvalidResponseCodeException &&
-                        StreamRefusalRecovery.isRefusal(failure.responseCode)
-                    ) {
-                        currentCode = failure.responseCode
-                        gaveUpReason = "same URL still refused with ${failure.responseCode}"
-                    } else {
-                        gaveUpReason = "same URL could not be opened"
-                        break
-                    }
-                }
-
-                MidPlayRefusalStep.GIVE_UP -> {
-                    gaveUpReason = gaveUpReason ?: "no path left"
-                    break
-                }
-            }
-        }
-
-        TrackLog.w(
-            TAG,
-            "stream: ${refused.videoId} refused mid-play at ${atLabel(refused.videoId)}; " +
-                "re-resolve failed (${gaveUpReason ?: "no path left"})",
-            about = refused.videoId,
-        )
-        return null
-    }
-
-    /**
-     * Where playback was when the range failed, in the unit the log line asks
-     * for. The byte offset is the fallback for read-ahead, where the track is
-     * not the one playing and no playback time exists for it yet.
-     */
-    private fun atLabel(videoId: String): String {
-        val ms = positionMsFor?.invoke(videoId)
-        return if (ms != null && ms >= 0L) "${ms}ms" else "byte $position"
-    }
-
-    /** The last exception [openReplacement] saw, for the recovery loop above. */
-    private var lastOpenFailure: Exception? = null
-
-    /**
-     * Credits the rest of this open to the host that actually served the
-     * replacement.
-     *
-     * The original URL was refused, so [close] must not hand its replacement's
-     * throughput to the dead host. The bytes already read before the refusal
-     * stay with the refused host (which earned a failure, not credit), so the
-     * replacement's accounting starts fresh.
-     */
-    private fun adoptRecoveredHost(url: String) {
-        currentHost = HqHostTracker.hostOf(url)
-        openedAtMs = System.currentTimeMillis()
-        bytesRead = 0L
-    }
-
-    /** Opens the chunk currently described by [baseSpec], or null on failure. */
-    private fun openReplacement(): Long? {
-        val length = minOf(rangeBytes, bytesRemaining)
-        if (length <= 0L) return 0L
-        val spec = requireNotNull(baseSpec).buildUpon()
-            .setPosition(position)
-            .setLength(length)
-            .build()
-        return try {
-            lastOpenFailure = null
-            // The failed open may have left a source holding a socket; a
-            // reopen on the same factory must start from a clean one.
-            runCatching { upstream.close() }
-            openWithRateLimitRetry(spec) { upstream.open(spec) }
-            length
-        } catch (e: Exception) {
-            lastOpenFailure = e
-            null
-        }
-    }
-
-    /**
      * Hands a refusal back to whoever minted the URL that was refused.
      *
-     * [StreamResolver] sorts out whether the URL was one of its own ??see
+     * [StreamResolver] sorts out whether the URL was one of its own — see
      * [StreamResolver.onPlaybackRefused]. Anything that isn't a refusal, or
      * isn't from a client it models, costs nothing here.
      */
@@ -451,20 +164,7 @@ class ChunkedDataSource(
     }
 
     override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
-        if (passthrough) {
-            val read = try {
-                upstream.read(buffer, offset, length)
-            } catch (e: Exception) {
-                if (!isTransferCancellation(e)) {
-                    transferFailed = true
-                    HqHostTracker.noteFailure(currentHost)
-                    failureNoted = true
-                }
-                throw e
-            }
-            if (read > 0) bytesRead += read
-            return read
-        }
+        if (passthrough) return koHostCost.readPassthrough { upstream.read(buffer, offset, length) } // [KO] hq-host-cost
         if (bytesRemaining == 0L) return C.RESULT_END_OF_INPUT
 
         // A range that ends early is re-opened for the part that didn't
@@ -476,36 +176,16 @@ class ChunkedDataSource(
                 closeChunk()
                 openChunk()
             }
-            val read = try {
-                upstream.read(buffer, offset, minOf(length.toLong(), chunkRemaining).toInt())
-            } catch (e: Exception) {
-                if (!isTransferCancellation(e)) {
-                    transferFailed = true
-                    HqHostTracker.noteFailure(currentHost)
-                    failureNoted = true
-                }
-                throw e
-            }
+            val read = koHostCost.readChunk { upstream.read(buffer, offset, minOf(length.toLong(), chunkRemaining).toInt()) } // [KO] hq-host-cost
             if (read != C.RESULT_END_OF_INPUT) {
                 position += read
                 chunkRemaining -= read
                 bytesRemaining -= read
-                bytesRead += read
                 return read
             }
             chunkRemaining = 0L
         }
-        // Every re-open at this position also ended before the bytes that were
-        // asked for. Reporting EOF here is what made a cut stream look like a
-        // finished song: ExoPlayer advanced the queue with no error and no
-        // recovery. A short read is a transport failure, not the end of the
-        // track, because `clen` already said how many bytes there are.
-        val message = "truncated stream at $position ($bytesRemaining bytes missing)"
-        transferFailed = true
-        HqHostTracker.noteFailure(currentHost)
-        failureNoted = true
-        TrackLog.w(TAG, "hq-stream: $message")
-        throw IOException(message)
+        koHostCost.failTruncated(position, bytesRemaining) // [KO] hq-host-cost
     }
 
     private fun closeChunk() {
@@ -521,103 +201,10 @@ class ChunkedDataSource(
 
     override fun close() {
         closeChunk()
-        if (openedAtMs != 0L) {
-            if (transferFailed) {
-                // A failed open has already been recorded where it happened; a
-                // truncated or aborted read has not. Record it once either way.
-                if (!failureNoted) HqHostTracker.noteFailure(currentHost)
-            } else {
-                HqHostTracker.noteTransfer(
-                    currentHost,
-                    bytesRead,
-                    System.currentTimeMillis() - openedAtMs,
-                    ok = true,
-                )
-            }
-        }
+        koHostCost.finish() // [KO] hq-host-cost
         baseSpec = null
         bytesRemaining = 0L
         chunkRemaining = 0L
-        currentHost = null
-        openedAtMs = 0L
-        bytesRead = 0L
-        transferFailed = false
-        failureNoted = false
-    }
-
-    /**
-     * Opens [spec], letting an awake server's 429 set the pace but waking a
-     * sleeping gateway only once.
-     *
-     * A 429 is waited out according to its `Retry-After` or, when it sent none,
-     * 1s/2s/4s — at most three retries. A 502/503/504 means a free-tier
-     * instance is asleep or booting: the request already sent is the wake-up,
-     * so it is not repeated, and the host is rested for [HqRetryPolicy.REST_MS]
-     * (or its stated `Retry-After`) so candidate ordering and the next track's
-     * read-ahead steer around it.
-     */
-    private fun openWithRateLimitRetry(spec: DataSpec, open: () -> Long): Long {
-        var attempt = 0
-        while (true) {
-            try {
-                return open()
-            } catch (e: Exception) {
-                val refusal = rateLimitedCause(e) ?: throw e
-                val code = refusal.responseCode
-                if (!HqRetryPolicy.isRateLimited(code) &&
-                    !HqRetryPolicy.isSleepingGateway(code)
-                ) {
-                    throw e
-                }
-                val host = HqHostTracker.hostOf(spec.uri.toString()) ?: spec.uri.host
-                val header = HqRetryPolicy.retryAfterHeader(refusal.headerFields)
-                val decision = HqRetryPolicy.decideAddon(
-                    code = code,
-                    header = header,
-                    attempt = attempt,
-                    nowMs = System.currentTimeMillis(),
-                )
-                val restMs = HqHostTracker.noteRateLimited(host, header, code)
-                val statedMs = HqRetryPolicy.retryAfterMs(header, System.currentTimeMillis())
-                TrackLog.w(
-                    TAG,
-                    "hq-stream: ${host ?: "?"} $code " +
-                        "retry-after=${(statedMs ?: decision.waitMs) / 1000}s; " +
-                        when {
-                            decision.retryAfterTooLong ->
-                                "over ${HqRetryPolicy.MAX_WAIT_MS / 1000}s cap, switching route"
-                            decision.retry ->
-                                "retrying (${attempt + 1}/${HqRetryPolicy.MAX_ATTEMPTS})"
-                            HqRetryPolicy.isSleepingGateway(code) ->
-                                "sleeping gateway; one wake request, resting ${restMs / 1000}s"
-                            else -> "giving up"
-                        },
-                )
-                if (!decision.retry) {
-                    HqHostTracker.noteFailure(host)
-                    // A long Retry-After, or the retry budget spent, must not
-                    // leave the same URL in the resolver's cache: the playback
-                    // recovery re-opens this item in 350ms and would otherwise
-                    // be handed the exact URL the host just asked us to leave
-                    // alone.
-                    StreamResolver.onRateLimited(spec.uri.toString())
-                    throw e
-                }
-                runCatching { upstream.close() }
-                runBlocking { delay(decision.waitMs) }
-                attempt++
-            }
-        }
-    }
-
-    private fun rateLimitedCause(error: Throwable?): HttpDataSource.InvalidResponseCodeException? {
-        var cause = error
-        var depth = 0
-        while (cause != null && depth++ < 8) {
-            if (cause is HttpDataSource.InvalidResponseCodeException) return cause
-            cause = cause.cause?.takeIf { it !== cause }
-        }
-        return null
     }
 
     private companion object {
@@ -625,18 +212,7 @@ class ChunkedDataSource(
 
         /** Enough to ride out a truncated range, not enough to hang on a dead one. */
         const val MAX_EMPTY_RANGES = 3
-
-        /**
-         * One refusal can walk direct and proxy, then two same-URL retries;
-         * the cap is only a guard against a resolver that keeps handing back
-         * refused URLs, not a path the ordinary case reaches.
-         */
-        const val MAX_RECOVERY_STEPS = 8
-
-        /** Long enough for a client walk and a proxy round trip, short enough to keep the buffer. */
-        const val MID_PLAY_RESOLVE_TIMEOUT_MS = 10_000L
     }
-
 
     /** Wraps [upstream]'s sources so everything opened through it is ranged. */
     class Factory(
