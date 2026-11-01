@@ -283,7 +283,7 @@ object Backup {
                 val restored = playlists?.let {
                     LocalPlaylistStore.importAll(it, playlistMode)
                 } ?: 0
-                check(restored >= 0) { "로컬 재생목록을 저장하지 못했습니다" }
+                check(restored >= 0) { "로컬 플레이리스트를 저장하지 못했습니다" }
                 // Explicit rather than relying on the settings map: schema 2
                 // states the list itself, and an empty list is a real answer.
                 check(SearchHistory.replace(file.searchHistory)) {
