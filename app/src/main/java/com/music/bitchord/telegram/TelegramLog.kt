@@ -37,6 +37,14 @@ object TelegramLog {
     fun authState(state: String) = write(line("auth state=$state"))
 
     /**
+     * Why a step failed: TDLib's own error code and text (such as
+     * "API_ID_INVALID" or "Wrong database encryption key"), or the exception
+     * class for a local failure. TDLib error text names the problem, never
+     * the values sent, and it still goes through [redact].
+     */
+    fun failure(step: String, detail: String) = write(line("$step failed", detail.take(160)))
+
+    /**
      * Query text, chat names and phone numbers never reach this line.
      *
      * Built outside [line]'s numeric redaction on purpose: the fields here are

@@ -866,9 +866,10 @@ object TelegramClientManager {
         val databaseKey = try {
             databaseKeyStore?.loadOrCreate()
                 ?: throw IllegalStateException("Telegram storage is not ready.")
-        } catch (_: Throwable) {
+        } catch (e: Throwable) {
             // A Keystore or disk failure must become a visible error, not an
             // uncaught worker exception that can take the process down.
+            TelegramLog.failure("database key", e.javaClass.simpleName)
             update { it.copy(error = TelegramError.GENERIC) }
             return
         }
@@ -899,6 +900,7 @@ object TelegramClientManager {
         } catch (e: Throwable) {
             databaseKey.fill(0)
             paramsSent = false
+            TelegramLog.failure("setTdlibParameters", describeFailure(e))
             update { it.copy(error = mapError(e)) }
         }
     }
@@ -983,7 +985,16 @@ object TelegramClientManager {
         }
     }
 
+    /** TDLib's code and text for a TDLib error, the exception class otherwise. */
+    private fun describeFailure(error: Throwable): String =
+        if (error is TelegramFailure) {
+            "code=${error.error.code} ${error.error.message.orEmpty()}"
+        } else {
+            error.javaClass.simpleName
+        }
+
     private fun mapError(error: Throwable): TelegramError {
+        TelegramLog.failure("request", describeFailure(error))
         if (error !is TelegramFailure) return TelegramError.GENERIC
         val message = error.error.message.orEmpty().uppercase(Locale.ROOT)
         return when {
