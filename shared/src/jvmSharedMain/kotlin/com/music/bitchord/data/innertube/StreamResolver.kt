@@ -546,13 +546,18 @@ object StreamResolver {
             // get fetched through the proxy once the bypass expired (403). Both
             // ends are required for the same reason as the reverse switch: a URL
             // minted before ALL came on was minted directly.
+            val onAllScope = ProxyPlaybackPolicy.mintedOnAllScopeAfterWalk(
+                allScopeAtStart = allScopeAtStart,
+                allScopeAtEnd = allScopeInForce(),
+            )
             ResolvedWalk(
                 stream = stream,
-                generation = mintedGeneration,
-                onAllScope = ProxyPlaybackPolicy.mintedOnAllScopeAfterWalk(
-                    allScopeAtStart = allScopeAtStart,
-                    allScopeAtEnd = allScopeInForce(),
-                ),
+                // Off ALL, only an actual markResolved registration carries a
+                // route; a direct URL (or one minted during the bypass) must
+                // stay unstamped or the next open follows a proxy that never
+                // issued it.
+                generation = if (onAllScope) mintedGeneration else ProxyPlayback.registeredGenerationFor(stream.url),
+                onAllScope = onAllScope,
             )
         }
         val running = inFlight.putIfAbsent(videoId, walk)
@@ -590,7 +595,7 @@ object StreamResolver {
      */
     private class ResolvedWalk(
         val stream: Stream,
-        val generation: Long,
+        val generation: Long?,
         val onAllScope: Boolean,
     )
 
@@ -1778,12 +1783,19 @@ object StreamResolver {
      *
      * [url] is null when the failure path only knows the videoId — the item's
      * virtual `bitchord://` URI does not carry the resolved URL.
+     *
+     * [proxyGeneration]/[mintedOnAllScope] are the route stamp the URL had
+     * before the refusal. A same-URL retry is still bound to the server that
+     * minted it, so restoring these keeps a pre-ALL direct URL from being
+     * relabelled as proxy-minted after the scope changed (403 on the next open).
      */
     class RefusedStream(
         val videoId: String,
         val url: String?,
         val mimeType: String?,
         val kbps: Int,
+        val proxyGeneration: Long? = null,
+        val mintedOnAllScope: Boolean = false,
     )
 
     /** A replacement stream for a refusal in the middle of a track. */
@@ -1830,10 +1842,18 @@ object StreamResolver {
         // and must not bench a YouTube client.
         if (url.toHttpUrlOrNull()?.host?.endsWith("googlevideo.com") != true) return null
         val extracted = InnerTubeXResolver.onRefused(url)
+        // The stamp belongs to the exact URL that was refused, not to whatever
+        // is currently cached for the same track: a re-resolve can have left a
+        // different URL under this videoId, and inheriting its generation would
+        // fetch the retried URL over a route that never minted it (403).
+        val matched = recent.entries.firstOrNull { it.value.url == url }
         val videoId = extracted?.videoId
-            ?: recent.entries.firstOrNull { it.value.url == url }?.key
+            ?: matched?.key
             ?: return null
-        recent.remove(videoId)
+        // Read the stamp before the entry is dropped: a retry of this exact URL
+        // still belongs to the route that minted it, even after a scope change.
+        val minted = matched?.value
+        matched?.key?.let(recent::remove)
         val parsed = url.toHttpUrlOrNull()
         val refused = RefusedStream(
             videoId = videoId,
@@ -1842,6 +1862,8 @@ object StreamResolver {
             kbps = extracted?.kbps
                 ?: parsed?.queryParameter("bitrate")?.toIntOrNull()?.div(1000)
                 ?: 0,
+            proxyGeneration = minted?.proxyGeneration,
+            mintedOnAllScope = minted?.mintedOnAllScope ?: false,
         )
         if (lastRefused.size >= MAX_REMEMBERED) lastRefused.clear()
         lastRefused[videoId] = refused
@@ -1937,9 +1959,32 @@ object StreamResolver {
      *
      * [refuseMidPlay] removes it so no later resolve hands it back blindly;
      * a retry that worked is the evidence that it is good again.
+     *
+     * The stamp comes from the refused record when this is the same URL, not
+     * from the state now: enabling ALL_YOUTUBE during a track must not turn a
+     * direct URL into a proxy URL, which the next open would fetch through the
+     * proxy and get 403. A replacement URL has no matching refusal, so it is
+     * stamped from the state that just minted it.
      */
     fun rememberServed(videoId: String, url: String) {
-        remember(videoId, url)
+        val refused = lastRefused[videoId]?.takeIf { it.url == url }
+        if (refused == null) {
+            remember(videoId, url)
+        } else {
+            remember(
+                videoId,
+                url,
+                // The refusal record can only carry a stamp it read from the
+                // recent cache before dropping the entry. When that entry was
+                // already gone, fall back to the registration ProxyPlayback
+                // kept for the URL, not the live ALL route: the URL is still
+                // known to be proxy-minted, and leaving it unstamped would let
+                // a route/scope change fetch it directly (403).
+                capturedGeneration = refused.proxyGeneration
+                    ?: ProxyPlayback.registeredGenerationFor(url),
+                capturedOnAllScope = refused.mintedOnAllScope,
+            )
+        }
     }
 
     /**

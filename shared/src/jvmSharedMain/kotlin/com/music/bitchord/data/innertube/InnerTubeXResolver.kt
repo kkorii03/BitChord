@@ -406,6 +406,12 @@ object InnerTubeXResolver {
     /** What [url] was minted from, when InnerTubeX minted it and has not forgotten it. */
     fun extractedFor(url: String): Extracted? = minted[url]
 
+    /** Test seam: register a minted URL without running a network extraction. */
+    internal fun rememberForTest(extracted: Extracted) {
+        if (minted.size >= MAX_REMEMBERED) minted.clear()
+        minted[extracted.url] = extracted
+    }
+
     /**
      * Records that googlevideo refused [url] mid-playback.
      *
