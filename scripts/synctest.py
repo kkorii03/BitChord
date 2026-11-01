@@ -258,6 +258,11 @@ def shape(points):
     return "scatter", 0.0
 
 
+# Strict pass (11-01 user: "엄격히"). Every rule must hold; `why` names the ones that failed.
+# The old rule (median |err| <= 0.2 s + 90% within 0.3 s) is kept as old_verdict for comparing past runs.
+STRICT = dict(median_abs=0.15, median_bias=0.10, in03=0.95, in02=0.80, max_abs=1.0, min_lines=6)
+
+
 def score(matched):
     errs = [shown - sung for _, shown, sung, _ in matched]
     if not errs:
@@ -266,11 +271,26 @@ def score(matched):
     within = {lim: sum(x <= lim for x in a) / len(a) for lim in (0.2, 0.3, 0.5)}
     med_signed = statistics.median(errs)
     med_abs = statistics.median(a)
-    verdict = "PASS" if med_abs <= 0.2 and within[0.3] >= 0.9 else "WARN" if med_abs <= 0.3 else "FAIL"
+    why = []
+    if len(errs) < STRICT["min_lines"]:
+        why.append(f"줄 {len(errs)}개뿐")
+    if med_abs > STRICT["median_abs"]:
+        why.append(f"중앙값 {med_abs:.2f}초")
+    if abs(med_signed) > STRICT["median_bias"]:
+        why.append(f"전체 {'늦음' if med_signed > 0 else '빠름'} {med_signed:+.2f}초")
+    if within[0.3] < STRICT["in03"]:
+        why.append(f"0.3초 이내 {within[0.3]:.0%}")
+    if within[0.2] < STRICT["in02"]:
+        why.append(f"0.2초 이내 {within[0.2]:.0%}")
+    if max(a) > STRICT["max_abs"]:
+        why.append(f"최대 {max(a):.1f}초 어긋난 줄")
+    verdict = "PASS" if not why else "WARN" if med_abs <= 0.3 else "FAIL"
+    old = "PASS" if med_abs <= 0.2 and within[0.3] >= 0.9 else "WARN" if med_abs <= 0.3 else "FAIL"
     kind, slope = shape([(sung, shown - sung) for _, shown, sung, _ in matched])
     return dict(matched=len(errs), median=round(med_signed, 3), median_abs=round(med_abs, 3),
                 in02=round(within[0.2], 2), in03=round(within[0.3], 2), in05=round(within[0.5], 2),
-                verdict=verdict, shape=kind, slope_ms_min=slope)
+                max_abs=round(max(a), 2), verdict=verdict, old_verdict=old, why=", ".join(why),
+                shape=kind, slope_ms_min=slope)
 
 
 # ---------- one song ----------
@@ -337,15 +357,18 @@ def run_song(vid, seconds, dry):
     s = score(matched)
     if s is None:
         return dict(row, error="no line matched the heard words")
+    if "another recording" in audio_note:
+        # Scored against audio the phone did not play: the numbers prove nothing.
+        s = dict(s, verdict="FAIL", why=", ".join(filter(None, [s["why"], "폰이 다른 녹음을 재생"])))
     return dict(row, **s)
 
 
 # ---------- report ----------
 
 def write_report(rows):
-    fields = ["playlist", "video", "verdict", "shape", "slope_ms_min", "median", "median_abs", "in02", "in03",
-              "in05", "matched", "lines", "stored", "resolve", "source", "base", "shift", "match", "playing",
-              "audio", "error"]
+    fields = ["playlist", "video", "verdict", "why", "old_verdict", "shape", "slope_ms_min", "median",
+              "median_abs", "in02", "in03", "in05", "max_abs", "matched", "lines", "stored", "resolve", "source",
+              "base", "shift", "match", "playing", "audio", "error"]
     with open(OUT / "report.csv", "w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         w.writeheader()
@@ -353,7 +376,11 @@ def write_report(rows):
     scored = [r for r in rows if r.get("verdict")]
     md = [f"# 싱크 채점 {datetime.datetime.now():%Y-%m-%d %H:%M} ({ARGS.model})", "",
           "오차 = 화면 표시 시각 - 실제 부른 시각 (+면 가사가 늦음). "
-          "PASS = 중앙값 |오차| ≤ 0.2초 + 0.3초 이내 줄 ≥ 90%, WARN = 중앙값 ≤ 0.3초.", ""]
+          f"PASS(엄격) = 중앙값 |오차| ≤ {STRICT['median_abs']}초, 전체 치우침 ≤ ±{STRICT['median_bias']}초, "
+          f"0.3초 이내 줄 ≥ {STRICT['in03']:.0%}, 0.2초 이내 ≥ {STRICT['in02']:.0%}, 어느 줄도 {STRICT['max_abs']}초 넘게 "
+          f"어긋나지 않음, 맞춘 줄 ≥ {STRICT['min_lines']}개, 폰이 재생한 녹음으로 채점. WARN = 중앙값 ≤ 0.3초. "
+          "전체 합격 = 채점한 곡 모두 PASS + 채점 못 한 곡 10% 이하. "
+          "'이전' = 예전 기준(중앙값 ≤ 0.2초 + 0.3초 이내 90%).", ""]
     shapes = {}
     for r in scored:
         shapes[r["shape"]] = shapes.get(r["shape"], 0) + 1
@@ -362,12 +389,13 @@ def write_report(rows):
         s = [r for r in scored if r.get("stored") == flag]
         if s:
             md.append(f"- {label}: 합격 {sum(r['verdict'] == 'PASS' for r in s)}/{len(s)}")
-    md += ["", "| 판정 | 곡 | 저장 | 모양 | 중앙값(초) | 0.2/0.3/0.5초 이내 | 맞춘 줄 | 제공처 | base/shift/match | 오디오 |",
-           "|---|---|---|---|---|---|---|---|---|---|"]
+    md += ["", "| 판정 | 이전 | 못 미친 기준 | 곡 | 저장 | 모양 | 중앙값(초) | 최대(초) | 0.2/0.3/0.5초 이내 | 맞춘 줄 | 제공처 | base/shift/match | 오디오 |",
+           "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     order = {"FAIL": 0, "WARN": 1, "PASS": 2}
     for r in sorted(scored, key=lambda r: (order[r["verdict"]], -r["median_abs"])):
         sh = r["shape"] + (f" {r['slope_ms_min']:+}ms/분" if r["shape"] == "drift" else "")
-        md.append(f"| {r['verdict']} | {r['video']} | {r.get('stored', '')} | {sh} | {r['median']:+.2f} | "
+        md.append(f"| {r['verdict']} | {r.get('old_verdict', '')} | {r.get('why', '')} | {r['video']} | "
+                  f"{r.get('stored', '')} | {sh} | {r['median']:+.2f} | {r.get('max_abs', '')} | "
                   f"{r['in02']:.0%}/{r['in03']:.0%}/{r['in05']:.0%} | {r['matched']}/{r['lines']} | "
                   f"{r['source']} | {r['base']}/{r['shift']}/{r['match']} | {r['audio']} |")
     errors = [r for r in rows if r.get("error")]
@@ -379,7 +407,10 @@ def write_report(rows):
         if s:
             md.append(f"- {pid}: 합격 {sum(r['verdict'] == 'PASS' for r in s)}/{len(s)}")
     passed = sum(r["verdict"] == "PASS" for r in scored)
-    md.append(f"\n**합격률: {passed}/{len(scored)}** (채점 못 함 {len(errors)})")
+    old_passed = sum(r.get("old_verdict") == "PASS" for r in scored)
+    overall = scored and passed == len(scored) and len(errors) <= 0.1 * len(rows)
+    md.append(f"\n**합격률(엄격): {passed}/{len(scored)}** (이전 기준 {old_passed}/{len(scored)}, "
+              f"채점 못 함 {len(errors)}) → **전체 {'합격' if overall else '불합격'}**")
     (OUT / "report.md").write_text("\n".join(md) + "\n", encoding="utf-8")
 
 
@@ -397,6 +428,17 @@ def selftest():
     m = align(lines, words)
     s = score(m)
     assert len(m) == 5 and abs(s["median"] - 0.4) < 0.01 and s["shape"] == "const", (m, s)
+    assert s["verdict"] == "FAIL" and s["old_verdict"] == "FAIL", s
+    # Strict rules: 10 lines 0.05 s late pass; one line 1.5 s off fails strict but passes the old rule.
+    good = [(n, 10.0 * n + 0.05, 10.0 * n, 1.0) for n in range(10)]
+    assert score(good)["verdict"] == "PASS", score(good)
+    one_bad = good[:9] + [(9, 91.5, 90.0, 1.0)]
+    s = score(one_bad)
+    assert s["verdict"] == "WARN" and s["old_verdict"] == "PASS" and "최대" in s["why"], s
+    late = [(n, 10.0 * n + 0.13, 10.0 * n, 1.0) for n in range(10)]
+    s = score(late)
+    assert s["verdict"] == "WARN" and "늦음" in s["why"] and s["old_verdict"] == "PASS", s
+    assert score(good[:4])["verdict"] != "PASS"
     drift = [(t, 0.01 * t) for t in range(0, 200, 10)]
     assert shape(drift)[0] == "drift", shape(drift)
     jump = [(t, 0.0 if t < 100 else 1.0) for t in range(0, 200, 10)]
@@ -448,7 +490,8 @@ def main():
         for k, (pid, vid) in enumerate(songs, 1):
             log(f"[{k}/{len(songs)}] {vid}")
             r = dict(playlist=pid, video=vid, **run_song(vid, ARGS.seconds, ARGS.dry_run))
-            log(f"  -> {r.get('verdict') or r.get('error')} median={r.get('median')} shape={r.get('shape')}")
+            log(f"  -> {r.get('verdict') or r.get('error')} median={r.get('median')} shape={r.get('shape')}"
+                + (f" ({r['why']})" if r.get("why") else ""))
             rows.append(r)
             write_report(rows)
     finally:
