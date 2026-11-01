@@ -433,6 +433,10 @@ def run_song(vid, seconds, dry):
             return dict(error="phone not connected")
         adb("logcat", "-c")
         adb("shell", "rm", "-f", f"{APP_DIR}/synctest/{vid}.wav")
+        # Screen on while it plays (11-02): lyrics are read with the screen on,
+        # and the video measurement / AI timing deliberately wait for it, so a
+        # dark-screen run scored lyrics no listener would ever see that way.
+        adb("shell", "input", "keyevent", "KEYCODE_WAKEUP")
         adb("shell", "am", "start", "-a", "android.intent.action.VIEW",
             "-d", f"https://music.youtube.com/watch?v={vid}", "-p", PKG)
         time.sleep(seconds)
@@ -446,7 +450,19 @@ def run_song(vid, seconds, dry):
     if not logf.exists():
         return dict(error="no log")
     text = logf.read_text(encoding="utf-8", errors="replace")
+    dump_id = vid
     dump = parse_dump(text, vid)
+    if not dump:
+        # The app swapped the row to its song version before the first sound
+        # ('song version: <vid> -> <id> via search'); lyrics, their dump and the
+        # song check's WAV then belong to that id (11-02 round 3: three
+        # "no lyrics" were this).
+        m = re.findall(rf"song version: {re.escape(vid)} -> ([\w-]{{11}})", text)
+        if m and parse_dump(text, m[-1]):
+            dump_id = m[-1]
+            dump = parse_dump(text, dump_id)
+            if not dry and not (wav.exists() and wav.stat().st_size > 1000):
+                adb("pull", f"{APP_DIR}/synctest/{dump_id}.wav", str(wav), timeout=120)
     if not dump:
         # No lyrics on screen is the user-facing failure itself, not a test gap.
         return dict(error="no sync-dump (no lyrics shown?)", app_fail=True)
@@ -457,7 +473,8 @@ def run_song(vid, seconds, dry):
     stored = resolve == "cache" or head.get("source", "").startswith("file:") or "@unknown" in head.get("source", "")
     row = dict(source=head.get("source", ""), base=head.get("base", ""), shift=head.get("shift", ""),
                match=head.get("match", ""), playing=head.get("playing", ""), lines=len(lines),
-               resolve=resolve, stored="y" if stored else "n", blocks=parse_blocks(text, vid))
+               resolve=resolve, stored="y" if stored else "n", blocks=parse_blocks(text, dump_id),
+               swapped=dump_id if dump_id != vid else "")
     if not lines:
         return dict(row, error="lyrics shown without timed lines", app_fail=True)
     lang = language_for(lines)
@@ -552,7 +569,7 @@ def write_report(rows):
     fields = ["playlist", "video", "verdict", "why", "old_verdict", "shape", "slope_ms_min", "span_s", "median",
               "median_abs", "in02", "in03", "in05", "max_abs", "matched", "eligible", "coverage", "model_gap",
               "lines", "stored", "resolve", "source", "base", "shift", "match", "playing", "audio", "error",
-              "app_fail", "alts"]
+              "app_fail", "alts", "swapped"]
     with open(OUT / "report.csv", "w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         w.writeheader()
@@ -721,6 +738,7 @@ def main():
         if not ARGS.dry_run:
             adb("shell", "rm", "-f", f"{APP_DIR}/sync-test.flag")
             adb("shell", "input", "keyevent", "KEYCODE_MEDIA_PAUSE")
+            adb("shell", "input", "keyevent", "KEYCODE_SLEEP")  # screen back off after the run
             if volume is not None:
                 set_media_volume(volume)
     log(f"done: {OUT / 'report.md'}")
