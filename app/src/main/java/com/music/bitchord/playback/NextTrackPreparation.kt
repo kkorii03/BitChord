@@ -201,6 +201,9 @@ internal class NextTrackPreparation(
         var syncFailure: NextPrepPolicy.SyncFailure? = null
         var syncProbe: LyricsTiming.NextSyncProbe? = null
         var deadlineHit = false
+        // The mix answer specifically, as opposed to an earlier step using up
+        // the track's remaining time before the mix could run.
+        var mixTimedOut = false
         // Steps this particular run actually reached, for the log: [steps] is
         // the session-wide set, so a step disabled now could still appear there
         // from an earlier sound and be reported as a miss instead of "off".
@@ -485,6 +488,7 @@ internal class NextTrackPreparation(
                 }
                 if (completed == null) {
                     deadlineHit = true
+                    mixTimedOut = true
                     // A deadline cut the wait short without answering. The
                     // bundle is scheduled again by the resume/queue events, and
                     // that run may still have time for the mix; a real refusal
@@ -497,8 +501,13 @@ internal class NextTrackPreparation(
             }
         }
 
-        completedRowId = snapshot.rowId
-        completedQueueKey = expectedQueueKey
+        // A timed-out mix must not leave the row marked as handled: [schedule]
+        // consults [NextPrepPolicy.alreadyHandled] before re-planning, and that
+        // mark alone would stop the retry the cleared attempt above enables.
+        if (NextPrepPolicy.keepCompletedAfter(mixTimedOut)) {
+            completedRowId = snapshot.rowId
+            completedQueueKey = expectedQueueKey
+        }
         val playerNow = currentPlayer()
         val playedMs = playerNow?.currentPosition ?: 0L
         val leftNow = playerNow?.let { remainingMs(it) } ?: Long.MAX_VALUE

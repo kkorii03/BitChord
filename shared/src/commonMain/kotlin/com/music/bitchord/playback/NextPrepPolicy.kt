@@ -119,6 +119,18 @@ object NextPrepPolicy {
      */
     fun keepMixAttemptAfter(completed: Boolean?): Boolean = completed != null
 
+    /**
+     * Whether a finished run may mark its row as handled.
+     *
+     * A mix that the deadline cut off is not a completion: the row is still
+     * next and the mix attempt was dropped above, so the resume/queue event
+     * that schedules the bundle again must be allowed to re-plan this row.
+     * Marking it completed here made [alreadyHandled] skip the retry even
+     * though the attempt mark had been cleared. A run that really finished
+     * (or refused the mix) keeps the mark so events do not start it again.
+     */
+    fun keepCompletedAfter(mixTimedOut: Boolean): Boolean = !mixTimedOut
+
     /** Whether the paid engines may be asked after [playedMs] of the current track. */
     fun aiGateOpen(playedMs: Long): Boolean = playedMs >= AI_MIN_PLAYED_MS
 
