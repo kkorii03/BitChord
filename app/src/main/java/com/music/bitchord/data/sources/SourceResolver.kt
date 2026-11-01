@@ -267,6 +267,11 @@ object SourceResolver {
         remembered.clear()
     }
 
+    /** Forgets one source's memoised searches without touching any other source. */
+    internal fun clearSearchAnswersForSource(configId: String) {
+        searchAnswers.keys.removeIf { it.sourceId == configId }
+    }
+
     /**
      * A source's own failure path, for sources that turn a transport fault into
      * an empty answer instead of throwing. A 5xx or a timeout that reaches
