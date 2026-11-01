@@ -34,10 +34,10 @@ import kotlinx.coroutines.runBlocking
 class TelegramAudioReader internal constructor(
     private val trackId: String,
     fileId: Int,
-    private val totalSize: Long,
-    val mimeType: String,
+    totalSize: Long,
+    mimeType: String,
     private var position: Long,
-    private val endPosition: Long,
+    private val requestedLength: Long,
     private val reason: String,
     private val transport: TelegramFileTransport,
 ) : Closeable {
@@ -45,6 +45,18 @@ class TelegramAudioReader internal constructor(
     @Volatile
     var fileId: Int = fileId
         private set
+
+    @Volatile
+    private var totalSize = totalSize
+
+    @Volatile
+    var mimeType: String = mimeType
+        private set
+
+    private val startPosition = position
+
+    @Volatile
+    private var endPosition = endFor(startPosition, totalSize, requestedLength)
 
     @Volatile
     private var closed = false
@@ -65,8 +77,11 @@ class TelegramAudioReader internal constructor(
         if (length == 0) return 0
         checkOpen()
         if (position >= endPosition) return -1
+        // Refreshing the message may replace the file with a different size and
+        // move endPosition; only read what the new end still allows.
+        val path = ensureDownloaded(position, length) ?: return -1
         val wanted = minOf(length.toLong(), endPosition - position).toInt()
-        val path = ensureDownloaded(position, wanted)
+        if (wanted <= 0) return -1
         val count = RandomAccessFile(path, "r").use { file ->
             file.seek(position)
             val available = (file.length() - position)
@@ -86,24 +101,32 @@ class TelegramAudioReader internal constructor(
      * Makes sure [length] bytes at [at] are on disk, fetching up to a small
      * window ahead so the next reads do not each start a download.
      */
-    private fun ensureDownloaded(at: Long, length: Int): String {
+    private fun ensureDownloaded(at: Long, length: Int): String? {
+        val wanted = minOf(length.toLong(), endPosition - at).toInt()
+        if (wanted <= 0) return null
         localPath?.let { path ->
-            if (at >= downloadedFrom && at + length <= downloadedEnd) return path
+            if (at >= downloadedFrom && at + wanted <= downloadedEnd) return path
         }
-        val lock = downloadLocks.computeIfAbsent(trackId) { ReentrantLock() }
-        lock.lock()
+        val entry = acquireDownloadLock(trackId)
+        entry.lock.lock()
         try {
             checkOpen()
             // A reader that was waiting for the per-track lock may now find the
             // range it wanted already on disk.
+            val lockedWanted = minOf(length.toLong(), endPosition - at).toInt()
+            if (lockedWanted <= 0) return null
             localPath?.let { path ->
-                if (at >= downloadedFrom && at + length <= downloadedEnd) return path
+                if (at >= downloadedFrom && at + lockedWanted <= downloadedEnd) return path
             }
             var attempt = 0
             while (true) {
                 checkOpen()
+                // refreshTrack may have changed the file, so clamp each attempt
+                // to the end position that is valid now.
+                val currentWanted = minOf(length.toLong(), endPosition - at).toInt()
+                if (currentWanted <= 0) return null
                 try {
-                    return downloadRange(at, length)
+                    return downloadRange(at, currentWanted)
                 } catch (failure: Exception) {
                     if (closed) throw InterruptedIOException("Telegram read cancelled")
                     if (failure is InterruptedIOException) throw failure
@@ -118,7 +141,8 @@ class TelegramAudioReader internal constructor(
                 }
             }
         } finally {
-            lock.unlock()
+            entry.lock.unlock()
+            releaseDownloadLock(trackId, entry)
         }
     }
 
@@ -156,16 +180,29 @@ class TelegramAudioReader internal constructor(
         return path
     }
 
-    /** A deleted message/channel ends the retry; a refreshed message updates [fileId]. */
+    /**
+     * A deleted message/channel ends the retry; a refreshed message updates the
+     * file id and also the size/mime/end that belong to the replacement file.
+     */
     private fun refreshTrack() {
         val fresh = transport.resolveTrack(trackId)
+        val freshSize = transport.fileInfo(fresh.fileId).size
+        if (freshSize < 0 || position > freshSize) {
+            throw IOException("Telegram audio position is outside the file.")
+        }
         if (fresh.fileId != fileId) {
             fileId = fresh.fileId
             localPath = null
             downloadedFrom = 0L
             downloadedEnd = 0L
         }
+        totalSize = freshSize
+        mimeType = fresh.mimeType.ifBlank { "application/octet-stream" }
+        endPosition = endFor(startPosition, freshSize, requestedLength)
     }
+
+    private fun endFor(start: Long, size: Long, length: Long): Long =
+        start + if (length < 0) size - start else minOf(length, size - start)
 
     private fun checkOpen() {
         if (closed) throw InterruptedIOException("Telegram read cancelled")
@@ -213,8 +250,30 @@ class TelegramAudioReader internal constructor(
          * TDLib has one download per file. The key is the track (the message
          * the listener chose), so a new file id after a reference refresh still
          * shares the same lock with the playback that was already reading it.
+         * The entry is removed as soon as the last holder or waiter leaves, so
+         * a history of played tracks cannot grow this map forever.
          */
-        private val downloadLocks = ConcurrentHashMap<String, ReentrantLock>()
+        private val downloadLocks = ConcurrentHashMap<String, DownloadLock>()
+
+        private class DownloadLock {
+            val lock = ReentrantLock()
+            var users = 0
+        }
+
+        private fun acquireDownloadLock(trackId: String): DownloadLock =
+            downloadLocks.compute(trackId) { _, existing ->
+                (existing ?: DownloadLock()).also { it.users++ }
+            }!!
+
+        private fun releaseDownloadLock(trackId: String, entry: DownloadLock) {
+            downloadLocks.computeIfPresent(trackId) { _, existing ->
+                if (existing !== entry) return@computeIfPresent existing
+                existing.users--
+                if (existing.users <= 0) null else existing
+            }
+        }
+
+        internal fun downloadLockCount(): Int = downloadLocks.size
 
         fun open(
             trackId: String,
@@ -260,16 +319,13 @@ class TelegramAudioReader internal constructor(
             if (size < 0 || requestedPosition > size) {
                 throw IOException("Telegram audio position is outside the file.")
             }
-            val available = size - requestedPosition
-            val end = requestedPosition +
-                if (requestedLength < 0) available else minOf(requestedLength, available)
             val reader = TelegramAudioReader(
                 trackId = trackId,
                 fileId = resolved.track.fileId,
                 totalSize = size,
                 mimeType = resolved.track.mimeType.ifBlank { "application/octet-stream" },
                 position = requestedPosition,
-                endPosition = end,
+                requestedLength = requestedLength,
                 reason = reason,
                 transport = transport,
             )
