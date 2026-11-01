@@ -15,8 +15,8 @@ import com.music.bitchord.playback.smart.AutomixWorkPolicy
  * track's opening and the outgoing track's tail. Each is skipped once measured,
  * so a track is decoded once rather than on every tick.
  *
- * Returns true once it has handled the request, so the upstream fallback in
- * [CrossfadeController.requestAnalysisAround] stays untouched for merging.
+ * Returns true once it has handled the request; [CrossfadeController.requestAnalysisAround]
+ * is only a [KO] hook around this function.
  */
 internal fun CrossfadeController.koRequestAnalysisAround(player: ExoPlayer, duration: Long): Boolean {
     val currentItem = player.currentMediaItem ?: return true

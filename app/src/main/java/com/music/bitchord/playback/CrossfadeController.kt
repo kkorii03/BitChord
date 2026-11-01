@@ -1166,14 +1166,7 @@ class CrossfadeController(
     }
 
     private fun requestAnalysisAround(player: ExoPlayer, duration: Long) {
-        if (koRequestAnalysisAround(player, duration)) return // [KO] crossfade-analysis
-        val currentItem = player.currentMediaItem ?: return
-        val nextIndex = player.nextMediaItemIndex
-        if (nextIndex == C.INDEX_UNSET) return
-        val nextItem = player.getMediaItemAt(nextIndex)
-        if (currentItem.isVideoOrigin || nextItem.isVideoOrigin) return
-        requestAnalysis(currentItem, duration, AnalysisWindow.TAIL)
-        requestAnalysis(nextItem, nextItemDurationMs(nextIndex, nextItem), AnalysisWindow.HEAD)
+        koRequestAnalysisAround(player, duration) // [KO] crossfade-analysis
     }
 
     /**
