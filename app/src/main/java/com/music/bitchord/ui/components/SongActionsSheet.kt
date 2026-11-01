@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -27,7 +26,6 @@ import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.automirrored.rounded.Undo
-import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.BugReport
@@ -40,23 +38,17 @@ import androidx.compose.material.icons.rounded.Downloading
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
-import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.FileUpload
 import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Radio
 import androidx.compose.material.icons.rounded.PlaylistRemove
-import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.Share
-import androidx.compose.material.icons.rounded.RecordVoiceOver
-import androidx.compose.material.icons.rounded.Speed
-import androidx.compose.material.icons.rounded.Subtitles
 import androidx.compose.material.icons.rounded.ThumbDown
 import androidx.compose.material.icons.rounded.ThumbDownOffAlt
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Videocam
-import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -83,7 +75,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -91,17 +82,14 @@ import coil3.compose.AsyncImage
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.ROW_ART_PX
 import com.music.bitchord.data.model.Song
-import com.music.bitchord.data.model.SongOrigins
 import com.music.bitchord.data.model.artworkAt
-import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.webdav.WebDavUploads
 import com.music.bitchord.download.DownloadState
+import com.music.bitchord.ko.KoSongActionsSheet
 import com.music.bitchord.download.Downloads
-import com.music.bitchord.playback.PlaybackParametersMath
 import com.music.bitchord.playback.SleepTimer
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.icons.BitChordIcons
-import com.music.bitchord.ui.player.coverSingerChannelId
 import com.music.bitchord.ui.theme.ArtworkPalette
 import com.music.bitchord.ui.theme.rememberArtworkPalette
 import kotlinx.coroutines.delay
@@ -116,12 +104,11 @@ import java.util.Locale
  * always the fallback for "I meant to do something with this song".
  *
  * Everything that writes to the account is hidden outright when [signedIn] is
- * false rather than shown and refused. The same goes for a track that is a
- * plain device or file-library row (`SongOrigins.isLocalFile`): rating,
- * playlists, downloading it again and sharing all assume a YouTube identity
- * the file doesn't carry, so those rows drop out regardless of [signedIn].
- * A *downloaded* YouTube track is not one of those — it still carries its id,
- * so it keeps every account row.
+ * false rather than shown and refused. The same goes for a track that is
+ * playing from a local file or a finished download (`song.localUri != null`):
+ * rating, playlists, downloading it again and sharing all assume a YouTube
+ * identity the file doesn't carry, so those rows drop out regardless of
+ * [signedIn].
  *
  * [showSleepTimer] and [onShare] are the player's extras: a sleep timer isn't a
  * property of some row in a list, so it only appears where it means something.
@@ -244,9 +231,46 @@ fun SongActionsSheet(
      */
     presentation: SongActionsPresentation = SongActionsPresentation.Sheet,
 ) {
+    KoSongActionsSheet(
+        song = song,
+        signedIn = signedIn,
+        likeStatus = likeStatus,
+        onPlayNext = onPlayNext,
+        onAddToQueue = onAddToQueue,
+        onStartRadio = onStartRadio,
+        onDownload = onDownload,
+        onUploadToWebDav = onUploadToWebDav,
+        onToggleLike = onToggleLike,
+        onToggleDislike = onToggleDislike,
+        onToggleLibrary = onToggleLibrary,
+        inLibrary = inLibrary,
+        onAddToPlaylist = onAddToPlaylist,
+        onOpenAlbum = onOpenAlbum,
+        onOpenArtist = onOpenArtist,
+        modifier = modifier,
+        onRemoveFromPlaylist = onRemoveFromPlaylist,
+        onRemoveFromCache = onRemoveFromCache,
+        showSleepTimer = showSleepTimer,
+        showPlaybackSpeed = showPlaybackSpeed,
+        privateListening = privateListening,
+        onTogglePrivateListening = onTogglePrivateListening,
+        onRollbackToOriginal = onRollbackToOriginal,
+        onUpgradeQuality = onUpgradeQuality,
+        upgradeQualityInProgress = upgradeQualityInProgress,
+        onRedownloadQuality = onRedownloadQuality,
+        redownloadQualityAtBest = redownloadQualityAtBest,
+        onToggleAudioVersion = onToggleAudioVersion,
+        isAudioVersion = isAudioVersion,
+        onShare = onShare,
+        onCopyLog = onCopyLog,
+        onReportProblem = onReportProblem,
+        onLyricsOffset = onLyricsOffset,
+        resolvingLinks = resolvingLinks,
+        menu = presentation == SongActionsPresentation.Menu,
+    ) // [KO] song-actions
+    return
     var showingSongInfo by remember(song.videoId) { mutableStateOf(false) }
     var pickingSleepTimer by remember { mutableStateOf(false) }
-    var pickingPlaybackSpeed by remember { mutableStateOf(false) }
     val menu = presentation == SongActionsPresentation.Menu
     // The held-row menu has no pages to swap, so there Song Info opens as a dialog.
     if (menu && showingSongInfo) SongInfoDialog(song) { showingSongInfo = false }
@@ -265,140 +289,20 @@ fun SongActionsSheet(
     }
     val liked = likeStatus == LikeStatus.LIKE
     val disliked = likeStatus == LikeStatus.DISLIKE
-    // A plain device or file-library row has no YouTube identity behind it to
-    // rate, save, queue into a playlist, fetch again, or share a link for. A
-    // downloaded YouTube track does, and keeps every account row.
-    val isLocalFile = SongOrigins.isLocalFile(song)
+    // A local file or a finished download has no YouTube identity behind it to
+    // rate, save, queue into a playlist, fetch again, or share a link for.
+    val isOffline = song.localUri != null
 
     val rows: @Composable ColumnScope.() -> Unit = {
-        // The account's own actions lead, in the order Apple Music writes
-        // them: library, playlist, queue, share, navigation, rating. A guest
-        // or a plain local file skips only the rows that need an account; the
-        // queue and navigation still work for both.
-        if (signedIn && !isLocalFile) {
-            onToggleLibrary?.let {
-                ActionRow(
-                    icon = if (inLibrary) Icons.Rounded.Check else Icons.Rounded.Add,
-                    label = stringResource(
-                        if (inLibrary) R.string.remove_from_library else R.string.add_to_library,
-                    ),
-                    tint = if (inLibrary) palette.accent else null,
-                    accent = palette.accent,
-                    onClick = it,
-                )
-            }
-            ActionRow(
-                icon = Icons.AutoMirrored.Rounded.PlaylistAdd,
-                label = stringResource(R.string.add_to_playlist),
-                accent = palette.accent,
-                onClick = onAddToPlaylist,
-            )
-            onRemoveFromPlaylist?.let {
-                ActionRow(
-                    icon = Icons.Rounded.PlaylistRemove,
-                    label = stringResource(R.string.remove_from_playlist),
-                    accent = palette.accent,
-                    onClick = it,
-                )
-            }
-        }
-
-        ActionRow(
-            icon = Icons.AutoMirrored.Rounded.PlaylistPlay,
-            label = stringResource(R.string.play_next),
-            accent = palette.accent,
-            onClick = onPlayNext,
-        )
-        ActionRow(
-            icon = Icons.AutoMirrored.Rounded.QueueMusic,
-            label = stringResource(R.string.add_to_queue),
-            accent = palette.accent,
-            onClick = onAddToQueue,
-        )
-        if (!isLocalFile) {
-            onShare?.let {
-                ActionRow(Icons.Rounded.Share, stringResource(R.string.share), accent = palette.accent, onClick = it)
-            }
-        }
-
-        if (!isLocalFile) {
-            when (val id = song.albumId) {
-                null -> if (resolvingLinks) {
-                    LoadingActionRow(Icons.Rounded.Album, stringResource(R.string.open_album), palette)
-                }
-                else -> ActionRow(
-                    Icons.Rounded.Album,
-                    stringResource(R.string.open_album),
-                    accent = palette.accent,
-                ) { onOpenAlbum(id) }
-            }
-            // A cover's singer is its uploader, which may be known from the
-            // cover fields even when the row carried no artist id.
-            when (val id = coverSingerChannelId(song)) {
-                null -> if (resolvingLinks) {
-                    LoadingActionRow(Icons.Rounded.Person, stringResource(R.string.open_artist), palette)
-                }
-                else -> ActionRow(
-                    Icons.Rounded.Person,
-                    stringResource(R.string.open_artist),
-                    accent = palette.accent,
-                ) { onOpenArtist(id) }
-            }
-        }
-
-        if (signedIn && !isLocalFile) {
-            ActionRow(
-                icon = if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                label = if (liked) stringResource(R.string.remove_from_liked) else stringResource(R.string.like),
-                tint = if (liked) palette.accent else null,
-                accent = palette.accent,
-                onClick = onToggleLike,
-            )
-            ActionRow(
-                icon = if (disliked) Icons.Rounded.ThumbDown else Icons.Rounded.ThumbDownOffAlt,
-                label = if (disliked) stringResource(R.string.undo_dislike) else stringResource(R.string.dislike),
-                tint = if (disliked) palette.accent else null,
-                accent = palette.accent,
-                onClick = onToggleDislike,
-            )
-        }
-
-        GroupSeparator(palette)
-
-        // Everything else: offline copies, the recording itself, and the
-        // player's own extras. Kept below the actions above, as Apple puts
-        // them under "Other".
-        DownloadRow(song, palette, isLocalFile, onDownload)
-        onRedownloadQuality?.let {
-            ActionRow(
-                icon = Icons.Rounded.HighQuality,
-                label = stringResource(
-                    if (redownloadQualityAtBest) {
-                        R.string.download_already_best_quality
-                    } else {
-                        R.string.redownload_higher_quality
-                    },
-                ),
-                accent = palette.accent,
-                enabled = !redownloadQualityAtBest,
-                onClick = it,
-            )
-        }
-        onRemoveFromCache?.let {
-            ActionRow(
-                icon = Icons.Rounded.DeleteSweep,
-                label = stringResource(R.string.remove_from_cache),
-                accent = palette.accent,
-                onClick = it,
-            )
-        }
-        WebDavUploadRow(song, palette, onUploadToWebDav)
-        ActionRow(
-            icon = Icons.Rounded.Radio,
-            label = stringResource(R.string.start_radio),
-            accent = palette.accent,
-            onClick = onStartRadio,
-        )
+        // Leads the list whenever it's available: which recording is playing
+        // is the one question that has to be answered before any of the rows
+        // below mean anything — there is no point rating, queueing or
+        // downloading the wrong version of a song.
+        //
+        // The two are never both present — one is offered for a track playing
+        // a substituted copy, the other for a track held on YouTube's own —
+        // and between them they are the whole of the choice, which is why they
+        // sit in the same place under the same divider.
         if (onRollbackToOriginal != null || onUpgradeQuality != null || onToggleAudioVersion != null) {
             (onRollbackToOriginal ?: onUpgradeQuality)?.let {
                 ActionRow(
@@ -419,6 +323,9 @@ fun SongActionsSheet(
                     onClick = it,
                 )
             }
+            // Which recording, not which quality — a different question from
+            // the row above, so it sits right under it rather than merged
+            // into it, but still ahead of the divider both share.
             onToggleAudioVersion?.let {
                 ActionRow(
                     icon = if (isAudioVersion) Icons.Rounded.Videocam else BitChordIcons.MusicNote,
@@ -429,45 +336,88 @@ fun SongActionsSheet(
                     onClick = it,
                 )
             }
+            GroupSeparator(palette)
         }
-        // Covers — see CoverTitles. The upload's own title, for a row shown
-        // as its song; tapping copies it.
-        song.originalTitle?.let { original ->
-            val context = LocalContext.current
+
+        if (signedIn && !isOffline) {
             ActionRow(
-                icon = Icons.Rounded.Subtitles,
-                label = stringResource(R.string.cover_original_title, original),
+                icon = if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                label = if (liked) stringResource(R.string.remove_from_liked) else stringResource(R.string.like),
+                tint = if (liked) palette.accent else null,
                 accent = palette.accent,
-            ) {
-                val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
-                clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("title", original))
-                // Android 13 and later confirm a copy themselves; a toast on top
-                // of that would say it twice.
-                if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) {
-                    android.widget.Toast.makeText(context, R.string.cover_original_title_copied, android.widget.Toast.LENGTH_SHORT).show()
-                }
+                onClick = onToggleLike,
+            )
+            ActionRow(
+                icon = if (disliked) Icons.Rounded.ThumbDown else Icons.Rounded.ThumbDownOffAlt,
+                label = if (disliked) stringResource(R.string.undo_dislike) else stringResource(R.string.dislike),
+                tint = if (disliked) palette.accent else null,
+                accent = palette.accent,
+                onClick = onToggleDislike,
+            )
+            ActionRow(
+                icon = Icons.AutoMirrored.Rounded.PlaylistAdd,
+                label = stringResource(R.string.add_to_playlist),
+                accent = palette.accent,
+                onClick = onAddToPlaylist,
+            )
+            onRemoveFromPlaylist?.let {
+                ActionRow(
+                    icon = Icons.Rounded.PlaylistRemove,
+                    label = stringResource(R.string.remove_from_playlist),
+                    accent = palette.accent,
+                    onClick = it,
+                )
             }
+            GroupSeparator(palette)
         }
-        // A channel whose uploads are covers, read as such even without the
-        // date tag their titles usually end on.
-        val channelId = song.artistId
-        if (song.isVideo && !isLocalFile && !channelId.isNullOrBlank()) {
-            val context = LocalContext.current
-            val coverChannels by com.music.bitchord.data.settings.AppSettings.coverChannels.collectAsStateWithLifecycle()
-            val designated = channelId in coverChannels
+
+        DownloadRow(song, palette, isOffline, onDownload)
+        onRemoveFromCache?.let {
             ActionRow(
-                icon = Icons.Rounded.RecordVoiceOver,
-                label = stringResource(if (designated) R.string.cover_channel_unset else R.string.cover_channel_set),
-                tint = if (designated) palette.accent else null,
+                icon = Icons.Rounded.DeleteSweep,
+                label = stringResource(R.string.remove_from_cache),
                 accent = palette.accent,
-            ) {
-                com.music.bitchord.data.settings.AppSettings.setCoverChannel(channelId, !designated)
-                android.widget.Toast.makeText(
-                    context,
-                    if (designated) R.string.cover_channel_unset_done else R.string.cover_channel_set_done,
-                    android.widget.Toast.LENGTH_SHORT,
-                ).show()
+                onClick = it,
+            )
+        }
+        WebDavUploadRow(song, palette, isOffline, onUploadToWebDav)
+        ActionRow(
+            icon = Icons.Rounded.Radio,
+            label = stringResource(R.string.start_radio),
+            accent = palette.accent,
+            onClick = onStartRadio,
+        )
+        ActionRow(
+            icon = Icons.AutoMirrored.Rounded.PlaylistPlay,
+            label = stringResource(R.string.play_next),
+            accent = palette.accent,
+            onClick = onPlayNext,
+        )
+        ActionRow(
+            icon = Icons.AutoMirrored.Rounded.QueueMusic,
+            label = stringResource(R.string.add_to_queue),
+            accent = palette.accent,
+            onClick = onAddToQueue,
+        )
+        when (val id = song.albumId) {
+            null -> if (resolvingLinks) {
+                LoadingActionRow(Icons.Rounded.Album, stringResource(R.string.open_album), palette)
             }
+            else -> ActionRow(
+                Icons.Rounded.Album,
+                stringResource(R.string.open_album),
+                accent = palette.accent,
+            ) { onOpenAlbum(id) }
+        }
+        when (val id = song.artistId) {
+            null -> if (resolvingLinks) {
+                LoadingActionRow(Icons.Rounded.Person, stringResource(R.string.open_artist), palette)
+            }
+            else -> ActionRow(
+                Icons.Rounded.Person,
+                stringResource(R.string.open_artist),
+                accent = palette.accent,
+            ) { onOpenArtist(id) }
         }
         ActionRow(Icons.Rounded.Info, stringResource(R.string.song_info), accent = palette.accent) {
             showingSongInfo = true
@@ -479,26 +429,6 @@ fun SongActionsSheet(
                 value = sleepTimerStatus(),
                 accent = palette.accent,
             ) { pickingSleepTimer = true }
-        }
-        if (showPlaybackSpeed && !menu) {
-            val speed by AppSettings.playbackSpeed.collectAsStateWithLifecycle()
-            val semitones by AppSettings.pitchSemitones.collectAsStateWithLifecycle()
-            ActionRow(
-                icon = Icons.Rounded.Speed,
-                label = stringResource(R.string.playback_speed),
-                value = speedPitchLabel(speed, semitones),
-                accent = palette.accent,
-            ) { pickingPlaybackSpeed = true }
-        }
-        onTogglePrivateListening?.let {
-            ActionRow(
-                icon = Icons.Rounded.VisibilityOff,
-                label = stringResource(R.string.private_listening),
-                value = stringResource(if (privateListening) R.string.enabled else R.string.off),
-                tint = if (privateListening) palette.accent else null,
-                accent = palette.accent,
-                onClick = it,
-            )
         }
         // Deliberately outside the online-only block below. Local files and
         // completed downloads use the same player lyric clock (including
@@ -512,21 +442,16 @@ fun SongActionsSheet(
                 onClick = it,
             )
         }
+        if (!isOffline) {
+            onShare?.let {
+                ActionRow(Icons.Rounded.Share, stringResource(R.string.share), accent = palette.accent, onClick = it)
+            }
+        }
         // Last, and only from the player: it is about the track playing right
         // now rather than about the song as a thing in a library, and it is
         // the one row here nobody reaches for by accident.
         onCopyLog?.let {
             ActionRow(Icons.Rounded.BugReport, stringResource(R.string.copy_log), accent = palette.accent, onClick = it)
-        }
-        // Beside Copy log: that one hands over the whole story, this one puts
-        // a pin in the moment the listener is looking at.
-        onReportProblem?.let {
-            ActionRow(
-                icon = Icons.Rounded.Flag,
-                label = stringResource(R.string.problem_mark),
-                accent = palette.accent,
-                onClick = it,
-            )
         }
     }
 
@@ -538,10 +463,6 @@ fun SongActionsSheet(
     }
 
     TintedSheet(palette = palette, imageUrl = song.thumbnailUrl, modifier = modifier) {
-        if (pickingPlaybackSpeed) {
-            PlaybackSpeedPicker(palette = palette, onBack = { pickingPlaybackSpeed = false })
-            return@TintedSheet
-        }
         if (pickingSleepTimer) {
             SleepTimerPicker(palette = palette, onBack = { pickingSleepTimer = false })
             return@TintedSheet
@@ -669,12 +590,6 @@ private fun TintedSheet(
             Column(
                 Modifier
                     .fillMaxWidth()
-                    // The sheet's surface runs to the bottom of the window, but
-                    // its last row has to stay above the gesture bar's home
-                    // indicator. Padding inside the scrolling column keeps the
-                    // tint full-bleed while the content (and therefore the
-                    // scroll range) stops clear of the system bar.
-                    .navigationBarsPadding()
                     .verticalScroll(rememberScrollState()),
                 content = content,
             )
@@ -700,7 +615,7 @@ private val SHEET_SHAPE = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
  * arrangement the sleep timer row already uses.
  */
 @Composable
-private fun DownloadRow(song: Song, palette: ArtworkPalette, isLocalFile: Boolean, onDownload: () -> Unit) {
+private fun DownloadRow(song: Song, palette: ArtworkPalette, isOffline: Boolean, onDownload: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val active by Downloads.active.collectAsStateWithLifecycle()
@@ -762,18 +677,8 @@ private fun DownloadRow(song: Song, palette: ArtworkPalette, isLocalFile: Boolea
                 value = stringResource(R.string.delete),
                 tint = palette.accent,
                 accent = palette.accent,
-            ) {
-                scope.launch {
-                    if (!Downloads.delete(context, song.videoId)) {
-                        android.widget.Toast.makeText(
-                            context,
-                            R.string.download_delete_failed,
-                            android.widget.Toast.LENGTH_SHORT,
-                        ).show()
-                    }
-                }
-            }
-        } else if (!isLocalFile) {
+            ) { scope.launch { Downloads.delete(context, song.videoId) } }
+        } else if (!isOffline) {
             ActionRow(
                 icon = Icons.Rounded.Download,
                 label = stringResource(R.string.download),
@@ -790,19 +695,18 @@ private fun DownloadRow(song: Song, palette: ArtworkPalette, isLocalFile: Boolea
  * reads its state where it is drawn rather than threading it through the
  * sheet's signature.
  *
- * Shown for any readable file on this device, including a finished download:
- * `WebDavUploads.isUploadable` already accepts its content/file URI and turns
- * down a row that already lives on the server. Testing `isLocalFile` here hid
- * the row for downloads even though the uploader could send them.
+ * Shown only for readable local files. A track already on the server, or a
+ * stream with no bytes on this device, has nothing to send up.
  */
 @Composable
 private fun WebDavUploadRow(
     song: Song,
     palette: ArtworkPalette,
+    isOffline: Boolean,
     onUpload: (() -> Unit)?,
 ) {
     onUpload ?: return
-    if (!WebDavUploads.isUploadable(song)) return
+    if (!isOffline || !WebDavUploads.isUploadable(song)) return
     val active by WebDavUploads.active.collectAsStateWithLifecycle()
     when (val state = active[song.videoId]) {
         is WebDavUploads.TrackState.Running -> ActionRow(
@@ -830,123 +734,6 @@ private fun WebDavUploadRow(
         )
     }
 }
-
-private val PLAYBACK_SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
-
-@Composable
-private fun PlaybackSpeedPicker(palette: ArtworkPalette, onBack: () -> Unit) {
-    val speed by AppSettings.playbackSpeed.collectAsStateWithLifecycle()
-    val semitones by AppSettings.pitchSemitones.collectAsStateWithLifecycle()
-
-    Column(Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 8.dp, end = 22.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButton(onClick = onBack) {
-                Icon(
-                    Icons.AutoMirrored.Rounded.ArrowBack,
-                    contentDescription = stringResource(R.string.back),
-                    tint = MaterialTheme.colorScheme.onBackground,
-                )
-            }
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = stringResource(R.string.playback_speed),
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onBackground,
-                )
-                Text(
-                    text = speedPitchLabel(speed, semitones),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        HorizontalDivider(thickness = 0.5.dp, color = palette.divider)
-
-        PLAYBACK_SPEEDS.forEach { option ->
-            SleepOption(
-                label = formatSpeed(option),
-                selected = speed == option,
-                accent = palette.accent,
-            ) {
-                AppSettings.setPlaybackSpeed(option)
-            }
-        }
-
-        HorizontalDivider(thickness = 0.5.dp, color = palette.divider)
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 22.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = stringResource(R.string.pitch),
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onBackground,
-                )
-                Text(
-                    text = formatSemitones(semitones),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            IconButton(
-                onClick = { AppSettings.setPitchSemitones(semitones - 1) },
-                enabled = semitones > PlaybackParametersMath.MIN_PITCH_SEMITONES,
-            ) {
-                Icon(
-                    Icons.Rounded.Remove,
-                    contentDescription = stringResource(R.string.pitch_lower),
-                    tint = MaterialTheme.colorScheme.onBackground,
-                )
-            }
-            Text(
-                text = formatSemitones(semitones),
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onBackground,
-                modifier = Modifier.width(42.dp),
-                textAlign = TextAlign.Center,
-            )
-            IconButton(
-                onClick = { AppSettings.setPitchSemitones(semitones + 1) },
-                enabled = semitones < PlaybackParametersMath.MAX_PITCH_SEMITONES,
-            ) {
-                Icon(
-                    Icons.Rounded.Add,
-                    contentDescription = stringResource(R.string.pitch_upper),
-                    tint = MaterialTheme.colorScheme.onBackground,
-                )
-            }
-        }
-
-        ActionRow(
-            icon = Icons.AutoMirrored.Rounded.Undo,
-            label = stringResource(R.string.reset_to_default),
-            accent = palette.accent,
-            enabled = speed != 1f || semitones != 0,
-        ) {
-            AppSettings.setPlaybackSpeed(1f)
-            AppSettings.setPitchSemitones(0)
-        }
-        Spacer(Modifier.height(24.dp))
-    }
-}
-
-private fun speedPitchLabel(speed: Float, semitones: Int): String =
-    if (semitones == 0) formatSpeed(speed) else "${formatSpeed(speed)} · ${formatSemitones(semitones)}"
-
-private fun formatSpeed(speed: Float): String =
-    String.format(Locale.ROOT, "%.2f", speed).trimEnd('0').trimEnd('.') + "×"
-
-private fun formatSemitones(semitones: Int): String =
-    if (semitones > 0) "+$semitones" else "$semitones"
 
 /** End of track or a duration, plus a way out once one is running. */
 @Composable
@@ -1169,13 +956,19 @@ private fun LoadingActionRow(icon: ImageVector, label: String, palette: ArtworkP
             ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = palette.onBackground.copy(alpha = 0.4f),
+            modifier = Modifier.size(22.dp),
+        )
+        Spacer(Modifier.width(18.dp))
         Text(
             text = label,
             style = MaterialTheme.typography.bodyLarge,
             color = palette.onBackground.copy(alpha = 0.4f),
             modifier = Modifier.weight(1f),
         )
-        Spacer(Modifier.width(14.dp))
         CircularProgressIndicator(
             color = palette.onBackgroundVariant,
             strokeWidth = 2.dp,
