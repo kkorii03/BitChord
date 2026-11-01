@@ -446,7 +446,9 @@ def run_song(vid, seconds, dry):
         # A hi-res substitute playing: its own head, kept under the id it plays as.
         played = parse_dump(logf.read_text(encoding="utf-8", errors="replace"), vid)
         if played and played[0].get("playing", "").startswith("src:"):
-            adb("pull", f"{APP_DIR}/synctest/{played[0]['playing']}.wav", str(OUT / f"{vid}.play.wav"), timeout=120)
+            # The app writes ':' as '_' in file names (SyncTestMode.safeName).
+            name = played[0]["playing"].replace(":", "_")
+            adb("pull", f"{APP_DIR}/synctest/{name}.wav", str(OUT / f"{vid}.play.wav"), timeout=120)
     if not logf.exists():
         return dict(error="no log")
     text = logf.read_text(encoding="utf-8", errors="replace")

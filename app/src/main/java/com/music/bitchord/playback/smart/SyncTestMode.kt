@@ -155,6 +155,8 @@ object SyncTestMode {
     /** A video id that is safe as a file name; ordinary ids (YouTube or `src:…::…`) pass through. */
     private fun safeName(videoId: String): String =
         videoId.map { char ->
-            if (char == '/' || char == '\\' || char == '\u0000') '_' else char
+            // ':' too: a substitute's `src:<config>::<track>` id broke the emulator
+            // run's artifact upload (11-02), which refuses colons in paths.
+            if (char == '/' || char == '\\' || char == '\u0000' || char == ':') '_' else char
         }.joinToString("").ifBlank { "song" }
 }
