@@ -1,0 +1,20 @@
+﻿BitChord 안드로이드 앱. 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/telegram (업스트림 v1.8.1 기반 한국어 포크).
+목표: 업스트림 v1.9 를 합칠 때 app/src/main/res/values*/strings.xml 에서 나는 충돌을 없앤다(지금 values-ko 1,408줄, 다른 언어 각 300줄 안팎이 우리 쪽 충돌). 규칙 문서: `git show origin/task/upstream-19:docs/ko-fork-layout.md` — 우리만 쓰는 문자열은 strings_ko_fork.xml 로.
+준비: `git fetch https://github.com/kushagrasinghx/BitChord.git tag v1.9 --no-tags` 후 FETCH_HEAD 를 v19 로 로컬 태그(푸시 금지). v1.8.1 태그도 없으면 같은 방법.
+방법:
+① 각 values*/strings.xml 에서 v1.8.1 에 없던 <string>/<plurals>/<string-array> 이름(= 우리가 추가한 것)을 찾아, 같은 폴더의 strings_ko_fork.xml(없으면 새로 만들기)로 그대로 옮긴다(이름·내용·순서 유지).
+② 우리가 업스트림 문자열의 '내용'을 바꾼 경우(같은 이름, 다른 번역)는 옮기지 말고 그대로 두되 목록을 요약에(값 덮어쓰기는 리소스 중복 오류가 나므로 옮기면 안 됨).
+③ 결과적으로 values*/strings.xml 은 v1.8.1 + 내용 수정만 남아야 한다.
+측정: 임시 브랜치에서 `git merge --no-commit --no-ff v19` → strings.xml 들의 우리 쪽 충돌 줄 합계(<<<<<<< 와 ======= 사이) 전→후 → `git merge --abort`. 합치기 결과는 커밋하지 않는다.
+완료 조건: 리소스 컴파일(:app:compileProdReleaseKotlin 또는 :app:processProdReleaseResources) 통과, 중복 리소스 오류 없음, 기존 테스트 통과, 앱에 보이는 문자열 변화 없음.
+제약: .github/, keys, *.jks, 서명·빌드 설정 수정 금지. 코드 파일 수정 금지(리소스만).
+마지막 10줄 이내 요약: strings 우리 쪽 충돌 줄 전→후 / 옮긴 문자열 수(언어별 합계) / 남긴 내용 수정 수 / 미해결.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 2
+- HIGH app/src/main/res/values-de/strings.xml:1375 — Fork-only keys still in the upstream file (korean, pipeline_*, route_*, connection_*, error_*, app_icon_*) are absent from v1.8.1, so all locales still conflict with v1.9 (e.g. 41 conflict lines in de, 1843 total), meaning the task's conflict-removal goal is not met; move the remaining keys into strings_ko_fork.xml (and drop v1.9-owned keys from base) instead of appending them to strings.xml.
+- HIGH app/src/main/res/values-ko/strings.xml:1142 — 28 fork-only keys (pipeline_route, connection_*, etc.) remain in values-ko, leaving ~1071 conflict lines against v1.9; relocate them to values-ko/strings_ko_fork.xml so the merge conflict is eliminated.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
