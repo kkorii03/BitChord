@@ -1,27 +1,6 @@
 package com.music.bitchord.ui.screens
 
-import com.music.bitchord.ko.KoAdvancedSyncSafetyRows
-import com.music.bitchord.ko.KoAutoDownloadLikedRow
-import com.music.bitchord.ko.KoAutomixVideosRow
-import com.music.bitchord.ko.KoContentCountryRow
-import com.music.bitchord.ko.KoDownloadExtrasRows
-import com.music.bitchord.ko.KoHiddenExploreDialog
-import com.music.bitchord.ko.KoHiddenExploreRow
-import com.music.bitchord.ko.KoLowPowerRow
-import com.music.bitchord.ko.KoLyricsEntryRow
-import com.music.bitchord.ko.KoPlaybackPrivacyRows
-import com.music.bitchord.ko.KoPlaybackTopRows
-import com.music.bitchord.ko.KoPlaylistImportDialog
-import com.music.bitchord.ko.KoSettingsTransferDialogs
-import com.music.bitchord.ko.KoSettingsTransferRows
-import com.music.bitchord.ko.KoSkipPartsRows
-import com.music.bitchord.ko.KoVideoCanvasRow
-import com.music.bitchord.ko.koOutputRouteLabelRes
-import com.music.bitchord.ko.rememberKoHiddenExploreState
-import com.music.bitchord.ko.rememberKoPlaylistImportState
-import com.music.bitchord.ko.rememberKoSettingsTransferState
-import com.music.bitchord.ko.settingsSubtitleStyle
-import com.music.bitchord.ko.settingsSwitchColors
+import com.music.bitchord.ko.*
 import com.music.bitchord.ui.theme.AppSpacing
 
 import com.music.bitchord.wear.WatchInstaller
@@ -480,23 +459,11 @@ fun SettingsScreen(
             }
             val onWifiTitle = stringResource(R.string.on_wifi)
             row(onWifiTitle, "wi-fi", "streaming quality") {
-                SettingsRow(
-                    icon = Icons.Rounded.Wifi,
-                    title = onWifiTitle,
-                    // No "in use" badge: Apple Music's settings carry none, and
-                    // beside a long quality value it was clipped mid-word.
-                    value = wifiQuality.localizedLabel(),
-                    onClick = { picking = QualityTarget.WIFI },
-                )
+                KoWifiQualityRow(onWifiTitle, wifiQuality.localizedLabel()) { picking = QualityTarget.WIFI } // [KO] wifi-quality
             }
             val onMobileDataTitle = stringResource(R.string.on_mobile_data)
             row(onMobileDataTitle, "cellular", "streaming quality") {
-                SettingsRow(
-                    icon = Icons.Rounded.SignalCellularAlt,
-                    title = onMobileDataTitle,
-                    value = cellularQuality.localizedLabel(),
-                    onClick = { picking = QualityTarget.CELLULAR },
-                )
+                KoCellularQualityRow(onMobileDataTitle, cellularQuality.localizedLabel()) { picking = QualityTarget.CELLULAR } // [KO] cellular-quality
             }
             // Sits with the quality ceilings rather than with Playback: it
             // decides which version of a track gets fetched, the same question
@@ -510,27 +477,7 @@ fun SettingsScreen(
             // way — see [AppSettings.dolbyAtmos].
             val dolbyAtmosTitle = stringResource(R.string.dolby_atmos)
             row(dolbyAtmosTitle, "surround", "e-ac-3") {
-                SettingsRow(
-                    iconPainter = painterResource(R.drawable.ic_dolby_atmos),
-                    title = dolbyAtmosTitle,
-                    subtitle = stringResource(
-                        if (dolbyAtmosSupported) {
-                            R.string.dolby_atmos_subtitle
-                        } else {
-                            R.string.dolby_atmos_unavailable
-                        },
-                    ),
-                    enabled = dolbyAtmosSupported,
-                    trailing = {
-                        Switch(
-                            checked = dolbyAtmos && dolbyAtmosSupported,
-                            onCheckedChange = AppSettings::setDolbyAtmos,
-                            enabled = dolbyAtmosSupported,
-                            colors = settingsSwitchColors(),
-                        )
-                    },
-                    onClick = { AppSettings.setDolbyAtmos(!dolbyAtmos) },
-                )
+                KoDolbyAtmosRow(dolbyAtmosTitle, dolbyAtmos, dolbyAtmosSupported) // [KO] dolby-atmos
             }
         }
 
@@ -586,19 +533,7 @@ fun SettingsScreen(
             KoPlaybackTopRows() // [KO] playback-extras
             val preferMusicOnlyTitle = stringResource(R.string.prefer_music_only)
             row(preferMusicOnlyTitle, "video", "audio", "music video") {
-                SettingsRow(
-                    icon = Icons.Rounded.SmartDisplay,
-                    title = preferMusicOnlyTitle,
-                    subtitle = stringResource(R.string.prefer_music_only_subtitle),
-                    trailing = {
-                        Switch(
-                            checked = preferMusicOnly,
-                            onCheckedChange = AppSettings::setPreferMusicOnly,
-                            colors = settingsSwitchColors(),
-                        )
-                    },
-                    onClick = { AppSettings.setPreferMusicOnly(!preferMusicOnly) },
-                )
+                KoPreferMusicOnlyRow(preferMusicOnlyTitle, preferMusicOnly) // [KO] prefer-music-only
             }
             KoSkipPartsRows() // [KO] skip-parts
             val outputPrecisionTitle = stringResource(R.string.output_precision)
@@ -679,18 +614,7 @@ fun SettingsScreen(
             }
             val automixTitle = stringResource(R.string.automix)
             row(automixTitle, "crossfade", "smart fade", "mix") {
-                SettingsRow(
-                    icon = Icons.Rounded.AutoAwesome,
-                    title = automixTitle,
-                    trailing = {
-                        Switch(
-                            checked = smartFade,
-                            onCheckedChange = AppSettings::setSmartFadeEnabled,
-                            colors = settingsSwitchColors(),
-                        )
-                    },
-                    onClick = { AppSettings.setSmartFadeEnabled(!smartFade) },
-                )
+                KoAutomixRow(automixTitle, smartFade) // [KO] automix-row
             }
             if (smartFade) {
                 KoAutomixVideosRow() // [KO] automix-videos
@@ -707,52 +631,12 @@ fun SettingsScreen(
             }
             val skipSilenceTitle = stringResource(R.string.skip_silence)
             row(skipSilenceTitle, "silence") {
-                SettingsRow(
-                    icon = Icons.AutoMirrored.Rounded.VolumeOff,
-                    title = skipSilenceTitle,
-                    // The low-level Media3 processor only runs on its 16-bit
-                    // branch, so the precision sink now trims float and direct
-                    // output itself before the DSP chain. The switch is live on
-                    // both paths; only the implementation differs.
-                    subtitle = stringResource(R.string.skip_silence_subtitle),
-                    trailing = {
-                        Switch(
-                            checked = skipSilence,
-                            onCheckedChange = AppSettings::setSkipSilence,
-                            colors = settingsSwitchColors(),
-                        )
-                    },
-                    onClick = { AppSettings.setSkipSilence(!skipSilence) },
-                )
+                KoSkipSilenceRow(skipSilenceTitle, skipSilence) // [KO] skip-silence-row
             }
             KoPlaybackPrivacyRows() // [KO] playback-privacy
             val spatialAudioTitle = stringResource(R.string.spatial_audio)
             row(spatialAudioTitle, "surround", "3d") {
-                SettingsRow(
-                    icon = Icons.Rounded.SurroundSound,
-                    title = spatialAudioTitle,
-                    // Widening a JOC stream would fight the object-based mix
-                    // Dolby has already spatialized, so the service holds this
-                    // off for the duration of an Atmos track — see
-                    // `PlaybackService.applySpatialAudioEnabled`. Said on the
-                    // row because the switch stays where the listener left it,
-                    // and a switch reading "on" over an effect that is not
-                    // running is the same silent lie the equaliser screen used
-                    // to tell.
-                    subtitle = if (playingDolbyAtmos) {
-                        stringResource(R.string.spatial_audio_atmos_subtitle)
-                    } else {
-                        stringResource(R.string.spatial_audio_subtitle)
-                    },
-                    trailing = {
-                        Switch(
-                            checked = spatialAudio,
-                            onCheckedChange = AppSettings::setSpatialAudio,
-                            colors = settingsSwitchColors(),
-                        )
-                    },
-                    onClick = { AppSettings.setSpatialAudio(!spatialAudio) },
-                )
+                KoSpatialAudioRow(spatialAudioTitle, spatialAudio, playingDolbyAtmos) // [KO] spatial-audio-row
             }
             // The system panel is not listed here as well. A device with a
             // Dolby or Dirac panel has something BitChord cannot reproduce and
@@ -1959,74 +1843,7 @@ private fun QualitySheet(
     selected: AudioQuality,
     onSelect: (AudioQuality) -> Unit,
 ) {
-    val haptics = LocalHapticFeedback.current
-    Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 24.dp)) {
-        Row(
-            modifier = Modifier.padding(start = 22.dp, end = 22.dp, bottom = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                imageVector = target.icon,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onBackground,
-                modifier = Modifier.size(22.dp),
-            )
-            Spacer(Modifier.width(14.dp))
-            Column {
-                Text(
-                    text = stringResource(R.string.audio_quality),
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onBackground,
-                )
-                Text(
-                    text = stringResource(
-                        R.string.audio_quality_connection,
-                        target.localizedTitle(),
-                    ),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline)
-
-        // Best first — the option most people want shouldn't be last.
-        AudioQuality.entries.reversed().forEach { quality ->
-            val chosen = quality == selected
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onSelect(quality)
-                    }
-                    .padding(horizontal = 22.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        text = quality.localizedLabel(),
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onBackground,
-                    )
-                    Text(
-                        text = quality.localizedDetail(),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                if (chosen) {
-                    Spacer(Modifier.width(12.dp))
-                    Icon(
-                        Icons.Rounded.Check,
-                        contentDescription = stringResource(R.string.selected),
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(22.dp),
-                    )
-                }
-            }
-        }
-    }
+    KoQualitySheet(target == QualityTarget.WIFI, selected, onSelect) // [KO] quality-sheet
 }
 
 /** CPU budget picker for the background models that prepare Automix. */
@@ -2035,157 +1852,18 @@ private fun AutomixPerformanceSheet(
     selected: AutomixPerformanceMode,
     onSelect: (AutomixPerformanceMode) -> Unit,
 ) {
-    val haptics = LocalHapticFeedback.current
-    Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 24.dp)) {
-        Row(
-            modifier = Modifier.padding(start = 22.dp, end = 22.dp, bottom = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                imageVector = Icons.Rounded.Tune,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onBackground,
-                modifier = Modifier.size(22.dp),
-            )
-            Spacer(Modifier.width(14.dp))
-            Column {
-                Text(
-                    text = stringResource(R.string.automix_performance),
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onBackground,
-                )
-                Text(
-                    text = stringResource(R.string.automix_performance_warning),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline)
-        AutomixPerformanceMode.entries.forEach { mode ->
-            val chosen = mode == selected
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onSelect(mode)
-                    }
-                    .padding(horizontal = 22.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        text = mode.localizedLabel(),
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onBackground,
-                    )
-                    Text(
-                        text = stringResource(
-                            when (mode) {
-                                AutomixPerformanceMode.EFFICIENT -> R.string.automix_mode_efficient_subtitle
-                                AutomixPerformanceMode.BALANCED -> R.string.automix_mode_balanced_subtitle
-                                AutomixPerformanceMode.PERFORMANCE -> R.string.automix_mode_performance_subtitle
-                            },
-                        ),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                if (chosen) {
-                    Spacer(Modifier.width(12.dp))
-                    Icon(
-                        Icons.Rounded.Check,
-                        contentDescription = stringResource(R.string.selected),
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(22.dp),
-                    )
-                }
-            }
-        }
-    }
+    KoAutomixPerformanceSheet(selected, onSelect) // [KO] automix-performance-sheet
 }
 
 /**
  * What to keep when a track is saved, with what each rung costs on disk.
- *
- * Priced per track rather than per hour, the way [QualitySheet] is. That sheet
- * is answering "what will listening cost me this hour", because a stream is
- * spent again on every replay; this one is answering "what will keeping this
- * cost me", and the answer is charged once. Same widget, different question, so
- * the numbers beside the options are in different units on purpose.
  */
 @Composable
 private fun DownloadQualitySheet(
     selected: DownloadQuality,
     onSelect: (DownloadQuality) -> Unit,
 ) {
-    val haptics = LocalHapticFeedback.current
-    Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 24.dp)) {
-        Row(
-            modifier = Modifier.padding(start = 22.dp, end = 22.dp, bottom = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                imageVector = Icons.Rounded.Download,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onBackground,
-                modifier = Modifier.size(22.dp),
-            )
-            Spacer(Modifier.width(14.dp))
-            Column {
-                Text(
-                    text = stringResource(R.string.download_quality),
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onBackground,
-                )
-                Text(
-                    text = stringResource(R.string.download_quality_dialog_subtitle),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline)
-
-        // Best first, matching [QualitySheet] — and here the best rung is also
-        // the default, so the checkmark starts where the eye does.
-        DownloadQuality.entries.reversed().forEach { quality ->
-            val chosen = quality == selected
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onSelect(quality)
-                    }
-                    .padding(horizontal = 22.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        text = quality.localizedLabel(),
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onBackground,
-                    )
-                    Text(
-                        text = stringResource(R.string.quality_per_track, quality.detail, quality.perTrack),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                if (chosen) {
-                    Spacer(Modifier.width(12.dp))
-                    Icon(
-                        Icons.Rounded.Check,
-                        contentDescription = stringResource(R.string.selected),
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(22.dp),
-                    )
-                }
-            }
-        }
-    }
+    KoDownloadQualitySheet(selected, onSelect) // [KO] download-quality-sheet
 }
 
 // ---- Building blocks --------------------------------------------------------
