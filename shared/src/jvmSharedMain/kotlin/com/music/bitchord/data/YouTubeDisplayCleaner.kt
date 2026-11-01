@@ -427,8 +427,10 @@ object StoredSongDisplay {
     }
 
     fun clean(song: Song): Song {
-        if (song.videoId.isBlank()) return song
-        if (song.albumId != null && !TrackMatcher.isSoundtrackCredit(song.artist)) return song
+        if (song.videoId.isBlank()) return song.withVideoThumbnailFallback()
+        if (song.albumId != null && !TrackMatcher.isSoundtrackCredit(song.artist)) {
+            return song.withVideoThumbnailFallback()
+        }
         val key = keyOf(song)
         val display = synchronized(cache) { cache[key] } ?: run {
             val cleaned = YouTubeDisplayCleaner.clean(song)

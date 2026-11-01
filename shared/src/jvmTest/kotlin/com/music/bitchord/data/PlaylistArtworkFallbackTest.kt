@@ -59,7 +59,7 @@ class PlaylistArtworkFallbackTest {
         )
 
         assertEquals(
-            "https://i.ytimg.com/vi/noArtTrack1/hqdefault.jpg",
+            "https://i.ytimg.com/vi/withArtTrck/hq.jpg",
             songs.firstArtworkOrStill(),
         )
     }

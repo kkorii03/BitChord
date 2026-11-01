@@ -942,11 +942,7 @@ fun DetailScreen(
                         val song = entry.value
                         val isCurrent = isCurrentRow(song)
                         SongRow(
-                            song = if (numbered) {
-                                song
-                            } else {
-                                song.copy(thumbnailUrl = song.thumbnailUrl ?: headerArtwork)
-                            },
+                            song = song,
                             onClick = {
                                 onSongClick(queue, position)
                             },

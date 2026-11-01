@@ -284,9 +284,9 @@ fun Song.withVideoThumbnailFallback(): Song {
  * still is the same last rung [Song.artworkAt] uses for a row. Null only when
  * no row has a picture or a YouTube id.
  */
-fun List<Song>.firstArtworkOrStill(): String? = firstNotNullOfOrNull { song ->
-    song.thumbnailUrl?.takeIf(String::isNotBlank) ?: videoThumbnailUrl(song.videoId)
-}
+fun List<Song>.firstArtworkOrStill(): String? =
+    firstNotNullOfOrNull { it.thumbnailUrl?.takeIf(String::isNotBlank) }
+        ?: firstNotNullOfOrNull { videoThumbnailUrl(it.videoId) }
 
 /**
  * Whether a row is the track the player is on, for the now-playing highlight.
