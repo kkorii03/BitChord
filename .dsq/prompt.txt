@@ -1,0 +1,13 @@
+﻿BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/telegram.
+과제: 아래는 10-30 폰 로그로 찾은 문제(ship FIXLIST 59 번)다. 지금 코드에 아직 남아 있는지 파일:줄 근거로 먼저 판정하고(이미 고쳐졌으면 근거와 함께 '고쳐짐'으로 끝), 남아 있으면 고친다.
+문제: 59. **지금 곡 미리받기(hq-prefetch)가 앱 재시작 뒤엔 안 먹힘.** Beauty and a Beat: 10-27 23:26 `hq-prefetch done 31.0 MB` → 저음질 사본 삭제는 '다음 곡으로 넘어갈 때' 하는데 그 전에 앱이 꺼짐 → 10-28 18:21 다시 틀었을 때 `[player-a:opus]`로 재생(무손실 사본이 있었는데도). 원인 추정: '검증된 원본' 기억이 메모리에만 있어 재시작 후 캐시 선택이 Opus를 고름. 수정 방향: 무손실을 다 받으면 그 즉시 기억을 저장하거나, 캐시 선택이 사본 자체의 음질(파일 형식)로 무손실을 우선.
+고칠 때: 고치기 전 실패하는 JVM 단위 테스트 먼저. 배터리 우선(폴링·타이머 금지, 이벤트 기반). 곡 판정·싱크 수치 변경 금지. .github/, keys, *.jks, 서명 수정 금지. 업스트림 파일 쪼개기 금지(새 코드는 ko/ 패키지 + // [KO] 한 줄 우선). 바꾼 함수의 모든 호출부 재확인.
+마지막 10줄 이내 요약: 판정(남음/고쳐짐) / 수정 파일 / 새 테스트 클래스 / 미해결.
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 2
+HIGH app/src/main/java/com/music/bitchord/ko/KoLosslessCache.kt:106 — The new order-0 path detects losslessness only via `isLosslessRendition` (`bc_hq_lossless` metadata), which is written only for the `#hifi` prefetch key at line 176; a complete FLAC/WAV `#alt` copy (the case this change claims to rescue after restart) is never marked, so it is still skipped and the reported Opus replay can persist. Fix: build candidates with `isLosslessCopy(key)` (container fallback, line 112) or persist the marker when any lossless copy completes, and test the real detector instead of a fabricated `lossless=true` `#alt` entry.
+MEDIUM app/src/main/java/com/music/bitchord/playback/CacheRenditionChoice.kt:43 — Allowing any complete order-0 lossless rendition lets `#alt`/`#alt-noatmos` copies from a disabled addon (`Origin.OTHER`) or a different cut override the configured YouTube/base copy, because `completeUpgradeRendition` bypasses the `canSubstituteForYouTube()`/`isKeptOrigin` guard that `completeSibling` applies (AudioCache.kt:588). Fix: restrict order-0 lossless candidates to kept origins, or pass the currently allowed rendition suffixes into the selector.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
