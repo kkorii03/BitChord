@@ -1,6 +1,7 @@
 package com.music.bitchord.data.settings
 
 import com.music.bitchord.data.webdav.update
+import com.music.bitchord.ko.*
 import android.content.Context
 import android.content.SharedPreferences
 import android.net.ConnectivityManager
@@ -170,42 +171,19 @@ enum class SongSort {
  */
 object AppSettings {
 
-    private lateinit var prefs: SharedPreferences
+    internal lateinit var prefs: SharedPreferences
 
-    /**
-     * One line per setting change, for the exported diagnostic log.
-     *
-     * A preference listener rather than a log call in every setter: every
-     * setting already writes here, so this sees all of them (including an
-     * import, which writes the file wholesale) without a hundred edits. Values
-     * are only printed for booleans and numbers; a string could be a host, a
-     * username or a token, so it is reported as `set`/`cleared` and never read
-     * back into the log.
-     */
-    private val settingsChangeListener =
-        SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-            if (key != null) {
-                val value = runCatching { prefs.all[key] }.getOrNull()
-                val shown = when (value) {
-                    is Boolean -> if (key == KEY_PREFER_MUSIC_ONLY) {
-                        if (value) "on" else "off"
-                    } else {
-                        value.toString()
-                    }
-                    is Int, is Long, is Float -> value.toString()
-                    is Set<*> -> "set(${value.size})"
-                    null -> "cleared"
-                    else -> if (value.toString().isBlank()) "cleared" else "set"
-                }
-                TrackLog.d("BitChord", "setting: $key = $shown")
-            }
-        }
+    internal fun prefsReady(): Boolean = this::prefs.isInitialized
+
+    internal fun authReady(): Boolean = this::authStore.isInitialized
+
+    internal fun appContextReady(): Boolean = this::appContext.isInitialized
 
     /** Kept so a setting the widgets read can redraw them without a caller passing one. */
-    private lateinit var appContext: Context
+    internal lateinit var appContext: Context
 
     /** Only for the Discord, WebDAV and SMB secrets — everything else on here is plain prefs. */
-    private lateinit var authStore: AuthStore
+    internal lateinit var authStore: AuthStore
 
     /**
      * Quality ceilings, one per kind of connection ??the point of the split is
@@ -257,31 +235,10 @@ object AppSettings {
      */
     val wifiOnlyDownloads = MutableStateFlow(true)
 
-    /**
-     * Whether a download judged to hold a music video's sound is fetched again
-     * as its song version without the listener asking.
-     *
-     * On by default: the wrong sound is a defect in a file the app wrote, and
-     * the listener's data and storage are not the constraint. The repair runs
-     * in the background and ignores [wifiOnlyDownloads] for that reason.
-     */
-    val autoRedownloadMvSound = MutableStateFlow(true)
-
-    /**
-     * Replace a downloaded file when a sound-verified copy on a higher rung
-     * exists, even if the file is already high quality.
-     *
-     * On by default. The old file is only removed after the replacement has
-     * been fetched and written, and the new file keeps the source, format and
-     * verification offset in its metadata. See `HqLibraryUpgrade`.
-     */
-    val autoReplaceHqDownloads = MutableStateFlow(true)
-
-    /** Pre-save a verified high-quality copy of frequently played and liked songs. */
-    val autoPrefetchHq = MutableStateFlow(true)
-
-    /** How many verified high-quality copies may be pre-saved in one pass. */
-    val hqPrefetchLimit = MutableStateFlow(500)
+    val autoRedownloadMvSound get() = KoAppSettings.autoRedownloadMvSound // [KO] hq automation
+    val autoReplaceHqDownloads get() = KoAppSettings.autoReplaceHqDownloads // [KO] hq automation
+    val autoPrefetchHq get() = KoAppSettings.autoPrefetchHq // [KO] hq automation
+    val hqPrefetchLimit get() = KoAppSettings.hqPrefetchLimit // [KO] hq automation
 
     /**
      * Keep ordinary downloads in Music/BitChord where other music apps can see
@@ -315,30 +272,13 @@ object AppSettings {
      */
     val smartFadeEnabled = MutableStateFlow(false)
 
-    /** Automix plans video songs' transitions too, rather than a plain crossfade. */
-    val automixVideos = MutableStateFlow(true)
+    val automixVideos get() = KoAppSettings.automixVideos // [KO] automix videos
 
     /** The CPU budget used by Beat This! and vocal analysis for Automix. */
     val automixPerformanceMode = MutableStateFlow(AutomixPerformanceMode.BALANCED)
     val skipSilence = MutableStateFlow(false)
 
-    /**
-     * Incognito listening: suppress every history-bearing write while on.
-     *
-     * Persisted across restarts like the other switches, because the listener
-     * chose a mode rather than a one-off session. Turning it off only resumes
-     * recording from that point; nothing that happened while it was on is
-     * written afterwards. See [PrivateListening] for the pure sink decision.
-     *
-     * A session is not indefinite: [privateListeningSinceMs] records when it
-     * was switched on, and [checkPrivateListeningExpiry] ends it after
-     * [PrivateListening.SESSION_MS]. The check runs at process start, when the
-     * app returns to the foreground, and before the listening recorder writes.
-     */
-    val privateListening = MutableStateFlow(false)
-
-    /** When the current private session began, or 0 while it is off. */
-    private var privateListeningSinceMs: Long = 0L
+    val privateListening get() = KoAppSettings.privateListening // [KO] private listening
 
     /** Requested PCM representation at the Android AudioTrack boundary. */
     val outputPcmMode = MutableStateFlow(OutputPcmMode.PCM_16)
@@ -442,54 +382,20 @@ object AppSettings {
     val equalizerPreset = MutableStateFlow(EqualizerPreset.FLAT)
 
     val playbackSpeed = MutableStateFlow(1.0f)
-    val pitchSemitones = MutableStateFlow(0)
+    val pitchSemitones get() = KoAppSettings.pitchSemitones // [KO] pitch
     val themeMode = MutableStateFlow(ThemeMode.DARK)
 
     /** Keep playing similar music once the queue runs out. */
     val autoplay = MutableStateFlow(true)
 
-    /**
-     * AutoPlay's value before repeat-all replaced it, or null when repeat-all
-     * is not holding AutoPlay off.
-     *
-     * Persisted so a restart with repeat-all still on can put the listener's
-     * original choice back when the loop is released. Null and false are
-     * different answers: null means there is nothing to restore, false means
-     * the listener already had AutoPlay off before choosing repeat-all.
-     */
-    val autoplayBeforeRepeatAll = MutableStateFlow<Boolean?>(null)
-
-    /**
-     * Rank AutoPlay's radio with the listener's own taste — likes, skips and
-     * recent listening — instead of taking YouTube's order as it comes.
-     *
-     * On by default: the station is still built from YouTube's radio, so this
-     * reorders that batch rather than replacing it, and with nothing recorded
-     * yet there is little for the ranking to say. Off restores the plain watch
-     * queue exactly, for anyone who wants it.
-     */
-    val personalisedAutoplay = MutableStateFlow(true)
-
-    /**
-     * Keep a station seeded by a video song inside that video-song world.
-     *
-     * On by default, as decided for the cover/live/self-upload case: the
-     * automatic tail must not drift back to catalogue recordings, nor be
-     * emptied by the normal cover filter. Off restores the old AutoPlay path.
-     */
-    val videoRadio = MutableStateFlow(true)
+    val autoplayBeforeRepeatAll get() = KoAppSettings.autoplayBeforeRepeatAll // [KO] autoplay
+    val personalisedAutoplay get() = KoAppSettings.personalisedAutoplay // [KO] autoplay
+    val videoRadio get() = KoAppSettings.videoRadio // [KO] autoplay
 
     /** Whether the queue is held in shuffled order (Mix button). */
     val shuffleEnabled = MutableStateFlow(false)
 
-    /**
-     * True once this install has asked for `POST_NOTIFICATIONS`, which the
-     * media notification needs on Android 13+. Asked once and remembered,
-     * grant or denial: the permission can only be given again from system
-     * settings, and a repeat prompt is an interruption with no answer of its
-     * own.
-     */
-    val notificationPermissionAsked = MutableStateFlow(false)
+    val notificationPermissionAsked get() = KoAppSettings.notificationPermissionAsked // [KO] notifications
 
     /** Repeat mode for the player — Off, All, or One. */
     val repeatMode = MutableStateFlow(Player.REPEAT_MODE_OFF)
@@ -500,63 +406,16 @@ object AppSettings {
     /** Freezes the main player's mesh gradient instead of letting it drift/crossfade. */
     val reduceAnimation = MutableStateFlow(false)
 
-    /** The listener's low-power choice; see [lowPowerActive]. */
-    val lowPowerMode = MutableStateFlow(LowPowerMode.AUTO)
-
-    /**
-     * True while the player should take its cheap path: no canvas video, no
-     * lyric bloom/lift/swell, a cheaper backdrop, and automatic timing and
-     * analysis work deferred. Recomputed from [lowPowerMode] and the phone's
-     * power-save/battery broadcasts by
-     * [com.music.bitchord.playback.LowPowerDevice].
-     */
-    val lowPower = MutableStateFlow(false)
-
-    /** Whether the charger is connected; [LowPowerMode.AUTO] ignores a low battery while it is. */
-    val charging = MutableStateFlow(true)
-
-    /**
-     * Automatic AI timing and the background analysis fetch may run while the
-     * phone is not saving power. The charger is deliberately not consulted:
-     * being plugged in must never be the condition that lets a feature run,
-     * and being unplugged must never be the reason it waits. Low power is the
-     * listener's own choice, the system saver, or a low battery, so it still
-     * defers this work until power saving is off. Manual asks never read this.
-     */
-    val heavyWorkAllowed: Boolean get() = !lowPower.value
-
-    /**
-     * Developer-only kill switches for the post-ko-101 lyrics-sync paths.
-     *
-     * The next-prep switch is on by default since 10-31, because with it off
-     * next-track preparation never measured lyrics sync. The other two stay
-     * off: downloaded files are not re-checked and stored overrides are
-     * ignored, and a saved HQ offset/rate is not re-applied to lyrics.
-     */
-    // On by default since 10-31: with it off, next-track preparation never
-    // measured lyrics sync (sync=skipped 154 of 173 in the user's log), which
-    // the user explicitly wants done before the next song starts.
-    val syncSafetyNextPrep = MutableStateFlow(true)
-    val syncSafetyDownloadRecheck = MutableStateFlow(false)
-    val syncSafetyHqSync = MutableStateFlow(false)
-
-    /** The three switches above as the pure policy sees them. */
-    val syncSafetySwitches: SyncSafetyPolicy.Switches
-        get() = SyncSafetyPolicy.Switches(
-            nextPrepLyrics = syncSafetyNextPrep.value,
-            downloadedRecheck = syncSafetyDownloadRecheck.value,
-            hqReapply = syncSafetyHqSync.value,
-        )
-
-    /** What the last battery broadcast said; kept to recompute [lowPower]. */
-    private var powerSaveMode = false
-    private var batteryPercent = 100
-
-    /** The last battery figure, for the diagnostic export header. */
-    fun batteryPercentValue(): Int = batteryPercent
-
-    /** When the current private session began, or 0 while it is off. */
-    fun privateListeningSince(): Long = privateListeningSinceMs
+    val lowPowerMode get() = KoAppSettings.lowPowerMode // [KO] low power
+    val lowPower get() = KoAppSettings.lowPower // [KO] low power
+    val charging get() = KoAppSettings.charging // [KO] low power
+    val heavyWorkAllowed: Boolean get() = KoAppSettings.heavyWorkAllowed // [KO] low power
+    val syncSafetyNextPrep get() = KoAppSettings.syncSafetyNextPrep // [KO] sync safety
+    val syncSafetyDownloadRecheck get() = KoAppSettings.syncSafetyDownloadRecheck // [KO] sync safety
+    val syncSafetyHqSync get() = KoAppSettings.syncSafetyHqSync // [KO] sync safety
+    val syncSafetySwitches: SyncSafetyPolicy.Switches get() = KoAppSettings.syncSafetySwitches // [KO] sync safety
+    fun batteryPercentValue(): Int = KoAppSettings.batteryPercentValue() // [KO] low power
+    fun privateListeningSince(): Long = KoAppSettings.privateListeningSince() // [KO] private listening
 
     /**
      * Whether the welcome pages (party name, then YouTube sign-in) have been
@@ -583,15 +442,7 @@ object AppSettings {
     /** Hides the "Playing from" / "Played by" caption at the top of the main player. */
     val hideSongStatus = MutableStateFlow(false)
 
-    /**
-     * Whether tapping a home-screen widget raises the full player.
-     *
-     * Off by default: a widget tap is how many people re-enter the app, and
-     * they expect the screen they left rather than the player pushed over it.
-     * Read by both widget providers when building their open intent — see
-     * [com.music.bitchord.widget.WidgetOpenIntent].
-     */
-    val widgetOpensPlayer = MutableStateFlow(false)
+    val widgetOpensPlayer get() = KoAppSettings.widgetOpensPlayer // [KO] widget
 
     val showQueueHistory = MutableStateFlow(false)
 
@@ -614,20 +465,8 @@ object AppSettings {
      */
     val preferMusicOnly = MutableStateFlow(true)
 
-    /**
-     * Jumps over the parts of a YouTube video that are not the song — the
-     * greeting a cover opens with, the channel plug it ends on — using
-     * SponsorBlock's public submissions. On by default, since a VTuber cover
-     * that opens with thirty seconds of talking is the thing this is for.
-     */
-    val skipNonMusicParts = MutableStateFlow(true)
-
-    /**
-     * Widens [skipNonMusicParts] to sponsorship reads, self-promotion, intros
-     * and outros. Off by default: those are ordinary parts of a video, and a
-     * listener who wanted them gone can say so.
-     */
-    val skipSponsorParts = MutableStateFlow(false)
+    val skipNonMusicParts get() = KoAppSettings.skipNonMusicParts // [KO] skipping
+    val skipSponsorParts get() = KoAppSettings.skipSponsorParts // [KO] skipping
 
     /** Analyzes audio waveform/envelope to align matching playback moment between versions. */
     val smartVersionAlignment = MutableStateFlow(true)
@@ -688,11 +527,7 @@ object AppSettings {
     /** Tries Spotify before Apple Music and the other animated-art providers. */
     val prioritizeSpotifyCanvas = MutableStateFlow(false)
 
-    /**
-     * With no motion artwork found, loop a stretch of video instead: the
-     * upload itself for a video, the song's music video for a track.
-     */
-    val videoCanvas = MutableStateFlow(true)
+    val videoCanvas get() = KoAppSettings.videoCanvas // [KO] video canvas
 
     /**
      * Secondary artist art: a user-hosted artist-signature API used only when
@@ -769,79 +604,23 @@ object AppSettings {
     /** User-issued credential required by api.paxsenix.org. */
     val paxSenixApiKey = MutableStateFlow("")
 
-    /** Translate lyrics with Gemini instead of Google Translate. See [LyricsTranslation.geminiEnabled]. */
-    val geminiTranslation = MutableStateFlow(false)
+    val geminiTranslation get() = KoAppSettings.geminiTranslation // [KO] lyrics ai
+    val geminiApiKey get() = KoAppSettings.geminiApiKey // [KO] lyrics ai
+    val prefetchTranslation get() = KoAppSettings.prefetchTranslation // [KO] lyrics ai
+    val keepDownloadTranslation get() = KoAppSettings.keepDownloadTranslation // [KO] lyrics ai
+    val autoTranslateLyrics get() = KoAppSettings.autoTranslateLyrics // [KO] lyrics ai
+    val autoLyricsTiming get() = KoAppSettings.autoLyricsTiming // [KO] lyrics ai
+    val aiLyrics get() = KoAppSettings.aiLyrics // [KO] lyrics ai
+    val aiTimingAhead get() = KoAppSettings.aiTimingAhead // [KO] lyrics ai
+    val autoDownloadLiked get() = KoAppSettings.autoDownloadLiked // [KO] lyrics ai
+    val lockScreenLyrics get() = KoAppSettings.lockScreenLyrics // [KO] lyrics ai
 
-    /** The user's own Gemini API key from Google AI Studio. Stays on this device. */
-    val geminiApiKey = MutableStateFlow("")
-
-    /** Translate the next song's lyrics while this one plays. See [TranslationAhead]. */
-    val prefetchTranslation = MutableStateFlow(true)
-
-    /** Translate a song's lyrics as it is downloaded, and keep that for offline. */
-    val keepDownloadTranslation = MutableStateFlow(true)
-
-    /** Show every song's lyrics translated without tapping the translate button. */
-    val autoTranslateLyrics = MutableStateFlow(false)
-
-    /**
-     * "가사 타이밍 자동 보정": when the free measurement can't time a video's
-     * lyrics, ask Gemini without waiting for the AI button. See LyricsTiming.
-     */
-    val autoLyricsTiming = MutableStateFlow(false)
-
-    /** With no lyrics anywhere, Gemini writes them down off the video — see AiLyrics. */
-    val aiLyrics = MutableStateFlow(true)
-
-    /**
-     * Ask Gemini to time a video's lyrics as it starts (and the next one
-     * ahead), alongside the measurement — see LyricsTiming. The measurement
-     * still wins where it holds; this is the answer ready when it doesn't.
-     */
-    val aiTimingAhead = MutableStateFlow(true)
-
-    /** Download a song as soon as it is liked. See [LikedAutoDownload]. */
-    val autoDownloadLiked = MutableStateFlow(true)
-
-    /** Show the full-screen lyrics over the lock screen. See [LockScreenLyrics]. */
-    val lockScreenLyrics = MutableStateFlow(false)
-
-    /**
-     * The country YouTube Music answers for — charts, moods, new releases.
-     * Sent as each request's `gl`; the account's own location is untouched.
-     */
-    val contentCountry = MutableStateFlow(DEFAULT_CONTENT_COUNTRY)
-
-    /** The country last picked on the charts page. */
-    val chartsCountry = MutableStateFlow(DEFAULT_CONTENT_COUNTRY)
-
-    /**
-     * Channels whose uploads are read as covers even without a date tag in
-     * the title — see [com.music.bitchord.data.cover.CoverTitles]. Channel ids.
-     */
-    val coverChannels = MutableStateFlow<Set<String>>(emptySet())
-
-    /**
-     * Singers seen named on cover titles, so a clip channel's "가수 - 곡명"
-     * with no "Cover" in it is read as theirs — see
-     * [com.music.bitchord.data.cover.CoverTitles.knownSingers].
-     */
-    val coverSingers = MutableStateFlow<Set<String>>(emptySet())
-
-    /**
-     * Explore tiles the listener has hidden, matched by their normalised
-     * title — see [ExploreCategoryFilter]. Seeded once on the first run of
-     * this version with the regional categories this fork's proxy exposes;
-     * the flag beside it makes sure a listener who shows them again does not
-     * get them back on the next launch.
-     */
-    val hiddenExploreCategories = MutableStateFlow<Set<String>>(emptySet())
-
-    /** Pick a paused song back up when headphones connect. */
-    val resumeOnHeadphones = MutableStateFlow(true)
-
-    /** See [init]: a key supplied with this build, used while none is saved. */
-    private var bundledGeminiApiKey = ""
+    val contentCountry get() = KoAppSettings.contentCountry // [KO] discovery
+    val chartsCountry get() = KoAppSettings.chartsCountry // [KO] discovery
+    val coverChannels get() = KoAppSettings.coverChannels // [KO] discovery
+    val coverSingers get() = KoAppSettings.coverSingers // [KO] discovery
+    val hiddenExploreCategories get() = KoAppSettings.hiddenExploreCategories // [KO] discovery
+    val resumeOnHeadphones get() = KoAppSettings.resumeOnHeadphones // [KO] discovery
 
     /**
      * Disk budget for cached audio. [AudioCache][com.music.bitchord.playback.AudioCache] evicts past it.
@@ -926,39 +705,15 @@ object AppSettings {
 
     // ── Network proxy ─────────────────────────────────────────────────────
 
-    /**
-     * An optional proxy for YouTube traffic, for networks where the Music
-     * origin is gated by the client's country. Off by default and inert until
-     * configured; see [YouTubeProxy] for where it is applied.
-     *
-     * Host, port, username and scope are ordinary settings. The password is
-     * mirrored out of [AuthStore] like the WebDAV and SMB secrets, so it is
-     * encrypted at rest and stays out of backup exports.
-     */
-    val proxyMode = MutableStateFlow(ProxyMode.OFF)
-    val proxyHost = MutableStateFlow("")
-    val proxyPort = MutableStateFlow(0)
-
-    /**
-     * An optional second server (host and port only — transport, scope and
-     * credentials are shared with the primary). Empty means no backup, and a
-     * dead primary keeps its old behaviour: one direct retry.
-     */
-    val proxyBackupHost = MutableStateFlow("")
-    val proxyBackupPort = MutableStateFlow(0)
-
-    val proxyUsername = MutableStateFlow("")
-    val proxyPassword = MutableStateFlow("")
-    val proxyScope = MutableStateFlow(ProxyScope.MUSIC_ONLY)
-
-    /**
-     * Bumped whenever [publishProxy] really changes the route.
-     *
-     * The UI watches it to re-check the Music gate and reload Home/Explore at
-     * once, instead of waiting for the next daily re-check. The initial value
-     * is not a change, so collectors drop it.
-     */
-    val proxyRevision = MutableStateFlow(0L)
+    val proxyMode get() = KoAppSettings.proxyMode // [KO] proxy
+    val proxyHost get() = KoAppSettings.proxyHost // [KO] proxy
+    val proxyPort get() = KoAppSettings.proxyPort // [KO] proxy
+    val proxyBackupHost get() = KoAppSettings.proxyBackupHost // [KO] proxy
+    val proxyBackupPort get() = KoAppSettings.proxyBackupPort // [KO] proxy
+    val proxyUsername get() = KoAppSettings.proxyUsername // [KO] proxy
+    val proxyPassword get() = KoAppSettings.proxyPassword // [KO] proxy
+    val proxyScope get() = KoAppSettings.proxyScope // [KO] proxy
+    val proxyRevision get() = KoAppSettings.proxyRevision // [KO] proxy
 
     /**
      * Browse ids of the playlists pinned to the top of the Library tab, in the
@@ -1135,12 +890,8 @@ object AppSettings {
      * still runs later for everything else; reading the same preferences in
      * both places converges on one published configuration.
      */
-    fun initProxy(context: Context, authStore: AuthStore) {
-        appContext = context.applicationContext
-        prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        this.authStore = authStore
-        readProxy()
-    }
+    fun initProxy(context: Context, authStore: AuthStore) =
+        KoAppSettings.initProxy(context, authStore) // [KO] proxy
 
     /**
      * [authStore] is the application's own, passed in rather than opened again:
@@ -1150,19 +901,12 @@ object AppSettings {
     fun init(context: Context, authStore: AuthStore) {
         appContext = context.applicationContext
         prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        runCatching { prefs.unregisterOnSharedPreferenceChangeListener(settingsChangeListener) }
-        prefs.registerOnSharedPreferenceChangeListener(settingsChangeListener)
-        // A Gemini key can be baked into a personal build's resources after it is
-        // built (never committed). It is only a default: a key typed in Settings wins.
-        bundledGeminiApiKey = context.getString(com.music.bitchord.R.string.default_gemini_api_key).trim()
-        // Baked into this personal build after CI, like Gemini's — never committed.
-        // Also only a default: a key typed in Settings (or removed there) wins.
-        bundledDeepgramApiKey = context.getString(com.music.bitchord.R.string.default_deepgram_api_key).trim()
+        KoAppSettings.installSettingsChangeListener() // [KO] settings log
+        KoAppSettings.prepareBundledKeys(context) // [KO] bundled keys
         this.authStore = authStore
         migrateSecretsToAuthStore()
         sanitizeStoredPreferences()
-        deepgramApiKey.value = authStore.secret(KEY_DEEPGRAM_API_KEY) ?: bundledDeepgramApiKey
-        com.music.bitchord.data.lyrics.Deepgram.apiKey = deepgramApiKey.value
+        KoAppSettings.readBundledKeys() // [KO] bundled keys
         com.music.bitchord.data.spotify.LocalPlaylistStore.init(context)
         readAll()
         watchConnection(context)
@@ -1190,7 +934,7 @@ object AppSettings {
         // install this is the only moment the file is still empty.
         val onboardingSaved = prefs.getBoolean(KEY_ONBOARDING_COMPLETE, false)
         val hadSettingsBeforeMigrations = prefs.all.isNotEmpty()
-        val existingInstall = !onboardingSaved && hadDataBeforeOnboarding()
+        val existingInstall = !onboardingSaved && KoAppSettings.hadDataBeforeOnboarding() // [KO] onboarding
         migrateCellularQualityDefault()
         migrateSingleQuality()
         audioQualityWifi.value = readQuality(KEY_QUALITY_WIFI)
@@ -1203,14 +947,11 @@ object AppSettings {
         migrateHqAutomationDefaults(hadSettingsBeforeMigrations)
         downloadQuality.value = readDownloadQuality()
         wifiOnlyDownloads.value = prefs.getBoolean(KEY_WIFI_ONLY_DOWNLOADS, true)
-        autoRedownloadMvSound.value = prefs.getBoolean(KEY_AUTO_REDOWNLOAD_MV_SOUND, true)
-        autoReplaceHqDownloads.value = prefs.getBoolean(KEY_AUTO_REPLACE_HQ_DOWNLOADS, true)
-        autoPrefetchHq.value = prefs.getBoolean(KEY_AUTO_PREFETCH_HQ, true)
-        hqPrefetchLimit.value = prefs.getInt(KEY_HQ_PREFETCH_LIMIT, 500).coerceIn(0, 10_000)
+        KoAppSettings.readHqSettings() // [KO] hq automation
         exportDownloads.value = prefs.getBoolean(KEY_EXPORT_DOWNLOADS, false)
         crossfadeSeconds.value = prefs.getInt(KEY_CROSSFADE, 0)
         smartFadeEnabled.value = prefs.getBoolean(KEY_SMART_FADE, false)
-        automixVideos.value = prefs.getBoolean(KEY_AUTOMIX_VIDEOS, true)
+        KoAppSettings.readAutomixVideos() // [KO] automix videos
         automixPerformanceMode.value = runCatching {
             AutomixPerformanceMode.valueOf(
                 prefs.getString(KEY_AUTOMIX_PERFORMANCE_MODE, null) ?: AutomixPerformanceMode.BALANCED.name,
@@ -1236,45 +977,24 @@ object AppSettings {
         equalizerToneX.value = prefs.getInt(KEY_EQ_TONE_X, 0).coerceIn(-EqLayout.TONE_STEPS, EqLayout.TONE_STEPS)
         equalizerToneY.value = prefs.getInt(KEY_EQ_TONE_Y, 0).coerceIn(-EqLayout.TONE_STEPS, EqLayout.TONE_STEPS)
         equalizerFocused.value = prefs.getBoolean(KEY_EQ_FOCUSED, false)
-        equalizerBalance.value = clampBalance(prefs.getFloat(KEY_EQ_BALANCE, 0f))
+        equalizerBalance.value = KoAppSettings.clampBalance(prefs.getFloat(KEY_EQ_BALANCE, 0f))
         equalizerBands.value = readEqualizerBands()
         equalizerPreset.value = EqualizerPreset.matching(equalizerBands.value)
         playbackSpeed.value = PlaybackParametersMath.clampSpeed(prefs.getFloat(KEY_SPEED, 1.0f))
-        pitchSemitones.value = PlaybackParametersMath.clampPitchSemitones(prefs.getInt(KEY_PITCH, 0))
+        KoAppSettings.readPitchSemitones() // [KO] pitch
         themeMode.value = runCatching {
             ThemeMode.valueOf(prefs.getString(KEY_THEME, null) ?: "DARK")
         }.getOrDefault(ThemeMode.DARK)
         autoplay.value = prefs.getBoolean(KEY_AUTOPLAY, true)
-        personalisedAutoplay.value = prefs.getBoolean(KEY_PERSONALISED_AUTOPLAY, true)
-        videoRadio.value = prefs.getBoolean(KEY_VIDEO_RADIO, true)
+        KoAppSettings.readPlaybackExtras() // [KO] autoplay
         shuffleEnabled.value = prefs.getBoolean(KEY_SHUFFLE_ENABLED, false)
-        notificationPermissionAsked.value = prefs.getBoolean(KEY_NOTIFICATION_PERMISSION_ASKED, false)
         repeatMode.value = PlaybackParametersMath.clampRepeatMode(
             prefs.getInt(KEY_REPEAT_MODE, Player.REPEAT_MODE_OFF),
         )
         reconcileAutoplayWithRepeatAll()
         showNerdStats.value = prefs.getBoolean(KEY_NERD_STATS, false)
         reduceAnimation.value = prefs.getBoolean(KEY_REDUCE_ANIMATION, false)
-        lowPowerMode.value = runCatching {
-            LowPowerMode.valueOf(
-                prefs.getString(KEY_LOW_POWER_MODE, null) ?: LowPowerMode.AUTO.name,
-            )
-        }.getOrDefault(LowPowerMode.AUTO)
-        lowPower.value = lowPowerActive(
-            lowPowerMode.value,
-            powerSaveMode,
-            batteryPercent,
-            charging.value,
-        )
-        // The welcome pages are new, so their flag is absent on an install that
-        // already has a listener's settings, account or history. Sending those
-        // through onboarding would read as the app having forgotten them, so
-        // an existing install is marked done silently.
-        val onboardingDone = onboardingSaved || existingInstall
-        onboardingComplete.value = onboardingDone
-        if (!onboardingSaved && onboardingDone) {
-            prefs.edit().putBoolean(KEY_ONBOARDING_COMPLETE, true).apply()
-        }
+        KoAppSettings.readLowPowerAndOnboarding(onboardingSaved, existingInstall) // [KO] low power
         highPerformanceMode.value = prefs.getBoolean(KEY_HIGH_PERFORMANCE_MODE, false)
         performanceRefreshRate.value = normalizePerformanceRefreshRate(
             prefs.getInt(KEY_PERFORMANCE_REFRESH_RATE, DEFAULT_PERFORMANCE_REFRESH_RATE),
@@ -1283,28 +1003,12 @@ object AppSettings {
         hideVolumeBar.value = prefs.getBoolean(KEY_HIDE_VOLUME_BAR, false)
         hideStatusBarInPlayer.value = prefs.getBoolean(KEY_HIDE_STATUS_BAR_IN_PLAYER, false)
         hideSongStatus.value = prefs.getBoolean(KEY_HIDE_SONG_STATUS, false)
-        widgetOpensPlayer.value = prefs.getBoolean(KEY_WIDGET_OPENS_PLAYER, false)
+        KoAppSettings.readWidgetOpensPlayerSetting() // [KO] widget
         showQueueHistory.value = prefs.getBoolean(KEY_SHOW_QUEUE_HISTORY, false)
         swipeToPlayNext.value = prefs.getBoolean(KEY_SWIPE_TO_PLAY_NEXT, false)
         dontRepeatSuggestions.value = prefs.getBoolean(KEY_DONT_REPEAT_SUGGESTIONS, false)
-        val storedPreferMusicOnly = if (prefs.contains(KEY_PREFER_MUSIC_ONLY)) {
-            prefs.getBoolean(KEY_PREFER_MUSIC_ONLY, false)
-        } else {
-            null
-        }
-        preferMusicOnly.value = preferMusicOnlyDefault(
-            storedPreferMusicOnly,
-            existingInstall = hadSettingsBeforeMigrations,
-        )
-        // A fresh install's true default has to be written, not just computed:
-        // onboarding writes its flag in the same launch, so on the next start
-        // the file is no longer empty and an absent key would otherwise be read
-        // as an existing install and silently turn the feature back off.
-        if (storedPreferMusicOnly == null && !hadSettingsBeforeMigrations) {
-            prefs.edit().putBoolean(KEY_PREFER_MUSIC_ONLY, preferMusicOnly.value).apply()
-        }
-        skipNonMusicParts.value = prefs.getBoolean(KEY_SKIP_NON_MUSIC_PARTS, true)
-        skipSponsorParts.value = prefs.getBoolean(KEY_SKIP_SPONSOR_PARTS, false)
+        KoAppSettings.readPreferMusicOnly(hadSettingsBeforeMigrations) // [KO] prefer music only
+        KoAppSettings.readSkipping() // [KO] skipping
         smartVersionAlignment.value = prefs.getBoolean(KEY_SMART_VERSION_ALIGNMENT, true)
         reduceDynamicBlur.value = prefs.getBoolean(KEY_REDUCE_BLUR, false)
         liquidGlass.value = prefs.getBoolean(KEY_LIQUID_GLASS, false)
@@ -1320,7 +1024,7 @@ object AppSettings {
         canvasOverCellular.value = prefs.getBoolean(KEY_CANVAS_OVER_CELLULAR, false)
         spotifyCanvasAutoHide.value = prefs.getBoolean(KEY_SPOTIFY_CANVAS_AUTO_HIDE, true)
         prioritizeSpotifyCanvas.value = prefs.getBoolean(KEY_PRIORITIZE_SPOTIFY_CANVAS, false)
-        videoCanvas.value = prefs.getBoolean(KEY_VIDEO_CANVAS, true)
+        KoAppSettings.readVideoCanvas() // [KO] video canvas
         signatureApiEnabled.value = prefs.getBoolean(KEY_SIGNATURE_API_ENABLED, false)
         signatureApiUrl.value = normalizeSignatureApiUrl(prefs.getString(KEY_SIGNATURE_API_URL, "").orEmpty())
         fullBleedArtwork.value = prefs.getBoolean(KEY_FULL_BLEED_ARTWORK, true)
@@ -1333,49 +1037,8 @@ object AppSettings {
         syncedLyrics.value = prefs.getBoolean(KEY_SYNCED_LYRICS, true)
         lyricsSources.value = readLyricsSources()
         lyricsSourceOrder.value = readLyricsSourceOrder()
-        // This fork wants the word-by-word sweep wherever any source has one,
-        // so the switch starts on — and is turned on once for an install that
-        // had saved it off before the fork changed the default.
-        if (!prefs.getBoolean(KEY_SYLLABLE_DEFAULT_MIGRATED, false)) {
-            prefs.edit()
-                .putBoolean(KEY_PRIORITIZE_SYLLABLE_SYNC, true)
-                .putBoolean(KEY_SYLLABLE_DEFAULT_MIGRATED, true)
-                .apply()
-        }
-        prioritizeSyllableSync.value = prefs.getBoolean(KEY_PRIORITIZE_SYLLABLE_SYNC, true)
-        autoTranslateLyrics.value = prefs.getBoolean(KEY_AUTO_TRANSLATE_LYRICS, false)
-        autoLyricsTiming.value = prefs.getBoolean(KEY_AUTO_LYRICS_TIMING, false)
-        aiLyrics.value = prefs.getBoolean(KEY_AI_LYRICS, true)
-        aiTimingAhead.value = prefs.getBoolean(KEY_AI_TIMING_AHEAD, true)
-        syncSafetyNextPrep.value = prefs.getBoolean(KEY_SYNC_SAFETY_NEXT_PREP, true)
-        syncSafetyDownloadRecheck.value = prefs.getBoolean(KEY_SYNC_SAFETY_DOWNLOAD_RECHECK, false)
-        syncSafetyHqSync.value = prefs.getBoolean(KEY_SYNC_SAFETY_HQ_SYNC, false)
-        paxSenixApiKey.value = authStore.secret(KEY_PAXSENIX_API_KEY).orEmpty()
-        com.music.bitchord.data.lyrics.PaxSenix.setApiKey(paxSenixApiKey.value)
-        geminiApiKey.value = authStore.secret(KEY_GEMINI_API_KEY) ?: bundledGeminiApiKey
-        geminiTranslation.value = prefs.getBoolean(KEY_GEMINI_TRANSLATION, bundledGeminiApiKey.isNotBlank())
-        com.music.bitchord.data.lyrics.LyricsTranslation.geminiApiKey = geminiApiKey.value
-        com.music.bitchord.data.lyrics.LyricsTranslation.geminiEnabled = geminiTranslation.value
-        prefetchTranslation.value = prefs.getBoolean(KEY_PREFETCH_TRANSLATION, true)
-        keepDownloadTranslation.value = prefs.getBoolean(KEY_KEEP_DOWNLOAD_TRANSLATION, true)
-        autoDownloadLiked.value = prefs.getBoolean(KEY_AUTO_DOWNLOAD_LIKED, true)
-        lockScreenLyrics.value = prefs.getBoolean(KEY_LOCK_SCREEN_LYRICS, false)
-        contentCountry.value = prefs.getString(KEY_CONTENT_COUNTRY, null)?.takeIf { it.length == 2 }
-            ?: DEFAULT_CONTENT_COUNTRY
-        chartsCountry.value = prefs.getString(KEY_CHARTS_COUNTRY, null)?.takeIf { it.isNotBlank() }
-            ?: contentCountry.value
-        coverChannels.value = prefs.getStringSet(KEY_COVER_CHANNELS, null)?.toSet().orEmpty()
-        coverSingers.value = prefs.getStringSet(KEY_COVER_SINGERS, null)?.toSet().orEmpty()
-        val hiddenSeeded = prefs.getBoolean(KEY_HIDDEN_EXPLORE_SEEDED_V1, false)
-        val storedHidden = prefs.getStringSet(KEY_HIDDEN_EXPLORE_CATEGORIES, null)?.toSet().orEmpty()
-        hiddenExploreCategories.value = ExploreCategoryFilter.seedHidden(storedHidden, hiddenSeeded)
-        if (!hiddenSeeded) {
-            prefs.edit()
-                .putStringSet(KEY_HIDDEN_EXPLORE_CATEGORIES, HashSet(hiddenExploreCategories.value))
-                .putBoolean(KEY_HIDDEN_EXPLORE_SEEDED_V1, true)
-                .apply()
-        }
-        resumeOnHeadphones.value = prefs.getBoolean(KEY_RESUME_ON_HEADPHONES, true)
+        KoAppSettings.readLyricsAndAiSettings() // [KO] lyrics ai
+        KoAppSettings.readDiscoverySettings() // [KO] discovery
         audioCacheLimitBytes.value = clampCacheLimit(prefs.getLong(KEY_CACHE_LIMIT, DEFAULT_CACHE_LIMIT_BYTES))
         showCacheFolder.value = prefs.getBoolean(KEY_SHOW_CACHE_FOLDER, false)
         lastfmEnabled.value = prefs.getBoolean(KEY_LASTFM_ENABLED, false)
@@ -1388,7 +1051,7 @@ object AppSettings {
         lastfmNowPlaying.value = prefs.getBoolean(KEY_LASTFM_NOW_PLAYING, false) && lastfmScrobbleEnabled.value
         lastfmPrimaryArtistOnly.value = prefs.getBoolean(KEY_LASTFM_PRIMARY_ARTIST_ONLY, false)
         scrobbleMinDuration.value = prefs.getInt(KEY_SCROBBLE_MIN_DURATION, 30)
-        scrobbleDelayPercent.value = clampScrobbleDelay(
+        scrobbleDelayPercent.value = KoAppSettings.clampScrobbleDelay(
             prefs.getFloat(KEY_SCROBBLE_DELAY_PERCENT, 0.5f),
         )
         scrobbleDelaySeconds.value = prefs.getInt(KEY_SCROBBLE_DELAY_SECONDS, 180)
@@ -1449,62 +1112,12 @@ object AppSettings {
         checkPrivateListeningExpiry()
     }
 
-    /**
-     * Reads the switch and its clock, seeding the clock for an install that was
-     * already private before this version stored one.
-     *
-     * The old preference said "on" without saying since when. Treating that as
-     * a session started now — rather than as one that never expires — gives
-     * those listeners the same six hours as everyone else, and the log line
-     * says why the start time is not the true one.
-     */
-    private fun readPrivateListening() {
-        val enabled = prefs.getBoolean(KEY_PRIVATE_LISTENING, false)
-        val storedSince = prefs.getLong(KEY_PRIVATE_LISTENING_SINCE, 0L)
-        if (!enabled) {
-            privateListeningSinceMs = 0L
-            privateListening.value = false
-            if (prefs.contains(KEY_PRIVATE_LISTENING_SINCE)) {
-                prefs.edit().remove(KEY_PRIVATE_LISTENING_SINCE).apply()
-            }
-            return
-        }
-        if (storedSince <= 0L) {
-            privateListeningSinceMs = System.currentTimeMillis()
-            prefs.edit().putLong(KEY_PRIVATE_LISTENING_SINCE, privateListeningSinceMs).apply()
-            privateListening.value = true
-            Debug.i(TAG, "private listening: on (since unknown, expires in 6h)")
-        } else {
-            privateListeningSinceMs = storedSince
-            privateListening.value = true
-        }
-    }
+    private fun readPrivateListening() =
+        KoAppSettings.readPrivateListening() // [KO] private listening
 
-    /**
-     * Ends a private session that has run its six hours.
-     *
-     * Event-driven and cheap: called at process start (via [readAll]), when the
-     * app returns to the foreground, and by
-     * [com.music.bitchord.data.stats.ListeningRecorder] before it decides
-     * whether to record. No timer, alarm or poll exists behind it.
-     */
     @Synchronized
-    fun checkPrivateListeningExpiry(nowMs: Long = System.currentTimeMillis()) {
-        if (!this::prefs.isInitialized || !privateListening.value) return
-        if (privateListeningSinceMs <= 0L) {
-            privateListeningSinceMs = nowMs
-            prefs.edit().putLong(KEY_PRIVATE_LISTENING_SINCE, nowMs).apply()
-            return
-        }
-        if (PrivateListening.isActive(true, privateListeningSinceMs, nowMs)) return
-        privateListening.value = false
-        privateListeningSinceMs = 0L
-        prefs.edit()
-            .putBoolean(KEY_PRIVATE_LISTENING, false)
-            .remove(KEY_PRIVATE_LISTENING_SINCE)
-            .apply()
-        Debug.i(TAG, "private listening: off (by expired)")
-    }
+    fun checkPrivateListeningExpiry(nowMs: Long = System.currentTimeMillis()) =
+        KoAppSettings.checkPrivateListeningExpiry(nowMs) // [KO] private listening
 
     /**
      * True the first time this is called after [currentVersionCode] rises above
@@ -1527,24 +1140,8 @@ object AppSettings {
         return currentVersionCode > last
     }
 
-    /**
-     * Pins the cellular ceiling for installs that predate the High default.
-     *
-     * The setting was never written out unless the listener changed it, so an
-     * absent key means one of two different things: a fresh install, or an
-     * existing one that has been on Lossless all along. An existing settings
-     * file has at least one key in it by the time this runs, a fresh one has
-     * none, and the two are answered separately: the old default is written
-     * down for the existing install (so it keeps hearing exactly what it
-     * heard), and the new one for the fresh one (so the next launch does not
-     * mistake it for an upgrade). Only runs while the key is absent, so a
-     * listener's own choice is never overwritten.
-     */
-    private fun migrateCellularQualityDefault() {
-        if (prefs.contains(KEY_QUALITY_CELLULAR)) return
-        val quality = cellularQualityDefault(existingInstall = prefs.all.isNotEmpty())
-        prefs.edit().putString(KEY_QUALITY_CELLULAR, quality.name).apply()
-    }
+    private fun migrateCellularQualityDefault() =
+        KoAppSettings.migrateCellularQualityDefault() // [KO] cellular quality
 
     /**
      * A ceiling saved when there was only one applies to both connections.
@@ -1588,33 +1185,8 @@ object AppSettings {
         prefs.edit().putString(KEY_QUALITY_DOWNLOAD, DownloadQuality.LOSSLESS.name).apply()
     }
 
-    /**
-     * The automatic HQ pass is new. An install that updates into it never chose
-     * to spend mobile data or storage on hundreds of background downloads, so
-     * both switches start off there; a fresh install gets the feature on, and
-     * its onboarding copy names what it does. An absent key on a later reload
-     * (a settings file that predates the switches) is treated the same as an
-     * upgrade, so restoring an old backup cannot silently turn it back on.
-     *
-     * [hadSettingsBeforeMigrations] is whether the file held anything before
-     * this launch wrote its own defaults — not whether onboarding is complete.
-     * A normal app update has already finished onboarding, so that flag would
-     * call it a fresh install and turn both switches on.
-     */
-    private fun migrateHqAutomationDefaults(hadSettingsBeforeMigrations: Boolean) {
-        val default = hqAutomationDefault(existingInstall = hadSettingsBeforeMigrations)
-        val edit = prefs.edit()
-        var changed = false
-        if (!prefs.contains(KEY_AUTO_REPLACE_HQ_DOWNLOADS)) {
-            edit.putBoolean(KEY_AUTO_REPLACE_HQ_DOWNLOADS, default)
-            changed = true
-        }
-        if (!prefs.contains(KEY_AUTO_PREFETCH_HQ)) {
-            edit.putBoolean(KEY_AUTO_PREFETCH_HQ, default)
-            changed = true
-        }
-        if (changed) edit.apply()
-    }
+    private fun migrateHqAutomationDefaults(hadSettingsBeforeMigrations: Boolean) =
+        KoAppSettings.migrateHqAutomationDefaults(hadSettingsBeforeMigrations) // [KO] hq automation
 
     private fun readDownloadQuality(): DownloadQuality {
         val stored = prefs.getString(KEY_QUALITY_DOWNLOAD, null) ?: return DownloadQuality.LOSSLESS
@@ -1660,72 +1232,25 @@ object AppSettings {
         applyAutoplayState(value, null)
     }
 
-    /**
-     * Writes the AutoPlay switch and repeat-all's held value in one step.
-     *
-     * The switch and the memory behind it are two preferences; writing them
-     * separately let a crash leave a value that the next launch would read as
-     * "repeat-all owns this", restoring the wrong state when the loop ended.
-     */
-    fun applyAutoplayState(value: Boolean, beforeRepeatAll: Boolean?) {
-        autoplay.value = value
-        autoplayBeforeRepeatAll.value = beforeRepeatAll
-        prefs.edit().apply {
-            putBoolean(KEY_AUTOPLAY, value)
-            if (beforeRepeatAll == null) {
-                remove(KEY_AUTOPLAY_BEFORE_REPEAT_ALL)
-            } else {
-                putBoolean(KEY_AUTOPLAY_BEFORE_REPEAT_ALL, beforeRepeatAll)
-            }
-        }.apply()
-    }
+    fun applyAutoplayState(value: Boolean, beforeRepeatAll: Boolean?) =
+        KoAppSettings.applyAutoplayState(value, beforeRepeatAll) // [KO] autoplay
 
-    /**
-     * Keeps the persisted pair consistent after a restart or a backup import.
-     *
-     * Repeat-all and AutoPlay cannot both be on. A file written before that
-     * rule existed can still say they are, so AutoPlay is held the same way a
-     * runtime repeat-all choice holds it, and restored when repeat-all is not
-     * in force.
-     */
-    private fun reconcileAutoplayWithRepeatAll() {
-        val held = if (prefs.contains(KEY_AUTOPLAY_BEFORE_REPEAT_ALL)) {
-            prefs.getBoolean(KEY_AUTOPLAY_BEFORE_REPEAT_ALL, false)
-        } else {
-            null
-        }
-        when {
-            repeatMode.value == Player.REPEAT_MODE_ALL -> {
-                applyAutoplayState(
-                    value = false,
-                    beforeRepeatAll = held ?: autoplay.value,
-                )
-            }
-            held != null -> applyAutoplayState(value = held, beforeRepeatAll = null)
-            else -> autoplayBeforeRepeatAll.value = null
-        }
-    }
+    private fun reconcileAutoplayWithRepeatAll() =
+        KoAppSettings.reconcileAutoplayWithRepeatAll() // [KO] autoplay
 
-    fun setPersonalisedAutoplay(value: Boolean) {
-        personalisedAutoplay.value = value
-        prefs.edit().putBoolean(KEY_PERSONALISED_AUTOPLAY, value).apply()
-    }
+    fun setPersonalisedAutoplay(value: Boolean) =
+        KoAppSettings.setPersonalisedAutoplay(value) // [KO] autoplay
 
-    fun setVideoRadio(value: Boolean) {
-        videoRadio.value = value
-        prefs.edit().putBoolean(KEY_VIDEO_RADIO, value).apply()
-    }
+    fun setVideoRadio(value: Boolean) =
+        KoAppSettings.setVideoRadio(value) // [KO] autoplay
 
     fun setShuffleEnabled(value: Boolean) {
         shuffleEnabled.value = value
         prefs.edit().putBoolean(KEY_SHUFFLE_ENABLED, value).apply()
     }
 
-    /** Remembers that the notification permission has been asked for. */
-    fun markNotificationPermissionAsked() {
-        notificationPermissionAsked.value = true
-        prefs.edit().putBoolean(KEY_NOTIFICATION_PERMISSION_ASKED, true).apply()
-    }
+    fun markNotificationPermissionAsked() =
+        KoAppSettings.markNotificationPermissionAsked() // [KO] notifications
 
     fun setRepeatMode(value: Int) {
         val clamped = PlaybackParametersMath.clampRepeatMode(value)
@@ -1762,26 +1287,17 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_WIFI_ONLY_DOWNLOADS, value).apply()
     }
 
-    fun setAutoRedownloadMvSound(value: Boolean) {
-        autoRedownloadMvSound.value = value
-        prefs.edit().putBoolean(KEY_AUTO_REDOWNLOAD_MV_SOUND, value).apply()
-    }
+    fun setAutoRedownloadMvSound(value: Boolean) =
+        KoAppSettings.setAutoRedownloadMvSound(value) // [KO] hq automation
 
-    fun setAutoReplaceHqDownloads(value: Boolean) {
-        autoReplaceHqDownloads.value = value
-        prefs.edit().putBoolean(KEY_AUTO_REPLACE_HQ_DOWNLOADS, value).apply()
-    }
+    fun setAutoReplaceHqDownloads(value: Boolean) =
+        KoAppSettings.setAutoReplaceHqDownloads(value) // [KO] hq automation
 
-    fun setAutoPrefetchHq(value: Boolean) {
-        autoPrefetchHq.value = value
-        prefs.edit().putBoolean(KEY_AUTO_PREFETCH_HQ, value).apply()
-    }
+    fun setAutoPrefetchHq(value: Boolean) =
+        KoAppSettings.setAutoPrefetchHq(value) // [KO] hq automation
 
-    fun setHqPrefetchLimit(value: Int) {
-        val normalized = value.coerceIn(0, 10_000)
-        hqPrefetchLimit.value = normalized
-        prefs.edit().putInt(KEY_HQ_PREFETCH_LIMIT, normalized).apply()
-    }
+    fun setHqPrefetchLimit(value: Int) =
+        KoAppSettings.setHqPrefetchLimit(value) // [KO] hq automation
 
     fun setCrossfadeSeconds(value: Int) {
         crossfadeSeconds.value = value
@@ -1793,10 +1309,8 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_SMART_FADE, value).apply()
     }
 
-    fun setAutomixVideos(value: Boolean) {
-        automixVideos.value = value
-        prefs.edit().putBoolean(KEY_AUTOMIX_VIDEOS, value).apply()
-    }
+    fun setAutomixVideos(value: Boolean) =
+        KoAppSettings.setAutomixVideos(value) // [KO] automix videos
 
     fun setAutomixPerformanceMode(value: AutomixPerformanceMode) {
         automixPerformanceMode.value = value
@@ -1808,36 +1322,10 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_SKIP_SILENCE, value).apply()
     }
 
-    /**
-     * Switches private listening on or off.
-     *
-     * [by] names only the way *on* was chosen; turning it off is always the
-     * listener's own act. Switching on starts a fresh six-hour clock, so a
-     * listener who turns it off and on again gets a whole session rather than
-     * inheriting the old one's remaining minutes.
-     */
-    @Synchronized
     fun setPrivateListening(
         value: Boolean,
         by: PrivateListeningSource = PrivateListeningSource.SETTINGS,
-    ) {
-        if (value == privateListening.value) return
-        val now = System.currentTimeMillis()
-        privateListeningSinceMs = if (value) now else 0L
-        privateListening.value = value
-        prefs.edit().apply {
-            putBoolean(KEY_PRIVATE_LISTENING, value)
-            if (value) putLong(KEY_PRIVATE_LISTENING_SINCE, now) else remove(KEY_PRIVATE_LISTENING_SINCE)
-        }.apply()
-        Debug.i(
-            TAG,
-            if (value) {
-                "private listening: on (by ${by.logLabel})"
-            } else {
-                "private listening: off (by user)"
-            },
-        )
-    }
+    ) = KoAppSettings.setPrivateListening(value, by) // [KO] private listening
 
     fun setDolbyAtmos(value: Boolean) {
         dolbyAtmos.value = value
@@ -1879,16 +1367,12 @@ object AppSettings {
         prefs.edit().putFloat(KEY_EQ_BALANCE, clamped).apply()
     }
 
-    private fun clampBalance(value: Float): Float =
-        value.takeIf { it.isFinite() }?.coerceIn(-1f, 1f) ?: 0f
+    private fun clampBalance(value: Float): Float = KoAppSettings.clampBalance(value) // [KO] clamp
 
     private fun clampScrobbleDelay(value: Float): Float =
-        value.takeIf { it.isFinite() }?.coerceIn(0.1f, 1f) ?: 0.5f
+        KoAppSettings.clampScrobbleDelay(value) // [KO] clamp
 
-    private fun clampBand(value: Float): Float =
-        value.takeIf { it.isFinite() }
-            ?.coerceIn(-EqLayout.MANUAL_RANGE_DB, EqLayout.MANUAL_RANGE_DB)
-            ?: 0f
+    private fun clampBand(value: Float): Float = KoAppSettings.clampBand(value) // [KO] clamp
 
     /**
      * Writes the manual tab's seven gains, and renames the preset row to suit.
@@ -1930,11 +1414,8 @@ object AppSettings {
         prefs.edit().putFloat(KEY_SPEED, clamped).apply()
     }
 
-    fun setPitchSemitones(value: Int) {
-        val clamped = PlaybackParametersMath.clampPitchSemitones(value)
-        pitchSemitones.value = clamped
-        prefs.edit().putInt(KEY_PITCH, clamped).apply()
-    }
+    fun setPitchSemitones(value: Int) =
+        KoAppSettings.setPitchSemitones(value) // [KO] pitch
 
     fun setShowNerdStats(value: Boolean) {
         showNerdStats.value = value
@@ -1954,49 +1435,17 @@ object AppSettings {
         editor.apply()
     }
 
-    fun setLowPowerMode(value: LowPowerMode) {
-        lowPowerMode.value = value
-        prefs.edit().putString(KEY_LOW_POWER_MODE, value.name).apply()
-        refreshLowPower()
-    }
+    fun setLowPowerMode(value: LowPowerMode) =
+        KoAppSettings.setLowPowerMode(value) // [KO] low power
 
-    /**
-     * The device's side of [lowPower], fed by the broadcasts
-     * [com.music.bitchord.playback.LowPowerDevice] listens for. Kept here so
-     * the shared player reads one source of truth.
-     */
-    fun setDevicePower(powerSave: Boolean, batteryPercent: Int, charging: Boolean) {
-        this.powerSaveMode = powerSave
-        this.batteryPercent = batteryPercent.coerceIn(0, 100)
-        this.charging.value = charging
-        refreshLowPower()
-    }
-
-    private fun refreshLowPower() {
-        lowPower.value = lowPowerActive(
-            lowPowerMode.value,
-            powerSaveMode,
-            batteryPercent,
-            charging.value,
-        )
-    }
+    fun setDevicePower(powerSave: Boolean, batteryPercent: Int, charging: Boolean) =
+        KoAppSettings.setDevicePower(powerSave, batteryPercent, charging) // [KO] low power
 
     fun setOnboardingComplete() {
         onboardingComplete.value = true
         prefs.edit().putBoolean(KEY_ONBOARDING_COMPLETE, true).apply()
     }
 
-    /**
-     * Whether this install holds anything a listener made before the welcome
-     * pages existed: a saved setting, a restored session, or a recorded play.
-     * A fresh install has none of them, so it still gets onboarding.
-     */
-    private fun hadDataBeforeOnboarding(): Boolean =
-        prefs.all.keys.any { it != KEY_ONBOARDING_COMPLETE } ||
-            runCatching { authStore.isSignedIn }.getOrDefault(false) ||
-            runCatching {
-                com.music.bitchord.data.stats.ListeningStats.hasStoredHistory(appContext)
-            }.getOrDefault(false)
 
     fun setStopOnTaskRemoved(value: Boolean) {
         stopOnTaskRemoved.value = value
@@ -2018,32 +1467,11 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_HIDE_SONG_STATUS, value).apply()
     }
 
-    fun setWidgetOpensPlayer(value: Boolean) {
-        widgetOpensPlayer.value = value
-        prefs.edit().putBoolean(KEY_WIDGET_OPENS_PLAYER, value).apply()
-        // The pending intent each widget already holds was built with the old
-        // answer, so every placed instance has to be rebuilt now rather than
-        // on the next track change.
-        if (this::appContext.isInitialized) {
-            com.music.bitchord.widget.MediaWidget.refresh(appContext)
-        }
-    }
+    fun setWidgetOpensPlayer(value: Boolean) =
+        KoAppSettings.setWidgetOpensPlayer(value) // [KO] widget
 
-    /**
-     * The widget-readable copy of [widgetOpensPlayer].
-     *
-     * A widget can be asked to draw before [init] has run in a process that
-     * only ever handled its broadcast, and the flow would still read its
-     * default then. Fall back to the same preference file directly, so the
-     * switch keeps working in that window.
-     */
     fun readWidgetOpensPlayer(context: Context): Boolean =
-        if (this::prefs.isInitialized) {
-            widgetOpensPlayer.value
-        } else {
-            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .getBoolean(KEY_WIDGET_OPENS_PLAYER, false)
-        }
+        KoAppSettings.readWidgetOpensPlayer(context) // [KO] widget
 
     fun setShowQueueHistory(value: Boolean) {
         showQueueHistory.value = value
@@ -2066,15 +1494,11 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_PREFER_MUSIC_ONLY, value).apply()
     }
 
-    fun setSkipNonMusicParts(value: Boolean) {
-        skipNonMusicParts.value = value
-        prefs.edit().putBoolean(KEY_SKIP_NON_MUSIC_PARTS, value).apply()
-    }
+    fun setSkipNonMusicParts(value: Boolean) =
+        KoAppSettings.setSkipNonMusicParts(value) // [KO] skipping
 
-    fun setSkipSponsorParts(value: Boolean) {
-        skipSponsorParts.value = value
-        prefs.edit().putBoolean(KEY_SKIP_SPONSOR_PARTS, value).apply()
-    }
+    fun setSkipSponsorParts(value: Boolean) =
+        KoAppSettings.setSkipSponsorParts(value) // [KO] skipping
 
     fun setSmartVersionAlignment(value: Boolean) {
         smartVersionAlignment.value = value
@@ -2224,155 +1648,75 @@ object AppSettings {
         com.music.bitchord.data.lyrics.PaxSenix.setApiKey(normalized)
     }
 
-    fun setGeminiTranslation(value: Boolean) {
-        geminiTranslation.value = value
-        prefs.edit().putBoolean(KEY_GEMINI_TRANSLATION, value).apply()
-        com.music.bitchord.data.lyrics.LyricsTranslation.geminiEnabled = value
-    }
+    fun setGeminiTranslation(value: Boolean) =
+        KoAppSettings.setGeminiTranslation(value) // [KO] lyrics ai
 
-    fun setPrefetchTranslation(value: Boolean) {
-        prefetchTranslation.value = value
-        prefs.edit().putBoolean(KEY_PREFETCH_TRANSLATION, value).apply()
-    }
+    fun setPrefetchTranslation(value: Boolean) =
+        KoAppSettings.setPrefetchTranslation(value) // [KO] lyrics ai
 
-    fun setKeepDownloadTranslation(value: Boolean) {
-        keepDownloadTranslation.value = value
-        prefs.edit().putBoolean(KEY_KEEP_DOWNLOAD_TRANSLATION, value).apply()
-    }
+    fun setKeepDownloadTranslation(value: Boolean) =
+        KoAppSettings.setKeepDownloadTranslation(value) // [KO] lyrics ai
 
-    fun setAutoTranslateLyrics(value: Boolean) {
-        autoTranslateLyrics.value = value
-        prefs.edit().putBoolean(KEY_AUTO_TRANSLATE_LYRICS, value).apply()
-    }
+    fun setAutoTranslateLyrics(value: Boolean) =
+        KoAppSettings.setAutoTranslateLyrics(value) // [KO] lyrics ai
 
-    fun setAutoLyricsTiming(value: Boolean) {
-        autoLyricsTiming.value = value
-        prefs.edit().putBoolean(KEY_AUTO_LYRICS_TIMING, value).apply()
-    }
+    fun setAutoLyricsTiming(value: Boolean) =
+        KoAppSettings.setAutoLyricsTiming(value) // [KO] lyrics ai
 
-    fun setAiTimingAhead(value: Boolean) {
-        aiTimingAhead.value = value
-        prefs.edit().putBoolean(KEY_AI_TIMING_AHEAD, value).apply()
-    }
+    fun setAiTimingAhead(value: Boolean) =
+        KoAppSettings.setAiTimingAhead(value) // [KO] lyrics ai
 
-    fun setSyncSafetyNextPrep(value: Boolean) {
-        syncSafetyNextPrep.value = value
-        prefs.edit().putBoolean(KEY_SYNC_SAFETY_NEXT_PREP, value).apply()
-    }
+    fun setSyncSafetyNextPrep(value: Boolean) =
+        KoAppSettings.setSyncSafetyNextPrep(value) // [KO] sync safety
 
-    fun setSyncSafetyDownloadRecheck(value: Boolean) {
-        syncSafetyDownloadRecheck.value = value
-        prefs.edit().putBoolean(KEY_SYNC_SAFETY_DOWNLOAD_RECHECK, value).apply()
-    }
+    fun setSyncSafetyDownloadRecheck(value: Boolean) =
+        KoAppSettings.setSyncSafetyDownloadRecheck(value) // [KO] sync safety
 
-    fun setSyncSafetyHqSync(value: Boolean) {
-        syncSafetyHqSync.value = value
-        prefs.edit().putBoolean(KEY_SYNC_SAFETY_HQ_SYNC, value).apply()
-    }
+    fun setSyncSafetyHqSync(value: Boolean) =
+        KoAppSettings.setSyncSafetyHqSync(value) // [KO] sync safety
 
-    fun setAiLyrics(value: Boolean) {
-        aiLyrics.value = value
-        prefs.edit().putBoolean(KEY_AI_LYRICS, value).apply()
-    }
+    fun setAiLyrics(value: Boolean) =
+        KoAppSettings.setAiLyrics(value) // [KO] lyrics ai
 
-    fun setAutoDownloadLiked(value: Boolean) {
-        autoDownloadLiked.value = value
-        prefs.edit().putBoolean(KEY_AUTO_DOWNLOAD_LIKED, value).apply()
-    }
+    fun setAutoDownloadLiked(value: Boolean) =
+        KoAppSettings.setAutoDownloadLiked(value) // [KO] lyrics ai
 
-    fun setLockScreenLyrics(value: Boolean) {
-        lockScreenLyrics.value = value
-        prefs.edit().putBoolean(KEY_LOCK_SCREEN_LYRICS, value).apply()
-    }
+    fun setLockScreenLyrics(value: Boolean) =
+        KoAppSettings.setLockScreenLyrics(value) // [KO] lyrics ai
 
-    fun setContentCountry(value: String) {
-        val code = value.trim().uppercase(java.util.Locale.ROOT).takeIf { it.length == 2 } ?: return
-        contentCountry.value = code
-        // The charts follow along: a new content country is a new "here".
-        chartsCountry.value = code
-        prefs.edit().putString(KEY_CONTENT_COUNTRY, code).putString(KEY_CHARTS_COUNTRY, code).apply()
-    }
+    fun setContentCountry(value: String) =
+        KoAppSettings.setContentCountry(value) // [KO] discovery
 
-    fun setChartsCountry(value: String) {
-        val code = value.trim().takeIf { it.isNotEmpty() } ?: return
-        chartsCountry.value = code
-        prefs.edit().putString(KEY_CHARTS_COUNTRY, code).apply()
-    }
+    fun setChartsCountry(value: String) =
+        KoAppSettings.setChartsCountry(value) // [KO] discovery
 
-    fun setCoverChannel(channelId: String, cover: Boolean) {
-        if (channelId.isBlank()) return
-        val next = if (cover) coverChannels.value + channelId else coverChannels.value - channelId
-        if (next == coverChannels.value) return
-        coverChannels.value = next
-        prefs.edit().putStringSet(KEY_COVER_CHANNELS, next).apply()
-    }
+    fun setCoverChannel(channelId: String, cover: Boolean) =
+        KoAppSettings.setCoverChannel(channelId, cover) // [KO] discovery
 
-    /** Called for every cover title read; writes only when [name] is new. */
-    fun rememberCoverSinger(name: String) {
-        val singer = name.trim()
-        if (singer.length < 2 || singer.length > 40 || singer in coverSingers.value) return
-        if (!::prefs.isInitialized) return
-        var next: Set<String> = emptySet()
-        coverSingers.update { current ->
-            next = if (singer in current) current else (current + singer).let { all ->
-                if (all.size > MAX_COVER_SINGERS) all.drop(all.size - MAX_COVER_SINGERS).toSet() else all
-            }
-            next
-        }
-        prefs.edit().putStringSet(KEY_COVER_SINGERS, HashSet(next)).apply()
-    }
+    fun rememberCoverSinger(name: String) =
+        KoAppSettings.rememberCoverSinger(name) // [KO] discovery
 
-    /** Hides one Explore category by the label the listener long-pressed. */
-    fun hideExploreCategory(title: String) {
-        val trimmed = title.trim()
-        if (trimmed.isEmpty()) return
-        setHiddenExploreCategories(hiddenExploreCategories.value + trimmed)
-    }
+    fun hideExploreCategory(title: String) =
+        KoAppSettings.hideExploreCategory(title) // [KO] discovery
 
-    /** Brings one hidden Explore category back into the grid. */
-    fun showExploreCategory(title: String) {
-        setHiddenExploreCategories(hiddenExploreCategories.value - title)
-    }
+    fun showExploreCategory(title: String) =
+        KoAppSettings.showExploreCategory(title) // [KO] discovery
 
-    /** Brings every Explore category back. The one-time seed flag stays set. */
-    fun clearHiddenExploreCategories() {
-        setHiddenExploreCategories(emptySet())
-    }
+    fun clearHiddenExploreCategories() =
+        KoAppSettings.clearHiddenExploreCategories() // [KO] discovery
 
-    private fun setHiddenExploreCategories(next: Set<String>) {
-        val stable = next.toSet()
-        hiddenExploreCategories.value = stable
-        if (!::prefs.isInitialized) return
-        prefs.edit().putStringSet(KEY_HIDDEN_EXPLORE_CATEGORIES, HashSet(stable)).apply()
-    }
+    fun setResumeOnHeadphones(value: Boolean) =
+        KoAppSettings.setResumeOnHeadphones(value) // [KO] discovery
 
-    fun setResumeOnHeadphones(value: Boolean) {
-        resumeOnHeadphones.value = value
-        prefs.edit().putBoolean(KEY_RESUME_ON_HEADPHONES, value).apply()
-    }
+    val deepgramApiKey get() = KoAppSettings.deepgramApiKey // [KO] lyrics ai
 
-    /** Deepgram's key for AI lyric timing; blank turns Deepgram (and Whisper) off. */
-    val deepgramApiKey = MutableStateFlow("")
-    private var bundledDeepgramApiKey = ""
-    private const val KEY_DEEPGRAM_API_KEY = "deepgram_api_key"
+    val deepgramKeyIsBundled: Boolean get() = KoAppSettings.deepgramKeyIsBundled // [KO] lyrics ai
 
-    /** Whether the key in use is the one this build came with (vs. typed in Settings). */
-    val deepgramKeyIsBundled: Boolean
-        get() = bundledDeepgramApiKey.isNotBlank() && deepgramApiKey.value == bundledDeepgramApiKey
+    fun setDeepgramApiKey(value: String) =
+        KoAppSettings.setDeepgramApiKey(value) // [KO] lyrics ai
 
-    fun setDeepgramApiKey(value: String) {
-        val normalized = value.trim()
-        deepgramApiKey.value = normalized
-        putSecret(KEY_DEEPGRAM_API_KEY, normalized)
-        com.music.bitchord.data.lyrics.Deepgram.apiKey = normalized
-    }
-
-    fun setGeminiApiKey(value: String) {
-        val normalized = value.trim()
-        geminiApiKey.value = normalized
-        putSecret(KEY_GEMINI_API_KEY, normalized)
-        com.music.bitchord.data.lyrics.LyricsTranslation.geminiApiKey = normalized
-    }
+    fun setGeminiApiKey(value: String) =
+        KoAppSettings.setGeminiApiKey(value) // [KO] lyrics ai
 
     /**
      * Puts the source list, its order and [prioritizeSyllableSync] back the
@@ -2400,10 +1744,8 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_SPOTIFY_CANVAS_AUTO_HIDE, value).apply()
     }
 
-    fun setVideoCanvas(value: Boolean) {
-        videoCanvas.value = value
-        prefs.edit().putBoolean(KEY_VIDEO_CANVAS, value).apply()
-    }
+    fun setVideoCanvas(value: Boolean) =
+        KoAppSettings.setVideoCanvas(value) // [KO] video canvas
 
     fun setPrioritizeSpotifyCanvas(value: Boolean) {
         prioritizeSpotifyCanvas.value = value
@@ -2754,88 +2096,13 @@ object AppSettings {
         setSmbPassword("")
     }
 
-    /**
-     * Saves the proxy in one write.
-     *
-     * One call rather than a setter per field: the settings dialog can change
-     * every value at once, and publishing five intermediate configurations
-     * would clear the connection pool five times and, worse, briefly expose a
-     * configuration that is half old and half new to a request in flight.
-     *
-     * The password goes to the encrypted store; everything else is ordinary
-     * preferences. A mode of OFF is saved like any other so the host and port
-     * survive turning the proxy off and on again.
-     */
-    fun setProxyConfig(config: ProxyConfig) {
-        val normalized = config.normalized()
-        val port = normalized.port.coerceIn(0, 65535)
-        val backupPort = normalized.backupPort.coerceIn(0, 65535)
-        proxyMode.value = normalized.mode
-        proxyHost.value = normalized.host
-        proxyPort.value = port
-        proxyBackupHost.value = normalized.backupHost
-        proxyBackupPort.value = backupPort
-        proxyUsername.value = normalized.username
-        proxyPassword.value = normalized.password
-        proxyScope.value = normalized.scope
-        prefs.edit()
-            .putString(KEY_PROXY_MODE, normalized.mode.name)
-            .putString(KEY_PROXY_HOST, normalized.host)
-            .putInt(KEY_PROXY_PORT, port)
-            .putString(KEY_PROXY_BACKUP_HOST, normalized.backupHost)
-            .putInt(KEY_PROXY_BACKUP_PORT, backupPort)
-            .putString(KEY_PROXY_USERNAME, normalized.username)
-            .putString(KEY_PROXY_SCOPE, normalized.scope.name)
-            .apply()
-        authStore.proxyPassword = normalized.password.ifEmpty { null }
-        publishProxy()
-    }
+    fun setProxyConfig(config: ProxyConfig) =
+        KoAppSettings.setProxyConfig(config) // [KO] proxy
 
-    /** Moves the proxy between Music-only and all YouTube traffic. */
-    fun setProxyScope(value: ProxyScope) {
-        proxyScope.value = value
-        prefs.edit().putString(KEY_PROXY_SCOPE, value.name).apply()
-        publishProxy()
-    }
+    fun setProxyScope(value: ProxyScope) =
+        KoAppSettings.setProxyScope(value) // [KO] proxy
 
-    /** Reads the proxy fields and publishes them; shared by [init] and [initProxy]. */
-    private fun readProxy() {
-        proxyMode.value = runCatching {
-            ProxyMode.valueOf(prefs.getString(KEY_PROXY_MODE, null) ?: ProxyMode.OFF.name)
-        }.getOrDefault(ProxyMode.OFF)
-        proxyHost.value = prefs.getString(KEY_PROXY_HOST, "").orEmpty()
-        proxyPort.value = prefs.getInt(KEY_PROXY_PORT, 0)
-        proxyBackupHost.value = prefs.getString(KEY_PROXY_BACKUP_HOST, "").orEmpty()
-        proxyBackupPort.value = prefs.getInt(KEY_PROXY_BACKUP_PORT, 0)
-        proxyUsername.value = prefs.getString(KEY_PROXY_USERNAME, "").orEmpty()
-        proxyPassword.value = authStore.proxyPassword.orEmpty()
-        proxyScope.value = runCatching {
-            ProxyScope.valueOf(prefs.getString(KEY_PROXY_SCOPE, null) ?: ProxyScope.MUSIC_ONLY.name)
-        }.getOrDefault(ProxyScope.MUSIC_ONLY)
-        publishProxy()
-    }
-
-    private fun publishProxy() {
-        if (!this::prefs.isInitialized || !this::authStore.isInitialized) return
-        val next = ProxyConfig(
-            mode = proxyMode.value,
-            host = proxyHost.value,
-            port = proxyPort.value,
-            backupHost = proxyBackupHost.value,
-            backupPort = proxyBackupPort.value,
-            username = proxyUsername.value,
-            password = proxyPassword.value,
-            scope = proxyScope.value,
-        ).normalized()
-        val changed = next != YouTubeProxy.config
-        YouTubeProxy.update(next)
-        if (!changed) return
-        // The route the stored verdicts were made on has moved. Start every
-        // identity from UNKNOWN so the next Home/Explore request re-checks
-        // through the new route instead of trusting yesterday's answer.
-        MusicGateFallback.resetAll()
-        proxyRevision.value += 1
-    }
+    private fun readProxy() = KoAppSettings.readProxy() // [KO] proxy
 
     private fun publishSmbAuth() {
         if (!this::prefs.isInitialized || !this::authStore.isInitialized) return
@@ -2911,39 +2178,11 @@ object AppSettings {
 
     // ── Secrets ─────────────────────────────────────────────────────────────
 
-    /**
-     * Writes one credential to the encrypted store, not the plain settings
-     * file. [authStore] is absent only in a unit test that installs a
-     * preference file directly; there the old plain write keeps the test
-     * fixture meaningful and never runs on a device.
-     */
-    private fun putSecret(key: String, value: String) {
-        if (this::authStore.isInitialized) authStore.setSecret(key, value)
-        else prefs.edit().putString(key, value).apply()
-    }
+    private fun putSecret(key: String, value: String) =
+        KoAppSettings.putSecret(key, value) // [KO] secrets
 
-    /**
-     * Moves credentials an older build left in [PREFS_NAME] into [AuthStore].
-     *
-     * Android auto-backup carries this plain file and excludes the encrypted
-     * one, so every key in [SECRETS] that stayed here was a credential in a
-     * cloud copy. The migration is idempotent: after the first launch the keys
-     * are gone from [PREFS_NAME], and [readAll] reads them from the encrypted
-     * store instead.
-     */
-    internal fun migrateSecretsToAuthStore() {
-        if (!this::prefs.isInitialized || !this::authStore.isInitialized) return
-        val present = SECRETS.filter { prefs.contains(it) }
-        if (present.isEmpty()) return
-        present.forEach { key ->
-            (prefs.all[key] as? String)?.takeIf { it.isNotEmpty() }?.let { value ->
-                authStore.setSecret(key, value)
-            }
-        }
-        prefs.edit().apply {
-            present.forEach { remove(it) }
-        }.apply()
-    }
+    internal fun migrateSecretsToAuthStore() =
+        KoAppSettings.migrateSecretsToAuthStore() // [KO] secrets
 
     // ── Backup ──────────────────────────────────────────────────────────────
 
@@ -2978,673 +2217,23 @@ object AppSettings {
      * file being restored from, and clearing them would sign the user out of
      * services the backup has nothing to say about.
      */
-    fun importPrefs(values: Map<String, Any?>): Boolean {
-        if (!this::prefs.isInitialized) return false
-        val kept = prefs.all.filterKeys { it in SECRETS || it in DEVICE_LOCAL }
-        val saved = prefs.edit().apply {
-            clear()
-            val incoming = values
-                .filterKeys { it !in SECRETS && it !in DEVICE_LOCAL }
-                .mapNotNull { (key, value) ->
-                    val sanitized = when {
-                        key in KNOWN_PREFS -> sanitizeKnownPref(key, value)
-                        value is Float && !value.isFinite() -> null
-                        else -> value
-                    }
-                    sanitized?.let { key to it }
-                }
-                .toMap()
-            (kept + incoming).forEach { (key, value) ->
-                putSanitized(key, value)
-            }
-        }.commit()
-        reload()
-        return saved
-    }
+    fun importPrefs(values: Map<String, Any?>): Boolean =
+        KoAppSettingsTransfer.importPrefs(values) // [KO] import validation
 
-    private enum class PrefCarrier { BOOLEAN, INT, LONG, FLOAT, STRING, STRING_SET }
+    private fun sanitizeStoredPreferences() =
+        KoAppSettingsTransfer.sanitizeStoredPreferences() // [KO] import validation
 
-    private data class KnownPref(
-        val carrier: PrefCarrier,
-        val allowed: Set<String>? = null,
-        val intRange: IntRange? = null,
-        val floatRange: ClosedFloatingPointRange<Float>? = null,
-    )
+    internal val TRANSFERABLE_KEYS: Map<String, TransferKey>
+        get() = KoAppSettingsTransfer.TRANSFERABLE_KEYS // [KO] settings transfer
 
-    /**
-     * Every preference [readAll] knows how to read, with the carrier type it
-     * must have and any bound its own setter enforces.
-     *
-     * A restored value is untrusted input. A string under [KEY_SPEED] would
-     * make Android's `getFloat` throw the first time the file is read — after
-     * [importPrefs] has already cleared it — and a speed of zero or a repeat
-     * mode outside Media3's three throws in the playback service. Known keys
-     * therefore accept only their declared type; numeric values are clamped to
-     * what the setter accepts, non-finite floats are refused, and enum-like
-     * strings must name a rung this build knows.
-     */
-    private val KNOWN_PREFS: Map<String, KnownPref> = buildMap {
-        fun bools(vararg keys: String) = keys.forEach {
-            this[it] = KnownPref(PrefCarrier.BOOLEAN)
-        }
-        fun ints(vararg keys: String) = keys.forEach {
-            this[it] = KnownPref(PrefCarrier.INT)
-        }
-        fun longs(vararg keys: String) = keys.forEach {
-            this[it] = KnownPref(PrefCarrier.LONG)
-        }
-        fun floats(vararg keys: String) = keys.forEach {
-            this[it] = KnownPref(PrefCarrier.FLOAT)
-        }
-        fun strings(vararg keys: String) = keys.forEach {
-            this[it] = KnownPref(PrefCarrier.STRING)
-        }
-        fun enums(key: String, allowed: Set<String>) {
-            this[key] = KnownPref(PrefCarrier.STRING, allowed)
-        }
-        fun stringSets(vararg keys: String) = keys.forEach {
-            this[it] = KnownPref(PrefCarrier.STRING_SET)
-        }
+    internal fun transferablePrefs(): Map<String, Any?> =
+        KoAppSettingsTransfer.transferablePrefs() // [KO] settings transfer
 
-        bools(
-            KEY_ONBOARDING_COMPLETE,
-            KEY_WIFI_ONLY_DOWNLOADS,
-            KEY_AUTO_REDOWNLOAD_MV_SOUND,
-            KEY_AUTO_REPLACE_HQ_DOWNLOADS,
-            KEY_AUTO_PREFETCH_HQ,
-            KEY_EXPORT_DOWNLOADS,
-            KEY_SMART_FADE,
-            KEY_AUTOMIX_VIDEOS,
-            KEY_SKIP_SILENCE,
-            KEY_PRIVATE_LISTENING,
-            KEY_PREFER_USB_DAC,
-            KEY_LOUDNESS_NORMALIZATION,
-            KEY_LOUDNESS_OFF_ON_SPEAKER,
-            KEY_DOLBY_ATMOS,
-            KEY_SPATIAL_AUDIO,
-            KEY_EQ_ENABLED,
-            KEY_EQ_FOCUSED,
-            KEY_AUTOPLAY,
-            KEY_AUTOPLAY_BEFORE_REPEAT_ALL,
-            KEY_PERSONALISED_AUTOPLAY,
-            KEY_VIDEO_RADIO,
-            KEY_SHUFFLE_ENABLED,
-            KEY_NOTIFICATION_PERMISSION_ASKED,
-            KEY_NERD_STATS,
-            KEY_REDUCE_ANIMATION,
-            KEY_HIGH_PERFORMANCE_MODE,
-            KEY_STOP_ON_TASK_REMOVED,
-            KEY_HIDE_VOLUME_BAR,
-            KEY_HIDE_STATUS_BAR_IN_PLAYER,
-            KEY_HIDE_SONG_STATUS,
-            KEY_WIDGET_OPENS_PLAYER,
-            KEY_SHOW_QUEUE_HISTORY,
-            KEY_SWIPE_TO_PLAY_NEXT,
-            KEY_DONT_REPEAT_SUGGESTIONS,
-            KEY_PREFER_MUSIC_ONLY,
-            KEY_SKIP_NON_MUSIC_PARTS,
-            KEY_SKIP_SPONSOR_PARTS,
-            KEY_SMART_VERSION_ALIGNMENT,
-            KEY_REDUCE_BLUR,
-            KEY_LIQUID_GLASS,
-            KEY_LYRICS_BLUR,
-            KEY_ANIMATED_CANVAS,
-            KEY_CANVAS_OVER_CELLULAR,
-            KEY_SPOTIFY_CANVAS_AUTO_HIDE,
-            KEY_PRIORITIZE_SPOTIFY_CANVAS,
-            KEY_VIDEO_CANVAS,
-            KEY_SIGNATURE_API_ENABLED,
-            KEY_FULL_BLEED_ARTWORK,
-            KEY_LEGACY_MESH_GRADIENT,
-            KEY_SYNCED_LYRICS,
-            KEY_PRIORITIZE_SYLLABLE_SYNC,
-            KEY_GEMINI_TRANSLATION,
-            KEY_PREFETCH_TRANSLATION,
-            KEY_KEEP_DOWNLOAD_TRANSLATION,
-            KEY_AUTO_DOWNLOAD_LIKED,
-            KEY_AUTO_TRANSLATE_LYRICS,
-            KEY_AUTO_LYRICS_TIMING,
-            KEY_AI_LYRICS,
-            KEY_AI_TIMING_AHEAD,
-            KEY_SYLLABLE_DEFAULT_MIGRATED,
-            KEY_LOCK_SCREEN_LYRICS,
-            KEY_HIDDEN_EXPLORE_SEEDED_V1,
-            KEY_SYNC_SAFETY_NEXT_PREP,
-            KEY_SYNC_SAFETY_DOWNLOAD_RECHECK,
-            KEY_SYNC_SAFETY_HQ_SYNC,
-            KEY_RESUME_ON_HEADPHONES,
-            KEY_REPLAY_GENRES,
-            KEY_FILTER_NON_MUSIC_AUDIO,
-            KEY_SHOW_CACHE_FOLDER,
-            KEY_LASTFM_ENABLED,
-            KEY_LASTFM_SCROBBLE_ENABLED,
-            KEY_LASTFM_NOW_PLAYING,
-            KEY_LASTFM_PRIMARY_ARTIST_ONLY,
-            KEY_LISTENBRAINZ_ENABLED,
-            KEY_LISTENBRAINZ_PRIMARY_ARTIST_ONLY,
-            KEY_DISCORD_RPC_ENABLED,
-            KEY_DISCORD_USE_DETAILS,
-            KEY_DISCORD_SHOW_AUDIO_QUALITY,
-            KEY_DISCORD_ADVANCED_MODE,
-            KEY_DISCORD_BUTTON_1_VISIBLE,
-            KEY_DISCORD_BUTTON_2_VISIBLE,
-            KEY_DISCORD_INFO_DISMISSED,
-            KEY_SYNC_SAFETY_NEXT_PREP,
-            KEY_SYNC_SAFETY_DOWNLOAD_RECHECK,
-            KEY_SYNC_SAFETY_HQ_SYNC,
-        )
-        ints(
-            KEY_UPGRADE_LENGTH_SLACK_SECONDS,
-            KEY_HQ_PREFETCH_LIMIT,
-            KEY_CROSSFADE,
-            KEY_EQ_TONE_X,
-            KEY_EQ_TONE_Y,
-            KEY_PITCH,
-            KEY_REPEAT_MODE,
-            KEY_PERFORMANCE_REFRESH_RATE,
-            KEY_LYRICS_OFFSET_MS,
-            KEY_PROXY_PORT,
-            KEY_PROXY_BACKUP_PORT,
-            KEY_SCROBBLE_MIN_DURATION,
-            KEY_SCROBBLE_DELAY_SECONDS,
-            KEY_LAST_VERSION_CODE,
-        )
-        longs(KEY_PRIVATE_LISTENING_SINCE, KEY_CACHE_LIMIT)
-        floats(KEY_EQ_BALANCE, KEY_SPEED, KEY_SCROBBLE_DELAY_PERCENT)
-        strings(
-            KEY_DEEPGRAM_API_KEY,
-            KEY_QUALITY_LEGACY,
-            KEY_QUALITY_WIFI,
-            KEY_QUALITY_CELLULAR,
-            KEY_QUALITY_DOWNLOAD,
-            KEY_AUTOMIX_PERFORMANCE_MODE,
-            KEY_OUTPUT_PCM_MODE,
-            KEY_EQ_MODE,
-            KEY_EQ_BANDS,
-            KEY_THEME,
-            KEY_LOW_POWER_MODE,
-            KEY_TRANSLATION_LANGUAGE,
-            KEY_SIGNATURE_API_URL,
-            KEY_LAST_PLAYER_SCREEN,
-            KEY_LYRICS_SOURCES,
-            KEY_LYRICS_SOURCES_SEEN,
-            KEY_LYRICS_SOURCE_ORDER,
-            KEY_PAXSENIX_API_KEY,
-            KEY_GEMINI_API_KEY,
-            KEY_CONTENT_COUNTRY,
-            KEY_CHARTS_COUNTRY,
-            KEY_LOCAL_MUSIC_SORT,
-            KEY_DOWNLOADED_MUSIC_SORT,
-            KEY_LIBRARY_SORT,
-            KEY_DETAIL_SONG_SORTS,
-            KEY_LOCAL_MUSIC_VIEW_TYPE,
-            KEY_DOWNLOADED_MUSIC_VIEW_TYPE,
-            KEY_HOME_RECENTS_VIEW_TYPE,
-            KEY_LOCAL_MUSIC_FOLDER_URI,
-            KEY_WEBDAV_URL,
-            KEY_WEBDAV_USERNAME,
-            KEY_SMB_HOST,
-            KEY_SMB_SHARE,
-            KEY_SMB_BASE_PATH,
-            KEY_SMB_USERNAME,
-            KEY_PROXY_MODE,
-            KEY_PROXY_HOST,
-            KEY_PROXY_BACKUP_HOST,
-            KEY_PROXY_USERNAME,
-            KEY_PROXY_SCOPE,
-            KEY_PINNED_PLAYLISTS,
-            KEY_LASTFM_USERNAME,
-            KEY_LASTFM_SESSION_KEY,
-            KEY_LASTFM_API_KEY,
-            KEY_LASTFM_SECRET,
-            KEY_LASTFM_ENDPOINT,
-            KEY_LISTENBRAINZ_TOKEN,
-            KEY_SPOTIFY_SPDC_TOKEN,
-            KEY_DISCORD_USERNAME,
-            KEY_DISCORD_NAME,
-            KEY_DISCORD_AVATAR,
-            KEY_DISCORD_STATUS,
-            KEY_DISCORD_ACTIVITY_TYPE,
-            KEY_DISCORD_ACTIVITY_NAME,
-            KEY_DISCORD_BUTTON_1_TEXT,
-            KEY_DISCORD_BUTTON_2_TEXT,
-        )
-        stringSets(KEY_COVER_CHANNELS, KEY_COVER_SINGERS, KEY_HIDDEN_EXPLORE_CATEGORIES)
+    internal fun applyTransferablePrefs(values: Map<String, Any?>): TransferApplyResult =
+        KoAppSettingsTransfer.applyTransferablePrefs(values) // [KO] settings transfer
 
-        enums(KEY_QUALITY_WIFI, AudioQuality.entries.map { it.name }.toSet())
-        enums(KEY_QUALITY_CELLULAR, AudioQuality.entries.map { it.name }.toSet())
-        enums(KEY_QUALITY_DOWNLOAD, DownloadQuality.entries.map { it.name }.toSet())
-        enums(KEY_AUTOMIX_PERFORMANCE_MODE, AutomixPerformanceMode.entries.map { it.name }.toSet())
-        enums(KEY_OUTPUT_PCM_MODE, OutputPcmMode.entries.map { it.name }.toSet())
-        enums(KEY_EQ_MODE, EqualizerMode.entries.map { it.name }.toSet())
-        enums(KEY_THEME, ThemeMode.entries.map { it.name }.toSet())
-        enums(KEY_LOW_POWER_MODE, LowPowerMode.entries.map { it.name }.toSet())
-        enums(KEY_LAST_PLAYER_SCREEN, LastPlayerScreen.entries.map { it.name }.toSet())
-        enums(KEY_PROXY_MODE, ProxyMode.entries.map { it.name }.toSet())
-        enums(KEY_PROXY_SCOPE, ProxyScope.entries.map { it.name }.toSet())
-        enums(KEY_LIBRARY_SORT, LibrarySort.entries.map { it.name }.toSet())
-        enums(KEY_LOCAL_MUSIC_SORT, LocalMusicSort.entries.map { it.name }.toSet())
-        enums(KEY_DOWNLOADED_MUSIC_SORT, LocalMusicSort.entries.map { it.name }.toSet())
-        enums(KEY_LOCAL_MUSIC_VIEW_TYPE, LibraryViewType.entries.map { it.name }.toSet())
-        enums(KEY_DOWNLOADED_MUSIC_VIEW_TYPE, LibraryViewType.entries.map { it.name }.toSet())
-        enums(KEY_HOME_RECENTS_VIEW_TYPE, LibraryViewType.entries.map { it.name }.toSet())
-
-        this[KEY_UPGRADE_LENGTH_SLACK_SECONDS] = KnownPref(
-            PrefCarrier.INT,
-            intRange = MIN_UPGRADE_LENGTH_SLACK_SECONDS..MAX_UPGRADE_LENGTH_SLACK_SECONDS,
-        )
-        this[KEY_HQ_PREFETCH_LIMIT] = KnownPref(PrefCarrier.INT, intRange = 0..10_000)
-        this[KEY_EQ_TONE_X] = KnownPref(
-            PrefCarrier.INT,
-            intRange = -EqLayout.TONE_STEPS..EqLayout.TONE_STEPS,
-        )
-        this[KEY_EQ_TONE_Y] = KnownPref(
-            PrefCarrier.INT,
-            intRange = -EqLayout.TONE_STEPS..EqLayout.TONE_STEPS,
-        )
-        this[KEY_PITCH] = KnownPref(
-            PrefCarrier.INT,
-            intRange = PlaybackParametersMath.MIN_PITCH_SEMITONES..
-                PlaybackParametersMath.MAX_PITCH_SEMITONES,
-        )
-        this[KEY_REPEAT_MODE] = KnownPref(
-            PrefCarrier.INT,
-            intRange = PlaybackParametersMath.MIN_REPEAT_MODE..
-                PlaybackParametersMath.MAX_REPEAT_MODE,
-        )
-        this[KEY_LYRICS_OFFSET_MS] = KnownPref(
-            PrefCarrier.INT,
-            intRange = MIN_LYRICS_OFFSET_MS..MAX_LYRICS_OFFSET_MS,
-        )
-        this[KEY_PROXY_PORT] = KnownPref(PrefCarrier.INT, intRange = 0..65535)
-        this[KEY_PROXY_BACKUP_PORT] = KnownPref(PrefCarrier.INT, intRange = 0..65535)
-        this[KEY_EQ_BALANCE] = KnownPref(PrefCarrier.FLOAT, floatRange = -1f..1f)
-        this[KEY_SPEED] = KnownPref(
-            PrefCarrier.FLOAT,
-            floatRange = PlaybackParametersMath.MIN_SPEED..PlaybackParametersMath.MAX_SPEED,
-        )
-        this[KEY_SCROBBLE_DELAY_PERCENT] = KnownPref(
-            PrefCarrier.FLOAT,
-            floatRange = 0.1f..1f,
-        )
-    }
-
-    private fun sanitizeKnownPref(key: String, value: Any?): Any? {
-        if (key == KEY_EQ_BANDS) return sanitizeEqualizerBands(value)
-        val spec = KNOWN_PREFS[key] ?: return value
-        return when (spec.carrier) {
-            PrefCarrier.BOOLEAN -> value as? Boolean
-            PrefCarrier.INT -> (value as? Int)?.let { raw ->
-                spec.intRange?.let { raw.coerceIn(it) } ?: raw
-            }
-            PrefCarrier.LONG -> value as? Long
-            PrefCarrier.FLOAT -> (value as? Float)
-                ?.takeIf { it.isFinite() }
-                ?.let { raw -> spec.floatRange?.let { raw.coerceIn(it) } ?: raw }
-            PrefCarrier.STRING -> (value as? String)
-                ?.takeIf { spec.allowed == null || it in spec.allowed }
-            PrefCarrier.STRING_SET -> (value as? Set<*>)
-                ?.filterIsInstance<String>()
-                ?.toSet()
-        }
-    }
-
-    private fun sanitizeEqualizerBands(value: Any?): Any? {
-        val text = value as? String ?: return null
-        val parts = text.split(',').map { it.trim() }
-        if (parts.any { it.isEmpty() }) return null
-        val parsed = parts.map { part ->
-            part.toFloatOrNull()?.takeIf { it.isFinite() } ?: return null
-        }
-        return parsed.joinToString(",") {
-            clampBand(it).toString()
-        }
-    }
-
-    /**
-     * Drops or repairs values already in the file, before [readAll]'s typed
-     * getters touch them. An import writes through [importPrefs], but a file
-     * restored by an older build can still hold a string under a float key.
-     */
-    private fun sanitizeStoredPreferences() {
-        if (!this::prefs.isInitialized) return
-        val snapshot = prefs.all
-        if (snapshot.isEmpty()) return
-        val removals = mutableListOf<String>()
-        val corrections = linkedMapOf<String, Any>()
-        for ((key, value) in snapshot) {
-            if (key !in KNOWN_PREFS) continue
-            val normalized = sanitizeKnownPref(key, value)
-            when {
-                normalized == null -> removals += key
-                normalized != value -> corrections[key] = normalized
-            }
-        }
-        if (removals.isEmpty() && corrections.isEmpty()) return
-        prefs.edit().apply {
-            removals.forEach { remove(it) }
-            corrections.forEach { (key, value) -> putSanitized(key, value) }
-        }.apply()
-    }
-
-    private fun SharedPreferences.Editor.putSanitized(key: String, value: Any?) {
-        when (value) {
-            is Boolean -> putBoolean(key, value)
-            is Int -> putInt(key, value)
-            is Long -> putLong(key, value)
-            is Float -> putFloat(key, value)
-            is String -> putString(key, value)
-            is Set<*> -> putStringSet(key, value.filterIsInstance<String>().toSet())
-            else -> Unit
-        }
-    }
-
-    // ── Settings transfer ───────────────────────────────────────────────
-
-    /**
-     * The only preferences [SettingsTransfer] may carry.
-     *
-     * Named one by one, with the type each must arrive as. A setting added to
-     * this file next month is therefore not in a settings transfer until it is
-     * listed here — the whitelist is the feature, not a shortcut around one.
-     *
-     * What is absent is as deliberate as what is present: account cookies,
-     * listening history, likes, playlists, downloads, diagnostics, device-local
-     * values, Spotify tokens and every user-supplied API key stay behind.
-     */
-    internal val TRANSFERABLE_KEYS: Map<String, TransferKey> = buildMap {
-        val quality = AudioQuality.entries.map { it.name }.toSet()
-        val downloadQuality = DownloadQuality.entries.map { it.name }.toSet()
-        val automix = AutomixPerformanceMode.entries.map { it.name }.toSet()
-        val lyrics = LyricsSource.entries.map { it.name }.toSet()
-        val pcm = OutputPcmMode.entries.map { it.name }.toSet()
-        val eqMode = EqualizerMode.entries.map { it.name }.toSet()
-        val theme = ThemeMode.entries.map { it.name }.toSet()
-        val lowPower = LowPowerMode.entries.map { it.name }.toSet()
-
-        fun put(
-            key: String,
-            category: TransferCategory,
-            type: TransferType,
-            allowed: Set<String>? = null,
-            floatRange: ClosedFloatingPointRange<Float>? = null,
-            intRange: IntRange? = null,
-        ) {
-            this[key] = TransferKey(category, TransferSpec(type, allowed, floatRange, intRange))
-        }
-
-        // Audio quality and downloads.
-        put(KEY_QUALITY_WIFI, TransferCategory.QUALITY, TransferType.STRING, quality)
-        put(KEY_QUALITY_CELLULAR, TransferCategory.QUALITY, TransferType.STRING, quality)
-        put(KEY_QUALITY_DOWNLOAD, TransferCategory.QUALITY, TransferType.STRING, downloadQuality)
-        put(KEY_UPGRADE_LENGTH_SLACK_SECONDS, TransferCategory.QUALITY, TransferType.INT)
-        put(KEY_WIFI_ONLY_DOWNLOADS, TransferCategory.QUALITY, TransferType.BOOLEAN)
-        put(KEY_AUTO_REDOWNLOAD_MV_SOUND, TransferCategory.QUALITY, TransferType.BOOLEAN)
-        put(KEY_AUTO_REPLACE_HQ_DOWNLOADS, TransferCategory.QUALITY, TransferType.BOOLEAN)
-        put(KEY_AUTO_PREFETCH_HQ, TransferCategory.QUALITY, TransferType.BOOLEAN)
-        put(KEY_HQ_PREFETCH_LIMIT, TransferCategory.QUALITY, TransferType.INT, intRange = 0..10_000)
-        put(KEY_EXPORT_DOWNLOADS, TransferCategory.QUALITY, TransferType.BOOLEAN)
-
-        // Automix and transitions.
-        put(KEY_CROSSFADE, TransferCategory.AUTOMIX, TransferType.INT)
-        put(KEY_SMART_FADE, TransferCategory.AUTOMIX, TransferType.BOOLEAN)
-        put(KEY_AUTOMIX_VIDEOS, TransferCategory.AUTOMIX, TransferType.BOOLEAN)
-        put(KEY_AUTOMIX_PERFORMANCE_MODE, TransferCategory.AUTOMIX, TransferType.STRING, automix)
-        put(KEY_SKIP_SILENCE, TransferCategory.AUTOMIX, TransferType.BOOLEAN)
-        put(KEY_SMART_VERSION_ALIGNMENT, TransferCategory.AUTOMIX, TransferType.BOOLEAN)
-
-        // Lyrics: providers, order, translation and timing. No API keys.
-        put(KEY_LYRICS_BLUR, TransferCategory.LYRICS, TransferType.BOOLEAN)
-        put(KEY_LYRICS_OFFSET_MS, TransferCategory.LYRICS, TransferType.INT)
-        put(KEY_TRANSLATION_LANGUAGE, TransferCategory.LYRICS, TransferType.STRING)
-        put(KEY_SYNCED_LYRICS, TransferCategory.LYRICS, TransferType.BOOLEAN)
-        put(KEY_LYRICS_SOURCES, TransferCategory.LYRICS, TransferType.STRING_LIST, lyrics)
-        put(KEY_LYRICS_SOURCES_SEEN, TransferCategory.LYRICS, TransferType.STRING_LIST, lyrics)
-        put(KEY_LYRICS_SOURCE_ORDER, TransferCategory.LYRICS, TransferType.STRING_LIST, lyrics)
-        put(KEY_PRIORITIZE_SYLLABLE_SYNC, TransferCategory.LYRICS, TransferType.BOOLEAN)
-        put(KEY_GEMINI_TRANSLATION, TransferCategory.LYRICS, TransferType.BOOLEAN)
-        put(KEY_PREFETCH_TRANSLATION, TransferCategory.LYRICS, TransferType.BOOLEAN)
-        put(KEY_KEEP_DOWNLOAD_TRANSLATION, TransferCategory.LYRICS, TransferType.BOOLEAN)
-        put(KEY_AUTO_TRANSLATE_LYRICS, TransferCategory.LYRICS, TransferType.BOOLEAN)
-        put(KEY_AUTO_LYRICS_TIMING, TransferCategory.LYRICS, TransferType.BOOLEAN)
-        put(KEY_AI_LYRICS, TransferCategory.LYRICS, TransferType.BOOLEAN)
-        put(KEY_AI_TIMING_AHEAD, TransferCategory.LYRICS, TransferType.BOOLEAN)
-        put(KEY_LOCK_SCREEN_LYRICS, TransferCategory.LYRICS, TransferType.BOOLEAN)
-
-        // Playback, including the equalizer and the audio pipeline.
-        put(KEY_RESUME_ON_HEADPHONES, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
-        put(KEY_PERSONALISED_AUTOPLAY, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
-        put(KEY_AUTOPLAY, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
-        put(KEY_VIDEO_RADIO, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
-        put(KEY_PREFER_MUSIC_ONLY, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
-        put(KEY_SKIP_NON_MUSIC_PARTS, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
-        put(KEY_SKIP_SPONSOR_PARTS, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
-        put(KEY_OUTPUT_PCM_MODE, TransferCategory.PLAYBACK, TransferType.STRING, pcm)
-        put(KEY_PREFER_USB_DAC, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
-        put(KEY_LOUDNESS_NORMALIZATION, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
-        put(KEY_LOUDNESS_OFF_ON_SPEAKER, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
-        put(KEY_DOLBY_ATMOS, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
-        put(KEY_SPATIAL_AUDIO, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
-        put(KEY_EQ_ENABLED, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
-        put(KEY_EQ_MODE, TransferCategory.PLAYBACK, TransferType.STRING, eqMode)
-        put(KEY_EQ_TONE_X, TransferCategory.PLAYBACK, TransferType.INT)
-        put(KEY_EQ_TONE_Y, TransferCategory.PLAYBACK, TransferType.INT)
-        put(KEY_EQ_FOCUSED, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
-        put(
-            KEY_EQ_BALANCE,
-            TransferCategory.PLAYBACK,
-            TransferType.FLOAT,
-            floatRange = -1f..1f,
-        )
-        put(
-            KEY_EQ_BANDS,
-            TransferCategory.PLAYBACK,
-            TransferType.FLOAT_LIST,
-            floatRange = -EqLayout.MANUAL_RANGE_DB..EqLayout.MANUAL_RANGE_DB,
-        )
-        put(
-            KEY_SPEED,
-            TransferCategory.PLAYBACK,
-            TransferType.FLOAT,
-            floatRange = PlaybackParametersMath.MIN_SPEED..PlaybackParametersMath.MAX_SPEED,
-        )
-        put(KEY_PITCH, TransferCategory.PLAYBACK, TransferType.INT)
-        put(KEY_SHUFFLE_ENABLED, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
-        put(
-            KEY_REPEAT_MODE,
-            TransferCategory.PLAYBACK,
-            TransferType.INT,
-            intRange = PlaybackParametersMath.MIN_REPEAT_MODE..PlaybackParametersMath.MAX_REPEAT_MODE,
-        )
-        put(KEY_DONT_REPEAT_SUGGESTIONS, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
-        put(KEY_SWIPE_TO_PLAY_NEXT, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
-        put(KEY_STOP_ON_TASK_REMOVED, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
-        put(KEY_SHOW_QUEUE_HISTORY, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
-        put(KEY_FILTER_NON_MUSIC_AUDIO, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
-        put(KEY_AUTO_DOWNLOAD_LIKED, TransferCategory.PLAYBACK, TransferType.BOOLEAN)
-
-        // What the screen looks like and how the player is laid out.
-        put(KEY_THEME, TransferCategory.DISPLAY, TransferType.STRING, theme)
-        put(KEY_REDUCE_ANIMATION, TransferCategory.DISPLAY, TransferType.BOOLEAN)
-        put(KEY_LOW_POWER_MODE, TransferCategory.DISPLAY, TransferType.STRING, lowPower)
-        put(KEY_REDUCE_BLUR, TransferCategory.DISPLAY, TransferType.BOOLEAN)
-        put(KEY_LIQUID_GLASS, TransferCategory.DISPLAY, TransferType.BOOLEAN)
-        put(KEY_FULL_BLEED_ARTWORK, TransferCategory.DISPLAY, TransferType.BOOLEAN)
-        put(KEY_LEGACY_MESH_GRADIENT, TransferCategory.DISPLAY, TransferType.BOOLEAN)
-        put(KEY_ANIMATED_CANVAS, TransferCategory.DISPLAY, TransferType.BOOLEAN)
-        put(KEY_CANVAS_OVER_CELLULAR, TransferCategory.DISPLAY, TransferType.BOOLEAN)
-        put(KEY_VIDEO_CANVAS, TransferCategory.DISPLAY, TransferType.BOOLEAN)
-        put(KEY_SPOTIFY_CANVAS_AUTO_HIDE, TransferCategory.DISPLAY, TransferType.BOOLEAN)
-        put(KEY_PRIORITIZE_SPOTIFY_CANVAS, TransferCategory.DISPLAY, TransferType.BOOLEAN)
-        put(KEY_HIGH_PERFORMANCE_MODE, TransferCategory.DISPLAY, TransferType.BOOLEAN)
-        put(KEY_PERFORMANCE_REFRESH_RATE, TransferCategory.DISPLAY, TransferType.INT)
-        put(KEY_HIDE_VOLUME_BAR, TransferCategory.DISPLAY, TransferType.BOOLEAN)
-        put(KEY_HIDE_STATUS_BAR_IN_PLAYER, TransferCategory.DISPLAY, TransferType.BOOLEAN)
-        put(KEY_HIDE_SONG_STATUS, TransferCategory.DISPLAY, TransferType.BOOLEAN)
-        put(KEY_NERD_STATS, TransferCategory.DISPLAY, TransferType.BOOLEAN)
-        put(KEY_WIDGET_OPENS_PLAYER, TransferCategory.DISPLAY, TransferType.BOOLEAN)
-    }
-
-    /**
-     * The whitelisted preferences as they are on this device, for an export.
-     *
-     * Built from the live values rather than from the preference file, because
-     * most settings are only written when they are first changed. A key still
-     * sitting on its default is absent from the file, and exporting only what
-     * is stored would let the receiving phone keep its own non-default value —
-     * the opposite of "send my settings". Metadata with no flow (the lyrics
-     * source list this build has shown) falls back to what is stored, or to
-     * this build's offered list.
-     */
-    internal fun transferablePrefs(): Map<String, Any?> {
-        if (!this::prefs.isInitialized) return emptyMap()
-        return TRANSFERABLE_KEYS.keys
-            .associateWith { transferableValue(it) }
-            .filterValues { it != null }
-    }
-
-    private fun transferableValue(key: String): Any? = when (key) {
-        KEY_QUALITY_WIFI -> audioQualityWifi.value.name
-        KEY_QUALITY_CELLULAR -> audioQualityCellular.value.name
-        KEY_QUALITY_DOWNLOAD -> downloadQuality.value.name
-        KEY_UPGRADE_LENGTH_SLACK_SECONDS -> upgradeLengthSlackSeconds.value
-        KEY_WIFI_ONLY_DOWNLOADS -> wifiOnlyDownloads.value
-        KEY_AUTO_REDOWNLOAD_MV_SOUND -> autoRedownloadMvSound.value
-        KEY_AUTO_REPLACE_HQ_DOWNLOADS -> autoReplaceHqDownloads.value
-        KEY_AUTO_PREFETCH_HQ -> autoPrefetchHq.value
-        KEY_HQ_PREFETCH_LIMIT -> hqPrefetchLimit.value
-        KEY_EXPORT_DOWNLOADS -> exportDownloads.value
-
-        KEY_CROSSFADE -> crossfadeSeconds.value
-        KEY_SMART_FADE -> smartFadeEnabled.value
-        KEY_AUTOMIX_VIDEOS -> automixVideos.value
-        KEY_AUTOMIX_PERFORMANCE_MODE -> automixPerformanceMode.value.name
-        KEY_SKIP_SILENCE -> skipSilence.value
-        KEY_SMART_VERSION_ALIGNMENT -> smartVersionAlignment.value
-
-        KEY_LYRICS_BLUR -> lyricsBlur.value
-        KEY_LYRICS_OFFSET_MS -> lyricsOffsetMs.value
-        KEY_TRANSLATION_LANGUAGE -> translationLanguage.value
-        KEY_SYNCED_LYRICS -> syncedLyrics.value
-        KEY_LYRICS_SOURCES -> lyricsSources.value.joinToString(",") { it.name }
-        KEY_LYRICS_SOURCES_SEEN -> prefs.getString(KEY_LYRICS_SOURCES_SEEN, null)
-            ?.takeIf { it.isNotBlank() }
-            ?: LyricsSource.offered.joinToString(",") { it.name }
-        KEY_LYRICS_SOURCE_ORDER -> lyricsSourceOrder.value.joinToString(",") { it.name }
-        KEY_PRIORITIZE_SYLLABLE_SYNC -> prioritizeSyllableSync.value
-        KEY_GEMINI_TRANSLATION -> geminiTranslation.value
-        KEY_PREFETCH_TRANSLATION -> prefetchTranslation.value
-        KEY_KEEP_DOWNLOAD_TRANSLATION -> keepDownloadTranslation.value
-        KEY_AUTO_TRANSLATE_LYRICS -> autoTranslateLyrics.value
-        KEY_AUTO_LYRICS_TIMING -> autoLyricsTiming.value
-        KEY_AI_LYRICS -> aiLyrics.value
-        KEY_AI_TIMING_AHEAD -> aiTimingAhead.value
-        KEY_LOCK_SCREEN_LYRICS -> lockScreenLyrics.value
-
-        KEY_RESUME_ON_HEADPHONES -> resumeOnHeadphones.value
-        KEY_PERSONALISED_AUTOPLAY -> personalisedAutoplay.value
-        KEY_AUTOPLAY -> autoplay.value
-        KEY_VIDEO_RADIO -> videoRadio.value
-        KEY_PREFER_MUSIC_ONLY -> preferMusicOnly.value
-        KEY_SKIP_NON_MUSIC_PARTS -> skipNonMusicParts.value
-        KEY_SKIP_SPONSOR_PARTS -> skipSponsorParts.value
-        KEY_OUTPUT_PCM_MODE -> outputPcmMode.value.name
-        KEY_PREFER_USB_DAC -> preferUsbDac.value
-        KEY_LOUDNESS_NORMALIZATION -> loudnessNormalization.value
-        KEY_LOUDNESS_OFF_ON_SPEAKER -> loudnessOffOnSpeaker.value
-        KEY_DOLBY_ATMOS -> dolbyAtmos.value
-        KEY_SPATIAL_AUDIO -> spatialAudio.value
-        KEY_EQ_ENABLED -> equalizerEnabled.value
-        KEY_EQ_MODE -> equalizerMode.value.name
-        KEY_EQ_TONE_X -> equalizerToneX.value
-        KEY_EQ_TONE_Y -> equalizerToneY.value
-        KEY_EQ_FOCUSED -> equalizerFocused.value
-        KEY_EQ_BALANCE -> equalizerBalance.value
-        KEY_EQ_BANDS -> equalizerBands.value.joinToString(",")
-        KEY_SPEED -> playbackSpeed.value
-        KEY_PITCH -> pitchSemitones.value
-        KEY_SHUFFLE_ENABLED -> shuffleEnabled.value
-        KEY_REPEAT_MODE -> repeatMode.value
-        KEY_DONT_REPEAT_SUGGESTIONS -> dontRepeatSuggestions.value
-        KEY_SWIPE_TO_PLAY_NEXT -> swipeToPlayNext.value
-        KEY_STOP_ON_TASK_REMOVED -> stopOnTaskRemoved.value
-        KEY_SHOW_QUEUE_HISTORY -> showQueueHistory.value
-        KEY_FILTER_NON_MUSIC_AUDIO -> filterNonMusicAudio.value
-        KEY_AUTO_DOWNLOAD_LIKED -> autoDownloadLiked.value
-
-        KEY_THEME -> themeMode.value.name
-        KEY_REDUCE_ANIMATION -> reduceAnimation.value
-        KEY_LOW_POWER_MODE -> lowPowerMode.value.name
-        KEY_REDUCE_BLUR -> reduceDynamicBlur.value
-        KEY_LIQUID_GLASS -> liquidGlass.value
-        KEY_FULL_BLEED_ARTWORK -> fullBleedArtwork.value
-        KEY_LEGACY_MESH_GRADIENT -> legacyMeshGradient.value
-        KEY_ANIMATED_CANVAS -> animatedCanvas.value
-        KEY_CANVAS_OVER_CELLULAR -> canvasOverCellular.value
-        KEY_VIDEO_CANVAS -> videoCanvas.value
-        KEY_SPOTIFY_CANVAS_AUTO_HIDE -> spotifyCanvasAutoHide.value
-        KEY_PRIORITIZE_SPOTIFY_CANVAS -> prioritizeSpotifyCanvas.value
-        KEY_HIGH_PERFORMANCE_MODE -> highPerformanceMode.value
-        KEY_PERFORMANCE_REFRESH_RATE -> performanceRefreshRate.value
-        KEY_HIDE_VOLUME_BAR -> hideVolumeBar.value
-        KEY_HIDE_STATUS_BAR_IN_PLAYER -> hideStatusBarInPlayer.value
-        KEY_HIDE_SONG_STATUS -> hideSongStatus.value
-        KEY_NERD_STATS -> showNerdStats.value
-        KEY_WIDGET_OPENS_PLAYER -> widgetOpensPlayer.value
-
-        else -> prefs.all[key]
-    }
-
-    /**
-     * Writes only the keys in [values] that are on the whitelist and carry the
-     * type they are declared with. Everything else is counted and skipped.
-     *
-     * A merge rather than [importPrefs]'s replace: this file says nothing about
-     * history, accounts or downloads, so clearing the preference file would
-     * quietly sign the listener out of services the transfer never mentioned.
-     */
-    internal fun applyTransferablePrefs(values: Map<String, Any?>): TransferApplyResult {
-        if (!this::prefs.isInitialized) return TransferApplyResult(0, values.size)
-        val accepted = linkedMapOf<String, Any>()
-        var skipped = 0
-        for ((key, raw) in values) {
-            val spec = TRANSFERABLE_KEYS[key]?.spec
-            val normalized = spec?.normalize(raw)
-            if (normalized == null) {
-                skipped++
-            } else {
-                accepted[key] = normalized
-            }
-        }
-        if (accepted.isNotEmpty()) {
-            prefs.edit().apply {
-                accepted.forEach { (key, value) ->
-                    when (value) {
-                        is Boolean -> putBoolean(key, value)
-                        is Int -> putInt(key, value)
-                        is Long -> putLong(key, value)
-                        is Float -> putFloat(key, value)
-                        is String -> putString(key, value)
-                        is Set<*> -> putStringSet(key, value.filterIsInstance<String>().toSet())
-                    }
-                }
-            }.apply()
-            reload()
-        }
-        return TransferApplyResult(accepted.size, skipped)
-    }
-
-    /** The proxy as it stands, credentials included, for [SettingsTransfer]. */
-    fun currentProxyConfig(): ProxyConfig = ProxyConfig(
-        mode = proxyMode.value,
-        host = proxyHost.value,
-        port = proxyPort.value,
-        backupHost = proxyBackupHost.value,
-        backupPort = proxyBackupPort.value,
-        username = proxyUsername.value,
-        password = proxyPassword.value,
-        scope = proxyScope.value,
-    ).normalized()
+    fun currentProxyConfig(): ProxyConfig =
+        KoAppSettings.currentProxyConfig() // [KO] proxy
 
     /**
      * Credentials, not configuration. They live in [AuthStore]'s encrypted
@@ -3652,7 +2241,7 @@ object AppSettings {
      * an older build, where these names may appear in plain preferences.
      * See [exportPrefs] and [migrateSecretsToAuthStore].
      */
-    private val SECRETS = setOf(
+    internal val SECRETS = setOf(
         KEY_LASTFM_SESSION_KEY,
         KEY_LASTFM_API_KEY,
         KEY_LASTFM_SECRET,
@@ -3684,7 +2273,7 @@ object AppSettings {
      * them would either lose a repair that had already been decided or make the
      * next read throw on a value another file wrote under the same name.
      */
-    private val DEVICE_LOCAL = setOf(
+    internal val DEVICE_LOCAL = setOf(
         "downloaded_tracks",
         "downloaded_tracks_metadata",
         "downloaded_collections",
@@ -3713,12 +2302,6 @@ object AppSettings {
 
     private const val DEFAULT_PERFORMANCE_REFRESH_RATE = 120
 
-    /** Shared with the widgets' fallback read, so both halves name the same file. */
-    private const val PREFS_NAME = "bitchord_settings"
-
-    /** Diagnostic tag shared with the rest of the playback trail. */
-    private const val TAG = "BitChord"
-
     private fun normalizePerformanceRefreshRate(value: Int): Int =
         value.takeIf { it in 50..240 } ?: DEFAULT_PERFORMANCE_REFRESH_RATE
 
@@ -3727,22 +2310,16 @@ object AppSettings {
 
     private const val KEY_QUALITY_LEGACY = "audio_quality"
     private const val KEY_QUALITY_WIFI = "audio_quality_wifi"
-    private const val KEY_QUALITY_CELLULAR = "audio_quality_cellular"
+    internal const val KEY_QUALITY_CELLULAR = "audio_quality_cellular"
+    const val DEFAULT_CONTENT_COUNTRY = "KR" // [KO] discovery
     private const val KEY_UPGRADE_LENGTH_SLACK_SECONDS = "upgrade_length_slack_seconds"
     private const val KEY_QUALITY_DOWNLOAD = "audio_quality_download"
     private const val KEY_WIFI_ONLY_DOWNLOADS = "wifi_only_downloads"
-    private const val KEY_AUTO_REDOWNLOAD_MV_SOUND = "auto_redownload_mv_sound"
-    private const val KEY_AUTO_REPLACE_HQ_DOWNLOADS = "auto_replace_hq_downloads"
-    private const val KEY_AUTO_PREFETCH_HQ = "auto_prefetch_hq"
-    private const val KEY_HQ_PREFETCH_LIMIT = "hq_prefetch_limit"
     private const val KEY_EXPORT_DOWNLOADS = "export_downloads"
     private const val KEY_CROSSFADE = "crossfade_seconds"
     private const val KEY_SMART_FADE = "smart_fade_enabled"
-    private const val KEY_AUTOMIX_VIDEOS = "automix_videos"
     private const val KEY_AUTOMIX_PERFORMANCE_MODE = "automix_performance_mode"
     private const val KEY_SKIP_SILENCE = "skip_silence"
-    private const val KEY_PRIVATE_LISTENING = "private_listening"
-    private const val KEY_PRIVATE_LISTENING_SINCE = "private_listening_since"
     private const val KEY_OUTPUT_PCM_MODE = "output_pcm_mode"
     private const val KEY_PREFER_USB_DAC = "prefer_usb_dac"
     private const val KEY_LOUDNESS_NORMALIZATION = "loudness_normalization"
@@ -3757,33 +2334,24 @@ object AppSettings {
     private const val KEY_EQ_BALANCE = "equalizer_balance"
     private const val KEY_EQ_BANDS = "equalizer_bands"
     private const val KEY_SPEED = "playback_speed"
-    private const val KEY_PITCH = "playback_pitch_semitones"
     private const val KEY_THEME = "theme_mode"
-    private const val KEY_AUTOPLAY = "autoplay"
-    private const val KEY_AUTOPLAY_BEFORE_REPEAT_ALL = "autoplay_before_repeat_all"
-    private const val KEY_PERSONALISED_AUTOPLAY = "personalised_autoplay"
-    private const val KEY_VIDEO_RADIO = "video_radio"
+    internal const val KEY_AUTOPLAY = "autoplay"
     private const val KEY_SHUFFLE_ENABLED = "shuffle_enabled"
-    private const val KEY_NOTIFICATION_PERMISSION_ASKED = "notification_permission_asked"
     private const val KEY_REPEAT_MODE = "repeat_mode"
     private const val KEY_NERD_STATS = "show_nerd_stats"
     private const val KEY_CACHE_LIMIT = "audio_cache_limit_bytes"
     private const val KEY_REDUCE_ANIMATION = "reduce_animation"
-    private const val KEY_LOW_POWER_MODE = "low_power_mode"
-    private const val KEY_ONBOARDING_COMPLETE = "onboarding_complete"
+    internal const val KEY_ONBOARDING_COMPLETE = "onboarding_complete"
     private const val KEY_HIGH_PERFORMANCE_MODE = "high_performance_mode"
     private const val KEY_PERFORMANCE_REFRESH_RATE = "performance_refresh_rate"
     private const val KEY_STOP_ON_TASK_REMOVED = "stop_on_task_removed"
     private const val KEY_HIDE_VOLUME_BAR = "hide_volume_bar"
     private const val KEY_HIDE_STATUS_BAR_IN_PLAYER = "hide_status_bar_in_player"
     private const val KEY_HIDE_SONG_STATUS = "hide_song_status"
-    private const val KEY_WIDGET_OPENS_PLAYER = "widget_opens_player"
     private const val KEY_SHOW_QUEUE_HISTORY = "show_queue_history"
     private const val KEY_SWIPE_TO_PLAY_NEXT = "swipe_to_play_next"
     private const val KEY_DONT_REPEAT_SUGGESTIONS = "dont_repeat_suggestions"
-    private const val KEY_PREFER_MUSIC_ONLY = "prefer_music_only"
-    private const val KEY_SKIP_NON_MUSIC_PARTS = "skip_non_music_parts"
-    private const val KEY_SKIP_SPONSOR_PARTS = "skip_sponsor_parts"
+    internal const val KEY_PREFER_MUSIC_ONLY = "prefer_music_only"
     private const val KEY_SMART_VERSION_ALIGNMENT = "smart_version_alignment"
     private const val KEY_REDUCE_BLUR = "reduce_dynamic_blur"
     private const val KEY_LIQUID_GLASS = "liquid_glass"
@@ -3794,7 +2362,6 @@ object AppSettings {
     private const val KEY_CANVAS_OVER_CELLULAR = "canvas_over_cellular"
     private const val KEY_SPOTIFY_CANVAS_AUTO_HIDE = "spotify_canvas_auto_hide"
     private const val KEY_PRIORITIZE_SPOTIFY_CANVAS = "prioritize_spotify_canvas"
-    private const val KEY_VIDEO_CANVAS = "ko_video_canvas"
     private const val KEY_SIGNATURE_API_ENABLED = "signature_api_enabled"
     private const val KEY_SIGNATURE_API_URL = "signature_api_url"
     private const val KEY_FULL_BLEED_ARTWORK = "full_bleed_artwork"
@@ -3804,31 +2371,8 @@ object AppSettings {
     private const val KEY_LYRICS_SOURCES = "lyrics_sources"
     private const val KEY_LYRICS_SOURCES_SEEN = "lyrics_sources_seen"
     private const val KEY_LYRICS_SOURCE_ORDER = "lyrics_source_order"
-    private const val KEY_PRIORITIZE_SYLLABLE_SYNC = "prioritize_syllable_sync"
-    private const val KEY_PAXSENIX_API_KEY = "paxsenix_api_key"
-    private const val KEY_GEMINI_API_KEY = "gemini_api_key"
-    private const val KEY_GEMINI_TRANSLATION = "gemini_translation"
-    private const val KEY_PREFETCH_TRANSLATION = "prefetch_translation"
-    private const val KEY_KEEP_DOWNLOAD_TRANSLATION = "keep_download_translation"
-    private const val KEY_AUTO_DOWNLOAD_LIKED = "auto_download_liked"
-    private const val KEY_AUTO_TRANSLATE_LYRICS = "auto_translate_lyrics"
-    private const val KEY_AUTO_LYRICS_TIMING = "auto_lyrics_timing"
-    private const val KEY_AI_LYRICS = "ko_ai_lyrics"
-    private const val KEY_AI_TIMING_AHEAD = "ko_ai_timing_ahead"
-    private const val KEY_SYNC_SAFETY_NEXT_PREP = "ko_sync_safety_next_prep"
-    private const val KEY_SYNC_SAFETY_DOWNLOAD_RECHECK = "ko_sync_safety_download_recheck"
-    private const val KEY_SYNC_SAFETY_HQ_SYNC = "ko_sync_safety_hq_sync"
-    private const val KEY_SYLLABLE_DEFAULT_MIGRATED = "ko_syllable_default_migrated"
-    private const val KEY_LOCK_SCREEN_LYRICS = "lock_screen_lyrics"
-    private const val KEY_CONTENT_COUNTRY = "ko_content_country"
-    private const val KEY_CHARTS_COUNTRY = "ko_charts_country"
-    private const val KEY_COVER_CHANNELS = "ko_cover_channels"
-    private const val KEY_COVER_SINGERS = "ko_cover_singers"
-    private const val KEY_HIDDEN_EXPLORE_CATEGORIES = "ko_hidden_explore_categories"
-    private const val KEY_HIDDEN_EXPLORE_SEEDED_V1 = "hidden_explore_seeded_v1"
-    private const val MAX_COVER_SINGERS = 400
-    private const val KEY_RESUME_ON_HEADPHONES = "ko_resume_on_headphones"
-    const val DEFAULT_CONTENT_COUNTRY = "KR"
+    internal const val KEY_PRIORITIZE_SYLLABLE_SYNC = "prioritize_syllable_sync"
+    internal const val KEY_PAXSENIX_API_KEY = "paxsenix_api_key"
     private const val KEY_REPLAY_GENRES = "replay_genres"
     private const val KEY_FILTER_NON_MUSIC_AUDIO = "filter_non_music_audio"
     private const val KEY_SHOW_CACHE_FOLDER = "show_cache_folder"
@@ -3846,13 +2390,6 @@ object AppSettings {
     private const val KEY_SMB_SHARE = "smb_share"
     private const val KEY_SMB_BASE_PATH = "smb_base_path"
     private const val KEY_SMB_USERNAME = "smb_username"
-    private const val KEY_PROXY_MODE = "proxy_mode"
-    private const val KEY_PROXY_HOST = "proxy_host"
-    private const val KEY_PROXY_PORT = "proxy_port"
-    private const val KEY_PROXY_BACKUP_HOST = "proxy_backup_host"
-    private const val KEY_PROXY_BACKUP_PORT = "proxy_backup_port"
-    private const val KEY_PROXY_USERNAME = "proxy_username"
-    private const val KEY_PROXY_SCOPE = "proxy_scope"
     private const val KEY_PINNED_PLAYLISTS = "pinned_playlists"
 
     private const val KEY_LASTFM_ENABLED = "lastfm_enabled"
@@ -3890,43 +2427,11 @@ object AppSettings {
     private const val KEY_LAST_VERSION_CODE = "last_version_code"
 }
 
-/**
- * The cellular ceiling an install gets when it has never stored one.
- *
- * The old default was Lossless and was only written down when the listener
- * changed it, so "no stored key" means either a fresh install (which gets the
- * new [AudioQuality.HIGH] default) or an existing install that has always been
- * on Lossless (which keeps it). Whether any settings at all have been written
- * tells the two apart: [migrateCellularQualityDefault] is the only caller and
- * runs before this launch writes anything.
- */
 internal fun cellularQualityDefault(existingInstall: Boolean): AudioQuality =
-    if (existingInstall) AudioQuality.LOSSLESS else AudioQuality.HIGH
+    com.music.bitchord.ko.cellularQualityDefault(existingInstall) // [KO] cellular quality
 
-/**
- * Off for an install that updated into the feature; on for a fresh one.
- *
- * [existingInstall] is whether the preference file already held settings before
- * this launch wrote any — not whether onboarding is complete. A normal app
- * update has finished onboarding, so the onboarding flag cannot stand in for
- * this.
- */
-internal fun hqAutomationDefault(existingInstall: Boolean): Boolean = !existingInstall
+internal fun hqAutomationDefault(existingInstall: Boolean): Boolean =
+    com.music.bitchord.ko.hqAutomationDefault(existingInstall) // [KO] hq automation
 
-/**
- * The music-only preference when this launch has never stored one.
- *
- * The catalogue song release is what the app is for, so a genuinely fresh
- * install (no settings written before this launch) starts on. An install that
- * already had settings was running with the old default, which was off, so an
- * absent key stays off rather than silently flipping that listener's playback.
- * A stored [Boolean] — including the `false` a listener chose — is kept exactly
- * as written; only the absence is defaulted.
- *
- * [existingInstall] is whether the preference file already held settings before
- * this launch wrote any — not whether onboarding is complete. A normal app
- * update has finished onboarding, so the onboarding flag cannot stand in for
- * this.
- */
 internal fun preferMusicOnlyDefault(stored: Boolean?, existingInstall: Boolean): Boolean =
-    stored ?: !existingInstall
+    com.music.bitchord.ko.preferMusicOnlyDefault(stored, existingInstall) // [KO] prefer music only
