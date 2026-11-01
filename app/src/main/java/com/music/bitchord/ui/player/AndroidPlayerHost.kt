@@ -21,6 +21,7 @@ import com.music.bitchord.data.lyrics.LyricsTranslation
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.LastPlayerScreen
+import com.music.bitchord.download.Downloads
 import com.music.bitchord.playback.AudioOutputStatus
 import com.music.bitchord.playback.AudioRouting
 import com.music.bitchord.playback.cast.CastController
@@ -35,6 +36,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.withContext
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -157,8 +159,24 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
         trackId: String,
         lines: List<LyricLine>,
         targetLanguageTag: String,
-    ): LyricsTranslationResult =
-        when (val result = LyricsTranslation.translate(trackId, lines, targetLanguageTag)) {
+    ): LyricsTranslationResult {
+        // A manual translation of a downloaded song is kept beside the download
+        // when the listener asked for that, so the next offline play finds it.
+        // Streamed songs stay in the ordinary cache.
+        val keep = withContext(Dispatchers.IO) {
+            keepDownloadedTranslation(
+                downloaded = Downloads.isDownloaded(trackId),
+                keepSetting = AppSettings.keepDownloadTranslation.value,
+            )
+        }
+        return when (
+            val result = LyricsTranslation.translate(
+                trackId,
+                lines,
+                targetLanguageTag,
+                keep = keep,
+            )
+        ) {
             is LyricsTranslation.Result.Translated -> LyricsTranslationResult.Translated(
                 lines = result.lines,
                 byGemini = result.engine == LyricsTranslation.Engine.GEMINI,
@@ -166,6 +184,7 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
             is LyricsTranslation.Result.SameLanguage -> LyricsTranslationResult.SameLanguage(result.language)
             LyricsTranslation.Result.Unavailable -> LyricsTranslationResult.Unavailable
         }
+    }
 
     override suspend fun romanizeLyrics(
         trackId: String,
@@ -293,6 +312,14 @@ private class CastAwareVolume(
 
     override fun refresh() = system.refresh()
 }
+
+/**
+ * Whether a translation made now belongs beside the download as well as in the
+ * cache. Only a downloaded song is kept for offline replay, and only while the
+ * "keep downloaded translations" setting is on.
+ */
+internal fun keepDownloadedTranslation(downloaded: Boolean, keepSetting: Boolean): Boolean =
+    downloaded && keepSetting
 
 /**
  * The music stream's volume. Hardware keys and the system panel change it

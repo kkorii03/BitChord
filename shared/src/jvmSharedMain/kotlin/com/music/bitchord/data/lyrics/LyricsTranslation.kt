@@ -20,6 +20,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.serialization.Serializable
@@ -92,6 +93,12 @@ object LyricsTranslation {
     private const val MAX_CACHE_BYTES = 30L * 1024L * 1024L
     private const val MAX_BATCH_CHARS = 3_500
     private const val MAX_PARALLEL_REQUESTS = 2
+    // The automatic and manual translation paths leave the button loading until
+    // one of them answers. Five Gemini models at 40 s each and then Google's
+    // 12 s is over three minutes on a slow proxy; this budget gives one Gemini
+    // attempt and the Google fallback room while still ending the wait. A kept
+    // answer is still used when the deadline passes (see [translate]).
+    internal const val TRANSLATION_DEADLINE_MS = 60_000L
     // Input Tools changes ASCII digits to the destination script, so match the
     // private-use wrapper rather than assuming the counter remains ASCII.
     // Translations of downloaded songs, kept out of reach of the cache trim and
@@ -272,7 +279,7 @@ object LyricsTranslation {
             // Anything short of a complete, line-for-line answer from either
             // engine falls back to whatever was kept, so the button never
             // stops working offline.
-            else -> resolve(trackId, slots, target) ?: kept
+            else -> withinTranslationDeadline { resolve(trackId, slots, target) } ?: kept
         } ?: return Result.Unavailable
         if (keep && entry !== kept) writeEntry(keepDir, KEPT_DIRECTORY, keptKey, entry, MAX_KEPT_BYTES)
 
@@ -287,6 +294,16 @@ object LyricsTranslation {
             )
         }
     }
+
+    /**
+     * Runs [block] under the translation request budget. Null means the budget
+     * ran out, which callers treat like any other unavailable answer; a kept
+     * translation is tried before this and still wins afterwards.
+     */
+    internal suspend fun <T> withinTranslationDeadline(
+        timeoutMs: Long = TRANSLATION_DEADLINE_MS,
+        block: suspend () -> T,
+    ): T? = withTimeoutOrNull(timeoutMs) { block() }
 
     /** Gemini where it is set up and answers in full, Google Translate otherwise. */
     private suspend fun resolve(
@@ -408,11 +425,13 @@ object LyricsTranslation {
 
         val target = targetLanguageTag.trim().ifBlank { "en" }
         val batches = batches(slots)
-        val answers = coroutineScope {
-            batches.chunked(MAX_PARALLEL_REQUESTS).flatMap { group ->
-                group.map { batch -> async { requestRomanizationBatch(batch, target) } }.awaitAll()
+        val answers = withinTranslationDeadline {
+            coroutineScope {
+                batches.chunked(MAX_PARALLEL_REQUESTS).flatMap { group ->
+                    group.map { batch -> async { requestRomanizationBatch(batch, target) } }.awaitAll()
+                }
             }
-        }
+        } ?: return RomanizationResult.Unavailable
         if (answers.any { it == null }) return RomanizationResult.Unavailable
         val complete = answers.filterNotNull()
         val source = complete
