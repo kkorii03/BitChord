@@ -1,0 +1,18 @@
+﻿BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/telegram.
+폰 실측(11-02): 정승환 '0+0' Cover(bVp6tXFoCVs) 가사 검색어가 'query variants … found at variant 1/1 (title='00', artist='')' — 제목 '0+0' 이 '00' 으로 정리되고 아티스트가 비어, 엉뚱하거나 맞추기 어려운 가사(72줄 중 17줄만 들림)를 잡았다.
+할 일: shared/.../lyrics/LyricsQuery.kt(forLyricsSearch)와 LyricsQueryVariants.kt 에서
+① 숫자·기호가 제목의 핵심인 짧은 제목('0+0', '+', '1+1', '7/11', '#1', '24/7', '#Hashtag')은 기호를 지우지 않은 원문 변형을 첫 변형으로 유지(기존 정리 변형은 다음 순서).
+② 커버 제목에서 원곡 가수를 찾을 수 있으면 아티스트를 비우지 않는다('(원곡 : 한로로)', '원곡: X', 'orig. X', '(Original by X)' 등 한국어·영어 표기). 기존 CoverTitles 파서를 재사용·확장.
+③ 아티스트가 빈 검색은 제목만으로 다른 곡을 잡기 쉬우므로, 아티스트를 알 수 있는 변형이 있으면 그것을 먼저.
+테스트(고치기 전 실패): '정승환 '0+0' Cover (원곡 : 한로로)' → 첫 변형 title='0+0', artist='한로로'(또는 원곡 가수), 'BTS - 2!3!' 등 기호 제목 보존, 기존 변형 순서 테스트 유지.
+제약: .github/, keys, *.jks, 서명 수정 금지. 곡 판정(노래 버전 교체) 로직 변경 금지. 싱크 시각 계산 변경 금지. 업스트림 파일 쪼개기 금지.
+마지막 8줄 이내 요약: 수정 / 테스트 / 미해결.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 2
+- **HIGH** `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/cover/CoverTitles.kt:853-855` (used at `:539-545`): the new bare `original(?![a-z])` alternative makes ordinary version brackets like `(Original Mix)`, `(Original Version)`, `(Original Soundtrack)` parse as an original-artist credit (`"Mix"`, `"Version"`, `"Soundtrack"`), and `readCredit` does not reject version words. Consequently `IU - Blueming (Original Mix)` now becomes a Cover with `originalArtist=Mix`, so its lyrics query asks for `blueming` by `Mix` and `isCover` also flips, affecting version-swap logic; fix by accepting bare `original` only with `by`/`artist`/colon, or rejecting credits where `isVersionWord`/`isDescriptor` is true.
+- **MEDIUM** `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/lyrics/LyricsQuery.kt:57-63` with `LyricsQueryVariants.kt:80-84`: `isSymbolicLyricsTitle` treats any `/` or `#` as core-title punctuation, so an ordinary separator title such as `IU / Blueming` now puts the whole raw string (artist included) first (`IU / Blueming`, artist `iu`) instead of the cleaned title; fix by requiring the symbol to be part of the name (e.g. digits on both sides of `/`, no surrounding spaces) before preserving the raw spelling.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
