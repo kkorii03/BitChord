@@ -116,9 +116,14 @@ def fresh_pool(playlists, seed):
     played = {p.stem.split(".")[0] for p in OUT.parent.rglob("*.log")}
     ids = []
     for q in FRESH_SEARCHES:
-        r = subprocess.run([YTDLP, "--flat-playlist", "--print", "id", q], capture_output=True, timeout=300)
-        ids += [("search", l.strip()) for l in r.stdout.decode("utf-8", "replace").splitlines()
-                if re.fullmatch(r"[\w-]{11}", l.strip())]
+        r = subprocess.run([YTDLP, "--flat-playlist", "--print", "%(id)s %(duration)s", q], capture_output=True, timeout=300)
+        for l in r.stdout.decode("utf-8", "replace").splitlines():
+            parts = l.split()
+            # One song, not an hour-long compilation or a short: 1.5-7 minutes
+            # (11-02 round 1 drew three playlist videos with no single lyric).
+            if len(parts) == 2 and re.fullmatch(r"[\w-]{11}", parts[0]) and \
+                    re.fullmatch(r"\d+(\.\d+)?", parts[1]) and 90 <= float(parts[1]) <= 420:
+                ids.append(("search", parts[0]))
     for pid in playlists:
         ids += [(pid, v) for v in playlist_ids(pid)]
     random.Random(seed).shuffle(ids)
