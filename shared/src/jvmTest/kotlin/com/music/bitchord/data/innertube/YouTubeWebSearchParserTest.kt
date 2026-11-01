@@ -5,9 +5,11 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * The anonymous youtube.com search fallback must treat an unreadable body as
- * "no rows" so a failed fallback degrades into the empty Music result instead
- * of failing the whole search page.
+ * The parser itself is forgiving: a body it cannot read yields no rows rather
+ * than throwing, so one odd renderer shape never takes the whole page down.
+ * Transport and body-read failures are kept distinct by [YouTubeWebSearch.songs]
+ * and surfaced to the caller, because a fallback that never answered is not an
+ * empty search result.
  */
 class YouTubeWebSearchParserTest {
 
