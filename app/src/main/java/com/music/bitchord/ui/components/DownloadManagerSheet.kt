@@ -305,26 +305,43 @@ fun DownloadManagerSheet(onDismiss: () -> Unit, modifier: Modifier = Modifier) {
  * The high-quality pass's one line, shown at the top of the Downloads screen.
  *
  * Drawn from the persisted pass state, so it survives the sheet being closed
- * and the process being restarted. Nothing is shown when no pass is running.
+ * and the process being restarted. A finished pass that failed something keeps
+ * its count and a retry here; otherwise nothing is shown when no pass is
+ * running.
  */
 @Composable
 fun HqLibraryProgressLine(modifier: Modifier = Modifier) {
     val progress by HqLibraryUpgrade.progress.collectAsStateWithLifecycle()
-    if (!progress.visible) return
-    Text(
-        text = if (progress.waiting) {
-            stringResource(R.string.hq_library_waiting)
-        } else {
-            stringResource(
-                R.string.hq_library_progress,
-                progress.done,
-                progress.total,
+    val context = LocalContext.current
+    when {
+        progress.failedVisible -> Row(
+            modifier = modifier,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = stringResource(R.string.hq_library_failed, progress.failed),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.error,
             )
-        },
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.primary,
-        modifier = modifier,
-    )
+            TextButton(onClick = { HqLibraryUpgrade.startReplacementPass(context) }) {
+                Text(stringResource(R.string.retry))
+            }
+        }
+        progress.visible -> Text(
+            text = if (progress.waiting) {
+                stringResource(R.string.hq_library_waiting)
+            } else {
+                stringResource(
+                    R.string.hq_library_progress,
+                    progress.done,
+                    progress.total,
+                )
+            },
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = modifier,
+        )
+    }
 }
 
 /**
