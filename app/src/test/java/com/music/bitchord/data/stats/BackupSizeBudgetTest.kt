@@ -1,5 +1,7 @@
 package com.music.bitchord.data.stats
 
+import com.music.bitchord.ko.KoBackup
+
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -29,17 +31,17 @@ class BackupSizeBudgetTest {
             // before, understating the largest legitimate export.
             bucket(first.plusMonths(index.toLong()), withDays = true)
         }
-        val file = Backup.BackupFile(app = "bitchord", version = 2, listening = buckets)
+        val file = KoBackup.BackupFile(app = "bitchord", version = 2, listening = buckets)
 
         val target = Files.createTempFile("bitchord-backup-size", ".json").toFile()
         try {
-            target.outputStream().use { Backup.encodeBackupToStream(file, it) }
+            target.outputStream().use { KoBackup.encodeBackupToStream(file, it) }
 
             assertTrue(
-                "full export was ${target.length()} bytes, cap is ${Backup.MAX_BACKUP_BYTES}",
-                target.length() <= Backup.MAX_BACKUP_BYTES,
+                "full export was ${target.length()} bytes, cap is ${KoBackup.MAX_BACKUP_BYTES}",
+                target.length() <= KoBackup.MAX_BACKUP_BYTES,
             )
-            val restored = target.inputStream().use { Backup.decodeBackupStream(it) }
+            val restored = target.inputStream().use { KoBackup.decodeBackupStream(it) }
             assertEquals(36, restored.listening.size)
         } finally {
             target.delete()
@@ -49,7 +51,7 @@ class BackupSizeBudgetTest {
     @Test(expected = IllegalArgumentException::class)
     fun `a file past the shared cap is refused before decoding`() {
         val tooBig = ByteArray(17) { 'x'.code.toByte() }
-        with(Backup) { Backup.decodeBackupStream(ByteArrayInputStream(tooBig), maxBytes = 16) }
+        with(KoBackup) { KoBackup.decodeBackupStream(ByteArrayInputStream(tooBig), maxBytes = 16) }
     }
 
     private fun bucket(month: YearMonth, withDays: Boolean): StoredBucket {

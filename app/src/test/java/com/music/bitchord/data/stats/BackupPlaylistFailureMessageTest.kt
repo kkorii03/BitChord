@@ -1,5 +1,7 @@
 package com.music.bitchord.data.stats
 
+import com.music.bitchord.ko.KoBackup
+
 import com.music.bitchord.auth.AuthStore
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.SearchHistory
@@ -95,8 +97,8 @@ class BackupPlaylistFailureMessageTest {
 
     @Test
     fun `a playlist write failure names the section the playlist term`() = runBlocking {
-        val text = Backup.encode(
-            Backup.BackupFile(
+        val text = KoBackup.encode(
+            KoBackup.BackupFile(
                 app = "bitchord",
                 version = 2,
                 versionName = "test",
@@ -104,7 +106,7 @@ class BackupPlaylistFailureMessageTest {
             ),
         )
 
-        val result = runCatching { Backup.importText(text) }
+        val result = runCatching { KoBackup.importText(text) }
 
         assertTrue(result.isFailure)
         assertEquals(

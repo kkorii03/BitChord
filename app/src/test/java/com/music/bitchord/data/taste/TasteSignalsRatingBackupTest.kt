@@ -1,7 +1,7 @@
 package com.music.bitchord.data.taste
 
 import com.music.bitchord.data.model.LikeStatus
-import com.music.bitchord.data.stats.Backup
+import com.music.bitchord.ko.KoBackup
 import org.junit.After
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -106,7 +106,7 @@ class TasteSignalsRatingBackupTest {
 
     @Test
     fun `export combines persisted ratings with this session's overrides`() {
-        val (liked, disliked) = Backup.mergeRatedIds(
+        val (liked, disliked) = KoBackup.mergeRatedIds(
             session = mapOf(
                 "session-like" to LikeStatus.LIKE,
                 "session-unlike" to LikeStatus.DISLIKE,
@@ -126,7 +126,7 @@ class TasteSignalsRatingBackupTest {
 
     @Test
     fun `a rating cleared this session is removed from both exported lists`() {
-        val (liked, disliked) = Backup.mergeRatedIds(
+        val (liked, disliked) = KoBackup.mergeRatedIds(
             session = mapOf(
                 "cleared-like" to LikeStatus.INDIFFERENT,
                 "cleared-dislike" to LikeStatus.INDIFFERENT,

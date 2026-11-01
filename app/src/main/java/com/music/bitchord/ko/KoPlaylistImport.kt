@@ -15,7 +15,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.res.stringResource
 import com.music.bitchord.R
 import com.music.bitchord.data.spotify.PlaylistImportMode
-import com.music.bitchord.data.stats.Backup
 import com.music.bitchord.ui.FriendlyError
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -36,7 +35,7 @@ internal class KoPlaylistImportState(
         pending = null
         scope.launch {
             onStatus(
-                Backup.importFrom(context, source, mode).fold(
+                KoBackup.importFrom(context, source, mode).fold(
                     onSuccess = { summary ->
                         if (summary.playlists > 0) {
                             context.getString(

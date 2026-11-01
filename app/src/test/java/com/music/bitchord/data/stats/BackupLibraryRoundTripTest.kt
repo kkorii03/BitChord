@@ -1,5 +1,7 @@
 package com.music.bitchord.data.stats
 
+import com.music.bitchord.ko.KoBackup
+
 import com.music.bitchord.data.model.EntityType
 import com.music.bitchord.data.model.SearchHistoryEntity
 import org.junit.Assert.assertEquals
@@ -24,17 +26,17 @@ class BackupLibraryRoundTripTest {
             entityType = EntityType.TRACK,
             timestamp = 1_700_000_000_000,
         )
-        val file = Backup.BackupFile(
+        val file = KoBackup.BackupFile(
             version = 2,
             versionName = "1.2.3",
             exportedAt = "2026-10-19T00:00:00Z",
             settings = mapOf("theme_mode" to Backup.PrefValue("string", "DARK")),
             localPlaylists = listOf(
-                Backup.BackupPlaylist(
+                KoBackup.BackupPlaylist(
                     id = "sp_local_1",
                     title = "Covers",
                     songs = listOf(
-                        Backup.BackupSong(
+                        KoBackup.BackupSong(
                             videoId = "v1",
                             title = "Cover",
                             artist = "Singer",
@@ -53,7 +55,7 @@ class BackupLibraryRoundTripTest {
             searchHistory = listOf(history),
         )
 
-        val decoded = Backup.decode(Backup.encode(file))
+        val decoded = KoBackup.decode(KoBackup.encode(file))
 
         assertEquals(file, decoded)
         assertEquals("Cover", decoded.localPlaylists.single().songs.single().title)
@@ -76,8 +78,8 @@ class BackupLibraryRoundTripTest {
             }
         """.trimIndent()
 
-        val file = Backup.decode(text)
-        Backup.validate(file)
+        val file = KoBackup.decode(text)
+        KoBackup.validate(file)
 
         assertEquals(1, file.version)
         assertEquals("LIGHT", file.settings["theme_mode"]?.decoded())
@@ -88,7 +90,7 @@ class BackupLibraryRoundTripTest {
 
     @Test(expected = IllegalArgumentException::class)
     fun `a schema from a newer build is refused`() {
-        Backup.validate(Backup.BackupFile(app = "bitchord", version = 4))
+        KoBackup.validate(KoBackup.BackupFile(app = "bitchord", version = 4))
     }
 
 
@@ -96,7 +98,7 @@ class BackupLibraryRoundTripTest {
     fun `schema 3 round trips lyric sheets, sync memory and HQ verdicts`() {
         val overrides = """{"version":1,"songs":{}}"""
         val timing = """{"entries":{"v1":{"syncCheckVersion":1}}}"""
-        val file = Backup.BackupFile(
+        val file = KoBackup.BackupFile(
             app = "bitchord",
             version = 3,
             lyricsOverrides = overrides,
@@ -105,8 +107,8 @@ class BackupLibraryRoundTripTest {
             hqRejected = "v2\u0001source\u0001track",
         )
 
-        val decoded = Backup.decode(Backup.encode(file))
-        Backup.validate(decoded)
+        val decoded = KoBackup.decode(KoBackup.encode(file))
+        KoBackup.validate(decoded)
 
         assertEquals(overrides, decoded.lyricsOverrides)
         assertEquals(timing, decoded.lyricsTiming)
@@ -116,26 +118,26 @@ class BackupLibraryRoundTripTest {
 
     @Test(expected = IllegalArgumentException::class)
     fun `a playlist row without a video id is refused before anything is written`() {
-        val file = Backup.BackupFile(
+        val file = KoBackup.BackupFile(
             app = "bitchord",
             version = 2,
             localPlaylists = listOf(
-                Backup.BackupPlaylist(
+                KoBackup.BackupPlaylist(
                     id = "sp_local_1",
                     title = "Broken",
-                    songs = listOf(Backup.BackupSong(videoId = "")),
+                    songs = listOf(KoBackup.BackupSong(videoId = "")),
                 ),
             ),
         )
 
-        Backup.validate(file)
+        KoBackup.validate(file)
     }
 
     @Test
     fun `a backup within the cap is read whole`() {
         val text = """{"app":"bitchord","version":2}"""
 
-        val read = Backup.readBackupText(
+        val read = KoBackup.readBackupText(
             ByteArrayInputStream(text.toByteArray()),
             maxBytes = text.length,
         )
@@ -148,7 +150,7 @@ class BackupLibraryRoundTripTest {
         val input = ByteArrayInputStream(ByteArray(17))
 
         val failure = assertThrows(IllegalArgumentException::class.java) {
-            Backup.readBackupText(input, maxBytes = 16)
+            KoBackup.readBackupText(input, maxBytes = 16)
         }
 
         assertEquals("백업 파일이 너무 큽니다", failure.message)
@@ -156,39 +158,39 @@ class BackupLibraryRoundTripTest {
 
     @Test
     fun `an export within the cap is written whole`() {
-        val file = Backup.BackupFile(
+        val file = KoBackup.BackupFile(
             app = "bitchord",
             version = 2,
             localPlaylists = listOf(
-                Backup.BackupPlaylist(
+                KoBackup.BackupPlaylist(
                     id = "sp_local_1",
                     title = "Covers",
-                    songs = listOf(Backup.BackupSong(videoId = "v1", title = "Cover")),
+                    songs = listOf(KoBackup.BackupSong(videoId = "v1", title = "Cover")),
                 ),
             ),
         )
 
-        val bytes = Backup.encodeBackupBytes(file)
+        val bytes = KoBackup.encodeBackupBytes(file)
 
-        assertEquals(file, Backup.decode(bytes.decodeToString()))
+        assertEquals(file, KoBackup.decode(bytes.decodeToString()))
     }
 
     @Test
     fun `an export larger than the cap is refused before it is written`() {
-        val file = Backup.BackupFile(
+        val file = KoBackup.BackupFile(
             app = "bitchord",
             version = 2,
             localPlaylists = listOf(
-                Backup.BackupPlaylist(
+                KoBackup.BackupPlaylist(
                     id = "sp_local_1",
                     title = "Covers",
-                    songs = listOf(Backup.BackupSong(videoId = "v1", title = "Cover")),
+                    songs = listOf(KoBackup.BackupSong(videoId = "v1", title = "Cover")),
                 ),
             ),
         )
 
         val failure = assertThrows(IllegalArgumentException::class.java) {
-            Backup.encodeBackupBytes(file, maxBytes = 16)
+            KoBackup.encodeBackupBytes(file, maxBytes = 16)
         }
 
         assertEquals("백업 파일이 너무 큽니다", failure.message)
