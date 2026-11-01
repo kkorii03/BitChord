@@ -748,4 +748,58 @@ class SongVersionPolicyTest {
             ),
         )
     }
+
+    @Test
+    fun `a legacy replacement also streams on video type or an MV title`() {
+        assertFalse(
+            SongVersionPolicy.versionReplacementUsesDownloadedFile(
+                playId = "song",
+                soundSourceId = null,
+                online = true,
+                fileDurationMs = 206_700L,
+                catalogDurationMs = 206_700L,
+                title = "Song (Official Video)",
+            ),
+        )
+        assertFalse(
+            SongVersionPolicy.versionReplacementUsesDownloadedFile(
+                playId = "song",
+                soundSourceId = null,
+                online = true,
+                fileDurationMs = 206_700L,
+                catalogDurationMs = 206_700L,
+                isVideo = true,
+            ),
+        )
+        assertFalse(
+            SongVersionPolicy.versionReplacementUsesDownloadedFile(
+                playId = "song",
+                soundSourceId = null,
+                online = true,
+                fileDurationMs = 206_700L,
+                catalogDurationMs = 206_700L,
+                typeUnknown = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `a file from another song recording is not the video's sound`() {
+        assertTrue(
+            SongVersionPolicy.downloadedFileUse(
+                playId = "song",
+                soundSourceId = "quality",
+                online = true,
+                sourceIsVideo = false,
+            ) == SongVersionPolicy.DownloadedFileUse.PLAY_FILE,
+        )
+        assertFalse(
+            SongVersionPolicy.downloadedFileUse(
+                playId = "song",
+                soundSourceId = "video",
+                online = true,
+                sourceIsVideo = true,
+            ) == SongVersionPolicy.DownloadedFileUse.PLAY_FILE,
+        )
+    }
 }

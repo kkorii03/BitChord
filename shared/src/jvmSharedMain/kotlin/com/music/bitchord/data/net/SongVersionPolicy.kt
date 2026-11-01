@@ -268,9 +268,13 @@ object SongVersionPolicy {
      * How a saved file may be used for [playId].
      *
      * [soundSourceId] is the id whose stream produced the bytes, recorded when
-     * the download was made. A mismatch means the row is a song id but the file
-     * is the music video's sound; online, the song is streamed and the file is
-     * kept only as the offline fallback. A null source is an older record whose
+     * the download was made. A mismatch is only the music video's sound when
+     * that source was itself recorded as a video: a file fetched from another
+     * song id (a quality replacement) is still the recording this row asked
+     * for. [sourceIsVideo]/[sourceTitle] are that source's own record; their
+     * default keeps the conservative old answer for a caller that has not read
+     * the source's metadata. Online, the song is streamed and the file is kept
+     * only as the offline fallback. A null source is an older record whose
      * provenance is unknown — it is not guessed at here; [mvSoundDeltaMs] is
      * the length evidence that may still identify it.
      */
@@ -278,11 +282,16 @@ object SongVersionPolicy {
         playId: String,
         soundSourceId: String?,
         online: Boolean,
+        sourceIsVideo: Boolean? = true,
+        sourceTitle: String = "",
     ): DownloadedFileUse = when {
         soundSourceId == null -> DownloadedFileUse.UNKNOWN_PLAY_FILE
         soundSourceId == playId -> DownloadedFileUse.PLAY_FILE
         !online -> DownloadedFileUse.PLAY_FILE
-        else -> DownloadedFileUse.STREAM_SONG
+        sourceIsVideo == true ||
+            (sourceIsVideo == null && DownloadedMvPolicy.hasMvTitleMarker(sourceTitle)) ->
+            DownloadedFileUse.STREAM_SONG
+        else -> DownloadedFileUse.PLAY_FILE
     }
 
     /**
@@ -293,9 +302,13 @@ object SongVersionPolicy {
      * the ordinary playback path that asks [downloadedFileUse]. Without this
      * the replacement would attach a file whose recorded source is another
      * upload — the music video's sound under the song's id — and the listener
-     * would hear the video even though the queue now names the release. A
-     * legacy record with no source is refused only when its longer run time
-     * says it is the video's sound, and never when a length is missing.
+     * would hear the video even though the queue now names the release.
+     *
+     * A legacy record with no source has no provenance to read, so the same
+     * evidence ordinary playback uses must still be asked: the stored video or
+     * unknown type, an MV title marker, and a length longer than the catalogue
+     * release. Length alone missed an equal-length video carrying an intro the
+     * release did not have.
      */
     fun versionReplacementUsesDownloadedFile(
         playId: String,
@@ -303,17 +316,41 @@ object SongVersionPolicy {
         online: Boolean,
         fileDurationMs: Long? = null,
         catalogDurationMs: Long? = null,
-    ): Boolean = when (downloadedFileUse(playId, soundSourceId, online)) {
+        title: String = "",
+        isVideo: Boolean? = null,
+        typeUnknown: Boolean = false,
+        artist: String = "",
+        sourceIsVideo: Boolean? = true,
+        sourceTitle: String = "",
+    ): Boolean = when (
+        downloadedFileUse(playId, soundSourceId, online, sourceIsVideo, sourceTitle)
+    ) {
         DownloadedFileUse.STREAM_SONG -> false
         DownloadedFileUse.PLAY_FILE -> true
-        DownloadedFileUse.UNKNOWN_PLAY_FILE ->
-            mvSoundDeltaMs(
+        DownloadedFileUse.UNKNOWN_PLAY_FILE -> {
+            val mvSound = DownloadedMvPolicy.isMvSound(
+                rowVideoId = playId,
+                title = title,
                 fileDurationMs = fileDurationMs,
+                storedIsVideo = isVideo,
+                storedTypeUnknown = typeUnknown,
+                soundSourceVideoId = null,
+                catalogVideoId = null,
                 catalogDurationMs = catalogDurationMs,
-                isVideo = false,
-                localFile = true,
-                soundSourceId = null,
-            ) == null
+                artist = artist,
+            )
+            val longerThanRelease = DownloadedMvPolicy.mvSoundSuspectDeltaMs(
+                rowVideoId = playId,
+                title = title,
+                fileDurationMs = fileDurationMs,
+                storedIsVideo = isVideo,
+                storedTypeUnknown = typeUnknown,
+                soundSourceVideoId = null,
+                catalogDurationMs = catalogDurationMs,
+                artist = artist,
+            ) != null
+            !mvSound && !longerThanRelease
+        }
     }
 
     /**

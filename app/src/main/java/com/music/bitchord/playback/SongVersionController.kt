@@ -243,13 +243,16 @@ internal class SongVersionController(
                 if (index >= exoPlayer.mediaItemCount) continue
                 val now = exoPlayer.getMediaItemAt(index)
                 if (now.mediaId != song.videoId) continue
-                val useDownloadedFile = SongVersionPolicy.versionReplacementUsesDownloadedFile(
+                val savedFile = Downloads.savedMetadataFor(resolved.videoId)
+                val savedSource = savedFile?.soundSourceVideoId
+                    ?.takeIf { it != resolved.videoId }
+                    ?.let { Downloads.savedMetadataFor(it) }
+                val useDownloadedFile = VersionReplacementFilePolicy.usesDownloadedFile(
                     playId = resolved.videoId,
-                    soundSourceId = Downloads.savedSoundSourceFor(resolved.videoId),
-                    online = !AudioCache.isOffline(),
-                    fileDurationMs = Downloads.savedMetadataFor(resolved.videoId)
-                        ?.durationText?.durationMillis(),
+                    saved = savedFile,
+                    source = savedSource,
                     catalogDurationMs = resolved.durationMillis(),
+                    online = !AudioCache.isOffline(),
                 )
                 val replacement = QueueShuffle.withQueueMetadata(
                     resolved.toMediaItem(useDownloadedFile = useDownloadedFile),
@@ -268,6 +271,29 @@ internal class SongVersionController(
                     }
             }
         }
+    }
+
+    /**
+     * How the saved file for [videoId] may be used, with its source's own
+     * metadata read. A different source is only the MV's sound when that
+     * source was recorded as a video; a quality replacement from another song
+     * id stays the recording this row asked for.
+     */
+    private fun savedFileUse(
+        videoId: String,
+        online: Boolean,
+    ): SongVersionPolicy.DownloadedFileUse {
+        val sourceId = Downloads.savedSoundSourceFor(videoId)
+        val source = sourceId
+            ?.takeIf { it != videoId }
+            ?.let { Downloads.savedMetadataFor(it) }
+        return SongVersionPolicy.downloadedFileUse(
+            playId = videoId,
+            soundSourceId = sourceId,
+            online = online,
+            sourceIsVideo = source?.isVideo,
+            sourceTitle = source?.title.orEmpty(),
+        )
     }
 
     /**
@@ -493,11 +519,8 @@ internal class SongVersionController(
                 return
             }
             if (!verifyUnknownDownload &&
-                SongVersionPolicy.downloadedFileUse(
-                    song.videoId,
-                    soundSourceId,
-                    online = !offline,
-                ) == SongVersionPolicy.DownloadedFileUse.STREAM_SONG
+                savedFileUse(song.videoId, online = !offline) ==
+                SongVersionPolicy.DownloadedFileUse.STREAM_SONG
             ) {
                 logStreamingSongFile(song.videoId, about = song.videoId)
                 installStreamedRecording(exoPlayer, item.mediaId, song)
@@ -545,11 +568,7 @@ internal class SongVersionController(
         // keeps the timeline change out of the transition callback.
         val cached = YtMusicRepository.cachedSongVersionFor(lookupSong)
         val cachedUse = cached?.let {
-            SongVersionPolicy.downloadedFileUse(
-                it.videoId,
-                Downloads.savedSoundSourceFor(it.videoId),
-                online = !offline,
-            )
+            savedFileUse(it.videoId, online = !offline)
         }
         val cachedFile = if (cached != null &&
             cachedUse != SongVersionPolicy.DownloadedFileUse.STREAM_SONG
@@ -701,11 +720,7 @@ internal class SongVersionController(
                     } else if (verifyUnknownDownload) {
                         backfillVerifiedSong(song)
                     }
-                    val resolvedUse = SongVersionPolicy.downloadedFileUse(
-                        resolved.videoId,
-                        Downloads.savedSoundSourceFor(resolved.videoId),
-                        online = !offline,
-                    )
+                    val resolvedUse = savedFileUse(resolved.videoId, online = !offline)
                     val streamOnly =
                         resolvedUse == SongVersionPolicy.DownloadedFileUse.STREAM_SONG
                     if (streamOnly) logStreamingSongFile(resolved.videoId, song.videoId)
@@ -826,11 +841,8 @@ internal class SongVersionController(
         val alias = Downloads.savedAliasFor(song.videoId) ?: return null
         val uri = Downloads.verifiedSavedUri(alias) ?: return null
         val meta = Downloads.savedMetadataFor(alias)
-        val streamOnly = SongVersionPolicy.downloadedFileUse(
-            alias,
-            Downloads.savedSoundSourceFor(alias),
-            online = !offline,
-        ) == SongVersionPolicy.DownloadedFileUse.STREAM_SONG
+        val streamOnly = savedFileUse(alias, online = !offline) ==
+            SongVersionPolicy.DownloadedFileUse.STREAM_SONG
         return Song(
             videoId = alias,
             title = meta?.title?.takeIf { it.isNotBlank() } ?: song.title,

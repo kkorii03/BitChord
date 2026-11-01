@@ -712,14 +712,18 @@ internal class NextTrackPreparation(
         if (item.mediaId != song.videoId) return null
         // The replacement must obey the same download rule as ordinary
         // playback: a file recorded from another upload is the video's sound,
-        // not the catalogue release this row now names.
-        val useDownloadedFile = SongVersionPolicy.versionReplacementUsesDownloadedFile(
+        // not the catalogue release this row now names. A legacy record with
+        // no source is judged by its own title/type/length, not length alone.
+        val savedFile = Downloads.savedMetadataFor(resolved.videoId)
+        val savedSource = savedFile?.soundSourceVideoId
+            ?.takeIf { it != resolved.videoId }
+            ?.let { Downloads.savedMetadataFor(it) }
+        val useDownloadedFile = VersionReplacementFilePolicy.usesDownloadedFile(
             playId = resolved.videoId,
-            soundSourceId = Downloads.savedSoundSourceFor(resolved.videoId),
-            online = !AudioCache.isOffline(),
-            fileDurationMs = Downloads.savedMetadataFor(resolved.videoId)
-                ?.durationText?.durationMillis(),
+            saved = savedFile,
+            source = savedSource,
             catalogDurationMs = resolved.durationMillis(),
+            online = !AudioCache.isOffline(),
         )
         val replacement = QueueShuffle.withQueueMetadata(
             resolved.toMediaItem(useDownloadedFile = useDownloadedFile),
