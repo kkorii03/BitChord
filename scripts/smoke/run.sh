@@ -537,7 +537,9 @@ mkdir -p "$OUT/synctest"
 if adb shell test -d "$APP_DIR/synctest" >/dev/null 2>&1; then
   for name in $(adb shell ls "$APP_DIR/synctest" 2>/dev/null | tr -d '\r'); do
     [ -n "$name" ] || continue
-    adb pull "$APP_DIR/synctest/$name" "$OUT/synctest/$name" >/dev/null 2>&1 || {
+    # HQ candidate heads are saved as src:<source>::<track>.wav; artifact upload
+    # rejects ':' in paths and then drops the whole artifact, so store them as '_'.
+    adb pull "$APP_DIR/synctest/$name" "$OUT/synctest/${name//:/_}" >/dev/null 2>&1 || {
       echo "smoke: could not pull synctest/$name" >&2
     }
   done
