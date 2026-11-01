@@ -626,14 +626,24 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             tail.keyConfidence >= head.keyConfidence -> tail
             else -> head
         }
+        val mergedDownbeats = tail.downbeats.ifEmpty { head.downbeats }
+        // The tail window opens on whatever bar the last 45 s happens to start
+        // on, so its phrase list cannot be indexed from zero. Re-derive it on
+        // the head's absolute eight-bar grid before publishing.
+        val phraseAnchor = head.downbeats.firstOrNull() ?: mergedDownbeats.firstOrNull()
+        val mergeBeatInterval = head.beatInterval.takeIf { it > 0 } ?: tail.beatInterval
+        val mergedPhrases = phraseAnchor
+            ?.let { BeatTracker.phraseBoundaries(mergedDownbeats, it, mergeBeatInterval) }
+            .orEmpty()
+            .ifEmpty { tail.phraseBoundaries.ifEmpty { head.phraseBoundaries } }
         return tail.copy(
             trackId = trackId,
             duration = maxOf(head.duration, tail.duration, durationSeconds),
             bpm = tail.bpm.takeIf { it > 0 } ?: head.bpm,
             beatInterval = tail.beatInterval.takeIf { it > 0 } ?: head.beatInterval,
             beatConfidence = maxOf(tail.beatConfidence, head.beatConfidence),
-            downbeats = tail.downbeats.ifEmpty { head.downbeats },
-            phraseBoundaries = tail.phraseBoundaries.ifEmpty { head.phraseBoundaries },
+            downbeats = mergedDownbeats,
+            phraseBoundaries = mergedPhrases,
             firstBeat = tail.firstBeat.takeIf { it != 0.0 } ?: head.firstBeat,
             key = keySource.key,
             keyConfidence = keySource.keyConfidence,
@@ -1351,6 +1361,24 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                 "vocalMask=${if (head?.vocalMask != null || tail?.vocalMask != null) "model" else "dsp"}",
         )
 
+        val mergedDownbeats = (headGrid?.downbeats.orEmpty() + tailGrid?.downbeats.orEmpty())
+            .ifEmpty { features.downbeats }
+            .sorted()
+        // Anchor the tail's phrases to the head's first downbeat. The tail
+        // window starts at an arbitrary bar, so indexing each window locally
+        // would put its phrase times half a phrase out and make the planner
+        // snap an outgoing transition to a non-phrase downbeat.
+        val phraseAnchor = headGrid?.downbeats?.firstOrNull()
+            ?: tailGrid?.downbeats?.firstOrNull()
+            ?: mergedDownbeats.firstOrNull()
+        val phraseInterval = headGrid?.beatInterval?.takeIf { it > 0 }
+            ?: leading?.beatInterval
+            ?: features.beatInterval
+        val mergedPhrases = phraseAnchor
+            ?.let { BeatTracker.phraseBoundaries(mergedDownbeats, it, phraseInterval) }
+            .orEmpty()
+            .ifEmpty { features.phraseBoundaries }
+
         return WholeTrack(
                 TrackAnalysis(
                     status = TrackAnalysis.STATUS_READY,
@@ -1360,17 +1388,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                     bpm = leading?.bpm ?: features.bpm,
                 beatInterval = leading?.beatInterval ?: features.beatInterval,
                 beatConfidence = leading?.beatConfidence ?: features.beatConfidence,
-                downbeats = (headGrid?.downbeats.orEmpty() + tailGrid?.downbeats.orEmpty())
-                    .ifEmpty { features.downbeats }
-                    .sorted(),
+                downbeats = mergedDownbeats,
                 firstBeat = headGrid?.firstBeat ?: features.firstBeat,
-                phraseBoundaries = (
-                    BeatTracker.phraseBoundaries(headGrid?.downbeats.orEmpty()) +
-                        BeatTracker.phraseBoundaries(tailGrid?.downbeats.orEmpty())
-                    )
-                    .distinct()
-                    .sorted()
-                    .ifEmpty { features.phraseBoundaries },
+                phraseBoundaries = mergedPhrases,
                 key = features.key,
                 keyConfidence = features.keyConfidence,
                 loudnessLufs = features.loudnessLufs,

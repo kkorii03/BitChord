@@ -38,6 +38,19 @@ class SyntheticBeatGridTest {
     }
 
     @Test
+    fun `tail phrase boundaries are phased from the track's first downbeat`() {
+        // Head 0-30.5 s and a tail window opening 100.5 s in, both at 120 BPM
+        // (one bar every 2 s). The tail's first bar is the third bar of a
+        // phrase, not a phrase start, so local indexing would report 100.5 s
+        // and 116.5 s instead of the real 112.5 s and 128.5 s.
+        val head = (0 until 16).map { 0.5 + it * 2.0 }
+        val tail = (0 until 16).map { 100.5 + it * 2.0 }
+        val phrases = BeatTracker.phraseBoundaries(head + tail, head.first(), 0.5)
+
+        assertEquals(listOf(0.5, 16.5, 112.5, 128.5), phrases)
+    }
+
+    @Test
     fun `phrase boundaries follow the tracked downbeat grid`() {
         // 120 BPM: one bar every 2 s, one eight-bar phrase every 16 s.
         val downbeats = (0 until 24).map { 0.5 + it * 2.0 }

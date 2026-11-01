@@ -452,19 +452,16 @@ void AnalyzeKeyAndTimbre(
     // 0.25 trusted-key threshold still means the same degree of separation.
     // Margin alone, however, is a relative measure: on atonal material both
     // the best and the runner-up correlate near zero, and any tiny difference
-    // between them used to read as a full confidence. The absolute fit below
-    // gates that -- a top correlation under kMinKeyCorrelation is no key at
-    // all, and above it the confidence is scaled by how much of a real fit the
-    // winning profile actually is. Both the synthetic C major progression and
-    // white noise are covered by SyntheticKeyAndBeatTest.
+    // between them used to read as a full confidence. The absolute floor below
+    // handles that without rescaling a real fit: a winning correlation under
+    // kMinKeyCorrelation is rejected as no key at all, while a candidate above
+    // it keeps the margin score the 0.25 threshold was calibrated against.
+    // Both the synthetic C major progression and white noise are covered by
+    // SyntheticKeyAndBeatTest.
     constexpr double kMinKeyCorrelation = 0.35;
     const double top = candidates[0].first;
-    // Square root so a clean but not perfect tonal fit keeps most of its
-    // margin score, while noise just above the floor is still scaled down
-    // hard enough to stay below the policy's 0.25 trusted-key threshold.
-    const double fit = std::sqrt(Clamp((top - kMinKeyCorrelation) / (1.0 - kMinKeyCorrelation), 0, 1));
     result.key_confidence = top > kMinKeyCorrelation
-      ? Clamp((top - candidates[1].first) / std::max(0.01, top) * 4.0 * fit, 0, 1)
+      ? Clamp((top - candidates[1].first) / std::max(0.01, top) * 4.0, 0, 1)
       : 0.0;
   }
 
