@@ -8,7 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
-import com.music.bitchord.data.cover.videoThumbnailUrl
+import com.music.bitchord.data.cover.videoThumbnailCandidates
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.SongOrigins
 import com.music.bitchord.data.remote.DownloadedArtworkEvents
@@ -39,7 +39,10 @@ fun rememberRemoteArtworkUrl(song: Song?): String? {
     }
     // A YouTube row with no artwork reached the player as a black square;
     // the video still is the last resort (and local files never get one).
-    val still = song?.takeIf { !SongOrigins.isLocalFile(it) }?.videoId?.let(::videoThumbnailUrl)
+    // Start at maxresdefault and let YouTubeArtworkFallback drop to hqdefault
+    // when the upload has no large frame.
+    val still = song?.takeIf { !SongOrigins.isLocalFile(it) }
+        ?.videoId?.let(::videoThumbnailCandidates)?.firstOrNull()
     val downloaded = song != null && SongOrigins.isDownloadedYouTube(song)
     var resolved by remember(key) {
         mutableStateOf(

@@ -8,6 +8,7 @@ import androidx.media3.common.MediaMetadata
 import com.music.bitchord.data.cover.ArtworkSource
 import com.music.bitchord.data.cover.artworkSelection
 import com.music.bitchord.data.cover.isLocalArtworkUri
+import com.music.bitchord.data.cover.mediaSessionArtworkAt
 import com.music.bitchord.data.cover.videoThumbnailUrl
 import com.music.bitchord.data.model.NOTIFICATION_ART_PX
 import com.music.bitchord.data.model.Song
@@ -75,8 +76,8 @@ internal object MediaSessionArtwork {
                     readableContentUri(ctx, selection.value)?.also {
                         grantRead(ctx, Uri.parse(it))
                     }
-                } ?: videoThumbnailUrl(song.videoId)?.artworkAt(NOTIFICATION_ART_PX)
-            ArtworkSource.REMOTE -> selection.value?.artworkAt(NOTIFICATION_ART_PX)
+                } ?: videoThumbnailUrl(song.videoId)?.mediaSessionArtworkAt(NOTIFICATION_ART_PX)
+            ArtworkSource.REMOTE -> selection.value?.mediaSessionArtworkAt(NOTIFICATION_ART_PX)
             ArtworkSource.NONE -> null
         }
     }
@@ -100,8 +101,8 @@ internal object MediaSessionArtwork {
         )
         val uri = when (selection.source) {
             ArtworkSource.LOCAL -> readableContentUri(context, selection.value)
-                ?: videoThumbnailUrl(videoId)?.artworkAt(NOTIFICATION_ART_PX)
-            ArtworkSource.REMOTE -> selection.value?.artworkAt(NOTIFICATION_ART_PX)
+                ?: videoThumbnailUrl(videoId)?.mediaSessionArtworkAt(NOTIFICATION_ART_PX)
+            ArtworkSource.REMOTE -> selection.value?.mediaSessionArtworkAt(NOTIFICATION_ART_PX)
             ArtworkSource.NONE -> null
         }
         // Also spent here for the playing item: an item built earlier may have

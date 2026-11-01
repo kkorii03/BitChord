@@ -1351,7 +1351,7 @@ object InnertubeParser {
             videoId = videoId,
             title = title,
             artist = artist,
-            thumbnailUrl = renderer.o("thumbnail").a("thumbnails").best()
+            thumbnailUrl = renderer.playlistPanelThumbnails().best()?.takeIf { it.isNotBlank() }
                 ?: videoThumbnailUrl(videoId),
             durationText = renderer.o("lengthText").text().takeIf { it.isNotBlank() },
             artistId = credits.artistId,
@@ -1372,6 +1372,22 @@ object InnertubeParser {
             isExplicit = renderer.hasExplicitBadge(),
         )
     }
+
+    /**
+     * A queue row's still, across the shapes a `next` response has used.
+     *
+     * The watch queue used to spell it `thumbnail.thumbnails` only. Video rows
+     * can arrive with the same still wrapped in `musicThumbnailRenderer` or in
+     * the newer `thumbnailViewModel`/`contentImage` shape, and reading only the
+     * first form dropped the URL the response actually carried.
+     */
+    private fun JsonObject.playlistPanelThumbnails(): JsonArray? =
+        o("thumbnail").a("thumbnails")
+            ?: o("thumbnail").o("musicThumbnailRenderer").o("thumbnail").a("thumbnails")
+            ?: o("thumbnail").o("thumbnailViewModel").o("image").a("sources")
+            ?: o("thumbnailViewModel").o("image").a("sources")
+            ?: o("contentImage").o("thumbnailViewModel").o("image").a("sources")
+            ?: o("contentImage").a("sources")
 
     /**
      * The account's own state for one track, read off the watch queue's row
