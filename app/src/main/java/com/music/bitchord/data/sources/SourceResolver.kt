@@ -145,16 +145,23 @@ object SourceResolver {
             }
         }
 
-        fun isResting(configId: String): Boolean {
-            if (isUnmeasurable(configId)) return true
+        fun isResting(configId: String, nowMs: Long = System.currentTimeMillis()): Boolean {
+            if (isUnmeasurable(configId, nowMs)) return true
             val state = states[configId] ?: return false
-            if (state.untilMs > System.currentTimeMillis()) return true
+            if (state.untilMs > nowMs) return true
             if (state.untilMs != 0L) states.remove(configId)
             return false
         }
 
-        fun failed(configId: String) {
-            recordFailure(configId, countForRest = true)
+        /**
+         * [restUntilMs] is the host's own rest expiry when there is one, so a
+         * sleeping gateway that wakes in a minute is not written off for
+         * [COOLDOWN_MS]. Zero keeps the ordinary cooldown, which is what a
+         * transport fault or a plain 5xx still needs: the dead-addon rule
+         * exists so one unreachable source cannot cost every track its window.
+         */
+        fun failed(configId: String, restUntilMs: Long = 0L) {
+            recordFailure(configId, countForRest = true, restUntilMs = restUntilMs)
         }
 
         /**
@@ -208,17 +215,23 @@ object SourceResolver {
             unmeasurable.remove(configId)
         }
 
-        private fun recordFailure(configId: String, countForRest: Boolean) {
+        private fun recordFailure(
+            configId: String,
+            countForRest: Boolean,
+            restUntilMs: Long = 0L,
+        ) {
             failureMarks.computeIfAbsent(configId) { java.util.concurrent.atomic.AtomicLong() }
                 .incrementAndGet()
             if (!countForRest) return
+            val nowMs = System.currentTimeMillis()
             val state = states.computeIfAbsent(configId) { State() }
             state.failures += 1
             if (state.failures >= FAILURES_BEFORE_REST) {
-                state.untilMs = System.currentTimeMillis() + COOLDOWN_MS
+                val untilMs = if (restUntilMs > nowMs) restUntilMs else nowMs + COOLDOWN_MS
+                state.untilMs = maxOf(state.untilMs, untilMs)
                 TrackLog.w(
                     "BitChord",
-                    "source $configId failed ${state.failures} times; resting for ${COOLDOWN_MS / 60_000} minutes",
+                    "source $configId failed ${state.failures} times; resting until $untilMs",
                 )
             }
         }
@@ -383,10 +396,18 @@ object SourceResolver {
      * when it answered with an error. Such a fault still raises the failure
      * mark so its empty answer is not cached, but an offline device only asks
      * for the mark: the connection, not the source, is what failed.
+     *
+     * [restUntilMs] is a host rest the addon itself recorded (429/502/503/504).
+     * Using that expiry keeps the source eligible again when the host is,
+     * instead of adding thirty minutes on top of a one-minute cold start.
      */
-    internal fun reportSourceFailure(configId: String, network: Boolean = false) {
+    internal fun reportSourceFailure(
+        configId: String,
+        network: Boolean = false,
+        restUntilMs: Long = 0L,
+    ) {
         if (network) SourceCooldown.networkFailed(configId, online = !offlineCheck())
-        else SourceCooldown.failed(configId)
+        else SourceCooldown.failed(configId, restUntilMs)
     }
 
     /**
