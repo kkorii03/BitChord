@@ -540,13 +540,28 @@ object TelegramClientManager {
         withContext(NonCancellable + Dispatchers.IO) { runOnWorker { acquireStreamLease("stream metadata open") } }
         return try {
             awaitReady()
-            withContext(Dispatchers.IO) { trackForStream(trackId) }
+            withContext(Dispatchers.IO) { trackForStreamWithRetry(trackId) }
         } finally {
             withContext(NonCancellable + Dispatchers.IO) {
                 runOnWorker { releaseStreamLease("stream metadata close") }
             }
         }
     }
+
+    /**
+     * A deleted message, a channel the account left, or an expired file
+     * reference all arrive as an [IOException]. Re-reading the message once is
+     * what refreshes a file reference; when the message is really gone the
+     * second failure is the clean one, never an endless wait.
+     */
+    private fun trackForStreamWithRetry(trackId: String): TelegramTrack =
+        try {
+            trackForStream(trackId)
+        } catch (failure: Throwable) {
+            if (failure is CancellationException) throw failure
+            if (failure !is IOException) throw failure
+            trackForStream(trackId)
+        }
 
     /** A file's current details for playback, re-checked against the selected chats. */
     internal fun trackForStream(trackId: String): TelegramTrack {
@@ -567,6 +582,16 @@ object TelegramClientManager {
         }
         return TelegramMessageMapper.from(message)
             ?: throw IOException("The Telegram file is no longer available.")
+    }
+
+    /**
+     * Stops the download this process owns for [fileId]. Used when the last
+     * reader closes, before its stream lease is released, so a background
+     * range read cannot keep the radio busy after playback moved on.
+     */
+    internal fun cancelDownload(fileId: Int) {
+        val target = client ?: return
+        runCatching { target.send(TdApi.CancelDownloadFile(fileId, false), null) }
     }
 
     /** One TDLib request from a caller already holding this client (search or a stream). */
