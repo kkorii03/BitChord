@@ -1,0 +1,5 @@
+BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/telegram.
+과제: 아래는 10-30 폰 로그로 찾은 문제(ship FIXLIST 79 번)다. 지금 코드에 아직 남아 있는지 파일:줄 근거로 먼저 판정하고(이미 고쳐졌으면 근거와 함께 '고쳐짐'으로 끝), 남아 있으면 고친다.
+문제: 79. **저작권 차단 곡에서 26초 무음 후 건너뜀.** 20:59:38 'The Main Ingredient - Everybody Plays the Fool | Joker OST'(7QihqRWMrz8): 'UNPLAYABLE: blocked due to the claimed content by SME' — 되돌릴 수 없는 오류인데 InnerTubeX 클라이언트 전부(8초) + NewPipe 3회 재시도(4초) = 12초를 재생 시도 3번 반복 → 21:00:04 에야 다음 곡. 그 전에 다음 곡 준비도 실패해 크로스페이드 'arm-timeout'. 수정: 'claimed content'·'This track is unavailable'·UNPLAYABLE 은 재시도 없이 한 번에 판정 → 같은 곡의 다른 사본(노래 버전 검색 1회) → 없으면 3초 안에 다음 곡. 다음 곡 준비 단계에서 이 판정이 나면 미리 표시해 두고 크로스페이드 전에 건너뜀.
+고칠 때: 고치기 전 실패하는 JVM 단위 테스트 먼저. 배터리 우선(폴링·타이머 금지, 이벤트 기반). 곡 판정·싱크 수치 변경 금지. .github/, keys, *.jks, 서명 수정 금지. 업스트림 파일 쪼개기 금지(새 코드는 ko/ 패키지 + // [KO] 한 줄 우선). 바꾼 함수의 모든 호출부 재확인.
+마지막 10줄 이내 요약: 판정(남음/고쳐짐) / 수정 파일 / 새 테스트 클래스 / 미해결.
