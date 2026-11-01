@@ -356,9 +356,10 @@ class ContextRegistry(
                 state.request = null
                 state.continuationState = ContinuationState.BLOCKED
                 state.diagnostic = diagnostic
+                callbackSnapshot = state.snapshot()
                 return@synchronized ContinuationResult(
                     status = ContinuationResultStatus.REJECTED_NO_PROGRESS,
-                    snapshot = state.snapshot(),
+                    snapshot = callbackSnapshot,
                     diagnostic = diagnostic,
                 )
             }
