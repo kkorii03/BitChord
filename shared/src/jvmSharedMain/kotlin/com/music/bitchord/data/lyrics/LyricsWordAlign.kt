@@ -28,7 +28,7 @@ object LyricsWordAlign {
     private const val GAP = -1
 
     /** Above this many cells the alignment isn't attempted (a very long song and transcript). */
-    private const val MAX_CELLS = 4_000_000L
+    internal const val MAX_CELLS = 4_000_000L
 
     /** How far into a line its first heard letter may be and still say when the line starts. */
     private const val LEAD_LETTERS = 4

@@ -31,8 +31,16 @@ object LyricsMismatch {
         val rejected: Boolean,
     )
 
-    fun judgeSheet(lines: List<LyricLine>, heard: List<LyricsWordAlign.Heard>): Verdict =
-        judgeTexts(withinHeardSpan(lines, heard).map { it.text }, heard)
+    fun judgeSheet(lines: List<LyricLine>, heard: List<LyricsWordAlign.Heard>): Verdict {
+        val texts = lines.filter { !it.isGap && it.text.isNotBlank() }
+        // A sheet with no times cannot be matched to the part of the song the
+        // transcript covers: judging all of it against the opening would hide
+        // a correct long sheet. Without timings it is not evidence either way.
+        if (texts.none { it.timeMs > 0L }) {
+            return Verdict(heard.size, 0, texts.size, rejected = false)
+        }
+        return judgeTexts(withinHeardSpan(lines, heard).map { it.text }, heard)
+    }
 
     fun judge(lines: List<String>, heard: List<LyricsWordAlign.Heard>): Verdict =
         judgeTexts(lines.filter { it.isNotBlank() }, heard)
@@ -40,7 +48,7 @@ object LyricsMismatch {
     /**
      * Lines the transcript could have covered. A song check hears only the
      * opening, so the rest of a correct long song must not be counted against
-     * it. An untimed sheet has no span to compare and is judged whole.
+     * it. An untimed sheet never reaches here: [judgeSheet] leaves it alone.
      */
     private fun withinHeardSpan(
         lines: List<LyricLine>,
@@ -60,13 +68,24 @@ object LyricsMismatch {
         if (heard.size < MIN_HEARD_WORDS || texts.isEmpty()) {
             return Verdict(heard.size, 0, texts.size, rejected = false)
         }
-        // A sheet and a transcript too long to align were not judged at all;
-        // treating that as "no line matched" would throw a correct sheet away
-        // (and delete its cached copy).
         val placement = LyricsWordAlign.placeLinesDetailed(texts, heard)
-        if (!placement.attempted) {
-            return Verdict(heard.size, 0, texts.size, rejected = false)
-        }
+        if (placement.attempted) return verdict(texts, placement, heard)
+        // A sheet and a transcript too long to align together are judged on
+        // the opening lines that do fit, rather than not at all: skipping the
+        // verdict would let a wrong sheet through whenever Whisper heard the
+        // whole song.
+        val window = openingWithinBudget(texts, heard)
+        if (window.isEmpty()) return Verdict(heard.size, 0, texts.size, rejected = false)
+        val bounded = LyricsWordAlign.placeLinesDetailed(window, heard)
+        if (!bounded.attempted) return Verdict(heard.size, 0, window.size, rejected = false)
+        return verdict(window, bounded, heard)
+    }
+
+    private fun verdict(
+        texts: List<String>,
+        placement: LyricsWordAlign.Placement,
+        heard: List<LyricsWordAlign.Heard>,
+    ): Verdict {
         val matched = placement.starts.count { it != null }
         return Verdict(
             heardWords = heard.size,
@@ -74,6 +93,32 @@ object LyricsMismatch {
             totalLines = texts.size,
             rejected = matched.toDouble() / texts.size < MIN_AGREEING_FRACTION,
         )
+    }
+
+    /**
+     * As many opening lines as the alignment's cell budget can hold beside
+     * the whole transcript. The opening is where a correct sheet and the
+     * heard sound meet; a wrong sheet has nothing there to match either way.
+     */
+    private fun openingWithinBudget(
+        texts: List<String>,
+        heard: List<LyricsWordAlign.Heard>,
+    ): List<String> {
+        val heardLetters = heard.sumOf { LyricsWordAlign.fold(it.text).length }
+        if (heardLetters <= 0) return emptyList()
+        val budget = LyricsWordAlign.MAX_CELLS / heardLetters
+        if (budget <= 0) return emptyList()
+        val window = ArrayList<String>()
+        var letters = 0L
+        for (text in texts) {
+            val line = LyricsWordAlign.fold(text).length
+            if (line > budget && window.isEmpty()) return emptyList()
+            if (window.isNotEmpty() && letters + line > budget) break
+            window += text
+            letters += line
+            if (letters >= budget) break
+        }
+        return window
     }
 
     /** The log line the lookup writes when it throws a provider's answer away. */
