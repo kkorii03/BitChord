@@ -64,6 +64,29 @@ internal object CrossfadeArmPolicy {
     fun armTimeoutMs(rampMs: Long = 0L): Long =
         (ARM_TIMEOUT_MS + rampMs.coerceAtLeast(0L)).coerceAtLeast(1L)
 
+    /** The arming loop's normal step while the outgoing track can still reach the fade. */
+    const val ARM_STEP_MS = 40L
+
+    /**
+     * How long the arming loop may sleep between checks.
+     *
+     * A paused outgoing player cannot reach the fade point, so no tick is due
+     * until the resume event. Returning 0 parks the loop and lets that event
+     * wake it, instead of keeping a 40 ms poll running through the whole pause.
+     */
+    fun armingStepMs(playWhenReady: Boolean): Long =
+        if (playWhenReady) ARM_STEP_MS else 0L
+
+    /**
+     * The deadline for a standby that was armed before a pause.
+     *
+     * Time spent paused did not give the incoming stream any chance to buffer,
+     * so it must not be charged against the readiness grace. A negative
+     * interval (a clock that moved backwards) leaves the deadline alone.
+     */
+    fun armDeadlineAfterPause(deadlineMs: Long, pausedForMs: Long): Long =
+        deadlineMs + pausedForMs.coerceAtLeast(0L)
+
     /**
      * Whether a listener's skip must silence the armed incoming player before
      * the service moves the session player on.

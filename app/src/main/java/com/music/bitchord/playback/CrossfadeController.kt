@@ -554,6 +554,16 @@ class CrossfadeController(
     private var armStartedAt = 0L
 
     /**
+     * When the listener paused an armed pair, or 0 when it is running.
+     *
+     * The pause no longer abandons the arm: the fade is already due within the
+     * lead, and throwing the prepared decoder away was heard as the crossfade
+     * disappearing whenever the listener paused just before a track ended. The
+     * ticker parks while this is set and the resume event wakes it.
+     */
+    private var armPausedAt = 0L
+
+    /**
      * The pair that has already been refused for this outgoing track, so an
      * arm timeout or an incompatible format is not retried every tick until
      * the track ends. Cleared as soon as the outgoing track changes.
@@ -750,6 +760,7 @@ class CrossfadeController(
         into.playWhenReady = false
         into.prepare()
         armStartedAt = SystemClock.elapsedRealtime()
+        armPausedAt = 0L
         armDeadline = armStartedAt + AutomixWorkPolicy.STANDBY_LEAD_MS +
             CrossfadeArmPolicy.armTimeoutMs(rampSteps * rampStepMs)
         return true
@@ -925,7 +936,7 @@ class CrossfadeController(
         } else {
             0L
         }
-        Phase.ARMING -> ARM_STEP_MS
+        Phase.ARMING -> CrossfadeArmPolicy.armingStepMs(outgoing?.playWhenReady != false)
         Phase.FADING -> FADE_STEP_MS
         Phase.SLEEP_FADE -> FADE_STEP_MS
         Phase.BAILING -> BAIL_STEP_MS
@@ -1616,6 +1627,7 @@ class CrossfadeController(
         rampStep = 0
         render = renderStyle
         armStartedAt = SystemClock.elapsedRealtime()
+        armPausedAt = 0L
         // The standby is now armed a full [AutomixWorkPolicy.STANDBY_LEAD_MS]
         // before the transition, so the readiness timeout has to start after
         // that lead rather than immediately. Otherwise a cold stream that is
@@ -1809,10 +1821,21 @@ class CrossfadeController(
             return bail(CrossfadeSkipReason.OUTGOING_MOVED)
         }
         if (!stillWorthFading()) return bail()
-        // Paused while armed: the transition is no longer imminent, and holding
-        // a prepared decoder open against a stopped player is worse than arming
-        // again when playback resumes.
-        if (!out.playWhenReady) return bail()
+        // Paused while armed: the transition is no longer imminent, but throwing
+        // the prepared standby away made a pause just before the fade point
+        // erase the crossfade entirely. Park here instead — the ticker waits for
+        // the resume event rather than polling — and give the incoming stream
+        // its full readiness grace once playback continues.
+        if (!out.playWhenReady) {
+            if (armPausedAt == 0L) armPausedAt = SystemClock.elapsedRealtime()
+            return
+        }
+        if (armPausedAt != 0L) {
+            val pausedFor = SystemClock.elapsedRealtime() - armPausedAt
+            armPausedAt = 0L
+            armDeadline = CrossfadeArmPolicy.armDeadlineAfterPause(armDeadline, pausedFor)
+            armStartedAt += pausedFor.coerceAtLeast(0L)
+        }
 
         // An earlier interrupted transition must not leave the audible track
         // at a gain the listener cannot hear. Nothing in ARMING automates this
@@ -2484,6 +2507,7 @@ class CrossfadeController(
         incomingPlaybackRate = 1.0
         outgoingPlaybackRate = 1.0
         rampSteps = 0
+        armPausedAt = 0L
         outgoingAnalysis = TrackAnalysis()
         incomingAnalysis = TrackAnalysis()
         phase = Phase.IDLE
@@ -3677,9 +3701,9 @@ class CrossfadeController(
         /**
          * Arming only waits on a buffer now — nothing is being converged — so
          * this is about how promptly the fade can start once the incoming track
-         * is ready, not about a control loop's step size.
+         * is ready, not about a control loop's step size. A paused arm parks
+         * instead of polling; see [CrossfadeArmPolicy.armingStepMs].
          */
-        const val ARM_STEP_MS = 40L
         const val FADE_STEP_MS = 30L
 
         /** A new position report landed somewhere in the last fade tick; half of one is the best guess. */

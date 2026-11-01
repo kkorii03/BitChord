@@ -483,7 +483,17 @@ internal class NextTrackPreparation(
                     )
                     false
                 }
-                if (completed == null) deadlineHit = true
+                if (completed == null) {
+                    deadlineHit = true
+                    // A deadline cut the wait short without answering. The
+                    // bundle is scheduled again by the resume/queue events, and
+                    // that run may still have time for the mix; a real refusal
+                    // (completed == false) stays remembered so it is not
+                    // repeated on every event.
+                    if (!NextPrepPolicy.keepMixAttemptAfter(completed)) {
+                        synchronized(attempted) { steps.remove(Step.MIX) }
+                    }
+                }
             }
         }
 

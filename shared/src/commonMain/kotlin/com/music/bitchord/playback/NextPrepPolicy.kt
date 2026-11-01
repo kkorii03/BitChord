@@ -107,6 +107,18 @@ object NextPrepPolicy {
     /** Whether a step may still start with [remainingMs] left. */
     fun canStartStep(remainingMs: Long): Boolean = remainingMs > 0L
 
+    /**
+     * Whether the MIX step keeps its one-attempt mark after a run that ended
+     * with [completed].
+     *
+     * A deadline timeout is null, not an answer: the row is still the next one
+     * and the bundle is scheduled again by the resume/queue events, so the mix
+     * may be asked for then with whatever time that run has. A completed false
+     * is a real refusal and must stay remembered, or every event would repeat
+     * the same failed request.
+     */
+    fun keepMixAttemptAfter(completed: Boolean?): Boolean = completed != null
+
     /** Whether the paid engines may be asked after [playedMs] of the current track. */
     fun aiGateOpen(playedMs: Long): Boolean = playedMs >= AI_MIN_PLAYED_MS
 
