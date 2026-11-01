@@ -1974,7 +1974,14 @@ object StreamResolver {
             remember(
                 videoId,
                 url,
-                capturedGeneration = refused.proxyGeneration,
+                // The refusal record can only carry a stamp it read from the
+                // recent cache before dropping the entry. When that entry was
+                // already gone, fall back to the registration ProxyPlayback
+                // kept for the URL, not the live ALL route: the URL is still
+                // known to be proxy-minted, and leaving it unstamped would let
+                // a route/scope change fetch it directly (403).
+                capturedGeneration = refused.proxyGeneration
+                    ?: ProxyPlayback.registeredGenerationFor(url),
                 capturedOnAllScope = refused.mintedOnAllScope,
             )
         }
