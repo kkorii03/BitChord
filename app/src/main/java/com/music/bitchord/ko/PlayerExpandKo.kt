@@ -34,3 +34,22 @@ internal fun koSetPlayerShown(
         }
     }
 }
+
+/** The activity's one raise/close entry point, kept out of the upstream file. */
+internal fun koPlayerShownSetter(
+    currentlyShown: () -> Boolean,
+    touchedSinceResume: () -> Boolean,
+    msSinceResume: () -> Long,
+    msSinceTouch: () -> Long,
+    onShownChange: (Boolean) -> Unit,
+): (Boolean, PlayerExpandSource) -> Unit = { shown, source ->
+    koSetPlayerShown(
+        shown = shown,
+        source = source,
+        currentlyShown = currentlyShown(),
+        touchedSinceResume = touchedSinceResume(),
+        msSinceResume = msSinceResume(),
+        msSinceTouch = msSinceTouch(),
+        onShownChange = onShownChange,
+    )
+}
