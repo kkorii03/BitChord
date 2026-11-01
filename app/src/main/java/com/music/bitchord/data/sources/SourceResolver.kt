@@ -56,7 +56,7 @@ object SourceResolver {
 
     private const val TAG = "BitChord"
 
-    internal var offlineCheck: () -> Boolean
+    internal var offlineCheck: () -> Boolean // [KO] offline-check
         get() = com.music.bitchord.ko.KoSourceRuntime.offlineCheck
         set(value) { com.music.bitchord.ko.KoSourceRuntime.offlineCheck = value }
 
