@@ -182,7 +182,9 @@ fun LibraryScreen(
                         shelf = emptyPlaylists,
                         onItemClick = onShelfItemClick,
                         onItemLongPress = onShelfItemLongPress,
-                        onNewPlaylist = onNewPlaylist,
+                        onNewPlaylist = onNewPlaylist.takeIf {
+                            libraryOffersNewPlaylist(signedIn)
+                        },
                         onImportSpotifyPlaylist = onImportSpotifyPlaylist,
                         onShowAll = { onShowAll(emptyPlaylists) },
                         isPlaying = isPlaying,
@@ -342,7 +344,7 @@ private fun PlaylistShelf(
     shelf: HomeShelf,
     onItemClick: (ShelfItem) -> Unit,
     onItemLongPress: (ShelfItem) -> Unit,
-    onNewPlaylist: () -> Unit,
+    onNewPlaylist: (() -> Unit)?,
     onImportSpotifyPlaylist: (() -> Unit)? = null,
     onShowAll: () -> Unit,
     pinnedPlaylists: List<String> = emptyList(),
@@ -355,22 +357,28 @@ private fun PlaylistShelf(
         onShowAll = onShowAll,
         pinnedPlaylists = pinnedPlaylists,
         isPlaying = isPlaying,
-        leadingCard = {
-            Row(horizontalArrangement = Arrangement.spacedBy(LIBRARY_GRID_SPACING)) {
-                NewShelfCard(
-                    icon = BitChordIcons.Plus,
-                    label = stringResource(Res.string.new_playlist),
-                    subtitle = stringResource(Res.string.saved_to_youtube_music),
-                    onClick = onNewPlaylist,
-                )
-                if (onImportSpotifyPlaylist != null) {
-                    NewShelfCard(
-                        icon = BitChordIcons.Download,
-                        label = stringResource(Res.string.import_spotify),
-                        subtitle = stringResource(Res.string.import_spotify_subtitle),
-                        onClick = onImportSpotifyPlaylist,
-                        logo = Res.drawable.spotify_logo,
-                    )
+        leadingCard = if (onNewPlaylist == null && onImportSpotifyPlaylist == null) {
+            null
+        } else {
+            {
+                Row(horizontalArrangement = Arrangement.spacedBy(LIBRARY_GRID_SPACING)) {
+                    onNewPlaylist?.let { create ->
+                        NewShelfCard(
+                            icon = BitChordIcons.Plus,
+                            label = stringResource(Res.string.new_playlist),
+                            subtitle = stringResource(Res.string.saved_to_youtube_music),
+                            onClick = create,
+                        )
+                    }
+                    onImportSpotifyPlaylist?.let { import ->
+                        NewShelfCard(
+                            icon = BitChordIcons.Download,
+                            label = stringResource(Res.string.import_spotify),
+                            subtitle = stringResource(Res.string.import_spotify_subtitle),
+                            onClick = import,
+                            logo = Res.drawable.spotify_logo,
+                        )
+                    }
                 }
             }
         },
@@ -519,3 +527,13 @@ private fun HomeShelf.sortedForLibrary(sort: LibrarySort): HomeShelf = when (sor
 
 /** The library feed whose cards are the account's own — see [PlaylistShelf]. */
 private const val PLAYLISTS = YtMusicRepository.PLAYLISTS_SHELF
+
+/**
+ * Whether this Library may offer the New playlist tile.
+ *
+ * A playlist made here is written to YouTube Music under the signed-in account,
+ * so without one the tile would open a form whose only result is a message that
+ * the playlist could not be changed. Spotify import is different: it falls
+ * back to a device-only row and stays available.
+ */
+fun libraryOffersNewPlaylist(signedIn: Boolean): Boolean = signedIn

@@ -5529,13 +5529,19 @@ private fun BitChordApp(
                         privacy,
                         songs.map { it.videoId },
                         songs,
-                    ) { browseId, pTitle, savedLocally ->
+                    ) { browseId, pTitle, savedLocally, failedSongs ->
                         showQueueNotice(
-                            context.getString(
-                                if (savedLocally && signedIn) R.string.spotify_import_local_fallback
-                                else R.string.spotify_import_done,
-                                pTitle,
-                            ),
+                            when {
+                                failedSongs > 0 -> context.getString(
+                                    R.string.spotify_import_partial,
+                                    failedSongs,
+                                )
+                                savedLocally && signedIn -> context.getString(
+                                    R.string.spotify_import_local_fallback,
+                                    pTitle,
+                                )
+                                else -> context.getString(R.string.spotify_import_done, pTitle)
+                            },
                         )
                         browseId?.let { id ->
                             viewModel.openDetail(id, pTitle, "${songs.size} songs", songs.firstOrNull()?.thumbnailUrl)

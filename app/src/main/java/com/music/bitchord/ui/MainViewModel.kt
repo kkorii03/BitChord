@@ -1063,8 +1063,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         privacy: PlaylistPrivacy,
         videoIds: List<String>,
         songs: List<Song> = emptyList(),
-        /** [savedLocally] is true when the playlist went to this device, not YouTube Music. */
-        onResult: ((browseId: String?, title: String, savedLocally: Boolean) -> Unit)? = null,
+        /**
+         * [savedLocally] is true when the playlist went to this device, not
+         * YouTube Music; [failedSongs] is how many later batches YouTube
+         * refused, so the surface can say the import was not whole.
+         */
+        onResult: ((
+            browseId: String?,
+            title: String,
+            savedLocally: Boolean,
+            failedSongs: Int,
+        ) -> Unit)? = null,
     ) {
         val name = title.trim().ifBlank { text(R.string.new_playlist) }
         viewModelScope.launch {
@@ -1076,10 +1085,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     videoIds = initialBatch,
                 ).fold(
                     onSuccess = { playlistId ->
-                        if (videoIds.size > 50) {
-                            videoIds.drop(50).chunked(50).forEach { chunk ->
-                                YtMusicRepository.addToPlaylist(playlistId, chunk)
-                            }
+                        val failedSongs = addPlaylistRemainderChunks(videoIds) { chunk ->
+                            YtMusicRepository.addToPlaylist(playlistId, chunk)
                         }
                         setPlaylistOwned("VL$playlistId", true)
                         libraryStale = true
@@ -1102,16 +1109,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                                 ),
                             ) + items.filterNot { it.browseId == created.browseId }
                         }
-                        onResult?.invoke(created.browseId, created.title, false)
+                        onResult?.invoke(created.browseId, created.title, false, failedSongs)
                     },
                     onFailure = {
                         val local = com.music.bitchord.data.spotify.LocalPlaylistStore.savePlaylist(name, songs)
-                        onResult?.invoke(local.browseId, local.title, true)
+                        onResult?.invoke(local.browseId, local.title, true, 0)
                     },
                 )
             } else {
                 val local = com.music.bitchord.data.spotify.LocalPlaylistStore.savePlaylist(name, songs)
-                onResult?.invoke(local.browseId, local.title, true)
+                onResult?.invoke(local.browseId, local.title, true, 0)
             }
         }
     }
@@ -1126,13 +1133,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         /** Told when YouTube refused the write, so the surface can say so. */
         onFailure: () -> Unit = {},
     ) {
-        val setVideoId = song.setVideoId ?: return
-        if (!requireSignIn()) return
+        val entry = playlistRemovalEntry(song, requireSignIn(), onFailure) ?: return
+        val (setVideoId, videoId) = entry
         val playlistId = browseId.removePrefix("VL")
         viewModelScope.launch {
             YtMusicRepository.removeFromPlaylist(
                 playlistId,
-                listOf(setVideoId to song.videoId),
+                listOf(setVideoId to videoId),
             ).fold(
                 onSuccess = {
                     libraryStale = true

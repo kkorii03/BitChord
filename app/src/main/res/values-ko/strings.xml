@@ -1139,6 +1139,7 @@
     <string name="spotify_import_button">가져오기</string>
     <string name="spotify_import_local_fallback">YouTube Music에 만들 수 없어 ‘%1$s’ 플레이리스트를 이 기기에 대신 저장했습니다.</string>
     <string name="spotify_import_done">‘%1$s’ 가져오기 완료</string>
+    <string name="spotify_import_partial">%1$d곡을 플레이리스트에 추가하지 못했습니다. 나머지 곡은 저장했습니다.</string>
     <string name="spotify_import_unmatched">%1$d곡을 YouTube Music에서 찾지 못했습니다.</string>
     <string name="spotify_import_loose">%1$d곡은 대략적으로 매칭되었습니다.</string>
     <string name="local_playlist_subtitle">%1$d곡 · 이 기기</string>
