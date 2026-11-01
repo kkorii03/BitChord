@@ -15,6 +15,10 @@ on:
         description: 'Force the Korea-without-Premium home (debug switch)'
         type: boolean
         default: true
+      liquid_glass_off:
+        description: 'Tour with the listener settings but Liquid Glass off (home-lag comparison)'
+        type: boolean
+        default: false
 
 jobs:
   tour:
@@ -52,6 +56,9 @@ jobs:
           if [ -n "$SMOKE_SETTINGS_B64" ]; then
             echo "$SMOKE_SETTINGS_B64" | base64 -d | sed '1s/^\xEF\xBB\xBF//' > "$RUNNER_TEMP/smoke.bitchord-settings"
             python3 scripts/smoke/set_proxy_port.py "$RUNNER_TEMP/smoke.bitchord-settings" "${SMOKE_PROXY_PORT:-8889}" --emulator
+            if [ "${{ inputs.liquid_glass_off }}" = "true" ]; then
+              python3 scripts/smoke/set_setting.py "$RUNNER_TEMP/smoke.bitchord-settings" liquid_glass false
+            fi
             echo "SMOKE_SETTINGS_FILE=$RUNNER_TEMP/smoke.bitchord-settings" >> "$GITHUB_ENV"
             echo "::notice title=tour::listener settings loaded"
           else
