@@ -101,3 +101,35 @@ internal object AudioOutputPolicy {
         return if (wired && source in advertisedSampleRates) null else 48_000
     }
 }
+
+/**
+ * Parks an output rebuild until a crossfade has finished.
+ *
+ * Replacing two renderers during a blend cuts one half of it, so a route or
+ * PCM-mode change that arrives mid-transition must wait. The wait is driven by
+ * [CrossfadeController]'s settled event; the old code asked
+ * [CrossfadeController.isTransitioning] every 50ms, which is a timer spent on
+ * an answer the controller already broadcasts.
+ */
+internal class OutputReconfigureGate {
+    private var parked = false
+
+    /** Whether the caller may rebuild now, or the request was parked until [settled]. */
+    @Synchronized
+    fun request(transitioning: Boolean): Boolean {
+        if (transitioning) {
+            parked = true
+            return false
+        }
+        parked = false
+        return true
+    }
+
+    /** The transition finished; whether a parked rebuild still has to run. */
+    @Synchronized
+    fun settled(): Boolean {
+        val run = parked
+        parked = false
+        return run
+    }
+}
