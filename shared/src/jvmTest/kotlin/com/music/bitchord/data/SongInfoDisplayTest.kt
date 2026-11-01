@@ -1,6 +1,10 @@
 package com.music.bitchord.data
 
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.ko.SongInfoDisplay
+import com.music.bitchord.ko.SongInfoField
+import com.music.bitchord.ko.SongInfoQuality
+import com.music.bitchord.ko.SongInfoTarget
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse

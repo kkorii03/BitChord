@@ -23,11 +23,11 @@ import androidx.compose.ui.window.DialogProperties
 import com.music.bitchord.R
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.SongInfo
-import com.music.bitchord.data.SongInfoDisplay
-import com.music.bitchord.data.SongInfoField
-import com.music.bitchord.data.SongInfoQuality
 import com.music.bitchord.data.SongInfoRepository
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.ko.SongInfoDisplay
+import com.music.bitchord.ko.SongInfoField
+import com.music.bitchord.ko.SongInfoQuality
 import com.music.bitchord.ui.theme.ArtworkPalette
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
