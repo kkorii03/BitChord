@@ -95,4 +95,36 @@ object HandoffQueuePolicy {
         outgoingKeys.getOrNull(outgoingCurrentIndex) == incomingKey ||
             outgoingKeys.getOrNull(outgoingCurrentIndex + 1) == incomingKey ||
             (wrapsToStart && outgoingKeys.getOrNull(0) == incomingKey)
+
+    /**
+     * Whether the standby is still buffering the recording the outgoing queue
+     * now names for the incoming row.
+     *
+     * A handoff key is the queue row and its tier, not the recording: a song
+     * version resolved while the transition is armed replaces the row's
+     * `mediaId` and keeps its entry id. The row is therefore still "next", but
+     * the standby holds the old upload — and after the handoff that copy is the
+     * session, so the resolved version is lost and the old one plays. The
+     * media id is the part that says which recording is actually buffered.
+     *
+     * A null standby id means there is nothing to compare (or the item has not
+     * loaded yet), so the earlier key checks remain the whole answer.
+     */
+    fun incomingRecordingMatches(
+        outgoingMediaIds: List<String>,
+        outgoingKeys: List<String>,
+        incomingKey: String,
+        incomingIndexHint: Int,
+        outgoingCurrentIndex: Int,
+        standbyMediaId: String?,
+    ): Boolean {
+        if (standbyMediaId == null) return true
+        val index = incomingIndex(
+            outgoingKeys = outgoingKeys,
+            incomingKey = incomingKey,
+            incomingIndexHint = incomingIndexHint,
+            outgoingCurrentIndex = outgoingCurrentIndex,
+        ) ?: return false
+        return outgoingMediaIds.getOrNull(index) == standbyMediaId
+    }
 }

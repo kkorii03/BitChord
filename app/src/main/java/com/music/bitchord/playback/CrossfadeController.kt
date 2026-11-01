@@ -828,11 +828,20 @@ class CrossfadeController(
                 val incomingKey = into?.currentMediaItem?.handoffKey()
                 if (out != null && incomingKey != null) {
                     val keys = (0 until out.mediaItemCount).map { out.getMediaItemAt(it).handoffKey() }
+                    val mediaIds = (0 until out.mediaItemCount).map { out.getMediaItemAt(it).mediaId }
                     if (!HandoffQueuePolicy.incomingStillNext(
                             outgoingKeys = keys,
                             outgoingCurrentIndex = out.currentMediaItemIndex,
                             incomingKey = incomingKey,
                             wrapsToStart = incomingWrapsToStart,
+                        ) ||
+                        !HandoffQueuePolicy.incomingRecordingMatches(
+                            outgoingMediaIds = mediaIds,
+                            outgoingKeys = keys,
+                            incomingKey = incomingKey,
+                            incomingIndexHint = incomingItemIndex,
+                            outgoingCurrentIndex = out.currentMediaItemIndex,
+                            standbyMediaId = into.currentMediaItem?.mediaId,
                         )
                     ) {
                         bail()

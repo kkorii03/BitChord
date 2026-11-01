@@ -27,8 +27,10 @@ import com.music.bitchord.playback.smart.LyricsTiming
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Locale
 
@@ -709,8 +711,15 @@ internal class NextTrackPreparation(
         val item = player.getMediaItemAt(index)
         if ((item.queueEntryId ?: item.mediaId) != rowId) return null
         if (item.mediaId != song.videoId) return null
+        val useDownloadedFile = nextPrepUseDownloadedFile(
+            playId = resolved.videoId,
+            soundSourceId = Downloads.savedSoundSourceFor(resolved.videoId),
+            storedIsVideo = Downloads.savedIsVideoFor(resolved.videoId),
+            lengthSuspect = Downloads.mvSoundSuspectMs(resolved.videoId) != null,
+            online = !AudioCache.isOffline(),
+        )
         val replacement = QueueShuffle.withQueueMetadata(
-            resolved.toMediaItem(),
+            resolved.toMediaItem(useDownloadedFile = useDownloadedFile),
             newEntryId = item.queueEntryId,
             newCanonicalIndex = item.canonicalIndex,
             newTier = item.queueTier,
@@ -726,7 +735,7 @@ internal class NextTrackPreparation(
 
     // ---- (b) lyrics, (c) high quality ---------------------------------------
 
-    private fun preparedSteps(song: Song, lyrics: TranslationAhead.AheadLyrics?): Set<Step> =
+    private suspend fun preparedSteps(song: Song, lyrics: TranslationAhead.AheadLyrics?): Set<Step> =
         buildSet {
             if (!versionWanted(song) || versionAnswered(song)) add(Step.VERSION)
             if (lyrics?.lines != null) add(Step.LYRICS)
@@ -742,7 +751,7 @@ internal class NextTrackPreparation(
         canSubstitute = SourceResolver.canSubstituteForYouTube(),
     )
 
-    private fun existingHq(song: Song): HqTier? {
+    private suspend fun existingHq(song: Song): HqTier? {
         val chosen = StreamChoice.of(song.videoId)
         val sourceId = chosen?.sourceConfigId
         if (chosen != null && sourceId != null &&
@@ -750,7 +759,12 @@ internal class NextTrackPreparation(
         ) {
             return HqQuality.tierOf(chosen.format)
         }
-        return HqVerificationStore.bestTier(context, song.videoId)
+        // The store parses up to 2,000 preference rows on its first read this
+        // process. This bundle runs on the playback service's main scope, so
+        // reading it here used to stall the first frame of a track change.
+        return nextPrepOffMain {
+            HqVerificationStore.bestTier(context, song.videoId)
+        }
     }
 
     private suspend fun prepareHq(song: Song): HqTier? {
@@ -914,6 +928,44 @@ internal class NextTrackPreparation(
         /** A player message at 30 s is the gate; this only covers a seek/pause race. */
         const val AI_GATE_GRACE_MS = 5_000L
     }
+}
+
+/**
+ * Runs a store read off the playback service's main scope.
+ *
+ * The next-prep bundle is launched on that scope, and the verification store's
+ * first read parses every stored row. Kept as a named seam so the dispatch is
+ * covered without a player or an Android main looper.
+ */
+internal suspend fun <T> nextPrepOffMain(block: () -> T): T =
+    withContext(Dispatchers.IO) { block() }
+
+/**
+ * Whether a file already saved for the next row's resolved recording may be
+ * attached to its media item.
+ *
+ * The same rules the playing-row path applies: a file recorded from another
+ * upload's sound, or one already marked as an MV-sound/length suspect, must
+ * not play under the song version the bundle just resolved. Without this, the
+ * next row swapped from a video to its catalogue release could still open the
+ * old file — and with a crossfade the listener hears the wrong recording from
+ * the first frame with no chance to correct it.
+ */
+internal fun nextPrepUseDownloadedFile(
+    playId: String,
+    soundSourceId: String?,
+    storedIsVideo: Boolean?,
+    lengthSuspect: Boolean,
+    online: Boolean,
+): Boolean {
+    if (storedIsVideo == true) return false
+    if (lengthSuspect) return false
+    val use = SongVersionPolicy.downloadedFileUse(
+        playId = playId,
+        soundSourceId = soundSourceId,
+        online = online,
+    )
+    return use != SongVersionPolicy.DownloadedFileUse.STREAM_SONG
 }
 
 /**

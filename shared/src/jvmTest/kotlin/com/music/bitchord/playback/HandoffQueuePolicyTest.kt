@@ -242,4 +242,47 @@ class HandoffQueuePolicyTest {
             ),
         )
     }
+
+    @Test
+    fun aVersionResolvedDuringArmingIsNotTheRecordingTheStandbyBuffered() {
+        val keys = listOf("row-a_t1", "row-b_t1", "row-c_t1")
+        assertFalse(
+            HandoffQueuePolicy.incomingRecordingMatches(
+                outgoingMediaIds = listOf("video-a", "song-b", "video-c"),
+                outgoingKeys = keys,
+                incomingKey = "row-b_t1",
+                incomingIndexHint = 1,
+                outgoingCurrentIndex = 0,
+                standbyMediaId = "video-b",
+            ),
+        )
+    }
+
+    @Test
+    fun theSameRecordingStaysArmedAcrossTailEdits() {
+        assertTrue(
+            HandoffQueuePolicy.incomingRecordingMatches(
+                outgoingMediaIds = listOf("video-a", "song-b", "video-d"),
+                outgoingKeys = listOf("row-a_t1", "row-b_t1", "row-d_t1"),
+                incomingKey = "row-b_t1",
+                incomingIndexHint = 1,
+                outgoingCurrentIndex = 0,
+                standbyMediaId = "song-b",
+            ),
+        )
+    }
+
+    @Test
+    fun anUnloadedStandbyHasNothingToContradictTheKeys() {
+        assertTrue(
+            HandoffQueuePolicy.incomingRecordingMatches(
+                outgoingMediaIds = listOf("video-a"),
+                outgoingKeys = listOf("row-a_t1"),
+                incomingKey = "row-a_t1",
+                incomingIndexHint = 0,
+                outgoingCurrentIndex = 0,
+                standbyMediaId = null,
+            ),
+        )
+    }
 }
