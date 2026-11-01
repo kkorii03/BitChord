@@ -949,7 +949,7 @@ class LyricsController(
                     }
                     if (!LyricsTiming.worthMeasuring(context, request.videoId)) return true
                     attempts++
-                    LyricsTiming.measure(context, video, names, request.durationMs)
+                    LyricsTiming.measure(context, video, names, request.durationMs, lines = lines)
                     refreshTiming(generation, lines)
                     autoAiIfNeeded(generation, lines)
                     return !LyricsTiming.measured(context, request.videoId)

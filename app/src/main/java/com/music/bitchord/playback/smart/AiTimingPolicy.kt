@@ -46,14 +46,19 @@ internal object AiTimingPolicy {
      */
     const val DEEPGRAM_WHISPER = "Deepgram Whisper"
 
-    /** All engines, cheapest first: what a request may spend while nothing usable is kept. */
-    val ALL_ENGINES = listOf(DEEPGRAM, WHISPER, GEMINI)
+    /**
+     * All engines a video request may spend. Deepgram's Whisper is used here
+     * instead of nova-3, which hears almost no singing over a band; it is the
+     * same request and key the song check uses.
+     */
+    val ALL_ENGINES = listOf(DEEPGRAM_WHISPER, GEMINI)
 
     /**
-     * The quick engines asked alongside the measurement. Whisper is paid for
-     * by the minute, so it waits until the measurement has given up.
+     * The engines asked alongside a video's measurement. nova-3 was cheap but
+     * deaf to songs seen on the phone (37 words, 5 of 44 lines placed), while
+     * Whisper through the same key heard hundreds. Gemini stays as before.
      */
-    val AHEAD_ENGINES = listOf(DEEPGRAM, GEMINI)
+    val AHEAD_ENGINES = listOf(DEEPGRAM_WHISPER, GEMINI)
 
     /**
      * What a song check may spend. There is no video edit to tell apart from
@@ -88,8 +93,8 @@ internal object AiTimingPolicy {
      * over an accepted answer or one already attempted for these lyrics.
      * Automatic asks only spend an engine once per lyrics text; a failed or
      * low-agreement answer therefore gets the next engine once, never the
-     * same one again. [measurementGaveUp] widens the pool to Whisper, whose
-     * cost is only worth paying once the free measurement has nothing.
+     * same one again. [measurementGaveUp] moves the pool from the ahead set to
+     * every engine still unspent; both hold Deepgram's Whisper now.
      *
      * [songOnly] is the record-timed song check: its pool is [SONG_ENGINES]
      * (Deepgram's Whisper only), so the video path's Gemini and its one
@@ -109,7 +114,9 @@ internal object AiTimingPolicy {
             // timing this song has, and a quicker engine's is coarser than
             // Whisper's word stamps: Whisper may still upgrade it — once.
             val upgrade = !songOnly && measurementGaveUp &&
-                knowledge.answerEngine != WHISPER && WHISPER !in spent
+                knowledge.answerEngine != WHISPER &&
+                knowledge.answerEngine != DEEPGRAM_WHISPER &&
+                WHISPER !in spent
             return if (upgrade) listOf(WHISPER) else emptyList()
         }
         val pool = when {

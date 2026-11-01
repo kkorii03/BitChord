@@ -358,7 +358,13 @@ internal object TranslationAhead {
                 com.music.bitchord.playback.AudioCache.requestAnalysisHead(
                     android.net.Uri.parse(com.music.bitchord.playback.smart.AutomixAnalysisSource.opusUri(song.videoId)),
                 )
-                timing.measure(context, song.copy(isVideo = true), names, song.durationMillis())
+                timing.measure(
+                    context,
+                    song.copy(isVideo = true),
+                    names,
+                    song.durationMillis(),
+                    lines = found.lines,
+                )
             }
             ahead?.join()
             if (!calibrationRan && AppSettings.aiTimingAhead.value &&

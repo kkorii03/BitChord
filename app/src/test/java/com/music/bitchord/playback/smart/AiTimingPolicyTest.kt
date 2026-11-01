@@ -73,14 +73,14 @@ class AiTimingPolicyTest {
     }
 
     @Test
-    fun failedQuickEnginesLeaveWhisperOnceAfterGivingUp() {
+    fun spentVideoEnginesAreNotAskedAgain() {
         val knowledge = AiTimingKnowledge(
             attemptedKey = key,
-            attemptedEngines = setOf("Deepgram", "Gemini"),
+            attemptedEngines = setOf("Deepgram Whisper", "Gemini"),
         )
-        assertEquals(listOf("Whisper"), AiTimingPolicy.nextEngines(knowledge, key, manual = false, measurementGaveUp = true))
-        val allSpent = knowledge.copy(attemptedEngines = setOf("Deepgram", "Whisper", "Gemini"))
-        assertEquals(emptyList<String>(), AiTimingPolicy.nextEngines(allSpent, key, manual = false, measurementGaveUp = true))
+        assertEquals(emptyList<String>(), AiTimingPolicy.nextEngines(knowledge, key, manual = false, measurementGaveUp = true))
+        val oneLeft = knowledge.copy(attemptedEngines = setOf("Deepgram Whisper"))
+        assertEquals(listOf("Gemini"), AiTimingPolicy.nextEngines(oneLeft, key, manual = false, measurementGaveUp = true))
     }
 
     @Test
@@ -88,17 +88,17 @@ class AiTimingPolicyTest {
         val knowledge = AiTimingKnowledge(answerKey = key, answerEngine = "Gemini", answerMatch = 20)
         assertFalse(AiTimingPolicy.isAccepted(knowledge, key))
         assertEquals(
-            listOf("Deepgram", "Whisper"),
+            listOf("Deepgram Whisper"),
             AiTimingPolicy.nextEngines(knowledge, key, manual = false, measurementGaveUp = true),
         )
-        val spent = knowledge.copy(attemptedKey = key, attemptedEngines = setOf("Deepgram", "Whisper"))
+        val spent = knowledge.copy(attemptedKey = key, attemptedEngines = setOf("Deepgram Whisper"))
         assertEquals(emptyList<String>(), AiTimingPolicy.nextEngines(spent, key, manual = false, measurementGaveUp = true))
     }
 
     @Test
     fun legacyWhisperKeyAndGeminiFailureCountAsSpent() {
         assertEquals(
-            listOf("Deepgram", "Gemini"),
+            listOf("Deepgram Whisper", "Gemini"),
             AiTimingPolicy.nextEngines(
                 AiTimingKnowledge(whisperKey = key),
                 key,
@@ -107,7 +107,7 @@ class AiTimingPolicyTest {
             ),
         )
         assertEquals(
-            listOf("Deepgram", "Whisper"),
+            listOf("Deepgram Whisper"),
             AiTimingPolicy.nextEngines(
                 AiTimingKnowledge(failedKey = key),
                 key,
@@ -171,11 +171,33 @@ class AiTimingPolicyTest {
             emptyList<String>(),
             AiTimingPolicy.nextEngines(accepted, key, manual = false, measurementGaveUp = true, songOnly = true),
         )
-        // The same entry on the video path still gets its one Whisper upgrade.
+        // A Deepgram Whisper answer is already the model the upgrade would ask.
         assertEquals(
-            listOf("Whisper"),
+            emptyList<String>(),
             AiTimingPolicy.nextEngines(accepted, key, manual = false, measurementGaveUp = true),
         )
+        // A Gemini answer still gets that one upgrade on the video path.
+        val gemini = accepted.copy(answerEngine = "Gemini")
+        assertEquals(
+            listOf("Whisper"),
+            AiTimingPolicy.nextEngines(gemini, key, manual = false, measurementGaveUp = true),
+        )
+    }
+
+    @Test
+    fun videoPathUsesDeepgramWhisperInsteadOfNova() {
+        assertEquals(
+            listOf("Deepgram Whisper", "Gemini"),
+            AiTimingPolicy.AHEAD_ENGINES,
+        )
+        val engines = AiTimingPolicy.nextEngines(
+            AiTimingKnowledge(),
+            key,
+            manual = false,
+            measurementGaveUp = false,
+        )
+        assertEquals(AiTimingPolicy.AHEAD_ENGINES, engines)
+        assertFalse(engines.contains("Deepgram"))
     }
 
     @Test
