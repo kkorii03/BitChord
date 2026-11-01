@@ -570,6 +570,60 @@ class LosslessTests(unittest.TestCase):
         self.assertEqual(0, playback.successes)
         self.assertFalse(playback.passed)
 
+    def test_next_prep_is_not_anchored_to_an_earlier_summarized_playback(self) -> None:
+        text = log_text(
+            logcat_line(
+                "18:00:00.000",
+                "play: -> Unplayed Song - Artist (id1) idx=0/10 reason=AUTO meta=ok",
+            ),
+            logcat_line(
+                "18:05:00.000",
+                "track-summary: id1 'Unplayed Song' video=n source=browse:x "
+                "resolve=direct firstAudio=1200 played=210 lyrics=lrc.red "
+                "sync=ai shift=-120 match=91 manualOffset=0 ended=natural",
+            ),
+            logcat_line(
+                "19:00:00.200",
+                "next-prep: Unplayed Song version=id1 lyrics=lrc.red "
+                "hq=lossless_16 sync=applied mix=ready in 100ms",
+            ),
+        )
+        report = analyze(text)
+        self.assertEqual(0, metric(report, "D2-playback").attempts)
+        self.assertEqual(0, report.stats["lossless"]["events"])
+
+    def test_next_prep_uses_the_first_matching_play_after_it(self) -> None:
+        text = log_text(
+            logcat_line(
+                "18:00:00.000",
+                "play: -> Unplayed Song - Artist (id1) idx=0/10 reason=AUTO meta=ok",
+            ),
+            logcat_line(
+                "18:05:00.000",
+                "track-summary: id1 'Unplayed Song' video=n source=browse:x "
+                "resolve=direct firstAudio=1200 played=210 lyrics=lrc.red "
+                "sync=ai shift=-120 match=91 manualOffset=0 ended=natural",
+            ),
+            logcat_line(
+                "19:00:00.200",
+                "next-prep: Unplayed Song version=id1 lyrics=lrc.red "
+                "hq=lossless_16 sync=applied mix=ready in 100ms",
+            ),
+            logcat_line(
+                "19:00:05.000",
+                "play: -> Unplayed Song - Artist (id1) idx=0/10 reason=AUTO meta=ok",
+            ),
+        )
+        report = analyze(text)
+        playback = metric(report, "D2-playback")
+        self.assertEqual(1, playback.attempts)
+        self.assertEqual(0, playback.successes)
+        self.assertEqual(1, len(playback.failures))
+        self.assertEqual(
+            featurehealth.datetime(2026, 10, 28, 19, 0, 5),
+            playback.failures[0].at,
+        )
+
 
 class AutoplayTests(unittest.TestCase):
     def test_refill_zero_refill_and_same_second_rescue(self) -> None:
@@ -887,6 +941,45 @@ class CrossfadeAndStartTests(unittest.TestCase):
         self.assertEqual(1, report.stats["crossfade"]["start"])
         self.assertEqual(1, report.stats["crossfade"]["end"])
         self.assertEqual([1100], report.stats["crossfade"]["overlaps"])
+
+    def test_export_start_duplicate_blend_does_not_double_count_its_arm(self) -> None:
+        text = log_text(
+            logcat_line(
+                "19:00:00.000",
+                "arm smart fade=1000ms end=5000ms cue=0ms rate=1.0 "
+                "style=DJ_FILTER handoff=0.5",
+                tag="BitChordCrossfade",
+                level="D",
+            ),
+            line(
+                "19:00:10.000",
+                "crossfade: start out=a in=b fade=1000ms cue=0ms smart=true",
+            ),
+            logcat_line(
+                "19:00:10.100",
+                "blend start at cue=0ms out=1000ms",
+                tag="BitChordCrossfade",
+                level="D",
+            ),
+            line(
+                "19:00:11.000",
+                "crossfade: end out=a in=b fade=1000ms overlap=1100ms tail=0ms",
+            ),
+            logcat_line(
+                "19:00:11.100",
+                "finish from FADING",
+                tag="BitChordCrossfade",
+                level="D",
+            ),
+        )
+        report = analyze(text)
+        # The blend start is the raw spelling of the export start, so its arm
+        # belongs to that same fade and must not add a second start.
+        self.assertEqual(1, report.stats["crossfade"]["start"])
+        self.assertEqual(1, report.stats["crossfade"]["end"])
+        self.assertEqual(1, report.stats["crossfade"]["complete"])
+        self.assertEqual(1, metric(report, "D7-crossfade").attempts)
+        self.assertEqual(1, metric(report, "D7-crossfade").successes)
 
     def test_crossfade_counts(self) -> None:
         text = log_text(

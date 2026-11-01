@@ -209,6 +209,12 @@ PASS_D2_PLAYBACK = 0.90
 FIRST_AUDIO_LIMIT_MS = 3000
 LIFECYCLE_WINDOW_SECONDS = 10.0
 REFILL_PAIR_WINDOW_SECONDS = 30.0
+# A next-prep row names the track about to play. Its PLAY follows shortly
+# after; a PLAY just before the row is the same track when the log order
+# jitters. Anything farther away is a different playback (often an earlier,
+# already-summarized one), so it must not become this row's anchor.
+PREP_PLAY_FORWARD_SECONDS = 900.0
+PREP_PLAY_BACKWARD_SECONDS = 30.0
 
 
 @dataclass(frozen=True)
@@ -1188,19 +1194,48 @@ def analyze(log: Log) -> Report:
         seen_titles.add(wanted)
 
     def prep_play(row: dict[str, Any]) -> dict[str, Any] | None:
-        """The PLAY this prep row belongs to, or None when it never played."""
+        """The PLAY this prep row belongs to, or None when it never played.
+
+        Only the first matching PLAY at/after the prep is the upcoming track.
+        A same-song PLAY before the prep is accepted only when it is recent and
+        no TRACK-SUMMARY has closed it yet; an older, already-summarized
+        playback must not be reused as this prep's anchor.
+        """
         wanted = _norm_title(row["title"])
-        matching = [
-            play for play in plays
-            if play["id"] == row["version"]
-            or _norm_title(play["title"]) == wanted
-        ]
-        if not matching:
-            return None
-        return min(
-            matching,
-            key=lambda play: abs((play["at"] - row["at"]).total_seconds()),
+
+        def belongs(play: dict[str, Any]) -> bool:
+            return play["id"] == row["version"] or _norm_title(play["title"]) == wanted
+
+        upcoming = sorted(
+            (play for play in plays if play["at"] >= row["at"] and belongs(play)),
+            key=lambda play: play["at"],
         )
+        if upcoming:
+            first = upcoming[0]
+            if (
+                first["at"] - row["at"]
+            ).total_seconds() <= PREP_PLAY_FORWARD_SECONDS:
+                return first
+        recent = sorted(
+            (play for play in plays if play["at"] < row["at"] and belongs(play)),
+            key=lambda play: play["at"],
+            reverse=True,
+        )
+        if not recent:
+            return None
+        last = recent[0]
+        if (row["at"] - last["at"]).total_seconds() > PREP_PLAY_BACKWARD_SECONDS:
+            return None
+        closed = any(
+            summary["at"] >= last["at"]
+            and summary["at"] <= row["at"]
+            and (
+                summary["id"] == last["id"]
+                or _norm_title(summary["title"]) == wanted
+            )
+            for summary in summaries
+        )
+        return None if closed else last
 
     for row in next_preps:
         if not _is_lossless_hq(row["hq"]):
@@ -1799,6 +1834,12 @@ def analyze(log: Log) -> Report:
 
         for index, row in enumerate(blend_starts):
             if near_any(row["at"], old_start_times):
+                # The export already counted this fade. Discard the raw arm it
+                # belongs to as well, so the unclaimed-arm loop below does not
+                # add the same fade a second time.
+                claimed = arm_for(row["at"])
+                if claimed is not None:
+                    claimed_arms.add(claimed[0])
                 continue
             claimed = arm_for(row["at"])
             arm = claimed[1] if claimed is not None else None
