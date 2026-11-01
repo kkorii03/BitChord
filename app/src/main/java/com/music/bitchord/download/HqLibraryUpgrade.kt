@@ -142,6 +142,7 @@ object HqLibraryUpgrade {
     private const val KEY_MANUAL = "manual"
     private const val KEY_FAILURES = "failures"
     private const val KEY_FAILED_RUN = "failed_run"
+    private const val KEY_FAILED_RUN_KEYS = "failed_run_keys"
     private const val KEY_RUN_FINISHED = "run_finished"
 
     /** How much history is read when ranking prefetch targets. */
@@ -1366,6 +1367,7 @@ object HqLibraryUpgrade {
             if (key != null) {
                 if (success || !recordFailure) {
                     failures.remove(key)
+                    clearRunFailureLocked(key)
                 } else {
                     val previous = failures[key]?.attempts ?: 0
                     recordedFailure = Failure(previous + 1, System.currentTimeMillis())
@@ -1596,9 +1598,14 @@ object HqLibraryUpgrade {
             total = prefs.getInt(KEY_TOTAL, 0)
             activeVideoId = prefs.getString(KEY_ACTIVE, null)?.takeIf { it.isNotBlank() }
             manualPass = prefs.getBoolean(KEY_MANUAL, false)
-            failedThisRun = prefs.getInt(KEY_FAILED_RUN, 0).coerceAtLeast(0)
             runFinished = prefs.getBoolean(KEY_RUN_FINISHED, false)
-            failedRunKeys.clear()
+            restoreRunSummaryLocked(
+                persistedFailed = prefs.getInt(KEY_FAILED_RUN, 0),
+                persistedKeys = prefs.getString(KEY_FAILED_RUN_KEYS, null).orEmpty()
+                    .lineSequence()
+                    .filter { it.isNotBlank() }
+                    .toList(),
+            )
             failures.clear()
             prefs.getString(KEY_FAILURES, null).orEmpty()
                 .lineSequence()
@@ -1630,6 +1637,7 @@ object HqLibraryUpgrade {
             .putString(KEY_ACTIVE, activeVideoId)
             .putBoolean(KEY_MANUAL, manualPass)
             .putInt(KEY_FAILED_RUN, failedThisRun)
+            .putString(KEY_FAILED_RUN_KEYS, failedRunKeys.joinToString("\n"))
             .putBoolean(KEY_RUN_FINISHED, runFinished)
             .putString(
                 KEY_FAILURES,
@@ -1648,6 +1656,27 @@ object HqLibraryUpgrade {
 
     private fun registerRunFailureLocked(key: String) {
         if (failedRunKeys.add(key)) failedThisRun += 1
+    }
+
+    /**
+     * Restores the per-run summary after a process death.
+     *
+     * [failedRunKeys] is persisted with [failedThisRun] so a target that
+     * already failed before the restart is not counted a second time when it
+     * fails again in the continuation of the same run. The stored count is kept
+     * when it is larger than the restored set, because prefs written before the
+     * key set existed still carry a count.
+     */
+    private fun restoreRunSummaryLocked(persistedFailed: Int, persistedKeys: Collection<String>) {
+        failedRunKeys.clear()
+        persistedKeys.filterTo(failedRunKeys) { it.isNotBlank() }
+        failedThisRun = maxOf(persistedFailed.coerceAtLeast(0), failedRunKeys.size)
+    }
+
+    private fun clearRunFailureLocked(key: String) {
+        if (failedRunKeys.remove(key)) {
+            failedThisRun = (failedThisRun - 1).coerceAtLeast(0)
+        }
     }
 
     private fun publishLocked() {
