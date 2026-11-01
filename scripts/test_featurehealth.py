@@ -24,6 +24,12 @@ def line(at: str, message: str, tag: str = "BitChord", level: str = "I") -> str:
     return f"2026-10-28 {at} {level}/{tag} {message}"
 
 
+def logcat_line(
+    at: str, message: str, tag: str = "BitChord", level: str = "I"
+) -> str:
+    return f"10-28 {at}  1234  5678 {level} {tag}: {message}"
+
+
 def log_text(*lines: str) -> str:
     return HEADER + "\n".join(lines) + "\n"
 
@@ -506,6 +512,118 @@ class LosslessTests(unittest.TestCase):
         self.assertEqual(1, playback.successes)
         self.assertTrue(playback.passed)
 
+    def test_logcat_power_decoder_and_lossless_next_prep_count_as_playback(self) -> None:
+        text = log_text(
+            logcat_line(
+                "19:00:00.000",
+                "play: -> Lossless Song - Artist (id1) idx=0/10 reason=AUTO meta=ok",
+            ),
+            logcat_line(
+                "19:00:00.100",
+                "power: decoders active=2 [player-b:c2.android.flac.decoder, automix]",
+            ),
+            logcat_line(
+                "19:00:00.200",
+                "next-prep: Lossless Song version=id1 lyrics=lrc.red "
+                "hq=lossless_16 sync=applied mix=ready in 100ms",
+            ),
+            logcat_line(
+                "19:02:00.000",
+                "track-summary: id1 'Lossless Song' video=n source=browse:x "
+                "resolve=direct firstAudio=1200 played=120 lyrics=lrc.red "
+                "sync=ai shift=-120 match=91 manualOffset=0 ended=natural",
+            ),
+        )
+        report = analyze(text)
+        playback = metric(report, "D2-playback")
+        self.assertEqual(1, playback.attempts)
+        self.assertEqual(1, playback.successes)
+        self.assertTrue(playback.passed)
+
+    def test_lossless_next_prep_without_a_play_is_not_an_event(self) -> None:
+        text = log_text(
+            logcat_line(
+                "19:00:00.200",
+                "next-prep: Unplayed Song version=id1 lyrics=lrc.red "
+                "hq=lossless_16 sync=applied mix=ready in 100ms",
+            ),
+        )
+        report = analyze(text)
+        self.assertEqual(0, metric(report, "D2-playback").attempts)
+        self.assertEqual(0, report.stats["lossless"]["events"])
+
+    def test_lossless_next_prep_does_not_prove_its_own_playback(self) -> None:
+        text = log_text(
+            logcat_line(
+                "19:00:00.000",
+                "play: -> Prep Song - Artist (id1) idx=0/10 reason=AUTO meta=ok",
+            ),
+            logcat_line(
+                "19:00:00.200",
+                "next-prep: Prep Song version=id1 lyrics=lrc.red "
+                "hq=lossless_16 sync=applied mix=ready in 100ms",
+            ),
+        )
+        report = analyze(text)
+        playback = metric(report, "D2-playback")
+        self.assertEqual(1, playback.attempts)
+        self.assertEqual(0, playback.successes)
+        self.assertFalse(playback.passed)
+
+    def test_next_prep_is_not_anchored_to_an_earlier_summarized_playback(self) -> None:
+        text = log_text(
+            logcat_line(
+                "18:00:00.000",
+                "play: -> Unplayed Song - Artist (id1) idx=0/10 reason=AUTO meta=ok",
+            ),
+            logcat_line(
+                "18:05:00.000",
+                "track-summary: id1 'Unplayed Song' video=n source=browse:x "
+                "resolve=direct firstAudio=1200 played=210 lyrics=lrc.red "
+                "sync=ai shift=-120 match=91 manualOffset=0 ended=natural",
+            ),
+            logcat_line(
+                "19:00:00.200",
+                "next-prep: Unplayed Song version=id1 lyrics=lrc.red "
+                "hq=lossless_16 sync=applied mix=ready in 100ms",
+            ),
+        )
+        report = analyze(text)
+        self.assertEqual(0, metric(report, "D2-playback").attempts)
+        self.assertEqual(0, report.stats["lossless"]["events"])
+
+    def test_next_prep_uses_the_first_matching_play_after_it(self) -> None:
+        text = log_text(
+            logcat_line(
+                "18:00:00.000",
+                "play: -> Unplayed Song - Artist (id1) idx=0/10 reason=AUTO meta=ok",
+            ),
+            logcat_line(
+                "18:05:00.000",
+                "track-summary: id1 'Unplayed Song' video=n source=browse:x "
+                "resolve=direct firstAudio=1200 played=210 lyrics=lrc.red "
+                "sync=ai shift=-120 match=91 manualOffset=0 ended=natural",
+            ),
+            logcat_line(
+                "19:00:00.200",
+                "next-prep: Unplayed Song version=id1 lyrics=lrc.red "
+                "hq=lossless_16 sync=applied mix=ready in 100ms",
+            ),
+            logcat_line(
+                "19:00:05.000",
+                "play: -> Unplayed Song - Artist (id1) idx=0/10 reason=AUTO meta=ok",
+            ),
+        )
+        report = analyze(text)
+        playback = metric(report, "D2-playback")
+        self.assertEqual(1, playback.attempts)
+        self.assertEqual(0, playback.successes)
+        self.assertEqual(1, len(playback.failures))
+        self.assertEqual(
+            featurehealth.datetime(2026, 10, 28, 19, 0, 5),
+            playback.failures[0].at,
+        )
+
 
 class AutoplayTests(unittest.TestCase):
     def test_refill_zero_refill_and_same_second_rescue(self) -> None:
@@ -628,6 +746,75 @@ class VersionAndLyricsTests(unittest.TestCase):
         self.assertEqual(3, metric(report, "D6-sync").attempts)
         self.assertEqual(2, metric(report, "D6-sync").successes)
 
+    def test_screen_off_lyrics_are_not_counted_as_missing(self) -> None:
+        text = log_text(
+            logcat_line("19:00:00.000", "AI timing: the screen is off"),
+            logcat_line(
+                "19:00:30.000",
+                "track-summary: off1 'Off One' video=n source=browse:x "
+                "resolve=direct firstAudio=1200 played=210 lyrics=none sync=none "
+                "shift=- match=- manualOffset=0 ended=natural",
+            ),
+            logcat_line(
+                "19:01:30.000",
+                "track-summary: off2 'Off Two' video=n source=browse:x "
+                "resolve=direct firstAudio=1200 played=210 lyrics=none sync=none "
+                "shift=- match=- manualOffset=0 ended=natural",
+            ),
+            logcat_line(
+                "19:02:30.000",
+                "track-summary: on1 'On One' video=n source=browse:x "
+                "resolve=direct firstAudio=1200 played=210 lyrics=lrc.red sync=ai "
+                "shift=-120 match=91 manualOffset=0 ended=natural",
+            ),
+        )
+        report = analyze(text)
+        lyrics = metric(report, "D6-lyrics")
+        self.assertEqual(1, lyrics.attempts)
+        self.assertEqual(1, lyrics.successes)
+        self.assertEqual(2, report.stats["lyrics"]["screen_off"])
+        self.assertEqual(0, report.stats["lyrics"]["missing"])
+        self.assertEqual(2, metric(report, "D6-screen-off").attempts)
+
+    def test_lyrics_none_without_screen_events_is_missing(self) -> None:
+        text = log_text(
+            logcat_line(
+                "19:00:30.000",
+                "track-summary: id1 'No Provider' video=n source=browse:x "
+                "resolve=direct firstAudio=1200 played=210 lyrics=none sync=none "
+                "shift=- match=- manualOffset=0 ended=natural",
+            ),
+        )
+        report = analyze(text)
+        lyrics = metric(report, "D6-lyrics")
+        self.assertEqual(1, lyrics.attempts)
+        self.assertEqual(0, lyrics.successes)
+        self.assertEqual(0, report.stats["lyrics"]["screen_off"])
+        self.assertEqual(1, report.stats["lyrics"]["missing"])
+
+    def test_foreground_ends_the_screen_off_interval(self) -> None:
+        text = log_text(
+            logcat_line("19:00:00.000", "AI timing: the screen is off"),
+            logcat_line(
+                "19:00:30.000",
+                "track-summary: off1 'Off One' video=n source=browse:x "
+                "resolve=direct firstAudio=1200 played=210 lyrics=none sync=none "
+                "shift=- match=- manualOffset=0 ended=natural",
+            ),
+            logcat_line("19:01:00.000", "lifecycle: foreground"),
+            logcat_line(
+                "19:02:00.000",
+                "track-summary: on1 'On One' video=n source=browse:x "
+                "resolve=direct firstAudio=1200 played=210 lyrics=none sync=none "
+                "shift=- match=- manualOffset=0 ended=natural",
+            ),
+        )
+        report = analyze(text)
+        self.assertEqual(1, report.stats["lyrics"]["screen_off"])
+        self.assertEqual(1, report.stats["lyrics"]["missing"])
+        self.assertEqual(1, metric(report, "D6-lyrics").attempts)
+        self.assertEqual(0, metric(report, "D6-lyrics").successes)
+
     def test_song_version_swap_and_kept_counts(self) -> None:
         text = log_text(
             line("19:00:00.000", "song version: mv1 -> aud1 via search before-audio"),
@@ -643,6 +830,157 @@ class VersionAndLyricsTests(unittest.TestCase):
 
 
 class CrossfadeAndStartTests(unittest.TestCase):
+    def test_raw_logcat_crossfade_lines_count_start_complete_and_overlap(self) -> None:
+        text = log_text(
+            logcat_line(
+                "19:00:00.000",
+                "arm smart fade=5644ms end=267898ms cue=2150ms rate=1.0 "
+                "at=267898ms style=DJ_FILTER bassSwap=true@0.5 advanced=true "
+                "lock=0.5 handoff=0.5 echo=off sweep=none",
+                tag="BitChordCrossfade",
+                level="D",
+            ),
+            logcat_line(
+                "19:00:01.000",
+                "blend start at cue=2150ms out=267898ms",
+                tag="BitChordCrossfade",
+                level="D",
+            ),
+            logcat_line(
+                "19:00:02.000",
+                "handoff at in=2194ms out=267920ms",
+                tag="BitChordCrossfade",
+                level="D",
+            ),
+            logcat_line(
+                "19:00:05.000",
+                "finish from FADING",
+                tag="BitChordCrossfade",
+                level="D",
+            ),
+            logcat_line(
+                "19:00:05.001",
+                "finish levels inVol=1.0 outVol=0.0 handedOff=true",
+                tag="BitChordCrossfade",
+                level="D",
+            ),
+        )
+        report = analyze(text)
+        self.assertEqual(1, report.stats["crossfade"]["start"])
+        self.assertEqual(1, report.stats["crossfade"]["end"])
+        self.assertEqual(1, report.stats["crossfade"]["complete"])
+        # No raw line measures the overlap; only the planned fade is known, so
+        # it must not become a tautological "actual overlap".
+        self.assertEqual([], report.stats["crossfade"]["overlaps"])
+        self.assertEqual([], report.stats["crossfade"]["overlap_ratios"])
+        self.assertEqual(0, metric(report, "D7-overlap").attempts)
+        self.assertEqual(1, metric(report, "D7-crossfade").attempts)
+        self.assertEqual(1, metric(report, "D7-crossfade").successes)
+
+    def test_each_arm_before_one_blend_start_counts_as_an_attempt(self) -> None:
+        text = log_text(
+            logcat_line(
+                "19:00:00.000",
+                "arm smart fade=1000ms end=5000ms cue=0ms rate=1.0 "
+                "style=DJ_FILTER handoff=0.5",
+                tag="BitChordCrossfade",
+                level="D",
+            ),
+            logcat_line(
+                "19:00:10.000",
+                "arm smart fade=5644ms end=267898ms cue=2150ms rate=1.0 "
+                "style=DJ_FILTER handoff=0.5",
+                tag="BitChordCrossfade",
+                level="D",
+            ),
+            logcat_line(
+                "19:00:20.000",
+                "blend start at cue=2150ms out=267898ms",
+                tag="BitChordCrossfade",
+                level="D",
+            ),
+            logcat_line(
+                "19:00:25.000",
+                "finish from FADING",
+                tag="BitChordCrossfade",
+                level="D",
+            ),
+        )
+        report = analyze(text)
+        # The blend claims only the nearest arm; the earlier failed arm is not
+        # swallowed by the successful retry.
+        self.assertEqual(2, report.stats["crossfade"]["start"])
+        self.assertEqual(1, report.stats["crossfade"]["complete"])
+        self.assertEqual(2, metric(report, "D7-crossfade").attempts)
+        self.assertEqual(1, metric(report, "D7-crossfade").successes)
+
+    def test_export_crossfade_and_raw_logcat_lines_are_not_double_counted(self) -> None:
+        text = log_text(
+            line(
+                "19:00:00.000",
+                "crossfade: start out=a in=b fade=1000ms cue=0ms smart=true",
+            ),
+            logcat_line(
+                "19:00:00.100",
+                "blend start at cue=0ms out=1000ms",
+                tag="BitChordCrossfade",
+                level="D",
+            ),
+            line(
+                "19:00:01.000",
+                "crossfade: end out=a in=b fade=1000ms overlap=1100ms tail=0ms",
+            ),
+            logcat_line(
+                "19:00:01.100",
+                "finish from FADING",
+                tag="BitChordCrossfade",
+                level="D",
+            ),
+        )
+        report = analyze(text)
+        self.assertEqual(1, report.stats["crossfade"]["start"])
+        self.assertEqual(1, report.stats["crossfade"]["end"])
+        self.assertEqual([1100], report.stats["crossfade"]["overlaps"])
+
+    def test_export_start_duplicate_blend_does_not_double_count_its_arm(self) -> None:
+        text = log_text(
+            logcat_line(
+                "19:00:00.000",
+                "arm smart fade=1000ms end=5000ms cue=0ms rate=1.0 "
+                "style=DJ_FILTER handoff=0.5",
+                tag="BitChordCrossfade",
+                level="D",
+            ),
+            line(
+                "19:00:10.000",
+                "crossfade: start out=a in=b fade=1000ms cue=0ms smart=true",
+            ),
+            logcat_line(
+                "19:00:10.100",
+                "blend start at cue=0ms out=1000ms",
+                tag="BitChordCrossfade",
+                level="D",
+            ),
+            line(
+                "19:00:11.000",
+                "crossfade: end out=a in=b fade=1000ms overlap=1100ms tail=0ms",
+            ),
+            logcat_line(
+                "19:00:11.100",
+                "finish from FADING",
+                tag="BitChordCrossfade",
+                level="D",
+            ),
+        )
+        report = analyze(text)
+        # The blend start is the raw spelling of the export start, so its arm
+        # belongs to that same fade and must not add a second start.
+        self.assertEqual(1, report.stats["crossfade"]["start"])
+        self.assertEqual(1, report.stats["crossfade"]["end"])
+        self.assertEqual(1, report.stats["crossfade"]["complete"])
+        self.assertEqual(1, metric(report, "D7-crossfade").attempts)
+        self.assertEqual(1, metric(report, "D7-crossfade").successes)
+
     def test_crossfade_counts(self) -> None:
         text = log_text(
             line("19:00:00.000", "crossfade: start out=a in=b fade=1000ms cue=0ms smart=true"),

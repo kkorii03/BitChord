@@ -98,6 +98,12 @@ FORMAT_TAG_RE = re.compile(r"\[(?P<player>player-[ab]):(?P<fmt>[A-Za-z0-9_-]+)\]
 POWER_FORMAT_RE = re.compile(
     r"(?P<player>player-[ab]):[^=\s]*(?P<fmt>flac|opus)[^=\s]*=\d+", re.I
 )
+# DecoderMonitor writes the open decoders as a logcat-only list:
+# `power: decoders active=2 [player-b:c2.android.flac.decoder, automix]`.
+POWER_DECODERS_RE = re.compile(
+    r"^power:\s+decoders active=(?P<active>\d+)\s*(?:\[(?P<names>[^\]]*)\])?"
+)
+DECODER_TOKEN_RE = re.compile(r"(?P<player>player-[ab]):(?P<fmt>[^\s,\]]+)")
 
 AUTOPLAY_RADIO_RE = re.compile(
     r"^autoplay:\s+\+radio\s+(?P<radio>\d+)\s+\+similar\s+(?P<similar>\d+)\s+"
@@ -145,6 +151,34 @@ CROSSFADE_ABORT_RE = re.compile(
     r"^crossfade:\s+abort\b"
     r"(?:\s+out=(?P<out>\S+)\s+in=(?P<in>\S+))?"
 )
+# CrossfadeController's raw logcat lines (tag BitChordCrossfade), which the
+# exported log does not carry in the `crossfade:` shape above.
+RAW_CROSSFADE_ARM_RE = re.compile(
+    r"^arm\s+(?P<kind>smart|standard)\s+fade=(?P<fade>-?\d+)ms\s+"
+    r"end=(?P<end>-?\d+)ms\b"
+)
+RAW_CROSSFADE_BLEND_RE = re.compile(
+    r"^blend start at cue=(?P<cue>-?\d+)ms\s+out=(?P<out>-?\d+)ms"
+)
+RAW_CROSSFADE_HANDOFF_RE = re.compile(
+    r"^handoff at in=(?P<in>-?\d+)ms\s+out=(?P<out>-?\d+)ms"
+)
+RAW_CROSSFADE_FINISH_RE = re.compile(r"^finish from\s+(?P<phase>[A-Za-z_]+)")
+RAW_CROSSFADE_FINISH_LEVELS_RE = re.compile(
+    r"^finish levels inVol=(?P<inVol>-?\d+(?:\.\d+)?)\s+"
+    r"outVol=(?P<outVol>-?\d+(?:\.\d+)?)\s+handedOff=(?P<handedOff>true|false)"
+)
+
+# There is no dedicated screen-state log line in an export. The playback paths
+# that do log when they stand down for it use these two shapes.
+SCREEN_OFF_RE = re.compile(
+    r"\bscreen(?:[\s_-]+is)?(?:[\s_-]+turn(?:ed)?)?[\s_-]+off\b",
+    re.IGNORECASE,
+)
+SCREEN_ON_RE = re.compile(
+    r"\bscreen(?:[\s_-]+is)?(?:[\s_-]+turn(?:ed)?)?[\s_-]+on\b",
+    re.IGNORECASE,
+)
 
 FAILED_START_RE = re.compile(r"failed to start after\s+(?P<attempts>\d+)\s+attempts")
 DOWNLOAD_FAILED_RE = re.compile(r"download failed for\s+(?P<id>\S+?)(?::|\s|$)")
@@ -175,6 +209,12 @@ PASS_D2_PLAYBACK = 0.90
 FIRST_AUDIO_LIMIT_MS = 3000
 LIFECYCLE_WINDOW_SECONDS = 10.0
 REFILL_PAIR_WINDOW_SECONDS = 30.0
+# A next-prep row names the track about to play. Its PLAY follows shortly
+# after; a PLAY just before the row is the same track when the log order
+# jitters. Anything farther away is a different playback (often an earlier,
+# already-summarized one), so it must not become this row's anchor.
+PREP_PLAY_FORWARD_SECONDS = 900.0
+PREP_PLAY_BACKWARD_SECONDS = 30.0
 
 
 @dataclass(frozen=True)
@@ -335,6 +375,12 @@ def _is_opus(value: str) -> bool:
     return "opus" in value.casefold()
 
 
+def _is_lossless_hq(value: str) -> bool:
+    """The next-prep `hq=` labels that mean a lossless/HD copy was prepared."""
+    lowered = value.casefold()
+    return any(word in lowered for word in ("lossless", "hi_res", "hi-res", "flac"))
+
+
 def _format_name(mime: str) -> str | None:
     lowered = mime.casefold()
     if "flac" in lowered:
@@ -445,6 +491,11 @@ def analyze(log: Log) -> Report:
     crossfade_ends: list[dict[str, Any]] = []
     crossfade_skips: list[dict[str, Any]] = []
     crossfade_aborts: list[dict[str, Any]] = []
+    raw_crossfade_arms: list[dict[str, Any]] = []
+    raw_crossfade_starts: list[dict[str, Any]] = []
+    raw_crossfade_handoffs: list[dict[str, Any]] = []
+    raw_crossfade_finishes: list[dict[str, Any]] = []
+    raw_crossfade_levels: list[dict[str, Any]] = []
     failed_starts: list[dict[str, Any]] = []
     unplayables: list[dict[str, Any]] = []
     download_failures: list[dict[str, Any]] = []
@@ -453,6 +504,7 @@ def analyze(log: Log) -> Report:
     process_starts: list[LogLine] = []
     foregrounds: list[LogLine] = []
     bracket_formats: list[dict[str, Any]] = []
+    decoder_formats: list[dict[str, Any]] = []
     title_by_id: dict[str, str] = {}
 
     for line in lines:
@@ -741,6 +793,71 @@ def analyze(log: Log) -> Report:
             )
             continue
 
+        match = RAW_CROSSFADE_ARM_RE.match(text)
+        if match:
+            raw_crossfade_arms.append(
+                {
+                    "at": at,
+                    "kind": match.group("kind"),
+                    "fade": int(match.group("fade")),
+                    "end": int(match.group("end")),
+                }
+            )
+            continue
+
+        match = RAW_CROSSFADE_BLEND_RE.match(text)
+        if match:
+            raw_crossfade_starts.append(
+                {
+                    "at": at,
+                    "cue": int(match.group("cue")),
+                    "out": int(match.group("out")),
+                }
+            )
+            continue
+
+        match = RAW_CROSSFADE_HANDOFF_RE.match(text)
+        if match:
+            raw_crossfade_handoffs.append(
+                {
+                    "at": at,
+                    "in": int(match.group("in")),
+                    "out": int(match.group("out")),
+                }
+            )
+            continue
+
+        match = RAW_CROSSFADE_FINISH_LEVELS_RE.match(text)
+        if match:
+            raw_crossfade_levels.append(
+                {
+                    "at": at,
+                    "handedOff": match.group("handedOff") == "true",
+                }
+            )
+            continue
+
+        match = RAW_CROSSFADE_FINISH_RE.match(text)
+        if match:
+            raw_crossfade_finishes.append(
+                {"at": at, "phase": match.group("phase").upper()}
+            )
+            continue
+
+        match = POWER_DECODERS_RE.match(text)
+        if match:
+            for token in DECODER_TOKEN_RE.finditer(match.group("names") or ""):
+                fmt = _format_name(token.group("fmt"))
+                if fmt is not None:
+                    decoder_formats.append(
+                        {
+                            "at": at,
+                            "player": token.group("player"),
+                            "format": fmt,
+                        }
+                    )
+            continue
+
         match = UNPLAYABLE_RE.match(text)
         if match:
             action = match.group("action")
@@ -1013,6 +1130,25 @@ def analyze(log: Log) -> Report:
                     "kind": "format",
                 }
             )
+    # The phone's logcat carries the decoders that are open (`power: decoders`)
+    # rather than the export's `crossfade:` format tags. The line names no
+    # track, so it belongs to the PLAY most recently started before it.
+    for row in decoder_formats:
+        if not _is_flac(row["format"]):
+            continue
+        prior_plays = [play for play in plays if play["at"] <= row["at"]]
+        anchor = max(prior_plays, key=lambda play: play["at"], default=None)
+        flac_evidence.append(
+            {
+                "at": row["at"],
+                "id": anchor["id"] if anchor is not None else None,
+                "title": anchor["title"] if anchor is not None else "",
+                "kind": "decoder",
+            }
+        )
+    # A lossless `hq=` answer says a FLAC copy was prepared, not that it played.
+    # It is kept for the D2 attempt below (paired with a real PLAY) but never
+    # used as flac_evidence: a prep row must not prove its own playback.
 
     d2_events: list[dict[str, Any]] = []
     for row in hq_verifies:
@@ -1035,6 +1171,99 @@ def analyze(log: Log) -> Report:
                     "kind": "upgrade-ahead",
                 }
             )
+    # The phone logcat has no hq-verify on many runs: its lossless evidence is
+    # the next-prep `hq=lossless_*` row and the open FLAC decoder. Add those as
+    # playback events unless an explicit verify/upgrade event already covers
+    # the same song, so an ordinary export keeps its existing attempt count.
+    explicit_ids = {row["id"] for row in d2_events if row["id"] is not None}
+    explicit_titles = {_norm_title(row["title"]) for row in d2_events}
+    seen_ids = set(explicit_ids)
+    seen_titles = set(explicit_titles)
+
+    def add_fallback_event(
+        at: datetime, video_id: str | None, title: str, kind: str
+    ) -> None:
+        wanted = _norm_title(title)
+        if (video_id is not None and video_id in seen_ids) or wanted in seen_titles:
+            return
+        d2_events.append(
+            {"at": at, "id": video_id, "title": title, "kind": kind}
+        )
+        if video_id is not None:
+            seen_ids.add(video_id)
+        seen_titles.add(wanted)
+
+    def prep_play(row: dict[str, Any]) -> dict[str, Any] | None:
+        """The PLAY this prep row belongs to, or None when it never played.
+
+        Only the first matching PLAY at/after the prep is the upcoming track.
+        A same-song PLAY before the prep is accepted only when it is recent and
+        no TRACK-SUMMARY has closed it yet; an older, already-summarized
+        playback must not be reused as this prep's anchor.
+        """
+        wanted = _norm_title(row["title"])
+
+        def belongs(play: dict[str, Any]) -> bool:
+            return play["id"] == row["version"] or _norm_title(play["title"]) == wanted
+
+        upcoming = sorted(
+            (play for play in plays if play["at"] >= row["at"] and belongs(play)),
+            key=lambda play: play["at"],
+        )
+        if upcoming:
+            first = upcoming[0]
+            if (
+                first["at"] - row["at"]
+            ).total_seconds() <= PREP_PLAY_FORWARD_SECONDS:
+                return first
+        recent = sorted(
+            (play for play in plays if play["at"] < row["at"] and belongs(play)),
+            key=lambda play: play["at"],
+            reverse=True,
+        )
+        if not recent:
+            return None
+        last = recent[0]
+        if (row["at"] - last["at"]).total_seconds() > PREP_PLAY_BACKWARD_SECONDS:
+            return None
+        closed = any(
+            summary["at"] >= last["at"]
+            and summary["at"] <= row["at"]
+            and (
+                summary["id"] == last["id"]
+                or _norm_title(summary["title"]) == wanted
+            )
+            for summary in summaries
+        )
+        return None if closed else last
+
+    for row in next_preps:
+        if not _is_lossless_hq(row["hq"]):
+            continue
+        anchor = prep_play(row)
+        if anchor is None:
+            continue
+        add_fallback_event(
+            anchor["at"], anchor["id"], anchor["title"], "next-prep-hq"
+        )
+    for row in decoder_formats:
+        if not _is_flac(row["format"]):
+            continue
+        prior_plays = [play for play in plays if play["at"] <= row["at"]]
+        anchor = max(prior_plays, key=lambda play: play["at"], default=None)
+        if anchor is not None:
+            add_fallback_event(
+                row["at"], anchor["id"], anchor["title"], "decoder-flac"
+            )
+    for row in decodes:
+        if _is_flac(row["mime"]):
+            add_fallback_event(
+                row["at"],
+                row["id"],
+                title_by_id.get(row["id"], ""),
+                "decode-flac",
+            )
+    d2_events.sort(key=lambda row: row["at"])
 
     def d2_belongs(
         video_id: str | None,
@@ -1501,14 +1730,56 @@ def analyze(log: Log) -> Report:
     # ---- D6: lyrics and sync -------------------------------------------
     with_lyrics = [row for row in summaries if row["lyrics"] != "none"]
     with_sync = [row for row in with_lyrics if row["sync"] != "none"]
+
+    # With the screen off the lyrics engine is never asked, so the summary
+    # carries `lyrics=none` for a healthy track. The app logs when it stands
+    # down for the screen off, and the activity foreground / screen-on line is
+    # the signal that it came back. Only rows inside a logged off interval are
+    # exempt: with no screen line at all the state is unknown, so a
+    # `lyrics=none` row still counts as a missing provider.
+    screen_events: list[tuple[datetime, bool]] = []
+    for line in lines:
+        if SCREEN_OFF_RE.search(line.text):
+            screen_events.append((line.at, True))
+        elif SCREEN_ON_RE.search(line.text) or FOREGROUND_RE.match(line.text):
+            screen_events.append((line.at, False))
+    screen_events.sort(key=lambda event: event[0])
+    screen_off_rows: list[dict[str, Any]] = []
+    missing_rows: list[dict[str, Any]] = []
+    if screen_events:
+        state: bool | None = None
+        index = 0
+        for row in summaries:
+            while index < len(screen_events) and screen_events[index][0] <= row["at"]:
+                state = screen_events[index][1]
+                index += 1
+            if row["lyrics"] != "none":
+                continue
+            if state is True:
+                screen_off_rows.append(row)
+            else:
+                missing_rows.append(row)
+    else:
+        missing_rows = [row for row in summaries if row["lyrics"] == "none"]
+    requested_rows = [row for row in summaries if row not in screen_off_rows]
+
     metrics.extend(
         [
             _info_metric(
                 "D6-lyrics",
                 "D6 가사 · 제공 비율",
-                len(summaries),
-                "track-summary lyrics!=none(참고)",
+                len(requested_rows),
+                "track-summary lyrics!=none(참고)"
+                f" · 화면 꺼짐 미요청 {len(screen_off_rows)}건"
+                f" · 미제공 {len(missing_rows)}건",
                 successes=len(with_lyrics),
+            ),
+            _info_metric(
+                "D6-screen-off",
+                "D6 가사 · 화면 꺼짐 미요청",
+                len(screen_off_rows),
+                "화면 꺼짐으로 가사 미요청 · 실패 아님",
+                successes=len(screen_off_rows),
             ),
             _info_metric(
                 "D6-sync",
@@ -1521,13 +1792,139 @@ def analyze(log: Log) -> Report:
     )
     stats["lyrics"] = {
         "summaries": len(summaries),
+        "total": len(summaries),
+        "requested": len(requested_rows),
         "with_lyrics": len(with_lyrics),
         "with_sync": len(with_sync),
+        "screen_off": len(screen_off_rows),
+        "not_requested": len(screen_off_rows),
+        "missing": len(missing_rows),
     }
 
     # ---- D7: crossfade --------------------------------------------------
+    # The raw logcat lines (`arm ...`, `blend start ...`, `finish from ...`)
+    # describe the same fades as the export's `crossfade:` lines but without
+    # media ids. Fold them into the same start/end lists so the metrics below
+    # keep one code path. When both spellings are in one log, the export line
+    # wins and the raw line within a few seconds is ignored.
+    def near_any(at: datetime, times: list[datetime], seconds: float = 3.0) -> bool:
+        return any(abs((at - other).total_seconds()) <= seconds for other in times)
+
+    raw_starts: list[dict[str, Any]] = []
+    raw_ends: list[dict[str, Any]] = []
+    if raw_crossfade_arms or raw_crossfade_starts:
+        old_start_times = [row["at"] for row in crossfade_starts]
+        old_end_times = [row["at"] for row in crossfade_ends]
+        arms = sorted(raw_crossfade_arms, key=lambda row: row["at"])
+        blend_starts = sorted(raw_crossfade_starts, key=lambda row: row["at"])
+
+        claimed_arms: set[int] = set()
+
+        def arm_for(at: datetime) -> tuple[int, dict[str, Any]] | None:
+            candidates = [
+                (index, arm)
+                for index, arm in enumerate(arms)
+                if index not in claimed_arms
+                and arm["at"] <= at
+                and (at - arm["at"]).total_seconds() <= 120.0
+            ]
+            if not candidates:
+                return None
+            return max(candidates, key=lambda item: item[1]["at"])
+
+        for index, row in enumerate(blend_starts):
+            if near_any(row["at"], old_start_times):
+                # The export already counted this fade. Discard the raw arm it
+                # belongs to as well, so the unclaimed-arm loop below does not
+                # add the same fade a second time.
+                claimed = arm_for(row["at"])
+                if claimed is not None:
+                    claimed_arms.add(claimed[0])
+                continue
+            claimed = arm_for(row["at"])
+            arm = claimed[1] if claimed is not None else None
+            if claimed is not None:
+                claimed_arms.add(claimed[0])
+            key = f"raw#{index}"
+            raw_starts.append(
+                {
+                    "at": row["at"],
+                    "out": key,
+                    "in": key,
+                    "fade": arm["fade"] if arm is not None else None,
+                }
+            )
+
+        # An arm that no blend start claimed is still an attempt (it may have
+        # bailed before the fade became audible). Only the nearest arm belongs
+        # to a start, so an earlier failed arm survives a later retry.
+        for index, arm in enumerate(arms):
+            if index in claimed_arms:
+                continue
+            if near_any(arm["at"], old_start_times):
+                continue
+            key = f"raw-arm#{index}"
+            raw_starts.append(
+                {
+                    "at": arm["at"],
+                    "out": key,
+                    "in": key,
+                    "fade": arm["fade"],
+                }
+            )
+
+        finishes: list[dict[str, Any]] = [
+            {"at": row["at"], "complete": row["phase"] == "FADING"}
+            for row in raw_crossfade_finishes
+        ]
+        for row in raw_crossfade_levels:
+            if not any(
+                abs((row["at"] - finish["at"]).total_seconds()) <= 2.0
+                for finish in finishes
+            ):
+                finishes.append(
+                    {"at": row["at"], "complete": row["handedOff"]}
+                )
+        used_starts: set[int] = set()
+        for finish in sorted(finishes, key=lambda row: row["at"]):
+            if not finish["complete"]:
+                continue
+            if near_any(finish["at"], old_end_times):
+                continue
+            candidates = [
+                (index, start)
+                for index, start in enumerate(raw_starts)
+                if index not in used_starts
+                and start["at"] <= finish["at"]
+                and (finish["at"] - start["at"]).total_seconds() <= 120.0
+            ]
+            if not candidates:
+                continue
+            index, start = max(candidates, key=lambda item: item[1]["at"])
+            used_starts.add(index)
+            fade = start["fade"]
+            raw_ends.append(
+                {
+                    "at": finish["at"],
+                    "out": start["out"],
+                    "in": start["in"],
+                    # No raw line prints the measured overlap. Leave it
+                    # unknown instead of copying the planned fade, which made
+                    # the "actual overlap" ratio tautologically 100%.
+                    "overlap": None,
+                    "fade": fade,
+                    "gains": {},
+                }
+            )
+
+    crossfade_starts = crossfade_starts + raw_starts
+    crossfade_ends = crossfade_ends + raw_ends
+
     skip_reasons = Counter(row["reason"] for row in crossfade_skips)
-    overlaps = [row["overlap"] for row in crossfade_ends]
+    overlaps = [
+        row["overlap"] for row in crossfade_ends
+        if row["overlap"] is not None
+    ]
     remaining_ends = Counter((row["out"], row["in"]) for row in crossfade_ends)
     completed_fades = 0
     for row in crossfade_starts:
@@ -1569,7 +1966,11 @@ def analyze(log: Log) -> Report:
                 planned = pending.pop(0)
             if planned is None:
                 planned = row["fade"]
-            if planned is not None and planned > 0:
+            if (
+                row["overlap"] is not None
+                and planned is not None
+                and planned > 0
+            ):
                 overlap_pairs.append((row["overlap"], planned))
     planned_fades = [planned for _, planned in overlap_pairs]
     overlap_ratios = [overlap / planned for overlap, planned in overlap_pairs]
@@ -1606,10 +2007,12 @@ def analyze(log: Log) -> Report:
             _info_metric(
                 "D7-overlap",
                 "D7 자동 믹스 · 실제 겹침",
-                len(crossfade_ends),
+                len(overlaps),
+                f"실측 {len(overlaps)}건 · "
                 f"overlap 평균 {overlap_avg if overlap_avg is not None else '—'}ms · "
                 f"계획 fade 평균 {planned_avg if planned_avg is not None else '—'}ms · "
-                f"계획 대비 {ratio_avg if ratio_avg is not None else '—'}%",
+                f"계획 대비 {ratio_avg if ratio_avg is not None else '—'}%"
+                " · raw logcat은 계획 fade만",
             ),
             _info_metric(
                 "D7-gains",
