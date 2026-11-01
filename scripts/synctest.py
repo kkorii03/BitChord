@@ -172,6 +172,17 @@ def deepgram_words(audio, mime, language, model):
     return None
 
 
+def hear(key, path, mime, language, model):
+    """Words heard in `path`, cached per audio and model so --dry-run re-scores for free."""
+    cache = OUT / f"{key}.{model}.words.json"
+    if cache.exists():
+        return json.loads(cache.read_text(encoding="utf-8"))
+    words = deepgram_words(path.read_bytes(), mime, language, model)
+    if words is not None:
+        cache.write_text(json.dumps(words, ensure_ascii=False), encoding="utf-8")
+    return words
+
+
 # ---------- alignment ----------
 
 def norm(s):
@@ -258,12 +269,31 @@ def shape(points):
     return "scatter", 0.0
 
 
-# Strict pass (11-01 user: "엄격히"). Every rule must hold; `why` names the ones that failed.
-# The old rule (median |err| <= 0.2 s + 90% within 0.3 s) is kept as old_verdict for comparing past runs.
-STRICT = dict(median_abs=0.15, median_bias=0.10, in03=0.95, in02=0.80, max_abs=1.0, min_lines=6)
+# Strict pass (11-01/11-02 user: "엄격히", twice). Every rule must hold; `why` names the ones
+# that failed. The old rule (median |err| <= 0.2 s + 90% within 0.3 s) is kept as
+# old_verdict for comparing past runs. Rules are judged on the whole song (lines both
+# hearing models agree on), so drift late in the song counts.
+# coverage = lines either model heard near their shown time / lines that should be heard:
+# hearing models catch ~50-80% of sung lines, wrong or far-off lyrics fall near 0.
+STRICT = dict(median_abs=0.12, median_bias=0.08, in03=0.95, in02=0.85, max_abs=0.8, min_lines=8,
+              drift_s_per_min=0.06, drift_min_span_s=90, coverage=0.4)
 
 
-def score(matched):
+def drift_slope(points):
+    """Error change per second over the song (least squares, lines > 0.5 s off the median left out)."""
+    if len(points) < 4:
+        return 0.0, 0.0
+    med = statistics.median(e for _, e in points)
+    pts = [(t, e) for t, e in points if abs(e - med) <= 0.5] or points
+    ts = [t for t, _ in pts]
+    mt, me = statistics.mean(ts), statistics.mean(e for _, e in pts)
+    var = sum((t - mt) ** 2 for t in ts) or 1e-9
+    return sum((t - mt) * (e - me) for t, e in pts) / var, max(ts) - min(ts)
+
+
+def score(matched, eligible=None, heard=None):
+    """matched = [(n, shown_s, sung_s, ratio)]; eligible = lines that should have been heard
+    (shown inside the heard audio) and heard = lines any model found, for the coverage rule."""
     errs = [shown - sung for _, shown, sung, _ in matched]
     if not errs:
         return None
@@ -271,9 +301,16 @@ def score(matched):
     within = {lim: sum(x <= lim for x in a) / len(a) for lim in (0.2, 0.3, 0.5)}
     med_signed = statistics.median(errs)
     med_abs = statistics.median(a)
+    slope, span = drift_slope([(sung, shown - sung) for _, shown, sung, _ in matched])
+    coverage = (heard if heard is not None else len(errs)) / eligible if eligible else None
     why = []
     if len(errs) < STRICT["min_lines"]:
         why.append(f"줄 {len(errs)}개뿐")
+    if coverage is not None and coverage < STRICT["coverage"]:
+        # Most shown lines are never sung near their time: wrong lyrics or far off.
+        why.append(f"들린 줄 {coverage:.0%}")
+    if span >= STRICT["drift_min_span_s"] and abs(slope * 60) > STRICT["drift_s_per_min"]:
+        why.append(f"점점 {'늦어짐' if slope > 0 else '빨라짐'} {slope * 60:+.2f}초/분")
     if med_abs > STRICT["median_abs"]:
         why.append(f"중앙값 {med_abs:.2f}초")
     if abs(med_signed) > STRICT["median_bias"]:
@@ -290,7 +327,58 @@ def score(matched):
     return dict(matched=len(errs), median=round(med_signed, 3), median_abs=round(med_abs, 3),
                 in02=round(within[0.2], 2), in03=round(within[0.3], 2), in05=round(within[0.5], 2),
                 max_abs=round(max(a), 2), verdict=verdict, old_verdict=old, why=", ".join(why),
-                shape=kind, slope_ms_min=slope)
+                shape=kind, slope_ms_min=slope, span_s=round(span),
+                coverage=round(coverage, 2) if coverage is not None else "")
+
+
+# ---------- whole-song hearing ----------
+
+# Two hearing models; a line counts only where both put its start within this of
+# each other, so one model's mishearing or coarse timestamp does not become an error.
+# 11-02 measured on two covers: nova-2/nova-3 hear almost nothing in singing (0-21
+# words for a whole song), whisper-large/medium ~100-280 words and agree to 0.06 s.
+MODELS = ("whisper-large", "whisper-medium")
+AGREE_S = 0.2
+
+
+def offset_between(ref_words, other_words):
+    """(offset_s, votes, share): other = ref + offset for the same recording. Each word
+    heard in both (3+ letters, within 30 s) votes for its time difference; the densest
+    0.1 s bin wins. `share` = voting words / ref words, to tell another recording apart."""
+    diffs = []
+    index = {}
+    for w, t, _ in other_words:
+        n = norm(w)
+        if len(n) >= 3:
+            index.setdefault(n, []).append(t)
+    usable = 0
+    for w, t, _ in ref_words:
+        n = norm(w)
+        if len(n) < 3:
+            continue
+        usable += 1
+        diffs += [u - t for u in index.get(n, []) if abs(u - t) <= 30]
+    if not diffs:
+        return 0.0, 0, 0.0
+    bins = {}
+    for d in diffs:
+        bins[round(d * 10)] = bins.get(round(d * 10), 0) + 1
+    centre = max(bins, key=lambda b: bins[b] + bins.get(b - 1, 0) + bins.get(b + 1, 0)) / 10
+    near = [d for d in diffs if abs(d - centre) <= 0.15]
+    return statistics.median(near), len(near), len(near) / max(usable, 1)
+
+
+def agreed(per_model):
+    """Lines both models matched with starts within AGREE_S: [(n, shown, mean sung, min ratio)],
+    plus every line either model matched (for coverage) and the models' median gap."""
+    a, b = ({n: (shown, sung, r) for n, shown, sung, r in m} for m in per_model)
+    both, gaps = [], []
+    for n in sorted(set(a) & set(b)):
+        gap = abs(a[n][1] - b[n][1])
+        gaps.append(gap)
+        if gap <= AGREE_S:
+            both.append((n, a[n][0], (a[n][1] + b[n][1]) / 2, min(a[n][2], b[n][2])))
+    return both, set(a) | set(b), (statistics.median(gaps) if gaps else None)
 
 
 # ---------- one song ----------
@@ -313,7 +401,8 @@ def run_song(vid, seconds, dry):
     text = logf.read_text(encoding="utf-8", errors="replace")
     dump = parse_dump(text, vid)
     if not dump:
-        return dict(error="no sync-dump (no lyrics shown?)")
+        # No lyrics on screen is the user-facing failure itself, not a test gap.
+        return dict(error="no sync-dump (no lyrics shown?)", app_fail=True)
     head, lines = dump
     # A downloaded song plays its stored file with its stored lyrics and timing,
     # which may themselves be wrong; scored the same way but reported apart.
@@ -323,63 +412,83 @@ def run_song(vid, seconds, dry):
                match=head.get("match", ""), playing=head.get("playing", ""), lines=len(lines),
                resolve=resolve, stored="y" if stored else "n")
     if not lines:
-        return dict(row, error="no timed lines")
-    audio_note = "app wav (first 90 s)"
+        return dict(row, error="lyrics shown without timed lines", app_fail=True)
+    lang = language_for(lines)
+    app_words = None
     if wav.exists() and wav.stat().st_size > 1000:
-        audio, mime = wav.read_bytes(), "audio/wav"
+        app_words = hear(f"{vid}.app", wav, "audio/wav", lang, MODELS[0])
+        if app_words is None:
+            return dict(row, error="deepgram failed")
     elif stored:
         # The stored file may be another recording than YouTube's copy, so
         # hearing yt-dlp's copy would score the wrong audio.
         return dict(row, error="downloaded song, app kept no wav (song check skipped)")
-    else:
-        # No song check this time: hear the YouTube copy instead (whole song). Only
-        # right when the phone played that same recording.
-        alt = OUT / f"{vid}.m4a"
-        if not alt.exists():
-            subprocess.run([YTDLP, "-f", "bestaudio[ext=m4a]/bestaudio", "-o", str(alt),
-                            f"https://www.youtube.com/watch?v={vid}"], capture_output=True, timeout=600)
-        if not alt.exists():
-            return dict(row, error="no audio")
-        audio, mime = alt.read_bytes(), "audio/mp4"
-        audio_note = "yt-dlp copy" + ("" if row["playing"] == vid else " (phone played another recording!)")
-    row["audio"] = audio_note
-    cache = OUT / f"{vid}.{ARGS.model}.words.json"
-    words = json.loads(cache.read_text(encoding="utf-8")) if cache.exists() else None
-    if words is None:
-        words = deepgram_words(audio, mime, language_for(lines), ARGS.model)
-        if words is None:
+    # Whole song (11-02): the app keeps only the first 90 s, so drift later in the
+    # song was never seen. Hear YouTube's copy of the recording the phone actually
+    # played, lined up on the app's own audio by the words both contain.
+    played = row["playing"] or vid
+    full = OUT / f"{played}.m4a"
+    if not full.exists():
+        subprocess.run([YTDLP, "-f", "bestaudio[ext=m4a]/bestaudio", "-o", str(full),
+                        f"https://www.youtube.com/watch?v={played}"], capture_output=True, timeout=600)
+    per_model = None
+    if full.exists():
+        full_words = [hear(f"{played}.full", full, "audio/mp4", lang, m) for m in MODELS]
+        if None in full_words:
             return dict(row, error="deepgram failed")
-        cache.write_text(json.dumps(words, ensure_ascii=False), encoding="utf-8")
-    matched = align(lines, words)
+        if app_words is None:
+            per_model, row["audio"] = full_words, "whole song (YouTube copy, not checked against the app's audio)"
+        else:
+            off, votes, share = offset_between(app_words, full_words[0])
+            if votes >= 8 and share >= 0.25:
+                per_model = [[(w, s - off, e - off) for w, s, e in fw] for fw in full_words]
+                row["audio"] = f"whole song (YouTube copy {off:+.2f}s from app audio, {votes} words)"
+    if per_model is None:
+        if app_words is None:
+            return dict(row, error="no audio")
+        # YouTube's copy is missing or another recording than the phone's: the app's
+        # 90 s is all that is certainly what was played.
+        second = hear(f"{vid}.app", wav, "audio/wav", lang, MODELS[1])
+        if second is None:
+            return dict(row, error="deepgram failed")
+        per_model, row["audio"] = [app_words, second], "app wav only (first 90 s; YouTube copy did not line up)"
+    per = [align(lines, words) for words in per_model]
+    both, either, gap = agreed(per)
+    heard_until = min(words[-1][1] for words in per_model if words) if all(per_model) else 0
+    eligible = sum(1 for _, ms, t in lines if len(norm(t)[:PREFIX_CHARS]) >= 2 and ms / 1000 <= heard_until)
+    row.update(eligible=eligible, model_gap=round(gap, 3) if gap is not None else "")
     (OUT / f"{vid}.lines.csv").write_text(
         "line,shown_s,sung_s,error_s,ratio\n" + "".join(
-            f"{n},{a:.3f},{b:.3f},{a - b:+.3f},{r}\n" for n, a, b, r in matched), encoding="utf-8")
-    s = score(matched)
-    if s is None:
-        return dict(row, error="no line matched the heard words")
-    if "another recording" in audio_note:
-        # Scored against audio the phone did not play: the numbers prove nothing.
-        s = dict(s, verdict="FAIL", why=", ".join(filter(None, [s["why"], "폰이 다른 녹음을 재생"])))
-    return dict(row, **s)
+            f"{n},{a:.3f},{b:.3f},{a - b:+.3f},{r}\n" for n, a, b, r in both), encoding="utf-8")
+    if eligible >= 10 and len(either) < 0.25 * eligible:
+        return dict(row, error=f"shown lyrics not heard ({len(either)}/{eligible} lines)", app_fail=True)
+    if len(both) < STRICT["min_lines"]:
+        # Too little agreed evidence to judge the app either way: a measuring gap,
+        # counted against the 10% allowance, never a pass.
+        return dict(row, error=f"too few lines both models agree on ({len(both)}, heard {len(either)}/{eligible})")
+    return dict(row, **score(both, eligible, len(either)))
 
 
 # ---------- report ----------
 
 def write_report(rows):
-    fields = ["playlist", "video", "verdict", "why", "old_verdict", "shape", "slope_ms_min", "median",
-              "median_abs", "in02", "in03", "in05", "max_abs", "matched", "lines", "stored", "resolve", "source",
-              "base", "shift", "match", "playing", "audio", "error"]
+    fields = ["playlist", "video", "verdict", "why", "old_verdict", "shape", "slope_ms_min", "span_s", "median",
+              "median_abs", "in02", "in03", "in05", "max_abs", "matched", "eligible", "coverage", "model_gap",
+              "lines", "stored", "resolve", "source", "base", "shift", "match", "playing", "audio", "error",
+              "app_fail"]
     with open(OUT / "report.csv", "w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         w.writeheader()
         w.writerows(rows)
     scored = [r for r in rows if r.get("verdict")]
-    md = [f"# 싱크 채점 {datetime.datetime.now():%Y-%m-%d %H:%M} ({ARGS.model})", "",
-          "오차 = 화면 표시 시각 - 실제 부른 시각 (+면 가사가 늦음). "
+    md = [f"# 싱크 채점 {datetime.datetime.now():%Y-%m-%d %H:%M} ({' + '.join(MODELS)})", "",
+          "오차 = 화면 표시 시각 - 실제 부른 시각 (+면 가사가 늦음). 곡 전체를 두 음성인식 모델로 듣고, "
+          f"두 모델이 {AGREE_S}초 안으로 같게 들은 줄만 채점(모델차 = 두 모델 시각 차 중앙값 = 측정 잡음). "
           f"PASS(엄격) = 중앙값 |오차| ≤ {STRICT['median_abs']}초, 전체 치우침 ≤ ±{STRICT['median_bias']}초, "
           f"0.3초 이내 줄 ≥ {STRICT['in03']:.0%}, 0.2초 이내 ≥ {STRICT['in02']:.0%}, 어느 줄도 {STRICT['max_abs']}초 넘게 "
-          f"어긋나지 않음, 맞춘 줄 ≥ {STRICT['min_lines']}개, 폰이 재생한 녹음으로 채점. WARN = 중앙값 ≤ 0.3초. "
-          "전체 합격 = 채점한 곡 모두 PASS + 채점 못 한 곡 10% 이하. "
+          f"어긋나지 않음, 점점 벌어짐 ≤ {STRICT['drift_s_per_min']}초/분, 채점 줄 ≥ {STRICT['min_lines']}개, "
+          f"들린 줄 ≥ {STRICT['coverage']:.0%}. WARN = 중앙값 ≤ 0.3초. "
+          "전체 합격 = 채점한 곡 모두 PASS + 앱 문제(가사 안 뜸·가사가 소리와 다름) 0곡 + 측정 실패 10% 이하. "
           "'이전' = 예전 기준(중앙값 ≤ 0.2초 + 0.3초 이내 90%).", ""]
     shapes = {}
     for r in scored:
@@ -389,18 +498,21 @@ def write_report(rows):
         s = [r for r in scored if r.get("stored") == flag]
         if s:
             md.append(f"- {label}: 합격 {sum(r['verdict'] == 'PASS' for r in s)}/{len(s)}")
-    md += ["", "| 판정 | 이전 | 못 미친 기준 | 곡 | 저장 | 모양 | 중앙값(초) | 최대(초) | 0.2/0.3/0.5초 이내 | 맞춘 줄 | 제공처 | base/shift/match | 오디오 |",
-           "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    md += ["", "| 판정 | 이전 | 못 미친 기준 | 곡 | 저장 | 모양 | 중앙값(초) | 최대(초) | 0.2/0.3/0.5초 이내 | 채점 줄/들려야 할 줄 | 모델차(초) | 제공처 | base/shift/match | 오디오 |",
+           "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     order = {"FAIL": 0, "WARN": 1, "PASS": 2}
     for r in sorted(scored, key=lambda r: (order[r["verdict"]], -r["median_abs"])):
         sh = r["shape"] + (f" {r['slope_ms_min']:+}ms/분" if r["shape"] == "drift" else "")
         md.append(f"| {r['verdict']} | {r.get('old_verdict', '')} | {r.get('why', '')} | {r['video']} | "
                   f"{r.get('stored', '')} | {sh} | {r['median']:+.2f} | {r.get('max_abs', '')} | "
-                  f"{r['in02']:.0%}/{r['in03']:.0%}/{r['in05']:.0%} | {r['matched']}/{r['lines']} | "
-                  f"{r['source']} | {r['base']}/{r['shift']}/{r['match']} | {r['audio']} |")
-    errors = [r for r in rows if r.get("error")]
+                  f"{r['in02']:.0%}/{r['in03']:.0%}/{r['in05']:.0%} | {r['matched']}/{r.get('eligible', '')} | "
+                  f"{r.get('model_gap', '')} | {r['source']} | {r['base']}/{r['shift']}/{r['match']} | {r['audio']} |")
+    errors = [r for r in rows if r.get("error") and not r.get("app_fail")]
+    app_fails = [r for r in rows if r.get("app_fail")]
+    if app_fails:
+        md += ["", "## 앱 문제 (불합격으로 셈)"] + [f"- {r['video']}: {r['error']}" for r in app_fails]
     if errors:
-        md += ["", "## 채점 못 한 곡"] + [f"- {r['video']}: {r['error']}" for r in errors]
+        md += ["", "## 측정 실패 (채점 못 함)"] + [f"- {r['video']}: {r['error']}" for r in errors]
     md.append("")
     for pid in dict.fromkeys(r["playlist"] for r in rows):
         s = [r for r in scored if r["playlist"] == pid]
@@ -408,9 +520,9 @@ def write_report(rows):
             md.append(f"- {pid}: 합격 {sum(r['verdict'] == 'PASS' for r in s)}/{len(s)}")
     passed = sum(r["verdict"] == "PASS" for r in scored)
     old_passed = sum(r.get("old_verdict") == "PASS" for r in scored)
-    overall = scored and passed == len(scored) and len(errors) <= 0.1 * len(rows)
-    md.append(f"\n**합격률(엄격): {passed}/{len(scored)}** (이전 기준 {old_passed}/{len(scored)}, "
-              f"채점 못 함 {len(errors)}) → **전체 {'합격' if overall else '불합격'}**")
+    overall = scored and passed == len(scored) and not app_fails and len(errors) <= 0.1 * len(rows)
+    md.append(f"\n**합격률(엄격): {passed}/{len(scored) + len(app_fails)}** (앱 문제 {len(app_fails)}곡 포함, "
+              f"이전 기준 {old_passed}/{len(scored)}, 측정 실패 {len(errors)}) → **전체 {'합격' if overall else '불합격'}**")
     (OUT / "report.md").write_text("\n".join(md) + "\n", encoding="utf-8")
 
 
@@ -439,6 +551,25 @@ def selftest():
     s = score(late)
     assert s["verdict"] == "WARN" and "늦음" in s["why"] and s["old_verdict"] == "PASS", s
     assert score(good[:4])["verdict"] != "PASS"
+    # Whole-song rules: 0.1 s/min drift over 4 min fails though the median is small;
+    # half the shown lines never heard fails coverage.
+    creep = [(n, 12.0 * n + (-0.08 + 0.1 * 12.0 * n / 60), 12.0 * n, 1.0) for n in range(20)]
+    s = score(creep)
+    assert s["verdict"] != "PASS" and "점점 늦어짐" in s["why"], s
+    assert "들린 줄" in score(good, eligible=30)["why"]
+    assert "들린 줄" not in score(good, eligible=30, heard=15)["why"]
+    assert score(good, eligible=12)["verdict"] == "PASS"
+    # Lining YouTube's copy up on the app's audio: same words 3.2 s later, plus noise.
+    ref = [(w, 5.0 + i * 0.6, 5.3 + i * 0.6) for i, w in enumerate("hello darkness my old friend come talk with again vision softly creeping".split())]
+    other = [(w, s + 3.2, e + 3.2) for w, s, e in ref] + [("hello", 60.0, 60.3), ("darkness", 61.0, 61.3)]
+    off, votes, share = offset_between(ref, other)
+    assert abs(off - 3.2) < 0.06 and votes >= 8 and share > 0.8, (off, votes, share)
+    assert offset_between(ref, [("unrelated", 1.0, 1.2)])[1] == 0
+    # Two models: line 2 heard 0.5 s apart is dropped, the rest averaged.
+    a = [(1, 10.0, 10.1, 0.9), (2, 20.0, 20.0, 0.9), (3, 30.0, 30.2, 0.8)]
+    b = [(1, 10.0, 10.0, 0.8), (2, 20.0, 20.5, 0.9), (4, 40.0, 40.0, 0.9)]
+    both, either, gap = agreed([a, b])
+    assert [n for n, *_ in both] == [1] and abs(both[0][2] - 10.05) < 1e-9 and either == {1, 2, 3, 4}, (both, either)
     drift = [(t, 0.01 * t) for t in range(0, 200, 10)]
     assert shape(drift)[0] == "drift", shape(drift)
     jump = [(t, 0.0 if t < 100 else 1.0) for t in range(0, 200, 10)]
@@ -447,7 +578,7 @@ def selftest():
 
 
 def main():
-    global ARGS
+    global ARGS, OUT
     ap = argparse.ArgumentParser()
     ap.add_argument("--playlist", action="append", default=[])
     ap.add_argument("--limit", type=int, default=0)
@@ -456,16 +587,17 @@ def main():
     ap.add_argument("--seed", default=f"{datetime.date.today():%Y%m%d}")
     ap.add_argument("--default-set", action="store_true")
     ap.add_argument("--video", action="append", default=[], help="score these video ids only")
-    ap.add_argument("--model", default="whisper-large", help="Deepgram model (the app itself uses nova-3)")
     # The user's call (10-26): test mostly video songs (MVs, covers, live clips),
     # where the song-version swap and sync go wrong; plain song copies rarely do.
     ap.add_argument("--all-tracks", dest="videos_only", action="store_false",
                     help="also pick plain song (Topic) copies; default is videos only")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--out", type=Path, default=OUT, help="results folder (default phone-out\\synctest)")
     ap.add_argument("--selftest", action="store_true")
     ARGS = ap.parse_args()
     if ARGS.selftest:
         return selftest()
+    OUT = ARGS.out.resolve()
     OUT.mkdir(parents=True, exist_ok=True)
     if ARGS.default_set:
         ARGS.playlist, ARGS.limit, ARGS.shuffle = DEFAULT_SET, ARGS.limit or DEFAULT_PER_PLAYLIST, True
