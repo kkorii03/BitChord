@@ -426,6 +426,62 @@ class WebDavTest {
     }
 
     @Test
+    fun `listLibrary keeps the library when one folder is refused`() = runBlocking {
+        MockWebServer().use { server ->
+            server.start()
+            val rootXml = multistatus(
+                file("Music/song.mp3", "audio/mpeg"),
+                collection("Music/Bad"),
+                collection("Music/Good"),
+            )
+            val goodXml = multistatus(file("Music/Good/take.flac", "audio/flac"))
+            server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+                override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest): MockResponse {
+                    val path = request.path.orEmpty()
+                    return when {
+                        path.contains("/Bad") -> MockResponse().setResponseCode(403)
+                        path.contains("/Good") ->
+                            MockResponse().setResponseCode(207).setBody(goodXml)
+                        else -> MockResponse().setResponseCode(207).setBody(rootXml)
+                    }
+                }
+            }
+            val listing = WebDavClient.listLibrary(server.url("/Music").toString(), "", "").getOrThrow()
+            assertEquals(
+                listOf("song.mp3", "take.flac"),
+                listing.audio.map { it.displayName },
+            )
+        }
+    }
+
+    @Test
+    fun `listLibrary caps collected images too`() = runBlocking {
+        MockWebServer().use { server ->
+            server.start()
+            server.enqueue(
+                MockResponse().setResponseCode(207).setBody(
+                    multistatus(
+                        file("Music/cover1.jpg", "image/jpeg"),
+                        file("Music/cover2.jpg", "image/jpeg"),
+                        file("Music/cover3.jpg", "image/jpeg"),
+                        file("Music/cover4.jpg", "image/jpeg"),
+                    ),
+                ),
+            )
+            val listing = WebDavClient.listLibrary(
+                server.url("/Music").toString(),
+                "",
+                "",
+                maxFiles = 2,
+            ).getOrThrow()
+            assertEquals(
+                listOf("cover1.jpg", "cover2.jpg"),
+                listing.images.map { it.displayName },
+            )
+        }
+    }
+
+    @Test
     fun `listLibrary leaves video files out of the audio rows`() = runBlocking {
         MockWebServer().use { server ->
             server.start()

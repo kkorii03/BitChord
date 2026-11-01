@@ -5,6 +5,7 @@ import com.hierynomus.msfscc.FileAttributes
 import com.hierynomus.mssmb2.SMB2CreateDisposition
 import com.hierynomus.mssmb2.SMB2ShareAccess
 import com.hierynomus.smbj.share.DiskShare
+import com.music.bitchord.data.DebugLog as Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.EnumSet
@@ -17,6 +18,8 @@ import java.util.EnumSet
  * a forward slash in it is a client-side display path and never goes out.
  */
 object SmbClient {
+
+    private const val TAG = "BitChord"
 
     data class Entry(
         /** Display path with forward slashes, relative to the share. */
@@ -56,7 +59,17 @@ object SmbClient {
                 while (stack.isNotEmpty() && audio.size < maxFiles) {
                     val dir = stack.removeFirst()
                     if (!visited.add(dir.lowercase())) continue
-                    for (child in listDir(diskShare, dir)) {
+                    val children = try {
+                        listDir(diskShare, dir)
+                    } catch (failure: Exception) {
+                        // One unreadable folder must not hide the rest of the
+                        // share. The root is different: a refused root is a
+                        // refused library, not a folder to skip.
+                        if (dir == SmbAuth.basePath) throw failure
+                        Log.w(TAG, "Skipping SMB folder $dir: ${failure.message}")
+                        continue
+                    }
+                    for (child in children) {
                         val childPath = if (dir.isBlank()) child.path else "$dir/${child.path}"
                         if (child.isDirectory) {
                             if (!visited.contains(childPath.lowercase())) stack.add(childPath)
@@ -66,7 +79,7 @@ object SmbClient {
                                 SmbConfig.isAudioFile(name) ->
                                     if (audio.size < maxFiles) audio.add(Entry(childPath, false, child.size))
                                 SmbConfig.isImageFile(name) ->
-                                    images.add(Entry(childPath, false, child.size))
+                                    if (images.size < maxFiles) images.add(Entry(childPath, false, child.size))
                             }
                         }
                     }

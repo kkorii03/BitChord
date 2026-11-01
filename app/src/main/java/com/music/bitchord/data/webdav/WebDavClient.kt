@@ -1,5 +1,6 @@
 package com.music.bitchord.data.webdav
 
+import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.Http
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -30,6 +31,8 @@ import javax.xml.parsers.DocumentBuilderFactory
  * Android.
  */
 object WebDavClient {
+
+    private const val TAG = "BitChord"
 
     data class Entry(
         val url: String,
@@ -88,7 +91,17 @@ object WebDavClient {
             while (dirs.isNotEmpty() && foundAudio.size < maxFiles) {
                 val dir = dirs.removeFirst()
                 if (!visited.add(dir.lowercase())) continue
-                val entries = propfind(dir, username, password).getOrThrow()
+                val entries = propfind(dir, username, password).fold(
+                    onSuccess = { it },
+                    onFailure = { failure ->
+                        // One unreadable folder must not hide the rest of the
+                        // share. The root is different: a refused root is a
+                        // refused library, not a folder to skip.
+                        if (dir == root) throw failure
+                        Log.w(TAG, "Skipping WebDAV folder $dir: ${failure.message}")
+                        emptyList()
+                    },
+                )
                 for (entry in entries) {
                     if (entry.isCollection) {
                         if (!visited.contains(entry.url.lowercase())) dirs.add(entry.url)
@@ -97,7 +110,8 @@ object WebDavClient {
                         when {
                             WebDavConfig.isAudioFile(name, entry.contentType) ->
                                 if (foundAudio.size < maxFiles) foundAudio.putIfAbsent(entry.url, entry)
-                            isImageFile(name) -> foundImages.putIfAbsent(entry.url, entry)
+                            isImageFile(name) ->
+                                if (foundImages.size < maxFiles) foundImages.putIfAbsent(entry.url, entry)
                         }
                     }
                 }
