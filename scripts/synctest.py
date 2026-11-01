@@ -413,6 +413,10 @@ def run_song(vid, seconds, dry):
                resolve=resolve, stored="y" if stored else "n")
     if not lines:
         return dict(row, error="lyrics shown without timed lines", app_fail=True)
+    if row["playing"].startswith("src:"):
+        # A hi-res copy from another source is playing; the kept WAV is the YouTube
+        # reference, whose timeline may differ. Scoring it would test the wrong audio.
+        return dict(row, error="hi-res substitute playing (its audio is not kept yet)")
     lang = language_for(lines)
     app_words = None
     if wav.exists() and wav.stat().st_size > 1000:
