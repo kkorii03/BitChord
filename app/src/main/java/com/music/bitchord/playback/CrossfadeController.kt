@@ -9,9 +9,25 @@ import androidx.media3.common.Player
 import androidx.media3.common.Timeline
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
-import com.music.bitchord.data.TrackLog
-import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.listentogether.ListenTogether
+import com.music.bitchord.ko.KoCrossfadeGain
+import com.music.bitchord.ko.KoCrossfadeLog
+import com.music.bitchord.ko.KoCrossfadeState
+import com.music.bitchord.ko.koFadeGainsAt
+import com.music.bitchord.ko.koArmOutgoingMoved
+import com.music.bitchord.ko.koArmPauseOrRestore
+import com.music.bitchord.ko.koBeginRejectsSameItem
+import com.music.bitchord.ko.koDriveBailStep
+import com.music.bitchord.ko.koRememberBailReason
+import com.music.bitchord.ko.koChooseAutoTransition
+import com.music.bitchord.ko.koIncomingQueueChanged
+import com.music.bitchord.ko.koLogFadeGains
+import com.music.bitchord.ko.koMatchGain
+import com.music.bitchord.ko.koLaunchTicker
+import com.music.bitchord.ko.koRearmIncoming
+import com.music.bitchord.ko.koReconcileQueue
+import com.music.bitchord.ko.koRequestAnalysisAround
+import com.music.bitchord.ko.koSkipAutoTransition
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.MixBlend
 import com.music.bitchord.data.settings.SmartAnalysis
@@ -28,11 +44,9 @@ import com.music.bitchord.playback.smart.TransitionTrackInfo
 import com.music.bitchord.playback.smart.planTransition
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -112,7 +126,7 @@ import java.util.Locale
 class CrossfadeController(
     private val scope: CoroutineScope,
     /** The player backing the session right now. Moves at every [onHandoff]. */
-    private val active: () -> ExoPlayer,
+    internal val active: () -> ExoPlayer,
     /** The idle player, which the next transition will load the incoming track onto. */
     private val standby: () -> ExoPlayer,
     /**
@@ -133,15 +147,8 @@ class CrossfadeController(
      * class always ran before Automix existed.
      */
     private val analysisFor: (MediaItem) -> TrackAnalysis = { TrackAnalysis() },
-    /**
-     * Whether the two tracks' decoded formats can share an output path.
-     *
-     * Unknown formats answer true: arming is allowed to discover the format,
-     * and the timeout is the backstop. Only a pair that is known to be
-     * incompatible skips arming outright, so the outgoing track is never
-     * filtered or ducked for a blend that could not have rendered.
-     */
-    private val canMix: (outgoing: MediaItem, incoming: MediaItem) -> Boolean = { _, _ -> true },
+    // [KO] crossfade-format — unknown formats answer true; see KoCrossfadePlan.kt
+    internal val canMix: (outgoing: MediaItem, incoming: MediaItem) -> Boolean = { _, _ -> true },
     /**
      * Queues background analysis for a media item that will soon need it.
      * Cheap to call on every tick: a track already analysed, already in
@@ -152,7 +159,7 @@ class CrossfadeController(
      * recording from a differently-cut one before reusing an analysis across
      * them, and this class is the only place that already knows it.
      */
-    private val requestAnalysis: (MediaItem, Long, AnalysisWindow) -> Unit = { _, _, _ -> },
+    internal val requestAnalysis: (MediaItem, Long, AnalysisWindow) -> Unit = { _, _, _ -> },
     /**
      * The low-pass and high-pass riding each side of a transition. This is what
      * makes a plan's
@@ -167,17 +174,10 @@ class CrossfadeController(
      * Only feeds the stats line — nothing about a transition waits on it.
      */
     private val analysisRunningFor: (MediaItem) -> Boolean = { false },
-    /**
-     * Milliseconds spent decoding and measuring a media item so far. Only
-     * feeds the per-transition `analysisMs` log line; nothing waits on it.
-     */
+    // [KO] crossfade-analysis — stats only; nothing waits on it
     private val analysisTimeMs: (MediaItem) -> Long = { 0L },
-    /**
-     * Whether a specific end of a media item has already been measured. The
-     * analyzer caches each window separately, so a track whose opening is known
-     * can still be missing the tail that describes its own mix-out.
-     */
-    private val analysisWindowMeasured: (MediaItem, AnalysisWindow) -> Boolean = { _, _ -> false },
+    // [KO] crossfade-analysis — each end is cached separately
+    internal val analysisWindowMeasured: (MediaItem, AnalysisWindow) -> Boolean = { _, _ -> false },
     /**
      * The track about to be loaded onto the standby player, announced at the
      * moment [begin] arms rather than at the handoff.
@@ -194,18 +194,8 @@ class CrossfadeController(
      * standby's queue, so that player's per-track state can follow it across
      * a later gapless boundary without waiting on the service.
      */
-    private val onArmIncoming: (MediaItem, String?) -> Unit = { _, _ -> },
-    /**
-     * Last chance to change the incoming queue item before the standby opens
-     * it.
-     *
-     * A track whose lossless copy was verified ahead of playback is already
-     * pinned in [StreamChoice][com.music.bitchord.playback.StreamChoice], but
-     * the queue entry still carries the plain URI. Re-pointing it here — with
-     * the upgrade marker — means the standby opens the verified copy from its
-     * first frame instead of buffering Opus and being swapped later. The item
-     * keeps its media id and queue identity; only the rendition changes.
-     */
+    internal val onArmIncoming: (MediaItem, String?) -> Unit = { _, _ -> },
+    // [KO] crossfade-rendition — point the standby at the verified copy before first frame
     private val prepareIncomingItem: (MediaItem) -> MediaItem = { it },
     /**
      * A smooth headroom trim for both players while two tracks overlap:
@@ -217,7 +207,7 @@ class CrossfadeController(
      * cost of at most 1.5 dB mid-blend. A gain rather than a limiter on
      * purpose — see [LoudnessProcessor].
      */
-    private val onBlendHeadroom: (Float) -> Unit = {},
+    internal val onBlendHeadroom: (Float) -> Unit = {},
     /**
      * True while the service is mid-swap between two versions/cuts of the
      * current track. That swap fades across the same active/standby pair
@@ -229,21 +219,15 @@ class CrossfadeController(
      * [Phase.IDLE] is the only phase that can still be preempted for free.
      */
     private val versionSwapActive: () -> Boolean = { false },
-    /**
-     * Whether the screen is interactive.
-     *
-     * Only the idle tick cadence reads this. Automix and its analysis keep
-     * running with the screen off — that is when a listener most wants the next
-     * track prepared — but a slower tick is enough to notice the transition
-     * approaching, and the marker it updates is not being watched. Playback
-     * itself is untouched.
-     */
-    private val screenOn: () -> Boolean = { true },
+    // [KO] crossfade-ticker — only the idle cadence reads this
+    internal val screenOn: () -> Boolean = { true },
     /** Invoked after [finish] has completed cleanup and returned to IDLE. */
     private val onSettled: () -> Unit = {},
 ) {
 
-    private enum class Phase {
+    internal val ko = KoCrossfadeState() // [KO] crossfade-state
+
+    internal enum class Phase {
         /** Nothing in flight; watching for the next transition. */
         IDLE,
 
@@ -269,7 +253,7 @@ class CrossfadeController(
         BAILING,
     }
 
-    private var phase = Phase.IDLE
+    internal var phase = Phase.IDLE
 
     /**
      * The player the session was on when this transition began — the one whose
@@ -278,10 +262,10 @@ class CrossfadeController(
      * through the fade and the ramp has to keep driving the same two players it
      * started with.
      */
-    private var outgoing: ExoPlayer? = null
+    internal var outgoing: ExoPlayer? = null
 
     /** The player carrying the track arriving. Becomes the session at [onHandoff]. */
-    private var incoming: ExoPlayer? = null
+    internal var incoming: ExoPlayer? = null
 
     /**
      * Whether [onHandoff] has run for the transition in flight, which is what
@@ -289,7 +273,7 @@ class CrossfadeController(
      * the session and [incoming] is a silent scratch player; after it, they have
      * traded places.
      */
-    private var handedOff = false
+    internal var handedOff = false
 
     /**
      * The outgoing player, while it is held at the end of its own track — see
@@ -308,38 +292,14 @@ class CrossfadeController(
      * that could not be held moves off it at its end, onto the very song
      * fading in — see [ranOn].
      */
-    private var outgoingItemIndex = C.INDEX_UNSET
-
-    /**
-     * The queue index the incoming track occupied when the standby was loaded.
-     * Tail edits leave it alone, so it is also what locates the row when the
-     * handoff rebuilds the standby's tail.
-     */
-    private var incomingItemIndex = C.INDEX_UNSET
-
-    /**
-     * Whether the transition wraps from the last queue row to the first, as
-     * repeat-all does. The incoming row stays at index 0 even if AutoPlay
-     * appends behind the old last row during the fade.
-     */
-    private var incomingWrapsToStart = false
+    internal var outgoingItemIndex = C.INDEX_UNSET
 
     /** Which player this class's own listener is currently attached to. */
     private var listeningTo: ExoPlayer? = null
     private var tickerJob: Job? = null
 
-    /**
-     * Wakes the tick early, when an event has made the next step due now.
-     *
-     * Conflated: a burst of callbacks is one wake, and a wake that arrives
-     * while a tick is running is kept for the next wait, which is exactly the
-     * "run again immediately" the events ask for. Null phase decisions are
-     * never made from the channel; it only shortens a wait.
-     */
-    private val tickerWake = Channel<Unit>(Channel.CONFLATED)
-
-    private fun wakeTicker() {
-        tickerWake.trySend(Unit)
+    internal fun wakeTicker() {
+        ko.tickerWake.trySend(Unit)
     }
 
     /** Length of the transition in flight, in ms. Fixed when it begins. */
@@ -366,16 +326,9 @@ class CrossfadeController(
      */
     private var smartFadeActive = false
 
-    /**
-     * A plain fade Automix ran for a pair it never plans (a video on either
-     * side) while the slider is at zero: "still on" means Automix is, not the
-     * slider — which would read as switched off and end the fade at once.
-     */
-    private var automixFallbackFade = false
-
     /** Whether the setting that armed the current fade is still on. */
     private fun fadeSettingOn(): Boolean =
-        if (smartFadeActive || automixFallbackFade) AppSettings.smartFadeEnabled.value else configuredFadeMs() > 0L
+        if (smartFadeActive || ko.automixFallbackFade) AppSettings.smartFadeEnabled.value else configuredFadeMs() > 0L
 
     /**
      * Where the incoming track is cued when the lap hands the queue over, in
@@ -383,7 +336,7 @@ class CrossfadeController(
      * track change starts from the top — and only a Automix plan sets it
      * to an analyzed mix-in point instead.
      */
-    private var incomingCueTimeMs: Long = 0L
+    internal var incomingCueTimeMs: Long = 0L
 
     /**
      * The tempo-stretch ratio applied to the incoming track for the
@@ -393,7 +346,7 @@ class CrossfadeController(
      * at their own unrelated tempi and the result is a crossfade with
      * smarter timing, not a beatmatch.
      */
-    private var incomingPlaybackRate: Double = 1.0
+    internal var incomingPlaybackRate: Double = 1.0
 
     /**
      * Advanced Automix: the speed-up the outgoing track is brought up to before
@@ -406,8 +359,8 @@ class CrossfadeController(
     private val mediaRatio: Double get() = incomingPlaybackRate / outgoingPlaybackRate
 
     /** The outgoing speed-up ramp: steps in all, one beat of outgoing media each, from [rampStartMs]. */
-    private var rampSteps = 0
-    private var rampStepMs = 0L
+    internal var rampSteps = 0
+    internal var rampStepMs = 0L
     private var rampStartMs = 0L
     private var rampStep = 0
 
@@ -417,7 +370,7 @@ class CrossfadeController(
      * is recomputed every tick and a bass swap that moved to a different beat
      * halfway through the blend would be heard as the low end flapping.
      */
-    private var render = Render()
+    internal var render = Render()
 
     /**
      * The style fields of a [com.music.bitchord.playback.smart.TransitionPlan],
@@ -430,7 +383,7 @@ class CrossfadeController(
      * the nearest beat or bar of the overlap, so the bass swap, the filters
      * opening and the echo all land where a DJ would put them.
      */
-    private class Render(
+    internal class Render(
         val style: TransitionStyle = TransitionStyle.EQUAL_POWER,
         val bassSwap: Boolean = false,
         bassSwapFraction: Double = 0.7,
@@ -534,12 +487,6 @@ class CrossfadeController(
 
     private var fadeStartedAt = 0L
 
-    /** When [driveFade] first reached progress 1, so overlap excludes any later tail. */
-    private var fadeCompletedAt = 0L
-    private var lastFadeProgress = 0f
-    private var lastFadeQuarter = 0
-    private val fadeQuarterGains = arrayOfNulls<String>(3)
-
     /**
      * Both tracks' analyses as the blend began, for the beat the scrubber
      * glows on — see [publishBlend]. Fixed at the start, like [render], so a
@@ -548,27 +495,7 @@ class CrossfadeController(
     private var outgoingAnalysis = TrackAnalysis()
     private var incomingAnalysis = TrackAnalysis()
     private var bailStartedAt = 0L
-    private var armDeadline = 0L
-
-    /** When the current arming attempt started, for the duration log. */
-    private var armStartedAt = 0L
-
-    /**
-     * When the listener paused an armed pair, or 0 when it is running.
-     *
-     * The pause no longer abandons the arm: the fade is already due within the
-     * lead, and throwing the prepared decoder away was heard as the crossfade
-     * disappearing whenever the listener paused just before a track ended. The
-     * ticker parks while this is set and the resume event wakes it.
-     */
-    private var armPausedAt = 0L
-
-    /**
-     * The pair that has already been refused for this outgoing track, so an
-     * arm timeout or an incompatible format is not retried every tick until
-     * the track ends. Cleared as soon as the outgoing track changes.
-     */
-    private var skippedPair: Pair<String?, String?>? = null
+    internal var armDeadline = 0L
 
     /** Length of the fade-out driven by [Phase.SLEEP_FADE], in ms. Fixed when it begins. */
     private var sleepFadeMs = 0L
@@ -603,29 +530,7 @@ class CrossfadeController(
      * Gain the outgoing track was at when the fade was interrupted, so the ramp
      * out starts from where it actually is rather than from full volume.
      */
-    private var bailFromGain = 0f
-
-    /**
-     * A skip before the handoff has to take the armed incoming player down
-     * before the session player lands on the same queue row. It used to do that
-     * by assigning `0f`, a step from a blend gain of up to full scale that is
-     * exactly the click the bail ramp exists to avoid. This flag lets
-     * [driveBail] run that one side down over [SKIP_SILENCE_MS] instead while
-     * the survivor keeps its normal ramp.
-     */
-    private var bailSilenceLeaving = false
-
-    /**
-     * When [driveBail] first applied [bailSilenceLeaving], so the skip ramp
-     * always starts at the real blend gain. Timing it from [bailStartedAt]
-     * instead let the first bail tick land up to [BAIL_STEP_MS] into the span,
-     * which could skip the whole ramp on a tick slower than the span.
-     */
-    private var skipSilenceStartedAt = 0L
-
-    /** The session-side player during a bail, and the faded gain it starts from. */
-    private var bailSurvivor: ExoPlayer? = null
-    private var bailSurvivorFromGain = 1f
+    internal var bailFromGain = 0f
 
     /** Dedupes the per-tick plan log down to one line per distinct verdict. */
     private var lastPlanVerdict = ""
@@ -733,38 +638,8 @@ class CrossfadeController(
      *
      * @return whether the standby was reloaded.
      */
-    fun rearmIncoming(replacement: MediaItem, index: Int = incomingItemIndex): Boolean {
-        if (!isArming()) return false
-        val out = outgoing ?: return false
-        val into = incoming ?: return false
-        if (index !in 0 until out.mediaItemCount) return false
-        if (out.getMediaItemAt(index).mediaId != replacement.mediaId) return false
-        if (into.currentMediaItem?.localConfiguration?.uri == replacement.localConfiguration?.uri) {
-            return false
-        }
-        val items = (0 until out.mediaItemCount).map { i ->
-            if (i == index) replacement else out.getMediaItemAt(i)
-        }
-        into.stop()
-        into.clearMediaItems()
-        into.skipSilenceEnabled = out.skipSilenceEnabled
-        into.repeatMode = out.repeatMode
-        into.shuffleModeEnabled = out.shuffleModeEnabled
-        into.applyPlaybackSpeed((AppSettings.playbackSpeed.value * incomingPlaybackRate).toFloat())
-        into.volume = 0f
-        into.setMediaItems(items, index, incomingCueTimeMs)
-        incomingItemIndex = index
-        val after = into.nextMediaItemIndex
-        val afterId = if (after == C.INDEX_UNSET) null else items.getOrNull(after)?.mediaId
-        onArmIncoming(replacement, afterId)
-        into.playWhenReady = false
-        into.prepare()
-        armStartedAt = SystemClock.elapsedRealtime()
-        armPausedAt = 0L
-        armDeadline = armStartedAt + AutomixWorkPolicy.STANDBY_LEAD_MS +
-            CrossfadeArmPolicy.armTimeoutMs(rampSteps * rampStepMs)
-        return true
-    }
+    fun rearmIncoming(replacement: MediaItem, index: Int = ko.incomingItemIndex): Boolean =
+        koRearmIncoming(replacement, index) // [KO] crossfade-rearm
 
     /** Applies the listener's speed and pitch without exposing AudioTrack's parameter-change click. */
     fun applyPlaybackSpeed(speed: Float, pitchSemitones: Int = AppSettings.pitchSemitones.value) {
@@ -827,61 +702,8 @@ class CrossfadeController(
         }
 
         override fun onTimelineChanged(timeline: Timeline, reason: Int) {
-            // Editing a row behind the incoming track — removing it, moving it,
-            // shuffling the tail, stashing AutoPlay — does not move the
-            // playhead and therefore produces no item transition, so the checks
-            // above never see it. The queue is still reconciled from the
-            // outgoing player at the handoff; only an edit that removes or
-            // moves the incoming row itself invalidates the blend.
-            if (!handedOff && (phase == Phase.ARMING || phase == Phase.FADING)) {
-                val out = outgoing
-                val into = incoming
-                val incomingKey = into?.currentMediaItem?.handoffKey()
-                if (out != null && incomingKey != null) {
-                    val keys = (0 until out.mediaItemCount).map { out.getMediaItemAt(it).handoffKey() }
-                    if (!HandoffQueuePolicy.incomingStillNext(
-                            outgoingKeys = keys,
-                            outgoingCurrentIndex = out.currentMediaItemIndex,
-                            incomingKey = incomingKey,
-                            wrapsToStart = incomingWrapsToStart,
-                        )
-                    ) {
-                        bail()
-                        return
-                    }
-                    // A song-version swap keeps the queue key and changes only
-                    // the recording. The standby still holds the old upload, so
-                    // handing it over would play the video the queue no longer
-                    // names. Reload the standby while it is still silent, and
-                    // abandon the blend once the fade is already audible.
-                    val mediaIds = (0 until out.mediaItemCount).map { out.getMediaItemAt(it).mediaId }
-                    if (HandoffQueuePolicy.incomingMediaReplaced(
-                            outgoingKeys = keys,
-                            outgoingMediaIds = mediaIds,
-                            incomingKey = incomingKey,
-                            incomingMediaId = into?.currentMediaItem?.mediaId,
-                            incomingIndexHint = incomingItemIndex,
-                            outgoingCurrentIndex = out.currentMediaItemIndex,
-                        )
-                    ) {
-                        val index = HandoffQueuePolicy.incomingIndex(
-                            outgoingKeys = keys,
-                            incomingKey = incomingKey,
-                            incomingIndexHint = incomingItemIndex,
-                            outgoingCurrentIndex = out.currentMediaItemIndex,
-                        )
-                        val replacement = index?.let { out.getMediaItemAt(it) }
-                        if (phase == Phase.ARMING && index != null && replacement != null &&
-                            rearmIncoming(replacement, index)
-                        ) {
-                            wakeTicker()
-                            return
-                        }
-                        bail()
-                        return
-                    }
-                }
-            }
+            // [KO] crossfade-queue
+            if (koIncomingQueueChanged()) return
             wakeTicker()
         }
 
@@ -932,45 +754,7 @@ class CrossfadeController(
     fun start() {
         listenTo(active())
         tickerJob?.cancel()
-        tickerJob = scope.launch {
-            while (isActive) {
-                tick()
-                val step = tickStepMs()
-                if (step > 0L) {
-                    // The normal cadence, cut short by anything that made the
-                    // next step due sooner.
-                    withTimeoutOrNull(step) { tickerWake.receive() }
-                } else {
-                    // Nothing to advance: idle, and the player is not making
-                    // sound. Waking four times a second to do nothing is the
-                    // battery this loop used to spend through a whole pause,
-                    // so it waits for the event that changes that instead.
-                    tickerWake.receive()
-                }
-            }
-        }
-    }
-
-    /**
-     * How long to wait before the next tick, or 0 to wait for an event.
-     *
-     * Only the idle-and-silent case is parked: an armed or running transition
-     * still has to step at its own rate whatever the player is doing.
-     */
-    private fun tickStepMs(): Long = when (phase) {
-        // Off screen the marker is not being watched, so once a second is
-        // plenty to notice the transition approaching; the four-a-second
-        // cadence exists to keep a visible marker current. The plan itself is
-        // still made off screen.
-        Phase.IDLE -> if (active().isPlaying) {
-            if (screenOn()) IDLE_STEP_MS else SCREEN_OFF_IDLE_STEP_MS
-        } else {
-            0L
-        }
-        Phase.ARMING -> CrossfadeArmPolicy.armingStepMs(outgoing?.playWhenReady != false)
-        Phase.FADING -> FADE_STEP_MS
-        Phase.SLEEP_FADE -> FADE_STEP_MS
-        Phase.BAILING -> BAIL_STEP_MS
+        tickerJob = koLaunchTicker(scope) // [KO] crossfade-ticker
     }
 
     fun release() {
@@ -983,7 +767,7 @@ class CrossfadeController(
         active().volume = 1f
         AppSettings.smartMixInProgress.value = false
         AppSettings.smartMixBlend.value = null
-        skippedPair = null
+        ko.skippedPair = null
         filters.open()
         filters.parkEchoes()
         onBlendHeadroom(1f)
@@ -1017,14 +801,14 @@ class CrossfadeController(
             // playing that row twice for the length of the bail ramp. Ramped
             // over a few milliseconds rather than snapped: it is still audible
             // at its blend gain here, and `volume = 0f` clicks.
-            bailSilenceLeaving = true
+            ko.bailSilenceLeaving = true
         }
         wakeTicker()
     }
 
     // ---- Ticker -------------------------------------------------------------
 
-    private fun tick() {
+    internal fun tick() {
         // A pause has to take the other player with it, or one half of the blend
         // carries on alone over a stopped one. Mirrored every tick rather than
         // handled as an event, so audio focus loss, the sleep timer and the
@@ -1076,25 +860,19 @@ class CrossfadeController(
     }
 
     /** Records the pair a skip was logged for, so it is logged once and never retried. */
-    private fun rememberSkipped(
+    internal fun rememberSkipped(
         pair: Pair<String?, String?>,
         reason: CrossfadeSkipReason,
         outgoing: MediaItem?,
         incoming: MediaItem?,
     ) {
-        skippedPair = pair
+        ko.skippedPair = pair
         logSkipped(outgoing?.mediaId, incoming?.mediaId, reason)
     }
 
     /** One line for every transition abandoned before it became audible. */
-    private fun logSkipped(outgoingId: String?, incomingId: String?, reason: CrossfadeSkipReason) {
-        Log.d(TAG, "crossfade: skipped $outgoingId->$incomingId reason=${reason.wire}")
-        TrackLog.d(
-            "BitChord",
-            "crossfade: skipped $outgoingId->$incomingId reason=${reason.wire}",
-            about = incomingId,
-        )
-    }
+    internal fun logSkipped(outgoingId: String?, incomingId: String?, reason: CrossfadeSkipReason) =
+        KoCrossfadeLog.skipped(TAG, outgoingId, incomingId, reason) // [KO] crossfade-log
 
     private fun planAutoTransition(player: ExoPlayer) {
         // Not while a version swap owns the standby player — see
@@ -1137,44 +915,7 @@ class CrossfadeController(
         val duration = player.duration
         if (duration == C.TIME_UNSET || duration <= 0L) return
 
-        val currentItem = player.currentMediaItem ?: return
-        val nextIndex = player.nextMediaItemIndex
-        if (nextIndex == C.INDEX_UNSET) return
-        val nextItem = player.getMediaItemAt(nextIndex)
-
-        // A pair this outgoing track has already failed to arm is left to the
-        // ordinary gapless advance. Without this, a cold stream that missed
-        // the deadline is retried on every idle tick, each attempt opening a
-        // decoder and each miss re-arming the outgoing filter for a blend that
-        // is never going to happen.
-        val pair = currentItem.mediaId to nextItem.mediaId
-        if (skippedPair == pair) {
-            // A pair already refused has no transition window to advertise.
-            AppSettings.smartTransitionWindow.value = null
-            return
-        }
-        // A different outgoing track is a fresh pair; forget the old verdict.
-        if (skippedPair?.first != null && skippedPair?.first != currentItem.mediaId) {
-            skippedPair = null
-        }
-
-        // Read-ahead has already settled that nobody can serve this upload.
-        // Arming would spend the standby decoder on it and hold the outgoing
-        // track's tail for a blend that can only end in the failure path.
-        // The ordinary advance still reaches it and skips it once.
-        if (StreamResolver.isUnplayable(nextItem.mediaId)) {
-            rememberSkipped(pair, CrossfadeSkipReason.UNPLAYABLE, currentItem, nextItem)
-            AppSettings.smartTransitionWindow.value = null
-            AppSettings.smartMixInProgress.value = false
-            return
-        }
-
-        if (!canMix(currentItem, nextItem)) {
-            rememberSkipped(pair, CrossfadeSkipReason.FORMAT_MISMATCH, currentItem, nextItem)
-            AppSettings.smartTransitionWindow.value = null
-            AppSettings.smartMixInProgress.value = false
-            return
-        }
+        if (koSkipAutoTransition(player)) return // [KO] crossfade-skip
 
         // Repeating one track would crossfade it into itself, so nothing is
         // armed and no window is marked — but the queue behind the loop has not
@@ -1199,39 +940,13 @@ class CrossfadeController(
             return
         }
 
-        // Automix is its own on/off, independent of the manual crossfade
-        // length: it decides its own duration from each pair of tracks (beats,
-        // tempo, structure), so requiring a nonzero [AppSettings.crossfadeSeconds]
-        // first would tie an automatic feature to a manual one it doesn't use.
-        // A video on either side is the one pair Automix never plans: its
-        // analysis and cueing stay off video rows. Rather than no transition
-        // at all, such a pair gets the plain crossfade below — at the slider's
-        // length, or Automix's own fallback length when the slider is off.
-        // "비디오 노래도 자동 믹스" (the default) lifts that: the analysis is of
-        // the audio either way, and a video Automix can't read yet still gets
-        // the plain fade its fallback starts from.
-        val videoPair = !AppSettings.automixVideos.value && (
-            player.currentMediaItem?.isVideoOrigin == true ||
-                player.getMediaItemAt(player.nextMediaItemIndex).isVideoOrigin
-            )
-        if (AppSettings.smartFadeEnabled.value && !videoPair) {
+        val choice = koChooseAutoTransition(player, duration) ?: return // [KO] crossfade-video-fallback
+        if (choice.smartPass) {
             considerSmartTransition(duration)
             return
         }
-        val automixVideoPair = AppSettings.smartFadeEnabled.value && videoPair
-        if (automixVideoPair) {
-            AppSettings.smartTransitionWindow.value = null
-            AppSettings.smartMixInProgress.value = false
-        }
-
-        val fallbackLength = automixVideoPair && configuredFadeMs() <= 0L
-        val fade = if (fallbackLength) {
-            minOf((DEFAULT_SMART_FALLBACK_SECONDS * 1000).toLong(), duration / 3).coerceAtLeast(0L)
-        } else {
-            if (configuredFadeMs() <= 0L) return
-            fadeFor(duration)
-        }
-        if (fade <= 0L) return
+        val fallbackLength = choice.fallbackLength
+        val fade = choice.fadeMs
 
         val remaining = duration - player.currentPosition
         if (SleepTimer.afterTrack.value) {
@@ -1330,24 +1045,7 @@ class CrossfadeController(
                     "bpm=${currentAnalysis.bpm}/${nextAnalysis.bpm} " +
                     "conf=${currentAnalysis.beatConfidence}/${nextAnalysis.beatConfidence}",
             )
-            Log.d(
-                TAG,
-                "automix: ${currentItem.mediaId}->${nextItem.mediaId} " +
-                    "beatAligned=${if (plan.beatAligned) "y" else "n"} " +
-                    "phrase=${if (plan.phraseAligned) "y" else "n"} " +
-                    "key=${plan.keyRelation.wire} " +
-                    "keyRaw=${currentAnalysis.key}/${nextAnalysis.key} " +
-                    "keyConf=${"%.2f".format(Locale.ROOT, currentAnalysis.keyConfidence)}/" +
-                    "${"%.2f".format(Locale.ROOT, nextAnalysis.keyConfidence)} " +
-                    "loudness=${"%+.1f".format(Locale.ROOT, plan.loudnessGainDb)}dB " +
-                    "style=${plan.transitionStyle.name.lowercase(Locale.ROOT)}" +
-                    (if (plan.transitionStyle == TransitionStyle.DJ_FILTER) {
-                        "/${plan.filterVariant.name.lowercase(Locale.ROOT)}"
-                    } else {
-                        ""
-                    }) +
-                    " character=${plan.character.wire}",
-            )
+            KoCrossfadeLog.plan(TAG, currentItem, nextItem, plan, currentAnalysis, nextAnalysis) // [KO] crossfade-log
         }
 
         // Gated on *both* tracks being measured, not on the plan alone. Until
@@ -1469,32 +1167,8 @@ class CrossfadeController(
         requestAnalysisAround(player, duration)
     }
 
-    private fun requestAnalysisAround(player: ExoPlayer, duration: Long) {
-        val currentItem = player.currentMediaItem ?: return
-        val nextIndex = player.nextMediaItemIndex
-        if (nextIndex == C.INDEX_UNSET) return
-        val nextItem = player.getMediaItemAt(nextIndex)
-        if (!AppSettings.automixVideos.value && (currentItem.isVideoOrigin || nextItem.isVideoOrigin)) return
-        // Only the immediate next transition, and only its two useful windows:
-        // the incoming track's opening and the outgoing track's tail. Each is
-        // skipped once it has been measured, so a track is decoded once rather
-        // than on every tick.
-        val automix = AppSettings.smartFadeEnabled.value
-        val nextTarget = AutomixWorkPolicy.nextAnalysisTarget(
-            nextId = nextItem.mediaId,
-            nextAnalysed = analysisWindowMeasured(nextItem, AnalysisWindow.HEAD),
-            automixEnabled = automix,
-        )
-        nextTarget?.let {
-            requestAnalysis(nextItem, nextItemDurationMs(nextIndex, nextItem), it.window)
-        }
-        val outgoingTarget = AutomixWorkPolicy.outgoingAnalysisTarget(
-            currentId = currentItem.mediaId,
-            currentAnalysed = analysisWindowMeasured(currentItem, AnalysisWindow.TAIL),
-            automixEnabled = automix,
-        )
-        outgoingTarget?.let { requestAnalysis(currentItem, duration, it.window) }
-    }
+    private fun requestAnalysisAround(player: ExoPlayer, duration: Long) =
+        koRequestAnalysisAround(player, duration) // [KO] crossfade-analysis
 
     /**
      * Keeps the stats line describing the pair that is actually playing.
@@ -1563,7 +1237,7 @@ class CrossfadeController(
      * it (see `Song.matchQuery`). Reading it here costs nothing and is available
      * from the moment the queue is set.
      */
-    private fun nextItemDurationMs(nextIndex: Int, item: MediaItem): Long {
+    internal fun nextItemDurationMs(nextIndex: Int, item: MediaItem): Long {
         val timeline = active().currentTimeline
         if (!timeline.isEmpty) {
             timeline.getWindow(nextIndex, Timeline.Window()).durationMs
@@ -1626,21 +1300,7 @@ class CrossfadeController(
         if (out === into) return false
         val nextIndex = out.nextMediaItemIndex
         if (nextIndex == C.INDEX_UNSET) return false
-        val nextItem = out.getMediaItemAt(nextIndex)
-        val currentItem = out.currentMediaItem
-        // A queue that points at the song already playing has nothing to fade
-        // into. This is also what a natural advance during an earlier ARMING
-        // leaves behind, so refuse it before touching either player.
-        if (currentItem != null && nextItem.mediaId == currentItem.mediaId) {
-            rememberSkipped(
-                currentItem.mediaId to nextItem.mediaId,
-                CrossfadeSkipReason.SAME_ITEM,
-                currentItem,
-                nextItem,
-            )
-            releaseHold()
-            return false
-        }
+        if (koBeginRejectsSameItem(out)) return false // [KO] crossfade-same-item
         // The last blend's stretch, if it is somehow still easing off: this
         // player is about to be the outgoing side of a new one.
         endEase(clickless = false)
@@ -1648,7 +1308,7 @@ class CrossfadeController(
         fadeMs = fade
         fadeEndMs = endMs
         smartFadeActive = smart
-        automixFallbackFade = automixFallback && !smart
+        ko.automixFallbackFade = automixFallback && !smart
         incomingCueTimeMs = cueTimeMs.coerceAtLeast(0L)
         incomingPlaybackRate = playbackRate
         outgoingPlaybackRate = outgoingRate
@@ -1657,21 +1317,21 @@ class CrossfadeController(
         rampStartMs = endMs - fade - rampSteps * beatMs
         rampStep = 0
         render = renderStyle
-        armStartedAt = SystemClock.elapsedRealtime()
-        armPausedAt = 0L
+        ko.armStartedAt = SystemClock.elapsedRealtime()
+        ko.armPausedAt = 0L
         // The standby is now armed a full [AutomixWorkPolicy.STANDBY_LEAD_MS]
         // before the transition, so the readiness timeout has to start after
         // that lead rather than immediately. Otherwise a cold stream that is
         // merely slower than three seconds would be dropped with twelve seconds
         // of the lead still to run.
-        armDeadline = armStartedAt + AutomixWorkPolicy.STANDBY_LEAD_MS +
+        armDeadline = ko.armStartedAt + AutomixWorkPolicy.STANDBY_LEAD_MS +
             CrossfadeArmPolicy.armTimeoutMs(rampSteps * beatMs)
         handedOff = false
         outgoing = out
         incoming = into
         outgoingItemIndex = out.currentMediaItemIndex
-        incomingItemIndex = nextIndex
-        incomingWrapsToStart = nextIndex == 0 && out.currentMediaItemIndex == out.mediaItemCount - 1
+        ko.incomingItemIndex = nextIndex
+        ko.incomingWrapsToStart = nextIndex == 0 && out.currentMediaItemIndex == out.mediaItemCount - 1
 
         val t0 = SystemClock.elapsedRealtimeNanos()
         val items = (0 until out.mediaItemCount).map { index ->
@@ -1724,11 +1384,13 @@ class CrossfadeController(
         into.prepare()
 
         phase = Phase.ARMING
-        TrackLog.d(
-            "BitChord",
-            "crossfade: arm out=${out.currentMediaItem?.mediaId} in=${items.getOrNull(nextIndex)?.mediaId} " +
-                "fade=${fade}ms cue=${incomingCueTimeMs}ms smart=$smart",
-            about = items.getOrNull(nextIndex)?.mediaId,
+        KoCrossfadeLog.arm( // [KO] crossfade-log
+            TAG,
+            out.currentMediaItem?.mediaId,
+            items.getOrNull(nextIndex)?.mediaId,
+            fade,
+            incomingCueTimeMs,
+            smart,
         )
         return true
     }
@@ -1806,7 +1468,7 @@ class CrossfadeController(
     }
 
     /** Undoes [holdAtEnd]. Idempotent; never flushes. */
-    private fun releaseHold() {
+    internal fun releaseHold() {
         heldAtEnd?.pauseAtEndOfMediaItems = false
         heldAtEnd = null
     }
@@ -1827,7 +1489,7 @@ class CrossfadeController(
      * after it — the song fading in, started a second time on the player
      * that is leaving. Never true for a held player: it stops on its track.
      */
-    private fun ranOn(out: ExoPlayer): Boolean =
+    internal fun ranOn(out: ExoPlayer): Boolean =
         handedOff && outgoingItemIndex != C.INDEX_UNSET && out.currentMediaItemIndex != outgoingItemIndex
 
     /**
@@ -1841,40 +1503,11 @@ class CrossfadeController(
         val out = outgoing ?: return bail()
         val into = incoming ?: return bail()
 
-        // The outgoing player can run out of its own item while the standby is
-        // still buffering. At that point both players hold the incoming song
-        // and there is no blend left to make — the natural advance is the
-        // transition. This is also where the old code produced the confusing
-        // `abort out=in` line twelve seconds later.
         val outId = out.currentMediaItem?.mediaId
         val inId = into.currentMediaItem?.mediaId
-        if (out.currentMediaItemIndex != outgoingItemIndex || (outId != null && outId == inId)) {
-            return bail(CrossfadeSkipReason.OUTGOING_MOVED)
-        }
+        if (koArmOutgoingMoved(out, into)) return // [KO] crossfade-arming
         if (!stillWorthFading()) return bail()
-        // Paused while armed: the transition is no longer imminent, but throwing
-        // the prepared standby away made a pause just before the fade point
-        // erase the crossfade entirely. Park here instead — the ticker waits for
-        // the resume event rather than polling — and give the incoming stream
-        // its full readiness grace once playback continues.
-        if (!out.playWhenReady) {
-            if (armPausedAt == 0L) armPausedAt = SystemClock.elapsedRealtime()
-            return
-        }
-        if (armPausedAt != 0L) {
-            val pausedFor = SystemClock.elapsedRealtime() - armPausedAt
-            armPausedAt = 0L
-            armDeadline = CrossfadeArmPolicy.armDeadlineAfterPause(armDeadline, pausedFor)
-            armStartedAt += pausedFor.coerceAtLeast(0L)
-        }
-
-        // An earlier interrupted transition must not leave the audible track
-        // at a gain the listener cannot hear. Nothing in ARMING automates this
-        // player's volume; full level is the only correct state until FADING.
-        if (out.volume <= 0.01f) {
-            Log.w(TAG, "arm: outgoing volume was ${out.volume}; restoring full level")
-            out.volume = 1f
-        }
+        if (koArmPauseOrRestore(out, into)) return // [KO] crossfade-arming
 
         val expired = SystemClock.elapsedRealtime() > armDeadline
         val ready = into.playbackState == Player.STATE_READY
@@ -1883,10 +1516,12 @@ class CrossfadeController(
         // up. Give up and let the queue move on plainly rather than fading into
         // silence.
         if (expired && !ready) {
-            Log.d(
+            KoCrossfadeLog.armTimeout( // [KO] crossfade-log
                 TAG,
-                "arm timeout after ${SystemClock.elapsedRealtime() - armStartedAt}ms " +
-                    "out=$outId in=$inId state=${into.playbackState}",
+                SystemClock.elapsedRealtime() - ko.armStartedAt,
+                outId,
+                inId,
+                into.playbackState,
             )
             return bail(CrossfadeSkipReason.ARM_TIMEOUT)
         }
@@ -1940,10 +1575,10 @@ class CrossfadeController(
         into.volume = 0f
         into.playWhenReady = true
         fadeStartedAt = SystemClock.elapsedRealtime()
-        fadeCompletedAt = 0L
-        lastFadeProgress = 0f
-        lastFadeQuarter = 0
-        fadeQuarterGains.fill(null)
+        ko.fadeCompletedAt = 0L
+        ko.lastFadeProgress = 0f
+        ko.lastFadeQuarter = 0
+        ko.fadeQuarterGains.fill(null)
         nudgeUntil = 0L
         lockCount = 0
         outClock.reset()
@@ -1959,27 +1594,22 @@ class CrossfadeController(
         outgoingAnalysis = out.currentMediaItem?.let(analysisFor) ?: TrackAnalysis()
         incomingAnalysis = into.currentMediaItem?.let(analysisFor) ?: TrackAnalysis()
 
-        val standbyLeadMs = SystemClock.elapsedRealtime() - armStartedAt
+        val standbyLeadMs = SystemClock.elapsedRealtime() - ko.armStartedAt
         val outItem = out.currentMediaItem
         val inItem = into.currentMediaItem
         val analysisMs = listOfNotNull(outItem, inItem).distinctBy { it.mediaId }
             .sumOf { analysisTimeMs(it) }
-        Log.d(TAG, "blend start at cue=${into.currentPosition}ms out=${out.currentPosition}ms")
-        Log.d(
+        KoCrossfadeLog.fadeStart( // [KO] crossfade-log
             TAG,
-            "automix: ${outItem?.mediaId}->${inItem?.mediaId} " +
-                "analysisMs=$analysisMs standbyLeadMs=$standbyLeadMs",
-        )
-        Log.d(
-            TAG,
-            "arm ready out=${outItem?.mediaId} in=${inItem?.mediaId} took=${standbyLeadMs}ms",
-        )
-        TrackLog.d(
-            "BitChord",
-            "crossfade: start out=${outItem?.mediaId} in=${inItem?.mediaId} fade=${fadeMs}ms " +
-                "cue=${incomingCueTimeMs}ms smart=$smartFadeActive " +
-                "gains in=${gainText(into.volume)} out=${gainText(out.volume)}",
-            about = inItem?.mediaId,
+            out,
+            into,
+            outItem,
+            inItem,
+            analysisMs,
+            standbyLeadMs,
+            fadeMs,
+            incomingCueTimeMs,
+            smartFadeActive,
         )
 
         // Published before the mix flag, in the same tick: the scrubber shows
@@ -2018,11 +1648,7 @@ class CrossfadeController(
         reconcileQueue(out, into)
 
         Log.d(TAG, "handoff at in=${into.currentPosition}ms out=${out.currentPosition}ms")
-        Log.d(
-            TAG,
-            "handoff levels inVol=${into.volume} outVol=${out.volume} " +
-                "inRate=${into.playbackParameters.speed} outRate=${out.playbackParameters.speed}",
-        )
+        KoCrossfadeLog.handoff(TAG, into, out) // [KO] crossfade-log
 
         // Before the swap, so the listener follows the session rather than
         // firing on a player this class is about to demote.
@@ -2068,22 +1694,7 @@ class CrossfadeController(
      * by [listener]'s timeline check and abandons the transition instead.
      */
     private fun reconcileQueue(out: ExoPlayer, into: ExoPlayer) {
-        val incomingKey = into.currentMediaItem?.handoffKey() ?: return
-        val outgoingKeys = (0 until out.mediaItemCount).map { out.getMediaItemAt(it).handoffKey() }
-        val incomingIndex = HandoffQueuePolicy.incomingIndex(
-            outgoingKeys = outgoingKeys,
-            incomingKey = incomingKey,
-            incomingIndexHint = incomingItemIndex,
-            outgoingCurrentIndex = out.currentMediaItemIndex,
-        ) ?: return
-        val intoCurrentIndex = into.currentMediaItemIndex
-        if (intoCurrentIndex !in 0 until into.mediaItemCount) return
-        val desiredTail = (incomingIndex + 1 until out.mediaItemCount).map { out.getMediaItemAt(it) }
-        val currentTailKeys = (intoCurrentIndex + 1 until into.mediaItemCount)
-            .map { into.getMediaItemAt(it).handoffKey() }
-        if (currentTailKeys == desiredTail.map { it.handoffKey() }) return
-        into.replaceMediaItems(intoCurrentIndex + 1, into.mediaItemCount, desiredTail)
-        Log.d(TAG, "reconciled ${desiredTail.size} tail item(s) onto the incoming player")
+        koReconcileQueue(out, into) // [KO] crossfade-queue
     }
 
     /**
@@ -2115,7 +1726,7 @@ class CrossfadeController(
             .takeIf { it != C.TIME_UNSET && it > 0L }
             ?.minus(incomingCueTimeMs)
             ?.coerceAtLeast(0L)
-        val span = CrossfadeGain.spanMs(fadeMs, remainingIncoming)
+        val span = KoCrossfadeGain.spanMs(fadeMs, remainingIncoming)
         val elapsed = (inClock.read(player) - incomingCueTimeMs).coerceAtLeast(0.0).toFloat()
         // Advanced: [fadeMs] is outgoing time, and a stretched incoming track
         // covers `rate` times as much of its own timeline in it — unscaled, a
@@ -2147,15 +1758,15 @@ class CrossfadeController(
         val incomingAt = ((elapsed + tracks.incomingLeadMs()) / wallSpan).coerceIn(0f, 1f)
         val outgoingAt = (progress + tracks.outgoingLeadMs() / span.toFloat()).coerceIn(0f, 1f)
 
-        val gains = fadeGainsAt(progress)
+        val gains = koFadeGainsAt(progress) // [KO] crossfade-fade
         // The match is eased back to unity over the last third of the blend so
         // the incoming player is at its own gain before [finish] hands it over,
         // rather than stepping up at the boundary.
-        val incomingGain = matchGain(render.incomingGain, progress)
-        val outgoingGain = matchGain(render.outgoingGain, progress)
+        val incomingGain = koMatchGain(render.incomingGain, progress) // [KO] crossfade-fade
+        val outgoingGain = koMatchGain(render.outgoingGain, progress) // [KO] crossfade-fade
         player.volume = gains.incoming
         out.volume = if (ranOn(out)) 0f else gains.outgoing
-        logFadeGains(progress)
+        koLogFadeGains(progress) // [KO] crossfade-fade
         onBlendHeadroom(
             headroomFor(
                 mixRise(outgoingAt) * incomingGain,
@@ -2184,8 +1795,8 @@ class CrossfadeController(
         val settingSwitchedOff = !fadeSettingOn()
         // The blend ends on its planned length. Nothing — not an echo tail or a
         // fader hold — may keep the outgoing player alive past progress 1.
-        if (progress >= 1f && fadeCompletedAt == 0L) {
-            fadeCompletedAt = SystemClock.elapsedRealtime()
+        if (progress >= 1f && ko.fadeCompletedAt == 0L) {
+            ko.fadeCompletedAt = SystemClock.elapsedRealtime()
         }
         val done = progress >= 1f || settingSwitchedOff
         if (done) {
@@ -2197,50 +1808,22 @@ class CrossfadeController(
         }
     }
 
-    /** The production fader pair plus the transition-only loudness match, at [progress]. */
-    private fun fadeGainsAt(progress: Float): CrossfadeGain.Gains = CrossfadeGain.Gains(
-        incoming = (mixRise(progress) * matchGain(render.incomingGain, progress)).coerceIn(0f, 1f),
-        outgoing = (mixFall(progress) * matchGain(render.outgoingGain, progress)).coerceIn(0f, 1f),
-    )
-
-    private fun matchGain(planned: Double, progress: Float): Float {
-        val weight = ((1f - progress) / LOUDNESS_MATCH_RELEASE).coerceIn(0f, 1f).toDouble()
-        return (1.0 + (planned - 1.0) * weight).toFloat().coerceIn(0f, 1f)
-    }
-
-    /**
-     * Records each quarter at the moment the fade crosses it, using the same
-     * fader functions playback uses. A skipped tick therefore still reports
-     * the gain at 25/50/75 rather than whatever the next tick happened to be.
-     */
-    private fun logFadeGains(progress: Float) {
-        if (progress <= lastFadeProgress) return
-        lastFadeProgress = progress
-        while (lastFadeQuarter < 3 && progress >= (lastFadeQuarter + 1) * 0.25f) {
-            val quarter = lastFadeQuarter + 1
-            val gains = fadeGainsAt(quarter * 0.25f)
-            fadeQuarterGains[quarter - 1] =
-                "${quarter * 25}%=${gainText(gains.incoming)}/${gainText(gains.outgoing)}"
-            lastFadeQuarter = quarter
-        }
-    }
-
     private fun logFadeEnd(out: ExoPlayer, into: ExoPlayer, progress: Float) {
-        val quarters = fadeQuarterGains.filterNotNull()
-        val quarterText = if (quarters.isEmpty()) "" else " ${quarters.joinToString(" ")}"
-        val completedAt = fadeCompletedAt.takeIf { it > 0L } ?: SystemClock.elapsedRealtime()
-        TrackLog.d(
-            "BitChord",
-            "crossfade: end out=${out.currentMediaItem?.mediaId} in=${into.currentMediaItem?.mediaId} " +
-                "fade=${fadeMs}ms overlap=${completedAt - fadeStartedAt}ms tail=${render.echoTailMs.toLong()}ms " +
-                "progress=${gainText(progress)}$quarterText " +
-                "gains end=${gainText(into.volume)}/${gainText(out.volume)}",
-            about = into.currentMediaItem?.mediaId,
+        val quarters = ko.fadeQuarterGains.filterNotNull()
+        val completedAt = ko.fadeCompletedAt.takeIf { it > 0L } ?: SystemClock.elapsedRealtime()
+        KoCrossfadeLog.fadeEnd( // [KO] crossfade-log
+            out,
+            into,
+            fadeMs,
+            fadeStartedAt,
+            completedAt,
+            render.echoTailMs,
+            progress,
+            quarters,
         )
     }
 
-    private fun gainText(gain: Float): String =
-        String.format(Locale.ROOT, "%.3f", gain.coerceIn(0f, 1f))
+    private fun gainText(gain: Float): String = KoCrossfadeLog.gainText(gain) // [KO] crossfade-log
 
     /**
      * Tells the scrubber where the blend's beats fall, and whether it is moving.
@@ -2391,24 +1974,7 @@ class CrossfadeController(
         val now = SystemClock.elapsedRealtime()
         val progress = (now - bailStartedAt).toFloat() / BAIL_MS
         if (progress < 1f) {
-            val survivorGain = CrossfadeGain.bailSurvivor(bailSurvivorFromGain, progress)
-            bailSurvivor?.volume = survivorGain
-            val fall = when {
-                leaving === outgoing && ranOn(leaving) -> 0f
-                // Long enough to be a ramp, short enough that the same queue row
-                // the session just moved onto does not play twice underneath it.
-                bailSilenceLeaving -> {
-                    if (skipSilenceStartedAt == 0L) skipSilenceStartedAt = now
-                    CrossfadeGain.skipSilence(
-                        bailFromGain,
-                        now - skipSilenceStartedAt,
-                        CrossfadeGain.SKIP_SILENCE_MS,
-                    )
-                }
-                else -> bailFromGain * fallGain(progress)
-            }
-            leaving.volume = fall
-            onBlendHeadroom(headroomFor(survivorGain, fall))
+            koDriveBailStep(leaving, now, progress) // [KO] crossfade-bail-step
             return
         }
         finish()
@@ -2427,29 +1993,13 @@ class CrossfadeController(
      * has been announced), so the only thing left is to take the outgoing track
      * away gracefully.
      */
-    private fun bail(reason: CrossfadeSkipReason? = null) {
+    internal fun bail(reason: CrossfadeSkipReason? = null) {
         if (phase == Phase.IDLE || phase == Phase.BAILING) return
         val outId = outgoing?.currentMediaItem?.mediaId
         val inId = incoming?.currentMediaItem?.mediaId
-        if (reason != null) {
-            if (phase == Phase.ARMING && outId != null && inId != null) {
-                // Remembered so the same pair is not re-armed on the next idle
-                // tick; a miss is a plain gapless advance, not a retry loop.
-                rememberSkipped(
-                    outId to inId,
-                    reason,
-                    outgoing?.currentMediaItem,
-                    incoming?.currentMediaItem,
-                )
-            } else {
-                logSkipped(outId, inId, reason)
-            }
-        }
+        if (reason != null) koRememberBailReason(reason, outId, inId) // [KO] crossfade-skip-log
         Log.d(TAG, "bail from $phase")
-        TrackLog.d(
-            "BitChord",
-            "crossfade: abort out=$outId in=$inId phase=$phase handedOff=$handedOff",
-        )
+        KoCrossfadeLog.abort(TAG, outId, inId, phase, handedOff) // [KO] crossfade-log
         AppSettings.smartMixInProgress.value = false
         AppSettings.smartMixBlend.value = null
         if (!handedOff && phase != Phase.FADING) {
@@ -2467,11 +2017,11 @@ class CrossfadeController(
         // session side is ramped back up from where its fader actually was, not
         // snapped to unity.
         val survivor = if (handedOff) incoming else outgoing
-        bailSurvivor = survivor
-        bailSurvivorFromGain = survivor?.volume ?: 1f
+        ko.bailSurvivor = survivor
+        ko.bailSurvivorFromGain = survivor?.volume ?: 1f
         bailFromGain = leavingOnBail()?.volume ?: 0f
-        bailSilenceLeaving = false
-        skipSilenceStartedAt = 0L
+        ko.bailSilenceLeaving = false
+        ko.skipSilenceStartedAt = 0L
         bailStartedAt = SystemClock.elapsedRealtime()
         phase = Phase.BAILING
     }
@@ -2482,10 +2032,7 @@ class CrossfadeController(
         val wasTransitioning = phase != Phase.IDLE
         if (phase != Phase.IDLE) {
             Log.d(TAG, "finish from $phase")
-            Log.d(
-                TAG,
-                "finish levels inVol=${incoming?.volume} outVol=${outgoing?.volume} handedOff=$handedOff",
-            )
+            KoCrossfadeLog.finish(TAG, incoming?.volume, outgoing?.volume, handedOff) // [KO] crossfade-log
             // Stamped under this guard rather than beside the assignment at the
             // bottom, because this function is idempotent and gets called with
             // nothing in flight: marking every one of those as a transition
@@ -2542,18 +2089,18 @@ class CrossfadeController(
         outgoing = null
         incoming = null
         handedOff = false
-        bailSurvivor = null
-        bailSurvivorFromGain = 1f
+        ko.bailSurvivor = null
+        ko.bailSurvivorFromGain = 1f
         bailFromGain = 0f
-        bailSilenceLeaving = false
+        ko.bailSilenceLeaving = false
         outgoingItemIndex = C.INDEX_UNSET
-        incomingItemIndex = C.INDEX_UNSET
-        incomingWrapsToStart = false
+        ko.incomingItemIndex = C.INDEX_UNSET
+        ko.incomingWrapsToStart = false
         incomingCueTimeMs = 0L
         incomingPlaybackRate = 1.0
         outgoingPlaybackRate = 1.0
         rampSteps = 0
-        armPausedAt = 0L
+        ko.armPausedAt = 0L
         outgoingAnalysis = TrackAnalysis()
         incomingAnalysis = TrackAnalysis()
         phase = Phase.IDLE
@@ -2586,7 +2133,7 @@ class CrossfadeController(
 
     // ---- Numbers ------------------------------------------------------------
 
-    private fun configuredFadeMs(): Long = AppSettings.crossfadeSeconds.value * 1000L
+    internal fun configuredFadeMs(): Long = AppSettings.crossfadeSeconds.value * 1000L
 
     /**
      * How early the standby is loaded before the fade. Before this point it
@@ -2600,7 +2147,7 @@ class CrossfadeController(
      * that swallows a third of a song stops being a transition and starts being
      * the arrangement.
      */
-    private fun fadeFor(duration: Long): Long {
+    internal fun fadeFor(duration: Long): Long {
         val configured = configuredFadeMs()
         if (duration == C.TIME_UNSET || duration <= 0L) return configured
         return minOf(configured, duration / 3).coerceAtLeast(0L)
@@ -3032,9 +2579,9 @@ class CrossfadeController(
         )
 
     /** Equal-power pair: [riseGain]² + [fallGain]² = 1, so the blend never dips. */
-    private fun riseGain(progress: Float): Float = CrossfadeGain.rise(progress)
+    private fun riseGain(progress: Float): Float = KoCrossfadeGain.rise(progress)
 
-    private fun fallGain(progress: Float): Float = CrossfadeGain.fall(progress)
+    private fun fallGain(progress: Float): Float = KoCrossfadeGain.fall(progress)
 
     /**
      * The incoming fader for the blend in flight.
@@ -3047,10 +2594,10 @@ class CrossfadeController(
      *
      * [headroomFor] keeps two faders at full from summing past full scale.
      */
-    private fun mixRise(progress: Float): Float = CrossfadeGain.mixRise(progress)
+    private fun mixRise(progress: Float): Float = KoCrossfadeGain.mixRise(progress)
 
     /** [mixRise]'s partner: the outgoing fader falls over the same planned span. */
-    private fun mixFall(progress: Float): Float = CrossfadeGain.mixFall(progress)
+    private fun mixFall(progress: Float): Float = KoCrossfadeGain.mixFall(progress)
 
     // ---- Phase lock ---------------------------------------------------------
 
@@ -3337,7 +2884,7 @@ class CrossfadeController(
     // gain it applies is a gain against a genuinely different track, and
     // equal-power is right everywhere.
 
-    private companion object {
+    internal companion object {
         const val TAG = "BitChordCrossfade"
 
         /**
@@ -3352,7 +2899,7 @@ class CrossfadeController(
         const val BAIL_MS = 120L
 
         /**
-         * The armed incoming player's skip ramp lives in [CrossfadeGain] with
+         * The armed incoming player's skip ramp lives in [KoCrossfadeGain] with
          * the gain curve it drives, so its length can be tested against the
          * real [BAIL_STEP_MS] cadence.
          */
@@ -3761,74 +3308,4 @@ class CrossfadeController(
     }
 }
 
-/**
- * The equal-power fade pair used by [CrossfadeController.mixRise] and
- * [CrossfadeController.mixFall], kept beside the controller rather than in a
- * new file so the production timing and gain stay in one place.
- */
-internal object CrossfadeGain {
-
-    /**
-     * Ramp for the armed incoming player when a skip before the handoff moves
-     * the session onto the same row. It has to be longer than one
-     * [CrossfadeController.BAIL_STEP_MS] bail tick (15 ms) or the first sample
-     * lands at the blend gain and the next is already past the span — the same
-     * step to `0f` the ramp exists to remove. Three ticks is still far too
-     * short to hear the same row play twice underneath.
-     */
-    const val SKIP_SILENCE_MS = 45L
-
-    data class Gains(val incoming: Float, val outgoing: Float)
-
-    fun gains(progress: Float): Gains {
-        val p = progress.coerceIn(0f, 1f)
-        return Gains(incoming = rise(p), outgoing = fall(p))
-    }
-
-    fun rise(progress: Float): Float =
-        sin(progress.coerceIn(0f, 1f) * PI.toFloat() / 2f)
-
-    fun fall(progress: Float): Float =
-        cos(progress.coerceIn(0f, 1f) * PI.toFloat() / 2f)
-
-    /** The production incoming fader: every Automix style uses this pair. */
-    fun mixRise(progress: Float): Float = rise(progress)
-
-    /** The production outgoing fader: every Automix style uses this pair. */
-    fun mixFall(progress: Float): Float = fall(progress)
-
-    /**
-     * The surviving player's gain while an interrupted blend is ramped away.
-     *
-     * An abort used to snap this side straight to unity, which was a jump of up
-     * to nearly full scale when the fade was already well advanced. It now
-     * returns from wherever the fader actually was, on the same short ramp the
-     * leaving side uses.
-     */
-    fun bailSurvivor(fromGain: Float, progress: Float): Float {
-        val from = fromGain.coerceIn(0f, 1f)
-        return (from + (1f - from) * rise(progress)).coerceIn(0f, 1f)
-    }
-
-    /**
-     * The armed incoming player's gain on a skip before the handoff: it has to
-     * reach zero before the session plays the same queue row, but from a blend
-     * gain that may be close to full scale. A `0f` assignment there was a step
-     * discontinuity on every such skip; this returns the same shape of short
-     * ramp the bail uses instead.
-     */
-    fun skipSilence(fromGain: Float, elapsedMs: Long, spanMs: Long): Float {
-        val from = fromGain.coerceIn(0f, 1f)
-        return (from * fall(progress(elapsedMs, spanMs))).coerceIn(0f, 1f)
-    }
-
-    fun progress(elapsedMs: Long, spanMs: Long): Float {
-        if (spanMs <= 0L) return 1f
-        return (elapsedMs.toDouble() / spanMs).toFloat().coerceIn(0f, 1f)
-    }
-
-    fun spanMs(plannedFadeMs: Long, incomingRemainingMs: Long?): Long {
-        val incomingCap = incomingRemainingMs?.div(3) ?: Long.MAX_VALUE
-        return minOf(plannedFadeMs, incomingCap).coerceAtLeast(1L)
-    }
-}
+// [KO] crossfade-gain — KoCrossfadeGain.kt

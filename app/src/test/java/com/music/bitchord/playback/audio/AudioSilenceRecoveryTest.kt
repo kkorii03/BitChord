@@ -1,6 +1,6 @@
 package com.music.bitchord.playback.audio
 
-import com.music.bitchord.playback.CrossfadeGain
+import com.music.bitchord.ko.KoCrossfadeGain
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -148,8 +148,8 @@ class AudioSilenceRecoveryTest {
     fun afterACrossfadeSettlesTheGainIsExactlyUnity() {
         // Both sides of the production fade end at 1/0, and a settled player
         // must never keep the outgoing side's zero.
-        assertEquals(1f, CrossfadeGain.gains(1f).incoming, 0.0001f)
-        assertEquals(0f, CrossfadeGain.gains(1f).outgoing, 0.0001f)
+        assertEquals(1f, KoCrossfadeGain.gains(1f).incoming, 0.0001f)
+        assertEquals(0f, KoCrossfadeGain.gains(1f).outgoing, 0.0001f)
         assertEquals(1f, AudioSilenceRecovery.settledGain(transitionActive = false, current = 0f), 0f)
         assertEquals(1f, AudioSilenceRecovery.settledGain(transitionActive = false, current = 0.3f), 0f)
     }
