@@ -105,6 +105,36 @@ def pick_songs(playlists, limit, shuffle, seed):
     return picked
 
 
+# Searches outside the user's own playlists, which the phone has mostly played.
+FRESH_SEARCHES = ["ytsearch40:노래 커버 cover", "ytsearch40:acoustic cover song", "ytsearch30:kpop vocal cover",
+                  "ytsearch30:pop song cover live"]
+
+
+def fresh_pool(playlists, seed):
+    """Candidates for --fresh: search results first, then the given playlists, shuffled,
+    videos only, minus every id an earlier test run on this PC already played."""
+    played = {p.stem.split(".")[0] for p in OUT.parent.rglob("*.log")}
+    ids = []
+    for q in FRESH_SEARCHES:
+        r = subprocess.run([YTDLP, "--flat-playlist", "--print", "id", q], capture_output=True, timeout=300)
+        ids += [("search", l.strip()) for l in r.stdout.decode("utf-8", "replace").splitlines()
+                if re.fullmatch(r"[\w-]{11}", l.strip())]
+    for pid in playlists:
+        ids += [(pid, v) for v in playlist_ids(pid)]
+    random.Random(seed).shuffle(ids)
+    seen, out = set(), []
+    for pid, v in ids:
+        if v in seen or v in played:
+            continue
+        seen.add(v)
+        out.append((pid, v))
+    out = out[:60]  # enough for 20-25 first plays; each is_video check is one yt-dlp call
+    if ARGS.videos_only:
+        out = [(pid, v) for pid, v in out if is_video(v)]
+    log(f"fresh pool: {len(out)} candidates")
+    return out
+
+
 # ---------- app log ----------
 
 def parse_dump(text, vid):
@@ -612,6 +642,9 @@ def main():
     # where the song-version swap and sync go wrong; plain song copies rarely do.
     ap.add_argument("--all-tracks", dest="videos_only", action="store_false",
                     help="also pick plain song (Topic) copies; default is videos only")
+    ap.add_argument("--fresh", type=int, default=0,
+                    help="score this many songs the phone never played (cached/downloaded ones skipped); "
+                         "pool = --playlist ids plus YouTube cover searches, shuffled")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--out", type=Path, default=OUT, help="results folder (default phone-out\\synctest)")
     ap.add_argument("--selftest", action="store_true")
@@ -622,7 +655,9 @@ def main():
     OUT.mkdir(parents=True, exist_ok=True)
     if ARGS.default_set:
         ARGS.playlist, ARGS.limit, ARGS.shuffle = DEFAULT_SET, ARGS.limit or DEFAULT_PER_PLAYLIST, True
-    if ARGS.video:
+    if ARGS.fresh:
+        songs = fresh_pool(ARGS.playlist, ARGS.seed)
+    elif ARGS.video:
         songs = [("manual", v) for v in ARGS.video]
     elif ARGS.dry_run and not ARGS.playlist:
         songs = [("saved", p.stem) for p in sorted(OUT.glob("*.log"))]
@@ -641,8 +676,16 @@ def main():
     rows = []
     try:
         for k, (pid, vid) in enumerate(songs, 1):
+            if ARGS.fresh and sum(1 for r in rows if not r.get("played_before")) >= ARGS.fresh:
+                break
             log(f"[{k}/{len(songs)}] {vid}")
             r = dict(playlist=pid, video=vid, **run_song(vid, ARGS.seconds, ARGS.dry_run))
+            if ARGS.fresh and (r.get("resolve") == "cache" or r.get("stored") == "y"):
+                # 11-02 user: measure songs the phone plays for the first time, not
+                # ones already downloaded or cached (stored lyrics/timing hide first-play
+                # behaviour). The app's own resolve=cache is the proof it played before.
+                log("  -> played before on this phone, not counted")
+                continue
             log(f"  -> {r.get('verdict') or r.get('error')} median={r.get('median')} shape={r.get('shape')}"
                 + (f" ({r['why']})" if r.get("why") else ""))
             rows.append(r)
