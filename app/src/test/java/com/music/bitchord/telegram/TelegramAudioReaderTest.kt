@@ -6,6 +6,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -149,6 +150,93 @@ class TelegramAudioReaderTest {
         }
     }
 
+    @Test
+    fun `refreshing after the file size changes uses the new length and end`() {
+        val transport = FakeTransport()
+        transport.failDownloadAttempts = 1
+        try {
+            val reader = open(transport)
+            val replacement = ByteArray(100) { ((it * 3) and 0x7f).toByte() }
+            transport.replaceFile(fileId = 9, content = replacement)
+
+            val buffer = ByteArray(256)
+            assertEquals(100, reader.read(buffer, 0, buffer.size))
+            assertArrayEquals(replacement, buffer.copyOf(100))
+            assertEquals(100L, reader.total)
+            assertEquals(0L, reader.remaining())
+            assertEquals(-1, reader.read(buffer, 0, buffer.size))
+            reader.close()
+        } finally {
+            transport.cleanup()
+        }
+    }
+
+    @Test
+    fun `refreshing to a file shorter than the current position fails cleanly`() {
+        val transport = FakeTransport()
+        transport.failDownloadAttempts = 1
+        try {
+            val reader = TelegramAudioReader.openWithTransport(
+                trackId = TRACK_ID,
+                requestedPosition = 200,
+                requestedLength = -1,
+                reason = TelegramAudioReader.REASON_PLAY,
+                transport = transport,
+            )
+            transport.replaceFile(fileId = 9, content = ByteArray(100))
+
+            val failure = assertThrows(IOException::class.java) {
+                reader.read(ByteArray(16), 0, 16)
+            }
+            assertTrue(
+                failure.suppressed.any { it.message?.contains("outside the file") == true },
+            )
+            reader.close()
+        } finally {
+            transport.cleanup()
+        }
+    }
+
+    @Test
+    fun `readers on one track share a lock that is removed when they finish`() {
+        val transport = FakeTransport()
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val blocked = java.util.concurrent.atomic.AtomicBoolean()
+        transport.downloadAction = {
+            if (blocked.compareAndSet(false, true)) {
+                entered.countDown()
+                release.await(5, TimeUnit.SECONDS)
+            }
+        }
+        try {
+            val first = open(transport)
+            val second = open(transport)
+            val firstRead = thread(name = "telegram-first") {
+                runCatching { first.read(ByteArray(64), 0, 64) }
+            }
+            assertTrue("download did not start", entered.await(5, TimeUnit.SECONDS))
+            assertEquals(1, TelegramAudioReader.downloadLockCount())
+            val secondRead = thread(name = "telegram-second") {
+                runCatching { second.read(ByteArray(64), 0, 64) }
+            }
+            Thread.sleep(100)
+            assertEquals(1, TelegramAudioReader.downloadLockCount())
+            release.countDown()
+            firstRead.join(5_000)
+            secondRead.join(5_000)
+            assertFalse(firstRead.isAlive)
+            assertFalse(secondRead.isAlive)
+            assertEquals(0, TelegramAudioReader.downloadLockCount())
+            first.close()
+            second.close()
+            assertEquals(0, TelegramAudioReader.downloadLockCount())
+        } finally {
+            release.countDown()
+            transport.cleanup()
+        }
+    }
+
     private fun open(
         transport: FakeTransport,
         reason: String = TelegramAudioReader.REASON_PLAY,
@@ -161,9 +249,14 @@ class TelegramAudioReaderTest {
     )
 
     private class FakeTransport : TelegramFileTransport {
-        private val data = ByteArray(256) { (it and 0x7f).toByte() }
-        private val file = File.createTempFile("telegram-reader-", ".bin").apply { writeBytes(data) }
-        private val track = TelegramTrack(
+        @Volatile
+        private var data = ByteArray(256) { (it and 0x7f).toByte() }
+
+        @Volatile
+        private var file = File.createTempFile("telegram-reader-", ".bin").apply { writeBytes(data) }
+
+        @Volatile
+        private var track = TelegramTrack(
             id = TRACK_ID,
             chatId = 1L,
             messageId = 2L,
@@ -223,6 +316,15 @@ class TelegramAudioReaderTest {
         }
 
         override fun nowMillis(): Long = System.nanoTime() / 1_000_000
+
+        /** Swaps the message's file for a replacement with a different size. */
+        fun replaceFile(fileId: Int, content: ByteArray) {
+            file.delete()
+            data = content
+            file = File.createTempFile("telegram-reader-", ".bin").apply { writeBytes(content) }
+            track = track.copy(fileId = fileId, size = content.size.toLong())
+            downloaded = false
+        }
 
         fun cleanup() {
             file.delete()
