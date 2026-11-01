@@ -93,6 +93,33 @@ internal object KoTrackMatcher {
         return out.filter { it.isNotBlank() }
     }
 
+    /** The first credited artist — who a catalogue is most likely to file the track under. */
+    internal fun primaryArtist(artist: String): String =
+        artistVariants(artist).firstOrNull().orEmpty()
+
+    private val artistNamesMemo = BoundedMemo<String, Set<List<String>>>(MEMO_ENTRIES)
+
+    /**
+     * The credited artists, each as its own list of words.
+     *
+     * Words rather than one run-together string, so that containment is
+     * checked on whole names: "Queen" is inside "Queensrÿche" as text and is
+     * not one of its artists, while "Atif Aslam" is genuinely one of
+     * "Atif Aslam, Tulsi Kumar". Single letters go — an initialled
+     * "A. R. Rahman" and a plain "AR Rahman" are the same person.
+     */
+    internal fun artistNames(value: String): Set<List<String>> =
+        artistNamesMemo.getOrPut(value) { artistNamesUncached(value) }
+
+    private fun artistNamesUncached(value: String): Set<List<String>> = artistVariants(value)
+        .map { name ->
+            name.split(WORD_SPLIT)
+                .map { it.replace(NON_ALNUM, "") }
+                .filter { it.length > 1 }
+        }
+        .filter { it.isNotEmpty() }
+        .toSet()
+
     /**
      * [best], but only a row that credits one of the target's artists.
      *
@@ -1567,8 +1594,6 @@ internal object KoTrackMatcher {
     fun secondsOf(text: String?): Int? = TrackMatcher.secondsOf(text)
     fun withinSeconds(candidate: Song, target: Target, seconds: Int): Boolean = TrackMatcher.withinSeconds(candidate, target, seconds)
     fun sharesArtist(wanted: String, got: String): Boolean = TrackMatcher.sharesArtist(wanted, got)
-    internal fun artistNames(value: String): Set<List<String>> = TrackMatcher.artistNames(value)
-    internal fun primaryArtist(artist: String): String = TrackMatcher.primaryArtist(artist)
     fun queries(target: Target): List<String> = TrackMatcher.queries(target)
     private fun artistScore(wanted: String, got: String): Int? = TrackMatcher.artistScore(wanted, got)
     fun score(candidate: Song, target: Target): Int? = TrackMatcher.score(candidate, target)

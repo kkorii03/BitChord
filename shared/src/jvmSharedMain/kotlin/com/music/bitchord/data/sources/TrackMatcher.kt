@@ -44,7 +44,6 @@ import java.util.Locale
 object TrackMatcher {
 
     private const val MEMO_ENTRIES = 256
-    private val artistNamesMemo = BoundedMemo<String, Set<List<String>>>(MEMO_ENTRIES)
     private val queryMemo = BoundedMemo<Pair<String, String>, List<String>>(MEMO_ENTRIES)
 
     /** The recording being looked for, as much of it as the queue knows. */
@@ -162,8 +161,7 @@ object TrackMatcher {
         parseTitle(title, artist).let { (it.words + it.versions).joinToString(" ") }
 
     /** The first credited artist — who a catalogue is most likely to file the track under. */
-    internal fun primaryArtist(artist: String): String = // [KO] track-matcher
-        artistVariants(artist).firstOrNull().orEmpty()
+    internal fun primaryArtist(artist: String): String = KoTrackMatcher.primaryArtist(artist) // [KO] primaryArtist
 
     internal fun artistVariants(artist: String) = KoTrackMatcher.artistVariants(artist) // [KO] artistVariants
     /** Whether both credits name at least one of the same artists. */
@@ -557,7 +555,7 @@ object TrackMatcher {
      * `(title)`. CJK letters themselves survive — stripping them is what kept
      * every non-Latin catalogue out of matching entirely.
      */
-    internal fun normalize(text: String): String = // [KO] track-matcher
+    internal fun normalize(text: String): String =
         Normalizer.normalize(text, Normalizer.Form.NFKC)
             .lowercase(Locale.ROOT)
             .replace("&", " and ")
@@ -569,7 +567,7 @@ object TrackMatcher {
      * marker ("絆ノ奇跡 -instrumental-") carries no filing — without this the
      * marker alone would keep the unmatchable script as the identity.
      */
-    internal fun hasFilingLatin(text: String): Boolean = // [KO] track-matcher
+    internal fun hasFilingLatin(text: String): Boolean =
         text.split(WORD_SPLIT)
             .map { it.replace(NON_ALNUM, "") }
             .filter { it.isNotEmpty() }
@@ -697,17 +695,7 @@ object TrackMatcher {
      * "Atif Aslam, Tulsi Kumar". Single letters go — an initialled
      * "A. R. Rahman" and a plain "AR Rahman" are the same person.
      */
-    internal fun artistNames(value: String): Set<List<String>> = // [KO] track-matcher
-        artistNamesMemo.getOrPut(value) { artistNamesUncached(value) }
-
-    private fun artistNamesUncached(value: String): Set<List<String>> = artistVariants(value)
-        .map { name ->
-            name.split(WORD_SPLIT)
-                .map { it.replace(NON_ALNUM, "") }
-                .filter { it.length > 1 }
-        }
-        .filter { it.isNotEmpty() }
-        .toSet()
+    internal fun artistNames(value: String): Set<List<String>> = KoTrackMatcher.artistNames(value) // [KO] artistNames
 
     private fun sameArtist(a: List<String>, b: List<String>) = runOf(a, b) || runOf(b, a)
 
@@ -772,7 +760,7 @@ object TrackMatcher {
      * (Remix)" as the album of a plain-titled "KALYANI"). Read with the same
      * parser, so the same version vocabulary applies on both sides.
      */
-    internal fun albumVersionMarkers(album: String?): Set<String> = // [KO] track-matcher
+    internal fun albumVersionMarkers(album: String?): Set<String> =
         if (album.isNullOrBlank()) emptySet() else parseTitle(album).versions
 
     /** Punctuation, spacing and a trailing edition label are catalogue formatting, not release identity. */
