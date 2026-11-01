@@ -1,0 +1,17 @@
+﻿BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/telegram.
+과제: 앱 시작 때 메인 스레드에서 하던 AuthStore(로그인 쿠키·세션 복원)·ArtistFacts 준비를 백그라운드로 옮겨 첫 화면을 빠르게 한다. 이전 시도(브랜치 cloud/startup-main-18-1101, 커밋 4b6062b — `git fetch origin cloud/startup-main-18-1101` 후 `git show 4b6062b` 로 참고)는 리뷰에서 HIGH 2건으로 보류됐다:
+ HIGH1: 프록시 비밀번호가 아직 읽히기 전에 프록시 라우트가 게시돼 첫 요청이 비밀번호 없이 나감.
+ HIGH2: 세션 쿠키 복원이 비동기라 첫 YouTube 요청이 로그인 안 된(익명) 상태로 나감 → 사용자 계정 추천·재생 기록이 깨짐.
+할 일: 같은 목표를 이 두 문제 없이 구현. 원칙: 무거운 준비는 백그라운드, 단 네트워크 요청은 로그인 쿠키·프록시 자격 증명 준비가 끝날 때까지 기다린다(준비 완료 신호를 한 곳에 두고 요청 경로가 그것을 await; 메인 스레드 블로킹 금지, 폴링·타이머 금지).
+테스트(고치기 전 실패): ① 준비가 끝나기 전에 시작된 첫 요청도 쿠키·프록시 비밀번호를 가진다 ② 메인 스레드에서 디스크 읽기를 하지 않는다(가능한 범위에서 디스패처 주입으로 확인) ③ 준비 실패 시에도 요청이 영원히 막히지 않는다(익명으로 진행 + 로그 한 줄).
+제약: .github/, keys, *.jks, 서명 수정 금지. 로그인·쿠키 저장 형식 변경 금지(기존 사용자 데이터 그대로 읽혀야 함). 업스트림 파일 쪼개기 금지. 바꾼 함수의 모든 호출부 재확인.
+마지막 10줄 이내 요약: 수정 파일 / 두 HIGH 각각 어떻게 막았는지 / 새 테스트 클래스 / 미해결.
+
+
+== 3 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 2
+MEDIUM — app/src/main/java/com/music/bitchord/data/innertube/PlaybackTracker.kt:180 — Removing PlaybackService's synchronous `Innertube.cookie` seed leaves this early `cookie == null` return ungated, so a restored downloaded track that starts before credential preparation finishes is never recorded and is never retried; fix by awaiting `NetworkReadiness` here (or deferring the tracker until the gate opens) before checking the cookie.
+LOW — app/src/main/java/com/music/bitchord/ui/MainViewModel.kt:1497 — `_signedIn` now starts false and flips asynchronously, but deferred startup work reads it after a fixed 2s timer, so on a slow credential open `StartupDeferredWork.ACCOUNT` is skipped permanently (and `onLibraryShown`/`loadLibrary` can likewise skip while false); fix by awaiting `credentialsReady`/`SignedIn` readiness before deciding, instead of sampling a timer-delayed value.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
