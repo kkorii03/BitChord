@@ -143,6 +143,14 @@ class LyricsQueryVariantsTest {
     }
 
     @Test
+    fun aSpacedSlashSeparatesInsteadOfBecomingPartOfTheTitle() {
+        val names = LyricsQueryVariants.names("IU / Blueming", "IU")
+        assertEquals("iu blueming", names.first().title)
+        assertEquals("iu", names.first().artist)
+        assertFalse(names.any { it.title == "IU / Blueming" })
+    }
+
+    @Test
     fun aCoverTitleSearchesTheSymbolicTitleUnderTheOriginalArtist() {
         val names = LyricsQueryVariants.names("정승환 '0+0' Cover (원곡 : 한로로)", "정승환")
         assertEquals("0+0", names.first().title)

@@ -537,7 +537,11 @@ object CoverTitles {
     /** "조별하 & 오화요 - All For You | 원곡: 서인국 정은지": a credited original makes it a cover. */
     private fun readCredit(raw: String, channel: String): Cover? {
         val match = ORIGINAL_CREDIT.find(raw) ?: ORIGINAL_CREDIT_TAIL.find(raw) ?: return null
-        val credit = cleanName(match.groupValues[1].ifEmpty { match.groupValues[2] }) ?: return null
+        val credit = cleanName(match.groupValues[1].ifEmpty { match.groupValues[2] })
+            ?.takeUnless {
+                isVersionWord(it) || isDescriptor(it) || isGenericCredit(it) || OST.containsMatchIn(it)
+            }
+            ?: return null
         val head = raw.removeRange(match.range).trim().trimEnd('|', '/', ' ')
         val (left, right) = splitTopLevelDash(head) ?: return readCreditWithoutDash(head, credit, channel)
         val singer = cleanName(left)?.takeUnless { isVersionWord(it) } ?: return null
@@ -851,7 +855,7 @@ object CoverTitles {
 
     /** "(원곡: Vaundy)", "(원곡 Vaundy)", "(Original by X)", "/ 원곡 Vaundy", "orig. X". */
     private val ORIGINAL_CREDIT = Regex(
-        """\s*(?:[(\[（【]\s*(?:원곡자|원곡|original\s+by|original\s+(?:artist|song)|original(?![a-z])|orig\.?(?![a-z]))\s*[:：]?\s*([^()\[\]（）【】]+?)\s*[)\]）】]|[/|｜]\s*(?:원곡자|원곡|original\s+by|original\s+(?:artist|song)|original(?![a-z])|orig\.?(?![a-z]))\s*[:：]?\s*(.+)$)""",
+        """\s*(?:[(\[（【]\s*(?:원곡자|원곡|original\s+by|original\s+(?:artist|song)|original(?![a-z])\s*[:：]|orig\.?(?![a-z]))\s*[:：]?\s*([^()\[\]（）【】]+?)\s*[)\]）】]|[/|｜]\s*(?:원곡자|원곡|original\s+by|original\s+(?:artist|song)|original(?![a-z])\s*[:：]|orig\.?(?![a-z]))\s*[:：]?\s*(.+)$)""",
         RegexOption.IGNORE_CASE,
     )
 
@@ -934,7 +938,7 @@ object CoverTitles {
         """(?i)^(?:vocaloid|보컬로이드|보카로|utau|cevio|synth\s*v|synthesizer\s*v|歌ってみた|cover|커버|노래)$""",
     )
 
-    private val OST = Regex("""(?i)\bost\b|o\.s\.t""")
+    private val OST = Regex("""(?i)\bost\b|o\.s\.t|soundtrack""")
 
     /** A voicebank or a word, not whose song it is. */
     private fun isGenericCredit(text: String): Boolean = GENERIC_CREDIT.matches(text.trim())

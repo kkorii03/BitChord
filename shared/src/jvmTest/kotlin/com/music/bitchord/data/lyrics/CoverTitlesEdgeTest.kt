@@ -185,6 +185,18 @@ class CoverTitlesEdgeTest {
     }
 
     @Test
+    fun originalVersionBracketsAreNotOriginalArtistCredits() {
+        listOf(
+            "IU - Blueming (Original Mix)",
+            "IU - Blueming (Original Version)",
+            "IU - Blueming (Original Soundtrack)",
+        ).forEach { title ->
+            assertNull(CoverTitles.read(title, "IU", null), title)
+            assertFalse(CoverTitles.isCover(song(title, "IU")), title)
+        }
+    }
+
+    @Test
     fun aTranslationBracketOnADatedBTitleIsNotAnArtist() {
         val read = cover("가수 - 봄날(Spring Day) [24.10.10]", "channel")
         assertEquals("봄날", read.title)
