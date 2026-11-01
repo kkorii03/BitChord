@@ -20,6 +20,8 @@ import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UserPlaylist
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
@@ -205,14 +207,44 @@ internal object YouTubeFallback {
             .map { it.song.artist }
             .filter { it.isNotBlank() }
             .toSet()
-        val recentSongs = try {
-            mergedHistory(RECENT_LIMIT, localPlays)
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (failure: Throwable) {
-            Log.w(TAG, "Recently played failed: ${failure.message}")
-            emptyList()
-        }
+
+        // These shelves do not depend on one another, but the old path awaited
+        // each one before starting the next. Start them together so a gated
+        // cold start pays for the slower shelf rather than their sum.
+        val parts = loadFallbackHomeParts(
+            history = {
+                try {
+                    mergedHistory(RECENT_LIMIT, localPlays)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Throwable) {
+                    Log.w(TAG, "Recently played failed: ${failure.message}")
+                    emptyList()
+                }
+            },
+            listenAgain = { listenAgainShelf(localPlays) },
+            myMixes = { mixShelf(localPlays) },
+            liked = { likedShelf() },
+            youtubeHome = {
+                runCatching {
+                    YouTubeWebParser.parseHome(
+                        Innertube.browseYouTube("FEwhat_to_watch"),
+                        musicOnly = true,
+                    )
+                }.onFailure {
+                    if (it is CancellationException) throw it
+                    Log.w(TAG, "YouTube home failed: ${it.message}")
+                }.getOrNull()?.let { personal ->
+                    rememberContinuation(personal.continuation)
+                    personal.shelves.map { musicOnlyShelf(it) } to personal.continuation
+                } ?: (emptyList<HomeShelf>() to null)
+            },
+            // The Music channel's own shelves are music by construction; only
+            // the mixed uploads above need per-row classification. Their titles
+            // still need the display cleaner.
+            musicChannel = { channelShelves().map(::displayShelf) },
+        )
+        val recentSongs = parts.recentSongs
 
         // One lookup allowance per Home build, shared by the rows this page
         // actually shows. Recents and Quick picks spend it first.
@@ -243,39 +275,67 @@ internal object YouTubeFallback {
             excludedIds = recentsIds,
             budget = catalogBudget,
         )
-        val listenAgain = listenAgainShelf(localPlays)
-        val myMixes = mixShelf(localPlays)
-        val liked = likedShelf()
-
-        val personal = runCatching {
-            YouTubeWebParser.parseHome(
-                Innertube.browseYouTube("FEwhat_to_watch"),
-                musicOnly = true,
-            )
-        }.onFailure {
-            if (it is CancellationException) throw it
-            Log.w(TAG, "YouTube home failed: ${it.message}")
-        }.getOrNull()
-        val personalShelves = personal?.shelves.orEmpty()
-            .map { musicOnlyShelf(it) }
-        val continuation = personal?.continuation?.also(::rememberContinuation)
 
         val shelves = YouTubeFallbackFeed.orderedShelves(
             recents = recents,
-            listenAgain = listenAgain,
+            listenAgain = parts.listenAgain,
             quickPicks = quickPicks,
-            myMixes = myMixes,
-            liked = liked,
-            youtubeHome = personalShelves,
-            // The Music channel's own shelves are music by construction; only
-            // the mixed uploads above need per-row classification. Their titles
-            // still need the display cleaner.
-            musicChannel = channelShelves().map(::displayShelf),
+            myMixes = parts.myMixes,
+            liked = parts.liked,
+            youtubeHome = parts.youtubeHome,
+            musicChannel = parts.musicChannel,
         )
         return HomeFeed(
             shelves = enrichCovers(YouTubeFallbackFeed.dedupeShelves(shelves)),
-            continuation = continuation,
+            continuation = parts.continuation,
             source = HomeSource.FALLBACK,
+        )
+    }
+
+    /** The independently fetched pieces of the gated Home. */
+    internal class FallbackHomeParts(
+        val recentSongs: List<Song>,
+        val listenAgain: HomeShelf?,
+        val myMixes: HomeShelf?,
+        val liked: HomeShelf?,
+        val youtubeHome: List<HomeShelf>,
+        val continuation: String?,
+        val musicChannel: List<HomeShelf>,
+    )
+
+    /**
+     * Starts every independent fallback shelf before awaiting any of them.
+     *
+     * They share no inputs ([listenAgain], mixes, likes, the youtube.com home
+     * and the Music channel each read their own endpoint), so awaiting one at
+     * a time only made the first Home line wait for every response in turn.
+     * Extracted with injectable producers so the overlap is testable without a
+     * network.
+     */
+    internal suspend fun loadFallbackHomeParts(
+        history: suspend () -> List<Song>,
+        listenAgain: suspend () -> HomeShelf?,
+        myMixes: suspend () -> HomeShelf?,
+        liked: suspend () -> HomeShelf?,
+        youtubeHome: suspend () -> Pair<List<HomeShelf>, String?>,
+        musicChannel: suspend () -> List<HomeShelf>,
+    ): FallbackHomeParts = coroutineScope {
+        val historyJob = async { history() }
+        val listenAgainJob = async { listenAgain() }
+        val myMixesJob = async { myMixes() }
+        val likedJob = async { liked() }
+        val youtubeHomeJob = async { youtubeHome() }
+        val musicChannelJob = async { musicChannel() }
+
+        val youtube = youtubeHomeJob.await()
+        FallbackHomeParts(
+            recentSongs = historyJob.await(),
+            listenAgain = listenAgainJob.await(),
+            myMixes = myMixesJob.await(),
+            liked = likedJob.await(),
+            youtubeHome = youtube.first,
+            continuation = youtube.second,
+            musicChannel = musicChannelJob.await(),
         )
     }
 
