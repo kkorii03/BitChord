@@ -102,6 +102,17 @@ internal class SharedCalls<T>(
     fun clear() = entries.clear()
 
     /**
+     * Drops one completed answer so the next [get] asks again.
+     *
+     * Work still running is left alone: a caller that needs a fresh answer
+     * should join the request already on the wire rather than start a second
+     * one beside it.
+     */
+    fun clearCompleted(key: String) {
+        entries[key]?.takeIf { !it.work.isActive }?.let { entries.remove(key, it) }
+    }
+
+    /**
      * Drops answers that have already completed while preserving work still in
      * flight.
      *

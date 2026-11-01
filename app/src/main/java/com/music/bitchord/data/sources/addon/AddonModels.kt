@@ -4,6 +4,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 
@@ -250,6 +251,14 @@ data class AddonStream(
     /** An older spelling some addons send in place of [manifest]. */
     @SerialName("mediaType") val mediaType: String? = null,
     @SerialName("mimeType") val mimeType: String? = null,
+    /**
+     * Headers the addon wants sent when its stream URL is fetched.
+     *
+     * The URL is the addon's own address, so some addons bind the audio to the
+     * request that asked for it. Playback and the sound comparison both have to
+     * carry them, or verification is refused while playback works.
+     */
+    @SerialName("headers") val headers: JsonElement? = null,
     /** `false`, or the name of a DRM scheme. Anything but false is refused. */
     @SerialName("encrypted") val encrypted: JsonElement? = null,
     @SerialName("sampleRate") val sampleRate: Double? = null,
@@ -286,6 +295,16 @@ data class AddonStream(
 
     /** Every free-text quality field at once, for the label readers to scan. */
     val qualityText: String get() = "$quality $streamQuality $audioQuality $format"
+
+    /** [headers] as the plain name/value pairs an HTTP request can carry. */
+    val requestHeaders: Map<String, String>
+        get() {
+            val fields = headers as? JsonObject ?: return emptyMap()
+            return fields.mapNotNull { (name, value) ->
+                val text = value.asQueryValue() ?: return@mapNotNull null
+                name.trim().takeIf { it.isNotEmpty() }?.let { it to text }
+            }.toMap()
+        }
 
     /**
      * Whether this rendition is behind a DRM scheme.
