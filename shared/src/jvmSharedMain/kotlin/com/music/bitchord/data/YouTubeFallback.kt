@@ -21,6 +21,7 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UserPlaylist
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
@@ -1162,33 +1163,39 @@ internal object YouTubeFallback {
      * listener is about to see. The budget is spread across shelves in page
      * order so a long feed cannot turn into a library-wide lookup, and every
      * item is returned even when no cover was found.
+     *
+     * The selection pass stays in page order, but the lookups for the chosen
+     * shelves run together: they share no inputs, and
+     * [YouTubeCoverResolver]'s single gate already caps the app-wide number of
+     * requests. Awaiting each shelf in turn made a cold start pay their sum.
      */
-    private suspend fun enrichCovers(shelves: List<HomeShelf>): List<HomeShelf> {
-        var budget = HOME_COVER_LIMIT
-        return shelves.map { shelf ->
-            if (budget <= 0) return@map shelf
-            val indexes = shelf.items.indices
-                .filter { index ->
-                    val item = shelf.items[index]
-                    item.videoId != null && YouTubeCoverResolver.isVideoThumbnail(item.thumbnailUrl)
+    private suspend fun enrichCovers(shelves: List<HomeShelf>): List<HomeShelf> =
+        enrichCoverShelves(shelves) { songs ->
+            YouTubeCoverResolver.enrich(songs, songs.size)
+        }
+
+    /**
+     * Applies [enrich] to the shelves selected by the page-order budget. The
+     * selection is computed before any lookup starts so the same rows keep
+     * their covers; the selected shelves then run concurrently and are joined
+     * back into their original order. Extracted with an injectable resolver so
+     * the overlap is testable without a network.
+     */
+    internal suspend fun enrichCoverShelves(
+        shelves: List<HomeShelf>,
+        enrich: suspend (List<Song>) -> List<Song>,
+    ): List<HomeShelf> {
+        val plans = coverPlans(shelves)
+        if (plans.isEmpty()) return shelves
+        val byShelf = coroutineScope {
+            plans.map { plan ->
+                async {
+                    plan.shelfIndex to plan.indexes.zip(enrich(plan.songs)).toMap()
                 }
-                .take(minOf(SHELF_COVER_LIMIT, budget))
-            if (indexes.isEmpty()) return@map shelf
-            val songs = indexes.map { index ->
-                val item = shelf.items[index]
-                displaySong(
-                    Song(
-                        videoId = item.videoId.orEmpty(),
-                        title = item.title,
-                        artist = item.subtitle,
-                        thumbnailUrl = item.thumbnailUrl,
-                    ),
-                )
-            }
-            val byIndex = indexes
-                .zip(YouTubeCoverResolver.enrich(songs, songs.size))
-                .toMap()
-            budget -= indexes.size
+            }.awaitAll()
+        }.toMap()
+        return shelves.mapIndexed { shelfIndex, shelf ->
+            val byIndex = byShelf[shelfIndex] ?: return@mapIndexed shelf
             shelf.copy(
                 items = shelf.items.mapIndexed { index, item ->
                     byIndex[index]?.let { song ->
@@ -1201,6 +1208,42 @@ internal object YouTubeFallback {
                 },
             )
         }
+    }
+
+    private class CoverPlan(
+        val shelfIndex: Int,
+        val indexes: List<Int>,
+        val songs: List<Song>,
+    )
+
+    /** The rows the cover budget reaches, planned in page order without lookups. */
+    private fun coverPlans(shelves: List<HomeShelf>): List<CoverPlan> {
+        var budget = HOME_COVER_LIMIT
+        val plans = ArrayList<CoverPlan>()
+        shelves.forEachIndexed { shelfIndex, shelf ->
+            if (budget <= 0) return@forEachIndexed
+            val indexes = shelf.items.indices
+                .filter { index ->
+                    val item = shelf.items[index]
+                    item.videoId != null && YouTubeCoverResolver.isVideoThumbnail(item.thumbnailUrl)
+                }
+                .take(minOf(SHELF_COVER_LIMIT, budget))
+            if (indexes.isEmpty()) return@forEachIndexed
+            val songs = indexes.map { index ->
+                val item = shelf.items[index]
+                displaySong(
+                    Song(
+                        videoId = item.videoId.orEmpty(),
+                        title = item.title,
+                        artist = item.subtitle,
+                        thumbnailUrl = item.thumbnailUrl,
+                    ),
+                )
+            }
+            budget -= indexes.size
+            plans += CoverPlan(shelfIndex, indexes, songs)
+        }
+        return plans
     }
 
     /** The display strings for a youtube.com row, before its cover is resolved. */
