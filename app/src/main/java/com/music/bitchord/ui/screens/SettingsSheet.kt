@@ -1,5 +1,27 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ko.KoAdvancedSyncSafetyRows
+import com.music.bitchord.ko.KoAutoDownloadLikedRow
+import com.music.bitchord.ko.KoAutomixVideosRow
+import com.music.bitchord.ko.KoContentCountryRow
+import com.music.bitchord.ko.KoDownloadExtrasRows
+import com.music.bitchord.ko.KoHiddenExploreDialog
+import com.music.bitchord.ko.KoHiddenExploreRow
+import com.music.bitchord.ko.KoLowPowerRow
+import com.music.bitchord.ko.KoLyricsEntryRow
+import com.music.bitchord.ko.KoPlaybackPrivacyRows
+import com.music.bitchord.ko.KoPlaybackTopRows
+import com.music.bitchord.ko.KoPlaylistImportDialog
+import com.music.bitchord.ko.KoSettingsTransferDialogs
+import com.music.bitchord.ko.KoSettingsTransferRows
+import com.music.bitchord.ko.KoSkipPartsRows
+import com.music.bitchord.ko.KoVideoCanvasRow
+import com.music.bitchord.ko.koOutputRouteLabelRes
+import com.music.bitchord.ko.rememberKoHiddenExploreState
+import com.music.bitchord.ko.rememberKoPlaylistImportState
+import com.music.bitchord.ko.rememberKoSettingsTransferState
+import com.music.bitchord.ko.settingsSubtitleStyle
+import com.music.bitchord.ko.settingsSwitchColors
 import com.music.bitchord.ui.theme.AppSpacing
 
 import com.music.bitchord.wear.WatchInstaller
@@ -40,7 +62,6 @@ import androidx.compose.material.icons.automirrored.rounded.VolumeOff
 import androidx.compose.material.icons.rounded.Animation
 import androidx.compose.material.icons.rounded.Apps
 import androidx.compose.material.icons.rounded.BarChart
-import androidx.compose.material.icons.rounded.BatterySaver
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.BlurOff
 import androidx.compose.material.icons.rounded.Brightness4
@@ -60,11 +81,7 @@ import androidx.compose.material.icons.rounded.Gradient
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.History
-import androidx.compose.material.icons.rounded.IosShare
 import androidx.compose.material.icons.rounded.Language
-import androidx.compose.material.icons.rounded.Headphones
-import androidx.compose.material.icons.rounded.Public
-import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.LocalOffer
@@ -83,7 +100,6 @@ import androidx.compose.material.icons.rounded.VolumeOff
 import androidx.compose.material.icons.rounded.WebAssetOff
 import androidx.compose.material.icons.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Waves
-import androidx.compose.material.icons.rounded.Widgets
 import androidx.compose.material.icons.rounded.Wifi
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -98,7 +114,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -120,9 +135,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import com.music.bitchord.download.DownloadHealth
-import com.music.bitchord.download.HqLibraryUpgrade
-import com.music.bitchord.download.MvSoundRedownload
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
@@ -158,22 +170,15 @@ import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.settings.AppSettings
-import com.music.bitchord.data.settings.SettingsTransfer
-import com.music.bitchord.data.settings.SettingsTransferInbox
-import com.music.bitchord.data.settings.TransferCategory
 import com.music.bitchord.data.settings.OutputPcmMode
-import com.music.bitchord.data.settings.PrivateListeningSource
 import com.music.bitchord.playback.AudioOutputStatus
-import com.music.bitchord.playback.AudioRouting
 import com.music.bitchord.data.settings.AutomixPerformanceMode
 import com.music.bitchord.R
 import com.music.bitchord.data.sources.DeviceCodecs
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.settings.DownloadQuality
-import com.music.bitchord.data.settings.LowPowerMode
 import com.music.bitchord.data.settings.ThemeMode
 import com.music.bitchord.data.stats.Backup
-import com.music.bitchord.data.spotify.PlaylistImportMode
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.ui.player.fullBleedArtworkAvailable
 import kotlinx.coroutines.launch
@@ -226,10 +231,8 @@ fun SettingsScreen(
     val cellularQuality by AppSettings.audioQualityCellular.collectAsStateWithLifecycle()
     val crossfade by AppSettings.crossfadeSeconds.collectAsStateWithLifecycle()
     val smartFade by AppSettings.smartFadeEnabled.collectAsStateWithLifecycle()
-    val automixVideos by AppSettings.automixVideos.collectAsStateWithLifecycle()
     val automixPerformance by AppSettings.automixPerformanceMode.collectAsStateWithLifecycle()
     val skipSilence by AppSettings.skipSilence.collectAsStateWithLifecycle()
-    val privateListening by AppSettings.privateListening.collectAsStateWithLifecycle()
     val dolbyAtmos by AppSettings.dolbyAtmos.collectAsStateWithLifecycle()
     // A property of the hardware, so it is read once rather than remembered
     // against a key that can never change — see [DeviceCodecs.playsDolbyAtmos],
@@ -238,24 +241,15 @@ fun SettingsScreen(
     val spatialAudio by AppSettings.spatialAudio.collectAsStateWithLifecycle()
     val nerdStats by AppSettings.showNerdStats.collectAsStateWithLifecycle()
     val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
-    val lowPowerMode by AppSettings.lowPowerMode.collectAsStateWithLifecycle()
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
     val liquidGlass by AppSettings.liquidGlass.collectAsStateWithLifecycle()
     val liquidGlassSupported = isGlassSupported()
     val animatedCanvas by AppSettings.animatedCanvas.collectAsStateWithLifecycle()
     val canvasOverCellular by AppSettings.canvasOverCellular.collectAsStateWithLifecycle()
-    val videoCanvas by AppSettings.videoCanvas.collectAsStateWithLifecycle()
     val signatureApiEnabled by AppSettings.signatureApiEnabled.collectAsStateWithLifecycle()
     val signatureApiUrl by AppSettings.signatureApiUrl.collectAsStateWithLifecycle()
     val fullBleedArtwork by AppSettings.fullBleedArtwork.collectAsStateWithLifecycle()
     val legacyMeshGradient by AppSettings.legacyMeshGradient.collectAsStateWithLifecycle()
-    val syncSafetyNextPrep by AppSettings.syncSafetyNextPrep.collectAsStateWithLifecycle()
-    val syncSafetyDownloadRecheck by AppSettings.syncSafetyDownloadRecheck.collectAsStateWithLifecycle()
-    val syncSafetyHqSync by AppSettings.syncSafetyHqSync.collectAsStateWithLifecycle()
-    val contentCountry by AppSettings.contentCountry.collectAsStateWithLifecycle()
-    val resumeOnHeadphones by AppSettings.resumeOnHeadphones.collectAsStateWithLifecycle()
-    val personalisedAutoplay by AppSettings.personalisedAutoplay.collectAsStateWithLifecycle()
-    val videoRadio by AppSettings.videoRadio.collectAsStateWithLifecycle()
     val theme by AppSettings.themeMode.collectAsStateWithLifecycle()
     val sessionId by AppSettings.audioSessionId.collectAsStateWithLifecycle()
     val outputPcmMode by AppSettings.outputPcmMode.collectAsStateWithLifecycle()
@@ -269,24 +263,15 @@ fun SettingsScreen(
     val showCacheFolder by AppSettings.showCacheFolder.collectAsStateWithLifecycle()
     val downloadQuality by AppSettings.downloadQuality.collectAsStateWithLifecycle()
     val wifiOnlyDownloads by AppSettings.wifiOnlyDownloads.collectAsStateWithLifecycle()
-    val autoRedownloadMvSound by AppSettings.autoRedownloadMvSound.collectAsStateWithLifecycle()
-    val autoReplaceHqDownloads by AppSettings.autoReplaceHqDownloads.collectAsStateWithLifecycle()
-    val autoPrefetchHq by AppSettings.autoPrefetchHq.collectAsStateWithLifecycle()
-    val hqPrefetchLimit by AppSettings.hqPrefetchLimit.collectAsStateWithLifecycle()
-    val autoDownloadLiked by AppSettings.autoDownloadLiked.collectAsStateWithLifecycle()
     val exportDownloads by AppSettings.exportDownloads.collectAsStateWithLifecycle()
     val stopOnTaskRemoved by AppSettings.stopOnTaskRemoved.collectAsStateWithLifecycle()
     val hideVolumeBar by AppSettings.hideVolumeBar.collectAsStateWithLifecycle()
     val hideStatusBarInPlayer by AppSettings.hideStatusBarInPlayer.collectAsStateWithLifecycle()
     val hideSongStatus by AppSettings.hideSongStatus.collectAsStateWithLifecycle()
-    val widgetOpensPlayer by AppSettings.widgetOpensPlayer.collectAsStateWithLifecycle()
-    val hiddenExploreCategories by AppSettings.hiddenExploreCategories.collectAsStateWithLifecycle()
     val showQueueHistory by AppSettings.showQueueHistory.collectAsStateWithLifecycle()
     val swipeToPlayNext by AppSettings.swipeToPlayNext.collectAsStateWithLifecycle()
     val dontRepeatSuggestions by AppSettings.dontRepeatSuggestions.collectAsStateWithLifecycle()
     val preferMusicOnly by AppSettings.preferMusicOnly.collectAsStateWithLifecycle()
-    val skipNonMusicParts by AppSettings.skipNonMusicParts.collectAsStateWithLifecycle()
-    val skipSponsorParts by AppSettings.skipSponsorParts.collectAsStateWithLifecycle()
     val smartVersionAlignment by AppSettings.smartVersionAlignment.collectAsStateWithLifecycle()
     val filterNonMusicAudio by AppSettings.filterNonMusicAudio.collectAsStateWithLifecycle()
     val localMusicFolderUri by AppSettings.localMusicFolderUri.collectAsStateWithLifecycle()
@@ -339,12 +324,9 @@ fun SettingsScreen(
     var exportStatus by remember { mutableStateOf<String?>(null) }
     var importStatus by remember { mutableStateOf<String?>(null) }
     var confirmImport by remember { mutableStateOf(false) }
-    /** The file chosen, waiting for the replace-or-merge choice. */
-    var pendingImport by remember { mutableStateOf<Uri?>(null) }
     var confirmClearSongCache by remember { mutableStateOf(false) }
     var showPerformanceWarning by remember { mutableStateOf(false) }
     var showPerformanceConfirmation by remember { mutableStateOf(false) }
-    var showHiddenCategories by remember { mutableStateOf(false) }
     val backupScope = rememberCoroutineScope()
 
     val batterySettingsLauncher = rememberLauncherForActivityResult(
@@ -387,134 +369,15 @@ fun SettingsScreen(
             )
         }
     }
+    val koPlaylistImport = rememberKoPlaylistImportState(context, backupScope) { importStatus = it } // [KO] playlist-import
     val importPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
     ) { source ->
         if (source == null) return@rememberLauncherForActivityResult
-        // Which file is separate from how its playlists should be applied, and
-        // the second question is the one the user has to answer.
-        pendingImport = source
+        koPlaylistImport.onPicked(source) // [KO] playlist-import
     }
-    val applyImport: (Uri, PlaylistImportMode) -> Unit = { source, mode ->
-        pendingImport = null
-        backupScope.launch {
-            importStatus = Backup.importFrom(context, source, mode).fold(
-                onSuccess = { summary ->
-                    if (summary.playlists > 0) {
-                        context.getString(
-                            R.string.import_succeeded_with_library,
-                            context.countOfMonths(summary.months),
-                            summary.from,
-                            summary.playlists,
-                        )
-                    } else {
-                        context.getString(
-                            R.string.import_succeeded,
-                            context.countOfMonths(summary.months),
-                            summary.from,
-                        )
-                    }
-                },
-                onFailure = {
-                    context.getString(R.string.import_failed, FriendlyError.message(context, it))
-                },
-            )
-        }
-    }
-    // Settings transfer: a short file of proxy, sources and sound/screen
-    // choices. Separate from the backup above, which replaces history too.
-    var settingsSendStatus by remember { mutableStateOf<String?>(null) }
-    var settingsImportStatus by remember { mutableStateOf<String?>(null) }
-    var confirmSendSettings by remember { mutableStateOf(false) }
-    var settingsPreview by remember { mutableStateOf<SettingsTransfer.Preview?>(null) }
-
-    val settingsImportPicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument(),
-    ) { source ->
-        if (source == null) return@rememberLauncherForActivityResult
-        backupScope.launch {
-            SettingsTransfer.importFrom(context, source).fold(
-                onSuccess = { settingsPreview = it },
-                onFailure = {
-                    settingsImportStatus = context.getString(
-                        R.string.settings_transfer_import_failed,
-                        FriendlyError.message(context, it),
-                    )
-                },
-            )
-        }
-    }
-
-    // A file shared to BitChord from a chat app or file manager. The activity
-    // has already brought Settings forward; reading it here is the other half.
-    val incomingSettingsFile by SettingsTransferInbox.pending.collectAsStateWithLifecycle()
-    LaunchedEffect(incomingSettingsFile) {
-        val source = incomingSettingsFile ?: return@LaunchedEffect
-        SettingsTransferInbox.handled()
-        SettingsTransfer.importFrom(context, source).fold(
-            onSuccess = { settingsPreview = it },
-            onFailure = {
-                settingsImportStatus = context.getString(
-                    R.string.settings_transfer_import_failed,
-                    FriendlyError.message(context, it),
-                )
-            },
-        )
-    }
-
-    val sendSettings: () -> Unit = {
-        confirmSendSettings = false
-        backupScope.launch {
-            SettingsTransfer.share(context).fold(
-                onSuccess = { intent ->
-                    settingsSendStatus = context.getString(R.string.settings_transfer_share_opened)
-                    context.startActivity(
-                        Intent.createChooser(intent, context.getString(R.string.settings_transfer_send))
-                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                    )
-                },
-                onFailure = {
-                    settingsSendStatus = context.getString(
-                        R.string.settings_transfer_send_failed,
-                        FriendlyError.message(context, it),
-                    )
-                },
-            )
-        }
-    }
-
-    val applySettingsImport: (SettingsTransfer.Preview) -> Unit = { preview ->
-        settingsPreview = null
-        backupScope.launch {
-            SettingsTransfer.apply(preview).fold(
-                onSuccess = { summary ->
-                    val parts = mutableListOf(
-                        context.getString(
-                            R.string.settings_transfer_applied,
-                            summary.settings,
-                            summary.sources,
-                        ),
-                    )
-                    if (summary.proxy) {
-                        parts += context.getString(R.string.settings_transfer_applied_proxy)
-                    }
-                    if (summary.skipped > 0) {
-                        parts += context.getString(
-                            R.string.settings_transfer_skipped,
-                            summary.skipped,
-                        )
-                    }
-                    settingsImportStatus = parts.joinToString(" ")
-                },
-                onFailure = {
-                    settingsImportStatus = context.getString(
-                        R.string.settings_transfer_import_failed,
-                        FriendlyError.message(context, it),
-                    )
-                },
-            )
-        }
-    }
+    val koTransfer = rememberKoSettingsTransferState(context, backupScope) // [KO] settings-transfer
+    val koHiddenExplore = rememberKoHiddenExploreState() // [KO] hidden-explore
 
     var showListenBrainzTokenDialog by remember { mutableStateOf(false) }
     var showLastfmLoginDialog by remember { mutableStateOf(false) }
@@ -702,64 +565,7 @@ fun SettingsScreen(
                     onCheckedChange = AppSettings::setWifiOnlyDownloads,
                 )
             }
-            val autoRedownloadMvSoundTitle = stringResource(R.string.auto_redownload_mv_sound)
-            val autoRedownloadMvSoundSubtitle =
-                stringResource(R.string.auto_redownload_mv_sound_subtitle)
-            row(autoRedownloadMvSoundTitle, "mv", "video", "download", "automatic", divided = false) {
-                SettingsSubRow(
-                    title = autoRedownloadMvSoundTitle,
-                    subtitle = autoRedownloadMvSoundSubtitle,
-                    checked = autoRedownloadMvSound,
-                    onCheckedChange = { checked ->
-                        AppSettings.setAutoRedownloadMvSound(checked)
-                        if (checked) {
-                            MvSoundRedownload.scheduleIfEnabled(context)
-                        } else {
-                            MvSoundRedownload.cancel(context)
-                        }
-                    },
-                )
-            }
-            val autoReplaceHqTitle = stringResource(R.string.auto_replace_hq_downloads)
-            val autoReplaceHqSubtitle =
-                stringResource(R.string.auto_replace_hq_downloads_subtitle)
-            row(autoReplaceHqTitle, "hq", "high quality", "lossless", "replace", "고음질", divided = false) {
-                SettingsSubRow(
-                    title = autoReplaceHqTitle,
-                    subtitle = autoReplaceHqSubtitle,
-                    checked = autoReplaceHqDownloads,
-                    onCheckedChange = { checked ->
-                        AppSettings.setAutoReplaceHqDownloads(checked)
-                        HqLibraryUpgrade.onSettingsChanged(context)
-                    },
-                )
-            }
-            val autoPrefetchHqTitle = stringResource(R.string.auto_prefetch_hq)
-            val autoPrefetchHqSubtitle =
-                stringResource(R.string.auto_prefetch_hq_subtitle, hqPrefetchLimit)
-            row(autoPrefetchHqTitle, "hq", "high quality", "prefetch", "offline", "고음질", divided = false) {
-                SettingsSubRow(
-                    title = autoPrefetchHqTitle,
-                    subtitle = autoPrefetchHqSubtitle,
-                    checked = autoPrefetchHq,
-                    onCheckedChange = { checked ->
-                        AppSettings.setAutoPrefetchHq(checked)
-                        HqLibraryUpgrade.onSettingsChanged(context)
-                    },
-                )
-            }
-            val recheckDownloadsTitle = stringResource(R.string.download_health_recheck)
-            val recheckDownloadsSubtitle =
-                stringResource(R.string.download_health_recheck_subtitle)
-            row(recheckDownloadsTitle, "download", "recheck", "verify", "다운로드", "점검", divided = false) {
-                SettingsRow(
-                    icon = Icons.Rounded.Cached,
-                    title = recheckDownloadsTitle,
-                    subtitle = recheckDownloadsSubtitle,
-                    trailing = { Chevron() },
-                    onClick = { DownloadHealth.resetChecks(context) },
-                )
-            }
+            KoDownloadExtrasRows() // [KO] download-extras
             val exportDownloadsTitle = stringResource(R.string.export_compatible_downloads)
             row(exportDownloadsTitle, "music folder", divided = false) {
                 SettingsSubRow(
@@ -769,17 +575,7 @@ fun SettingsScreen(
                     subtitle = "Music/BitChord".takeIf { exportDownloads },
                 )
             }
-            val autoDownloadLikedTitle = stringResource(R.string.auto_download_liked)
-            val autoDownloadLikedSubtitle =
-                stringResource(R.string.auto_download_liked_subtitle)
-            row(autoDownloadLikedTitle, "like", "heart", "offline", divided = false) {
-                SettingsSubRow(
-                    title = autoDownloadLikedTitle,
-                    subtitle = autoDownloadLikedSubtitle,
-                    checked = autoDownloadLiked,
-                    onCheckedChange = AppSettings::setAutoDownloadLiked,
-                )
-            }
+            KoAutoDownloadLikedRow() // [KO] auto-download-liked
         }
 
         SearchableSettingsGroup(
@@ -787,51 +583,7 @@ fun SettingsScreen(
             header = stringResource(R.string.playback),
             footer = stringResource(R.string.settings_footer_playback),
         ) {
-            val resumeOnHeadphonesTitle = stringResource(R.string.resume_on_headphones)
-            row(resumeOnHeadphonesTitle, "headphones", "earbuds", "bluetooth", "resume", "이어폰") {
-                SettingsRow(
-                    icon = Icons.Rounded.Headphones,
-                    title = resumeOnHeadphonesTitle,
-                    trailing = {
-                        Switch(
-                            checked = resumeOnHeadphones,
-                            onCheckedChange = { AppSettings.setResumeOnHeadphones(it) },
-                            colors = settingsSwitchColors(),
-                        )
-                    },
-                    onClick = { AppSettings.setResumeOnHeadphones(!resumeOnHeadphones) },
-                )
-            }
-            val personalisedAutoplayTitle = stringResource(R.string.personalised_autoplay)
-            row(personalisedAutoplayTitle, "autoplay", "radio", "recommend", "추천") {
-                SettingsRow(
-                    icon = Icons.Rounded.AutoAwesome,
-                    title = personalisedAutoplayTitle,
-                    trailing = {
-                        Switch(
-                            checked = personalisedAutoplay,
-                            onCheckedChange = AppSettings::setPersonalisedAutoplay,
-                            colors = settingsSwitchColors(),
-                        )
-                    },
-                    onClick = { AppSettings.setPersonalisedAutoplay(!personalisedAutoplay) },
-                )
-            }
-            val videoRadioTitle = stringResource(R.string.video_radio_continue)
-            row(videoRadioTitle, "video", "radio", "cover", "비디오") {
-                SettingsRow(
-                    icon = Icons.Rounded.SmartDisplay,
-                    title = videoRadioTitle,
-                    trailing = {
-                        Switch(
-                            checked = videoRadio,
-                            onCheckedChange = AppSettings::setVideoRadio,
-                            colors = settingsSwitchColors(),
-                        )
-                    },
-                    onClick = { AppSettings.setVideoRadio(!videoRadio) },
-                )
-            }
+            KoPlaybackTopRows() // [KO] playback-extras
             val preferMusicOnlyTitle = stringResource(R.string.prefer_music_only)
             row(preferMusicOnlyTitle, "video", "audio", "music video") {
                 SettingsRow(
@@ -848,44 +600,9 @@ fun SettingsScreen(
                     onClick = { AppSettings.setPreferMusicOnly(!preferMusicOnly) },
                 )
             }
-            val skipNonMusicPartsTitle = stringResource(R.string.skip_non_music_parts)
-            row(skipNonMusicPartsTitle, "sponsor", "skip", "intro", "outro", "건너뛰기") {
-                SettingsRow(
-                    icon = Icons.Rounded.MusicOff,
-                    title = skipNonMusicPartsTitle,
-                    subtitle = stringResource(R.string.skip_non_music_parts_subtitle),
-                    trailing = {
-                        Switch(
-                            checked = skipNonMusicParts,
-                            onCheckedChange = AppSettings::setSkipNonMusicParts,
-                            colors = settingsSwitchColors(),
-                        )
-                    },
-                    onClick = { AppSettings.setSkipNonMusicParts(!skipNonMusicParts) },
-                )
-            }
-            if (skipNonMusicParts) {
-                val skipSponsorPartsTitle = stringResource(R.string.skip_sponsor_parts)
-                row(skipSponsorPartsTitle, "sponsor", "self promo", "intro", "outro", divided = false) {
-                    SettingsSubRow(
-                        title = skipSponsorPartsTitle,
-                        subtitle = stringResource(R.string.skip_sponsor_parts_subtitle),
-                        checked = skipSponsorParts,
-                        onCheckedChange = AppSettings::setSkipSponsorParts,
-                    )
-                }
-            }
+            KoSkipPartsRows() // [KO] skip-parts
             val outputPrecisionTitle = stringResource(R.string.output_precision)
-            val outputRouteLabel = stringResource(
-                when (outputStatus.routeKind) {
-                    AudioRouting.Kind.PHONE -> R.string.route_phone
-                    AudioRouting.Kind.WIRED -> R.string.route_wired
-                    AudioRouting.Kind.USB -> R.string.route_usb
-                    AudioRouting.Kind.BLUETOOTH -> R.string.route_bluetooth
-                    AudioRouting.Kind.HDMI -> R.string.route_hdmi
-                    AudioRouting.Kind.OTHER -> R.string.route_other
-                },
-            )
+            val outputRouteLabel = stringResource(koOutputRouteLabelRes(outputStatus.routeKind)) // [KO] output-route
             row(outputPrecisionTitle, "pcm", "bit depth", "sample rate", "dac") {
                 SettingsRow(
                     icon = Icons.Rounded.GraphicEq,
@@ -976,15 +693,7 @@ fun SettingsScreen(
                 )
             }
             if (smartFade) {
-                val automixVideosTitle = stringResource(R.string.automix_videos)
-                row(automixVideosTitle, "video", "automix", "mix") {
-                    SettingsSubRow(
-                        title = automixVideosTitle,
-                        subtitle = stringResource(R.string.automix_videos_subtitle),
-                        checked = automixVideos,
-                        onCheckedChange = AppSettings::setAutomixVideos,
-                    )
-                }
+                KoAutomixVideosRow() // [KO] automix-videos
             }
             val automixPerformanceTitle = stringResource(R.string.automix_performance)
             row(automixPerformanceTitle, "cpu", "battery") {
@@ -1016,45 +725,7 @@ fun SettingsScreen(
                     onClick = { AppSettings.setSkipSilence(!skipSilence) },
                 )
             }
-            val privateListeningTitle = stringResource(R.string.private_listening)
-            row(privateListeningTitle, "private", "incognito", "history", "privacy") {
-                SettingsRow(
-                    icon = Icons.Rounded.VisibilityOff,
-                    title = privateListeningTitle,
-                    subtitle = stringResource(R.string.private_listening_subtitle),
-                    trailing = {
-                        Switch(
-                            checked = privateListening,
-                            onCheckedChange = {
-                                AppSettings.setPrivateListening(it, PrivateListeningSource.SETTINGS)
-                            },
-                            colors = settingsSwitchColors(),
-                        )
-                    },
-                    onClick = {
-                        AppSettings.setPrivateListening(
-                            !privateListening,
-                            PrivateListeningSource.SETTINGS,
-                        )
-                    },
-                )
-            }
-            val widgetOpensPlayerTitle = stringResource(R.string.widget_opens_player)
-            row(widgetOpensPlayerTitle, "widget", "home screen", "player") {
-                SettingsRow(
-                    icon = Icons.Rounded.Widgets,
-                    title = widgetOpensPlayerTitle,
-                    subtitle = stringResource(R.string.widget_opens_player_subtitle),
-                    trailing = {
-                        Switch(
-                            checked = widgetOpensPlayer,
-                            onCheckedChange = AppSettings::setWidgetOpensPlayer,
-                            colors = settingsSwitchColors(),
-                        )
-                    },
-                    onClick = { AppSettings.setWidgetOpensPlayer(!widgetOpensPlayer) },
-                )
-            }
+            KoPlaybackPrivacyRows() // [KO] playback-privacy
             val spatialAudioTitle = stringResource(R.string.spatial_audio)
             row(spatialAudioTitle, "surround", "3d") {
                 SettingsRow(
@@ -1125,20 +796,7 @@ fun SettingsScreen(
                     onClick = { AppSettings.setReduceAnimation(!reduceAnimation) },
                 )
             }
-            val lowPowerTitle = stringResource(R.string.low_power_mode)
-            row(lowPowerTitle, "battery", "heat", "power saving") {
-                SettingsRow(
-                    icon = Icons.Rounded.BatterySaver,
-                    title = lowPowerTitle,
-                    subtitle = stringResource(R.string.low_power_mode_subtitle),
-                )
-                SettingsSegmentedControl(
-                    options = LowPowerMode.entries.map { it.localizedLabel() },
-                    selectedIndex = LowPowerMode.entries.indexOf(lowPowerMode),
-                    onSelect = { AppSettings.setLowPowerMode(LowPowerMode.entries[it]) },
-                    modifier = Modifier.padding(start = ROW_INSET, end = ROW_INSET, bottom = 14.dp),
-                )
-            }
+            KoLowPowerRow() // [KO] low-power-mode
             val reduceDynamicBlurTitle = stringResource(R.string.reduce_dynamic_blur)
             row(reduceDynamicBlurTitle, "blur", "performance") {
                 SettingsRow(
@@ -1250,14 +908,7 @@ fun SettingsScreen(
                         onCheckedChange = AppSettings::setCanvasOverCellular,
                     )
                 }
-                val videoCanvasTitle = stringResource(R.string.video_canvas)
-                row(videoCanvasTitle, "canvas", "video", "music video", divided = false) {
-                    SettingsSubRow(
-                        title = videoCanvasTitle,
-                        checked = videoCanvas,
-                        onCheckedChange = AppSettings::setVideoCanvas,
-                    )
-                }
+                KoVideoCanvasRow() // [KO] video-canvas
                 val spotifyCanvasTitle = stringResource(R.string.integrate_spotify_canvas)
                 row(spotifyCanvasTitle, "spotify", "canvas", divided = false) {
                     Row(
@@ -1319,46 +970,14 @@ fun SettingsScreen(
                     }
                 }
             }
-            val hiddenCategoriesTitle = stringResource(R.string.hidden_explore_categories)
-            row(hiddenCategoriesTitle, "explore", "category", "filter", "hide") {
-                SettingsRow(
-                    icon = Icons.Rounded.VisibilityOff,
-                    title = hiddenCategoriesTitle,
-                    subtitle = if (hiddenExploreCategories.isEmpty()) {
-                        stringResource(R.string.hidden_explore_categories_none)
-                    } else {
-                        stringResource(
-                            R.string.hidden_explore_categories_count,
-                            hiddenExploreCategories.size,
-                        )
-                    },
-                    trailing = { Chevron() },
-                    onClick = { showHiddenCategories = true },
-                )
-            }
+            KoHiddenExploreRow(koHiddenExplore) // [KO] hidden-explore
         }
 
         // The lyrics page is a screen of its own now — see [LyricsSettingsScreen].
         // This row takes the old expanded group's place (and its first row's
         // glyph) so the list keeps one lyrics entry where the group was.
         SearchableSettingsGroup(search) {
-            val lyricsTitle = stringResource(R.string.settings_lyrics)
-            row(
-                lyricsTitle,
-                "lyrics", "translation", "lrclib", "musixmatch", "blur",
-                "timing", "sync", "gemini", "ai", "deepgram", "prefetch",
-                "download", "lock screen", "lockscreen",
-                "실시간 가사", "가사 소스", "번역 언어", "AI 가사 번역",
-                "가사 자동 번역", "가사 타이밍", "잠금 화면 가사", "가사 싱크",
-                *LyricsSettingsCatalog.keys.toTypedArray(),
-            ) {
-                SettingsRow(
-                    icon = Icons.AutoMirrored.Rounded.Notes,
-                    title = lyricsTitle,
-                    trailing = { Chevron() },
-                    onClick = onOpenLyrics,
-                )
-            }
+            KoLyricsEntryRow(onOpenLyrics) // [KO] lyrics-entry
         }
 
         SearchableSettingsGroup(search, header = stringResource(R.string.performance)) {
@@ -1591,30 +1210,7 @@ fun SettingsScreen(
                     onClick = { confirmImport = true },
                 )
             }
-            val sendSettingsTitle = stringResource(R.string.settings_transfer_send)
-            row(sendSettingsTitle, "settings", "transfer", "share", "proxy") {
-                SettingsRow(
-                    icon = Icons.Rounded.IosShare,
-                    title = sendSettingsTitle,
-                    subtitle = settingsSendStatus
-                        ?: stringResource(R.string.settings_transfer_send_subtitle),
-                    onClick = { confirmSendSettings = true },
-                )
-            }
-            val importSettingsTitle = stringResource(R.string.settings_transfer_import)
-            row(importSettingsTitle, "settings", "transfer", "import", "proxy") {
-                SettingsRow(
-                    icon = Icons.Rounded.FileDownload,
-                    title = importSettingsTitle,
-                    subtitle = settingsImportStatus
-                        ?: stringResource(R.string.settings_transfer_import_subtitle),
-                    onClick = {
-                        settingsImportPicker.launch(
-                            arrayOf("application/json", "application/octet-stream", "text/plain", "*/*"),
-                        )
-                    },
-                )
-            }
+            KoSettingsTransferRows(koTransfer) // [KO] settings-transfer
         }
 
         // No footer: it only restated the stop-on-close row's own subtitle,
@@ -1750,16 +1346,7 @@ fun SettingsScreen(
                     onClick = onAppLanguage,
                 )
             }
-            val contentCountryTitle = stringResource(R.string.content_country)
-            row(contentCountryTitle, "country", "region", "chart", "gl", "국가", "지역") {
-                SettingsRow(
-                    icon = Icons.Rounded.Public,
-                    title = contentCountryTitle,
-                    subtitle = countryDisplayName(contentCountry),
-                    trailing = { Chevron() },
-                    onClick = onContentCountry,
-                )
-            }
+            KoContentCountryRow(onContentCountry) // [KO] content-country
         }
 
         SearchableSettingsGroup(
@@ -1783,51 +1370,7 @@ fun SettingsScreen(
                     onClick = { AppSettings.setSmartVersionAlignment(!smartVersionAlignment) },
                 )
             }
-            val syncSafetyNextPrepTitle = stringResource(R.string.sync_safety_next_prep)
-            row(syncSafetyNextPrepTitle, "lyrics", "sync", "next", "developer", "experimental") {
-                SettingsRow(
-                    icon = Icons.Rounded.Timer,
-                    title = syncSafetyNextPrepTitle,
-                    trailing = {
-                        Switch(
-                            checked = syncSafetyNextPrep,
-                            onCheckedChange = AppSettings::setSyncSafetyNextPrep,
-                            colors = settingsSwitchColors(),
-                        )
-                    },
-                    onClick = { AppSettings.setSyncSafetyNextPrep(!syncSafetyNextPrep) },
-                )
-            }
-            val syncSafetyDownloadRecheckTitle = stringResource(R.string.sync_safety_download_recheck)
-            row(syncSafetyDownloadRecheckTitle, "lyrics", "sync", "download", "recheck", "developer", "experimental") {
-                SettingsRow(
-                    icon = Icons.Rounded.Cached,
-                    title = syncSafetyDownloadRecheckTitle,
-                    trailing = {
-                        Switch(
-                            checked = syncSafetyDownloadRecheck,
-                            onCheckedChange = AppSettings::setSyncSafetyDownloadRecheck,
-                            colors = settingsSwitchColors(),
-                        )
-                    },
-                    onClick = { AppSettings.setSyncSafetyDownloadRecheck(!syncSafetyDownloadRecheck) },
-                )
-            }
-            val syncSafetyHqSyncTitle = stringResource(R.string.sync_safety_hq_sync)
-            row(syncSafetyHqSyncTitle, "lyrics", "sync", "hq", "developer", "experimental") {
-                SettingsRow(
-                    icon = Icons.Rounded.GraphicEq,
-                    title = syncSafetyHqSyncTitle,
-                    trailing = {
-                        Switch(
-                            checked = syncSafetyHqSync,
-                            onCheckedChange = AppSettings::setSyncSafetyHqSync,
-                            colors = settingsSwitchColors(),
-                        )
-                    },
-                    onClick = { AppSettings.setSyncSafetyHqSync(!syncSafetyHqSync) },
-                )
-            }
+            KoAdvancedSyncSafetyRows() // [KO] sync-safety
             val showNerdStatsTitle = stringResource(R.string.show_nerd_stats)
             row(showNerdStatsTitle, "debug", "bitrate", "codec") {
                 SettingsRow(
@@ -2062,132 +1605,8 @@ fun SettingsScreen(
         )
     }
 
-    // The password and any token in a source URL leave the phone in this file,
-    // so say so before the share sheet opens rather than after somebody has
-    // already sent it.
-    if (confirmSendSettings) {
-        AlertDialog(
-            onDismissRequest = { confirmSendSettings = false },
-            title = { Text(stringResource(R.string.settings_transfer_send)) },
-            text = { Text(stringResource(R.string.settings_transfer_send_warning)) },
-            confirmButton = {
-                TextButton(onClick = sendSettings) {
-                    Text(stringResource(R.string.settings_transfer_send_confirm))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmSendSettings = false }) {
-                    Text(stringResource(R.string.cancel))
-                }
-            },
-        )
-    }
-
-    // Nothing has been written yet: this is the list of what would change, and
-    // the only button that writes is the one that says so.
-    settingsPreview?.let { preview ->
-        AlertDialog(
-            onDismissRequest = { settingsPreview = null },
-            title = { Text(stringResource(R.string.settings_transfer_preview_title)) },
-            text = {
-                Column(
-                    Modifier
-                        .heightIn(max = 360.dp)
-                        .verticalScroll(rememberScrollState()),
-                ) {
-                    Text(stringResource(R.string.settings_transfer_preview_body))
-                    if (!preview.hasChanges) {
-                        Spacer(Modifier.height(12.dp))
-                        Text(stringResource(R.string.settings_transfer_preview_none))
-                    }
-                    if (preview.sourcesChanged) {
-                        Spacer(Modifier.height(12.dp))
-                        Text(
-                            stringResource(
-                                R.string.settings_transfer_preview_sources,
-                                preview.sources.size,
-                                preview.sourceNames.joinToString(", "),
-                            ),
-                        )
-                    }
-                    if (preview.proxyChanged) {
-                        Spacer(Modifier.height(12.dp))
-                        val proxy = preview.proxy
-                        Text(
-                            stringResource(
-                                R.string.settings_transfer_preview_proxy,
-                                if (proxy == null || proxy.host.isBlank()) {
-                                    stringResource(R.string.off)
-                                } else {
-                                    "${proxy.host}:${proxy.port}"
-                                },
-                            ),
-                        )
-                    }
-                    if (preview.changedCategoryCounts.isNotEmpty()) {
-                        Spacer(Modifier.height(12.dp))
-                        preview.changedCategoryCounts.forEach { (category, count) ->
-                            Text(
-                                stringResource(
-                                    when (category) {
-                                        TransferCategory.QUALITY -> R.string.settings_transfer_preview_quality
-                                        TransferCategory.AUTOMIX -> R.string.settings_transfer_preview_automix
-                                        TransferCategory.LYRICS -> R.string.settings_transfer_preview_lyrics
-                                        TransferCategory.PLAYBACK -> R.string.settings_transfer_preview_playback
-                                        TransferCategory.DISPLAY -> R.string.settings_transfer_preview_display
-                                    },
-                                    count,
-                                ),
-                            )
-                        }
-                    }
-                    if (preview.skipped > 0) {
-                        Spacer(Modifier.height(12.dp))
-                        Text(
-                            stringResource(
-                                R.string.settings_transfer_preview_skipped,
-                                preview.skipped,
-                            ),
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { applySettingsImport(preview) }) {
-                    Text(stringResource(R.string.settings_transfer_apply))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { settingsPreview = null }) {
-                    Text(stringResource(R.string.cancel))
-                }
-            },
-        )
-    }
-
-    // The file is already chosen; the remaining question is only what happens
-    // to the local playlists already on this device. Settings, listening and
-    // search history are replaced either way.
-    pendingImport?.let { source ->
-        AlertDialog(
-            onDismissRequest = { pendingImport = null },
-            title = { Text(stringResource(R.string.import_playlists_title)) },
-            text = { Text(stringResource(R.string.import_playlists_choice)) },
-            confirmButton = {
-                Row {
-                    TextButton(onClick = { pendingImport = null }) {
-                        Text(stringResource(R.string.cancel))
-                    }
-                    TextButton(onClick = { applyImport(source, PlaylistImportMode.REPLACE) }) {
-                        Text(stringResource(R.string.import_playlists_replace))
-                    }
-                    TextButton(onClick = { applyImport(source, PlaylistImportMode.MERGE) }) {
-                        Text(stringResource(R.string.import_playlists_merge))
-                    }
-                }
-            },
-        )
-    }
+    KoSettingsTransferDialogs(koTransfer) // [KO] settings-transfer
+    KoPlaylistImportDialog(koPlaylistImport) // [KO] playlist-import
 
     if (showPerformanceWarning) {
         AlertDialog(
@@ -2348,53 +1767,7 @@ fun SettingsScreen(
         )
     }
 
-    if (showHiddenCategories) {
-        AlertDialog(
-            onDismissRequest = { showHiddenCategories = false },
-            title = { Text(stringResource(R.string.hidden_explore_categories)) },
-            text = {
-                if (hiddenExploreCategories.isEmpty()) {
-                    Text(stringResource(R.string.hidden_explore_categories_none))
-                } else {
-                    Column {
-                        hiddenExploreCategories.sorted().forEach { title ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { AppSettings.showExploreCategory(title) }
-                                    .padding(vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text(
-                                    text = title,
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    modifier = Modifier.weight(1f),
-                                )
-                                Text(
-                                    text = stringResource(R.string.show_again),
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = MaterialTheme.colorScheme.primary,
-                                )
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = { AppSettings.clearHiddenExploreCategories() },
-                    enabled = hiddenExploreCategories.isNotEmpty(),
-                ) {
-                    Text(stringResource(R.string.show_all_again))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showHiddenCategories = false }) {
-                    Text(stringResource(R.string.cancel))
-                }
-            },
-        )
-    }
+    KoHiddenExploreDialog(koHiddenExplore) // [KO] hidden-explore
 }
 
 /** "3 months of listening" — the unit a backup is actually measured in. */
@@ -2450,15 +1823,6 @@ private fun ThemeMode.localizedLabel(): String = stringResource(
         ThemeMode.SYSTEM -> R.string.system
         ThemeMode.LIGHT -> R.string.light
         ThemeMode.DARK -> R.string.dark
-    },
-)
-
-@Composable
-private fun LowPowerMode.localizedLabel(): String = stringResource(
-    when (this) {
-        LowPowerMode.AUTO -> R.string.low_power_auto
-        LowPowerMode.ON -> R.string.low_power_on
-        LowPowerMode.OFF -> R.string.low_power_off
     },
 )
 
@@ -2845,7 +2209,7 @@ internal val TEXT_INSET = ROW_INSET + ICON_SIZE + ICON_GAP
  * every group has had its turn, which is why this is made fresh on each pass
  * rather than remembered.
  */
-private class SettingsSearch(query: String) {
+internal class SettingsSearch(query: String) {
     // Trimmed, because a trailing space is a typo rather than a search for
     // something ending in one — and on a phone keyboard it is one keystroke
     // away from every word typed.
@@ -2863,7 +2227,7 @@ private class SettingsSearch(query: String) {
 }
 
 /** Collects the rows of one group that survived the search. */
-private class SettingsGroupScope(
+internal class SettingsGroupScope(
     private val search: SettingsSearch,
     private val header: String?,
 ) {
@@ -2981,38 +2345,6 @@ internal fun RowDivider() {
         color = MaterialTheme.colorScheme.outline,
     )
 }
-
-/**
- * The one switch palette every settings toggle uses.
- *
- * Material's off track is the card's own container colour, so a row's switch
- * all but disappears against it. The outline grey keeps the track visible at
- * rest, the way iOS's off state does, while the checked colours stay the
- * app's accent.
- */
-@Composable
-internal fun settingsSwitchColors() = SwitchDefaults.colors(
-    checkedTrackColor = IosSwitchGreen,
-    checkedBorderColor = IosSwitchGreen,
-    checkedThumbColor = Color.White,
-    uncheckedTrackColor = IosSwitchGrey,
-    uncheckedBorderColor = IosSwitchGrey,
-    uncheckedThumbColor = Color.White,
-)
-
-/** iOS's switch palette: green when on, graphite when off, white knob in both. */
-private val IosSwitchGreen = Color(0xFF34C759)
-private val IosSwitchGrey = Color(0xFF39393D)
-
-/**
- * A row's explanation, a clear step below its title: four-fifths of the title
- * size with a tight leading, so one-line subtitles stay compact.
- */
-@Composable
-private fun settingsSubtitleStyle() = MaterialTheme.typography.bodyLarge.copy(
-    fontSize = MaterialTheme.typography.bodyLarge.fontSize * 0.8f,
-    lineHeight = MaterialTheme.typography.bodyLarge.fontSize * 0.96f,
-)
 
 /**
  * The standard row: glyph, title, optional subtitle, and on the right either
