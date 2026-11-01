@@ -302,10 +302,37 @@ class AddonSource(
      * addon thinks best.
      */
     suspend fun stream(trackId: String, request: StreamRequest, stereoOnly: Boolean): SourceStream? =
+        streamInternal(trackId, request, stereoOnly, fresh = false)
+
+    /**
+     * As [stream], but forces `/stream` to answer again instead of reusing a
+     * completed answer.
+     *
+     * A URL that was refused on its first fetch may have been minted for one
+     * request only; asking the addon for another is the one way to learn a
+     * replacement. In-flight work is still shared, so a retry beside a request
+     * already on the wire cannot double the load.
+     */
+    internal suspend fun streamFresh(
+        trackId: String,
+        request: StreamRequest,
+        stereoOnly: Boolean = false,
+    ): SourceStream? = streamInternal(trackId, request, stereoOnly, fresh = true)
+
+    private suspend fun streamInternal(
+        trackId: String,
+        request: StreamRequest,
+        stereoOnly: Boolean,
+        fresh: Boolean,
+    ): SourceStream? =
         withContext(Dispatchers.IO) {
             if (!admitted("a stream")) return@withContext null
             val tier = request.tier
-            val result = client.stream(trackId, tier, stereoOnly)
+            val result = if (fresh) {
+                client.streamFresh(trackId, tier, stereoOnly)
+            } else {
+                client.stream(trackId, tier, stereoOnly)
+            }
             val answer = result.getOrNull()
 
             if (answer == null) {
@@ -431,6 +458,7 @@ class AddonSource(
         return SourceStream(
             url = url,
             format = format,
+            headers = answer.requestHeaders,
             durationSec = rows[trackId]?.durationSec,
         )
     }

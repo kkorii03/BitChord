@@ -5,12 +5,14 @@ import android.media.MediaDataSource
 import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
 import com.music.bitchord.data.TrackLog
+import com.music.bitchord.data.innertube.PlayerClient
 import com.music.bitchord.data.net.HqRetryPolicy
 import com.music.bitchord.data.net.ProxyPlayback
 import com.music.bitchord.download.HqLibraryUpgrade
 import com.music.bitchord.data.lyrics.ChromaAlignment
 import com.music.bitchord.data.lyrics.WavAudio
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.sources.AddonSource
 import com.music.bitchord.data.sources.DownloadHealthPolicy
 import com.music.bitchord.data.sources.HqMatchPolicy
 import com.music.bitchord.data.sources.HqQuality
@@ -21,6 +23,7 @@ import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.SourceTrackKeys
+import com.music.bitchord.data.sources.StreamRequest
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.playback.HqHostTracker
 import com.music.bitchord.playback.StreamContainer
@@ -231,6 +234,12 @@ object HqAudioVerify {
         val retryAfter: String?,
         val headerFields: Map<String, List<String>>,
     ) : IOException("HTTP $code")
+
+    /** A definitive refusal (403/410), which a fresh URL may get past. */
+    private class DownloadRefused(val code: Int) : IOException("HTTP $code")
+
+    /** A fresh-URL retry failed after it was already logged. */
+    private class FreshRetryFailed : IOException()
 
     /** The candidate head's download answer, keeping the 429 apart from other failures. */
     private sealed interface DownloadFetch {
@@ -1084,13 +1093,15 @@ object HqAudioVerify {
         stream,
         ProxyPlayback.mediaClientFor(stream.url),
         epoch,
+        ::freshAddonStream,
     )
 
     internal suspend fun candidateFeatures(
         directory: File,
         stream: SourceStream,
         client: OkHttpClient = ProxyPlayback.mediaClientFor(stream.url),
-    ): Candidate? = candidateFetch(directory, stream, client, playbackEpoch.get()).readyOrNull()
+        refreshStream: (suspend (SourceStream) -> SourceStream?)? = null,
+    ): Candidate? = candidateFetch(directory, stream, client, playbackEpoch.get(), refreshStream).readyOrNull()
 
     private fun CandidateFetch.readyOrNull(): Candidate? =
         (this as? CandidateFetch.Ready)?.value
@@ -1100,6 +1111,7 @@ object HqAudioVerify {
         stream: SourceStream,
         client: OkHttpClient,
         epoch: PlaybackEpoch,
+        refreshStream: (suspend (SourceStream) -> SourceStream?)?,
     ): CandidateFetch {
         val needed = HqVerifyPolicy.bytesToFetch(stream.format, COMPARE_SECONDS + 2.0)
         if (needed <= 0L) return CandidateFetch.Failed
@@ -1114,7 +1126,13 @@ object HqAudioVerify {
             return CandidateFetch.Failed
         }
         return try {
-            val bytes = when (val download = downloadCandidate(stream, file, needed, client, epoch)) {
+            val download = try {
+                downloadCandidate(stream, file, needed, client, epoch)
+            } catch (refused: DownloadRefused) {
+                if (refused.code != 403 && refused.code != 410) throw refused
+                retryWithFreshStream(stream, refused, file, needed, epoch, refreshStream)
+            }
+            val bytes = when (download) {
                 is DownloadFetch.Bytes -> download.value
                 is DownloadFetch.RateLimited ->
                     return CandidateFetch.RateLimited(download.host, download.restMs)
@@ -1144,15 +1162,97 @@ object HqAudioVerify {
             // A cancelled call surfaces as an IOException; only report it
             // as a download failure when the coroutine is still wanted.
             currentCoroutineContext().ensureActive()
-            // The candidate server failed this time. Recorded so the next
-            // candidate choice can prefer a host that actually answered,
-            // rather than retrying the same dead edge for every track.
-            HqHostTracker.noteFailure(HqHostTracker.hostOf(stream.url))
-            TrackLog.w(TAG, "decode: hq-verify failed at=download ${e.message}")
+            if (e !is FreshRetryFailed) {
+                // The candidate server failed this time. Recorded so the next
+                // candidate choice can prefer a host that actually answered,
+                // rather than retrying the same dead edge for every track.
+                HqHostTracker.noteFailure(HqHostTracker.hostOf(stream.url))
+                TrackLog.w(TAG, "decode: hq-verify failed at=download ${e.message}")
+            }
             CandidateFetch.Failed
         } finally {
             runCatching { file.delete() }
         }
+    }
+
+    /**
+     * Re-asks the addon for a new URL and tries the head once more.
+     *
+     * Only a 403/410 reaches here: the URL was refused outright, and the one
+     * thing that can change is which URL is asked for. A 429 has its own
+     * waiting retry in [downloadCandidate] and is not treated as a dead link.
+     * The second attempt is the only one; if it is refused too the candidate
+     * stays unmeasured rather than becoming a stored rejection.
+     */
+    private suspend fun retryWithFreshStream(
+        stream: SourceStream,
+        refused: DownloadRefused,
+        file: File,
+        limit: Long,
+        epoch: PlaybackEpoch,
+        refreshStream: (suspend (SourceStream) -> SourceStream?)?,
+    ): DownloadFetch {
+        val fresh = refreshStream?.invoke(stream)
+        if (fresh == null || fresh.url.isBlank() || fresh.url == stream.url) throw refused
+        // A new answer may state a different rate; fetching the old byte count
+        // could cut a lossless head short or read far more than the new one
+        // needs.
+        val freshLimit = HqVerifyPolicy.bytesToFetch(fresh.format, COMPARE_SECONDS + 2.0)
+            .takeIf { it > 0L } ?: limit
+        val retried = try {
+            downloadCandidate(
+                fresh,
+                file,
+                freshLimit,
+                ProxyPlayback.mediaClientFor(fresh.url),
+                epoch,
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (second: Exception) {
+            currentCoroutineContext().ensureActive()
+            HqHostTracker.noteFailure(HqHostTracker.hostOf(fresh.url))
+            val outcome = (second as? DownloadRefused)?.code?.toString()
+                ?: second.message
+                ?: "failed"
+            TrackLog.w(
+                TAG,
+                "decode: hq-verify failed at=download HTTP ${refused.code} " +
+                    "(retried with fresh url: $outcome)",
+            )
+            throw FreshRetryFailed()
+        }
+        val outcome = when (retried) {
+            is DownloadFetch.Bytes -> "ok"
+            is DownloadFetch.RateLimited -> "rate-limited"
+            DownloadFetch.Abandoned -> "abandoned"
+        }
+        TrackLog.w(
+            TAG,
+            "decode: hq-verify failed at=download HTTP ${refused.code} " +
+                "(retried with fresh url: $outcome)",
+        )
+        return retried
+    }
+
+    /**
+     * A fresh URL for the same addon row, bypassing a completed `/stream` cache.
+     *
+     * Only an addon has a `/stream` endpoint to ask again. Other sources either
+     * serve a stable URL or have their own recovery; asking them here would
+     * spend a request without a way to mint a new link.
+     */
+    private suspend fun freshAddonStream(stream: SourceStream): SourceStream? {
+        val sourceId = stream.sourceConfigId ?: return null
+        val trackId = stream.trackId?.takeIf { it.isNotBlank() } ?: return null
+        val source = SourceRegistry.instance(sourceId) as? AddonSource ?: return null
+        val request = when {
+            HqQuality.isLosslessTier(stream.format) -> StreamRequest.Lossless
+            else -> stream.format.kbps?.takeIf { it > 0 }
+                ?.let { StreamRequest.Capped(it) }
+                ?: StreamRequest.Best
+        }
+        return source.streamFresh(trackId, request)
     }
 
     /**
@@ -1265,13 +1365,15 @@ object HqAudioVerify {
 
     /**
      * Fetches the first [limit] bytes of [stream] into [file], using the same
-     * client, headers and proxy route as HQ playback.
+     * client, headers, range style and proxy route as HQ playback.
      *
-     * `Range: bytes=0-` lets the server stream from the start; the copy stops
-     * as soon as [limit] is reached, so a server that ignores Range cannot
-     * make this read the whole track. The call is cancelled as soon as the
-     * calling coroutine is, including while a read is blocked: cancelling the
-     * call closes the connection, which is what lets the blocked read return
+     * A googlevideo URL is asked for as a range, as playback does; every other
+     * source is opened as one continuous read, which is what playback's
+     * passthrough does when the URL carries no length. The copy stops as soon
+     * as [limit] is reached, so a server that ignores the end cannot make this
+     * read the whole track. The call is cancelled as soon as the calling
+     * coroutine is, including while a read is blocked: cancelling the call
+     * closes the connection, which is what lets the blocked read return
      * instead of waiting for the socket timeout.
      */
     private suspend fun downloadPrefix(
@@ -1283,7 +1385,16 @@ object HqAudioVerify {
         val request = Request.Builder()
             .url(stream.url)
             .apply { stream.headers.forEach { (name, value) -> header(name, value) } }
-            .header("Range", "bytes=0-")
+            .also { builder ->
+                // A source URL is opened by playback as one continuous read:
+                // only googlevideo is range-chunked. Sending a Range header to
+                // an addon whose URL was minted for a plain GET is enough for
+                // some edges to refuse the request, which is how verification
+                // 403ed while playback worked.
+                if (PlayerClient.rangeBytesFor(stream.url) != Long.MAX_VALUE) {
+                    builder.header("Range", "bytes=0-")
+                }
+            }
             .build()
         val call = client.newCall(request)
         val coroutine = currentCoroutineContext()
@@ -1313,7 +1424,7 @@ object HqAudioVerify {
                                 headerFields = headerFields,
                             )
                         }
-                        throw IOException("HTTP ${response.code}")
+                        throw DownloadRefused(response.code)
                     }
                     val body = response.body ?: throw IOException("no body")
                     body.byteStream().use { input ->

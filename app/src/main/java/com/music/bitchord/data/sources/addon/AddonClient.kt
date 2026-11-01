@@ -212,6 +212,24 @@ class AddonClient(rawBaseUrl: String) {
         }
     }
 
+    /**
+     * As [stream], but does not reuse a completed `/stream` answer.
+     *
+     * A URL already refused by the recipient is not worth handing back: the
+     * addon may mint a one-request URL, or its backend may have moved on. An
+     * in-flight answer is still joined, so this cannot double a request that
+     * has already reached the server.
+     */
+    suspend fun streamFresh(
+        trackId: String,
+        tier: String,
+        stereoOnly: Boolean = false,
+    ): Result<AddonStream> {
+        val params = settingsFor(tier, stereoOnly)
+        streams.clearCompleted(keyOf(trackId, params.toString()))
+        return stream(trackId, tier, stereoOnly)
+    }
+
     // ── Settings passthrough ──────────────────────────────────────────────
 
     /**
