@@ -151,6 +151,7 @@ import com.music.bitchord.ko.koSetPlayerShown
 import com.music.bitchord.ko.KoMainActivity
 import com.music.bitchord.ko.KoMainActivityState
 import com.music.bitchord.ko.chooseAlbumSearchHit
+import com.music.bitchord.ko.isLaunchedFromHistory
 import com.music.bitchord.ko.koResolveQueueAhead
 import com.music.bitchord.ko.koSongBeforeAudio
 import com.music.bitchord.ko.musicOnlyTried
@@ -416,7 +417,22 @@ class MainActivity : AppCompatActivity() {
         // and coming back to the app must not raise the player again. A task
         // picked out of Recents is the other replay: it starts from the old
         // intent without saved state, so its history flag is checked too.
-        KoMainActivity.prepareLaunch(this, intent, savedInstanceState, koState) // [KO] launch-replay
+        val launch = KoMainActivity.prepareLaunch(intent, savedInstanceState, koState) // [KO] launch-replay
+        if (!launch.replaying) {
+            PlayerDeepLink.consume(intent)
+            JamInviteLink.consume(intent)
+            SettingsTransferInbox.consume(intent) // [KO] settings-transfer
+            // Likewise for a link tapped or shared from another app — see [MusicLink].
+            MusicLink.consume(intent)
+        } else {
+            // A replay marks the widget request spent without re-arming it.
+            PlayerDeepLink.consume(
+                intent,
+                recreating = true,
+                launchedFromHistory = launch.launchedFromHistory,
+            ) // [KO] launch-replay
+        }
+        KoMainActivity.afterLaunch(this, intent) // [KO] debug-launch-switches
         setContent {
             val theme by AppSettings.themeMode.collectAsStateWithLifecycle()
             val highPerformance by AppSettings.highPerformanceMode.collectAsStateWithLifecycle()
@@ -524,7 +540,16 @@ class MainActivity : AppCompatActivity() {
         // Read before the relays consume their extras: a widget's open-player
         // flag is removed by [PlayerDeepLink.consume], and a fingerprint taken
         // afterwards no longer showed that this arrival was a widget request.
-        KoMainActivity.onNewIntent(this, intent, koState) // [KO] launch-replay
+        val launchFingerprint = KoMainActivity.newIntentFingerprint(intent) // [KO] launch-replay
+        if (intent.isLaunchedFromHistory()) {
+            PlayerDeepLink.consume(intent, launchedFromHistory = true) // [KO] launch-replay
+        } else {
+            PlayerDeepLink.consume(intent)
+        }
+        JamInviteLink.consume(intent)
+        SettingsTransferInbox.consume(intent) // [KO] settings-transfer
+        MusicLink.consume(intent)
+        KoMainActivity.onNewIntent(this, intent, launchFingerprint, koState) // [KO] launch-replay
     }
 }
 

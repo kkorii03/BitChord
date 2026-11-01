@@ -10,13 +10,9 @@ import androidx.lifecycle.lifecycleScope
 import com.music.bitchord.BuildConfig
 import com.music.bitchord.data.innertube.InnerTubeXResolver
 import com.music.bitchord.data.innertube.MusicGateFallback
-import com.music.bitchord.data.listentogether.JamInviteLink
 import com.music.bitchord.data.net.ProxyUrlParser
 import com.music.bitchord.data.settings.AppSettings
-import com.music.bitchord.data.settings.SettingsTransferInbox
 import com.music.bitchord.data.stats.ListeningStats
-import com.music.bitchord.playback.MusicLink
-import com.music.bitchord.playback.PlayerDeepLink
 import com.music.bitchord.startup.LaunchReplay
 import com.music.bitchord.ui.player.PlayerSheetMotion
 import kotlinx.coroutines.Dispatchers
@@ -53,6 +49,11 @@ internal class KoMainActivityState {
         if (lastTouchDownNanos == 0L) -1L else (System.nanoTime() - lastTouchDownNanos) / 1_000_000L
 }
 
+internal data class KoLaunchDecision(
+    val replaying: Boolean,
+    val launchedFromHistory: Boolean,
+)
+
 internal object KoMainActivity {
     fun onStart(state: KoMainActivityState) {
         state.noteForeground()
@@ -66,17 +67,16 @@ internal object KoMainActivity {
     }
 
     /**
-     * Consumes the cold-launch intent, returning whether it was a replay.
-     * A recreation replays the task's original intent, and that intent may
-     * still carry a widget's extra; the request was served the first time and
-     * coming back to the app must not raise the player again.
+     * Decides whether the cold-launch intent is a replay. A recreation replays
+     * the task's original intent, and that intent may still carry a widget's
+     * extra; the request was served the first time and coming back to the app
+     * must not raise the player again.
      */
     fun prepareLaunch(
-        activity: Activity,
         intent: Intent,
         savedInstanceState: Bundle?,
         state: KoMainActivityState,
-    ): Boolean {
+    ): KoLaunchDecision {
         val launchedFromHistory = intent.isLaunchedFromHistory()
         val launchFingerprint = LaunchReplay.fingerprint(intent)
         val savedFingerprints = savedInstanceState
@@ -88,33 +88,26 @@ internal object KoMainActivity {
             savedFingerprints = savedFingerprints,
             currentFingerprint = launchFingerprint,
         )
-        PlayerDeepLink.consume(
-            intent,
-            recreating = replayingLaunch,
-            launchedFromHistory = launchedFromHistory,
-        )
-        if (!replayingLaunch) {
-            JamInviteLink.consume(intent)
-            SettingsTransferInbox.consume(intent)
-            MusicLink.consume(intent)
-        }
         state.handledLaunchFingerprints.clear()
         state.handledLaunchFingerprints.addAll(savedFingerprints.orEmpty())
         state.handledLaunchFingerprints.add(launchFingerprint)
-        applyDebugLaunchSwitches(activity, intent)
-        return replayingLaunch
+        return KoLaunchDecision(replayingLaunch, launchedFromHistory)
     }
 
-    fun onNewIntent(activity: Activity, intent: Intent, state: KoMainActivityState) {
-        val fingerprint = LaunchReplay.fingerprint(intent)
-        PlayerDeepLink.consume(
-            intent,
-            launchedFromHistory = intent.isLaunchedFromHistory(),
-        )
-        JamInviteLink.consume(intent)
-        SettingsTransferInbox.consume(intent)
-        MusicLink.consume(intent)
+    /** The fingerprint is taken before MainActivity's relays consume the extras. */
+    fun newIntentFingerprint(intent: Intent): String = LaunchReplay.fingerprint(intent)
+
+    fun onNewIntent(
+        activity: Activity,
+        intent: Intent,
+        fingerprint: String,
+        state: KoMainActivityState,
+    ) {
         state.handledLaunchFingerprints += fingerprint
+        applyDebugLaunchSwitches(activity, intent)
+    }
+
+    fun afterLaunch(activity: Activity, intent: Intent) {
         applyDebugLaunchSwitches(activity, intent)
     }
 
