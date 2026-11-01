@@ -162,7 +162,7 @@ object LrcRed {
         "albumversion", "originalversion", "originalmix", "singleversion",
         "radioversion", "radioedit", "stereoversion", "monoversion",
         "studioversion", "fullversion", "standardversion", "explicitversion",
-        "deluxeversion", "originaltrack",
+        "deluxeversion", "originaltrack", "cleanedit", "cleanversion", "cleanmix", "clean",
     )
 
     /** Bracket words that make it a different recording, not a different label. */

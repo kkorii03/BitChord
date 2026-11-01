@@ -299,10 +299,20 @@ object LyricsRepository {
             videoId, title, artist, durationMs, album, prioritizeSyllableSync, isrc, isVideo, artistKnown,
             alternatives, order, sources, artistAliases,
         )
-        val remembered = readKeys.firstNotNullOfOrNull { candidate ->
-            answers.get(candidate)?.takeIf { it.result != null }?.let { candidate to it }
-        } ?: readKeys.firstNotNullOfOrNull { candidate ->
-            answers.get(candidate)?.let { candidate to it }
+        val heard = heardNow(videoId)
+        var remembered: Pair<String, Answer>? = null
+        for (candidate in readKeys) {
+            val answer = answers.get(candidate) ?: continue
+            val result = answer.result
+            if (result != null && soundRejects(videoId, result, heard)) {
+                answers.remove(candidate)
+                continue
+            }
+            if (result != null) {
+                remembered = candidate to answer
+                break
+            }
+            if (remembered == null) remembered = candidate to answer
         }
         if (remembered != null) {
             remembered.second.result?.let { onSourceResult?.invoke(it.source, it, null) }
@@ -319,7 +329,9 @@ object LyricsRepository {
             }
             val kept = keptEntry?.second
             val keptResult = kept?.result
-            if (keptEntry != null && keptResult != null) {
+            if (keptEntry != null && keptResult != null && soundRejects(videoId, keptResult, heard)) {
+                LyricsDiskCache.remove(keptEntry.first)
+            } else if (keptEntry != null && keptResult != null) {
                 answers.put(key, Answer(keptResult))
                 onSourceResult?.invoke(keptResult.source, keptResult, null)
                 if (LyricsDiskCache.worthCheckingAgain(kept)) {
@@ -509,6 +521,10 @@ object LyricsRepository {
         @Synchronized fun put(key: String, answer: Answer) {
             entries[key] = answer
         }
+
+        @Synchronized fun remove(key: String) {
+            entries.remove(key)
+        }
     }
 
     private const val MISS_KEPT_MS = 3L * 60L * 1000L
@@ -530,6 +546,14 @@ object LyricsRepository {
      */
     @Volatile
     var transcriber: (suspend (videoId: String, durationMs: Long) -> List<LyricLine>?)? = null
+
+    /**
+     * Words heard from a video, when the app has listened to it (Deepgram or
+     * Whisper) on an earlier playback. Used only to throw away a provider's
+     * sheet whose lines the sound never sang; empty means no verdict.
+     */
+    @Volatile
+    var heardWordsFor: (suspend (videoId: String) -> List<LyricsWordAlign.Heard>)? = null
 
     /**
      * Videos the app is having lyrics written down for right now — filled in
@@ -684,6 +708,26 @@ object LyricsRepository {
                 ),
             )
         }
+        // The title may name the song and a cover channel, never the record's
+        // artist. Only after every name above has missed: ask the catalogue
+        // which other artist has this title and search under that name.
+        suspend fun retryCatalogOriginal(): Result? {
+            if (!isVideo || durationMs <= 0L) return null
+            val names = (listOf(title to artist) + alternatives).distinct()
+            val originals = try {
+                RecordingPick.find(names, durationMs, max = 2)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                emptyList()
+            }
+            for (original in originals) {
+                if (original.title.isBlank() || original.artist.isBlank()) continue
+                retry(original.title to original.artist)?.let { return it }
+                retry(original.title to "")?.let { return it }
+            }
+            return null
+        }
         val extra = variants.drop(1)
         if (extra.isNotEmpty()) {
             TrackLog.i(TAG, "lyrics: query variants for $videoId: n=${extra.size}", about = videoId)
@@ -708,8 +752,10 @@ object LyricsRepository {
             nameAhead?.await()?.let { name ->
                 retry(name.title to name.artist)?.let { return it }
             }
+            retryCatalogOriginal()?.let { return it }
             return fallback
         }
+        retryCatalogOriginal()?.let { return it }
         // Still nothing, and the name is written in Hangul: very often a Korean
         // spelling of a Japanese, Chinese or English song, which the catalogues
         // file under its own name. Ask for that name and search once more —
@@ -762,9 +808,13 @@ object LyricsRepository {
         // split a catalogue/decoder pair that straddles a boundary.
         val memoKeys = durationBuckets(durationMs).map(::memoKey)
         val memoHit = synchronized(recent) { memoKeys.firstNotNullOfOrNull { recent[it] } }
-        memoHit?.let { hit ->
-            onSourceResult?.invoke(hit.source, hit, null)
-            return hit
+        if (memoHit != null) {
+            val heard = heardNow(videoId)
+            if (!soundRejects(videoId, memoHit, heard)) {
+                onSourceResult?.invoke(memoHit.source, memoHit, null)
+                return memoHit
+            }
+            synchronized(recent) { memoKeys.forEach { recent.remove(it) } }
         }
         val found = lookUp(
             videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
@@ -780,6 +830,39 @@ object LyricsRepository {
 
     /** The sources that can use a recording id, and so wait for [identify]. */
     private val USES_RECORDING = setOf(LyricsSource.LRC_RED, LyricsSource.LYRICS_PLUS, LyricsSource.BINI_LYRICS)
+
+    /** What the app has heard from [videoId], or nothing when it never listened. */
+    private suspend fun heardNow(videoId: String): List<LyricsWordAlign.Heard> =
+        heardWordsFor?.let { provider ->
+            try {
+                provider(videoId)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }.orEmpty()
+
+    /**
+     * Whether [result]'s lines are words the sound did not sing — see
+     * [LyricsMismatch]. A transcription made off this very video is never
+     * rejected by it: it is the sound's own words, however few a lyric line
+     * was recognised. A rejection is remembered per song, provider and sheet.
+     */
+    private fun soundRejects(
+        videoId: String,
+        result: Result,
+        heard: List<LyricsWordAlign.Heard>,
+    ): Boolean {
+        if (result.source == LyricsSource.GEMINI_TRANSCRIPT) return false
+        if (heard.size < LyricsMismatch.MIN_HEARD_WORDS) return false
+        if (LyricsMismatch.isRejected(videoId, result.source, result.lines)) return true
+        val verdict = LyricsMismatch.judgeSheet(result.lines, heard)
+        if (!verdict.rejected) return false
+        LyricsMismatch.rememberRejected(videoId, result.source, result.lines)
+        TrackLog.i(TAG, LyricsMismatch.logLine(result.source, verdict), about = videoId)
+        return true
+    }
 
     /**
      * The most a source may take, all its requests together. One request is
@@ -816,6 +899,7 @@ object LyricsRepository {
         onSourceResult: ((LyricsSource, Result?, LyricsFailure?) -> Unit)?,
         onSourceCancelled: ((LyricsSource) -> Unit)?,
     ): Result? = coroutineScope {
+        val heard = heardNow(videoId)
         val sequence = (order + LyricsSource.offered)
             .distinct()
             .filter { it in sources && !it.hidden }
@@ -853,7 +937,7 @@ object LyricsRepository {
                     // mid-request, so it is left to finish on its own instead of
                     // holding the whole lookup past [budgetMs].
                     val work = detached.async {
-                        fetch(source, videoId, searchTitle, searchArtist, durationMs, album, recording, hit, documents::get)
+                        fetch(source, videoId, searchTitle, searchArtist, durationMs, album, recording, hit, heard, documents::get)
                     }
                     val lines = try {
                         withTimeoutOrNull(budgetMs(source)) { work.await() }
@@ -981,6 +1065,8 @@ object LyricsRepository {
         isrc: String?,
         /** What [identify] already found, where it ran; saves a second search. */
         hit: BiniLyrics.Hit?,
+        /** What the sound sang, when it has been heard; see [heardWordsFor]. */
+        heard: List<LyricsWordAlign.Heard>,
         /** Fetches a document once per lookup, however many sources want it. */
         get: suspend (String) -> String?,
     ): List<LyricLine>? {
@@ -1011,6 +1097,7 @@ object LyricsRepository {
             // Never raced: only ever the last resort of [search].
             LyricsSource.GEMINI_TRANSCRIPT -> null
         }
+        if (found != null && soundRejects(videoId, result(source, found), heard)) return null
         return found
     }
 
