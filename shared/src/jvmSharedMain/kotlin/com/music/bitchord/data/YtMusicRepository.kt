@@ -34,6 +34,7 @@ import com.music.bitchord.data.model.playlistMoves
 import com.music.bitchord.data.model.PlaylistPrivacy
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
+import com.music.bitchord.data.model.firstArtworkOrStill
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.SongMenu
@@ -1862,10 +1863,11 @@ object YtMusicRepository {
     suspend fun browseSongs(browseId: String): Result<SongPage> = call("browse:$browseId") {
         if (isYouTubePlaylistId(browseId) && ensureGateKnown()) {
             val result = YouTubeFallback.playlistPage(browseId)
+            val songs = result.songs.map(StoredSongDisplay::clean)
             return@call SongPage(
-                songs = result.songs.map(StoredSongDisplay::clean),
+                songs = songs,
                 continuation = result.continuation,
-                header = result.header,
+                header = result.header.withArtworkFallback(songs),
                 hiddenSongs = result.hiddenSongs.map(StoredSongDisplay::clean),
             )
         }
@@ -1896,10 +1898,11 @@ object YtMusicRepository {
             }
             TrackLog.i(TAG, "playlist: $browseId rows via youtube.com (no music-video type on rows)")
             val result = YouTubeFallback.playlistPage(browseId)
+            val songs = result.songs.map(StoredSongDisplay::clean)
             return@call SongPage(
-                songs = result.songs.map(StoredSongDisplay::clean),
+                songs = songs,
                 continuation = result.continuation,
-                header = result.header,
+                header = result.header.withArtworkFallback(songs),
                 hiddenSongs = result.hiddenSongs.map(StoredSongDisplay::clean),
             )
         }
@@ -2003,10 +2006,11 @@ object YtMusicRepository {
     suspend fun moreSongs(token: String): Result<SongPage> = call("browse:more") {
         if (YouTubeFallback.isContinuation(token)) {
             val result = YouTubeFallback.morePlaylist(token)
+            val songs = result.songs.map(StoredSongDisplay::clean)
             return@call SongPage(
-                songs = result.songs.map(StoredSongDisplay::clean),
+                songs = songs,
                 continuation = result.continuation,
-                header = result.header,
+                header = result.header.withArtworkFallback(songs),
                 hiddenSongs = result.hiddenSongs.map(StoredSongDisplay::clean),
             )
         }
@@ -2080,9 +2084,7 @@ object YtMusicRepository {
     ): InnertubeParser.BrowseHeader? {
         val header = this ?: return null
         if (!header.thumbnailUrl.isNullOrBlank()) return header
-        val fallback = songs.firstNotNullOfOrNull {
-            it.thumbnailUrl?.takeIf(String::isNotBlank)
-        } ?: return header
+        val fallback = songs.firstArtworkOrStill() ?: return header
         return header.copy(thumbnailUrl = fallback)
     }
 

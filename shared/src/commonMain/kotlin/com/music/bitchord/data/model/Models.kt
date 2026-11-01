@@ -276,6 +276,19 @@ fun Song.withVideoThumbnailFallback(): Song {
 }
 
 /**
+ * Artwork for a page header, taken from the first row that can supply any.
+ *
+ * A playlist header can arrive without a cover (a channel list rendered from
+ * rows only, or a downloaded copy shown before its listing), while its rows
+ * still name a video. The first real thumbnail wins; after that, the video
+ * still is the same last rung [Song.artworkAt] uses for a row. Null only when
+ * no row has a picture or a YouTube id.
+ */
+fun List<Song>.firstArtworkOrStill(): String? = firstNotNullOfOrNull { song ->
+    song.thumbnailUrl?.takeIf(String::isNotBlank) ?: videoThumbnailUrl(song.videoId)
+}
+
+/**
  * Whether a row is the track the player is on, for the now-playing highlight.
  *
  * Title and credit, matched exactly, and nothing else. Every id a row could be

@@ -46,6 +46,7 @@ import com.music.bitchord.data.model.mergeAccountIdentity
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.DetailPage
 import com.music.bitchord.data.model.detailListingState
+import com.music.bitchord.data.model.firstArtworkOrStill
 import com.music.bitchord.data.ExploreCategoryFilter
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.HomeSource
@@ -60,7 +61,6 @@ import com.music.bitchord.data.model.PlaylistPrivacy
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.ShelfItem
-import com.music.bitchord.data.cover.videoThumbnailUrl
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.stats.SmartPlaylist
 import com.music.bitchord.data.stats.SmartPlaylists
@@ -3127,10 +3127,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             // still) so the header shows a cover again.
                             if (artwork.isNullOrBlank()) {
                                 artwork = (page.songs + page.suggested + page.hiddenSongs)
-                                    .firstNotNullOfOrNull { song ->
-                                        song.thumbnailUrl?.takeIf { it.isNotBlank() }
-                                            ?: videoThumbnailUrl(song.videoId)
-                                    }
+                                    .firstArtworkOrStill()
                             }
                             description = page.description
                             // A page whose only rows are videos (Liked Music's
