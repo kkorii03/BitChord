@@ -70,21 +70,10 @@ class DownloadsPermanentFailureRetryPlanTest {
     }
 
     private fun fail(videoId: String, reason: String) {
-        val method = Downloads::class.java.getDeclaredMethod(
-            "fail",
-            String::class.java,
-            String::class.java,
-        ).apply { isAccessible = true }
-        method.invoke(Downloads, videoId, reason)
+        Downloads.fail(videoId, reason)
     }
 
     private fun fail(videoId: String, reason: String, keepVerifiedPair: Boolean) {
-        val method = Downloads::class.java.getDeclaredMethod(
-            "fail",
-            String::class.java,
-            String::class.java,
-            Boolean::class.javaPrimitiveType,
-        ).apply { isAccessible = true }
-        method.invoke(Downloads, videoId, reason, keepVerifiedPair)
+        Downloads.fail(videoId, reason, keepVerifiedPair)
     }
 }

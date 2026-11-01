@@ -2,6 +2,7 @@ package com.music.bitchord.download
 
 import com.music.bitchord.data.settings.DownloadQuality
 import com.music.bitchord.data.sources.HqTier
+import com.music.bitchord.ko.downloads.KoDownloadQueue
 import org.junit.After
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -17,7 +18,9 @@ class DownloadsAbandonPendingTest {
 
     private val videoId = "video-1"
 
-    private val pendingField = field("pending")
+    private val pendingField = Downloads::class.java
+        .getDeclaredField("pending")
+        .apply { isAccessible = true }
     private val qualityField = field("qualityOverrides")
     private val hqField = field("hqOverrides")
     private val avoidField = field("avoidSources")
@@ -94,12 +97,12 @@ class DownloadsAbandonPendingTest {
         assertTrue(contains(mvRepairField))
     }
 
-    private fun field(name: String) = Downloads::class.java
+    private fun field(name: String) = KoDownloadQueue::class.java
         .getDeclaredField(name)
         .apply { isAccessible = true }
 
     private fun clearMap(field: java.lang.reflect.Field) {
-        when (val value = field.get(Downloads)) {
+        when (val value = field.get(KoDownloadQueue)) {
             is MutableMap<*, *> -> value.clear()
             is MutableSet<*> -> value.clear()
             else -> error("unexpected field type ${value?.javaClass}")
@@ -108,16 +111,16 @@ class DownloadsAbandonPendingTest {
 
     @Suppress("UNCHECKED_CAST")
     private fun put(field: java.lang.reflect.Field, value: Any) {
-        (field.get(Downloads) as MutableMap<String, Any>)[videoId] = value
+        (field.get(KoDownloadQueue) as MutableMap<String, Any>)[videoId] = value
     }
 
     @Suppress("UNCHECKED_CAST")
     private fun add(field: java.lang.reflect.Field) {
-        (field.get(Downloads) as MutableSet<String>).add(videoId)
+        (field.get(KoDownloadQueue) as MutableSet<String>).add(videoId)
     }
 
     @Suppress("UNCHECKED_CAST")
-    private fun contains(field: java.lang.reflect.Field): Boolean = when (val value = field.get(Downloads)) {
+    private fun contains(field: java.lang.reflect.Field): Boolean = when (val value = field.get(KoDownloadQueue)) {
         is Map<*, *> -> value.containsKey(videoId)
         is Set<*> -> value.contains(videoId)
         else -> error("unexpected field type ${value?.javaClass}")

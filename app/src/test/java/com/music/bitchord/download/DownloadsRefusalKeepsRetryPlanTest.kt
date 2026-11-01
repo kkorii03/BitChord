@@ -3,6 +3,7 @@ package com.music.bitchord.download
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.DownloadQuality
 import com.music.bitchord.data.sources.HqTier
+import com.music.bitchord.ko.downloads.KoDownloadQueue
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -30,12 +31,12 @@ class DownloadsRefusalKeepsRetryPlanTest {
         tier = HqTier.LOSSLESS_16,
     )
 
-    private val hqField = Downloads::class.java
+    private val hqField = KoDownloadQueue::class.java
         .getDeclaredField("hqOverrides")
         .apply { isAccessible = true }
 
     @Suppress("UNCHECKED_CAST")
-    private val overrides = hqField.get(Downloads) as MutableMap<String, HqDownloadSource>
+    private val overrides = hqField.get(KoDownloadQueue) as MutableMap<String, HqDownloadSource>
 
     @Before
     fun setUp() {
@@ -99,11 +100,6 @@ class DownloadsRefusalKeepsRetryPlanTest {
     }
 
     private fun fail(videoId: String, reason: String) {
-        val method = Downloads::class.java.getDeclaredMethod(
-            "fail",
-            String::class.java,
-            String::class.java,
-        ).apply { isAccessible = true }
-        method.invoke(Downloads, videoId, reason)
+        Downloads.fail(videoId, reason)
     }
 }
