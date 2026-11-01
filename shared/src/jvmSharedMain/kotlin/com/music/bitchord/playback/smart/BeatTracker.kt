@@ -310,6 +310,48 @@ class BeatTracker(
         }
 
         /**
+         * Phrase boundaries implied by a tracked downbeat grid: the first downbeat of every
+         * eight 4/4 bars.
+         *
+         * The DSP analyzer also emits phrase times, but they are built from its own beat
+         * interval. When the model supplies the grid the planner snaps to model downbeats, so
+         * reusing the DSP phrase times leaves `phraseAligned` comparing two different clocks
+         * and it reads false on a perfectly musical boundary. Deriving both from the same grid
+         * keeps the flag meaningful.
+         */
+        fun phraseBoundaries(downbeats: List<Double>): List<Double> =
+            downbeats.filterIndexed { index, time -> index % 8 == 0 && time.isFinite() }
+
+        /**
+         * Phrase boundaries for a downbeat list that does not start at the
+         * track's first bar, such as the 45 s tail window.
+         *
+         * Indexing that window from zero would treat whatever bar it happened
+         * to open on as a phrase start, phase-shifting every phrase time the
+         * planner snaps to. [anchor] is the track's first downbeat and
+         * [beatInterval] its seconds per beat; both windows are then placed on
+         * one absolute eight-bar grid (32 beats) before the boundaries are
+         * selected. A downbeat within half a beat of a phrase start counts, so
+         * model jitter does not drop the boundary.
+         */
+        fun phraseBoundaries(
+            downbeats: List<Double>,
+            anchor: Double,
+            beatInterval: Double,
+        ): List<Double> {
+            if (!anchor.isFinite() || !beatInterval.isFinite() || beatInterval <= 0) {
+                return phraseBoundaries(downbeats)
+            }
+            val phraseSeconds = beatInterval * 32.0
+            val tolerance = beatInterval * 0.5
+            return downbeats.filter { time ->
+                if (!time.isFinite()) return@filter false
+                val phrase = ((time - anchor) / phraseSeconds).roundToInt()
+                phrase >= 0 && abs(time - (anchor + phrase * phraseSeconds)) <= tolerance
+            }
+        }
+
+        /**
          * How far the grid can be trusted, 0..1: regularity of the spacing and decisiveness of
          * the peaks. This is the number the whole transition policy gates on, so it is deliberately
          * capped below 1: a model is evidence, not proof.

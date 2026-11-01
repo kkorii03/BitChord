@@ -405,25 +405,64 @@ void AnalyzeKeyAndTimbre(
     "C", "C\xE2\x99\xAF", "D", "E\xE2\x99\xAD", "E", "F",
     "F\xE2\x99\xAF", "G", "A\xE2\x99\xAD", "A", "B\xE2\x99\xAD", "B"
   };
+  // Compare the *shape* of the chroma with each key profile, not its raw
+  // overlap. Chroma is sum-normalized, so a dot product already measures
+  // overlap, but the profile vectors total slightly different weights and
+  // share most of their energy; on a clean I-IV-V-I the C major and C minor
+  // dots differed by less than 1%, while their centered profiles differ by
+  // 14%. That near-tie is what pinned keyConfidence at 0 on real tracks even
+  // when the key itself was right.
+  const double chroma_mean = std::accumulate(result.chroma.begin(), result.chroma.end(), 0.0) / 12.0;
+  double chroma_variance = 0;
+  for (const double value : result.chroma) {
+    const double centered = value - chroma_mean;
+    chroma_variance += centered * centered;
+  }
+  const auto profile_mean = [](const std::array<double, 12>& profile) {
+    return std::accumulate(profile.begin(), profile.end(), 0.0) / 12.0;
+  };
+  const auto profile_variance = [](const std::array<double, 12>& profile, double mean) {
+    double variance = 0;
+    for (const double value : profile) {
+      const double centered = value - mean;
+      variance += centered * centered;
+    }
+    return variance;
+  };
+  const double major_mean = profile_mean(major);
+  const double minor_mean = profile_mean(minor);
+  const double major_denominator = std::sqrt(std::max(1e-18, chroma_variance * profile_variance(major, major_mean)));
+  const double minor_denominator = std::sqrt(std::max(1e-18, chroma_variance * profile_variance(minor, minor_mean)));
   std::vector<std::pair<double, std::string>> candidates;
   for (size_t root = 0; root < 12; ++root) {
     double major_score = 0;
     double minor_score = 0;
     for (size_t pitch = 0; pitch < 12; ++pitch) {
-      major_score += result.chroma[pitch] * major[(pitch + 12 - root) % 12];
-      minor_score += result.chroma[pitch] * minor[(pitch + 12 - root) % 12];
+      const double centered = result.chroma[pitch] - chroma_mean;
+      major_score += centered * (major[(pitch + 12 - root) % 12] - major_mean);
+      minor_score += centered * (minor[(pitch + 12 - root) % 12] - minor_mean);
     }
-    candidates.emplace_back(major_score, std::string(names[root]) + " major");
-    candidates.emplace_back(minor_score, std::string(names[root]) + " minor");
+    candidates.emplace_back(major_score / major_denominator, std::string(names[root]) + " major");
+    candidates.emplace_back(minor_score / minor_denominator, std::string(names[root]) + " minor");
   }
   std::sort(candidates.begin(), candidates.end(), std::greater<>());
   if (chroma_weight > 0 && !candidates.empty()) {
     result.key = candidates[0].second;
-    result.key_confidence = Clamp(
-      (candidates[0].first - candidates[1].first) / std::max(0.01, candidates[0].first) * 4.0,
-      0,
-      1
-    );
+    // The old margin scale (4x the relative gap) is kept so the policy's
+    // 0.25 trusted-key threshold still means the same degree of separation.
+    // Margin alone, however, is a relative measure: on atonal material both
+    // the best and the runner-up correlate near zero, and any tiny difference
+    // between them used to read as a full confidence. The absolute floor below
+    // handles that without rescaling a real fit: a winning correlation under
+    // kMinKeyCorrelation is rejected as no key at all, while a candidate above
+    // it keeps the margin score the 0.25 threshold was calibrated against.
+    // Both the synthetic C major progression and white noise are covered by
+    // SyntheticKeyAndBeatTest.
+    constexpr double kMinKeyCorrelation = 0.35;
+    const double top = candidates[0].first;
+    result.key_confidence = top > kMinKeyCorrelation
+      ? Clamp((top - candidates[1].first) / std::max(0.01, top) * 4.0, 0, 1)
+      : 0.0;
   }
 
   // The track-wide summary keeps its existing meaning -- the same logistic over

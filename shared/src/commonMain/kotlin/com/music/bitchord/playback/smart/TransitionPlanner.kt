@@ -1058,7 +1058,17 @@ fun planWsolaTransition(
     if (incomingCueTime < audibleStart - 0.05) return WsolaPlanResult.Refused("incoming-no-runway")
 
     val startTarget = overlapEndTarget - outgoingOverlapSeconds
-    val transitionStart = nearestAtOrBefore(analysis.downbeats, startTarget) ?: startTarget
+    // Open on a phrase boundary when one is within a bar of the target, so the
+    // adaptive mix uses the phrase times the model grid actually implies;
+    // otherwise keep the old downbeat snap. Both the boundary and the downbeat
+    // come from the same tracked grid now (see BeatTracker.phraseBoundaries).
+    val phraseStart = timedValueNearOrBefore(
+        analysis.phraseBoundaries,
+        startTarget,
+        max(1.0, outgoingBeatSeconds * 4),
+        MIN_CLEARANCE_SECONDS,
+    )
+    val transitionStart = phraseStart ?: nearestAtOrBefore(analysis.downbeats, startTarget) ?: startTarget
     if (transitionStart < MIN_CLEARANCE_SECONDS) return WsolaPlanResult.Refused("outgoing-too-short")
     val transitionEnd = transitionStart + outgoingOverlapSeconds
     if (transitionEnd > outgoingLength + 0.05) return WsolaPlanResult.Refused("outgoing-overlap-overruns")
