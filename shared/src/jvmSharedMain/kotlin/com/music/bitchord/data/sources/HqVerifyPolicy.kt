@@ -94,6 +94,16 @@ object HqVerifyPolicy {
     fun shouldRetryMissingReference(manual: Boolean): Boolean = manual
 
     /**
+     * A remembered rejection may only short-circuit an automatic attempt.
+     *
+     * A manual request is the listener asking for a fresh measurement. If the
+     * pair is still wrong, the comparison rejects it again; if the source has
+     * since started serving the right recording under the same id, the new
+     * measurement can accept it.
+     */
+    fun shouldRetryRejected(manual: Boolean): Boolean = manual
+
+    /**
      * What to do after a candidate download is rate limited.
      *
      * Verification runs beside playback, so it may wait longer than a loader

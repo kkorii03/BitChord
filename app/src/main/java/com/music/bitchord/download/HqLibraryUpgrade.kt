@@ -605,7 +605,15 @@ object HqLibraryUpgrade {
                 val sourceId = candidate.sourceConfigId
                 val trackId = candidate.trackId
                 if (!sourceId.isNullOrBlank() && !trackId.isNullOrBlank()) {
-                    val verified = HqAudioVerify.verify(context, song.videoId, target, candidate)
+                    // A tap is a fresh request: it may re-measure a pair an
+                    // automatic attempt rejected earlier.
+                    val verified = HqAudioVerify.verify(
+                        context,
+                        song.videoId,
+                        target,
+                        candidate,
+                        manual = !automatic,
+                    )
                     val acceptable = verified != null &&
                         if (allowEqual) {
                             verified.tier.rank <= currentTier.rank

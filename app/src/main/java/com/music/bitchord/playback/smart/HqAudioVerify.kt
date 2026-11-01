@@ -354,14 +354,17 @@ object HqAudioVerify {
      * candidate must not be used.
      *
      * A previously accepted pair returns its stored answer without decoding
-     * anything. A previously rejected one returns null immediately.
+     * anything. A previously rejected one returns null immediately, unless
+     * [manual] asks for a fresh measurement.
      */
     suspend fun verify(
         context: Context,
         youtubeId: String,
         target: TrackMatcher.Target,
         stream: SourceStream,
-    ): HqVerificationStore.Verified? = verifyOutcome(context, youtubeId, target, stream).verifiedOrNull()
+        manual: Boolean = false,
+    ): HqVerificationStore.Verified? =
+        verifyOutcome(context, youtubeId, target, stream, manual).verifiedOrNull()
 
     /**
      * As [verify], with the reason when the candidate cannot be used.
@@ -451,7 +454,10 @@ object HqAudioVerify {
             return@withContext Outcome.Verified(it)
         }
         // Only a measured mismatch is stored here; a missing reference never is.
-        if (HqVerificationStore.isRejected(context, youtubeId, sourceId, trackId)) {
+        // A manual request may ask for a fresh measurement of a stored rejection.
+        if (!HqVerifyPolicy.shouldRetryRejected(manual) &&
+            HqVerificationStore.isRejected(context, youtubeId, sourceId, trackId)
+        ) {
             return@withContext Outcome.Mismatch
         }
         // A manifest is a container the decoder here cannot read; it cannot be
@@ -488,7 +494,9 @@ object HqAudioVerify {
                 coroutineScope {
                     HqVerificationStore.get(context, youtubeId, sourceId, trackId)
                         ?.let { return@coroutineScope Outcome.Verified(it) }
-                    if (HqVerificationStore.isRejected(context, youtubeId, sourceId, trackId)) {
+                    if (!HqVerifyPolicy.shouldRetryRejected(manual) &&
+                        HqVerificationStore.isRejected(context, youtubeId, sourceId, trackId)
+                    ) {
                         return@coroutineScope Outcome.Mismatch
                     }
                     // The two ninety-second reads do not depend on each other:
