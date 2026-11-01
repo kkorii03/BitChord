@@ -1,0 +1,10 @@
+BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/telegram. 대상: playback/smart/HqAudioVerify.kt (후보 받기), data/sources/StreamRequest·AddonSource·ModuleSource 의 tier 요청.
+문제: 24-bit/96kHz 후보 소리 대조가 30초 걸림(폰 로그: hq-verify timing: download=31587 decode=30241 bytes=62899200). 전송 ~2MB/s 가 지배. 같은 소스·같은 트랙 ID 의 낮은 등급(16-bit 44.1k FLAC, 없으면 320k) 스트림은 같은 녹음이라 대조에는 충분하고 3~4배 작음.
+할 일:
+① 대조 다운로드만 같은 소스·같은 trackId 로 낮은 tier(16-bit lossless) 를 요청해 받는다. 소스가 낮은 tier 를 못 주거나 실패하면 지금처럼 원래 스트림으로 대조(폴백). 재생은 원래 고음질 스트림 그대로.
+② 판정 기록(HqVerificationStore 등)은 원래 후보 행(소스+trackId) 기준 그대로 — 저장 키 바꾸지 말 것.
+③ 텔레그램 후보(bitchord-telegram://)와 YouTube 기준(reference)은 해당 없음 — 그대로.
+④ 로그: 'hq-verify: <title> <source> verify-tier=<tier> (play=<tier>)'.
+테스트(고치기 전 실패): 24-bit 후보 대조 시 낮은 tier 요청, 낮은 tier 실패 시 원래 스트림으로 폴백, 저장 키 불변. 새 테스트 클래스 이름 요약에.
+제약: .github/, keys, *.jks, 서명 수정 금지. match 임계값·판정 규칙 변경 금지. 403 새 URL 재시도·스트리밍 디코드(GrowingFileReader) 유지. 타이머·폴링 금지. 바꾼 함수의 모든 호출부 재확인.
+마지막 10줄 이내 요약: 근거(파일:줄) / 수정 / 테스트 / 미해결.
