@@ -22,9 +22,18 @@ internal object TelegramSealedBox {
     private const val AAD = "bitchord-telegram-v1"
 
     fun seal(plain: ByteArray, key: SecretKey): String {
-        val iv = ByteArray(IV_BYTES).also(SecureRandom()::nextBytes)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(TAG_BITS, iv))
+        // An AndroidKeyStore key requires randomized encryption and refuses a
+        // caller-provided IV ("Caller-provided IV not permitted"), which made
+        // every save fail on the phone while software-key tests passed. Let the
+        // cipher choose the IV; only a key that does not supply one gets ours.
+        try {
+            cipher.init(Cipher.ENCRYPT_MODE, key)
+        } catch (_: java.security.InvalidKeyException) {
+            val chosen = ByteArray(IV_BYTES).also(SecureRandom()::nextBytes)
+            cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(TAG_BITS, chosen))
+        }
+        val iv = cipher.iv ?: throw IllegalStateException("The cipher chose no IV.")
         cipher.updateAAD(AAD.toByteArray(Charsets.UTF_8))
         val encrypted = cipher.doFinal(plain)
         return buildString {

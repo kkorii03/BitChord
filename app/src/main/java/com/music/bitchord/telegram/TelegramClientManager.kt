@@ -474,7 +474,8 @@ object TelegramClientManager {
             val changed = credentials != next
             try {
                 store.save(next)
-            } catch (_: Throwable) {
+            } catch (e: Throwable) {
+                TelegramLog.failure("save credentials", e.javaClass.simpleName)
                 update { it.copy(error = TelegramError.GENERIC) }
                 return@execute
             }
@@ -779,7 +780,8 @@ object TelegramClientManager {
         ) { File(dir, "db").exists() || File(dir, "files").exists() }
         credentials = try {
             credentialStore?.load() ?: TelegramApplicationCredentials.EMPTY
-        } catch (_: Throwable) {
+        } catch (e: Throwable) {
+            TelegramLog.failure("load credentials", e.javaClass.simpleName)
             TelegramApplicationCredentials.EMPTY
         }
         credentialsLoaded = true
