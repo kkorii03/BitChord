@@ -77,6 +77,7 @@ import java.util.concurrent.TimeUnit
  */
 private typealias Stream = StreamResolver.Stream
 private typealias PermanentlyUnplayableException = StreamResolver.PermanentlyUnplayableException
+private typealias Probe = StreamResolver.Probe
 
 internal object KoStreamResolver {
     /** The bitrate ceiling in force — the phone's quality setting for the connection it is on. */
@@ -87,11 +88,8 @@ internal object KoStreamResolver {
 
     private const val TAG = StreamResolver.TAG
     private val resolverScope get() = StreamResolver.resolverScope
-    private val prober get() = StreamResolver.prober
     private val REFUSAL_CODES get() = StreamResolver.REFUSAL_CODES
     private const val PROBE_TIMEOUT_SECONDS = StreamResolver.PROBE_TIMEOUT_SECONDS
-    private const val AUTH_BOUNDARY_BYTES = StreamResolver.AUTH_BOUNDARY_BYTES
-    private const val PROBE_READ_BYTES = StreamResolver.PROBE_READ_BYTES
     private val extractionGate get() = StreamResolver.extractionGate
     private const val URL_TTL_MS = StreamResolver.URL_TTL_MS
     private const val MAX_REMEMBERED = StreamResolver.MAX_REMEMBERED
@@ -101,8 +99,6 @@ internal object KoStreamResolver {
 
     private fun <T> underCeiling(candidates: List<Pair<Int, T>>, maxKbps: Int): T? =
         StreamResolver.underCeiling(candidates, maxKbps)
-
-    private fun describeMediaUrl(url: String): String = StreamResolver.describeMediaUrl(url)
 
     /**
      * @return a directly streamable URL that has been proven to serve bytes,
@@ -1232,7 +1228,7 @@ internal object KoStreamResolver {
                 null
             }
             if (found != null) {
-                val verdict = timed("$videoId InnerTubeX ${found.profileId} probe") { probe(found.url, viaProxy) }
+                val verdict = timed("$videoId InnerTubeX ${found.profileId} probe") { StreamResolver.probe(found.url, viaProxy) }
                 if (verdict == Probe.OK) {
                     TrackLog.d(TAG, "resolved $videoId via InnerTubeX ${found.profileId} @ ${found.kbps}kbps")
                     onServed(ResolutionOrder.itx(preferredManifest), "InnerTubeX ${found.profileId}")
@@ -1297,7 +1293,7 @@ internal object KoStreamResolver {
                 }
                 return null
             } ?: return null
-            val verdict = timed("$videoId InnerTubeX ${found.profileId} probe") { probe(found.url, viaProxy) }
+            val verdict = timed("$videoId InnerTubeX ${found.profileId} probe") { StreamResolver.probe(found.url, viaProxy) }
             if (verdict == Probe.OK) {
                 TrackLog.d(TAG, "resolved $videoId via InnerTubeX ${found.profileId} @ ${found.kbps}kbps")
                 val manifest = InnerTubeXResolver.manifestIdForProfile(found.profileId)
@@ -1380,7 +1376,7 @@ internal object KoStreamResolver {
             checkActive = checkActive,
         )) {
             checkActive()
-            if (probe(found.url, viaProxy) == Probe.OK) {
+            if (StreamResolver.probe(found.url, viaProxy) == Probe.OK) {
                 TrackLog.d(TAG, "resolved $videoId via direct ${found.client} @ ${found.kbps}kbps")
                 return DirectProbe.Stream(
                     DirectRun(
@@ -1437,7 +1433,7 @@ internal object KoStreamResolver {
             TrackLog.w(TAG, "no stream for $videoId when asked as an upload")
             return null
         }
-        val verdict = timed("$videoId InnerTubeX ${found.profileId} upload probe") { probe(found.url, viaProxy) }
+        val verdict = timed("$videoId InnerTubeX ${found.profileId} upload probe") { StreamResolver.probe(found.url, viaProxy) }
         if (verdict != Probe.OK) {
             TrackLog.w(TAG, "InnerTubeX ${found.profileId} as an upload for $videoId: $verdict")
             return null
@@ -1937,97 +1933,6 @@ internal object KoStreamResolver {
         return found
     }
 
-    // ---- Format selection ---------------------------------------------------
-
-    /**
-     * Highest stream at or under the ceiling set for the connection in use; if
-     * everything is above it (e.g. Low on a track that only has 130kbps+), take
-     * the cheapest available rather than failing.
-     */
-    // ---- Validation ---------------------------------------------------------
-
-    private enum class Probe {
-        /** Served media bytes; safe to play and to cache. */
-        OK,
-
-        /** Answered, but refused this request — the client is the problem. */
-        REFUSED,
-
-        /** Never got an answer worth interpreting; blame nothing in particular. */
-        UNREACHABLE,
-    }
-
-    /**
-     * Read the end of a URL before trusting it.
-     *
-     * This is the whole difference between a track that fails and a track that
-     * fails *visibly and instantly*. A URL that 403s is indistinguishable from
-     * a good one until something reads from it; hand it to ExoPlayer and the
-     * failure surfaces as a track that spins and never starts.
-     *
-     * The range has to be as large as the real fetch will ask for, not a token
-     * one. A URL minted for a session Google has reservations about serves
-     * small ranges to anybody — enough to pass a small probe — and then refuses
-     * the multi-megabyte ranges actual listening is made of with a 403.
-     * The range starts past [AUTH_BOUNDARY_BYTES] when the file is that long:
-     * some clients' URLs serve the first megabyte and 403 everything after
-     * it, so a probe of the opening passes and playback dies ~50s in.
-     * Sixteen kilobytes of the answer still have to actually arrive, so a
-     * response that stalls after its headers is a failure too.
-     *
-     * The headers are the ones the media fetch will really use — see
-     * [PlayerClient.forStreamUrl] — so this tests the request that matters
-     * rather than a more favourable version of it.
-     */
-    private fun probe(url: String, viaProxy: Boolean = false): Probe {
-        val length = url.toHttpUrlOrNull()?.queryParameter("clen")?.toLongOrNull()
-        val start = if (length != null && length > AUTH_BOUNDARY_BYTES + PROBE_READ_BYTES) AUTH_BOUNDARY_BYTES else 0L
-        // A host with no range cap of its own reports Long.MAX_VALUE, which
-        // must not be added to [start]: that overflowed into a negative end
-        // and a 416 read as a refusal. Its real fetch asks for the rest of
-        // the file, so the probe does too.
-        val window = PlayerClient.rangeBytesFor(url)
-        val range = when {
-            window != Long.MAX_VALUE -> "bytes=$start-${minOf(start + window, length ?: Long.MAX_VALUE) - 1}"
-            length != null -> "bytes=$start-${length - 1}"
-            else -> "bytes=$start-"
-        }
-        val builder = okhttp3.Request.Builder().url(url)
-            .header("Range", range)
-        val sentHeaders = mediaHeadersFor(url)
-        sentHeaders.forEach { (name, value) -> builder.header(name, value) }
-        return try {
-            (if (viaProxy) proxyProber else prober).newCall(builder.build()).execute().use { response ->
-                val contentType = response.header("Content-Type")
-                val verdict = when {
-                    response.code in REFUSAL_CODES -> Probe.REFUSED
-                    response.code !in 200..299 && response.code != 416 -> Probe.UNREACHABLE
-                    // A refusal dressed as a success: an error page, or the
-                    // consent/captcha interstitial, rather than audio.
-                    contentType?.startsWith("audio/") != true -> Probe.REFUSED
-                    // Headers can arrive long before a body that never does —
-                    // exactly the shaping this whole path exists to sidestep.
-                    // Insisting on the bytes is the point: a trickle that
-                    // yields its first byte and stalls is a failure too.
-                    response.body?.source()?.request(PROBE_READ_BYTES) != true -> Probe.UNREACHABLE
-                    else -> Probe.OK
-                }
-                if (verdict != Probe.OK) {
-                    TrackLog.w(
-                        TAG,
-                        "probe $verdict: HTTP ${response.code} type=$contentType " +
-                            "range=$range ${describeMediaUrl(url)} " +
-                            "sent=${sentHeaders.keys.sorted()}",
-                    )
-                }
-                verdict
-            }
-        } catch (e: Exception) {
-            TrackLog.w(TAG, "probe failed: ${e.message}")
-            Probe.UNREACHABLE
-        }
-    }
-
     /** Back-pressure, not a refusal: forget the URL but keep the client. */
     private val RATE_LIMIT_CODES = setOf(429, 503)
 
@@ -2036,7 +1941,7 @@ internal object KoStreamResolver {
      * only from the proxy's address, so a direct probe would turn a perfectly
      * good stream into a REFUSED verdict.
      */
-    private val proxyProber by lazy {
+    internal val proxyProber by lazy {
         Http.proxyMediaClient.newBuilder()
             .callTimeout(PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .build()
@@ -2265,70 +2170,18 @@ internal object KoStreamResolver {
     /** Multiplied by the attempt number, so the wait grows if the first retry doesn't take. */
     private const val EXTRACTION_RETRY_MS = 1000L
 
-    /**
-     * One extraction at a time, across the whole app.
-     *
-     * Extraction is not the network-bound step it looks like. Fetching the
-     * watch page is the small part; the expensive part is running YouTube's
-     * player JavaScript through Rhino to transform each format's `n`
-     * parameter, which is CPU work on a phone against static state NewPipe
-     * shares process-wide. Run concurrently it does not share out, it
-     * collapses — measured on-device at 1.8s alone, 16.2s with two in flight
-     * (both finishing within 35ms of each other, which is the tell), and 30.3s
-     * with three. Read-ahead is what puts three or four in flight: the track
-     * being waited on plus [AudioCache][com.music.bitchord.playback.AudioCache]'s
-     * queue warm-up, every one of them an extraction now that no player client
-     * is being served.
-     *
-     * So they are queued rather than raced. Serialised, three cost about two
-     * seconds each in turn instead of thirty seconds each at once, and the one
-     * a listener is actually waiting on is behind at most one other — see
-     * `QUEUE_LOOKAHEAD`, kept at one for exactly this reason. The bound on how
-     * long a single holder can keep the gate is [EXTRACTOR_TIMEOUT_SECONDS].
-     */
+    /** [StreamResolver.extractStream], keeping the fork's Korean failure wording. */
     private suspend fun extractStream(
         videoId: String,
         select: (List<Pair<Int, AudioStream>>) -> AudioStream?,
-    ): Stream = extractionGate.withLock {
-        withContext(Dispatchers.IO) {
-            val waited = MonotonicClock.nowMs()
-            val extractor = ServiceList.YouTube.getStreamExtractor(
-                "https://www.youtube.com/watch?v=$videoId",
-            )
-            extractor.fetchPage()
-            val candidates = extractor.audioStreams
-                // Progressive only — DASH/HLS entries carry a manifest, not a URL.
-                .filter {
-                    !it.content.isNullOrBlank() &&
-                        it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP
-                }
-            val stream = select(candidates.map { it.averageBitrate to it })
-                ?: error("트랙 사용 불가: 오디오 스트림 없음")
-            TrackLog.d(
-                TAG,
-                "resolved $videoId via NewPipe ${stream.format?.name} @ ${stream.averageBitrate}kbps " +
-                    "(extraction held the gate ${MonotonicClock.nowMs() - waited}ms)",
-            )
-            // stream.content is already playable, not raw: YoutubeStreamExtractor
-            // resolves the signature cipher and the `n` parameter itself while
-            // building audioStreams, so it is handed on as-is.
-            Stream(
-                url = stream.content,
-                kbps = stream.averageBitrate,
-                mimeType = stream.mime,
-            )
+    ): Stream = try {
+        StreamResolver.extractStream(videoId, select)
+    } catch (e: IllegalStateException) {
+        if (e.message == "Track unavailable: no audio streams") {
+            throw IllegalStateException("트랙 사용 불가: 오디오 스트림 없음")
         }
+        throw e
     }
-
-    /**
-     * The container, which is all NewPipe's mime type reports.
-     *
-     * `MediaFormat.WEBMA_OPUS` — what YouTube's Opus arrives as — carries the
-     * mime type `audio/webm`, identical to the Vorbis-in-WebM entry beside it.
-     * Accurate about the bytes, and useless for telling the codec apart, which
-     * is what [isM4a] is asked of the format for instead.
-     */
-    private val AudioStream.mime: String get() = format?.mimeType.orEmpty()
 
     /**
      * Whether these bytes are AAC in MP4, asked of the format rather than its
