@@ -1,0 +1,8 @@
+BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/telegram. 대상: app/src/main/java/com/music/bitchord/telegram/TelegramAudioReader.kt 만(+그 테스트).
+리뷰 LOW 2건 수정:
+1) refreshTrack(156행 부근)이 fileId 만 바꾸고 totalSize·endPosition·mimeType 은 옛 파일 값 그대로 → 크기가 다른 새 파일이면 길이가 틀리거나 EOF 너머를 읽음. 새 파일 정보로 크기·끝 위치를 다시 계산하고, 현재 position 이 새 크기 밖이면 깔끔한 IOException.
+2) downloadLocks(213행 부근)가 영원히 쌓임 → 보유자·대기자가 없으면 제거(참조 카운트) 또는 고정 개수 striped lock. 같은 트랙 읽기 두 개가 서로 다른 락을 잡는 일이 없어야 함.
+기존 동작(재생 우선순위, close 시 취소, 만료 재시도 1회)은 유지.
+테스트(고치기 전 실패): 크기가 바뀐 새 파일로 refresh 후 길이 정확, 락 맵이 읽기 끝나면 비워짐, 동시 읽기 직렬화 유지. 기존 TelegramAudioReaderTest 에 추가.
+제약: .github/, keys, *.jks, 서명 수정 금지. 타이머·폴링 금지. 바꾼 함수의 모든 호출부 재확인.
+마지막 10줄 이내 요약: 수정 / 테스트 / 미해결.
