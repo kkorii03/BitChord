@@ -5,6 +5,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import android.view.MotionEvent
+import android.view.ViewTreeObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import com.music.bitchord.BuildConfig
@@ -57,8 +58,26 @@ internal data class KoLaunchDecision(
 internal object KoMainActivity {
     fun onStart(state: KoMainActivityState) {
         state.noteForeground()
-        InnerTubeXResolver.ensureWarm()
         AppSettings.checkPrivateListeningExpiry()
+    }
+
+    /**
+     * The cold InnerTubeX warm-up belongs to the first frame actually drawn,
+     * not to an activity that was started in the background (a car, an OEM
+     * music button, a widget) and never shown. A play still starts it itself
+     * through [InnerTubeXResolver.ensureWarm], so first sound is not delayed.
+     */
+    fun warmOnFirstScreen(activity: Activity) {
+        val decor = activity.window?.decorView ?: return
+        val observer = decor.viewTreeObserver ?: return
+        observer.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                val live = decor.viewTreeObserver
+                if (live.isAlive) live.removeOnPreDrawListener(this)
+                InnerTubeXResolver.ensureWarm()
+                return true
+            }
+        })
     }
 
     fun onResume(state: KoMainActivityState) {

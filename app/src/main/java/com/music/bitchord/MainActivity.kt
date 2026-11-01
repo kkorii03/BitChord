@@ -496,6 +496,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+        KoMainActivity.warmOnFirstScreen(this) // [KO] first-screen-warmup
     }
 
     /**
