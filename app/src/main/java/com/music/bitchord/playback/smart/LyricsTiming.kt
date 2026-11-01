@@ -400,7 +400,12 @@ object LyricsTiming {
     private fun savedHeardWords(entry: Entry, key: Int): List<LyricsWordAlign.Heard> {
         val saved = when {
             entry.refineHeardKey == key && entry.refineHeardWords.isNotEmpty() -> entry.refineHeardWords
-            entry.aiTextKey == key && entry.heardWords.isNotEmpty() -> entry.heardWords
+            // Only word-stamped transcripts are a judge. Gemini's "words" are its
+            // own line times: scoring the AI answer against them always says the
+            // AI answer is perfect, and would hand it every disagreement with a
+            // measurement that was in fact right (Opus review, 11-02).
+            entry.aiTextKey == key && entry.heardWords.isNotEmpty() &&
+                entry.aiEngine != null && entry.aiEngine != ENGINE_GEMINI -> entry.heardWords
             else -> emptyList()
         }
         return saved.map { LyricsWordAlign.Heard(it.t, it.s, it.e) }
