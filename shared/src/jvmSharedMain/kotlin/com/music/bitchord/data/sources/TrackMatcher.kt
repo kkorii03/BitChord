@@ -1271,7 +1271,17 @@ object TrackMatcher {
                 tailRemoved = true
                 labelPackaged = true
                 work = work ?: cleanSoundtrackWorkPreserving(tail)
-                text = text.substring(0, match.range.first)
+                // The label is packaging, but a take after it ("Joker OST
+                // Korean Version", "Joker OST (Live)") still names the
+                // recording. Dropping the whole pipe tail let the original
+                // stand in for that take.
+                val kept = keptSoundtrackTakeWords(tail)
+                val before = text.substring(0, match.range.first)
+                text = if (kept.isEmpty()) {
+                    before
+                } else {
+                    before + " (" + kept.joinToString(" ") + ")"
+                }
             }
         }
 
@@ -1408,7 +1418,13 @@ object TrackMatcher {
      */
     private fun keptSoundtrackTakeWords(text: String): List<String> {
         val words = wordsOf(text)
-        val languageTake = isLanguageVersion(text)
+        // A named label ("Joker OST Korean Version") puts the take after the
+        // soundtrack word, so the language check has to read that suffix.
+        // Without it only the packaging "version" survived and the original
+        // recording could stand in for the language take.
+        val label = SOUNDTRACK_WORD.findAll(text).lastOrNull()
+        val takeText = label?.let { text.substring(it.range.last + 1) } ?: text
+        val languageTake = isLanguageVersion(takeText)
         return words.filter {
             (it in VERSION_WORDS && it !in NEUTRAL_SUFFIX_WORDS) ||
                 (languageTake && it in VERSION_LANGUAGES)
@@ -1777,6 +1793,20 @@ object TrackMatcher {
             .filter { it.isNotEmpty() }
         if (words.isEmpty()) return
         if (words.joinToString("") in NEUTRAL_SEGMENTS) return
+        // A named soundtrack label inside a dropped tail names the release,
+        // not the take: "Joker OST Korean" keeps its language marker while
+        // "Joker" and "OST" stay context. Only segments with a take after the
+        // label are split; a bare/terminal label keeps the old reading.
+        val label = SOUNDTRACK_WORD.findAll(segment).lastOrNull()
+        if (label != null) {
+            val before = segment.substring(0, label.range.first)
+            val after = segment.substring(label.range.last + 1)
+            if (after.isNotBlank()) {
+                if (before.isNotBlank()) classify(before, versions, context)
+                classify(after, versions, context)
+                return
+            }
+        }
         val languages = words.mapNotNull { VERSION_LANGUAGES[it] }.distinct()
         if (languages.isNotEmpty() && isLanguageVersion(segment)) {
             // A language version is a different recording. "Version"/"ver" is
