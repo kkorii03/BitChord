@@ -1,0 +1,23 @@
+﻿BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/telegram.
+폰 실측(11-02, 처음 트는 곡, 곡 전체를 whisper 두 모델로 들음):
+- 49pBS6s8avc(HANRORO 관련 영상): lrc.red 가사 26줄이 떴는데 노래에서 한 줄도 안 불림(0/26) = 다른 곡 가사. 제목에 원곡자명이 곡명 자리에 있어 그 이름으로 검색해 다른 곡을 잡음. chroma 측정은 시간만 옮김.
+- WbDgdy7jhIs 'Superman - Boyce Avenue'(커버 채널, 제목에 cover 표시 없음): 원곡(Five for Fighting)을 못 찾고 커버 아티스트로 검색 → 다른 녹음 기준 가사 6/35줄만 맞음.
+- IYxWaWNdTNo: 'Clean Edit' 제목 → LrcRed.best 가 'edit' 를 버전 불일치로 거절 → 시각 없는 가사만.
+할 일:
+① 다른 곡 가사 차단: 노래를 들은 단어(song check/영상 경로의 heard words, Deepgram Whisper)가 충분한데(예: 40단어 이상) 가사 줄 시작이 들린 단어와 맞는 줄이 들려야 할 줄의 15% 미만이면 '가사가 소리와 다름'으로 판정 → 그 제공처 결과를 버리고(이 곡·이 가사 key 에 기억) 다음 제공처/검색어로 다시 찾는다. 다 실패하면 가사를 숨기고 '가사 없음' 상태(엉뚱한 가사보다 없는 게 낫다). 로그: 'lyrics-mismatch: <제공처> heard <n> words, <m>/<k> lines -> rejected'. 기존 LyricsWordAlign 재사용.
+② 'Clean Edit'/'Clean Version'/'Radio Edit' 같은 중립 표기는 버전 불일치로 보지 않는다(LrcRed.best 및 같은 판정을 쓰는 곳). 'Remix'·'Live'·'Acoustic'·언어 버전은 그대로 다른 버전.
+③ 커버 채널 원곡 찾기: 제목에 cover 표기가 없어도 업로더가 알려진 커버 채널이거나(가사 검색에서 그 '아티스트'로 원곡을 못 찾고) 같은 제목의 다른 아티스트 원곡이 카탈로그에 있으면 원곡 아티스트로 가사를 다시 찾는다(RecordingPick/CoverTitles 쪽 기존 경로 활용). 커버 판정을 넓혀 노래 버전 교체(곡 고르기)에 영향 주지 말 것 — 가사 검색어에만 적용.
+테스트(고치기 전 실패): ① 들린 단어 많고 줄 맞음 10% → rejected, 30% → 유지, 단어 적음 → 판정 안 함 ② 'Clean Edit' 수용, 'Live' 거절 ③ 커버 채널 제목에서 원곡 아티스트 검색어 생성.
+제약: .github/, keys, *.jks, 서명 수정 금지. 싱크 시각 계산(LyricsTiming base/refine/hq) 변경 금지. 곡 판정(노래 버전 교체) 기준 변경 금지. 폴링·타이머 금지. 업스트림 파일 쪼개기 금지(새 코드는 ko/ 또는 기존 우리 파일).
+마지막 10줄 이내 요약: 수정 파일 / ①②③ 각각 구현 위치 / 새 테스트 클래스 / 미해결.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 4
+1. HIGH `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/lyrics/LyricsMismatch.kt:42` — `judge` calls `placeLines`, which returns all nulls when `n*m > MAX_CELLS` (LyricsWordAlign.kt:72), so a long correct sheet against a full-song transcript counts 0 matched and is rejected, and LyricsRepository then deletes its disk-cached lyrics. Fix: have `placeLines` report "not attempted" and treat that as `rejected = false` (or judge on a bounded window) rather than as a mismatch.
+2. MEDIUM `app/src/main/java/com/music/bitchord/playback/smart/LyricsTiming.kt:2429` — `resetSongCheck` clears `heardWords`/`refineHeardWords` after a recording swap but not the new `heardCheckKey`/`heardCheckWords` (nor does the success write at :2704), so words heard from the old recording survive and can reject the new recording's correct lyrics. Fix: also clear `heardCheckKey = null` and `heardCheckWords = emptyList()` in `resetSongCheck` and the song-check success update.
+3. MEDIUM `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/lyrics/LyricsMismatch.kt:47` — the denominator is every non-gap line even when the transcript covers only the 90 s song-check/refine window, so a correct long song can fall below 15% and be hidden. Fix: judge only lines whose start falls inside the heard span, or scale the threshold by heard coverage.
+4. MEDIUM `app/src/main/java/com/music/bitchord/ui/LyricsController.kt:1250` — `judgeSheet`/`placeLines` (O(n·m) DP) is launched on `viewModelScope` (Main), and `LyricsRepository.kt:307` runs `soundRejects` on the caller's Main context for in-memory answers, blocking the UI thread for large sheets. Fix: run the judgement under `withContext(Dispatchers.Default)` and keep repository checks off the Main dispatcher.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
