@@ -14,6 +14,7 @@ import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioManager
 import com.music.bitchord.data.settings.OutputPcmMode
+import com.music.bitchord.ko.KoAudioOutputStatus
 import com.music.bitchord.playback.audio.DirectAudioProbe
 import com.music.bitchord.playback.audio.FallbackReason
 import com.music.bitchord.playback.audio.OutputNegotiationResult
@@ -39,7 +40,7 @@ object AudioOutputStatus {
     data class Snapshot(
         val sink: String = "AudioTrack",
         val requestedPcmMode: OutputPcmMode = OutputPcmMode.PCM_16,
-        val deviceName: String = "시스템 기본값",
+        val deviceName: String = KoAudioOutputStatus.defaultDeviceName, // [KO] default-device-name
         /**
          * The [AudioDeviceInfo.getId] of whatever [deviceName] names — the exact
          * device the player resolved and is rendering to, not a second guess at
@@ -140,7 +141,8 @@ object AudioOutputStatus {
                 decoderName == other.decoderName &&
                 bufferSize == other.bufferSize &&
                 decoderOutputEncoding == other.decoderOutputEncoding &&
-                dspFormat == other.dspFormat &&
+                dspFormat == other.dspFormat &&
+
                 dspAvailable == other.dspAvailable &&
                 directUsbProbe == other.directUsbProbe &&
                 directSupport == other.directSupport &&
@@ -181,7 +183,8 @@ object AudioOutputStatus {
             result = 31 * result + (decoderName?.hashCode() ?: 0)
             result = 31 * result + (bufferSize ?: 0)
             result = 31 * result + (decoderOutputEncoding?.hashCode() ?: 0)
-            result = 31 * result + dspFormat.hashCode()
+            result = 31 * result + dspFormat.hashCode()
+
             result = 31 * result + dspAvailable.hashCode()
             result = 31 * result + (directUsbProbe?.hashCode() ?: 0)
             result = 31 * result + (directSupport?.hashCode() ?: 0)
@@ -252,7 +255,7 @@ object AudioOutputStatus {
             AudioDeviceInfo.TYPE_BLE_SPEAKER,
             AudioDeviceInfo.TYPE_BLE_BROADCAST,
             -> "LE Audio"
-            AudioDeviceInfo.TYPE_HEARING_AID -> "보청기"
+            AudioDeviceInfo.TYPE_HEARING_AID -> KoAudioOutputStatus.hearingAidProfile // [KO] bluetooth-profile
             else -> null
         }
 
@@ -268,11 +271,11 @@ object AudioOutputStatus {
         val (reason, detail) = when {
             isDirectUsbViable -> Pair(FallbackReason.NONE, null)
             computedRouteKind == AudioRouting.Kind.PHONE && fallback ->
-                Pair(FallbackReason.ROUTE_LIMITATION, "제조사 믹서 왜곡 방지를 위해 스피커 출력을 16비트로 제한")
+                Pair(FallbackReason.ROUTE_LIMITATION, KoAudioOutputStatus.speakerFallbackDetail) // [KO] fallback-detail
             computedRouteKind == AudioRouting.Kind.USB && fallback ->
                 Pair(
                     if (directUsbProbe?.isViable == false) FallbackReason.DIRECT_USB_UNAVAILABLE else FallbackReason.ROUTE_LIMITATION,
-                    directUsbProbe?.diagnosticReason ?: "USB 경로가 Float32 출력을 지원하지 않음",
+                    directUsbProbe?.diagnosticReason ?: KoAudioOutputStatus.usbFallbackDetail, // [KO] fallback-detail
                 )
             computedRouteKind == AudioRouting.Kind.BLUETOOTH && fallback -> {
                 val btCode = bluetoothTelemetry?.codecName?.let { " ($it)" }.orEmpty()
@@ -286,7 +289,7 @@ object AudioOutputStatus {
 
         val baseSnapshot = current.value.copy(
             requestedPcmMode = requestedPcmMode,
-            deviceName = device?.productName?.toString()?.ifBlank { null } ?: "시스템 기본값",
+            deviceName = device?.productName?.toString()?.ifBlank { null } ?: KoAudioOutputStatus.defaultDeviceName, // [KO] default-device-name
             activeDeviceId = device?.id,
             sampleRatesHz = device?.sampleRates ?: IntArray(0),
             encodings = device?.encodings ?: IntArray(0),
@@ -404,21 +407,13 @@ object AudioOutputStatus {
 
     fun publishAudioTrack(encoding: Int, sampleRateHz: Int, bufferSize: Int? = null) {
         val isFloat = encoding == AudioFormat.ENCODING_PCM_FLOAT
-        val rejectedFloat = current.value.requestedPcmMode == OutputPcmMode.FLOAT_32 &&
-            encoding == AudioFormat.ENCODING_PCM_16BIT
         val baseSnapshot = current.value.copy(
             actualEncoding = encoding,
             actualSampleRateHz = sampleRateHz,
             bufferSize = bufferSize ?: current.value.bufferSize,
             floatFallback = current.value.requestedPcmMode == OutputPcmMode.FLOAT_32 && !isFloat,
-            fallbackReason = if (rejectedFloat) FallbackReason.ROUTE_LIMITATION else current.value.fallbackReason,
-            fallbackDetail = if (rejectedFloat) {
-                "기기가 Float32 AudioTrack을 거부해 16비트 PCM으로 대체"
-            } else {
-                current.value.fallbackDetail
-            },
         )
-        current.value = evaluateActualPath(baseSnapshot)
+        current.value = evaluateActualPath(KoAudioOutputStatus.onAudioTrackPublished(baseSnapshot, encoding)) // [KO] audio-track-fallback
     }
 
     /**
@@ -615,8 +610,8 @@ object AudioOutputStatus {
         AudioFormat.ENCODING_PCM_FLOAT -> "32-bit float"
         AudioFormat.ENCODING_PCM_24BIT_PACKED -> "24-bit PCM"
         AudioFormat.ENCODING_PCM_32BIT -> "32-bit PCM"
-        AudioFormat.ENCODING_PCM_16BIT -> if (snapshot.floatFallback) "16비트 대체" else "16-bit PCM"
-        null -> if (snapshot.floatFallback) "16비트 대체" else snapshot.requestedPcmMode.label
+        AudioFormat.ENCODING_PCM_16BIT -> if (snapshot.floatFallback) KoAudioOutputStatus.encodingFallbackLabel else "16-bit PCM" // [KO] encoding-label
+        null -> if (snapshot.floatFallback) KoAudioOutputStatus.encodingFallbackLabel else snapshot.requestedPcmMode.label // [KO] encoding-label
         else -> "PCM (${snapshot.actualEncoding})"
     }
 }
