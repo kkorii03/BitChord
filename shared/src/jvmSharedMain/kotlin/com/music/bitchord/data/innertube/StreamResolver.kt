@@ -757,7 +757,9 @@ object StreamResolver {
             } else if (probe is DirectProbe.Other) {
                 if (probe.refused) {
                     directUnplayable = true
-                    if (gated) noteBlockedSignal("direct")
+                    if (BlockedStartPolicy.directRefusalStartsRescue(gated, probe.refused)) {
+                        noteBlockedSignal("direct")
+                    }
                 }
                 directUnplayableReason =
                     UnplayableReason.keepTrackSpecific(directUnplayableReason, probe.reason)
@@ -850,6 +852,9 @@ object StreamResolver {
             val directRefused = directRun is DirectProbe.Other && directRun.refused
             if (directRun is DirectProbe.Other) {
                 directUnplayable = directRun.refused
+                if (BlockedStartPolicy.directRefusalStartsRescue(gated, directRun.refused)) {
+                    noteBlockedSignal("direct")
+                }
                 directUnplayableReason =
                     UnplayableReason.keepTrackSpecific(directUnplayableReason, directRun.reason)
             }

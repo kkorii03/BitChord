@@ -47,9 +47,20 @@ try:
 except Exception:
     sys.exit(0)
 def label(n): return (n.get('text') or '') + '|' + (n.get('content-desc') or '')
+# A leading '=' asks for an exact label only (see .github/ui-tour/tour.sh).
+exact_only = want.startswith('=')
+if exact_only:
+    want = want[1:]
 hits = [n for n in nodes if want in ((n.get('text') or ''), (n.get('content-desc') or ''))]
-if not hits:
+if not hits and not exact_only:
     hits = [n for n in nodes if want in label(n)]
+def box(n): return list(map(int, re.findall(r'\d+', n.get('bounds') or '0,0,0,0')))
+# A row hidden behind the floating tab bar is matched but cannot be tapped
+# (the tap lands on the bar): skip matches in the bottom strip or barely
+# visible, so tap_scrolled scrolls once more and finds the row higher up.
+screen_h = max([box(n)[3] for n in nodes] or [0])
+if screen_h:
+    hits = [n for n in hits if box(n)[3] - box(n)[1] >= 12 and (box(n)[1] + box(n)[3]) // 2 < screen_h * 0.86]
 if not hits:
     sys.exit(0)
 def centre(n):
@@ -158,6 +169,22 @@ section_settings() {
   scroll_top
   if tap_scrolled "자동 믹스 성능" 4 12 || tap_scrolled "Automix performance" 4 12; then
     shot settings-playback "Automix performance sheet"
+    back
+  fi
+
+  # Lyrics is a page of its own: tap the row, photograph the page and its
+  # sources dialog, then come back to the main list.
+  scroll_top
+  if tap_scrolled "=가사" 4 20; then
+    shot settings-lyrics "Lyrics settings"
+    adb shell input swipe 540 1700 540 600 400
+    sleep 1
+    shot settings-lyrics-scrolled "Lyrics settings scrolled"
+    scroll_top
+    if tap_scrolled "가사 소스" 4 12; then
+      shot settings-lyrics-sources "Lyrics sources dialog"
+      back
+    fi
     back
   fi
 

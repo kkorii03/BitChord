@@ -122,6 +122,17 @@ class BlockedStartPolicyTest {
     }
 
     @Test
+    fun `only a gated direct refusal starts the rescue budget`() {
+        assertTrue(BlockedStartPolicy.directRefusalStartsRescue(gated = true, refused = true))
+        assertFalse(
+            BlockedStartPolicy.directRefusalStartsRescue(gated = false, refused = true),
+            "an ordinary refusal outside the gate keeps the old unbounded race",
+        )
+        assertFalse(BlockedStartPolicy.directRefusalStartsRescue(gated = true, refused = false))
+        assertFalse(BlockedStartPolicy.directRefusalStartsRescue(gated = false, refused = false))
+    }
+
+    @Test
     fun `a direct refusal starts the proxy only after a short hold, never before`() {
         assertFalse(
             BlockedStartPolicy.shouldStartProxyEarly(

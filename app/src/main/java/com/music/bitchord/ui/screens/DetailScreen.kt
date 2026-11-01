@@ -166,6 +166,7 @@ import com.music.bitchord.data.model.appleCardKind
 import com.music.bitchord.data.model.AlbumSubtitle
 import com.music.bitchord.data.model.parseAlbumSubtitle
 import com.music.bitchord.data.model.durationMillis
+import com.music.bitchord.data.model.firstArtworkOrStill
 import com.music.bitchord.data.model.playingRowMatcher
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.ui.components.BROWSE_LOADING_TIMEOUT_MS
@@ -418,6 +419,14 @@ fun DetailScreen(
     val songs = remember(rawSongs, songSort, folderSort) {
         if (folderSort != null) rawSongs.sortedForLibrary(folderSort) else rawSongs.sortedForDetail(songSort)
     }
+    // A channel playlist can come back with rows but no release cover. The
+    // sleeve then takes the first row's picture — or, when that row only names
+    // its video, the still every YouTube row can always reach — instead of
+    // leaving the header an empty square while the list below has artwork.
+    val headerArtwork = remember(page.thumbnailUrl, songs, page.suggestedSongs) {
+        page.thumbnailUrl?.takeIf { it.isNotBlank() }
+            ?: (songs + page.suggestedSongs).firstArtworkOrStill()
+    }
     // What a numbered row shows regardless of [songSort] — an album's track
     // numbers are the sleeve's own and must not relabel themselves to match
     // wherever a sort put the row. An album grouped off a device's files
@@ -499,7 +508,7 @@ fun DetailScreen(
         }
     }
     val palette = rememberArtworkPalette(
-        imageUrl = appleArt?.heroUrl ?: page.thumbnailUrl,
+        imageUrl = appleArt?.heroUrl ?: headerArtwork,
         keyColors = appleArt?.keyColors(),
     )
 
@@ -674,6 +683,7 @@ fun DetailScreen(
                             sleeveSize = sleeveSize,
                             canvas = canvas,
                             songs = songs,
+                            artworkUrl = headerArtwork,
                             albumSubtitle = albumSubtitle,
                             onPlay = { onSongClick(songs, 0) },
                             onShuffle = { onShuffle(songs) },
@@ -943,11 +953,7 @@ fun DetailScreen(
                         val song = entry.value
                         val isCurrent = isCurrentRow(song)
                         SongRow(
-                            song = if (numbered) {
-                                song
-                            } else {
-                                song.copy(thumbnailUrl = song.thumbnailUrl ?: page.thumbnailUrl)
-                            },
+                            song = song,
                             onClick = {
                                 onSongClick(queue, position)
                             },
@@ -1126,6 +1132,8 @@ private fun ReleaseHeader(
     sleeveSize: Dp,
     canvas: CanvasArtwork?,
     songs: List<Song>,
+    /** The page cover, or the first row's picture/still when the header had none. */
+    artworkUrl: String? = page.thumbnailUrl,
     /** The album subtitle split into credit / year, or null on any other page. */
     albumSubtitle: AlbumSubtitle? = null,
     onPlay: () -> Unit,
@@ -1176,8 +1184,8 @@ private fun ReleaseHeader(
                 // placeholder sleeve rather than an empty square. Not shown while a
                 // real one is still on its way, so a loading cover doesn't flash
                 // a glyph first.
-                var artFailed by remember(page.thumbnailUrl) { mutableStateOf(false) }
-                if (page.thumbnailUrl == null || artFailed) {
+                var artFailed by remember(artworkUrl) { mutableStateOf(false) }
+                if (artworkUrl == null || artFailed) {
                     CoverPlaceholder(
                         icon = page.placeholderIcon(),
                         base = palette.elevated,
@@ -1186,7 +1194,7 @@ private fun ReleaseHeader(
                     )
                 }
                 AsyncImage(
-                    model = page.thumbnailUrl.artworkAt(HEADER_ART_PX),
+                    model = artworkUrl.artworkAt(HEADER_ART_PX),
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     onState = { artFailed = it is AsyncImagePainter.State.Error },
