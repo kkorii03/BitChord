@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
@@ -82,6 +83,13 @@ class LyricsController(
      * clears it, so the next playback may have the audio.
      */
     private var songCheckStartedFor: String? = null
+
+    /**
+     * The lyrics whose mismatch with the sound was already acted on in this
+     * playback. A reload is started once per sheet, so a transcript that keeps
+     * arriving cannot keep restarting the lookup.
+     */
+    private var mismatchReloadedFor: String? = null
 
     /**
      * The lyrics whose first ninety seconds were already heard for a measured
@@ -224,6 +232,7 @@ class LyricsController(
         ) {
             songCheckStartedFor = null
             refineHeardStartedFor = null
+            mismatchReloadedFor = null
         }
         lyricsFor = key
         lyricsGeneration += 1
@@ -1219,6 +1228,55 @@ class LyricsController(
         }
         if (refineFrom != null) {
             startRefineHeardIfNeeded(request, lines, refineFrom, audioSource, generation)
+        }
+        rejectWrongLyricsIfHeard(generation, request, lines)
+    }
+
+    /**
+     * Throws away what is on screen when the transcript the app already has
+     * shows the sheet is another song's, and asks again — the same lookup,
+     * now able to reject that provider's answer and try the next name. The
+     * repository keeps the rejection, so the wrong sheet is not fetched back.
+     */
+    private fun rejectWrongLyricsIfHeard(
+        generation: Long,
+        request: LyricsRequest,
+        lines: List<LyricLine>,
+    ) {
+        if (generation != lyricsGeneration || timingLines !== lines) return
+        if (selectedLyricsSource != null) return
+        val result = rawLyricsResult ?: return
+        val key = "${request.videoId}|${lines.hashCode()}"
+        if (mismatchReloadedFor == key) return
+        scope.launch {
+            val heard = LyricsTiming.heardWordsFor(app, request.videoId)
+            if (generation != lyricsGeneration || timingLines !== lines) return@launch
+            // Lining a long sheet up with a long transcript is a full DP table;
+            // it must not run on the main thread while the screen is drawing.
+            val verdict = withContext(Dispatchers.Default) {
+                com.music.bitchord.data.lyrics.LyricsMismatch.judgeSheet(lines, heard)
+            }
+            if (generation != lyricsGeneration || timingLines !== lines) return@launch
+            if (!verdict.rejected) return@launch
+            mismatchReloadedFor = key
+            TrackLog.i(
+                "BitChord",
+                com.music.bitchord.data.lyrics.LyricsMismatch.logLine(result.source, verdict),
+                about = request.videoId,
+            )
+            lyricsFor = null
+            loadLyrics(
+                videoId = request.videoId,
+                title = request.title,
+                artist = request.artist,
+                durationMs = request.durationMs,
+                album = request.album,
+                localUri = request.localUri,
+                isVideo = request.isVideo,
+                alternatives = request.alternatives,
+                artistKnown = request.artistKnown,
+                artistAliases = request.artistAliases,
+            )
         }
     }
 

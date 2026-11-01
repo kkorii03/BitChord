@@ -1711,6 +1711,9 @@ object LyricsTiming {
         // The words behind the answer that is kept, so the panel can use their
         // real per-word times instead of guessing them from the line's slot.
         var acceptedHeard: List<LyricsWordAlign.Heard>? = null
+        // Words heard for a sheet they did not fit: kept as evidence that the
+        // sheet is not this video's song, without becoming a timing answer.
+        var rejectedHeard: List<LyricsWordAlign.Heard>? = null
         // Kept before the call, not after: a request that fails, times out or
         // is cancelled has still been paid for, and must not be made again for
         // these lyrics. [AiTimingPolicy] reads this to pick the next engine.
@@ -1805,6 +1808,7 @@ object LyricsTiming {
                     acceptedHeard = heard
                     break
                 }
+                if (heard != null) rejectedHeard = heard
                 // A key Deepgram turned away is turned away for Whisper too.
                 if (!com.music.bitchord.data.lyrics.Deepgram.usable) break
             }
@@ -1857,6 +1861,15 @@ object LyricsTiming {
                 persistAttempts()
                 if (anyEngineAnswered) store(context).update(videoId) { it.copy(aiFailedKey = key) }
             }
+            rejectedHeard?.let { heard ->
+                store(context).update(videoId) {
+                    it.copy(
+                        heardCheckKey = key,
+                        heardCheckWords = heard.take(MAX_HEARD_WORDS)
+                            .map { word -> SavedWord(t = word.text, s = word.startMs, e = word.endMs) },
+                    )
+                }
+            }
             return null
         }
         persistAttempts()
@@ -1873,6 +1886,8 @@ object LyricsTiming {
                 heardWords = acceptedHeard.orEmpty()
                     .take(MAX_HEARD_WORDS)
                     .map { word -> SavedWord(t = word.text, s = word.startMs, e = word.endMs) },
+                heardCheckKey = null,
+                heardCheckWords = emptyList(),
                 // A new answer to the same lyrics keeps whether it was wanted
                 // over the measurement; it's [placeWithAi] that says it is.
                 aiPreferred = it.aiPreferred && it.aiTextKey == key,
@@ -2213,7 +2228,21 @@ object LyricsTiming {
             ?: return@withLock false
         if (check.failure != null) return@withLock false
         if (check.result == "no-words") return@withLock false
-        val fitted = check.fitted ?: return@withLock true
+        val fitted = check.fitted
+        if (fitted == null) {
+            // The engine answered but its transcript does not fit this sheet.
+            // Keep the words as wrong-song evidence; no timing is applied.
+            if (check.heard.isNotEmpty()) {
+                store(context).update(song.videoId) {
+                    it.copy(
+                        heardCheckKey = key,
+                        heardCheckWords = check.heard.take(MAX_HEARD_WORDS)
+                            .map { word -> SavedWord(t = word.text, s = word.startMs, e = word.endMs) },
+                    )
+                }
+            }
+            return@withLock true
+        }
         store(context).update(song.videoId) {
             it.copy(
                 aiTextKey = key,
@@ -2223,6 +2252,8 @@ object LyricsTiming {
                 aiFailedKey = null,
                 heardWords = check.heard.take(MAX_HEARD_WORDS)
                     .map { word -> SavedWord(t = word.text, s = word.startMs, e = word.endMs) },
+                heardCheckKey = null,
+                heardCheckWords = emptyList(),
                 aiPreferred = it.aiPreferred && it.aiTextKey == key,
                 biasSampled = false,
                 aiEngine = engine,
@@ -2494,6 +2525,8 @@ object LyricsTiming {
                 aiStarts = null,
                 aiFailedKey = null,
                 heardWords = emptyList(),
+                heardCheckKey = null,
+                heardCheckWords = emptyList(),
                 aiPreferred = false,
                 aiEngine = null,
                 aiAttemptedKey = null,
@@ -2755,6 +2788,8 @@ object LyricsTiming {
                         aiFailedKey = null,
                         heardWords = result.heard.take(MAX_HEARD_WORDS)
                             .map { word -> SavedWord(t = word.text, s = word.startMs, e = word.endMs) },
+                        heardCheckKey = null,
+                        heardCheckWords = emptyList(),
                         aiPreferred = false,
                         biasSampled = false,
                         aiEngine = ENGINE_DEEPGRAM_WHISPER,
@@ -3035,6 +3070,19 @@ object LyricsTiming {
     /** The listener's own correction for [videoId], ms; positive shows the lyrics later. */
     suspend fun manual(context: Context, videoId: String): Long = store(context).get(videoId)?.manualMs ?: 0L
 
+    /**
+     * The words a transcript heard in [videoId], whichever kept list covers
+     * the most of the song. Used to check that a provider's lyrics are the
+     * words actually sung — see [com.music.bitchord.data.lyrics.LyricsMismatch].
+     */
+    suspend fun heardWordsFor(context: Context, videoId: String): List<LyricsWordAlign.Heard> {
+        val entry = store(context).get(videoId) ?: return emptyList()
+        val saved = listOf(entry.heardWords, entry.refineHeardWords, entry.heardCheckWords)
+            .maxByOrNull { it.size }
+            .orEmpty()
+        return saved.map { LyricsWordAlign.Heard(it.t, it.s, it.e) }
+    }
+
     /** Keeps [ms] as the correction for [videoId]; 0 removes it. */
     suspend fun setManual(context: Context, videoId: String, ms: Long) {
         val value = ms.coerceIn(-MAX_MANUAL_MS, MAX_MANUAL_MS)
@@ -3174,6 +3222,13 @@ object LyricsTiming {
         val whisperKey: Int? = null,
         /** The words behind the AI answer, on the video's clock; see [timing]. */
         val heardWords: List<SavedWord> = emptyList(),
+        /**
+         * Words heard while checking a sheet they did not fit. They are not a
+         * timing answer and are never applied; they let a later lyrics lookup
+         * see that the shown sheet is not what this video sings.
+         */
+        val heardCheckKey: Int? = null,
+        val heardCheckWords: List<SavedWord> = emptyList(),
         /**
          * The line-level refine: the offset [RefinePolicy] found, the drift
          * per minute when the residuals followed a straight line, how many

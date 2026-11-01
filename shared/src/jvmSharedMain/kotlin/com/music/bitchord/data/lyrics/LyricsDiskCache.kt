@@ -93,6 +93,11 @@ internal object LyricsDiskCache {
         }
     }
 
+    /** Forgets a kept answer the sound has since shown to be the wrong song. */
+    fun remove(key: String) {
+        runCatching { fileFor(key)?.delete() }
+    }
+
     /** Marks [key] as just checked, so the background search waits [RECHECK_MS] again. */
     fun touchChecked(key: String) {
         runCatching {

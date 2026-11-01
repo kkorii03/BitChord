@@ -140,6 +140,11 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         com.music.bitchord.data.cover.CoverTitles.knownOriginal = com.music.bitchord.playback.smart.CoverOriginals::get
         // Lyrics no source has: Gemini writes them down off the video.
         com.music.bitchord.playback.smart.AiLyrics.init(this)
+        // A sheet whose lines the sound never sang is not shown: the lookup
+        // can compare it with the words an earlier Deepgram/Whisper pass kept.
+        com.music.bitchord.data.lyrics.LyricsRepository.heardWordsFor = { videoId ->
+            com.music.bitchord.playback.smart.LyricsTiming.heardWordsFor(this, videoId)
+        }
         LyricsTranslation.cacheDir = cacheDir
         LyricsTranslation.keepDir = filesDir
         // PlaybackService shares this process, so seeding the cookie here means

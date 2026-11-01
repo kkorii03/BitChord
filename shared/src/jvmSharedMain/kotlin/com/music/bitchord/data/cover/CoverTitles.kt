@@ -325,9 +325,38 @@ object CoverTitles {
             // A cover is an upload whatever the row says — a Recents row can
             // arrive without its video flag — so its captions are asked first
             // and its lyrics are put on its own clock.
-            title, artist, queries.drop(1), song.isVideo || cover != null,
+            title, artist,
+            (queries.drop(1) + coverChannelQueries(upload)).distinct(),
+            song.isVideo || cover != null,
             artistKnown = cover == null || cover.originalArtist != null,
             artistAliases = ArtistAliases.forSong(upload),
+        )
+    }
+
+    /**
+     * Lyrics-only readings for an upload on a known cover channel whose title
+     * never says "Cover": the original's artist and the song are on either
+     * side of its dash, and which is which is not written anywhere. Both
+     * orientations are tried under the song's own name after the plain reading
+     * has missed. This deliberately does not change [read] — a song version
+     * pick must not start treating an ordinary artist-title row as a cover.
+     */
+    private fun coverChannelQueries(song: Song): List<Pair<String, String>> {
+        if (!song.isVideo) return emptyList()
+        val channelId = song.artistId ?: return emptyList()
+        if (channelId !in designatedChannels()) return emptyList()
+        val raw = song.title.trim()
+        if (raw.isEmpty() || ANY_COVER_WORD.containsMatchIn(raw)) return emptyList()
+        // A title that already names the original needs nothing else.
+        if (read(song)?.originalArtist != null) return emptyList()
+        val (left, right) = splitTopLevelDash(raw) ?: return emptyList()
+        val leftTitle = cleanTitle(left) ?: return emptyList()
+        val rightTitle = cleanTitle(right) ?: return emptyList()
+        fun person(text: String): String? = cleanName(text)
+            ?.takeUnless { it.isBlank() || isVersionWord(it) || isDescriptor(it) || isGenericCredit(it) }
+        return listOfNotNull(
+            person(right)?.let { leftTitle to it },
+            person(left)?.let { rightTitle to it },
         )
     }
 
