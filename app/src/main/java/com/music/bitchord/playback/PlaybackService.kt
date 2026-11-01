@@ -939,6 +939,13 @@ class PlaybackService : MediaLibraryService() {
             boundedContextRequest?.let { BoundedContextRequests.publish(it, snapshot) }
             player?.let(::saveBoundedContextSnapshot)
             scheduleBoundedContextTopUp()
+            if (autoplayNeedsContinuationTerminalRecheck(snapshot.continuationState)) {
+                // The playlist can run out of continuation while its last row
+                // is already current, so no item transition is left to give
+                // AutoPlay its usual chance. Reconsider it on this terminal
+                // event instead of polling.
+                loadAutoplayForCurrentTrack()
+            }
         }
     }
 
@@ -4072,7 +4079,18 @@ class PlaybackService : MediaLibraryService() {
                     )
                     return@launch
                 }
-                if (emptyRefreshesRemaining-- <= 0) {
+                if (emptyRefreshesRemaining <= 0) {
+                    // The retries are spent; release the latch so the next
+                    // event (a queue edit, pause/resume, or a terminal
+                    // continuation) can ask again instead of stopping forever
+                    // at "same-seed". Only the newest load may clear a seed.
+                    if (generation == autoplayRefillGeneration) {
+                        autoplaySeed = autoplaySeedAfterExhaustedRetries(
+                            seed = autoplaySeed,
+                            currentVideoId = current.videoId,
+                            retriesRemaining = emptyRefreshesRemaining,
+                        )
+                    }
                     TrackLog.d(
                         "BitChord",
                         "autoplay: empty seed=${current.videoId} retry=exhausted",
@@ -4080,6 +4098,7 @@ class PlaybackService : MediaLibraryService() {
                     )
                     return@launch
                 }
+                emptyRefreshesRemaining--
                 delay(AUTOPLAY_EMPTY_REFRESH_DELAY_MS)
                 remaining = MAX_QUEUED_AUTOPLAY
             }

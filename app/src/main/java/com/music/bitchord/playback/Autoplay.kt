@@ -103,6 +103,34 @@ fun autoplayQueueNeedsRefresh(
     currentIndex >= 0 &&
     currentIndex == itemCount - 1
 
+/**
+ * Whether a continuation reaching a terminal state has to make AutoPlay look
+ * at the queue again right away.
+ *
+ * A bounded playlist that runs out of continuation while its last row is
+ * already the current one has no upcoming item transition left to reconsider
+ * AutoPlay. Without this, an enabled AutoPlay queue stayed empty until the
+ * listener touched something. The terminal snapshot is the event; no timer is
+ * involved.
+ */
+internal fun autoplayNeedsContinuationTerminalRecheck(state: ContinuationState): Boolean =
+    state == ContinuationState.EXHAUSTED || state == ContinuationState.BLOCKED
+
+/**
+ * The seed to keep after an AutoPlay load came back empty.
+ *
+ * The seed normally stays latched to suppress duplicate loads from the several
+ * callbacks one event can produce. Once the bounded empty-response retries are
+ * used up it must be released, or every later pause/resume and queue edit is
+ * skipped as "same seed" and AutoPlay stays on with nothing queued. Clearing
+ * only when it still names this track keeps a newer load's seed intact.
+ */
+internal fun autoplaySeedAfterExhaustedRetries(
+    seed: String?,
+    currentVideoId: String,
+    retriesRemaining: Int,
+): String? = if (retriesRemaining <= 0 && seed == currentVideoId) null else seed
+
 fun needsYoutubeSeedLookup(song: Song): Boolean =
     !SongOrigins.hasYouTubeIdentity(song.videoId)
 
