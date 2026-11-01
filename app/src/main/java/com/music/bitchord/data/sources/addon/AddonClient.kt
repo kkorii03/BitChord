@@ -476,8 +476,19 @@ class AddonClient(rawBaseUrl: String) {
                                 // the next request has to wait out that same rest
                                 // instead of turning one refusal into a stream of
                                 // them.
-                                quietUntilMs = System.currentTimeMillis() + restMs
-                                throw AddonUnavailable("애드온이 BitChord의 요청을 제한하고 있습니다")
+                                val nowMs = System.currentTimeMillis()
+                                quietUntilMs = nowMs + restMs
+                                // A sleeping free-tier host wakes in about a
+                                // minute; the source-level 30-minute rest would
+                                // keep its candidates out for the rest of that
+                                // window even after it is healthy again. Carry
+                                // the host's own expiry so the caller can align
+                                // the two without weakening the fallback used by
+                                // a real, unreachable addon.
+                                throw AddonUnavailable(
+                                    "애드온이 BitChord의 요청을 제한하고 있습니다",
+                                    restUntilMs = nowMs + restMs,
+                                )
                             }
                             decision.waitMs
                         }
@@ -724,10 +735,17 @@ class AddonAuthException(
  * [transport] is true when the addon could not be reached at all (DNS, TLS, a
  * refused connection, a body read that timed out). That still counts against
  * the source, but an offline device must not be parked for it.
+ *
+ * [restUntilMs] is the host's own rest expiry when the addon answered with a
+ * rate-limit or sleeping-gateway code. It lets [SourceCooldown] stop parking
+ * the whole source for thirty minutes once the host itself is awake again.
+ * Zero means no host rest was recorded (a transport fault, a plain 5xx), so
+ * the source keeps its ordinary cooldown.
  */
 class AddonUnavailable(
     message: String,
     val transport: Boolean = false,
+    val restUntilMs: Long = 0L,
 ) : Exception(message)
 
 /** The addon answered, and does not have what was asked for. A miss, not a fault. */

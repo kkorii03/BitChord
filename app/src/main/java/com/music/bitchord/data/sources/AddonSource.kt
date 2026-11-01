@@ -251,7 +251,11 @@ class AddonSource(
                 if (failure is AddonAuthException) {
                     noteAuthFailure()
                 } else if (failure is AddonUnavailable) {
-                    SourceResolver.reportSourceFailure(config.id, network = failure.transport)
+                    SourceResolver.reportSourceFailure(
+                        config.id,
+                        network = failure.transport,
+                        restUntilMs = failure.restUntilMs,
+                    )
                 }
                 return@withContext emptyList()
             }
@@ -353,7 +357,11 @@ class AddonSource(
                     return@withContext null
                 }
                 if (failure is AddonUnavailable) {
-                    SourceResolver.reportSourceFailure(config.id, network = failure.transport)
+                    SourceResolver.reportSourceFailure(
+                        config.id,
+                        network = failure.transport,
+                        restUntilMs = failure.restUntilMs,
+                    )
                 }
                 return@withContext fromRow(trackId, tier, request, stereoOnly)
             }
