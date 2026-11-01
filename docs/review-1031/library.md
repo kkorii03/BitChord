@@ -210,3 +210,21 @@
 
 업스트림 v1.8.1 코드는 삭제·분할하지 않았다. 기존 안전 규칙(다운로드 파일
 비교 조건, HQ 매니페스트 금지, PCM16 상한 등)은 그대로 두었다.
+
+---
+
+## 7. 2026-11-02 재검증 (현재 코드 기준)
+
+| 지적 | 판정 | 현재 근거 |
+|---|---|---|
+| H1 로컬 목록 이름 변경·삭제 | 이미 고쳐짐 | `MainViewModel.kt:1326,1336`, `MainActivity.kt:5722,5761` |
+| H2 고음질 보관함 포그라운드·비재생 게이트 | 남음 | `HqLibraryUpgrade.kt:313`(`runAllowed`), `:317`(포그라운드), `:321`(재생 중) |
+| M1 백업 좋아요 병합 | 이미 고쳐짐 | `Backup.kt:295`(`LikeState.clear()`), `:299-304` |
+| M2 같은 ms 로컬 목록 덮어쓰기 | 이미 고쳐짐 | `LocalPlaylistStore.kt:138,251` |
+| M3 Spotify 51곡 이후 실패 은폐 | 이미 고쳐짐 | `MainViewModel.kt:1088,1112`, `MainActivity.kt:5535` |
+| M4 로그아웃 새 플레이리스트 무반응 | 이미 고쳐짐 | `LibraryScreen.kt:186,539` |
+| M5 setVideoId 없는 행 삭제 | 오진/이미 고쳐짐 | `MainActivity.kt:5139`가 삭제 행을 숨김; 도달 불가 helper/test 제거 |
+
+이번 보완: `spotify_import_partial`이 `values/`·`values-ko/`에만 있어 16개
+언어에서 영어로 폴백되던 문제를 각 로케일에 추가(H2는 이번에도 미수정).
+

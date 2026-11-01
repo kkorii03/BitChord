@@ -1272,6 +1272,7 @@
     <string name="spotify_import_description">粘贴公开播放列表链接。歌曲将在 YouTube Music 上匹配。</string>
     <string name="spotify_import_description_local">粘贴公开播放列表链接。歌曲将在 YouTube Music 上匹配并保存到本设备。</string>
     <string name="spotify_import_done">已导入“%1$s”</string>
+    <string name="spotify_import_partial">有 %1$d 首歌曲未能添加，其余歌曲已保存到播放列表。</string>
     <string name="spotify_import_empty_playlist">此播放列表中没有歌曲</string>
     <string name="spotify_import_failed">无法导入播放列表：%1$s</string>
     <string name="spotify_import_fetching">正在读取 Spotify 播放列表…</string>

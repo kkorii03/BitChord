@@ -1,8 +1,5 @@
 package com.music.bitchord.ui
 
-import com.music.bitchord.data.TrackLog
-import com.music.bitchord.data.model.Song
-
 /**
  * The part of a playlist import that arrives after the first request.
  *
@@ -19,27 +16,4 @@ internal suspend fun addPlaylistRemainderChunks(
         if (add(chunk).isFailure) failedSongs += chunk.size
     }
     return failedSongs
-}
-
-/**
- * The entry a playlist removal names, or null when this row cannot carry one.
- *
- * A row with no set-video-id is one YouTube never placed in this playlist; the
- * caller gets [onFailure] so the tap does not disappear without a word.
- */
-internal fun playlistRemovalEntry(
-    song: Song,
-    signedIn: Boolean,
-    onFailure: () -> Unit,
-): Pair<String, String>? {
-    if (!signedIn) return null
-    val setVideoId = song.setVideoId ?: run {
-        TrackLog.w(
-            "BitChord",
-            "playlist remove skipped: no setVideoId for ${song.videoId}",
-        )
-        onFailure()
-        return null
-    }
-    return setVideoId to song.videoId
 }

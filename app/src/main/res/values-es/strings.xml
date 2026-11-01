@@ -1267,6 +1267,7 @@
     <string name="spotify_import_description">Pega un enlace público de playlist. Las canciones se buscan en YouTube Music.</string>
     <string name="spotify_import_description_local">Pega un enlace público de playlist. Las canciones se buscan en YouTube Music y se guardan en este dispositivo.</string>
     <string name="spotify_import_done">Se importó «%1$s»</string>
+    <string name="spotify_import_partial">No se pudieron añadir %1$d canciones; el resto de la lista se guardó.</string>
     <string name="spotify_import_empty_playlist">No hay canciones en esta playlist</string>
     <string name="spotify_import_failed">No se pudo importar la playlist: %1$s</string>
     <string name="spotify_import_fetching">Leyendo la playlist de Spotify…</string>

@@ -1296,6 +1296,7 @@
     <string name="spotify_import_description">Collez un lien de playlist publique. Les titres sont recherchés sur YouTube Music.</string>
     <string name="spotify_import_description_local">Collez un lien de playlist publique. Les titres sont recherchés sur YouTube Music et enregistrés sur cet appareil.</string>
     <string name="spotify_import_done">« %1$s » importée</string>
+    <string name="spotify_import_partial">%1$d titres n’ont pas pu être ajoutés ; le reste de la playlist a été enregistré.</string>
     <string name="spotify_import_empty_playlist">Aucun titre dans cette playlist</string>
     <string name="spotify_import_failed">Impossible d\'importer la playlist : %1$s</string>
     <string name="spotify_import_fetching">Lecture de la playlist Spotify…</string>

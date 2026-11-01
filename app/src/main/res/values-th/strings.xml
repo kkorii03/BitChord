@@ -1278,6 +1278,7 @@
     <string name="spotify_import_description">วางลิงก์เพลย์ลิสต์สาธารณะ เพลงจะถูกจับคู่บน YouTube Music</string>
     <string name="spotify_import_description_local">วางลิงก์เพลย์ลิสต์สาธารณะ เพลงจะถูกจับคู่บน YouTube Music และบันทึกไว้ในเครื่องนี้</string>
     <string name="spotify_import_done">นำเข้า ‘%1$s’ แล้ว</string>
+    <string name="spotify_import_partial">ไม่สามารถเพิ่มเพลง %1$d เพลงได้ เพลงที่เหลือบันทึกไว้ในเพลย์ลิสต์แล้ว</string>
     <string name="spotify_import_empty_playlist">ไม่มีเพลงในเพลย์ลิสต์นี้</string>
     <string name="spotify_import_failed">นำเข้าเพลย์ลิสต์ไม่สำเร็จ: %1$s</string>
     <string name="spotify_import_fetching">กำลังอ่านเพลย์ลิสต์ Spotify…</string>

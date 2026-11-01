@@ -1272,6 +1272,7 @@
     <string name="spotify_import_description">Tempelkan tautan playlist publik. Lagu dicocokkan di YouTube Music.</string>
     <string name="spotify_import_description_local">Tempelkan tautan playlist publik. Lagu dicocokkan di YouTube Music dan disimpan di perangkat ini.</string>
     <string name="spotify_import_done">‘%1$s’ diimpor</string>
+    <string name="spotify_import_partial">%1$d lagu tidak dapat ditambahkan; sisa playlist telah disimpan.</string>
     <string name="spotify_import_empty_playlist">Tidak ada lagu di playlist ini</string>
     <string name="spotify_import_failed">Gagal mengimpor playlist: %1$s</string>
     <string name="spotify_import_fetching">Membaca playlist Spotify…</string>

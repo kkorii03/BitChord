@@ -1133,8 +1133,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         /** Told when YouTube refused the write, so the surface can say so. */
         onFailure: () -> Unit = {},
     ) {
-        val entry = playlistRemovalEntry(song, requireSignIn(), onFailure) ?: return
-        val (setVideoId, videoId) = entry
+        if (!requireSignIn()) return
+        // The sheet hides this row without an entry id; keep the notice for any
+        // other caller rather than dropping the tap without a word.
+        val setVideoId = song.setVideoId ?: run {
+            onFailure()
+            return
+        }
+        val videoId = song.videoId
         val playlistId = browseId.removePrefix("VL")
         viewModelScope.launch {
             YtMusicRepository.removeFromPlaylist(

@@ -1295,6 +1295,7 @@
     <string name="spotify_import_description">Füge einen öffentlichen Playlist-Link ein. Titel werden auf YouTube Music abgeglichen.</string>
     <string name="spotify_import_description_local">Füge einen öffentlichen Playlist-Link ein. Titel werden auf YouTube Music abgeglichen und auf diesem Gerät gespeichert.</string>
     <string name="spotify_import_done">„%1$s“ importiert</string>
+    <string name="spotify_import_partial">%1$d Titel konnten nicht hinzugefügt werden; der Rest der Playlist wurde gespeichert.</string>
     <string name="spotify_import_empty_playlist">Keine Titel in dieser Playlist</string>
     <string name="spotify_import_failed">Playlist konnte nicht importiert werden: %1$s</string>
     <string name="spotify_import_fetching">Spotify-Playlist wird gelesen…</string>

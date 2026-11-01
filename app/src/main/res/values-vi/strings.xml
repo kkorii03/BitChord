@@ -1212,6 +1212,7 @@
     <string name="spotify_import_description">Dán liên kết danh sách phát công khai. Bài hát được đối chiếu trên YouTube Music.</string>
     <string name="spotify_import_description_local">Dán liên kết danh sách phát công khai. Bài hát được đối chiếu trên YouTube Music và lưu trên thiết bị này.</string>
     <string name="spotify_import_done">Đã nhập ‘%1$s’</string>
+    <string name="spotify_import_partial">Không thể thêm %1$d bài hát; phần còn lại của danh sách phát đã được lưu.</string>
     <string name="spotify_import_empty_playlist">Không có bài hát trong danh sách phát này</string>
     <string name="spotify_import_failed">Không thể nhập danh sách phát: %1$s</string>
     <string name="spotify_import_fetching">Đang đọc danh sách phát Spotify…</string>

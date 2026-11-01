@@ -1300,6 +1300,7 @@
     <string name="spotify_import_description">Cole um link público de playlist. As músicas são encontradas no YouTube Music.</string>
     <string name="spotify_import_description_local">Cole um link público de playlist. As músicas são encontradas no YouTube Music e salvas neste dispositivo.</string>
     <string name="spotify_import_done">‘%1$s’ importada</string>
+    <string name="spotify_import_partial">Não foi possível adicionar %1$d músicas; o resto da playlist foi salvo.</string>
     <string name="spotify_import_empty_playlist">Nenhuma música nesta playlist</string>
     <string name="spotify_import_failed">Não foi possível importar a playlist: %1$s</string>
     <string name="spotify_import_fetching">Lendo a playlist do Spotify…</string>

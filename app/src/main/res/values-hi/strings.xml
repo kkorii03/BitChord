@@ -1295,6 +1295,7 @@
     <string name="spotify_import_description">सार्वजनिक प्लेलिस्ट लिंक चिपकाएँ. गाने YouTube Music पर मिलाए जाते हैं.</string>
     <string name="spotify_import_description_local">सार्वजनिक प्लेलिस्ट लिंक चिपकाएँ. गाने YouTube Music पर मिलाए जाते हैं और इस डिवाइस पर सहेजे जाते हैं.</string>
     <string name="spotify_import_done">‘%1$s’ आयात हुई</string>
+    <string name="spotify_import_partial">%1$d गाने जोड़े नहीं जा सके; बाकी प्लेलिस्ट सहेज ली गई.</string>
     <string name="spotify_import_empty_playlist">इस प्लेलिस्ट में कोई गाना नहीं</string>
     <string name="spotify_import_failed">प्लेलिस्ट आयात नहीं हो सकी: %1$s</string>
     <string name="spotify_import_fetching">Spotify प्लेलिस्ट पढ़ी जा रही है…</string>

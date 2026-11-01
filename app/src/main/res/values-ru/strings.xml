@@ -1327,6 +1327,7 @@
     <string name="spotify_import_description">Вставьте ссылку на публичный плейлист. Треки сопоставляются на YouTube Music.</string>
     <string name="spotify_import_description_local">Вставьте ссылку на публичный плейлист. Треки сопоставляются на YouTube Music и сохраняются на этом устройстве.</string>
     <string name="spotify_import_done">Импортирован «%1$s»</string>
+    <string name="spotify_import_partial">Не удалось добавить %1$d треков; остальная часть плейлиста сохранена.</string>
     <string name="spotify_import_empty_playlist">В этом плейлисте нет треков</string>
     <string name="spotify_import_failed">Не удалось импортировать плейлист: %1$s</string>
     <string name="spotify_import_fetching">Читаем плейлист Spotify…</string>

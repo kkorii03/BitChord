@@ -1300,6 +1300,7 @@
     <string name="spotify_import_description">הדביקו קישור לפלייליסט ציבורי. השירים יותאמו ב-YouTube Music.</string>
     <string name="spotify_import_description_local">הדביקו קישור לפלייליסט ציבורי. השירים יותאמו ב-YouTube Music ויישמרו במכשיר זה.</string>
     <string name="spotify_import_done">„%1$s” יובאה</string>
+    <string name="spotify_import_partial">לא ניתן היה להוסיף %1$d שירים; שאר הפלייליסט נשמר.</string>
     <string name="spotify_import_empty_playlist">אין שירים בפלייליסט זה</string>
     <string name="spotify_import_failed">ייבוא הפלייליסט נכשל: %1$s</string>
     <string name="spotify_import_fetching">קורא את הפלייליסט של Spotify…</string>

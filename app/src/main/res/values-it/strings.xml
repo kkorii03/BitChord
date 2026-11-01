@@ -1234,6 +1234,7 @@
     <string name="spotify_import_description">Incolla il collegamento di una playlist pubblica. I brani vengono abbinati su YouTube Music.</string>
     <string name="spotify_import_description_local">Incolla il collegamento di una playlist pubblica. I brani vengono abbinati su YouTube Music e salvati su questo dispositivo.</string>
     <string name="spotify_import_done">«%1$s» importata</string>
+    <string name="spotify_import_partial">Impossibile aggiungere %1$d brani; il resto della playlist è stato salvato.</string>
     <string name="spotify_import_empty_playlist">Nessun brano in questa playlist</string>
     <string name="spotify_import_failed">Impossibile importare la playlist: %1$s</string>
     <string name="spotify_import_fetching">Lettura della playlist Spotify…</string>
