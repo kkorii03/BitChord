@@ -97,8 +97,10 @@ class AiTimingPolicyTest {
 
     @Test
     fun legacyWhisperKeyAndGeminiFailureCountAsSpent() {
+        // The legacy whisperKey named the same Deepgram Whisper request, so it
+        // spends both ids and only Gemini is left.
         assertEquals(
-            listOf("Deepgram Whisper", "Gemini"),
+            listOf("Gemini"),
             AiTimingPolicy.nextEngines(
                 AiTimingKnowledge(whisperKey = key),
                 key,

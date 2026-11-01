@@ -1033,7 +1033,7 @@ object LyricsTiming {
                 biasSampled = false,
             )
         }
-        sampleBias(context, videoId, lines)
+        sampleBias(context, videoId, lines, lines?.let { textKey(it) })
         _changes.tryEmit(videoId)
     }
 
@@ -1875,7 +1875,7 @@ object LyricsTiming {
                 aiEngine = engine,
             )
         }
-        sampleBias(context, videoId, lines)
+        sampleBias(context, videoId, lines, key)
         _changes.tryEmit(videoId)
         return adjustment
     }
@@ -2855,6 +2855,7 @@ object LyricsTiming {
         context: Context,
         videoId: String,
         lines: List<LyricLine>? = null,
+        linesKey: Int? = null,
     ) {
         val entry = store(context).get(videoId) ?: return
         if (entry.biasSampled || entry.autoVersion != AUTO_VERSION) return
@@ -2862,7 +2863,10 @@ object LyricsTiming {
         val ai = entry.ai?.toAdjustment(byAi = true) ?: return
         // Only a measurement that clearly held: most of the song agreeing.
         if ((measured.matchPercent ?: 0) < 60 || (ai.matchPercent ?: 0) < 50) return
-        val heard = entry.aiTextKey?.let { savedHeardWords(entry, it) }.orEmpty()
+        // The words must belong to the lines being scored: after a lyrics-source
+        // change aiTextKey names another transcript, and comparing it with these
+        // starts would record or skip a bias sample for the wrong reason.
+        val heard = linesKey?.let { savedHeardWords(entry, it) }.orEmpty()
         val measuredScore = if (lines != null && heard.isNotEmpty()) {
             BaseChoicePolicy.score(
                 choiceStarts(lines, measured),

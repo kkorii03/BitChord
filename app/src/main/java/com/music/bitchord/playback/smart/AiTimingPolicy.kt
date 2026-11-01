@@ -131,7 +131,13 @@ internal object AiTimingPolicy {
     private fun spentOn(knowledge: AiTimingKnowledge, lyricsKey: Int): Set<String> =
         buildSet {
             if (knowledge.attemptedKey == lyricsKey) addAll(knowledge.attemptedEngines)
-            if (knowledge.whisperKey == lyricsKey) add(WHISPER)
+            // A legacy Whisper attempt was the same Deepgram Whisper request
+            // the pools ask for now, so it must spend both ids: otherwise the
+            // song is billed for the identical request a second time.
+            if (knowledge.whisperKey == lyricsKey) {
+                add(WHISPER)
+                add(DEEPGRAM_WHISPER)
+            }
             // Only Gemini's "no usable fit" was ever recorded this way.
             if (knowledge.failedKey == lyricsKey) add(GEMINI)
             // A low-agreement answer means that engine already ran for this text.
