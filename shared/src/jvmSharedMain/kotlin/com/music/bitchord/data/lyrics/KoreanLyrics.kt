@@ -58,10 +58,17 @@ object BugsLyrics {
                 ?.let { runCatching { lyricsJson.decodeFromString<LyricsResponse>(it).lyrics }.getOrNull() }
                 ?.let(::parseTimed)
         }
-        val plain = attempts.orNull {
-            get("https://music.bugs.co.kr/player/lyrics/N/${best.id}")
-                ?.let { runCatching { lyricsJson.decodeFromString<LyricsResponse>(it).lyrics }.getOrNull() }
-                ?.let(KoreanMatch::plain)
+        // The plain copy is the fallback for a track with no timed lines. Ask
+        // for it only then: an extra request must not be able to fail a lookup
+        // whose timed lyrics already succeeded.
+        val plain = if (timed.isNullOrEmpty()) {
+            attempts.orNull {
+                get("https://music.bugs.co.kr/player/lyrics/N/${best.id}")
+                    ?.let { runCatching { lyricsJson.decodeFromString<LyricsResponse>(it).lyrics }.getOrNull() }
+                    ?.let(KoreanMatch::plain)
+            }
+        } else {
+            null
         }
         attempts.ifEmptyThrow(timed?.takeIf { it.isNotEmpty() } ?: plain)
     }

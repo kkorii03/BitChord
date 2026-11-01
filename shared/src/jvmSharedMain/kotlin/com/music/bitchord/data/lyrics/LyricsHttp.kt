@@ -84,10 +84,10 @@ private inline fun <T> statusAware(block: () -> T): T? = try {
  * Written to from several candidate coroutines, hence volatile.
  */
 internal class ProviderAttempts {
-    @Volatile @PublishedApi internal var lastFailure: java.io.IOException? = null
+    @Volatile @PublishedApi internal var lastFailure: Exception? = null
 
-    fun note(transport: java.io.IOException) {
-        lastFailure = transport
+    fun note(failure: Exception) {
+        lastFailure = failure
     }
 
     // Inline so a provider step may be a suspend call (the injected document
@@ -96,6 +96,12 @@ internal class ProviderAttempts {
         block()
     } catch (transport: java.io.IOException) {
         lastFailure = transport
+        null
+    } catch (status: LyricsHttpStatusException) {
+        // A mirror that refuses (403/429/408) is one step's failure, not the
+        // provider's final answer: the remaining mirrors/candidates still get
+        // their turn, and [ifEmptyThrow] surfaces it only if none answered.
+        lastFailure = status
         null
     }
 
