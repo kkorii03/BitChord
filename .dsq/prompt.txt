@@ -1,0 +1,12 @@
+BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/telegram. 대상: app/src/main/java/com/music/bitchord/playback/smart/HqAudioVerify.kt 와 그것이 쓰는 디코드·크로마(data/lyrics/ChromaAlignment, WavAudio 등).
+문제: 품질 업그레이드 후보 소리 대조(hq-verify)가 느림. 폰 로그(S24 Ultra):
+ 15:46:38.654 upgrade found: 'Something Just Like This' FLAC 24-bit 44.1 kHz from Qobuz
+ 15:46:53.013 hq-verify: … Qobuz match=100% offset=1 -> accepted reference=wav candidate=file bytes=29200800   ← 14.4초
+ JioSaavn 320k(bytes=4416000)은 ~8초, 24-bit 96kHz(bytes=63590400)는 ~30초.
+할 일:
+① 시간 분해: 후보 다운로드 / 디코드 / 리샘플·크로마 / 정렬 각각 ms 를 'hq-verify timing: download=.. decode=.. chroma=.. align=.. bytes=..' 로그로.
+② 판정 결과가 바뀌지 않는 최적화만: (a) 대조에 실제로 쓰는 구간(초)만큼만 받고 디코드(지금 더 받는다면 줄임), (b) 다운로드와 디코드를 파이프로 겹치기, (c) 크로마가 어차피 낮은 샘플레이트를 쓰면 24-bit/96k 를 디코드 직후 바로 다운믹스·다운샘플해 큰 PCM 파일을 쓰지 않기, (d) 같은 곡의 기준(reference) 특징값이 이미 있으면 재계산하지 않기(이미 있으면 확인만).
+③ 판정 동일성 증명: 최적화 전후 같은 입력에서 match%·offset 이 같음을 테스트로(합성 PCM/짧은 FLAC fixture 사용 가능).
+테스트(고치기 전 실패하는 것 포함): 구간만 디코드함, 판정 동일. 새 테스트 클래스 이름 요약에.
+제약: .github/, keys, *.jks, 서명 수정 금지. match 임계값·offset 허용치·판정 규칙 변경 금지. 동시 디코더 수 늘리지 말 것(배터리). 타이머·폴링 금지. 텔레그램 분기(downloadTelegramPrefix)와 403 새 URL 재시도는 그대로 유지. 바꾼 함수의 모든 호출부 재확인. 기존 주석·의도를 지우면 요약에 이유.
+마지막 10줄 이내 요약: 시간 분해 근거 / 수정 / 판정 동일성 테스트 / 미해결.
