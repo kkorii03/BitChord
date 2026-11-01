@@ -1,4 +1,4 @@
-BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/telegram (업스트림 v1.8.1 기반 한국어 포크).
+﻿BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/telegram (업스트림 v1.8.1 기반 한국어 포크).
 목표: 업스트림 v1.9(곧 1.9.1)를 합칠 때 app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt 에서 나는 충돌을 줄인다. 규칙 문서: `git show origin/task/upstream-19:docs/ko-fork-layout.md`.
 준비: `git fetch https://github.com/kushagrasinghx/BitChord.git tag v1.9 --no-tags` 후 FETCH_HEAD 를 v19 로 태그(로컬만, 푸시 금지). v1.8.1 태그가 없으면 같은 방법으로 받는다.
 측정(전·후 같은 방법): 임시 브랜치에서 `git merge --no-commit --no-ff v19` → app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt 의 충돌 덩어리에서 우리 쪽(<<<<<<< 와 ======= 사이) 줄 수를 센다 → `git merge --abort`. 커밋에 합치기 결과를 남기지 말 것.
@@ -6,3 +6,11 @@ BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 �
 완료 조건: ① 우리 쪽 충돌 줄 수 전→후 감소(요약에 숫자) ② 컴파일 ③ 기존 단위 테스트 통과.
 제약: .github/, keys, *.jks, 서명·빌드 설정 수정 금지. 다른 업스트림 파일은 최소. 싱크·곡 판정 로직은 옮기기만, 수치·순서 변경 금지. 폴링·타이머 추가 금지.
 마지막 10줄 이내 요약: app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt 우리 쪽 충돌 줄 전→후 / 새·수정 ko 파일 / [KO] 훅 수 / 미해결.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 1
+- MEDIUM app/src/main/java/com/music/bitchord/ko/KoSourceResolverCore.kt:658,733 — `atmosWanted` and `statesNothingLossy` are byte-identical upstream v1.8.1 code (not fork code) and were not on our side of any merge conflict, so moving them violates the task's "never move upstream original code" rule and silently freezes v1.9's `DeviceCodecs.atmosWanted` change; keep both helpers in `SourceResolver.kt` and reach them through a `[KO]` delegation instead of copying them.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
