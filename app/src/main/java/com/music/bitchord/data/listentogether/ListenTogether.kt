@@ -7,6 +7,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import com.music.bitchord.BitChordApplication
 import com.music.bitchord.BuildConfig
+import com.music.bitchord.auth.AuthStore
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.playback.BatteryPolicy
@@ -128,6 +129,42 @@ internal fun partyDisplayName(
         ?: accountName.takeIf { it.isNotBlank() }
         ?: profileHandle?.removePrefix("@")?.takeIf { it.isNotBlank() }
         ?: "Listener"
+
+/**
+ * The party membership token, kept in [AuthStore]'s encrypted file.
+ *
+ * The token lets its holder act as this device in a party, so it is a session
+ * credential like the YouTube cookie. It used to sit in the plainly readable
+ * `bitchord_listen_together` preferences; [load] moves such a copy out on the
+ * first read, and [save]/[clear] never write it back there.
+ */
+internal class PartyTokenStore(
+    private val prefs: SharedPreferences,
+    private val authStore: AuthStore,
+) {
+    fun load(): String? {
+        val legacy = prefs.getString(KEY_TOKEN, null)
+        if (legacy != null) prefs.edit().remove(KEY_TOKEN).apply()
+        val stored = authStore.secret(KEY_TOKEN)?.takeIf { it.isNotBlank() }
+        if (stored == null && !legacy.isNullOrBlank()) {
+            authStore.setSecret(KEY_TOKEN, legacy)
+            return legacy
+        }
+        return stored
+    }
+
+    fun save(token: String) {
+        authStore.setSecret(KEY_TOKEN, token.ifBlank { null })
+    }
+
+    fun clear() {
+        authStore.setSecret(KEY_TOKEN, null)
+    }
+
+    private companion object {
+        const val KEY_TOKEN = "party_token"
+    }
+}
 
 /**
  * Listen together: one party, shared by up to five signed-in devices.
@@ -739,6 +776,7 @@ object ListenTogether {
     }
 
     private lateinit var prefs: SharedPreferences
+    private lateinit var partyTokens: PartyTokenStore
     private var token: String? = null
 
     @Volatile
@@ -747,6 +785,7 @@ object ListenTogether {
 
     fun init(context: Context) {
         prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        partyTokens = PartyTokenStore(prefs, BitChordApplication.authStore)
         val rawSaved = prefs.getString(KEY_SERVER, null)?.trim().orEmpty()
         val normalizedSaved = when (val res = parseAndNormalizeServerUrl(rawSaved)) {
             is ServerUrlValidationResult.Valid -> res.normalizedUrl
@@ -760,12 +799,13 @@ object ListenTogether {
         }
 
         val code = prefs.getString(KEY_CODE, null)
-        val saved = prefs.getString(KEY_TOKEN, null)
+        val saved = partyTokens.load()
         val savedServer = prefs.getString(KEY_PARTY_SERVER, null)
-        prefs.edit().remove(KEY_CODE).remove(KEY_TOKEN).remove(KEY_PARTY_SERVER).apply()
+        prefs.edit().remove(KEY_CODE).remove(KEY_PARTY_SERVER).apply()
         if (!code.isNullOrBlank() && !saved.isNullOrBlank()) {
             releaseStaleSlot(code, saved, savedServer)
         }
+        partyTokens.clear()
 
         val manager = context.getSystemService(ConnectivityManager::class.java)
         if (manager != null) {
@@ -934,9 +974,9 @@ object ListenTogether {
             token = membership.token
             prefs.edit()
                 .putString(KEY_CODE, membership.code)
-                .putString(KEY_TOKEN, membership.token)
                 .putString(KEY_PARTY_SERVER, serverBase)
                 .apply()
+            partyTokens.save(membership.token)
             clock.reset()
             _state.value = State(
                 code = membership.code,
@@ -993,9 +1033,9 @@ object ListenTogether {
             token = membership.token
             prefs.edit()
                 .putString(KEY_CODE, membership.code)
-                .putString(KEY_TOKEN, membership.token)
                 .putString(KEY_PARTY_SERVER, serverBase)
                 .apply()
+            partyTokens.save(membership.token)
             clock.reset()
             _state.value = State(
                 code = membership.code,
@@ -1132,9 +1172,9 @@ object ListenTogether {
                 token = membership.token
                 prefs.edit()
                     .putString(KEY_CODE, membership.code)
-                    .putString(KEY_TOKEN, membership.token)
                     .putString(KEY_PARTY_SERVER, targetBase)
                     .apply()
+                partyTokens.save(membership.token)
                 clock.reset()
                 _state.value = State(
                     code = membership.code,
@@ -1167,7 +1207,8 @@ object ListenTogether {
             clock.reset()
             token = null
             activePartyServerBase = null
-            prefs.edit().remove(KEY_CODE).remove(KEY_TOKEN).remove(KEY_PARTY_SERVER).apply()
+            prefs.edit().remove(KEY_CODE).remove(KEY_PARTY_SERVER).apply()
+            partyTokens.clear()
             _state.value = State()
             syncHealthMonitor()
             if (code != null && held != null) {
@@ -1840,7 +1881,6 @@ object ListenTogether {
 
     private val ABSOLUTE_URL = Regex("""(?:https?|wss?)://[^\s,;)\]}'\"]+""", RegexOption.IGNORE_CASE)
     private const val KEY_CODE = "party_code"
-    private const val KEY_TOKEN = "party_token"
     /** Which server hosted the saved membership; see [staleSlotReleaseServer]. */
     private const val KEY_PARTY_SERVER = "party_server"
     private const val KEY_DEVICE = "device_id"
