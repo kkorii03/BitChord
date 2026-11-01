@@ -401,11 +401,11 @@ object Downloads {
      */
     private fun restorePendingLocked(): Int {
         if (pendingRestored) return 0
-        pendingRestored = true
         if (!::prefs.isInitialized) return 0
         val entries = PendingDownloadsStore.decode(
             prefs.getString(PendingDownloadsStore.key(), null),
         )
+        pendingRestored = true
         if (entries.isEmpty()) return 0
         var restored = 0
         for (entry in entries) {
@@ -431,6 +431,7 @@ object Downloads {
             if (entry.automatic) automaticIds.add(id)
             if (entry.mvSoundRepair) mvSoundRepairIds.add(id)
             if (entry.allowMetered) meteredAllowedIds.add(id)
+            if (entry.cacheServable) cacheServableIds.add(id)
             restored++
         }
         return restored
@@ -462,6 +463,7 @@ object Downloads {
             minimumTier = minimumTiers[id]?.name,
             automatic = id in automaticIds,
             allowMetered = id in meteredAllowedIds,
+            cacheServable = id in cacheServableIds,
             mvSoundRepair = id in mvSoundRepairIds,
         )
 
@@ -707,7 +709,14 @@ object Downloads {
     fun onForeground(context: Context) {
         if (!AppForeground.isForeground) return
         val app = appContext ?: context.applicationContext
-        val waiting = synchronized(lock) { pending.keys.toList() }
+        val waiting = synchronized(lock) {
+            // Rows parked for a connection that does not allow downloads have
+            // no work for the service. Starting it for them would show a
+            // notification only to tear it down after the idle grace; the
+            // allowed-connection transition is the event that starts it.
+            if (!hasStartablePendingLocked()) return
+            pending.keys.toList()
+        }
         if (waiting.isEmpty()) return
         val startFailure = startService(app) ?: return
         // The service that was to drain these never started. Leaving them
@@ -2038,7 +2047,7 @@ object Downloads {
         // start, exactly as they do at enqueue time.
         val allowedNow = AppSettings.downloadsAllowedNow
         val entry = pending.entries.firstOrNull { (id, _) ->
-            allowedNow || id in meteredAllowedIds || id in cacheServableIds
+            startableNowLocked(id, allowedNow)
         } ?: return null
         pending.remove(entry.key)
         running[entry.key] = null
@@ -2081,8 +2090,30 @@ object Downloads {
     internal suspend fun awaitWorkChange(seen: Long, timeoutMs: Long): Boolean =
         withTimeoutOrNull(timeoutMs) { awaitWorkChange(seen) } != null
 
-    /** Whether anything is still queued or in flight — see [DownloadService]'s workers. */
-    internal fun busy(): Boolean = synchronized(lock) { pending.isNotEmpty() || running.isNotEmpty() }
+    /**
+     * Whether this waiting row may start on the current connection, under
+     * [lock].
+     *
+     * A row restored after a restart never met the Wi-Fi-only check that
+     * [enqueue] makes. Leave an ordinary row waiting on a metered connection
+     * instead of spending data the listener saved; a cache copy and a
+     * replacement the listener explicitly allowed on cellular still start,
+     * exactly as they do at enqueue time.
+     */
+    private fun startableNowLocked(id: String, allowedNow: Boolean): Boolean =
+        allowedNow || id in meteredAllowedIds || id in cacheServableIds
+
+    private fun hasStartablePendingLocked(): Boolean {
+        if (pending.isEmpty()) return false
+        val allowedNow = AppSettings.downloadsAllowedNow
+        return pending.keys.any { startableNowLocked(it, allowedNow) }
+    }
+
+    private fun hasStartableWorkLocked(): Boolean =
+        running.isNotEmpty() || hasStartablePendingLocked()
+
+    /** Whether anything startable is queued or already in flight — see [DownloadService]. */
+    internal fun busy(): Boolean = synchronized(lock) { hasStartableWorkLocked() }
 
     /**
      * The service is gone, so nothing is running any more.
@@ -2927,8 +2958,14 @@ object Downloads {
      * [transfer]) and report Done without the upgrade the listener asked for.
      */
     private fun fail(videoId: String, reason: String, keepVerifiedPair: Boolean) {
-        if (!keepVerifiedPair) {
-            synchronized(lock) { hqOverrides.remove(videoId) }
+        synchronized(lock) {
+            if (!keepVerifiedPair) hqOverrides.remove(videoId)
+            // The connection permission belonged to the attempt that just
+            // failed. Leaving it behind let a later retry of the same id — even
+            // an ordinary tap after the connection dropped — spend metered
+            // data as if the listener had asked for it again.
+            meteredAllowedIds.remove(videoId)
+            cacheServableIds.remove(videoId)
         }
         _active.update { it + (videoId to DownloadState.Failed(reason)) }
         DownloadSession.failed(videoId, reason)

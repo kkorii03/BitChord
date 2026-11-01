@@ -55,6 +55,7 @@ internal object PendingDownloadsStore {
         val automatic: Boolean = false,
         val mvSoundRepair: Boolean = false,
         val allowMetered: Boolean = false,
+        val cacheServable: Boolean = false,
     )
 
     @Serializable

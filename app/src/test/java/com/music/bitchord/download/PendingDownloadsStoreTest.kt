@@ -49,6 +49,7 @@ class PendingDownloadsStoreTest {
             automatic = true,
             mvSoundRepair = true,
             allowMetered = true,
+            cacheServable = true,
         )
 
         val decoded = PendingDownloadsStore.decode(
@@ -75,6 +76,7 @@ class PendingDownloadsStoreTest {
         assertTrue(restored.automatic)
         assertTrue(restored.mvSoundRepair)
         assertTrue(restored.allowMetered)
+        assertTrue(restored.cacheServable)
         assertEquals(HqTier.LOSSLESS_16.name, restored.minimumTier)
         val restoredHq = PendingDownloadsStore.restoredHq(restored.hq!!)!!
         assertEquals(hq.sourceConfigId, restoredHq.sourceConfigId)

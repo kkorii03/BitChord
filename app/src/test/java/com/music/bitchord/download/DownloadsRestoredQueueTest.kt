@@ -5,6 +5,7 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -26,6 +27,7 @@ class DownloadsRestoredQueueTest {
     private val runningField = field("running")
     private val restoredField = field("pendingRestored")
     private val meteredAllowedField = field("meteredAllowedIds")
+    private val cacheServableField = field("cacheServableIds")
 
     @Suppress("UNCHECKED_CAST")
     private val pending = pendingField.get(Downloads) as MutableMap<String, Song>
@@ -36,6 +38,9 @@ class DownloadsRestoredQueueTest {
     @Suppress("UNCHECKED_CAST")
     private val meteredAllowed = meteredAllowedField.get(Downloads) as MutableSet<String>
 
+    @Suppress("UNCHECKED_CAST")
+    private val cacheServable = cacheServableField.get(Downloads) as MutableSet<String>
+
     @Before
     fun setUp() {
         fakePrefs = FakeSharedPreferences()
@@ -43,6 +48,7 @@ class DownloadsRestoredQueueTest {
         pending.clear()
         running.clear()
         meteredAllowed.clear()
+        cacheServable.clear()
         restoredField.setBoolean(Downloads, false)
     }
 
@@ -51,6 +57,7 @@ class DownloadsRestoredQueueTest {
         pending.clear()
         running.clear()
         meteredAllowed.clear()
+        cacheServable.clear()
         restoredField.setBoolean(Downloads, false)
         AppSettings.wifiOnlyDownloads.value = originalWifiOnly
         AppSettings.meteredConnection.value = originalMetered
@@ -123,6 +130,45 @@ class DownloadsRestoredQueueTest {
         pending["saved"] = song("saved")
 
         assertEquals("saved", Downloads.takeNext()?.videoId)
+    }
+
+    @Test
+    fun `a restored row the song cache can serve still starts while metered`() {
+        AppSettings.wifiOnlyDownloads.value = true
+        AppSettings.meteredConnection.value = true
+        pending["cached"] = song("cached")
+        cacheServable += "cached"
+        persistPendingLocked()
+
+        // The process died: nothing is in memory, and the saved row has to
+        // bring back the fact that the cache can serve it without data.
+        pending.clear()
+        cacheServable.clear()
+        restoredField.setBoolean(Downloads, false)
+        restorePendingLocked()
+
+        assertEquals("cached", Downloads.takeNext()?.videoId)
+    }
+
+    @Test
+    fun `a restore before prefs is ready does not mark the saved queue read`() {
+        val method = Downloads::class.java
+            .getDeclaredMethod("restorePendingLocked")
+            .apply { isAccessible = true }
+        val savedPrefs = prefsField.get(Downloads)
+        prefsField.set(Downloads, null)
+        try {
+            restoredField.setBoolean(Downloads, false)
+
+            method.invoke(Downloads)
+
+            assertFalse(
+                "a later restore must still be able to read the saved queue",
+                restoredField.getBoolean(Downloads),
+            )
+        } finally {
+            prefsField.set(Downloads, savedPrefs)
+        }
     }
 
     private fun restorePendingLocked() {
