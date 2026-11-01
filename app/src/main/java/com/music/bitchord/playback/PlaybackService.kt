@@ -161,6 +161,8 @@ import com.music.bitchord.data.taste.TasteSignals
 import com.music.bitchord.data.innertube.PlayerClient
 import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.innertube.UnplayableReason
+import com.music.bitchord.ko.BotChallengeException
+import com.music.bitchord.ko.MidPlayStream
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.SongOrigins
@@ -5115,7 +5117,7 @@ class PlaybackService : MediaLibraryService() {
                 // The bot challenge is network-wide, not a verdict about this
                 // track, so Media3 must not spend its own retries on it; the
                 // service stops instead of skipping.
-                if (cause is StreamResolver.BotChallengeException) return true
+                if (cause is BotChallengeException) return true
                 if (UnplayableReason.isBotChallenge(cause.message)) return true
                 cause = cause.cause?.takeIf { it !== cause }
             }
@@ -6025,7 +6027,7 @@ class PlaybackService : MediaLibraryService() {
                     StreamRefusalRecovery.noteAttempt(mediaId)
                     val previous = StreamChoice.of(mediaId)?.url
                         ?: StreamContainer.servedUrl(mediaId)
-                    fun acceptable(candidate: StreamResolver.MidPlayStream?): StreamResolver.MidPlayStream? =
+                    fun acceptable(candidate: MidPlayStream?): MidPlayStream? =
                         candidate?.takeIf {
                             previous == null ||
                                 (it.url != previous && StreamContainer.sameRendition(previous, it.url))
@@ -6451,7 +6453,7 @@ class PlaybackService : MediaLibraryService() {
         var cause = error
         var depth = 0
         while (cause != null && depth++ < PERMANENT_CAUSE_DEPTH) {
-            if (cause is StreamResolver.BotChallengeException) return true
+            if (cause is BotChallengeException) return true
             if (UnplayableReason.isBotChallenge(cause.message)) return true
             cause = cause.cause?.takeIf { it !== cause }
         }

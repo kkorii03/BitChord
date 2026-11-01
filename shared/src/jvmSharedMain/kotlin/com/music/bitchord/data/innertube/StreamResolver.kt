@@ -3,7 +3,11 @@ package com.music.bitchord.data.innertube
 import com.music.bitchord.data.MonotonicClock
 import com.music.bitchord.data.innertube.ResolutionOrder
 import com.music.bitchord.data.net.ProxyPlaybackPolicy
+import com.music.bitchord.ko.BotChallengeException
 import com.music.bitchord.ko.KoStreamResolver
+import com.music.bitchord.ko.MidPlayStream
+import com.music.bitchord.ko.RefusedStream
+import com.music.bitchord.ko.VideoLoop
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.NerdStats
@@ -65,7 +69,7 @@ object StreamResolver {
     var maxKbps: () -> Int = { Int.MAX_VALUE }
 
 
-    private const val TAG = "BitChord"
+    internal const val TAG = "BitChord" // [KO] shared-with-ko
 
     /** Past this, an extractor fetch is worth flagging rather than just noting. */
     private const val SLOW_FETCH_MS = 2000L
@@ -154,15 +158,16 @@ object StreamResolver {
                 TrackLog.w(
                     TAG,
                     "extractor fetch FAILED after ${MonotonicClock.nowMs() - requestStart}ms " +
-                        "${request.httpMethod()} ${request.url()}: ${e.javaClass.simpleName}: ${e.message}",
+                        "${request.httpMethod()} ${com.music.bitchord.data.net.LogUrl.of(request.url())}: " + // [KO] log-url
+                        "${e.javaClass.simpleName}: ${e.message}",
                 )
                 throw e
             }
             val took = MonotonicClock.nowMs() - requestStart
             if (took > SLOW_FETCH_MS) {
-                TrackLog.w(TAG, "extractor fetch ${took}ms ${request.httpMethod()} ${request.url()}")
+                TrackLog.w(TAG, "extractor fetch ${took}ms ${request.httpMethod()} ${com.music.bitchord.data.net.LogUrl.of(request.url())}") // [KO] log-url
             } else {
-                TrackLog.d(TAG, "extractor fetch ${took}ms ${request.httpMethod()} ${request.url()}")
+                TrackLog.d(TAG, "extractor fetch ${took}ms ${request.httpMethod()} ${com.music.bitchord.data.net.LogUrl.of(request.url())}") // [KO] log-url
             }
             if (response.code == 429) {
                 response.close()
@@ -178,7 +183,7 @@ object StreamResolver {
         }
     }
 
-    private val init by lazy { NewPipe.init(OkHttpDownloader()) }
+    internal val init by lazy { NewPipe.init(OkHttpDownloader()) } // [KO] shared-with-ko
 
     /**
      * The extractor's own leash on [Http.client].
@@ -285,7 +290,7 @@ object StreamResolver {
     }
 
     /** Per-track loudness, read once and kept for as long as the process runs. */
-    private val loudness = ConcurrentHashMap<String, Double>()
+    internal val loudness = ConcurrentHashMap<String, Double>() // [KO] shared-with-ko
 
     /**
      * YouTube's own normalization figure for [videoId], or null when it has
@@ -298,7 +303,7 @@ object StreamResolver {
      * track substituted to JioSaavn or an addon still carries the figure its
      * YouTube counterpart resolved.
      */
-    fun loudnessDbFor(videoId: String): Double? = KoStreamResolver.loudnessDbFor(videoId) // [KO] loudness
+    fun loudnessDbFor(videoId: String): Double? = loudness[videoId]
 
     /**
      * A track this app cannot play, for a reason that will read the same in ten
@@ -312,31 +317,6 @@ object StreamResolver {
      * policy and `recoverFrom`.
      */
     class PermanentlyUnplayableException(reason: String) : IOException(reason)
-
-    /** YouTube's "sign in to prove you are not a bot" challenge. */
-    class BotChallengeException(reason: String) : IOException(reason)
-
-    /** A URL googlevideo refused, and enough about the rendition it served to ask for it again. */
-    class RefusedStream(
-        val videoId: String,
-        val url: String?,
-        val mimeType: String?,
-        val kbps: Int,
-        val proxyGeneration: Long? = null,
-        val mintedOnAllScope: Boolean = false,
-    )
-
-    /** A replacement stream for a refusal in the middle of a track. */
-    class MidPlayStream(
-        val videoId: String,
-        val url: String,
-        val headers: Map<String, String>,
-        val viaProxy: Boolean,
-        val client: String,
-    )
-
-    /** A video-only rendition of an upload, for a muted loop in the cover's place. */
-    class VideoLoop(val url: String, val durationMs: Long, val expiresAtMs: Long)
 
     /**
      * Tracks that have already failed for a reason retrying cannot fix, and
@@ -360,9 +340,9 @@ object StreamResolver {
      * the storm cannot re-form, short enough that a listener who fixes the
      * cause does not have to restart the app.
      */
-    private val unplayable = ConcurrentHashMap<String, Verdict>()
+    internal val unplayable = ConcurrentHashMap<String, Verdict>() // [KO] shared-with-ko
 
-    private class Verdict(val reason: String, val at: Long)
+    internal class Verdict(val reason: String, val at: Long) // [KO] shared-with-ko
 
     fun unplayableReason(videoId: String): String? = KoStreamResolver.unplayableReason(videoId) // [KO] unplayable
 
@@ -413,7 +393,7 @@ object StreamResolver {
     suspend fun videoLoop(videoId: String, maxHeight: Int = 480): VideoLoop? =
         KoStreamResolver.videoLoop(videoId, maxHeight) // [KO] video-loop
 
-    private fun rememberUnplayable(videoId: String, reason: String) {
+    internal fun rememberUnplayable(videoId: String, reason: String) { // [KO] shared-with-ko
         if (unplayable.size > MAX_REMEMBERED) unplayable.clear()
         unplayable[videoId] = Verdict(reason, MonotonicClock.nowMs())
     }
@@ -434,7 +414,7 @@ object StreamResolver {
         UploadedTracks.clear()
     }
 
-    private const val UNPLAYABLE_TTL_MS = 10 * 60 * 1000L
+    internal const val UNPLAYABLE_TTL_MS = 10 * 60 * 1000L // [KO] shared-with-ko
 
     /**
      * One walk per videoId at a time.
@@ -492,7 +472,7 @@ object StreamResolver {
 
     private val inFlight = ConcurrentHashMap<String, Deferred<Stream>>()
 
-    private val resolverScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    internal val resolverScope = CoroutineScope(SupervisorJob() + Dispatchers.IO) // [KO] shared-with-ko
 
     private suspend fun resolveUncached(videoId: String): Stream {
         val resolveStart = MonotonicClock.nowMs()
@@ -807,7 +787,7 @@ object StreamResolver {
      * everything is above it (e.g. Low on a track that only has 130kbps+), take
      * the cheapest available rather than failing.
      */
-    private fun <T> pickForQuality(candidates: List<Pair<Int, T>>): T? =
+    internal fun <T> pickForQuality(candidates: List<Pair<Int, T>>): T? = // [KO] shared-with-ko
         underCeiling(candidates, maxKbps())
 
     /**
@@ -815,7 +795,7 @@ object StreamResolver {
      * — Standard on a track whose AAC ladder starts at 256, say — the cheapest
      * available, because a rung over budget still beats no audio at all.
      */
-    private fun <T> underCeiling(candidates: List<Pair<Int, T>>, maxKbps: Int): T? {
+    internal fun <T> underCeiling(candidates: List<Pair<Int, T>>, maxKbps: Int): T? { // [KO] shared-with-ko
         if (candidates.isEmpty()) return null
         val withinBudget = candidates.filter { it.first <= maxKbps }
         return (withinBudget.maxByOrNull { it.first } ?: candidates.minByOrNull { it.first })
@@ -869,7 +849,7 @@ object StreamResolver {
 
     // ---- Validation ---------------------------------------------------------
 
-    private enum class Probe {
+    internal enum class Probe { // [KO] shared-with-ko
         /** Served media bytes; safe to play and to cache. */
         OK,
 
@@ -902,7 +882,7 @@ object StreamResolver {
      * [PlayerClient.forStreamUrl] — so this tests the request that matters
      * rather than a more favourable version of it.
      */
-    private fun probe(url: String): Probe {
+    internal fun probe(url: String): Probe { // [KO] shared-with-ko
         val length = url.toHttpUrlOrNull()?.queryParameter("clen")?.toLongOrNull()
         val start = if (length != null && length > AUTH_BOUNDARY_BYTES + PROBE_READ_BYTES) AUTH_BOUNDARY_BYTES else 0L
         // A host with no range cap of its own reports Long.MAX_VALUE, which
@@ -951,10 +931,10 @@ object StreamResolver {
         }
     }
 
-    private val REFUSAL_CODES = setOf(403, 404, 410)
+    internal val REFUSAL_CODES = setOf(403, 404, 410) // [KO] shared-with-ko
 
     /** A stream URL reduced to what describes it and nothing that could be replayed. */
-    private fun describeMediaUrl(url: String): String {
+    internal fun describeMediaUrl(url: String): String { // [KO] shared-with-ko
         val parsed = url.toHttpUrlOrNull() ?: return "url=unparseable"
         return "host=${parsed.host} path=${parsed.encodedPath} " +
             "c=${parsed.queryParameter("c")} itag=${parsed.queryParameter("itag")} " +
@@ -971,19 +951,19 @@ object StreamResolver {
      * Built from the shared client, so the connection pool and DNS are the
      * same ones the real fetch will use.
      */
-    private val prober by lazy {
+    internal val prober by lazy { // [KO] shared-with-ko
         Http.client.newBuilder()
             .callTimeout(PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .build()
     }
 
-    private const val PROBE_TIMEOUT_SECONDS = 6L
+    internal const val PROBE_TIMEOUT_SECONDS = 6L // [KO] shared-with-ko
 
     /** Where googlevideo stops authorising some clients' URLs (InnerTubeX: "CDN 403 after 1 MiB"). */
-    private const val AUTH_BOUNDARY_BYTES = 1024L * 1024
+    internal const val AUTH_BOUNDARY_BYTES = 1024L * 1024 // [KO] shared-with-ko
 
     /** How much of the answer must actually arrive, to catch a stalled body. */
-    private const val PROBE_READ_BYTES = 16L * 1024
+    internal const val PROBE_READ_BYTES = 16L * 1024 // [KO] shared-with-ko
 
     /**
      * A URL that [probe] cleared has been refused while actually playing.
@@ -1154,7 +1134,7 @@ object StreamResolver {
      * `QUEUE_LOOKAHEAD`, kept at one for exactly this reason. The bound on how
      * long a single holder can keep the gate is [EXTRACTOR_TIMEOUT_SECONDS].
      */
-    private val extractionGate = Mutex()
+    internal val extractionGate = Mutex() // [KO] shared-with-ko
 
     private suspend fun extractStream(
         videoId: String,
@@ -1247,10 +1227,10 @@ object StreamResolver {
      */
     private val recent = ConcurrentHashMap<String, Resolved>()
 
-    private const val URL_TTL_MS = 20 * 60 * 1000L
+    internal const val URL_TTL_MS = 20 * 60 * 1000L // [KO] shared-with-ko
 
     /** Enough for the queue in hand; this is a latency cache, not a store. */
-    private const val MAX_REMEMBERED = 32
+    internal const val MAX_REMEMBERED = 32 // [KO] shared-with-ko
 
     private fun remember(videoId: String, url: String) {
         if (recent.size >= MAX_REMEMBERED) {
