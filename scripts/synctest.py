@@ -486,13 +486,16 @@ def run_song(vid, seconds, dry):
     # song was never seen. Hear YouTube's copy of the recording the phone actually
     # played, lined up on the app's own audio by the words both contain.
     played = row["playing"] or vid
-    full = OUT / f"{played}.m4a"
+    # The same Opus stream (itag 251) the app plays: the AAC copy (140) carries
+    # its own encoder delay, and scoring on it put every streamed song ~0.1 s
+    # early while downloaded songs, scored on the app's own audio, sat at 0.
+    full = OUT / f"{played}.webm"
     if not full.exists():
-        subprocess.run([YTDLP, "-f", "bestaudio[ext=m4a]/bestaudio", "-o", str(full),
+        subprocess.run([YTDLP, "-f", "251/bestaudio[ext=webm]/bestaudio", "-o", str(full),
                         f"https://www.youtube.com/watch?v={played}"], capture_output=True, timeout=600)
     per_model = None
     if full.exists():
-        full_words = [hear(f"{played}.full", full, "audio/mp4", lang, m) for m in MODELS]
+        full_words = [hear(f"{played}.opus", full, "audio/webm", lang, m) for m in MODELS]
         if None in full_words:
             return dict(row, error="deepgram failed")
         if app_words is None:
