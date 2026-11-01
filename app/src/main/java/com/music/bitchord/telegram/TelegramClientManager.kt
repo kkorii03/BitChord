@@ -122,9 +122,10 @@ object TelegramClientManager {
 
     /**
      * The Telegram source calls this when its own playback starts or stops.
-     * Global playback (local, YouTube, add-ons) must not reach here. Streams
-     * and metadata lookups use the counted [beginStream]/[streamMetadata]
-     * leases instead, so they cannot close one another.
+     * Global playback (local, YouTube, add-ons) must not reach here. Streams,
+     * metadata lookups and searches use the counted
+     * [beginStream]/[streamMetadata]/[searchTracks] leases instead, so they
+     * cannot close one another.
      */
     fun onTelegramPlayback(active: Boolean) {
         if (context == null) return
@@ -155,15 +156,31 @@ object TelegramClientManager {
     }
 
     /** Runs on [work]. A metadata lookup is a lease just like an open stream. */
-    private fun acquireStreamLease(reason: String) {
-        val first = gate.beginStreamLease()
+    private fun acquireStreamLease(reason: String) =
+        acquireCountedLease(reason) { gate.beginStreamLease() }
+
+    /** Runs on [work]. Only the last lease releases playback and the holder. */
+    private fun releaseStreamLease(reason: String) =
+        releaseCountedLease(reason) { gate.endStreamLease() }
+
+    /** Runs on [work]. A search shares the counted lease with streams. */
+    private fun acquireSearchLease(reason: String) =
+        acquireCountedLease(reason) { gate.beginSearchLease() }
+
+    /** Runs on [work]. One finished search must not close another's client. */
+    private fun releaseSearchLease(reason: String) =
+        releaseCountedLease(reason) { gate.endSearchLease() }
+
+    /** Runs on [work]. The first lease opens; shared by stream, metadata and search. */
+    private fun acquireCountedLease(reason: String, begin: () -> Boolean) {
+        val first = begin()
         if (first) gate.acquire(STREAM_HOLDER)
         applyGate(reason)
     }
 
     /** Runs on [work]. Only the last lease releases playback and the holder. */
-    private fun releaseStreamLease(reason: String) {
-        val last = gate.endStreamLease()
+    private fun releaseCountedLease(reason: String, end: () -> Boolean) {
+        val last = end()
         if (last) gate.release(STREAM_HOLDER)
         applyGate(reason)
     }
@@ -262,9 +279,12 @@ object TelegramClientManager {
      *
      * There is no index and no background pass: this asks TDLib only because
      * someone submitted a search, opens the client for that request (through
-     * [TelegramClientGate]) and releases it afterwards. Audio messages are
-     * searched first, then documents filtered to music formats, in selected
-     * order; duplicates across chats are dropped by chat/message id.
+     * [TelegramClientGate]) and releases it afterwards. The request holds the
+     * same counted lease as [streamMetadata], so a screen-off queue transition
+     * keeps the client open and concurrent searches cannot close one another.
+     * Audio messages are searched first, then documents filtered to music
+     * formats, in selected order; duplicates across chats are dropped by
+     * chat/message id.
      */
     suspend fun searchTracks(query: String, limit: Int): List<TelegramTrack> {
         // The credential store and Keystore are disk work. Load them on the
@@ -273,7 +293,10 @@ object TelegramClientManager {
         withContext(Dispatchers.IO) { runOnWorker { ensureCredentialsLoaded() } }
         val chats = selectedChatIds().toList().sorted()
         if (chats.isEmpty()) return emptyList()
-        acquire(SEARCH_HOLDER)
+        // Callers include main-thread prefetch: the wait for the worker happens
+        // on IO, never on the caller's thread. The release must still run when
+        // the search is cancelled, or the lease (and the client) would leak.
+        withContext(Dispatchers.IO) { runOnWorker { acquireSearchLease("search open") } }
         val started = System.nanoTime()
         return try {
             awaitReady()
@@ -282,7 +305,9 @@ object TelegramClientManager {
             TelegramLog.search(query.length, chats.size, rows.size, millis)
             rows
         } finally {
-            release(SEARCH_HOLDER)
+            withContext(NonCancellable + Dispatchers.IO) {
+                runOnWorker { releaseSearchLease("search close") }
+            }
         }
     }
 
@@ -1033,7 +1058,6 @@ object TelegramClientManager {
         override val message: String get() = "Telegram ${error.code}"
     }
 
-    private const val SEARCH_HOLDER = "search"
     private const val CHATS_HOLDER = "chats"
     private const val STREAM_HOLDER = "stream"
     private const val MAX_CHATS = 500
