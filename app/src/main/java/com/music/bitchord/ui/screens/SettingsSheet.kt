@@ -1550,7 +1550,10 @@ fun SettingsScreen(
             }
         }
 
-        SearchableSettingsGroup(search, header = stringResource(R.string.settings_lyrics)) {
+        if (shows(SettingsCategory.LYRICS)) SearchableSettingsGroup(
+            search,
+            header = stringResource(R.string.settings_lyrics),
+        ) {
             val syncedLyricsTitle = stringResource(R.string.synced_lyrics)
             // Same reasoning as Animated cover art above: the lyrics source and
             // translation rows are only here while this is on.
@@ -3601,6 +3604,7 @@ enum class SettingsCategory(@param:StringRes val title: Int) {
     DOWNLOADS(R.string.downloads),
     PLAYBACK(R.string.playback),
     APPEARANCE(R.string.appearance),
+    LYRICS(R.string.settings_lyrics),
     PERFORMANCE(R.string.performance),
     LOCAL_MUSIC(R.string.local_music),
     STORAGE(R.string.storage),
@@ -3615,6 +3619,7 @@ enum class SettingsCategory(@param:StringRes val title: Int) {
             DOWNLOADS -> SfIcons.Download
             PLAYBACK -> SfIcons.PlayCircle
             APPEARANCE -> SfIcons.Appearance
+            LYRICS -> SfIcons.Notes
             PERFORMANCE -> SfIcons.Performance
             LOCAL_MUSIC -> SfIcons.LibraryMusic
             STORAGE -> SfIcons.Storage
@@ -3623,6 +3628,32 @@ enum class SettingsCategory(@param:StringRes val title: Int) {
             LANGUAGE -> SfIcons.Language
             ADVANCED -> SfIcons.Advanced
         }
+}
+
+/**
+ * The rows [SettingsCategory.LYRICS] carries, in the order the old "가사" group
+ * had them. Kept as data so the search and its test can name every one without
+ * walking the composition.
+ */
+internal object LyricsSettingsCatalog {
+    val section = SettingsCategory.LYRICS
+
+    val keys = listOf(
+        "synced_lyrics",
+        "lyrics_blur",
+        "lyrics_sources",
+        "translation_language",
+        "gemini_translation",
+        "auto_translate_lyrics",
+        "auto_lyrics_timing",
+        "ai_timing_ahead",
+        "reset_download_sync",
+        "deepgram_api_key",
+        "ai_lyrics",
+        "prefetch_translation",
+        "keep_download_translation",
+        "lock_screen_lyrics",
+    )
 }
 
 /** The settings whose options are a page of their own — see [SettingsChoicePage]. */

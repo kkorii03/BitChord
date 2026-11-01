@@ -210,7 +210,6 @@ import com.music.bitchord.ui.screens.SPOTIFY_BROWSE_ID
 import com.music.bitchord.ui.screens.libraryLinks
 import com.music.bitchord.ui.screens.CACHE_FOLDER_BROWSE_ID
 import com.music.bitchord.ui.screens.ListenTogetherScreen
-import com.music.bitchord.ui.screens.LyricsSettingsScreen
 import com.music.bitchord.ui.screens.PartyServerEditor
 import com.music.bitchord.ui.screens.SignatureApiEditor
 import com.music.bitchord.ui.screens.SettingsScreen
@@ -1178,7 +1177,6 @@ private fun BitChordApp(
         showNowPlaying -> "Player"
         route == AppRoute.Replay -> "Replay"
         route == AppRoute.Settings -> "Settings"
-        route == AppRoute.Lyrics -> "Settings/lyrics"
         route == AppRoute.AccountScrobbling -> "Settings/account_scrobbling"
         route == AppRoute.Discord -> "Settings/discord"
         route == AppRoute.Spotify -> "Settings/spotify"

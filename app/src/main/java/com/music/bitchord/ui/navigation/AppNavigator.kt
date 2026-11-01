@@ -17,8 +17,6 @@ import com.music.bitchord.ui.screens.SettingsChoiceKind
  */
 sealed interface AppRoute {
     data object Settings : AppRoute
-    /** Every lyrics setting, moved off the main Settings list. */
-    data object Lyrics : AppRoute
     data object AccountScrobbling : AppRoute
     data object Sources : AppRoute
     data object ListenTogether : AppRoute
