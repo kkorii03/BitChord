@@ -1,0 +1,19 @@
+﻿BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/fix-1030.
+버그(사용자 폰 test26/tg1, 11-01): 홈에서 연 YouTube 채널 재생목록 '오화요 한식모음'(오화요 노래주머니, 44곡), '오화요 양식모음'(56곡) 상세 화면에서 큰 표지와 모든 곡 줄의 썸네일이 빈 회색 칸. 곡 제목·가수·길이는 정상('Night Flower (야화) (cover)' / 오화요 / 4:25). 같은 화면의 미니 플레이어 표지는 정상. 10-26 에도 같은 증상('ya7 재생목록 표지·썸네일 빈칸 — 오화요 한식모음')을 고친 적이 있음 → 회귀.
+할 일:
+① 원인 확정(파일:줄): 재생목록 상세(DetailScreen 등)가 표지·줄 썸네일 URL 을 어디서 얻는지, 이 재생목록 응답(youtube.com 재생목록 / 한국 게이트 대체 경로 / 노래 버전 정리)에서 thumbnailUrl 이 비는지, 비었을 때 영상 썸네일(i.ytimg.com/vi/<id>/…, data.cover.videoThumbnailUrl)로 채우는 대체가 빠졌는지, 다운로드된 곡이면 rememberRemoteArtworkUrl 의 versionedFileArtwork('file:…?v=…') 가 Coil 3.0.4 에서 실제 파일로 읽히는지도 확인(쿼리가 경로에 섞이면 빈칸).
+② 수정: 곡 줄 썸네일이 비면 영상 썸네일로, 재생목록 큰 표지가 비면 첫 곡들의 표지(기존 2x2/첫 곡 규칙이 있으면 그것)로. 10-26 수정(git log 에서 'thumbnail'/'artwork'/'ya7' 검색)이 왜 다시 깨졌는지 요약에 적을 것.
+③ versionedFileArtwork 가 문제면: 쿼리 대신 Coil 메모리 캐시 키(ImageRequest.memoryCacheKey/diskCacheKey)를 바꾸는 방식으로 고치고 file 경로는 그대로.
+테스트(고치기 전 실패): 썸네일 없는 재생목록 곡 → 영상 썸네일 URL, 큰 표지 대체, (해당하면) 버전 붙은 file 경로가 같은 파일로 열림 — 단위 테스트. 새 테스트 클래스 이름 요약에 적을 것.
+제약: .github/, keys, 서명 수정 금지. 업스트림 파일 쪼개기·삭제 금지. 타이머·폴링 금지. 바꾼 함수의 모든 호출부 재확인. 기존 주석·의도를 지우면 요약에 이유.
+마지막 10줄 이내 요약: 원인(파일:줄) / 10-26 수정이 깨진 이유 / 수정 파일 / 테스트 / 미해결.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 3
+MEDIUM — app/src/main/java/com/music/bitchord/ui/screens/DetailScreen.kt:948 — Every row with no thumbnail now inherits `headerArtwork` (page/first-row artwork), so all such rows repeat one image instead of each row's own video still. Fix: use the per-song fallback (`videoThumbnailUrl(song.videoId)` / `song.artworkAt`) or leave it null for `rememberRemoteArtworkUrl`.
+MEDIUM — shared/src/commonMain/kotlin/com/music/bitchord/data/model/Models.kt:287 — `firstArtworkOrStill()` returns the first row's low-res video still immediately, so a later row's real cover is never considered, contradicting its KDoc and the test named "first real cover before a video still". Fix: scan all rows for a non-blank real thumbnail first, then fall back to the first available video still.
+LOW — shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YouTubeDisplayCleaner.kt:431 — The early return for rows with `albumId` bypasses the newly added `withVideoThumbnailFallback()`, so catalogue/album-linked rows still do not get the advertised data-layer still and the new test misses that path. Fix: apply the fallback before each early return (or restructure so every non-local row passes through it).
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
