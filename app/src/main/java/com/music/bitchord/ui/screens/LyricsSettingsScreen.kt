@@ -112,8 +112,13 @@ fun LyricsSettingsScreen(
     // Both AI rows silently did nothing without a speech key; the switch now
     // says why instead of looking on. The key flow carries the bundled key too,
     // so a personal build with a baked-in key keeps the rows live.
-    val aiLyricsMissingKey = aiLyricsKeyMissing(geminiApiKey)
-    val aiTimingMissingKey = aiTimingKeyMissing(geminiApiKey, deepgramApiKey)
+    val aiLyricsMissingKey = aiLyricsKeyMissing(geminiApiKey, geminiKeyRejected)
+    val aiTimingMissingKey = aiTimingKeyMissing(
+        geminiApiKey,
+        deepgramApiKey,
+        geminiKeyRejected,
+        deepgramKeyRejected,
+    )
 
     Column(
         modifier = modifier
@@ -395,9 +400,18 @@ fun LyricsSettingsScreen(
     }
 }
 
-/** Gemini writes AI lyrics; without its key the row would be a silent no-op. */
-internal fun aiLyricsKeyMissing(geminiKey: String): Boolean = geminiKey.isBlank()
+/** Gemini writes AI lyrics; without a usable key the row would be a silent no-op. */
+internal fun aiLyricsKeyMissing(
+    geminiKey: String,
+    geminiKeyRejected: Boolean = false,
+): Boolean = geminiKey.isBlank() || geminiKeyRejected
 
-/** AI timing runs on Gemini or Deepgram; either key keeps both rows usable. */
-internal fun aiTimingKeyMissing(geminiKey: String, deepgramKey: String): Boolean =
-    geminiKey.isBlank() && deepgramKey.isBlank()
+/** AI timing runs on Gemini or Deepgram; either usable key keeps both rows live. */
+internal fun aiTimingKeyMissing(
+    geminiKey: String,
+    deepgramKey: String,
+    geminiKeyRejected: Boolean = false,
+    deepgramKeyRejected: Boolean = false,
+): Boolean =
+    (geminiKey.isBlank() || geminiKeyRejected) &&
+        (deepgramKey.isBlank() || deepgramKeyRejected)
