@@ -1192,6 +1192,10 @@ private fun ServiceCard(
     isPlaying: Boolean,
 ) {
     val palette = remember { MeshPalette(colors) }
+    // Home hands down whether this page is really being looked at; a folder
+    // card must obey it the same way Top Picks does. Otherwise a paused app or
+    // Now Playing over Home kept re-blurring these meshes every frame.
+    val motion = LocalArtworkMotion.current
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -1206,8 +1210,8 @@ private fun ServiceCard(
             // on screen (the mesh itself stops off-screen). Paused, the
             // settled frame is the same picture minus the constant re-blur,
             // and even the one-shot drift is skipped: a still card is still.
-            continuous = isPlaying,
-            animated = isPlaying,
+            continuous = isPlaying && motion,
+            animated = isPlaying && motion,
             blurRadius = 24.dp,
         )
         Icon(
@@ -1249,8 +1253,8 @@ internal fun ShelfCard(
                     MeshGradientBackground(
                         palette = palette,
                         trackKey = "local:downloads",
-                        continuous = isPlaying,
-                        animated = isPlaying,
+                        continuous = isPlaying && LocalArtworkMotion.current,
+                        animated = isPlaying && LocalArtworkMotion.current,
                         blurRadius = 24.dp,
                     )
                     Icon(
