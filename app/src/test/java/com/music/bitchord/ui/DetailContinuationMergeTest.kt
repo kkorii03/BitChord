@@ -1,4 +1,5 @@
 package com.music.bitchord.ui
+import com.music.bitchord.ko.ui.mergeDetailContinuation
 
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.DetailPage

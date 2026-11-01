@@ -1,4 +1,5 @@
 package com.music.bitchord.ui
+import com.music.bitchord.ko.ui.searchPageState
 
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.UiState
