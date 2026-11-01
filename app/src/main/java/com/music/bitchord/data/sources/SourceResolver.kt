@@ -134,6 +134,25 @@ object SourceResolver {
             recordFailure(configId, countForRest = true)
         }
 
+        /**
+         * A source did not answer inside its per-track window.
+         *
+         * Telegram is exempt: a cold TDLib session plus a search is slower than
+         * the race's window by design, and the source has not answered "no" —
+         * it has not finished. Counting that as a failure is what put a healthy
+         * Telegram account into a thirty-minute rest after the listener added
+         * more chats. Every other source keeps the old timeout rule.
+         */
+        internal fun timedOut(configId: String, kind: SourceKind, online: Boolean) {
+            if (kind == SourceKind.TELEGRAM) return
+            recordFailure(configId, countForRest = online)
+        }
+
+        /** Forgets a rest and its failure count after the source's settings changed. */
+        internal fun clear(configId: String) {
+            states.remove(configId)
+        }
+
         private fun recordFailure(configId: String, countForRest: Boolean) {
             failureMarks.computeIfAbsent(configId) { java.util.concurrent.atomic.AtomicLong() }
                 .incrementAndGet()
@@ -248,6 +267,11 @@ object SourceResolver {
         remembered.clear()
     }
 
+    /** Forgets one source's memoised searches without touching any other source. */
+    internal fun clearSearchAnswersForSource(configId: String) {
+        searchAnswers.keys.removeIf { it.sourceId == configId }
+    }
+
     /**
      * A source's own failure path, for sources that turn a transport fault into
      * an empty answer instead of throwing. A 5xx or a timeout that reaches
@@ -271,6 +295,14 @@ object SourceResolver {
      */
     internal fun reportSourceAuthFailure(configId: String) {
         SourceCooldown.authFailed(configId)
+    }
+
+    /**
+     * The source's own settings changed (Telegram login or selected chats), so
+     * any rest it earned under the old settings is no longer evidence about it.
+     */
+    internal fun clearCooldown(configId: String) {
+        SourceCooldown.clear(configId)
     }
 
     /** Keeps [stream] as the verified original for [target], for a later play. */
@@ -1346,7 +1378,11 @@ object SourceResolver {
                         // Counting it here parked every source for 30 minutes
                         // after a dorm Wi-Fi drop, long after the link was
                         // back.
-                        if (!offlineCheck()) SourceCooldown.failed(source.configId)
+                        SourceCooldown.timedOut(
+                            source.configId,
+                            source.kind,
+                            online = !offlineCheck(),
+                        )
                         TrackLog.d(
                             TAG,
                             "${source.displayName} timed out after ${sourceTimeout}ms; " +
@@ -1547,8 +1583,9 @@ object SourceResolver {
         }
         if (answer == null) {
             // A timeout while the device is offline is the connection, not the
-            // source — the same rule [bestAcross] follows.
-            if (!offlineCheck()) SourceCooldown.failed(source.configId)
+            // source — the same rule [bestAcross] follows. Telegram's cold
+            // session is not a failure either; see [SourceCooldown.timedOut].
+            SourceCooldown.timedOut(source.configId, source.kind, online = !offlineCheck())
             TrackLog.d(TAG, "${source.displayName} timed out after ${timeoutMs}ms; skipping for this track")
             TrackLog.d(TAG, hqSearchLine(target, source, SearchOutcome(verdict = "timeout", conclusive = false)))
         } else if (answer.stream != null) {
@@ -2106,7 +2143,10 @@ object SourceResolver {
         // [countFailure] is off for an optional open whose result is not
         // needed; its failure says nothing about this track's answer.
         if (countFailure && source.kind != SourceKind.YOUTUBE) {
-            if (e.isNetworkFailure()) {
+            if (source.kind == SourceKind.TELEGRAM && e.isTimeoutFailure()) {
+                // A slow TDLib open/search is not the source saying "no"; it is
+                // the source still working. Counting it was the rest bug.
+            } else if (e.isNetworkFailure()) {
                 SourceCooldown.networkFailed(source.configId, online = !offlineCheck())
             } else {
                 SourceCooldown.failed(source.configId)
@@ -2126,6 +2166,23 @@ object SourceResolver {
      * answering, and it stays a source failure.
      */
     internal fun isNetworkFault(failure: Throwable): Boolean = failure.isNetworkFailure()
+
+    /** Whether [this] is a deadline rather than an answer; see [SourceCooldown.timedOut]. */
+    internal fun Throwable.isTimeoutFailure(): Boolean {
+        var cause: Throwable? = this
+        var depth = 0
+        while (cause != null && depth++ < 8) {
+            if (cause is java.net.SocketTimeoutException ||
+                cause is java.io.InterruptedIOException ||
+                cause is java.util.concurrent.TimeoutException
+            ) {
+                return true
+            }
+            cause = cause.cause?.takeIf { it !== cause }
+        }
+        val text = message?.lowercase() ?: return false
+        return text.contains("timed out") || text.contains("timeout") || text.contains("time-out")
+    }
 
     internal fun Throwable.isNetworkFailure(): Boolean {
         var cause: Throwable? = this

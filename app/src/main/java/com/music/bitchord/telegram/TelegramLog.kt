@@ -51,11 +51,17 @@ object TelegramLog {
      * already only lengths, counts and milliseconds, and running them through
      * it turned a required `ms=1234` into `ms=***`.
      */
-    internal fun searchLine(queryLength: Int, chats: Int, results: Int, millis: Long): String =
-        "telegram: search q=$queryLength chats=$chats results=$results ms=$millis"
+    internal fun searchLine(
+        queryLength: Int,
+        chats: Int,
+        results: Int,
+        millis: Long,
+        mode: String = "global",
+    ): String =
+        "telegram: search q=$queryLength chats=$chats results=$results ms=$millis mode=$mode"
 
-    fun search(queryLength: Int, chats: Int, results: Int, millis: Long) =
-        write(searchLine(queryLength, chats, results, millis))
+    fun search(queryLength: Int, chats: Int, results: Int, millis: Long, mode: String = "global") =
+        write(searchLine(queryLength, chats, results, millis, mode))
 
     /** The file id is hashed, so a numeric-only hash must not be redacted either. */
     internal fun streamLine(event: String, fileId: Int): String =
