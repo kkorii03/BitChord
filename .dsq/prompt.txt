@@ -1,0 +1,33 @@
+﻿BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/telegram. 대상: data/sources/SourceResolver.kt, playback/smart/HqAudioVerify.kt, 업그레이드 진행(수동 업그레이드·next-prep) 코드, data/sources/AddonSource.kt.
+사용자 불만: 품질 업그레이드가 너무 느림. 폰 tg7(git 41d4b94) 수동 업그레이드 1건이 40초 걸림:
+ 15:48:02.912 upgrade asked for by hand for xlidFadhnN0
+ 15:48:02.936 Trial… / Eljohnzc Addon Monochrome / Monochrome Lossless Provider is resting; asking it once because this upgrade was requested by hand
+ 15:48:14.939 upgrade found: 'Golden Boy' FLAC 16-bit from Deezer      ← 검색 1회에 12초(쉬는 소스 timeout 대기)
+ 15:48:16.035 decode: hq-verify failed at=download HTTP 403 ; Golden Boy Deezer -> unmeasured   ← 15:47:43 에 같은 곡·같은 소스가 이미 403 이었는데 또 시도. '(retried with fresh url…)' 꼬리 로그 없음 = 새 URL 재시도가 Deezer 에 안 걸림
+ 15:48:16.037 upgrade candidate failed; trying the next source / Eljohnzc … is resting; asking it once …
+ 15:48:17.658 upgrade found: FLAC from LastWave ; 15:48:20.121 hq-verify LastWave -> unmeasured candidate bytes=513221   ← LastWave 는 30초 미리듣기라 항상 unmeasured
+ 15:48:20.122 trying the next source / Eljohnzc … asking it once …   ← 같은 쉬는 소스를 후보마다 다시 물어 12초씩 소모
+ 15:48:32.124 upgrade found from Trial… ; 즉시 unmeasured
+ 15:48:33.704 upgrade found MP4 320 from JioSaavn ; 15:48:41.130 accepted ; 15:48:43.063 upgraded
+또 next-prep: 'West Coast' 검색 15:46:33→38.6(느린 소스 timeout 대기), 검증이 Deezer(403)→LastWave(미리듣기)→Qobuz 24-bit 순서로 하나씩 → 35초. Qobuz 24-bit 검증 1건은 ~14초(29MB PCM 디코드).
+할 일(판정 규칙·소리 대조 기준·match 임계값은 바꾸지 말 것 — 속도만):
+① 수동 업그레이드 1회 안에서 검색은 한 번만: '다음 소스 시도' 때 다시 검색하지 말고 첫 검색 답(후보 목록)을 재사용. 쉬는 소스 'asking it once' 는 요청당 정말 한 번, 짧은 제한(4초)으로, 나머지와 병렬.
+② 검증 순서: 음질 높은 후보부터(24-bit > 16-bit FLAC > 손실). 이미 상위 등급 후보가 있으면 느린 소스의 timeout 을 기다리지 말고 그 후보 검증을 바로 시작(남은 검색은 계속, 더 좋은 후보가 오면 그때 비교).
+③ 검증 불가 기억: (소스, 곡) 이 unmeasured(403/미리듣기 등) 이었으면 이 앱 실행 동안 같은 조합을 다시 받지 않음(메모리, 디스크 아님). 스트림이 곡 길이의 절반 미만(미리듣기)이면 다운로드 전에 후보에서 제외(길이 정보가 있으면).
+④ Deezer 403 에 새 URL 1회 재시도가 왜 안 걸리는지 원인(파일:줄) 확정 후 수정(Deezer 가 어떤 소스 종류·경로인지).
+⑤ 로그: 'upgrade timing: search=..ms verify=..ms total=..ms source=..' 한 줄.
+테스트(고치기 전 실패): 다음 후보로 넘어갈 때 재검색 없음; 쉬는 소스가 요청당 1회만 호출; unmeasured 기억; 높은 음질 후보가 먼저 검증됨. 새 테스트 클래스 이름 요약에.
+제약: .github/, keys, *.jks, 서명 수정 금지. TrackMatcher·hq-verify 판정 기준 변경 금지. 타이머·폴링 금지(배터리), 동시 검증 최대 2. 바꾼 함수의 모든 호출부 재확인. 기존 주석·의도를 지우면 요약에 이유.
+마지막 10줄 이내 요약: 원인(파일:줄) / 수정 / 테스트 / 미해결.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 5
+- HIGH `app/src/main/java/com/music/bitchord/playback/QualityUpgrade.kt:657` — `candidateQueue` is not cleared when a lossless follow-up is armed at :695, so after a successful lossy swap the follow-up hits the queue branch and pops stale lossy candidates (measured against the old floor) or returns null instead of searching lossless; `swapIn` does not re-check quality, so this can even downgrade. Fix: clear/scope `candidateQueue` when `followUps` is armed and re-check `worthSwapping`/`servedBy` on queue pops.
+- MEDIUM `app/src/main/java/com/music/bitchord/playback/smart/HqAudioVerify.kt:1191` — every `FreshRetryFailed` (including timeouts, I/O errors, 404/500) is remembered as `HTTP 403` for the process, so one transient retry failure permanently suppresses an otherwise valid source row. Fix: carry the retry's real code/reason and only memoize definitive 403/410 failures.
+- MEDIUM `app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:7242` — `searchMs` covers the whole `lookAgain`, including the now-inlined verification decode, while `verifyMs` measures only the cached `swapIn` lookup, so the required timing line misattributes e.g. the 14s Qobuz decode to search and is never emitted on the automatic/next-prep path. Fix: measure search and verification separately inside `lookAgain` and log the line on both paths.
+- LOW `app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:209` — `manualRestingProbes` entries are never removed after a request (only by `clearSearchAnswers`), so every manual press adds source/target/hash strings for the process lifetime. Fix: evict the session's keys when the manual request ends or cap the set.
+- LOW `app/src/test/java/com/music/bitchord/UpgradeSpeedTest.kt:88` — the new tests only exercise `bestAcross`' collect list and the sort helper, so the required "no re-search on next candidate" queue path and real high-quality-first verification order are never run, leaving the follow-up regression undetected. Fix: drive `QualityUpgrade.lookAgain` through two candidates and assert one search plus verification order.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
