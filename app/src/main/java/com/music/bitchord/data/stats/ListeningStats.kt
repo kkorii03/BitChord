@@ -2,21 +2,13 @@ package com.music.bitchord.data.stats
 
 import android.content.Context
 import android.util.Log
-import com.music.bitchord.data.DebugLog as Debug
-import com.music.bitchord.data.HomeFallbackRules
 import com.music.bitchord.data.LocalArtist
 import com.music.bitchord.data.LocalPlay
-import com.music.bitchord.data.StoredSongDisplay
 import com.music.bitchord.data.model.Song
-import com.music.bitchord.data.model.normalizedArtistName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.channels.BufferOverflow
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.SharedFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -135,34 +127,14 @@ object ListeningStats {
     private var lastWrite: Job? = null
 
     /**
-     * Routine writes are at most one every two minutes. Playback samples every
-     * few seconds; the month file is up to six hundred tracks, and rewriting it
-     * at that rate is flash wear for numbers nobody reads at that resolution.
-     * Forced writes (pause, track end, service stop, and every read of the
-     * summary) are not throttled.
-     */
-    private val writeThrottle = WriteThrottle(MIN_WRITE_INTERVAL_MS)
-
-    /**
      * Bumped by every completed write and every import, so [summary] can tell
      * whether the answer it already has is still the answer.
      */
     @Volatile
     private var version = 0L
 
-    /**
-     * Emits when a playthrough starts and when a play is counted, so Home's
-     * Recents can follow this device's record immediately. Event-driven: no
-     * timer and no polling, and at most twice per track. A slow collector may
-     * miss an intermediate event, which is harmless because it reads the whole
-     * recent list when it wakes.
-     */
-    private val _changes = MutableSharedFlow<Unit>(
-        extraBufferCapacity = 1,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST,
-    )
-
-    val changes: SharedFlow<Unit> = _changes.asSharedFlow()
+    val changes: kotlinx.coroutines.flow.SharedFlow<Unit>
+        get() = com.music.bitchord.ko.KoListeningStatsChanges.changes // [KO] listening-changes
 
     /** The last summary handed out, and what it was computed from. */
     private var cached: Cached? = null
@@ -204,28 +176,8 @@ object ListeningStats {
      */
     internal val isReady: Boolean get() = ready
 
-    /**
-     * Whether this install has recorded any listening yet.
-     *
-     * Kept callable before [init] because the settings read runs before the
-     * store opens, and an onboarding flag that predates the welcome pages is
-     * decided there. An empty month still carries `"tracks":[]`; anything with
-     * a play, an artist or time in the day buckets counts as history.
-     */
-    fun hasStoredHistory(context: Context): Boolean {
-        val files = File(context.filesDir, DIRECTORY).listFiles() ?: return false
-        return files.any { file ->
-            if (!file.isFile || !file.name.endsWith(".json")) return@any false
-            val bucket = runCatching {
-                json.decodeFromString(StoredBucket.serializer(), file.readText())
-            }.getOrNull() ?: return@any false
-            bucket.tracks.isNotEmpty() ||
-                bucket.artists.isNotEmpty() ||
-                bucket.albums.isNotEmpty() ||
-                bucket.hours.any { it > 0 } ||
-                bucket.days.isNotEmpty()
-        }
-    }
+    fun hasStoredHistory(context: Context): Boolean =
+        com.music.bitchord.ko.KoListeningStatsHistory.hasStoredHistory(context) // [KO] listening-history
 
     // ── Writing ─────────────────────────────────────────────────────────────
 
@@ -301,9 +253,8 @@ object ListeningStats {
             // whoever its page opens, and crediting a feature the same as a
             // headline act puts a guest verse on a chart of what someone
             // listens to.
-            // A cover counts for the person singing it, not the channel that
-            // posted it nor the artist whose song it is — see CoverTitles.
-            primaryArtist(com.music.bitchord.data.cover.CoverTitles.creditedArtist(song))?.let { name ->
+            // [KO] listening-display — a cover counts for the person singing it.
+            primaryArtist(com.music.bitchord.ko.KoListeningStatsDisplay.creditedArtist(song))?.let { name ->
                 // Asked here rather than in the recorder, because here is where
                 // the credit has already been reduced to a person: asking about
                 // "Cheema Y & Gur Sidhu" gets a picture of nobody and a genre of
@@ -360,7 +311,7 @@ object ListeningStats {
         // for the other, once-per-playthrough event. A track is announced as
         // the newest Recents row at most twice: when it starts and when it
         // counts, never on every five-second sample.
-        if (countsAsPlay) _changes.tryEmit(Unit)
+        if (countsAsPlay) com.music.bitchord.ko.KoListeningStatsChanges.emit() // [KO] listening-changes
     }
 
     /**
@@ -382,42 +333,19 @@ object ListeningStats {
         if (!ready) return
         record(song, playedMs, countsAsPlay = false, atMs = atMs)
         if (song.videoId.isBlank()) return
-        _changes.tryEmit(Unit)
+        com.music.bitchord.ko.KoListeningStatsChanges.emit() // [KO] listening-changes
     }
 
-    /**
-     * Records [plays] at the times they happened, then waits for every touched
-     * month to reach disk.
-     *
-     * The debug tour force-stops the app between seeding and the launch whose
-     * screenshots matter, so a write still queued behind the force-stop would
-     * be a Home with no Recents on the second launch.
-     */
-    internal suspend fun seedHistorical(plays: List<SeedPlay>): Int = withContext(Dispatchers.IO) {
-        if (!ready || plays.isEmpty()) return@withContext 0
-        // Oldest first, so each month is opened once and retired in order.
-        // The whole run holds the bucket lock: the startup warm-up opens the
-        // current month on its own coroutine, and letting it interleave would
-        // retire a half-written older month.
-        synchronized(lock) {
-            plays.sortedBy { it.playedAtMs }.forEach { play ->
-                record(play.song, play.playedMs, play.countsAsPlay, play.playedAtMs)
-            }
-        }
-        flushAndAwait()
-        awaitWriter()
-        plays.size
-    }
+    internal suspend fun seedHistorical(plays: List<SeedPlay>): Int =
+        com.music.bitchord.ko.KoListeningStatsSeed.seedHistorical(plays) // [KO] listening-seed
 
     /** Seeds the tour's history only when this device has not listened yet. */
-    internal suspend fun seedIfEmpty(nowMs: Long = System.currentTimeMillis()): Int {
-        if (!ready) return 0
-        if (recentTracks(1).isNotEmpty()) return 0
-        return seedHistorical(ListeningStatsSeed.plan(nowMs))
-    }
+    internal suspend fun seedIfEmpty(nowMs: Long = System.currentTimeMillis()): Int =
+        com.music.bitchord.ko.KoListeningStatsSeed.seedIfEmpty(nowMs) // [KO] listening-seed
 
-    /** Joins month writes [bucketFor] queued while the seed rolled over. */
-    private suspend fun awaitWriter() {
+    internal fun koLock(): Any = lock
+
+    internal suspend fun koAwaitWriter() {
         writer.coroutineContext[Job]?.children?.toList()?.forEach { it.join() }
     }
 
@@ -427,14 +355,14 @@ object ListeningStats {
      * Called on a cadence rather than on every sample: the numbers are worth
      * losing a few seconds of, and a music player has better uses for its disk
      * than re-serialising a month every time a track ticks over. The routine
-     * path is throttled to [MIN_WRITE_INTERVAL_MS]; [force] is for a pause or
+     * path is throttled by the fork's listening-changes state; [force] is for a pause or
      * a stop, where losing the tail would actually matter.
      */
     fun flush(force: Boolean = false) {
-        if (!force && !writeThrottle.shouldWrite(System.currentTimeMillis())) return
+        if (!force && !com.music.bitchord.ko.KoListeningStatsChanges.shouldWrite(System.currentTimeMillis())) return // [KO] listening-changes
         val now = System.currentTimeMillis()
         pending()?.let { (key, snapshot, generation) ->
-            writeThrottle.wrote(now)
+            com.music.bitchord.ko.KoListeningStatsChanges.wrote(now) // [KO] listening-changes
             lastWrite = writer.launch { write(key, snapshot, generation) }
         }
     }
@@ -442,7 +370,7 @@ object ListeningStats {
     /** As [flush], for a caller that is about to read back what it wrote. */
     private suspend fun flushAndAwait() {
         val queued = pending()?.let { (key, snapshot, generation) ->
-            writeThrottle.wrote(System.currentTimeMillis())
+            com.music.bitchord.ko.KoListeningStatsChanges.wrote(System.currentTimeMillis()) // [KO] listening-changes
             writer.launch { write(key, snapshot, generation) }.also { lastWrite = it }
         }
         // No snapshot here means a throttled flush may already have taken one;
@@ -563,137 +491,38 @@ object ListeningStats {
         }
     }
 
-    /**
-     * Each month's track totals, oldest first — what [SmartPlaylists] ranks.
-     * The open month is flushed first so the lists include what just played.
-     */
-    suspend fun monthlyTracks(): List<Pair<YearMonth, List<TrackEntry>>> = withContext(Dispatchers.IO) {
-        flushAndAwait()
-        months().mapNotNull { month -> read(month.toString())?.let { month to it.tracks } }
-    }
+    suspend fun monthlyTracks(): List<Pair<YearMonth, List<TrackEntry>>> =
+        com.music.bitchord.ko.KoListeningStatsRecent.monthlyTracks() // [KO] listening-recents
 
-    /**
-     * The most recently played tracks across every month, newest first and one
-     * row per video id.
-     *
-     * [TrackEntry.last] is the play time that orders this: the monthly buckets
-     * exist for the Replay's arithmetic, not to imply that a track heard last
-     * month is newer than one heard this morning.
-     *
-     * The open month is merged from memory as well as read off disk. A routine
-     * write is throttled and runs on the writer coroutine, so the file can lag
-     * behind the track that just started; merging the live bucket means Recents
-     * never waits for it and no write is forced just to read. Only a write for
-     * a month that has already rolled over has to land, because that data is no
-     * longer in `open`.
-     */
-    suspend fun recentTracks(limit: Int = RECENT_LIMIT): List<TrackEntry> =
-        withContext(Dispatchers.IO) {
-            if (limit <= 0) return@withContext emptyList()
-            if (!ready) return@withContext emptyList()
-            lastWrite?.join()
-            val (openKey, openTracks) = synchronized(lock) {
-                val bucket = open
-                bucket?.key to (bucket?.tracks?.values?.map { it.copy() }.orEmpty())
-            }
-            val fileTracks = months()
-                .filter { it.toString() != openKey }
-                .flatMap { month -> read(month.toString())?.tracks.orEmpty() }
-            mergeRecentTracks(fileTracks, openTracks, limit).also { tracks ->
-                Debug.i(
-                    RECENTS_TAG,
-                    "recents: local read n=${tracks.size} top=" +
-                        tracks.take(3).joinToString(" | ") { it.title },
-                )
-            }
-        }
+    suspend fun recentTracks(limit: Int = com.music.bitchord.ko.KoListeningStatsRecent.recentLimit()): List<TrackEntry> =
+        com.music.bitchord.ko.KoListeningStatsRecent.recentTracks(limit) // [KO] listening-recents
 
-    /**
-     * The newest [limit] tracks across [fileTracks] and the open month's
-     * [openTracks], one row per id.
-     *
-     * [openTracks] are listed first so a track heard again in the open month
-     * wins a tie against the older copy already on disk. Pure so the merge can
-     * be tested without a directory.
-     */
     internal fun mergeRecentTracks(
         fileTracks: List<TrackEntry>,
         openTracks: List<TrackEntry>,
         limit: Int,
-    ): List<TrackEntry> {
-        if (limit <= 0) return emptyList()
-        return (openTracks + fileTracks)
-            .asSequence()
-            .filter { it.id.isNotBlank() }
-            .sortedByDescending { it.last }
-            .distinctBy { it.id }
-            .take(limit)
-            .toList()
+    ): List<TrackEntry> =
+        com.music.bitchord.ko.KoListeningStatsRecent.mergeRecentTracks(fileTracks, openTracks, limit) // [KO] listening-recents
+
+    suspend fun topArtists(days: Int, minPlays: Int): List<LocalArtist> =
+        com.music.bitchord.ko.KoListeningStatsRecent.topArtists(days, minPlays) // [KO] listening-recents
+
+    suspend fun rediscover(limit: Int, olderThanDays: Int): List<LocalPlay> =
+        com.music.bitchord.ko.KoListeningStatsRecent.rediscover(limit, olderThanDays) // [KO] listening-recents
+
+    internal fun koReady(): Boolean = ready
+
+    internal suspend fun koFlushAndAwait() = flushAndAwait()
+
+    internal fun koRead(key: String): StoredBucket? = read(key)
+
+    internal suspend fun koAwaitLastWrite() {
+        lastWrite?.join()
     }
 
-    /**
-     * The artists with at least [minPlays] whole plays in the last [days] days,
-     * most played first.
-     *
-     * Months are the bucket keys, so the window reaches back to the first whole
-     * month inside it: a 90-day look on the 20th starts at the month holding
-     * that day, not at the same day of the month, which is the granularity this
-     * store has. Artists are folded by their lead name, matching the chart the
-     * Replay pages draw.
-     */
-    suspend fun topArtists(days: Int, minPlays: Int): List<LocalArtist> =
-        withContext(Dispatchers.IO) {
-            if (days <= 0 || minPlays <= 0) return@withContext emptyList()
-            flushAndAwait()
-            val today = LocalDate.now()
-            val from = YearMonth.from(today.minusDays(days.toLong()))
-            val until = YearMonth.from(today)
-            val merged = LinkedHashMap<String, NameEntry>()
-            months().filter { !it.isBefore(from) && !it.isAfter(until) }
-                .forEach { month ->
-                    read(month.toString())?.artists?.forEach { stored ->
-                        val name = primaryArtist(stored.name) ?: stored.name
-                        val key = normalizedArtistName(name)
-                        if (key.isEmpty()) return@forEach
-                        val entry = stored.copy(name = name)
-                        merged.merge(key, entry) { a, b -> a.also { it.absorb(b) } }
-                    }
-                }
-            merged.values
-                .filter { it.plays >= minPlays }
-                .sortedWith(
-                    compareByDescending<NameEntry> { it.plays }
-                        .thenBy { normalizedArtistName(it.name) },
-                )
-                .map {
-                    LocalArtist(
-                        name = it.name,
-                        artistId = it.id,
-                        plays = it.plays,
-                        thumbnailUrl = it.art,
-                    )
-                }
-        }
-
-    /**
-     * Rediscoveries: the highest lifetime play counts whose last play is older
-     * than [olderThanDays] days, oldest last play first — see
-     * [HomeFallbackRules.rediscover] for the ranking itself.
-     */
-    suspend fun rediscover(limit: Int, olderThanDays: Int): List<LocalPlay> {
-        if (limit <= 0) return emptyList()
-        val totals = LinkedHashMap<String, TrackEntry>()
-        monthlyTracks().forEach { (_, tracks) ->
-            tracks.forEach { track ->
-                totals.merge(track.id, track.copy()) { a, b -> a.also { it.absorb(b) } }
-            }
-        }
-        return HomeFallbackRules.rediscover(
-            candidates = totals.values.map { LocalPlay(it.asSong(), it.last, it.plays) },
-            nowMs = System.currentTimeMillis(),
-            limit = limit,
-            olderThanDays = olderThanDays,
-        )
+    internal fun koOpenTracks(): Pair<String?, List<TrackEntry>> = synchronized(lock) {
+        val bucket = open
+        bucket?.key to (bucket?.tracks?.values?.map { it.copy() }.orEmpty())
     }
 
     /** Every month with a file, oldest first. */
@@ -779,271 +608,37 @@ object ListeningStats {
         return months().mapNotNull { read(it.toString()) }
     }
 
-    /**
-     * Replaces everything held with [buckets], returning whether the restored
-     * files reached disk.
-     *
-     * A replace rather than a merge, and deliberately so: an import is a restore
-     * onto a new device, and two copies of the same month added together would
-     * silently double every number on the page with no way to tell afterwards.
-     *
-     * The new months are written aside first and only then swapped in. Existing
-     * months are renamed to `.bak`, never deleted, and the swap is journaled:
-     * a failure in this process restores the backups before returning, while a
-     * process death between the rename steps is rolled back on the next
-     * [init]. The journal is removed at the commit point, so a death after it
-     * leaves only cleanup (the new files are already in place).
-     *
-     * A month that cannot be parsed is refused by [prepareImport] rather than
-     * skipped, because a silent skip here is exactly the "applied" summary
-     * disagreeing with what is on disk.
-     */
-    suspend fun importAll(buckets: List<StoredBucket>): Boolean {
-        if (!ready) {
-            Log.w(TAG, "Refusing to import listening buckets before the store is open")
-            return false
-        }
-        val prepared = runCatching { prepareImport(buckets) }
-            .onFailure { Log.w(TAG, "Refusing an unreadable listening import", it) }
-            .getOrElse { return false }
+    suspend fun importAll(buckets: List<StoredBucket>): Boolean =
+        com.music.bitchord.ko.KoListeningStatsImport.importAll(buckets) // [KO] listening-import
 
-        synchronized(lock) { importing = true }
-        try {
-            // A flush taken before the flag flipped may still be queued. Joining
-            // it before taking [writeLock] lets it finish instead of cancelling
-            // it halfway through, and stops it landing after the restore.
-            lastWrite?.join()
-            return writeLock.withLock {
-                synchronized(lock) {
-                    // A previous import may have died after writing its
-                    // journal. Roll that one back before this import writes a
-                    // new journal over the only record of what it left in
-                    // `.bak`; otherwise the next no-journal open would purge
-                    // those months as leftovers. If the rollback is incomplete
-                    // the old journal is the only thing that can make the next
-                    // open retry, so this import must not replace it.
-                    if (!recoverInterruptedImport()) {
-                        Log.w(TAG, "Refusing to import while an earlier rollback is incomplete")
-                        return@synchronized false
-                    }
-                    directory.mkdirs()
-                    val staged = mutableListOf<Pair<String, File>>()
-                    for ((key, text) in prepared) {
-                        val temporary = File(directory, "$key$IMPORTING_SUFFIX")
-                        val written = runCatching { temporary.writeText(text) }
-                            .onFailure { Log.w(TAG, "Could not stage listening bucket $key", it) }
-                            .isSuccess
-                        if (!written) {
-                            staged.forEach { (_, file) -> file.delete() }
-                            temporary.delete()
-                            return@synchronized false
-                        }
-                        staged += key to temporary
-                    }
-
-                    // Every new month is now on disk under its staging name.
-                    val existing = directory.listFiles()
-                        ?.filter { it.isFile && it.name.endsWith(".json") }
-                        .orEmpty()
-                    val journal = File(directory, IMPORT_JOURNAL)
-                    val journalText = buildString {
-                        existing.forEach { appendLine("O ${it.name}") }
-                        prepared.forEach { (key, _) -> appendLine("N $key.json") }
-                    }
-                    val journalWritten = runCatching { journal.writeText(journalText) }.isSuccess
-                    if (!journalWritten) {
-                        Log.w(TAG, "Could not write the listening import journal")
-                        staged.forEach { (_, file) -> file.delete() }
-                        return@synchronized false
-                    }
-
-                    // Move the old months aside first. Nothing is deleted until
-                    // every new month is in place.
-                    val backups = mutableListOf<Pair<File, File>>()
-                    var backedUp = true
-                    for (file in existing) {
-                        val backup = File(directory, file.name + BACKUP_SUFFIX)
-                        if (file.renameTo(backup)) {
-                            backups += file to backup
-                        } else {
-                            Log.w(TAG, "Could not back up listening bucket ${file.name}")
-                            backedUp = false
-                            break
-                        }
-                    }
-                    if (!backedUp) {
-                        staged.forEach { (_, file) -> file.delete() }
-                        // Only drop the journal once every old month is back.
-                        // If a rename back fails, leaving it lets [init] retry;
-                        // deleting it would let the next open purge the `.bak`
-                        // as a leftover and lose that month for good.
-                        if (restoreBackups(backups)) {
-                            journal.delete()
-                        } else {
-                            Log.w(TAG, "Could not restore every listening backup; keeping the journal")
-                        }
-                        return@synchronized false
-                    }
-
-                    val applied = mutableListOf<File>()
-                    var committed = true
-                    for ((key, temporary) in staged) {
-                        val target = File(directory, "$key.json")
-                        if (temporary.renameTo(target) ||
-                            (target.delete() && temporary.renameTo(target))
-                        ) {
-                            applied += target
-                        } else {
-                            Log.w(TAG, "Could not commit listening bucket $key")
-                            committed = false
-                            break
-                        }
-                    }
-                    if (!committed) {
-                        // Put the old months back exactly as they were. The
-                        // journal stays if any rename back fails, so the same
-                        // rollback runs again on the next [init] instead of
-                        // losing the remaining `.bak` files.
-                        staged.forEach { (_, file) -> file.delete() }
-                        if (restoreBackups(backups, applied)) {
-                            journal.delete()
-                        } else {
-                            Log.w(TAG, "Could not restore every listening backup; keeping the journal")
-                        }
-                        return@synchronized false
-                    }
-
-                    // Commit point. Once the journal is gone the new folder is
-                    // the answer; only backup cleanup is left.
-                    journal.delete()
-                    backups.forEach { (_, backup) -> backup.delete() }
-                    open = null
-                    dirty = false
-                    importGeneration++
-                    version++
-                    cached = null
-                    true
-                }
-            }
-        } finally {
-            synchronized(lock) { importing = false }
-        }
-    }
-
-    /**
-     * Puts every old month named by [backups] back where it was.
-     *
-     * Returns false when any target could not be cleared or any `.bak` could
-     * not be renamed back. The caller must then keep the import journal so
-     * [recoverInterruptedImport] retries on the next open; dropping it would
-     * make that recovery treat the surviving `.bak` files as leftovers.
-     */
     internal fun restoreBackups(
         backups: List<Pair<File, File>>,
         applied: List<File> = emptyList(),
-    ): Boolean {
-        var restored = true
-        // A month committed by this import has to be gone before its old copy
-        // can take that name. A failed delete is as much a rollback failure as
-        // a failed rename: leaving it out of [restored] would let the caller
-        // delete the journal and strand the only remaining copy in `.bak`.
-        applied.forEach { file ->
-            if (file.exists() && !file.delete()) restored = false
-        }
-        for ((original, backup) in backups) {
-            if (!backup.isFile) continue
-            if (original.exists() && !original.delete()) {
-                restored = false
-                continue
-            }
-            if (!backup.renameTo(original)) {
-                Log.w(TAG, "Could not restore listening bucket ${original.name}")
-                restored = false
-            }
-        }
-        return restored
+    ): Boolean =
+        com.music.bitchord.ko.KoListeningStatsImport.restoreBackups(backups, applied) // [KO] listening-import
+
+    private fun recoverInterruptedImport(): Boolean =
+        com.music.bitchord.ko.KoListeningStatsImport.recoverInterruptedImport() // [KO] listening-import
+
+    internal fun prepareImport(buckets: List<StoredBucket>): List<Pair<String, String>> =
+        com.music.bitchord.ko.KoListeningStatsImport.prepareImport(buckets) // [KO] listening-import
+
+    internal fun koDirectory(): File = directory
+
+    internal fun koJson(): Json = json
+
+    internal fun koWriteLock(): Mutex = writeLock
+
+    internal fun koSetImporting(value: Boolean) {
+        importing = value
     }
 
-    /**
-     * Rolls back an import that died mid-swap and reports whether the folder is
-     * whole again.
-     *
-     * Callers that are about to write a new journal must abort when this
-     * returns false: overwriting the old journal would discard the only record
-     * of which months survive as `.bak`, and the next open would purge them.
-     */
-    private fun recoverInterruptedImport(): Boolean {
-        val journal = File(directory, IMPORT_JOURNAL)
-        if (!journal.exists()) {
-            // A completed import may have died before deleting its staging
-            // files or `.bak` copies. Neither is a month any more.
-            directory.listFiles()?.forEach { file ->
-                if (file.isFile &&
-                    (file.name.endsWith(IMPORTING_SUFFIX) || file.name.endsWith(BACKUP_SUFFIX))
-                ) {
-                    file.delete()
-                }
-            }
-            return true
-        }
-        val oldNames = mutableSetOf<String>()
-        val newNames = mutableSetOf<String>()
-        runCatching { journal.readLines() }.getOrDefault(emptyList()).forEach { line ->
-            when {
-                line.startsWith("O ") -> oldNames += line.removePrefix("O ")
-                line.startsWith("N ") -> newNames += line.removePrefix("N ")
-            }
-        }
-        // Only delete a `.json` that is a backup target or a month the file
-        // brought. An old month not yet moved aside has no `.bak` and must stay.
-        var rolledBack = true
-        newNames.forEach { name ->
-            val target = File(directory, name)
-            val backup = File(directory, name + BACKUP_SUFFIX)
-            if (target.isFile && (name !in oldNames || backup.isFile)) {
-                if (!target.delete()) rolledBack = false
-            }
-        }
-        oldNames.forEach { name ->
-            val backup = File(directory, name + BACKUP_SUFFIX)
-            if (backup.isFile) {
-                val target = File(directory, name)
-                if (target.exists() && !target.delete()) rolledBack = false
-                if (!backup.renameTo(target)) rolledBack = false
-            }
-        }
-        directory.listFiles()?.forEach { file ->
-            if (file.isFile && file.name.endsWith(IMPORTING_SUFFIX)) file.delete()
-        }
-        if (!rolledBack) {
-            // A rename that failed now may succeed next time (a full volume, a
-            // file briefly held open). Keeping the journal is what stops the
-            // next open from treating the surviving `.bak` files as leftovers.
-            Log.w(TAG, "Could not fully roll back an interrupted listening import; retrying next open")
-            return false
-        }
-        journal.delete()
-        Log.w(TAG, "Rolled back an interrupted listening import")
-        return true
-    }
-
-    /**
-     * Serialises a whole import before [importAll] touches the directory.
-     *
-     * Kept separate and pure so the refusal path — a month this build cannot
-     * parse, or two rows for one month that would overwrite each other — can be
-     * tested without an Android context or a writable files directory.
-     */
-    internal fun prepareImport(buckets: List<StoredBucket>): List<Pair<String, String>> {
-        val seen = HashSet<String>(buckets.size)
-        return buckets.map { bucket ->
-            val key = runCatching { YearMonth.parse(bucket.month).toString() }
-                .getOrElse { throw IllegalArgumentException("잘못된 청취 달: ${bucket.month}", it) }
-            require(seen.add(key)) { "같은 청취 달이 두 번 있습니다: $key" }
-            val text = runCatching { json.encodeToString(StoredBucket.serializer(), bucket) }
-                .getOrElse { throw IllegalArgumentException("청취 기록을 저장할 수 없습니다: $key", it) }
-            key to text
-        }
+    internal fun koFinishImport() {
+        open = null
+        dirty = false
+        importGeneration++
+        version++
+        cached = null
     }
 
     // ── Shapes ──────────────────────────────────────────────────────────────
@@ -1189,7 +784,7 @@ object ListeningStats {
                     .map { (entry, msPlays) ->
                         val (ms, plays) = msPlays
                         RankedSong(
-                            song = StoredSongDisplay.clean(
+                            song = com.music.bitchord.ko.KoListeningStatsDisplay.clean(
                                 Song(
                                     videoId = entry.id,
                                     title = entry.title,
@@ -1199,7 +794,7 @@ object ListeningStats {
                                     albumId = entry.albumId,
                                     albumName = entry.album,
                                 ),
-                            ),
+                            ), // [KO] listening-display
                             ms = ms,
                             plays = plays,
                         )
@@ -1209,7 +804,7 @@ object ListeningStats {
                     .sortedWith(compareByDescending<TrackEntry> { it.ms }.thenByDescending { it.plays })
                     .map {
                         RankedSong(
-                            song = StoredSongDisplay.clean(
+                            song = com.music.bitchord.ko.KoListeningStatsDisplay.clean(
                                 Song(
                                     videoId = it.id,
                                     title = it.title,
@@ -1219,7 +814,7 @@ object ListeningStats {
                                     albumId = it.albumId,
                                     albumName = it.album,
                                 ),
-                            ),
+                            ), // [KO] listening-display
                             ms = it.ms,
                             plays = it.plays,
                         )
@@ -1403,35 +998,13 @@ object ListeningStats {
 
     private const val TAG = "BitChordListening"
 
-    /**
-     * Tag for the Recents diagnostic trail, shared with the shared module's
-     * logs so one export reads as a single sequence.
-     */
-    private const val RECENTS_TAG = "BitChord"
-
     private const val DIRECTORY = "listening"
-
-    /** Rows waiting to replace a month, and the old month they replace. */
-    private const val IMPORTING_SUFFIX = ".importing"
-    private const val BACKUP_SUFFIX = ".bak"
-
-    /**
-     * Written before the first old month is moved and removed at the commit
-     * point. Its presence on the next launch means the import did not finish.
-     */
-    private const val IMPORT_JOURNAL = "import.journal"
-
-    /** At most one routine month write per two minutes of playback. */
-    private const val MIN_WRITE_INTERVAL_MS = 2L * 60L * 1000L
 
     /** How far down the artist chart a page opening will send lookups for. */
     private const val ARTISTS_TO_RESOLVE = 15
 
     /** Three years, which is longer than "all time" means to most people. */
     private const val KEEP_MONTHS = 36
-
-    /** How many recent tracks a shelf asks this store for. */
-    private const val RECENT_LIMIT = 20
 
     /**
      * Per-month caps. Generous enough that nobody reaches them by listening,
@@ -1465,25 +1038,8 @@ data class TrackEntry(
     /** Per-day breakdown for weekly queries. Key: "YYYY-MM-DD". */
     var days: MutableMap<String, DayStats> = mutableMapOf(),
 ) {
-    /**
-     * The entry as a playable row. A cover was recorded as it was shown —
-     * its song, and "원곡자 · 가수 커버" — so it is marked a video again: that
-     * byline is what [com.music.bitchord.data.cover.CoverTitles] reads a
-     * cover back from, for its lyrics, timing and moving cover.
-     */
-    fun asSong(): Song = StoredSongDisplay.clean(
-        Song(
-            videoId = id,
-            title = title,
-            artist = artist,
-            thumbnailUrl = art,
-            durationText = durationText,
-            artistId = artistId,
-            albumId = albumId,
-            albumName = album,
-            isVideo = artist.endsWith(" 커버"),
-        ),
-    )
+    fun asSong(): Song =
+        com.music.bitchord.ko.KoListeningStatsDisplay.asSong(this) // [KO] listening-display
 
     fun absorb(other: TrackEntry) {
         ms += other.ms
