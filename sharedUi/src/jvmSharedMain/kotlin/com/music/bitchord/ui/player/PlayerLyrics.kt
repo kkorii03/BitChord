@@ -51,13 +51,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Language
-import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -132,13 +130,24 @@ import com.music.bitchord.data.lyrics.isGeniusSectionHeader
 import com.music.bitchord.data.lyrics.GrowingWord
 import com.music.bitchord.data.lyrics.LyricAlignment
 import com.music.bitchord.data.lyrics.LyricLine
-import com.music.bitchord.data.lyrics.LyricLineIndex
-import com.music.bitchord.data.lyrics.LyricWord
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.lyrics.LyricsWordAlign
 import com.music.bitchord.data.lyrics.translationLanguageName
-import com.music.bitchord.data.lyrics.withEstimatedWords
-import com.music.bitchord.data.lyrics.withHeardWords
+import com.music.bitchord.ko.ui.player.koAutoTranslateEffect
+import com.music.bitchord.ko.ui.player.koChooseProviderButton
+import com.music.bitchord.ko.ui.player.koCurrentLyricTransition
+import com.music.bitchord.ko.ui.player.koLyricsStatusWithTiming
+import com.music.bitchord.ko.ui.player.koLyricsTimingDetail
+import com.music.bitchord.ko.ui.player.koRetimedLyricsEffect
+import com.music.bitchord.ko.ui.player.koSameTiming
+import com.music.bitchord.ko.ui.player.koSameWords
+import com.music.bitchord.ko.ui.player.koShouldDrawLyricFrame
+import com.music.bitchord.ko.ui.player.koShownLine
+import com.music.bitchord.ko.ui.player.koStatusChevron
+import com.music.bitchord.ko.ui.player.koSweptLine
+import com.music.bitchord.ko.ui.player.koTranscribingPlaceholder
+import com.music.bitchord.ko.ui.player.rememberKoLineIndex
+import com.music.bitchord.ko.ui.player.rememberKoLyricPanelIndexes
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.Haptics
 import com.music.bitchord.ui.haptics.rememberHaptics
@@ -534,8 +543,6 @@ internal fun LyricsStatusWithChange(
     modifier: Modifier = Modifier,
 ) {
     val haptics = rememberHaptics()
-    // A chevron, as Apple marks a row that opens something, rather than an
-    // underline — and the whole line is the target, not just its letters.
     Row(
         modifier = modifier.then(
             if (onStatusClick != null) {
@@ -561,16 +568,7 @@ internal fun LyricsStatusWithChange(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f, fill = false),
         )
-        if (onStatusClick != null) {
-            Icon(
-                imageVector = com.music.bitchord.ui.icons.BitChordIcons.ChevronRight,
-                contentDescription = null,
-                tint = Color.White.copy(alpha = 0.45f),
-                modifier = Modifier
-                    .padding(start = 4.dp)
-                    .size(14.dp),
-            )
-        }
+        if (onStatusClick != null) koStatusChevron() // [KO] lyrics-status-chevron
     }
 }
 
@@ -605,10 +603,7 @@ internal fun CurrentLyricStrip(
     var activeText by remember { mutableStateOf("") }
     if (isSynced) {
         val clock = rememberLyricClock(trackKey, playhead, isPlaying)
-        val rowIndex = remember(lines) { LyricLineIndex(lines) }
-        val index by remember(lines, rowIndex) {
-            derivedStateOf { rowIndex.lineAt(clock.longValue) }
-        }
+        val index by rememberKoLineIndex(lines, clock) // [KO] lyric-line-index
         val current = lines.getOrNull(index)
         val instrumental = current == null || current.isGap
         val firstSung = remember(lines) { lines.indexOfFirst { !it.isGap } }
@@ -764,11 +759,7 @@ private fun rememberLyricClock(
                 // two are seconds apart and the real clock is used instead.
                 val system = System.nanoTime()
                 val now = if (abs(system - frameNanos) < SAME_CLOCK_NANOS) frameNanos else system
-                // A 120 Hz panel is a request to redraw a text sweep twice as
-                // often as the eye can use, at twice the drawing cost. One
-                // update per 60 Hz frame is the whole of the visual change; the
-                // skipped frames are simply a larger dt in the next one.
-                if (lastDrawnNanos != 0L && now - lastDrawnNanos < LYRIC_FRAME_INTERVAL_NANOS) {
+                if (koShouldDrawLyricFrame(now, lastDrawnNanos)) { // [KO] lyric-frame-gate
                     return@withFrameNanos
                 }
                 lastDrawnNanos = now
@@ -784,9 +775,6 @@ private fun rememberLyricClock(
     }
     return clock
 }
-
-/** The fastest lyric highlight is redrawn, whatever the display refresh rate. */
-private const val LYRIC_FRAME_INTERVAL_NANOS = 16_000_000L
 
 /** A frame time this close to [System.nanoTime] is on the same clock. */
 private const val SAME_CLOCK_NANOS = 250_000_000L
@@ -1589,40 +1577,13 @@ internal fun RomanizationToggleButton(
     }
 }
 
-/**
- * The line under the lyrics: who provided them, and — in a word — whether
- * they were moved onto this video's clock. Short on purpose, like the credit
- * line it extends; the figures (how far, how fast, how sure) are in the sync
- * drawer, see [lyricsTimingDetail].
- */
 @Composable
-internal fun lyricsStatusWithTiming(status: String, timing: LyricsTimingUi): String = when {
-    timing.aiRunning -> stringResource(Res.string.lyrics_timing_running_short, status)
-    timing.shiftMs != null || timing.byAi -> stringResource(Res.string.lyrics_timing_adjusted, status)
-    timing.manualMs != 0L -> stringResource(Res.string.lyrics_timing_manual_short, status)
-    else -> status
-}
+internal fun lyricsStatusWithTiming(status: String, timing: LyricsTimingUi): String =
+    koLyricsStatusWithTiming(status, timing) // [KO] lyrics-timing
 
-/**
- * What was done to the timing, with its figures — "자동 보정 +3.2초 · 속도
- * 0.98배", "AI 타이밍 +2.1초 · 일치 85%" — or null when nothing moved the lines.
- */
 @Composable
-internal fun lyricsTimingDetail(timing: LyricsTimingUi): String? {
-    if (timing.shiftMs == null && !timing.byAi) return null
-    val details = buildList {
-        timing.shiftMs?.let { add(stringResource(Res.string.lyrics_timing_seconds, signedSeconds(it))) }
-        timing.rate?.let { add(stringResource(Res.string.lyrics_timing_rate, String.format(java.util.Locale.ROOT, "%.2f", it))) }
-        if (timing.byAi) timing.matchPercent?.let { add(stringResource(Res.string.lyrics_timing_match, it.toString())) }
-        if (timing.byAi) timing.aiEngine?.let { add(it) }
-    }.joinToString(" · ")
-    return stringResource(
-        if (timing.byAi) Res.string.lyrics_timing_detail_ai else Res.string.lyrics_timing_detail_auto,
-        details,
-    ).trim()
-}
-
-internal fun signedSeconds(ms: Long): String = String.format(java.util.Locale.ROOT, "%+.1f", ms / 1000.0)
+internal fun lyricsTimingDetail(timing: LyricsTimingUi): String? =
+    koLyricsTimingDetail(timing) // [KO] lyrics-timing
 
 /**
  * A short text-material transition: the list and its playback clock stay in
@@ -1719,7 +1680,7 @@ private fun Modifier.lyricParticles(
  * as it took to find out that it did.
  */
 @Composable
-private fun LyricsSkeleton(modifier: Modifier = Modifier, topPadding: Dp = 40.dp) {
+internal fun LyricsSkeleton(modifier: Modifier = Modifier, topPadding: Dp = 40.dp) { // [KO] fork access
     val sweep = rememberInfiniteTransition(label = "lyricsSkeleton").animateFloat(
         initialValue = 0f,
         targetValue = 1f,
@@ -1892,24 +1853,9 @@ internal fun LyricsPanel(
     // panel into lanes for it would just be a narrower panel.
     val duet = remember(lines) { lines.any { it.alignment == LyricAlignment.End } }
 
-    // The clock moves every frame; the line it picks out does not. These
-    // indexes answer the lookup from a binary search and a backwards walk over
-    // the vocals still unfinished, so a tick is a handful of comparisons rather
-    // than a scan and a full-list allocation. Kept apart because the lead line
-    // asks at a different position from the rows, and one shared scratch buffer
-    // would make the two evict each other every frame. See [LyricLineIndex].
-    val rowIndex = remember(lines) { LyricLineIndex(lines) }
-    val leadIndex = remember(lines) { LyricLineIndex(lines) }
-
-    val activeRows by remember(lines, isSynced, rowIndex) {
-        derivedStateOf {
-            if (!isSynced) emptyList() else rowIndex.activeRows(clock.longValue)
-        }
-    }
-    // Rows ask "am I active" one by one, so membership is a set lookup keyed on
-    // the row list rather than a scan; it is rebuilt only when the answer
-    // itself changes.
-    val activeRowSet = remember(activeRows) { activeRows.toHashSet() }
+    val koIndexes = rememberKoLyricPanelIndexes(lines, isSynced, clock, ::scrollLead) // [KO] lyric-line-index
+    val activeRows by koIndexes.activeRows
+    val activeRowSet = koIndexes.activeRowSet
     // The uppermost unfinished vocal owns the scroll anchor until its end,
     // even as later rows begin their own independent highlight animations.
     val scrollLine = activeRows.firstOrNull() ?: -1
@@ -1920,17 +1866,7 @@ internal fun LyricsPanel(
     //
     // Kept apart from [scrollLine] on purpose: this leads, and the sweep must
     // not. Everything lit by the clock still goes through the real one.
-    val leadLine by remember(lines, isSynced, leadIndex) {
-        derivedStateOf {
-            if (!isSynced) {
-                -1
-            } else {
-                val now = clock.longValue
-                val lead = scrollLead(lines, leadIndex.lineAt(now))
-                leadIndex.activeRows(now + lead).firstOrNull() ?: -1
-            }
-        }
-    }
+    val leadLine by koIndexes.leadLine
     // What the stack arranges itself around. The outgoing line starts dimming
     // as the panel leaves it rather than when its last word ends, so the dim,
     // the blur and the movement are one gesture.
@@ -2090,7 +2026,7 @@ internal fun LyricsPanel(
                 // given the run-up's own duration and curve instead of the
                 // list's default spring.
                 visible != null -> {
-                    val span = scrollLead(lines, rowIndex.lineAt(clock.longValue)).toInt()
+                    val span = scrollLead(lines, koIndexes.rowIndex.lineAt(clock.longValue)).toInt()
                     val distance = (visible.offset - focusOffset(visible.size)).toFloat()
                     run = ScrollRun(run.id + 1, distance, span)
                     // The same curve the rows catch up on. Two different
@@ -2130,25 +2066,7 @@ internal fun LyricsPanel(
         // has actually come back with it.
         if (looking) {
             if (transcribing) {
-                // The placeholder bars stay — they are the shape the words will
-                // fill — but a page of them alone reads as a panel that has
-                // stopped. One calm line where the first lyric will land says
-                // what the wait is for, in the same grey as the other statuses.
-                Column(empty) {
-                    Text(
-                        text = stringResource(Res.string.lyrics_transcribing),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = Color.White.copy(alpha = 0.55f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(
-                            top = 40.dp,
-                            start = PLAYER_GUTTER,
-                            end = PLAYER_GUTTER,
-                        ),
-                    )
-                    LyricsSkeleton(topPadding = 18.dp)
-                }
+                koTranscribingPlaceholder(empty) // [KO] lyrics-transcribing
             } else {
                 LyricsSkeleton(empty)
             }
@@ -2160,15 +2078,7 @@ internal fun LyricsPanel(
                         style = MaterialTheme.typography.titleMedium,
                         color = Color.White.copy(alpha = 0.6f),
                     )
-                    if (onChooseProvider != null) {
-                        Spacer(Modifier.height(8.dp))
-                        TextButton(onClick = onChooseProvider) {
-                            Text(
-                                text = stringResource(Res.string.choose_lyrics_provider),
-                                color = Color.White.copy(alpha = 0.85f),
-                            )
-                        }
-                    }
+                    koChooseProviderButton(onChooseProvider) // [KO] lyrics-provider
                 }
             }
         }
@@ -2566,22 +2476,9 @@ internal fun LyricsPanel(
                         label = "backingOpen",
                     )
                 }
-                // Line-synced sources only stamp where a line starts. Guess a
-                // pace for its words from the slot up to the next stamp, so the
-                // highlight still follows the singer letter by letter instead of
-                // lighting the whole line at once. Display-only: the rows, the
-                // scroll and the focus keep reading the provider's own [line].
-                //
-                // Where AI timing heard the words, their own times are real and
-                // win; only a line the transcript did not really hear falls back
-                // to the estimate.
                 val nextStamp = lines.getOrNull(index + 1)?.timeMs
                 val shown = remember(line, nextStamp, isSynced, heardWords) {
-                    when {
-                        !isSynced -> line
-                        else -> line.withHeardWords(heardWords, nextStamp)
-                            ?: line.withEstimatedWords(nextStamp)
-                    }
+                    koShownLine(line, nextStamp, isSynced, heardWords) // [KO] lyrics-word-sweep
                 }
                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                 Column(modifier = shape) {
@@ -2860,7 +2757,7 @@ private fun rememberSubLyricsReveal(target: List<LyricLine>?, trackKey: String):
         }
         // The same lines re-timed (the lyrics moved onto the video's clock):
         // swapped in place, nothing to fold.
-        if (sameWords(shown.value, target) && progress.value > 0f) {
+        if (koSameWords(shown.value, target) && progress.value > 0f) { // [KO] lyrics-retime
             shown.value = target
             return@LaunchedEffect
         }
@@ -2879,40 +2776,8 @@ private fun rememberSubLyricsReveal(target: List<LyricLine>?, trackKey: String):
     return remember(trackKey) { SubLyricsReveal(progress.asState(), shown) }
 }
 
-/** The same small lines re-timed: same count, same words. */
-private fun sameWords(a: List<LyricLine>?, b: List<LyricLine>?): Boolean =
-    a != null && b != null && a.size == b.size && a.indices.all { a[it].text == b[it].text }
-
-/**
- * Whether the translated lines were made from the same timing as [source].
- *
- * Line starts alone are not enough. Word sync often arrives after the first
- * line-only sheet, on exactly the same stamps, and a hold can change without
- * its start moving; either one leaves the translated sheet projecting the old
- * envelope unless it is rebuilt. A translated line keeps the original it was
- * made from in [LyricLine.timingSource], which is what makes the comparison
- * possible without confusing its own translated words with the source's.
- */
 internal fun sameTiming(made: List<LyricLine>, source: List<LyricLine>): Boolean =
-    made.size == source.size && made.indices.all { index ->
-        val a = made[index]
-        val b = source[index]
-        a.timeMs == b.timeMs &&
-            a.sungUntilMs == b.sungUntilMs &&
-            sourceWordsOf(a) == sourceWordsOf(b) &&
-            sameBackgroundTiming(a.background, b.background)
-    }
-
-/** The source words a display line was timed from; its own words when untranslated. */
-private fun sourceWordsOf(line: LyricLine): List<LyricWord> =
-    line.timingSource?.words ?: line.words
-
-private fun sameBackgroundTiming(a: LyricLine?, b: LyricLine?): Boolean {
-    if (a == null || b == null) return a == null && b == null
-    return a.timeMs == b.timeMs &&
-        a.sungUntilMs == b.sungUntilMs &&
-        sourceWordsOf(a) == sourceWordsOf(b)
-}
+    koSameTiming(made, source) // [KO] lyrics-retime
 
 /**
  * Opens downward out of the line above: the height grows from nothing while
@@ -3039,10 +2904,7 @@ private fun CurrentLyricLine(
 
     val clock = rememberLyricClock(trackKey, playhead, isPlaying)
 
-    val rowIndex = remember(lines) { LyricLineIndex(lines) }
-    val index by remember(lines, rowIndex) {
-        derivedStateOf { rowIndex.lineAt(clock.longValue) }
-    }
+    val index by rememberKoLineIndex(lines, clock) // [KO] lyric-line-index
     val current = lines.getOrNull(index)
     // Before the first line, and through instrumental breaks, show the note.
     val instrumental = current == null || current.isGap
@@ -3098,25 +2960,7 @@ private fun CurrentLyricLine(
         AnimatedContent(
             targetState = Triple(index, current, text),
             transitionSpec = {
-                val duration = if (calm) 0 else 340
-                if (calm) {
-                    (fadeIn(snap()) togetherWith fadeOut(snap())).using(
-                        SizeTransform(clip = false, sizeAnimationSpec = { _, _ -> snap() })
-                    )
-                } else {
-                    // A full-height slide rather than a crossfade: the outgoing
-                    // line leaves through the top while the incoming one comes
-                    // up from the bottom, so the two never sit on the same
-                    // baseline and read as one garbled line mid-transition.
-                    (fadeIn(animationSpec = tween(duration, easing = FastOutSlowInEasing)) +
-                        slideInVertically(animationSpec = tween(duration, easing = FastOutSlowInEasing)) { height -> height })
-                        .togetherWith(
-                            fadeOut(animationSpec = tween(duration, easing = FastOutSlowInEasing)) +
-                                slideOutVertically(animationSpec = tween(duration, easing = FastOutSlowInEasing)) { height -> -height }
-                        ).using(
-                            SizeTransform(clip = true, sizeAnimationSpec = { _, _ -> tween(duration, easing = FastOutSlowInEasing) })
-                        )
-                }
+                koCurrentLyricTransition(calm) // [KO] current-lyric-transition
             },
             label = "currentLyricTransition",
             modifier = Modifier.weight(1f, fill = false).clipToBounds(),
@@ -3127,9 +2971,7 @@ private fun CurrentLyricLine(
             // the transcript's real times where it heard the words.
             val nextStamp = lines.getOrNull(lineIndex + 1)?.timeMs
             val swept = remember(lineItem, nextStamp, heardWords) {
-                lineItem?.takeIf { !itemInstrumental }
-                    ?.let { it.withHeardWords(heardWords, nextStamp) ?: it.withEstimatedWords(nextStamp) }
-                    ?.takeIf { it.isWordSynced }
+                koSweptLine(lineItem, itemInstrumental, nextStamp, heardWords) // [KO] lyrics-word-sweep
             }
             if (swept != null) {
                 SweptLyricLine(
@@ -3386,46 +3228,32 @@ internal fun rememberLyricsTranslation(
     // Same words, new timings: what is on screen is made again for the moved
     // lines — from the cache, at once — and swapped in quietly, without
     // folding the small lines away and back or a haptic for a tap nobody made.
-    LaunchedEffect(lyrics) {
-        val source = lyrics
-        if (source.isNullOrEmpty()) return@LaunchedEffect
-        val translated = translationState as? LyricsTranslationUiState.Ready
-        if (translated != null && !sameTiming(translated.lines, source)) {
-            val result = PlayerPlatform.host.translateLyrics(
-                trackId = trackId,
-                lines = source,
-                targetLanguageTag = translationLanguage,
-            )
-            if (result is LyricsTranslationResult.Translated) {
-                translationState = LyricsTranslationUiState.Ready(result.lines, result.byGemini)
-            }
-        }
-        val romanized = romanizationState as? LyricsTranslationUiState.Ready
-        if (romanized != null && !sameTiming(romanized.lines, source)) {
-            val result = PlayerPlatform.host.romanizeLyrics(
-                trackId = trackId,
-                lines = source,
-                targetLanguageTag = translationLanguage,
-            )
-            if (result is LyricsRomanizationResult.Romanized) {
-                romanizationState = LyricsTranslationUiState.Ready(result.lines)
-            }
-        }
-    }
+    koRetimedLyricsEffect(
+        lyrics = lyrics,
+        trackId = trackId,
+        translationLanguage = translationLanguage,
+        translationState = translationState,
+        romanizationState = romanizationState,
+        onTranslation = { lines, byGemini ->
+            translationState = LyricsTranslationUiState.Ready(lines, byGemini)
+        },
+        onRomanization = { lines ->
+            romanizationState = LyricsTranslationUiState.Ready(lines)
+        },
+    ) // [KO] lyrics-retime
     // Auto-translate: each new lyric sheet asks for its translation once, as
     // if the button had been pressed. Keyed on the sheet, so turning the
     // translation off by hand is left alone for the rest of the song.
     val autoTranslate by PlayerSettings.autoTranslateLyrics.collectAsStateWithLifecycle()
-    LaunchedEffect(trackId, translationLanguage, lyrics, autoTranslate) {
-        if (
-            autoTranslate &&
-            !lyrics.isNullOrEmpty() &&
-            translationState is LyricsTranslationUiState.Idle &&
-            lyricsDisplayMode == LyricsDisplayMode.Original
-        ) {
-            requestTranslation(true)
-        }
-    }
+    koAutoTranslateEffect(
+        trackId = trackId,
+        translationLanguage = translationLanguage,
+        lyrics = lyrics,
+        autoTranslate = autoTranslate,
+        translationState = translationState,
+        displayMode = lyricsDisplayMode,
+        requestTranslation = requestTranslation,
+    ) // [KO] lyrics-auto-translate
     val toggleRomanization: () -> Unit = toggleRomanization@{
         when (val state = romanizationState) {
             is LyricsTranslationUiState.Ready -> {
