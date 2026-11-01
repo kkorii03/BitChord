@@ -98,7 +98,27 @@ object QualityUpgrade {
          * for its one turn; see [SourceResolver.bestAcross].
          */
         val manual: Boolean = false,
+        /**
+         * This hand-made request's identity. It lets a resting source be
+         * probed once for the whole request rather than once per candidate —
+         * the reported upgrade asked the same resting addon again for every
+         * source it moved through.
+         */
+        val manualSession: Any? = null,
     )
+
+    /**
+     * The candidates one manual search already found, waiting to be tried.
+     *
+     * A candidate that fails its proof used to send [lookAgain] back through
+     * every source, which on the reported device paid the same twelve-second
+     * search again and re-asked the same refused Deezer row. The first search
+     * already returned every copy worth trying; this keeps them in hand.
+     */
+    private val candidateQueue = ConcurrentHashMap<String, MutableList<SourceStream>>()
+
+    /** One manual request's identity, renewed when the listener presses again. */
+    private val manualSessions = ConcurrentHashMap<String, Any>()
 
     private val pending = ConcurrentHashMap<String, Pending>()
 
@@ -256,6 +276,11 @@ object QualityUpgrade {
             playing,
             servedBy,
             manual = mediaId in handAsked,
+            manualSession = if (mediaId in handAsked) {
+                manualSessions.getOrPut(mediaId) { Any() }
+            } else {
+                null
+            },
         )
         NerdStats.onLosslessRaceStart(mediaId)
         TrackLog.d(
@@ -487,6 +512,11 @@ object QualityUpgrade {
             inFlight = null,
             playing = playing,
             manual = mediaId in handAsked,
+            manualSession = if (mediaId in handAsked) {
+                manualSessions.getOrPut(mediaId) { Any() }
+            } else {
+                null
+            },
         )
         NerdStats.onLosslessRaceStart(mediaId)
         TrackLog.d(
@@ -540,6 +570,13 @@ object QualityUpgrade {
         mediaId: String,
         playingDurationSec: Int?,
         report: SourceResolver.SearchReport = SourceResolver.SearchReport(),
+        /**
+         * The sound comparison, when the caller has one. On a manual request
+         * it runs as candidates arrive, so a high-register copy is proved
+         * while the slow sources are still searching rather than after their
+         * timeout. Fallbacks are left unproved until they are actually tried.
+         */
+        verify: (suspend (TrackMatcher.Target, SourceStream) -> Boolean)? = null,
     ): SourceStream? {
         val waiting = pending[mediaId] ?: return null
         lastPending[mediaId] = waiting
@@ -610,6 +647,61 @@ object QualityUpgrade {
                     conclusive = true
                     return late
                 }
+            }
+            // A hand-made request asks every source once and keeps the whole
+            // candidate list. Walking to the next source after one fails its
+            // proof is then a list pop, not another search — the reported
+            // upgrade paid the same twelve-second search once per candidate
+            // and re-asked a source that had already refused.
+            if (waiting.manual) {
+                val queued = candidateQueue[mediaId]
+                if (queued != null) {
+                    val next = queued.firstOrNull {
+                        it.sourceConfigId !in excludedSources &&
+                            (it.url.let(HqHostTracker::hostOf)?.let { host -> host !in excludedHosts } ?: true)
+                    }
+                    if (next != null) {
+                        queued.remove(next)
+                        found = next
+                        answered = true
+                        conclusive = true
+                        return next
+                    }
+                    // Everything the one search found has been tried. That is
+                    // a complete answer to this request, not a reason to ask
+                    // the same sources again.
+                    answered = true
+                    conclusive = true
+                    return null
+                }
+                val effectiveTarget = waiting.target.copy(durationSec = effectiveDurationSec)
+                val searched = SourceResolver.upgradeCandidatesFor(
+                    target = effectiveTarget,
+                    playing = waiting.playing,
+                    servedBy = waiting.servedBy,
+                    excludeSources = excludedSources,
+                    excludeHosts = excludedHosts,
+                    manual = true,
+                    report = report,
+                    manualSession = waiting.manualSession,
+                    verify = verify?.let { check -> { _, stream -> check(effectiveTarget, stream) } },
+                )
+                val queue = searched.map { it.second }.toMutableList()
+                candidateQueue[mediaId] = queue
+                val next = queue.firstOrNull()
+                if (next != null) queue.removeAt(0)
+                found = next
+                if (next != null && needsLosslessFollowUp(next.format)) {
+                    followUps[mediaId] = waiting.copy(
+                        target = waiting.target.copy(durationSec = effectiveDurationSec),
+                        inFlight = null,
+                        playing = next.format,
+                        servedBy = next.sourceConfigId,
+                    )
+                }
+                conclusive = report.allConclusive
+                answered = true
+                return next
             }
             // It finished with nothing better, so the question gets asked
             // again from scratch — this time waiting on every module, which is
@@ -813,6 +905,8 @@ object QualityUpgrade {
         failedSources.remove(mediaId)
         failedHosts.remove(mediaId)
         retryAfter.remove(mediaId)
+        candidateQueue.remove(mediaId)
+        manualSessions.remove(mediaId)
         // A request made by hand is about the track the listener was listening
         // to. Once the queue has moved off it there is nothing left to honour,
         // and an exemption that outlived its moment would let the next visit to
@@ -909,7 +1003,13 @@ object QualityUpgrade {
      */
     fun adoptByHand(mediaId: String, target: TrackMatcher.Target, playing: StreamFormat?): Boolean {
         if (target.title.isBlank() || mediaId !in handAsked) return false
-        pending[mediaId] = Pending(target, inFlight = null, playing = playing, manual = true)
+        pending[mediaId] = Pending(
+            target,
+            inFlight = null,
+            playing = playing,
+            manual = true,
+            manualSession = manualSessions.getOrPut(mediaId) { Any() },
+        )
         retryAfter.remove(mediaId)
         NerdStats.onLosslessRaceStart(mediaId)
         TrackLog.d(
@@ -928,12 +1028,17 @@ object QualityUpgrade {
         failedHosts.remove(mediaId)
         lastPending.remove(mediaId)
         retryAfter.remove(mediaId)
+        // A new press is a new request: its resting-source probe budget and
+        // its candidate list start empty, even if an earlier press left some.
+        val session = Any()
+        manualSessions[mediaId] = session
+        candidateQueue.remove(mediaId)
         // A lookup already pending for this track inherited the automatic
         // path's view of the world. Mark it manual so it ignores the search
         // memo and asks a resting source once, which is what the listener
         // pressed the button for.
-        pending[mediaId]?.let { pending[mediaId] = it.copy(manual = true) }
-        followUps[mediaId]?.let { followUps[mediaId] = it.copy(manual = true) }
+        pending[mediaId]?.let { pending[mediaId] = it.copy(manual = true, manualSession = session) }
+        followUps[mediaId]?.let { followUps[mediaId] = it.copy(manual = true, manualSession = session) }
     }
 
     /**

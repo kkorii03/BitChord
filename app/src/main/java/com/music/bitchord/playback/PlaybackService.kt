@@ -7233,9 +7233,14 @@ class PlaybackService : MediaLibraryService() {
                     return@launch
                 }
                 val upgradeReport = SourceResolver.SearchReport()
+                val upgradeStarted = SystemClock.elapsedRealtime()
                 val better = withContext(Dispatchers.IO) {
-                    QualityUpgrade.lookAgain(mediaId, playingSeconds, upgradeReport)
+                    QualityUpgrade.lookAgain(mediaId, playingSeconds, upgradeReport) { target, stream ->
+                        HqAudioVerify.verify(this@PlaybackService, mediaId, target, stream) != null
+                    }
                 }
+                var searchMs = SystemClock.elapsedRealtime() - upgradeStarted
+                var attemptStarted = upgradeStarted
                 if (better == null) {
                     TrackLog.d("BitChord", "upgrade search for $mediaId: no better copy on any source", about = mediaId)
                     val message = noBetterUpgradeMessage(mediaId, upgradeReport)
@@ -7292,8 +7297,9 @@ class PlaybackService : MediaLibraryService() {
                 var candidate = better ?: return@launch
                 var round = 0
                 while (true) {
+                    var verifyMs = 0L
                     val outcome = try {
-                        swapIn(mediaId, candidate)
+                        swapIn(mediaId, candidate) { verifyMs = it }
                     } finally {
                         // The badge comes down when the upgrade is done, not when the
                         // search that found it was — including the deliberate wait in
@@ -7303,6 +7309,13 @@ class PlaybackService : MediaLibraryService() {
                         // put the badge out as surely as a completed one.
                         NerdStats.onLosslessRaceEnd(mediaId)
                     }
+                    val totalMs = SystemClock.elapsedRealtime() - attemptStarted
+                    TrackLog.d(
+                        "BitChord",
+                        "upgrade timing: search=${searchMs}ms verify=${verifyMs}ms total=${totalMs}ms " +
+                            "source=${candidate.sourceConfigId ?: "?"}",
+                        about = mediaId,
+                    )
                     if (outcome != SwapOutcome.NOT_PROVEN || round >= MAX_UPGRADE_CANDIDATES) {
                         reportManualSwapOutcome(mediaId, outcome)
                         return@launch
@@ -7324,9 +7337,16 @@ class PlaybackService : MediaLibraryService() {
                     )
                     NerdStats.onLosslessRaceStart(mediaId)
                     val retryReport = SourceResolver.SearchReport()
+                    val retryStarted = SystemClock.elapsedRealtime()
                     val next = withContext(Dispatchers.IO) {
-                        QualityUpgrade.lookAgain(mediaId, playingSeconds, retryReport)
+                        QualityUpgrade.lookAgain(mediaId, playingSeconds, retryReport) { target, stream ->
+                            HqAudioVerify.verify(this@PlaybackService, mediaId, target, stream) != null
+                        }
                     }
+                    // A queued candidate is a list pop; a real search here is
+                    // only possible when the first one found nothing further.
+                    searchMs = SystemClock.elapsedRealtime() - retryStarted
+                    attemptStarted = retryStarted
                     if (next == null) {
                         if (deferManualAnswer()) {
                             TrackLog.d(
@@ -7784,7 +7804,11 @@ class PlaybackService : MediaLibraryService() {
      * playback URI differs, so an item rebuilt identically would be accepted
      * and quietly keep playing the old stream.
      */
-    private suspend fun swapIn(mediaId: String, stream: SourceStream): SwapOutcome {
+    private suspend fun swapIn(
+        mediaId: String,
+        stream: SourceStream,
+        onVerified: ((Long) -> Unit)? = null,
+    ): SwapOutcome {
         // A quality upgrade is an audible interruption bought with an audition
         // and a ninety-second verification decode. With the screen off nobody
         // asked for it and nobody is watching; shelve the stream so it can be
@@ -7805,12 +7829,14 @@ class PlaybackService : MediaLibraryService() {
         // song. The answer is cached per pair, so a stream verified during
         // next-song preparation costs only a map lookup here.
         val target = runCatching { SourceResolver.targetIn(Uri.parse(at.uri)) }.getOrNull()
+        val verifyStarted = SystemClock.elapsedRealtime()
         val verification = target?.let {
             // A manual request ignores the automatic retry cooldown and any
             // missing reference remembered earlier in this play, and waits
             // longer for the YouTube opening.
             HqAudioVerify.verifyOutcome(this, mediaId, it, stream, manual = true)
         }
+        onVerified?.invoke(SystemClock.elapsedRealtime() - verifyStarted)
         when (verification) {
             is HqAudioVerify.Outcome.Mismatch -> {
                 TrackLog.d(

@@ -200,6 +200,18 @@ object SourceResolver {
     private val searchAnswers = ConcurrentHashMap<SearchKey, SearchAnswer>()
 
     /**
+     * Resting sources already given their one manual probe, per request.
+     *
+     * The key carries the caller's [manualSession] identity, so this says
+     * nothing across two presses of the button: a fresh request is entitled to
+     * probe a resting source once again.
+     */
+    private val manualRestingProbes = ConcurrentHashMap.newKeySet<String>()
+
+    private fun manualProbeKey(session: Any, sourceId: String, target: TrackMatcher.Target): String =
+        System.identityHashCode(session).toString() + '\u0001' + sourceId + '\u0001' + targetKey(target)
+
+    /**
      * The per-source detail of one search, for the `hq-search` line.
      *
      * [verdict] is why a result was or was not usable:
@@ -265,6 +277,7 @@ object SourceResolver {
     internal fun clearSearchAnswers() {
         searchAnswers.clear()
         remembered.clear()
+        manualRestingProbes.clear()
     }
 
     /** Forgets one source's memoised searches without touching any other source. */
@@ -783,6 +796,22 @@ object SourceResolver {
         manual: Boolean = false,
         /** Filled with each source's verdict, so a caller can tell none from not-now. */
         report: SearchReport? = null,
+        /**
+         * One manual request's identity, so a resting source is probed at
+         * most once for it even when the caller walks several candidates.
+         */
+        manualSession: Any? = null,
+        /**
+         * Every candidate that cleared the quality gate, in the order the
+         * race produced it. The upgrade path keeps this so moving to the next
+         * source after a failed verification does not search again.
+         */
+        collect: MutableList<Pair<MusicSource, SourceStream>>? = null,
+        /**
+         * The sound comparison, when the caller has one. It runs as each
+         * candidate arrives rather than after every source has timed out.
+         */
+        verify: (suspend (MusicSource, SourceStream) -> Boolean)? = null,
     ): SourceStream? {
         if (target.title.isBlank() || target.durationSec == null || target.isVideo) return null
         val request = requestForNow()
@@ -816,6 +845,24 @@ object SourceResolver {
         // Thirteen seconds of a 143-second track played at the wrong bitrate,
         // and the seam then landed mid-song rather than near its start. Raced,
         // the same swap happens inside a second.
+        val worth: suspend (MusicSource, SourceStream) -> Boolean = { candidate, stream ->
+            val acceptable = worthSwapping(stream.format, playing) ||
+                (allowSameRendition && HqQuality.isSameOrBetter(stream.format, playing))
+            // Named rather than skipped silently. This is the one refusal
+            // in the upgrade path that discards a stream already found,
+            // matched and length-checked, and a silent skip reads in the log
+            // exactly like a source having nothing — which is how a null
+            // [playing] came to quietly turn the whole cached-track path
+            // lossless-only for a while without leaving a trace.
+            if (!acceptable) {
+                TrackLog.d(
+                    TAG,
+                    "${candidate.displayName}'s ${stream.format.summary} isn't worth swapping " +
+                        "'${target.title}' off ${playing?.summary ?: "an unmeasured stream"}",
+                )
+            }
+            acceptable
+        }
         val (source, chosen) = bestAcross(
             rankedAbove(youtube.configId, active, target).filterNot {
                 it.configId == servedBy || it.configId in excludeSources
@@ -829,29 +876,72 @@ object SourceResolver {
             allowArtistUnverified = true,
             excludeHosts = excludeHosts,
             manual = manual,
+            manualSession = manualSession,
             report = report,
+            collect = collect,
+            collectGate = worth,
         ) { candidate, stream ->
-            val acceptable = worthSwapping(stream.format, playing) ||
-                (allowSameRendition && HqQuality.isSameOrBetter(stream.format, playing))
-            acceptable.also { worth ->
-                // Named rather than skipped silently. This is the one refusal
-                // in the upgrade path that discards a stream already found,
-                // matched and length-checked, and a silent skip reads in the log
-                // exactly like a source having nothing — which is how a null
-                // [playing] came to quietly turn the whole cached-track path
-                // lossless-only for a while without leaving a trace.
-                if (!worth) {
-                    TrackLog.d(
-                        TAG,
-                        "${candidate.displayName}'s ${stream.format.summary} isn't worth swapping " +
-                            "'${target.title}' off ${playing?.summary ?: "an unmeasured stream"}",
-                    )
-                }
-            }
+            worth(candidate, stream) && (verify?.invoke(candidate, stream) ?: true)
         } ?: return null
         TrackLog.d(TAG, "upgrade found: '${target.title}' at ${chosen.format.summary} from ${source.displayName}")
         return chosen
     }
+
+    /**
+     * Every worthwhile upgrade candidate, best rendition first, from **one**
+     * search.
+     *
+     * [upgradeFor] answers "what should play now". This answers "what else did
+     * the same search find", which is what a caller walking candidates after a
+     * failed verification needs. Re-running [upgradeFor] for each one asked
+     * every source again: on the reported device one hand-made upgrade spent
+     * 12s on the first search, then another 12s on the same resting source,
+     * another on the same Deezer row that had just refused, and so on.
+     *
+     * The list is ordered by [HqQuality]'s ladder: 24-bit before 16-bit
+     * lossless before lossy. Verification is expensive (a Qobuz 24-bit head
+     * measured ~14s), so the copy with the most to gain is proved first.
+     */
+    internal suspend fun upgradeCandidatesFor(
+        target: TrackMatcher.Target,
+        playing: StreamFormat? = null,
+        servedBy: String? = null,
+        excludeSources: Set<String> = emptySet(),
+        excludeHosts: Set<String> = emptySet(),
+        allowSameRendition: Boolean = false,
+        manual: Boolean = false,
+        report: SearchReport? = null,
+        manualSession: Any? = null,
+        verify: (suspend (MusicSource, SourceStream) -> Boolean)? = null,
+    ): List<Pair<MusicSource, SourceStream>> {
+        val found = mutableListOf<Pair<MusicSource, SourceStream>>()
+        upgradeFor(
+            target = target,
+            playing = playing,
+            servedBy = servedBy,
+            excludeSources = excludeSources,
+            excludeHosts = excludeHosts,
+            allowSameRendition = allowSameRendition,
+            manual = manual,
+            report = report,
+            manualSession = manualSession,
+            collect = found,
+            verify = verify,
+        )
+        return orderUpgradeCandidates(found)
+    }
+
+    /** The one place the upgrade candidate list's quality order is defined. */
+    internal fun orderUpgradeCandidates(
+        found: List<Pair<MusicSource, SourceStream>>,
+    ): List<Pair<MusicSource, SourceStream>> = found
+        .distinctBy { it.second.url }
+        .sortedWith(
+            compareBy<Pair<MusicSource, SourceStream>> { HqQuality.tierOf(it.second.format).rank }
+                .thenByDescending { it.second.format.kbps ?: 0 }
+                .thenByDescending { it.second.format.bitDepth ?: 0 }
+                .thenByDescending { it.second.format.sampleRateHz ?: 0 },
+        )
 
     /**
      * The copy of a track about to be downloaded that is worth keeping over
@@ -1324,12 +1414,40 @@ object SourceResolver {
         manual: Boolean = false,
         /** Collects each source's verdict so a caller can tell a real none from an interrupted one. */
         report: SearchReport? = null,
+        /**
+         * One manual request's identity. A resting source is probed once per
+         * session, not once per candidate walk inside it — the walk is the
+         * same request, and re-asking a source that already said it is
+         * resting only spends another timeout.
+         */
+        manualSession: Any? = null,
+        /**
+         * Every offer that passes [accept], including ones that did not beat
+         * the current best. The upgrade path needs the fallbacks behind a
+         * candidate that later fails its audition, and cannot afford to search
+         * for them again.
+         */
+        collect: MutableList<Pair<MusicSource, SourceStream>>? = null,
+        /**
+         * The cheap gate for [collect]'s fallbacks. They are kept in case the
+         * best candidate later fails its audition, but are not proved now:
+         * verifying every lossless fallback before returning the first would
+         * cost more than the re-search this list exists to avoid.
+         */
+        collectGate: (suspend (MusicSource, SourceStream) -> Boolean)? = null,
         accept: suspend (MusicSource, SourceStream) -> Boolean = { _, _ -> true },
     ): Pair<MusicSource, SourceStream>? = coroutineScope {
         val lookupTimeoutMs = sourceLookupTimeoutMs(manual, sourceTimeoutMs)
         val usable = sources.filterNot { source ->
             val resting = SourceCooldown.isResting(source.configId)
-            if (resting && !manual) {
+            val alreadyProbed = resting && manual && manualSession != null &&
+                !manualRestingProbes.add(manualProbeKey(manualSession, source.configId, target))
+            if (alreadyProbed) {
+                val skipped = SearchOutcome(verdict = "resting", conclusive = false)
+                report?.record(skipped, source.displayName)
+                TrackLog.d(TAG, hqSearchLine(target, source, skipped))
+                true
+            } else if (resting && !manual) {
                 TrackLog.d(
                     TAG,
                     "${source.displayName} is resting after repeated failures; skipping for this track",
@@ -1358,7 +1476,15 @@ object SourceResolver {
                     // four-second catalogue window can expire before TDLib has
                     // even opened its session. This is a per-source timeout,
                     // not a longer wait for the other sources.
-                    val sourceTimeout = sourceLookupTimeoutMsFor(source, lookupTimeoutMs)
+                    // A resting source gets one short probe, in parallel with
+                    // everyone else. It was parked for failing; waiting the
+                    // full manual window for it is what made one hand-made
+                    // upgrade spend twelve seconds before its first candidate.
+                    val sourceTimeout = if (manual && SourceCooldown.isResting(source.configId)) {
+                        minOf(lookupTimeoutMs, MANUAL_RESTING_PROBE_TIMEOUT_MS)
+                    } else {
+                        sourceLookupTimeoutMsFor(source, lookupTimeoutMs)
+                    }
                     val answer = withTimeoutOrNull(sourceTimeout) {
                         matchAndStream(
                             source,
@@ -1417,8 +1543,20 @@ object SourceResolver {
                 // both answered quickly.
                 val readyDeferred = listOf(first) + running.filter { it !== first && it.isCompleted }
                 running -= readyDeferred.toSet()
-                val ready = readyDeferred.map { it.await() }
-                ready.forEach { (source, outcome) -> report?.record(outcome, source.displayName) }
+                val arrived = readyDeferred.map { it.await() }
+                arrived.forEach { (source, outcome) -> report?.record(outcome, source.displayName) }
+                // On a path that is already waiting for everyone (an upgrade,
+                // read-ahead or download), prove the best rendition first.
+                // A Qobuz 24-bit head measured ~14s; spending that after a
+                // 320kbps copy has been decoded wastes the comparison the
+                // listener is actually waiting for.
+                val ready = if (waitForAll) {
+                    arrived.sortedBy {
+                        HqQuality.tierOf(it.second.stream?.format).rank
+                    }
+                } else {
+                    arrived
+                }
                 // A song with another addon answer must try the healthy host
                 // first; a resting one is still kept as the last resort rather
                 // than dropped. The loop below also refuses a resting host, so
@@ -1501,8 +1639,20 @@ object SourceResolver {
                             }
                             else -> couldWin || hostPreferred
                         }
-                        if (!beats) continue
+                        if (!beats) {
+                            // Still offered as a fallback when the caller asked
+                            // for a list. A better candidate can fail its own
+                            // proof, and the next copy must already be in hand
+                            // rather than costing another search.
+                            if (collect != null &&
+                                (collectGate?.invoke(source, stream) ?: accept(source, stream))
+                            ) {
+                                collect += source to stream
+                            }
+                            continue
+                        }
                         if (!accept(source, stream)) continue
+                        collect?.let { if (it.none { pair -> pair.second.url == stream.url }) it += source to stream }
                         best = source to stream
                         bestVerdict = verdict
                     }
@@ -2312,6 +2462,13 @@ object SourceResolver {
      * one mid-playback must not spend twelve seconds per source.
      */
     private const val MANUAL_SOURCE_LOOKUP_TIMEOUT_MS = 12_000L
+
+    /**
+     * A resting source's one manual probe. It was parked for failing, so it
+     * gets one short chance beside the healthy sources rather than holding the
+     * whole request open for the full manual window.
+     */
+    private const val MANUAL_RESTING_PROBE_TIMEOUT_MS = 4_000L
 
     internal fun sourceLookupTimeoutMs(
         manual: Boolean,
