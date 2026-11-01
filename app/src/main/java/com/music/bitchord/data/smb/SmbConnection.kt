@@ -39,7 +39,10 @@ object SmbConnection {
     fun <T> withShare(block: (DiskShare) -> T): T {
         return try {
             block(open())
-        } catch (e: IOException) {
+        } catch (e: Exception) {
+            // smbj wraps a dead wire in SMBRuntimeException, so an IOException
+            // catch alone missed the failures this retry exists for.
+            if (!SmbClient.isTransportFailure(e)) throw e
             invalidate()
             block(open())
         }

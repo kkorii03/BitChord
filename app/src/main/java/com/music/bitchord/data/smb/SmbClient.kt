@@ -4,6 +4,9 @@ import com.hierynomus.msdtyp.AccessMask
 import com.hierynomus.msfscc.FileAttributes
 import com.hierynomus.mssmb2.SMB2CreateDisposition
 import com.hierynomus.mssmb2.SMB2ShareAccess
+import com.hierynomus.mssmb2.SMBApiException
+import com.hierynomus.protocol.transport.TransportException
+import com.hierynomus.smbj.common.SMBRuntimeException
 import com.hierynomus.smbj.share.DiskShare
 import com.music.bitchord.data.DebugLog as Log
 import kotlinx.coroutines.CancellationException
@@ -70,11 +73,16 @@ object SmbClient {
      * the failure policy can be exercised without a server.
      *
      * A server status on one folder (access denied, gone) skips that folder
-     * and keeps the rest of the library. A transport [IOException] is not a
-     * folder to skip: it means the session is dead, so it is rethrown for
+     * and keeps the rest of the library. A transport failure is not a folder
+     * to skip: it means the session is dead, so it is rethrown for
      * [SmbConnection.withShare] to invalidate and retry. Swallowing it here
      * returned a partial library and left every later folder on a dead
      * session until its own 30s timeout.
+     *
+     * smbj wraps the transport [IOException] in [SMBRuntimeException] on the
+     * way out of `Share.receive`, so the old `catch (IOException)` never
+     * fired for a dropped wire. [isTransportFailure] unwraps that, while
+     * [SMBApiException] (a status answer) still counts as a folder to skip.
      *
      * The lists live inside this call, so the retry after a transport failure
      * starts a fresh walk instead of appending a second copy of the entries
@@ -98,9 +106,8 @@ object SmbClient {
                 listDirectory(dir)
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (transport: IOException) {
-                throw transport
             } catch (failure: Exception) {
+                if (isTransportFailure(failure)) throw failure
                 // One unreadable folder must not hide the rest of the
                 // share. The root is different: a refused root is a
                 // refused library, not a folder to skip.
@@ -124,6 +131,27 @@ object SmbClient {
             }
         }
         return Listing(audio, images)
+    }
+
+    /**
+     * True when [failure] is a dropped wire rather than the server's answer
+     * about one folder. smbj raises [SMBRuntimeException] around
+     * [TransportException] from its receive path; [SMBApiException] is a
+     * status answer and stays a folder-skip even though it shares that base
+     * class. Walks the cause chain because the wrapper can be nested.
+     */
+    internal fun isTransportFailure(failure: Throwable): Boolean {
+        var current: Throwable? = failure
+        var depth = 0
+        while (current != null && depth < 8) {
+            if (current is SMBApiException) return false
+            if (current is TransportException || current is IOException) return true
+            val cause = current.cause
+            if (cause === current) return false
+            current = cause
+            depth++
+        }
+        return false
     }
 
     /**
