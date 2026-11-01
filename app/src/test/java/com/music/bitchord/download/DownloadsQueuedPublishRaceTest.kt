@@ -1,6 +1,7 @@
 package com.music.bitchord.download
 
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.ko.downloads.KoDownloadQueue
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -34,21 +35,21 @@ class DownloadsQueuedPublishRaceTest {
     @Suppress("UNCHECKED_CAST")
     private val active = activeField.get(Downloads) as MutableStateFlow<Map<String, DownloadState>>
 
-    private val enqueueGenerationsField = Downloads::class.java
+    private val enqueueGenerationsField = KoDownloadQueue::class.java
         .getDeclaredField("enqueueGenerations")
         .apply { isAccessible = true }
 
-    private val claimedGenerationsField = Downloads::class.java
+    private val claimedGenerationsField = KoDownloadQueue::class.java
         .getDeclaredField("claimedGenerations")
         .apply { isAccessible = true }
 
     @Suppress("UNCHECKED_CAST")
     private val enqueueGenerations =
-        enqueueGenerationsField.get(Downloads) as MutableMap<String, Long>
+        enqueueGenerationsField.get(KoDownloadQueue) as MutableMap<String, Long>
 
     @Suppress("UNCHECKED_CAST")
     private val claimedGenerations =
-        claimedGenerationsField.get(Downloads) as MutableMap<String, Long>
+        claimedGenerationsField.get(KoDownloadQueue) as MutableMap<String, Long>
 
     @Before
     fun setUp() {

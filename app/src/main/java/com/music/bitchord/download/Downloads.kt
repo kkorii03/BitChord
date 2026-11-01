@@ -1,38 +1,29 @@
 package com.music.bitchord.download
 
 import android.content.Context
-import android.content.Intent
 import android.content.SharedPreferences
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import com.music.bitchord.data.DebugLog as Log
-import androidx.core.content.ContextCompat
 import com.music.bitchord.data.StoredSongDisplay
-import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.innertube.StreamResolver
-import com.music.bitchord.data.net.DownloadedMvPolicy
 import com.music.bitchord.data.net.HqAutoDownloadPolicy
-import com.music.bitchord.data.net.HqRetryPolicy
 import com.music.bitchord.data.net.SongVersionPolicy
-import com.music.bitchord.data.remote.DownloadedArtworkEvents
 import com.music.bitchord.playback.HqHostTracker
 import com.music.bitchord.playback.TranslationAhead
 import com.music.bitchord.data.model.Song
-import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.DownloadQuality
-import com.music.bitchord.data.sources.DownloadHealthPolicy
 import com.music.bitchord.data.sources.HqQuality
 import com.music.bitchord.data.sources.HqTier
-import com.music.bitchord.playback.smart.HqAudioVerify
-import com.music.bitchord.playback.smart.HqVerificationStore
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.TrackMatcher
+import com.music.bitchord.ko.downloads.isCoverRecording
+import com.music.bitchord.ko.downloads.preservingUploadTypeFrom
+import com.music.bitchord.ko.downloads.wasVideoRow
 import com.music.bitchord.playback.AudioCache
-import com.music.bitchord.startup.AppForeground
-import com.music.bitchord.startup.StartupWork
 import com.music.bitchord.ui.FriendlyError
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Deferred
@@ -67,37 +58,9 @@ sealed interface DownloadState {
     data class Failed(val reason: String) : DownloadState
 }
 
-/**
- * What an automatic high-quality download's failure means to the pass.
- *
- * [transient] keeps the target in the plan and schedules it again; a permanent
- * failure lets the pass move on. [retryAfterHeader] is the server's own wait,
- * when the response carried one.
- */
-internal data class DownloadFailure(
-    val transient: Boolean,
-    val retryAfterHeader: String? = null,
-    val retryAfterMs: Long? = null,
-)
-
-/**
- * The verified pair a high-quality replacement must fetch.
- *
- * Both ids are the ones the sound comparison stored: searching again could
- * pick a different recording with the same title. [tier], [offsetMs] and
- * [rate] are written into the new file's metadata so the provenance and the
- * lyric clock survive the replacement.
- */
-data class HqDownloadSource(
-    val sourceConfigId: String,
-    val trackId: String,
-    val tier: HqTier,
-    val offsetMs: Long = 0L,
-    val rate: Double = 1.0,
-    /** The source row's own names, for the arrangement check on a later play. */
-    val sourceTitle: String? = null,
-    val sourceArtist: String? = null,
-)
+// [KO] download-types — see com.music.bitchord.ko.downloads.KoDownloadTypes
+internal typealias DownloadFailure = com.music.bitchord.ko.downloads.DownloadFailure
+typealias HqDownloadSource = com.music.bitchord.ko.downloads.HqDownloadSource
 
 /**
  * The download queue, and the record of what came out of it.
@@ -123,33 +86,31 @@ object Downloads {
     private const val TAG = "BitChord"
     private const val KEY_SAVED_METADATA = "downloaded_tracks_metadata"
     private const val KEY_SAVED_COLLECTIONS = "downloaded_collections"
-    private const val KEY_MV_SOUND_SUSPECTS = "downloaded_mv_sound_suspects"
-    private lateinit var prefs: SharedPreferences
+    internal lateinit var prefs: SharedPreferences
 
-    /** Where the settings file is opened from, once [init] has been told. */
-    private var appContext: Context? = null
+    internal val json = Json { ignoreUnknownKeys = true }
+    internal val serializer = MapSerializer(String.serializer(), String.serializer())
+    internal val metadataSerializer = MapSerializer(String.serializer(), SavedSongMetadata.serializer())
+    internal val collectionSerializer = MapSerializer(String.serializer(), SavedCollection.serializer())
 
-    /** Set once [open] has finished, so the startup open and an early caller run it once. */
-    @Volatile
-    private var opened = false
+    // [KO] records-access — the Korean fork's record helpers live in KoDownloadRecords.
+    internal fun savedValue(): Map<String, String> = _saved.value
+    internal fun savedMetadataValue(): Map<String, SavedSongMetadata> = _savedMetadata.value
+    internal fun setSaved(value: Map<String, String>) { _saved.value = value }
+    internal fun setSavedMetadata(value: Map<String, SavedSongMetadata>) { _savedMetadata.value = value }
+    internal fun setCollections(value: Map<String, SavedCollection>) { _collections.value = value }
+    internal fun prefsReady(): Boolean = ::prefs.isInitialized
+    internal fun openPrefs(context: Context) {
+        prefs = context.getSharedPreferences("bitchord_settings", Context.MODE_PRIVATE)
+    }
+    internal fun decodeSaved(prefs: SharedPreferences): Map<String, String> =
+        json.decodeFromString(serializer, prefs.getString(KEY_SAVED, null) ?: "{}")
+    internal fun decodeMetadata(prefs: SharedPreferences): Map<String, SavedSongMetadata> =
+        json.decodeFromString(metadataSerializer, prefs.getString(KEY_SAVED_METADATA, null) ?: "{}")
+    internal fun decodeCollections(prefs: SharedPreferences): Map<String, SavedCollection> =
+        json.decodeFromString(collectionSerializer, prefs.getString(KEY_SAVED_COLLECTIONS, null) ?: "{}")
 
-    /**
-     * Whether both download records were decoded rather than replaced by an
-     * empty map after a parse failure. A corrupt record must not make the
-     * offline-package sweep treat every package as unreferenced.
-     */
-    @Volatile
-    private var recordsReadable = false
-
-    private val openLock = Any()
-
-    private val json = Json { ignoreUnknownKeys = true }
-    private val serializer = MapSerializer(String.serializer(), String.serializer())
-    private val metadataSerializer = MapSerializer(String.serializer(), SavedSongMetadata.serializer())
-    private val collectionSerializer = MapSerializer(String.serializer(), SavedCollection.serializer())
-    private val suspectSerializer = MapSerializer(String.serializer(), Long.serializer())
-
-    private val _active = MutableStateFlow<Map<String, DownloadState>>(emptyMap())
+    internal val _active = MutableStateFlow<Map<String, DownloadState>>(emptyMap())
     val active: StateFlow<Map<String, DownloadState>> = _active.asStateFlow()
 
     /**
@@ -175,31 +136,18 @@ object Downloads {
         _requested.update { it + (browseId to (it[browseId].orEmpty() + videoIds)) }
     }
 
-    private val _saved = MutableStateFlow<Map<String, String>>(emptyMap())
+    internal val _saved = MutableStateFlow<Map<String, String>>(emptyMap())
 
     /** videoId to the uri of the file saved for it. */
     val saved: StateFlow<Map<String, String>> = _saved.asStateFlow()
 
-    private val _savedMetadata = MutableStateFlow<Map<String, SavedSongMetadata>>(emptyMap())
+    internal val _savedMetadata = MutableStateFlow<Map<String, SavedSongMetadata>>(emptyMap())
 
-    /**
-     * Downloaded song ids whose file is the music video's sound, by how much
-     * longer than the song it is when that is known, as judged once and kept
-     * across launches.
-     *
-     * A record may already say video/unknown or name another upload as its
-     * source; a legacy record with no provenance can only be told from the song
-     * by its length. The verdict is remembered so the same file is neither
-     * re-measured nor re-requested on every play, and so the Downloads page can
-     * offer to fetch the song version without a network request of its own.
-     */
-    private val _mvSoundSuspects = MutableStateFlow<Map<String, Long>>(emptyMap())
-    val mvSoundSuspects: StateFlow<Map<String, Long>> = _mvSoundSuspects.asStateFlow()
+    /** [KO] mv-sound — see com.music.bitchord.ko.downloads.KoDownloadRecords */
+    val mvSoundSuspects: StateFlow<Map<String, Long>>
+        get() = com.music.bitchord.ko.downloads.KoDownloadRecords.mvSoundSuspects
 
-    /** Serialises the suspect map's update-and-write, so a later verdict is not overwritten. */
-    private val suspectLock = Any()
-
-    private val _collections = MutableStateFlow<Map<String, SavedCollection>>(emptyMap())
+    internal val _collections = MutableStateFlow<Map<String, SavedCollection>>(emptyMap())
 
     /**
      * The releases that were downloaded *as* releases, by the id they were asked
@@ -212,104 +160,17 @@ object Downloads {
      */
     val collections: StateFlow<Map<String, SavedCollection>> = _collections.asStateFlow()
 
-    /**
-     * Bumped whenever the queue may have changed, so idle workers sleep on a
-     * change instead of polling every 100 ms.
-     *
-     * A revision rather than a channel: every waiting worker has to see the
-     * same change, and a revision cannot be consumed by whichever worker woke
-     * first. A worker reads it before looking at the queue, so an enqueue that
-     * lands in between is not lost.
-     */
-    private val workRevision = MutableStateFlow(0L)
-
     /** Waiting, in the order asked for. Guarded by [lock]. */
-    private val pending = LinkedHashMap<String, Song>()
+    internal val pending = LinkedHashMap<String, Song>()
 
-    /**
-     * The enqueue generation each waiting id was inserted under, and the
-     * generation a worker has since claimed.
-     *
-     * The Queued publish runs under [lock] with the insert, so a fresh claim
-     * cannot overtake it. When the two generations differ the row has been
-     * claimed for this enqueue and any Running/Failed/Done state belongs to that
-     * claim, not to an older attempt; when they match any old failure or Done
-     * row must be reset so a retry reads as Queued. Guarded by [lock].
-     */
-    private val enqueueGenerations = HashMap<String, Long>()
-    private val claimedGenerations = HashMap<String, Long>()
-    private var generationCounter = 0L
+    internal val lock = Any()
 
-    /**
-     * A rung asked for by a deliberate replacement — see [enqueue] — rather
-     * than the standing [AppSettings.downloadQuality]. Guarded by [lock] while
-     * written, and only read by [prepare] for the track it names.
-     */
-    private val qualityOverrides = HashMap<String, DownloadQuality>()
-
-    /**
-     * The verified source/track pair a replacement must use, when it is the
-     * automatic high-quality pass asking rather than a listener tap. Guarded
-     * by [lock], like [qualityOverrides].
-     */
-    private val hqOverrides = HashMap<String, HqDownloadSource>()
-
-    /**
-     * A source that must not be asked for this track's repair.
-     *
-     * The health check names the source that supplied a wrong recording, so
-     * the re-download does not land on the very same row again. Guarded by
-     * [lock], like the other per-download overrides.
-     */
-    private val avoidSources = HashMap<String, String>()
-
-    /** Ids whose existing file must not be adopted, even under the same name. */
-    private val forceReplaceIds = HashSet<String>()
-
-    /** Ids that must be fetched from YouTube, never from a configured source. */
-    private val youtubeOnlyIds = HashSet<String>()
-
-    /**
-     * File names another transfer in this process has already claimed.
-     *
-     * Two downloads of different songs can share a name and run at the same
-     * time. The second must not choose the same destination while the first is
-     * still writing it, even though neither final file exists yet. Guarded by
-     * [lock].
-     */
-    private val reservedNames = HashSet<String>()
-
-    /** A repair's minimum served rung; see [enqueue]. Guarded by [lock]. */
-    private val minimumTiers = HashMap<String, HqTier>()
-
-    /**
-     * Downloads the automatic high-quality pass asked for, not a listener.
-     *
-     * Read once when the download starts. These stay out of [DownloadSession]
-     * entirely: a server's back-pressure on work nobody requested must not
-     * become a red failure badge, and the pass has its own progress line.
-     * Guarded by [lock].
-     */
-    private val automaticIds = HashSet<String>()
-
-    /**
-     * Downloads that are repairing a file judged to be a music video's sound.
-     *
-     * Their whole point is to fetch a *different* upload. If the catalogue has
-     * no song version the lookup falls back to the same id, and fetching that
-     * would write the same MV stream again while clearing the warning. Guarded
-     * by [lock].
-     */
-    private val mvSoundRepairIds = HashSet<String>()
-
-    private val lock = Any()
-
-    /** The current work generation; the same revision [workRevision] exposes. */
-    internal fun workVersion(): Long = workRevision.value
+    /** [KO] queue-state — the fork's per-download state lives in KoDownloadQueue. */
+    internal fun workVersion(): Long = com.music.bitchord.ko.downloads.KoDownloadQueue.workVersion()
 
     /** Wake every waiting worker after [pending] or [running] changes. */
     internal fun signalWork() {
-        wakeWorkers()
+        com.music.bitchord.ko.downloads.KoDownloadQueue.wakeWorkers()
     }
 
     /**
@@ -323,42 +184,14 @@ object Downloads {
      * claiming the next track must not be able to step on another worker's.
      * Guarded by [lock].
      */
-    private val running = LinkedHashMap<String, Job?>()
+    internal val running = LinkedHashMap<String, Job?>()
 
     /** The application context [init] was given, for metadata built off the main thread. */
-    internal fun applicationContext(): Context? = appContext
+    internal fun applicationContext(): Context? =
+        com.music.bitchord.ko.downloads.KoDownloadRecords.applicationContext() // [KO] downloads-records
 
     fun init(context: Context) {
-        appContext = context.applicationContext
-        // Three JSON maps that grow with the listener's Downloads folder. None
-        // of them is needed for the first frame, so they are parsed on the
-        // startup thread; a caller that gets here first runs [open] itself.
-        // The abandoned-destination sweep needs the records to know which
-        // offline packages are still referenced, so it runs after [open]. It
-        // only touches entries older than this process, which is what keeps a
-        // download started by the foreground or liked event safe beside it.
-        StartupWork.background("downloads") {
-            open()
-            DownloadStore.cleanupAbandoned(context, offlinePackageRoots())
-        }
-    }
-
-    /**
-     * Directories the recorded offline packages still point at.
-     *
-     * Null when the records could not be decoded: an empty answer then would
-     * make every old package look unreferenced and delete files a corrupt
-     * record still owns.
-     */
-    private fun offlinePackageRoots(): Set<String>? {
-        if (!recordsReadable) return null
-        return buildSet {
-            for (raw in _saved.value.values + _savedMetadata.value.values.map { it.uri }) {
-                val path = runCatching { Uri.parse(raw).path }.getOrNull() ?: continue
-                val root = File(path).parentFile ?: continue
-                if (root.parentFile?.name == "offline-hls") add(root.absolutePath)
-            }
-        }
+        com.music.bitchord.ko.downloads.KoDownloadRecords.init(context) // [KO] downloads-records
     }
 
     /**
@@ -380,27 +213,7 @@ object Downloads {
      * while the record is still being read in and then be overwritten by it.
      */
     private fun open() {
-        synchronized(openLock) {
-            if (opened) return
-            val context = appContext ?: return
-            prefs = context.getSharedPreferences("bitchord_settings", Context.MODE_PRIVATE)
-            val saved = runCatching {
-                json.decodeFromString(serializer, prefs.getString(KEY_SAVED, null) ?: "{}")
-            }
-            val metadata = runCatching {
-                json.decodeFromString(metadataSerializer, prefs.getString(KEY_SAVED_METADATA, null) ?: "{}")
-            }
-            _saved.value = saved.getOrDefault(emptyMap())
-            _savedMetadata.value = metadata.getOrDefault(emptyMap())
-            recordsReadable = saved.isSuccess && metadata.isSuccess
-            _mvSoundSuspects.value = runCatching {
-                json.decodeFromString(suspectSerializer, prefs.getString(KEY_MV_SOUND_SUSPECTS, null) ?: "{}")
-            }.getOrDefault(emptyMap())
-            _collections.value = runCatching {
-                json.decodeFromString(collectionSerializer, prefs.getString(KEY_SAVED_COLLECTIONS, null) ?: "{}")
-            }.getOrDefault(emptyMap())
-            opened = true
-        }
+        com.music.bitchord.ko.downloads.KoDownloadRecords.open() // [KO] downloads-records
     }
 
     // ---- Asking -------------------------------------------------------------
@@ -476,15 +289,17 @@ object Downloads {
         synchronized(lock) {
             if (id in pending || id in running) return
             pending[id] = song
-            enqueueGenerations[id] = ++generationCounter
-            if (quality != null) qualityOverrides[id] = quality
-            if (hq != null) hqOverrides[id] = hq
-            if (avoidSourceConfigId != null) avoidSources[id] = avoidSourceConfigId
-            if (forceReplace) forceReplaceIds.add(id)
-            if (youtubeOnly) youtubeOnlyIds.add(id)
-            if (minimumTier != null) minimumTiers[id] = minimumTier
-            if (automatic) automaticIds.add(id)
-            if (mvSoundRepair) mvSoundRepairIds.add(id)
+            com.music.bitchord.ko.downloads.KoDownloadQueue.remember(
+                id = id,
+                quality = quality,
+                hq = hq,
+                avoidSourceConfigId = avoidSourceConfigId,
+                forceReplace = forceReplace,
+                youtubeOnly = youtubeOnly,
+                minimumTier = minimumTier,
+                automatic = automatic,
+                mvSoundRepair = mvSoundRepair,
+            ) // [KO] queue-state
             // Publish while the row is still ours: a worker can only claim it
             // through [takeNext], which needs this same lock. Publishing after
             // the lock is what let a claimed row finish first and then be
@@ -497,22 +312,7 @@ object Downloads {
         }
         wakeWorkers()
 
-        val app = context.applicationContext
-        // Android refuses a foreground service started from a background
-        // process. Leave the track queued and let [onForeground] start the
-        // drain when the app next has a window; there is no timer.
-        if (AppForeground.isForeground) {
-            val startFailure = startService(app)
-            if (startFailure != null) {
-                // Refused only when the app has no window and no exemption,
-                // which means the queue has nothing to drain it and would sit
-                // there looking accepted forever.
-                Log.w(TAG, "could not start the download service: ${startFailure.message}")
-                if (abandonPending(id)) {
-                    fail(id, "지금은 다운로드를 시작할 수 없습니다")
-                }
-            }
-        }
+        com.music.bitchord.ko.downloads.KoDownloadQueue.startAfterEnqueue(context, id) // [KO] queue-state
     }
 
     /**
@@ -535,60 +335,18 @@ object Downloads {
         song: Song,
         from: String?,
         publishSession: Boolean,
-    ) {
-        synchronized(lock) {
-            val id = song.videoId
-            if (id !in pending && id !in running) return
-            val enqueueGeneration = enqueueGenerations[id]
-            val claimedGeneration = claimedGenerations[id]
-            // Only a row that was not claimed after this enqueue can carry a
-            // state from an older attempt. In that case Queued must win, so a
-            // retry of a Failed or Done download does not keep showing the old
-            // row until the worker happens to start. A row already claimed for
-            // this enqueue may have advanced past Queued — a cache copy that
-            // finishes at once, or a fast refusal — and must not be moved back.
-            val freshUnclaimed = enqueueGeneration != null &&
-                claimedGeneration != enqueueGeneration
-            if (!freshUnclaimed) {
-                // A worker that claimed this row may already have moved it past
-                // Queued — a cache copy that finishes at once, or a fast
-                // refusal. Writing Queued afterwards would move the manager's
-                // row backwards and leave it there, since nothing is left to
-                // advance it again. The same goes for the `active` map, which
-                // the worker writes before the session row.
-                val activeState = _active.value[id]
-                val sessionState = if (publishSession) DownloadSession.progressOf(id) else null
-                val alreadyAdvanced = activeState is DownloadState.Running ||
-                    activeState is DownloadState.Failed ||
-                    (sessionState != null && sessionState !is DownloadProgress.Queued)
-                if (alreadyAdvanced) return
-            }
-            _active.update { it + (id to DownloadState.Queued) }
-            if (publishSession) DownloadSession.queued(song, from)
-            enqueueGenerations.remove(id)
-            claimedGenerations.remove(id)
-        }
-    }
+    ) = com.music.bitchord.ko.downloads.KoDownloadQueue.publishQueuedIfPending(
+        song,
+        from,
+        publishSession,
+    ) // [KO] queue-state
 
     /**
      * The app has a window again: drain anything queued while Android would
      * not let this process start the download service.
      */
-    fun onForeground(context: Context) {
-        if (!AppForeground.isForeground) return
-        val app = appContext ?: context.applicationContext
-        val waiting = synchronized(lock) { pending.keys.toList() }
-        if (waiting.isEmpty()) return
-        val startFailure = startService(app) ?: return
-        // The service that was to drain these never started. Leaving them
-        // Queued would look accepted forever, so take each back and show the
-        // same refusal a foreground enqueue shows. There is no timer; the next
-        // tap or foreground event can ask again.
-        Log.w(TAG, "could not start the download service: ${startFailure.message}")
-        for (id in waiting) {
-            if (abandonPending(id)) fail(id, "지금은 다운로드를 시작할 수 없습니다")
-        }
-    }
+    fun onForeground(context: Context) =
+        com.music.bitchord.ko.downloads.KoDownloadQueue.onForeground(context) // [KO] queue-state
 
     /**
      * Take a track back out of the queue when its service could not start.
@@ -596,26 +354,11 @@ object Downloads {
      * Returns whether it was still waiting: a cancel that won the race must not
      * be turned back into a failure row.
      */
-    private fun abandonPending(videoId: String): Boolean = synchronized(lock) {
-        if (pending.remove(videoId) == null) return@synchronized false
-        qualityOverrides.remove(videoId)
-        hqOverrides.remove(videoId)
-        avoidSources.remove(videoId)
-        forceReplaceIds.remove(videoId)
-        youtubeOnlyIds.remove(videoId)
-        minimumTiers.remove(videoId)
-        automaticIds.remove(videoId)
-        mvSoundRepairIds.remove(videoId)
-        enqueueGenerations.remove(videoId)
-        claimedGenerations.remove(videoId)
-        wakeWorkers()
-        true
-    }
+    private fun abandonPending(videoId: String): Boolean =
+        com.music.bitchord.ko.downloads.KoDownloadQueue.abandonPending(videoId) // [KO] queue-state
 
     private fun startService(context: Context): Throwable? =
-        runCatching {
-            ContextCompat.startForegroundService(context, Intent(context, DownloadService::class.java))
-        }.exceptionOrNull()
+        com.music.bitchord.ko.downloads.KoDownloadQueue.startService(context) // [KO] queue-state
 
     /**
      * Tracks asked for from the Cached songs folder, which are saved from the
@@ -655,8 +398,7 @@ object Downloads {
     fun cancel(videoId: String) {
         val job = synchronized(lock) {
             pending.remove(videoId)
-            enqueueGenerations.remove(videoId)
-            claimedGenerations.remove(videoId)
+            com.music.bitchord.ko.downloads.KoDownloadQueue.forgetGenerations(videoId)
             if (videoId !in running) return@synchronized null
             running.remove(videoId)
         }
@@ -747,54 +489,24 @@ object Downloads {
      * Cheaper than looking the file up again, and enough for a caller to build
      * the release row without a network request.
      */
-    fun savedAliasFor(videoId: String): String? {
-        open()
-        val uri = _saved.value[videoId] ?: return null
-        return _saved.value.entries
-            .firstOrNull { (id, saved) -> id != videoId && saved == uri }
-            ?.key
-    }
+    fun savedAliasFor(videoId: String): String? =
+        com.music.bitchord.ko.downloads.KoDownloadRecords.savedAliasFor(videoId) // [KO] downloads-records
 
     /** The metadata recorded for a downloaded id, without touching its file. */
-    internal fun savedMetadataFor(videoId: String): SavedSongMetadata? {
-        open()
-        return _savedMetadata.value[videoId]
-    }
+    internal fun savedMetadataFor(videoId: String): SavedSongMetadata? =
+        com.music.bitchord.ko.downloads.KoDownloadRecords.savedMetadataFor(videoId) // [KO] downloads-records
 
     /** A snapshot of every recorded download, without a disk check per row. */
-    internal fun savedMetadataSnapshot(): Map<String, SavedSongMetadata> {
-        open()
-        return _savedMetadata.value
-    }
+    internal fun savedMetadataSnapshot(): Map<String, SavedSongMetadata> =
+        com.music.bitchord.ko.downloads.KoDownloadRecords.savedMetadataSnapshot() // [KO] downloads-records
 
     /** A downloaded row as a playable [Song], or null when it was never saved. */
-    internal fun savedSongFor(videoId: String): Song? {
-        open()
-        val meta = _savedMetadata.value[videoId] ?: return null
-        return StoredSongDisplay.clean(
-            Song(
-                videoId = meta.videoId,
-                title = meta.title,
-                artist = meta.artist,
-                thumbnailUrl = meta.thumbnailUrl,
-                durationText = meta.durationText,
-                albumName = meta.albumName,
-                localUri = _saved.value[videoId] ?: meta.uri,
-                downloadFormat = meta.downloadFormat,
-                isVideo = meta.wasVideoRow(),
-                typeUnknown = meta.typeUnknown,
-            ),
-        )
-    }
+    internal fun savedSongFor(videoId: String): Song? =
+        com.music.bitchord.ko.downloads.KoDownloadRecords.savedSongFor(videoId) // [KO] downloads-records
 
     /** Whether [videoId]'s recorded file carries the provenance of [hq]. */
-    internal fun hqApplied(videoId: String, hq: HqDownloadSource): Boolean {
-        open()
-        val meta = _savedMetadata.value[videoId] ?: return false
-        return meta.hqSourceConfigId == hq.sourceConfigId &&
-            meta.hqTrackId == hq.trackId &&
-            meta.hqTier == hq.tier.name
-    }
+    internal fun hqApplied(videoId: String, hq: HqDownloadSource): Boolean =
+        com.music.bitchord.ko.downloads.KoDownloadRecords.hqApplied(videoId, hq) // [KO] downloads-records
 
     /**
      * Whether [videoId]'s file was proved to be another recording.
@@ -802,10 +514,8 @@ object Downloads {
      * The flag survives until a replacement lands, so a wrong file is neither
      * served to the player nor adopted as the answer to a repair download.
      */
-    internal fun isWrongRecording(videoId: String): Boolean {
-        open()
-        return _savedMetadata.value[videoId]?.wrongRecording == true
-    }
+    internal fun isWrongRecording(videoId: String): Boolean =
+        com.music.bitchord.ko.downloads.KoDownloadRecords.isWrongRecording(videoId) // [KO] downloads-records
 
     /**
      * Marks [videoId]'s file as the wrong recording without touching its bytes.
@@ -819,49 +529,15 @@ object Downloads {
         videoId: String,
         inspectedUri: String,
         inspectedVersion: String? = null,
-    ): Boolean {
-        open()
-        val context = appContext
-        record(
-            saved = { it },
-            meta = { map ->
-                val current = map[videoId] ?: return@record map
-                val version = context?.let { fileVersion(it, current.uri) }
-                if (!DownloadHealthPolicy.shouldMarkWrong(
-                        currentUri = current.uri,
-                        inspectedUri = inspectedUri,
-                        alreadyWrong = current.wrongRecording,
-                        currentVersion = version,
-                        inspectedVersion = inspectedVersion,
-                    )
-                ) {
-                    return@record map
-                }
-                map + (videoId to current.copy(wrongRecording = true))
-            },
-        )
-        val current = _savedMetadata.value[videoId] ?: return false
-        val version = context?.let { fileVersion(it, current.uri) }
-        val marked = DownloadHealthPolicy.shouldMarkWrong(
-            currentUri = current.uri,
-            inspectedUri = inspectedUri,
-            alreadyWrong = false,
-            currentVersion = version,
-            inspectedVersion = inspectedVersion,
-        ) && current.wrongRecording
-        // The source pair that supplied the wrong recording must not be picked
-        // again: the replacement plan reads accepted pairs from the store, and
-        // a flag on the file alone left this very pair first in line.
-        if (marked && context != null && current.hqSourceConfigId != null) {
-            HqVerificationStore.reject(context, videoId, current.hqSourceConfigId, current.hqTrackId)
-        }
-        return marked
-    }
+    ): Boolean = com.music.bitchord.ko.downloads.KoDownloadRecords.markWrongRecording(
+        videoId,
+        inspectedUri,
+        inspectedVersion,
+    ) // [KO] downloads-records
 
     /** The verified rung a downloaded file was saved at, when the download recorded one. */
     fun storedTier(videoId: String): HqTier? =
-        _savedMetadata.value[videoId]?.hqTier?.let { name -> runCatching { HqTier.valueOf(name) }.getOrNull() }
-
+        com.music.bitchord.ko.downloads.KoDownloadRecords.storedTier(videoId) // [KO] downloads-records
     /**
      * The file's own length and modified time, as one value.
      *
@@ -870,23 +546,12 @@ object Downloads {
      * the file that was inspected. A `content://` uri has no modified time,
      * but a replacement there gets a new uri anyway.
      */
-    internal fun fileVersion(context: Context, uriString: String): String {
-        val parsed = Uri.parse(uriString)
-        val file = runCatching { File(parsed.path.orEmpty()) }
-            .getOrNull()
-            ?.takeIf { it.exists() }
-        if (file != null) return "${file.length()}|${file.lastModified()}"
-        val length = runCatching {
-            context.contentResolver.openAssetFileDescriptor(parsed, "r")?.use { it.length }
-        }.getOrNull() ?: 0L
-        return "$length|0"
-    }
+    internal fun fileVersion(context: Context, uriString: String): String =
+        com.music.bitchord.ko.downloads.KoDownloadRecords.fileVersion(context, uriString) // [KO] downloads-records
 
     /** Whether [videoId] is one of this app's downloads, rather than a local file. */
-    fun isDownloaded(videoId: String): Boolean {
-        open()
-        return videoId in _saved.value || videoId in _savedMetadata.value
-    }
+    fun isDownloaded(videoId: String): Boolean =
+        com.music.bitchord.ko.downloads.KoDownloadRecords.isDownloaded(videoId) // [KO] downloads-records
 
     /**
      * The id whose stream produced the file saved for [videoId], when it was
@@ -896,86 +561,39 @@ object Downloads {
      * resolved to, so this is the only way to tell the two apart afterwards:
      * the ids name two uploads, the file can only be the sound of one of them.
      */
-    internal fun savedSoundSourceFor(videoId: String): String? {
-        open()
-        return _savedMetadata.value[videoId]?.soundSourceVideoId
-    }
+    internal fun savedSoundSourceFor(videoId: String): String? =
+        com.music.bitchord.ko.downloads.KoDownloadRecords.savedSoundSourceFor(videoId) // [KO] downloads-records
 
     /**
      * The recorded upload type, or null for a record written before the field
      * existed. Null is not the same as false: an old own-id record may still be
      * a music video's sound.
      */
-    internal fun savedIsVideoFor(videoId: String): Boolean? {
-        open()
-        return _savedMetadata.value[videoId]?.isVideo
-    }
+    internal fun savedIsVideoFor(videoId: String): Boolean? =
+        com.music.bitchord.ko.downloads.KoDownloadRecords.savedIsVideoFor(videoId) // [KO] downloads-records
 
     /** Whether the saved row's upload type was still unknown, false if unrecorded. */
-    internal fun savedTypeUnknownFor(videoId: String): Boolean {
-        open()
-        return _savedMetadata.value[videoId]?.typeUnknown == true
-    }
+    internal fun savedTypeUnknownFor(videoId: String): Boolean =
+        com.music.bitchord.ko.downloads.KoDownloadRecords.savedTypeUnknownFor(videoId) // [KO] downloads-records
 
     /**
      * Fills in the upload type of a pre-field record once it has been verified
      * against the catalogue, so the same file is not looked up on every play.
      * Does nothing when the record already states a type, or has no record.
      */
-    internal fun backfillUploadType(videoId: String, isVideo: Boolean, typeUnknown: Boolean) {
-        open()
-        record(
-            saved = { it },
-            meta = { meta ->
-                val now = meta[videoId]
-                if (now == null || now.isVideo != null) {
-                    meta
-                } else {
-                    meta + (
-                        videoId to now.copy(
-                            isVideo = isVideo,
-                            typeUnknown = typeUnknown,
-                            // The catalogue just agreed this is the recording;
-                            // naming its own id also records the provenance the
-                            // old entry lacked, so it is not verified again.
-                            soundSourceVideoId = now.soundSourceVideoId ?: videoId,
-                        )
-                    )
-                }
-            },
-        )
-    }
+    internal fun backfillUploadType(videoId: String, isVideo: Boolean, typeUnknown: Boolean) =
+        com.music.bitchord.ko.downloads.KoDownloadRecords.backfillUploadType(videoId, isVideo, typeUnknown) // [KO] downloads-records
 
     /** How much longer than the song this file was judged to be, or null. */
-    fun mvSoundSuspectMs(videoId: String): Long? {
-        open()
-        return _mvSoundSuspects.value[videoId]
-    }
+    fun mvSoundSuspectMs(videoId: String): Long? =
+        com.music.bitchord.ko.downloads.KoDownloadRecords.mvSoundSuspectMs(videoId) // [KO] mv-sound
 
     /** Keeps the length verdict for [videoId] across launches. */
-    fun markMvSoundSuspect(videoId: String, deltaMs: Long) {
-        open()
-        synchronized(suspectLock) {
-            val next = _mvSoundSuspects.updateAndGet { it + (videoId to deltaMs) }
-            if (::prefs.isInitialized) {
-                prefs.edit()
-                    .putString(KEY_MV_SOUND_SUSPECTS, json.encodeToString(suspectSerializer, next))
-                    .apply()
-            }
-        }
-    }
+    fun markMvSoundSuspect(videoId: String, deltaMs: Long) =
+        com.music.bitchord.ko.downloads.KoDownloadRecords.markMvSoundSuspect(videoId, deltaMs) // [KO] mv-sound
 
-    private fun clearMvSoundSuspects(videoIds: Collection<String>) {
-        if (videoIds.isEmpty()) return
-        synchronized(suspectLock) {
-            val next = _mvSoundSuspects.updateAndGet { it - videoIds.toSet() }
-            if (::prefs.isInitialized) {
-                prefs.edit()
-                    .putString(KEY_MV_SOUND_SUSPECTS, json.encodeToString(suspectSerializer, next))
-                    .apply()
-            }
-        }
-    }
+    private fun clearMvSoundSuspects(videoIds: Collection<String>) =
+        com.music.bitchord.ko.downloads.KoDownloadRecords.clearMvSoundSuspects(videoIds) // [KO] mv-sound
 
     /**
      * The song id for the file [videoId] names: the shortest of the ids filed
@@ -985,35 +603,16 @@ object Downloads {
      * and only the shorter row is the recording the app plays as the song.
      * [videoId] itself when there is no second id.
      */
-    fun songIdForFile(videoId: String): String {
-        open()
-        val uri = _saved.value[videoId] ?: _savedMetadata.value[videoId]?.uri ?: return videoId
-        return _saved.value
-            .filterValues { it == uri }
-            .keys
-            .minByOrNull { candidate ->
-                _savedMetadata.value[candidate]?.durationText?.durationMillis()
-                    ?: Long.MAX_VALUE
-            } ?: videoId
-    }
+    fun songIdForFile(videoId: String): String =
+        com.music.bitchord.ko.downloads.KoDownloadRecords.songIdForFile(videoId) // [KO] mv-sound
 
     /**
      * The shortest duration known for [videoId]'s song: the row's own catalogue
      * length, or a shorter length recorded against the same file (the song
      * version the video was resolved to).
      */
-    fun catalogDurationMs(videoId: String, rowDurationMs: Long?): Long? {
-        open()
-        val uri = _saved.value[videoId] ?: _savedMetadata.value[videoId]?.uri
-        val recorded = if (uri != null) {
-            _savedMetadata.value.values
-                .filter { it.uri == uri }
-                .mapNotNull { it.durationText?.durationMillis()?.takeIf { ms -> ms > 0L } }
-        } else {
-            emptyList()
-        }
-        return (recorded + listOfNotNull(rowDurationMs?.takeIf { it > 0L })).minOrNull()
-    }
+    fun catalogDurationMs(videoId: String, rowDurationMs: Long?): Long? =
+        com.music.bitchord.ko.downloads.KoDownloadRecords.catalogDurationMs(videoId, rowDurationMs) // [KO] mv-sound
 
     /**
      * Scans the downloads for files that are the music video's sound, using
@@ -1025,140 +624,15 @@ object Downloads {
      * answer is measured by length. No network; the file's own metadata is read
      * only for records that have a catalogue length to compare it with.
      */
-    suspend fun scanForMvSoundSuspects(context: Context) = withContext(Dispatchers.IO) {
-        open()
-        val found = LinkedHashMap<String, Long>()
-        _savedMetadata.value.values.groupBy { it.uri }.forEach { (_, entries) ->
-            if (entries.isEmpty()) return@forEach
-            val durations = entries.mapNotNull { meta ->
-                meta.durationText?.durationMillis()
-                    ?.takeIf { ms -> ms > 0L }
-                    ?.let { meta.videoId to it }
-            }
-            if (durations.isEmpty()) return@forEach
-            val fileUri = entries.first().uri
-            if (!DownloadStore.exists(context, fileUri.toUri())) return@forEach
-            // A file already recorded as a song version from its own stream is
-            // the answer, even when an alias row still carries the video's row
-            // type. Checking every entry, not just the shortest, keeps a
-            // song/video pair with equal lengths from being re-opened on
-            // whichever alias happens to come first.
-            if (entries.any {
-                    DownloadedMvPolicy.isRecordedSongVersion(
-                        storedIsVideo = it.isVideo,
-                        storedTypeUnknown = it.typeUnknown,
-                        soundSourceVideoId = it.soundSourceVideoId,
-                        rowVideoId = it.videoId,
-                    )
-                }
-            ) {
-                return@forEach
-            }
-            val (catalogId, catalogMs) = durations.minBy { it.second }
-            // The shortest duration is the song side of a video/song pair. Its
-            // own record is the one whose verdict describes the bytes the app
-            // plays; the video alias may still carry its row's video type even
-            // when the file itself is the song version.
-            val catalog = entries.firstOrNull { it.videoId == catalogId } ?: entries.first()
-            // The recorded lengths say this file might be the video's sound;
-            // the file's own metadata is the one that says whether it is.
-            // Read only for the candidates, never for every download.
-            val fileMs = localDurationMs(context, fileUri)
-                ?: durations.maxOf { it.second }
-            // Provenance names another upload, but only a source that is itself
-            // recorded as a video is the official MV. A song version fetched
-            // from another id (a quality replacement) must not be repaired.
-            val source = catalog.soundSourceVideoId
-                ?.takeIf { it != catalog.videoId }
-                ?.let { sourceId ->
-                    _savedMetadata.value[sourceId]
-                        ?: entries.firstOrNull { it.videoId == sourceId }
-                }
-            val sourceRecordedAsMv = source != null &&
-                (source.isVideo == true ||
-                    (source.isVideo == null && DownloadedMvPolicy.hasMvTitleMarker(source.title)))
-            val delta = DownloadedMvPolicy.mvSoundSuspectDeltaMs(
-                rowVideoId = catalog.videoId,
-                title = catalog.title,
-                fileDurationMs = fileMs,
-                storedIsVideo = catalog.isVideo,
-                storedTypeUnknown = catalog.typeUnknown,
-                soundSourceVideoId = catalog.soundSourceVideoId,
-                catalogDurationMs = catalogMs,
-                artist = catalog.artist,
-                sourceRecordedAsMv = sourceRecordedAsMv,
-            ) ?: return@forEach
-            found[songIdForFile(catalogId)] = delta
-        }
-        var changed = false
-        synchronized(suspectLock) {
-            val before = _mvSoundSuspects.value
-            val next = _mvSoundSuspects.updateAndGet { current ->
-                val kept = current.filter { (id, _) ->
-                    val meta = _savedMetadata.value[id] ?: return@filter false
-                    val uri = _saved.value[id] ?: meta.uri
-                    !meta.isCoverRecording() &&
-                        !DownloadedMvPolicy.isRecordedSongVersion(
-                            storedIsVideo = meta.isVideo,
-                            storedTypeUnknown = meta.typeUnknown,
-                            soundSourceVideoId = meta.soundSourceVideoId,
-                            rowVideoId = meta.videoId,
-                        ) && DownloadStore.exists(context, uri.toUri())
-                }
-                kept + found
-            }
-            changed = next != before
-            if (changed && ::prefs.isInitialized) {
-                prefs.edit()
-                    .putString(KEY_MV_SOUND_SUSPECTS, json.encodeToString(suspectSerializer, next))
-                    .apply()
-            }
-        }
-        if (_mvSoundSuspects.value.isNotEmpty()) MvSoundRedownload.scheduleIfEnabled(context)
-    }
+    suspend fun scanForMvSoundSuspects(context: Context) =
+        com.music.bitchord.ko.downloads.KoDownloadRecords.scanForMvSoundSuspects(context) // [KO] mv-sound
 
     /** The file's own length from its container metadata, or null if it cannot be read. */
-    internal fun localDurationMs(context: Context, uriString: String): Long? = runCatching {
-        val retriever = MediaMetadataRetriever()
-        try {
-            retriever.setDataSource(context, uriString.toUri())
-            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
-        } finally {
-            retriever.release()
-        }
-    }.getOrNull()?.takeIf { it > 0L }
-
+    internal fun localDurationMs(context: Context, uriString: String): Long? =
+        com.music.bitchord.ko.downloads.KoDownloadRecords.localDurationMs(context, uriString) // [KO] mv-sound
     /** The downloaded rows still on disk that are remembered as the video's sound. */
-    suspend fun suspectedSongs(context: Context): List<Song> = withContext(Dispatchers.IO) {
-        open()
-        _mvSoundSuspects.value.keys.mapNotNull { id ->
-            val meta = _savedMetadata.value[id] ?: return@mapNotNull null
-            val uri = _saved.value[id] ?: meta.uri
-            if (!DownloadStore.exists(context, uri.toUri())) return@mapNotNull null
-            // The verdict names a file, and the same file may be filed under
-            // the video and the song. Fetch the shorter name: that is the song
-            // id, whose own stream is the recording to keep.
-            val target = songIdForFile(id)
-            val targetMeta = _savedMetadata.value[target] ?: meta
-            Song(
-                videoId = target,
-                title = targetMeta.title,
-                artist = targetMeta.artist,
-                thumbnailUrl = targetMeta.thumbnailUrl,
-                durationText = targetMeta.durationText,
-                albumName = targetMeta.albumName,
-                localUri = uri,
-                // Restore the recorded upload type: a cover must still read as
-                // the cover it is, so the repair can skip it rather than
-                // replacing the listener's chosen performance.
-                isVideo = targetMeta.isVideo == true,
-                // The file was judged to be the video's sound; let the repair
-                // resolve the song version instead of downloading this id's
-                // own (video) stream again.
-                typeUnknown = true,
-            )
-        }.distinctBy { it.localUri }
-    }
+    suspend fun suspectedSongs(context: Context): List<Song> =
+        com.music.bitchord.ko.downloads.KoDownloadRecords.suspectedSongs(context) // [KO] mv-sound
 
     /**
      * Queues every remembered suspect as its song version. The old file is
@@ -1168,44 +642,12 @@ object Downloads {
      * A suspect that failed recently is skipped until its cooldown passes;
      * [manual] is the banner tap, which is allowed to try again immediately.
      */
-    suspend fun redownloadSuspected(context: Context, manual: Boolean = false): Int {
-        if (!mvRepairAllowsMetered(manual, AppSettings.downloadsAllowedNow)) {
-            Log.i(TAG, "mv-sound: waiting for an unmetered connection")
-            return 0
-        }
-        val all = suspectedSongs(context)
-        // The scan already refuses covers, but a verdict persisted by an older
-        // build can still name one. Check again right before downloading: a
-        // cover is the listener's chosen performance, never replaced by the
-        // original recording.
-        val (covers, songs) = all.partition { song ->
-            DownloadedMvPolicy.isCover(song.videoId, song.title, song.artist, song.isVideo)
-        }
-        if (covers.isNotEmpty()) {
-            open()
-            clearMvSoundSuspects(
-                _mvSoundSuspects.value.keys.filter { id ->
-                    _savedMetadata.value[id]?.isCoverRecording() == true
-                },
-            )
-        }
-        val now = System.currentTimeMillis()
-        val retryable = songs.filter { song ->
-            MvSoundRedownload.mayAttempt(context, song.videoId, now, manual)
-        }
-        retryable.forEach {
-            enqueue(context, it, allowMetered = manual, mvSoundRepair = true)
-        }
-        return retryable.size
-    }
+    suspend fun redownloadSuspected(context: Context, manual: Boolean = false): Int =
+        com.music.bitchord.ko.downloads.KoDownloadRecords.redownloadSuspected(context, manual) // [KO] mv-sound
 
     /** Whether any suspect may be repaired now, rather than waiting out a failure. */
-    fun hasRepairableMvSuspects(context: Context, nowMs: Long): Boolean {
-        open()
-        return _mvSoundSuspects.value.keys.any { id ->
-            MvSoundRedownload.mayAttempt(context, id, nowMs, manual = false)
-        }
-    }
+    fun hasRepairableMvSuspects(context: Context, nowMs: Long): Boolean =
+        com.music.bitchord.ko.downloads.KoDownloadRecords.hasRepairableMvSuspects(context, nowMs) // [KO] mv-sound
 
     /**
      * Whether the file [uri] is recorded as [videoId]'s own downloaded
@@ -1215,13 +657,8 @@ object Downloads {
      * answer: the file manager's folder is not ours, and the old bug was a
      * music video's sound being adopted under the catalogue song's id.
      */
-    internal fun savedFileIsRecording(videoId: String, uri: String): Boolean {
-        open()
-        val meta = _savedMetadata.value[videoId] ?: return false
-        return !meta.wrongRecording &&
-            meta.uri == uri &&
-            SongVersionPolicy.mayAdoptDownloadedFile(videoId, meta.soundSourceVideoId)
-    }
+    internal fun savedFileIsRecording(videoId: String, uri: String): Boolean =
+        com.music.bitchord.ko.downloads.KoDownloadRecords.savedFileIsRecording(videoId, uri) // [KO] mv-sound
 
     /**
      * Delete the file saved for [videoId] and forget it.
@@ -1362,13 +799,8 @@ object Downloads {
      * naming a deleted sidecar is what made a re-download keep the dead path
      * instead of the remote cover it was given.
      */
-    private fun isUsableLocalArtwork(url: String): Boolean = when {
-        url.startsWith("file:") -> runCatching {
-            url.toUri().path?.let(::File)?.let { it.isFile && it.length() > 0L } == true
-        }.getOrDefault(false)
-        url.startsWith("content:") -> true
-        else -> false
-    }
+    private fun isUsableLocalArtwork(url: String): Boolean =
+        com.music.bitchord.ko.downloads.KoDownloadRecords.isUsableLocalArtwork(url) // [KO] artwork
 
     /** Drop a release from the record without touching the files under it. */
     fun forgetCollection(id: String) {
@@ -1529,16 +961,8 @@ object Downloads {
      * so the record does not keep promising a file the next reader cannot
      * open.
      */
-    private fun recordedThumbnail(saved: String?, song: Song): String? {
-        if (!saved.isNullOrBlank()) return saved
-        val recorded = song.thumbnailUrl?.takeIf { it.isNotBlank() }
-        if (recorded != null && (!isLocalArtwork(recorded) || isUsableLocalArtwork(recorded))) {
-            return recorded
-        }
-        // A dead local path with no YouTube identity has no honest fallback;
-        // null draws the placeholder instead of promising a missing file.
-        return com.music.bitchord.data.cover.videoThumbnailUrl(song.videoId)
-    }
+    private fun recordedThumbnail(saved: String?, song: Song): String? =
+        com.music.bitchord.ko.downloads.KoDownloadRecords.recordedThumbnail(saved, song, ::isLocalArtwork) // [KO] artwork
 
     /**
      * Record one file under every id it could be asked about.
@@ -1562,13 +986,7 @@ object Downloads {
     ) {
         open()
         val ids = setOf(asked.videoId, fetched.videoId)
-        val previousUris = ids.mapNotNull { id ->
-            _savedMetadata.value[id]?.uri ?: _saved.value[id]
-        }.toSet()
-        val previousSuspects = _mvSoundSuspects.value.keys.filter { id ->
-            val old = _savedMetadata.value[id]?.uri ?: _saved.value[id]
-            old != null && (old == uri.toString() || old in previousUris)
-        }
+        val previous = com.music.bitchord.ko.downloads.KoDownloadPipeline.previousStateFor(ids, uri)
         // MediaStore supplies this for exported downloads, but app-private and
         // legacy file:// downloads never pass through that index. Keep the
         // creation time in our own record so "Date added" remains stable if a
@@ -1601,48 +1019,30 @@ object Downloads {
         // the file's own picture first.
         val askedThumbnail = recordedThumbnail(savedArtwork ?: artworkUri, asked)
         val fetchedThumbnail = recordedThumbnail(savedArtwork ?: artworkUri, fetched)
-        val metaAsked = SavedSongMetadata(
-            videoId = asked.videoId,
-            title = asked.title,
-            artist = asked.artist,
-            thumbnailUrl = askedThumbnail,
-            durationText = asked.durationText,
-            albumName = album,
-            uri = uri.toString(),
-            downloadFormat = downloadFormat,
-            dateAddedSeconds = dateAddedSeconds,
-            soundSourceVideoId = soundSourceVideoId,
-            isVideo = asked.isVideo,
-            typeUnknown = asked.typeUnknown,
-            hqSourceConfigId = hq?.sourceConfigId,
-            hqTrackId = hq?.trackId,
-            hqOffsetMs = hq?.offsetMs,
-            hqRate = hq?.rate,
-            hqTier = hq?.tier?.name,
-            hqSourceTitle = hq?.sourceTitle ?: sourceTitle,
-            hqSourceArtist = hq?.sourceArtist ?: sourceArtist,
-        )
-        val metaFetched = SavedSongMetadata(
-            videoId = fetched.videoId,
-            title = fetched.title,
-            artist = fetched.artist,
-            thumbnailUrl = fetchedThumbnail,
-            durationText = fetched.durationText,
-            albumName = album,
-            uri = uri.toString(),
-            downloadFormat = downloadFormat,
-            dateAddedSeconds = dateAddedSeconds,
-            soundSourceVideoId = soundSourceVideoId,
-            isVideo = fetched.isVideo,
-            typeUnknown = fetched.typeUnknown,
-            hqSourceConfigId = hq?.sourceConfigId,
-            hqTrackId = hq?.trackId,
-            hqOffsetMs = hq?.offsetMs,
-            hqRate = hq?.rate,
-            hqTier = hq?.tier?.name,
-            hqSourceTitle = hq?.sourceTitle ?: sourceTitle,
-            hqSourceArtist = hq?.sourceArtist ?: sourceArtist,
-        )
+        val metaAsked = com.music.bitchord.ko.downloads.KoDownloadPipeline.metadataFor(
+            asked,
+            askedThumbnail,
+            album,
+            uri,
+            downloadFormat,
+            dateAddedSeconds,
+            soundSourceVideoId,
+            hq,
+            sourceTitle,
+            sourceArtist,
+        ) // [KO] pipeline
+        val metaFetched = com.music.bitchord.ko.downloads.KoDownloadPipeline.metadataFor(
+            fetched,
+            fetchedThumbnail,
+            album,
+            uri,
+            downloadFormat,
+            dateAddedSeconds,
+            soundSourceVideoId,
+            hq,
+            sourceTitle,
+            sourceArtist,
+        ) // [KO] pipeline
         record(
             saved = { it + ids.associateWith { id -> uri.toString() } },
             meta = { current ->
@@ -1652,73 +1052,14 @@ object Downloads {
                 )
             },
         )
-        // The cover file has landed with the track. Tell any row already
-        // showing these ids to read it again; its earlier ask may have seen a
-        // miss, and a remembered miss is no longer timed out on its own.
-        if (savedArtwork != null || artworkUri != null) {
-            DownloadedArtworkEvents.coverSaved(ids)
-        }
-        // A file whose recorded source is one of these ids is the recording
-        // these rows asked for, so a length verdict from the old file no longer
-        // applies. When the new file landed elsewhere, remove the old one once
-        // nothing else names it — that is the "replace the old file" half of a
-        // re-download.
-        if (soundSourceVideoId in ids) {
-            // Only a different upload proves the MV sound has been replaced.
-            // A same-id re-fetch wrote the same bytes again; clearing here is
-            // what made the warning disappear while the file stayed wrong.
-            if (DownloadedMvPolicy.repairFetchedSongVersion(asked.videoId, fetched.videoId)) {
-                clearMvSoundSuspects(previousSuspects + ids)
-            }
-            val context = appContext
-            val fileReplaced = previousUris.any { it != uri.toString() }
-            if (context != null && (fileReplaced || previousSuspects.isNotEmpty())) {
-                // A song's file was replaced. Any AI timing answer was measured
-                // against the old bytes, so drop it (and the spent engine
-                // record) and let the song check run against the new
-                // recording. Video rows keep their own timing.
-                buildSet {
-                    if (!asked.isVideo) add(asked.videoId)
-                    if (!fetched.isVideo) add(fetched.videoId)
-                    addAll(previousSuspects)
-                }.forEach { id ->
-                    runCatching {
-                        com.music.bitchord.playback.smart.LyricsTiming.resetSongCheck(context, id)
-                    }
-                }
-            }
-            // Other ids that named the old file are aliases of the same
-            // download (a music video and its song). Point them at the new
-            // file rather than dropping them, so a playlist that was filed
-            // under the old id keeps its track.
-            val staleIds = _saved.value
-                .filterValues { value -> value != uri.toString() && value in previousUris }
-                .keys.toList()
-            if (staleIds.isNotEmpty()) {
-                record(
-                    saved = { it + staleIds.associateWith { uri.toString() } },
-                    meta = { meta ->
-                        meta.mapValues { (id, value) ->
-                            if (id in staleIds) {
-                                value.copy(
-                                    uri = uri.toString(),
-                                    soundSourceVideoId = soundSourceVideoId,
-                                )
-                            } else {
-                                value
-                            }
-                        }
-                    },
-                )
-            }
-            if (context != null) {
-                previousUris.forEach { old ->
-                    if (old != uri.toString() && _saved.value.values.none { it == old }) {
-                        runCatching { DownloadStore.delete(context, old.toUri()) }
-                    }
-                }
-            }
-        }
+        com.music.bitchord.ko.downloads.KoDownloadPipeline.afterRemember(
+            asked,
+            fetched,
+            uri,
+            soundSourceVideoId,
+            previous,
+            savedArtwork != null || artworkUri != null,
+        ) // [KO] pipeline
     }
 
     /**
@@ -1731,7 +1072,7 @@ object Downloads {
      * updated compare-and-set, and the persist is serialised so the copy that
      * reaches disk is never older than one already written.
      */
-    private fun record(
+    internal fun record(
         saved: (Map<String, String>) -> Map<String, String>,
         meta: (Map<String, SavedSongMetadata>) -> Map<String, SavedSongMetadata>,
     ) {
@@ -1900,7 +1241,7 @@ object Downloads {
         val entry = pending.entries.firstOrNull() ?: return null
         pending.remove(entry.key)
         running[entry.key] = null
-        enqueueGenerations[entry.key]?.let { claimedGenerations[entry.key] = it }
+        com.music.bitchord.ko.downloads.KoDownloadQueue.claim(entry.key) // [KO] queue-state
         entry.value
     }
 
@@ -1921,20 +1262,18 @@ object Downloads {
     }
 
     /** The current queue revision; read it before [takeNext] when waiting. */
-    internal fun workRevision(): Long = workRevision.value
+    internal fun workRevision(): Long = com.music.bitchord.ko.downloads.KoDownloadQueue.workRevision() // [KO] queue-state
 
     /** Tell every idle worker that the queue or its running set changed. */
-    internal fun wakeWorkers() {
-        workRevision.update { it + 1 }
-    }
+    internal fun wakeWorkers() =
+        com.music.bitchord.ko.downloads.KoDownloadQueue.wakeWorkers() // [KO] queue-state
 
     /** Suspends until the queue changes, or [timeoutMs] passes. */
-    internal suspend fun awaitWorkChange(seen: Long) {
-        workRevision.first { it != seen }
-    }
+    internal suspend fun awaitWorkChange(seen: Long) =
+        com.music.bitchord.ko.downloads.KoDownloadQueue.awaitWorkChange(seen) // [KO] queue-state
 
     internal suspend fun awaitWorkChange(seen: Long, timeoutMs: Long): Boolean =
-        withTimeoutOrNull(timeoutMs) { awaitWorkChange(seen) } != null
+        com.music.bitchord.ko.downloads.KoDownloadQueue.awaitWorkChange(seen, timeoutMs) // [KO] queue-state
 
     /** Whether anything is still queued or in flight — see [DownloadService]'s workers. */
     internal fun busy(): Boolean = synchronized(lock) { pending.isNotEmpty() || running.isNotEmpty() }
@@ -1978,8 +1317,8 @@ object Downloads {
      */
     internal suspend fun run(context: Context, song: Song) = withContext(Dispatchers.IO) {
         val id = song.videoId
-        val automatic = synchronized(lock) { automaticIds.remove(id) }
-        val mvRepair = synchronized(lock) { mvSoundRepairIds.remove(id) }
+        val automatic = com.music.bitchord.ko.downloads.KoDownloadQueue.takeAutomatic(id) // [KO] queue-state
+        val mvRepair = com.music.bitchord.ko.downloads.KoDownloadQueue.takeMvRepair(id) // [KO] queue-state
         // Set before the lookup, not after it. Resolving where a lossless track
         // comes from is the long part of a download, and leaving the row on
         // "Queued" for all of it reads as a queue that has stopped rather than
@@ -1999,26 +1338,11 @@ object Downloads {
             // the notification and with the Downloads page afterwards.
             DownloadSession.retitle(id, plan.track)
             if (automatic) {
-                host = plan.route?.host
-                if (host != null) {
-                    // A host the pass or playback has just been refused by is
-                    // not asked again until its own wait has passed. The
-                    // scheduler gets the remaining time, so this is not a poll.
-                    val rest = HqHostTracker.restRemainingMs(host)
-                    if (rest > 0L) throw AutoDownloadDeferred(rest)
-                    // Playback's upgrade/read-ahead and its verification hold
-                    // the same host slots; an automatic file waits for them
-                    // rather than opening a second request to the same server.
-                    HqHostTracker.awaitIdle(host, exceptTrack = id)
-                    HqHostTracker.beginDownload(id, host)
-                }
+                host = com.music.bitchord.ko.downloads.KoDownloadPipeline.beginAutomaticDownload(id, plan.route) // [KO] pipeline
             }
-            val work = suspend { transfer(context, song, plan) }
-            val fetched = if (automatic && host != null) {
-                HqAudioVerify.withCandidateHost(host) { work() }
-            } else {
-                work()
-            }
+            val fetched = com.music.bitchord.ko.downloads.KoDownloadPipeline.transferAutomatic(automatic, host) {
+                transfer(context, song, plan)
+            } // [KO] pipeline
             // An adopted file made no request; calling that a success would
             // clear the host's 429 streak and send the next attempt straight
             // back into the edge that was still refusing.
@@ -2029,19 +1353,7 @@ object Downloads {
             clear(id)
             throw e
         } catch (e: Exception) {
-            // A 429 is back-pressure, not a stack worth printing on every
-            // automatic target; the one line says which host and when the
-            // pass will try again. A deferred automatic download is the same
-            // kind of news: the host is resting, nothing failed.
-            val deferred = e as? AutoDownloadDeferred
-            val rateLimit = e.rateLimitCode()
-            when {
-                deferred != null ->
-                    Log.w(TAG, "download deferred for $id: host resting ${deferred.waitMs}ms")
-                rateLimit != null ->
-                    Log.w(TAG, "download rate limited for $id: HTTP $rateLimit")
-                else -> Log.w(TAG, "download failed for $id: ${e.message}", e)
-            }
+            com.music.bitchord.ko.downloads.KoDownloadPipeline.logDownloadFailure(id, e) // [KO] pipeline
             if (automatic) {
                 failure = e.automaticFailure()
                 // No DownloadSession row: the pass reports its own wait, and a
@@ -2057,37 +1369,23 @@ object Downloads {
                 fail(id, e.friendly(), keepVerifiedPair = e.automaticFailure().transient)
             }
         } finally {
-            if (host != null) HqHostTracker.endDownload(id, host)
-            if (mvRepair && !cancelled) {
-                if (completed) {
-                    MvSoundRedownload.clearFailed(context, id)
-                } else {
-                    MvSoundRedownload.markFailed(context, id)
-                }
-            }
-            // One HQ target at a time: the next one is only queued once this
-            // one has landed or failed, so the pass cannot fan out into the
-            // four-worker download queue. Cheap for ordinary downloads — the
-            // id is not the pass's active target and the call returns.
-            HqLibraryUpgrade.onDownloadSettled(context, id, completed, failure, cancelled)
+            com.music.bitchord.ko.downloads.KoDownloadPipeline.settleDownload(
+                context,
+                id,
+                completed,
+                cancelled,
+                mvRepair,
+                failure,
+                host,
+            ) // [KO] pipeline
         }
     }
 
-    /** The pass has parked this host until the time it named. */
-    private class AutoDownloadDeferred(val waitMs: Long) : Exception("server busy")
+    /** [KO] pipeline — the auto-download failure types live in KoDownloadPipeline. */
+    private typealias AutoDownloadDeferred = com.music.bitchord.ko.downloads.KoDownloadPipeline.AutoDownloadDeferred
 
-    /** What an automatic download's exception means to [HqLibraryUpgrade]. */
-    private fun Exception.automaticFailure(): DownloadFailure {
-        val deferred = this as? AutoDownloadDeferred
-        val http = this as? DownloadHttpException
-        val code = http?.code ?: HqAutoDownloadPolicy.statusCode(message)
-        return DownloadFailure(
-            transient = deferred != null ||
-                HqAutoDownloadPolicy.isTransientFailure(code, message),
-            retryAfterHeader = http?.retryAfter,
-            retryAfterMs = deferred?.waitMs,
-        )
-    }
+    private fun Exception.automaticFailure(): DownloadFailure =
+        com.music.bitchord.ko.downloads.KoDownloadPipeline.automaticFailure(this) // [KO] pipeline
 
     /**
      * Everything that has to be known before a byte can be asked for, and
@@ -2115,68 +1413,24 @@ object Downloads {
         song: Song,
         mvSoundRepair: Boolean = false,
     ): Prepared = withContext(Dispatchers.IO) {
-        // A music video keeps the video's sound if downloaded as its own row.
-        // The catalogue release is the recording the app plays, so a video row
-        // is resolved first and the bytes, the name and the record all follow
-        // that id. A row already known to have no version keeps its own, and a
-        // catalogue row is never looked up at all. A download made before its
-        // provenance or upload type was recorded is treated like a video
-        // candidate: a re-download or quality replacement must fetch the
-        // catalogue release, not its own video stream again.
-        val storedIsVideo = savedIsVideoFor(song.videoId)
-        val storedTypeUnknown = savedTypeUnknownFor(song.videoId)
-        val soundSourceId = savedSoundSourceFor(song.videoId)
-        val downloaded = isDownloaded(song.videoId)
-        val effectiveIsVideo: Boolean? = when {
-            song.isVideo || storedIsVideo == true -> true
-            storedIsVideo == null -> null
-            else -> false
-        }
-        val unknownDownload = SongVersionPolicy.verifiesUnknownDownload(
-            localFile = downloaded,
-            downloaded = downloaded,
-            provenanceKnown = soundSourceId != null,
-            provenanceIsOwnId = soundSourceId == song.videoId,
-            isVideo = effectiveIsVideo,
-            typeUnknown = song.typeUnknown || storedTypeUnknown,
-            offline = AudioCache.isOffline(),
-        )
-        val versionSong = if (unknownDownload) song.copy(typeUnknown = true) else song
-        val track = if (SongVersionPolicy.downloadIsSongVersion(
-                versionSong.isVideo,
-                versionSong.typeUnknown,
-                YtMusicRepository.isSongVersionMissing(versionSong.videoId),
-            )
-        ) {
-            runCatching { YtMusicRepository.songVersion(versionSong) }.getOrNull()
-                ?.takeIf { SongVersionPolicy.mayInstallSongVersion(versionSong) }
-                ?: versionSong
-        } else {
-            versionSong
-        }
-        // A repair exists to fetch a different upload. Falling back to the same
-        // id would save the same MV stream again and then clear the warning, so
-        // fail instead and leave the suspect for the next attempt.
-        if (mvSoundRepair && !DownloadedMvPolicy.repairFetchedSongVersion(song.videoId, track.videoId)) {
-            error("MV sound repair found no different song version")
-        }
+        val track = com.music.bitchord.ko.downloads.KoDownloadPipeline.resolveTrack(song, mvSoundRepair) // [KO] pipeline
         // Read once, here, for the whole of this track. Both routes below
         // and the re-resolve inside [Downloader.fetch] have to agree on
         // which rung they are fetching, and re-reading the setting per call
         // would let a change made mid-download splice two renditions into
         // one file. A replacement asked for at a specific rung keeps that
         // rung instead of the standing setting.
-        val quality = synchronized(lock) { qualityOverrides[song.videoId] }
+        val quality = com.music.bitchord.ko.downloads.KoDownloadQueue.qualityFor(song.videoId) // [KO] queue-state
             ?: AppSettings.downloadQuality.value
         // The automatic pass pins the exact verified pair. It must not adopt a
         // file already under the same name either: a FLAC replacement has the
         // same filename as the FLAC it is replacing, and adopting that would
         // answer a hi-res verdict with yesterday's lossless bytes.
-        val hq = synchronized(lock) { hqOverrides[song.videoId] }
-        val avoidSource = synchronized(lock) { avoidSources[song.videoId] }
-        val forceReplace = synchronized(lock) { forceReplaceIds.contains(song.videoId) }
-        val youtubeOnly = synchronized(lock) { youtubeOnlyIds.contains(song.videoId) }
-        val minimumTier = synchronized(lock) { minimumTiers[song.videoId] }
+        val hq = com.music.bitchord.ko.downloads.KoDownloadQueue.hqFor(song.videoId) // [KO] queue-state
+        val avoidSource = com.music.bitchord.ko.downloads.KoDownloadQueue.avoidSourceFor(song.videoId) // [KO] queue-state
+        val forceReplace = com.music.bitchord.ko.downloads.KoDownloadQueue.forceReplaceFor(song.videoId) // [KO] queue-state
+        val youtubeOnly = com.music.bitchord.ko.downloads.KoDownloadQueue.youtubeOnlyFor(song.videoId) // [KO] queue-state
+        val minimumTier = com.music.bitchord.ko.downloads.KoDownloadQueue.minimumTierFor(song.videoId) // [KO] queue-state
 
         // Asked before the lookup rather than after it, unlike the check on the
         // route's own filename below. A file already sitting in Music under a
@@ -2238,17 +1492,8 @@ object Downloads {
         }
         // A repair that could not prove its replacement first must still not
         // leave a lower rendition in place of the file it is replacing. An
-        // unknown rung (the song cache) cannot make that promise either, so
-        // both keep the old file.
-        if (minimumTier != null) {
-            val served = route.tier
-            if (served == null || served.rank > minimumTier.rank) {
-                error(
-                    "고음질 복구 음원이 기존 파일보다 낮은 등급으로 응답했습니다 " +
-                        "(${served?.label ?: "unknown"}, ${minimumTier.label})",
-                )
-            }
-        }
+        // unknown rung (the song cache) cannot make that promise either.
+        minimumTier?.let { com.music.bitchord.ko.downloads.KoDownloadPipeline.requireMinimumTier(route, it) } // [KO] pipeline
         Log.d(TAG, "downloading ${track.videoId} as .${route.extension} (${route.describe}, ${quality.label})")
         Prepared(
             song.videoId,
@@ -2346,37 +1591,15 @@ object Downloads {
                     clear(id)
                     return@coroutineScope false
                 }
-                val name = synchronized(lock) {
-                    var candidate = DownloadStore.downloadFileName(
-                        song = track,
-                        extension = route.extension,
-                        nameTaken = alreadyThere != null,
-                        existingIsRecording = existingIsRecording,
-                        replacing = plan.hq != null || plan.forceReplace,
-                    )
-                    if (!reservedNames.add(candidate)) {
-                        // A different transfer is already writing this name.
-                        // Its final file does not exist yet, so `existing` could
-                        // not see it; the id suffix keeps the two apart.
-                        candidate = DownloadStore.disambiguatedFileName(track, route.extension)
-                        reservedNames.add(candidate)
-                    }
-                    reservedName = candidate
-                    candidate
-                }
-                if (alreadyThere != null && name == baseName && plan.hq == null && !plan.forceReplace) {
-                    // Same name, but not a file this record knows to be the
-                    // requested recording. A video's sound sitting under the
-                    // song's name is exactly what used to be adopted here.
-                    Log.d(TAG, "$baseName exists but is not ${track.videoId}'s verified recording; downloading it")
-                }
-                if (alreadyThere != null && name != baseName) {
-                    // A different upload already owns this name. Keep both
-                    // files; overwriting would make the old record play these
-                    // bytes under the old song's name.
-                    Log.d(TAG, "$baseName belongs to another recording; saving as $name")
-                }
-
+                val name = com.music.bitchord.ko.downloads.KoDownloadPipeline.reserveFileName(
+                    track = track,
+                    extension = route.extension,
+                    baseName = baseName,
+                    alreadyThere = alreadyThere,
+                    existingIsRecording = existingIsRecording,
+                    replacing = plan.hq != null || plan.forceReplace,
+                ) // [KO] pipeline
+                reservedName = name
                 val manifest = route.offlineHls
                 if (manifest != null) {
                     val onSegment: (Long, Long) -> Unit = { written, total ->
@@ -2466,7 +1689,7 @@ object Downloads {
             lyrics?.cancel()
             artwork?.cancel()
             reservedName?.let { claimed ->
-                synchronized(lock) { reservedNames.remove(claimed) }
+                com.music.bitchord.ko.downloads.KoDownloadQueue.releaseName(claimed)
             }
         }
     }
@@ -2573,21 +1796,12 @@ object Downloads {
         track: Song,
         quality: DownloadQuality,
         hq: HqDownloadSource,
-    ): Route {
-        val stream = SourceResolver.forDownloadVerified(
-            sourceConfigId = hq.sourceConfigId,
-            trackId = hq.trackId,
-            request = SourceResolver.requestForDownload(quality),
-        ) ?: error("검증된 고음질 음원을 받을 수 없습니다")
-        val served = HqQuality.tierOf(stream.format)
-        if (served.rank > hq.tier.rank) {
-            error("검증된 고음질 음원이 더 낮은 등급으로 응답했습니다 (${served.label})")
-        }
-        val storable = DownloadStore.storable(stream.format.codec)
-            ?: error("이 기기에 저장할 수 없는 형식입니다 (${stream.format.codec})")
-        return routeFromSource(context, track, stream, storable)
-            ?: error("고음질 음원을 내보낼 수 없습니다")
-    }
+    ): Route = com.music.bitchord.ko.downloads.KoDownloadPipeline.routeForVerified(
+        context,
+        track,
+        quality,
+        hq,
+    ) // [KO] pipeline
 
     /**
      * Turn an open source stream into a file route, or null when it cannot be
@@ -2598,64 +1812,12 @@ object Downloads {
         track: Song,
         stream: SourceStream,
         storable: DownloadStore.Storable,
-    ): Route? {
-        // A manifest is an index, not audio. Whichever kind it is, fetching
-        // it as a file writes the index into something named `.flac` —
-        // which is exactly what a `.mpd` did until [OfflineDash] existed:
-        // a 2.7 KB download that reported success and could never play.
-        // Read off the URL rather than off `stream.format`, which describes
-        // the audio inside and says nothing about the envelope.
-        val dash = OfflineDash.handles(stream.url)
-        val hls = stream.url.substringBefore('?').endsWith(".m3u8", ignoreCase = true)
-        val packaged = hls || dash
-        // A manifest's segments are joined back into one ordinary file —
-        // see [ManifestFile] — exported or not, so a lossless download is
-        // a `.flac` wherever it lands. Exports used to decline manifests
-        // instead, which meant YouTube: Tidal serves every lossless tier
-        // as a manifest, so an exporting user heard FLAC and saved 131kbps
-        // AAC. Only a codec the assembler can't file falls through to the
-        // package (in-app) or YouTube (export) below.
-        if (packaged && storable.extension in ManifestFile.EXTENSIONS) {
-            return Route(
-                extension = storable.extension,
-                mimeType = storable.mimeType,
-                describe = "${stream.format.summary} (assembled from ${if (dash) "DASH" else "HLS"})",
-                host = HqHostTracker.hostOf(stream.url),
-                downloadFormat = stream.format.downloadBadge(),
-                tier = HqQuality.tierOf(stream.format),
-                sourceTitle = stream.trackTitle,
-                sourceArtist = stream.trackArtist,
-                write = { sink, onProgress ->
-                    ManifestFile.write(
-                        context.cacheDir, stream.url, stream.headers, dash,
-                        storable.extension, sink, onProgress,
-                    )
-                },
-            )
-        }
-        if (packaged && AppSettings.exportDownloads.value) {
-            Log.d(TAG, "can't export a .${storable.extension} manifest; taking YouTube for ${track.videoId}")
-            return null
-        }
-        return Route(
-            // DASH is saved *as* HLS — see [OfflineDash] for why — so both
-            // kinds land as the same package and are named for what was
-            // written rather than for what was fetched.
-            extension = if (packaged) "m3u8" else storable.extension,
-            mimeType = if (packaged) "application/vnd.apple.mpegurl" else storable.mimeType,
-            describe = stream.format.summary,
-            host = HqHostTracker.hostOf(stream.url),
-            downloadFormat = stream.format.downloadBadge(),
-            tier = HqQuality.tierOf(stream.format),
-            sourceTitle = stream.trackTitle,
-            sourceArtist = stream.trackArtist,
-            taggable = true,
-            offlineHls = Manifest(stream.url, stream.headers, dash = dash).takeIf { packaged },
-            write = { sink, onProgress ->
-                Downloader.fetchDirect(stream.url, stream.headers, sink, onProgress)
-            },
-        )
-    }
+    ): Route? = com.music.bitchord.ko.downloads.KoDownloadPipeline.routeFromSource(
+        context,
+        track,
+        stream,
+        storable,
+    ) // [KO] pipeline
 
     /**
      * A route that copies [copy] out of the song cache instead of fetching
@@ -2746,23 +1908,12 @@ object Downloads {
     }
 
     /** Back to "not downloaded" — used for success, where [saved] takes over, and for cancellation. */
-    private fun clear(videoId: String) {
+    internal fun clear(videoId: String) {
         _active.update { it - videoId }
-        synchronized(lock) {
-            qualityOverrides.remove(videoId)
-            hqOverrides.remove(videoId)
-            avoidSources.remove(videoId)
-            forceReplaceIds.remove(videoId)
-            youtubeOnlyIds.remove(videoId)
-            minimumTiers.remove(videoId)
-            automaticIds.remove(videoId)
-            mvSoundRepairIds.remove(videoId)
-            enqueueGenerations.remove(videoId)
-            claimedGenerations.remove(videoId)
-        }
+        com.music.bitchord.ko.downloads.KoDownloadQueue.clear(videoId) // [KO] queue-state
     }
 
-    private fun fail(videoId: String, reason: String) {
+    internal fun fail(videoId: String, reason: String) {
         fail(videoId, reason, keepVerifiedPair = false)
     }
 
@@ -2779,9 +1930,9 @@ object Downloads {
      * lower-rung file (see the `already in Music` paths in [prepare] and
      * [transfer]) and report Done without the upgrade the listener asked for.
      */
-    private fun fail(videoId: String, reason: String, keepVerifiedPair: Boolean) {
+    internal fun fail(videoId: String, reason: String, keepVerifiedPair: Boolean) {
         if (!keepVerifiedPair) {
-            synchronized(lock) { hqOverrides.remove(videoId) }
+            com.music.bitchord.ko.downloads.KoDownloadQueue.dropVerifiedPair(videoId) // [KO] queue-state
         }
         _active.update { it + (videoId to DownloadState.Failed(reason)) }
         DownloadSession.failed(videoId, reason)
@@ -2796,15 +1947,12 @@ object Downloads {
      * hosts as a single line), so this must not log it again.
      */
     private fun Exception.friendly(): String =
-        appContext?.let { FriendlyError.message(it, this) }
+        applicationContext()?.let { FriendlyError.message(it, this) }
             ?: "다운로드 실패 — 연결 상태를 확인하십시오"
 
     /** The 429/503 status behind this failure, when it is the server asking for time. */
-    private fun Throwable.rateLimitCode(): Int? {
-        val code = (this as? DownloadHttpException)?.code
-            ?: HqAutoDownloadPolicy.statusCode(message)
-        return code?.takeIf(HqRetryPolicy::isRateLimited)
-    }
+    private fun Throwable.rateLimitCode(): Int? =
+        com.music.bitchord.ko.downloads.KoDownloadPipeline.rateLimitCode(this) // [KO] pipeline
 
     /**
      * How long the source lookup may hold a download up before it goes to
@@ -2946,44 +2094,6 @@ internal data class SavedSongMetadata(
 )
 
 /**
- * Keep the type already on the record when the incoming row is only the
- * unknown placeholder a repair uses to ask for the song version.
- *
- * A new definite row still replaces it: the bytes may genuinely be a video or
- * a song version, and that is evidence the old record did not have.
- */
-private fun SavedSongMetadata.preservingUploadTypeFrom(
-    previous: SavedSongMetadata?,
-): SavedSongMetadata {
-    if (previous == null) return this
-    return if (DownloadedMvPolicy.keepsStoredUploadType(
-            storedIsVideo = previous.isVideo,
-            storedTypeUnknown = previous.typeUnknown,
-            incomingIsVideo = isVideo,
-            incomingTypeUnknown = typeUnknown,
-        )
-    ) {
-        copy(isVideo = previous.isVideo, typeUnknown = previous.typeUnknown)
-    } else {
-        this
-    }
-}
-
-/**
- * Whether this record names a music-video row.
- *
- * New records say so directly. An older record can still be recovered from its
- * provenance: a file recorded from a *different* id's stream was filed under
- * the video's id as well, so this id is the video side of that pair.
- */
-private fun SavedSongMetadata.wasVideoRow(): Boolean =
-    isVideo == true || (soundSourceVideoId != null && soundSourceVideoId != videoId)
-
-/** Whether this record is a cover, live clip or other chosen performance. */
-private fun SavedSongMetadata.isCoverRecording(): Boolean =
-    DownloadedMvPolicy.isCover(videoId, title, artist, isVideo)
-
-/**
  * Dates for a downloaded file-backed row.
  *
  * Old metadata has no persisted creation time, so the file timestamp is the
@@ -2999,7 +2109,7 @@ internal fun resolvedDownloadDates(
 }
 
 /** Premium source labels used in BitChord's Downloads list. */
-private fun StreamFormat.downloadBadge(): String? = when {
+internal fun StreamFormat.downloadBadge(): String? = when {
     isDolbyAtmos -> "DOLBY"
     codec.equals("flac", ignoreCase = true) || codec.equals("x-flac", ignoreCase = true) -> "FLAC"
     else -> null
