@@ -18,6 +18,7 @@ import com.music.bitchord.data.sources.HqQuality
 import com.music.bitchord.data.sources.HqReferenceCache
 import com.music.bitchord.data.sources.HqTier
 import com.music.bitchord.data.sources.HqVerifyPolicy
+import com.music.bitchord.data.sources.ModuleSource
 import com.music.bitchord.data.sources.MusicSource
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
@@ -243,8 +244,17 @@ object HqAudioVerify {
     /** A definitive refusal (403/410), which a fresh URL may get past. */
     private class DownloadRefused(val code: Int) : IOException("HTTP $code")
 
-    /** A fresh-URL retry failed after it was already logged. */
-    private class FreshRetryFailed : IOException()
+    /**
+     * A fresh-URL retry failed after it was already logged.
+     *
+     * The retry's own answer is carried rather than flattened to 403: a
+     * timeout, a 404 or a 500 against the fresh URL says nothing definitive
+     * about the source row and must not suppress it for the rest of the run.
+     */
+    private class FreshRetryFailed(
+        val code: Int?,
+        val reason: String,
+    ) : IOException("HTTP ${code ?: reason}")
 
     /** The candidate head's download answer, keeping the 429 apart from other failures. */
     private sealed interface DownloadFetch {
@@ -359,6 +369,27 @@ object HqAudioVerify {
         }
         val trackId = stream.trackId
         val sourceName = SourceRegistry.config(sourceId)?.displayName ?: "source"
+        // A pair already proved unmeasurable in this run is not fetched again.
+        // The reported upgrade tried the same Deezer row that had returned 403
+        // two minutes earlier, and the same 30-second LastWave preview for
+        // every candidate after it.
+        UnmeasuredMemory.reason(sourceId, trackId)?.let { reason ->
+            TrackLog.d(
+                TAG,
+                "decode: hq-verify '${target.title}' skipped; this $sourceName row stayed unmeasured ($reason)",
+                youtubeId,
+            )
+            return@withContext Outcome.Unavailable()
+        }
+        // A preview shorter than half the track cannot be the recording. The
+        // catalogue states its length, so this is known before a byte is
+        // fetched — LastWave's 30s clips were downloaded and decoded only to
+        // be discarded as unmeasured.
+        if (isPreview(stream.durationSec, target.durationSec)) {
+            UnmeasuredMemory.note(sourceId, trackId, "preview ${stream.durationSec}s/${target.durationSec}s")
+            logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId, measured = false)
+            return@withContext Outcome.Unavailable()
+        }
         // A source row that names an arrangement the song itself does not is
         // refused before the expensive decode. The same vocabulary decides the
         // download health check, so a piano cover cannot enter through one
@@ -1098,7 +1129,7 @@ object HqAudioVerify {
         stream,
         ProxyPlayback.mediaClientFor(stream.url),
         epoch,
-        ::freshAddonStream,
+        ::freshStream,
     )
 
     internal suspend fun candidateFeatures(
@@ -1167,6 +1198,17 @@ object HqAudioVerify {
             // A cancelled call surfaces as an IOException; only report it
             // as a download failure when the coroutine is still wanted.
             currentCoroutineContext().ensureActive()
+            // 403/410 is a definitive refusal, not a slow edge: remember it
+            // for this source row so the next candidate does not re-download
+            // the same dead URL during this run. The fresh-URL retry carries
+            // its own outcome — a timeout or a 5xx is not evidence that the
+            // row is permanently unmeasurable, so only a definitive code is
+            // memoized.
+            val refusal = (e as? DownloadRefused)?.code?.takeIf { it == 403 || it == 410 }
+                ?: (e as? FreshRetryFailed)?.code?.takeIf { it == 403 || it == 410 }
+            if (refusal != null) {
+                UnmeasuredMemory.note(stream.sourceConfigId, stream.trackId, "HTTP $refusal")
+            }
             if (e !is FreshRetryFailed) {
                 // The candidate server failed this time. Recorded so the next
                 // candidate choice can prefer a host that actually answered,
@@ -1198,7 +1240,22 @@ object HqAudioVerify {
         refreshStream: (suspend (SourceStream) -> SourceStream?)?,
     ): DownloadFetch {
         val fresh = refreshStream?.invoke(stream)
-        if (fresh == null || fresh.url.isBlank() || fresh.url == stream.url) throw refused
+        if (fresh == null || fresh.url.isBlank()) {
+            // Say why the one retry did not happen. This used to throw the
+            // original refusal silently, which is why the failed Deezer row
+            // had no '(retried with fresh url…)' line to explain itself.
+            TrackLog.w(
+                TAG,
+                "decode: hq-verify failed at=download HTTP ${refused.code} " +
+                    "(no fresh url: source=${stream.sourceConfigId ?: "?"} row=${stream.trackId ?: "?"})",
+            )
+            throw refused
+        }
+        // A freshly asked addon can legitimately hand back the same URL — its
+        // backend may hold one permanent link. Refusing that here meant the
+        // retry never reached the server at all; one more request is the only
+        // way to tell a transient refusal from a dead row.
+        val sameUrl = fresh.url == stream.url
         // A new answer may state a different rate; fetching the old byte count
         // could cut a lossless head short or read far more than the new one
         // needs.
@@ -1217,7 +1274,8 @@ object HqAudioVerify {
         } catch (second: Exception) {
             currentCoroutineContext().ensureActive()
             HqHostTracker.noteFailure(HqHostTracker.hostOf(fresh.url))
-            val outcome = (second as? DownloadRefused)?.code?.toString()
+            val secondCode = (second as? DownloadRefused)?.code
+            val outcome = secondCode?.toString()
                 ?: second.message
                 ?: "failed"
             TrackLog.w(
@@ -1225,7 +1283,10 @@ object HqAudioVerify {
                 "decode: hq-verify failed at=download HTTP ${refused.code} " +
                     "(retried with fresh url: $outcome)",
             )
-            throw FreshRetryFailed()
+            // Carry the retry's real answer. A transient timeout or a 5xx on
+            // the fresh URL is not a definitive refusal and must not be
+            // remembered as one.
+            throw FreshRetryFailed(secondCode, outcome)
         }
         val outcome = when (retried) {
             is DownloadFetch.Bytes -> "ok"
@@ -1235,7 +1296,7 @@ object HqAudioVerify {
         TrackLog.w(
             TAG,
             "decode: hq-verify failed at=download HTTP ${refused.code} " +
-                "(retried with fresh url: $outcome)",
+                "(retried with ${if (sameUrl) "the same url, re-asked" else "fresh url"}: $outcome)",
         )
         return retried
     }
@@ -1247,18 +1308,43 @@ object HqAudioVerify {
      * serve a stable URL or have their own recovery; asking them here would
      * spend a request without a way to mint a new link.
      */
-    private suspend fun freshAddonStream(stream: SourceStream): SourceStream? =
-        freshAddonStream(stream) { SourceRegistry.instance(it) }
+    private suspend fun freshStream(stream: SourceStream): SourceStream? =
+        freshStream(stream) { SourceRegistry.instance(it) }
 
-    internal suspend fun freshAddonStream(
+    /**
+     * A new URL for the same row, from whichever source supplied it.
+     *
+     * This used to be addon-only. Deezer rows here are served through an addon
+     * whose `/stream` answer is cached, and a module-backed row is not an
+     * [AddonSource] at all — so the cast returned null, the retry never
+     * reached the source, and the 403 was reported as final. An addon still
+     * gets its forced `/stream` refresh; every other source is simply asked
+     * for the row again, which is where a module's backend mints a new link.
+     */
+    private suspend fun freshStream(
         stream: SourceStream,
         sourceOf: (String) -> MusicSource?,
     ): SourceStream? {
         val sourceId = stream.sourceConfigId ?: return null
         val trackId = stream.trackId?.takeIf { it.isNotBlank() } ?: return null
-        val source = sourceOf(sourceId) as? AddonSource ?: return null
-        return source.streamFresh(trackId, freshRequestFor(stream), stream.stereoOnly)
+        val source = sourceOf(sourceId) ?: return null
+        if (source.kind == SourceKind.YOUTUBE) return null
+        val request = freshRequestFor(stream)
+        return when (source) {
+            is AddonSource -> source.streamFresh(trackId, request, stream.stereoOnly)
+            // A module caches its `/stream` answer the same way an addon does.
+            // Calling plain [MusicSource.stream] handed back the very URL that
+            // had just been refused, so the retry never reached the module.
+            is ModuleSource -> source.streamFresh(trackId, request)
+            else -> source.stream(trackId, request)
+        }
     }
+
+    /** Kept for callers and tests that name the addon path explicitly. */
+    internal suspend fun freshAddonStream(
+        stream: SourceStream,
+        sourceOf: (String) -> MusicSource?,
+    ): SourceStream? = freshStream(stream, sourceOf)
 
     /**
      * The tier a fresh URL is asked for: the one the refused stream was
@@ -1578,5 +1664,50 @@ object HqAudioVerify {
         if (sampleRate <= 0) return null
         return extractor?.finish(startSeconds = startSeconds)?.takeIf { it.frames > 0 }
     }
+
+    /**
+     * Whether a stated runtime is a preview rather than the recording.
+     *
+     * Less than half the song is the bar: a 30-second clip under a 3-minute
+     * track is unambiguous, while an edited radio version that is a few
+     * seconds shorter is not. Unknown lengths are not previews.
+     */
+    internal fun isPreview(streamDurationSec: Int?, targetDurationSec: Int?): Boolean {
+        val stream = streamDurationSec ?: return false
+        val target = targetDurationSec ?: return false
+        return stream > 0 && target > 0 && stream.toLong() * 2L < target.toLong()
+    }
+
+    /**
+     * Source rows that could not be measured during this app run.
+     *
+     * Process-lifetime and memory only, by design: the report's repeated 403s
+     * and 30-second previews are properties of these rows right now, and a
+     * disk-backed rejection would outlive the outage that caused them. The
+     * pair is the source config and the source's own track id, exactly what a
+     * repeated candidate would carry.
+     */
+    internal object UnmeasuredMemory {
+        private val rows = ConcurrentHashMap<String, String>()
+
+        private fun key(sourceId: String?, trackId: String?): String? {
+            val source = sourceId?.takeIf { it.isNotBlank() } ?: return null
+            val track = trackId?.takeIf { it.isNotBlank() } ?: return null
+            return source + '\u0001' + track
+        }
+
+        fun note(sourceId: String?, trackId: String?, reason: String) {
+            val key = key(sourceId, trackId) ?: return
+            if (rows.size >= MAX_UNMEASURED_ROWS) rows.keys.firstOrNull()?.let(rows::remove)
+            rows[key] = reason
+        }
+
+        fun reason(sourceId: String?, trackId: String?): String? =
+            key(sourceId, trackId)?.let(rows::get)
+
+        internal fun clearForTest() = rows.clear()
+    }
+
+    private const val MAX_UNMEASURED_ROWS = 256
 }
 
