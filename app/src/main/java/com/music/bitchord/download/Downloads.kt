@@ -547,7 +547,7 @@ object Downloads {
                     // there looking accepted forever.
                     Log.w(TAG, "could not start the download service: ${startFailure.message}")
                     if (abandonPending(id)) {
-                        fail(id, "지금은 다운로드를 시작할 수 없습니다")
+                        fail(id, SERVICE_START_REFUSAL)
                     }
                 }
             }
@@ -657,7 +657,7 @@ object Downloads {
         // tap or foreground event can ask again.
         Log.w(TAG, "could not start the download service: ${startFailure.message}")
         for (id in waiting) {
-            if (abandonPending(id)) fail(id, "지금은 다운로드를 시작할 수 없습니다")
+            if (abandonPending(id)) fail(id, SERVICE_START_REFUSAL)
         }
     }
 
@@ -1811,19 +1811,19 @@ object Downloads {
                 // The old row is gone, so the media store should accept the
                 // real name instead of appending "(1)". App-private/legacy
                 // files already have it and return true without touching the
-                // disk. If the rename still fails, record the name the store
-                // actually kept; otherwise the committed file sits under a name
-                // the next lookup does not ask for and is downloaded again.
+                // disk. Read the name back even when the update reports
+                // success: the store appends "(1)" when another row still owns
+                // the name and still counts that as success. Recording the
+                // name it kept is what lets the next lookup find the committed
+                // file instead of downloading it again.
                 if (finalName != null) {
                     val renamed = DownloadStore.renamePublished(context, uri, finalName)
-                    val actualName = if (renamed) null else DownloadStore.displayName(context, uri)
-                    val recordedName = DownloadStore.settledFileName(
+                    val recordedName = DownloadStore.reconcilePublishedName(
                         finalName = finalName,
                         stagedName = stagedName
                             ?: DownloadStore.stagingFileName(finalName, fetched.videoId),
                         renamed = renamed,
-                        actualName = actualName,
-                    )
+                    ) { DownloadStore.displayName(context, uri) }
                     record(
                         saved = { it },
                         meta = { meta ->
@@ -2893,9 +2893,26 @@ object Downloads {
         }
     }
 
+    /**
+     * A failure before the verified pair was tried — a Wi-Fi-only or
+     * service-start refusal. The pair is still valid, so keeping it lets Retry
+     * resume the upgrade; dropping it made Retry an ordinary download that
+     * could adopt the old lower-rung file and report Done.
+     *
+     * Permanent source/track failures go through the [keepVerifiedPair]
+     * overload with false, so the next tap can search again.
+     */
     private fun fail(videoId: String, reason: String) {
-        fail(videoId, reason, keepVerifiedPair = false)
+        fail(videoId, reason, keepVerifiedPair = reason.keepsVerifiedPairAfterRefusal())
     }
+
+    /**
+     * The refusals that happen before any source or track was contacted. Their
+     * pinned pair was never tried, and a retry on an allowed connection or a
+     * started service still needs it.
+     */
+    private fun String.keepsVerifiedPairAfterRefusal(): Boolean =
+        this == WIFI_ONLY_REFUSAL || this == SERVICE_START_REFUSAL
 
     /**
      * A failed replacement leaves the old file in place, and a permanent
@@ -2904,11 +2921,12 @@ object Downloads {
      * pair, even when the caller passed `hq = null`; the row failed again
      * before it could fall back to YouTube.
      *
-     * [keepVerifiedPair] is for a transient network failure. The pair is still
-     * the answer once the connection returns, and dropping it made the retry
-     * go through `routeFor` instead — where it could adopt the existing
-     * lower-rung file (see the `already in Music` paths in [prepare] and
-     * [transfer]) and report Done without the upgrade the listener asked for.
+     * [keepVerifiedPair] is true for a transient network failure or a refusal
+     * that never contacted the pair. The pair is still the answer once the
+     * connection returns, and dropping it made the retry go through `routeFor`
+     * instead — where it could adopt the existing lower-rung file (see the
+     * `already in Music` paths in [prepare] and [transfer]) and report Done
+     * without the upgrade the listener asked for.
      */
     private fun fail(videoId: String, reason: String, keepVerifiedPair: Boolean) {
         if (!keepVerifiedPair) {
@@ -3001,6 +3019,9 @@ object Downloads {
      * that show it as a toast so the two cannot drift apart.
      */
     internal const val WIFI_ONLY_REFUSAL = "다운로드가 Wi-Fi 전용으로 설정되어 있습니다"
+
+    /** The download service could not be started; the track never left the queue. */
+    internal const val SERVICE_START_REFUSAL = "지금은 다운로드를 시작할 수 없습니다"
 
     /** Dropped when the sheet is reopened; a failure is worth showing once. */
     fun dismissFailure(videoId: String) {

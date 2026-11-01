@@ -179,10 +179,10 @@ object DownloadStore {
     /**
      * The name the committed row actually carries now.
      *
-     * Used only when [renamePublished] reports failure: the store may have kept
-     * the staging name, or appended `(1)` because another row still owned the
-     * requested one. Recording that name is what lets the next lookup find the
-     * file instead of downloading a second copy.
+     * Read after every rename attempt, not only a failed one: the store appends
+     * `(1)` when another row still owns the requested name and still reports a
+     * successful update. Recording that name is what lets the next lookup find
+     * the file instead of downloading a second copy.
      */
     fun displayName(context: Context, uri: Uri): String? {
         if (uri.scheme == "file") return uri.lastPathSegment
@@ -204,10 +204,11 @@ object DownloadStore {
     /**
      * The name to record after a rename attempt.
      *
-     * A successful rename took the final name. A failed one leaves the row
-     * under whatever the store actually kept (the staging name, or the
-     * disambiguated name it appended), and recording that is the difference
-     * between finding the file on the next pass and downloading it again.
+     * Whatever the store says the row now carries wins: a successful update can
+     * still be disambiguated to `… (1).ext` when another row owns the requested
+     * name, and a failed one leaves the staging name behind. Recording that is
+     * the difference between finding the file on the next pass and downloading
+     * it again.
      */
     internal fun settledFileName(
         finalName: String,
@@ -215,10 +216,28 @@ object DownloadStore {
         renamed: Boolean,
         actualName: String?,
     ): String = when {
-        renamed -> finalName
         !actualName.isNullOrBlank() -> actualName
+        renamed -> finalName
         else -> stagedName
     }
+
+    /**
+     * Apply [settledFileName] with the name read back from the committed row.
+     *
+     * Always reads, even when the update reported success, because the store
+     * may have appended `(1)` instead of taking [finalName].
+     */
+    internal fun reconcilePublishedName(
+        finalName: String,
+        stagedName: String,
+        renamed: Boolean,
+        readActualName: () -> String?,
+    ): String = settledFileName(
+        finalName = finalName,
+        stagedName = stagedName,
+        renamed = renamed,
+        actualName = readActualName(),
+    )
 
     /**
      * Names a later download lookup may use for a file written under [baseName].

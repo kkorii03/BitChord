@@ -34,7 +34,7 @@ class DownloadReplacementNameFallbackTest {
             finalName = finalName,
             stagedName = stagedName,
             renamed = true,
-            actualName = "Artist - Title (1).flac",
+            actualName = finalName,
         )
 
         assertEquals(finalName, recorded)
