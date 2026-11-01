@@ -4,6 +4,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import java.io.IOException
 import java.text.Normalizer
 import java.util.Locale
 import kotlin.math.abs
@@ -57,24 +58,48 @@ object LrcRed {
         get: suspend (String) -> String? = { lyricsGet(it) },
     ): List<LyricLine>? = withContext(Dispatchers.IO) {
         val known = isrc?.let(::documentUrl)
-        if (known != null) document(known, get)?.let { return@withContext it }
+        val attempts = ProviderAttempts()
+
+        // One failed document/search must not discard the sibling-release
+        // search behind it; the failure is only carried out if nothing answers.
+        val knownLines = known?.let { url ->
+            try {
+                document(url, get)
+            } catch (transport: IOException) {
+                attempts.note(transport)
+                null
+            }
+        }
+        knownLines?.let { return@withContext it }
 
         // A known recording lrc.red doesn't have — a local file's tag naming a
         // release it never indexed — still gets a search: the same song is
         // often catalogued under a sibling release's code.
-        val hit = search(title, artist, durationMs) ?: return@withContext null
-        val found = hit.isrc?.let(::documentUrl)?.takeIf { it != known } ?: return@withContext null
-        document(found, get)
+        val hit = search(title, artist, durationMs, get) ?: return@withContext attempts.ifEmptyThrow(null)
+        val found = hit.isrc?.let(::documentUrl)?.takeIf { it != known }
+            ?: return@withContext attempts.ifEmptyThrow(null)
+        val lines = try {
+            document(found, get)
+        } catch (transport: IOException) {
+            attempts.note(transport)
+            null
+        }
+        attempts.ifEmptyThrow(lines)
     }
 
     private suspend fun document(url: String, get: suspend (String) -> String?): List<LyricLine>? =
         get(url)?.let(TtmlLyrics::parse)?.takeIf { it.isNotEmpty() }
 
-    private fun search(title: String, artist: String, durationMs: Long): Hit? {
+    private suspend fun search(
+        title: String,
+        artist: String,
+        durationMs: Long,
+        get: suspend (String) -> String?,
+    ): Hit? {
         val url = "${BASE}search.json".toHttpUrl().newBuilder()
             .addQueryParameter("q", "$title $artist".trim())
             .build()
-        val body = lyricsGet(url.toString()) ?: return null
+        val body = get(url.toString()) ?: return null
         val hits = runCatching { lyricsJson.decodeFromString<Response>(body) }.getOrNull()?.hits
             ?: return null
         return best(hits, title, artist, durationMs)

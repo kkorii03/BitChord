@@ -52,8 +52,14 @@ object LyricsPlus {
             ?.let { listOf(it) + MIRRORS.filterNot { mirror -> mirror == it } }
             ?: MIRRORS
 
+        // A mirror that is simply down must not end the race for the others.
+        // Its transport failure is remembered and only surfaced if no mirror
+        // answers with lyrics.
+        val attempts = ProviderAttempts()
         val pending = hosts.map { host ->
-            host to async(Dispatchers.IO) { fetch(host, title, artist, durationMs, album, isrc) }
+            host to async(Dispatchers.IO) {
+                attempts.orNull { fetch(host, title, artist, durationMs, album, isrc) }
+            }
         }.toMutableList()
 
         // Take the first mirror to answer with something usable rather than
@@ -70,7 +76,7 @@ object LyricsPlus {
                     return@coroutineScope lines
                 }
             }
-            null
+            attempts.ifEmptyThrow(null)
         } finally {
             pending.forEach { it.second.cancel() }
         }

@@ -28,34 +28,45 @@ object KuGou {
         artist: String,
         durationMs: Long,
         album: String? = null,
+        get: (String) -> String? = ::lyricsGet,
     ): List<LyricLine>? = withContext(Dispatchers.IO) {
         val keyword = keyword(title, artist, album)
         val seconds = (durationMs / 1000).toInt()
         val wantsInstrumental = INSTRUMENTAL_TAG.containsMatchIn(title)
+        val attempts = ProviderAttempts()
 
         // A candidate whose file turns out to be the "no words" placeholder is
         // a miss, not an answer: the next one is tried instead.
-        fun fetch(candidate: Candidate): List<LyricLine>? {
-            val lrc = download(candidate.id, candidate.accesskey) ?: return null
-            return LrcLib.parseLrc(lrc).takeIf { it.isNotEmpty() && !isInstrumentalPlaceholder(it) }
+        fun fetch(candidate: Candidate): List<LyricLine>? = attempts.orNull {
+            val lrc = download(candidate.id, candidate.accesskey, get) ?: return@orNull null
+            LrcLib.parseLrc(lrc).takeIf { it.isNotEmpty() && !isInstrumentalPlaceholder(it) }
         }
 
-        searchSongs(keyword, seconds, wantsInstrumental, title).orEmpty()
-            .take(MAX_HASHES)
-            .firstNotNullOfOrNull { hash -> searchLyrics(hash = hash)?.firstOrNull()?.let(::fetch) }
-            ?.let { return@withContext it }
+        val fromHashes = attempts.orNull {
+            searchSongs(keyword, seconds, wantsInstrumental, title, get).orEmpty()
+                .take(MAX_HASHES)
+                .firstNotNullOfOrNull { hash ->
+                    // One dead hash search must not discard the rest of the
+                    // candidates, or the keyword fallback behind them.
+                    attempts.orNull { searchLyrics(hash = hash, get = get)?.firstOrNull()?.let(::fetch) }
+                }
+        }
+        fromHashes?.let { return@withContext it }
 
-        searchLyrics(keyword = keyword, seconds = seconds).orEmpty()
-            // The keyword search matches on length as much as on name, so for a
-            // title KuGou doesn't know it hands back whatever else runs that
-            // long — usually an instrumental. Keep only a candidate whose own
-            // name has something in common with the title asked for.
-            .filter {
-                it.song.isNotBlank() && titlesOverlap(title, it.song) &&
-                    (wantsInstrumental || !INSTRUMENTAL_TAG.containsMatchIn(it.song))
-            }
-            .take(MAX_HASHES)
-            .firstNotNullOfOrNull(::fetch)
+        val fromKeyword = attempts.orNull {
+            searchLyrics(keyword = keyword, seconds = seconds, get = get).orEmpty()
+                // The keyword search matches on length as much as on name, so for a
+                // title KuGou doesn't know it hands back whatever else runs that
+                // long — usually an instrumental. Keep only a candidate whose own
+                // name has something in common with the title asked for.
+                .filter {
+                    it.song.isNotBlank() && titlesOverlap(title, it.song) &&
+                        (wantsInstrumental || !INSTRUMENTAL_TAG.containsMatchIn(it.song))
+                }
+                .take(MAX_HASHES)
+                .firstNotNullOfOrNull { candidate -> attempts.orNull { fetch(candidate) } }
+        }
+        attempts.ifEmptyThrow(fromKeyword)
     }
 
     /** How many search hits are worth downloading before giving up. */
@@ -108,7 +119,13 @@ object KuGou {
      * first result for a common title is as likely to be a cover or a remix
      * as the right recording — and ordered closest match first.
      */
-    private fun searchSongs(keyword: Keyword, seconds: Int, wantsInstrumental: Boolean, title: String): List<String>? {
+    private fun searchSongs(
+        keyword: Keyword,
+        seconds: Int,
+        wantsInstrumental: Boolean,
+        title: String,
+        get: (String) -> String?,
+    ): List<String>? {
         val url = "https://mobileservice.kugou.com/api/v3/search/song".toHttpUrl().newBuilder()
             .addQueryParameter("version", "9108")
             .addQueryParameter("plat", "0")
@@ -116,7 +133,7 @@ object KuGou {
             .addQueryParameter("showtype", "0")
             .addQueryParameter("keyword", keyword.query)
             .build()
-        val body = lyricsGet(url.toString()) ?: return null
+        val body = get(url.toString()) ?: return null
         val response = runCatching { lyricsJson.decodeFromString<SearchSongResponse>(body) }.getOrNull()
         return response?.data?.info.orEmpty()
             .filter { seconds <= 0 || abs(it.duration - seconds) <= DURATION_TOLERANCE_SECONDS }
@@ -144,7 +161,12 @@ object KuGou {
             candidates.sortedBy { abs(it.first - seconds) }.map { it.second }
         }
 
-    private fun searchLyrics(hash: String? = null, keyword: Keyword? = null, seconds: Int = -1): List<Candidate>? {
+    private fun searchLyrics(
+        hash: String? = null,
+        keyword: Keyword? = null,
+        seconds: Int = -1,
+        get: (String) -> String? = ::lyricsGet,
+    ): List<Candidate>? {
         val builder = "https://lyrics.kugou.com/search".toHttpUrl().newBuilder()
             .addQueryParameter("ver", "1")
             .addQueryParameter("man", "yes")
@@ -157,12 +179,12 @@ object KuGou {
             }
             else -> return null
         }
-        val body = lyricsGet(builder.build().toString()) ?: return null
+        val body = get(builder.build().toString()) ?: return null
         val response = runCatching { lyricsJson.decodeFromString<SearchLyricsResponse>(body) }.getOrNull()
         return response?.candidates
     }
 
-    private fun download(id: String, accessKey: String): String? {
+    private fun download(id: String, accessKey: String, get: (String) -> String?): String? {
         val url = "https://lyrics.kugou.com/download".toHttpUrl().newBuilder()
             .addQueryParameter("fmt", "lrc")
             .addQueryParameter("charset", "utf8")
@@ -171,7 +193,7 @@ object KuGou {
             .addQueryParameter("id", id)
             .addQueryParameter("accesskey", accessKey)
             .build()
-        val body = lyricsGet(url.toString()) ?: return null
+        val body = get(url.toString()) ?: return null
         val response = runCatching { lyricsJson.decodeFromString<DownloadResponse>(body) }.getOrNull()
             ?: return null
         val decoded = runCatching {

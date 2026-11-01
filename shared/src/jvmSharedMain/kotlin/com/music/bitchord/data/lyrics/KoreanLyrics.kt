@@ -25,31 +25,50 @@ object BugsLyrics {
 
     private const val REFERER = "https://music.bugs.co.kr/"
 
-    suspend fun lyrics(title: String, artist: String, durationMs: Long): List<LyricLine>? = withContext(Dispatchers.IO) {
+    suspend fun lyrics(
+        title: String,
+        artist: String,
+        durationMs: Long,
+        get: (String) -> String? = ::bugsGet,
+    ): List<LyricLine>? = withContext(Dispatchers.IO) {
         val query = URLEncoder.encode("$title $artist", "UTF-8")
-        val page = lyricsGetAsBrowser("https://music.bugs.co.kr/search/track?q=$query", REFERER, "text/html")
+        val page = get("https://music.bugs.co.kr/search/track?q=$query")
             ?: return@withContext null
         val ids = TRACK_ROW.findAll(page).map { it.groupValues[1] }.distinct().take(MAX_CANDIDATES).toList()
+        val attempts = ProviderAttempts()
         // The candidates' details all at once rather than one after another.
+        // One candidate's dead request must not discard the other ids.
         val hits = coroutineScope {
             ids.map { id ->
                 async {
-                    val body = lyricsGetAsBrowser("https://music.bugs.co.kr/player/track/$id", REFERER)
-                        ?: return@async null
-                    val track = runCatching { lyricsJson.decodeFromString<TrackResponse>(body).track }.getOrNull()
-                        ?: return@async null
-                    KoreanMatch.Hit(id, track.track_title, track.artist_nm, KoreanMatch.seconds(track.len))
+                    attempts.orNull {
+                        val body = get("https://music.bugs.co.kr/player/track/$id")
+                            ?: return@orNull null
+                        val track = runCatching { lyricsJson.decodeFromString<TrackResponse>(body).track }.getOrNull()
+                            ?: return@orNull null
+                        KoreanMatch.Hit(id, track.track_title, track.artist_nm, KoreanMatch.seconds(track.len))
+                    }
                 }
             }.awaitAll().filterNotNull()
         }
-        val best = KoreanMatch.best(hits, title, artist, durationMs) ?: return@withContext null
-        val timed = lyricsGetAsBrowser("https://music.bugs.co.kr/player/lyrics/T/${best.id}", REFERER)
-            ?.let { runCatching { lyricsJson.decodeFromString<LyricsResponse>(it).lyrics }.getOrNull() }
-            ?.let(::parseTimed)
-        timed?.takeIf { it.isNotEmpty() } ?: lyricsGetAsBrowser("https://music.bugs.co.kr/player/lyrics/N/${best.id}", REFERER)
-            ?.let { runCatching { lyricsJson.decodeFromString<LyricsResponse>(it).lyrics }.getOrNull() }
-            ?.let(KoreanMatch::plain)
+        val best = KoreanMatch.best(hits, title, artist, durationMs)
+            ?: return@withContext attempts.ifEmptyThrow(null)
+        val timed = attempts.orNull {
+            get("https://music.bugs.co.kr/player/lyrics/T/${best.id}")
+                ?.let { runCatching { lyricsJson.decodeFromString<LyricsResponse>(it).lyrics }.getOrNull() }
+                ?.let(::parseTimed)
+        }
+        val plain = attempts.orNull {
+            get("https://music.bugs.co.kr/player/lyrics/N/${best.id}")
+                ?.let { runCatching { lyricsJson.decodeFromString<LyricsResponse>(it).lyrics }.getOrNull() }
+                ?.let(KoreanMatch::plain)
+        }
+        attempts.ifEmptyThrow(timed?.takeIf { it.isNotEmpty() } ?: plain)
     }
+
+    /** The search row is HTML; the player routes answer JSON. */
+    private fun bugsGet(url: String): String? =
+        lyricsGetAsBrowser(url, REFERER, if ("/search/track" in url) "text/html" else "application/json")
 
     /** "0.3|이 밤 그날의 반딧불을＃8.9|당신의 창 가까이 보낼게요＃…" */
     internal fun parseTimed(raw: String?): List<LyricLine>? {

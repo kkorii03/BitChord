@@ -55,11 +55,16 @@ object PaxSenix {
         artist: String,
         durationMs: Long,
     ): List<LyricLine>? = withContext(Dispatchers.IO) {
-        val id = searchTrackId("spotify/search", title, artist, durationMs)
-        id?.let {
-            apiBody(apiUrl("lyrics/spotify").addQueryParameter("id", it).build())
-                ?.let(::parseResponse)
-        } ?: genericAuthenticatedLyrics(title, artist, durationMs)
+        val attempts = ProviderAttempts()
+        // A failed keyed route still leaves the generic one worth asking.
+        val direct = attempts.orNull {
+            searchTrackId("spotify/search", title, artist, durationMs)?.let { id ->
+                apiBody(apiUrl("lyrics/spotify").addQueryParameter("id", id).build())
+                    ?.let(::parseResponse)
+            }
+        }
+        if (direct != null) return@withContext direct
+        attempts.ifEmptyThrow(attempts.orNull { genericAuthenticatedLyrics(title, artist, durationMs) })
     }
 
     suspend fun musixmatchLyrics(
@@ -72,9 +77,13 @@ object PaxSenix {
             addQueryParameter("a", artist)
             addQueryParameter("d", (durationMs / 1000).toString())
         }
-        apiBody(apiUrl("lyrics/musixmatch").apply(query).build())
-            ?.let(::parseResponse)
-            ?: genericAuthenticatedLyrics(title, artist, durationMs)
+        val attempts = ProviderAttempts()
+        val direct = attempts.orNull {
+            apiBody(apiUrl("lyrics/musixmatch").apply(query).build())
+                ?.let(::parseResponse)
+        }
+        if (direct != null) return@withContext direct
+        attempts.ifEmptyThrow(attempts.orNull { genericAuthenticatedLyrics(title, artist, durationMs) })
     }
 
     private suspend fun searchPublicAppleTrackId(

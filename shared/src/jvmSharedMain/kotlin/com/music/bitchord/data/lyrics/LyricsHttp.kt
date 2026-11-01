@@ -70,6 +70,42 @@ private inline fun <T> statusAware(block: () -> T): T? = try {
     null
 }
 
+/**
+ * One provider's own fallback chain.
+ *
+ * [lyricsGet] surfaces a transport failure so the provider sheet can report
+ * NETWORK/TIMEOUT rather than NOT_FOUND. A provider that makes several
+ * requests — a search, then candidates, then a file — must not treat one of
+ * them dying as its final answer: before that surfacing was added a failed
+ * request was a null and the next candidate got its turn. [orNull] keeps that
+ * for a single step, while [ifEmptyThrow] carries the failure to the source
+ * boundary when nothing in the chain answered.
+ *
+ * Written to from several candidate coroutines, hence volatile.
+ */
+internal class ProviderAttempts {
+    @Volatile @PublishedApi internal var lastFailure: java.io.IOException? = null
+
+    fun note(transport: java.io.IOException) {
+        lastFailure = transport
+    }
+
+    // Inline so a provider step may be a suspend call (the injected document
+    // fetcher in [LrcRed]); it is still just the one step.
+    inline fun <T> orNull(block: () -> T?): T? = try {
+        block()
+    } catch (transport: java.io.IOException) {
+        lastFailure = transport
+        null
+    }
+
+    fun <T> ifEmptyThrow(result: T?): T? {
+        val failure = lastFailure
+        if (result == null && failure != null) throw failure
+        return result
+    }
+}
+
 /** Body of a successful GET, or null for any failure at all. */
 internal fun lyricsGet(url: String): String? = statusAware {
     val request = Request.Builder().url(url)
