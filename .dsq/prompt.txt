@@ -1,0 +1,9 @@
+BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/telegram.
+버그(사용자 폰 11-02, 재현됨): 외부 링크(https://music.youtube.com/watch?v=<id> 를 VIEW 인텐트로 열기 = '공유된 링크에서 재생 중', MainActivity 의 LinkRequest.Track → YtMusicRepository.trackLinks → playRadio)로 재생하면 전체 플레이어·미니 플레이어 표지가 빈 칸(음표 아이콘)으로 나온다. 예: 'New Rules (cover)' 오화요(영상 곡). 전에 재생목록 표지 빈칸을 고쳤지만 이 경로는 여전히 빈 칸.
+할 일:
+① 원인 증명: trackLinks(InnertubeParser.parseWatchQueue(Innertube.next(videoId)))가 주는 Song 의 thumbnailUrl 이 비는지/영상 곡의 썸네일 형태를 못 읽는지, 아니면 표지 표시 쪽(아트워크 선택·정사각형 크롭·영상 곡 처리)이 버리는지 파일:줄로 확정.
+② 고침: 원인 자리에서 고친다. 그리고 안전망 하나: 재생 중 곡의 thumbnailUrl 이 비어 있고 videoId 가 YouTube id 면 https://i.ytimg.com/vi/<id>/hqdefault.jpg (가능하면 maxresdefault 우선, 실패 시 hqdefault)로 표지·알림·잠금화면(MediaSession 메타데이터) 모두 채움. 영상 썸네일(16:9)은 기존 영상 곡 표지와 같은 방식으로 정사각형 표시.
+③ 같은 원인을 공유하는 다른 경로(검색 결과 바로 재생, 라디오·자동 재생으로 들어온 곡, 다음 곡 미리 준비)도 빈 표지가 없게 확인.
+테스트(고치기 전 실패): next 응답 픽스처(영상 곡, 썸네일 형태가 다른 것)에서 thumbnailUrl 이 채워짐 + 비었을 때 안전망 URL 선택 순수 함수 테스트.
+제약: .github/, keys, *.jks, 서명 수정 금지. 업스트림 파일 쪼개기 금지(한국어 추가는 ko/ + // [KO] 한 줄 우선). 네트워크 요청 추가는 이미지 로딩 외 금지. 배터리: 폴링·타이머 금지.
+마지막 10줄 이내 요약: 원인(파일:줄) / 수정 파일 / 새 테스트 클래스 / 미해결.
