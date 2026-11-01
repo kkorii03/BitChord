@@ -1,6 +1,7 @@
 package com.music.bitchord.ko
 
 import com.music.bitchord.playback.CachedRendition
+import com.music.bitchord.playback.QualityUpgrade
 
 /** Containers that are lossless whatever their metadata says. */
 internal val KO_LOSSLESS_CONTAINERS = setOf("flac", "wav")
@@ -34,3 +35,41 @@ internal fun losslessCacheCandidate(
     upgradeOrder = upgradeOrder,
     keptOrigin = keptOrigin,
 )
+
+/**
+ * [KO] hq-lossless
+ *
+ * Builds the cache choices for [videoId] from the keys the cache holds.
+ *
+ * The container is probed only for a complete order-0 copy. An incomplete one
+ * cannot be chosen, and opening its file would put blocking disk I/O on the
+ * playback key path for nothing.
+ */
+internal fun losslessRenditionCandidates(
+    videoId: String,
+    keys: List<String>,
+    isComplete: (String) -> Boolean,
+    markedLossless: (String) -> Boolean,
+    keptOrigin: (String) -> Boolean,
+    containerOf: (String) -> Pair<String, String>?,
+): List<CachedRendition> = keys.mapNotNull { key ->
+    if (key.endsWith("#watch")) return@mapNotNull null
+    val suffix = key.removePrefix("$videoId#")
+    if (suffix == key) return@mapNotNull null
+    val upgradeOrder = QualityUpgrade.upgradeGeneration(suffix)
+    val complete = isComplete(key)
+    losslessCacheCandidate(
+        key = key,
+        complete = complete,
+        markedLossless = markedLossless(key),
+        // The marker is written only by a completed `#hifi` fetch. A
+        // FLAC/WAV under `#alt` has none, so read the copy's own container or
+        // it stays invisible after a restart.
+        container = if (upgradeOrder == 0 && complete) containerOf(key)?.first else null,
+        // An order-0 lossless `#alt` may be a different cut or an addon that
+        // is no longer configured. Only a kept origin may replace the
+        // configured copy, as completeSibling requires.
+        keptOrigin = upgradeOrder > 0 || keptOrigin(key),
+        upgradeOrder = upgradeOrder,
+    )
+}

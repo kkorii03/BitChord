@@ -72,6 +72,38 @@ class KoRenditionCandidateTest {
     }
 
     @Test
+    fun `an incomplete alt copy is never opened`() {
+        val reads = mutableListOf<String>()
+        val candidates = losslessRenditionCandidates(
+            videoId = videoId,
+            keys = listOf(videoId, "$videoId#alt"),
+            isComplete = { it == videoId },
+            markedLossless = { false },
+            keptOrigin = { true },
+            containerOf = { key ->
+                reads += key
+                "flac" to "audio/flac"
+            },
+        )
+
+        assertEquals(emptyList<String>(), reads)
+        assertEquals(videoId, CacheRenditionChoice.choose(videoId, candidates))
+    }
+
+    @Test
+    fun `a complete wav alt without the marker beats the complete opus copy`() {
+        val chosen = CacheRenditionChoice.choose(
+            preferred = videoId,
+            candidates = listOf(
+                candidate(videoId),
+                candidate("$videoId#alt", container = "wav"),
+            ),
+        )
+
+        assertEquals("$videoId#alt", chosen)
+    }
+
+    @Test
     fun `a complete hifi fetch still wins without a container read`() {
         val chosen = CacheRenditionChoice.choose(
             preferred = videoId,
