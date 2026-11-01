@@ -257,8 +257,23 @@ class LyricsTimeMapTest {
         val snapped = listOf(0L to 0L, 10_000L to 9_950L, 20_000L to 19_900L, 30_000L to 29_850L)
         assertEquals(1.0, assertNotNull(TimingFit.fit(snapped)).rate)
 
-        val justOutside = listOf(0L to 0L, 10_000L to 9_940L, 20_000L to 19_880L, 30_000L to 29_820L)
+        // Over 90 s a 0.6% pace moves the answers 540 ms: enough to believe.
+        val justOutside = listOf(0L to 0L, 30_000L to 29_820L, 60_000L to 59_640L, 90_000L to 89_460L)
         assertEquals(0.994, assertNotNull(TimingFit.fit(justOutside)).rate)
+    }
+
+    @Test
+    fun aSmallPaceFromAShortStretchIsTheRecordsPace() {
+        // 11-02 qzXa: a 0.7% pace read off 45 s of a Whisper opening put the last
+        // chorus a second early. 315 ms across the stretch is within its jitter.
+        val short = listOf(0L to 0L, 15_000L to 14_895L, 30_000L to 29_790L, 45_000L to 44_685L)
+        assertEquals(1.0, assertNotNull(TimingFit.fit(short)).rate)
+        // A real cover tempo shows over the same stretch: 5% is 2.25 s.
+        val slowCover = listOf(0L to 0L, 15_000L to 15_750L, 30_000L to 31_500L, 45_000L to 47_250L)
+        assertEquals(1.05, assertNotNull(TimingFit.fit(slowCover)).rate, 1e-9)
+        // The same 0.7% over three minutes is believed.
+        val long = listOf(0L to 0L, 60_000L to 59_580L, 120_000L to 119_160L, 180_000L to 178_740L)
+        assertEquals(0.993, assertNotNull(TimingFit.fit(long)).rate, 1e-9)
     }
 
     @Test
