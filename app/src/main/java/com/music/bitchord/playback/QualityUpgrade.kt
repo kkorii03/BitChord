@@ -4,17 +4,13 @@ import android.net.Uri
 import android.util.Log
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.NerdStats
-import com.music.bitchord.data.net.LogUrl
-import com.music.bitchord.data.sources.HqQuality
-import com.music.bitchord.data.sources.SourceKind
-import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.StreamRequest
 import com.music.bitchord.data.sources.TrackMatcher
+import com.music.bitchord.ko.KoQualityUpgrade
 import kotlinx.coroutines.Deferred
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -72,7 +68,7 @@ object QualityUpgrade {
      * come back with nothing better; the second look then has to go find its
      * own candidates.
      */
-    private data class Pending(
+    internal data class Pending( // [KO] quality-upgrade-access
         val target: TrackMatcher.Target,
         val inFlight: Deferred<SourceStream?>? = null,
         /**
@@ -92,61 +88,9 @@ object QualityUpgrade {
          * twice for a rejection it already gave the first time.
          */
         val servedBy: String? = null,
-        /**
-         * Whether the listener asked for this search by hand. A manual request
-         * overrules the cached "nothing better" verdict and the resting rule
-         * for its one turn; see [SourceResolver.bestAcross].
-         */
-        val manual: Boolean = false,
-        /**
-         * This hand-made request's identity. It lets a resting source be
-         * probed once for the whole request rather than once per candidate —
-         * the reported upgrade asked the same resting addon again for every
-         * source it moved through.
-         */
-        val manualSession: Any? = null,
     )
 
-    /**
-     * The candidates one manual search already found, waiting to be tried.
-     *
-     * A candidate that fails its proof used to send [lookAgain] back through
-     * every source, which on the reported device paid the same twelve-second
-     * search again and re-asked the same refused Deezer row. The first search
-     * already returned every copy worth trying; this keeps them in hand.
-     */
-    private val candidateQueue = ConcurrentHashMap<String, MutableList<SourceStream>>()
-
-    /** One manual request's identity, renewed when the listener presses again. */
-    private val manualSessions = ConcurrentHashMap<String, Any>()
-
-    private val pending = ConcurrentHashMap<String, Pending>()
-
-    /**
-     * When an inconclusive second look may be tried again, keyed by media id.
-     *
-     * A search that came back empty only because a source failed, timed out or
-     * was still resting is not a verdict. It must not enter [asked], but it
-     * also must not be retried on every progress sample — that would be a
-     * timer by another name. The timestamp lets the next ordinary event (a
-     * progress sample, a resume) ask again once the window has passed, and the
-     * automatic path keeps its rest and cache rules.
-     */
-    private val retryAfter = ConcurrentHashMap<String, Long>()
-
-    /** How long an inconclusive "none" waits before an automatic retry. */
-    private const val INCONCLUSIVE_RETRY_MS = 60_000L
-
-    /**
-     * The last [Pending] a second look was asked about, kept so a candidate
-     * that fails its audition can hand the same question to the next source
-     * without re-deriving what is playing.
-     */
-    private val lastPending = ConcurrentHashMap<String, Pending>()
-
-    /** Sources and hosts already refused by a failed audition for [mediaId]. */
-    private val failedSources = ConcurrentHashMap<String, MutableSet<String>>()
-    private val failedHosts = ConcurrentHashMap<String, MutableSet<String>>()
+    internal val pending = ConcurrentHashMap<String, Pending>() // [KO] quality-upgrade-access
     /**
      * A second pass to make after a worthwhile lossy upgrade.  The first pass
      * intentionally takes the first source that beats Opus so playback improves
@@ -158,11 +102,11 @@ object QualityUpgrade {
      * not an interim copy to search over and swap to again.
      */
     private val followUps = ConcurrentHashMap<String, Pending>()
-    private val forced = ConcurrentHashMap<String, SourceStream>()
+    internal val forced = ConcurrentHashMap<String, SourceStream>() // [KO] quality-upgrade-access
 
     internal fun needsLosslessFollowUp(format: StreamFormat): Boolean =
         SourceResolver.requestForNow() is StreamRequest.Lossless &&
-            !HqQuality.isLosslessTier(format) &&
+            KoQualityUpgrade.isLosslessTier(format) == false && // [KO] lossless-tier
             !format.isDolbyAtmos
 
     /**
@@ -178,7 +122,7 @@ object QualityUpgrade {
      * the old stream, and a badge that reads "Lossless" over it is describing
      * a swap that has not happened and might never.
      */
-    private val auditioning = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
+    internal val auditioning = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>()) // [KO] quality-upgrade-access
 
     fun beginAudition(mediaId: String) {
         auditioning += mediaId
@@ -207,7 +151,7 @@ object QualityUpgrade {
      * follows is the cheap kind: no search, no download, and an audition that
      * reads from disk.
      */
-    private val shelved = ConcurrentHashMap<String, SourceStream>()
+    internal val shelved = ConcurrentHashMap<String, SourceStream>() // [KO] quality-upgrade-access
 
     /** Keeps a proved-but-unused upgrade for [mediaId] against a return visit. */
     fun shelve(mediaId: String, stream: SourceStream) {
@@ -270,18 +214,7 @@ object QualityUpgrade {
             inFlight?.cancel()
             return false
         }
-        pending[mediaId] = Pending(
-            target,
-            inFlight,
-            playing,
-            servedBy,
-            manual = mediaId in handAsked,
-            manualSession = if (mediaId in handAsked) {
-                manualSessions.getOrPut(mediaId) { Any() }
-            } else {
-                null
-            },
-        )
+        pending[mediaId] = Pending(target, inFlight, playing, servedBy)
         NerdStats.onLosslessRaceStart(mediaId)
         TrackLog.d(
             TAG,
@@ -309,7 +242,7 @@ object QualityUpgrade {
      * read "cleared with the rest when the process goes", which is a lifetime
      * this map does not have — see there.
      */
-    private val refused = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
+    internal val refused = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>()) // [KO] quality-upgrade-access
 
     /**
      * Stops offering [mediaId] any further upgrades this session — its last
@@ -321,40 +254,11 @@ object QualityUpgrade {
         TrackLog.d(TAG, "$mediaId broke on its upgrade; no more swaps for it", about = mediaId)
     }
 
-    /**
-     * A candidate that was chosen but failed its audition or verification.
-     *
-     * Its source and host are excluded from the next attempt, and the track is
-     * put back in the state a fresh second look expects — without touching
-     * [lastPending], which is what [retryNext] needs. This is the difference
-     * between "this candidate was bad" and "this track has no better copy".
-     */
-    fun failedCandidate(mediaId: String, sourceConfigId: String?, host: String?) {
-        sourceConfigId?.takeIf { it.isNotBlank() }?.let {
-            failedSources.getOrPut(mediaId) { ConcurrentHashMap.newKeySet() } += it
-        }
-        host?.takeIf { it.isNotBlank() }?.let {
-            failedHosts.getOrPut(mediaId) { ConcurrentHashMap.newKeySet() } += it
-        }
-        forced.remove(mediaId)
-        shelved.remove(mediaId)
-        auditioning -= mediaId
-        pending.remove(mediaId)
-        asked -= mediaId
-        HqHostTracker.endDownload(mediaId, host)
-    }
+    fun failedCandidate(mediaId: String, sourceConfigId: String?, host: String?) =
+        KoQualityUpgrade.failedCandidate(mediaId, sourceConfigId, host) // [KO] quality-retry
 
-    /**
-     * Re-arms the second look after [failedCandidate], so the next source in
-     * the same tier can be tried immediately. False when there is no previous
-     * question to re-ask.
-     */
-    fun retryNext(mediaId: String): Boolean {
-        val last = lastPending[mediaId] ?: return false
-        pending[mediaId] = last
-        asked -= mediaId
-        return true
-    }
+    fun retryNext(mediaId: String): Boolean =
+        KoQualityUpgrade.retryNext(mediaId) // [KO] quality-retry
 
     /**
      * Tracks that have already had their second look, whether it found
@@ -368,7 +272,7 @@ object QualityUpgrade {
      * [adoptUnresolved], which is offered the same playing track every five
      * seconds for as long as it lasts.
      */
-    private val asked = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
+    internal val asked = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>()) // [KO] quality-upgrade-access
 
     /**
      * Whether [mediaId] is worth *evaluating* for a second look, given that
@@ -379,28 +283,13 @@ object QualityUpgrade {
      * the decoder to settle first. Everything here is a fact about the queue
      * entry and the settings; nothing here touches the network.
      */
-    /**
-     * Why [couldStillUpgrade] said no, in the words a manual request is
-     * answered with. Each one is a different thing for the listener to do (or
-     * not do) next, and "can't change it right now" covered all of them.
-     */
     enum class Refusal { NO_STREAM, MUSIC_VIDEO, NO_SOURCE, ALREADY_CHECKED }
 
-    fun refusalFor(mediaId: String, uri: Uri?): Refusal = refusalOf(
-        hasStream = uri?.getQueryParameter("v") != null,
-        musicVideo = uri?.getQueryParameter("m") == "1",
-        canSubstitute = SourceResolver.canSubstituteForYouTube(),
-    )
+    fun refusalFor(mediaId: String, uri: Uri?): Refusal =
+        KoQualityUpgrade.refusalFor(mediaId, uri) // [KO] quality-refusal
 
-    internal fun refusalOf(hasStream: Boolean, musicVideo: Boolean, canSubstitute: Boolean): Refusal = when {
-        !hasStream -> Refusal.NO_STREAM
-        // Substitution never matches a music-video row against a catalogue
-        // recording (SourceResolver refuses video targets): the listener's way
-        // to lossless is the song version of the row, not this one.
-        musicVideo -> Refusal.MUSIC_VIDEO
-        !canSubstitute -> Refusal.NO_SOURCE
-        else -> Refusal.ALREADY_CHECKED
-    }
+    internal fun refusalOf(hasStream: Boolean, musicVideo: Boolean, canSubstitute: Boolean): Refusal =
+        KoQualityUpgrade.refusalOf(hasStream, musicVideo, canSubstitute) // [KO] quality-refusal
 
     fun couldStillUpgrade(mediaId: String, uri: Uri?): Boolean {
         if (uri == null || uri.getQueryParameter("v") == null ||
@@ -412,12 +301,7 @@ object QualityUpgrade {
         // overruled — see [askByHand].
         if (mediaId !in handAsked && uri.getQueryParameter(MARKER) != null) return false
         if (mediaId in asked || mediaId in refused || pending.containsKey(mediaId)) return false
-        // An inconclusive second look was not a verdict. Wait a bounded window
-        // before the next ordinary event retries it, so a source that was down
-        // is asked again without turning every progress sample into a search.
-        val retryAt = retryAfter[mediaId] ?: 0L
-        if (System.currentTimeMillis() < retryAt) return false
-        if (retryAt != 0L) retryAfter.remove(mediaId)
+        if (KoQualityUpgrade.suppressesRetry(mediaId)) return false // [KO] quality-retry
         // Same widening as [settledForLess]: a track playing off the cache is
         // worth a second look whenever anything outranks YouTube, not only
         // when lossless was asked for.
@@ -507,17 +391,7 @@ object QualityUpgrade {
             asked += mediaId
             return false
         }
-        pending[mediaId] = Pending(
-            target,
-            inFlight = null,
-            playing = playing,
-            manual = mediaId in handAsked,
-            manualSession = if (mediaId in handAsked) {
-                manualSessions.getOrPut(mediaId) { Any() }
-            } else {
-                null
-            },
-        )
+        pending[mediaId] = Pending(target, inFlight = null, playing = playing)
         NerdStats.onLosslessRaceStart(mediaId)
         TrackLog.d(
             TAG,
@@ -579,26 +453,10 @@ object QualityUpgrade {
         verify: (suspend (TrackMatcher.Target, SourceStream) -> Boolean)? = null,
     ): SourceStream? {
         val waiting = pending[mediaId] ?: return null
-        lastPending[mediaId] = waiting
-        // Search and proof are timed apart here because they are the two costs
-        // the listener actually pays: a 12s slow-source window, then a 14s
-        // Qobuz decode. Measuring only the outer call attributed the decode to
-        // the search and made the timing line point at the wrong one.
-        val timingStartedNs = System.nanoTime()
-        var verifyNanos = 0L
-        val measuredVerify: (suspend (TrackMatcher.Target, SourceStream) -> Boolean)? =
-            verify?.let { check ->
-                { target: TrackMatcher.Target, stream: SourceStream ->
-                    val started = System.nanoTime()
-                    try {
-                        check(target, stream)
-                    } finally {
-                        verifyNanos += System.nanoTime() - started
-                    }
-                }
-            }
-        val excludedSources = failedSources[mediaId].orEmpty().toSet()
-        val excludedHosts = failedHosts[mediaId].orEmpty().toSet()
+        KoQualityUpgrade.rememberLastPending(mediaId, waiting) // [KO] quality-retry
+        val koManual = KoQualityUpgrade.isManual(mediaId) // [KO] quality-manual
+        val koSession = KoQualityUpgrade.sessionFor(mediaId, koManual) // [KO] quality-manual
+        val koLook = KoQualityUpgrade.beginLook(mediaId, verify) // [KO] quality-timing
         var found: SourceStream? = null
         /**
          * Whether the search got as far as an answer, as opposed to being
@@ -643,11 +501,8 @@ object QualityUpgrade {
             // which played for five seconds of silence and was then put back.
             waiting.inFlight?.let { lookup ->
                 val late = runCatching { lookup.await() }.getOrNull()
-                val lateHost = late?.url?.let(HqHostTracker::hostOf)
-                val allowed = late != null &&
-                    late.sourceConfigId !in excludedSources &&
-                    (lateHost == null || lateHost !in excludedHosts)
-                if (allowed && late != null &&
+                if (late != null &&
+                    KoQualityUpgrade.allowsInFlight(mediaId, late) && // [KO] quality-retry
                     SourceResolver.worthSwapping(late.format, waiting.playing) &&
                     SourceResolver.sameRecordingAs(late.durationSec, effectiveDurationSec)
                 ) {
@@ -665,71 +520,16 @@ object QualityUpgrade {
                     return late
                 }
             }
-            // A hand-made request asks every source once and keeps the whole
-            // candidate list. Walking to the next source after one fails its
-            // proof is then a list pop, not another search — the reported
-            // upgrade paid the same twelve-second search once per candidate
-            // and re-asked a source that had already refused.
-            if (waiting.manual) {
-                val queued = candidateQueue[mediaId]
-                if (queued != null) {
-                    // The queue was built against the floor that was playing
-                    // when it was collected. A candidate popped after the floor
-                    // moved on (a lossy swap armed a lossless follow-up) must be
-                    // weighed again, or a copy that only beat the old stream can
-                    // be swapped in as a downgrade. The source already serving
-                    // the track is out for the same reason the first search
-                    // leaves it out.
-                    val next = queued.firstOrNull {
-                        it.sourceConfigId !in excludedSources &&
-                            it.sourceConfigId != waiting.servedBy &&
-                            SourceResolver.worthSwapping(it.format, waiting.playing) &&
-                            (it.url.let(HqHostTracker::hostOf)?.let { host -> host !in excludedHosts } ?: true)
-                    }
-                    if (next != null) {
-                        queued.remove(next)
-                        found = next
-                        answered = true
-                        conclusive = true
-                        return next
-                    }
-                    // Everything the one search found has been tried. That is
-                    // a complete answer to this request, not a reason to ask
-                    // the same sources again.
-                    answered = true
-                    conclusive = true
-                    return null
-                }
-                val effectiveTarget = waiting.target.copy(durationSec = effectiveDurationSec)
-                val searched = SourceResolver.upgradeCandidatesFor(
-                    target = effectiveTarget,
-                    playing = waiting.playing,
-                    servedBy = waiting.servedBy,
-                    excludeSources = excludedSources,
-                    excludeHosts = excludedHosts,
-                    manual = true,
-                    report = report,
-                    manualSession = waiting.manualSession,
-                    verify = measuredVerify?.let { check ->
-                        { _, stream -> check(effectiveTarget, stream) }
-                    },
-                )
-                val queue = searched.map { it.second }.toMutableList()
-                candidateQueue[mediaId] = queue
-                val next = queue.firstOrNull()
-                if (next != null) queue.removeAt(0)
-                found = next
-                if (next != null && needsLosslessFollowUp(next.format)) {
-                    followUps[mediaId] = waiting.copy(
-                        target = waiting.target.copy(durationSec = effectiveDurationSec),
-                        inFlight = null,
-                        playing = next.format,
-                        servedBy = next.sourceConfigId,
-                    )
-                }
-                conclusive = report.allConclusive
+            if (koManual) { // [KO] quality-manual
+                val outcome = KoQualityUpgrade.manualLook(
+                    mediaId, waiting, effectiveDurationSec, report, koLook.measuredVerify,
+                    koLook.excludedSources, koLook.excludedHosts, koSession,
+                ) // [KO] quality-manual
+                found = outcome.stream
+                outcome.followUp?.let { followUps[mediaId] = it }
                 answered = true
-                return next
+                conclusive = outcome.conclusive
+                return outcome.stream
             }
             // It finished with nothing better, so the question gets asked
             // again from scratch — this time waiting on every module, which is
@@ -739,9 +539,9 @@ object QualityUpgrade {
                 waiting.target.copy(durationSec = effectiveDurationSec),
                 playing = waiting.playing,
                 servedBy = waiting.servedBy,
-                excludeSources = excludedSources,
-                excludeHosts = excludedHosts,
-                manual = waiting.manual,
+                excludeSources = koLook.excludedSources, // [KO] quality-retry
+                excludeHosts = koLook.excludedHosts, // [KO] quality-retry
+                manual = koManual, // [KO] quality-manual
                 report = report,
             ).also {
                 found = it
@@ -763,9 +563,7 @@ object QualityUpgrade {
                 answered = true
             }
         } finally {
-            val elapsedNs = System.nanoTime() - timingStartedNs
-            report.verifyMs = verifyNanos / 1_000_000L
-            report.searchMs = ((elapsedNs - verifyNanos).coerceAtLeast(0L)) / 1_000_000L
+            koLook.finish(report) // [KO] quality-timing
             if (answered) {
                 // The question has now been asked, whatever the answer. Leaving
                 // it pending would re-run the whole search on every pause and
@@ -773,19 +571,7 @@ object QualityUpgrade {
                 // [adoptUnresolved] offer the same track again at the next
                 // progress sample.
                 pending.remove(mediaId)
-                if (conclusive) {
-                    asked += mediaId
-                } else {
-                    // Not a verdict: a source failed, timed out or was resting.
-                    // Allow a later event to ask again after a bounded wait
-                    // instead of recording the track as permanently answered.
-                    retryAfter[mediaId] = System.currentTimeMillis() + INCONCLUSIVE_RETRY_MS
-                    TrackLog.d(
-                        TAG,
-                        "'${waiting.target.title}' has no confirmed answer yet; a source was unavailable, will retry",
-                        about = mediaId,
-                    )
-                }
+                KoQualityUpgrade.recordAnswer(mediaId, waiting, conclusive) // [KO] quality-retry
             }
             // Otherwise the search was cancelled — the queue moved on while it
             // was still running — and *nothing was learned*. The track is left
@@ -852,14 +638,7 @@ object QualityUpgrade {
     fun onPlaybackStarted(mediaId: String, rendition: String?) {
         if (rendition != null) return
         asked -= mediaId
-        // "No more swaps for it" is a verdict about the playback that broke,
-        // not about the song. A fresh play of the same track is a different
-        // stream and gets another try; see [refuseUpgrades].
-        refused -= mediaId
-        lastPending.remove(mediaId)
-        failedSources.remove(mediaId)
-        failedHosts.remove(mediaId)
-        retryAfter.remove(mediaId)
+        KoQualityUpgrade.onPlaybackStarted(mediaId) // [KO] quality-retry
     }
 
     /**
@@ -891,21 +670,7 @@ object QualityUpgrade {
      */
     fun isKnownToBePlayingYouTubesOwn(mediaId: String, rendition: String?): Boolean {
         if (rendition != null) return false
-        // The decoder's own source identity wins when it has spoken. It is the
-        // only record of what is actually being read, and the menu used to
-        // disagree with the badge when a stored verdict or a stale
-        // [StreamChoice] still named YouTube over a module stream.
-        val snapshot = NerdStats.current.value?.takeIf { it.mediaId == mediaId }
-        if (snapshot != null) {
-            val kind = snapshot.sourceConfigId
-                ?.let { SourceRegistry.config(it)?.kind }
-            when {
-                kind == SourceKind.YOUTUBE -> return true
-                kind != null -> return false
-                snapshot.sourceName == "YouTube" -> return true
-                snapshot.sourceName != null -> return false
-            }
-        }
+        KoQualityUpgrade.youtubeOwnVerdict(mediaId)?.let { return it } // [KO] source-identity
         return StreamChoice.of(mediaId) != null && !StreamChoice.isSubstitute(mediaId)
     }
 
@@ -932,12 +697,7 @@ object QualityUpgrade {
         forced.remove(mediaId)
         shelved.remove(mediaId)
         auditioning -= mediaId
-        lastPending.remove(mediaId)
-        failedSources.remove(mediaId)
-        failedHosts.remove(mediaId)
-        retryAfter.remove(mediaId)
-        candidateQueue.remove(mediaId)
-        manualSessions.remove(mediaId)?.let(SourceResolver::clearManualProbes)
+        KoQualityUpgrade.forget(mediaId) // [KO] quality-retry
         // A request made by hand is about the track the listener was listening
         // to. Once the queue has moved off it there is nothing left to honour,
         // and an exemption that outlived its moment would let the next visit to
@@ -946,47 +706,10 @@ object QualityUpgrade {
         NerdStats.onLosslessRaceEnd(mediaId)
     }
 
-    /**
-     * Drops the forced stream serving [url] when only the URL is known.
-     *
-     * A swapped-in lossless/module rendition has no YouTube videoId in its URL,
-     * so the resolver's rate-limit feedback cannot name the mediaId. Matching
-     * the opened URL against the parked stream is what keeps the next open from
-     * serving the URL the host just asked us to leave alone.
-     */
-    fun forgetUrl(url: String) {
-        val key = canonicalUrl(url)
-        val mediaId = forced.entries.firstOrNull { canonicalUrl(it.value.url) == key }?.key
-        if (mediaId == null) {
-            // Not silent: the resolver reported this URL as rate-limited and
-            // the forced stream is the only copy that would be served again. A
-            // no-match means the keys differ (encoding, redirect) and the pin
-            // survives, so the next open repeats the paused URL.
-            TrackLog.w(TAG, "no forced stream to forget for rate-limited URL: ${LogUrl.of(url)}")
-            return
-        }
-        forget(mediaId)
-        StreamChoice.forget(mediaId)
-    }
+    fun forgetUrl(url: String) = KoQualityUpgrade.forgetUrl(url) // [KO] quality-forget-url
 
-    /** The same URL OkHttp opens, so `Uri` re-encoding cannot lose the match. */
-    private fun canonicalUrl(url: String): String = url.toHttpUrlOrNull()?.toString() ?: url
-
-    /**
-     * Forgets a replacement that is being reverted, together with the choice
-     * that still names it.
-     *
-     * [forget] drops the forced stream, but [StreamChoice] keeps the
-     * replacement recorded when the swap went out. Reopening the previous URI
-     * with that choice in place resolves the replacement URL under the old
-     * rendition key, which can append a different file to a partial cache
-     * entry. The direct-YouTube path already releases both; this is the same
-     * hand-back for a revert onto the previous stream.
-     */
-    fun forgetReverted(mediaId: String) {
-        forget(mediaId)
-        StreamChoice.forget(mediaId)
-    }
+    fun forgetReverted(mediaId: String) =
+        KoQualityUpgrade.forgetReverted(mediaId) // [KO] quality-forget-url
 
     /**
      * Tracks the listener has asked to upgrade themselves.
@@ -1004,7 +727,7 @@ object QualityUpgrade {
      * [upgradedUri] takes the `direct_youtube` out of the URI it builds so the
      * one cut the listener does hear is the one that changes the audio.
      */
-    private val handAsked = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
+    internal val handAsked = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>()) // [KO] quality-upgrade-access
 
     /**
      * Re-opens the upgrade question for [mediaId] because the listener asked
@@ -1021,73 +744,25 @@ object QualityUpgrade {
      * the answer being waited for, not a stale one, and the item it was started
      * against is the item still playing.
      */
-    /**
-     * Opens the second look for a track the listener asked about by hand when
-     * nothing left it pending.
-     *
-     * The automatic look empties [pending] as it asks, and [askByHand] drops
-     * [lastPending], so a track whose automatic search had already answered
-     * reached the manual pass with nothing to search with. [adoptUnresolved]
-     * only takes tracks played from the cache, so a resolved track was turned
-     * away with "can't change the quality right now" before any search ran
-     * (10-31, '체포하겠어' and 'Friction', no line after "asked for by hand").
-     */
-    fun adoptByHand(mediaId: String, target: TrackMatcher.Target, playing: StreamFormat?): Boolean {
-        if (target.title.isBlank() || mediaId !in handAsked) return false
-        pending[mediaId] = Pending(
-            target,
-            inFlight = null,
-            playing = playing,
-            manual = true,
-            manualSession = manualSessions.getOrPut(mediaId) { Any() },
-        )
-        retryAfter.remove(mediaId)
-        NerdStats.onLosslessRaceStart(mediaId)
-        TrackLog.d(
-            TAG,
-            "manual upgrade: searching again for '${target.title}' over ${playing?.summary ?: "an unmeasured stream"}",
-            about = mediaId,
-        )
-        return true
-    }
-
     fun askByHand(mediaId: String) {
         handAsked += mediaId
         asked -= mediaId
         refused -= mediaId
-        failedSources.remove(mediaId)
-        failedHosts.remove(mediaId)
-        lastPending.remove(mediaId)
-        retryAfter.remove(mediaId)
-        // A new press is a new request: its resting-source probe budget and
-        // its candidate list start empty, even if an earlier press left some.
-        val session = Any()
-        manualSessions.put(mediaId, session)?.let(SourceResolver::clearManualProbes)
-        candidateQueue.remove(mediaId)
-        // A lookup already pending for this track inherited the automatic
-        // path's view of the world. Mark it manual so it ignores the search
-        // memo and asks a resting source once, which is what the listener
-        // pressed the button for.
-        pending[mediaId]?.let { pending[mediaId] = it.copy(manual = true, manualSession = session) }
-        followUps[mediaId]?.let { followUps[mediaId] = it.copy(manual = true, manualSession = session) }
+        KoQualityUpgrade.afterAskByHand(mediaId) // [KO] quality-manual
     }
 
-    /**
-     * Whether a running automatic pass must leave the manual request that
-     * joined it unanswered, so the waiter can run the manual pass itself.
-     *
-     * The pass captured `manual = false` when it started, before the listener
-     * pressed the button; its search therefore skipped resting sources and
-     * replayed the memoised empty answer. A `none` from that pass is not the
-     * answer to the manual request — the request was for a search under the
-     * manual rules — and answering it would clear [PlaybackService]'s
-     * `manualUpgradeFor` before the waiter could run. See 10-31 'Flowers'.
-     */
+    fun adoptByHand(mediaId: String, target: TrackMatcher.Target, playing: StreamFormat?): Boolean =
+        KoQualityUpgrade.adoptByHand(mediaId, target, playing) // [KO] quality-manual
+
     internal fun defersAutomaticAnswerToManual(
         startedManual: Boolean,
         manualPending: Boolean,
         manualJoined: Boolean,
-    ): Boolean = !startedManual && manualPending && manualJoined
+    ): Boolean = KoQualityUpgrade.defersAutomaticAnswerToManual(
+        startedManual,
+        manualPending,
+        manualJoined,
+    ) // [KO] quality-manual
 
     /**
      * Abandons the second look for every track at once, because the player all
@@ -1133,11 +808,9 @@ object QualityUpgrade {
         // auditioned or still holding a live lookup is torn down properly — and
         // so the badge for it goes out with it.
         (pending.keys + followUps.keys + forced.keys + shelved.keys + auditioning).forEach(::forget)
-        manualSessions.clear()
-        SourceResolver.clearManualProbes()
+        KoQualityUpgrade.forgetLastSession() // [KO] quality-retry
         asked.clear()
         refused.clear()
-        retryAfter.clear()
     }
 
     // ── Handing the stream to the player ────────────────────────────────────
@@ -1154,13 +827,7 @@ object QualityUpgrade {
      */
     fun continueAfterLossySwap(mediaId: String): Boolean {
         val next = followUps.remove(mediaId) ?: return false
-        // The lossy swap has landed, so the floor is now that lossy stream and
-        // the candidates collected against the old floor are no longer valid:
-        // popping them would either repeat a copy at or below what is playing
-        // or, worse, swap in one that only beat the stream that was replaced.
-        // The follow-up must search again at the new floor; the reported
-        // upgrade was spending that on stale candidates instead.
-        candidateQueue.remove(mediaId)
+        KoQualityUpgrade.onLossySwapContinued(mediaId) // [KO] quality-manual
         pending[mediaId] = next
         asked -= mediaId
         NerdStats.onLosslessRaceStart(mediaId)
@@ -1221,19 +888,6 @@ object QualityUpgrade {
      */
     fun cacheTag(uri: Uri): String? = uri.getQueryParameter(MARKER)
 
-    /**
-     * The upgrade generation a rendition key's suffix names: `hifi` is 1,
-     * `hifi-2` is 2, and anything else is 0.
-     *
-     * Used when a plain play request picks among the renditions already on
-     * disk. A later generation replaced an earlier one only because it was
-     * better, so the newest complete upgrade is the one to open.
-     */
-    fun upgradeGeneration(tag: String?): Int {
-        if (tag == null || !tag.startsWith(UPGRADED)) return 0
-        return tag.removePrefix(UPGRADED)
-            .removePrefix("-")
-            .toIntOrNull()
-            ?: 1
-    }
+    fun upgradeGeneration(tag: String?): Int =
+        KoQualityUpgrade.upgradeGeneration(tag) // [KO] quality-generation
 }
