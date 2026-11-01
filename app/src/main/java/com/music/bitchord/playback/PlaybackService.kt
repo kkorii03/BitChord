@@ -12951,28 +12951,64 @@ class PlaybackService : MediaLibraryService() {
                     when {
                         parentId.startsWith("playlist:") -> {
                             val playlistId = parentId.removePrefix("playlist:")
-                            val songs = try {
+                            // null means the fetch failed or timed out; an empty
+                            // list means the playlist really has no songs.
+                            val songs: List<Song>? = try {
                                 withTimeoutOrNull(2500L) {
                                     YtMusicRepository.browseSongs("VL$playlistId").getOrNull()?.songs
                                         ?: YtMusicRepository.browseSongs(playlistId).getOrNull()?.songs
-                                } ?: emptyList()
+                                }
                             } catch (_: Exception) {
-                                emptyList()
+                                null
                             }
-                            cacheSongs(songs)
-                            songs.map { it.toMediaItem() }
+                            cacheSongs(songs.orEmpty())
+                            AutoBrowseFallback.items(
+                                songs = songs?.map { it.toMediaItem() },
+                                unavailable = {
+                                    TrackLog.w("BitChord", "auto: playlist browse failed id=$playlistId")
+                                    createInfoItem(
+                                        "msg:unavailable|$parentId",
+                                        getString(R.string.auto_unavailable_title),
+                                        getString(R.string.auto_unavailable_subtitle),
+                                    )
+                                },
+                                empty = {
+                                    createInfoItem(
+                                        "msg:empty|$parentId",
+                                        getString(R.string.auto_empty_songs_title),
+                                        getString(R.string.auto_empty_songs_subtitle),
+                                    )
+                                },
+                            )
                         }
                         parentId.startsWith("browse:") -> {
                             val browseId = parentId.removePrefix("browse:")
-                            val songs = try {
+                            val songs: List<Song>? = try {
                                 withTimeoutOrNull(2500L) {
                                     YtMusicRepository.browseSongs(browseId).getOrNull()?.songs
-                                } ?: emptyList()
+                                }
                             } catch (_: Exception) {
-                                emptyList()
+                                null
                             }
-                            cacheSongs(songs)
-                            songs.map { it.toMediaItem() }
+                            cacheSongs(songs.orEmpty())
+                            AutoBrowseFallback.items(
+                                songs = songs?.map { it.toMediaItem() },
+                                unavailable = {
+                                    TrackLog.w("BitChord", "auto: browse failed id=$browseId")
+                                    createInfoItem(
+                                        "msg:unavailable|$parentId",
+                                        getString(R.string.auto_unavailable_title),
+                                        getString(R.string.auto_unavailable_subtitle),
+                                    )
+                                },
+                                empty = {
+                                    createInfoItem(
+                                        "msg:empty|$parentId",
+                                        getString(R.string.auto_empty_songs_title),
+                                        getString(R.string.auto_empty_songs_subtitle),
+                                    )
+                                },
+                            )
                         }
                         else -> {
                             val cachedSong = songCache[parentId]
@@ -13058,65 +13094,43 @@ class PlaybackService : MediaLibraryService() {
         ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> = scope.future(Dispatchers.IO) {
             // 1. If player currently holds items in its queue, resume from it
             val activePlayer = player
-            if (activePlayer != null && activePlayer.mediaItemCount > 0) {
-                val currentItems = (0 until activePlayer.mediaItemCount).map { activePlayer.getMediaItemAt(it) }
-                val startIndex = activePlayer.currentMediaItemIndex.coerceIn(0, currentItems.size - 1)
-                val startPositionMs = activePlayer.currentPosition.coerceAtLeast(0L)
-                return@future MediaSession.MediaItemsWithStartPosition(
-                    ImmutableList.copyOf(currentItems),
-                    startIndex,
-                    startPositionMs,
-                )
-            }
-
-            // 2. Fallback to local downloaded songs (offline-ready)
-            val downloaded = Downloads.getDownloadedSongs(this@PlaybackService)
-            if (downloaded.isNotEmpty()) {
-                val items = downloaded.map { it.toMediaItem() }
-                return@future MediaSession.MediaItemsWithStartPosition(
-                    ImmutableList.copyOf(items),
-                    0,
-                    0L,
-                )
-            }
-
-            // 3. Fallback to device local music
-            val localSongs = LocalMediaRepository.getLocalMusic(this@PlaybackService)
-            if (localSongs.isNotEmpty()) {
-                val items = localSongs.map { it.toMediaItem() }
-                return@future MediaSession.MediaItemsWithStartPosition(
-                    ImmutableList.copyOf(items),
-                    0,
-                    0L,
-                )
-            }
-
-            // 5. Fallback to Quick Picks / Home shelves
-            val fallbackSongs = try {
-                withTimeoutOrNull(2500L) {
-                    val home = YtMusicRepository.home().getOrNull()
-                    home?.shelves?.flatMap { shelf ->
-                        shelf.items.mapNotNull { it.toMediaItemOrNull() }
-                    }?.distinctBy { it.mediaId }
-                } ?: emptyList()
-            } catch (_: Exception) {
+            val activeItems = if (activePlayer != null && activePlayer.mediaItemCount > 0) {
+                (0 until activePlayer.mediaItemCount).map { activePlayer.getMediaItemAt(it) }
+            } else {
                 emptyList()
             }
+            val activeIndex = if (activeItems.isNotEmpty()) activePlayer?.currentMediaItemIndex ?: 0 else 0
+            val activePositionMs = if (activeItems.isNotEmpty()) activePlayer?.currentPosition ?: 0L else 0L
 
-            if (fallbackSongs.isNotEmpty()) {
-                return@future MediaSession.MediaItemsWithStartPosition(
-                    ImmutableList.copyOf(fallbackSongs),
+            // 2. Only the queue the listener last played is a resume. The old
+            // downloaded/local/home fallbacks started the first row of an
+            // arbitrary list, so just connecting a car could play a track the
+            // listener never chose. With no history the car browses instead.
+            val lastPlayed = if (activeItems.isEmpty()) LastPlayed.load() else null
+            val lastPlayedItems = lastPlayed?.songs?.map { it.toMediaItem() }.orEmpty()
+
+            val plan = AutoResumptionPolicy.choose(
+                activeItems = activeItems,
+                activeIndex = activeIndex,
+                activePositionMs = activePositionMs,
+                lastPlayedItems = lastPlayedItems,
+                lastPlayedIndex = lastPlayed?.index ?: 0,
+                lastPlayedPositionMs = lastPlayed?.positionMs ?: 0L,
+            )
+            if (plan == null) {
+                // Return empty instead of throwing an unhandled exception to prevent crash
+                MediaSession.MediaItemsWithStartPosition(
+                    ImmutableList.of(),
                     0,
                     0L,
                 )
+            } else {
+                MediaSession.MediaItemsWithStartPosition(
+                    ImmutableList.copyOf(plan.items),
+                    plan.startIndex,
+                    plan.startPositionMs,
+                )
             }
-
-            // Return empty instead of throwing an unhandled exception to prevent crash
-            MediaSession.MediaItemsWithStartPosition(
-                ImmutableList.of(),
-                0,
-                0L,
-            )
         }
 
         override fun onSearch(
@@ -13210,6 +13224,9 @@ class PlaybackService : MediaLibraryService() {
                         } catch (_: Exception) {
                             emptyList()
                         }
+                        if (songs.isEmpty()) {
+                            TrackLog.w("BitChord", "auto: playlist resolve empty id=$playlistId")
+                        }
                         cacheSongs(songs)
                         resolved.addAll(songs.map { it.toMediaItem() })
                     }
@@ -13221,6 +13238,9 @@ class PlaybackService : MediaLibraryService() {
                             } ?: emptyList()
                         } catch (_: Exception) {
                             emptyList()
+                        }
+                        if (songs.isEmpty()) {
+                            TrackLog.w("BitChord", "auto: browse resolve empty id=$browseId")
                         }
                         cacheSongs(songs)
                         resolved.addAll(songs.map { it.toMediaItem() })
