@@ -68,7 +68,7 @@ object QualityUpgrade {
      * come back with nothing better; the second look then has to go find its
      * own candidates.
      */
-    internal data class Pending(
+    internal data class Pending( // [KO] quality-upgrade-access
         val target: TrackMatcher.Target,
         val inFlight: Deferred<SourceStream?>? = null,
         /**
@@ -90,7 +90,7 @@ object QualityUpgrade {
         val servedBy: String? = null,
     )
 
-    internal val pending = ConcurrentHashMap<String, Pending>()
+    internal val pending = ConcurrentHashMap<String, Pending>() // [KO] quality-upgrade-access
     /**
      * A second pass to make after a worthwhile lossy upgrade.  The first pass
      * intentionally takes the first source that beats Opus so playback improves
@@ -102,7 +102,7 @@ object QualityUpgrade {
      * not an interim copy to search over and swap to again.
      */
     private val followUps = ConcurrentHashMap<String, Pending>()
-    internal val forced = ConcurrentHashMap<String, SourceStream>()
+    internal val forced = ConcurrentHashMap<String, SourceStream>() // [KO] quality-upgrade-access
 
     internal fun needsLosslessFollowUp(format: StreamFormat): Boolean =
         SourceResolver.requestForNow() is StreamRequest.Lossless &&
@@ -122,7 +122,7 @@ object QualityUpgrade {
      * the old stream, and a badge that reads "Lossless" over it is describing
      * a swap that has not happened and might never.
      */
-    internal val auditioning = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
+    internal val auditioning = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>()) // [KO] quality-upgrade-access
 
     fun beginAudition(mediaId: String) {
         auditioning += mediaId
@@ -151,7 +151,7 @@ object QualityUpgrade {
      * follows is the cheap kind: no search, no download, and an audition that
      * reads from disk.
      */
-    internal val shelved = ConcurrentHashMap<String, SourceStream>()
+    internal val shelved = ConcurrentHashMap<String, SourceStream>() // [KO] quality-upgrade-access
 
     /** Keeps a proved-but-unused upgrade for [mediaId] against a return visit. */
     fun shelve(mediaId: String, stream: SourceStream) {
@@ -242,7 +242,7 @@ object QualityUpgrade {
      * read "cleared with the rest when the process goes", which is a lifetime
      * this map does not have — see there.
      */
-    internal val refused = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
+    internal val refused = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>()) // [KO] quality-upgrade-access
 
     /**
      * Stops offering [mediaId] any further upgrades this session — its last
@@ -272,7 +272,7 @@ object QualityUpgrade {
      * [adoptUnresolved], which is offered the same playing track every five
      * seconds for as long as it lasts.
      */
-    internal val asked = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
+    internal val asked = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>()) // [KO] quality-upgrade-access
 
     /**
      * Whether [mediaId] is worth *evaluating* for a second look, given that
@@ -727,7 +727,7 @@ object QualityUpgrade {
      * [upgradedUri] takes the `direct_youtube` out of the URI it builds so the
      * one cut the listener does hear is the one that changes the audio.
      */
-    internal val handAsked = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
+    internal val handAsked = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>()) // [KO] quality-upgrade-access
 
     /**
      * Re-opens the upgrade question for [mediaId] because the listener asked
