@@ -26,6 +26,12 @@ internal data class CachedRendition(
  * again, so reading it cannot create the mixed-file seam the key split exists
  * to prevent.
  *
+ * A complete lossless copy with no upgrade generation (`#alt`, or a base entry
+ * filled from a lossless source) also beats a complete lossy one. That is the
+ * restart case: the in-memory stream choice is gone, so only the bytes on disk
+ * can say which copy the listener asked for. It is complete, so reading it is
+ * as safe as reading any other finished entry.
+ *
  * An incomplete upgrade is not a candidate: it would stream the rest from a
  * different URL into a half-written entry, and the complete low-quality copy is
  * still better than that.
@@ -34,7 +40,7 @@ internal object CacheRenditionChoice {
 
     fun choose(preferred: String, candidates: List<CachedRendition>): String =
         candidates
-            .filter { it.complete && it.upgradeOrder > 0 }
+            .filter { it.complete && (it.upgradeOrder > 0 || it.lossless) }
             .maxWithOrNull(
                 compareBy<CachedRendition> { it.lossless }
                     .thenBy { it.upgradeOrder },

@@ -76,29 +76,42 @@ class KoLosslessCache(
         val failure: String?,
     )
 
-    /** A complete upgraded rendition of [videoId], if one is on disk. */
+    /**
+     * The complete rendition of [videoId] a plain play should open: a finished
+     * upgrade, or a finished lossless copy that has no upgrade generation.
+     *
+     * The losslessness is read from the entry's own persisted metadata, so it
+     * survives a restart with the bytes it describes: after one, the metadata
+     * is all that is left of the in-memory stream choice.
+     */
     fun completeUpgradeRendition(videoId: String): String? {
         if (cache() == null) return null
         // A copy prefetched during this play must not take over its key until
         // the queue moves on: a seek reopens the plain URI, and handing it the
         // FLAC entry at the Opus entry's byte offset breaks the extractor.
         if (videoId in upgradeKeyDeferred) return null
-        val candidates = renditionKeysFor(videoId).mapNotNull { key ->
+        val candidates = renditionCandidates(videoId)
+        if (candidates.isEmpty()) return null
+        return CacheRenditionChoice.choose(videoId, candidates).takeIf { it != videoId }
+    }
+
+    private fun renditionCandidates(videoId: String): List<CachedRendition> =
+        renditionKeysFor(videoId).mapNotNull { key ->
             if (key.endsWith("#watch")) return@mapNotNull null
             val suffix = key.removePrefix("$videoId#")
             if (suffix == key) return@mapNotNull null
-            val order = QualityUpgrade.upgradeGeneration(suffix)
-            if (order <= 0) return@mapNotNull null
             CachedRendition(
                 key = key,
                 complete = isComplete(key),
                 lossless = isLosslessRendition(key),
-                upgradeOrder = order,
+                upgradeOrder = QualityUpgrade.upgradeGeneration(suffix),
             )
         }
-        if (candidates.isEmpty()) return null
-        return CacheRenditionChoice.choose(videoId, candidates).takeIf { it != videoId }
-    }
+
+    /** Whether [key] is lossless by its marker or by the container it holds. */
+    private fun isLosslessCopy(key: String): Boolean =
+        isLosslessRendition(key) ||
+            containerOf(key)?.first?.let { it in LOSSLESS_CONTAINERS } == true
 
     fun hasCompleteLosslessCopy(mediaId: String): Boolean {
         val cache = cache() ?: return false
@@ -106,9 +119,7 @@ class KoLosslessCache(
         return keysOf(mediaId)
             .filterNot { it.endsWith("#watch") }
             .any { key ->
-                val lossless = isLosslessRendition(key) ||
-                    containerOf(key)?.first?.let { it in LOSSLESS_CONTAINERS } == true
-                if (!lossless) return@any false
+                if (!isLosslessCopy(key)) return@any false
                 runCatching {
                     val length = ContentMetadata.getContentLength(cache.getContentMetadata(key))
                     length > 0 && cache.isCached(key, 0, length)
