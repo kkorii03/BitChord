@@ -61,7 +61,20 @@ if [ -n "${SMOKE_SETTINGS_FILE:-}" ] && [ -f "$SMOKE_SETTINGS_FILE" ]; then
   fi
 fi
 adb shell monkey -p $PKG -c android.intent.category.LAUNCHER 1
-sleep 30
+# Main-thread samples while Home loads: a poor man's profiler for the Home
+# stalls (Choreographer skips, ANRs on the phone). debuggerd -j dumps every
+# Java stack of a debuggable app; only the "main" thread is kept.
+sleep 2
+APP_PID=$(adb shell pidof $PKG | tr -d '\r' | awk '{print $1}')
+if [ -n "$APP_PID" ]; then
+  for i in $(seq 1 12); do
+    echo "=== sample $i $(date +%T.%N | cut -c1-12)" >> "$OUT/main-stacks.txt"
+    adb shell debuggerd -j "$APP_PID" 2>/dev/null | tr -d '\r' \
+      | awk '/^"main"/{p=1} p&&/^$/{exit} p' | head -40 >> "$OUT/main-stacks.txt" || true
+    sleep 0.5
+  done
+fi
+sleep 22
 
 n=0
 # Geometry for the bottom-tab coordinate fallback (4 equal slots).
