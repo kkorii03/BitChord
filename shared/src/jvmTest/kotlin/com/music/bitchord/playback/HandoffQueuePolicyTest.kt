@@ -242,4 +242,56 @@ class HandoffQueuePolicyTest {
             ),
         )
     }
+
+    @Test
+    fun aVersionSwapUnderTheSameQueueKeyReplacesTheStandbyRecording() {
+        assertTrue(
+            HandoffQueuePolicy.incomingMediaReplaced(
+                outgoingKeys = listOf("a", "b", "c"),
+                outgoingMediaIds = listOf("track-a", "song-version", "track-c"),
+                incomingKey = "b",
+                incomingMediaId = "video",
+                incomingIndexHint = 1,
+                outgoingCurrentIndex = 0,
+            ),
+        )
+    }
+
+    @Test
+    fun theSameRecordingUnderTheSameQueueKeyIsNotAReplacement() {
+        assertFalse(
+            HandoffQueuePolicy.incomingMediaReplaced(
+                outgoingKeys = listOf("a", "b", "c"),
+                outgoingMediaIds = listOf("track-a", "track-b", "track-c"),
+                incomingKey = "b",
+                incomingMediaId = "track-b",
+                incomingIndexHint = 1,
+                outgoingCurrentIndex = 0,
+            ),
+        )
+    }
+
+    @Test
+    fun aLostOrUnknownIncomingRowIsNotReportedAsReplaced() {
+        assertFalse(
+            HandoffQueuePolicy.incomingMediaReplaced(
+                outgoingKeys = listOf("a", "c"),
+                outgoingMediaIds = listOf("track-a", "track-c"),
+                incomingKey = "b",
+                incomingMediaId = "track-b",
+                incomingIndexHint = 1,
+                outgoingCurrentIndex = 0,
+            ),
+        )
+        assertFalse(
+            HandoffQueuePolicy.incomingMediaReplaced(
+                outgoingKeys = listOf("a", "b"),
+                outgoingMediaIds = listOf("track-a", "song-version"),
+                incomingKey = "b",
+                incomingMediaId = null,
+                incomingIndexHint = 1,
+                outgoingCurrentIndex = 0,
+            ),
+        )
+    }
 }

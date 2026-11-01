@@ -13,6 +13,7 @@ import com.music.bitchord.data.lyrics.Deepgram
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.net.SongVersionPolicy
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.HqQuality
@@ -736,8 +737,23 @@ internal class NextTrackPreparation(
         val item = player.getMediaItemAt(index)
         if ((item.queueEntryId ?: item.mediaId) != rowId) return null
         if (item.mediaId != song.videoId) return null
+        // The replacement must obey the same download rule as ordinary
+        // playback: a file recorded from another upload is the video's sound,
+        // not the catalogue release this row now names. A legacy record with
+        // no source is judged by its own title/type/length, not length alone.
+        val savedFile = Downloads.savedMetadataFor(resolved.videoId)
+        val savedSource = savedFile?.soundSourceVideoId
+            ?.takeIf { it != resolved.videoId }
+            ?.let { Downloads.savedMetadataFor(it) }
+        val useDownloadedFile = VersionReplacementFilePolicy.usesDownloadedFile(
+            playId = resolved.videoId,
+            saved = savedFile,
+            source = savedSource,
+            catalogDurationMs = resolved.durationMillis(),
+            online = !AudioCache.isOffline(),
+        )
         val replacement = QueueShuffle.withQueueMetadata(
-            resolved.toMediaItem(),
+            resolved.toMediaItem(useDownloadedFile = useDownloadedFile),
             newEntryId = item.queueEntryId,
             newCanonicalIndex = item.canonicalIndex,
             newTier = item.queueTier,

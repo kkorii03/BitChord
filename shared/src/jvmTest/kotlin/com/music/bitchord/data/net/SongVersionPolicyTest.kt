@@ -673,4 +673,165 @@ class SongVersionPolicyTest {
             ),
         )
     }
+
+    @Test
+    fun `a replacement streams when the saved file came from another upload`() {
+        assertFalse(
+            SongVersionPolicy.versionReplacementUsesDownloadedFile(
+                playId = "song",
+                soundSourceId = "video",
+                online = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `a replacement keeps the file recorded for its own stream`() {
+        assertTrue(
+            SongVersionPolicy.versionReplacementUsesDownloadedFile(
+                playId = "song",
+                soundSourceId = "song",
+                online = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `a replacement keeps the file offline even when the source differs`() {
+        assertTrue(
+            SongVersionPolicy.versionReplacementUsesDownloadedFile(
+                playId = "song",
+                soundSourceId = "video",
+                online = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `a legacy replacement with no length evidence keeps its file`() {
+        assertTrue(
+            SongVersionPolicy.versionReplacementUsesDownloadedFile(
+                playId = "song",
+                soundSourceId = null,
+                online = true,
+            ),
+        )
+        assertTrue(
+            SongVersionPolicy.versionReplacementUsesDownloadedFile(
+                playId = "song",
+                soundSourceId = null,
+                online = true,
+                fileDurationMs = null,
+                catalogDurationMs = 206_700L,
+            ),
+        )
+    }
+
+    @Test
+    fun `a legacy replacement streams when the file is the video's longer sound`() {
+        assertFalse(
+            SongVersionPolicy.versionReplacementUsesDownloadedFile(
+                playId = "song",
+                soundSourceId = null,
+                online = true,
+                fileDurationMs = 210_700L,
+                catalogDurationMs = 206_700L,
+            ),
+        )
+        assertTrue(
+            SongVersionPolicy.versionReplacementUsesDownloadedFile(
+                playId = "song",
+                soundSourceId = null,
+                online = true,
+                fileDurationMs = 207_500L,
+                catalogDurationMs = 206_700L,
+            ),
+        )
+    }
+
+    @Test
+    fun `a legacy replacement also streams on video type or an MV title`() {
+        assertFalse(
+            SongVersionPolicy.versionReplacementUsesDownloadedFile(
+                playId = "song",
+                soundSourceId = null,
+                online = true,
+                fileDurationMs = 206_700L,
+                catalogDurationMs = 206_700L,
+                title = "Song (Official Video)",
+            ),
+        )
+        assertFalse(
+            SongVersionPolicy.versionReplacementUsesDownloadedFile(
+                playId = "song",
+                soundSourceId = null,
+                online = true,
+                fileDurationMs = 206_700L,
+                catalogDurationMs = 206_700L,
+                isVideo = true,
+            ),
+        )
+        assertFalse(
+            SongVersionPolicy.versionReplacementUsesDownloadedFile(
+                playId = "song",
+                soundSourceId = null,
+                online = true,
+                fileDurationMs = 206_700L,
+                catalogDurationMs = 206_700L,
+                typeUnknown = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `a file from another song recording is not the video's sound`() {
+        assertTrue(
+            SongVersionPolicy.downloadedFileUse(
+                playId = "song",
+                soundSourceId = "quality",
+                online = true,
+                sourceIsVideo = false,
+            ) == SongVersionPolicy.DownloadedFileUse.PLAY_FILE,
+        )
+        assertFalse(
+            SongVersionPolicy.downloadedFileUse(
+                playId = "song",
+                soundSourceId = "video",
+                online = true,
+                sourceIsVideo = true,
+            ) == SongVersionPolicy.DownloadedFileUse.PLAY_FILE,
+        )
+    }
+
+    @Test
+    fun `a mismatched source with no metadata is streamed online, never played`() {
+        assertEquals(
+            SongVersionPolicy.DownloadedFileUse.STREAM_SONG,
+            SongVersionPolicy.downloadedFileUse(
+                playId = "song",
+                soundSourceId = "video",
+                online = true,
+                sourceIsVideo = null,
+                sourceTitle = "",
+            ),
+        )
+        assertEquals(
+            SongVersionPolicy.DownloadedFileUse.PLAY_FILE,
+            SongVersionPolicy.downloadedFileUse(
+                playId = "song",
+                soundSourceId = "quality",
+                online = true,
+                sourceIsVideo = false,
+            ),
+        )
+        assertEquals(
+            SongVersionPolicy.DownloadedFileUse.STREAM_SONG,
+            SongVersionPolicy.downloadedFileUse(
+                playId = "song",
+                soundSourceId = "video",
+                online = true,
+                sourceIsVideo = true,
+            ),
+        )
+    }
 }
