@@ -4,10 +4,19 @@ import android.content.Context
 import android.os.Build
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
+import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.startup.AppForeground
 import com.music.bitchord.startup.StartupWork
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -25,6 +34,7 @@ import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -52,6 +62,19 @@ object TelegramClientManager {
 
     private val gate = TelegramClientGate()
     private val generation = AtomicInteger()
+
+    /**
+     * Identical searches already running are shared, so a second track using
+     * the same query does not open a second TDLib search. Completed answers
+     * live for [SEARCH_REUSE_NANOS] only; this is not a catalogue cache.
+     */
+    private val searchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val searchFlights = ConcurrentHashMap<SearchKey, CompletableDeferred<SearchResult>>()
+    private val recentSearches = ConcurrentHashMap<SearchKey, RecentSearch>()
+
+    private data class SearchKey(val chats: List<Long>, val query: String, val limit: Int)
+    private class RecentSearch(val result: SearchResult, val atNanos: Long)
+    private class SearchResult(val tracks: List<TelegramTrack>, val mode: String)
 
     @Volatile
     private var context: Context? = null
@@ -205,6 +228,9 @@ object TelegramClientManager {
             _selectedChats.value = next
             runCatching { chatSelection?.save(next) }
         }
+        // The listener just changed what Telegram should look at, so a rest
+        // earned by the old selection must not keep the new one switched off.
+        clearTelegramRest()
     }
 
     fun setSelectedChatIds(ids: Set<Long>) {
@@ -213,6 +239,19 @@ object TelegramClientManager {
             _selectedChats.value = ids
             runCatching { chatSelection?.save(ids) }
         }
+        clearTelegramRest()
+    }
+
+    /**
+     * A Telegram settings change is new evidence: the old selection's rest
+     * says nothing about the new one. Reads the already-published registry
+     * list (no disk open) so this can run from the settings UI thread.
+     */
+    private fun clearTelegramRest() {
+        SourceRegistry.configs.value
+            .filter { it.kind == SourceKind.TELEGRAM }
+            .forEach { SourceResolver.clearCooldown(it.id) }
+        recentSearches.clear()
     }
 
     /** Reads the chosen chats off disk once; it neither decrypts credentials nor opens TDLib. */
@@ -282,9 +321,16 @@ object TelegramClientManager {
      * [TelegramClientGate]) and releases it afterwards. The request holds the
      * same counted lease as [streamMetadata], so a screen-off queue transition
      * keeps the client open and concurrent searches cannot close one another.
-     * Audio messages are searched first, then documents filtered to music
-     * formats, in selected order; duplicates across chats are dropped by
-     * chat/message id.
+     *
+     * One global TDLib search per filter covers every chat, and its rows are
+     * then kept only for the selected chats. The old per-chat loop cost
+     * 6–12 seconds for fourteen chats; a global search is two requests. If
+     * that path itself fails, the per-chat search is used as a bounded
+     * (four-at-a-time) fallback, not as the normal path.
+     *
+     * Identical searches in flight share one result; a just-finished answer is
+     * reused for [SEARCH_REUSE_NANOS], because the same query arrives again
+     * from the next track's upgrade pass.
      */
     suspend fun searchTracks(query: String, limit: Int): List<TelegramTrack> {
         // The credential store and Keystore are disk work. Load them on the
@@ -293,6 +339,41 @@ object TelegramClientManager {
         withContext(Dispatchers.IO) { runOnWorker { ensureCredentialsLoaded() } }
         val chats = selectedChatIds().toList().sorted()
         if (chats.isEmpty()) return emptyList()
+        val wanted = query.trim()
+        if (wanted.isEmpty()) return emptyList()
+        val key = SearchKey(chats, wanted, limit)
+        recentSearches[key]?.let { recent ->
+            if (System.nanoTime() - recent.atNanos < SEARCH_REUSE_NANOS) return recent.result.tracks
+            recentSearches.remove(key, recent)
+        }
+        val flight = searchFlight(key)
+        return flight.await().tracks
+    }
+
+    private fun searchFlight(key: SearchKey): CompletableDeferred<SearchResult> =
+        searchFlights.compute(key) { _, existing ->
+            existing ?: CompletableDeferred<SearchResult>().also { flight ->
+                searchScope.launch {
+                    try {
+                        val result = runSearch(key)
+                        val now = System.nanoTime()
+                        recentSearches[key] = RecentSearch(result, now)
+                        if (recentSearches.size > SEARCH_REUSE_MAX) {
+                            recentSearches.entries.removeIf {
+                                now - it.value.atNanos >= SEARCH_REUSE_NANOS
+                            }
+                        }
+                        flight.complete(result)
+                    } catch (failure: Throwable) {
+                        flight.completeExceptionally(failure)
+                    } finally {
+                        searchFlights.remove(key, flight)
+                    }
+                }
+            }
+        }!!
+
+    private suspend fun runSearch(key: SearchKey): SearchResult {
         // Callers include main-thread prefetch: the wait for the worker happens
         // on IO, never on the caller's thread. The release must still run when
         // the search is cancelled, or the lease (and the client) would leak.
@@ -301,10 +382,16 @@ object TelegramClientManager {
         val started = System.nanoTime()
         return try {
             awaitReady()
-            val rows = withContext(Dispatchers.IO) { searchSelected(chats, query, limit) }
+            val result = withContext(Dispatchers.IO) { searchSelected(key.chats, key.query, key.limit) }
             val millis = (System.nanoTime() - started) / 1_000_000
-            TelegramLog.search(query.length, chats.size, rows.size, millis)
-            rows
+            TelegramLog.search(
+                queryLength = key.query.length,
+                chats = key.chats.size,
+                results = result.tracks.size,
+                millis = millis,
+                mode = result.mode,
+            )
+            result
         } finally {
             withContext(NonCancellable + Dispatchers.IO) {
                 runOnWorker { releaseSearchLease("search close") }
@@ -402,50 +489,121 @@ object TelegramClientManager {
     }
 
     /** Runs on IO, with the client held by a search. */
-    private fun searchSelected(
+    private suspend fun searchSelected(
         chats: List<Long>,
         query: String,
         limit: Int,
-    ): List<TelegramTrack> {
+    ): SearchResult {
         val wanted = query.trim()
-        if (wanted.isEmpty()) return emptyList()
-        val rows = LinkedHashMap<String, TelegramTrack>()
-        var firstFailure: Throwable? = null
-        val filters = listOf<TdApi.SearchMessagesFilter>(
-            TdApi.SearchMessagesFilterAudio(),
-            TdApi.SearchMessagesFilterDocument(),
-        )
-        for (filter in filters) {
-            for (chat in chats) {
-                if (rows.size >= limit) break
-                try {
-                    val found = request(
-                        TdApi.SearchChatMessages(
-                            chat,
-                            null,
-                            wanted,
-                            null,
-                            0,
-                            0,
-                            100,
-                            filter,
-                        ),
-                        15_000,
-                    )
-                    found.messages?.forEach { message ->
-                        if (rows.size < limit) {
-                            TelegramMessageMapper.from(message)?.let { rows.putIfAbsent(it.id, it) }
-                        }
-                    }
-                } catch (failure: Throwable) {
-                    if (firstFailure == null) firstFailure = failure
-                }
+        if (wanted.isEmpty()) return SearchResult(emptyList(), "global")
+        return try {
+            SearchResult(searchGlobal(chats.toSet(), wanted, limit), "global")
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (globalFailure: Throwable) {
+            // A TDLib build without the global search, or one rejected request,
+            // falls back to the selected chats directly. Still bounded to four
+            // in-flight requests instead of the old one-at-a-time loop.
+            try {
+                SearchResult(searchPerChat(chats, wanted, limit), "perChat")
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (chatFailure: Throwable) {
+                throw IOException("Telegram search is unavailable.", globalFailure.apply { addSuppressed(chatFailure) })
             }
         }
+    }
+
+    /** Two TDLib requests total: audio and documents across all chats. */
+    private fun searchGlobal(
+        selected: Set<Long>,
+        query: String,
+        limit: Int,
+    ): List<TelegramTrack> {
+        val rows = LinkedHashMap<String, TelegramTrack>()
+        var firstFailure: Throwable? = null
+        for (filter in SEARCH_FILTERS) {
+            try {
+                val found = request(
+                    TdApi.SearchMessages(
+                        null,
+                        query,
+                        "",
+                        GLOBAL_SEARCH_LIMIT,
+                        filter,
+                        null,
+                        0,
+                        0,
+                    ),
+                    15_000,
+                )
+                found.messages?.forEach { message ->
+                    if (message.chatId !in selected) return@forEach
+                    if (rows.size < limit) {
+                        TelegramMessageMapper.from(message)?.let { rows.putIfAbsent(it.id, it) }
+                    }
+                }
+            } catch (failure: Throwable) {
+                if (firstFailure == null) firstFailure = failure
+            }
+        }
+        // A filter that failed after the other one already supplied rows is
+        // not worth falling back to the slow per-chat walk for.
         if (rows.isEmpty() && firstFailure != null) {
-            throw IOException("Telegram search is unavailable.", firstFailure)
+            throw IOException("Telegram global search is unavailable.", firstFailure)
         }
         return rows.values.toList()
+    }
+
+    /** Fallback only: selected chats, at most [MAX_PARALLEL_CHAT_SEARCHES] at once. */
+    private suspend fun searchPerChat(
+        chats: List<Long>,
+        query: String,
+        limit: Int,
+    ): List<TelegramTrack> = coroutineScope {
+        val rows = LinkedHashMap<String, TelegramTrack>()
+        var firstFailure: Throwable? = null
+        for (chunk in chats.chunked(MAX_PARALLEL_CHAT_SEARCHES)) {
+            if (synchronized(rows) { rows.size >= limit }) break
+            chunk.map { chat ->
+                async(Dispatchers.IO) {
+                    try {
+                        for (filter in SEARCH_FILTERS) {
+                            val found = request(
+                                TdApi.SearchChatMessages(
+                                    chat,
+                                    null,
+                                    query,
+                                    null,
+                                    0,
+                                    0,
+                                    100,
+                                    filter,
+                                ),
+                                15_000,
+                            )
+                            synchronized(rows) {
+                                found.messages?.forEach { message ->
+                                    if (rows.size < limit) {
+                                        TelegramMessageMapper.from(message)?.let { rows.putIfAbsent(it.id, it) }
+                                    }
+                                }
+                            }
+                        }
+                    } catch (failure: Throwable) {
+                        synchronized(rows) {
+                            if (firstFailure == null) firstFailure = failure
+                        }
+                    }
+                }
+            }.awaitAll()
+        }
+        synchronized(rows) {
+            if (rows.isEmpty() && firstFailure != null) {
+                throw IOException("Telegram search is unavailable.", firstFailure)
+            }
+            return@coroutineScope rows.values.toList()
+        }
     }
 
     /** Runs on IO, with the client held by the settings screen. */
@@ -855,6 +1013,9 @@ object TelegramClientManager {
 
             is TdApi.AuthorizationStateReady -> {
                 markSessionValidated()
+                // A login change is a new session; a rest from the previous
+                // one must not keep the source switched off.
+                clearTelegramRest()
                 update {
                     it.copy(stage = TelegramAuthStage.READY, error = null)
                 }
@@ -1064,6 +1225,17 @@ object TelegramClientManager {
     private const val STREAM_HOLDER = "stream"
     private const val MAX_CHATS = 500
     private const val MAX_CHAT_PAGES = MAX_CHATS / 100
+
+    private val SEARCH_FILTERS = listOf<TdApi.SearchMessagesFilter>(
+        TdApi.SearchMessagesFilterAudio(),
+        TdApi.SearchMessagesFilterDocument(),
+    )
+    private const val GLOBAL_SEARCH_LIMIT = 100
+    private const val MAX_PARALLEL_CHAT_SEARCHES = 4
+
+    /** Only long enough to fold the next track's identical query into this answer. */
+    private const val SEARCH_REUSE_NANOS = 2_000_000_000L
+    private const val SEARCH_REUSE_MAX = 64
 }
 
 /** A chat the listener may choose as a search source. */

@@ -45,9 +45,15 @@ class TelegramSourceStageTwoReviewTest {
 
     @Test
     fun `search log keeps the required numeric fields instead of redacting timings`() {
-        val line = TelegramLog.searchLine(queryLength = 12, chats = 3, results = 7, millis = 1234)
+        val line = TelegramLog.searchLine(
+            queryLength = 12,
+            chats = 3,
+            results = 7,
+            millis = 1234,
+            mode = "global",
+        )
 
-        assertEquals("telegram: search q=12 chats=3 results=7 ms=1234", line)
+        assertEquals("telegram: search q=12 chats=3 results=7 ms=1234 mode=global", line)
     }
 
     @Test
