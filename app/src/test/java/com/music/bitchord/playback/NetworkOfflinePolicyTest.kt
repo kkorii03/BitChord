@@ -1,5 +1,6 @@
 package com.music.bitchord.playback
 
+import com.music.bitchord.ko.isTransferCancellation
 import java.io.IOException
 import java.io.InterruptedIOException
 import java.net.SocketTimeoutException
