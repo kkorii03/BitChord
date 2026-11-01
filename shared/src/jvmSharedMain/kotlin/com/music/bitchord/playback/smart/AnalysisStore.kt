@@ -285,8 +285,11 @@ class AnalysisStore(
          * assumptions is silently wrong for the life of the file.
          *
          * 2 added the whole-track loudness figure used for transition matching.
+         * 3 changed key confidence to a centered profile correlation. Stored
+         * entries still hold the old near-zero confidence, so they are dropped
+         * and re-earned instead of pinning key matching off for their lifetime.
          */
-        const val SCHEMA_VERSION = 2
+        const val SCHEMA_VERSION = 3
 
         /** A few thousand tracks' worth, at tens of kilobytes each. */
         const val MAX_ENTRIES = 2_000
