@@ -301,8 +301,8 @@ internal object KoAppSettings {
      */
     @Synchronized
     fun checkPrivateListeningExpiry(nowMs: Long = System.currentTimeMillis()) {
-        val prefs = AppSettings.prefs
         if (!AppSettings.prefsReady()) return
+        val prefs = AppSettings.prefs
         if (!privateListening.value) return
         if (privateListeningSinceMs <= 0L) {
             privateListeningSinceMs = nowMs
