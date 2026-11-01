@@ -34,9 +34,11 @@ import com.music.bitchord.telegram.TelegramStreamUri
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -86,6 +88,16 @@ object HqAudioVerify {
 
     /** How much of each recording is compared. */
     const val COMPARE_SECONDS = 90.0
+
+    /**
+     * How much of the candidate is fetched and decoded.
+     *
+     * One second past [COMPARE_SECONDS] is what [featuresOf] already decoded:
+     * a decoded chunk that starts inside the window may run past its end. The
+     * fetch used to ask for two seconds, so every candidate downloaded a
+     * second of audio the comparison never read.
+     */
+    const val FETCH_SECONDS = COMPARE_SECONDS + 1.0
 
     /** One verification per pair at a time while that verification is running. */
     private val locks = ConcurrentHashMap<String, Mutex>()
@@ -211,11 +223,39 @@ object HqAudioVerify {
         data class Missing(val reason: NoReferenceReason) : Reference
     }
 
-    /** The candidate's opening as a profile, and how many bytes were fetched for it. */
+    /**
+     * The candidate's opening as a profile, how many bytes were fetched for
+     * it, and the milliseconds each stage spent.
+     *
+     * The download and decode overlap by design, so the two figures are each
+     * stage's own wall time rather than a partition of one total.
+     */
     internal data class Candidate(
         val features: ChromaAlignment.Features,
         val bytes: Long,
+        val downloadMs: Long = 0L,
+        val decodeMs: Long = 0L,
+        val chromaMs: Long = 0L,
     )
+
+    /** Chroma construction time inside one decode, so it can be told apart from the codec. */
+    private class DecodeTiming {
+        var decodeNanos: Long = 0L
+        var chromaNanos: Long = 0L
+    }
+
+    /** What a streaming decode produced, read by [candidateFetch] once the copy is done. */
+    private class StreamSlot {
+        @Volatile
+        var features: ChromaAlignment.Features? = null
+        @Volatile
+        var decodeMs: Long = 0L
+        @Volatile
+        var chromaMs: Long = 0L
+    }
+
+    private typealias StreamDecode =
+        suspend (File, Long, DownloadProgress) -> Boolean
 
     /** Temporary candidate heads live here and are deleted after every attempt. */
     private const val CANDIDATE_DIR = "hq_verify"
@@ -518,6 +558,7 @@ object HqAudioVerify {
                         )
                         return@coroutineScope Outcome.Unavailable(transient = true)
                     }
+                    val alignStarted = System.nanoTime()
                     val result = runCatching {
                         ChromaAlignment.align(
                             referenceFeatures,
@@ -525,11 +566,13 @@ object HqAudioVerify {
                             videoComplete = false,
                         )
                     }.getOrNull()
+                    val alignMs = millisSince(alignStarted)
                     if (result == null) {
                         // The aligner failed rather than finding a poor match;
                         // that says nothing about the candidate, so it must not
                         // become a stored rejection.
                         logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId, measured = false)
+                        logTiming(youtubeId, candidate, alignMs)
                         return@coroutineScope Outcome.Unavailable(transient = true)
                     }
                     val match = result.matchPercent
@@ -547,6 +590,7 @@ object HqAudioVerify {
                         candidate = "file",
                         bytes = candidate.bytes,
                     )
+                    logTiming(youtubeId, candidate, alignMs)
                     if (!verdict.accepted) {
                         if (HqVerifyPolicy.shouldPersistRejection(
                                 referenceAvailable = referenceComplete && candidateComplete,
@@ -899,7 +943,7 @@ object HqAudioVerify {
         val source = VersionAudioAligner.openDataSource(context, song) ?: return null
         return try {
             val coroutine = currentCoroutineContext()
-            featuresOf(source) { !coroutine.isActive }
+            featuresOf(source, abort = { !coroutine.isActive })
         } finally {
             runCatching { source.close() }
         }
@@ -926,6 +970,24 @@ object HqAudioVerify {
                 (candidate?.let { " candidate=$it" } ?: "") +
                 (bytes?.let { " bytes=$it" } ?: ""),
             about,
+        )
+    }
+
+    /**
+     * The stage costs of one measured candidate, in milliseconds.
+     *
+     * Download and decode overlap, so the first two are each stage's own wall
+     * time rather than a split of one total; chroma is the part of decode spent
+     * building profiles. This is the line used to tell a slow edge from a slow
+     * codec or aligner without guessing from the verdict.
+     */
+    private fun logTiming(youtubeId: String, candidate: Candidate, alignMs: Long) {
+        TrackLog.i(
+            TAG,
+            "hq-verify timing: download=${candidate.downloadMs} " +
+                "decode=${candidate.decodeMs} chroma=${candidate.chromaMs} " +
+                "align=$alignMs bytes=${candidate.bytes}",
+            youtubeId,
         )
     }
 
@@ -1149,7 +1211,7 @@ object HqAudioVerify {
         epoch: PlaybackEpoch,
         refreshStream: (suspend (SourceStream) -> SourceStream?)?,
     ): CandidateFetch {
-        val needed = HqVerifyPolicy.bytesToFetch(stream.format, COMPARE_SECONDS + 2.0)
+        val needed = HqVerifyPolicy.bytesToFetch(stream.format, FETCH_SECONDS)
         if (needed <= 0L) return CandidateFetch.Failed
         if (!ensureCandidateDirectory(directory)) {
             TrackLog.w(TAG, "decode: hq-verify failed at=cache-dir")
@@ -1162,12 +1224,40 @@ object HqAudioVerify {
             return CandidateFetch.Failed
         }
         return try {
+            val slot = StreamSlot()
+            // The same head, decoded as it arrives instead of after it has all
+            // landed. Nothing about the bytes handed to the decoder changes:
+            // it reads the file from position 0, blocking only when it reaches
+            // the current end. A decode that cannot use the growing file still
+            // falls back to the complete file below, so this can only save
+            // time, not change the answer.
+            val decode: StreamDecode = { source, expected, progress ->
+                val started = System.nanoTime()
+                val timing = DecodeTiming()
+                val coroutine = currentCoroutineContext()
+                val features = featuresOfGrowing(
+                    source,
+                    expected,
+                    progress,
+                    { !coroutine.isActive },
+                    timing,
+                )
+                coroutine.ensureActive()
+                if (features != null) {
+                    slot.features = features
+                    slot.decodeMs = millisSince(started)
+                    slot.chromaMs = timing.chromaNanos / 1_000_000L
+                }
+                features != null
+            }
+            val downloadStarted = System.nanoTime()
             val download = try {
-                downloadCandidate(stream, file, needed, client, epoch)
+                downloadCandidate(stream, file, needed, client, epoch, decode)
             } catch (refused: DownloadRefused) {
                 if (refused.code != 403 && refused.code != 410) throw refused
-                retryWithFreshStream(stream, refused, file, needed, epoch, refreshStream)
+                retryWithFreshStream(stream, refused, file, needed, epoch, refreshStream, decode)
             }
+            val downloadMs = millisSince(downloadStarted)
             val bytes = when (download) {
                 is DownloadFetch.Bytes -> download.value
                 is DownloadFetch.RateLimited ->
@@ -1178,20 +1268,41 @@ object HqAudioVerify {
                 TrackLog.w(TAG, "decode: hq-verify failed at=download bytes=0")
                 return CandidateFetch.Failed
             }
-            val coroutine = currentCoroutineContext()
-            // abort answers "stop now?", so it is the inverse of isActive. Passing
-            // isActive itself stopped every decode on its first pass, which is why
-            // no candidate ever reached the comparison.
-            val features = featuresOf(file) { !coroutine.isActive }
-            // The decoder stops on abort without throwing; confirm here that
-            // the verification itself was not abandoned while it ran, before a
-            // null is reported as a decode failure.
-            coroutine.ensureActive()
+            // A streamed profile is the same decode; only fall back to the
+            // finished file when the growing source could not be read (an
+            // extractor that insists on the whole file, or a codec that needs
+            // the tail). The file has all the fetched bytes by then.
+            val features = slot.features ?: run {
+                val coroutine = currentCoroutineContext()
+                val started = System.nanoTime()
+                val timing = DecodeTiming()
+                // abort answers "stop now?", so it is the inverse of isActive. Passing
+                // isActive itself stopped every decode on its first pass, which is why
+                // no candidate ever reached the comparison.
+                val decoded = featuresOf(file, { !coroutine.isActive }, timing)
+                // The decoder stops on abort without throwing; confirm here that
+                // the verification itself was not abandoned while it ran, before a
+                // null is reported as a decode failure.
+                coroutine.ensureActive()
+                if (decoded != null) {
+                    slot.decodeMs = millisSince(started)
+                    slot.chromaMs = timing.chromaNanos / 1_000_000L
+                }
+                decoded
+            }
             if (features == null) {
                 TrackLog.w(TAG, "decode: hq-verify failed at=candidate-decode bytes=$bytes")
                 return CandidateFetch.Failed
             }
-            CandidateFetch.Ready(Candidate(features, bytes))
+            CandidateFetch.Ready(
+                Candidate(
+                    features = features,
+                    bytes = bytes,
+                    downloadMs = downloadMs,
+                    decodeMs = slot.decodeMs,
+                    chromaMs = slot.chromaMs,
+                ),
+            )
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (e: Exception) {
@@ -1238,6 +1349,7 @@ object HqAudioVerify {
         limit: Long,
         epoch: PlaybackEpoch,
         refreshStream: (suspend (SourceStream) -> SourceStream?)?,
+        decode: StreamDecode? = null,
     ): DownloadFetch {
         val fresh = refreshStream?.invoke(stream)
         if (fresh == null || fresh.url.isBlank()) {
@@ -1259,7 +1371,7 @@ object HqAudioVerify {
         // A new answer may state a different rate; fetching the old byte count
         // could cut a lossless head short or read far more than the new one
         // needs.
-        val freshLimit = HqVerifyPolicy.bytesToFetch(fresh.format, COMPARE_SECONDS + 2.0)
+        val freshLimit = HqVerifyPolicy.bytesToFetch(fresh.format, FETCH_SECONDS)
             .takeIf { it > 0L } ?: limit
         val retried = try {
             downloadCandidate(
@@ -1268,6 +1380,7 @@ object HqAudioVerify {
                 freshLimit,
                 ProxyPlayback.mediaClientFor(fresh.url),
                 epoch,
+                decode,
             )
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -1402,6 +1515,7 @@ object HqAudioVerify {
         limit: Long,
         client: OkHttpClient,
         epoch: PlaybackEpoch,
+        decode: StreamDecode? = null,
     ): DownloadFetch {
         var attempt = 0
         // One candidate download per host at a time. With AutoPlay filling the
@@ -1412,7 +1526,9 @@ object HqAudioVerify {
         val host = HqHostTracker.hostOf(stream.url).orEmpty()
         while (true) {
             try {
-                val bytes = withCandidateHost(host) { downloadPrefix(stream, file, limit, client) }
+                val bytes = withCandidateHost(host) {
+                    downloadPrefix(stream, file, limit, client, decode)
+                }
                 HqHostTracker.noteSuccess(host)
                 return DownloadFetch.Bytes(bytes)
             } catch (limited: RateLimitedDownload) {
@@ -1532,6 +1648,7 @@ object HqAudioVerify {
         file: File,
         limit: Long,
         client: OkHttpClient,
+        decode: StreamDecode? = null,
     ): Long {
         // A Telegram candidate is not an HTTP URL: OkHttp rejected the internal
         // scheme, so no Telegram row could ever be measured or chosen.
@@ -1553,15 +1670,24 @@ object HqAudioVerify {
             }
             .build()
         val call = client.newCall(request)
-        val coroutine = currentCoroutineContext()
-        return suspendCancellableCoroutine { continuation ->
-            // Cancelling the call closes the connection, which is what lets a
-            // blocked execute/read return instead of waiting for the socket
-            // timeout. The copy runs on the IO dispatcher the verifier already
-            // uses, so the caller's finally deletes the file only after the
-            // stream is closed.
-            continuation.invokeOnCancellation { call.cancel() }
-            val length = try {
+        // Cancelling the call closes the connection, which is what lets a
+        // blocked execute/read return instead of waiting for the socket
+        // timeout. The copy runs on the IO dispatcher the verifier already
+        // uses, so the caller's finally deletes the file only after the stream
+        // is closed.
+        return withContext(Dispatchers.IO) {
+            // The blocking read below cannot check cancellation itself. A
+            // child that only waits for cancellation closes the connection as
+            // soon as the verification is abandoned, which is what lets the
+            // blocked call return instead of waiting for the socket timeout.
+            val watchdog = launch(start = CoroutineStart.UNDISPATCHED) {
+                try {
+                    awaitCancellation()
+                } finally {
+                    call.cancel()
+                }
+            }
+            try {
                 call.execute().use { response ->
                     if (!response.isSuccessful) {
                         val headerFields = response.headers.toMultimap()
@@ -1583,28 +1709,78 @@ object HqAudioVerify {
                         throw DownloadRefused(response.code)
                     }
                     val body = response.body ?: throw IOException("no body")
+                    // Never claim more bytes than this fetch will write: the
+                    // extractor uses the size to decide where the file ends.
+                    val contentLength = body.contentLength()
+                    val expected = if (contentLength > 0L) minOf(contentLength, limit) else limit
                     body.byteStream().use { input ->
-                        FileOutputStream(file).use { output ->
-                            val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
-                            var remaining = limit
-                            while (remaining > 0L) {
-                                coroutine.ensureActive()
-                                val want = minOf(buffer.size.toLong(), remaining).toInt()
-                                val read = input.read(buffer, 0, want)
-                                if (read < 0) break
-                                output.write(buffer, 0, read)
-                                remaining -= read
+                        if (decode == null) {
+                            copyPrefix(input, file, limit)
+                            file.length()
+                        } else {
+                            val progress = DownloadProgress()
+                            coroutineScope {
+                                val copy = async(Dispatchers.IO) {
+                                    try {
+                                        copyPrefix(input, file, limit)
+                                    } catch (failed: Throwable) {
+                                        progress.markFinished(failed)
+                                        throw failed
+                                    } finally {
+                                        if (!progress.finished) progress.markFinished()
+                                    }
+                                }
+                                val decoded = try {
+                                    decode(file, expected, progress)
+                                } catch (cancelled: CancellationException) {
+                                    copy.cancel()
+                                    throw cancelled
+                                } catch (_: Exception) {
+                                    false
+                                }
+                                if (decoded) {
+                                    // The decoder has all it needs; stop the
+                                    // transfer instead of fetching the rest of
+                                    // the estimated head. Cancelling the call
+                                    // closes the socket so a blocked read
+                                    // returns at once.
+                                    copy.cancel()
+                                    call.cancel()
+                                    runCatching { copy.await() }
+                                } else {
+                                    // Let the head finish, then decode the
+                                    // complete file the old way below.
+                                    copy.await()
+                                }
                             }
-                            output.flush()
+                            file.length()
                         }
                     }
                 }
-                file.length()
-            } catch (error: Exception) {
-                if (continuation.isActive) continuation.resumeWithException(error)
-                return@suspendCancellableCoroutine
+            } finally {
+                watchdog.cancel()
             }
-            if (continuation.isActive) continuation.resume(length)
+        }
+    }
+
+    /**
+     * Copies at most [limit] bytes from [input] into [file], stopping as soon
+     * as the caller is cancelled.
+     */
+    private suspend fun copyPrefix(input: java.io.InputStream, file: File, limit: Long) {
+        val coroutine = currentCoroutineContext()
+        FileOutputStream(file).use { output ->
+            val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
+            var remaining = limit
+            while (remaining > 0L) {
+                coroutine.ensureActive()
+                val want = minOf(buffer.size.toLong(), remaining).toInt()
+                val read = input.read(buffer, 0, want)
+                if (read < 0) break
+                output.write(buffer, 0, read)
+                remaining -= read
+            }
+            output.flush()
         }
     }
 
@@ -1619,33 +1795,68 @@ object HqAudioVerify {
     private fun featuresOf(
         file: File,
         abort: () -> Boolean = { false },
-    ): ChromaAlignment.Features? = featuresFrom { onChunk ->
-        AudioDecoder.decodeMonoStream(file, 0.0, COMPARE_SECONDS + 1.0, abort = abort, label = "hq-verify", onChunk = onChunk)
+        timing: DecodeTiming? = null,
+    ): ChromaAlignment.Features? = featuresFrom(timing) { onChunk ->
+        AudioDecoder.decodeMonoStream(file, 0.0, FETCH_SECONDS, abort = abort, label = "hq-verify", onChunk = onChunk)
     }
 
     /** The same profile from a downloaded file opened as a data source (a `content://` file has no path). */
     private fun featuresOf(
         source: MediaDataSource,
         abort: () -> Boolean = { false },
-    ): ChromaAlignment.Features? = featuresFrom { onChunk ->
-        AudioDecoder.decodeMonoStream(source, 0.0, COMPARE_SECONDS + 1.0, abort = abort, label = "hq-verify", onChunk = onChunk)
+        timing: DecodeTiming? = null,
+    ): ChromaAlignment.Features? = featuresFrom(timing) { onChunk ->
+        AudioDecoder.decodeMonoStream(source, 0.0, FETCH_SECONDS, abort = abort, label = "hq-verify", onChunk = onChunk)
+    }
+
+    /**
+     * The profile of a candidate that is still being written.
+     *
+     * The extractor reads the same growing file the copy loop is filling; a
+     * read at the end waits for the next bytes instead of treating them as
+     * EOF. A null here means the growing source could not be read, and the
+     * caller decodes the complete file instead.
+     */
+    private fun featuresOfGrowing(
+        file: File,
+        expectedSize: Long,
+        progress: DownloadProgress,
+        abort: () -> Boolean,
+        timing: DecodeTiming?,
+    ): ChromaAlignment.Features? {
+        val reader = runCatching {
+            GrowingFileReader(file, expectedSize, progress)
+        }.getOrNull() ?: return null
+        val source = GrowingFileDataSource(reader)
+        return try {
+            featuresOf(source, abort, timing)
+        } finally {
+            runCatching { source.close() }
+        }
     }
 
     private fun featuresFrom(
+        timing: DecodeTiming? = null,
         decode: ((FloatArray, Int, Double) -> Unit) -> Double?,
     ): ChromaAlignment.Features? {
+        val started = System.nanoTime()
         var extractor: ChromaAlignment.Extractor? = null
         var sampleRate = 0
         var startSeconds = 0.0
         try {
             val decoded = decode { samples, rate, at ->
-                val current = extractor
-                if (current == null) {
-                    sampleRate = rate
-                    startSeconds = at
-                    extractor = ChromaAlignment.Extractor(rate).also { it.push(samples) }
-                } else if (rate == sampleRate) {
-                    current.push(samples)
+                val pushStarted = System.nanoTime()
+                try {
+                    val current = extractor
+                    if (current == null) {
+                        sampleRate = rate
+                        startSeconds = at
+                        extractor = ChromaAlignment.Extractor(rate).also { it.push(samples) }
+                    } else if (rate == sampleRate) {
+                        current.push(samples)
+                    }
+                } finally {
+                    timing?.let { it.chromaNanos += System.nanoTime() - pushStarted }
                 }
             }
             // Null means the decode was aborted or produced nothing. A partial
@@ -1657,12 +1868,17 @@ object HqAudioVerify {
         } catch (e: Exception) {
             TrackLog.w(TAG, "hq-verify: could not read candidate audio: ${e.message}")
             return null
+        } finally {
+            timing?.decodeNanos = System.nanoTime() - started
         }
         // A container that never states its rate would make the chroma clock
         // infinite; it cannot be compared, so it is refused here rather than
         // carried into the aligner as a bogus profile.
         if (sampleRate <= 0) return null
-        return extractor?.finish(startSeconds = startSeconds)?.takeIf { it.frames > 0 }
+        val finishStarted = System.nanoTime()
+        val features = extractor?.finish(startSeconds = startSeconds)?.takeIf { it.frames > 0 }
+        timing?.let { it.chromaNanos += System.nanoTime() - finishStarted }
+        return features
     }
 
     /**
@@ -1709,5 +1925,8 @@ object HqAudioVerify {
     }
 
     private const val MAX_UNMEASURED_ROWS = 256
+
+    private fun millisSince(startedNanos: Long): Long =
+        (System.nanoTime() - startedNanos) / 1_000_000L
 }
 
