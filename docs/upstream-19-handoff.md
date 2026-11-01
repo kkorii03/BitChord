@@ -1,4 +1,4 @@
-# v1.9 업그레이드 인수인계 (새 Claude 계정용) — 2026-11-01 06:00
+﻿# v1.9 업그레이드 인수인계 (새 Claude 계정용) — 2026-11-01 06:00
 
 새 계정의 Claude 는 이 파일부터 읽는다. 함께 읽을 것: `C:\Users\jang\Desktop\BitChord\CLAUDE.md`(운영 지침, 자동 로드), `ship\HANDOFF.md`(1.8 일상판, 원래 세션 담당), 이 폴더의 `docs/upstream-19-*.md`, `docs/ko-fork-layout.md`.
 사용자 응답은 항상 한국어. 사용자는 코딩을 모른다 — 쉬운 말로.
@@ -23,7 +23,7 @@
 | 공유 메모 폴더 | `C:\Users\jang\AppData\Local\Claude-Data\claude_pzs8sxrjxfjjc\side-session-notes\local_15ed43a1-...\u19-status.md` (계정이 바뀌면 경로가 달라질 수 있음 — 이 파일이 정본) |
 
 ## 2. 버전 번호 규칙
-- 1.9 시험판 = **홀수**(다음 99), 1.8(fix-1030) 시험판 = **짝수**(다음 98). 설치 후 낮은 번호로 되돌릴 수 없음.
+- 1.9 시험판 = **홀수**(다음 101), 1.8(fix-1030) 시험판 = **짝수**(다음 98). 설치 후 낮은 번호로 되돌릴 수 없음.
 - 서명: `task-apk.yml` 이 `apk/**` 브랜치 push 로 서명 안 된 APK 를 만든다 → `gh run download <run> -n BitChord-task-arm64` → 
   `BITCHORD_APK=<apk> BITCHORD_VERSION_CODE=<홀수> BITCHORD_DL=ship\dl-u19 tools\python\python.exe -I ship\ship_local.py ko-102-u19-N`. `ship\work` 를 1.8 쪽과 같이 쓰므로 동시에 돌리지 말 것. GitHub 릴리스를 만드는 `korean-build.yml` 은 쓰지 않는다(자동 배포 금지).
 
@@ -68,6 +68,7 @@
 - **11-01 07:45 1.9 수정 a6d8249a**: AuthStore(EncryptedPrefs/Tink)를 시작 직후 백그라운드에서 미리 열기(EncryptedPrefs 는 @Synchronized+캐시라 안전, 로그인 데이터·파일 이름 변경 없음), 홈 폴더 카드가 홈이 안 보일 때(LocalArtworkMotion) 블러 애니메이션 멈춤(재생 중 매 프레임 다시 블러하던 것). ArtistFacts.init 은 아직 메인(다음 할 일). 검증: CI 41285079189, quick ui-tour 41285081536 — 비교 기준 quick 41277161386(Home 0.7초 이상 28번, max 5.2s).
 - **측정 결과(11-01 08:10, 41285081536, a6d8249a): 개선 확인 안 됨.** Home 0.7초 이상 28번(수정 전 28~31번), skipped 2578(전 1216~1336), max 9.3s; onCreate 4.2~7.3초(전 3.7초). CI 41285079189 는 통과. 에뮬레이터(소프트웨어 그리기, 공용 러너)는 같은 코드로도 값이 크게 흔들려서 이 정도 변경은 구분이 안 됨 — **에뮬 수치로 판단하지 말 것.** 수정 자체는 해롭지 않아 남겨 둠(로그인 데이터 변경 없음).
 - 다음 방법: ① 메인 스레드 표본을 홈 진입 후 5~20초 구간에서, 40줄 제한 없이 여러 번 찍어 앱 코드(com.music.bitchord) 가 몇 번 나오는지 센다 ② ArtistFacts.init 을 IO 로 ③ 사용자 폰에서 vc99 이상의 `exit-anr:` 스택이 가장 확실한 근거.
+- **11-01 서명본 ko-102-u19-3 (vc99)**: `ship\dl-u19\ko-102-u19-3.apk`, 87,924,572 B, APK SHA256 `32d9feae154db315e148208aaf1afd708a14d0d5ceec2258047ed2393dd9d3fc`, 소스 dfecd258(1.8 수정 15개 + '가사' 분류 + ANR 기록·시작 수정 전부 포함), APK run 41314534095. **다운로드 페이지 미게시**(사용자 폰 확인 전 금지 방침). 사용자가 쓰다 먹통이 나면 다음 실행 때 `exit-anr:` 줄이 진단 로그에 남음 → 그 스택으로 원인 확정. 다음 1.9 번호는 101.
 - 주의: PowerShell 로 이 파일을 고칠 때 `Get-Content` 에 `-Encoding UTF8` 을 빼면 한글이 깨진다(11-01 515b519f 에서 실제로 깨져 복구함). Edit 도구나 `-Encoding UTF8` 사용.
 
 ## 6. 사용자 지시 원문 요약 (우선순위)
