@@ -132,6 +132,7 @@ object SimilarCandidates {
     private var lastSimilar: List<SimilarRecording> = emptyList()
     private var lastResolved: List<Song> = emptyList()
     private var pendingTail: List<SimilarRecording> = emptyList()
+    private var lastFailedSearches = 0
 
     // ListenBrainz's window, learned from response headers. Guarded by [lock].
     private var notBeforeMs = 0L
@@ -187,8 +188,15 @@ object SimilarCandidates {
             // the answer. Only its kept tail may cost a few searches, and only
             // when the first batch barely matched.
             val reused = reuseLastFetch(seed) ?: return emptyList()
-            store(SimilarCacheEntry(key, nowMs, reused.map { it.asCached() }))
-            return reused
+            if (shouldCacheReusedSimilarAnswer(
+                    found = reused.songs.size,
+                    failedBefore = reused.failedSearchesBefore,
+                    failedNow = reused.failedSearchesNow,
+                )
+            ) {
+                store(SimilarCacheEntry(key, nowMs, reused.songs.map { it.asCached() }))
+            }
+            return reused.songs
         }
 
         val recording = when (val lookup = resolveRecording(seed)) {
@@ -217,6 +225,7 @@ object SimilarCandidates {
             lastSimilar = similar
             lastResolved = resolved
             pendingTail = tail
+            lastFailedSearches = resolution.failedSearches
         }
 
         // The seed resolved and ListenBrainz answered, so this outcome is the
@@ -265,6 +274,20 @@ object SimilarCandidates {
         found > 0 || failedSearches == 0
 
     /**
+     * Whether an answer reused inside the throttle window may be remembered.
+     *
+     * The same rule as [shouldCacheSimilarAnswer], but the failures from the
+     * fetch that produced the reused rows still count: an empty answer that
+     * was not cached because its YouTube searches failed must not become a
+     * seven-day empty cache merely because the next top-up reused it.
+     */
+    internal fun shouldCacheReusedSimilarAnswer(
+        found: Int,
+        failedBefore: Int,
+        failedNow: Int,
+    ): Boolean = shouldCacheSimilarAnswer(found, failedBefore + failedNow)
+
+    /**
      * The last fetch's answer for a seed inside the throttle window.
      *
      * Nothing is fetched from ListenBrainz. When the first batch resolved fewer
@@ -273,31 +296,39 @@ object SimilarCandidates {
      * path may spend, and it stops once enough rows survive. Returns null when
      * there is nothing to reuse, so failures are not cached as empty answers.
      */
-    private suspend fun reuseLastFetch(seed: Seed): List<Song>? {
+    private suspend fun reuseLastFetch(seed: Seed): SimilarReuse? {
         var resolved: List<Song> = emptyList()
         var tail: List<SimilarRecording> = emptyList()
         var hadSimilar = false
+        var failedBefore = 0
         synchronized(lock) {
             hadSimilar = lastSimilar.isNotEmpty()
             resolved = lastResolved
             tail = pendingTail
+            failedBefore = lastFailedSearches
         }
         if (!hadSimilar) return null
 
+        var failedNow = 0
         if (resolved.size < MIN_LAZY_SURVIVORS && tail.isNotEmpty()) {
             val batch = tail.take(MAX_SEARCHES_PER_FETCH)
             val rest = tail.drop(MAX_SEARCHES_PER_FETCH)
-            val extra = resolveOnYouTube(batch, seed).songs
-            resolved = (resolved + extra).distinctBy { it.videoId }
+            val extra = resolveOnYouTube(batch, seed)
+            failedNow = extra.failedSearches
+            resolved = (resolved + extra.songs).distinctBy { it.videoId }
             synchronized(lock) {
                 lastResolved = resolved
                 pendingTail = rest
             }
         }
 
-        return resolved.filterNot {
-            titleMatches(it.title, seed.title) && artistMatches(it.artist, seed.artist)
-        }
+        return SimilarReuse(
+            songs = resolved.filterNot {
+                titleMatches(it.title, seed.title) && artistMatches(it.artist, seed.artist)
+            },
+            failedSearchesBefore = failedBefore,
+            failedSearchesNow = failedNow,
+        )
     }
 
     // ── Seeds ───────────────────────────────────────────────────────────────
@@ -524,6 +555,13 @@ object SimilarCandidates {
     private data class YouTubeResolution(
         val songs: List<Song>,
         val failedSearches: Int,
+    )
+
+    /** A reused answer and the failed lookups it must not hide behind a cache. */
+    private data class SimilarReuse(
+        val songs: List<Song>,
+        val failedSearchesBefore: Int,
+        val failedSearchesNow: Int,
     )
 
     /** What one YouTube search produced; a failure is not the same as no match. */

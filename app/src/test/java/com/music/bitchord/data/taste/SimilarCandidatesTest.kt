@@ -226,6 +226,41 @@ class SimilarCandidatesTest {
     }
 
     @Test
+    fun `a reused empty answer is not cached while any of its searches failed`() {
+        // The fetch that produced the reused rows may have failed some YouTube
+        // lookups and was therefore not cached. Reusing its empty answer on the
+        // next top-up must not turn that transient fault into a seven-day cache.
+        assertFalse(
+            SimilarCandidates.shouldCacheReusedSimilarAnswer(
+                found = 0,
+                failedBefore = 2,
+                failedNow = 0,
+            ),
+        )
+        assertFalse(
+            SimilarCandidates.shouldCacheReusedSimilarAnswer(
+                found = 0,
+                failedBefore = 0,
+                failedNow = 1,
+            ),
+        )
+        assertTrue(
+            SimilarCandidates.shouldCacheReusedSimilarAnswer(
+                found = 0,
+                failedBefore = 0,
+                failedNow = 0,
+            ),
+        )
+        assertTrue(
+            SimilarCandidates.shouldCacheReusedSimilarAnswer(
+                found = 1,
+                failedBefore = 2,
+                failedNow = 1,
+            ),
+        )
+    }
+
+    @Test
     fun `similar is fetched at most once per fifteen minutes even as tracks change`() {
         val window = SimilarCandidates.SIMILAR_MIN_INTERVAL_MS
 
