@@ -1,0 +1,29 @@
+﻿BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/telegram. 대상: app/src/main/java/com/music/bitchord/telegram/*, 텔레그램 소스 어댑터, SourceResolver/SourceCooldown 의 텔레그램 처리.
+버그(사용자 폰 tg5 vc108, 11-01 13:30~13:51, 채팅 14개 선택): 텔레그램 검색이 느리고 실패해 30분 쉬기에 들어가며, 사용자가 채널을 더 추가해도 계속 쉼 → 텔레그램 업그레이드가 사실상 안 됨.
+ 13:32:37.514 telegram: search q=23 chats=14 results=0 ms=12697
+ 13:33:02.345 telegram: client close reason=search close
+ 13:33:02.364 telegram: search failed (IOException)  /  텔레그램 failed: IOException: Telegram search is unavailable.
+ 13:33:20.753 search q=14 chats=14 results=0 ms=6362 ; 13:33:21.045 같은 q 다시 ms=6655 ; 13:33:21.553 q=3 results=15 ms=799
+ 13:33:29.919 source 8de46317-… failed 2 times; resting for 30 minutes / 텔레그램 timed out after 15000ms
+ 13:38~13:41 사용자가 텔레그램 설정에서 채널 추가 → 13:43 이후 모든 곡 '텔레그램 is resting after repeated failures'
+할 일:
+① 원인 확정(파일:줄): (a) 한 검색이 끝나며 클라이언트를 닫는 순간 다른 검색이 진행/대기 중이라 IOException 'Telegram search is unavailable' 이 나는 경합인지, (b) 채팅 14개를 하나씩 searchChatMessages 로 도는지(쿼리당 6~12초), (c) 같은 쿼리를 중복 요청하는지.
+② 수정: 경합 제거(진행 중 검색이 있으면 닫지 않음; 기존 lease 구조 재사용). 쿼리당 요청을 줄인다 — TDLib searchMessages(전체, 오디오/문서 필터) 1회 후 선택한 채팅만 남기거나, 채팅별 요청을 병렬(동시 최대 4)로; 같은 쿼리 중복 제거. 목표: 쿼리당 3초 이내.
+③ 텔레그램의 느림(timeout)·'검색 결과 없음'은 소스 실패로 세지 않는다(실제 오류만 실패). 텔레그램 설정(채팅 선택·로그인)이 바뀌면 텔레그램 쉬기(cooldown)를 바로 해제.
+④ 로그: 'telegram: search q=.. chats=.. results=.. ms=.. mode=global|perChat'.
+테스트(고치기 전 실패): 동시 검색 2개 중 하나가 끝나도 다른 하나가 IOException 없이 끝남; 텔레그램 timeout 이 cooldown 실패로 안 세짐; 설정 변경 시 cooldown 해제. 새 테스트 클래스 이름 요약에 적을 것.
+제약: .github/, keys, *.jks, 서명 수정 금지. 곡 판정(TrackMatcher)·소리 대조 기준 변경 금지. 다른 소스의 cooldown 동작 변경 금지. 타이머·폴링 금지(배터리). 바꾼 함수의 모든 호출부 재확인. 기존 주석·의도를 지우면 요약에 이유.
+마지막 10줄 이내 요약: 원인(파일:줄) / 수정 / 테스트 / 미해결.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 6
+HIGH `TelegramClientManager.kt:528` — The global search takes only the first 100 rows of all chats per filter and ignores `FoundMessages.nextOffset`, so selected chats whose matches fall outside that page return 0 and the per-chat fallback (exception-only) never runs. Fix: page on `nextOffset` until selected-chat rows reach `limit`/exhaustion or fall back to per-chat search.
+MEDIUM `TelegramClientManager.kt:250` — `clearTelegramRest` clears the cooldown and 2s cache but not `SourceResolver.searchAnswers`, so a 10-minute cached empty result from the old chat selection still blocks automatic upgrades after chats are added. Fix: invalidate the resolver memo for the Telegram source on selection/login changes.
+MEDIUM `TelegramClientManager.kt:1018` — `AuthorizationStateReady` fires on every cold TDLib client start, not only a login change, so a genuine-error rest/failure count is wiped whenever the client reopens (playback/manual retry). Fix: clear only on an actual credential/session change.
+MEDIUM `TelegramClientManager.kt:354` — searches run in a detached `SupervisorJob` scope and are never cancelled when all callers time out, so a cold search can continue up to 2×15s holding the counted lease/client and radio after nobody needs it; distinct prefetches can accumulate without a cap. Fix: cancel the flight when its last waiter leaves or apply one search deadline.
+MEDIUM `TelegramRestRecoveryTest.kt:27` — the required race test only exercises the pre-existing `TelegramClientGate` counter; it never runs two `searchTracks` calls, so it would have passed before this change and does not prove the IOException race is fixed. Fix: drive two concurrent `searchTracks`/`runSearch` calls through a fake client and assert both complete.
+LOW `TelegramClientManager.kt:593` — the per-chat fallback catches `CancellationException` as an ordinary chat failure and continues the remaining chunks, so cancellation does not propagate promptly. Fix: rethrow `CancellationException` before recording `firstFailure`.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
