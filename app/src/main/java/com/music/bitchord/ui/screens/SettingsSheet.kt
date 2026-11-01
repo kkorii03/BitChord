@@ -1633,7 +1633,7 @@ fun SettingsScreen(
                             },
                         ),
                         trailing = {
-                            Switch(
+                            IosSwitch(
                                 checked = geminiTranslation && geminiApiKey.isNotBlank(),
                                 onCheckedChange = { on ->
                                     if (on && geminiApiKey.isBlank()) onGeminiKey()
@@ -1652,7 +1652,7 @@ fun SettingsScreen(
                         title = autoTranslateTitle,
                         subtitle = stringResource(R.string.auto_translate_lyrics_subtitle),
                         trailing = {
-                            Switch(
+                            IosSwitch(
                                 checked = autoTranslateLyrics,
                                 onCheckedChange = { AppSettings.setAutoTranslateLyrics(it) },
                                 colors = settingsSwitchColors(),
@@ -1668,7 +1668,7 @@ fun SettingsScreen(
                         title = autoLyricsTimingTitle,
                         subtitle = stringResource(R.string.auto_lyrics_timing_subtitle),
                         trailing = {
-                            Switch(
+                            IosSwitch(
                                 checked = autoLyricsTiming,
                                 onCheckedChange = { AppSettings.setAutoLyricsTiming(it) },
                                 colors = settingsSwitchColors(),
@@ -1684,7 +1684,7 @@ fun SettingsScreen(
                         title = aiTimingAheadTitle,
                         subtitle = stringResource(R.string.ai_timing_ahead_subtitle),
                         trailing = {
-                            Switch(
+                            IosSwitch(
                                 checked = aiTimingAhead,
                                 onCheckedChange = { AppSettings.setAiTimingAhead(it) },
                                 colors = settingsSwitchColors(),
@@ -1727,7 +1727,7 @@ fun SettingsScreen(
                         title = aiLyricsTitle,
                         subtitle = stringResource(R.string.ai_lyrics_subtitle),
                         trailing = {
-                            Switch(
+                            IosSwitch(
                                 checked = aiLyrics,
                                 onCheckedChange = { AppSettings.setAiLyrics(it) },
                                 colors = settingsSwitchColors(),
@@ -1743,7 +1743,7 @@ fun SettingsScreen(
                         title = prefetchTranslationTitle,
                         subtitle = stringResource(R.string.prefetch_translation_subtitle),
                         trailing = {
-                            Switch(
+                            IosSwitch(
                                 checked = prefetchTranslation,
                                 onCheckedChange = { AppSettings.setPrefetchTranslation(it) },
                                 colors = settingsSwitchColors(),
@@ -1759,7 +1759,7 @@ fun SettingsScreen(
                         title = keepDownloadTranslationTitle,
                         subtitle = stringResource(R.string.keep_download_translation_subtitle),
                         trailing = {
-                            Switch(
+                            IosSwitch(
                                 checked = keepDownloadTranslation,
                                 onCheckedChange = { AppSettings.setKeepDownloadTranslation(it) },
                                 colors = settingsSwitchColors(),
@@ -1781,7 +1781,7 @@ fun SettingsScreen(
                             },
                         ),
                         trailing = {
-                            Switch(
+                            IosSwitch(
                                 checked = lockScreenLyrics && canDrawOverlays,
                                 onCheckedChange = { on ->
                                     AppSettings.setLockScreenLyrics(on)
