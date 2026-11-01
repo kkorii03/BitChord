@@ -261,7 +261,7 @@ import java.util.UUID
 
 /**
  * Re-arms AutoPlay for a queue whose last item could not play. The append
- * is asynchronous; [pendingAutoplayAdvanceFor] lets the existing timeline
+ * is asynchronous; [koAutoplayAdvance.pendingFor] lets the existing timeline
  * callback move to the new item when it arrives, without polling.
  *
  * @return true when a refill was requested or is already in flight, so the
@@ -273,8 +273,8 @@ internal fun PlaybackService.koTryAutoplayRefillBeforeStopping(exoPlayer: ExoPla
     if (exoPlayer.repeatMode == Player.REPEAT_MODE_ALL) return false
     if (party.inParty && autoplaySupplierId(party) != party.you?.memberId) return false
     if (boundedContextWindow != null && !boundedAutoplayEligible(exoPlayer)) return false
-    pendingAutoplayAdvanceFor = mediaId
-    pendingAutoplayAdvanceTarget = null
+    koAutoplayAdvance.pendingFor = mediaId
+    koAutoplayAdvance.pendingTarget = null
     // An active job may belong to the track that was current a moment
     // ago: it exits on its own id check, but while it is still active it
     // would keep this refill from ever starting. Only a load already

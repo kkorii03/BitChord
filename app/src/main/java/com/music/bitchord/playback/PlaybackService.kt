@@ -151,7 +151,6 @@ import com.music.bitchord.data.net.autoplayToggleResult
 import com.music.bitchord.data.net.repeatModeAutoplayResult
 import com.music.bitchord.R
 import com.music.bitchord.data.LocalMediaRepository
-import com.music.bitchord.data.innertube.Innertube
 import com.music.bitchord.data.innertube.InnertubeParser
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.lyrics.EmbeddedLyrics
@@ -203,13 +202,6 @@ import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.EqualizerMode
 import com.music.bitchord.data.settings.ListeningSink
 import com.music.bitchord.data.settings.OutputPcmMode
-import com.music.bitchord.data.settings.PrivateListening
-import com.music.bitchord.data.sources.QualityUpgradeAdvice
-import com.music.bitchord.data.sources.HqQuality
-import com.music.bitchord.data.sources.HqTier
-import com.music.bitchord.data.sources.PlayingAudioFormat
-import com.music.bitchord.data.sources.SourceKind
-import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.SourceTrackKeys
@@ -261,6 +253,31 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import java.util.Locale
 import java.util.UUID
+import com.music.bitchord.data.innertube.Innertube
+import com.music.bitchord.data.settings.PrivateListening
+import com.music.bitchord.data.sources.QualityUpgradeAdvice
+import com.music.bitchord.data.sources.HqQuality
+import com.music.bitchord.data.sources.HqTier
+import com.music.bitchord.data.sources.PlayingAudioFormat
+import com.music.bitchord.data.sources.SourceRegistry
+import com.music.bitchord.ko.AUDIO_TRACK_REASON_TTL_MS
+import com.music.bitchord.ko.PLAYBACK_STATE_SAVE_MS
+import com.music.bitchord.ko.koAutoplayAdvance
+import com.music.bitchord.ko.koAutoplayRetryAllowed
+import com.music.bitchord.ko.koCanLike
+import com.music.bitchord.ko.koDeferManualAnswer
+import com.music.bitchord.ko.koLogVersionSwapRefused
+import com.music.bitchord.ko.koNoteManualSeek
+import com.music.bitchord.ko.koObservePlaybackPreferences
+import com.music.bitchord.ko.koResampleTargetRate
+import com.music.bitchord.ko.koRotateExpiredHistory
+import com.music.bitchord.ko.koSessionFavoriteStatus
+import com.music.bitchord.ko.missingMeta
+import com.music.bitchord.ko.playReason
+import com.music.bitchord.ko.rowAlreadySounding
+import com.music.bitchord.ko.rowSoundingAfterVersionHold
+import com.music.bitchord.ko.songCacheEvictionCount
+import com.music.bitchord.ko.transitionReason
 
 
 /** Session command used by both the player UI and the media notification. */
@@ -367,12 +384,6 @@ private const val SYSTEM_UI_PACKAGE = "com.android.systemui"
 /** A car / cast / other surface that may draw the subtitle. */
 private fun MediaSession.ControllerInfo.showsMediaMetadata(): Boolean =
     packageName != SYSTEM_UI_PACKAGE
-
-/**
- * How long after our own jump out of a segment a seek still reads as ours
- * rather than as the listener's — see the seek handling in [PlaybackService].
- */
-private const val OWN_SKIP_SETTLE_MS = 1_000L
 
 private fun Song.canStartStation(): Boolean =
     videoId.isNotBlank() &&
@@ -917,12 +928,12 @@ class PlaybackService : MediaLibraryService() {
      */
     internal var reportedPlaybackFailureId: String? = null
 
-    private var scrobbleManager: ScrobbleManager? = null
-    private var listenBrainzSong: Song? = null
+    internal var scrobbleManager: ScrobbleManager? = null // [KO] playback-preferences
+    internal var listenBrainzSong: Song? = null // [KO] playback-preferences
 
-    private var listenBrainzStartMs: Long = 0L
+    internal var listenBrainzStartMs: Long = 0L // [KO] playback-preferences
 
-    private var listenBrainzDurationMs: Long? = null
+    internal var listenBrainzDurationMs: Long? = null // [KO] playback-preferences
 
     /**
      * The gateway connection publishing what's playing to Discord, or null when
@@ -1162,23 +1173,6 @@ class PlaybackService : MediaLibraryService() {
     private var stationActionJob: Job? = null
     internal var autoplayLoadJob: Job? = null
     internal var autoplaySeed: String? = null
-
-    /**
-     * The unplayable end-of-queue track AutoPlay is refilling behind. When the
-     * refill appends, the timeline callback moves to it; no timer is used.
-     */
-    internal var pendingAutoplayAdvanceFor: String? = null
-
-    /**
-     * The item this refill actually appended. The timeline callback only
-     * advances when this exact id becomes the next item, so an unrelated
-     * queue edit (or a refill that appends nothing) cannot silently skip the
-     * failed track.
-     */
-    internal var pendingAutoplayAdvanceTarget: String? = null
-
-    /** Identifies the newest refill so a cancelled load cannot clear its marker. */
-    private var autoplayRefillGeneration = 0
 
     /** Index in the live queue represented by entry zero of the persisted window. */
     private var persistedQueueStart = 0
@@ -1452,21 +1446,7 @@ class PlaybackService : MediaLibraryService() {
         ) {
             val exoPlayer = player ?: return
             if (reason == Player.DISCONTINUITY_REASON_SEEK) {
-                // Remember where the listener put the playhead. A jump into a
-                // SponsorBlock segment made by hand is left alone for a moment
-                // rather than pulled straight back out — see [checkSkipSegments].
-                // Our own jump out of a segment also arrives here and is not
-                // the listener asking for anything.
-                val now = SystemClock.elapsedRealtime()
-                val ours = skipSeekTargetMs >= 0L &&
-                    now - skipSeekAtMs < OWN_SKIP_SETTLE_MS &&
-                    abs(newPosition.positionMs - skipSeekTargetMs) < OWN_SKIP_SETTLE_MS
-                if (ours) {
-                    skipSeekTargetMs = -1L
-                } else {
-                    lastManualSeekAtMs = now
-                    lastManualSeekPositionMs = newPosition.positionMs
-                }
+                koNoteManualSeek(newPosition.positionMs) // [KO] manual-seek
                 if (exoPlayer.isPlaying) pushDiscordPresence(exoPlayer)
                 // A seek moved the playhead, so the line that is current now
                 // and the next boundary after it are both new. Paused, there is
@@ -1721,23 +1701,23 @@ class PlaybackService : MediaLibraryService() {
             // The player this fired on, which is by definition the one the
             // session is currently pointed at.
             val exoPlayer = player ?: return
-            pendingAutoplayAdvanceFor?.let { pending ->
+            koAutoplayAdvance.pendingFor?.let { pending ->
                 if (exoPlayer.currentMediaItem?.mediaId != pending) {
-                    pendingAutoplayAdvanceFor = null
-                    pendingAutoplayAdvanceTarget = null
+                    koAutoplayAdvance.pendingFor = null
+                    koAutoplayAdvance.pendingTarget = null
                 } else {
                     val nextId = if (exoPlayer.hasNextMediaItem()) {
                         exoPlayer.getMediaItemAt(exoPlayer.currentMediaItemIndex + 1).mediaId
                     } else {
                         null
                     }
-                    val target = pendingAutoplayAdvanceTarget
+                    val target = koAutoplayAdvance.pendingTarget
                     when {
                         // Only the item this refill appended may move the
                         // queue off the failed track.
                         target != null && nextId == target -> {
-                            pendingAutoplayAdvanceFor = null
-                            pendingAutoplayAdvanceTarget = null
+                            koAutoplayAdvance.pendingFor = null
+                            koAutoplayAdvance.pendingTarget = null
                             TrackLog.w(
                                 "BitChord",
                                 "autoplay: refilled after $pending could not play; continuing",
@@ -1750,8 +1730,8 @@ class PlaybackService : MediaLibraryService() {
                         // listener's item, not the refill, so disarm rather
                         // than skip over it.
                         target != null && nextId != null -> {
-                            pendingAutoplayAdvanceFor = null
-                            pendingAutoplayAdvanceTarget = null
+                            koAutoplayAdvance.pendingFor = null
+                            koAutoplayAdvance.pendingTarget = null
                         }
                         // The party path arms before the target is known and
                         // only records it after topUpPartyAutoplay waits for
@@ -1766,8 +1746,8 @@ class PlaybackService : MediaLibraryService() {
                             } else {
                                 null
                             }
-                            pendingAutoplayAdvanceFor = null
-                            pendingAutoplayAdvanceTarget = null
+                            koAutoplayAdvance.pendingFor = null
+                            koAutoplayAdvance.pendingTarget = null
                             if (partyNext == nextId) {
                                 TrackLog.w(
                                     "BitChord",
@@ -2671,34 +2651,12 @@ class PlaybackService : MediaLibraryService() {
             screenOn = { PowerState.screenOn },
         )
 
-    /**
-     * Whether Like is offered for [item] — the player's own rule, so no surface
-     * shows a heart the player doesn't: there has to be an account to record it
-     * against, and a plain local file has no YouTube identity to rate. A
-     * finished download still does, so it keeps its heart.
-     */
-    private fun canLike(item: MediaItem?): Boolean =
-        item != null && SignedIn.state(this).value && !SongOrigins.isLocalFile(item.toSong())
-
-    /**
-     * The rating the notification star should draw, with the same persisted
-     * fallback the widget uses. Reading the snapshot only when this process has
-     * no override keeps a normal tap from touching preferences at all.
-     */
-    private fun sessionFavoriteStatus(videoId: String?): LikeStatus {
-        val override = videoId?.let { LikeState.overrides.value[it] }
-        val persisted = if (videoId != null && override == null) {
-            MediaWidgetSnapshot.load(this)
-        } else {
-            null
-        }
-        return SessionFavoriteState.status(videoId, override, persisted)
-    }
+    private fun canLike(item: MediaItem?): Boolean = koCanLike(this, item) // [KO] can-like
 
     /** Favorite and Shuffle: the only actions shown on the phone notification. */
     private fun notificationButtons(): List<CommandButton> {
         val current = player?.currentMediaItem
-        val liked = sessionFavoriteStatus(current?.mediaId) == LikeStatus.LIKE
+        val liked = koSessionFavoriteStatus(current?.mediaId) == LikeStatus.LIKE
         // The icon constant tells controllers like Android Auto what the button
         // means; the custom drawable swaps Material's sharp star for the
         // player's rounded one on the notification itself.
@@ -3213,7 +3171,7 @@ class PlaybackService : MediaLibraryService() {
         val targetId = targetSong.videoId
 
         if (VersionAudioAligner.isRejected(sourceId, targetId)) {
-            logVersionSwapRefused(sourceSong, targetSong, VersionAudioAligner.getConfidence(sourceId, targetId))
+            koLogVersionSwapRefused(sourceSong, targetSong, VersionAudioAligner.getConfidence(sourceId, targetId))
             return null
         }
 
@@ -3221,7 +3179,7 @@ class PlaybackService : MediaLibraryService() {
             val confidence = VersionAudioAligner.getConfidence(sourceId, targetId)
             if (confidence != null && !VersionSwapPolicy.shouldSwap(confidence)) {
                 VersionAudioAligner.reject(sourceId, targetId)
-                logVersionSwapRefused(sourceSong, targetSong, confidence)
+                koLogVersionSwapRefused(sourceSong, targetSong, confidence)
                 return null
             }
             val cachedToken = VersionAudioAligner.beginAttempt(sourceId, targetId)
@@ -3243,7 +3201,7 @@ class PlaybackService : MediaLibraryService() {
             val confidence = VersionAudioAligner.getConfidence(sourceId, targetId)
             if (confidence != null && !VersionSwapPolicy.shouldSwap(confidence)) {
                 VersionAudioAligner.reject(sourceId, targetId)
-                logVersionSwapRefused(sourceSong, targetSong, confidence)
+                koLogVersionSwapRefused(sourceSong, targetSong, confidence)
                 VersionAudioAligner.publishPhase(token, VersionAudioAligner.CutPhase.FAILED)
                 return null
             }
@@ -3266,14 +3224,6 @@ class PlaybackService : MediaLibraryService() {
             VersionAudioAligner.publishPhase(token, VersionAudioAligner.CutPhase.FAILED)
             throw e
         }
-    }
-
-    private fun logVersionSwapRefused(sourceSong: Song, targetSong: Song, confidence: Double?) {
-        TrackLog.w(
-            "BitChord",
-            "version swap refused: ${sourceSong.title} -> ${targetSong.title} conf=${confidence ?: -1.0}",
-            sourceSong.videoId,
-        )
     }
 
     internal fun adoptPlayerForVersionSwap(outgoing: ExoPlayer, incoming: ExoPlayer) {
@@ -3964,7 +3914,7 @@ class PlaybackService : MediaLibraryService() {
         }
         autoplaySeed = current.videoId
         autoplayLoadJob = scope.launch {
-            val generation = ++autoplayRefillGeneration
+            val generation = ++koAutoplayAdvance.refillGeneration
             var appended = false
             try {
             var remaining = needed
@@ -3987,13 +3937,7 @@ class PlaybackService : MediaLibraryService() {
                 } else {
                     queueSongs
                 }
-                val result = loadAutoplayTracks(
-                    existing = existing,
-                    seedSong = current,
-                    limit = remaining,
-                    sessionSong = lastCompletedSong,
-                    sessionIds = autoplaySessionIds.toSet(),
-                )
+                val result = loadAutoplayTracks(existing, current, remaining, lastCompletedSong, autoplaySessionIds.toSet()) // [KO] autoplay-session
                 val resolved = result.getOrElse {
                     TrackLog.w(
                         "BitChord",
@@ -4044,7 +3988,7 @@ class PlaybackService : MediaLibraryService() {
                         rememberSessionSongs(landed)
                         // The server echo names what is now queued; advance only
                         // onto the item it actually put next.
-                        val armed = pendingAutoplayAdvanceFor == current.videoId
+                        val armed = koAutoplayAdvance.pendingFor == current.videoId
                         val partyNext = if (armed) {
                             val now = ListenTogether.state.value
                             partyUpcomingAfter(now.queue, now.playback, current.videoId)
@@ -4052,7 +3996,7 @@ class PlaybackService : MediaLibraryService() {
                         } else {
                             null
                         }
-                        if (armed) pendingAutoplayAdvanceTarget = partyNext
+                        if (armed) koAutoplayAdvance.pendingTarget = partyNext
                         appended = !armed || partyNext != null
                     } else {
                         // The queue may have changed while the radio request
@@ -4068,8 +4012,8 @@ class PlaybackService : MediaLibraryService() {
                             .filterNot { song -> queuedNow.any { QueueBuilder.isSameRecording(it, song) } }
                             .take(room.coerceAtLeast(0))
                         if (fresh.isNotEmpty()) {
-                            if (pendingAutoplayAdvanceFor == current.videoId) {
-                                pendingAutoplayAdvanceTarget = fresh.first().videoId
+                            if (koAutoplayAdvance.pendingFor == current.videoId) {
+                                koAutoplayAdvance.pendingTarget = fresh.first().videoId
                             }
                             latestPlayer.addMediaItems(fresh.map { it.toMediaItem() })
                             appended = true
@@ -4100,34 +4044,7 @@ class PlaybackService : MediaLibraryService() {
                 // request. Keep it bounded: a radio with no usable unique songs
                 // must not turn into a permanent background polling loop.
                 val at = latestPlayer.currentMediaItemIndex
-                if (at < 0 || at != latestPlayer.mediaItemCount - 1) {
-                    TrackLog.d(
-                        "BitChord",
-                        "autoplay: empty seed=${current.videoId} at=$at " +
-                            "size=${latestPlayer.mediaItemCount} retry=later",
-                        about = current.videoId,
-                    )
-                    return@launch
-                }
-                if (emptyRefreshesRemaining <= 0) {
-                    // The retries are spent; release the latch so the next
-                    // event (a queue edit, pause/resume, or a terminal
-                    // continuation) can ask again instead of stopping forever
-                    // at "same-seed". Only the newest load may clear a seed.
-                    if (generation == autoplayRefillGeneration) {
-                        autoplaySeed = autoplaySeedAfterExhaustedRetries(
-                            seed = autoplaySeed,
-                            currentVideoId = current.videoId,
-                            retriesRemaining = emptyRefreshesRemaining,
-                        )
-                    }
-                    TrackLog.d(
-                        "BitChord",
-                        "autoplay: empty seed=${current.videoId} retry=exhausted",
-                        about = current.videoId,
-                    )
-                    return@launch
-                }
+                if (!koAutoplayRetryAllowed(current.videoId, at, latestPlayer.mediaItemCount, generation, emptyRefreshesRemaining)) return@launch // [KO] autoplay-retry
                 emptyRefreshesRemaining--
                 delay(AUTOPLAY_EMPTY_REFRESH_DELAY_MS)
                 remaining = MAX_QUEUED_AUTOPLAY
@@ -4138,11 +4055,11 @@ class PlaybackService : MediaLibraryService() {
                 // promised next item. Only the newest load may disarm it, so
                 // a cancelled one cannot clear a fresh refill's marker.
                 if (!appended &&
-                    generation == autoplayRefillGeneration &&
-                    pendingAutoplayAdvanceFor == current.videoId
+                    generation == koAutoplayAdvance.refillGeneration &&
+                    koAutoplayAdvance.pendingFor == current.videoId
                 ) {
-                    pendingAutoplayAdvanceFor = null
-                    pendingAutoplayAdvanceTarget = null
+                    koAutoplayAdvance.pendingFor = null
+                    koAutoplayAdvance.pendingTarget = null
                 }
             }
         }
@@ -4285,7 +4202,7 @@ class PlaybackService : MediaLibraryService() {
 
     private fun toggleFavoriteFromNotification(videoId: String) {
         favoriteActionJob?.cancel()
-        val previous = sessionFavoriteStatus(videoId)
+        val previous = koSessionFavoriteStatus(videoId)
         val target = if (previous == LikeStatus.LIKE) {
             LikeStatus.INDIFFERENT
         } else {
@@ -4652,8 +4569,8 @@ class PlaybackService : MediaLibraryService() {
         // on, or the same id is current again and must not stay armed. Left
         // set, a later replay of the failed track with something queued after
         // it was silently auto-skipped by the timeline callback.
-        pendingAutoplayAdvanceFor = null
-        pendingAutoplayAdvanceTarget = null
+        koAutoplayAdvance.pendingFor = null
+        koAutoplayAdvance.pendingTarget = null
         // A lossless swap hands the same song to the other player. It must not
         // close the outgoing play, start a second one, or count the listen
         // twice; only the audio source changed.
@@ -4733,14 +4650,7 @@ class PlaybackService : MediaLibraryService() {
                 // has fallen out of the visible 25-song window to the end
                 // instead of deleting it; it becomes upcoming again in the
                 // same order and the loop can continue indefinitely.
-                repeat(expiredHistory) {
-                    exoPlayer.moveMediaItem(0, exoPlayer.mediaItemCount - 1)
-                }
-                TrackLog.d(
-                    "BitChord",
-                    "queue: move n=$expiredHistory at=0 to=${exoPlayer.mediaItemCount - 1} " +
-                        "size=${exoPlayer.mediaItemCount} by=history",
-                )
+                koRotateExpiredHistory(exoPlayer, expiredHistory) // [KO] queue-history
             } else {
                 exoPlayer.removeMediaItems(0, expiredHistory)
                 TrackLog.d(
@@ -6242,16 +6152,6 @@ class PlaybackService : MediaLibraryService() {
             TrackLog.d("BitChord", "looking again for a better copy of $mediaId", about = mediaId)
         }
         upgradeJob = scope.launch(TrackLog.about(mediaId)) {
-            // A manual request that joined after this pass started is answered
-            // only by the waiter's manual search below, never by this pass's
-            // automatic one — its search skipped resting sources and read the
-            // memo. See [QualityUpgrade.defersAutomaticAnswerToManual].
-            fun deferManualAnswer(): Boolean =
-                QualityUpgrade.defersAutomaticAnswerToManual(
-                    startedManual = manual,
-                    manualPending = manualUpgradeFor == mediaId,
-                    manualJoined = manualJoinedRunningUpgrade,
-                )
             try {
                 // A previous visit to this track already did all the expensive
                 // parts and lost the swap to a skip. Nothing about the answer has
@@ -6377,7 +6277,7 @@ class PlaybackService : MediaLibraryService() {
                         about = mediaId,
                     )
                     val message = noBetterUpgradeMessage(mediaId, upgradeReport)
-                    if (deferManualAnswer()) {
+                    if (koDeferManualAnswer(manual, manualUpgradeFor == mediaId, manualJoinedRunningUpgrade)) { // [KO] manual-upgrade-answer
                         TrackLog.d(
                             "BitChord",
                             "automatic upgrade for $mediaId came back empty; the joined manual request will search again",
@@ -6489,7 +6389,7 @@ class PlaybackService : MediaLibraryService() {
                     searchVerifyMs = retryReport.verifyMs
                     attemptStarted = retryStarted
                     if (next == null) {
-                        if (deferManualAnswer()) {
+                        if (koDeferManualAnswer(manual, manualUpgradeFor == mediaId, manualJoinedRunningUpgrade)) { // [KO] manual-upgrade-answer
                             TrackLog.d(
                                 "BitChord",
                                 "automatic upgrade for $mediaId ran out of candidates; the joined manual request will search again",
@@ -6513,7 +6413,7 @@ class PlaybackService : MediaLibraryService() {
                     "manual upgrade for $mediaId failed: ${failed.javaClass.simpleName}: ${failed.message}",
                     about = mediaId,
                 )
-                if (deferManualAnswer()) {
+                if (koDeferManualAnswer(manual, manualUpgradeFor == mediaId, manualJoinedRunningUpgrade)) { // [KO] manual-upgrade-answer
                     TrackLog.d(
                         "BitChord",
                         "automatic upgrade for $mediaId failed; the joined manual request will search again",
@@ -8800,11 +8700,11 @@ class PlaybackService : MediaLibraryService() {
             song = song,
             // LikeState only knows ratings this process has seen: a fresh
             // service started from the widget or a restart has none until
-            // something seeds it. sessionFavoriteStatus keeps the persisted
+            // something seeds it. koSessionFavoriteStatus keeps the persisted
             // rating for this same track rather than emptying a heart that was
             // right.
             isLiked = song != null &&
-                sessionFavoriteStatus(song.videoId) == LikeStatus.LIKE,
+                koSessionFavoriteStatus(song.videoId) == LikeStatus.LIKE,
             // playWhenReady, not isPlaying — see MediaWidgetSnapshot.isPlaying.
             // Through the session player, which answers for Cast or the watch
             // while one of them is the speaker.
@@ -8866,9 +8766,9 @@ class PlaybackService : MediaLibraryService() {
         )
     }
 
-    private fun prefetchAround(player: ExoPlayer) = prefetchController.prefetchAround(player)
+    internal fun prefetchAround(player: ExoPlayer) = prefetchController.prefetchAround(player) // [KO] playback-preferences
 
-    private fun cancelPrefetch() = prefetchController.cancelPrefetch()
+    internal fun cancelPrefetch() = prefetchController.cancelPrefetch() // [KO] playback-preferences
 
     /**
      * The one-row bundle that prepares the next track's version, lyrics, high
@@ -9774,7 +9674,7 @@ class PlaybackService : MediaLibraryService() {
                 device.type == AudioDeviceInfo.TYPE_USB_ACCESSORY
         }
 
-    private fun resolveActiveOutputDevice(): AudioDeviceInfo? {
+    internal fun resolveActiveOutputDevice(): AudioDeviceInfo? { // [KO] resample-rate
         val manager = audioManager ?: return null
         val infos = runCatching { manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS) }.getOrNull() ?: return null
         val chosen = AudioRouting.infoFor(manager, AudioRouting.selectedId.value)
@@ -9782,7 +9682,7 @@ class PlaybackService : MediaLibraryService() {
         return preferred ?: AudioRouting.activeOf(infos, null)
     }
 
-    private fun resolveActiveRouteKind(device: AudioDeviceInfo?): AudioRouting.Kind {
+    internal fun resolveActiveRouteKind(device: AudioDeviceInfo?): AudioRouting.Kind { // [KO] resample-rate
         if (device == null) return AudioRouting.Kind.PHONE
         return AudioRouting.kindOf(device.type) ?: AudioRouting.Kind.PHONE
     }
@@ -9810,19 +9710,7 @@ class PlaybackService : MediaLibraryService() {
         )
     }
 
-    /**
-     * The rate the resampler should open AudioTrack at, or null to keep the
-     * decoder's rate. See [AudioOutputPolicy.outputSampleRateFor].
-     */
-    private fun resampleTargetRate(inputRateHz: Int): Int? {
-        val activeDevice = resolveActiveOutputDevice()
-        val routeKind = resolveActiveRouteKind(activeDevice)
-        return AudioOutputPolicy.outputSampleRateFor(
-            sourceRateHz = inputRateHz,
-            routeKind = routeKind,
-            advertisedSampleRates = activeDevice?.sampleRates?.toList().orEmpty(),
-        )
-    }
+    private fun resampleTargetRate(inputRateHz: Int): Int? = koResampleTargetRate(inputRateHz) // [KO] resample-rate
 
     /** Runs [body] against both players, in whichever roles they currently hold. */
     private inline fun eachPlayer(body: (ExoPlayer) -> Unit) {
@@ -9834,49 +9722,7 @@ class PlaybackService : MediaLibraryService() {
         scope.launch {
             AppSettings.skipSilence.collect { on -> eachPlayer { it.skipSilenceEnabled = on } }
         }
-        scope.launch {
-            // SponsorBlock settings change what this track still has to skip.
-            // The switch used to wait for the next play/pause or the next
-            // scheduled message, so turning extras on mid-song did nothing
-            // until the following track. Re-read the current track on the
-            // toggle itself; no timer is involved.
-            AppSettings.skipNonMusicParts.drop(1).collect {
-                refreshSkipSegmentsForSettings()
-            }
-        }
-        scope.launch {
-            AppSettings.skipSponsorParts.drop(1).collect {
-                refreshSkipSegmentsForSettings()
-            }
-        }
-        scope.launch {
-            // Event-driven: the toggle itself is the only thing that wakes this.
-            // On the way in, drop whatever is already pending so nothing from
-            // before the switch can be written afterwards; on the way out,
-            // suppress the interrupted playthrough and resume only from the
-            // next real track.
-            AppSettings.privateListening.drop(1).collect { enabled ->
-                PlaybackTracker.suppressCurrent(player?.currentMediaItem?.mediaId)
-                if (enabled) {
-                    ListeningRecorder.onPrivateModeEnabled()
-                    scrobbleManager?.onPrivateModeEnabled()
-                    listenBrainzSong = null
-                    listenBrainzStartMs = 0L
-                    listenBrainzDurationMs = null
-                    clearDiscordPresence()
-                } else {
-                    player?.takeIf { it.isPlaying }?.let(::pushDiscordPresence)
-                }
-            }
-        }
-        scope.launch {
-            // Re-evaluate the already queued next track immediately when this
-            // preference changes, instead of waiting for another timeline event.
-            AppSettings.preferMusicOnly.drop(1).collect {
-                cancelPrefetch()
-                player?.takeIf { it.isPlaying }?.let(::prefetchAround)
-            }
-        }
+        koObservePlaybackPreferences() // [KO] playback-preferences
         scope.launch {
             AppSettings.preferUsbDac.drop(1).collect { requestOutputReconfiguration() }
         }
@@ -10306,7 +10152,7 @@ class PlaybackService : MediaLibraryService() {
      * never connect an account, and this is called from the middle of every
      * track change.
      */
-    private fun pushDiscordPresence(exoPlayer: ExoPlayer) {
+    internal fun pushDiscordPresence(exoPlayer: ExoPlayer) { // [KO] playback-preferences
         if (!PrivateListening.allows(ListeningSink.DISCORD_PRESENCE, AppSettings.privateListening.value)) return
         val rpc = discordRpc ?: return
         val song = exoPlayer.currentMediaItem?.toSong() ?: return
@@ -10357,7 +10203,7 @@ class PlaybackService : MediaLibraryService() {
      * Takes the presence down but leaves the socket up, so resuming doesn't pay
      * for a reconnect. Discord clears the card on an activity-less presence.
      */
-    private fun clearDiscordPresence() {
+    internal fun clearDiscordPresence() { // [KO] playback-preferences
         val rpc = discordRpc ?: return
         if (!discordPresenceUp) return
         discordPresenceUp = false
@@ -10833,7 +10679,7 @@ class PlaybackService : MediaLibraryService() {
     private fun cancelSkipSegmentMessages() =
         koCancelSkipSegmentMessages() // [KO] skip-segments
 
-    private fun refreshSkipSegmentsForSettings() =
+    internal fun refreshSkipSegmentsForSettings() = // [KO] playback-preferences
         koRefreshSkipSegmentsForSettings() // [KO] skip-segments
 
     private fun checkSkipSegments() =
@@ -12431,16 +12277,6 @@ class PlaybackService : MediaLibraryService() {
         /** How often played-seconds are sampled off the player. */
         const val PROGRESS_SAMPLE_MS = 5_000L
 
-        /** How long an AudioTrack-reason hint stays valid for the next event. */
-        const val AUDIO_TRACK_REASON_TTL_MS = 10_000L
-
-        /**
-         * How often the playhead is written back while playing. The restore
-         * point only has to be roughly where the listener was; pause, track
-         * change and service stop write it exactly.
-         */
-        const val PLAYBACK_STATE_SAVE_MS = 30_000L
-
         /** Bounds on a track's normalization gain, in millibels: the range the platform LoudnessEnhancer this replaced accepted. */
         const val MIN_LOUDNESS_GAIN_MB = -1500
         const val MAX_LOUDNESS_GAIN_MB = 300
@@ -12738,72 +12574,3 @@ class PlaybackService : MediaLibraryService() {
         const val PARTY_QUEUE_ECHO_TIMEOUT_MS = 5_000L
     }
 }
-
-/** The short reason names a diagnostic log reads without the Media3 constants. */
-private fun transitionReason(reason: Int): String = when (reason) {
-    Player.MEDIA_ITEM_TRANSITION_REASON_AUTO -> "AUTO"
-    Player.MEDIA_ITEM_TRANSITION_REASON_SEEK -> "SEEK"
-    Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT -> "REPEAT"
-    Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED -> "PLAYLIST_CHANGED"
-    else -> "OTHER($reason)"
-}
-
-private fun playReason(reason: Int): String = when (reason) {
-    Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST -> "ui"
-    Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS -> "focus"
-    Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY -> "noisy"
-    Player.PLAY_WHEN_READY_CHANGE_REASON_REMOTE -> "remote"
-    Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM -> "end"
-    Player.PLAY_WHEN_READY_CHANGE_REASON_SUPPRESSED_TOO_LONG -> "suppressed"
-    else -> "other($reason)"
-}
-
-/** Which pieces a queue item is missing, for the `play:` line's `meta=`. */
-private fun missingMeta(song: com.music.bitchord.data.model.Song?): String {
-    if (song == null) return "title,artist,artwork"
-    val missing = buildList {
-        if (song.title.isBlank()) add("title")
-        if (song.artist.isBlank()) add("artist")
-        if (song.thumbnailUrl.isNullOrBlank()) add("artwork")
-    }
-    return missing.ifEmpty { listOf("ok") }.joinToString(",")
-}
-
-/**
- * How many entries [PlaybackService.cacheSong] has to drop so that adding one
- * more keeps the cache at or below [max].
- *
- * Pure so the ceiling can be checked without a running service; returns zero
- * while there is still room.
- */
-internal fun songCacheEvictionCount(size: Int, max: Int): Int =
-    if (size >= max) size - max + 1 else 0
-
-/**
- * Whether the row that just became current is already producing sound.
- *
- * A crossfade says so directly. A gapless auto advance does not: Media3 keeps
- * the player READY across the item boundary, so [Player.Listener.onIsPlayingChanged]
- * never fires and [PlaybackService.audibleMediaId] would still name the
- * outgoing row. Requiring an ended track and a playing player is what separates
- * that continuous handoff from a skip into a row that is still buffering
- * (isPlaying can be true for one event while the incoming row has not sounded).
- */
-internal fun rowAlreadySounding(
-    alreadyAudible: Boolean,
-    previousEnded: Boolean,
-    isPlaying: Boolean,
-): Boolean = alreadyAudible || (previousEnded && isPlaying)
-
-/**
- * Whether that row is still audible once the song-version decision has run.
- *
- * A gapless advance into a video row is paused by [SongVersionController]'s
- * first-sound hold, so the transition's playing state no longer describes it;
- * treating it as audible there would write firstAudio=0 and start read-ahead
- * for a row nobody can hear yet.
- */
-internal fun rowSoundingAfterVersionHold(
-    alreadySounding: Boolean,
-    versionHeld: Boolean,
-): Boolean = alreadySounding && !versionHeld
