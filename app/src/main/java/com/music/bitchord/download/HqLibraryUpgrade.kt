@@ -141,6 +141,8 @@ object HqLibraryUpgrade {
     private const val KEY_ACTIVE = "active"
     private const val KEY_MANUAL = "manual"
     private const val KEY_FAILURES = "failures"
+    private const val KEY_FAILED_RUN = "failed_run"
+    private const val KEY_RUN_FINISHED = "run_finished"
 
     /** How much history is read when ranking prefetch targets. */
     private const val HISTORY_LIMIT = 1_000
@@ -167,8 +169,19 @@ object HqLibraryUpgrade {
         val total: Int = 0,
         /** A server asked the pass to come back later; nothing is in flight. */
         val waiting: Boolean = false,
+        /** Targets that finally failed during the run this summary describes. */
+        val failed: Int = 0,
+        /** The run has ended; its failure line stays until a new run starts. */
+        val finished: Boolean = false,
     ) {
         val visible: Boolean get() = (running || waiting) && total > 0
+
+        /**
+         * A finished pass that failed something keeps one line on the Downloads
+         * screen. Before this the row disappeared with the pass, so "just
+         * finished" and "everything failed" looked exactly the same.
+         */
+        val failedVisible: Boolean get() = finished && failed > 0
     }
 
     private data class PendingTarget(
@@ -273,6 +286,18 @@ object HqLibraryUpgrade {
     private var done: Int = 0
     private var total: Int = 0
     private var activeVideoId: String? = null
+
+    /**
+     * Failures of the current or last finished run, deduplicated by target.
+     *
+     * [failures] is the permanent retry history and keeps growing across runs;
+     * showing its size would repeat old failures forever. This is only what
+     * this pass actually failed, so the end-of-run line can say "N failed"
+     * without counting a song twice when a deferred retry fails again.
+     */
+    private var failedThisRun: Int = 0
+    private var runFinished: Boolean = false
+    private val failedRunKeys = HashSet<String>()
 
     /**
      * A worker is inside [runOne], so its target may already be selected even
@@ -471,6 +496,7 @@ object HqLibraryUpgrade {
     fun startReplacementPass(context: Context) {
         ensureLoaded(context)
         synchronized(lock) {
+            resetRunSummaryLocked()
             manualPass = true
             if (activeVideoId == null) {
                 plan = emptyList()
@@ -1036,6 +1062,7 @@ object HqLibraryUpgrade {
             // below then owns their wake-up. A rebuilt target for the same song
             // wins over the kept one.
             synchronized(lock) {
+                if (runFinished) resetRunSummaryLocked()
                 plan = mergeParkedPlan(built, plan, resumable)
                 done = 0
                 total = plan.size
@@ -1343,6 +1370,7 @@ object HqLibraryUpgrade {
                     val previous = failures[key]?.attempts ?: 0
                     recordedFailure = Failure(previous + 1, System.currentTimeMillis())
                     failures[key] = recordedFailure!!
+                    registerRunFailureLocked(key)
                 }
             }
             val left = plan.filterNot { it.target.videoId == videoId }
@@ -1356,7 +1384,10 @@ object HqLibraryUpgrade {
                 rebuildRequested = false
                 // A button-started pass ends with its plan. Only a verdict
                 // that arrived mid-run keeps it alive for the rebuild.
-                if (!rebuild) manualPass = false
+                if (!rebuild) {
+                    manualPass = false
+                    runFinished = true
+                }
             }
             persistLocked()
             publishLocked()
@@ -1400,6 +1431,11 @@ object HqLibraryUpgrade {
             total = 0
             activeVideoId = null
             manualPass = false
+            // A run that ended through settle() already marked its failure
+            // summary and must keep it. A run abandoned here (cancelled or
+            // replaced) has no completed summary, so its partial count must
+            // not leak into the next pass.
+            if (!runFinished) resetRunSummaryLocked()
             if (ready) {
                 persistLocked()
                 publishLocked()
@@ -1560,6 +1596,9 @@ object HqLibraryUpgrade {
             total = prefs.getInt(KEY_TOTAL, 0)
             activeVideoId = prefs.getString(KEY_ACTIVE, null)?.takeIf { it.isNotBlank() }
             manualPass = prefs.getBoolean(KEY_MANUAL, false)
+            failedThisRun = prefs.getInt(KEY_FAILED_RUN, 0).coerceAtLeast(0)
+            runFinished = prefs.getBoolean(KEY_RUN_FINISHED, false)
+            failedRunKeys.clear()
             failures.clear()
             prefs.getString(KEY_FAILURES, null).orEmpty()
                 .lineSequence()
@@ -1590,6 +1629,8 @@ object HqLibraryUpgrade {
             .putInt(KEY_TOTAL, total)
             .putString(KEY_ACTIVE, activeVideoId)
             .putBoolean(KEY_MANUAL, manualPass)
+            .putInt(KEY_FAILED_RUN, failedThisRun)
+            .putBoolean(KEY_RUN_FINISHED, runFinished)
             .putString(
                 KEY_FAILURES,
                 failures.entries.joinToString("\n") { (key, failure) ->
@@ -1597,6 +1638,16 @@ object HqLibraryUpgrade {
                 },
             )
             .apply()
+    }
+
+    private fun resetRunSummaryLocked() {
+        failedThisRun = 0
+        runFinished = false
+        failedRunKeys.clear()
+    }
+
+    private fun registerRunFailureLocked(key: String) {
+        if (failedRunKeys.add(key)) failedThisRun += 1
     }
 
     private fun publishLocked() {
@@ -1607,6 +1658,8 @@ object HqLibraryUpgrade {
             done = done,
             total = total,
             waiting = waiting,
+            failed = failedThisRun,
+            finished = runFinished,
         )
     }
 

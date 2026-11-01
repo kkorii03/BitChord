@@ -1410,6 +1410,7 @@
     <string name="auto_prefetch_hq_subtitle">자주 듣는 노래 최대 %1$d곡 저장</string>
     <string name="hq_library_progress">고음질로 바꾸는 중 %1$d/%2$d</string>
     <string name="hq_library_waiting">대기 중 (서버 혼잡)</string>
+    <string name="hq_library_failed">%1$d곡 실패</string>
     <string name="hq_library_upgrade_all">모두 고음질로 다시 받기</string>
     <string name="hq_library_upgrade_all_subtitle">다운로드한 곡을 소리로 검증된 고음질 음원으로 지금 교체합니다. 곡마다 하나씩 진행됩니다.</string>
     <string name="download_health_recheck">다운로드 곡 다시 점검</string>
