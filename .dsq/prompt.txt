@@ -1,0 +1,10 @@
+BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/telegram. 대상: app/src/main/java/com/music/bitchord/telegram/ 의 재생·스트림 경로(텔레그램 파일을 TDLib 로 받아 ExoPlayer 로 재생, hq-verify 가 후보를 받는 경로)만. SourceResolver.kt·HqAudioVerify.kt 는 다른 작업이 고치는 중이니 수정 금지(읽기만).
+배경: 텔레그램 검색은 이제 정상(폰 로그 mode=global 500~900ms, West Coast 맞는 곡 찾음). 그러나 텔레그램 후보가 실제로 대조·재생에 쓰인 적이 아직 없어 재생 경로는 실기기 검증 0회.
+할 일 — 버그 사냥 후 확실한 것만 수정:
+① 텔레그램 후보의 hq-verify 다운로드와 재생: TDLib downloadFile 진행(부분 다운로드, offset/limit, 우선순위), 파일이 다 받아지기 전 읽기, seek, 받다가 앱이 백그라운드로 갈 때, 같은 파일을 대조와 재생이 동시에 받을 때, 취소 시 lease 반환, 임시 파일 정리(용량 누수).
+② 실패 처리: 파일 삭제됨/채널 나감/파일 참조 만료(file_reference) 시 재시도 1회 후 깔끔한 실패, 무한 대기 없음.
+③ 배터리: 재생이 끝나거나 다음 곡으로 넘어가면 TDLib 다운로드 취소·클라이언트 닫힘(lease 0). 주기 폴링·타이머 금지.
+④ 로그: 'telegram: download file=.. bytes=.. ms=.. reason=verify|play' 한 줄.
+테스트(고치기 전 실패하는 것만): 찾은 각 버그마다 단위 테스트. 새 테스트 클래스 이름 요약에.
+제약: .github/, keys, *.jks, 서명 수정 금지. 판정 기준 변경 금지. 바꾼 함수의 모든 호출부 재확인. 확실하지 않은 의심은 고치지 말고 요약의 '미해결'에 파일:줄과 함께.
+마지막 10줄 이내 요약: 찾은 버그(파일:줄) / 수정 / 테스트 / 미해결.
