@@ -3,6 +3,7 @@ package com.music.bitchord.data.innertube
 import com.music.bitchord.auth.normalizeDataSyncId
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.Http
+import com.music.bitchord.data.net.NetworkReadiness
 import com.music.bitchord.data.net.ProxyFailure
 import com.music.bitchord.data.net.ProxyHealthMonitor
 import com.music.bitchord.data.net.YouTubeProxy
@@ -563,6 +564,7 @@ object Innertube {
      * [SessionScope.dataSyncId] — see that field.
      */
     suspend fun ensureSessionScope() {
+        NetworkReadiness.await()
         val session = cookie ?: return
         if (scope != null) return
         scopeLock.withLock {
@@ -899,6 +901,7 @@ object Innertube {
      * per unknown history row, never something a page waits on for long.
      */
     suspend fun playerCategory(videoId: String): String? {
+        NetworkReadiness.await()
         if (videoId.isBlank()) return null
         val response = client.post("$YOUTUBE_BASE/player") {
             contentType(ContentType.Application.Json)
@@ -1067,6 +1070,7 @@ object Innertube {
      * rather than being handed to the JSON reader as-is.
      */
     suspend fun accountSwitcher(): JsonObject {
+        NetworkReadiness.await()
         requireSession()
         ensureSessionScope()
         val session = scope
@@ -1255,6 +1259,7 @@ object Innertube {
      * timestamp one revision old, it does not.
      */
     suspend fun playbackTracking(videoId: String, signatureTimestamp: Int?): PlaybackTracking? {
+        NetworkReadiness.await()
         if (cookie == null) return null
         ensureSessionScope()
         // A gated listener has no Music player to ask; IOS on youtube.com still
@@ -1420,6 +1425,7 @@ object Innertube {
         origin: String = MUSIC_ORIGIN,
         clientName: String = "WEB_REMIX",
     ): Int {
+        NetworkReadiness.await()
         // Playback can outlive the Activity that restored the session. Ensure
         // the selected profile's headers exist before this first history ping.
         if (cookie != null) ensureSessionScope()
@@ -1439,6 +1445,7 @@ object Innertube {
         clientVersion: String,
         extras: HttpRequestBuilder.() -> Unit,
     ): Int {
+        NetworkReadiness.await()
         if (cookie != null) ensureSessionScope()
         val session = scope
         val ios = clientName == "IOS"
@@ -1505,7 +1512,8 @@ object Innertube {
     /** A write attempted without a session; the caller has a sign-in prompt to show. */
     class NotSignedInException : IllegalStateException("이 작업을 하려면 YouTube Music에 로그인하십시오")
 
-    private fun requireSession() {
+    private suspend fun requireSession() {
+        NetworkReadiness.await()
         if (cookie == null) throw NotSignedInException()
     }
 
@@ -1771,6 +1779,7 @@ object Innertube {
         searchQueryLength: Int? = null,
         bodyExtras: JsonObjectBuilder.() -> Unit,
     ): JsonObject {
+        NetworkReadiness.await()
         // In Korea without Premium the signed-in Music session is refused
         // (401/403) on every page, while the same catalog pages — albums,
         // artists, playlists — answer an anonymous request (measured
@@ -1959,6 +1968,7 @@ object Innertube {
         searchQueryLength: Int? = null,
         bodyExtras: JsonObjectBuilder.() -> Unit,
     ): JsonObject {
+        NetworkReadiness.await()
         val anonymousRequest = isAnonymousYouTubeRequest(endpoint, anonymous)
         if (isSearchEndpoint(endpoint)) {
             check(anonymousRequest) { "youtube.com search must not carry the account" }

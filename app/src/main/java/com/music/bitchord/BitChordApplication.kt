@@ -15,6 +15,7 @@ import coil3.svg.SvgDecoder
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import okhttp3.OkHttpClient
 import com.music.bitchord.auth.AuthStore
+import com.music.bitchord.auth.GoogleAccountSession
 import com.music.bitchord.data.DebugLog
 import com.music.bitchord.data.LocalPlay
 import com.music.bitchord.data.LocalPlayHistory
@@ -142,15 +143,15 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         com.music.bitchord.playback.smart.AiLyrics.init(this)
         LyricsTranslation.cacheDir = cacheDir
         LyricsTranslation.keepDir = filesDir
-        // PlaybackService shares this process, so seeding the cookie here means
-        // stream resolution is authenticated from the first play onwards.
+        // Created, not opened: the encrypted store's first read is a Keystore
+        // round trip and belongs on the startup thread with the rest of the
+        // credential preparation below. PlaybackService shares this process,
+        // so the cookie restored there is in force for stream resolution too.
         authStore = AuthStore(this)
-        // The proxy route has to be in YouTubeProxy before this process makes
-        // its first YouTube request. Everything below can start such a request
-        // — a source open or the session-scope lookup a few lines down — while
-        // the full settings read is still running, and a direct first browse
-        // from Korea is exactly what stores a GATED verdict even though a
-        // working proxy is configured. This is only the small proxy read.
+        // Reads only the plain proxy fields. The password and the published
+        // route follow on the startup thread, before NetworkReadiness opens;
+        // keeping the route out of YouTubeProxy until then is what stops a
+        // first request from going through it without the credential.
         AppSettings.initProxy(this, authStore)
         // The refused-track memory that decides "proxy first" next launch. It
         // reads one small preference file and installs a debounced writer; no
@@ -192,28 +193,12 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // all — it is the fix for canvas clips re-fetching the same few
         // seconds of video from the network on every loop.
         CanvasCache.init(this)
-        // Migration-safe: an old single cookie becomes the first encrypted
-        // session, while newer installs restore the profile the listener chose.
-        val restoredSession = authStore.activeSession
-        if (restoredSession != null && authStore.activeAccountId == null) {
-            authStore.select(restoredSession.accountId, restoredSession.activeProfileId)
-        }
-        authStore.cookie = restoredSession?.cookie
-        Innertube.cookie = restoredSession?.cookie
-        // Which account that cookie actually acts as. Read here rather than on
-        // demand so the answer is usually in hand before the first request needs
-        // it: a play registered under the wrong account is indistinguishable, to
-        // the listener, from one that was never registered at all. Fire and
-        // forget — every caller works without it, just less precisely.
-        if (restoredSession != null) {
-            // After the cookie, never before: setting the cookie clears any
-            // channel the last session was acting as, so restoring the choice
-            // first would restore it into the value about to be wiped.
-            restoredSession.profiles.firstOrNull { it.profileId == restoredSession.activeProfileId }
-                ?.let { Innertube.selectChannel(it.pageId, it.dataSyncId, it.authUser) }
-            CoroutineScope(Dispatchers.IO).launch { Innertube.ensureSessionScope() }
-        }
+        // The encrypted store is opened on the startup thread below. Restoring
+        // the cookie and the account's chosen channel is preparation, not
+        // launch work; [NetworkReadiness] holds the first request until that
+        // pass has finished, so it still carries the listener's login.
         AppSettings.init(this, authStore)
+        StartupWork.background("startup-credentials") { prepareStartupCredentials() }
         // After AppSettings, whose flows it feeds: the power-save switch and
         // the battery can change while the app is in the background.
         com.music.bitchord.playback.LowPowerDevice.start(this)
@@ -347,7 +332,10 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // read only by the AutoPlay top-up that is already off the main thread.
         com.music.bitchord.data.taste.SimilarCandidates.init(this)
         // After AppSettings, whose switch decides whether half of it runs.
-        ArtistFacts.init(this)
+        // Opening the cache is a disk read on the launch path, so it happens
+        // on the startup thread; reads before then keep their existing empty
+        // answer.
+        StartupWork.background("artist-facts") { ArtistFacts.init(this) }
         // One cache directory can only be opened once per process, and
         // PlaybackService shares this one — so it's opened here, not there.
         AudioCache.init(this)
@@ -377,8 +365,8 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
                 CoroutineScope(Dispatchers.IO).launch { loader.diskCache?.clear() }
             }
         }
-        // Initialize LastFM with saved settings if available
-        initLastfm()
+        // LastFM is configured from the credential-backed settings on the
+        // startup thread; see prepareStartupCredentials.
         // The public "apps open right now" count; see Presence.
         com.music.bitchord.data.presence.AndroidPresence.install(this)
         StartupTrace.applicationCreated()
@@ -508,6 +496,55 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         TrackLog.w("BitChord", "lifecycle: low memory")
         TrackLog.flush()
         com.music.bitchord.data.FeatureHealthCounters.flush()
+    }
+
+    /**
+     * Opens the encrypted store, restores the session and publishes the
+     * credential-backed settings, all off the main thread.
+     *
+     * [NetworkReadiness.markReady] is called only after the cookie and the
+     * proxy password are in place. If any of it fails the gate is still opened
+     * with one log line, so the first request goes out anonymously instead of
+     * waiting forever.
+     */
+    private fun prepareStartupCredentials() {
+        try {
+            authStore.ensureReady()
+            val restoredSession = restoreSession()
+            AppSettings.applyAuthSecrets()
+            initLastfm()
+            com.music.bitchord.data.net.NetworkReadiness.markReady()
+            if (restoredSession != null) {
+                // The cookie — and now the proxy — are ready, so this is the
+                // first request that may leave the process.
+                CoroutineScope(Dispatchers.IO).launch { Innertube.ensureSessionScope() }
+            }
+        } catch (failure: Throwable) {
+            com.music.bitchord.data.net.NetworkReadiness.markFailed(
+                failure.message ?: failure.javaClass.simpleName,
+            )
+        }
+    }
+
+    /**
+     * Migration-safe: an old single cookie becomes the first encrypted session,
+     * while newer installs restore the profile the listener chose.
+     */
+    private fun restoreSession(): GoogleAccountSession? {
+        val restoredSession = authStore.activeSession
+        if (restoredSession != null && authStore.activeAccountId == null) {
+            authStore.select(restoredSession.accountId, restoredSession.activeProfileId)
+        }
+        authStore.cookie = restoredSession?.cookie
+        Innertube.cookie = restoredSession?.cookie
+        if (restoredSession != null) {
+            // After the cookie, never before: setting the cookie clears any
+            // channel the last session was acting as, so restoring the choice
+            // first would restore it into the value about to be wiped.
+            restoredSession.profiles.firstOrNull { it.profileId == restoredSession.activeProfileId }
+                ?.let { Innertube.selectChannel(it.pageId, it.dataSyncId, it.authUser) }
+        }
+        return restoredSession
     }
 
     private fun initLastfm() {

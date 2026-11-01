@@ -1125,21 +1125,25 @@ object AppSettings {
         get() = !wifiOnlyDownloads.value || meteredConnection.value != true
 
     /**
-     * Loads only the saved proxy route, synchronously and without the rest of
-     * the settings.
+     * Loads the plain proxy fields, synchronously and without the rest of the
+     * settings.
      *
-     * Application.onCreate calls this before it starts anything that can issue
-     * a YouTube request: the proxy has to be in [YouTubeProxy] before the
-     * process's first browse, or a direct request from Korea records a GATED
-     * verdict against a network the listener already routed around. [init]
-     * still runs later for everything else; reading the same preferences in
-     * both places converges on one published configuration.
+     * The password and the route itself wait for the encrypted store: publishing
+     * a route before its credential has been read would send the first request
+     * through it unauthenticated. NetworkReadiness holds requests until that
+     * pass finishes; [init] still runs later for everything else.
      */
     fun initProxy(context: Context, authStore: AuthStore) {
         appContext = context.applicationContext
         prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         this.authStore = authStore
-        readProxy()
+        // Only the plain fields are read here. The password lives in the
+        // encrypted store, and publishing a route before that read has
+        // finished would send the first request through it without a
+        // password. The route is published by [applyAuthSecrets] once the
+        // startup task has the credential; NetworkReadiness holds requests
+        // until then.
+        readProxy(withCredentials = false)
     }
 
     /**
@@ -1159,13 +1163,66 @@ object AppSettings {
         // Also only a default: a key typed in Settings (or removed there) wins.
         bundledDeepgramApiKey = context.getString(com.music.bitchord.R.string.default_deepgram_api_key).trim()
         this.authStore = authStore
-        migrateSecretsToAuthStore()
         sanitizeStoredPreferences()
-        deepgramApiKey.value = authStore.secret(KEY_DEEPGRAM_API_KEY) ?: bundledDeepgramApiKey
-        com.music.bitchord.data.lyrics.Deepgram.apiKey = deepgramApiKey.value
         com.music.bitchord.data.spotify.LocalPlaylistStore.init(context)
         readAll()
+        // Credential-backed settings are applied by the startup task after the
+        // encrypted store opens; see BitChordApplication. Nothing here may
+        // touch that store on the launch thread.
         watchConnection(context)
+    }
+
+    /**
+     * Applies the credential-backed settings once [authStore] has opened.
+     *
+     * The startup prewarm and this module use one open; a callback on that
+     * task keeps the first frame from paying for the Keystore round trip while
+     * still publishing the proxy password, scrobbler tokens and WebDAV/SMB
+     * credentials before the settings screen or a request needs them.
+     */
+    private fun applyAuthSecretsWhenReady() {
+        if (!this::authStore.isInitialized) return
+        authStore.onReady { applyAuthSecrets() }
+    }
+
+    /**
+     * Reads the encrypted values and publishes everything derived from them.
+     *
+     * Runs on the startup task after [AuthStore.ensureReady] and after the
+     * session cookie has been restored, so the proxy route is published with
+     * its password and before [NetworkReadiness.markReady] opens the gate.
+     */
+    internal fun applyAuthSecrets() {
+        if (!this::prefs.isInitialized || !this::authStore.isInitialized) return
+        migrateSecretsToAuthStore()
+        deepgramApiKey.value = authStore.secret(KEY_DEEPGRAM_API_KEY) ?: bundledDeepgramApiKey
+        com.music.bitchord.data.lyrics.Deepgram.apiKey = deepgramApiKey.value
+        paxSenixApiKey.value = authStore.secret(KEY_PAXSENIX_API_KEY).orEmpty()
+        com.music.bitchord.data.lyrics.PaxSenix.setApiKey(paxSenixApiKey.value)
+        geminiApiKey.value = authStore.secret(KEY_GEMINI_API_KEY) ?: bundledGeminiApiKey
+        com.music.bitchord.data.lyrics.LyricsTranslation.geminiApiKey = geminiApiKey.value
+        com.music.bitchord.data.lyrics.LyricsTranslation.geminiEnabled = geminiTranslation.value
+        lastfmSessionKey.value = authStore.secret(KEY_LASTFM_SESSION_KEY).orEmpty()
+        lastfmApiKey.value = authStore.secret(KEY_LASTFM_API_KEY).orEmpty().ifBlank { BuildConfig.LASTFM_API_KEY }
+        lastfmSecret.value = authStore.secret(KEY_LASTFM_SECRET).orEmpty().ifBlank { BuildConfig.LASTFM_SECRET }
+        listenBrainzToken.value = authStore.secret(KEY_LISTENBRAINZ_TOKEN).orEmpty()
+        spotifySpdcToken.value = authStore.secret(KEY_SPOTIFY_SPDC_TOKEN).orEmpty()
+        webdavPassword.value = authStore.webdavPassword.orEmpty()
+        smbPassword.value = authStore.smbPassword.orEmpty()
+        com.music.bitchord.data.smb.SmbAuth.update(
+            smbHost.value,
+            smbShare.value,
+            smbBasePath.value,
+            smbUsername.value,
+            smbPassword.value,
+        )
+        com.music.bitchord.data.webdav.WebDavAuth.update(
+            webdavUrl.value,
+            webdavUsername.value,
+            webdavPassword.value,
+        )
+        readProxy()
+        discordToken.value = authStore.discordToken.orEmpty()
     }
 
     /**
@@ -1182,6 +1239,7 @@ object AppSettings {
     fun reload() {
         if (!this::prefs.isInitialized) return
         readAll()
+        applyAuthSecretsWhenReady()
     }
 
     private fun readAll() {
@@ -1350,12 +1408,7 @@ object AppSettings {
         syncSafetyNextPrep.value = prefs.getBoolean(KEY_SYNC_SAFETY_NEXT_PREP, true)
         syncSafetyDownloadRecheck.value = prefs.getBoolean(KEY_SYNC_SAFETY_DOWNLOAD_RECHECK, false)
         syncSafetyHqSync.value = prefs.getBoolean(KEY_SYNC_SAFETY_HQ_SYNC, false)
-        paxSenixApiKey.value = authStore.secret(KEY_PAXSENIX_API_KEY).orEmpty()
-        com.music.bitchord.data.lyrics.PaxSenix.setApiKey(paxSenixApiKey.value)
-        geminiApiKey.value = authStore.secret(KEY_GEMINI_API_KEY) ?: bundledGeminiApiKey
         geminiTranslation.value = prefs.getBoolean(KEY_GEMINI_TRANSLATION, bundledGeminiApiKey.isNotBlank())
-        com.music.bitchord.data.lyrics.LyricsTranslation.geminiApiKey = geminiApiKey.value
-        com.music.bitchord.data.lyrics.LyricsTranslation.geminiEnabled = geminiTranslation.value
         prefetchTranslation.value = prefs.getBoolean(KEY_PREFETCH_TRANSLATION, true)
         keepDownloadTranslation.value = prefs.getBoolean(KEY_KEEP_DOWNLOAD_TRANSLATION, true)
         autoDownloadLiked.value = prefs.getBoolean(KEY_AUTO_DOWNLOAD_LIKED, true)
@@ -1380,9 +1433,6 @@ object AppSettings {
         showCacheFolder.value = prefs.getBoolean(KEY_SHOW_CACHE_FOLDER, false)
         lastfmEnabled.value = prefs.getBoolean(KEY_LASTFM_ENABLED, false)
         lastfmUsername.value = prefs.getString(KEY_LASTFM_USERNAME, "").orEmpty()
-        lastfmSessionKey.value = authStore.secret(KEY_LASTFM_SESSION_KEY).orEmpty()
-        lastfmApiKey.value = authStore.secret(KEY_LASTFM_API_KEY).orEmpty().ifBlank { BuildConfig.LASTFM_API_KEY }
-        lastfmSecret.value = authStore.secret(KEY_LASTFM_SECRET).orEmpty().ifBlank { BuildConfig.LASTFM_SECRET }
         lastfmEndpoint.value = prefs.getString(KEY_LASTFM_ENDPOINT, "").orEmpty()
         lastfmScrobbleEnabled.value = prefs.getBoolean(KEY_LASTFM_SCROBBLE_ENABLED, false)
         lastfmNowPlaying.value = prefs.getBoolean(KEY_LASTFM_NOW_PLAYING, false) && lastfmScrobbleEnabled.value
@@ -1393,9 +1443,7 @@ object AppSettings {
         )
         scrobbleDelaySeconds.value = prefs.getInt(KEY_SCROBBLE_DELAY_SECONDS, 180)
         listenBrainzEnabled.value = prefs.getBoolean(KEY_LISTENBRAINZ_ENABLED, false)
-        listenBrainzToken.value = authStore.secret(KEY_LISTENBRAINZ_TOKEN).orEmpty()
         listenBrainzPrimaryArtistOnly.value = prefs.getBoolean(KEY_LISTENBRAINZ_PRIMARY_ARTIST_ONLY, false)
-        spotifySpdcToken.value = authStore.secret(KEY_SPOTIFY_SPDC_TOKEN).orEmpty()
         replayGenres.value = prefs.getBoolean(KEY_REPLAY_GENRES, true)
         filterNonMusicAudio.value = prefs.getBoolean(KEY_FILTER_NON_MUSIC_AUDIO, true)
         localMusicSort.value = readLocalMusicSort(KEY_LOCAL_MUSIC_SORT)
@@ -1410,27 +1458,11 @@ object AppSettings {
         localMusicFolderUri.value = prefs.getString(KEY_LOCAL_MUSIC_FOLDER_URI, "").orEmpty()
         webdavUrl.value = prefs.getString(KEY_WEBDAV_URL, "").orEmpty()
         webdavUsername.value = prefs.getString(KEY_WEBDAV_USERNAME, "").orEmpty()
-        webdavPassword.value = authStore.webdavPassword.orEmpty()
         smbHost.value = prefs.getString(KEY_SMB_HOST, "").orEmpty()
         smbShare.value = prefs.getString(KEY_SMB_SHARE, "").orEmpty()
         smbBasePath.value = prefs.getString(KEY_SMB_BASE_PATH, "").orEmpty()
         smbUsername.value = prefs.getString(KEY_SMB_USERNAME, "").orEmpty()
-        smbPassword.value = authStore.smbPassword.orEmpty()
-        com.music.bitchord.data.smb.SmbAuth.update(
-            smbHost.value,
-            smbShare.value,
-            smbBasePath.value,
-            smbUsername.value,
-            smbPassword.value,
-        )
-        com.music.bitchord.data.webdav.WebDavAuth.update(
-            webdavUrl.value,
-            webdavUsername.value,
-            webdavPassword.value,
-        )
-        readProxy()
         pinnedPlaylists.value = readPinnedPlaylists()
-        discordToken.value = authStore.discordToken.orEmpty()
         discordUsername.value = prefs.getString(KEY_DISCORD_USERNAME, "").orEmpty()
         discordName.value = prefs.getString(KEY_DISCORD_NAME, "").orEmpty()
         discordAvatar.value = prefs.getString(KEY_DISCORD_AVATAR, "").orEmpty()
@@ -1993,7 +2025,10 @@ object AppSettings {
      */
     private fun hadDataBeforeOnboarding(): Boolean =
         prefs.all.keys.any { it != KEY_ONBOARDING_COMPLETE } ||
-            runCatching { authStore.isSignedIn }.getOrDefault(false) ||
+            // A signed-in install with no other preference is not a state this
+            // app can reach: onboarding marks the file before the login screen.
+            // Do not block launch on the encrypted store to prove it here.
+            runCatching { authStore.isReady && authStore.isSignedIn }.getOrDefault(false) ||
             runCatching {
                 com.music.bitchord.data.stats.ListeningStats.hasStoredHistory(appContext)
             }.getOrDefault(false)
@@ -2799,7 +2834,7 @@ object AppSettings {
     }
 
     /** Reads the proxy fields and publishes them; shared by [init] and [initProxy]. */
-    private fun readProxy() {
+    private fun readProxy(withCredentials: Boolean = true) {
         proxyMode.value = runCatching {
             ProxyMode.valueOf(prefs.getString(KEY_PROXY_MODE, null) ?: ProxyMode.OFF.name)
         }.getOrDefault(ProxyMode.OFF)
@@ -2808,11 +2843,13 @@ object AppSettings {
         proxyBackupHost.value = prefs.getString(KEY_PROXY_BACKUP_HOST, "").orEmpty()
         proxyBackupPort.value = prefs.getInt(KEY_PROXY_BACKUP_PORT, 0)
         proxyUsername.value = prefs.getString(KEY_PROXY_USERNAME, "").orEmpty()
-        proxyPassword.value = authStore.proxyPassword.orEmpty()
         proxyScope.value = runCatching {
             ProxyScope.valueOf(prefs.getString(KEY_PROXY_SCOPE, null) ?: ProxyScope.MUSIC_ONLY.name)
         }.getOrDefault(ProxyScope.MUSIC_ONLY)
-        publishProxy()
+        if (withCredentials) {
+            proxyPassword.value = authStore.proxyPassword.orEmpty()
+            publishProxy()
+        }
     }
 
     private fun publishProxy() {

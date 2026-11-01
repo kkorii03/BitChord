@@ -2,9 +2,12 @@ package com.music.bitchord.data.stats
 
 import android.content.Context
 import android.net.Uri
+import android.os.Process
+import android.os.SystemClock
 import android.util.Log
 import com.music.bitchord.BuildConfig
 import com.music.bitchord.data.Http
+import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
@@ -109,23 +112,37 @@ object ArtistFacts {
     private val _revision = MutableStateFlow(0)
     val revision: StateFlow<Int> = _revision.asStateFlow()
 
+    private val initLock = Any()
+
+    @Volatile
+    private var started = false
+
     fun init(context: Context) {
-        file = File(context.filesDir, FILE_NAME)
-        scope.launch {
-            load()
-            worker()
-        }
-        // Writes are debounced rather than one per answer. The cache holds every
-        // artist ever played, so rewriting it after each lookup meant a few
-        // hundred kilobytes per artist during a backfill — for a file that is
-        // only read once, at launch. A lookup now arms the write; a burst of
-        // answers still lands as one write, and a process that never learns a
-        // new artist never wakes up to save nothing.
-        scope.launch {
-            while (true) {
-                saves.receive()
-                delay(SAVE_DEBOUNCE_MS)
-                save()
+        synchronized(initLock) {
+            if (started) return
+            started = true
+            file = File(context.filesDir, FILE_NAME)
+            scope.launch {
+                load()
+                TrackLog.i(
+                    "BitChord",
+                    "startup: artistfacts ready in " +
+                        "${SystemClock.uptimeMillis() - Process.getStartUptimeMillis()}ms",
+                )
+                worker()
+            }
+            // Writes are debounced rather than one per answer. The cache holds every
+            // artist ever played, so rewriting it after each lookup meant a few
+            // hundred kilobytes per artist during a backfill — for a file that is
+            // only read once, at launch. A lookup now arms the write; a burst of
+            // answers still lands as one write, and a process that never learns a
+            // new artist never wakes up to save nothing.
+            scope.launch {
+                while (true) {
+                    saves.receive()
+                    delay(SAVE_DEBOUNCE_MS)
+                    save()
+                }
             }
         }
     }
