@@ -4,6 +4,16 @@ import com.music.bitchord.ui.theme.AppType
 
 import android.os.Build
 import com.music.bitchord.R
+import com.music.bitchord.ko.KoAlbumFooter
+import com.music.bitchord.ko.KoDetailDownloadsScan
+import com.music.bitchord.ko.koArtistTopSongs
+import com.music.bitchord.ko.koDetailAlbumSubtitle
+import com.music.bitchord.ko.koDetailDownloadExtras
+import com.music.bitchord.ko.koDetailEmptyFlags
+import com.music.bitchord.ko.koDetailErrorItems
+import com.music.bitchord.ko.koDetailHeaderArtwork
+import com.music.bitchord.ko.koDetailLoadingItems
+import com.music.bitchord.ko.koDetailLoadingState
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateContentSize
@@ -54,7 +64,6 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
 import com.music.bitchord.data.model.LibraryState
-import com.music.bitchord.data.stats.SmartPlaylist
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.GraphicEq
@@ -101,7 +110,6 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -152,30 +160,21 @@ import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.settings.SongSort
 import com.music.bitchord.data.model.Song
-import com.music.bitchord.download.Downloads
 import com.music.bitchord.data.model.SubscriptionState
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.model.artistCountValue
 import com.music.bitchord.data.model.appleCardKind
 import com.music.bitchord.data.model.AlbumSubtitle
-import com.music.bitchord.data.model.parseAlbumSubtitle
 import com.music.bitchord.data.model.durationMillis
-import com.music.bitchord.data.model.firstArtworkOrStill
 import com.music.bitchord.data.model.playingRowMatcher
 import com.music.bitchord.data.settings.AppSettings
-import com.music.bitchord.ui.components.BROWSE_LOADING_TIMEOUT_MS
 import com.music.bitchord.ui.components.DownloadedBadge
-import com.music.bitchord.ui.components.EmptyState
-import com.music.bitchord.ui.components.HqLibraryProgressLine
-import com.music.bitchord.ui.components.HqLibraryUpgradeAllRow
 import com.music.bitchord.ui.components.ExplicitSongTitle
 import com.music.bitchord.ui.components.LIBRARY_GRID_SPACING
 import com.music.bitchord.ui.components.LARGE_CARD_CORNER
 import com.music.bitchord.ui.components.LikedMusicCover
-import com.music.bitchord.ui.components.LoadingTimeoutState
 import com.music.bitchord.ui.components.MessageState
-import com.music.bitchord.ui.components.rememberLoadingTimedOut
 import com.music.bitchord.ui.components.PAGE_GUTTER
 import com.music.bitchord.ui.components.SMALL_ART_CORNER
 import com.music.bitchord.ui.components.artworkCorner
@@ -190,7 +189,6 @@ import com.music.bitchord.ui.components.libraryGrid
 import com.music.bitchord.ui.components.lightweightLiquidGlass
 import com.music.bitchord.ui.components.rememberRemoteArtworkUrl
 import com.music.bitchord.ui.components.thumbnailBorder
-import com.music.bitchord.ui.components.detailSkeleton
 import com.music.bitchord.ui.components.topBarContentPadding
 import com.music.bitchord.ui.components.trackColumnWidth
 import com.music.bitchord.ui.haptics.Haptic
@@ -387,19 +385,13 @@ fun DetailScreen(
     /** Re-runs the page's first load in place after its error state. */
     onRetryLoading: (() -> Unit)? = null,
 ) {
-    var loadAttempt by remember { mutableIntStateOf(0) }
-    val loadingTimedOut = rememberLoadingTimedOut(
+    val koLoading = koDetailLoadingState( // [KO] detail-retry
         loading = page.songs is UiState.Loading,
-        tag = "detail",
-        timeoutMs = BROWSE_LOADING_TIMEOUT_MS,
-        requestKey = "${page.browseId}:$loadAttempt",
+        browseId = page.browseId,
+        onRetryLoading = onRetryLoading,
     )
-    val retryLoading: (() -> Unit)? = onRetryLoading?.let { action ->
-        {
-            loadAttempt += 1
-            action()
-        }
-    }
+    val loadingTimedOut = koLoading.timedOut
+    val retryLoading = koLoading.onRetry
     val visibleSongs = (page.songs as? UiState.Success)?.data.orEmpty()
     // Liked Music keeps the account's non-music videos aside by default;
     // the row below the header reveals them. Everywhere else this is empty.
@@ -417,10 +409,11 @@ fun DetailScreen(
     // sleeve then takes the first row's picture — or, when that row only names
     // its video, the still every YouTube row can always reach — instead of
     // leaving the header an empty square while the list below has artwork.
-    val headerArtwork = remember(page.thumbnailUrl, songs, page.suggestedSongs) {
-        page.thumbnailUrl?.takeIf { it.isNotBlank() }
-            ?: (songs + page.suggestedSongs).firstArtworkOrStill()
-    }
+    val headerArtwork = koDetailHeaderArtwork( // [KO] header-artwork
+        page.thumbnailUrl,
+        songs,
+        page.suggestedSongs,
+    )
     // What a numbered row shows regardless of [songSort] — an album's track
     // numbers are the sleeve's own and must not relabel themselves to match
     // wherever a sort put the row. An album grouped off a device's files
@@ -433,26 +426,28 @@ fun DetailScreen(
     val isArtist = page.type == BrowseType.ARTIST
     // An album's header and footer share one reading of the server's subtitle:
     // the artist line, the kind/year meta, and the release date when stated.
-    val albumSubtitle = remember(page.subtitle, page.type) {
-        if (page.type == BrowseType.ALBUM) parseAlbumSubtitle(page.subtitle) else null
-    }
+    val albumSubtitle = koDetailAlbumSubtitle(page.subtitle, page.type) // [KO] album-subtitle
     // A smart playlist with nothing to show is an empty shelf, not a release
     // with a missing sleeve: the tall artwork header would push the title into
     // the middle of the screen and leave the explanation stranded below it.
     // YouTube's Liked Music page is not one of the local SmartPlaylist ids but
     // is the same account-only shelf; a guest opening it needs the sign-in
     // route too rather than a plain retry-less message.
-    val likedMusicPage = page.browseId == YtMusicRepository.LIKED_MUSIC
-    val smartEmpty = (SmartPlaylist.of(page.browseId) != null || likedMusicPage) &&
-        page.songs is UiState.Error
+    val koEmptyFlags = koDetailEmptyFlags( // [KO] detail-empty-flags
+        browseId = page.browseId,
+        songsError = page.songs is UiState.Error,
+        folderPresent = folder != null,
+        signedIn = signedIn,
+    )
+    val likedMusicPage = koEmptyFlags.likedMusicPage
+    val smartEmpty = koEmptyFlags.smartEmpty
     // A device folder with nothing in it is an empty shelf too: the tall sleeve
     // header would show a placeholder square over an explanation, so the whole
     // page becomes one centred empty state instead.
-    val folderEmpty = folder != null && page.songs is UiState.Error
+    val folderEmpty = koEmptyFlags.folderEmpty
     // Liked songs are the one smart list that lives on the account; a guest
     // opening it gets the way to sign in rather than only a retry-less message.
-    val smartNeedsSignIn = smartEmpty && !signedIn &&
-        (SmartPlaylist.of(page.browseId) == SmartPlaylist.LIKED_UNPLAYED || likedMusicPage)
+    val smartNeedsSignIn = koEmptyFlags.smartNeedsSignIn
     // Whether the top release card's album is already saved isn't on the shelf
     // item; it is read off the album once, as soon as the card is known.
     val topReleaseId = if (isArtist) page.sections.topRelease()?.browseId else null
@@ -595,12 +590,7 @@ fun DetailScreen(
 
     // Opening Downloads is the event that refreshes the length verdicts from
     // what is already recorded — no network, no timer.
-    val downloadsContext = LocalContext.current
-    LaunchedEffect(page.browseId) {
-        if (page.browseId == "local:downloads") {
-            Downloads.scanForMvSoundSuspects(downloadsContext)
-        }
-    }
+    KoDetailDownloadsScan(page.browseId) // [KO] downloads-scan
 
     AnimatedContent(
         targetState = activeShelf,
@@ -686,21 +676,12 @@ fun DetailScreen(
                 }
             }
 
-            if (page.browseId == "local:downloads" && songs.isNotEmpty()) {
-                item(key = "hq-library-progress") {
-                    HqLibraryProgressLine(
-                        Modifier.padding(horizontal = HEADER_GUTTER, vertical = 6.dp),
-                    )
-                }
-                item(key = "hq-library-upgrade-all") {
-                    HqLibraryUpgradeAllRow(
-                        Modifier.padding(horizontal = HEADER_GUTTER, vertical = 2.dp),
-                    )
-                }
-                item(key = "mv-sound-suspects") {
-                    MvSoundSuspectBanner(palette)
-                }
-            }
+            koDetailDownloadExtras( // [KO] downloads-extras
+                page.browseId,
+                songs.size,
+                palette,
+                HEADER_GUTTER,
+            )
 
             if (searching) {
                 item(key = "search") {
@@ -828,41 +809,21 @@ fun DetailScreen(
             if (!isArtist) aboutItem()
 
             when (val state = page.songs) {
-                is UiState.Loading -> if (loadingTimedOut && retryLoading != null) {
-                    item(key = "detail:timeout") { LoadingTimeoutState(onRetry = retryLoading) }
-                } else {
-                    detailSkeleton(isArtist)
-                }
-                is UiState.Error -> when {
-                    folderEmpty -> item(key = "folder-empty") {
-                        EmptyState(
-                            icon = deviceFolderIcon(page.browseId) ?: BitChordIcons.MusicNote,
-                            title = page.title.ifBlank { state.message },
-                            message = state.message.takeIf { page.title.isNotBlank() },
-                            modifier = Modifier
-                                .fillParentMaxHeight(0.86f)
-                                .padding(top = topBarContentPadding()),
-                        )
-                    }
-                    smartEmpty -> item(key = "smart-empty") {
-                        SmartPlaylistEmptyState(
-                            title = page.title,
-                            message = state.message,
-                            onSignIn = onSignIn.takeIf { smartNeedsSignIn },
-                            modifier = Modifier
-                                .fillParentMaxHeight(0.86f)
-                                .padding(top = topBarContentPadding()),
-                        )
-                    }
-                    retryLoading != null -> item {
-                        MessageState(
-                            state.message,
-                            actionLabel = stringResource(R.string.try_again),
-                            onAction = retryLoading,
-                        )
-                    }
-                    else -> item { MessageState(state.message) }
-                }
+                is UiState.Loading -> koDetailLoadingItems( // [KO] detail-loading
+                    timedOut = loadingTimedOut,
+                    onRetry = retryLoading,
+                    isArtist = isArtist,
+                )
+                is UiState.Error -> koDetailErrorItems( // [KO] detail-error
+                    browseId = page.browseId,
+                    pageTitle = page.title,
+                    message = state.message,
+                    folderEmpty = folderEmpty,
+                    smartEmpty = smartEmpty,
+                    smartNeedsSignIn = smartNeedsSignIn,
+                    onSignIn = onSignIn,
+                    onRetry = retryLoading,
+                )
                 is UiState.Success -> if (folder != null && folderState != null) {
                     localFolderItems(
                         folder = folder,
@@ -885,7 +846,7 @@ fun DetailScreen(
                     // heading is skipped rather than leaving a gap above them.
                     // The filter narrows this strip too: searching an artist used
                     // to leave the popular songs untouched under the search box.
-                    val top = songs.artistTopSongs(query, MAX_ARTIST_SONGS)
+                    val top = songs.koArtistTopSongs(query, MAX_ARTIST_SONGS) // [KO] artist-top-songs
                     if (top.isNotEmpty()) item {
                         val isCurrentRow = playingRowMatcher(top, currentSong)
                         SectionHeading(
@@ -981,7 +942,7 @@ fun DetailScreen(
                     // the way Apple Music's do, rather than repeating above it.
                     if (numbered && query.isBlank() && songs.isNotEmpty()) {
                         item(key = "album-footer") {
-                            AlbumFooter(
+                            KoAlbumFooter( // [KO] album-footer
                                 songs = songs,
                                 albumSubtitle = albumSubtitle,
                                 palette = palette,
@@ -1078,29 +1039,6 @@ fun DetailScreen(
     )
 }
 }
-}
-
-/**
- * A smart playlist with no songs is a single centred answer, the way Apple
- * Music draws an empty list: its name as the bold line and the reason below.
- * The artwork header is skipped entirely — there is no cover to show and no
- * track count to report.
- */
-@Composable
-private fun SmartPlaylistEmptyState(
-    title: String,
-    message: String,
-    onSignIn: (() -> Unit)? = null,
-    modifier: Modifier = Modifier,
-) {
-    EmptyState(
-        icon = BitChordIcons.MusicNote,
-        title = title.ifBlank { message },
-        message = message.takeIf { title.isNotBlank() },
-        actionLabel = if (onSignIn != null) stringResource(R.string.sign_in) else null,
-        onAction = onSignIn,
-        modifier = modifier,
-    )
 }
 
 /**
@@ -1299,61 +1237,6 @@ private fun ReleaseHeader(
 }
 
 /**
- * The small grey note under an album's last track: its release date when the
- * header states one, then "9 tracks, 31 min". Both are read from the album,
- * not from whatever a filter left in the list, so narrowing the running order
- * never rewrites the record's own figures.
- */
-@Composable
-private fun AlbumFooter(
-    songs: List<Song>,
-    albumSubtitle: AlbumSubtitle?,
-    palette: ArtworkPalette,
-) {
-    val date = albumSubtitle?.let { parts ->
-        val year = parts.year
-        val month = parts.month
-        val day = parts.day
-        when {
-            year == null -> null
-            month != null && day != null ->
-                stringResource(R.string.album_release_date, year, month, day)
-            else -> stringResource(R.string.album_release_year, year.toString())
-        }
-    }
-    val summary = listOfNotNull(
-        pluralStringResource(R.plurals.track_count_plural, songs.size, songs.size),
-        songs.playtime(),
-    ).joinToString(", ")
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(
-                start = PAGE_GUTTER,
-                end = PAGE_GUTTER,
-                top = 18.dp,
-                bottom = 30.dp,
-            ),
-    ) {
-        if (date != null) {
-            Text(
-                text = date,
-                style = MaterialTheme.typography.labelMedium,
-                color = palette.onBackgroundVariant,
-            )
-            Spacer(Modifier.height(3.dp))
-        }
-        if (summary.isNotBlank()) {
-            Text(
-                text = summary,
-                style = MaterialTheme.typography.labelMedium,
-                color = palette.onBackgroundVariant,
-            )
-        }
-    }
-}
-
-/**
  * The filter box, shown under the header while the top bar's search button is on.
  *
  * Live rather than submit-on-enter, and for the same reason the Local Music
@@ -1482,17 +1365,6 @@ internal fun List<Song>.matching(query: String): List<IndexedValue<Song>> {
     if (query.isBlank()) return all
     return all.filter { (_, song) -> song.matchesSearch(query) }
 }
-
-/**
- * The artist page's popular-songs strip: the first [limit] rows left by the
- * page's own filter, not the first [limit] rows of the unfiltered list.
- *
- * Searching an artist used to leave the strip whole, so the only thing the
- * query narrowed was the empty space below it. The cap is applied after the
- * filter for the same reason: a match at the end of a long list is a match.
- */
-internal fun List<Song>.artistTopSongs(query: String, limit: Int = MAX_ARTIST_SONGS): List<Song> =
-    matching(query).take(limit).map { it.value }
 
 /**
  * An artist: their name across the foot of the photo [PageBackground] is
@@ -2670,7 +2542,7 @@ private fun BrowseType.localizedLabel(): String? = when (this) {
  * in counts up with it, so the figure is never ahead of the list it sits over.
  */
 @Composable
-private fun List<Song>.playtime(): String? {
+internal fun List<Song>.playtime(): String? { // [KO] playtime
     val minutes = sumOf { it.durationMillis() } / 60_000
     return when {
         minutes <= 0 -> null
