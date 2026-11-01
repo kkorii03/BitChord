@@ -1,19 +1,6 @@
-﻿BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/telegram.
-과제: docs/review-1031/data-safety-update-r3.md 는 10-31 검토 문서다. 그 뒤로 코드가 많이 바뀌었다. 지적 중 HIGH·MED 가 지금 코드에도 남아 있는지 다시 확인하고, 남은 것만 고친다.
-순서:
-① 문서의 HIGH·MED 지적을 모두 뽑아 각각 지금 코드(파일:줄 근거)로 '남음 / 이미 고쳐짐 / 오진' 판정. 근거 없는 판정 금지.
-② '남음' 중 사용자에게 실제로 보이는 것(엉뚱한 곡·MV 재생, 재생 끊김·멈춤·튕김·ANR, 데이터·설정·보관함 손실, 배터리 낭비, 개인정보) 우선 최대 3건을 고친다. 꾸미기·리팩터링·이름 바꾸기는 하지 않는다.
-③ 고칠 때마다 고치기 전에는 실패하고 고친 뒤 통과하는 JVM 단위 테스트를 만든다(app/src/test, 기존 테스트 방식 따라). 실패 재현이 불가능하면 그 건은 고치지 말고 요약에 이유를 적는다.
-④ 바꾼 함수의 모든 호출부와 타입을 다시 읽고 확인. 기존 주석·설계 의도를 지울 때는 요약에 이유.
-제약: .github/, keys, *.jks, 서명·빌드 설정 수정 금지. 업스트림 파일 쪼개기·삭제·대규모 이동 금지(한국어 기능은 ko/ 패키지 + 한 줄 // [KO] 연결). 가사 싱크·타이밍 코드(LyricsTiming, VersionAudioAligner, 싱크 오프셋·보정, sync-dump)는 건드리지 않는다(Opus 담당). 곡 판정·검증 기준 수치 변경 금지. 배터리 우선: 주기 폴링·타이머 금지, 이벤트 기반. 새 문자열은 values-ko 에 합니다체(Apple Music 한국어 톤). 다른 영역 파일은 꼭 필요한 최소만.
-마지막 10줄 이내 요약: 판정(남음 n / 고쳐짐 n / 오진 n) / 수정 파일 / 새 테스트 클래스 이름(CI 목록 추가는 Opus 가 함) / 미해결·고치지 않은 이유.
-
-
-== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
-?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
-寃??吏??
-VERDICT: ISSUES 3
-HIGH shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/net/SongVersionPolicy.kt:309 — A legacy file with no recorded sound source is screened only by run-time length, while the ordinary path also rejects stored video/unknown type and MV title markers via `DownloadedMvPolicy.isMvSound`; an equal-length legacy MV file is still attached to the song replacement and the listener hears the video sound. Fix: reuse `DownloadedMvPolicy`/`mvSoundSuspectDeltaMs` with title, `isVideo`, and `typeUnknown` from `savedMetadataFor`.
-MED shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/net/SongVersionPolicy.kt:306 — Any non-own `soundSourceId` online becomes `STREAM_SONG`, so a file legitimately recorded from another song/quality-replacement id is no longer used after a replacement and is streamed instead, wasting data and ignoring the download; the existing rule distinguishes this via `sourceRecordedAsMv`. Fix: pass the saved source's metadata and refuse the file only when that source was itself recorded as a video/MV.
-LOW shared/src/jvmTest/kotlin/com/music/bitchord/data/net/SongVersionPolicyTest.kt:673 — The required tests were not added under `app/src/test`, and they only exercise the new pure helpers, so neither app call site nor the crossfade bail behavior is regression-tested as required. Fix: add an app-level JVM test that fails on the pre-change replacement behavior.
-留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
+BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 현재 브랜치 = 이전 차수 결과(cloud/rv-data-safety-update-1102-r2).
+Opus 검토 결과 1건 고칠 것(그 외 변경은 유지):
+HIGH(1순위 '맞는 곡' 회귀): shared/.../data/net/SongVersionPolicy.kt 의 downloadedFileUse 가 이제 soundSourceId != playId(저장 파일이 다른 영상의 소리)일 때 sourceIsVideo == null 이고 제목에 MV 표시가 없으면 PLAY_FILE 을 돌려준다. SongVersionController.savedFileUse 는 소스 메타데이터가 없으면(source == null) sourceIsVideo=null, sourceTitle="" 를 넘기므로, 소스 정보를 모르는 옛 다운로드는 MV 소리 파일일 수 있는데도 온라인에서 파일을 재생하게 된다. 원칙: 노래 버전 행에서 MV 소리를 절대 재생하지 않는다(온라인이면 노래를 스트리밍).
+고칠 것: 소스가 '영상이 아님'으로 확실할 때(sourceIsVideo == false)만 PLAY_FILE. sourceIsVideo == null(모름)이면 이전처럼 STREAM_SONG(온라인). 오프라인 동작은 기존 그대로. 이 경우를 고정하는 테스트 추가(수정 전 실패): 소스 메타데이터 없음 + 온라인 → STREAM_SONG, sourceIsVideo=false + 온라인 → PLAY_FILE, sourceIsVideo=true → STREAM_SONG.
+제약: .github/, keys, *.jks, 서명 수정 금지. 다른 변경 되돌리지 말 것. 바꾼 함수의 모든 호출부 재확인.
+마지막 10줄 이내 요약: 수정 / 테스트 / 미해결.
