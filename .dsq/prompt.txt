@@ -1,0 +1,9 @@
+BitChord 안드로이드 앱(Kotlin). 검색은 grep/git grep(rg 없음), 큰 목록 출력 금지(끝까지 작업). 기준 브랜치 task/telegram.
+문제: 앱 시작 시 메인 스레드에서 무거운 준비가 돈다(1.9 세션 조사, 1.8 줄에도 같은 코드): BitChordApplication.onCreate 의 AuthStore(EncryptedSharedPreferences/Tink 키셋 열기, 147행 부근)와 ArtistFacts.init(350행 부근). 홈 화면 첫 표시가 늦고 멈춤이 생긴다.
+할 일:
+① 두 준비를 앱 시작 직후 백그라운드(Dispatchers.IO 의 한 번짜리 작업)에서 미리 열게 하고, 첫 사용자가 메인 스레드에서 기다리지 않게 한다. 단, 로그인 정보(쿠키·계정)를 읽는 첫 호출이 준비 전이면 같은 준비 작업을 기다리게(이중 초기화·빈 값 반환 금지). 로그인 데이터 형식·저장 위치 절대 변경 금지.
+② 그 밖에 onCreate 에서 메인 스레드 디스크/키스토어/네트워크 작업이 있으면 목록화하고, 안전한 것만 같은 방식으로 옮김.
+③ 로그: 'startup: authstore ready in ..ms (thread=..)', 'startup: artistfacts ready in ..ms'.
+테스트(고치기 전 실패): 준비 전 첫 읽기가 기다렸다가 올바른 값을 받음, 초기화 1회만. 새 테스트 클래스 이름 요약에.
+제약: .github/, keys, *.jks, 서명 수정 금지. 타이머·폴링 금지. 바꾼 함수의 모든 호출부 재확인(특히 AuthStore 를 동기적으로 쓰는 곳). 기존 주석·의도를 지우면 요약에 이유.
+마지막 10줄 이내 요약: 원인(파일:줄) / 수정 / 테스트 / 미해결.
