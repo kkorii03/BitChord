@@ -1,0 +1,16 @@
+﻿Kotlin Android app = upstream v1.9 + Korean fork (task/u19-tg; 1.8 fork = origin/task/telegram). Battery first: event-driven, no polling/timers, never block the main thread. Use grep/Select-String, not rg. Unknown Android/Media3 APIs: context7. Every fix gets a JVM test that fails on current code (no network). Do not touch .github/workflows. Smallest change; keep v1.9's improvements.
+
+Phone sync round 11-03 (vc132): song v59g4HRNIkc (cover video, lyrics lrc.red) drifts later +0.10 s per minute (median 0.48 s, 2.4 s worst line by the end), another drifts -0.08 s/min. Find why a constant-rate song shows a linear drift: refine/rate fit (TimingFit, LyricsTiming refine, PACE_EVIDENCE_MS, chroma line rate), clock conversion between YouTube/HQ copies (sync-three-clocks tags), or playback speed. Make a song whose evidence does not support a rate keep rate 1.0, and a supported rate apply from the first line. Tests with synthetic timings.
+
+Summary of at most 12 lines: cause, files, REMOVED-LINES AUDIT, tests (class names for CI), what you did not do. Follow AGENTS.md (ponytail) rules.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 3
+HIGH `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/lyrics/LyricsTimeMap.kt:215` — Removing the `SNAP_RATE` floor lets a 0.44–0.6% pace measured over a ~90 s answer span clear the evidence bar (0.005×90 000 = 450 ms ≥ 400), so the qzXa short-stretch jitter the floor existed to reject is applied to the whole song again; the new comment's own 0.6 %/90 s example (540 ms) is not snapped either. Fix: keep an absolute floor for short/mid spans (e.g. snap when `abs(rate-1) < SNAP_RATE && span < 240_000`) and add a 90 s/0.5 % regression test.
+HIGH `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/lyrics/RefinePolicy.kt:391` — Replacing `abs(slope) < MIN_SLOPE` with the 400 ms evidence test raises the refine's floor on short spans (260 ms/min over 63 s = 273 ms now falls back to CONST, though the old guard and its test accepted it), and `RefinePolicyTest.kt:122-128` rewrites that existing test from 260 to 500 ms/min so the regression is no longer covered; the audit's “replaced by the same check” is false for spans below ~200 s. Fix: accept when `abs(slope) >= MIN_SLOPE` OR the evidence test passes, and restore the 260 ms/min test.
+LOW `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/lyrics/LyricsTimeMap.kt:200` and `RefinePolicy.kt:126` — `SNAP_RATE` and `MIN_SLOPE` now have no callers anywhere (repo-wide grep), yet the new comments say “Kept for callers that still name it,” so the dead constants advertise a use that does not exist. Fix: use them in the floor rules above, or delete the constants and comments.
+Skipped: device playback speed and HQ clock conversion were not exercised; the qzXa regression and the refine short-span regression are inferred from the math and the old tests, not reproduced on hardware.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
