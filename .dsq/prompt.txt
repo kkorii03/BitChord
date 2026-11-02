@@ -1,0 +1,14 @@
+Task: add a word-level human-timed lyrics source so line times are accurate at the source. Kotlin Android app. Use grep. Follow AGENTS.md (ponytail). Design draft + assumptions first in your summary, then implement, test, self-review. You may use webfetch to read public docs/repos.
+
+Why: strict sync grading shows many songs fail because the lyrics file's own line times scatter +-0.2-0.3 s (mostly provider lrc.red); the whole-song correction cannot fix that. Human word-timed lyrics (Apple-Music-style TTML) are far more precise.
+
+Research first (keep it short, cite URLs in the summary): the AMLL TTML DB (github.com/Steve-xmh/amll-ttml-db or its current home) - how files are indexed (by Apple Music / NetEase / QQ / Spotify id), the raw file URL pattern, license/usage terms, and a free way to get the needed id from title + artist + duration (e.g. iTunes Search API for the Apple Music track id). If the DB is not usable without login/paid API or its license forbids this use, STOP and report instead of building.
+
+Build (only if usable):
+- A lyrics provider next to the existing ones (find the provider list/registry used by the lyrics fetcher; reuse its interfaces, HTTP client, caching and the Korean-fork hook style '// [KO]'). Parse TTML (begin/end per <p> line and per <span> word) into the app's LyricLine (and word timings if the app model has them; otherwise line times only).
+- Ranking: when this source has the song (same title/artist, duration within 3 s), prefer it over lrc.red/LRCLIB/KuGou etc.; otherwise current behavior unchanged. Respect the existing lyrics-mismatch / wrong-song guards (never accept another song's lyrics).
+- Network only when lyrics are requested (no polling), cache results like other providers, one lookup per song.
+- Log once per song: 'lyrics source ttml: hit|miss id=<id> lines=<n>'.
+Do not touch LyricsTiming / LyricsPerLine / sync measurement code (another task is changing them). Do not touch .github/.
+Tests (JVM): TTML parsing (lines, words, nested spans, background vocals if present), id lookup parsing from a saved JSON sample, ranking prefers TTML when durations match and not when they differ. List new test class names in the summary.
+Finish with a summary of at most 15 lines: research result with URLs / design / files / tests / open problems.
