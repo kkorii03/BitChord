@@ -171,9 +171,10 @@ private fun LyricWord.retimed(at: (Long) -> Long): LyricWord {
  *  3. When more answers are set aside than kept, there is no line the answers
  *     agree on, and nothing is applied — better the record's timing than a
  *     confident wrong one.
- *  4. A pace within [SNAP_RATE] of the record's is the record's: a lyric
- *     drifting by a tenth of a second over four minutes is measuring noise,
- *     not a slower video.
+ *  4. A pace counts only when it moves the answers by [PACE_EVIDENCE_MS]
+ *     across their own stretch. A smaller one is the answers' jitter, not a
+ *     slower video, and the record's pace stands. The same evidence test is
+ *     used by the chroma alignment and the line-level refine.
  */
 object TimingFit {
 
@@ -192,7 +193,10 @@ object TimingFit {
     /** An answer this far off the fitted line disagrees with it. */
     const val INLIER_MS = 1_500L
 
-    /** Paces closer than this to 1 are taken as exactly the record's. */
+    /**
+     * The old absolute snap for a short answer stretch. Kept for callers that
+     * still name it; a pace is now judged by [PACE_EVIDENCE_MS] across its span.
+     */
     const val SNAP_RATE = 0.006
 
     /**
@@ -200,6 +204,18 @@ object TimingFit {
      * believed: a pace off 1 by less than this over the span is snapped to 1.
      */
     const val PACE_EVIDENCE_MS = 400.0
+
+    /**
+     * [rate] when it moves its stretch by [PACE_EVIDENCE_MS], else the record's
+     * own pace. A pace read off a short stretch is mostly jitter; a pace too
+     * small to show over a long one is too (11-02, qzXa: a 90 s opening's
+     * 0.6% pace put the last chorus 1.1 s early). A real 0.1 s/min drift over
+     * four minutes moves the answers 400 ms and is believed.
+     */
+    fun rateForSpan(rate: Double, spanMs: Long): Double {
+        if (!rate.isFinite() || spanMs <= 0L) return 1.0
+        return if (abs(rate - 1.0) * spanMs < PACE_EVIDENCE_MS) 1.0 else rate
+    }
 
     /** Paces beyond these are not a cover of the same song; they're a wrong answer. */
     const val MIN_RATE = 0.75
@@ -221,15 +237,8 @@ object TimingFit {
         val refined = theilSen(inliers) ?: first
         val rate = refined.rate
         if (rate < MIN_RATE || rate > MAX_RATE) return null
-        // A pace read off a short stretch is mostly the answers' jitter: over
-        // 50 s, 0.2 s of it is a 0.4% pace, which a 4-minute song turns into a
-        // second of drift (11-02, qzXa: a 90 s Whisper opening fitted a pace
-        // that put the last chorus 1.1 s early). Below what the stretch can
-        // show, the record's own pace stands.
         val span = inliers.maxOf { it.first } - inliers.minOf { it.first }
-        val snapLimit = if (span > 0) maxOf(SNAP_RATE, PACE_EVIDENCE_MS / span) else Double.MAX_VALUE
-        val snapped = abs(rate - 1.0) < snapLimit
-        val finalRate = if (snapped) 1.0 else rate
+        val finalRate = rateForSpan(rate, span)
         val offset = median(inliers.map { (x, y) -> (y - finalRate * x) })
         val agreeing = points.count { (x, y) -> abs(y - (finalRate * x + offset)) <= INLIER_MS }
         if (agreeing * 2 < points.size) return null

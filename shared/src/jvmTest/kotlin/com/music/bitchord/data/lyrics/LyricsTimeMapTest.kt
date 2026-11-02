@@ -1,6 +1,7 @@
 package com.music.bitchord.data.lyrics
 
 import kotlin.math.abs
+import kotlin.math.roundToLong
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -274,6 +275,31 @@ class LyricsTimeMapTest {
         // The same 0.7% over three minutes is believed.
         val long = listOf(0L to 0L, 60_000L to 59_580L, 120_000L to 119_160L, 180_000L to 178_740L)
         assertEquals(0.993, assertNotNull(TimingFit.fit(long)).rate, 1e-9)
+    }
+
+    @Test
+    fun aSmallPaceSupportedByTheWholeSongIsAppliedFromTheFirstLine() {
+        // 1.002 moves the answers 580 ms across 290 s: a supported rate, and
+        // the offset must still put the first line where the answers say.
+        val points = (0 until 6).map { index ->
+            val x = 10_000L + index * 58_000L
+            x to (x * 1.002).roundToLong() + 500L
+        }
+        val line = assertNotNull(TimingFit.fit(points))
+        assertEquals(1.002, line.rate, 1e-9)
+        assertEquals(500L, line.offsetMs)
+        assertEquals(10_520L, line.map.map(10_000L))
+    }
+
+    @Test
+    fun aSmallPaceOverAShortStretchStaysTheRecordsPace() {
+        // The same 0.2% pace over 58 s moves only 116 ms: that is jitter.
+        val points = (0 until 4).map { index ->
+            val x = 10_000L + index * 19_000L
+            x to (x * 1.002).roundToLong() + 500L
+        }
+        val line = assertNotNull(TimingFit.fit(points))
+        assertEquals(1.0, line.rate)
     }
 
     @Test

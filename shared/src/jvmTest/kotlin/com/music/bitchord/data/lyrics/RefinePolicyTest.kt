@@ -120,11 +120,11 @@ class RefinePolicyTest {
 
     @Test
     fun aSteadyDriftIsFittedAsALine() {
-        // 260 ms per minute over 63 s: a constant move leaves the last lines
-        // further out than the first, so the slope is what the residuals say.
+        // 500 ms per minute over 63 s moves the last line 525 ms: enough
+        // evidence across the span for a rate, not just a constant move.
         val startMs = 10_000L
         val stepMs = 7_000L
-        val slopePerMs = 260.0 / 60_000.0
+        val slopePerMs = 500.0 / 60_000.0
         val lines = List(10) { index -> line(startMs + index * stepMs, "line$index") }
         val heard = lines.map { line ->
             heard(line.text, line.timeMs + (slopePerMs * line.timeMs).toLong())
@@ -132,8 +132,44 @@ class RefinePolicyTest {
         val result = RefinePolicy.compute(lines, heard)
 
         assertTrue(result.applied)
-        assertTrue(abs(result.slopePerMin - 260.0) <= 26.0, "slope ${result.slopePerMin} ms/min")
+        assertEquals(RefinePolicy.Model.LINEAR, result.model)
+        assertTrue(abs(result.slopePerMin - 500.0) <= 50.0, "slope ${result.slopePerMin} ms/min")
         assertEquals(lines.size, result.lines)
+    }
+
+    @Test
+    fun aSmallDriftOverAShortStretchIsOnlyAConstantMove() {
+        // 0.1 s/min over 63 s moves the last line just 105 ms: the evidence
+        // does not support a rate, so the constant move is what applies.
+        val startMs = 10_000L
+        val stepMs = 7_000L
+        val slopePerMs = 100.0 / 60_000.0
+        val lines = List(10) { index -> line(startMs + index * stepMs, "line$index") }
+        val heard = lines.map { line ->
+            heard(line.text, line.timeMs + (slopePerMs * line.timeMs).toLong())
+        }
+        val result = RefinePolicy.compute(lines, heard)
+
+        assertEquals(RefinePolicy.Model.CONST, result.model)
+        assertEquals(0.0, result.slopePerMin)
+    }
+
+    @Test
+    fun aSmallDriftOverTheWholeSongIsARate() {
+        // The same 0.1 s/min over 400 s moves the last line 667 ms: the whole
+        // song supports the rate, so it is applied (and from the first line).
+        val startMs = 10_000L
+        val stepMs = 14_000L
+        val slopePerMs = 100.0 / 60_000.0
+        val lines = List(30) { index -> line(startMs + index * stepMs, "line$index") }
+        val heard = lines.map { line ->
+            heard(line.text, line.timeMs + (slopePerMs * line.timeMs).toLong())
+        }
+        val result = RefinePolicy.compute(lines, heard)
+
+        assertTrue(result.applied)
+        assertEquals(RefinePolicy.Model.LINEAR, result.model)
+        assertTrue(abs(result.slopePerMin - 100.0) <= 10.0, "slope ${result.slopePerMin} ms/min")
     }
 
     @Test

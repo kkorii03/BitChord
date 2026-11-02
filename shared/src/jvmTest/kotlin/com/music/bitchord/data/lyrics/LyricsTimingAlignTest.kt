@@ -367,6 +367,28 @@ class LyricsTimingAlignTest {
     }
 
     @Test
+    fun chromaAppliesASmallConstantPaceSupportedByTheWholeSong() {
+        // A cover that runs 0.2% faster is a constant rate, not jitter: over a
+        // whole song it moves the last chord by more than the 400 ms evidence
+        // bar, so it must be applied from the first chord.
+        val rate = 22_050
+        val original = song(seed = 101, count = 160)
+        val recordStart = starts(original, 1.0, 0.5)
+        val record = FloatArray((recordStart.last() + 4.0).times(rate).toInt())
+        render(record, rate, original, original.chords.indices, at = 0.5, tempo = 1.0, transpose = 0, brightness = 0.6)
+        val tempo = 1.002
+        val videoStart = starts(original, tempo, 0.5)
+        val video = FloatArray((videoStart.last() + 4.0).times(rate).toInt())
+        render(video, rate, original, original.chords.indices, at = 0.5, tempo = tempo, transpose = 0, brightness = 0.6)
+
+        val result = assertNotNull(ChromaAlignment.align(features(record, rate), features(video, rate)))
+        assertEquals(tempo, result.rate, 0.0005)
+        assertTrue(
+            abs(result.map.map((recordStart[0] * 1000).toLong()) - (videoStart[0] * 1000).toLong()) <= 100,
+        )
+    }
+
+    @Test
     fun chromaUsesTheOpeningOfAVideoStillDownloading() {
         val rate = 22_050
         val original = song(seed = 41, count = 90)
