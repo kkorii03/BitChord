@@ -524,7 +524,10 @@ object AppSettings {
     /** Prefer the catalogue audio release when the selected result is a music video. // [KO] */
     val preferMusicOnly = MutableStateFlow(true)
 
+    // [KO] prefer-music-only / non-music + sponsor skipping
+    /** Jumps over non-song parts of a video using SponsorBlock. // [KO] */
     val skipNonMusicParts get() = KoAppSettings.skipNonMusicParts // [KO] skipping
+    /** Widens [skipNonMusicParts] to sponsorship reads, intros and outros. // [KO] */
     val skipSponsorParts get() = KoAppSettings.skipSponsorParts // [KO] skipping
 
     /** Analyzes audio waveform/envelope to align matching playback moment between versions. */
@@ -1618,11 +1621,13 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_PREFER_MUSIC_ONLY, value).apply()
     }
 
-    fun setSkipNonMusicParts(value: Boolean) =
+    fun setSkipNonMusicParts(value: Boolean) { // [KO] skip non-music parts
         KoAppSettings.setSkipNonMusicParts(value) // [KO] skipping
+    }
 
-    fun setSkipSponsorParts(value: Boolean) =
+    fun setSkipSponsorParts(value: Boolean) { // [KO] skip sponsor parts
         KoAppSettings.setSkipSponsorParts(value) // [KO] skipping
+    }
 
     fun setSmartVersionAlignment(value: Boolean) {
         smartVersionAlignment.value = value

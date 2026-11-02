@@ -1712,6 +1712,7 @@ object YtMusicRepository {
 
     private const val HISTORY_MEMO_MS = 120_000L
 
+    /** Whether the Music gate is active, settling an UNKNOWN verdict first. */
     private suspend fun ensureGateKnown(): Boolean = KoRepoGate.ensureGateKnown() // [KO] korea-gate
 
     /** One immediate gate re-check after the proxy settings moved. */

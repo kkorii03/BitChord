@@ -905,6 +905,9 @@ object Downloads {
      * device — the "delete download" a whole album or playlist card offers,
      * where a single track only ever offers [delete].
      *
+     * A file another downloaded release also lists stays, since deleting it
+     * would take it out of that release as well.
+     *
      * Returns true only when every recorded file was deleted. The collection
      * record is kept when any of them could not be, because it is still the
      * only thing that knows those files belong to this release; the tracks
@@ -913,12 +916,11 @@ object Downloads {
      */
     suspend fun deleteCollection(context: Context, id: String): Boolean {
         open()
-        val record = _collections.value[id] ?: return false
-        var failedAny = false
-        record.videoIds.forEach { videoId ->
-            if (videoId !in _saved.value) return@forEach
-            if (!delete(context, videoId)) failedAny = true
-        }
+        if (id !in _collections.value) return false
+        var any = false
+        tracksOnlyIn(id, _collections.value, _saved.value)
+            .forEach { videoId -> if (delete(context, videoId)) any = true }
+        val failedAny = tracksOnlyIn(id, _collections.value, _saved.value).any { it in _saved.value }
         if (failedAny) {
             Log.w(TAG, "kept the record for $id: some of its downloads could not be deleted")
         } else {
@@ -947,7 +949,12 @@ object Downloads {
      */
     const val PLAYLIST_PREFIX = "local:playlist:"
 
-    /** The page id for the release recorded under [id]. */
+    /**
+     * The tracks of release [id] whose file no other release lists.
+     *
+     * Compared by file as well as by id, because one file answers to two ids
+     * when a music video was swapped for its catalogue track — see [remember].
+     */
     internal fun tracksOnlyIn(
         id: String,
         collections: Map<String, SavedCollection>,
