@@ -5,11 +5,12 @@ Reads every shots/*.xml beside the screenshots (or --shots DIR) and writes a
 Markdown report:
 
   (a) text clipped or ellipsized by its own bounds
-  (b) a line break inside a Hangul word
+  (b) a line break inside a Hangul word (explicit or Android's own wrap)
   (c) two text nodes drawn over each other
   (d) English UI left in the Korean screen (a string that has a values-ko
       translation is shown in its English form)
-  (e) list rows in one screen whose text heights jump
+  (e) list rows in one screen whose per-line text sizes jump
+  (f) a line holding only one or two characters
 
 The checks are heuristics: they point a reviewer at the screen and the node,
 they do not replace looking at the PNG. Run --self-test for the fixture check.
@@ -17,7 +18,6 @@ they do not replace looking at the PNG. Run --self-test for the fixture check.
 from __future__ import annotations
 
 import argparse
-import math
 import re
 import sys
 import tempfile
@@ -122,20 +122,93 @@ def _needed_width(line: str, font_px: float) -> float:
     return sum(_char_em(ch) for ch in line) * font_px
 
 
-def _clip(node: Node) -> Issue | None:
+def _base_line_height(nodes: list[Node]) -> float:
+    """Typical single-line height on this screen, as a font-size proxy.
+
+    The dump has no text size, and a wrapped node's own height is a multiple
+    of the line height: using it directly would make every wrapped paragraph
+    look one line tall. Short single-line nodes give the proportion instead.
+    """
+    heights = sorted(
+        n.height for n in nodes
+        if n.text and "\n" not in n.text and 2 <= len(n.text) <= 24 and 12 <= n.height <= 200
+    )
+    if not heights:
+        return 0.0
+    return float(heights[len(heights) // 2])
+
+
+def _split_word(word: str, width: int, font_px: float) -> list[str]:
+    parts: list[str] = []
+    while word:
+        take = 0
+        while take < len(word) and _needed_width(word[: take + 1], font_px) <= width:
+            take += 1
+        take = max(1, take)
+        parts.append(word[:take])
+        word = word[take:]
+    return parts
+
+
+def _wrap_lines(text: str, width: int, font_px: float) -> list[str]:
+    """Greedy wrap at spaces, breaking an over-long word by characters."""
+    if width <= 0:
+        return text.split("\n")
+    out: list[str] = []
+    for para in text.split("\n"):
+        cur = ""
+        for word in para.split(" "):
+            candidate = word if not cur else cur + " " + word
+            if not cur:
+                if _needed_width(word, font_px) <= width:
+                    cur = word
+                else:
+                    parts = _split_word(word, width, font_px)
+                    out.extend(parts[:-1])
+                    cur = parts[-1]
+            elif _needed_width(candidate, font_px) <= width:
+                cur = candidate
+            else:
+                out.append(cur)
+                if _needed_width(word, font_px) <= width:
+                    cur = word
+                else:
+                    parts = _split_word(word, width, font_px)
+                    out.extend(parts[:-1])
+                    cur = parts[-1]
+        out.append(cur)
+    return out
+
+
+def _visual_lines(node: Node, base: float) -> list[str]:
+    """Lines the TextView actually paints: explicit breaks, else its wrap."""
+    if "\n" in node.text:
+        return node.text.split("\n")
+    # An ellipsis is a single line cut by its box, not a wrapped paragraph.
+    if "…" in node.text or node.text.rstrip().endswith("..."):
+        return [node.text]
+    if base <= 0:
+        return [node.text]
+    return _wrap_lines(node.text, node.width, base * 0.75)
+
+
+def _clip(node: Node, base: float) -> Issue | None:
     if node.width <= 0 or node.height <= 0:
         return None
-    lines = node.text.split("\n")
-    widest = max(lines, key=len)
-    needed = _needed_width(widest, _font_px(node))
+    explicit = node.text.split("\n")
+    font = base * 0.75 if base > 0 else _font_px(node)
+    too_wide = any(_needed_width(line, font) > node.width * 1.05 for line in explicit)
+    if "\n" in node.text:
+        # Each explicit line fits its own line box; only its width can overflow.
+        too_tall = False
+    else:
+        lines = _visual_lines(node, base)
+        line_height = base if base > 0 else node.height / max(1, len(lines))
+        too_tall = len(lines) > 1 and len(lines) * line_height > node.height * 1.15
     ellipsis = "…" in node.text or node.text.rstrip().endswith("...")
-    if not ellipsis and needed <= node.width * 1.05:
+    if not (too_wide or too_tall):
         return None
-    line_height = node.height / len(lines)
-    needed_lines = max(1, math.ceil(needed / max(1, node.width)))
-    needed_height = needed_lines * line_height
-    if not ellipsis and needed_height <= node.height * 1.15:
-        return None
+    needed = max((_needed_width(line, font) for line in explicit), default=0.0)
     why = "ends in an ellipsis" if ellipsis else "needs more room than its box"
     return Issue(
         "a-cut",
@@ -144,10 +217,26 @@ def _clip(node: Node) -> Issue | None:
     )
 
 
-def _split_hangul(node: Node) -> Issue | None:
+def _split_hangul(node: Node, base: float) -> Issue | None:
+    if "\n" not in node.text:
+        # A single word (no spaces) painted on more than one line was broken
+        # between two Hangul syllables by the text layout, not by the author.
+        lines = _visual_lines(node, base)
+        if (
+            len(lines) > 1
+            and " " not in node.text
+            and HANGUL.search(node.text)
+        ):
+            return Issue(
+                "b-split-word",
+                node.text,
+                f"wrapped over {len(lines)} lines without a word break at {node.bounds[0]},{node.bounds[1]}",
+            )
+        return None
     lines = node.text.split("\n")
     for before, after in zip(lines, lines[1:]):
-        if not before or not after:
+        # A break beside a space is a word boundary, not a split.
+        if not before or not after or before[-1].isspace() or after[0].isspace():
             continue
         left, right = before[-1], after[0]
         if HANGUL.match(left) and HANGUL.match(right):
@@ -155,6 +244,21 @@ def _split_hangul(node: Node) -> Issue | None:
                 "b-split-word",
                 node.text,
                 f"line break between '{left}' and '{right}' splits a Hangul word at {node.bounds[0]},{node.bounds[1]}",
+            )
+    return None
+
+
+def _short_line(node: Node, base: float) -> Issue | None:
+    lines = _visual_lines(node, base)
+    if len(lines) < 2:
+        return None
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if 1 <= len(stripped) <= 2 and HANGUL.search(stripped):
+            return Issue(
+                "f-short-line",
+                node.text,
+                f"line {index + 1} holds only '{stripped}' at {node.bounds[0]},{node.bounds[1]}",
             )
     return None
 
@@ -184,16 +288,19 @@ def _texts(node: Node) -> list[Node]:
     return found
 
 
-def _size_jump(root: list[Node]) -> list[Issue]:
+def _size_jump(root: list[Node], base: float) -> list[Issue]:
     issues: list[Issue] = []
     seen: set[tuple[int, int, int, int]] = set()
+
+    def per_line_height(node: Node) -> float:
+        return node.height / max(1, len(_visual_lines(node, base)))
 
     def visit(node: Node) -> None:
         items = []
         for child in node.children:
             texts = _texts(child)
             if texts:
-                items.append((child, max(t.height for t in texts)))
+                items.append((child, max(per_line_height(t) for t in texts)))
         if len(items) >= 2:
             heights = [h for _, h in items if h >= 18]
             if heights and max(heights) / min(heights) >= 1.35:
@@ -204,7 +311,7 @@ def _size_jump(root: list[Node]) -> list[Issue]:
                         Issue(
                             "e-size-jump",
                             " / ".join(t.text for c, _ in items for t in _texts(c)[:1]),
-                            f"row text heights {sorted(heights)} in one list at {node.bounds}",
+                            f"row line heights {sorted(round(h) for h in heights)} in one list at {node.bounds}",
                         )
                     )
         for child in node.children:
@@ -258,9 +365,18 @@ def load_untranslated_terms(repo_root: Path) -> set[str]:
     return terms
 
 
+def _latin_words(text: str) -> list[str]:
+    return [m.group(0).lower() for m in LATIN_WORD.finditer(text)]
+
+
 def _english_left(node: Node, terms: set[str]) -> Issue | None:
     low = node.text.lower()
-    if low in terms and not any(p in low for p in PROPER_NOUNS):
+    words = _latin_words(node.text)
+    # Match whole tokens: "Broadcast settings" is not excused by "cast" in it.
+    only_proper = bool(words) and all(
+        word in PROPER_NOUNS or word in STOPWORDS for word in words
+    )
+    if low in terms and not only_proper:
         return Issue("d-english", node.text, "resource has a Korean translation")
     for match in LATIN_WORD.finditer(node.text):
         word = match.group(0).lower()
@@ -274,14 +390,18 @@ def check_screen(path: Path, terms: set[str]) -> list[Issue]:
     nodes = [n for n in all_nodes if n.text]
     if not nodes:
         return []
+    base = _base_line_height(nodes)
     issues: list[Issue] = []
     for node in nodes:
-        clipped = _clip(node)
+        clipped = _clip(node, base)
         if clipped:
             issues.append(clipped)
-        split = _split_hangul(node)
+        split = _split_hangul(node, base)
         if split:
             issues.append(split)
+        short = _short_line(node, base)
+        if short:
+            issues.append(short)
         english = _english_left(node, terms)
         if english:
             issues.append(english)
@@ -290,13 +410,19 @@ def check_screen(path: Path, terms: set[str]) -> list[Issue]:
             both = _overlap(a, b)
             if both:
                 issues.append(both)
-    issues.extend(_size_jump(all_nodes))
+    issues.extend(_size_jump(all_nodes, base))
     return issues
 
 
-def render(reports: list[tuple[str, list[Issue]]]) -> str:
+def screen_has_hangul(path: Path) -> bool:
+    return any(HANGUL.search(n.text) for n in parse_ui(path))
+
+
+def render(reports: list[tuple[str, list[Issue]]], has_hangul: bool | None = None) -> str:
     total = sum(len(i) for _, i in reports)
-    has_hangul = any(page and any(issue.kind != "d-english" for issue in page) for _, page in reports)
+    if has_hangul is None:
+        # Kept for callers that only have the issue list.
+        has_hangul = any(page and any(issue.kind != "d-english" for issue in page) for _, page in reports)
     lines = [
         "# UI text check",
         "",
@@ -304,7 +430,8 @@ def render(reports: list[tuple[str, list[Issue]]]) -> str:
         "",
         "Heuristics over the uiautomator dumps: (a) clipped/ellipsized text, "
         "(b) Hangul word split by a line break, (c) overlapping text, "
-        "(d) English UI with a Korean translation, (e) list row size jumps.",
+        "(d) English UI with a Korean translation, (e) list row size jumps, "
+        "(f) a line holding only 1-2 characters.",
         "",
     ]
     if not has_hangul:
@@ -323,8 +450,9 @@ def run(shots: Path, report: Path, repo_root: Path) -> int:
     terms = load_untranslated_terms(repo_root)
     screens = sorted(shots.glob("*.xml"))
     reports = [(p.name, check_screen(p, terms)) for p in screens]
+    has_hangul = any(screen_has_hangul(p) for p in screens)
     report.parent.mkdir(parents=True, exist_ok=True)
-    report.write_text(render(reports), encoding="utf-8")
+    report.write_text(render(reports, has_hangul), encoding="utf-8")
     total = sum(len(i) for _, i in reports)
     print(f"ui-textcheck: {len(screens)} screens, {total} issues -> {report}")
     return 0
@@ -338,6 +466,7 @@ FIXTURE = """<?xml version="1.0" encoding="UTF-8"?>
   <node text="겹치는 텍스트" class="android.widget.TextView" package="com.dev.bitchord" bounds="[10,220][400,300]"/>
   <node text="다른 텍스트" class="android.widget.TextView" package="com.dev.bitchord" bounds="[20,240][380,320]"/>
   <node text="Settings" class="android.widget.TextView" package="com.dev.bitchord" bounds="[10,340][400,400]"/>
+  <node text="가&#10;나" class="android.widget.TextView" package="com.dev.bitchord" bounds="[10,400][400,500]"/>
   <node text="Dance Monkey" class="android.widget.TextView" package="com.dev.bitchord" bounds="[10,410][400,470]"/>
   <node text="" class="android.widget.LinearLayout" package="com.dev.bitchord" bounds="[0,500][1080,800]">
    <node text="첫 행" class="android.widget.TextView" package="com.dev.bitchord" bounds="[10,510][400,558]"/>
@@ -367,7 +496,7 @@ def self_test() -> int:
         terms = load_untranslated_terms(root)
         issues = check_screen(root / "shots/01-fixture.xml", terms)
         kinds = {i.kind for i in issues}
-        expected = {"a-cut", "b-split-word", "c-overlap", "d-english", "e-size-jump"}
+        expected = {"a-cut", "b-split-word", "c-overlap", "d-english", "e-size-jump", "f-short-line"}
         missing = expected - kinds
         if missing:
             print(f"self-test: missing {sorted(missing)} in {sorted(kinds)}", file=sys.stderr)

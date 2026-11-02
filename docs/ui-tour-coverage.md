@@ -1,8 +1,11 @@
 # UI tour coverage
 
 Last full run: 65 numbered screens (`shots/index.txt`, `screen-texts.md` 1311 lines).
-The tour now also walks the category pages, choice pages and the remaining player
-sheets (full mode, `TOUR_QUICK=0`); quick mode keeps its old screen set.
+The full tour (`TOUR_QUICK=0`) now adds the mood grid, library shelf/release and
+long-press menu, search source pills, the player's extra sheets, the Settings
+categories and choice pages, the source editors, the language dialogs and
+onboarding. Quick mode keeps its old screen set. Every new step is fail-soft:
+a missing label is logged and the section moves on.
 
 How the app is wired: tabs are `AppDestination.Tab(0..3)`, pushed pages are
 `AppRoute` (`app/src/main/java/com/music/bitchord/ui/navigation/AppNavigator.kt`),
@@ -42,7 +45,7 @@ There is no androidx `NavHost`.
 | Sleep timer page | `CustomSleepTimerPage` | no | yes | Song actions > `취침 타이머` |
 | Playback speed page | `PlaybackSpeedPage` | no | yes | Song actions > `재생 속도` |
 | Song info | `SongInfoDialog` | no | yes | Song actions > `노래 정보` |
-| Lyrics share | `LyricsShareSheet` | no | yes | Song actions > `가사 공유` |
+| Lyrics share | `LyricsShareSheet` | no | no | Needs a lyric picker long-press; not deterministic |
 | Playlist picker | `PlaylistPickerSheet` | no | yes | Song actions > `플레이리스트에 추가` |
 | Audio output sheet | `AudioOutputSheet` | yes | yes | Player `오디오 출력` |
 | Audio pipeline dialog | `AudioPipelineDialog` | no | yes | Audio output > `오디오 파이프라인` |
@@ -96,8 +99,9 @@ There is no androidx `NavHost`.
 ## Not captured automatically
 
 These need an account, a network service, a real receiver, or a destructive
-action: login WebViews, account switcher, cast, Replay share/story, song meaning,
-update prompt, Spotify import, Gemini/Deepgram keys, proxy/signature editors.
+action: login WebViews, account switcher, cast, Replay share/story, lyrics share,
+song meaning, update prompt, Spotify import, Gemini/Deepgram keys, proxy/signature
+editors.
 The tour still fails soft on their rows, so their absence is visible in
 `index.txt` rather than aborting the run.
 
@@ -106,12 +110,17 @@ The tour still fails soft on their rows, so their absence is visible in
 `scripts/ui/ui_textcheck.py` runs at the end of every tour (quick and full) and
 writes `shots/ui-text-issues.md`. It reads each `shots/*.xml` and reports:
 
-- `a-cut` — text that needs more width than its node and is ellipsized or clipped.
-- `b-split-word` — a newline between two Hangul characters with no space.
+- `a-cut` — text that needs more width than its node and is ellipsized or
+  clipped; an ellipsis that genuinely fits is not reported.
+- `b-split-word` — a break between two Hangul characters with no space, from an
+  explicit newline or from the layout wrapping a single long word.
 - `c-overlap` — two text nodes whose bounds overlap.
 - `d-english` — an English UI string whose resource has a Hangul `values-ko`
-  translation (brand, song and artist allow-list included).
-- `e-size-jump` — sibling rows in one list whose primary text heights jump.
+  translation (whole-token brand, song and artist allow-list included).
+- `e-size-jump` — sibling rows in one list whose per-line text heights jump
+  (a two-line row is not a jump by itself).
+- `f-short-line` — a line holding only one or two characters, from an explicit
+  newline or from a wrapped line.
 
 Its fixture check is `python3 scripts/ui/ui_textcheck.py --self-test`; the unit
 tests are `python3 -m unittest scripts/ui/test_ui_textcheck.py`.
