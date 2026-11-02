@@ -9274,9 +9274,17 @@ class PlaybackService : MediaLibraryService() {
      */
     private fun driveDirectWindow() {
         val exoPlayer = player ?: return
+        // [KO] direct-gate: a song version keeps the row's mediaId but streams
+        // another video (uri v=…), and the cache holds that id at the gate.
+        // Phone 11-03: 'released <MV>' then 'holding <song version>' forever.
+        fun MutableSet<String>.addItem(item: MediaItem?) {
+            item ?: return
+            add(item.mediaId)
+            item.localConfiguration?.uri?.getQueryParameter("v")?.takeIf { it.isNotBlank() }?.let(::add)
+        }
         val audible = buildSet {
-            exoPlayer.currentMediaItem?.mediaId?.let(::add)
-            if (crossfade?.isTransitioning() == true) spare?.currentMediaItem?.mediaId?.let(::add)
+            addItem(exoPlayer.currentMediaItem)
+            if (crossfade?.isTransitioning() == true) addItem(spare?.currentMediaItem)
         }
         if (DirectSourceGate.onPlaying(audible)) AudioCache.cancelDirect()
         if (!DirectSourceGate.isActive() || !exoPlayer.isPlaying) return
