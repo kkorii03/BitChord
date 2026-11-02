@@ -17,7 +17,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.resetMain
@@ -66,12 +66,18 @@ class LyricsControllerCoverAiTest {
         AppSettings.lyricsSourceOrder.value = listOf(LyricsSource.KUGOU)
         directory = Files.createTempDirectory("bitchord-cover-ai").toFile()
         storeField.set(LyricsTiming, null)
-        controller = LyricsController(Application(), scope)
+        // A bare Application() has no files dir in the unit-test stub. The
+        // timing job outlives this test, so teardown's store reset would make
+        // it throw an uncaught NPE into whichever test runs next.
+        controller = LyricsController(
+            TestApplication(FakeContext.create(FakePreferences(), directory)),
+            scope,
+        )
     }
 
     @After
     fun tearDown() {
-        scope.cancel()
+        runBlocking { job.cancelAndJoin() }
         Dispatchers.resetMain()
         AppSettings.lyricsSources.value = savedSources
         AppSettings.lyricsSourceOrder.value = savedOrder
@@ -153,4 +159,9 @@ class LyricsControllerCoverAiTest {
             TrackLog.exportText().contains("ai answer for other lyrics: $otherKey"),
         )
     }
+}
+
+private class TestApplication(private val base: Context) : Application() {
+    override fun getApplicationContext(): Context = base
+    override fun getFilesDir(): File = base.filesDir
 }

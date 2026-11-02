@@ -30,7 +30,9 @@ import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -102,11 +104,6 @@ class LyricsController(
     /** How long to keep looking — longer than any video worth measuring takes to arrive. */
     private val MEASURE_WINDOW_MS = 15 * 60_000L
 
-    /** A failed measurement pass is logged, not left as an uncaught coroutine failure. */
-    private val timingFailureHandler = CoroutineExceptionHandler { _, error ->
-        TrackLog.d("BitChord", "lyrics-timing: pass failed: ${error.message}")
-    }
-
     /** How the lyrics on screen were moved onto the video's clock — see [LyricsTiming]. */
     private val _lyricsTiming = MutableStateFlow(LyricsTimingUi())
     val lyricsTiming: StateFlow<LyricsTimingUi> = _lyricsTiming.asStateFlow()
@@ -121,6 +118,14 @@ class LyricsController(
     private var lyricsRaceOrder: List<LyricsSource> = emptyList()
     private var lyricsTimingJob: Job? = null
     private var aiTimingJob: Job? = null
+
+    /**
+     * A failing measurement or automatic AI pass is a background detail, not a
+     * reason to take the playback down with it; the plain lyrics stay on screen.
+     */
+    private val timingFailureHandler = CoroutineExceptionHandler { _, error ->
+        TrackLog.w("BitChord", "lyrics timing failed", error)
+    }
 
     /**
      * The song whose check was started in this playback. It keeps a check that
@@ -1024,6 +1029,9 @@ class LyricsController(
                 var attempts = 0
                 val giveUpAt = System.currentTimeMillis() + MEASURE_WINDOW_MS
                 suspend fun measureOnce(): Boolean {
+                    // A cancelled timing job must stop before it reads the
+                    // timing store, not run one more pass while unwinding.
+                    currentCoroutineContext().ensureActive()
                     if (!lyricsMeasurementAllowed(
                             attempts = attempts,
                             maxAttempts = MAX_MEASURE_ATTEMPTS,
@@ -1049,10 +1057,15 @@ class LyricsController(
                     }
                     if (!LyricsTiming.worthMeasuring(context, request.videoId)) return true
                     attempts++
-                    LyricsTiming.measure(context, video, names, request.durationMs, lines = lines)
-                    refreshTiming(generation, lines)
-                    autoAiIfNeeded(generation, lines)
-                    return !LyricsTiming.measured(context, request.videoId)
+                    return measureThen(
+                        measure = {
+                            LyricsTiming.measure(context, video, names, request.durationMs, lines = lines)
+                        },
+                    ) {
+                        refreshTiming(generation, lines)
+                        autoAiIfNeeded(generation, lines)
+                        !LyricsTiming.measured(context, request.videoId)
+                    }
                 }
                 if (measureOnce() && LocalTimingPolicy.measureWaitsForStream(video.localUri)) {
                     // Event-driven: a stream open is the point where more of the
@@ -1612,3 +1625,16 @@ internal fun lyricsMeasurementAllowed(
     giveUpAt: Long,
     measured: Boolean,
 ): Boolean = attempts < maxAttempts && nowMs < giveUpAt && !measured
+
+/**
+ * Runs a measurement and only then lets its caller read the timing store.
+ *
+ * [measure] blocks on decode, so a cancel can arrive while it is in flight and
+ * the caller's job reports it only here: a cancelled job must not refresh the
+ * screen or read the store while unwinding.
+ */
+internal suspend fun <T> measureThen(measure: suspend () -> Unit, then: suspend () -> T): T {
+    measure()
+    currentCoroutineContext().ensureActive()
+    return then()
+}
