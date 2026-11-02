@@ -26,7 +26,6 @@ import com.music.bitchord.playback.smart.SyncTestMode
 import com.music.bitchord.playback.smart.VideoAudio
 import com.music.bitchord.ui.player.LyricsTimingUi
 import java.util.concurrent.ConcurrentHashMap
-import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -856,15 +855,7 @@ class LyricsController(
         }
         val generation = lyricsGeneration
         val context = app
-        // Measurement is best-effort. A store read that fails while this job is
-        // being cancelled (a new track, a cleared view model) must not become
-        // an uncaught exception in the player's scope.
-        val timingFailureHandler = CoroutineExceptionHandler { _, error ->
-            if (error !is kotlinx.coroutines.CancellationException) {
-                TrackLog.w("BitChord", "lyrics-timing pass failed", error, request.videoId)
-            }
-        }
-        lyricsTimingJob = scope.launch(timingFailureHandler) {
+        lyricsTimingJob = scope.launch {
             // Whatever else changes this video's timing — the lock screen, the
             // next-song preparation measuring it first — shows here too.
             launch {

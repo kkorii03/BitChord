@@ -61,8 +61,16 @@ class KoreanStringsTest {
     }
 
     @Test
-    fun autoplayEmptyCopyFollowsTheV19Behaviour() {
-        assertEquals("비슷한 음악이 계속 재생됩니다", value("sharedUi", "autoplay_empty_description"))
+    fun autoplayEmptyCopySaysNothingWasFound() {
+        assertEquals("추천 곡을 찾지 못했습니다", value("sharedUi", "autoplay_empty_description"))
+    }
+
+    @Test
+    fun automixVideoCopySaysSimpleCrossfade() {
+        assertEquals(
+            "자동 믹스 · 비디오 노래: 단순 크로스페이드",
+            value("sharedUi", "automix_not_supported_video"),
+        )
     }
 
     @Test

@@ -32,7 +32,6 @@ class UiTranslationCoverageTest {
         "route_other",
         "spotify_import_language_preference",
         "spotify_import_language_hint",
-        "music_gate_fallback",
     )
 
     @Test
