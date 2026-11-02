@@ -27,4 +27,14 @@ object TelegramStreamUri {
         } else {
             null
         }
+
+    /** [trackId] for the string form, without an Android Uri (downloads run on a plain JVM too). */
+    fun trackId(url: String): String? {
+        val prefix = "$SCHEME://track/"
+        if (!url.startsWith(prefix)) return null
+        return url.substring(prefix.length)
+            .substringBefore('?')
+            .substringBefore('#')
+            .takeIf { TelegramMessageMapper.parseId(it) != null }
+    }
 }

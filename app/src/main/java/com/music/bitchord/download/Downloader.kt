@@ -5,9 +5,13 @@ import com.music.bitchord.data.Http
 import com.music.bitchord.data.innertube.PlayerClient
 import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.net.ProxyPlayback
+import com.music.bitchord.telegram.TelegramAudioReader
+import com.music.bitchord.telegram.TelegramClientManager
+import com.music.bitchord.telegram.TelegramStreamUri
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import okhttp3.Call
@@ -76,6 +80,27 @@ internal fun downloadStreamChanged(
 object Downloader {
 
     private const val TAG = "BitChord"
+
+    /** Opens the TDLib reader behind a Telegram stream URL; tests supply a transport-backed fake. */
+    internal interface TelegramStreamOpener {
+        suspend fun open(
+            trackId: String,
+            position: Long,
+            requestedLength: Long,
+            reason: String,
+        ): TelegramAudioReader
+    }
+
+    private object SystemTelegramStreamOpener : TelegramStreamOpener {
+        override suspend fun open(
+            trackId: String,
+            position: Long,
+            requestedLength: Long,
+            reason: String,
+        ): TelegramAudioReader = TelegramAudioReader.open(trackId, position, requestedLength, reason)
+    }
+
+    private fun isTelegram(url: String): Boolean = url.startsWith("${TelegramStreamUri.SCHEME}:")
 
     /** Matches the range size read-ahead settled on; large enough to amortise, small enough to cancel promptly. */
     private const val CHUNK_BYTES = 2L * 1024 * 1024
@@ -268,7 +293,18 @@ object Downloader {
         headers: Map<String, String>,
         sink: OutputStream,
         onProgress: (written: Long, total: Long) -> Unit,
+    ): Long = fetchDirect(url, headers, sink, onProgress, SystemTelegramStreamOpener)
+
+    internal suspend fun fetchDirect(
+        url: String,
+        headers: Map<String, String>,
+        sink: OutputStream,
+        onProgress: (written: Long, total: Long) -> Unit,
+        telegramOpener: TelegramStreamOpener,
     ): Long = withContext(Dispatchers.IO) {
+        if (isTelegram(url)) {
+            return@withContext fetchTelegram(url, sink, onProgress, telegramOpener)
+        }
         val request = Request.Builder().url(url)
             .apply { headers.forEach { (name, value) -> header(name, value) } }
             .build()
@@ -307,6 +343,65 @@ object Downloader {
             if (written == 0L) error("Download failed: nothing was sent")
             Log.d(TAG, "fetched ${written}B directly")
             written
+        }
+    }
+
+    /**
+     * The same whole-file fetch for a Telegram stream. TDLib ranges are read
+     * through [TelegramAudioReader] while one stream lease keeps the client
+     * open; cancellation interrupts the blocking read instead of waiting for
+     * it to finish.
+     */
+    private suspend fun fetchTelegram(
+        url: String,
+        sink: OutputStream,
+        onProgress: (written: Long, total: Long) -> Unit,
+        opener: TelegramStreamOpener,
+    ): Long {
+        val id = TelegramStreamUri.trackId(url) ?: error("Not a Telegram track: $url")
+        return withTelegramStream(id, 0L, -1L, TelegramAudioReader.REASON_VERIFY, opener) { reader ->
+            runInterruptible(Dispatchers.IO) {
+                val total = reader.total.takeIf { it > 0 }
+                val buffer = ByteArray(BUFFER_BYTES)
+                var written = 0L
+                while (true) {
+                    val read = reader.read(buffer, 0, buffer.size)
+                    if (read < 0) break
+                    sink.write(buffer, 0, read)
+                    written += read
+                    if (total != null) onProgress(written, total)
+                }
+                sink.flush()
+
+                if (total != null && written < total) {
+                    error("Download stopped at ${written}B of $total — try again")
+                }
+                if (written == 0L) error("Download failed: nothing was sent")
+                Log.d(TAG, "fetched ${written}B from Telegram")
+                written
+            }
+        }
+    }
+
+    /** Opens one reader under a counted stream lease and always releases both. */
+    private suspend fun <T> withTelegramStream(
+        trackId: String,
+        position: Long,
+        requestedLength: Long,
+        reason: String,
+        opener: TelegramStreamOpener,
+        block: suspend (TelegramAudioReader) -> T,
+    ): T {
+        TelegramClientManager.beginStream(trackId)
+        try {
+            val reader = opener.open(trackId, position, requestedLength, reason)
+            try {
+                return block(reader)
+            } finally {
+                reader.close()
+            }
+        } finally {
+            TelegramClientManager.endStream(trackId)
         }
     }
 
@@ -364,7 +459,9 @@ object Downloader {
         url: String,
         headers: Map<String, String>,
         statedCodec: String? = null,
+        telegramOpener: TelegramStreamOpener = SystemTelegramStreamOpener,
     ): Probe? = withContext(Dispatchers.IO) {
+        if (isTelegram(url)) return@withContext probeTelegram(url, statedCodec, telegramOpener)
         runCatching {
             val request = Request.Builder().url(url)
                 .header("Range", "bytes=0-${PROBE_BYTES - 1}")
@@ -395,6 +492,35 @@ object Downloader {
             Log.w(TAG, "could not probe source file: ${it.message}")
         }.getOrNull()
     }
+
+    /** [probe] for a Telegram stream: the same 512-byte sniff over a TDLib reader. */
+    private suspend fun probeTelegram(
+        url: String,
+        statedCodec: String?,
+        opener: TelegramStreamOpener,
+    ): Probe? = runCatching {
+        val id = TelegramStreamUri.trackId(url) ?: error("Not a Telegram track: $url")
+        withTelegramStream(id, 0L, PROBE_BYTES.toLong(), TelegramAudioReader.REASON_VERIFY, opener) { reader ->
+            runInterruptible(Dispatchers.IO) {
+                val head = ByteArray(PROBE_BYTES)
+                var filled = 0
+                while (filled < head.size) {
+                    val read = reader.read(head, filled, head.size - filled)
+                    if (read < 0) break
+                    filled += read
+                }
+                sniff(
+                    head = head.copyOf(filled),
+                    contentType = reader.mimeType,
+                    statedCodec = statedCodec,
+                    totalBytes = reader.total.takeIf { it > 0 },
+                )
+            }
+        }
+    }.onFailure {
+        if (it is CancellationException) throw it
+        Log.w(TAG, "could not probe source file: ${it.message}")
+    }.getOrNull()
 
     /** [Call.execute], but given up on — and the call cancelled — when the coroutine is. */
     private suspend fun Call.awaitResponse(): Response = suspendCancellableCoroutine { continuation ->

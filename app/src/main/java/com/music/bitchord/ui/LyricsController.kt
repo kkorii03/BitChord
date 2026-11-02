@@ -26,6 +26,7 @@ import com.music.bitchord.playback.smart.SyncTestMode
 import com.music.bitchord.playback.smart.VideoAudio
 import com.music.bitchord.ui.player.LyricsTimingUi
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -853,7 +854,16 @@ class LyricsController(
         }
         val generation = lyricsGeneration
         val context = app
-        lyricsTimingJob = scope.launch {
+        lyricsTimingJob = scope.launch(CoroutineExceptionHandler { _, error ->
+            // Timing is best-effort: a failure here must not take down the
+            // process, and a test's fake context can legitimately be gone.
+            TrackLog.w(
+                "BitChord",
+                "lyrics-timing: background pass failed",
+                error,
+                request.videoId,
+            )
+        }) {
             // Whatever else changes this video's timing — the lock screen, the
             // next-song preparation measuring it first — shows here too.
             launch {
