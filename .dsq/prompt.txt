@@ -1,0 +1,23 @@
+﻿Kotlin Android app (v1.9 + Korean fork). Battery first: event-driven, no polling/timers; never block the main thread. Every change gets a JVM test that fails on the old code. Read every caller of a function you change. Unknown Android/Media3/OkHttp APIs: check with context7. Use grep/Select-String, not rg.
+
+Bug (phone 11-03, 1.9): a downloaded song upgrades to lossless from the Telegram source, and the download fails every time:
+  W/BitChord could not probe source file: Expected URL scheme 'http' or 'https' but was 'bitchord-telegram'
+  W/BitChord download failed for 9RfVp-GhKfs: Expected URL scheme 'http' or 'https' but was 'bitchord-telegram'
+Telegram streams use the internal URI scheme TelegramStreamUri.SCHEME ("bitchord-telegram:"), which playback reads through playback/TelegramDataSource.kt (RoutingFactory). download/Downloader.kt (probe() and open()/the ranged fetch) only knows OkHttp (Http.client), so it throws on that scheme. The Korean download pipeline (ko/downloads/KoDownloadPipeline.kt) calls it.
+
+Task: make Downloader read a bitchord-telegram URL through TelegramDataSource (or TelegramAudioReader directly) for both the probe (first 512 bytes -> sniff()) and the full download, keeping every existing http behaviour unchanged. TelegramClientManager.beginStream/endStream must be balanced (close in finally). Downloads run off the main thread already; keep it so. If a download path cannot support Telegram cleanly, the fallback is: skip Telegram candidates for downloads with one log line, so the next source (http addon) is tried instead of failing the whole upgrade - say which you did and why.
+YOUR SCOPE: download/Downloader.kt, ko/downloads/KoDownloadPipeline.kt (only if needed), telegram/* (read-only unless a tiny helper is needed) (+ tests). Do not touch .github/workflows.
+Tests: a JVM test that fails on the old code (e.g. the probe/open path chooses the Telegram reader for the bitchord-telegram scheme, injectable opener), name it for the CI list.
+
+Finish with a summary of at most 10 lines: files, REMOVED-LINES AUDIT, tests (fail-before/pass-after, names for CI), what you did not do. Follow AGENTS.md (ponytail) rules.
+
+OPUS NOTE: an earlier attempt (cloud/telegram-download-1103-r2) conflicted with task/u19-tg in ui/LyricsController.kt. Do not touch LyricsController at all; only download/ and ko/downloads/ files.
+
+
+== 3 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 1
+1. MEDIUM — app/src/main/java/com/music/bitchord/download/Downloader.kt:358 — The swap guard only checks `reader.fileId` when `read > 0`, so if a refresh changes the file and the next `reader.read` returns `-1` (e.g. replacement size equals the bytes already written at a 4 MB window boundary), the loop exits and the unchanged length check passes, committing the old file's prefix under the new file's identity; the summary's "mid-copy refresh now fails" is therefore not universally true. Fix: compare `reader.fileId` after every read including `-1` (error when `writtenBefore > 0`), and add a test whose replacement length equals `WINDOW_BYTES`.
+Skipped: on-device TDLib refresh semantics; risk: the equal-length-at-EOF path can still commit a mixed/garbage file.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
