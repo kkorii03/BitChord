@@ -38,18 +38,23 @@ internal fun committedSpanAt(spans: List<CommittedSpan>, position: Long): Commit
  * Span files are opened as soon as the reader is built. The cache may evict a
  * span at any point after the snapshot, and a file opened only when its first
  * byte is read can be gone by then; an already-open descriptor keeps reading
- * the data the evictor unlinked. A file missing at construction is skipped, so
- * a decode only ever sees what was committed when it started.
+ * the data the evictor unlinked. A file missing at construction is skipped,
+ * so a decode only ever sees what was committed when it started — including
+ * in [size], so it never advertises bytes [read] cannot return.
  */
 internal class CommittedSpanReader(
-    private val spans: List<CommittedSpan>,
+    spans: List<CommittedSpan>,
     private val contentLength: Long,
 ) : AutoCloseable {
 
     private val readers = HashMap<File, RandomAccessFile>()
+    private val spans: List<CommittedSpan>
 
     init {
         spans.map { it.file }.distinct().forEach { open(it) }
+        // Keep only spans whose file opened: a snapshot can name a span the
+        // evictor already removed, and its bytes are not readable.
+        this.spans = spans.filter { readers.containsKey(it.file) }
     }
 
     /**

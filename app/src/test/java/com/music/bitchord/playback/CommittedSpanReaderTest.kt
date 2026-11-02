@@ -108,6 +108,27 @@ class CommittedSpanReaderTest {
     }
 
     @Test
+    fun `a span missing at construction is never advertised as size`() {
+        // The snapshot can still name a span the evictor already removed.
+        // Counting it made size() promise bytes read() could not return,
+        // which is the no-first-sample failure this reader exists to avoid.
+        val missing = tempFile("abcd".toByteArray()).apply { delete() }
+        val present = tempFile("efgh".toByteArray())
+        val reader = CommittedSpanReader(
+            listOf(
+                CommittedSpan(0, 4, missing),
+                CommittedSpan(4, 4, present),
+            ),
+            contentLength = 8,
+        )
+
+        assertEquals(-1L, reader.size())
+        assertEquals(-1, reader.read(0, ByteArray(8), 0, 8))
+        assertEquals(4, reader.read(4, ByteArray(4), 0, 4))
+        reader.close()
+    }
+
+    @Test
     fun `a span evicted after the snapshot is still readable`() {
         // The evictor may unlink a span after [AudioCache.renditionDataSource]
         // snapshots it. Opening the files with the reader keeps the decode off
