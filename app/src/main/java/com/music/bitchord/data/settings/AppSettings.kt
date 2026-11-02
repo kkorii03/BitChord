@@ -481,6 +481,7 @@ object AppSettings {
     val syncSafetyNextPrep get() = KoAppSettings.syncSafetyNextPrep // [KO] sync safety
     val syncSafetyDownloadRecheck get() = KoAppSettings.syncSafetyDownloadRecheck // [KO] sync safety
     val syncSafetyHqSync get() = KoAppSettings.syncSafetyHqSync // [KO] sync safety
+    val syncSafetyPerLine get() = KoAppSettings.syncSafetyPerLine // [KO] sync safety
     val syncSafetySwitches: SyncSafetyPolicy.Switches get() = KoAppSettings.syncSafetySwitches // [KO] sync safety
     fun batteryPercentValue(): Int = KoAppSettings.batteryPercentValue() // [KO] low power
     fun privateListeningSince(): Long = KoAppSettings.privateListeningSince() // [KO] private listening
@@ -1802,6 +1803,9 @@ object AppSettings {
 
     fun setSyncSafetyHqSync(value: Boolean) =
         KoAppSettings.setSyncSafetyHqSync(value) // [KO] sync safety
+
+    fun setSyncSafetyPerLine(value: Boolean) =
+        KoAppSettings.setSyncSafetyPerLine(value) // [KO] sync safety
 
     fun setAiLyrics(value: Boolean) =
         KoAppSettings.setAiLyrics(value) // [KO] lyrics ai

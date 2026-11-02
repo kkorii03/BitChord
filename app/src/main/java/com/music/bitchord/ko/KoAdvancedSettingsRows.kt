@@ -19,6 +19,7 @@ internal fun SettingsGroupScope.KoAdvancedSyncSafetyRows() {
     val syncSafetyNextPrep by AppSettings.syncSafetyNextPrep.collectAsStateWithLifecycle()
     val syncSafetyDownloadRecheck by AppSettings.syncSafetyDownloadRecheck.collectAsStateWithLifecycle()
     val syncSafetyHqSync by AppSettings.syncSafetyHqSync.collectAsStateWithLifecycle()
+    val syncSafetyPerLine by AppSettings.syncSafetyPerLine.collectAsStateWithLifecycle()
 
     val syncSafetyNextPrepTitle = stringResource(R.string.sync_safety_next_prep)
     row(syncSafetyNextPrepTitle, "lyrics", "sync", "next", "developer", "experimental") {
@@ -63,6 +64,21 @@ internal fun SettingsGroupScope.KoAdvancedSyncSafetyRows() {
                 )
             },
             onClick = { AppSettings.setSyncSafetyHqSync(!syncSafetyHqSync) },
+        )
+    }
+    val syncSafetyPerLineTitle = stringResource(R.string.sync_safety_per_line)
+    row(syncSafetyPerLineTitle, "lyrics", "sync", "line", "developer", "experimental") {
+        SettingsRow(
+            icon = Icons.Rounded.Timer,
+            title = syncSafetyPerLineTitle,
+            trailing = {
+                Switch(
+                    checked = syncSafetyPerLine,
+                    onCheckedChange = AppSettings::setSyncSafetyPerLine,
+                    colors = settingsSwitchColors(),
+                )
+            },
+            onClick = { AppSettings.setSyncSafetyPerLine(!syncSafetyPerLine) },
         )
     }
 }

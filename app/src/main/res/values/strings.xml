@@ -1035,6 +1035,8 @@
     <string name="use_this_profile">Use this profile</string>
     <string name="switch_profile_hint">Switch using the avatar, then use this profile.</string>
     <string name="profile_unavailable">No signed-in profile is available on this page yet.</string>
+
+    <!-- Listen together -->
     <string name="listen_together">Listen together</string>
     <string name="listen_together_subtitle">Share a code and play the same music, in time</string>
     <string name="listen_together_in_party">In a party · %1$s</string>
@@ -1135,77 +1137,151 @@
     <string name="listen_together_status_custom_fallback">Custom server unreachable · Using default fallback (%1$d ms)</string>
     <string name="listen_together_status_all_offline">Both custom server and default server are offline</string>
     <string name="listen_together_top_bar_fallback">Fallback · %1$s</string>
+
     <string name="vietnamese">Vietnamese</string>
+
     <string name="miscellaneous_footer">When enabled, closing the app from the recent apps screen will also stop music playback.</string>
+
     <string name="export_compatible_downloads">Export compatible downloads</string>
+
     <string name="output_precision">Output precision</string>
+
     <string name="prefer_usb_dac">Prefer USB DAC</string>
+
     <string name="loudness_normalization">Loudness normalization</string>
+
     <string name="loudness_normalization_subtitle">Levels every track to the same loudness</string>
     <string name="loudness_off_on_speaker">Disable on Phone Speaker</string>
+
     <string name="loudness_target">Target loudness</string>
+
     <string name="loudness_target_subtitle">Quieter suits headphones; louder suits a car or a phone speaker</string>
+
     <string name="loudness_target_value">%1$s LUFS</string>
+
     <string name="pipeline_loudness">Loudness</string>
+
     <string name="pipeline_loudness_gain">Gain</string>
+
     <string name="pipeline_loudness_measured">Measured</string>
+
     <string name="pipeline_bit_exact">Bit-exact</string>
+
     <string name="loudness_measuring">Measuring…</string>
+
     <string name="loudness_gain_db">%1$s dB</string>
+
     <string name="loudness_lufs">%1$s LUFS</string>
+
     <string name="blur_unfocused_lyrics">Blur unfocused lyrics</string>
+
     <string name="blur_unfocused_lyrics_subtitle">Keeps the spotlight on the current line</string>
+
     <string name="advanced_options">Advanced &amp; experimental options</string>
     <string name="settings_footer_advanced">Developer options and experiments. Leave these at their defaults unless asked to change them.</string>
+
     <string name="sync_safety_next_prep">Next-song lyrics preparation</string>
+
     <string name="sync_safety_next_prep_subtitle">Developer option. Looks up and verifies the next song\'s lyrics and sync before it starts. Off keeps the earlier sync path.</string>
+
     <string name="sync_safety_download_recheck">Downloaded lyrics re-check</string>
+
     <string name="sync_safety_download_recheck_subtitle">Developer option. Re-checks a downloaded file\'s saved lyrics and sync, and reads a stored override. Off ignores both.</string>
+
     <string name="sync_safety_hq_sync">HQ sync re-apply</string>
+
     <string name="sync_safety_hq_sync_subtitle">Developer option. Re-applies a saved HQ offset and rate to lyrics. Off shows the provider\'s own timing.</string>
+    <string name="sync_safety_per_line">Per-line lyrics timing correction</string>
+    <string name="sync_safety_per_line_subtitle">Developer option. Corrects each line\'s timing from the words heard. Off keeps only the whole-song correction.</string>
+
     <string name="lyrics_debug_logs">Lyrics debug logs</string>
+
     <string name="lyrics_debug_logs_subtitle">Show live API queries and scraper activity in the lyrics panel</string>
+
     <string name="shelf_trending_community_playlists">Trending community playlists</string>
+
     <string name="shelf_featured_playlists_for_you">Featured playlists for you</string>
+
     <string name="shelf_quick_picks">Quick picks</string>
+
     <string name="shelf_listen_again">Listen again</string>
+
     <string name="shelf_mixed_for_you">Mixed for you</string>
+
     <string name="shelf_similar_to">Similar to %1$s</string>
+
     <string name="shelf_forgotten_favorites">Forgotten favorites</string>
+
     <string name="shelf_recommended_music_videos">Recommended music videos</string>
+
     <string name="shelf_from_your_library">From your library</string>
+
     <string name="shelf_charts">Charts</string>
+
     <string name="shelf_new_releases">New releases</string>
+
     <string name="shelf_top_music_videos">Top music videos</string>
+
     <string name="shelf_for_you">For you</string>
+
     <string name="shelf_energy_boosters">Energy boosters</string>
+
     <string name="shelf_feel_good">Feel good</string>
+
     <string name="shelf_commute">Commute</string>
+
     <string name="shelf_workout">Workout</string>
+
     <string name="shelf_focus">Focus</string>
+
     <string name="shelf_relax">Relax</string>
+
     <string name="shelf_sleep">Sleep</string>
+
     <string name="shelf_party">Party</string>
+
     <string name="shelf_romance">Romance</string>
+
     <string name="shelf_sad">Sad</string>
+
     <string name="shelf_100_on_repeat">100% on repeat</string>
+
     <string name="shelf_new_albums_singles">New albums &amp; singles</string>
+
     <string name="shelf_hits_today">Hits today</string>
+
     <string name="shelf_artists_on_the_rise">Artists on the rise</string>
+
+
     <string name="shelf_top_tunes_right_now">Top tunes right now</string>
+
     <string name="shelf_concerts">Concerts</string>
+
     <string name="shelf_shorts">Shorts</string>
+
     <string name="shelf_single">Single</string>
+
     <string name="shelf_chart">Chart</string>
+
     <string name="shelf_song_item">Song</string>
+
     <string name="shelf_from_the_community">From the community</string>
+
     <string name="shelf_youtube_charts">YouTube Charts</string>
+
     <string name="shelf_trending">Trending</string>
+
     <string name="shelf_recents">Recents</string>
+
     <string name="subscriptions">Subscriptions</string>
+
+
     <string name="card_views_format">%1$s views</string>
+
     <string name="card_plays_format">%1$s plays</string>
+
     <string name="card_songs_format">%1$s songs</string>
+
     <string name="source_needs_lossless_output">Needs a lossless output · use a lossless supported device</string>
     <string name="source_needs_lossless_bt_codec">Needs a lossless output · Bluetooth is on %1$s; use a lossless supported device</string>
     <string name="source_needs_lossless_bt_unknown">Needs a lossless output · can’t tell which Bluetooth codec is in use</string>
@@ -1272,6 +1348,7 @@
     <string name="song_info_unknown">No information</string>
     <string name="song_info_error">Some information could not be loaded.</string>
     <string name="song_info_retry">Retry</string>
+    <!-- Settings: BitChord for Wear OS -->
     <string name="wear_os_section">BitChord for Wear OS</string>
     <string name="wear_os_page_title">Wear OS</string>
     <string name="wear_os_your_watches">Your watches</string>
@@ -1313,6 +1390,7 @@
     <string name="gemini_api_key">Gemini API key</string>
     <string name="gemini_api_key_description">Create a free key at aistudio.google.com/apikey and paste it here. It stays on this device and is sent only to Google. Leave it empty to use Google Translate.</string>
     <string name="korean">Korean</string>
+    <!-- Filled in only in a personal build, after it is built. Keep empty in the repository. -->
     <string name="default_gemini_api_key" translatable="false"></string>
     <string name="default_deepgram_api_key" translatable="false"></string>
     <string name="prefetch_translation">Translate the next song\'s lyrics ahead</string>
@@ -1510,6 +1588,8 @@
     <string name="telegram_source_login_required">Sign in to Telegram to use this source.</string>
     <string name="telegram_source_no_chats">Choose chats to search in Telegram settings.</string>
     <string name="telegram_source_connects_on_search">Connects to Telegram when you search.</string>
+
+    <!-- fork-only resources kept by merge_strings.py -->
     <string name="addon_blocked_title">Can\'t play this song</string>
     <string name="addon_blocked_quality">Audio quality on %1$s is set to %2$s. Songs from %3$s only play at Lossless — change it in Settings → Audio quality to play this one.</string>
     <string name="addon_blocked_watch">Music is playing through your watch, which limits audio below Lossless. Songs from %1$s play again once your phone takes the music back.</string>
