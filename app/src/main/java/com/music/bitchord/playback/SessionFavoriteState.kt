@@ -39,14 +39,21 @@ internal object SessionFavoriteState {
      * The star a queue item draws. A device file is liked into the device's own
      * Liked playlist, so [deviceLiked] decides it; an online track goes through
      * [isLiked], which keeps the persisted snapshot after a process restart.
+     * [persisted] is only consulted for an online track this process has no
+     * rating for, so the caller need not read the snapshot on the hot path.
      */
     fun queueItemLiked(
         videoId: String?,
         onDevice: Boolean,
         deviceLiked: Boolean,
         override: LikeStatus?,
-        persisted: MediaWidgetSnapshot?,
-    ): Boolean = if (onDevice) deviceLiked else isLiked(videoId, override, persisted)
+        persisted: () -> MediaWidgetSnapshot?,
+    ): Boolean {
+        if (videoId == null) return false
+        if (onDevice) return deviceLiked
+        val snapshot = if (override == null) persisted() else null
+        return isLiked(videoId, override, snapshot)
+    }
 
     /** The rating a tap on the star is asking to write. */
     fun toggled(

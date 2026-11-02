@@ -1198,6 +1198,17 @@ class PlaybackService : MediaLibraryService() {
     private var persistedQueueStart = 0
 
     /**
+     * The last persisted widget snapshot, read once off the main thread. The
+     * notification and lock screen refresh on every track event, so reading
+     * preferences there would put a disk read on that path; the rating only
+     * matters for a track this process has not rated itself.
+     */
+    @Volatile private var persistedFavorite: MediaWidgetSnapshot? = null
+
+    /** Whether [persistedFavorite] has been read yet; see [publishWidgetState]. */
+    @Volatile private var persistedFavoriteLoaded = false
+
+    /**
      * The last repeat mode seen, so [onRepeatModeChanged] can tell which
      * direction the change went in: the callback reports where the player has
      * arrived, and leaving repeat-all is the half that has to restore.
@@ -2062,6 +2073,23 @@ class PlaybackService : MediaLibraryService() {
                     publishWidgetState()
                 }
         }
+        // The saved rating the notification star falls back to after a process
+        // restart. Read once, off the main thread, so the per-track layout
+        // refresh never touches preferences (see persistedFavorite).
+        scope.launch {
+            persistedFavorite = try {
+                withContext(Dispatchers.IO) {
+                    MediaWidgetSnapshot.load(this@PlaybackService)
+                }
+            } catch (error: Exception) {
+                // An unreadable snapshot is not worth holding the widget back.
+                TrackLog.w("BitChord", "widget rating load failed: ${error.message}")
+                null
+            }
+            persistedFavoriteLoaded = true
+            refreshCustomLayouts()
+            publishWidgetState()
+        }
         // A device file's heart, liked from the app, the notification or a widget.
         scope.launch {
             OfflinePlaylists.liked
@@ -2840,31 +2868,23 @@ class PlaybackService : MediaLibraryService() {
     private fun isLiked(item: MediaItem?): Boolean {
         val song = item?.toSong() ?: return false
         val onDevice = song.localUri != null
-        val override = LikeState.overrides.value[song.videoId]
-        // Only an online track consults the persisted snapshot, and only when
-        // this process has no rating of its own — see SessionFavoriteState.
-        val persisted = if (!onDevice && override == null) MediaWidgetSnapshot.load(this) else null
         return SessionFavoriteState.queueItemLiked(
             videoId = song.videoId,
             onDevice = onDevice,
             deviceLiked = onDevice && OfflinePlaylists.isLiked(song),
-            override = override,
-            persisted = persisted,
+            override = LikeState.overrides.value[song.videoId],
+            persisted = { persistedFavorite },
         )
     }
 
     /**
      * The rating the notification star should draw, with the same persisted
-     * fallback the widget uses. Reading the snapshot only when this process has
-     * no override keeps a normal tap from touching preferences at all.
+     * fallback the widget uses. Reading the cached snapshot only when this
+     * process has no override keeps a normal tap from touching it at all.
      */
     private fun sessionFavoriteStatus(videoId: String?): LikeStatus {
         val override = videoId?.let { LikeState.overrides.value[it] }
-        val persisted = if (videoId != null && override == null) {
-            MediaWidgetSnapshot.load(this)
-        } else {
-            null
-        }
+        val persisted = if (videoId != null && override == null) persistedFavorite else null
         return SessionFavoriteState.status(videoId, override, persisted)
     }
 
@@ -9128,6 +9148,14 @@ class PlaybackService : MediaLibraryService() {
     private fun publishWidgetState(playing: Boolean? = null) {
         val exoPlayer = player ?: return
         val song = exoPlayer.currentMediaItem?.toSong()
+        // Before the saved rating has been read, an online track with no
+        // override has no trustworthy like state: saving now would write false
+        // over the stored like. The read publishes once it has the answer.
+        if (!persistedFavoriteLoaded && song != null && song.localUri == null &&
+            LikeState.overrides.value[song.videoId] == null
+        ) {
+            return
+        }
         val reported: Player = mediaSession?.player ?: exoPlayer
         val snapshot = MediaWidgetSnapshot.fromPlayback(
             // Null is an answer, not a reason to return: a queue that has been

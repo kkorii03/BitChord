@@ -71,20 +71,42 @@ class SessionFavoriteStateTest {
                 onDevice = false,
                 deviceLiked = false,
                 override = null,
-                persisted = likedSnapshot,
+                persisted = { likedSnapshot },
             ),
         )
     }
 
     @Test
+    fun `an online track with an override never reads the persisted snapshot`() {
+        var reads = 0
+        assertFalse(
+            SessionFavoriteState.queueItemLiked(
+                videoId = "dQw4w9WgXcQ",
+                onDevice = false,
+                deviceLiked = false,
+                override = LikeStatus.INDIFFERENT,
+                persisted = {
+                    reads++
+                    likedSnapshot
+                },
+            ),
+        )
+        assertEquals(0, reads)
+    }
+
+    @Test
     fun `a device file's star follows the device liked playlist`() {
+        var reads = 0
         assertFalse(
             SessionFavoriteState.queueItemLiked(
                 videoId = "dQw4w9WgXcQ",
                 onDevice = true,
                 deviceLiked = false,
                 override = null,
-                persisted = likedSnapshot,
+                persisted = {
+                    reads++
+                    likedSnapshot
+                },
             ),
         )
         assertTrue(
@@ -93,9 +115,13 @@ class SessionFavoriteStateTest {
                 onDevice = true,
                 deviceLiked = true,
                 override = null,
-                persisted = null,
+                persisted = {
+                    reads++
+                    null
+                },
             ),
         )
+        assertEquals(0, reads)
     }
 
     @Test
