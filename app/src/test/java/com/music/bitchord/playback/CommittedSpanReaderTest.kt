@@ -70,14 +70,57 @@ class CommittedSpanReaderTest {
     }
 
     @Test
-    fun `size is the declared length, or the last committed byte when unknown`() {
+    fun `a partial entry's size is its contiguous committed end`() {
+        // The metadata knows the whole rendition's length, but only the
+        // opening is committed. Reporting the full length here used to let the
+        // extractor seek into bytes that are not on disk, which is the
+        // no-first-sample failure this reader exists to avoid.
         val file = tempFile("abcd".toByteArray())
-        val known = CommittedSpanReader(listOf(CommittedSpan(0, 4, file)), contentLength = 4_000)
-        val unknown = CommittedSpanReader(listOf(CommittedSpan(0, 4, file)), contentLength = 0)
+        val reader = CommittedSpanReader(listOf(CommittedSpan(0, 4, file)), contentLength = 4_000)
 
-        assertEquals(4_000L, known.size())
-        assertEquals(4L, unknown.size())
-        known.close()
-        unknown.close()
+        assertEquals(4L, reader.size())
+        reader.close()
+    }
+
+    @Test
+    fun `a known length with a hole does not make the size complete`() {
+        val first = tempFile("abcd".toByteArray())
+        val later = tempFile("ijkl".toByteArray())
+        val reader = CommittedSpanReader(
+            listOf(
+                CommittedSpan(0, 4, first),
+                CommittedSpan(8, 4, later),
+            ),
+            contentLength = 12,
+        )
+
+        assertEquals("only the contiguous opening is readable", 4L, reader.size())
+        reader.close()
+    }
+
+    @Test
+    fun `a rendition with no committed head has size -1`() {
+        val later = tempFile("ijkl".toByteArray())
+        val reader = CommittedSpanReader(listOf(CommittedSpan(8, 4, later)), contentLength = 12)
+
+        assertEquals(-1L, reader.size())
+        reader.close()
+    }
+
+    @Test
+    fun `a span evicted after the snapshot is still readable`() {
+        // The evictor may unlink a span after [AudioCache.renditionDataSource]
+        // snapshots it. Opening the files with the reader keeps the decode off
+        // that race; the old lazy open found the file already gone and the
+        // decode stopped mid-track.
+        val file = tempFile("abcdefgh".toByteArray())
+        val reader = CommittedSpanReader(listOf(CommittedSpan(0, 8, file)), contentLength = 8)
+
+        assertEquals("the evictor removed the cached file", true, file.delete())
+
+        val out = ByteArray(8)
+        assertEquals(8, reader.read(0, out, 0, out.size))
+        assertEquals("abcdefgh", String(out))
+        reader.close()
     }
 }

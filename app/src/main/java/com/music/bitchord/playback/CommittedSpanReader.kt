@@ -34,6 +34,12 @@ internal fun committedSpanAt(spans: List<CommittedSpan>, position: Long): Commit
  * A hole between spans reads as end of input rather than as a different
  * rendering of the file, and a read never crosses bytes a span has not
  * committed.
+ *
+ * Span files are opened as soon as the reader is built. The cache may evict a
+ * span at any point after the snapshot, and a file opened only when its first
+ * byte is read can be gone by then; an already-open descriptor keeps reading
+ * the data the evictor unlinked. A file missing at construction is skipped, so
+ * a decode only ever sees what was committed when it started.
  */
 internal class CommittedSpanReader(
     private val spans: List<CommittedSpan>,
@@ -42,8 +48,32 @@ internal class CommittedSpanReader(
 
     private val readers = HashMap<File, RandomAccessFile>()
 
-    fun size(): Long =
-        contentLength.takeIf { it > 0L } ?: spans.maxOfOrNull { it.end } ?: -1L
+    init {
+        spans.map { it.file }.distinct().forEach { open(it) }
+    }
+
+    /**
+     * The declared length only once the committed bytes actually reach it;
+     * otherwise the contiguous committed end, or `-1` when nothing starts at
+     * byte 0.
+     *
+     * A partial rendition told its full length would let the extractor seek
+     * past the bytes it can read, and the decode then fails with no first
+     * sample. Holes count: bytes committed after a gap are not a longer file.
+     */
+    fun size(): Long {
+        val committedEnd = contiguousEnd()
+        return if (contentLength > 0L && committedEnd >= contentLength) contentLength else committedEnd
+    }
+
+    private fun contiguousEnd(): Long {
+        var end = 0L
+        for (span in spans) {
+            if (span.position > end) break
+            end = maxOf(end, span.end)
+        }
+        return if (end > 0L) end else -1L
+    }
 
     @Synchronized
     fun read(position: Long, buffer: ByteArray, offset: Int, size: Int): Int {
@@ -55,7 +85,7 @@ internal class CommittedSpanReader(
             val within = at - span.position
             val want = minOf((size - filled).toLong(), span.length - within).toInt()
             if (want <= 0) break
-            val reader = readerFor(span.file) ?: break
+            val reader = open(span.file) ?: break
             val read = try {
                 reader.seek(within)
                 reader.read(buffer, offset + filled, want)
@@ -69,10 +99,13 @@ internal class CommittedSpanReader(
         return if (filled == 0) -1 else filled
     }
 
-    private fun readerFor(file: File): RandomAccessFile? =
-        readers[file] ?: runCatching { RandomAccessFile(file, "r") }
-            .getOrNull()
-            ?.also { readers[file] = it }
+    private fun open(file: File): RandomAccessFile? {
+        readers[file]?.let { return it }
+        if (!file.exists()) return null
+        val reader = runCatching { RandomAccessFile(file, "r") }.getOrNull() ?: return null
+        readers[file] = reader
+        return reader
+    }
 
     @Synchronized
     override fun close() {
