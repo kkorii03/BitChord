@@ -1,0 +1,10 @@
+Kotlin Android app = upstream v1.9 + Korean fork (task/u19-tg). Battery first, no polling; never block the main thread. Use grep/Select-String, not rg. Every fix gets a JVM test that fails on current code (no network). Do not touch .github/workflows.
+
+User on the phone 11-03 08:17 (build 315467a): "sync is wrecked". Phone log for two DOWNLOADED cover videos played from Home Recents:
+  song version: vRjfYdwM5L4 skipped (not a video)
+  song version: vRjfYdwM5L4 kept (local file, none)
+  lyrics-sync: vRjfYdwM5L4 source=file:lrc.red@unknown base=none shift=-ms match=-% stored=y recheck=unknown-provider video=n
+  track-summary: vRjfYdwM5L4 'ファンサ - Fansa (cover)' video=n source=home ... lyrics=file:lrc.red@unknown sync=none
+(same for 7PgA6kyqVTc 'instagram (cover)'). Both are cover VIDEO uploads that were downloaded; their lyrics are embedded in the file ('file:<provider>@unknown'). A stored sync entry exists (stored=y) but nothing is applied (base=none), and 'recheck=unknown-provider' never leads to a re-check.
+Find why, in LyricsTiming (stored entry lookup keys: video key vs audioSourceKey(videoId, localFile), isVideoRow / CoverTitles.lyricsQuery), LyricsController, KoDownloadRecords (is the original row's isVideo kept with the download?), and the download re-check path ('download re-check skipped by guard'), compare with origin/task/telegram (1.8 fork, where these songs synced). Make a downloaded video/cover row (1) be recognised as a video row everywhere the lyrics screen and sync use it, and (2) find and apply its stored timing; and make 'unknown-provider' embedded lyrics get the song check once instead of nothing. Tests with fakes for each.
+Summary of at most 12 lines: root cause(s) with file:line, fix, REMOVED-LINES AUDIT, tests (class names for CI), what you did not do. Follow AGENTS.md (ponytail) rules.
