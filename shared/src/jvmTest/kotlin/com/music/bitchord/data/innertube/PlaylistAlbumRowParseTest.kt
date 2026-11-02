@@ -73,6 +73,19 @@ class PlaylistAlbumRowParseTest {
     }
 
     @Test
+    fun `a square-art private upload row stays a song`() {
+        val page = InnertubeParser.parsePlaylistShelf(
+            json(
+                playlist(
+                    playlistRow("privateUp01", "MUSIC_VIDEO_TYPE_PRIVATELY_OWNED_TRACK", 480, 480),
+                ),
+            ),
+        )
+
+        assertFalse(page?.songs?.single()?.isVideo == true)
+    }
+
+    @Test
     fun `album pages read lockup video rows as songs`() {
         val songs = InnertubeParser.collectSongsDeep(
             json(

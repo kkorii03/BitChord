@@ -4315,6 +4315,11 @@ object LyricsTiming {
 
     private fun store(context: Context): Store =
         store ?: synchronized(this) {
-            store ?: Store(File(context.applicationContext.filesDir, "lyrics_timing_v1.json")).also { store = it }
+            // A context before attach (a unit test) has no applicationContext or
+            // files dir; keep its timing in the temp root instead of crashing
+            // the timing job with an NPE.
+            val dir = (context.applicationContext ?: context).filesDir
+                ?: File(System.getProperty("java.io.tmpdir"))
+            store ?: Store(File(dir, "lyrics_timing_v1.json")).also { store = it }
         }
 }

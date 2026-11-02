@@ -859,6 +859,7 @@ object InnertubeParser {
         val show = if (episode) showNameFromRuns(subtitleRuns) else null
 
         val thumbnails = renderer.bestThumbnailSources()
+        val videoType = renderer.findString("musicVideoType")
 
         return Song(
             videoId = videoId,
@@ -884,15 +885,18 @@ object InnertubeParser {
             // is simply absent, which is what makes "remove from playlist"
             // offer itself exactly where it means something.
             setVideoId = renderer.o("playlistItemData").s("playlistSetVideoId"),
-            // The row's own `musicVideoType` says exactly what it is; the type
-            // word and the art are only fallbacks without it. A video row can
-            // carry square art, and an ATV row beside it must still count as
-            // the catalogue song — [KO] kept from 1.8 (c078d94e). Not an
-            // episode, whose art is a widescreen still too: it is listened to,
-            // and a "video" is dropped from the All tab's results.
-            isVideo = !episode && when (val videoType = renderer.findString("musicVideoType")) {
-                null -> rowType == "video" || thumbnails.isNotSquare()
-                else -> !videoType.contains("ATV", ignoreCase = true)
+            // The row's own `musicVideoType` says what it is; the type word and
+            // the art are only fallbacks without one. A video row can carry
+            // square art, and an ATV row beside it must still count as the
+            // catalogue song — [KO] kept from 1.8 (c078d94e). Other types (a
+            // private upload) are not videos by default. Not an episode, whose
+            // art is a widescreen still too: it is listened to, and a "video"
+            // is dropped from the All tab's results.
+            isVideo = !episode && when {
+                videoType?.contains("ATV", ignoreCase = true) == true -> false
+                videoType?.contains("OMV", ignoreCase = true) == true ||
+                    videoType?.contains("UGC", ignoreCase = true) == true -> true
+                else -> rowType == "video" || thumbnails.isNotSquare()
             },
             isEpisode = episode,
             isExplicit = renderer.hasExplicitBadge(),
