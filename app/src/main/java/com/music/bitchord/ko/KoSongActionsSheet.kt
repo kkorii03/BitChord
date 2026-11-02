@@ -322,13 +322,13 @@ internal fun KoSongActionsSheet(
         }
 
         ActionRow(
-            icon = SfIcons.PlaylistPlay,
+            icon = SfIcons.PlayNext,
             label = stringResource(R.string.play_next),
             accent = palette.accent,
             onClick = onPlayNext,
         )
         ActionRow(
-            icon = SfIcons.PlaylistPlay,
+            icon = SfIcons.PlayLast,
             label = stringResource(R.string.add_to_queue),
             accent = palette.accent,
             onClick = onAddToQueue,

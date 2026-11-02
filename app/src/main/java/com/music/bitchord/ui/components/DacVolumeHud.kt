@@ -315,7 +315,7 @@ fun DacVolumeHud(hazeState: HazeState) {
                     Icon(
                         imageVector = when {
                             current <= 0f -> SfIcons.VolumeOff
-                            current < 0.5f -> SfIcons.VolumeUp
+                            current < 0.5f -> SfIcons.VolumeDown
                             else -> SfIcons.VolumeUp
                         },
                         contentDescription = null,

@@ -86,6 +86,7 @@ import com.composables.sfsymbols.monochrome.SFShuffle
 import com.composables.sfsymbols.monochrome.SFSliderHorizontal3
 import com.composables.sfsymbols.monochrome.SFSparkles
 import com.composables.sfsymbols.monochrome.SFSpeakerSlash
+import com.composables.sfsymbols.monochrome.SFSpeakerWave1
 import com.composables.sfsymbols.monochrome.SFSpeakerWave2
 import com.composables.sfsymbols.monochrome.SFSquareAndArrowUp
 import com.composables.sfsymbols.monochrome.SFSquareGrid2x2
@@ -218,6 +219,7 @@ object SfIcons {
     val Usb: ImageVector by lazy { bold(SfSymbols.Monochrome.SFCableConnector) }
     val VisibilityOff: ImageVector by lazy { bold(SfSymbols.Monochrome.SFEyeSlash) }
     val VolumeOff: ImageVector by lazy { bold(SfSymbols.Monochrome.SFSpeakerSlash) }
+    val VolumeDown: ImageVector by lazy { bold(SfSymbols.Monochrome.SFSpeakerWave1) }
     val VolumeUp: ImageVector by lazy { bold(SfSymbols.Monochrome.SFSpeakerWave2) }
     val Warning: ImageVector by lazy { bold(SfSymbols.Monochrome.SFExclamationmarkTriangle) }
     val Watch: ImageVector by lazy { bold(SfSymbols.Monochrome.SFApplewatch) }
@@ -260,7 +262,6 @@ object SfIcons {
     val ArrowDown: ImageVector by lazy { bold(SfSymbols.Monochrome.SFArrowDown) }
     val BatterySaver: ImageVector by lazy { bold(SfSymbols.Monochrome.SFBattery50percent) }
     val Cast: ImageVector by lazy { bold(SfSymbols.Monochrome.SFDisplay) }
-    val CastConnected: ImageVector by lazy { bold(SfSymbols.Monochrome.SFDisplay) }
     val ChevronDown: ImageVector by lazy { bold(SfSymbols.Monochrome.SFChevronDown) }
     val Document: ImageVector by lazy { bold(SfSymbols.Monochrome.SFDocument) }
     val Flag: ImageVector by lazy { bold(SfSymbols.Monochrome.SFFlag) }

@@ -137,7 +137,7 @@ private fun CastDeviceRow(
     ) {
         Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
             Icon(
-                imageVector = if (connected) SfIcons.CastConnected else SfIcons.Cast,
+                imageVector = if (connected) Icons.Rounded.CastConnected else SfIcons.Cast,
                 contentDescription = null,
                 tint = Color.White.copy(alpha = if (connected) 1f else 0.8f),
                 modifier = Modifier.size(20.dp),

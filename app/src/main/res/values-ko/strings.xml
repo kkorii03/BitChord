@@ -936,8 +936,8 @@
     <string name="listen_together_in_party">파티 참여 중 · %1$s</string>
     <string name="listen_together_sign_in_footer">함께 듣기를 쓰려면 계정이 필요합니다. 파티 참여자끼리 서로 누가 있는지 볼 수 있습니다.</string>
     <string name="listen_together_server">파티 서버</string>
-    <string name="listen_together_server_online">온라인 · %1$.1f초</string>
-    <string name="listen_together_server_online_fallback">온라인(기본 서버로 대체) · %1$.1f초</string>
+    <string name="listen_together_server_online">온라인 · %1$dms</string>
+    <string name="listen_together_server_online_fallback">온라인(기본 서버로 대체) · %1$dms</string>
     <string name="listen_together_server_offline">현재 연결할 수 없음</string>
     <string name="listen_together_server_checking">확인 중…</string>
     <string name="listen_together_server_unknown">탭하여 확인</string>
@@ -1016,7 +1016,7 @@
     <string name="listen_together_official_server_dialog_message">이 파티는 BitChord 공식 서버에서 호스팅되고 있습니다.\n\n공식 서버로 다시 전환하고 %1$s 파티에 참여하시겠습니까?</string>
     <string name="listen_together_switch_failed_stayed_in_party">파티에 참여할 수 없습니다: %1$s. %2$s 파티에 계속 참여 중입니다.</string>
     <string name="listen_together_switch_failed">파티에 참여할 수 없습니다: %1$s.</string>
-    <string name="listen_together_ping">연결 지연 %1$.1f초</string>
+    <string name="listen_together_ping">연결 지연 %1$dms</string>
     <string name="listen_together_invalid_server_url">유효하지 않은 서버 URL입니다. 올바른 주소를 입력하십시오(예: https://your-server.com).</string>
     <string name="listen_together_err_whitespace">서버 URL에는 공백을 포함할 수 없습니다.</string>
     <string name="listen_together_err_invalid_path">서버 URL에 유효하지 않은 경로가 포함되어 있습니다.</string>

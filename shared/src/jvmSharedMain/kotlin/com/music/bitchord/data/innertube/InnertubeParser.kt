@@ -277,13 +277,7 @@ object InnertubeParser {
             browseId = browseId,
             title = title,
             subtitle = subtitle,
-            thumbnailUrl = (renderer.o("thumbnail").o("musicThumbnailRenderer")
-                .o("thumbnail").a("thumbnails")
-                ?: renderer.o("thumbnail").a("thumbnails")
-                ?: renderer.o("thumbnail").o("thumbnailViewModel").a("sources")
-                ?: renderer.o("thumbnailViewModel").a("sources")
-                ?: renderer.o("contentImage").o("thumbnailViewModel").a("sources")
-                ?: renderer.o("contentImage").a("sources")).best(),
+            thumbnailUrl = renderer.bestThumbnailSources().best(),
             type = when {
                 "ALBUM" in pageType -> BrowseType.ALBUM
                 "ARTIST" in pageType -> BrowseType.ARTIST
@@ -860,16 +854,7 @@ object InnertubeParser {
         val episode = rowType == "episode" || renderer.isPodcastEpisode()
         val show = if (episode) showNameFromRuns(subtitleRuns) else null
 
-        val thumbnails = renderer.o("thumbnail").o("musicThumbnailRenderer")
-            .o("thumbnail").a("thumbnails")
-            ?: renderer.o("thumbnail").a("thumbnails")
-            ?: renderer.o("thumbnail").o("thumbnailViewModel").o("image").a("sources")
-            ?: renderer.o("thumbnail").o("thumbnailViewModel").a("sources")
-            ?: renderer.o("thumbnailViewModel").o("image").a("sources")
-            ?: renderer.o("thumbnailViewModel").a("sources")
-            ?: renderer.o("contentImage")
-                ?.let { it.o("thumbnailViewModel").o("image").a("sources") }
-            ?: renderer.o("contentImage").a("sources")
+        val thumbnails = renderer.bestThumbnailSources()
 
         return Song(
             videoId = videoId,
@@ -1084,13 +1069,7 @@ object InnertubeParser {
             browseId = browseId,
             title = title,
             subtitle = subtitle,
-            thumbnailUrl = (renderer.o("thumbnail").o("musicThumbnailRenderer")
-                .o("thumbnail").a("thumbnails")
-                ?: renderer.o("thumbnail").a("thumbnails")
-                ?: renderer.o("thumbnail").o("thumbnailViewModel").a("sources")
-                ?: renderer.o("thumbnailViewModel").a("sources")
-                ?: renderer.o("contentImage").o("thumbnailViewModel").a("sources")
-                ?: renderer.o("contentImage").a("sources")).best(),
+            thumbnailUrl = renderer.bestThumbnailSources().best(),
             type = when {
                 "ALBUM" in pageType -> BrowseType.ALBUM
                 "ARTIST" in pageType -> BrowseType.ARTIST
@@ -1543,6 +1522,23 @@ object InnertubeParser {
             isExplicit = renderer.hasExplicitBadge(),
         )
     }
+
+    /**
+     * A search/browse row's still across every shape YouTube Music has used:
+     * the old `musicThumbnailRenderer`, the newer `thumbnailViewModel` (with
+     * or without its `image`), and `contentImage` cards. Every renderer that
+     * reads one of those rows goes through here so none loses the URL.
+     */
+    private fun JsonObject.bestThumbnailSources(): JsonArray? =
+        o("thumbnail").o("musicThumbnailRenderer").o("thumbnail").a("thumbnails")
+            ?: o("thumbnail").a("thumbnails")
+            ?: o("thumbnail").o("thumbnailViewModel").o("image").a("sources")
+            ?: o("thumbnail").o("thumbnailViewModel").a("sources")
+            ?: o("thumbnailViewModel").o("image").a("sources")
+            ?: o("thumbnailViewModel").a("sources")
+            ?: o("contentImage").o("thumbnailViewModel").o("image").a("sources")
+            ?: o("contentImage").o("thumbnailViewModel").a("sources")
+            ?: o("contentImage").a("sources")
 
     /**
      * A queue row's still, across the shapes a `next` response has used.

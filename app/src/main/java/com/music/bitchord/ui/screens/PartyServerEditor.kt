@@ -136,7 +136,7 @@ fun PartyServerEditor(hazeState: HazeState, onDismiss: () -> Unit) {
                             SERVER_PROBE_TIMEOUT_MS,
                         )
                         status = if (probe.isOnline) {
-                            context.getString(R.string.listen_together_server_online, probe.latencyMs / 1000f) to true
+                            context.getString(R.string.listen_together_server_online, probe.latencyMs) to true
                         } else {
                             context.getString(R.string.listen_together_server_offline) to false
                         }

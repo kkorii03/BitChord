@@ -4345,13 +4345,13 @@ private fun BitChordApp(
                                     is ServerConnectionState.CustomFallback -> {
                                         Icon(
                                             Icons.Rounded.CloudOff,
-                                            contentDescription = stringResource(R.string.listen_together_top_bar_fallback, stringResource(R.string.listen_together_ping, state.latencyMs / 1000f)),
+                                            contentDescription = stringResource(R.string.listen_together_top_bar_fallback, stringResource(R.string.listen_together_ping, state.latencyMs)),
                                             tint = MaterialTheme.colorScheme.error,
                                             modifier = Modifier.size(14.dp),
                                         )
                                         Spacer(Modifier.width(4.dp))
                                         Text(
-                                            text = stringResource(R.string.listen_together_ping, state.latencyMs / 1000f),
+                                            text = stringResource(R.string.listen_together_ping, state.latencyMs),
                                             style = MaterialTheme.typography.labelMedium,
                                             color = MaterialTheme.colorScheme.error,
                                             maxLines = 1,
@@ -4359,7 +4359,7 @@ private fun BitChordApp(
                                     }
                                     is ServerConnectionState.CustomOnline -> {
                                         Text(
-                                            text = stringResource(R.string.listen_together_ping, state.latencyMs / 1000f),
+                                            text = stringResource(R.string.listen_together_ping, state.latencyMs),
                                             style = MaterialTheme.typography.labelMedium,
                                             color = MaterialTheme.colorScheme.onSurface,
                                             maxLines = 1,
@@ -4367,7 +4367,7 @@ private fun BitChordApp(
                                     }
                                     is ServerConnectionState.DefaultOnline -> {
                                         Text(
-                                            text = stringResource(R.string.listen_together_ping, state.latencyMs / 1000f),
+                                            text = stringResource(R.string.listen_together_ping, state.latencyMs),
                                             style = MaterialTheme.typography.labelMedium,
                                             color = MaterialTheme.colorScheme.onSurface,
                                             maxLines = 1,
