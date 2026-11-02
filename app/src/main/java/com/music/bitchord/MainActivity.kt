@@ -143,6 +143,7 @@ import com.music.bitchord.data.DiagnosticsState
 import com.music.bitchord.data.innertube.InnertubeParser
 import com.music.bitchord.ko.KoAlternateVersionEffect
 import com.music.bitchord.ko.KoAutoMusicOnlyEffect
+import com.music.bitchord.ko.KoDebugQueue
 import com.music.bitchord.ko.KoDetailCoversEffect
 import com.music.bitchord.ko.KoDismissEmptyPlayerEffect
 import com.music.bitchord.ko.KoLyricsSettingsRoute
@@ -466,6 +467,7 @@ class MainActivity : AppCompatActivity() {
             SettingsTransferInbox.consume(intent) // [KO] settings-transfer
             // Likewise for a link tapped or shared from another app — see [MusicLink].
             MusicLink.consume(intent)
+            KoDebugQueue.consume(intent) // [KO] debug-queue
         } else {
             // A replay marks the widget request spent without re-arming it.
             PlayerDeepLink.consume(
@@ -599,6 +601,7 @@ class MainActivity : AppCompatActivity() {
         JamInviteLink.consume(intent)
         SettingsTransferInbox.consume(intent) // [KO] settings-transfer
         MusicLink.consume(intent)
+        KoDebugQueue.consume(intent) // [KO] debug-queue
         KoMainActivity.onNewIntent(this, intent, launchFingerprint, koState) // [KO] launch-replay
     }
 }
@@ -2299,6 +2302,33 @@ private fun BitChordApp(
             }
         }
         MusicLink.handled()
+    }
+
+    // Debug-only smoke hook: adb hands in the test songs as one queue, so the
+    // next row prepared while a song plays is the next test song. See
+    // [KoDebugQueue]. A partial lookup never starts a broken queue; the smoke
+    // script falls back to its per-song VIEW path instead.
+    val debugQueue by KoDebugQueue.pending.collectAsStateWithLifecycle()
+    LaunchedEffect(debugQueue, controller) {
+        val ids = debugQueue ?: return@LaunchedEffect
+        val session = controller ?: return@LaunchedEffect
+        val songs = ids.mapNotNull { id ->
+            YtMusicRepository.trackLinks(id).getOrNull()
+        }
+        if (songs.size != ids.size) {
+            TrackLog.w("BitChord", "debug-queue: resolved ${songs.size}/${ids.size}; not starting")
+            KoDebugQueue.handled()
+            return@LaunchedEffect
+        }
+        // The smoke list is listened to in order; a restored shuffle would
+        // make the script's NEXT presses skip test songs.
+        if (QueueShuffle.enabled.value) QueueShuffle.setEnabled(false)
+        session.playSongs(songs, 0)
+        TrackLog.i(
+            "BitChord",
+            "debug-queue: started n=${songs.size} first=${songs.first().videoId}",
+        )
+        KoDebugQueue.handled()
     }
 
     // ---- Album / playlist menu ----

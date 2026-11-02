@@ -45,6 +45,7 @@ HQ_WAIT_PER_SONG=${SMOKE_WAIT_S:-150}
 SYNC_WAIT_PER_SONG=${SMOKE_WAIT_S:-150}
 START_TIMEOUT=20
 FALLBACK_TIMEOUT=15
+QUEUE_START_TIMEOUT=${SMOKE_QUEUE_START_S:-120}
 HQ_CONFIGURED=0
 
 [ "$SCENARIO_MODE" = 1 ] || [ -f "$SONGS_FILE" ] || {
@@ -184,13 +185,25 @@ wait_seconds_for() {
   esac
 }
 
+# Sleep until the row has had its full listening window. The window starts when
+# playback is detected, not when the VIEW/NEXT was sent, so a fallback-started
+# song is not cut short. [3] overrides the per-kind wait (scenarios use it).
+wait_listening_window() {
+  local kind=$1 started=$2 wait_override=${3:-} wait_seconds elapsed
+  wait_seconds=${wait_override:-$(wait_seconds_for "$kind")}
+  elapsed=$((SECONDS - started))
+  if [ "$elapsed" -lt "$wait_seconds" ]; then
+    sleep $((wait_seconds - elapsed))
+  fi
+}
+
 start_search() {
   local query=$1
   adb shell "am start -a android.media.action.MEDIA_PLAY_FROM_SEARCH -p '$PKG' --es query '$query'" >/dev/null 2>&1 || true
 }
 
 play_song() {
-  local key=$1 kind=$2 wait_override=${3:-} query="" started=0 before wait_seconds elapsed
+  local key=$1 kind=$2 wait_override=${3:-} query="" started=0 before
   case "$key" in
     search:*) query=${key#search:} ;;
   esac
@@ -226,12 +239,39 @@ play_song() {
   # The listening window starts when playback is detected, not when the VIEW
   # was sent, so a fallback-started song is not cut short.
   if [ "$started" -gt 0 ]; then
-    wait_seconds=${wait_override:-$(wait_seconds_for "$kind")}
-    elapsed=$((SECONDS - started))
-    if [ "$elapsed" -lt "$wait_seconds" ]; then
-      sleep $((wait_seconds - elapsed))
+    wait_listening_window "$kind" "$started" "$wait_override"
+  fi
+}
+
+# The queue hook plays the whole list as one queue; each later row is advanced
+# with the media NEXT key, the same control a user presses. [QUEUE_INDEX] is the
+# row the script is on, [QUEUE_STARTED_AT] when the first row was detected.
+play_queued_song() {
+  local key=$1 kind=$2 started before
+  if [ "${QUEUE_INDEX:-0}" -eq 0 ]; then
+    started=$QUEUE_STARTED_AT
+    echo "$key QUEUE started" >> "$OUT/smoke-playback.txt"
+  elif grep -q "play: -> .*($key)" "$OUT/smoke-logcat.txt"; then
+    # The app may already have advanced on its own when a track was shorter
+    # than the listening window; pressing NEXT then would skip a test song.
+    started=$SECONDS
+    echo "$key QUEUE already playing" >> "$OUT/smoke-playback.txt"
+  else
+    before=$(play_count)
+    adb shell input keyevent 87 >/dev/null 2>&1 || true
+    if wait_for_new_play "$before" "$START_TIMEOUT"; then
+      started=$SECONDS
+      echo "$key QUEUE next started" >> "$OUT/smoke-playback.txt"
+    else
+      echo "$key QUEUE next did not start; using VIEW fallback" >> "$OUT/smoke-playback.txt"
+      QUEUE_PATH=0
+      play_song "$key" "$kind"
+      QUEUE_INDEX=$(( ${QUEUE_INDEX:-0} + 1 ))
+      return
     fi
   fi
+  QUEUE_INDEX=$(( ${QUEUE_INDEX:-0} + 1 ))
+  wait_listening_window "$kind" "$started"
 }
 
 scenario_mark() {
@@ -512,6 +552,40 @@ progress_report() {
   echo "smoke: progress status http=${code:-none} $desc" >&2
 }
 
+song_keys() {
+  local key kind rest
+  while IFS=$'\t' read -r key kind rest; do
+    key=${key%$'\r'}
+    case "$key" in
+      ''|'#'*) continue ;;
+    esac
+    printf '%s\n' "$key"
+  done < "$SONGS_FILE"
+}
+
+# Start the whole list as one queue once. A search row cannot be expressed as a
+# video id, so any list containing one keeps the old per-song path.
+QUEUE_PATH=0
+QUEUE_INDEX=0
+QUEUE_STARTED_AT=0
+SEARCH_ROWS=$(song_keys | grep -c '^search:' || true)
+QUEUE_IDS=$(song_keys | paste -sd, -)
+if [ "${SEARCH_ROWS:-0}" -eq 0 ] && [ -n "$QUEUE_IDS" ]; then
+  echo "queue: starting one queue via bitchord_queue ($QUEUE_IDS)" >> "$OUT/smoke-playback.txt"
+  before=$(play_count)
+  adb shell am start -n "$PKG/com.music.bitchord.MainActivity" \
+    --es bitchord_queue "$QUEUE_IDS" </dev/null >/dev/null 2>&1 || true
+  if wait_for_new_play "$before" "$QUEUE_START_TIMEOUT"; then
+    QUEUE_PATH=1
+    QUEUE_STARTED_AT=$SECONDS
+    echo "queue: hook started; moving on with MEDIA_NEXT" >> "$OUT/smoke-playback.txt"
+  else
+    echo "queue: hook did not start playback; per-song VIEW path" >> "$OUT/smoke-playback.txt"
+  fi
+else
+  echo "queue: skipped (search rows or empty list); per-song VIEW path" >> "$OUT/smoke-playback.txt"
+fi
+
 # fd 3, not stdin: adb shell inside the loop reads stdin and swallowed the
 # rest of the song list after the first song on the first run.
 while IFS=$'\t' read -r -u 3 key kind _rest || [ -n "$key" ]; do
@@ -524,7 +598,11 @@ while IFS=$'\t' read -r -u 3 key kind _rest || [ -n "$key" ]; do
     echo "smoke: song line without kind: $key" >&2
     continue
   }
-  play_song "$key" "$kind"
+  if [ "$QUEUE_PATH" = 1 ]; then
+    play_queued_song "$key" "$kind"
+  else
+    play_song "$key" "$kind"
+  fi
   # No audio after three songs means YouTube refused this network (the runner
   # IPs get "confirm you're not a bot"); say so now instead of after an hour.
   SONGS_DONE=$(( ${SONGS_DONE:-0} + 1 ))
