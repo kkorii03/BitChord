@@ -1,0 +1,9 @@
+Task: READ-ONLY research. Do NOT change any source file and do NOT copy any code (Cider 1 is AGPL-3.0; we only take behavior and design ideas, written in our own words). Only output: docs/cider-notes-1102.md.
+Clone https://github.com/ciderapp/Cider (Cider 1, archived Apple Music desktop client, Vue/Electron) into /tmp/cider (git clone --depth 1) and read it there. Use grep.
+
+Write design notes for an Android (Jetpack Compose) music app that wants to feel like Apple Music, covering how Cider does:
+1. Lyrics view: layout (line size, spacing, alignment), current/past/future line styling (scale, blur, opacity), word-by-word fill or karaoke (how it uses per-word times from TTML/syllable lyrics, interpolation inside a word, easing), scrolling (how the current line is kept in place, spring/easing, user scroll then auto-return delay), tap-a-line-to-seek, translation lines, instrumental gaps (the dots/breathing indicator), background vocals.
+2. Now playing screen: background (artwork blur / animated gradient / color extraction), artwork size and transitions, progress bar behaviour, controls layout, quality badges (Lossless, Dolby Atmos).
+3. Small Apple-like touches worth copying in behaviour (hover/press feedback, transitions between mini and full player, queue view).
+For each: what Cider does (with file paths in Cider for reference), the exact numbers it uses (durations, scales, blur radii, delays), and a short note how to do the same in Compose while keeping battery low (no per-frame work when the screen is off; animate only what changes).
+Finish with a summary of at most 10 lines: the 8 most valuable ideas for us, ranked.
