@@ -480,11 +480,15 @@ class LyricsController(
                     // (A video keeps its existing foreign/measure treatment.)
                     val unverified = !isVideo && timed && !LyricsTiming.timedToVideo(file.source) &&
                         com.music.bitchord.data.lyrics.FileLyricsOrigin.timingIsUnverified(file.videoId, videoId)
-                    // A downloaded song is re-checked once with today's rules,
+                    // A downloaded file is re-checked once with today's rules,
                     // whatever its header says: the file was written at save
-                    // time and may have kept a wrong sync ever since.
-                    val downloadRecheck = !isVideo && timed && !foreign &&
-                        !LyricsTiming.timedToVideo(file.source)
+                    // time and may have kept a wrong sync ever since. A video
+                    // only needs it when the file names no provider/recording
+                    // (its own measurement handles the rest).
+                    val providerKnown = file.source != null && !file.videoId.isNullOrBlank()
+                    val downloadRecheck = timed && !foreign &&
+                        !LyricsTiming.timedToVideo(file.source) &&
+                        (!isVideo || !providerKnown)
                     startTiming(
                         embedded,
                         adjustable = onVideo || foreign || unverified || downloadRecheck,
@@ -923,7 +927,11 @@ class LyricsController(
                     !AppSettings.heavyWorkAllowed || !AppSettings.aiTimingAhead.value ||
                     !com.music.bitchord.data.lyrics.Deepgram.usable
                 ) return@launch
-                val checkKey = LyricsTiming.audioSourceKey(request.videoId, localFile = true)
+                val checkKey = if (request.isVideo) {
+                    request.videoId
+                } else {
+                    LyricsTiming.audioSourceKey(request.videoId, localFile = true)
+                }
                 if (songCheckStartedFor == checkKey) return@launch
                 songCheckStartedFor = checkKey
                 val replaced = LyricsTiming.recheckDownloaded(
@@ -933,7 +941,7 @@ class LyricsController(
                         title = request.title,
                         artist = request.artist,
                         thumbnailUrl = null,
-                        isVideo = false,
+                        isVideo = request.isVideo,
                         localUri = request.localUri,
                     ),
                     lines,

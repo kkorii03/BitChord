@@ -23,17 +23,22 @@ internal object KoListeningStatsDisplay {
      * byline is what CoverTitles reads a cover back from, for its lyrics,
      * timing and moving cover.
      */
-    fun asSong(entry: TrackEntry): Song = StoredSongDisplay.clean(
-        Song(
-            videoId = entry.id,
-            title = entry.title,
-            artist = entry.artist,
-            thumbnailUrl = entry.art,
-            durationText = entry.durationText,
-            artistId = entry.artistId,
-            albumId = entry.albumId,
-            albumName = entry.album,
-            isVideo = entry.artist.endsWith(" 커버"),
-        ),
-    )
+    fun asSong(entry: TrackEntry): Song {
+        val cleaned = StoredSongDisplay.clean(
+            Song(
+                videoId = entry.id,
+                title = entry.title,
+                artist = entry.artist,
+                thumbnailUrl = entry.art,
+                durationText = entry.durationText,
+                artistId = entry.artistId,
+                albumId = entry.albumId,
+                albumName = entry.album,
+                isVideo = entry.artist.endsWith(" 커버"),
+            ),
+        )
+        // A downloaded cover's cleaned title still says " (cover)" even after
+        // its video flag was lost on the way into history.
+        return if (cleaned.isVideo) cleaned else cleaned.copy(isVideo = CoverTitles.isCover(cleaned))
+    }
 }

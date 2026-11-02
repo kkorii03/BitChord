@@ -100,6 +100,9 @@ object CoverTitles {
     private const val COVER_WORD = "커버"
     private const val SEPARATOR = " · "
 
+    /** The app's own marker on a cover row it has already cleaned. */
+    private const val STORED_COVER_SUFFIX = " (cover)"
+
     /** A "원곡" label left on the original artist's name — never part of the name. */
     private val ORIGINAL_LABEL = Regex("""^\s*원곡\s*[:：-]?\s*""")
 
@@ -139,7 +142,12 @@ object CoverTitles {
         // shelves often draw an upload with a square thumbnail — is still a
         // cover when its title says so outright. Only the shapes that can't be
         // an ordinary track are read for it.
-        read(song.title, song.artist, song.artistId, unambiguousOnly = !song.isVideo)?.let { cover ->
+        read(
+            song.title,
+            song.artist,
+            song.artistId,
+            unambiguousOnly = !song.isVideo && !isStoredCover(song),
+        )?.let { cover ->
             // Spelled the way the record is, once the record is known: covers
             // are titled by hand, typos and capitals and all.
             val known = runCatching { knownOriginal(song.videoId) }.getOrNull()
@@ -293,6 +301,9 @@ object CoverTitles {
      * queue row already shown as its song ([applyTo]).
      */
     fun lyricsQuery(song: Song): LyricsQuery {
+        // A downloaded cover keeps the app's own " (cover)" marker but may have
+        // lost the video flag; the stored timing is still the video's.
+        val storedCover = isStoredCover(song)
         // Shown as a cover but with the upload's own title lost (a queue saved
         // before covers were kept whole): the byline still names both people.
         if (song.originalTitle == null && song.isVideo && song.artist.endsWith(" $COVER_WORD")) {
@@ -320,14 +331,18 @@ object CoverTitles {
         }
         val queries = lyricsQueries(upload)
         val (title, artist) = queries.firstOrNull() ?: (song.title to song.artist)
-        val cover = read(upload)
+        val cover = read(upload) ?: if (storedCover) {
+            read(upload.title, upload.artist, upload.artistId)
+        } else {
+            null
+        }
         return LyricsQuery(
             // A cover is an upload whatever the row says — a Recents row can
             // arrive without its video flag — so its captions are asked first
             // and its lyrics are put on its own clock.
             title, artist,
             (queries.drop(1) + coverChannelQueries(upload)).distinct(),
-            song.isVideo || cover != null,
+            song.isVideo || storedCover || cover != null,
             artistKnown = cover == null || cover.originalArtist != null,
             artistAliases = ArtistAliases.forSong(upload),
         )
@@ -384,8 +399,16 @@ object CoverTitles {
      * that only its "… 커버" byline still gives away.
      */
     fun isCover(song: Song): Boolean =
-        song.originalTitle != null || song.coverSinger != null ||
+        song.originalTitle != null || song.coverSinger != null || isStoredCover(song) ||
             (song.isVideo && song.artist.endsWith(" $COVER_WORD")) || read(song) != null
+
+    /**
+     * A cover row saved by this app: its cleaned title carries [STORED_COVER_SUFFIX]
+     * even when the video flag was lost on the way through history or a queue.
+     */
+    private fun isStoredCover(song: Song): Boolean =
+        song.originalTitle != null || song.coverSinger != null ||
+            song.title.trim().endsWith(STORED_COVER_SUFFIX, ignoreCase = true)
 
     /**
      * Who to credit a play to: the singer of a cover, the artist of anything

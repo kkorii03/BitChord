@@ -6,6 +6,7 @@ import android.net.Uri
 import androidx.core.net.toUri
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.StoredSongDisplay
+import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.net.DownloadedMvPolicy
@@ -208,7 +209,7 @@ internal object KoDownloadRecords {
     fun savedSongFor(videoId: String): Song? {
         open()
         val meta = Downloads.savedMetadataValue()[videoId] ?: return null
-        return StoredSongDisplay.clean(
+        val row = StoredSongDisplay.clean(
             Song(
                 videoId = meta.videoId,
                 title = meta.title,
@@ -222,6 +223,9 @@ internal object KoDownloadRecords {
                 typeUnknown = meta.typeUnknown,
             ),
         )
+        // An older record may have lost the upload flag before the cover title
+        // was kept; the cleaned title still says what it is.
+        return if (row.isVideo) row else row.copy(isVideo = CoverTitles.isCover(row))
     }
 
     /** Whether [videoId]'s recorded file carries the provenance of [hq]. */
