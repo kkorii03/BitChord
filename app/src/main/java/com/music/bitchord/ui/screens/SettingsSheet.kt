@@ -625,7 +625,11 @@ fun SettingsScreen(
         // does this minute cost"; these answer "what am I keeping, and when may
         // it be fetched" — and those two questions only make sense read
         // together, which is what puts them side by side here.
-        if (shows(SettingsCategory.DOWNLOADS)) SearchableSettingsGroup(search, header = stringResource(R.string.downloads)) {
+        if (shows(SettingsCategory.DOWNLOADS)) SearchableSettingsGroup(
+            search,
+            header = stringResource(R.string.downloads),
+            footer = stringResource(R.string.settings_footer_downloads),
+        ) {
             val downloadQualityTitle = stringResource(R.string.download_quality)
             row(downloadQualityTitle, "offline", "lossless") {
                 SettingsRow(
@@ -672,7 +676,11 @@ fun SettingsScreen(
         if (shows(SettingsCategory.PLAYBACK)) SearchableSettingsGroup(
             search,
             header = stringResource(R.string.playback),
-            footer = stringResource(R.string.bit_perfect_bypassed_footer).takeIf { bitPerfectReady },
+            footer = if (bitPerfectReady) {
+                stringResource(R.string.bit_perfect_bypassed_footer)
+            } else {
+                stringResource(R.string.settings_footer_playback)
+            },
         ) {
             // [KO] fork-only playback rows restored over v1.9.
             KoPlaybackTopRows() // [KO] playback-extras
@@ -1210,7 +1218,11 @@ fun SettingsScreen(
         val cacheLimitMb = if (cacheUnlimited) CACHE_UNLIMITED_STOP_MB else (cacheLimitBytes / (1024 * 1024)).toInt()
         val unlimitedLabel = stringResource(R.string.song_cache_unlimited)
         val cacheLimitLabel = if (cacheUnlimited) unlimitedLabel else formatCacheSize(cacheLimitMb)
-        if (shows(SettingsCategory.STORAGE)) SearchableSettingsGroup(search, header = stringResource(R.string.storage)) {
+        if (shows(SettingsCategory.STORAGE)) SearchableSettingsGroup(
+            search,
+            header = stringResource(R.string.storage),
+            footer = stringResource(R.string.show_cache_folder_subtitle),
+        ) {
             val showCacheFolderTitle = stringResource(R.string.show_cache_folder)
             row(showCacheFolderTitle, "cache", "cached songs", "library", "folder") {
                 SettingsRow(
@@ -1308,8 +1320,9 @@ fun SettingsScreen(
                     enabled = genresSupported,
                     trailing = {
                         IosSwitch(
-                            checked = replayGenres,
+                            checked = replayGenres && genresSupported,
                             onCheckedChange = AppSettings::setReplayGenres,
+                            enabled = genresSupported,
                         )
                     },
                     onClick = { AppSettings.setReplayGenres(!replayGenres) },
@@ -1480,7 +1493,11 @@ fun SettingsScreen(
             KoContentCountryRow(onContentCountry) // [KO] content-country
         }
 
-        if (shows(SettingsCategory.ADVANCED)) SearchableSettingsGroup(search, header = stringResource(R.string.advanced_options)) {
+        if (shows(SettingsCategory.ADVANCED)) SearchableSettingsGroup(
+            search,
+            header = stringResource(R.string.advanced_options),
+            footer = stringResource(R.string.settings_footer_advanced),
+        ) {
             val smartAlignmentTitle = stringResource(R.string.smart_version_alignment)
             row(smartAlignmentTitle, "alignment", "sync", "waveform", "video", "audio", "skit", "intro") {
                 SettingsRow(
