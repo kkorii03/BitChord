@@ -1,4 +1,4 @@
-Goal: background audio decodes must never hold the Media3 cache lock in a way that stalls playback or other reads.
+﻿Goal: background audio decodes must never hold the Media3 cache lock in a way that stalls playback or other reads.
 
 Evidence (emulator log 11-02, task/u19-tg), repeated several times while music played:
 'W om.dev.bitchord: Long monitor contention with owner lyrics-timing (8539) at androidx.media3.datasource.cache.CacheSpan androidx.media3.datasource.cache.SimpleCache...'
@@ -12,3 +12,12 @@ Do (systematic debugging, root cause first):
 
 Rules: battery first (no polling/timers), read every caller and type of what you change, keep all existing guards unless justified; REMOVED-LINES AUDIT required. Do not touch .github/workflows/, keys/, signing. grep/Select-String only (no rg). AGENTS.md (ponytail) rules apply.
 At the end, summary within 10 lines: files changed / key change / test result / open problems / root cause.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 3
+HIGH `app/src/main/java/com/music/bitchord/playback/CommittedSpanReader.kt:45-46` — `size()` now returns the full rendition `contentLength` even when only a committed prefix exists; old `getSize()` returned the cached span length or `-1`, so a partial head decode can be told the file is complete and seek past cached bytes, reproducing the extractor/no-first-sample failures this task targets, while the summary falsely claims size behavior was carried. Return the contiguous committed end (or `-1`) unless `rendition.isComplete`, and add a partial-known-length test.
+MEDIUM `app/src/main/java/com/music/bitchord/playback/AudioCache.kt:2378` and `CommittedSpanReader.kt:72` — spans are snapshotted once and files opened lazily with no cache touch/lock, so SimpleCache's LRU evictor can delete a not-yet-opened span during a long decode; the old `CacheDataSource` touched each span it opened. Revalidate `file.exists()` at open or touch the chosen spans once via the non-blocking API, and test eviction between snapshot and read.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
