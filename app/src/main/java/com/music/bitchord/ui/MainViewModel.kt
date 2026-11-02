@@ -1447,13 +1447,27 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         startSuggestPipeline()
         startTypeaheadMediaPipeline()
         loadHome()
-        // Explore waits for its tab (see [onExploreShown]): its category list
-        // and the dozen-odd artwork browses after it went out at launch with
-        // Home's own requests, to the same host, for a page not yet opened.
-        if (_signedIn.value) {
-            loadLibrary()
-            loadAccount()
-            loadPlaylists()
+        // Explore, Library and the account menus are none of them on the first
+        // screen, and each one starts network work. The two feeds load only
+        // from the tab that shows them (onExploreShown/onLibraryShown), so a
+        // launch does not spend requests on a page the listener never opens.
+        // What is left here is the account identity and the once-a-day update
+        // check — neither blocks or competes with Home's first row.
+        viewModelScope.launch {
+            delay(STARTUP_DEFER_MS)
+            for (work in startupDeferredWork(_signedIn.value)) {
+                when (work) {
+                    StartupDeferredWork.ACCOUNT -> loadAccount()
+                    StartupDeferredWork.UPDATE_CHECK -> {
+                        // A leftover APK only means "Install Now" for the session
+                        // that downloaded it — see AppUpdateChecker.clearCache.
+                        AppUpdateChecker.clearCache(getApplication())
+                        // The GitHub round trip is not part of opening the app:
+                        // ask at most once a day rather than on every cold start.
+                        AppUpdateChecker.checkDaily(getApplication())
+                    }
+                }
+            }
         }
         viewModelScope.launch {
             // drop(1): the current value is just the count so far, not a play.
