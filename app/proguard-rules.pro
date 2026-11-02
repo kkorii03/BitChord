@@ -16,14 +16,12 @@
 # log several times a second. Nobody reads logcat on a user's phone: what a bug
 # report needs is Copy Log in the player, which reads TrackLog's own buffer and
 # never touched logcat to begin with (see TrackLog's class doc).
+# [KO] phone-tests: only verbose chatter is stripped. Our phone sync round and
+# night checks read I/W/E over USB (scripts/synctest.py: sync-dump lines); with
+# every level stripped, 11-03's phone rounds came back with no data at all.
+# TrackLog's echo already keeps release D lines to a few tags.
 -assumenosideeffects class android.util.Log {
     public static int v(...);
-    public static int d(...);
-    public static int i(...);
-    public static int w(...);
-    public static int e(...);
-    public static int wtf(...);
-    public static int println(...);
 }
 
 # ---- Script engines and extractors ------------------------------------------
