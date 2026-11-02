@@ -1,0 +1,11 @@
+﻿Kotlin Android app (v1.9 + Korean fork). Inputs: docs/audit-1102.md (performance audit; its reviewer note: ActionRow/SheetTrackHeader are still used, never delete whole blocks blindly). Battery first: event-driven, no polling/timers; never block the main thread. Every change gets a JVM test that fails on the old code. Do not touch files outside YOUR SCOPE (other lanes edit them in parallel); list needed outside changes in the summary.
+Task: audit findings H2 (PlaybackService restores the queue with a JSON/prefs read on the main thread: load the snapshot on IO, then setMediaItems on main) and M2 (analysis-head wait polls at 40 ms / 100 ms: wake on the cache span event instead). Also: AudioCache.dropForeignEntries now duplicates KoCacheRetention.dropForeignEntries and scans every cache key while the purge index is maintained but never read - merge them into ONE implementation that uses the purge index and keeps the v1.9 keepsAddonCopy / keepAnalysis / keepForTiming rules (tests for each rule).
+YOUR SCOPE: playback/PlaybackService.kt (queue restore only), playback/AudioCache.kt, ko/KoAnalysisHeadEngine.kt, ko/KoCacheRetention.kt, playback/AnalysisHeadRetry.kt (+ tests).
+Finish with a summary of at most 12 lines: files, REMOVED-LINES AUDIT, tests (fail-before/pass-after, names for CI), what you did not do.
+
+== 3 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 1
+- HIGH `playback/PlaybackService.kt:9004` — `BoundedContextPersistence.clearImmediately()` performs a synchronous `SharedPreferences.commit()` and now runs directly from the Main-dispatcher restore coroutine (the earlier `withContext(Dispatchers.IO)` wrapper was dropped), blocking the main thread on cold-start malformed-record restore; this also contradicts the summary's "No ... offloads ... dropped" claim. Fix: wrap the call in `withContext(Dispatchers.IO)` as the stash clear already is.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
