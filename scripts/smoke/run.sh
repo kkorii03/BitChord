@@ -488,18 +488,23 @@ fi
 SONGS_TOTAL=$(grep -cvE '^\s*(#|$)' "$SONGS_FILE" 2>/dev/null || echo 0)
 progress_report() {
   [ -n "${GITHUB_TOKEN:-}" ] && [ -n "${GITHUB_REPOSITORY:-}" ] && [ -n "${GITHUB_SHA:-}" ] || return 0
-  local log="$OUT/smoke-logcat.txt" audio measured heard crashes desc state
-  audio=$(grep -cE 'track-summary:.*firstAudio=[0-9]' "$log" 2>/dev/null || echo 0)
-  measured=$(grep -E 'lyrics-sync: ' "$log" 2>/dev/null | grep -vc 'base=none' || echo 0)
-  heard=$(grep -c 'Whisper timing' "$log" 2>/dev/null || echo 0)
-  crashes=$(grep -cE 'FATAL EXCEPTION|ANR in ' "$log" 2>/dev/null || echo 0)
-  desc="${1:+$1 | }song ${SONGS_DONE:-0}/$SONGS_TOTAL audio=$audio sync-applied=$measured heard=$heard crash=$crashes"
+  local log="$OUT/smoke-logcat.txt" audio measured heard crashes oom desc state code
+  # `grep -c` prints 0 and exits 1 on no match; `|| echo 0` then added a second
+  # "0" line, the JSON below broke on the newline and GitHub refused every post.
+  audio=$(grep -cE 'track-summary:.*firstAudio=[0-9]' "$log" 2>/dev/null || true)
+  measured=$(grep -E 'lyrics-sync: ' "$log" 2>/dev/null | grep -vc 'base=none' || true)
+  heard=$(grep -c 'Whisper timing' "$log" 2>/dev/null || true)
+  crashes=$(grep -cE 'FATAL EXCEPTION|ANR in ' "$log" 2>/dev/null || true)
+  oom=$(grep -c 'Throwing OutOfMemoryError' "$log" 2>/dev/null || true)
+  desc="${1:+$1 | }song ${SONGS_DONE:-0}/$SONGS_TOTAL audio=${audio:-0} sync-applied=${measured:-0} heard=${heard:-0} crash=${crashes:-0} oom=${oom:-0}"
   state=pending
   case "${1:-}" in STOP*) state=failure ;; esac
-  curl -s -m 10 -o /dev/null -X POST \
+  code=$(curl -s -m 10 -o /dev/null -w '%{http_code}' -X POST \
     -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
     "https://api.github.com/repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
-    -d "{\"state\":\"$state\",\"context\":\"smoke-progress/${GITHUB_RUN_ID:-0}\",\"description\":\"${desc:0:138}\"}" || true
+    -d "{\"state\":\"$state\",\"context\":\"smoke-progress/${GITHUB_RUN_ID:-0}\",\"description\":\"${desc:0:138}\"}" || true)
+  # Said once per post in the job log, so a refused status is not silent again.
+  echo "smoke: progress status http=${code:-none} $desc" >&2
 }
 
 # fd 3, not stdin: adb shell inside the loop reads stdin and swallowed the
