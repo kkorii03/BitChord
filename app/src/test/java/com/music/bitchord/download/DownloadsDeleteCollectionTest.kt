@@ -67,4 +67,16 @@ class DownloadsDeleteCollectionTest {
         assertTrue(Downloads.savedValue().containsKey("blocked"))
         assertTrue(Downloads.collections.value.containsKey("release"))
     }
+
+    @Test
+    fun `a track with no saved file is already gone and does not fail the delete`() = runTest {
+        Downloads.setSaved(emptyMap())
+        Downloads.setCollections(
+            mapOf("release" to SavedCollection("release", "Release", videoIds = listOf("missing"))),
+        )
+
+        assertTrue(Downloads.deleteCollection("release") { false })
+
+        assertNull(Downloads.collections.value["release"])
+    }
 }

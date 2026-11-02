@@ -925,9 +925,12 @@ object Downloads {
     ): Boolean {
         open()
         if (id !in _collections.value) return false
-        val tracks = tracksOnlyIn(id, _collections.value, _saved.value)
+        val saved = _saved.value
+        val tracks = tracksOnlyIn(id, _collections.value, saved)
         var failedAny = false
-        tracks.forEach { videoId -> if (!delete(videoId)) failedAny = true }
+        // A track with no saved file is already gone (a failed or individually
+        // deleted download), not a deletion that failed.
+        tracks.forEach { videoId -> if (!delete(videoId) && videoId in saved) failedAny = true }
         if (failedAny) {
             Log.w(TAG, "kept the record for $id: some of its downloads could not be deleted")
         } else {
@@ -1560,7 +1563,10 @@ object Downloads {
         // be lossless are worth guessing at: an `.m4a` may be this app's ALAC
         // or its AAC, and adopting the wrong one would quietly answer a request
         // for lossless with a transcode.
-        if (hq == null && !forceReplace && quality.keepsLossless) {
+        // Asked on every rung, not just Lossless: High keeps an addon's FLAC
+        // when nothing lossy beats YouTube (see [SourceResolver.forDownload]),
+        // and a FLAC already on disk is the song whatever the setting.
+        if (hq == null && !forceReplace) {
             LOSSLESS_EXTENSIONS.firstNotNullOfOrNull { extension ->
                 existingDownload(context, track, extension)
             }?.takeIf { Downloads.savedFileIsRecording(track.videoId, it.toString()) }?.let { uri ->
@@ -2060,14 +2066,22 @@ object Downloads {
         // recording" is a fact about the track, and "the clock ran out" is a
         // fact about [SOURCE_LOOKUP_MS] — which is what silently sent a whole
         // Lossless queue to YouTube's AAC while the log said nothing at all.
+        // The outer bound adds [LOOKUP_BACKSTOP_MS] so it cannot cancel the
+        // resolver at the instant its own budget expires, before it returns an
+        // answer already in hand.
+        val kept = java.util.concurrent.ConcurrentHashMap<String, Pair<SourceStream, DownloadStore.Storable>>()
         var timedOut = true
-        val stream = withTimeoutOrNull(SOURCE_LOOKUP_MS) {
+        val stream = withTimeoutOrNull(SOURCE_LOOKUP_MS + LOOKUP_BACKSTOP_MS) {
             try {
                 SourceResolver.forDownload(
                     TrackMatcher.targetOf(track),
                     SourceResolver.requestForDownload(quality),
                     keep = { candidate ->
-                        candidate.takeIf { DownloadStore.storable(it.format.codec) != null }
+                        DownloadStore.storable(candidate.format.codec)?.let { storable ->
+                            keepable(candidate, storable)
+                                ?.also { kept[it.first.url] = it }
+                                ?.first
+                        }
                     },
                     excludeSources = setOfNotNull(avoidSourceConfigId),
                     budgetMs = SOURCE_LOOKUP_MS,
@@ -2083,19 +2097,13 @@ object Downloads {
             if (timedOut) {
                 Log.w(
                     TAG,
-                    "source lookup for ${track.videoId} ran past ${SOURCE_LOOKUP_MS}ms; " +
+                    "source lookup for ${track.videoId} ran past ${SOURCE_LOOKUP_MS + LOOKUP_BACKSTOP_MS}ms; " +
                         "downloading it from YouTube instead of ${quality.label}",
                 )
             }
             return null
         }
-
-        val storable = DownloadStore.storable(stream.format.codec)
-        if (storable == null) {
-            Log.d(TAG, "nothing to file a '${stream.format.codec}' as; taking YouTube for ${track.videoId}")
-            return null
-        }
-        return stream to storable
+        return kept[stream.url]
     }
 
     /** Back to "not downloaded" — used for success, where [saved] takes over, and for cancellation. */
@@ -2201,6 +2209,9 @@ object Downloads {
      * waiting for a module and never be asked.
      */
     private const val SOURCE_LOOKUP_MS = 85_000L
+
+    /** How far past [SOURCE_LOOKUP_MS] the outer backstop in [fromSources] waits. */
+    private const val LOOKUP_BACKSTOP_MS = 15_000L
 
     /**
      * The extensions a file in Music can carry that say, on their own, that a

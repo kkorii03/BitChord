@@ -432,72 +432,89 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // still useful, while starting a new decode is not.
         if (ListenTogether.state.value.inParty) return
         if (trackId in running) return
-        // A track measured in an earlier session costs nothing to restore, so
-        // it is looked for before the thermal gate: only new work waits for the
-        // phone to cool.
+        // Whatever an earlier session already measured comes back first: it is
+        // a disk read, not a decode.
         restoreOnce(trackId)
+        if (hasWindow(trackId, window)) return
+        if (!AppSettings.heavyWorkAllowed) return
         // only the work below waits for the phone to cool.
-        if (overheated) {
-            restoreOnce(trackId)
-            return
-        }
-
-        // Decode, two model runs and the cache reads all happen off the
-        // crossfade ticker's thread (Dispatchers.Main in PlaybackService).
+        if (overheated) return
+        // Everything below reads the cache index and, through it, the
+        // filesystem. One queued reconsideration per track and window is
+        // enough, and the single-threaded executor keeps them in order with the
+        // analysis they may start.
+        val pendingKey = "$trackId@${window.name}"
+        if (!requestPending.add(pendingKey)) return
         executor.execute {
-            val analysisUri = analysisUriFor(trackId, uri) ?: return@execute
-
-            // A track playing off the device is not a download in progress. Every
-            // byte of it is already there, and none of those bytes are in the cache.
-            val local = LocalAudioSource.isLocal(analysisUri)
-            val complete = if (local) {
-                emptyList()
-            } else {
-                cache.renditionsOf(analysisUri)
-                    .filter { AutomixAnalysisSource.isCanonicalYouTubeRendition(analysisUri.getQueryParameter("v"), it.key) }
-                    .filter { it.isComplete && it.key !in badRenditions }
-            }
-            val usableComplete = local || complete.isNotEmpty()
-
-            when (window) {
-                AnalysisWindow.HEAD -> {
-                    if (usableComplete) {
-                        val copy = copyToRead(trackId, analysisUri, durationSeconds) ?: return@execute
-                        runWindow(trackId, analysisUri, durationSeconds, window, copy)
-                    } else {
-                        // A partial container can still yield the opening. This is
-                        // the path that gets the incoming side measured before its
-                        // download finishes.
-                        val headRendition = headWorthTrying(trackId, analysisUri, durationSeconds)
-                        if (headRendition == null) {
-                            cache.requestAnalysisHead(analysisUri)
-                            return@execute
-                        }
-                        runWindow(
-                            trackId,
-                            analysisUri,
-                            durationSeconds,
-                            window,
-                            copy = null,
-                            headRendition = headRendition,
-                        )
-                    }
-                }
-                AnalysisWindow.TAIL -> {
-                    // The tail cannot be read from a partial file. Keep the
-                    // download moving and try again when the copy is complete.
-                    if (!usableComplete) {
-                        cache.requestAnalysisHead(analysisUri)
-                        return@execute
-                    }
-                    val copy = copyToRead(trackId, analysisUri, durationSeconds) ?: return@execute
-                    runWindow(trackId, analysisUri, durationSeconds, window, copy)
-                }
+            try {
+                requestWindowNow(trackId, uri, durationSeconds, window)
+            } catch (error: Throwable) {
+                Log.w(TAG, "Analysis request for $trackId ($window) failed", error)
+            } finally {
+                requestPending.remove(pendingKey)
             }
         }
     }
 
-    /** True once [trackId] has a usable result for [window]. */
+    /** [request]'s body, on the analysis thread rather than the playback thread. */
+    private fun requestWindowNow(
+        trackId: String,
+        uri: Uri,
+        durationSeconds: Double,
+        window: AnalysisWindow,
+    ) {
+        if (stopped || trackId in running || hasWindow(trackId, window)) return
+        val analysisUri = analysisUriFor(trackId, uri) ?: return
+
+        // A track playing off the device is not a download in progress. Every
+        // byte of it is already there, and none of those bytes are in the cache.
+        val local = LocalAudioSource.isLocal(analysisUri)
+        val complete = if (local) {
+            emptyList()
+        } else {
+            cache.renditionsOf(analysisUri)
+                .filter { AutomixAnalysisSource.isCanonicalYouTubeRendition(analysisUri.getQueryParameter("v"), it.key) }
+                .filter { it.isComplete && it.key !in badRenditions }
+        }
+        val usableComplete = local || complete.isNotEmpty()
+
+        when (window) {
+            AnalysisWindow.HEAD -> {
+                if (usableComplete) {
+                    val copy = copyToRead(trackId, analysisUri, durationSeconds) ?: return
+                    runWindow(trackId, analysisUri, durationSeconds, window, copy)
+                } else {
+                    // A partial container can still yield the opening. This is
+                    // the path that gets the incoming side measured before its
+                    // download finishes.
+                    val headRendition = headWorthTrying(trackId, analysisUri, durationSeconds)
+                    if (headRendition == null) {
+                        cache.requestAnalysisHead(analysisUri)
+                        return
+                    }
+                    runWindow(
+                        trackId,
+                        analysisUri,
+                        durationSeconds,
+                        window,
+                        copy = null,
+                        headRendition = headRendition,
+                    )
+                }
+            }
+            AnalysisWindow.TAIL -> {
+                // The tail cannot be read from a partial file. Keep the
+                // download moving and try again when the copy is complete.
+                if (!usableComplete) {
+                    cache.requestAnalysisHead(analysisUri)
+                    return
+                }
+                val copy = copyToRead(trackId, analysisUri, durationSeconds) ?: return
+                runWindow(trackId, analysisUri, durationSeconds, window, copy)
+            }
+        }
+    }
+
     /** Milliseconds spent decoding and measuring [trackId] so far. */
     fun analysisTimeMs(trackId: String): Long = analysisMillis[trackId] ?: 0L
 

@@ -769,10 +769,9 @@ object SourceResolver {
      * On the **High** rung step 1 is empty and every ranked source goes into
      * step 2's race, asked for [StreamRequest.Best]. A bit-exact answer to that
      * is refused rather than kept: someone who chose High over Lossless chose
-     * the smaller file, and a FLAC filed under this setting would additionally
-     * be missed by the already-on-disk check in `Downloads.prepare` — which only
-     * looks for lossless extensions when the setting keeps lossless — and so be
-     * re-downloaded on every pass through the queue.
+     * the smaller file, and a FLAC filed under this setting is still found by
+     * the already-on-disk check in `Downloads.prepare`, which looks for
+     * lossless extensions on every rung.
      *
      * ### The floor, and why a lossy answer can still lose to YouTube
      *
@@ -894,10 +893,9 @@ object SourceResolver {
             ) { source, stream ->
                 // Bit-exact audio is *over* budget on the High rung. Someone
                 // who picked High over Lossless picked the ~8MB file, and a
-                // FLAC filed under this setting would also be missed by the
-                // already-on-disk check in `Downloads.prepare`, which only
-                // looks for lossless extensions when the setting keeps
-                // lossless — so it would be re-downloaded every time.
+                // FLAC filed under this setting is still found by the
+                // already-on-disk check in `Downloads.prepare`, which looks for
+                // lossless extensions on every rung.
                 val ok = wantsLossless || stream.format.isLossless != true
                 if (!ok) {
                     TrackLog.d(
