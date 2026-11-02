@@ -1101,8 +1101,12 @@ internal object YouTubeFallback {
         return out.values.toList()
     }
 
-    suspend fun radio(videoId: String): List<Song> {
+    suspend fun radio(videoId: String, preferVideo: Boolean = false): List<Song> {
         val songs = rawRadio(videoId)
+        // A video station needs the upload rows as the mix filed them. The
+        // music filter and catalogue mapper turn a cover into a catalogue
+        // track, which is the wrong id for a station that must keep videos.
+        if (preferVideo) return songs.map(::displaySong)
         val music = YouTubeMusicClassifier.filterMusic(songs, songs.size)
         return CatalogSongMapper.mapPage(music.map(::displaySong), CatalogSongMapper.newBudget())
     }

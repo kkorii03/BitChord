@@ -60,8 +60,26 @@ suspend fun loadAutoplayTracks(
     limit: Int = MAX_QUEUED_AUTOPLAY,
     sessionSong: Song? = null,
     sessionIds: Set<String> = emptySet(),
+): Result<List<Song>> = loadAutoplayTracks(
+    existing = existing,
+    seedSong = seedSong,
+    limit = limit,
+    sessionSong = sessionSong,
+    sessionIds = sessionIds,
+    radio = { id, preferVideo -> YtMusicRepository.radio(id, preferVideo) },
+)
+
+internal suspend fun loadAutoplayTracks(
+    existing: List<Song>,
+    seedSong: Song,
+    limit: Int,
+    sessionSong: Song?,
+    sessionIds: Set<String>,
+    radio: suspend (String, Boolean) -> Result<List<Song>>,
+    inParty: Boolean = ListenTogether.state.value.inParty,
+    seedFor: suspend (Song) -> String? = { youtubeSeedFor(it) },
 ): Result<List<Song>> {
-    val seed = youtubeSeedFor(seedSong) ?: run {
+    val seed = seedFor(seedSong) ?: run {
         // A module track has no YouTube id of its own and the catalogue search
         // found no match. Say so: an empty batch here used to look exactly like
         // a station that answered with nothing.
@@ -77,7 +95,7 @@ suspend fun loadAutoplayTracks(
     // station would make that order depend on whose phone topped it up.
     val videoWanted = AppSettings.videoRadio.value &&
         mode == AutoplayMode.VIDEO_RADIO &&
-        !ListenTogether.state.value.inParty
+        !inParty
     val offline = AppSettings.meteredConnection.value == null
 
     // Offline the only video songs that can play are the downloaded ones; no
@@ -114,7 +132,7 @@ suspend fun loadAutoplayTracks(
         var radioResult: Result<List<Song>>? = null
 
         if (pick.ordered.size < MIN_VIDEO_RADIO_TRACKS) {
-            radioResult = YtMusicRepository.radio(seed)
+            radioResult = radio(seed, false)
             val radio = radioResult.getOrElse { emptyList() }
             if (radio.isNotEmpty()) {
                 val merged = mergeVideoSources(sourceSongs, sourceMap, radio, VideoSource.RADIO)
@@ -177,7 +195,7 @@ suspend fun loadAutoplayTracks(
             TrackLog.i("BitChord", pick.logLine(stage.wire), about = seedSong.videoId)
         }
         val fallback = radioResult ?: try {
-            YtMusicRepository.radio(seed)
+            radio(seed, false)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Throwable) {
@@ -249,28 +267,152 @@ suspend fun loadAutoplayTracks(
         return normal
     }
 
-    val radio = YtMusicRepository.radio(seed).getOrElse { return Result.failure(it) }
-    return loadNormalAutoplayTracks(
-        existing = existing,
-        seedSong = seedSong,
-        radio = radio,
-        limit = limit,
-        sessionSong = sessionSong,
+    val radioResult = radio(seed, false)
+    val rows = if (radioResult.isSuccess) {
+        loadNormalAutoplayTracks(
+            existing = existing,
+            seedSong = seedSong,
+            radio = radioResult.getOrNull().orEmpty(),
+            limit = limit,
+            sessionSong = sessionSong,
+            sessionIds = sessionIds,
+            onEmpty = {},
+            onFilled = {},
+        ).getOrNull().orEmpty()
+    } else {
+        emptyList()
+    }
+    // A cover upload's own station is other covers, and YouTube often answers
+    // it with two or three rows that the metadata/cover filter drops. The
+    // song it covers still has a normal station, so fall back to that, then
+    // to the upload's video mix, instead of leaving the queue empty. The video
+    // leg is the same station the video radio would run, so it keeps that
+    // setting and party guards even on this music path.
+    var fallbackSource: String? = null
+    val fallback = if (rows.isEmpty() &&
+        CoverTitles.isCover(seedSong) &&
+        !offline &&
+        AppSettings.heavyWorkAllowed
+    ) {
+        coverSeedFallback(
+            existing = existing,
+            seedSong = seedSong,
+            videoSeed = seed,
+            limit = limit,
+            sessionSong = sessionSong,
+            sessionIds = sessionIds,
+            allowVideo = AppSettings.videoRadio.value && !inParty,
+            radio = radio,
+            seedFor = seedFor,
+            onSource = { fallbackSource = it },
+        )
+    } else {
+        emptyList()
+    }
+    val filled = rows.ifEmpty { fallback }
+    if (filled.isEmpty()) {
+        if (radioResult.isFailure) return Result.failure(radioResult.exceptionOrNull()!!)
+        TrackLog.i(
+            "BitChord",
+            "video-radio: seed=${seedSong.videoId} mode=music picked=0 from=radio dropped= fallback=empty",
+            about = seedSong.videoId,
+        )
+        return Result.success(emptyList())
+    }
+    TrackLog.i(
+        "BitChord",
+        "video-radio: seed=${seedSong.videoId} mode=music picked=${filled.size} " +
+            "from=radio dropped= fallback=${fallbackSource ?: "none"}",
+        about = seedSong.videoId,
+    )
+    return Result.success(filled)
+}
+
+/**
+ * The station to try when a cover upload's own music radio came back empty:
+ * first the song it covers, then the upload's video mix. The original seed is
+ * built from [CoverTitles]' reading so the station asks what is like the song,
+ * not what is like this cover video.
+ */
+internal suspend fun coverSeedFallback(
+    existing: List<Song>,
+    seedSong: Song,
+    videoSeed: String,
+    limit: Int,
+    sessionSong: Song?,
+    sessionIds: Set<String>,
+    allowVideo: Boolean = true,
+    seedFor: suspend (Song) -> String? = { youtubeSeedFor(it) },
+    radio: suspend (String, Boolean) -> Result<List<Song>> = { id, preferVideo ->
+        YtMusicRepository.radio(id, preferVideo)
+    },
+    onSource: (String) -> Unit = {},
+): List<Song> {
+    val original = coverSeedOriginal(seedSong)
+    val originalId = original?.let { seedFor(it) }
+    if (original != null && originalId != null) {
+        val originalRadio = radio(originalId, false).getOrNull().orEmpty()
+        if (originalRadio.isNotEmpty()) {
+            val rows = loadNormalAutoplayTracks(
+                existing = existing,
+                seedSong = original,
+                radio = originalRadio,
+                limit = limit,
+                sessionSong = sessionSong,
+                sessionIds = sessionIds,
+                onEmpty = {},
+                onFilled = {},
+            ).getOrNull().orEmpty()
+            if (rows.isNotEmpty()) {
+                onSource("original")
+                return rows
+            }
+        }
+    }
+    if (!allowVideo) return emptyList()
+    val videoRadio = radio(videoSeed, true).getOrNull().orEmpty()
+    if (videoRadio.isEmpty()) return emptyList()
+    val pick = pickVideoRadio(
+        seedSong,
+        videoRadio,
+        existing,
+        sessionSong,
         sessionIds = sessionIds,
-        onEmpty = {
-            TrackLog.i(
-                "BitChord",
-                "video-radio: seed=${seedSong.videoId} mode=music picked=0 from=radio dropped= fallback=empty",
-                about = seedSong.videoId,
-            )
-        },
-        onFilled = { rows ->
-            TrackLog.i(
-                "BitChord",
-                "video-radio: seed=${seedSong.videoId} mode=music picked=$rows from=radio dropped= fallback=none",
-                about = seedSong.videoId,
-            )
-        },
+    )
+    if (pick.ordered.isEmpty()) return emptyList()
+    onSource("video")
+    return videoRadioRows(pick, videoRadio, seedSong, limit)
+}
+
+/**
+ * The song a cover seed plays, as a plain catalogue seed for the search and
+ * radio. Null for a normal track, and for a cover whose title names no song.
+ * The seed's video id is cleared so [youtubeSeedFor] looks the recording up
+ * instead of reusing the upload's id.
+ */
+internal fun coverSeedOriginal(song: Song): Song? {
+    if (!CoverTitles.isCover(song)) return null
+    val seed = SimilarCandidates.seedOf(song) ?: return null
+    if (seed.title.isBlank()) return null
+    return song.copy(
+        videoId = "",
+        title = seed.title,
+        artist = seed.artist.ifBlank { CoverTitles.creditedOriginalArtist(song).orEmpty() },
+        thumbnailUrl = null,
+        durationText = null,
+        artistId = null,
+        channelId = null,
+        artists = emptyList(),
+        albumId = null,
+        albumName = null,
+        isVideo = false,
+        isVideoOrigin = false,
+        typeUnknown = false,
+        videoRadio = false,
+        originalTitle = null,
+        originalArtist = null,
+        coverSinger = null,
+        coverOriginalArtist = null,
     )
 }
 
@@ -355,7 +497,9 @@ private fun videoRadioRows(
  */
 internal fun autoplayRowsAfterCoverFilter(rows: List<Song>, seed: Song): List<Song> {
     val uploadTitle = seed.originalTitle?.takeIf { it.isNotBlank() }
-    val seedIsCover = uploadTitle != null || TrackMatcher.isCoverArrangement(seed)
+    val seedIsCover = uploadTitle != null ||
+        TrackMatcher.isCoverArrangement(seed) ||
+        CoverTitles.isCover(seed)
     if (seedIsCover) {
         // A cover seed's station is other covers, and its own shown title may
         // carry no marker at all. Keep ordinary covers by any artist; drop
