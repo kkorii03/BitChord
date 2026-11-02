@@ -234,6 +234,7 @@ import com.music.bitchord.widget.MediaWidget
 import com.music.bitchord.widget.MediaWidgetSnapshot
 import com.music.bitchord.wear.WearBridge
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -9002,9 +9003,7 @@ class PlaybackService : MediaLibraryService() {
                 // A malformed record is treated as absent; the fallback below
                 // gets the next chance at the queue. The clear commits to
                 // prefs synchronously, so it must not run on the main thread.
-                QueueRestore.NOTHING -> withContext(Dispatchers.IO) {
-                    BoundedContextPersistence.clearImmediately()
-                }
+                QueueRestore.NOTHING -> discardMalformedBoundedContext()
             }
         }
         return restoreLastQueue(player)
@@ -13485,3 +13484,14 @@ internal fun queueStashMayClear(outcome: QueueRestore, hadStash: Boolean): Boole
 /** A queue the listener just chose is not overwritten with an empty widget. */
 internal fun queueRestoreSavesEmptyWidget(outcome: QueueRestore): Boolean =
     outcome == QueueRestore.NOTHING
+
+/**
+ * A malformed bounded snapshot is discarded before LastPlayed gets its fallback
+ * chance. `clearImmediately` commits synchronously, so it must not run on the
+ * main thread; the dispatcher is a parameter so a JVM test can see where the
+ * commit lands.
+ */
+internal suspend fun discardMalformedBoundedContext(
+    io: CoroutineDispatcher = Dispatchers.IO,
+    clear: () -> Unit = BoundedContextPersistence::clearImmediately,
+) = withContext(io) { clear() }
