@@ -261,6 +261,9 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory, Configu
             CoroutineScope(Dispatchers.IO).launch { Innertube.ensureSessionScope() }
         }
         AppSettings.init(this, authStore)
+        // [KO] main-stall: the main Looper already measures every message; this
+        // only records the slow ones (event-driven, no timer).
+        com.music.bitchord.ko.KoDiagnostics.install()
         // After AppSettings, whose flows it feeds: the power-save switch and
         // the battery can change while the app is in the background.
         com.music.bitchord.playback.LowPowerDevice.start(this)

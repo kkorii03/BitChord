@@ -94,13 +94,17 @@ object TrackLog {
             runCatching {
                 directory.mkdirs()
                 persistence = TrackLogPersistence(directory)
+            }.onFailure {
+                TrackLog.w("BitChord", "log persistence unavailable: ${it.message}")
             }
         }
     }
 
     /** Forces every queued line to disk — used on background/trim and before export. */
     fun flush() {
-        runCatching { persistence?.flush() }
+        runCatching { persistence?.flush() }.onFailure {
+            TrackLog.w("BitChord", "log flush failed: ${it.message}")
+        }
     }
 
 
@@ -200,6 +204,9 @@ object TrackLog {
         // restart, when "09:14:22" alone could be any of several mornings.
         runCatching {
             persistence?.append("${persistentClock.get().format(Date(at))} $level/$tag $text")
+        }.onFailure {
+            // Echo directly: going back through write() here would recurse.
+            echo?.invoke('W', "BitChord", "log file append failed: ${it.message}", it)
         }
     }
 
@@ -233,6 +240,9 @@ object TrackLog {
                 store.flush()
                 store.readOldestFirst()
             }
+        }.onFailure {
+            // Echo directly: the in-memory ring below is still a usable answer.
+            echo?.invoke('W', "BitChord", "log file read failed: ${it.message}", it)
         }.getOrNull()
         if (!persisted.isNullOrEmpty()) return persisted.joinToString("\n")
         return everything().joinToString("\n")
@@ -262,6 +272,10 @@ object TrackLog {
             val store = persistence ?: return
             store.appendSync("${persistentClock.get().format(Date(at))} E/BitChord $message")
             store.flush()
+        }.onFailure {
+            // Echo directly: write() would only queue another line the dying
+            // process will not write.
+            echo?.invoke('W', "BitChord", "crash log write failed: ${it.message}", it)
         }
     }
 

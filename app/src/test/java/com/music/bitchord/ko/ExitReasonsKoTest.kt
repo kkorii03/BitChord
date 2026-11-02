@@ -17,22 +17,21 @@ class ExitReasonsKoTest {
     }
 
     @Test
-    fun `an exit line carries reason time importance and description`() {
+    fun `an exit line carries reason description time and pss`() {
         val line = formatExitLine(
             reason = ApplicationExitInfo.REASON_ANR,
             atMs = 1_700_000_000_000L,
-            importance = 100,
             description = "Input dispatch timeout\n(main thread)",
+            pssKb = 123_456L,
         )
-        assertTrue(line, line.startsWith("exit: reason=ANR at="))
-        assertTrue(line, line.contains("importance=100"))
-        assertTrue(line, line.endsWith("desc=Input dispatch timeout (main thread)"))
+        assertTrue(line, line.startsWith("exit-reason: ANR Input dispatch timeout (main thread) at "))
+        assertTrue(line, line.endsWith("pss=123456"))
     }
 
     @Test
     fun `a missing description is written as a dash`() {
-        val line = formatExitLine(ApplicationExitInfo.REASON_CRASH, 0L, 125, null)
-        assertTrue(line, line.endsWith("desc=-"))
+        val line = formatExitLine(ApplicationExitInfo.REASON_CRASH, 0L, null, 0L)
+        assertTrue(line, line.contains(" CRASH - at "))
     }
 
     @Test

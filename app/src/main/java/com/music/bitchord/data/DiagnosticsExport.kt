@@ -20,6 +20,7 @@ import com.music.bitchord.data.net.ProxyMode
 import com.music.bitchord.data.net.ProxyPlayback
 import com.music.bitchord.data.net.YouTubeProxy
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.playback.AudioOutputStatus
 import com.music.bitchord.ko.preferMusicOnlyKo
 import com.music.bitchord.ko.skipNonMusicPartsKo
 import com.music.bitchord.ko.skipSponsorPartsKo
@@ -96,6 +97,8 @@ object DiagnosticsExport {
                 val cookie = runCatching {
                     val store = AuthStore(context)
                     store.activeSession?.cookie ?: store.cookie
+                }.onFailure {
+                    TrackLog.w("BitChord", "diagnostic export cookie unreadable: ${it.message}")
                 }.getOrNull()
                 val authCookieNames = cookieNames(cookie)
                 val logText = LogRedactor.redact(TrackLog.exportText())
@@ -116,6 +119,19 @@ object DiagnosticsExport {
                     appendLine("git: ${BuildConfig.GIT_SHA.ifBlank { "unknown" }}")
                     appendLine("android: ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
                     appendLine("device: ${Build.MANUFACTURER} ${Build.MODEL}")
+                    val audio = AudioOutputStatus.current.value
+                    appendLine(
+                        "audio route: ${audio.routeKind.name.lowercase(Locale.US)} " +
+                            "device=${audio.deviceName} sink=${audio.sink} " +
+                            "transport=${audio.transportType.name.lowercase(Locale.US)}",
+                    )
+                    appendLine(
+                        "audio format: pcm=${audio.requestedPcmMode.name.lowercase(Locale.US)} " +
+                            "rate=${audio.actualSampleRateHz?.let { "${it}Hz" } ?: "unknown"} " +
+                            "encoding=${audio.actualEncoding ?: "unknown"} " +
+                            "dsp=${audio.dspFormat} exact=${onOff(audio.outputExact)}" +
+                            (audio.outputExactDetail?.let { " ($it)" } ?: ""),
+                    )
                     appendLine("signed in: ${if (signedIn) "yes" else "no"}")
                     appendLine("locale: ${locale.toLanguageTag()} region: ${locale.country.ifEmpty { "?" }}")
                     appendLine("music gate active: ${MusicGateFallback.active.value}")
@@ -176,6 +192,13 @@ object DiagnosticsExport {
                     )
                     appendLine("auth cookie captured from: not recorded")
                     webViewNames.forEach { appendLine(it) }
+                    runCatching { AppSettings.prefs.all }.getOrElse { failure ->
+                        TrackLog.w("BitChord", "settings snapshot unreadable: ${failure.message}")
+                        null
+                    }?.let { values ->
+                        appendLine("settings snapshot (secrets masked):")
+                        settingsSnapshotLines(values).forEach { appendLine(it) }
+                    }
                     appendLine("---")
                 }
                 val content = header + logText + "\n"
@@ -187,7 +210,10 @@ object DiagnosticsExport {
                         .let { dir -> File(dir, fileName).apply { writeText(content) } },
                 )
                 SavedLog(fileName, uri, inDownloads = downloadsUri != null)
-            }.getOrNull()
+            }.getOrElse {
+                TrackLog.w("BitChord", "diagnostic export failed: ${it.message}")
+                null
+            }
         }
     }
 
@@ -203,7 +229,10 @@ object DiagnosticsExport {
         }
         val uri = runCatching {
             resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-        }.getOrNull() ?: return null
+        }.getOrElse {
+            TrackLog.w("BitChord", "diagnostic export download insert failed: ${it.message}")
+            return null
+        } ?: return null
         return runCatching {
             val stream = resolver.openOutputStream(uri)
                 ?: error("no output stream for $uri")
@@ -213,12 +242,40 @@ object DiagnosticsExport {
             resolver.update(uri, values, null, null)
             uri
         }.getOrElse {
-            runCatching { resolver.delete(uri, null, null) }
+            TrackLog.w("BitChord", "diagnostic export download write failed: ${it.message}")
+            runCatching { resolver.delete(uri, null, null) }.onFailure { failure ->
+                TrackLog.w("BitChord", "diagnostic export download cleanup failed: ${failure.message}")
+            }
             null
         }
     }
 
     private fun onOff(value: Boolean): String = if (value) "on" else "off"
+
+    /**
+     * Every stored setting as one line, with credential-shaped keys and values
+     * masked. Pure so the masking rules can be checked without a device.
+     */
+    internal fun settingsSnapshotLines(values: Map<String, *>): List<String> =
+        values.entries.sortedBy { it.key }.map { (key, value) ->
+            val text = if (SECRET_SETTING.containsMatchIn(key)) {
+                "[redacted]"
+            } else {
+                LogRedactor.redact(value?.toString().orEmpty())
+                    .replace('\n', ' ')
+                    .replace('\r', ' ')
+                    .take(MAX_SETTING_CHARS)
+            }
+            "setting: $key=$text"
+        }
+
+    /** Keys whose value is a credential, a session, or a person. */
+    private val SECRET_SETTING = Regex(
+        """(?i)(secret|token|password|passwd|pwd|cookie|session|auth|credential|""" +
+            """api[_-]?key|sapisid|hsid|ssid|(?:^|_)sid(?:_|$)|login|username|email|account)""",
+    )
+
+    private const val MAX_SETTING_CHARS = 300
 
     /** Enabled lyric providers in the order they are asked, labels only. */
     private fun lyricsProviders(): String {
@@ -251,6 +308,8 @@ object DiagnosticsExport {
             } else {
                 first.substringBefore(' ')
             }
+        }.onFailure {
+            TrackLog.w("BitChord", "diagnostic export oldest line unreadable: ${it.message}")
         }.getOrElse { "(unknown)" }
     }
 
@@ -275,6 +334,8 @@ object DiagnosticsExport {
             caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) -> "vpn"
             else -> "other"
         }
+    }.onFailure {
+        TrackLog.w("BitChord", "diagnostic export network type unreadable: ${it.message}")
     }.getOrElse { "unknown" }
 
     private fun cookieNames(header: String?): List<String> = header.orEmpty()
@@ -298,5 +359,7 @@ object DiagnosticsExport {
             "webview cookie names ${origin.substringAfter("://")}: " +
                 names.joinToString(", ").ifEmpty { "(none)" }
         }
+    }.onFailure {
+        TrackLog.w("BitChord", "webview cookie names unreadable: ${it.message}")
     }.getOrElse { listOf("webview cookie names: unreadable (${it.message})") }
 }

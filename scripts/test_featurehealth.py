@@ -1143,6 +1143,121 @@ class DownloadLifecycleQualityTests(unittest.TestCase):
         self.assertEqual(1, report.stats["quality"]["opus"])
 
 
+class DiagnosticsRowsTests(unittest.TestCase):
+    def test_direct_source_and_automix_rows(self) -> None:
+        report = analyze(
+            log_text(
+                line("19:00:00.000", "direct-source: id1 settled=addon source=addon"),
+                line("19:00:01.000", "direct-source: id2 settled=youtube source=youtube"),
+                line("19:00:02.000", "direct-source: id3 waiting source=addon"),
+                line("19:00:03.000", "automix-analysis: id1 done in 120ms"),
+                line("19:00:04.000", "automix-analysis: id2 failed reason=decode in 500ms"),
+                line("19:00:05.000", "automix-analysis: id3 done in 80ms main-thread=yes"),
+            )
+        )
+        direct = metric(report, "D12-direct")
+        self.assertEqual(3, direct.attempts)
+        self.assertEqual(2, direct.successes)
+        self.assertEqual(
+            {"events": 3, "settled": 2, "addon": 2, "youtube": 1, "other": 0},
+            report.stats["direct_source"],
+        )
+        automix = metric(report, "D13-automix")
+        self.assertEqual(3, automix.attempts)
+        self.assertEqual(2, automix.successes)
+        self.assertEqual(233, report.stats["automix_analysis"]["avg_ms"])
+        self.assertEqual(500, report.stats["automix_analysis"]["max_ms"])
+        self.assertEqual(1, report.stats["automix_analysis"]["main_thread"])
+
+    def test_sleep_lyrics_sync_clock_and_perline_rows(self) -> None:
+        report = analyze(
+            log_text(
+                line("19:00:00.000", "sleep-timer: set 30m"),
+                line("19:00:01.000", "sleep-timer: fired after 30m"),
+                line("19:00:02.000", "lyrics: deadline after 2500ms"),
+                line("19:00:03.000", "lyrics: script-mismatch provider=lrc"),
+                line("19:00:04.000", "sync clock: converted=4 dropped=1"),
+                line(
+                    "19:00:05.000",
+                    "sync perline: anchors=20 applied=18 maxAbsMs=-140",
+                ),
+                line(
+                    "19:00:06.000",
+                    "sync perline: anchors=10 applied=9 maxAbsMs=260",
+                ),
+            )
+        )
+        self.assertEqual(1, report.stats["sleep_timer"]["set"])
+        self.assertEqual(1, report.stats["sleep_timer"]["fired"])
+        self.assertEqual(1, report.stats["lyrics_failures"]["deadline"])
+        self.assertEqual(1, report.stats["lyrics_failures"]["script-mismatch"])
+        self.assertEqual(
+            {"converted": 4, "dropped": 1}, report.stats["sync_clock"]
+        )
+        self.assertEqual(2, metric(report, "D17-perline").attempts)
+        self.assertEqual(27, metric(report, "D17-perline").successes)
+        self.assertEqual(260, report.stats["perline"]["max_abs"])
+
+    def test_main_stall_and_exit_reason_rows(self) -> None:
+        report = analyze(
+            log_text(
+                line("19:00:00.000", "main-stall: 240ms Choreographer#doFrame"),
+                line("19:00:03.000", "main-stall: 810ms com.example.Work.run"),
+                line(
+                    "19:00:04.000",
+                    "exit-reason: ANR Input dispatch timeout at 2026-10-28 18:59:00 pss=1234",
+                ),
+                line(
+                    "19:00:05.000",
+                    "exit: reason=CRASH at=2026-10-28 18:58:00 pss=4321",
+                ),
+            )
+        )
+        stall = metric(report, "D18-stall")
+        self.assertEqual(2, stall.attempts)
+        self.assertIn("최악 810ms", stall.criterion)
+        self.assertEqual(
+            {"count": 2, "worst_ms": 810}, report.stats["main_stall"]
+        )
+        exit_row = metric(report, "D19-exit")
+        self.assertEqual(2, exit_row.attempts)
+        self.assertEqual(
+            {"ANR": 1, "CRASH": 1}, report.stats["exit_reason"]
+        )
+
+    def test_missing_diagnostic_lines_leave_rows_empty(self) -> None:
+        report = analyze(log_text(play("19:00:00.000", "id1", "Song")))
+        self.assertEqual(0, metric(report, "D18-stall").attempts)
+        self.assertEqual(0, metric(report, "D19-exit").attempts)
+        self.assertEqual({"count": 0, "worst_ms": 0}, report.stats["main_stall"])
+
+    def test_exit_reason_warnings_are_not_counted_as_exits(self) -> None:
+        report = analyze(
+            log_text(
+                line("19:00:00.000", "exit-reason: preferences unreadable: boom"),
+                line("19:00:00.100", "exit-reason: history unreadable: boom"),
+                line("19:00:00.200", "exit-reason: ANR trace unreadable: boom"),
+                line(
+                    "19:00:01.000",
+                    "exit-reason: ANR Input dispatch timeout at "
+                    "2026-10-28 19:00:00 pss=1234",
+                ),
+            )
+        )
+        self.assertEqual({"ANR": 1}, report.stats["exit_reason"])
+        self.assertEqual(1, metric(report, "D19-exit").attempts)
+
+    def test_rows_without_an_emitter_say_no_data(self) -> None:
+        report = analyze(log_text(play("19:00:00.000", "id1", "Song")))
+        for key in ("D12-direct", "D13-automix", "D14-sleep", "D15-lyrics", "D16-sync-clock"):
+            self.assertTrue(metric(report, key).emitter_pending)
+            self.assertIn(
+                "no data (emitter pending)", featurehealth.render_console(report)
+            )
+        for key in ("D17-perline", "D18-stall", "D19-exit"):
+            self.assertFalse(metric(report, key).emitter_pending)
+
+
 class FeatureHealthHeaderTests(unittest.TestCase):
     def test_app_counters_are_read_and_shown_beside_log_counts(self) -> None:
         text = (
