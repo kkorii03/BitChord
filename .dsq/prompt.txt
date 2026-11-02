@@ -1,0 +1,5 @@
+Kotlin Android app = upstream v1.9 + Korean fork (task/u19-tg; 1.8 fork = origin/task/telegram). Battery first: event-driven, no polling/timers, never block the main thread. Use grep/Select-String, not rg. Unknown Android/Media3 APIs: context7. Every fix gets a JVM test that fails on current code (no network). Do not touch .github/workflows. Smallest change; keep v1.9's improvements.
+
+Home '내 분위기 찾기' (TopPicks/mood stations, sharedUi TopPicksShelf.kt, shared data/model/TopPicks.kt, YtMusicRepository station code: 'station PERSONAL_STATION: mix= core= radios= extra=') takes long before a song plays. Measure the request chain from tap to queue set (watch:RDAMVM... calls run several radios before playing), and make the first song start as soon as the first radio answers, filling the rest after. Tests with fake sources.
+
+Summary of at most 12 lines: cause, files, REMOVED-LINES AUDIT, tests (class names for CI), what you did not do. Follow AGENTS.md (ponytail) rules.
