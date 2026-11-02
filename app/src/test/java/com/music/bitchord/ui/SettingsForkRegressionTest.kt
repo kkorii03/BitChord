@@ -1,9 +1,9 @@
 package com.music.bitchord.ui
 
+import com.music.bitchord.TestFiles
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.File
 
 /**
  * Settings rows the v1.9 merge changed away from the Korean fork.
@@ -32,11 +32,16 @@ class SettingsForkRegressionTest {
     }
 
     @Test
-    fun lyricsEntryKeepsTheOldSearchTerm() {
+    fun lyricsEntryUsesTheForkLabelAndSearchTerms() {
         val src = source("app/src/main/java/com/music/bitchord/ko/KoLyricsEntry.kt")
+        val strings = source("app/src/main/res/values-ko/strings.xml")
 
         assertTrue("the 1.8 search term must still find the lyrics page", src.contains("\"가사 소스\""))
-        assertTrue("the current label must still find it", src.contains("\"가사 제공처\""))
+        assertTrue("the current search term must still find it", src.contains("\"가사 제공처\""))
+        assertTrue(
+            "the lyrics sources row must read 가사 소스, as it did on 1.8",
+            strings.contains("<string name=\"lyrics_sources\">가사 소스</string>"),
+        )
     }
 
     @Test
@@ -54,14 +59,5 @@ class SettingsForkRegressionTest {
     }
 
     private fun source(relative: String): String =
-        File(repositoryRoot(), relative).readText()
-
-    private fun repositoryRoot(): File {
-        var directory = File(System.getProperty("user.dir")).absoluteFile
-        while (!File(directory, "settings.gradle.kts").isFile) {
-            directory = directory.parentFile
-                ?: error("settings.gradle.kts not found above ${System.getProperty("user.dir")}")
-        }
-        return directory
-    }
+        TestFiles.file(relative).readText()
 }
