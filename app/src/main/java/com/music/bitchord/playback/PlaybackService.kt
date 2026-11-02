@@ -9315,6 +9315,7 @@ class PlaybackService : MediaLibraryService() {
                     NEXT_PREP_MIX_WAIT_MS,
                 ) && trackAnalyzer.analysisFor(id).isUsable
             },
+            cancelMix = { id -> trackAnalyzer.cancelAnalysis(id) },
         )
     }
 

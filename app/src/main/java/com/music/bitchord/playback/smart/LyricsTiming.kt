@@ -43,6 +43,7 @@ import com.music.bitchord.playback.StreamChoice
 import com.music.bitchord.playback.SyncSafetyPolicy
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
@@ -2164,9 +2165,9 @@ object LyricsTiming {
             askAi(context, videoId, lines, sung, key, engines, title, artist, isVideo, probe)
         }
         val running = aiInFlight.putIfAbsent(flight, fresh) ?: fresh
+        running.cancelledWithCaller(currentCoroutineContext()[Job], cancelWithCaller)
         if (running === fresh) {
             fresh.invokeOnCompletion { aiInFlight.remove(flight, fresh) }
-            fresh.cancelledWithCaller(currentCoroutineContext()[Job], cancelWithCaller)
             fresh.start()
         }
         val adjustment = running.await() ?: return null
@@ -2183,20 +2184,56 @@ object LyricsTiming {
     private val aiInFlight = ConcurrentHashMap<String, kotlinx.coroutines.Deferred<Adjustment.Mapped?>>()
 
     /**
-     * Ties an app-lifetime flight to the caller that started it when that
-     * caller is a next-prep bundle: cancelling the bundle must stop its own
+     * Who is still waiting on a shared flight. A next-prep bundle may start one
+     * and a screen may join it; the flight is only tied to the bundle's job
+     * while no caller that wants it to outlive its own screen remains.
+     */
+    private class FlightWaiters {
+        private var total = 0
+        private var protected = 0
+
+        @Synchronized fun join(cancelWithCaller: Boolean) {
+            total++
+            if (!cancelWithCaller) protected++
+        }
+
+        @Synchronized fun leave(cancelWithCaller: Boolean, cancelled: Boolean): Boolean {
+            total--
+            if (!cancelWithCaller) protected--
+            return cancelled && cancelWithCaller && protected <= 0
+        }
+
+        @Synchronized fun isEmpty(): Boolean = total <= 0
+    }
+
+    private val flightWaiters = ConcurrentHashMap<kotlinx.coroutines.Deferred<*>, FlightWaiters>()
+
+    /**
+     * Ties an app-lifetime flight to the callers waiting on it when those
+     * callers are next-prep bundles: cancelling the bundle must stop its own
      * request, not leave it paying for two more minutes after the row is gone.
-     * A flight another caller started is only awaited, never cancelled here.
+     * A flight another caller started is only awaited, never cancelled here
+     * while a caller that expects it to outlive its screen is still waiting.
      */
     internal fun <T> kotlinx.coroutines.Deferred<T>.cancelledWithCaller(
         caller: Job?,
         cancelWithCaller: Boolean,
     ): kotlinx.coroutines.Deferred<T> {
-        if (cancelWithCaller && caller != null) {
-            caller.invokeOnCompletion { cause ->
-                if (cause != null) cancel(CancellationException("caller cancelled", cause))
+        if (caller == null) return this
+        val waiters = flightWaiters.computeIfAbsent(this) { FlightWaiters() }
+        waiters.join(cancelWithCaller)
+        val left = AtomicBoolean(false)
+        fun leave(cancelled: Boolean) {
+            if (!left.compareAndSet(false, true)) return
+            if (waiters.leave(cancelWithCaller, cancelled)) {
+                cancel(CancellationException("caller cancelled"))
             }
+            if (waiters.isEmpty()) flightWaiters.remove(this, waiters)
         }
+        caller.invokeOnCompletion { cause -> leave(cause != null) }
+        // A flight that finishes on its own stops being awaited; drop its
+        // waiter bookkeeping rather than keeping it for the session.
+        invokeOnCompletion { leave(false) }
         return this
     }
 
@@ -2582,9 +2619,9 @@ object LyricsTiming {
             verifySongRequest(context.applicationContext, song, lines, key, engine, probe)
         }
         val running = songInFlight.putIfAbsent(flight, fresh) ?: fresh
+        running.cancelledWithCaller(currentCoroutineContext()[Job], cancelWithCaller)
         if (running === fresh) {
             fresh.invokeOnCompletion { songInFlight.remove(flight, fresh) }
-            fresh.cancelledWithCaller(currentCoroutineContext()[Job], cancelWithCaller)
             fresh.start()
         }
         return running.await()

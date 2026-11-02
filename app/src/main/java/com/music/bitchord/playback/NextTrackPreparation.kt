@@ -58,6 +58,7 @@ internal class NextTrackPreparation(
     private val prepareMix: (ExoPlayer) -> Unit,
     private val mixReady: (String) -> Boolean,
     private val awaitMix: suspend (String) -> Boolean,
+    private val cancelMix: (String) -> Unit,
 ) {
 
     private var job: Job? = null
@@ -223,6 +224,7 @@ internal class NextTrackPreparation(
 
     private suspend fun run(snapshot: Snapshot) {
         val startedAt = SystemClock.elapsedRealtime()
+        val bundleJob = kotlinx.coroutines.currentCoroutineContext()[Job]
         val switches = AppSettings.syncSafetySwitches
         var song = snapshot.song
         var expectedQueueKey = snapshot.queueKey
@@ -511,7 +513,15 @@ internal class NextTrackPreparation(
                         val player = currentPlayer()
                         if (player != null) {
                             prepareMix(player)
-                            mix = awaitMix(song.videoId)
+                            try {
+                                mix = awaitMix(song.videoId)
+                            } catch (cancelled: CancellationException) {
+                                // Only a replaced bundle cancels the analysis
+                                // it started; a step deadline ends the wait
+                                // and leaves the pass for the crossfade path.
+                                if (bundleJob?.isActive != true) cancelMix(song.videoId)
+                                throw cancelled
+                            }
                         }
                         true
                     }

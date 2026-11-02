@@ -44,4 +44,25 @@ class LyricsTimingFlightCancellationTest {
         assertFalse("a caller that did not start the flight must not cancel it", flight.isCancelled)
         flight.join()
     }
+
+    @Test
+    fun aLiveJoinerKeepsTheSharedFlightAliveWhenTheStartingCallerIsCancelled() = runBlocking {
+        val starter = launch { delay(60_000) }
+        val screen = launch { delay(60_000) }
+        val flight = async(Dispatchers.Default) {
+            delay(300)
+            "answer"
+        }
+        with(LyricsTiming) {
+            flight.cancelledWithCaller(starter, cancelWithCaller = true)
+            flight.cancelledWithCaller(screen, cancelWithCaller = false)
+        }
+        starter.cancelAndJoin()
+        assertFalse("a joined flight must not be cancelled under a live waiter", flight.isCancelled)
+        assertTrue(
+            "the live waiter lost its answer",
+            withTimeoutOrNull(2_000L) { flight.await() } == "answer",
+        )
+        screen.cancelAndJoin()
+    }
 }
