@@ -766,27 +766,79 @@ object YtMusicRepository {
     suspend fun resolveVideo(song: Song): Song? {
         if (song.isVideo) return null
         videoVersionCache[song.videoId]?.let { return it }
+        // A remembered miss was both the pairing and the search coming back
+        // empty, so asking either again would only repeat the same answer.
+        if (synchronized(videoVersionMissing) { song.videoId in videoVersionMissing }) return null
+        // YouTube's own pairing first: an answer, not a search guess. It is
+        // keyed by the id, so a row that lost its header still gets it.
         officialVersion(song, wantAudio = false)?.let { video ->
             videoVersionCache[song.videoId] = video
             return video
         }
-        val target = TrackMatcher.targetOf(song)
-        for (query in TrackMatcher.queries(target)) {
-            val candidates = search(query, SearchFilter.VIDEOS)
-                .getOrNull()
-                ?.filterIsInstance<SearchResult.Track>()
-                ?.map { it.song }
-                .orEmpty()
-            TrackMatcher.best(candidates, target)?.let { match ->
-                Log.d(TAG, "video switch: '${song.title}' -> '${match.title}' ($query)")
-                videoVersionCache[song.videoId] = match
-                return match
+        if (!videoVersionSearchWanted(song)) {
+            // A queue row that lost its header would search the empty string
+            // and can only match something unrelated.
+            Log.w(TAG, "video switch skipped: ${song.videoId} has empty title/artist")
+            return null
+        }
+
+        // The alternate-version check and a manual switch can ask for the same
+        // track at once; one search answers both.
+        val mine = CompletableDeferred<Song?>()
+        videoVersionLookups.putIfAbsent(song.videoId, mine)?.let {
+            return try {
+                it.await()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             }
         }
-        Log.w(TAG, "video switch: no video match for '${song.title}' by '${song.artist}'")
-        synchronized(videoVersionMissing) { videoVersionMissing[song.videoId] = true }
-        return null
+        try {
+            val target = TrackMatcher.targetOf(song)
+            for (query in TrackMatcher.queries(target)) {
+                val candidates = search(query, SearchFilter.VIDEOS, SearchKind.VIDEO_SWITCH)
+                    .getOrNull()
+                    ?.filterIsInstance<SearchResult.Track>()
+                    ?.map { it.song }
+                    .orEmpty()
+                pickVideoVersion(candidates, target)?.let { match ->
+                    Log.d(
+                        TAG,
+                        "video switch: '${song.title}' -> '${match.title}' (queryLength=${query.length})",
+                    )
+                    videoVersionCache[song.videoId] = match
+                    mine.complete(match)
+                    return match
+                }
+            }
+            Log.w(TAG, "video switch: no video match for '${song.title}' by '${song.artist}'")
+            // Cached for the run, like a hit: a second search would ask the
+            // same question of the same index and get the same answer.
+            synchronized(videoVersionMissing) { videoVersionMissing[song.videoId] = true }
+            mine.complete(null)
+            return null
+        } catch (failure: Throwable) {
+            mine.completeExceptionally(failure)
+            throw failure
+        } finally {
+            videoVersionLookups.remove(song.videoId, mine)
+        }
     }
+
+    /**
+     * The official video among search hits. [TrackMatcher.best] would accept a
+     * fancam or a stage upload carrying the same title; the video switch must
+     * not, so this keeps the fork's ranked pick.
+     */
+    internal fun pickVideoVersion(candidates: List<Song>, target: TrackMatcher.Target): Song? =
+        TrackMatcher.bestForVideoSwitch(candidates, target)
+
+    /**
+     * Whether a video version may be looked up by search at all. A row with no
+     * header cannot be searched: the empty query can only match something
+     * unrelated.
+     */
+    internal fun videoVersionSearchWanted(song: Song): Boolean =
+        song.title.isNotBlank() && song.artist.isNotBlank()
 
     fun cachedSongVersionFor(song: Song): Song? =
         KoSongVersion.cachedSongVersionFor(song) // [KO] song-version
