@@ -244,37 +244,92 @@ def char_stream(words):
     return "".join(chars), times
 
 
+MAX_CANDIDATES = 6     # places per line the whole-sheet alignment chooses between
+AMBIGUOUS_RATIO = 0.05  # another place this close in likeness ...
+AMBIGUOUS_ERR_S = 1.0   # ... and a chosen error this large: which repeat it was is unknowable
+
+
+def candidates(key, shown, heard, times):
+    """[(rank, ratio, i, t)] places the line's opening may have been sung: the best
+    start in each stretch of matching characters, at most MAX_CANDIDATES."""
+    found = []
+    for i in range(len(heard)):
+        t = times[i]
+        if t < shown - SEARCH_S:
+            continue
+        if t > shown + SEARCH_S:
+            break
+        r = difflib.SequenceMatcher(None, key, heard[i:i + len(key)], autojunk=False).ratio()
+        if heard[i] != key[0]:
+            r -= 0.05  # prefer a match that starts on the line's first sound
+        if r < MIN_RATIO:
+            continue
+        # A chorus repeats its words: among near-equal matches the one nearest the
+        # displayed time is preferred (10-27: repeats were scored as 5 s errors).
+        rank = r - DIST_PENALTY_PER_S * abs(t - shown)
+        if found and i - found[-1][2] < len(key):
+            if rank > found[-1][0]:
+                found[-1] = (rank, r, i, t)  # same stretch: keep its best start
+            continue
+        found.append((rank, r, i, t))
+    return sorted(found, reverse=True)[:MAX_CANDIDATES]
+
+
 def align(lines, words):
-    """[(n, shown_s, sung_s, ratio)] for every line found in the heard words, in order."""
+    """[(n, shown_s, sung_s, ratio)] for every line found in the heard words, in order.
+
+    The whole sheet is placed at once (11-02): the sung order must follow the sheet's
+    order, and among the orders that do, the one with the best total likeness wins.
+    The old greedy walk took each line's best place and then searched only after it,
+    so one line matched to a later chorus dragged every following line onto that
+    repeat as well: hand-timed sheets (AMLL) scored -9.3 s errors on Espresso and
+    -7.5 s on APT. A line whose chosen place is far off while an almost-as-alike
+    place exists elsewhere is dropped — which repeat was sung cannot be told."""
     heard, times = char_stream(words)
     if not heard:
         return []
-    out, floor = [], 0
     last_heard = times[-1]
+    rows = []
     for n, start_ms, text in lines:
         shown = start_ms / 1000.0
         key = norm(text)[:PREFIX_CHARS]
         if len(key) < 2 or shown > last_heard + 1.0:
             continue
-        best = None
-        for i in range(floor, len(heard)):
-            t = times[i]
-            if t < shown - SEARCH_S:
-                continue
-            if t > shown + SEARCH_S:
-                break
-            r = difflib.SequenceMatcher(None, key, heard[i:i + len(key)], autojunk=False).ratio()
-            if heard[i] != key[0]:
-                r -= 0.05  # prefer a match that starts on the line's first sound
-            # A chorus repeats its words: among near-equal matches the one nearest
-            # the displayed time is the line being sung, not an earlier or later
-            # repeat up to 15 s away (10-27: repeats were scored as 5 s errors).
-            rank = r - DIST_PENALTY_PER_S * abs(t - shown)
-            if best is None or rank > best[2] + 1e-9:
-                best = (r, i, rank)
-        if best and best[0] >= MIN_RATIO:
-            out.append((n, shown, times[best[1]], round(best[0], 2)))
-            floor = best[1] + 1
+        cand = candidates(key, shown, heard, times)
+        if cand:
+            rows.append((n, shown, cand))
+    # best[j][c] = best total ending with line j at its candidate c (indices rising).
+    best, back = [], []
+    for j, (_, _, cand) in enumerate(rows):
+        bj, kj = [], []
+        for rank, _, i, _ in cand:
+            top, arg = 0.0, None
+            for jj in range(j):
+                for cc, (_, _, ii, _) in enumerate(rows[jj][2]):
+                    if ii < i and best[jj][cc] > top:
+                        top, arg = best[jj][cc], (jj, cc)
+            bj.append(rank + top)
+            kj.append(arg)
+        best.append(bj)
+        back.append(kj)
+    if not rows:
+        return []
+    end = max(((j, c) for j in range(len(rows)) for c in range(len(rows[j][2]))),
+              key=lambda jc: best[jc[0]][jc[1]])
+    chosen = []
+    while end is not None:
+        chosen.append(end)
+        end = back[end[0]][end[1]]
+    out = []
+    for j, c in reversed(chosen):
+        n, shown, cand = rows[j]
+        _, r, _, t = cand[c]
+        if abs(t - shown) > AMBIGUOUS_ERR_S and any(
+            other[1] >= r - AMBIGUOUS_RATIO and abs(other[3] - t) > AMBIGUOUS_ERR_S
+            for k, other in enumerate(cand) if k != c
+        ):
+            continue
+        out.append((n, shown, t, round(r, 2)))
     return out
 
 
