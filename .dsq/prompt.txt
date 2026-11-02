@@ -1,0 +1,5 @@
+Kotlin Android app = upstream v1.9 + Korean fork (task/u19-tg; 1.8 fork = origin/task/telegram). Battery first: event-driven, no polling/timers, never block the main thread. Use grep/Select-String, not rg. Unknown Android/Media3 APIs: context7. Every fix gets a JVM test that fails on current code (no network). Do not touch .github/workflows. Smallest change; keep v1.9's improvements.
+
+Right song is priority 1. TrackMatcher (shared/.../data/sources/TrackMatcher.kt VERSION_WORDS/TRAILING_TAKES/NOVOCAL_TAKES, ko/KoTrackMatcher.kt) missed 'A Cappella' written as two words (fixed). Audit for other take spellings that let a different recording match the original: 'Ver.'/'ver' with a qualifier (Japanese Ver., Band Ver., Piano Ver., Acoustic Ver.), Korean takes (어쿠스틱, 피아노, 밴드, 일본어, 영어 버전, 리믹스, 라이브, 커버, 리메이크, MR, 반주, 인스트), sped up/slowed variants, '(Live at ...)', 'Remastered' (neutral), 'Radio Edit' (neutral?). Add what is missing with tests both directions; keep neutral ones neutral.
+
+Summary of at most 12 lines: cause, files, REMOVED-LINES AUDIT, tests (class names for CI), what you did not do. Follow AGENTS.md (ponytail) rules.
