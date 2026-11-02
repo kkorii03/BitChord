@@ -271,7 +271,7 @@
     <string name="blocking">차단 중</string>
     <string name="crossfade">크로스페이드</string>
     <string name="crossfade_subtitle">다음 노래로 자연스럽게 연결</string>
-    <string name="automix">자동 믹스(베타)</string>
+    <string name="automix">자동 믹스 [베타]</string>
     <string name="automix_performance">자동 믹스 성능</string>
     <string name="automix_performance_subtitle">백그라운드 분석 성능</string>
     <string name="automix_performance_warning">성능을 높이면 노래 분석이 빨라지지만 배터리 사용량이 늘고 기기가 따뜻해질 수 있습니다.</string>
