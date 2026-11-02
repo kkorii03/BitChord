@@ -5156,7 +5156,15 @@ class PlaybackService : MediaLibraryService() {
         // crossfade are already sounding, so they prefetch here as before.
         val currentAudible = alreadySounding ||
             (exoPlayer.isPlaying && exoPlayer.currentMediaItem?.mediaId == audibleMediaId)
-        if (currentAudible) prefetchAround(exoPlayer)
+        if (currentAudible) {
+            prefetchAround(exoPlayer)
+        } else if (DirectSourceGate.isActive()) {
+            // [KO] direct-gate: the gate admits only rows it is told are
+            // playing. Waiting for first sound here deadlocked every cold
+            // start (phone 11-03): the row's loader held for a sound that
+            // could only come after it. Not playing, so nothing reads ahead.
+            driveDirectWindow()
+        }
         // The second look belongs to the track it was started for; the
         // queue moving on ends it — unless it is already proving what it
         // found, see [cancelStaleUpgradeJob] — and starts the new
