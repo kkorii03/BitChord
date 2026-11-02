@@ -1,0 +1,16 @@
+Goal: the app must not run out of memory in long listening sessions. Emulator heap limit is 192 MB; two runs hit OutOfMemoryError after ~25-50 minutes (11-02).
+
+Evidence: heap dump at the end of a 50-minute run (131 MB live), largest owners:
+- 18.75 MB char[] String held by com.music.bitchord.ko.KoLyricsTranslation askGemini continuation (L$0), plus 7.03 MB byte[] in KoLyricsTranslation transcribeVideo (L$1): the Gemini audio transcription builds the whole audio as one base64 String (and keeps the WAV) in memory = ~26 MB per call.
+- 2 x 7.48 MB Strings in com.metrolist.innertubex.cipher.EjsChallengeSolver preprocessed cache, plus 3 x 2.67 MB player code Strings (YouTubeCipherService CachedSolver.playerCode / playerCode cache, a ktor SavedHttpResponse body): ~23 MB of cipher caches for more than one player version.
+- 8.26 MB + 2.88 MB VideoAudio SongAudio.bytes in VideoAudio.recent / recentSongs LRU caches.
+- 2 x 2.67 MB io.ktor SavedHttpResponse bodies still referenced.
+
+Do (root cause first, failing tests first where possible):
+1. Gemini audio requests: never hold the audio twice. Stream the base64 encoding straight into the request body (OkHttp/ktor streaming body, or android.util.Base64OutputStream / java.util.Base64.getEncoder().wrap(...)), release the WAV once sent, and make sure the continuation does not keep the encoded String. Check every caller of the transcription/askGemini path (KoLyricsTranslation, LyricsTranslation.placeLinesInVideo).
+2. Cipher caches: keep only the newest player version (one preprocessed solver + one player code), and drop the ktor saved response once its body is read. Find where these caches live (innertubex module in this repo) and bound them; do not change cipher behaviour.
+3. VideoAudio recent caches: bound them by total bytes (e.g. 8 MB total across both), evicting oldest.
+4. JVM tests for each bound (cache sizes, streaming encoder produces the same body as the old String path for a small input). Name test classes in the summary (Opus adds them to CI).
+
+Rules: battery first (no polling/timers), read every caller and type of what you change, keep all existing guards unless justified; REMOVED-LINES AUDIT required. Do not touch .github/workflows/, keys/, signing. grep/Select-String only (no rg). Unknown OkHttp/ktor/Android API -> context7. AGENTS.md (ponytail) rules apply.
+At the end, summary within 10 lines: files changed / MB saved per item (estimate) / test result / open problems.
