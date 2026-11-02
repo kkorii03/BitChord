@@ -2022,11 +2022,21 @@ object Downloads {
         stream: SourceStream,
         storable: DownloadStore.Storable,
     ): Pair<SourceStream, DownloadStore.Storable>? {
-        if (Downloader.probe(stream.url, stream.headers, stream.format.codec) == null) {
-            Log.d(TAG, "${stream.format.summary}: not a file a download can keep; passing")
-            return null
+        when (Downloader.probe(stream.url, stream.headers, stream.format.codec)) {
+            null -> {
+                Log.d(TAG, "${stream.format.summary}: not a file a download can keep; passing")
+                return null
+            }
+            // The fork's pipeline writes the bytes it fetches as one file; a
+            // manifest (extensionless HLS, DASH) would land as a tiny `.flac`.
+            // shortcut: skip manifests until v1.9's ManifestFile assembly is
+            // ported into KoDownloadPipeline.
+            is Downloader.Probe.Manifest -> {
+                Log.d(TAG, "${stream.format.summary}: a manifest, not a file; passing")
+                return null
+            }
+            is Downloader.Probe.File -> return stream to storable
         }
-        return stream to storable
     }
 
     /**
