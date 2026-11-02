@@ -236,4 +236,101 @@ class TrackMatcherTakeSpellingTest {
         assertTrue(accepted(radio, song("Song", "Artist", "3:20")))
         assertTrue(accepted(original, song("Song (Radio Edit)", "Artist", "3:20")))
     }
+
+    @Test
+    fun `an unbracketed take before Ver is still a take`() {
+        listOf(
+            "Song Acoustic Ver.",
+            "Song Acoustic Version",
+            "Song Live Ver.",
+            "Song Japanese Ver.",
+            "Song Korean Version",
+        ).forEach { assertTakeSeparated(it) }
+    }
+
+    @Test
+    fun `an unbracketed take agrees with its bracketed spelling`() {
+        listOf(
+            "Song Acoustic Ver." to "Song (Acoustic Version)",
+            "Song Live Ver." to "Song (Live Version)",
+            "Song Japanese Ver." to "Song (Japanese Version)",
+        ).forEach { (bare, bracketed) ->
+            val target = TrackMatcher.Target(bare, "Artist", durationSec = 200)
+            assertTrue("$bare must accept $bracketed", accepted(target, song(bracketed, "Artist", "3:20")))
+            val reverse = TrackMatcher.Target(bracketed, "Artist", durationSec = 200)
+            assertTrue("$bracketed must accept $bare", accepted(reverse, song(bare, "Artist", "3:20")))
+        }
+    }
+
+    @Test
+    fun `a language qualifies a piano or band take`() {
+        val cases = listOf(
+            "Song (Japanese Piano Version)" to listOf("Song (Piano Version)", "Song (Korean Piano Version)"),
+            "Song (Korean Band Version)" to listOf("Song (Band Version)", "Song (Japanese Band Version)"),
+        )
+        cases.forEach { (languageTake, otherTakes) ->
+            val target = TrackMatcher.Target(languageTake, "Artist", durationSec = 200)
+            assertTrue(
+                "$languageTake must accept itself",
+                accepted(target, song(languageTake, "Artist", "3:20")),
+            )
+            otherTakes.forEach { other ->
+                assertFalse(
+                    "$languageTake must not accept $other",
+                    accepted(target, song(other, "Artist", "3:20")),
+                )
+                assertFalse(
+                    "$other must not accept $languageTake",
+                    accepted(
+                        TrackMatcher.Target(other, "Artist", durationSec = 200),
+                        song(languageTake, "Artist", "3:20"),
+                    ),
+                )
+            }
+        }
+        val bare = TrackMatcher.Target("Song Japanese Piano Version", "Artist", durationSec = 200)
+        assertTrue(
+            "unbracketed language qualifier take agrees with the bracketed one",
+            accepted(bare, song("Song (Japanese Piano Version)", "Artist", "3:20")),
+        )
+    }
+
+    @Test
+    fun `a take after a pipe soundtrack label is not inverted into the title`() {
+        val band = TrackMatcher.parseTitle("Bluebird - Band Version | Show OST")
+        assertEquals("bluebird", band.core)
+        assertEquals(setOf("band"), band.versions)
+
+        val piano = TrackMatcher.parseTitle("Bluebird - Piano Version | Show OST")
+        assertEquals("bluebird", piano.core)
+        assertEquals(setOf("piano"), piano.versions)
+
+        val target = TrackMatcher.Target("Bluebird - Band Version | Show OST", "Artist", durationSec = 200)
+        assertTrue(accepted(target, song("Bluebird (Band Version)", "Artist", "3:20")))
+        assertFalse(
+            "the plain song must not accept the band take",
+            accepted(
+                TrackMatcher.Target("Bluebird", "Artist", durationSec = 200),
+                song("Bluebird - Band Version | Show OST", "Artist", "3:20"),
+            ),
+        )
+    }
+
+    @Test
+    fun `a qualifier take after a named pipe OST label is kept`() {
+        val band = TrackMatcher.parseTitle("Dynamite | Joker OST Band Version")
+        assertEquals("dynamite", band.core)
+        assertEquals(setOf("band"), band.versions)
+
+        val koreanPiano = TrackMatcher.parseTitle("Dynamite | Joker OST 피아노 버전")
+        assertEquals("dynamite", koreanPiano.core)
+        assertEquals(setOf("piano"), koreanPiano.versions)
+    }
+
+    @Test
+    fun `an ambiguous qualifier word in a title is still a title`() {
+        val parts = TrackMatcher.parseTitle("Performer - Piano Man | Joker OST")
+        assertEquals("pianoman", parts.core)
+        assertEquals(emptySet<String>(), parts.versions)
+    }
 }

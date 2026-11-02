@@ -1035,8 +1035,10 @@ internal object KoTrackMatcher {
         val takeWords = wordsOf(takeText)
         if (takeWords.map(::canonicalTake).joinToString("") in NEUTRAL_SEGMENTS) return emptyList()
         val languageTake = isLanguageVersion(takeText)
+        val qualifierTake = hasQualifiedQualifier(takeWords)
         return (words.filter {
             (it in VERSION_WORDS && it !in NEUTRAL_SUFFIX_WORDS) ||
+                (qualifierTake && it in QUALIFIER_TAKES) ||
                 (languageTake && it in VERSION_LANGUAGES)
         } + phraseTakes(words)).distinct()
     }
@@ -1055,8 +1057,9 @@ internal object KoTrackMatcher {
         if (words.isEmpty()) return true
         if (phraseTakes(words).isNotEmpty()) return true
         return words.all {
-            it in VERSION_WORDS || it in NEUTRAL_SUFFIX_WORDS || it in TRAILING_NOISE ||
-                it in NOISE_WORDS || it in PACKAGING_CONNECTORS || it.all(Char::isDigit)
+            it in VERSION_WORDS || it in QUALIFIER_TAKES || it in NEUTRAL_SUFFIX_WORDS ||
+                it in TRAILING_NOISE || it in NOISE_WORDS ||
+                it in PACKAGING_CONNECTORS || it.all(Char::isDigit)
         }
     }
 
@@ -1072,6 +1075,7 @@ internal object KoTrackMatcher {
             .filter { it.isNotEmpty() }
         val first = words.firstOrNull() ?: return false
         return first in VERSION_WORDS || first in TRAILING_TAKES ||
+            (first in QUALIFIER_TAKES && hasQualifiedQualifier(words)) ||
             phraseTakes(words).isNotEmpty()
     }
 
@@ -1251,12 +1255,30 @@ internal object KoTrackMatcher {
             val speedTake = trailingPhraseTake(words)
             // "Song Band Ver." / "Song Piano Version": the qualifier and its
             // version word are one take, so both leave the core together.
+            // The same holds for a take ("Song Live Ver.") or a language
+            // ("Song Japanese Ver.") before the packaging word: dropping only
+            // "ver" left the take unmarked and the original could stand in.
             if (words.size > 2 && previous != null &&
-                previous in QUALIFIER_TAKES && last in LANGUAGE_PACKAGING
+                (previous in QUALIFIER_TAKES || previous in VERSION_WORDS ||
+                    previous in VERSION_LANGUAGES) && last in LANGUAGE_PACKAGING
             ) {
-                versions += canonicalTake(previous)
-                words = words.dropLast(2)
-                droppedTail += 2
+                val marks = mutableListOf(VERSION_LANGUAGES[previous] ?: canonicalTake(previous))
+                var taken = 2
+                // A language or qualifier chain before the packaging word is
+                // one take too ("Japanese Piano Version"). Stop at the title
+                // and never eat a bare version word such as the "Cover" in
+                // "Take Cover", which is part of the song's name.
+                var at = words.size - 3
+                while (at >= 1 &&
+                    (words[at] in QUALIFIER_TAKES || words[at] in VERSION_LANGUAGES)
+                ) {
+                    marks += VERSION_LANGUAGES[words[at]] ?: canonicalTake(words[at])
+                    taken++
+                    at--
+                }
+                versions += marks
+                words = words.dropLast(taken)
+                droppedTail += taken
             // "Version"/"Edition" after a bracketed take is packaging, not a
             // take: "Song (Live) Version" is the live recording of "Song", and
             // leaving the word in the core made the exact-title gates refuse it.
@@ -1403,8 +1425,7 @@ internal object KoTrackMatcher {
         // word qualifies it ("Band Ver."). Otherwise "From Band of Brothers"
         // and "Mr. Jones" would read as takes and stop matching the original.
         val qualifiers = rawWords.filter { it in QUALIFIER_TAKES }
-        val qualified = qualifiers.size == rawWords.size ||
-            rawWords.any { it in LANGUAGE_PACKAGING }
+        val qualified = hasQualifiedQualifier(rawWords)
         // Drop an unqualified qualifier before canonicalisation: "inst" and
         // "mr" would otherwise fold to "instrumental" and become takes again.
         val identity = rawWords
@@ -1443,6 +1464,10 @@ internal object KoTrackMatcher {
             // stays out of versions and cannot reject the plain catalogue row.
             versions += languages
             versions += identity.filter { it in VERSION_WORDS && it !in LANGUAGE_PACKAGING }
+            // A qualifier next to a language is part of the same take
+            // ("Japanese Piano Version"): dropping it made the Japanese
+            // piano recording agree with a plain or other-language piano take.
+            versions += qualifiers.map(::canonicalTake)
             return
         }
         val qualifierMarks = if (qualified) qualifiers.map(::canonicalTake) else emptyList()
@@ -1481,7 +1506,8 @@ internal object KoTrackMatcher {
         if (words.isEmpty()) return false
         return words.any { it in VERSION_LANGUAGES } &&
             words.all {
-                it in VERSION_LANGUAGES || it in VERSION_WORDS || it in LANGUAGE_PACKAGING ||
+                it in VERSION_LANGUAGES || it in VERSION_WORDS || it in QUALIFIER_TAKES ||
+                    it in LANGUAGE_PACKAGING ||
                     it in PACKAGING_CONNECTORS || it in NOISE_WORDS || it.all(Char::isDigit)
             }
     }
@@ -1664,6 +1690,18 @@ internal object KoTrackMatcher {
     )
 
     private fun canonicalTake(word: String): String = TAKE_ALIASES[word] ?: word
+
+    /**
+     * Whether [words] carry a qualifier that names a take: every word is one
+     * ("Band") or a version word qualifies it ("Band Version"). "From Band of
+     * Brothers" and "Mr. Jones" stay ordinary words.
+     */
+    private fun hasQualifiedQualifier(words: List<String>): Boolean {
+        val qualifiers = words.filter { it in QUALIFIER_TAKES }
+        return qualifiers.isNotEmpty() && (
+            qualifiers.size == words.size || words.any { it in LANGUAGE_PACKAGING }
+            )
+    }
 
     /** Packaging words that follow a soundtrack label without naming a take. */
     private val NEUTRAL_SUFFIX_WORDS = setOf("version", "ver", "버전", "バージョン", "edition")
