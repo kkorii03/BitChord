@@ -188,4 +188,32 @@ class LocalMediaFilterTest {
             ),
         )
     }
+
+    @Test
+    fun `the scan keeps the container gate when the non-music filter is off`() {
+        // 1.8 rejected a row the app has no extractor for with the filter on
+        // or off; the v1.9 merge dropped the second half, so an AIFF/WMA/MKV
+        // row reached Local Music and failed only when played.
+        for (name in listOf("clip.mkv", "notes.txt", "mix.aiff", "song.wma")) {
+            assertFalse(
+                name,
+                LocalMediaRepository.keepLocalAudioRow(
+                    filterNonMusic = false,
+                    durationMs = 180_000,
+                    displayName = name,
+                    path = "/storage/emulated/0/Download/$name",
+                ),
+            )
+        }
+        // Turning the filter off still brings back playable containers and
+        // skips the duration/folder heuristics that belong to the filter.
+        assertTrue(
+            LocalMediaRepository.keepLocalAudioRow(
+                filterNonMusic = false,
+                durationMs = 30_000,
+                displayName = "memo.wav",
+                path = "/storage/emulated/0/Recordings/memo.wav",
+            ),
+        )
+    }
 }

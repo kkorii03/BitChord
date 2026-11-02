@@ -293,10 +293,10 @@ object LocalMediaRepository {
                     val durationMs = cursor.getLong(columns.duration)
                     val path = cursor.getString(columns.data)
 
-                    if (filterNonMusic && !isEligibleLocalMusic(durationMs, displayName, path)) continue
+                    if (!keepLocalAudioRow(filterNonMusic, durationMs, displayName, path)) continue
                     if (treeUri.isNotBlank() && !isInFolder(path, chosen)) continue
 
-                    songs.add(columns.song(cursor, videoIdByUri))
+                    songs.add(columns.song(context, cursor, videoIdByUri))
                 }
             }
         }.onFailure { Log.w(TAG, "Failed scanning device local music: ${it.message}") }
@@ -338,7 +338,7 @@ object LocalMediaRepository {
         val dateModified = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_MODIFIED)
         val track = cursor.getColumnIndex(MediaStore.Audio.Media.TRACK)
 
-        fun song(cursor: Cursor, videoIdByUri: Map<String, String>): Song {
+        fun song(context: Context, cursor: Cursor, videoIdByUri: Map<String, String>): Song {
             val rowId = cursor.getLong(id)
             val name = cursor.getString(displayName).orEmpty()
             val artId = cursor.getLong(albumId)
@@ -346,7 +346,7 @@ object LocalMediaRepository {
             val contentUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, rowId).toString()
             val songTitle = cursor.getString(title).cleanTag()?.removeAudioExtension()
                 ?: name.substringBeforeLast('.').takeIf { it.isNotBlank() }
-                ?: "Track $rowId"
+                ?: context.getString(R.string.local_track_fallback, rowId)
             val trackNumber = if (track >= 0 && !cursor.isNull(track)) {
                 trackNumberFromMediaStore(cursor.getInt(track))
             } else {
@@ -355,7 +355,7 @@ object LocalMediaRepository {
             return Song(
                 videoId = videoIdByUri[contentUri] ?: contentUri,
                 title = songTitle,
-                artist = cursor.getString(artist).cleanTag() ?: "Unknown Artist",
+                artist = cursor.getString(artist).cleanTag() ?: context.getString(R.string.unknown_artist),
                 thumbnailUrl = if (artId > 0) ContentUris.withAppendedId(ALBUM_ART_URI, artId).toString() else null,
                 durationText = durationMs.takeIf { it > 0 }?.let { formatDuration(it) },
                 albumName = cursor.getString(album).cleanTag(),
@@ -459,7 +459,7 @@ object LocalMediaRepository {
         resolver.query(target, AUDIO_PROJECTION, selection, args, null)?.use { cursor ->
             if (!cursor.moveToFirst()) return@use null
             val videoIdByUri = Downloads.saved.value.entries.associate { (id, saved) -> saved to id }
-            AudioColumns(cursor).song(cursor, videoIdByUri)
+            AudioColumns(cursor).song(context, cursor, videoIdByUri)
         }
     }.getOrNull()
 
@@ -500,6 +500,26 @@ object LocalMediaRepository {
 
     private fun String.normalizedPath(): String =
         replace('\\', '/').trimEnd('/').lowercase(Locale.ROOT)
+
+    /**
+     * Whether one MediaStore row belongs in the local list.
+     *
+     * The non-music filter turns off the duration and folder heuristics, not
+     * the container gate: a `.mkv` or `.aiff` row is still a file no extractor
+     * in this app can play, so it stays out either way. This is the fork's
+     * 1.8 condition; the v1.9 merge dropped its `hasPlayableAudioExtension`
+     * call, which let those rows into the list with the filter off.
+     */
+    internal fun keepLocalAudioRow(
+        filterNonMusic: Boolean,
+        durationMs: Long,
+        displayName: String,
+        path: String?,
+    ): Boolean = if (filterNonMusic) {
+        isEligibleLocalMusic(durationMs, displayName, path)
+    } else {
+        hasPlayableAudioExtension(displayName, path)
+    }
 
     /**
      * MediaStore's `IS_MUSIC` flag is advisory and often includes notification
