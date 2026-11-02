@@ -3,6 +3,7 @@ package com.music.bitchord.ui
 import android.app.Application
 import android.content.Context
 import com.music.bitchord.data.TrackLog
+import com.music.bitchord.data.lyrics.EmbeddedLyrics
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsOverrideStore
 import com.music.bitchord.data.lyrics.LyricsRepository
@@ -59,6 +60,7 @@ class LyricsControllerSyncDumpTest {
     private val savedRecheck = AppSettings.syncSafetyDownloadRecheck.value
     private val savedEcho = TrackLog.echo
     private val savedDecode = SyncTestMode.decodeHead
+    private var savedEmbedded: (suspend (Context, String) -> EmbeddedLyrics.Embedded?)? = null
 
     @Before
     fun setUp() {
@@ -76,6 +78,7 @@ class LyricsControllerSyncDumpTest {
             TestApplication(context, external),
             scope,
         )
+        savedEmbedded = controller.embeddedLyrics
     }
 
     @After
@@ -94,6 +97,7 @@ class LyricsControllerSyncDumpTest {
         AppSettings.syncSafetyDownloadRecheck.value = savedRecheck
         TrackLog.echo = savedEcho
         SyncTestMode.decodeHead = savedDecode
+        savedEmbedded?.let { controller.embeddedLyrics = it }
         storeField.set(LyricsTiming, null)
         directory.deleteRecursively()
         external.deleteRecursively()
@@ -197,6 +201,49 @@ class LyricsControllerSyncDumpTest {
         assertTrue("expected the untimed block, got $dump", dump.contains("base=none"))
         assertEquals(listOf(localUri), decoded)
         assertTrue(wav.readBytes().contentEquals(byteArrayOf(7, 6, 5)))
+    }
+
+    @Test
+    fun `a sidecar with a provider but no id dumps and keeps its wav`() = runBlocking {
+        val id = "sidecar0001"
+        val logs = captureLog()
+        val decoded = mutableListOf<String?>()
+        SyncTestMode.decodeHead = { _, song ->
+            decoded += song.localUri
+            byteArrayOf(9, 8, 7)
+        }
+        val packageDir = File(directory, "offline").apply { mkdirs() }
+        val playlist = File(packageDir, "stream.m3u8").apply { writeText("") }
+        File(packageDir, "lyrics.lrc").writeText(
+            "[re:BitChord LRCLIB]\n[00:00.00]one\n[00:00.00]two\n",
+        )
+        // The unit-test android.jar returns null from Uri.parse, so the sidecar
+        // is read by path here; parseText is the same half withSource uses.
+        val raw = requireNotNull(EmbeddedLyrics.sidecar(playlist.path))
+        controller.embeddedLyrics = { _, _ -> EmbeddedLyrics.parseText(raw) }
+        val localUri = playlist.toURI().toString()
+
+        controller.loadLyrics(id, "Song", "Artist", durationMs = 200_000L, localUri = localUri)
+        withTimeout(5_000L) { controller.lyricsChecked.first { it } }
+        val dump = withTimeout(5_000L) {
+            var found: String? = null
+            while (found == null) {
+                found = synchronized(logs) {
+                    logs.firstOrNull { it.contains("sync-dump: begin $id ") }
+                }
+                if (found == null) kotlinx.coroutines.delay(10)
+            }
+            checkNotNull(found)
+        }
+        val wav = File(File(external, "synctest"), "$id.wav")
+        withTimeout(5_000L) {
+            while (!wav.isFile) kotlinx.coroutines.delay(10)
+        }
+
+        assertTrue("expected the file's provider and no id, got $dump", dump.contains("source=file:LRCLIB@unknown"))
+        assertTrue("expected the untimed block, got $dump", dump.contains("base=none"))
+        assertEquals(listOf(localUri), decoded)
+        assertTrue(wav.readBytes().contentEquals(byteArrayOf(9, 8, 7)))
     }
 
     @Test

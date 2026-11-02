@@ -86,20 +86,25 @@ object EmbeddedLyrics {
                 .onFailure { Log.d(TAG, "no embedded lyrics in $uriString: ${it.message}") }
                 .getOrNull()
                 ?: return@withContext null
-            // The same last pass the network sources get, so a downloaded track
-            // and a streamed one draw their backing vocals the same way.
-            val lines = LrcLib.parseLrc(raw).takeIf { lines -> lines.any { it.text.isNotBlank() } }
-                ?.withBackgroundVocals()
-                ?: return@withContext null
-            val header = SOURCE_TAG.find(raw)
-            val source = header?.groupValues?.get(1)?.let { name ->
-                LyricsSource.entries.firstOrNull { it.name == name }
-            }
-            val videoId = FileLyricsOrigin.knownVideoId(
-                header?.groupValues?.getOrNull(2)?.removePrefix("@"),
-            )
-            Embedded(lines, source, videoId)
+            parseText(raw)
         }
+
+    /** [withSource]'s parsing half, split out so a JVM test can feed it raw LRC. */
+    internal fun parseText(raw: String): Embedded? {
+        // The same last pass the network sources get, so a downloaded track
+        // and a streamed one draw their backing vocals the same way.
+        val lines = LrcLib.parseLrc(raw).takeIf { lines -> lines.any { it.text.isNotBlank() } }
+            ?.withBackgroundVocals()
+            ?: return null
+        val header = SOURCE_TAG.find(raw)
+        val source = header?.groupValues?.get(1)?.let { name ->
+            LyricsSource.entries.firstOrNull { it.name == name }
+        }
+        val videoId = FileLyricsOrigin.knownVideoId(
+            header?.groupValues?.getOrNull(2)?.removePrefix("@"),
+        )
+        return Embedded(lines, source, videoId)
+    }
 
     /** `[re:BitChord LRCLIB]`: the header a download writes naming where its lyrics came from. */
     private val SOURCE_TAG = Regex("""(?m)^\[re:BitChord ([A-Z_]+)(?: @([A-Za-z0-9_-]+))?]""")

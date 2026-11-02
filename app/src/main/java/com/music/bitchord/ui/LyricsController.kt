@@ -1,6 +1,7 @@
 package com.music.bitchord.ui
 
 import android.app.Application
+import android.content.Context
 import com.music.bitchord.data.TrackDiagnostics
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.cover.CoverTitles
@@ -77,6 +78,10 @@ class LyricsController(
 
     /** The repository call; a seam for tests, as [LyricsRepository.transcriber] is there. */
     internal var lyricsLookup: LyricsLookup = LyricsRepository::lyrics
+
+    /** The file's own lyrics; a seam because the JVM test has no real `Uri.parse`. */
+    internal var embeddedLyrics: suspend (Context, String) -> EmbeddedLyrics.Embedded? =
+        EmbeddedLyrics::withSource
 
     /** Where sync-test dumps keep their wav and log; [Dispatchers.IO], controllable in tests. */
     internal var syncDumpDispatcher: CoroutineDispatcher = Dispatchers.IO
@@ -450,7 +455,7 @@ class LyricsController(
             // recording. The caller has already had the player's length for
             // every track before this job starts.
             if (localUri != null) {
-                EmbeddedLyrics.withSource(app, localUri)?.let { file ->
+                embeddedLyrics(app, localUri)?.let { file ->
                     val embedded = file.lines
                     _lyrics.value = embedded
                     // No source to name: what the file records is the lyrics,

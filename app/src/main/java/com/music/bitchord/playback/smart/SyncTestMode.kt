@@ -145,24 +145,29 @@ object SyncTestMode {
         write(context, videoId, wav)
     }
 
-    // Serialized: keepHead and a song check can keep the same id at once, and
-    // the rename fallback deletes the target before replacing it. Unique temp
-    // names keep a write from ever sharing another's partial file.
-    @Synchronized
+    // Serialized on its own lock, not the object monitor: a long WAV write runs
+    // on IO while [report] runs on the main thread, which must not wait for it.
+    // keepHead and a song check can keep the same id at once, and the rename
+    // fallback deletes the target before replacing it. Unique temp names keep a
+    // write from ever sharing another's partial file.
+    private val writeLock = Any()
+
     private fun write(context: Context, id: String, wav: ByteArray) {
-        runCatching {
-            val root = externalRoot(context) ?: return@runCatching
-            val dir = File(root, WAV_DIR).apply { mkdirs() }
-            val file = File(dir, "${safeName(id)}.wav")
-            val temporary = File.createTempFile("${file.name}.", ".tmp", dir)
-            try {
-                temporary.writeBytes(wav)
-                if (!temporary.renameTo(file)) {
-                    file.delete()
-                    temporary.renameTo(file)
+        synchronized(writeLock) {
+            runCatching {
+                val root = externalRoot(context) ?: return@runCatching
+                val dir = File(root, WAV_DIR).apply { mkdirs() }
+                val file = File(dir, "${safeName(id)}.wav")
+                val temporary = File.createTempFile("${file.name}.", ".tmp", dir)
+                try {
+                    temporary.writeBytes(wav)
+                    if (!temporary.renameTo(file)) {
+                        file.delete()
+                        temporary.renameTo(file)
+                    }
+                } finally {
+                    temporary.delete()
                 }
-            } finally {
-                temporary.delete()
             }
         }
     }
