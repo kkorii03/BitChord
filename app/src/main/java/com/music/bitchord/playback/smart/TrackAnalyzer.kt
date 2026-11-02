@@ -40,7 +40,6 @@ import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.AutomixPerformanceMode
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.TrackMatcher
-import com.music.bitchord.ko.koCrossfadeAnalysisCompleted
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.BatteryPolicy
 import kotlinx.coroutines.CompletableDeferred
@@ -379,7 +378,6 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                 windowsOf(trackId).addAll(listOf(AnalysisWindow.HEAD, AnalysisWindow.TAIL))
                 completeWindow(trackId, AnalysisWindow.HEAD)
                 completeWindow(trackId, AnalysisWindow.TAIL)
-                koCrossfadeAnalysisCompleted.tryEmit(Unit)
             }
         }
     }
@@ -626,7 +624,6 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         results[trackId] = merged
         trimAnalysisCaches(keep = trackId)
         completeWindow(trackId, window)
-        koCrossfadeAnalysisCompleted.tryEmit(Unit)
         // Only a track measured at both ends is persisted. A head-only result
         // is missing the outgoing half, and a tail-only one the incoming half;
         // storing either would freeze a deliberately partial answer in place.
@@ -654,7 +651,6 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         windowsOf(trackId).add(window)
         if (results[trackId] == null) results[trackId] = empty(trackId, durationSeconds)
         completeWindow(trackId, window)
-        koCrossfadeAnalysisCompleted.tryEmit(Unit)
     }
 
     /**

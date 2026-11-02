@@ -6,20 +6,12 @@ import com.music.bitchord.playback.CrossfadeController
 import com.music.bitchord.playback.smart.AutomixWorkPolicy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.roundToLong
-
-/**
- * Emits whenever an analysis pass publishes a result. The idle ticker parks
- * between cues, so this is the event that lets a newly-landed analysis move
- * the planned cue without polling [com.music.bitchord.playback.smart.TrackAnalyzer].
- */
-internal val koCrossfadeAnalysisCompleted = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
 
 /**
  * [KO] crossfade-ticker
@@ -62,16 +54,6 @@ internal fun CrossfadeController.koLaunchSettingsWake(scope: CoroutineScope): Jo
         ) { _, _, _, _, _ -> Unit }
             .drop(1)
             .collect { wakeTicker() }
-    }
-
-/**
- * Wakes the parked ticker when an analysis pass lands. Without this an
- * earlier analyzed cue (and the Automix marker) would stay at the fallback
- * until the horizon tick even though the plan just became available.
- */
-internal fun CrossfadeController.koLaunchAnalysisWake(scope: CoroutineScope): Job =
-    scope.launch {
-        analysisCompleted.collect { wakeTicker() }
     }
 
 /**
