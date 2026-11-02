@@ -1940,6 +1940,7 @@ object InnertubeParser {
             thumbnailUrl = thumbnails.best() ?: videoId?.let(::videoThumbnailUrl),
             videoId = videoId,
             browseId = resolvedBrowseId,
+            isArtist = "ARTIST" in pageType,
             isVideo = isVideo,
         )
     }

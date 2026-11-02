@@ -155,13 +155,13 @@ internal fun homeShelfKind(shelf: HomeShelf, index: Int, firstIsHero: Boolean): 
 internal fun toggledRecentsViewType(viewType: LibraryViewType): LibraryViewType =
     if (viewType == LibraryViewType.LIST) LibraryViewType.GRID else LibraryViewType.LIST
 
-private fun ShelfItem.matchesCurrentlyPlaying(song: Song?): Boolean {
+internal fun ShelfItem.matchesCurrentlyPlaying(song: Song?): Boolean {
     song ?: return false
     if (videoId == null) return false
     return videoId == song.videoId || (title == song.title && subtitle == song.artist)
 }
 
-private fun List<ShelfItem>.playingItemMatcher(song: Song?): (ShelfItem) -> Boolean {
+internal fun List<ShelfItem>.playingItemMatcher(song: Song?): (ShelfItem) -> Boolean {
     song ?: return { false }
     // The card that was played, when the shelf holds it, and only that one —
     // see [com.music.bitchord.data.model.playingRowMatcher], which rows use.
