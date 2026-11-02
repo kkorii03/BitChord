@@ -106,15 +106,15 @@ class FakeContext private constructor() : ContextWrapper(null) {
     override fun getSharedPreferences(name: String?, mode: Int): SharedPreferences =
         currentPreferences.prefs
 
-    override fun getFilesDir(): File = currentFilesDir
+    override fun getFilesDir(): File? = currentFilesDir
 
     companion object {
         private var currentPreferences: FakePreferences = FakePreferences()
-        private var currentFilesDir: File = File(System.getProperty("java.io.tmpdir"))
+        private var currentFilesDir: File? = File(System.getProperty("java.io.tmpdir"))
 
         fun create(
             preferences: FakePreferences = FakePreferences(),
-            filesDir: File = File(
+            filesDir: File? = File(
                 System.getProperty("java.io.tmpdir"),
                 "bitchord-test-${System.nanoTime()}",
             ).apply { mkdirs() },
@@ -126,6 +126,11 @@ class FakeContext private constructor() : ContextWrapper(null) {
             val unsafe = field.get(null)
             val allocate = unsafeClass.getMethod("allocateInstance", Class::class.java)
             return allocate.invoke(unsafe, FakeContext::class.java) as Context
+        }
+
+        /** Makes the directory appear (or vanish) between calls, like a cold start. */
+        fun setFilesDir(filesDir: File?) {
+            currentFilesDir = filesDir
         }
     }
 }

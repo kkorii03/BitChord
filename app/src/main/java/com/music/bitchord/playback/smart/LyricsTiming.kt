@@ -4145,14 +4145,16 @@ object LyricsTiming {
         val version: Int = 0,
     )
 
-    private class Store(private val file: File) {
+    private class Store(private val file: File?) {
         private val mutex = Mutex()
         private var entries: LinkedHashMap<String, Entry>? = null
 
         private suspend fun loaded(): LinkedHashMap<String, Entry> {
             entries?.let { return it }
-            val read = withContext(Dispatchers.IO) {
-                runCatching { json.decodeFromString(Saved.serializer(), file.readText()).entries }.getOrNull()
+            val read = file?.let {
+                withContext(Dispatchers.IO) {
+                    runCatching { json.decodeFromString(Saved.serializer(), it.readText()).entries }.getOrNull()
+                }
             }
             return LinkedHashMap(read.orEmpty()).also { entries = it }
         }
@@ -4229,6 +4231,7 @@ object LyricsTiming {
          * the pre-import entries.
          */
         suspend fun restore(text: String?): Boolean = mutex.withLock {
+            val file = file ?: return@withLock false
             runCatching {
                 if (text == null) {
                     file.delete()
@@ -4260,6 +4263,7 @@ object LyricsTiming {
          * times a second.
          */
         private fun scheduleSave() {
+            if (file == null) return
             if (!saving.compareAndSet(false, true)) return
             saveScope.launch {
                 try {
@@ -4273,11 +4277,12 @@ object LyricsTiming {
                         // it let a snapshot captured before an import rename
                         // its old text over the restored file.
                         runCatching {
+                            val target = file
                             val text = json.encodeToString(Saved.serializer(), snapshot)
-                            val temporary = File(file.parentFile, "${file.name}.tmp")
+                            val temporary = File(target.parentFile, "${target.name}.tmp")
                             temporary.writeText(text)
-                            if (!temporary.renameTo(file)) {
-                                temporary.copyTo(file, overwrite = true)
+                            if (!temporary.renameTo(target)) {
+                                temporary.copyTo(target, overwrite = true)
                                 temporary.delete()
                             }
                         }
@@ -4292,7 +4297,8 @@ object LyricsTiming {
 
     /** The whole timing memory as text, for a device-migration backup. */
     internal suspend fun exportBackupText(context: Context): String? = withContext(Dispatchers.IO) {
-        val file = File(context.applicationContext.filesDir, "lyrics_timing_v1.json")
+        val directory = (context.applicationContext ?: context).filesDir ?: return@withContext null
+        val file = File(directory, "lyrics_timing_v1.json")
         runCatching { file.takeIf { it.isFile }?.readText() }.getOrNull()
     }
 
@@ -4313,8 +4319,16 @@ object LyricsTiming {
     @Volatile
     private var store: Store? = null
 
-    private fun store(context: Context): Store =
-        store ?: synchronized(this) {
-            store ?: Store(File(context.applicationContext.filesDir, "lyrics_timing_v1.json")).also { store = it }
+    private fun store(context: Context): Store {
+        store?.let { return it }
+        synchronized(this) {
+            store?.let { return it }
+            val file = (context.applicationContext ?: context).filesDir
+                ?.let { File(it, "lyrics_timing_v1.json") }
+                // Not cached: a directory can appear later, and this store could
+                // never save. The next call builds a real one.
+                ?: return Store(null)
+            return Store(file).also { store = it }
         }
+    }
 }
