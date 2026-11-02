@@ -17,7 +17,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.resetMain
@@ -71,7 +71,7 @@ class LyricsControllerCoverAiTest {
 
     @After
     fun tearDown() {
-        scope.cancel()
+        runBlocking { job.cancelAndJoin() }
         Dispatchers.resetMain()
         AppSettings.lyricsSources.value = savedSources
         AppSettings.lyricsSourceOrder.value = savedOrder

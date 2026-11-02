@@ -28,6 +28,29 @@ class StartupLaunchWiringTest {
             "the deferred work belongs behind STARTUP_DEFER_MS",
             source.contains("delay(STARTUP_DEFER_MS)"),
         )
+        assertTrue(
+            "the deferred ACCOUNT work must actually load the account",
+            source.contains("StartupDeferredWork.ACCOUNT -> loadAccount()"),
+        )
+        assertTrue(
+            "the deferred UPDATE_CHECK work must stay wired to the update check",
+            source.contains("StartupDeferredWork.UPDATE_CHECK ->"),
+        )
+    }
+
+    @Test
+    fun `library and playlists are still fetched, just when the tab is shown`() {
+        val source = mainViewModelSource()
+        val shown = source.substringAfter("fun onLibraryShown()").substringBefore("\n    }")
+
+        assertTrue(
+            "onLibraryShown must fetch the Library the launch no longer fetches eagerly",
+            shown.contains("loadLibrary()"),
+        )
+        assertTrue(
+            "onLibraryShown must fetch the playlists the launch no longer fetches eagerly",
+            shown.contains("loadPlaylists()"),
+        )
     }
 
     private fun mainViewModelSource(): String {

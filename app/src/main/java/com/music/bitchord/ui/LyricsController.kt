@@ -118,6 +118,14 @@ class LyricsController(
     private var aiTimingJob: Job? = null
 
     /**
+     * A failing measurement or automatic AI pass is a background detail, not a
+     * reason to take the playback down with it; the plain lyrics stay on screen.
+     */
+    private val timingFailureHandler = CoroutineExceptionHandler { _, error ->
+        TrackLog.w("BitChord", "lyrics timing failed", error)
+    }
+
+    /**
      * The song whose check was started in this playback. It keeps a check that
      * found no audio from being tried again on every lyrics delivery in the
      * same playback; a different track (or coming back to this one later)
@@ -854,15 +862,7 @@ class LyricsController(
         }
         val generation = lyricsGeneration
         val context = app
-        lyricsTimingJob = scope.launch(
-            // Background timing is best effort: an unexpected failure (a
-            // provider or store error) must not escape as an uncaught
-            // coroutine exception and take the process down.
-            CoroutineExceptionHandler { _, error ->
-                if (error is kotlinx.coroutines.CancellationException) return@CoroutineExceptionHandler
-                TrackLog.d("BitChord", "lyrics-timing: pass failed: ${error.message}", request.videoId)
-            },
-        ) {
+        lyricsTimingJob = scope.launch(timingFailureHandler) {
             // Whatever else changes this video's timing — the lock screen, the
             // next-song preparation measuring it first — shows here too.
             launch {
