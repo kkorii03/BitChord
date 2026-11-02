@@ -5,6 +5,7 @@ import android.media.MediaDataSource
 import android.net.Uri
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.ko.downloads.KoDownloadRecords
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.PowerState
 import kotlinx.coroutines.Dispatchers
@@ -47,19 +48,38 @@ object VideoAudio {
     /** How long a song check waits for its opening to reach the disk. */
     private const val HEAD_TIMEOUT_MS = 20_000L
 
+    /**
+     * Sound read from one copy, with the rendition it came from. The clock a
+     * transcript belongs to is the copy that was actually opened, so it is
+     * captured here rather than re-asked after the listen.
+     */
+    data class SongAudio(
+        val bytes: ByteArray,
+        /** The cache rendition key, or null when read straight off a local file. */
+        val renditionKey: String?,
+        val fromFile: Boolean,
+        /** The verified source pair recorded for a local file, captured when it was opened. */
+        val localSourceConfigId: String? = null,
+        val localTrackId: String? = null,
+    )
+
     /** The last two, by video: the AI timing and the AI lyrics often ask for the same song. */
-    private val recent = object : LinkedHashMap<String, ByteArray>(4, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ByteArray>) = size > 2
+    private val recent = object : LinkedHashMap<String, SongAudio>(4, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, SongAudio>) = size > 2
     }
     private val locks = ConcurrentHashMap<String, Any>()
 
     /** The last two song checks, by recording, file and length — a retry asks again. */
-    private val recentSongs = object : LinkedHashMap<String, ByteArray>(4, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ByteArray>) = size > 2
+    private val recentSongs = object : LinkedHashMap<String, SongAudio>(4, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, SongAudio>) = size > 2
     }
     private val songLocks = ConcurrentHashMap<String, Any>()
 
-    suspend fun wav(context: Context, videoId: String): ByteArray? = withContext(Dispatchers.IO) {
+    suspend fun wav(context: Context, videoId: String): ByteArray? =
+        wavCopy(context, videoId)?.bytes
+
+    /** [wav] with the rendition it was read from, so its clock is not guessed afterwards. */
+    suspend fun wavCopy(context: Context, videoId: String): SongAudio? = withContext(Dispatchers.IO) {
         synchronized(recent) { recent[videoId] }?.let { return@withContext it }
         if (!PowerState.screenOn) {
             TrackLog.d(TAG, "AI timing: the screen is off", videoId)
@@ -86,9 +106,9 @@ object VideoAudio {
         }
         synchronized(locks.getOrPut(videoId) { Any() }) {
             synchronized(recent) { recent[videoId] }?.let { return@synchronized it }
-            val bytes = decode(context, videoId) ?: return@synchronized null
-            synchronized(recent) { recent[videoId] = bytes }
-            bytes
+            val audio = decode(videoId, copy) ?: return@synchronized null
+            synchronized(recent) { recent[videoId] = audio }
+            audio
         }
     }
 
@@ -158,7 +178,14 @@ object VideoAudio {
         context: Context,
         song: Song,
         untilSeconds: Double = SONG_CHECK_SECONDS,
-    ): ByteArray? = withContext(Dispatchers.IO) {
+    ): ByteArray? = songWavCopy(context, song, untilSeconds)?.bytes
+
+    /** [songWav] with the copy it actually opened, so the transcript is tagged with that clock. */
+    suspend fun songWavCopy(
+        context: Context,
+        song: Song,
+        untilSeconds: Double = SONG_CHECK_SECONDS,
+    ): SongAudio? = withContext(Dispatchers.IO) {
         if (!untilSeconds.isFinite() || untilSeconds <= 0.0) return@withContext null
         val until = untilSeconds.coerceAtMost(MAX_SECONDS)
         val key = songCacheKey(song, until)
@@ -175,12 +202,25 @@ object VideoAudio {
                 return@synchronized it
             }
             val bytes = decodeSong(song, opened.data, opened.fromFile, until) ?: return@synchronized null
-            synchronized(recentSongs) { recentSongs[key] = bytes }
-            bytes
+            val audio = SongAudio(
+                bytes,
+                opened.renditionKey,
+                opened.fromFile,
+                opened.localSourceConfigId,
+                opened.localTrackId,
+            )
+            synchronized(recentSongs) { recentSongs[key] = audio }
+            audio
         }
     }
 
-    private class SongSource(val data: MediaDataSource, val fromFile: Boolean)
+    private class SongSource(
+        val data: MediaDataSource,
+        val fromFile: Boolean,
+        val renditionKey: String?,
+        val localSourceConfigId: String? = null,
+        val localTrackId: String? = null,
+    )
 
     private suspend fun openSongSource(context: Context, song: Song): SongSource? {
         val local = song.localUri?.takeIf { it.isNotBlank() }?.let { Uri.parse(it) }
@@ -195,22 +235,49 @@ object VideoAudio {
                 return null
             }
         }
-        val data = VersionAudioAligner.openDataSource(context, song)
+        if (fromFile) {
+            // Read the file's clock here, when its data source is opened. Asking
+            // again after the ninety-second decode could tag the words with a
+            // repair that landed meanwhile.
+            val meta = KoDownloadRecords.savedMetadataFor(song.videoId)
+            val data = VersionAudioAligner.openDataSource(context, song)
+            if (data == null) {
+                TrackLog.d(TAG, "song check: no audio to listen to", song.videoId)
+                return null
+            }
+            return SongSource(
+                data,
+                true,
+                null,
+                meta?.hqSourceConfigId,
+                meta?.hqTrackId,
+            )
+        }
+        // Pick once and open that exact copy: asking again after the listen
+        // could name a different rendition than the one whose words were heard.
+        val copy = VersionAudioAligner.renditionToMeasure(song.videoId) ?: return null
+        val data = AudioCache.renditionDataSource(
+            Uri.parse("bitchord://watch?v=${song.videoId}"),
+            copy,
+        )
         if (data == null) {
             TrackLog.d(TAG, "song check: no audio to listen to", song.videoId)
             return null
         }
-        return SongSource(data, fromFile)
+        return SongSource(data, false, copy.key)
     }
 
     private fun songCacheKey(song: Song, untilSeconds: Double): String =
         "${song.videoId}\u0000${song.localUri.orEmpty()}\u0000$untilSeconds"
 
-    private fun decode(context: Context, videoId: String): ByteArray? {
+    private fun decode(
+        videoId: String,
+        copy: AudioCache.Rendition,
+    ): SongAudio? {
         if (!PowerState.screenOn) return null
-        val source = VersionAudioAligner.openDataSource(
-            context,
-            Song(videoId = videoId, title = "", artist = "", thumbnailUrl = null, isVideo = true),
+        val source = AudioCache.renditionDataSource(
+            Uri.parse("bitchord://watch?v=$videoId"),
+            copy,
         ) ?: return null
         val resampler = Resampler(RATE * 2 * 240)
         try {
@@ -235,7 +302,7 @@ object VideoAudio {
             TrackLog.d(TAG, "too long to send inline", videoId)
             return null
         }
-        return header(data.size) + data
+        return SongAudio(header(data.size) + data, copy.key, fromFile = false)
     }
 
     /**

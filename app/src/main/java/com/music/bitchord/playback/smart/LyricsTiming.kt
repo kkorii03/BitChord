@@ -35,6 +35,7 @@ import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.HqMatchPolicy
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.download.LyricsTag
+import com.music.bitchord.ko.downloads.KoDownloadRecords
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.NextPrepPolicy
 import com.music.bitchord.playback.PowerState
@@ -113,6 +114,24 @@ object LyricsTiming {
         var failure: NextPrepPolicy.SyncFailure? = null
     }
 
+    /**
+     * Which audio clock a stored correction was measured on.
+     *
+     * [Unknown] is every record saved before the clock was kept: it keeps the
+     * old behaviour exactly, including the saved HQ map's safety switch.
+     * [YouTube] is the upload the providers and measurements agree on.
+     * [Substitute] names the verified high-quality rendition actually read.
+     */
+    sealed interface Clock {
+        data object Unknown : Clock
+        data object YouTube : Clock
+        data class Substitute(val sourceConfigId: String, val trackId: String) : Clock
+    }
+
+    private const val CLOCK_VERSION = 1
+    private const val CLOCK_YOUTUBE = "yt"
+    private const val CLOCK_SUBSTITUTE = "alt"
+
     /** How the lines were moved before any correction by hand. */
     sealed interface Adjustment {
         val byAi: Boolean
@@ -134,11 +153,18 @@ object LyricsTiming {
         ) : Adjustment
     }
 
-    /** Heard words for the per-line layer, with the rendition key they belong to and the playing one. */
+    /**
+     * Heard words for the per-line layer, with the rendition key and the clock
+     * they belong to and the playing one. [timing] converts the words onto the
+     * playing clock before building this, so the two clocks are equal whenever
+     * the layer runs; a missing map leaves the words out instead.
+     */
     data class PerLineWords(
         val words: List<LyricsWordAlign.Heard>,
         val wordsKey: Int,
         val currentKey: Int,
+        val wordsClock: Clock = Clock.Unknown,
+        val currentClock: Clock = Clock.Unknown,
     )
 
     /**
@@ -230,6 +256,15 @@ object LyricsTiming {
     val changes: SharedFlow<String> get() = _changes
     private val _changes = MutableSharedFlow<String>(extraBufferCapacity = 8)
 
+    /**
+     * A substitute was just recorded for [videoId]: let the lyrics screen, the
+     * lock screen and the next-row preparation re-read the clock on this event.
+     * No timer and no poll.
+     */
+    fun notifyStreamChoice(videoId: String) {
+        _changes.tryEmit(videoId)
+    }
+
     /** A measured shift smaller than this, at the record's pace, is the two being the same. */
     private const val MIN_SHIFT_MS = 150L
 
@@ -257,19 +292,66 @@ object LyricsTiming {
         // that map applies even when no measurement or AI answer exists.
         val entry = store(context).get(videoId) ?: Entry()
         val key = textKey(lines, audioSource)
-        val base = if (baseAllowed) {
+        val originalBase = if (baseAllowed) {
             baseOf(entry, lines, measuredAllowed, isVideo, audioSource, key, videoId)
         } else {
             null
+        }
+        val playing = playingClock(videoId)
+        var converted = 0
+        var dropped = 0
+        // A correction tagged with the clock it was measured on is put on the
+        // playing clock now. Old records carry no tag and keep hqAdjustment's
+        // switch-gated behaviour below.
+        val baseClock = when {
+            originalBase == null -> Clock.Unknown
+            originalBase.byAi -> clockOf(entry.aiClock)
+            else -> clockOf(entry.autoClock)
+        }
+        var hq = hqAdjustment(context, videoId)
+        val base = if (originalBase != null &&
+            baseClock !is Clock.Unknown && playing !is Clock.Unknown
+        ) {
+            // The stored answer is already on its measured clock; once moved
+            // onto the playing one, the YouTube→copy map must not run again.
+            hq = null
+            if (baseClock == playing) {
+                originalBase
+            } else {
+                val conversion = conversion(context, videoId, baseClock, playing)
+                if (conversion == null) {
+                    dropped++
+                    null
+                } else {
+                    converted++
+                    convertAdjustment(originalBase, conversion)
+                }
+            }
+        } else {
+            originalBase
+        }
+        val manualClock = clockOf(entry.manualClock)
+        var manualMs = entry.manualMs ?: 0L
+        if (manualMs != 0L && manualClock !is Clock.Unknown && playing !is Clock.Unknown &&
+            manualClock != playing
+        ) {
+            val conversion = conversion(context, videoId, manualClock, playing)
+            if (conversion == null) {
+                dropped++
+                manualMs = 0L
+            } else {
+                converted++
+                manualMs = conversion.delta(manualMs)
+            }
         }
         val engine = if (base?.byAi == true) entry.aiEngine ?: ENGINE_GEMINI else null
         val bias = engine?.let { aiBias(context, it) } ?: 0L
         val timing = Timing(
             base = base,
-            manualMs = entry.manualMs ?: 0L,
+            manualMs = manualMs,
             aiBiasMs = bias,
             aiEngine = engine,
-            hq = hqAdjustment(context, videoId),
+            hq = hq,
             videoId = videoId,
         )
         // The provider's own line times can stay a fifth of a second early or
@@ -277,8 +359,23 @@ object LyricsTiming {
         // clock, and a longer video can drift. One constant move or one
         // straight line, learned from the words heard, goes on top of base and
         // HQ and under the listener's own correction.
-        val refineWords = refineWords(entry, key, base)
-        val refineClock = onHqClock(refineWords, timing)
+        val refineSource = refineWords(entry, key, base)
+        val refineClock = when {
+            refineSource.words.isEmpty() -> emptyList()
+            refineSource.clock is Clock.Unknown || playing is Clock.Unknown ->
+                onHqClock(refineSource.words, timing)
+            refineSource.clock == playing -> refineSource.words
+            else -> {
+                val conversion = conversion(context, videoId, refineSource.clock, playing)
+                if (conversion == null) {
+                    dropped++
+                    emptyList()
+                } else {
+                    converted++
+                    conversion.words(refineSource.words)
+                }
+            }
+        }
         val refine = if (baseAllowed && refineClock.isNotEmpty()) {
             RefinePolicy.compute(
                 apply(
@@ -315,7 +412,13 @@ object LyricsTiming {
             emptyList()
         }
         val perLine = perLineWords.takeIf { it.isNotEmpty() }?.let {
-            PerLineWords(words = it, wordsKey = key, currentKey = key)
+            PerLineWords(
+                words = it,
+                wordsKey = key,
+                currentKey = key,
+                wordsClock = playing,
+                currentClock = playing,
+            )
         }
         val refinedWithPerLine = refined.copy(perLine = perLine)
         val refinedLines = applyThroughRefine(lines, refinedWithPerLine)
@@ -337,24 +440,46 @@ object LyricsTiming {
         // bake it into the kept words: a correction by hand, a refine, a
         // per-line move, or a newly learned engine lateness must move the heard
         // words with their line.
-        val heard = if (base?.byAi == true && entry.aiTextKey == key) {
-            val hqMap = refined.hq?.map
+        val savedHeard = if (base?.byAi == true && entry.aiTextKey == key) {
+            entry.heardWords
+        } else {
+            emptyList()
+        }
+        val heardSourceClock = if (savedHeard.isEmpty()) Clock.Unknown else clockOf(entry.heardClock)
+        val heardOnClock = when {
+            savedHeard.isEmpty() -> emptyList()
+            heardSourceClock is Clock.Unknown || playing is Clock.Unknown -> savedHeard
+            heardSourceClock == playing -> savedHeard
+            else -> {
+                val conversion = conversion(context, videoId, heardSourceClock, playing)
+                if (conversion == null) {
+                    dropped++
+                    emptyList()
+                } else {
+                    converted++
+                    conversion.savedWords(savedHeard)
+                }
+            }
+        }
+        val hqMap = if (heardSourceClock is Clock.Unknown || playing is Clock.Unknown) {
+            refined.hq?.map
+        } else {
+            null
+        }
+        val heard = heardOnClock.map { word ->
             fun heardAt(ms: Long): Long {
                 val onClock = hqMap?.map(ms) ?: ms
                 val refinedAt = (onClock + refined.refineAt(onClock)).coerceAtLeast(0L)
                 return (refinedAt + perLineShiftAt(refinedAt) + refined.extraMs).coerceAtLeast(0L)
             }
-            entry.heardWords.map { word ->
-                val start = heardAt(word.s)
-                LyricsWordAlign.Heard(
-                    text = word.t,
-                    startMs = start,
-                    endMs = maxOf(start, heardAt(word.e)),
-                )
-            }
-        } else {
-            emptyList()
+            val start = heardAt(word.s)
+            LyricsWordAlign.Heard(
+                text = word.t,
+                startMs = start,
+                endMs = maxOf(start, heardAt(word.e)),
+            )
         }
+        logClocks(videoId, playing, baseClock, refineSource.clock, manualClock, converted, dropped)
         return refinedWithPerLine.copy(heardWords = heard).takeUnless { it.isEmpty }
     }
 
@@ -362,23 +487,28 @@ object LyricsTiming {
      * The words a refine may compare with: the AI answer's own transcript when
      * that is the base, otherwise the transcript kept for refine (a measured
      * song's first ninety seconds), falling back to any AI words already heard.
-     * All are on the video's own clock.
+     * The clock is the one those words were heard on.
      */
+    private class WordSource(val words: List<LyricsWordAlign.Heard>, val clock: Clock)
+
     private fun refineWords(
         entry: Entry,
         key: Int,
         base: Adjustment?,
-    ): List<LyricsWordAlign.Heard> {
+    ): WordSource {
         // The refine's own transcript first: an AI answer's words can be
         // Gemini's, which are line-level and match no line's opening letters
         // (vc80: qQNbfxDLxq0, base=ai, refine found 0 lines and stayed -0.24 s).
-        val saved = when {
-            entry.refineHeardKey == key && entry.refineHeardWords.isNotEmpty() -> entry.refineHeardWords
-            base?.byAi == true && entry.aiTextKey == key -> entry.heardWords
-            entry.aiTextKey == key -> entry.heardWords
-            else -> emptyList()
+        val (saved, clock) = when {
+            entry.refineHeardKey == key && entry.refineHeardWords.isNotEmpty() ->
+                entry.refineHeardWords to clockOf(entry.refineHeardClock)
+            base?.byAi == true && entry.aiTextKey == key ->
+                entry.heardWords to clockOf(entry.heardClock)
+            entry.aiTextKey == key ->
+                entry.heardWords to clockOf(entry.heardClock)
+            else -> emptyList<SavedWord>() to Clock.Unknown
         }
-        return saved.map { LyricsWordAlign.Heard(it.t, it.s, it.e) }
+        return WordSource(saved.map { LyricsWordAlign.Heard(it.t, it.s, it.e) }, clock)
     }
 
     /** Heard words moved onto the HQ copy's clock, where [apply] puts the lines after [Timing.hq]. */
@@ -388,6 +518,237 @@ object LyricsTiming {
             val start = map.map(word.startMs)
             LyricsWordAlign.Heard(word.text, start, maxOf(start, map.map(word.endMs)))
         }
+    }
+
+    /** A refine's stored words put onto the clock now playing, for a result written after a listen. */
+    private fun refineWordsOnClock(
+        context: Context,
+        videoId: String?,
+        source: WordSource,
+        timing: Timing,
+    ): List<LyricsWordAlign.Heard> {
+        if (source.words.isEmpty()) return emptyList()
+        val playing = videoId?.let(::playingClock) ?: Clock.Unknown
+        return when {
+            source.clock is Clock.Unknown || playing is Clock.Unknown ->
+                onHqClock(source.words, timing)
+            source.clock == playing -> source.words
+            else -> videoId?.let {
+                conversion(context, it, source.clock, playing)?.words(source.words)
+            } ?: emptyList()
+        }
+    }
+
+    // ---- Clock identity and conversion ------------------------------------------------
+
+    private fun clockOf(saved: String?): Clock = when {
+        saved == CLOCK_YOUTUBE -> Clock.YouTube
+        saved != null && saved.startsWith("$CLOCK_SUBSTITUTE\u0001") -> {
+            val parts = saved.split('\u0001')
+            if (parts.size >= 3 && parts[1].isNotBlank() && parts[2].isNotBlank()) {
+                Clock.Substitute(parts[1], parts[2])
+            } else {
+                Clock.Unknown
+            }
+        }
+        else -> Clock.Unknown
+    }
+
+    private fun Clock.saved(): String? = when (this) {
+        Clock.Unknown -> null
+        Clock.YouTube -> CLOCK_YOUTUBE
+        is Clock.Substitute -> "$CLOCK_SUBSTITUTE\u0001$sourceConfigId\u0001$trackId"
+    }
+
+    private fun Clock.label(): String = when (this) {
+        Clock.Unknown -> "unknown"
+        Clock.YouTube -> "youtube"
+        is Clock.Substitute -> "alt:$sourceConfigId/$trackId"
+    }
+
+    /** The substitute [StreamChoice] recorded for [videoId], or unknown when it named no source row. */
+    private fun substituteClock(videoId: String): Clock {
+        val choice = StreamChoice.of(videoId) ?: return Clock.Unknown
+        val source = choice.sourceConfigId ?: return Clock.Unknown
+        val track = choice.trackId ?: return Clock.Unknown
+        return Clock.Substitute(source, track)
+    }
+
+    /** The copy actually serving [videoId] — not the copy it may swap to later. */
+    internal fun playingClock(videoId: String): Clock = when {
+        StreamChoice.isSubstitute(videoId) -> substituteClock(videoId)
+        // An explicit YouTube choice is the stream; a saved file only answers
+        // when nothing has been chosen yet.
+        StreamChoice.isYouTube(videoId) -> Clock.YouTube
+        else -> {
+            val meta = KoDownloadRecords.savedMetadataFor(videoId)
+            clockForLocalCopy(meta?.hqSourceConfigId, meta?.hqTrackId)
+        }
+    }
+
+    /** The clock of the rendition a measurement read; any substitute key is the substitute's. */
+    private fun clockForRendition(videoId: String, key: String?): Clock =
+        if (key != null && AutomixAnalysisSource.isSubstituteRendition(videoId, key)) {
+            substituteClock(videoId)
+        } else {
+            Clock.YouTube
+        }
+
+    /**
+     * The clock a remembered [StreamChoice] names, without asking the store.
+     * Used when a choice is removed: what the playing clock was just before.
+     */
+    internal fun clockOfChoice(
+        substituted: Boolean,
+        sourceConfigId: String?,
+        trackId: String?,
+    ): Clock = if (!substituted) {
+        Clock.YouTube
+    } else if (sourceConfigId != null && trackId != null) {
+        Clock.Substitute(sourceConfigId, trackId)
+    } else {
+        Clock.Unknown
+    }
+
+    /**
+     * The clock of a local file: an HQ download carries the source pair it was
+     * proved against, so it is the same substitute clock as that rendition.
+     */
+    internal fun clockForLocalCopy(sourceConfigId: String?, trackId: String?): Clock =
+        if (sourceConfigId != null && trackId != null) {
+            Clock.Substitute(sourceConfigId, trackId)
+        } else {
+            Clock.YouTube
+        }
+
+    /** The clock of the audio a song check listened to, from the copy it actually opened. */
+    internal fun clockForSongAudio(song: Song, copy: VideoAudio.SongAudio): Clock =
+        if (copy.fromFile) {
+            // Captured when the data source was opened; see [VideoAudio.SongAudio].
+            clockForLocalCopy(copy.localSourceConfigId, copy.localTrackId)
+        } else {
+            clockForRendition(song.videoId, copy.renditionKey)
+        }
+
+    private class VerifiedClock(val offsetMs: Long, val rate: Double)
+
+    private fun verifiedClock(context: Context, videoId: String, clock: Clock.Substitute): VerifiedClock? {
+        val verified = HqVerificationStore.get(
+            context,
+            videoId,
+            clock.sourceConfigId,
+            clock.trackId,
+        ) ?: return null
+        if (!verified.rate.isFinite() || verified.rate <= 0.0) return null
+        return VerifiedClock(verified.offsetMs, verified.rate)
+    }
+
+    private class ClockConversion(val map: LyricsTimeMap, val deltaScale: Double) {
+        val identity: Boolean get() = deltaScale == 1.0 && map.map(0L) == 0L
+
+        fun delta(ms: Long): Long = (ms * deltaScale).roundToLong()
+
+        fun words(words: List<LyricsWordAlign.Heard>): List<LyricsWordAlign.Heard> =
+            if (identity) words else words.map { word ->
+                val start = map.map(word.startMs)
+                LyricsWordAlign.Heard(word.text, start, maxOf(start, map.map(word.endMs)))
+            }
+
+        fun savedWords(words: List<SavedWord>): List<SavedWord> =
+            if (identity) words else words.map { word ->
+                SavedWord(t = word.t, s = map.map(word.s), e = maxOf(map.map(word.s), map.map(word.e)))
+            }
+    }
+
+    /**
+     * The conversion from [from]'s clock to [to]'s, or null when there is no
+     * verified copy to carry the correction across. A missing map drops the
+     * correction rather than showing it on the wrong clock.
+     */
+    private fun conversion(
+        context: Context,
+        videoId: String,
+        from: Clock,
+        to: Clock,
+    ): ClockConversion? {
+        if (from == to) return ClockConversion(LyricsTimeMap.shift(0L), 1.0)
+        if (from is Clock.Unknown || to is Clock.Unknown) return null
+        return when {
+            from == Clock.YouTube && to is Clock.Substitute -> {
+                val verified = verifiedClock(context, videoId, to) ?: return null
+                ClockConversion(
+                    LyricsTimeMap.linear(verified.rate, verified.offsetMs),
+                    verified.rate,
+                )
+            }
+            from is Clock.Substitute && to == Clock.YouTube -> {
+                val verified = verifiedClock(context, videoId, from) ?: return null
+                val rate = 1.0 / verified.rate
+                ClockConversion(
+                    LyricsTimeMap.linear(rate, (-verified.offsetMs / verified.rate).roundToLong()),
+                    rate,
+                )
+            }
+            from is Clock.Substitute && to is Clock.Substitute -> {
+                val a = verifiedClock(context, videoId, from) ?: return null
+                val b = verifiedClock(context, videoId, to) ?: return null
+                val rate = b.rate / a.rate
+                val offset = (b.offsetMs - b.rate * a.offsetMs / a.rate).roundToLong()
+                ClockConversion(LyricsTimeMap.linear(rate, offset), rate)
+            }
+            else -> null
+        }
+    }
+
+    /** [adjustment] composed after [conversion]: its map is measured clock → playing clock. */
+    private fun convertAdjustment(adjustment: Adjustment, conversion: ClockConversion): Adjustment {
+        if (conversion.identity) return adjustment
+        val baseMap = when (adjustment) {
+            is Adjustment.Shift -> LyricsTimeMap.shift(adjustment.ms)
+            is Adjustment.Mapped -> adjustment.map
+        }
+        val moved = composeMaps(baseMap, conversion.map)
+        val rate = (adjustment as? Adjustment.Mapped)?.rate?.times(conversion.deltaScale)
+            ?: conversion.deltaScale
+        return Adjustment.Mapped(
+            map = moved,
+            byAi = adjustment.byAi,
+            rate = rate,
+            matchPercent = (adjustment as? Adjustment.Mapped)?.matchPercent,
+        )
+    }
+
+    /** [map] followed by [after]; [after] is a verified linear map. */
+    private fun composeMaps(map: LyricsTimeMap, after: LyricsTimeMap): LyricsTimeMap {
+        val flat = map.flatten().chunked(2).flatMap { (src, dst) -> listOf(src, after.map(dst)) }
+        return LyricsTimeMap.unflatten(
+            flat,
+            map.headRate * after.headRate,
+            map.tailRate * after.tailRate,
+        ) ?: map
+    }
+
+    private val loggedClocks = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    private fun logClocks(
+        videoId: String,
+        playing: Clock,
+        base: Clock,
+        refine: Clock,
+        manual: Clock,
+        converted: Int,
+        dropped: Int,
+    ) {
+        val key = "$videoId|${playing.label()}|${base.label()}|${refine.label()}|${manual.label()}"
+        if (!loggedClocks.add(key)) return
+        if (loggedClocks.size > 3_000) loggedClocks.clear()
+        TrackLog.i(
+            "BitChord",
+            "sync clock: playing=${playing.label()} base=${base.label()} " +
+                "refine=${refine.label()} manual=${manual.label()} " +
+                "converted=$converted dropped=$dropped",
+            videoId,
+        )
     }
 
     private fun baseOf(
@@ -678,8 +1039,8 @@ object LyricsTiming {
         // listen is detected below instead of becoming the new baseline.
         val entry = snapshot?.entry ?: stored
         val key = textKey(lines, audioSource)
-        val result = refineResult(entry, key, base, lines, timing)
-        val words = refineWords(entry, key, base)
+        val result = refineResult(context, entry, key, base, lines, timing)
+        val words = refineWords(entry, key, base).words
         if (words.isEmpty()) return result
         // The snapshot was taken before the caller's long listen. If the
         // stored entry no longer matches it, another path corrected this song
@@ -712,10 +1073,12 @@ object LyricsTiming {
         }
         val saved = store(context).updateIfUnchanged(videoId, entry) {
             it.copy(
+                clockVersion = CLOCK_VERSION,
                 refineMs = appliedMs,
                 refineSlopePerMin = appliedSlope,
                 refineLines = result.lines,
                 refineMad = result.madMs,
+                refineClock = playingClock(videoId).saved(),
             )
         }
         if (!saved) {
@@ -759,13 +1122,15 @@ object LyricsTiming {
 
     /** The refine [result] for the words kept for these lyrics and sound, without writing anything. */
     private fun refineResult(
+        context: Context,
         entry: Entry,
         key: Int,
         base: Adjustment?,
         lines: List<LyricLine>,
         timing: Timing,
     ): RefinePolicy.Result {
-        val words = refineWords(entry, key, base)
+        val source = refineWords(entry, key, base)
+        val words = refineWordsOnClock(context, timing.videoId, source, timing)
         if (words.isEmpty()) return RefinePolicy.Result.NONE
         return RefinePolicy.compute(
             apply(
@@ -777,7 +1142,7 @@ object LyricsTiming {
                     perLine = null,
                 ),
             ),
-            onHqClock(words, timing),
+            words,
         )
     }
 
@@ -802,7 +1167,7 @@ object LyricsTiming {
         if (entry.refineHeardKey == key) {
             if (entry.refineHeardExtended) return true
             val heardSeconds = refineHeardSeconds(entry)
-            val result = refineResult(entry, key, timing.base, lines, timing)
+            val result = refineResult(context, entry, key, timing.base, lines, timing)
             return !RefineExtendPolicy.shouldExtend(result, heardSeconds, lastLineMs(lines))
         }
         // Only word-level transcripts serve a refine; Gemini's are line-level.
@@ -859,15 +1224,20 @@ object LyricsTiming {
             val before = store(context).get(videoId)
             val hadWords = before?.refineHeardKey == key && before.refineHeardWords.isNotEmpty()
             var heardWords: List<SavedWord>? = null
+            var heardClock: Clock = Clock.Unknown
             if (!hadWords) {
-                val audio = VideoAudio.songWav(context, song, VideoAudio.SONG_CHECK_SECONDS)
+                val copy = VideoAudio.songWavCopy(context, song, VideoAudio.SONG_CHECK_SECONDS)
                     ?: return@withLock false
-                val words = listenForRefine(audio, lines) ?: return@withLock false
+                val listenClock = clockForSongAudio(song, copy)
+                val words = listenForRefine(copy.bytes, lines) ?: return@withLock false
                 heardWords = words
+                heardClock = listenClock
                 store(context).update(videoId) {
                     it.copy(
+                        clockVersion = CLOCK_VERSION,
                         refineHeardKey = key,
                         refineHeardWords = words,
+                        refineHeardClock = listenClock.saved(),
                         refineHeardSeconds = VideoAudio.SONG_CHECK_SECONDS,
                         refineHeardExtended = false,
                     )
@@ -885,6 +1255,7 @@ object LyricsTiming {
                         start.copy(
                             refineHeardKey = key,
                             refineHeardWords = heardWords,
+                            refineHeardClock = heardClock.saved(),
                             refineHeardSeconds = VideoAudio.SONG_CHECK_SECONDS,
                             refineHeardExtended = false,
                         )
@@ -916,12 +1287,15 @@ object LyricsTiming {
                 return@withLock !hadWords
             }
             val beforeExtend = store(context).get(videoId) ?: Entry()
-            val audio = VideoAudio.songWav(context, song, target) ?: return@withLock !hadWords
-            val words = listenForRefine(audio, lines) ?: return@withLock !hadWords
+            val copy = VideoAudio.songWavCopy(context, song, target) ?: return@withLock !hadWords
+            val extendClock = clockForSongAudio(song, copy)
+            val words = listenForRefine(copy.bytes, lines) ?: return@withLock !hadWords
             store(context).update(videoId) {
                 it.copy(
+                    clockVersion = CLOCK_VERSION,
                     refineHeardKey = key,
                     refineHeardWords = words,
+                    refineHeardClock = extendClock.saved(),
                     refineHeardSeconds = target,
                     refineHeardExtended = true,
                 )
@@ -932,6 +1306,7 @@ object LyricsTiming {
                 beforeExtend.copy(
                     refineHeardKey = key,
                     refineHeardWords = words,
+                    refineHeardClock = extendClock.saved(),
                     refineHeardSeconds = target,
                     refineHeardExtended = true,
                 ),
@@ -1131,7 +1506,11 @@ object LyricsTiming {
         lines: List<LyricLine>? = null,
     ) {
         store(context).update(videoId) {
+            // A pass with no fresh answer keeps the earlier measurement; its
+            // clock must stay with it rather than becoming unknown.
+            val keepEarlier = done.result == null && !done.noChange && it.autoVersion == AUTO_VERSION
             it.copy(
+                clockVersion = CLOCK_VERSION,
                 autoVersion = AUTO_VERSION,
                 auto = autoAfter(
                     previous = it.auto,
@@ -1139,6 +1518,7 @@ object LyricsTiming {
                     fresh = done.result?.let(::savedOf),
                     noChange = done.noChange,
                 ),
+                autoClock = if (keepEarlier) it.autoClock else done.clock.saved(),
                 autoComplete = done.complete,
                 autoRecordPartial = done.recordPartial,
                 autoNoChange = done.noChange,
@@ -1166,7 +1546,7 @@ object LyricsTiming {
     internal fun <T> autoAfter(previous: T?, previousCurrent: Boolean, fresh: T?, noChange: Boolean): T? =
         fresh ?: previous.takeIf { previousCurrent && !noChange }
 
-    private sealed interface Measured {
+    internal sealed interface Measured {
         data class Done(
             val result: ChromaAlignment.Result?,
             val complete: Boolean,
@@ -1178,10 +1558,21 @@ object LyricsTiming {
             val note: String? = null,
             /** Measured against only the opening of the record: worth doing again once all of it is in. */
             val recordPartial: Boolean = false,
+            /** The audio clock the rendition actually read was on. */
+            val clock: Clock = Clock.Unknown,
         ) : Measured
 
         data object Retry : Measured
     }
+
+    /** The video's own upload is the record: it is always on YouTube's clock. */
+    internal fun originalNoChangeMeasurement(): Measured.Done = Measured.Done(
+        null,
+        complete = true,
+        noChange = true,
+        note = "비디오가 원곡과 같음",
+        clock = Clock.YouTube,
+    )
 
     /** How one candidate recording fared. */
     private class Tried(
@@ -1231,7 +1622,7 @@ object LyricsTiming {
         // The video is the record itself: nothing to move.
         if (candidates.any { it.videoId == video.videoId }) {
             CoverOriginals.remember(video.videoId, candidates.first { it.videoId == video.videoId })
-            return Measured.Done(null, complete = true, noChange = true, note = "비디오가 원곡과 같음")
+            return originalNoChangeMeasurement()
         }
 
         // The records start coming down now, while the video's opening is
@@ -1260,6 +1651,9 @@ object LyricsTiming {
             awaitVideoOpening(video)
         } ?: return Measured.Retry
         mark = lap("비디오 대기", mark)
+        // Read from the rendition actually opened, not from what is playing now:
+        // after a mid-song swap the YouTube copy may already be gone.
+        val measurementClock = clockForRendition(video.videoId, copy.key)
         val complete = copy.isComplete || video.localUri != null
         val job = currentCoroutineContext()[Job]
         // The video's opening first: decoding all of it before any answer was the
@@ -1289,6 +1683,7 @@ object LyricsTiming {
                                     firstResult, complete = false, videoBytes = copy.cachedPrefix,
                                     videoSeconds = opening.durationSeconds, recordPartial = true,
                                     note = "$firstNote\n$times · $earlyNote (원곡 앞부분으로 먼저 맞춤)",
+                                    clock = measurementClock,
                                 ),
                             )
                         }
@@ -1306,11 +1701,20 @@ object LyricsTiming {
         best?.let { CoverOriginals.remember(video.videoId, it.original) }
         val recordPartial = best?.partial ?: tried.any { it.partial }
         val found = best?.result
-            ?: return Measured.Done(null, complete, copy.cachedPrefix, clip.durationSeconds, note = note, recordPartial = recordPartial)
+            ?: return Measured.Done(
+                null,
+                complete,
+                copy.cachedPrefix,
+                clip.durationSeconds,
+                note = note,
+                recordPartial = recordPartial,
+                clock = measurementClock,
+            )
         val same = found.linear && found.rate == 1.0 && abs(found.map.map(0L)) < MIN_SHIFT_MS
         return Measured.Done(
             found.takeUnless { same }, complete, copy.cachedPrefix, clip.durationSeconds,
             noChange = same, note = note, recordPartial = recordPartial,
+            clock = measurementClock,
         )
     }
 
@@ -1763,7 +2167,7 @@ object LyricsTiming {
         if (!automatic) {
             // Asked for by hand: it now wins over the measurement, and a
             // correction made on top of the old timing no longer fits it.
-            store(context).update(videoId) { it.copy(aiPreferred = true, manualMs = null) }
+            store(context).update(videoId) { it.copy(aiPreferred = true, manualMs = null, manualClock = null) }
             _changes.tryEmit(videoId)
         }
         return adjustment
@@ -1809,7 +2213,15 @@ object LyricsTiming {
         }
         // The sound the phone already has, when it has all of it; the YouTube
         // address (Gemini fetching and watching the video) otherwise.
-        val audio = runCatching { VideoAudio.wav(context, videoId) }.getOrNull()
+        val audioCopy = runCatching { VideoAudio.wavCopy(context, videoId) }.getOrNull()
+        val audio = audioCopy?.bytes
+        // The rendition the WAV was actually read from; Gemini watching the
+        // video URL when there was no local audio is on YouTube's clock.
+        val listenedClock = if (audioCopy == null) {
+            Clock.YouTube
+        } else {
+            clockForRendition(videoId, audioCopy.renditionKey)
+        }
         val texts = sung.map { it.value.text }
         // Deepgram's Whisper first: every word it hears comes with its time to
         // the hundredth of a second, and it hears the singing nova-3 mostly
@@ -1975,9 +2387,11 @@ object LyricsTiming {
             rejectedHeard?.let { heard ->
                 store(context).update(videoId) {
                     it.copy(
+                        clockVersion = CLOCK_VERSION,
                         heardCheckKey = key,
                         heardCheckWords = heard.take(MAX_HEARD_WORDS)
                             .map { word -> SavedWord(t = word.text, s = word.startMs, e = word.endMs) },
+                        heardCheckClock = listenedClock.saved(),
                     )
                 }
             }
@@ -1986,6 +2400,7 @@ object LyricsTiming {
         persistAttempts()
         store(context).update(videoId) {
             it.copy(
+                clockVersion = CLOCK_VERSION,
                 aiTextKey = key,
                 ai = savedOf(adjustment),
                 aiShiftMs = null,
@@ -1997,8 +2412,11 @@ object LyricsTiming {
                 heardWords = acceptedHeard.orEmpty()
                     .take(MAX_HEARD_WORDS)
                     .map { word -> SavedWord(t = word.text, s = word.startMs, e = word.endMs) },
+                aiClock = listenedClock.saved(),
+                heardClock = listenedClock.saved(),
                 heardCheckKey = null,
                 heardCheckWords = emptyList(),
+                heardCheckClock = null,
                 // A new answer to the same lyrics keeps whether it was wanted
                 // over the measurement; it's [placeWithAi] that says it is.
                 aiPreferred = it.aiPreferred && it.aiTextKey == key,
@@ -2339,6 +2757,7 @@ object LyricsTiming {
             ?: return@withLock false
         if (check.failure != null) return@withLock false
         if (check.result == "no-words") return@withLock false
+        val checkClock = check.clock
         val fitted = check.fitted
         if (fitted == null) {
             // The engine answered but its transcript does not fit this sheet.
@@ -2346,9 +2765,11 @@ object LyricsTiming {
             if (check.heard.isNotEmpty()) {
                 store(context).update(song.videoId) {
                     it.copy(
+                        clockVersion = CLOCK_VERSION,
                         heardCheckKey = key,
                         heardCheckWords = check.heard.take(MAX_HEARD_WORDS)
                             .map { word -> SavedWord(t = word.text, s = word.startMs, e = word.endMs) },
+                        heardCheckClock = checkClock.saved(),
                     )
                 }
             }
@@ -2356,6 +2777,7 @@ object LyricsTiming {
         }
         store(context).update(song.videoId) {
             it.copy(
+                clockVersion = CLOCK_VERSION,
                 aiTextKey = key,
                 ai = savedOf(fitted),
                 aiShiftMs = null,
@@ -2363,8 +2785,11 @@ object LyricsTiming {
                 aiFailedKey = null,
                 heardWords = check.heard.take(MAX_HEARD_WORDS)
                     .map { word -> SavedWord(t = word.text, s = word.startMs, e = word.endMs) },
+                aiClock = checkClock.saved(),
+                heardClock = checkClock.saved(),
                 heardCheckKey = null,
                 heardCheckWords = emptyList(),
+                heardCheckClock = null,
                 aiPreferred = it.aiPreferred && it.aiTextKey == key,
                 biasSampled = false,
                 aiEngine = engine,
@@ -2401,11 +2826,13 @@ object LyricsTiming {
     ): SongCheck? {
         // Straight off the file, or the streaming copy's opening; null when
         // there is nothing to listen to yet.
-        val audio = VideoAudio.songWav(context, song) ?: run {
+        val copy = VideoAudio.songWavCopy(context, song) ?: run {
             songLog(song.videoId, "no-audio", null, null, 0)
             probe?.failure = NextPrepPolicy.SyncFailure.NO_AUDIO
             return null
         }
+        val audio = copy.bytes
+        val listenClock = clockForSongAudio(song, copy)
         // Sync-test mode only: the ninety seconds the check already decoded,
         // kept for the phone's scoring run. Off, this is a no-op.
         SyncTestMode.saveWav(context, song.videoId, audio)
@@ -2416,7 +2843,7 @@ object LyricsTiming {
         if (indices.size < MIN_AI_LINES) {
             songLog(song.videoId, "no-words", null, null, seconds)
             probe?.failure = NextPrepPolicy.SyncFailure.TOO_FEW_LINES
-            return SongCheck("no-words", null, emptyList(), null, null, seconds, null, 0, probe?.failure)
+            return SongCheck("no-words", null, emptyList(), null, null, seconds, null, 0, probe?.failure, listenClock)
         }
         val texts = indices.map { lines[it].text }
         val language = com.music.bitchord.data.lyrics.Deepgram.languageFor(texts)
@@ -2430,19 +2857,19 @@ object LyricsTiming {
                 else -> NextPrepPolicy.SyncFailure.TOO_FEW_LINES
             }
             recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe)
-            return SongCheck("no-answer", null, emptyList(), null, null, seconds, answer.httpCode, 0, probe?.failure)
+            return SongCheck("no-answer", null, emptyList(), null, null, seconds, answer.httpCode, 0, probe?.failure, listenClock)
         }
         if (heard.size < MIN_AI_LINES) {
             songLog(song.videoId, "few-words", null, null, seconds, words = heard.size, http = answer.httpCode)
             probe?.failure = NextPrepPolicy.SyncFailure.TOO_FEW_LINES
             recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe)
-            return SongCheck("few-words", null, heard, null, null, seconds, answer.httpCode, heard.size, probe?.failure)
+            return SongCheck("few-words", null, heard, null, null, seconds, answer.httpCode, heard.size, probe?.failure, listenClock)
         }
         val starts = LyricsWordAlign.placeLines(texts, heard)
         val fitted = fitAi(lines, indices, starts) ?: run {
             songLog(song.videoId, "no-fit", null, null, seconds, words = heard.size, http = answer.httpCode)
             recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe)
-            return SongCheck("no-fit", null, heard, null, null, seconds, answer.httpCode, heard.size)
+            return SongCheck("no-fit", null, heard, null, null, seconds, answer.httpCode, heard.size, clock = listenClock)
         }
         val match = fitted.matchPercent
         val shift = shownShiftMs(lines, fitted)
@@ -2450,16 +2877,16 @@ object LyricsTiming {
             !LyricsAiGuard.agreementAllows(match) -> {
                 songLog(song.videoId, "refused-match", match, shift, seconds, words = heard.size, http = answer.httpCode)
                 recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe)
-                return SongCheck("refused-match", null, heard, match, shift, seconds, answer.httpCode, heard.size)
+                return SongCheck("refused-match", null, heard, match, shift, seconds, answer.httpCode, heard.size, clock = listenClock)
             }
             !LyricsAiGuard.songShiftAllows(shift) -> {
                 songLog(song.videoId, "refused-shift", match, shift, seconds, words = heard.size, http = answer.httpCode)
                 recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe)
-                return SongCheck("refused-shift", null, heard, match, shift, seconds, answer.httpCode, heard.size)
+                return SongCheck("refused-shift", null, heard, match, shift, seconds, answer.httpCode, heard.size, clock = listenClock)
             }
         }
         recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe)
-        return SongCheck("applied", fitted, heard, match, shift, seconds, answer.httpCode, heard.size)
+        return SongCheck("applied", fitted, heard, match, shift, seconds, answer.httpCode, heard.size, clock = listenClock)
     }
 
     /**
@@ -2500,6 +2927,8 @@ object LyricsTiming {
          * `no-answer` token could mean either.
          */
         val failure: NextPrepPolicy.SyncFailure? = null,
+        /** The clock of the copy this check actually listened to. */
+        val clock: Clock = Clock.Unknown,
     )
 
     /**
@@ -2597,12 +3026,16 @@ object LyricsTiming {
     suspend fun clearAi(context: Context, videoId: String) {
         store(context).update(videoId) {
             it.copy(
+                clockVersion = CLOCK_VERSION,
                 aiTextKey = null,
                 ai = null,
                 aiShiftMs = null,
                 aiStarts = null,
+                aiClock = null,
                 heardWords = emptyList(),
+                heardClock = null,
                 manualMs = null,
+                manualClock = null,
                 aiPreferred = false,
             )
         }
@@ -2630,14 +3063,18 @@ object LyricsTiming {
         LyricsOverrideStore.removeRecheck(context, videoId)
         store(context).update(videoId) {
             it.copy(
+                clockVersion = CLOCK_VERSION,
                 aiTextKey = null,
                 ai = null,
                 aiShiftMs = null,
                 aiStarts = null,
+                aiClock = null,
                 aiFailedKey = null,
                 heardWords = emptyList(),
+                heardClock = null,
                 heardCheckKey = null,
                 heardCheckWords = emptyList(),
+                heardCheckClock = null,
                 aiPreferred = false,
                 aiEngine = null,
                 aiAttemptedKey = null,
@@ -2655,6 +3092,7 @@ object LyricsTiming {
                 autoShiftMs = null,
                 autoVersion = 0,
                 auto = null,
+                autoClock = null,
                 autoComplete = false,
                 autoNoChange = false,
                 autoRecordPartial = false,
@@ -2670,8 +3108,10 @@ object LyricsTiming {
                 refineSlopePerMin = 0.0,
                 refineLines = 0,
                 refineMad = null,
+                refineClock = null,
                 refineHeardKey = null,
                 refineHeardWords = emptyList(),
+                refineHeardClock = null,
                 refineHeardSeconds = 0.0,
                 refineHeardExtended = false,
             )
@@ -2850,6 +3290,7 @@ object LyricsTiming {
             }
             val result = best
             val chosen = result.fitted
+            val checkClock = result.clock
             val freshKey = bestFresh?.let { textKey(it.lines, audioSource) } ?: key
             val decision = DownloadedSyncCheck.decide(
                 storedVersion = entry?.syncCheckVersion,
@@ -2892,6 +3333,7 @@ object LyricsTiming {
             store(context).update(song.videoId) {
                 val keep = if (decision.replace && chosen != null) {
                     it.copy(
+                        clockVersion = CLOCK_VERSION,
                         aiTextKey = decision.key ?: key,
                         ai = savedOf(chosen),
                         aiShiftMs = null,
@@ -2899,8 +3341,11 @@ object LyricsTiming {
                         aiFailedKey = null,
                         heardWords = result.heard.take(MAX_HEARD_WORDS)
                             .map { word -> SavedWord(t = word.text, s = word.startMs, e = word.endMs) },
+                        aiClock = checkClock.saved(),
+                        heardClock = checkClock.saved(),
                         heardCheckKey = null,
                         heardCheckWords = emptyList(),
+                        heardCheckClock = null,
                         aiPreferred = false,
                         biasSampled = false,
                         aiEngine = ENGINE_DEEPGRAM_WHISPER,
@@ -3197,7 +3642,13 @@ object LyricsTiming {
     /** Keeps [ms] as the correction for [videoId]; 0 removes it. */
     suspend fun setManual(context: Context, videoId: String, ms: Long) {
         val value = ms.coerceIn(-MAX_MANUAL_MS, MAX_MANUAL_MS)
-        store(context).update(videoId) { it.copy(manualMs = value.takeIf { v -> v != 0L }) }
+        store(context).update(videoId) {
+            it.copy(
+                clockVersion = CLOCK_VERSION,
+                manualMs = value.takeIf { v -> v != 0L },
+                manualClock = playingClock(videoId).saved(),
+            )
+        }
         _changes.tryEmit(videoId)
     }
 
@@ -3292,6 +3743,8 @@ object LyricsTiming {
 
     @Serializable
     internal data class Entry(
+        /** The clock format this entry was written with; 0 is a record from before clocks were kept. */
+        val clockVersion: Int = 0,
         // ko-21/22: the loudness measurement (superseded, see AUTO_VERSION)
         // and per-line AI answers.
         val autoChecked: Boolean = false,
@@ -3302,6 +3755,8 @@ object LyricsTiming {
         // ko-23
         val autoVersion: Int = 0,
         val auto: SavedMap? = null,
+        /** The audio clock [auto] was measured on; null on entries saved before clocks. */
+        val autoClock: String? = null,
         /** The whole video was measured, or there was nothing to measure it against. */
         val autoComplete: Boolean = false,
         /** Measured, and the video keeps the record's time: nothing to move. */
@@ -3312,9 +3767,13 @@ object LyricsTiming {
         val autoVideoBytes: Long = 0L,
         val autoVideoSeconds: Double = 0.0,
         val ai: SavedMap? = null,
+        /** The audio clock [ai] was measured on; null on entries saved before clocks. */
+        val aiClock: String? = null,
         /** The automatic AI fallback got nothing for the lyrics with this key. */
         val aiFailedKey: Int? = null,
         val manualMs: Long? = null,
+        /** The audio clock the listener's nudge was made on; null on entries saved before clocks. */
+        val manualClock: String? = null,
         /** See [note]. */
         val autoNote: String? = null,
         /** Which way of searching for the original the measurement used; see [searchOutdated]. */
@@ -3333,6 +3792,8 @@ object LyricsTiming {
         val whisperKey: Int? = null,
         /** The words behind the AI answer, on the video's clock; see [timing]. */
         val heardWords: List<SavedWord> = emptyList(),
+        /** The audio clock [heardWords] was heard on; null on entries saved before clocks. */
+        val heardClock: String? = null,
         /**
          * Words heard while checking a sheet they did not fit. They are not a
          * timing answer and are never applied; they let a later lyrics lookup
@@ -3340,6 +3801,8 @@ object LyricsTiming {
          */
         val heardCheckKey: Int? = null,
         val heardCheckWords: List<SavedWord> = emptyList(),
+        /** The audio clock [heardCheckWords] was heard on; null on entries saved before clocks. */
+        val heardCheckClock: String? = null,
         /**
          * The line-level refine: the offset [RefinePolicy] found, the drift
          * per minute when the residuals followed a straight line, how many
@@ -3351,9 +3814,13 @@ object LyricsTiming {
         val refineSlopePerMin: Double = 0.0,
         val refineLines: Int = 0,
         val refineMad: Long? = null,
+        /** The audio clock the refine result was computed on; null on entries saved before clocks. */
+        val refineClock: String? = null,
         /** The lyrics (text key) the refine transcript belongs to, and its words on the video's clock. */
         val refineHeardKey: Int? = null,
         val refineHeardWords: List<SavedWord> = emptyList(),
+        /** The audio clock [refineHeardWords] was heard on; null on entries saved before clocks. */
+        val refineHeardClock: String? = null,
         /** How much of the song [refineHeardWords] covers, in seconds; 0 on entries saved before this was kept. */
         val refineHeardSeconds: Double = 0.0,
         /** The once-only longer listen has been made (or the song ends before it could help); see [RefineExtendPolicy]. */
@@ -3384,7 +3851,11 @@ object LyricsTiming {
     )
 
     @Serializable
-    private data class Saved(val entries: Map<String, Entry> = emptyMap())
+    private data class Saved(
+        val entries: Map<String, Entry> = emptyMap(),
+        /** The clock-tag format this file was written with; 0 is a file from before clocks. */
+        val version: Int = 0,
+    )
 
     private class Store(private val file: File) {
         private val mutex = Mutex()
@@ -3507,7 +3978,7 @@ object LyricsTiming {
                     delay(SAVE_DELAY_MS)
                     mutex.withLock {
                         dirty = false
-                        val snapshot = Saved(LinkedHashMap(loaded()))
+                        val snapshot = Saved(LinkedHashMap(loaded()), version = CLOCK_VERSION)
                         // The write stays under the lock as well: a restore
                         // holds it while it replaces the file, so whichever
                         // wins the lock is the final content. Writing outside
