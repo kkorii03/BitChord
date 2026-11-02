@@ -1,16 +1,23 @@
 package com.music.bitchord
 
+import android.net.FakeUri
+import com.music.bitchord.data.model.Song
 import com.music.bitchord.download.FlacTagger
+import com.music.bitchord.download.MediaTagger
 import com.music.bitchord.download.Mp4Tagger
 import com.music.bitchord.download.WebmTagger
+import com.music.bitchord.testutil.FakeContext
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 /**
  * All three taggers touch raw bytes of a file a user will actually try to play,
@@ -449,6 +456,46 @@ class MediaTaggerTest {
         assertTrue(tagged.indexOfBytes("LYRICS=$LRC".toByteArray(Charsets.UTF_8)) >= 0)
     }
 
+
+    /**
+     * The in-memory taggers hold roughly three copies of the file. A file past
+     * the cap keeps its bytes and loses only its tags, rather than failing the
+     * whole download near the heap ceiling; an unknown size is not trusted.
+     */
+    @Test
+    fun `in-memory tagging is capped and refuses unknown sizes`() {
+        assertTrue(MediaTagger.canTagInMemory(0L))
+        assertTrue(MediaTagger.canTagInMemory(32L * 1024 * 1024))
+        assertFalse(MediaTagger.canTagInMemory(32L * 1024 * 1024 + 1))
+        assertFalse(MediaTagger.canTagInMemory(-1L))
+        assertFalse(MediaTagger.canTagInMemory(null))
+    }
+
+    /**
+     * The cap has to be applied to the real file, not just to a number. A file
+     * over [MediaTagger]'s limit must come back byte-for-byte untouched rather
+     * than being loaded and tagged — the guard is what keeps the ~3-copy
+     * in-memory tagger from OOMing on a large lossless track.
+     */
+    @Test
+    fun `in-memory tagging refuses an over-cap file without rewriting it`() = runBlocking {
+        val (original, _, _) = buildFakeMp4(ByteArray(32 * 1024 * 1024 + 1))
+        val file = File.createTempFile("over-cap-", ".m4a")
+        try {
+            file.writeBytes(original)
+            val uri = FakeUri(file.toURI().toString())
+            assertEquals(original.size.toLong(), MediaTagger.sizeOf(FakeContext.create(), uri))
+            MediaTagger.embed(
+                FakeContext.create(),
+                uri,
+                Song(videoId = "over-cap", title = "T", artist = "A", thumbnailUrl = null, fromAutoplay = false),
+                "m4a",
+            )
+            assertArrayEquals(original, file.readBytes())
+        } finally {
+            file.delete()
+        }
+    }
 
     private companion object {
         const val TYPE_STREAMINFO = 0

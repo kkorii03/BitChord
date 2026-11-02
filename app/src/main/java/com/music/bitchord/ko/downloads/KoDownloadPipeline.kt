@@ -80,8 +80,29 @@ internal object KoDownloadPipeline {
         }
         val storable = DownloadStore.storable(stream.format.codec)
             ?: error("이 기기에 저장할 수 없는 형식입니다 (${stream.format.codec})")
-        return routeFromSource(context, track, stream, storable)
+        val probe = Downloader.probe(stream.url, stream.headers, stream.format.codec)
+        return routeFromSource(context, track, stream, storable, probe)
             ?: error("고음질 음원을 내보낼 수 없습니다")
+    }
+
+    /**
+     * The shape a source URL really is, from the probe when one answered and
+     * from the URL otherwise. A source may label an extensionless HLS/DASH
+     * stream as FLAC; only the bytes (or the catalogued extension) say it is an
+     * index rather than audio.
+     */
+    class ManifestShape(val packaged: Boolean, val dash: Boolean)
+
+    fun manifestShape(url: String, probe: Downloader.Probe?): ManifestShape = when (probe) {
+        // The bytes decide. A server can serve an ordinary file from a `.mpd`
+        // or `.m3u8` URL, and as a file it must stay one.
+        is Downloader.Probe.Manifest -> ManifestShape(packaged = true, dash = probe.dash)
+        is Downloader.Probe.File -> ManifestShape(packaged = false, dash = false)
+        null -> {
+            val dash = OfflineDash.handles(url)
+            val hls = url.substringBefore('?').endsWith(".m3u8", ignoreCase = true)
+            ManifestShape(packaged = hls || dash, dash = dash)
+        }
     }
 
     /**
@@ -93,16 +114,17 @@ internal object KoDownloadPipeline {
         track: Song,
         stream: SourceStream,
         storable: DownloadStore.Storable,
+        probe: Downloader.Probe? = null,
     ): Downloads.Route? {
         // A manifest is an index, not audio. Whichever kind it is, fetching
         // it as a file writes the index into something named `.flac` —
         // which is exactly what a `.mpd` did until [OfflineDash] existed:
         // a 2.7 KB download that reported success and could never play.
-        // Read off the URL rather than off `stream.format`, which describes
-        // the audio inside and says nothing about the envelope.
-        val dash = OfflineDash.handles(stream.url)
-        val hls = stream.url.substringBefore('?').endsWith(".m3u8", ignoreCase = true)
-        val packaged = hls || dash
+        // The probe reads the bytes, so an extensionless manifest is caught
+        // too; the URL is the fallback for a caller that did not probe.
+        val shape = manifestShape(stream.url, probe)
+        val dash = shape.dash
+        val packaged = shape.packaged
         // A manifest's segments are joined back into one ordinary file —
         // see [ManifestFile] — exported or not, so a lossless download is
         // a `.flac` wherever it lands. Exports used to decline manifests
