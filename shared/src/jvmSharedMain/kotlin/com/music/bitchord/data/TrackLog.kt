@@ -140,7 +140,9 @@ object TrackLog {
         error: Throwable?,
         about: String? = working.get(),
     ) {
-        echo?.invoke(level, tag, message, error)
+        // [KO] sync-diag: logcat lines name their song, so an emulator run can say
+        // which song every sync step (Deepgram answer, measurement) belonged to.
+        echo?.invoke(level, tag, if (about == null || message.contains(about)) message else "[$about] $message", error)
         // Counted from the same line the export will carry, so the summary at
         // the top of the file and the lines below it always describe one run.
         FeatureHealthCounters.observe(tag, message)
