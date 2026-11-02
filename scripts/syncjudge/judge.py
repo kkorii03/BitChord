@@ -82,6 +82,7 @@ def main():
     payload, out = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")), Path(sys.argv[2])
     proxy = sys.argv[sys.argv.index("--proxy") + 1] if "--proxy" in sys.argv else None
     out.mkdir(parents=True, exist_ok=True)
+    timed = 0
     for song in payload["songs"]:
         vid, offset = song["vid"], float(song.get("offset", 0.0))
         work = Path("work") / vid
@@ -114,7 +115,12 @@ def main():
             rows.append(dict(n=line["n"], fa=round(start + at - offset, 3), score=round(float(score), 3)))
         (out / f"{vid}.fa-out.json").write_text(json.dumps(dict(vid=vid, lines=rows)), encoding="utf-8")
         print(f"{vid}: {len(rows)}/{len(song['lines'])} lines timed", flush=True)
+        timed += bool(rows)
+    # A run that timed nothing must not read as a success (11-02: no ffmpeg on
+    # the runner failed every song and the job was still green).
+    print(f"songs timed: {timed}/{len(payload['songs'])}", flush=True)
+    return 0 if timed else 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
