@@ -459,10 +459,12 @@ object InnertubeParser {
                 val header = carousel.o("header").o("musicCarouselShelfBasicHeaderRenderer")
                 val title = header.o("title").runs()
                 // Releases and playlists open their pages; the Videos shelf's
-                // cards play, now that the player can show them.
+                // cards play, now that the player can show them. A video whose
+                // still looks square is still a card on that shelf, so it is
+                // kept by its id as 1.8 did.
                 val items = carousel.a("contents").orEmpty().mapNotNull {
                     parseTwoRowItem(it.o("musicTwoRowItemRenderer"))
-                }.filter { it.browseId != null || it.isVideo }
+                }.filter { it.browseId != null || it.videoId != null }
                 val moreEndpoint = header.o("title").a("runs")?.firstNotNullOfOrNull {
                     it.o("navigationEndpoint").o("browseEndpoint")
                 }
@@ -1934,6 +1936,7 @@ object InnertubeParser {
             thumbnailUrl = thumbnails.best() ?: videoId?.let(::videoThumbnailUrl),
             videoId = videoId,
             browseId = resolvedBrowseId,
+            isArtist = "ARTIST" in pageType,
             isVideo = isVideo,
         )
     }

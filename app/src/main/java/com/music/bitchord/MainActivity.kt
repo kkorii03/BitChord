@@ -3657,7 +3657,7 @@ private fun BitChordApp(
                                 onShuffle = { songs -> shuffleDetailSongs(songs) },
                                 shuffleLoading = shuffleStarting,
                                 onSectionItemClick = { item ->
-                                    val video = shelfSong(item)?.takeIf { item.browseId == null }
+                                    val video = shelfSong(item)?.takeIf { item.isTrackCard }
                                     if (video != null) {
                                         // An artist's Videos shelf plays, from the page it is on.
                                         playRadio(video, QueueSource(page.title, PlaybackSourceType.BROWSE, page.browseId))
@@ -3668,7 +3668,9 @@ private fun BitChordApp(
                                                 title = item.title,
                                                 subtitle = item.subtitle,
                                                 thumbnailUrl = item.thumbnailUrl,
-                                                type = BrowseType.ALBUM,
+                                                // An artist card whose id is not `UC…`
+                                                // still opens as an artist page.
+                                                type = item.detailBrowseType(),
                                             )
                                         }
                                     }
