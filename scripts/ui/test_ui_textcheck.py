@@ -54,13 +54,31 @@ class CheckerTests(unittest.TestCase):
         issues = self.check(node("더 보기…", "[10,10][400,80]"))
         self.assertNotIn("a-cut", {i.kind for i in issues})
 
+    # Review r2: body rows of 50 px set the screen's line height for these.
+    BODY = "".join(node(t, f"[10,{y}][1000,{y + 50}]") for t, y in (("보관함", 1000), ("플레이리스트", 1100), ("아티스트", 1200)))
+
+    def test_a_cut_large_header_among_body_text_is_reported(self) -> None:
+        issues = self.check(self.BODY + node("아주 긴 큰 제목이 잘립니다", "[10,10][210,110]"))
+        self.assertIn("a-cut", {i.kind for i in issues if i.text.startswith("아주")})
+
+    def test_a_wrapped_paragraph_that_fits_is_not_cut(self) -> None:
+        text = "이 곡의 가사는 화면에 여러 줄로 나뉘어 보이며 상자 안에 모두 들어갑니다"
+        issues = self.check(self.BODY + node(text, "[10,300][1000,600]"))
+        self.assertNotIn("a-cut", {i.kind for i in issues if i.text == text})
+
+    def test_a_one_line_box_too_narrow_for_a_word_is_cut_not_split(self) -> None:
+        issues = self.check(self.BODY + node("플레이리스트보관함", "[10,700][120,750]"))
+        kinds = {i.kind for i in issues if i.text == "플레이리스트보관함"}
+        self.assertNotIn("b-split-word", kinds)
+        self.assertIn("a-cut", kinds)
+
     def test_long_text_in_a_single_line_box_is_cut(self) -> None:
         issues = self.check(node("아주 긴 제목이 상자 밖으로 잘려 나갑니다", "[10,10][140,60]"))
         self.assertIn("a-cut", {i.kind for i in issues})
 
     def test_wrapped_hangul_word_is_reported(self) -> None:
         # No newline in the dump: the layout wrapped a single long Korean word.
-        issues = self.check(node("아주긴한국어단어입니다", "[10,10][120,120]"))
+        issues = self.check(self.BODY + node("아주긴한국어단어입니다", "[10,10][160,220]"))
         self.assertIn("b-split-word", {i.kind for i in issues})
 
     def test_one_or_two_character_line_is_reported(self) -> None:

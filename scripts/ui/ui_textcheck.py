@@ -192,21 +192,34 @@ def _visual_lines(node: Node, base: float) -> list[str]:
     return _wrap_lines(node.text, node.width, base * 0.75)
 
 
+def _fits_one_line(node: Node) -> bool:
+    """The text on one line at the type size its own box height implies."""
+    return _needed_width(node.text, _font_px(node)) <= node.width * 1.05
+
+
+def _fits_wrapped(node: Node, base: float) -> bool:
+    """The text wrapped at the screen's body size, within the box height."""
+    if base <= 0:
+        return False
+    return len(_wrap_lines(node.text, node.width, base * 0.75)) * base <= node.height * 1.15
+
+
 def _clip(node: Node, base: float) -> Issue | None:
     if node.width <= 0 or node.height <= 0:
         return None
     explicit = node.text.split("\n")
     font = base * 0.75 if base > 0 else _font_px(node)
-    too_wide = any(_needed_width(line, font) > node.width * 1.05 for line in explicit)
     if "\n" in node.text:
         # Each explicit line fits its own line box; only its width can overflow.
-        too_tall = False
+        cut = any(_needed_width(line, font) > node.width * 1.05 for line in explicit)
     else:
-        lines = _visual_lines(node, base)
-        line_height = base if base > 0 else node.height / max(1, len(lines))
-        too_tall = len(lines) > 1 and len(lines) * line_height > node.height * 1.15
+        # The dump has no type size: a box can be one line of big text or
+        # several wrapped lines of body text. Cut only when it is neither
+        # (review r2: a cut big header, and no false cut on a wrapped paragraph).
+        cut = not (_fits_one_line(node) or _fits_wrapped(node, base))
+        font = _font_px(node)
     ellipsis = "…" in node.text or node.text.rstrip().endswith("...")
-    if not (too_wide or too_tall):
+    if not cut:
         return None
     needed = max((_needed_width(line, font) for line in explicit), default=0.0)
     why = "ends in an ellipsis" if ellipsis else "needs more room than its box"
@@ -224,6 +237,10 @@ def _split_hangul(node: Node, base: float) -> Issue | None:
         lines = _visual_lines(node, base)
         if (
             len(lines) > 1
+            # Wrapped only if it does not fit one line yet fits as wrapped body
+            # text; otherwise the box is too small and that is a cut (a-cut).
+            and not _fits_one_line(node)
+            and _fits_wrapped(node, base)
             and " " not in node.text
             and HANGUL.search(node.text)
         ):
