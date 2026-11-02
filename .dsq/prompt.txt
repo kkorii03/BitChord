@@ -1,0 +1,11 @@
+Task: READ-ONLY research. Do NOT change any source file and do NOT copy code (AMLL is AGPL-3.0; take behavior, numbers and ideas only, in your own words). Only output: docs/amll-notes-1102.md.
+Clone https://github.com/amll-dev/applemusic-like-lyrics into /tmp/amll (git clone --depth 1) and read packages/core first (the framework-free lyric player), then packages/react-full for the full now-playing page. Use grep.
+
+Explain, for an Android Jetpack Compose app that already has per-line and per-word lyric timings (TTML words, heard words) and wants the Apple Music lyrics feel at low battery cost:
+1. Line layout and motion: how the current line is positioned, the spring model used for scrolling (stiffness/damping/mass or equivalent numbers), per-line delay so lines move one after another, scale/opacity/blur per distance from the current line (exact values), how user scrolling pauses auto-scroll and when it resumes.
+2. Word-by-word fill: how a word's highlight progresses (gradient mask? per-letter?), the emphasis effect on long words (lift/glow/scale, thresholds in ms), how it handles words without times, background vocals, duet/right-aligned lines, translation and romanised sub-lines.
+3. Interludes: the 'three dots' breathing indicator — when it appears (gap threshold), its animation.
+4. Background: the mesh/fluid gradient from artwork colors — how colors are extracted, how it animates, frame-rate caps and how it pauses when hidden.
+5. Performance tricks they use (only animate visible lines, caching, frame skipping).
+For each item: AMLL file path for reference, the numbers, and a Compose sketch in words (which state drives it, what runs per frame, what stops when the screen is off). Note which ideas our app likely already has (lyrics screen in sharedUi/.../ui/player/PlayerLyrics.kt and ko/ui/player/*) by grepping our code, and what is missing.
+Finish with a summary of at most 10 lines: the 8 most valuable changes for our lyrics screen, ranked.
