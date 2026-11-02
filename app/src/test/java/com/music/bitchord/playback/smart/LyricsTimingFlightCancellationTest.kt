@@ -65,4 +65,25 @@ class LyricsTimingFlightCancellationTest {
         )
         screen.cancelAndJoin()
     }
+
+    @Test
+    fun aSecondLiveBundleKeepsTheSharedFlightAliveWhenTheFirstIsCancelled() = runBlocking {
+        val first = launch { delay(60_000) }
+        val second = launch { delay(60_000) }
+        val flight = async(Dispatchers.Default) {
+            delay(300)
+            "answer"
+        }
+        with(LyricsTiming) {
+            flight.cancelledWithCaller(first, cancelWithCaller = true)
+            flight.cancelledWithCaller(second, cancelWithCaller = true)
+        }
+        first.cancelAndJoin()
+        assertFalse("a joined flight must not be cancelled under a live waiter", flight.isCancelled)
+        assertTrue(
+            "the live waiter lost its answer",
+            withTimeoutOrNull(2_000L) { flight.await() } == "answer",
+        )
+        second.cancelAndJoin()
+    }
 }

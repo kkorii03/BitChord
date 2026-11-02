@@ -63,6 +63,14 @@ internal class NextTrackPreparation(
 
     private var job: Job? = null
 
+    /**
+     * The mix pass this bundle requested. A step deadline may leave it running
+     * for the crossfade path after the bundle moves on, so the pass is kept
+     * here and stopped when the row is replaced — unless that row has become
+     * the playing one, whose analysis is now the crossfade's own.
+     */
+    private val mixPass = PreparedMixPass(cancelMix)
+
     /** The queue row this bundle belongs to and the pair it was started for. */
     private var rowId: String? = null
     private var queueKey: String? = null
@@ -127,6 +135,7 @@ internal class NextTrackPreparation(
         if (NextPrepPolicy.shouldCancel(rowId, queueKey, snapshot.rowId, snapshot.queueKey)) {
             job?.cancel()
             cancelPreparedDownloads()
+            cancelPreparedMix()
             NextPrepCache.clear()
         }
         rowId = snapshot.rowId
@@ -174,6 +183,7 @@ internal class NextTrackPreparation(
         job?.cancel()
         job = null
         cancelPreparedDownloads()
+        cancelPreparedMix()
         rowId = null
         queueKey = null
         completedRowId = null
@@ -185,6 +195,15 @@ internal class NextTrackPreparation(
     private fun cancelPreparedDownloads() {
         AudioCache.cancelLosslessPrefetchFor(hqPrefetchVideoId)
         hqPrefetchVideoId = null
+    }
+
+    /**
+     * Stops the mix pass this bundle started, including one a step deadline
+     * left running after the bundle moved on. The row may already be playing:
+     * its analysis then belongs to the crossfade, so it is kept.
+     */
+    private fun cancelPreparedMix() {
+        mixPass.cancelUnlessPlaying(currentPlayer()?.currentMediaItem?.mediaId)
     }
 
     private fun snapshot(player: ExoPlayer): Snapshot? {
@@ -512,14 +531,17 @@ internal class NextTrackPreparation(
                     withRemaining(beforeMix) {
                         val player = currentPlayer()
                         if (player != null) {
+                            mixPass.requested(song.videoId)
                             prepareMix(player)
                             try {
                                 mix = awaitMix(song.videoId)
+                                mixPass.finished()
                             } catch (cancelled: CancellationException) {
                                 // Only a replaced bundle cancels the analysis
                                 // it started; a step deadline ends the wait
-                                // and leaves the pass for the crossfade path.
-                                if (bundleJob?.isActive != true) cancelMix(song.videoId)
+                                // and leaves the pass for the crossfade path,
+                                // which [cancelPreparedMix] later stops.
+                                if (bundleJob?.isActive != true) cancelPreparedMix()
                                 throw cancelled
                             }
                         }
@@ -1144,5 +1166,29 @@ internal object NextPrepCache {
 
     fun clear() {
         ready = null
+    }
+}
+
+/**
+ * The mix pass a next-prep bundle asked for. The bundle's own deadline can
+ * leave the pass running for the crossfade, so a later replacement of its row
+ * must still stop it — unless that row is now the playing one.
+ */
+internal class PreparedMixPass(private val cancel: (String) -> Unit) {
+    private var videoId: String? = null
+
+    fun requested(videoId: String) {
+        this.videoId = videoId
+    }
+
+    /** The pass answered or failed; there is nothing left to stop. */
+    fun finished() {
+        videoId = null
+    }
+
+    fun cancelUnlessPlaying(playingVideoId: String?) {
+        val id = videoId ?: return
+        videoId = null
+        if (id != playingVideoId) cancel(id)
     }
 }

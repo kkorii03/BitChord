@@ -2185,22 +2185,20 @@ object LyricsTiming {
 
     /**
      * Who is still waiting on a shared flight. A next-prep bundle may start one
-     * and a screen may join it; the flight is only tied to the bundle's job
-     * while no caller that wants it to outlive its own screen remains.
+     * and a screen or another bundle may join it; the flight is only cancelled
+     * once no live waiter remains, so a cancelled joiner cannot cancel work the
+     * other caller still expects.
      */
     private class FlightWaiters {
         private var total = 0
-        private var protected = 0
 
-        @Synchronized fun join(cancelWithCaller: Boolean) {
+        @Synchronized fun join() {
             total++
-            if (!cancelWithCaller) protected++
         }
 
         @Synchronized fun leave(cancelWithCaller: Boolean, cancelled: Boolean): Boolean {
             total--
-            if (!cancelWithCaller) protected--
-            return cancelled && cancelWithCaller && protected <= 0
+            return cancelled && cancelWithCaller && total <= 0
         }
 
         @Synchronized fun isEmpty(): Boolean = total <= 0
@@ -2221,7 +2219,7 @@ object LyricsTiming {
     ): kotlinx.coroutines.Deferred<T> {
         if (caller == null) return this
         val waiters = flightWaiters.computeIfAbsent(this) { FlightWaiters() }
-        waiters.join(cancelWithCaller)
+        waiters.join()
         val left = AtomicBoolean(false)
         fun leave(cancelled: Boolean) {
             if (!left.compareAndSet(false, true)) return
