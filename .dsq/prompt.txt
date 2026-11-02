@@ -1,4 +1,4 @@
-Kotlin Android app = upstream v1.9 + our Korean fork, on branch task/u19-tg. The Korean fork as it was on 1.8 is origin/task/telegram (fetch it: git fetch origin task/telegram). Battery first: event-driven, no polling/timers; never block the main thread. Use grep/Select-String, not rg. Unknown Android/Media3/Compose APIs: check with context7.
+﻿Kotlin Android app = upstream v1.9 + our Korean fork, on branch task/u19-tg. The Korean fork as it was on 1.8 is origin/task/telegram (fetch it: git fetch origin task/telegram). Battery first: event-driven, no polling/timers; never block the main thread. Use grep/Select-String, not rg. Unknown Android/Media3/Compose APIs: check with context7.
 
 Problem: the 1.9 merge silently dropped Korean-fork behaviour. Found on the phone tonight: fetchHistory lost its StoredSongDisplay.clean, the Recents shelf dropped isVideo, a [KO] first-sound change deadlocked DirectSourceGate, cleanCoverTitle grew "( )" on every pass. The user says 1.9 is a mess: wrong titles, odd Korean wording, features that do nothing.
 
@@ -7,3 +7,17 @@ Start from these files (and what they call): sharedUi/.../ui/settings/*, app/...
 Task: compare the area on origin/task/telegram (1.8 fork) with task/u19-tg (git diff origin/task/telegram task/u19-tg -- <files>, plus git log -S on key symbols). List every user-visible behaviour of 1.8 that is missing or changed in 1.9 (titles/artists shown, Korean wording, a button or feature that no longer does anything, a hook whose call disappeared, a flag no longer passed through). Fix each real regression with the smallest change, keeping v1.9's own improvements (on overlap the better one wins). Each fix gets a JVM test that fails on the current task/u19-tg code; tests must not need network.
 Do not touch .github/workflows. Do not refactor or move upstream code. Keep edits inside YOUR AREA's files where possible (other lanes run in parallel); list any needed change outside it in the summary instead of making it.
 Finish with a summary of at most 12 lines: regressions found (1.8 behaviour -> 1.9 behaviour), files, REMOVED-LINES AUDIT, tests (fail-before/pass-after, class names for the CI list), what you did not do. Follow AGENTS.md (ponytail) rules.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 2
+MEDIUM — app/src/main/res/values-ko/strings.xml:361 — the user-visible label is still "가사 제공처" although both the 1.8 fork and upstream v1.9 use "가사 소스"; the diff only adds the old term as a search keyword, so the Korean-wording regression remains (and lyrics_sources_order still says "소스").
+Fix: restore `lyrics_sources` to "가사 소스" (keep both search terms) or justify the new label as a v1.9 improvement and make the description consistent.
+MEDIUM — app/src/test/java/com/music/bitchord/ui/SettingsForkRegressionTest.kt:35-40 — the test asserts only that the search keyword exists, so it passes while the visible label is wrong; it does not cover the wording fix the task requires.
+Fix: assert the `lyrics_sources` resource value (or a shared label lookup) in the JVM test.
+MEDIUM — app/src/test/java/com/music/bitchord/ui/SettingsForkRegressionTest.kt:59-66 — `repositoryRoot()` is copied verbatim from IntegrationImportHygieneTest.kt:43 instead of reusing one helper (AGENTS.md no-copied-blocks).
+Fix: extract a shared test utility (or expose the existing method) and call it from both tests.
+Skipped: the `divided = false` grouping difference on the Export Downloads row (layout-only) and the harness workflow/.dsq changes, which belong to the separate dsq setup commit, not the developer's commit. Risk: if "가사 제공처" was a deliberate later wording improvement, finding 1 is a false positive.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
