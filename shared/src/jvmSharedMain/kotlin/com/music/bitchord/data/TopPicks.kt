@@ -12,7 +12,9 @@ import com.music.bitchord.data.model.TopPickMood
 import com.music.bitchord.data.model.WatchTarget
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import com.music.bitchord.data.model.normalizedArtistName
@@ -138,13 +140,43 @@ object TopPicks {
     }
 
     /** The queue a card starts. Never called for [TopPickKind.LATEST_RELEASE], which opens a page. */
-    suspend fun queue(pick: TopPick): Result<List<Song>> {
-        if (pick.kind == TopPickKind.MOOD) return moodQueue(pick)
+    suspend fun queue(
+        pick: TopPick,
+        onFirstBatch: suspend (List<Song>) -> Unit = {},
+    ): Result<List<Song>> {
+        if (pick.kind == TopPickKind.MOOD) return moodQueue(pick, onFirstBatch)
         val target = pick.watch ?: return Result.failure(IllegalStateException("no queue behind ${pick.kind}"))
         if (pick.kind == TopPickKind.PERSONAL_STATION || pick.kind == TopPickKind.DISCOVERY_STATION) {
-            return freshStation(pick, target)
+            return freshStation(pick, target, onFirstBatch)
         }
         return YtMusicRepository.watchQueue(target)
+    }
+
+    /**
+     * Runs every [sources] call at once and hands [onFirst] the first answer it
+     * can use, so playback starts on that one instead of waiting for the last.
+     * [onFirst] returns false for an answer it cannot use (all filtered out);
+     * the next answer is then offered. Every answer is returned in source order
+     * once the rest have finished as well.
+     */
+    internal suspend fun <T> firstAnswer(
+        sources: List<suspend () -> List<T>>,
+        onFirst: suspend (Int, List<T>) -> Boolean,
+    ): List<List<T>> = coroutineScope {
+        val answers = sources.map { source -> async { source() } }
+        val ready = Channel<Int>(Channel.UNLIMITED)
+        answers.forEachIndexed { index, answer ->
+            launch {
+                answer.await()
+                ready.send(index)
+            }
+        }
+        var announced = false
+        repeat(answers.size) {
+            val index = ready.receive()
+            if (!announced && onFirst(index, answers[index].await())) announced = true
+        }
+        answers.awaitAll()
     }
 
     /**
@@ -160,41 +192,95 @@ object TopPicks {
      * A Discovery Station leaves out everything already in that history (and
      * the seed artist, when it's built off an artist's Mix rather than
      * Discover Mix), so what it adds stays new to the listener.
+     *
+     * Whatever answers first — the mix or one of the seed radios — is handed
+     * to [onFirstBatch] at once so a song can play, and the remaining answers
+     * fill the rest of the station afterwards.
      */
-    private suspend fun freshStation(pick: TopPick, target: WatchTarget): Result<List<Song>> = coroutineScope {
-        val mixAsync = async { YtMusicRepository.watchQueue(target) }
-        val history = YtMusicRepository.recentHistory().getOrNull().orEmpty()
-        val seeds = history.take(SEED_POOL).shuffled().take(SEED_RADIOS)
-        val radios = seeds.map { seed ->
-            async {
-                YtMusicRepository.watchQueue(WatchTarget(playlistId = "RDAMVM${seed.videoId}", videoId = seed.videoId))
-                    .getOrNull().orEmpty()
-            }
-        }
-        val mix = mixAsync.await().getOrElse { failure ->
-            if (seeds.isEmpty()) return@coroutineScope Result.failure(failure)
-            emptyList()
-        }
-        val around = radios.awaitAll().flatten()
+    private suspend fun freshStation(
+        pick: TopPick,
+        target: WatchTarget,
+        onFirstBatch: suspend (List<Song>) -> Unit,
+    ): Result<List<Song>> =
+        buildFreshStation(
+            kind = pick.kind,
+            mix = { YtMusicRepository.watchQueue(target).getOrNull().orEmpty() },
+            history = { YtMusicRepository.recentHistory().getOrNull().orEmpty() },
+            radio = { seed ->
+                YtMusicRepository.watchQueue(
+                    WatchTarget(playlistId = "RDAMVM${seed.videoId}", videoId = seed.videoId),
+                ).getOrNull().orEmpty()
+            },
+            exclude = pick.exclude,
+            seedArtistName = pick.artistName,
+            onFirstBatch = onFirstBatch,
+        )
 
-        val discovery = pick.kind == TopPickKind.DISCOVERY_STATION
-        val heard = if (discovery) history.mapTo(HashSet()) { it.videoId } + pick.exclude else emptySet()
-        val seedArtist = pick.artistName?.takeIf { discovery }?.lowercase(Locale.ROOT)
+    internal suspend fun buildFreshStation(
+        kind: TopPickKind,
+        mix: suspend () -> List<Song>,
+        history: suspend () -> List<Song>,
+        radio: suspend (Song) -> List<Song>,
+        exclude: List<String> = emptyList(),
+        seedArtistName: String? = null,
+        onFirstBatch: suspend (List<Song>) -> Unit = {},
+    ): Result<List<Song>> = coroutineScope {
+        // The mix request does not need the history, so let it run beside it.
+        val mixDeferred = async { mix() }
+        val historySongs = history()
+        val seeds = historySongs.take(SEED_POOL).shuffled().take(SEED_RADIOS)
+
+        val discovery = kind == TopPickKind.DISCOVERY_STATION
+        val heard = if (discovery) historySongs.mapTo(HashSet()) { it.videoId } + exclude else emptySet()
+        val seedArtist = seedArtistName?.takeIf { discovery }?.lowercase(Locale.ROOT)
         fun keep(song: Song): Boolean =
             song.videoId !in heard &&
                 (seedArtist == null || !song.artist.lowercase(Locale.ROOT).contains(seedArtist))
-        val core = mix.filter(::keep).shuffled().take(STATION_FROM_MIX)
+        fun mixBatch(songs: List<Song>): List<Song> =
+            songs.filter(::keep).shuffled().take(STATION_FROM_MIX)
+        fun radioBatch(songs: List<Song>): List<Song> =
+            songs.filter(::keep).distinctBy { it.videoId }.shuffled()
+
+        var firstBatch = emptyList<Song>()
+        var firstWasMix = false
+        val sources: List<suspend () -> List<Song>> = buildList {
+            add { mixDeferred.await() }
+            seeds.forEach { seed -> add { radio(seed) } }
+        }
+        val answers = firstAnswer(sources) { index, songs ->
+            val batch = if (index == 0) mixBatch(songs) else radioBatch(songs)
+            if (batch.isEmpty()) {
+                false
+            } else {
+                firstBatch = batch
+                firstWasMix = index == 0
+                onFirstBatch(batch)
+                true
+            }
+        }
+        val mixSongs = answers.firstOrNull().orEmpty()
+        val around = answers.drop(1).flatten()
+
+        // A mix that answered first is already the core; drawing another half
+        // of it would squeeze the radios out of the station.
+        val core = if (firstWasMix) emptyList() else mixBatch(mixSongs)
         val coreIds = core.mapTo(HashSet()) { it.videoId }
+        val firstIds = firstBatch.mapTo(HashSet()) { it.videoId }
         val extra = around.filter { keep(it) && it.videoId !in coreIds }
             .distinctBy { it.videoId }
+        val tail = (core + extra)
+            .filterNot { it.videoId in firstIds }
+            .distinctBy { it.videoId }
             .shuffled()
-            .take(STATION_SIZE - core.size)
-        val station = (core + extra).shuffled()
-        Log.d(TAG, "station ${pick.kind}: mix=${mix.size} core=${core.size} radios=${seeds.size} extra=${extra.size}")
+        val station = (firstBatch + tail).take(STATION_SIZE)
+        Log.d(TAG, "station $kind: mix=${mixSongs.size} core=${core.size} radios=${seeds.size} first=${firstBatch.size} total=${station.size}")
         when {
             station.size >= MIN_FILTERED_QUEUE -> Result.success(station)
-            mix.isNotEmpty() -> Result.success(mix.shuffled())
-            else -> Result.failure(IllegalStateException("${pick.kind} came back empty"))
+            // The first answer is already playing; failing now would report a
+            // station that did start as one that did not.
+            firstBatch.isNotEmpty() -> Result.success(station)
+            mixSongs.isNotEmpty() -> Result.success(mixSongs.shuffled())
+            else -> Result.failure(IllegalStateException("$kind came back empty"))
         }
     }
 
@@ -452,35 +538,60 @@ object TopPicks {
      * Indian", "Pop romance", …). A shelf naming the listener's own scene
      * wins; two of its playlists are drawn at random and mixed.
      */
-    private suspend fun moodQueue(pick: TopPick): Result<List<Song>> = coroutineScope {
-        val mood = pick.mood ?: return@coroutineScope Result.failure(IllegalStateException("mood card without a mood"))
+    private suspend fun moodQueue(
+        pick: TopPick,
+        onFirstBatch: suspend (List<Song>) -> Unit,
+    ): Result<List<Song>> {
+        val mood = pick.mood ?: return Result.failure(IllegalStateException("mood card without a mood"))
         val shelves = YtMusicRepository.moodGenreShelves(TopPickMood.CATEGORY_BROWSE_ID, mood.params)
-            .getOrElse { return@coroutineScope Result.failure(it) }
+            .getOrElse { return Result.failure(it) }
+        return buildMoodQueue(mood, shelves, pick.hints, onFirstBatch) { item ->
+            val playlistId = item.browseId!!.removePrefix("VL")
+            // As a watch queue, so YouTube hands over each official video's
+            // song version directly; the playlist page only lists videos.
+            YtMusicRepository.playlistAsAudio(playlistId).getOrNull()?.takeIf { it.isNotEmpty() }
+                ?: YtMusicRepository.browseSongs(item.browseId!!).getOrNull()?.songs.orEmpty()
+        }
+    }
+
+    internal suspend fun buildMoodQueue(
+        mood: TopPickMood,
+        shelves: List<HomeShelf>,
+        hints: List<String>,
+        onFirstBatch: suspend (List<Song>) -> Unit = {},
+        songsOf: suspend (ShelfItem) -> List<Song>,
+    ): Result<List<Song>> = coroutineScope {
         val playlists = { shelf: HomeShelf -> shelf.items.filter { it.browseId?.startsWith("VL") == true } }
         val candidates = shelves.filter { playlists(it).isNotEmpty() }
         val score = { shelf: HomeShelf ->
             val title = shelf.title.lowercase(Locale.ROOT)
-            2 * mood.shelfWords.count { it in title } + pick.hints.count { it.isNotBlank() && it in title }
+            2 * mood.shelfWords.count { it in title } + hints.count { it.isNotBlank() && it in title }
         }
         val best = candidates.maxOfOrNull(score)
             ?: return@coroutineScope Result.failure(IllegalStateException("no playlists for $mood"))
         // With no scene in common, any shelf of the mood will do.
         val shelf = candidates.filter { score(it) == best }.random()
         val chosen = playlists(shelf).take(6).shuffled().take(MOOD_PLAYLISTS)
-        val songs = chosen.map { item ->
-            async {
-                val playlistId = item.browseId!!.removePrefix("VL")
-                // As a watch queue, so YouTube hands over each official video's
-                // song version directly; the playlist page only lists videos.
-                YtMusicRepository.playlistAsAudio(playlistId).getOrNull()?.takeIf { it.isNotEmpty() }
-                    ?: YtMusicRepository.browseSongs(item.browseId!!).getOrNull()?.songs.orEmpty()
-            }
-        }.awaitAll().flatten()
+
+        var firstBatch = emptyList<Song>()
+        val answers = firstAnswer(chosen.map { item -> suspend { songsOf(item) } }) { _, songs ->
             // A row YouTube couldn't pair stays the video, and plays as one;
             // the player menu's version switch turns it into the song.
+            val batch = songs.distinctBy { it.videoId }.shuffled()
+            if (batch.isEmpty()) {
+                false
+            } else {
+                firstBatch = batch
+                onFirstBatch(batch)
+                true
+            }
+        }
+        val firstIds = firstBatch.mapTo(HashSet()) { it.videoId }
+        val rest = answers.flatten()
             .distinctBy { it.videoId }
+            .filterNot { it.videoId in firstIds }
             .shuffled()
-            .take(MOOD_QUEUE)
+        val songs = (firstBatch + rest).take(MOOD_QUEUE)
         if (songs.isEmpty()) Result.failure(IllegalStateException("$mood playlists were empty"))
         else Result.success(songs)
     }
