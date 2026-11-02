@@ -60,6 +60,11 @@ object AmllTtml {
         }
         val lines = get(documentUrl(id))?.let(TtmlLyrics::parse)?.takeIf { it.isNotEmpty() }
         if (lines == null) {
+            // The recording iTunes matched has no document (a cover, an edit the
+            // DB lacks): drop it for the song and mark this query a miss, so the
+            // repository's later name variants search again instead of reusing
+            // a dead id.
+            forgetDeadId(lookup)
             if (lookup.fresh) TrackLog.i(TAG, "lyrics source ttml: miss id=$id lines=0")
             return@withContext null
         }
@@ -82,10 +87,10 @@ object AmllTtml {
         val hitKey = "$song\u0000$length"
         val missKey = "${normalized(title)}\u0000${normalized(artist)}\u0000$length"
 
-        synchronized(hits) { hits[hitKey] }?.let { return AppleLookup(it.id, false) }
+        synchronized(hits) { hits[hitKey] }?.let { return AppleLookup(it.id, false, hitKey, missKey) }
         // A miss is only a verdict on this name and length, never on the song:
         // the repository's later rounds try the plain and original names.
-        synchronized(misses) { if (missKey in misses) return AppleLookup(null, false) }
+        synchronized(misses) { if (missKey in misses) return AppleLookup(null, false, hitKey, missKey) }
 
         var owned: CompletableDeferred<AppleLookup>? = null
         val flight = synchronized(flights) {
@@ -95,11 +100,21 @@ object AmllTtml {
             }
         }
         // Someone else is already asking this exact query: share their answer.
-        if (owned == null) return flight.await().copy(fresh = false)
+        // An owner that was cancelled (a prefetch losing its race) leaves no
+        // answer, and this caller asks for itself rather than inherit that
+        // foreign cancellation.
+        if (owned == null) {
+            val shared = flight.await()
+            return if (shared.ownerCancelled) {
+                appleId(title, artist, durationMs, songKey, get)
+            } else {
+                shared.copy(fresh = false)
+            }
+        }
         return try {
             val results = search(title, artist, get)
             val found = results?.let { best(it, title, artist, durationMs)?.trackId }
-            val answer = AppleLookup(found, true)
+            val answer = AppleLookup(found, true, hitKey, missKey)
             if (results != null) {
                 // Only a search that got an answer is worth remembering:
                 // offline is no verdict on the song, and must be retried by a
@@ -113,7 +128,7 @@ object AmllTtml {
             flight.complete(answer)
             answer
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
-            flight.completeExceptionally(cancelled)
+            flight.complete(AppleLookup(null, false, hitKey, missKey, ownerCancelled = true))
             throw cancelled
         } catch (error: Throwable) {
             flight.completeExceptionally(error)
@@ -164,7 +179,18 @@ object AmllTtml {
 
     private class AppleId(val id: Long?)
 
-    private data class AppleLookup(val id: Long?, val fresh: Boolean)
+    private data class AppleLookup(
+        val id: Long?,
+        val fresh: Boolean,
+        val hitKey: String,
+        val missKey: String,
+        val ownerCancelled: Boolean = false,
+    )
+
+    private fun forgetDeadId(lookup: AppleLookup) {
+        synchronized(hits) { hits.remove(lookup.hitKey) }
+        synchronized(misses) { misses.add(lookup.missKey) }
+    }
 
     /** Hits live per song; misses per query; in-flight searches per query. */
     private val hits: MutableMap<String, AppleId> = object : LinkedHashMap<String, AppleId>(REMEMBERED, 0.75f, true) {

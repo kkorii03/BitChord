@@ -100,6 +100,26 @@ class AmllTtmlTest {
     }
 
     @Test
+    fun `a matched id without a document is not reused by the next variant`() = runBlocking {
+        var searches = 0
+        val get: suspend (String) -> String? = { url ->
+            if (url.startsWith("https://itunes.apple.com/")) {
+                searches++
+                searchJson
+            } else {
+                null // the DB has no document for the recording iTunes matched
+            }
+        }
+        assertEquals(null, AmllTtml.lyrics("Shape of You", "Ed Sheeran", 233_000, "video-dead", get))
+        // Another name for the same song searches again instead of reusing the dead id...
+        assertEquals(null, AmllTtml.lyrics("Shape Of You", "Ed Sheeran Official", 233_000, "video-dead", get))
+        assertEquals(2, searches)
+        // ...but the same query is not searched twice.
+        assertEquals(null, AmllTtml.lyrics("Shape of You", "Ed Sheeran", 233_000, "video-dead", get))
+        assertEquals(2, searches)
+    }
+
+    @Test
     fun `a named version only matches the same version`() {
         val hits = AmllTtml.parseSearch(searchJson)!!
         assertEquals(
