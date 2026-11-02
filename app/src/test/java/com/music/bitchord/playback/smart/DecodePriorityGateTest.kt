@@ -3,6 +3,11 @@ package com.music.bitchord.playback.smart
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -50,6 +55,44 @@ class DecodePriorityGateTest {
             gate.release()
         }.start()
         assertTrue(done.await(5, TimeUnit.SECONDS))
+    }
+
+    /**
+     * 11-02: the next-prep bundle was cancelled at 09:00:02, yet its decode
+     * sat at the gate another 25 s because only the block after the acquire
+     * checked the abort. A cancelled decode interrupts its blocking wait.
+     */
+    @Test
+    fun aCancelledDecodeStopsWaitingAtTheGate() = runBlocking {
+        val gate = DecodePriorityGate()
+        gate.acquire(background = false) // the playing track holds the one slot
+        val waiting = CountDownLatch(1)
+        val job = launch(Dispatchers.IO) {
+            try {
+                AudioDecoder.interruptibleDecode {
+                    waiting.countDown()
+                    try {
+                        gate.acquire(background = true)
+                        gate.release()
+                    } catch (_: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                    }
+                }
+            } catch (_: Throwable) {
+                // The interrupted wait is the point; only completion matters.
+            }
+        }
+        try {
+            assertTrue("decode never reached the gate", waiting.await(5, TimeUnit.SECONDS))
+            val stopped = withTimeoutOrNull(2_000L) {
+                job.cancelAndJoin()
+                true
+            }
+            assertTrue("the cancelled decode stayed queued at the gate", stopped == true)
+        } finally {
+            gate.release()
+            job.cancel()
+        }
     }
 
     private fun waitUntilWaiting(t: Thread) {
