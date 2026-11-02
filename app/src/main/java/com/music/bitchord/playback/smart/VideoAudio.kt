@@ -265,8 +265,17 @@ object VideoAudio {
             val opus = Uri.parse(AutomixAnalysisSource.opusUri(song.videoId))
             AudioCache.keepForTiming(song.videoId)
             if (!AudioCache.awaitAnalysisHead(opus, HEAD_TIMEOUT_MS)) {
-                TrackLog.d(TAG, "song check: the opening is not on disk yet", song.videoId)
-                return null
+                // A blocked video, or one already swapped to its quality copy,
+                // never gets its YouTube opening: listen to the copy that plays
+                // instead. Its key tags the words with that copy's clock.
+                val substitute = VersionAudioAligner.renditionToMeasure(song.videoId)
+                if (substitute == null ||
+                    substitute.cachedPrefix < AudioCache.MIN_ALIGNMENT_PREFIX_BYTES
+                ) {
+                    TrackLog.d(TAG, "song check: the opening is not on disk yet", song.videoId)
+                    return null
+                }
+                TrackLog.d(TAG, "song check: no YouTube opening; listening to ${substitute.key}", song.videoId)
             }
         }
         if (fromFile) {

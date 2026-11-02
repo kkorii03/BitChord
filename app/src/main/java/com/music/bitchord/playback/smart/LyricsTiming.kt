@@ -2693,7 +2693,8 @@ object LyricsTiming {
         )
         val entry = store(context).get(song.videoId)
         if (entry == null) {
-            TrackLog.d(TAG, "lyrics-sync: song-check skipped (no entry)", song.videoId)
+            // Not a skip: the caller runs the check next.
+            TrackLog.d(TAG, "lyrics-sync: song-check not done yet (no entry)", song.videoId)
             return false
         }
         return entry.aiTextKey == key && entry.ai != null
