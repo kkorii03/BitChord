@@ -1,0 +1,10 @@
+Kotlin Android app = upstream v1.9 + Korean fork (task/u19-tg; 1.8 fork = origin/task/telegram). Use grep/Select-String, not rg. Every fix gets a JVM test that fails on current code (no network). Do not touch .github/workflows. Battery first.
+
+Two phone bugs, 11-03 08:24 (build 315467a), playlist '오화요(허니즈)' = covers uploaded by singer 오화요:
+A) Wrong cover credit (artist line) — CoverTitles / YouTubeDisplayCleaner / StoredSongDisplay / ko cover-singer set (setting ko_cover_singers):
+  1. 'instagram (cover)' shows artist '오화요 가사포함' (channel/upload suffix '가사포함' = 'with lyrics' leaked into the singer).
+  2. a 오화요 cover shows artist '콩밥특별시 경찰 야유회' (some other channel/playlist text taken as the singer).
+  3. 'Memories(Smiling Test) / cover...' shows artist '윤미래' — the ORIGINAL artist, not the cover singer 오화요.
+  The playlist rows' channel is 오화요 for all. Make the cover singer come from the uploading channel when the title names the original artist, strip suffixes like 가사포함/가사/lyrics/MV/풀버전 from singer names, and never show the original artist as the cover's artist. Tests with these exact strings (and the title shapes 'Song / cover by X', 'Song (cover)', 'Original Artist - Song / cover').
+B) Video songs: picture never loads; log repeats 'ITX InnerTubeExtractor: no playable clients' about once per second while the song plays (MusicVideoPlayer.resolve / InnerTubeXResolver.extractVideo incl. the new preferredClientId fallback). Stop the retry loop (bounded retries, then MusicVideoEngine.missing so the player shows artwork), and find why every client fails for the picture when audio works (headers, PoToken, client profile, signed-in vs anonymous) — fix if possible.
+Summary of at most 14 lines: causes (file:line), fixes, REMOVED-LINES AUDIT, tests (class names for CI), what you did not do. Follow AGENTS.md (ponytail) rules.
