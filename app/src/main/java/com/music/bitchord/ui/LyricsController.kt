@@ -219,14 +219,13 @@ class LyricsController(
             prioritizeSyllableSync = AppSettings.prioritizeSyllableSync.value,
         )
         if (lyricsFor == key) return
-        // The duration lands a beat after the track, and a database match needs
-        // it. Turned away here rather than inside the job below: claiming the
-        // lookup first and giving it up asynchronously means the very re-trigger
-        // that carries the duration can arrive while the claim still stands, be
-        // dropped as a duplicate, and leave the track marked as being looked up
-        // by nobody — which is what left a paused track loading for ever, since
-        // pausing is when the duration is most likely to arrive a frame late.
-        if (localUri == null && durationMs <= 0L) return
+        // The duration lands a beat after the track, and every lookup — a
+        // network search and a downloaded file's own tags alike — now waits for
+        // it before claiming the key. Claiming first and giving it up inside
+        // the job meant the re-trigger carrying the duration could arrive while
+        // the claim still stood, be dropped as a duplicate, and leave the track
+        // looked up by nobody (a59AuyMjb68). One rule for all tracks.
+        if (!LyricsRequestGate.canClaim(durationMs)) return
         if (currentLyricsRequest?.videoId != videoId ||
             (currentLyricsRequest?.localUri != null) != (localUri != null)
         ) {
@@ -364,10 +363,11 @@ class LyricsController(
                 }
                 return@launch
             }
-            // The file first, and without the duration gate below: a length is
-            // only needed to *match* a track against a stranger's database, and
-            // nothing is being matched here — these lyrics were written into
-            // this exact file, for this exact recording.
+            // The file first: a length is only needed to *match* a track
+            // against a stranger's database, and nothing is being matched here
+            // — these lyrics were written into this exact file, for this exact
+            // recording. The caller has already had the player's length for
+            // every track before this job starts.
             if (localUri != null) {
                 EmbeddedLyrics.withSource(app, localUri)?.let { file ->
                     val embedded = file.lines
@@ -422,11 +422,6 @@ class LyricsController(
                     )
                     return@launch
                 }
-            }
-            if (durationMs <= 0L) {
-                // Duration arrives a beat after the track does; wait for it.
-                lyricsFor = null
-                return@launch
             }
             val found = LyricsRepository.lyrics(
                 videoId, title, artist, durationMs, album, sources,
@@ -1470,6 +1465,15 @@ class LyricsController(
             refreshTiming(generation, lines)
         }
     }
+}
+
+/**
+ * Whether this call may claim the lookup key. A track's length arrives from the
+ * player a beat after the track itself; until it does, the lookup stays
+ * unclaimed so the event that carries it starts the one request.
+ */
+internal object LyricsRequestGate {
+    fun canClaim(durationMs: Long): Boolean = durationMs > 0L
 }
 
 /**

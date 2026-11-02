@@ -154,10 +154,14 @@ object LyricsRepository {
          */
         transcribe: Boolean = false,
     ): Result? {
+        // The title's own language, when it names a version ("Lethe (ENG
+        // cover)"). Passed all the way down so every provider's sheet is
+        // checked before it can be accepted.
+        val language = LyricsAiGuard.namedLanguage(title)
         val found = lookUpAll(
             videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
             onSourceStarted, onSourceResult, onSourceCancelled, isVideo, alternatives, artistKnown,
-            artistAliases,
+            artistAliases, language,
         )
         // An upload labelled an instrumental has no words to write down: skip
         // the paid Gemini request before it is made.
@@ -284,6 +288,7 @@ object LyricsRepository {
         alternatives: List<Pair<String, String>>,
         artistKnown: Boolean,
         artistAliases: List<String>,
+        language: LyricsAiGuard.Language?,
     ): Result? {
         // The whole answer — retries and original-language names included —
         // kept against the whole question, so the lookup the next-track
@@ -306,7 +311,10 @@ object LyricsRepository {
         for (candidate in readKeys) {
             val answer = answers.get(candidate) ?: continue
             val result = answer.result
-            if (result != null && soundRejects(videoId, result, heard)) {
+            if (result != null &&
+                (scriptRejects(videoId, language, result.source, result.lines) ||
+                    soundRejects(videoId, result, heard))
+            ) {
                 answers.remove(candidate)
                 continue
             }
@@ -331,7 +339,10 @@ object LyricsRepository {
             }
             val kept = keptEntry?.second
             val keptResult = kept?.result
-            if (keptEntry != null && keptResult != null && soundRejects(videoId, keptResult, heard)) {
+            if (keptEntry != null && keptResult != null &&
+                (scriptRejects(videoId, language, keptResult.source, keptResult.lines) ||
+                    soundRejects(videoId, keptResult, heard))
+            ) {
                 LyricsDiskCache.remove(keptEntry.first)
             } else if (keptEntry != null && keptResult != null) {
                 answers.put(key, Answer(keptResult))
@@ -340,7 +351,7 @@ object LyricsRepository {
                     checkAgain(keptEntry.first, videoId, keptResult) {
                         search(
                             videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
-                            null, null, null, isVideo, alternatives, artistKnown, artistAliases,
+                            null, null, null, isVideo, alternatives, artistKnown, artistAliases, language,
                         )
                     }
                 }
@@ -351,7 +362,7 @@ object LyricsRepository {
             return search(
                 videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
                 onSourceStarted, onSourceResult, onSourceCancelled, isVideo, alternatives, artistKnown,
-                artistAliases,
+                artistAliases, language,
             )
         }
         // Everyone asking hears every provider as it starts and answers — not
@@ -370,7 +381,7 @@ object LyricsRepository {
                     search(
                         videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
                         lookup::started, lookup::answered, lookup::cancelled, isVideo, alternatives, artistKnown,
-                        artistAliases,
+                        artistAliases, language,
                     ).also {
                         answers.put(key, Answer(it))
                         // Only answers go on disk: "nothing found" may only
@@ -630,6 +641,7 @@ object LyricsRepository {
         alternatives: List<Pair<String, String>>,
         artistKnown: Boolean,
         artistAliases: List<String>,
+        language: LyricsAiGuard.Language?,
     ): Result? = coroutineScope {
         // The original-language name is one cheap search away and needed the
         // moment the first round comes back empty, so it is asked for now,
@@ -644,7 +656,7 @@ object LyricsRepository {
             searchRounds(
                 videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
                 onSourceStarted, onSourceResult, onSourceCancelled, isVideo, alternatives, artistKnown,
-                artistAliases, nameAhead,
+                artistAliases, language, nameAhead,
             )
         } finally {
             nameAhead?.cancel()
@@ -668,6 +680,7 @@ object LyricsRepository {
         alternatives: List<Pair<String, String>>,
         artistKnown: Boolean,
         artistAliases: List<String>,
+        language: LyricsAiGuard.Language?,
         nameAhead: Deferred<OriginalNames.Name?>?,
     ): Result? {
         val ordered = if (isVideo && LyricsSource.YOUTUBE_TRANSCRIPT in sources) {
@@ -675,6 +688,11 @@ object LyricsRepository {
         } else {
             order
         }
+        // One deadline for the whole lookup, every name and catalogue retry
+        // included. Without it a name that kept missing spent a provider budget
+        // per variant and the panel never left its spinner (MA9BrvtKvhM).
+        val deadline = LookupDeadline()
+        var deadlineLogged = false
         // A plain-text answer is kept, but never at the price of a synced one
         // a later name could still find: the bug's "통가사 only" was the first
         // name's plain YouTube Music answer ending the search before the
@@ -686,38 +704,71 @@ object LyricsRepository {
             if (fallback == null) fallback = result
             return null
         }
+        // The best a provider has actually delivered, even if the round was
+        // cut off before it could be returned: what "show what we have" means.
+        var seen: Result? = null
+        val seenLock = Any()
+        fun note(result: Result?) {
+            if (result == null) return
+            synchronized(seenLock) {
+                val best = seen
+                if (best == null || LyricsDiskCache.rank(result) > LyricsDiskCache.rank(best)) seen = result
+            }
+        }
+        fun bestSeen(): Result? = synchronized(seenLock) { seen }
+        fun deadlineResult(): Result? {
+            if (deadline.expired() && !deadlineLogged) {
+                deadlineLogged = true
+                TrackLog.i(TAG, "lyrics: deadline after ${deadline.totalMs}ms", about = videoId)
+            }
+            return bestSeen() ?: fallback
+        }
+        val watchedResult: (LyricsSource, Result?, LyricsFailure?) -> Unit = { source, result, failure ->
+            note(result)
+            onSourceResult?.invoke(source, result, failure)
+        }
         val variants = LyricsQueryVariants.names(title, artist, album, artistAliases)
+        // The normalised original title+artist is the first name, before any
+        // variant or catalogue retry.
         val primary = variants.firstOrNull() ?: LyricsQueryVariants.Name(title, artist)
-        val first = keepIfBetter(
-            lyricsFor(
-                videoId, primary.title, primary.artist, durationMs, album, sources, ordered,
-                prioritizeSyllableSync, isrc, onSourceStarted, onSourceResult, onSourceCancelled,
-            ),
+        suspend fun tryName(
+            nameTitle: String,
+            nameArtist: String,
+            nameSources: Set<LyricsSource>,
+        ): Result? = keepIfBetter(
+            beforeLookupDeadline(deadline) {
+                lyricsFor(
+                    videoId, nameTitle, nameArtist, durationMs, album, nameSources, ordered,
+                    prioritizeSyllableSync, isrc, onSourceStarted, watchedResult, onSourceCancelled,
+                    language,
+                )
+            },
         )
+        val first = tryName(primary.title, primary.artist, sources)
         if (first != null) return first
+        if (deadline.expired()) return deadlineResult()
         // The sources keyed on the video rather than on a name were already
         // asked: they do not change with the name the search is made under.
         val byName = sources - KEYED_ON_VIDEO
-        if (byName.isEmpty()) return fallback
+        if (byName.isEmpty()) return deadlineResult()
         val tried = mutableSetOf(primary.title to primary.artist)
         suspend fun retry(name: Pair<String, String>): Result? {
             if (!tried.add(name)) return null
-            return keepIfBetter(
-                lyricsFor(
-                    videoId, name.first, name.second, durationMs, album,
-                    byName, ordered, prioritizeSyllableSync, isrc,
-                    onSourceStarted, onSourceResult, onSourceCancelled,
-                ),
-            )
+            return tryName(name.first, name.second, byName)
+        }
+        suspend fun aheadName(): OriginalNames.Name? {
+            val ahead = nameAhead ?: return null
+            return beforeLookupDeadline(deadline) { ahead.await() }
         }
         // The title may name the song and a cover channel, never the record's
         // artist. Only after every name above has missed: ask the catalogue
         // which other artist has this title and search under that name.
         suspend fun retryCatalogOriginal(): Result? {
-            if (!isVideo || durationMs <= 0L) return null
+            if (!isVideo || durationMs <= 0L || deadline.expired()) return null
             val names = (listOf(title to artist) + alternatives).distinct()
             val originals = try {
-                RecordingPick.find(names, durationMs, max = 2)
+                beforeLookupDeadline(deadline) { RecordingPick.find(names, durationMs, max = 2) }
+                    ?: emptyList()
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
@@ -751,25 +802,27 @@ object LyricsRepository {
         // A cover with no original artist named: the singer was never going to
         // find it. Find the song by its title, then search under its real name.
         if (!artistKnown) {
-            nameAhead?.await()?.let { name ->
+            aheadName()?.let { name ->
                 retry(name.title to name.artist)?.let { return it }
             }
             retryCatalogOriginal()?.let { return it }
-            return fallback
+            return deadlineResult()
         }
         retryCatalogOriginal()?.let { return it }
         // Still nothing, and the name is written in Hangul: very often a Korean
         // spelling of a Japanese, Chinese or English song, which the catalogues
         // file under its own name. Ask for that name and search once more —
         // YouTube Music first, Gemini only if that doesn't do it.
-        if (!OriginalNames.worthTrying(title, artist)) return fallback
-        nameAhead?.await()?.let { name ->
+        if (!OriginalNames.worthTrying(title, artist)) return deadlineResult()
+        aheadName()?.let { name ->
             retry(name.title to name.artist)?.let { return it }
         }
-        OriginalNames.fromGemini(title, artist)?.let { name ->
-            retry(name.title to name.artist)?.let { return it }
+        if (!deadline.expired()) {
+            beforeLookupDeadline(deadline) { OriginalNames.fromGemini(title, artist) }?.let { name ->
+                retry(name.title to name.artist)?.let { return it }
+            }
         }
-        return fallback
+        return deadlineResult()
     }
 
     /** Sources that look a track up by its video id, whatever it is called. */
@@ -792,6 +845,7 @@ object LyricsRepository {
         onSourceStarted: ((LyricsSource) -> Unit)?,
         onSourceResult: ((LyricsSource, Result?, LyricsFailure?) -> Unit)?,
         onSourceCancelled: ((LyricsSource) -> Unit)?,
+        language: LyricsAiGuard.Language?,
     ): Result? {
         // The last few answers, so the next track's lyrics looked up ahead of
         // time (see LyricsPrefetch) are the very lines the player then shows —
@@ -812,7 +866,9 @@ object LyricsRepository {
         val memoHit = synchronized(recent) { memoKeys.firstNotNullOfOrNull { recent[it] } }
         if (memoHit != null) {
             val heard = heardNow(videoId)
-            if (!soundRejects(videoId, memoHit, heard)) {
+            if (!scriptRejects(videoId, language, memoHit.source, memoHit.lines) &&
+                !soundRejects(videoId, memoHit, heard)
+            ) {
                 onSourceResult?.invoke(memoHit.source, memoHit, null)
                 return memoHit
             }
@@ -820,7 +876,7 @@ object LyricsRepository {
         }
         val found = lookUp(
             videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
-            onSourceStarted, onSourceResult, onSourceCancelled,
+            onSourceStarted, onSourceResult, onSourceCancelled, language,
         )?.copy(searchedAs = title to artist)
         // Only an answer matched against a known length is worth reusing: one
         // made without it may be a looser match than the player would make.
@@ -871,6 +927,30 @@ object LyricsRepository {
     }
 
     /**
+     * Whether a sheet is in the wrong language for the version the title
+     * names. Rejected and remembered like [soundRejects], so the next variant
+     * or provider is asked instead and the sheet is not fetched again.
+     */
+    private suspend fun scriptRejects(
+        videoId: String,
+        language: LyricsAiGuard.Language?,
+        source: LyricsSource,
+        lines: List<LyricLine>,
+    ): Boolean {
+        if (language == null) return false
+        if (LyricsAiGuard.isScriptRejected(videoId, source, lines)) return true
+        // Reading every character of a sheet is CPU work; keep it off the
+        // caller's thread, which may be Main for an in-memory answer.
+        val mismatch = withContext(Dispatchers.Default) {
+            LyricsAiGuard.scriptMismatch(language, lines)
+        }
+        if (!mismatch) return false
+        LyricsAiGuard.rememberScriptRejected(videoId, source, lines)
+        TrackLog.i(TAG, "lyrics: script-mismatch provider=${source.label} title-language=$language", about = videoId)
+        return true
+    }
+
+    /**
      * The most a source may take, all its requests together. One request is
      * already capped at six seconds; a source that chains several (search,
      * then details, then the file) is held to this as a whole. PaxSenix's
@@ -879,6 +959,30 @@ object LyricsRepository {
     private fun budgetMs(source: LyricsSource): Long = when (source) {
         LyricsSource.PAXSENIX_SPOTIFY, LyricsSource.PAXSENIX_MUSIXMATCH -> 18_000L
         else -> 9_000L
+    }
+
+    /**
+     * How long the whole lookup may take, retries and catalogue searches
+     * included. Between the per-source budget and the old unbounded walk of
+     * every variant; on expiry the best sheet already found is returned.
+     */
+    internal const val LOOKUP_DEADLINE_MS = 12_000L
+
+    internal class LookupDeadline(
+        val totalMs: Long = LOOKUP_DEADLINE_MS,
+        private val startedAtMs: Long = System.currentTimeMillis(),
+    ) {
+        fun remainingMs(nowMs: Long = System.currentTimeMillis()): Long =
+            (startedAtMs + totalMs - nowMs).coerceAtLeast(0L)
+
+        fun expired(nowMs: Long = System.currentTimeMillis()): Boolean = remainingMs(nowMs) <= 0L
+    }
+
+    /** Runs [block] only while [deadline] has time left; null when it is already gone or runs out. */
+    internal suspend fun <T> beforeLookupDeadline(deadline: LookupDeadline, block: suspend () -> T?): T? {
+        val remaining = deadline.remainingMs()
+        if (remaining <= 0L) return null
+        return withTimeoutOrNull(remaining) { block() }
     }
 
     /** Where provider work runs, so a stuck request never holds a lookup open. */
@@ -904,6 +1008,7 @@ object LyricsRepository {
         onSourceStarted: ((LyricsSource) -> Unit)?,
         onSourceResult: ((LyricsSource, Result?, LyricsFailure?) -> Unit)?,
         onSourceCancelled: ((LyricsSource) -> Unit)?,
+        language: LyricsAiGuard.Language?,
     ): Result? = coroutineScope {
         val heard = heardNow(videoId)
         val sequence = (order + LyricsSource.offered)
@@ -943,7 +1048,10 @@ object LyricsRepository {
                     // mid-request, so it is left to finish on its own instead of
                     // holding the whole lookup past [budgetMs].
                     val work = detached.async {
-                        fetch(source, videoId, searchTitle, searchArtist, durationMs, album, recording, hit, heard, documents::get)
+                        fetch(
+                            source, videoId, searchTitle, searchArtist, durationMs, album, recording, hit,
+                            heard, language, documents::get,
+                        )
                     }
                     val lines = try {
                         withTimeoutOrNull(budgetMs(source)) { work.await() }
@@ -1073,6 +1181,8 @@ object LyricsRepository {
         hit: BiniLyrics.Hit?,
         /** What the sound sang, when it has been heard; see [heardWordsFor]. */
         heard: List<LyricsWordAlign.Heard>,
+        /** The language the playing title names, when it names one; see [LyricsAiGuard.namedLanguage]. */
+        language: LyricsAiGuard.Language?,
         /** Fetches a document once per lookup, however many sources want it. */
         get: suspend (String) -> String?,
     ): List<LyricLine>? {
@@ -1104,7 +1214,9 @@ object LyricsRepository {
             // Never raced: only ever the last resort of [search].
             LyricsSource.GEMINI_TRANSCRIPT -> null
         }
-        if (found != null && soundRejects(videoId, result(source, found), heard)) return null
+        if (found == null) return null
+        if (scriptRejects(videoId, language, source, found)) return null
+        if (soundRejects(videoId, result(source, found), heard)) return null
         return found
     }
 
