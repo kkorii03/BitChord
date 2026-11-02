@@ -35,6 +35,19 @@ internal object SessionFavoriteState {
         persisted: MediaWidgetSnapshot?,
     ): Boolean = status(videoId, override, persisted) == LikeStatus.LIKE
 
+    /**
+     * The star a queue item draws. A device file is liked into the device's own
+     * Liked playlist, so [deviceLiked] decides it; an online track goes through
+     * [isLiked], which keeps the persisted snapshot after a process restart.
+     */
+    fun queueItemLiked(
+        videoId: String?,
+        onDevice: Boolean,
+        deviceLiked: Boolean,
+        override: LikeStatus?,
+        persisted: MediaWidgetSnapshot?,
+    ): Boolean = if (onDevice) deviceLiked else isLiked(videoId, override, persisted)
+
     /** The rating a tap on the star is asking to write. */
     fun toggled(
         videoId: String?,

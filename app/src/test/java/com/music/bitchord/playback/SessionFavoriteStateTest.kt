@@ -3,6 +3,8 @@ package com.music.bitchord.playback
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.widget.MediaWidgetSnapshot
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -57,6 +59,41 @@ class SessionFavoriteStateTest {
                 videoId = "aaaaaaaaaaa",
                 override = null,
                 persisted = likedSnapshot,
+            ),
+        )
+    }
+
+    @Test
+    fun `the notification star keeps a persisted like after a restart`() {
+        assertTrue(
+            SessionFavoriteState.queueItemLiked(
+                videoId = "dQw4w9WgXcQ",
+                onDevice = false,
+                deviceLiked = false,
+                override = null,
+                persisted = likedSnapshot,
+            ),
+        )
+    }
+
+    @Test
+    fun `a device file's star follows the device liked playlist`() {
+        assertFalse(
+            SessionFavoriteState.queueItemLiked(
+                videoId = "dQw4w9WgXcQ",
+                onDevice = true,
+                deviceLiked = false,
+                override = null,
+                persisted = likedSnapshot,
+            ),
+        )
+        assertTrue(
+            SessionFavoriteState.queueItemLiked(
+                videoId = "dQw4w9WgXcQ",
+                onDevice = true,
+                deviceLiked = true,
+                override = null,
+                persisted = null,
             ),
         )
     }

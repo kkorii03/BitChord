@@ -2839,11 +2839,18 @@ class PlaybackService : MediaLibraryService() {
     /** Whether [item] is liked, by whichever of the two records owns it. */
     private fun isLiked(item: MediaItem?): Boolean {
         val song = item?.toSong() ?: return false
-        return if (song.localUri != null) {
-            OfflinePlaylists.isLiked(song)
-        } else {
-            LikeState.overrides.value[song.videoId] == LikeStatus.LIKE
-        }
+        val onDevice = song.localUri != null
+        val override = LikeState.overrides.value[song.videoId]
+        // Only an online track consults the persisted snapshot, and only when
+        // this process has no rating of its own — see SessionFavoriteState.
+        val persisted = if (!onDevice && override == null) MediaWidgetSnapshot.load(this) else null
+        return SessionFavoriteState.queueItemLiked(
+            videoId = song.videoId,
+            onDevice = onDevice,
+            deviceLiked = onDevice && OfflinePlaylists.isLiked(song),
+            override = override,
+            persisted = persisted,
+        )
     }
 
     /**
