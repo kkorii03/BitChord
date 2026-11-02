@@ -895,11 +895,6 @@ class LyricsController(
                 }
             }
             refreshTiming(generation, lines)
-            // Measurements and AI answers are kept in the app's files; without
-            // an application context there is nowhere to keep them (a bare
-            // Application in a unit test), so stop instead of failing in a
-            // background job that outlives its caller.
-            if (context.applicationContext == null) return@launch
             if (downloadRecheck && request.localUri != null) {
                 // Event-driven only: the check runs because this file started
                 // playing, once per playback and one file at a time. A version

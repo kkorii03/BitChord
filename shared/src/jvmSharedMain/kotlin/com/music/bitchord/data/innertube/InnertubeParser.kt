@@ -213,28 +213,50 @@ object InnertubeParser {
             .ifBlank { fallback }
 
     /**
-     * The typeahead queries out of a `music/get_search_suggestions` response.
+     * The typeahead out of a `music/get_search_suggestions` response.
      *
-     * Two sections come back. The first is what this reads: query strings, as
-     * `searchSuggestionRenderer`. The second — present signed in, and for
-     * some terms signed out — is entity rows for songs and artists, as the
-     * same `musicResponsiveListItemRenderer` a search result uses. Those are
-     * deliberately ignored: what the field is being filled in with is a
-     * query, and a row that navigates straight to a track instead is a
-     * different feature with a different tap target.
+     * Two sections come back. The first is query strings, as
+     * `searchSuggestionRenderer`; it can also carry general YouTube rows for
+     * some inputs. The second is entity rows for songs, artists and albums,
+     * as the same `musicResponsiveListItemRenderer` a search result uses.
+     * Both are returned: the caller fills the field with the queries and uses
+     * the entities to keep only the music ones. A row that navigates straight
+     * to a track is still not a suggestion.
      *
      * `searchEndpoint.query` is preferred over the display text because the
      * display text arrives split into runs purely so the typed prefix can be
      * bold-faced, with no separator of its own to rejoin on.
      */
-    fun parseSearchSuggestions(response: JsonObject): List<String> =
-        collectRenderers(response, "searchSuggestionRenderer")
-            .mapNotNull { renderer ->
-                val query = renderer.o("navigationEndpoint").o("searchEndpoint").s("query")
-                    ?: renderer.o("suggestion").runs()
-                query.takeIf { it.isNotBlank() }
-            }
-            .distinct()
+    data class SearchSuggestions(
+        /** Query completions from YouTube's suggest section. */
+        val queries: List<String>,
+        /**
+         * Titles and subtitles of the music rows in the same answer. They are
+         * what proves a query completion is about a song, artist or album
+         * rather than the general YouTube suggestions the endpoint can also
+         * return.
+         */
+        val musicTerms: List<String>,
+    )
+
+    fun parseSearchSuggestions(response: JsonObject): SearchSuggestions =
+        SearchSuggestions(
+            queries = collectRenderers(response, "searchSuggestionRenderer")
+                .mapNotNull { renderer ->
+                    val query = renderer.o("navigationEndpoint").o("searchEndpoint").s("query")
+                        ?: renderer.o("suggestion").runs()
+                    query.takeIf { it.isNotBlank() }
+                }
+                .distinct(),
+            musicTerms = collectRenderers(response, "musicResponsiveListItemRenderer")
+                .flatMap { renderer ->
+                    renderer.a("flexColumns").orEmpty().mapNotNull { column ->
+                        column.o("musicResponsiveListItemFlexColumnRenderer")
+                            .o("text").runs().takeIf { it.isNotBlank() }
+                    }
+                }
+                .distinct(),
+        )
 
     /** Depth-first collection of a named renderer, preserving document order. */
     private fun collectRenderers(root: JsonElement, name: String): List<JsonObject> {

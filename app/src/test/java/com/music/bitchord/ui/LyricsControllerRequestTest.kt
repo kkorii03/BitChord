@@ -54,6 +54,7 @@ class LyricsControllerRequestTest {
     @After
     fun tearDown() {
         scope.cancel()
+        runBlocking { job.join() }
         Dispatchers.resetMain()
         AppSettings.lyricsSources.value = savedSources
         AppSettings.lyricsSourceOrder.value = savedOrder

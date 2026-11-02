@@ -72,6 +72,9 @@ class LyricsControllerCoverAiTest {
     @After
     fun tearDown() {
         scope.cancel()
+        // Wait for the measurement jobs to finish before the store and its
+        // directory are pulled out from under them.
+        runBlocking { job.join() }
         Dispatchers.resetMain()
         AppSettings.lyricsSources.value = savedSources
         AppSettings.lyricsSourceOrder.value = savedOrder
