@@ -585,7 +585,7 @@ object QualityUpgrade {
                 // A copy that opened while a better row failed (a fallback
                 // below the request) is not a verdict either: once the source
                 // is back the better row may open.
-                conclusive = true
+                conclusive = report.allConclusive
                 answered = true
             }
         } finally {
@@ -725,6 +725,11 @@ object QualityUpgrade {
     /** Test seam: puts [mediaId] in the state a completed second look leaves it. */
     internal fun markAnsweredForTest(mediaId: String) {
         asked += mediaId
+    }
+
+    /** Test seam: puts [mediaId] in the state a below-request play leaves it. */
+    internal fun markPendingForTest(mediaId: String, target: TrackMatcher.Target) {
+        pending[mediaId] = Pending(target)
     }
 
     /** Abandons the second look for [mediaId] — the queue has moved on. */
