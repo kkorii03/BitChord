@@ -574,11 +574,13 @@ def run_song(vid, seconds, dry):
             return dict(row, error="deepgram failed")
         if app_words is None:
             per_model, row["audio"] = full_words, "whole song (YouTube copy, not checked against the app's audio)"
+            row["fa_audio"], row["fa_off"] = played, 0.0
         else:
             off, votes, share = offset_between(app_words, full_words[0])
             if votes >= 8 and share >= 0.25:
                 per_model = [[(w, s - off, e - off) for w, s, e in fw] for fw in full_words]
                 row["audio"] = f"whole song (YouTube copy {off:+.2f}s from app audio, {votes} words)"
+                row["fa_audio"], row["fa_off"] = played, off
     if per_model is None:
         if app_words is None:
             return dict(row, error="no audio")
@@ -589,6 +591,44 @@ def run_song(vid, seconds, dry):
             return dict(row, error="deepgram failed")
         per_model, row["audio"] = [app_words, second], "app wav only (first 90 s; YouTube copy did not line up)"
     return finish(vid, row, lines, per_model)
+
+
+# Precise onsets (11-02): scripts/syncjudge/judge.py on a runner re-times each line
+# whisper placed, by forced alignment on the separated vocals (tools\syncjudge.ps1).
+FA_MIN_SCORE = 0.2   # mean letter probability below this: the aligner did not find the line
+FA_MAX_MOVE_S = 0.6  # farther than this from whisper's place: a different stretch, not a refinement
+
+
+def write_fa_in(vid, audio, offset, lines, both):
+    """What the runner needs to re-time `both`: the YouTube id it downloads, the offset to
+    the app's clock (YouTube = app + offset), and per line its text and how long it lasts."""
+    starts = sorted(ms / 1000 for _, ms, _ in lines)
+    text_of = {n: t for n, _, t in lines}
+    rows = []
+    for n, shown, sung, _ in both:
+        later = [s for s in starts if s > shown]
+        span = (later[0] - shown) if later else 4.0
+        rows.append(dict(n=n, sung=round(sung, 3), span=round(span, 3), text=text_of.get(n, "")))
+    (OUT / f"{vid}.fa-in.json").write_text(
+        json.dumps(dict(vid=vid, audio=audio, offset=offset, lines=rows), ensure_ascii=False), encoding="utf-8")
+
+
+def refine_with_fa(vid, both):
+    """`both` re-timed by the runner's forced alignment when its answer is here:
+    (lines, label). Only lines the aligner timed confidently and near whisper's place
+    are kept, so whisper's own timing error does not mix back in."""
+    path = OUT / f"{vid}.fa-out.json"
+    if not path.exists():
+        return both, "whisper"
+    fa = {r["n"]: r for r in json.loads(path.read_text(encoding="utf-8")).get("lines", [])}
+    out = []
+    for n, shown, sung, ratio in both:
+        r = fa.get(n)
+        if r and r["score"] >= FA_MIN_SCORE and abs(r["fa"] - sung) <= FA_MAX_MOVE_S:
+            out.append((n, shown, r["fa"], ratio))
+    if len(out) < STRICT["min_lines"]:
+        return both, f"whisper (fa timed {len(out)}/{len(both)})"
+    return out, f"fa {len(out)}/{len(both)}"
 
 
 def finish(vid, row, lines, per_model):
@@ -605,6 +645,14 @@ def finish(vid, row, lines, per_model):
     row["alts"] = " ".join(dict.fromkeys(alts))
     per = [align(lines, words) for words in per_model]
     both, either, gap = agreed(per)
+    fa_audio, fa_off = row.pop("fa_audio", None), row.pop("fa_off", None)
+    if fa_audio:
+        write_fa_in(vid, fa_audio, fa_off, lines, both)
+        whisper = score(both, None, None) if len(both) >= STRICT["min_lines"] else None
+        both, row["timing"] = refine_with_fa(vid, both)
+        row["whisper_verdict"] = whisper["verdict"] if whisper else ""
+    else:
+        row["timing"] = "whisper (no YouTube copy for fa)"
     heard_until = min(words[-1][1] for words in per_model if words) if all(per_model) else 0
     eligible = sum(1 for _, ms, t in lines if len(norm(t)[:PREFIX_CHARS]) >= 2 and ms / 1000 <= heard_until)
     row.update(eligible=eligible, model_gap=round(gap, 3) if gap is not None else "")
@@ -626,7 +674,7 @@ def write_report(rows):
     fields = ["playlist", "video", "verdict", "why", "old_verdict", "shape", "slope_ms_min", "span_s", "median",
               "median_abs", "in02", "in03", "in05", "max_abs", "matched", "eligible", "coverage", "model_gap",
               "lines", "stored", "resolve", "source", "base", "shift", "match", "playing", "audio", "error",
-              "app_fail", "alts", "swapped"]
+              "app_fail", "alts", "swapped", "timing", "whisper_verdict"]
     with open(OUT / "report.csv", "w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         w.writeheader()
@@ -649,8 +697,8 @@ def write_report(rows):
         s = [r for r in scored if r.get("stored") == flag]
         if s:
             md.append(f"- {label}: 합격 {sum(r['verdict'] == 'PASS' for r in s)}/{len(s)}")
-    md += ["", "| 판정 | 이전 | 못 미친 기준 | 곡 | 저장 | 모양 | 중앙값(초) | 최대(초) | 0.2/0.3/0.5초 이내 | 채점 줄/들려야 할 줄 | 모델차(초) | 제공처 | base/shift/match | 앱이 보인 답 차례(기준shift:중앙값/0.3초 이내) | 오디오 |",
-           "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    md += ["", "| 판정 | 이전 | 못 미친 기준 | 곡 | 저장 | 모양 | 중앙값(초) | 최대(초) | 0.2/0.3/0.5초 이내 | 채점 줄/들려야 할 줄 | 모델차(초) | 제공처 | base/shift/match | 앱이 보인 답 차례(기준shift:중앙값/0.3초 이내) | 오디오 | 시각 기준(whisper 판정) |",
+           "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     order = {"FAIL": 0, "WARN": 1, "PASS": 2}
     for r in sorted(scored, key=lambda r: (order[r["verdict"]], -r["median_abs"])):
         sh = r["shape"] + (f" {r['slope_ms_min']:+}ms/분" if r["shape"] == "drift" else "")
@@ -658,7 +706,7 @@ def write_report(rows):
                   f"{r.get('stored', '')} | {sh} | {r['median']:+.2f} | {r.get('max_abs', '')} | "
                   f"{r['in02']:.0%}/{r['in03']:.0%}/{r['in05']:.0%} | {r['matched']}/{r.get('eligible', '')} | "
                   f"{r.get('model_gap', '')} | {r['source']} | {r['base']}/{r['shift']}/{r['match']} | "
-                  f"{r.get('alts', '')} | {r['audio']} |")
+                  f"{r.get('alts', '')} | {r['audio']} | {r.get('timing', '')} ({r.get('whisper_verdict', '')}) |")
     errors = [r for r in rows if r.get("error") and not r.get("app_fail")]
     app_fails = [r for r in rows if r.get("app_fail")]
     if app_fails:

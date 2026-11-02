@@ -1,0 +1,65 @@
+name: Sync judge
+
+# Precise lyric-line onsets for scripts/synctest.py (scripts/syncjudge/judge.py:
+# Demucs vocals + MMS_FA forced alignment around whisper's answer). Started by
+# tools\syncjudge.ps1, which pushes judge/<tag> carrying .judge/payload.enc:
+# the lines are lyrics text and this repository is public, so the payload is
+# AES-encrypted with the Deepgram key (local keys\, here the secret) as its
+# passphrase. The artifact holds times and scores only.
+on:
+  push:
+    branches: ['judge/**']
+
+permissions:
+  contents: read
+
+jobs:
+  judge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Model and package cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.cache/torch
+          key: syncjudge-v1
+
+      - name: Install
+        run: |
+          pip install --index-url https://download.pytorch.org/whl/cpu torch torchaudio
+          pip install demucs uroman yt-dlp soundfile
+
+      # YouTube answers runner IPs with its bot check: download through the
+      # M8's home IP like the smoke does (VM :8889 -> tools\homeproxy-tunnel.ps1).
+      - name: Home proxy
+        env:
+          SMOKE_SETTINGS_B64: ${{ secrets.SMOKE_SETTINGS_B64 }}
+        run: |
+          echo "$SMOKE_SETTINGS_B64" | base64 -d | sed '1s/^\xEF\xBB\xBF//' > "$RUNNER_TEMP/settings.json"
+          python3 scripts/smoke/set_proxy_port.py "$RUNNER_TEMP/settings.json" "${SMOKE_PROXY_PORT:-8889}" --emulator
+
+      - name: Judge
+        env:
+          DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
+        run: |
+          (nohup python3 scripts/smoke/authfwd.py "$SMOKE_UPSTREAM_PROXY" > "$RUNNER_TEMP/authfwd.log" 2>&1 &)
+          sleep 2
+          openssl enc -d -aes-256-cbc -pbkdf2 -pass env:DEEPGRAM_API_KEY -in .judge/payload.enc | gunzip > "$RUNNER_TEMP/payload.json"
+          python3 scripts/syncjudge/judge.py "$RUNNER_TEMP/payload.json" out --proxy http://127.0.0.1:3128
+
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sync-judge
+          path: out/

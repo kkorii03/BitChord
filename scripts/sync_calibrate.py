@@ -139,13 +139,24 @@ def main():
             print(f"{vid}: no heard words")
             continue
         both, either, gap = st.agreed([st.align(lines, w) for w in words])
+        # Experiments only: what a ratio floor or other strict rules would make of
+        # sheets known to be right. synctest.py's own STRICT is not touched.
+        override = __import__("os").environ.get("CALIB_STRICT")
+        if override:
+            st.STRICT.update(json.loads(override))
+        floor = float(__import__("os").environ.get("CALIB_MIN_RATIO", "0"))
+        both = [b for b in both if b[3] >= floor]
+        # The runner's forced alignment (tools\syncjudge.ps1 -Dir phone-out\synctest)
+        # re-times these lines once its answer is in st.OUT; until then whisper's.
+        st.write_fa_in(vid, vid, 0.0, lines, both)
+        both, timing = st.refine_with_fa(vid, both)
         heard_until = min(w[-1][1] for w in words if w)
         eligible = sum(1 for _, ms, t in lines if len(st.norm(t)[:st.PREFIX_CHARS]) >= 2 and ms / 1000 <= heard_until)
         s = st.score(both, eligible, len(either)) if both else None
         errs = [shown - sung for _, shown, sung, _ in both]
         errors_all += errs
         print(f"{vid} '{pick['trackName']}' / {pick['artistName']} ({pick['trackTimeMillis'] / 1000:.1f}s) "
-              f"sheet lines={len(lines)} agreed={len(both)} heard={len(either)}/{eligible} model_gap={gap}")
+              f"sheet lines={len(lines)} agreed={len(both)} heard={len(either)}/{eligible} model_gap={gap} timing={timing}")
         if s:
             print(f"   scorer says: {s['verdict']} median={s['median']:+.3f} |med|={s['median_abs']:.3f} "
                   f"in0.2={s['in02']:.0%} in0.3={s['in03']:.0%} max={s['max_abs']} shape={s['shape']} why={s['why']}")
