@@ -1,0 +1,16 @@
+﻿Kotlin Android app = upstream v1.9 + Korean fork (task/u19-tg; 1.8 fork = origin/task/telegram). Battery first: event-driven, no polling/timers, never block the main thread. Use grep/Select-String, not rg. Unknown Android/Media3 APIs: context7. Every fix gets a JVM test that fails on current code (no network). Do not touch .github/workflows. Smallest change; keep v1.9's improvements.
+
+Phone sync round 11-03: some songs produce no 'sync-dump' (lyrics never logged as shown) and a downloaded song logs 'app kept no wav (song check skipped)'. Read scripts/synctest.py to see what it expects (SyncTestMode, sync-test.flag, synctest/<id>.wav, sync-dump lines), then find in LyricsController/LyricsTiming/SyncTestMode why those are missing for (a) downloaded/local songs and (b) songs whose lyrics arrive late or from a file:<provider>@unknown source. Fix the app side so every played song in test mode dumps its shown timing and keeps its wav.
+
+Summary of at most 12 lines: cause, files, REMOVED-LINES AUDIT, tests (class names for CI), what you did not do. Follow AGENTS.md (ponytail) rules.
+
+
+== 3 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 3
+- MEDIUM `app/src/main/java/com/music/bitchord/playback/smart/SyncTestMode.kt:151` — `@Synchronized` makes `write` share the object monitor with `report`/`enabled`, and `refreshTiming` calls `report` on the main thread, so a ~90 s WAV write on IO can stall the UI; serialize writes on a private lock instead (or drop it now that temp names are unique).
+- MEDIUM `app/src/main/java/com/music/bitchord/playback/smart/SyncTestMode.kt:156` — the task requires every fix to get a JVM test that fails on the old code, but the temp-file/`@Synchronized` race fix has none (the summary admits this); add a test doing concurrent `saveWav`/`keepHead` writes for one id and assert a single complete WAV remains.
+- MEDIUM `app/src/test/java/com/music/bitchord/ui/LyricsControllerSyncDumpTest.kt:196` — the new test asserts `file:unknown@<id>` from a `source=null` override, not the task's `file:<provider>@unknown` embedded/sidecar case, so that reported failure path is still untested; add a `lyrics.lrc`/`[re:BitChord PROVIDER]` header with no id and assert its dump and WAV.
+Not checked: on-device decoder/scoring behavior; findings are static-analysis and lock-scope risks.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
