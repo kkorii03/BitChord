@@ -3010,8 +3010,12 @@ object LyricsTiming {
             untilSeconds = SongCheckWindow.firstPassSeconds(screenOn, VideoAudio.SONG_CHECK_SECONDS),
         ) ?: return@withLock false
         val firstOk = applySongCheck(context, song, key, engine, first)
-        if (!screenOn) return@withLock firstOk
-        if (!SongCheckWindow.needsFullOpening(first.result)) return@withLock firstOk
+        val secondSeconds = SongCheckWindow.secondPassSeconds(
+            screenOnAtStart = screenOn,
+            screenOnNow = PowerState.screenOn,
+            result = first.result,
+            fullSeconds = VideoAudio.SONG_CHECK_SECONDS,
+        ) ?: return@withLock firstOk
         val full = runSongCheck(
             context,
             song,
@@ -3019,7 +3023,7 @@ object LyricsTiming {
             key,
             engine,
             probe,
-            untilSeconds = VideoAudio.SONG_CHECK_SECONDS,
+            untilSeconds = secondSeconds,
         ) ?: return@withLock firstOk
         if (!SongCheckWindow.fullMayReplace(
                 firstFitted = first.fitted != null,

@@ -32,6 +32,21 @@ object SongCheckWindow {
         if (screenOn) FIRST_SECONDS else fullSeconds
 
     /**
+     * The window for the second pass, or null when it must not run. The screen
+     * is read again after the first pass: if it went off meanwhile the
+     * correction has nobody to show, so the full opening is not read twice.
+     * A first pass that already read the full opening never follows with
+     * another one.
+     */
+    fun secondPassSeconds(
+        screenOnAtStart: Boolean,
+        screenOnNow: Boolean,
+        result: String,
+        fullSeconds: Double,
+    ): Double? =
+        if (screenOnAtStart && screenOnNow && needsFullOpening(result)) fullSeconds else null
+
+    /**
      * Whether the full opening follows a first pass that ended with [result].
      * A `no-answer` either spent the engine on a refusal (a 429, no network)
      * or never reached it, so it must not be asked again; every other result

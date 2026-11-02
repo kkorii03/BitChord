@@ -49,13 +49,43 @@ No earlier code was re-audited except where a lane touched it.
 
 | screen | first pass | second pass |
 |---|---|---|
-| on | 40 s | full, when `needsFullOpening` and `fullMayReplace` allow |
+| on | 40 s | full, when still on and `needsFullOpening`/`fullMayReplace` allow |
 | off | full | **none** |
 
 - Test: `shared/src/jvmTest/.../SongCheckFirstPassTest.kt`
-  `a screen-off first pass is the full opening, not the short one`.
-  Fail-before: unresolved `firstPassSeconds` (compile failure). Pass-after:
-  BUILD SUCCESSFUL.
+  `a screen-off first pass is the full opening, not the short one` and
+  `no second pass once the screen is off or the first pass was refused`.
+  Fail-before: compile failure on the absent helper
+  (`firstPassSeconds` / `secondPassSeconds`). Pass-after: BUILD SUCCESSFUL.
+
+## REMOVED-LINES AUDIT
+
+Previous round (`e2de4702..fc57b43`, the cold song check fix):
+
+- `LyricsTiming.kt:3010`: `untilSeconds = SongCheckWindow.FIRST_SECONDS` was
+  replaced by `SongCheckWindow.firstPassSeconds(screenOn, full)`. With the
+  screen on the value is still `FIRST_SECONDS`; with it off it is the full
+  opening. No timeout, clamp, offload, retry guard or rate limit changed.
+- `LyricsTiming.kt:2999`: the comment line "or as the first answer when the
+  short one could not fit." was folded into the expanded comment directly
+  above the call; the code it described (`needsFullOpening` and
+  `fullMayReplace`) is unchanged.
+- `SongCheckWindow.kt`: only comments and `firstPassSeconds` were added; no
+  existing line was removed.
+
+This round (re-read the screen before the second pass):
+
+- `LyricsTiming.kt:3013-3014`: the two early returns
+  `if (!screenOn) return@withLock firstOk` and
+  `if (!SongCheckWindow.needsFullOpening(first.result)) return@withLock firstOk`
+  moved into `SongCheckWindow.secondPassSeconds(...)`, which returns null in
+  the same two cases and also when the screen has gone off since the first
+  pass. The caller uses `?: return@withLock firstOk`, so the result is the
+  same on every old path.
+- `LyricsTiming.kt:3022`: `untilSeconds = VideoAudio.SONG_CHECK_SECONDS` now
+  receives the window returned by `secondPassSeconds`, which is the same
+  full length whenever the second pass runs. No clamp, timeout, offload,
+  cache cap or engine guard was dropped.
 
 ## Left (not fixed)
 
