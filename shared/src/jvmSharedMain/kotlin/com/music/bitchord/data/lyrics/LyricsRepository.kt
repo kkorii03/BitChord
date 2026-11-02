@@ -1077,7 +1077,7 @@ object LyricsRepository {
         get: suspend (String) -> String?,
     ): List<LyricLine>? {
         val found = when (source) {
-            LyricsSource.AMLL_TTML -> AmllTtml.lyrics(title, artist, durationMs, get)
+            LyricsSource.AMLL_TTML -> AmllTtml.lyrics(title, artist, durationMs, videoId, get)
             LyricsSource.LRC_RED -> LrcRed.lyrics(title, artist, durationMs, isrc, get)
             LyricsSource.BETTER_LYRICS -> BetterLyrics.lyrics(title, artist, durationMs, album)
             LyricsSource.BETTER_LYRICS_PORTATO -> BetterLyrics.portato(title, artist, durationMs, album)

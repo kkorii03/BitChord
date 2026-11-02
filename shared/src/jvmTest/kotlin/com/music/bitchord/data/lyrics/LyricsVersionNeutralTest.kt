@@ -24,6 +24,12 @@ class LyricsVersionNeutralTest {
     }
 
     @Test
+    fun aHitWithoutALengthIsRefusedWhenTheSongLengthIsKnown() {
+        val unknown = LrcRed.Hit(isrc = "USRC17607839", title = "Song", artist = "Artist", duration = null)
+        assertNull(LrcRed.best(listOf(unknown), "Song", "Artist", 200_000L))
+    }
+
+    @Test
     fun aRealVersionStillSeparatesThem() {
         assertNull(best("Song (Live)"))
         assertNull(best("Song (Remix)"))

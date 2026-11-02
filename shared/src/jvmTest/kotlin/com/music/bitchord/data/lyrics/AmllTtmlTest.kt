@@ -1,5 +1,6 @@
 package com.music.bitchord.data.lyrics
 
+import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -60,6 +61,40 @@ class AmllTtmlTest {
         assertNull(AmllTtml.best(hits, "Shape of You", "Ed Sheeran", 190_000))
         // Same title, different artist.
         assertNull(AmllTtml.best(hits, "Shape of You", "Someone Else", 233_000))
+    }
+
+    @Test
+    fun `an apple hit with unknown length is refused when the song length is known`() {
+        val hits = listOf(
+            AmllTtml.Hit(
+                trackId = 1,
+                trackName = "Shape of You",
+                artistName = "Ed Sheeran",
+                trackTimeMillis = null,
+            ),
+        )
+        assertNull(AmllTtml.best(hits, "Shape of You", "Ed Sheeran", 233_000))
+    }
+
+    @Test
+    fun `the iTunes id is looked up once for every query variant`() = runBlocking {
+        var searches = 0
+        val ttml = """
+            <tt xmlns="http://www.w3.org/ns/ttml"><body><div>
+            <p begin="1.0" end="2.0">Hi</p>
+            </div></body></tt>
+        """.trimIndent()
+        val get: suspend (String) -> String? = { url ->
+            if (url.startsWith("https://itunes.apple.com/")) {
+                searches++
+                searchJson
+            } else {
+                ttml
+            }
+        }
+        assertTrue(AmllTtml.lyrics("Shape of You", "Ed Sheeran", 233_000, "video-a", get)!!.isNotEmpty())
+        assertTrue(AmllTtml.lyrics("Shape of You (Cover)", "Someone Else", 233_000, "video-a", get)!!.isNotEmpty())
+        assertEquals(1, searches)
     }
 
     @Test

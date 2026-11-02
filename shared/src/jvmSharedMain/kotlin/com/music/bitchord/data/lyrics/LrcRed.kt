@@ -4,9 +4,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import okhttp3.HttpUrl.Companion.toHttpUrl
-import java.text.Normalizer
 import java.util.Locale
-import kotlin.math.abs
 
 /**
  * lrc.red — Apple Music TTML, per-syllable, filed by ISRC.
@@ -30,14 +28,6 @@ import kotlin.math.abs
 object LrcRed {
 
     private const val BASE = "https://lrc.red/"
-
-    /**
-     * How far a hit's length may be from the playing track's. YouTube reports
-     * whole seconds, and lrc.red lists the 2011 remaster of "Bohemian Rhapsody"
-     * at 356.5 s against 352.0 s for the live cut — close enough that the
-     * version words in [best] have to do most of the work, not this.
-     */
-    private const val DURATION_TOLERANCE_SECONDS = 3.0
 
     /** `CC-XXX-YY-NNNNN` without the dashes — and nothing else goes into a path. */
     private val ISRC = Regex("""[A-Z]{2}[A-Z0-9]{3}\d{7}""")
@@ -82,95 +72,23 @@ object LrcRed {
 
     /**
      * The hit that is this recording, or null if none of them is sure to be.
-     *
-     * A miss here is recoverable — the sources behind this one get their turn —
-     * and the wrong words scrolling in time with the right song is not, so
-     * every test is a requirement rather than a score:
-     *
-     *  - the title, outside its brackets and any " - " suffix, is the same;
-     *  - the words in those brackets that name a different recording
-     *    ([VERSION_WORDS]: live, remix, acoustic…) are the same on both
-     *    sides — "Remastered" and "From 'Aashiqui 2'" don't count;
-     *  - at least one credited artist is shared;
-     *  - the length is within [DURATION_TOLERANCE_SECONDS], when both are known.
-     *
-     * Of the hits that pass, the closest in length wins, and the search's own
-     * rank breaks a tie.
+     * See [RecordingMatch] for the shared name and length tests.
      */
-    fun best(hits: List<Hit>, title: String, artist: String, durationMs: Long): Hit? {
-        val wantedTitle = coreOf(title)
-        val wantedVersion = versionOf(title)
-        val wantedArtists = artistsOf(artist)
-        val seconds = durationMs / 1000.0
-
-        fun distance(hit: Hit): Double =
-            if (durationMs > 0 && hit.duration != null) abs(hit.duration - seconds) else 0.0
-
-        return hits
-            .filter { hit ->
-                val name = hit.title ?: return@filter false
-                hit.isrc?.let(::documentUrl) != null &&
-                    coreOf(name) == wantedTitle &&
-                    versionOf(name) == wantedVersion &&
-                    (wantedArtists.isEmpty() || artistsOf(hit.artist.orEmpty()).any { it in wantedArtists }) &&
-                    distance(hit) <= DURATION_TOLERANCE_SECONDS
-            }
-            .minByOrNull(::distance)
-    }
-
-    /** "Song (Live) - 2011 Remaster" → "song". */
-    private fun coreOf(title: String): String =
-        normalized(title.replace(BRACKETED, " ").substringBefore(" - "))
-            .ifEmpty { normalized(title) }
-
-    /** The version words in the parts [coreOf] throws away. */
-    private fun versionOf(title: String): Set<String> {
-        val extras = BRACKETED.findAll(title).map { it.value }.toList() +
-            title.substringAfter(" - ", "")
-        return extras.flatMap { extra ->
-            val words = normalized(extra).split(' ').filter { it.isNotEmpty() }
-            // "Album Version" and "Radio Edit" read like a take and are the
-            // ordinary release. Treating them as versions made the plain
-            // listing of the same recording fail every test below.
-            if (words.joinToString("") in NEUTRAL) emptyList() else words.filter { it in VERSION_WORDS }
-        }.toSet()
-    }
-
-    private fun artistsOf(artist: String): Set<String> =
-        artist.split(ARTIST_SEPARATORS).map(::normalized).filter { it.isNotEmpty() }.toSet()
-
-    /** Lower case, accents off ("ROSÉ" is "rose"), and only letters and digits. */
-    private fun normalized(value: String): String =
-        Normalizer.normalize(value, Normalizer.Form.NFD)
-            .replace(COMBINING_MARKS, "")
-            .lowercase(Locale.ROOT)
-            .map { if (it.isLetterOrDigit()) it else ' ' }
-            .joinToString("")
-            .replace(WHITESPACE, " ")
-            .trim()
-
-    private val BRACKETED = Regex("""[(\[][^)\]]*[)\]]""")
-    private val COMBINING_MARKS = Regex("""\p{Mn}+""")
-    private val WHITESPACE = Regex("""\s+""")
-    private val ARTIST_SEPARATORS = Regex(
-        """\s*(?:,|&|;|/|\s+and\s+|\s+x\s+|\s+with\s+|\s+feat\.?\s+|\s+ft\.?\s+)\s*""",
-        RegexOption.IGNORE_CASE,
-    )
-
-    /** Asides that read like a take but name the ordinary release. */
-    private val NEUTRAL = setOf(
-        "albumversion", "originalversion", "originalmix", "singleversion",
-        "radioversion", "radioedit", "stereoversion", "monoversion",
-        "studioversion", "fullversion", "standardversion", "explicitversion",
-        "deluxeversion", "originaltrack", "cleanedit", "cleanversion", "cleanmix", "clean",
-    )
-
-    /** Bracket words that make it a different recording, not a different label. */
-    private val VERSION_WORDS = setOf(
-        "live", "remix", "remixed", "mix", "acoustic", "unplugged", "instrumental",
-        "karaoke", "cappella", "acapella", "demo", "edit", "version", "cover",
-        "sped", "slowed", "reverb", "nightcore", "lofi", "orchestral", "extended",
-    )
+    fun best(hits: List<Hit>, title: String, artist: String, durationMs: Long): Hit? =
+        RecordingMatch.best(
+            hits.map { hit ->
+                RecordingMatch.Candidate(
+                    value = hit,
+                    title = hit.title,
+                    artist = hit.artist,
+                    seconds = hit.duration,
+                    usable = hit.isrc?.let(::documentUrl) != null,
+                )
+            },
+            title,
+            artist,
+            durationMs,
+        )
 
     @Serializable
     data class Response(
