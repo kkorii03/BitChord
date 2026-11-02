@@ -1,6 +1,7 @@
 package com.music.bitchord.data.lyrics
 
 import kotlin.math.abs
+import kotlin.math.roundToLong
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -253,13 +254,14 @@ class LyricsTimeMapTest {
     }
 
     @Test
-    fun aPaceWithinTheSnapWindowBecomesTheRecordsPace() {
+    fun aSmallPaceOnAShortStretchIsSnappedEvenWhenItsMovementClearsTheEvidence() {
         val snapped = listOf(0L to 0L, 10_000L to 9_950L, 20_000L to 19_900L, 30_000L to 29_850L)
         assertEquals(1.0, assertNotNull(TimingFit.fit(snapped)).rate)
 
-        // Over 90 s a 0.6% pace moves the answers 540 ms: enough to believe.
-        val justOutside = listOf(0L to 0L, 30_000L to 29_820L, 60_000L to 59_640L, 90_000L to 89_460L)
-        assertEquals(0.994, assertNotNull(TimingFit.fit(justOutside)).rate)
+        // 0.5% over 90 s moves the answers 450 ms, past PACE_EVIDENCE_MS, but
+        // the qzXa short-stretch jitter guard still snaps a sub-0.6% pace.
+        val shortStretch = listOf(0L to 0L, 30_000L to 29_850L, 60_000L to 59_700L, 90_000L to 89_550L)
+        assertEquals(1.0, assertNotNull(TimingFit.fit(shortStretch)).rate)
     }
 
     @Test
@@ -274,6 +276,31 @@ class LyricsTimeMapTest {
         // The same 0.7% over three minutes is believed.
         val long = listOf(0L to 0L, 60_000L to 59_580L, 120_000L to 119_160L, 180_000L to 178_740L)
         assertEquals(0.993, assertNotNull(TimingFit.fit(long)).rate, 1e-9)
+    }
+
+    @Test
+    fun aSmallPaceSupportedByTheWholeSongIsAppliedFromTheFirstLine() {
+        // 1.002 moves the answers 580 ms across 290 s: a supported rate, and
+        // the offset must still put the first line where the answers say.
+        val points = (0 until 6).map { index ->
+            val x = 10_000L + index * 58_000L
+            x to (x * 1.002).roundToLong() + 500L
+        }
+        val line = assertNotNull(TimingFit.fit(points))
+        assertEquals(1.002, line.rate, 1e-9)
+        assertEquals(500L, line.offsetMs)
+        assertEquals(10_520L, line.map.map(10_000L))
+    }
+
+    @Test
+    fun aSmallPaceOverAShortStretchStaysTheRecordsPace() {
+        // The same 0.2% pace over 58 s moves only 116 ms: that is jitter.
+        val points = (0 until 4).map { index ->
+            val x = 10_000L + index * 19_000L
+            x to (x * 1.002).roundToLong() + 500L
+        }
+        val line = assertNotNull(TimingFit.fit(points))
+        assertEquals(1.0, line.rate)
     }
 
     @Test

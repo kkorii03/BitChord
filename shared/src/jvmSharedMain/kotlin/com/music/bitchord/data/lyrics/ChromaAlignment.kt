@@ -776,7 +776,9 @@ object ChromaAlignment {
     /**
      * (rate, offsetMs) when nearly every point lies within 0.4 s of one line:
      * a Theil–Sen line through all of them, then least squares through the
-     * ones on it — a slope off by 0.3% is most of a second by the last chorus.
+     * ones on it. The pace is kept only when it moves the matched stretch by
+     * [TimingFit.PACE_EVIDENCE_MS], so a small offset over a whole song stays
+     * a line while the same slope over a short opening is jitter.
      */
     private fun straightLine(points: List<Pair<Long, Long>>): Pair<Double, Long>? {
         val rough = overallRate(points, maxSpanMs = Long.MAX_VALUE)
@@ -792,7 +794,8 @@ object ChromaAlignment {
             sxx += (x - mx) * (x - mx)
         }
         val fitted = if (sxx > 0) (sxy / sxx).coerceIn(TimingFit.MIN_RATE, TimingFit.MAX_RATE) else rough
-        val rate = if (abs(fitted - 1.0) < 0.003) 1.0 else fitted
+        val span = (points.maxOfOrNull { it.first } ?: 0L) - (points.minOfOrNull { it.first } ?: 0L)
+        val rate = TimingFit.rateForSpan(fitted, span)
         val offset = TimingFit.median(on.map { (x, y) -> y - rate * x }).roundToLong()
         val inside = points.count { (x, y) -> abs(y - (rate * x + offset)) <= 400 }
         return if (inside * 100 >= points.size * 90) rate to offset else null
@@ -812,6 +815,7 @@ object ChromaAlignment {
         maxSpanMs: Long = 40_000L,
     ): Double {
         val slopes = ArrayList<Double>()
+        var evidenceMs = 0L
         val stride = max(1, points.size / 120)
         for (i in points.indices step stride) {
             for (j in i + 1 until points.size step stride) {
@@ -819,11 +823,12 @@ object ChromaAlignment {
                 if (dx < 8_000) continue
                 if (dx > maxSpanMs) break
                 slopes += (points[j].second - points[i].second).toDouble() / dx
+                if (dx > evidenceMs) evidenceMs = dx
             }
         }
         if (slopes.isEmpty()) return fallback
         val rate = TimingFit.median(slopes).coerceIn(TimingFit.MIN_RATE, TimingFit.MAX_RATE)
-        return if (abs(rate - 1.0) < 0.003) 1.0 else rate
+        return TimingFit.rateForSpan(rate, evidenceMs)
     }
 
     private fun normalize(v: FloatArray, at: Int) {
