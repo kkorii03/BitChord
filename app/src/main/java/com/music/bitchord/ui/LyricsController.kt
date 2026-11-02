@@ -1146,6 +1146,7 @@ class LyricsController(
             refreshTiming(generation, lines)
             }.onFailure {
                 if (it is kotlinx.coroutines.CancellationException) throw it
+                if (it !is Exception) throw it
                 TrackLog.w("BitChord", "lyrics-timing: pass failed", it, request.videoId)
             }
         }

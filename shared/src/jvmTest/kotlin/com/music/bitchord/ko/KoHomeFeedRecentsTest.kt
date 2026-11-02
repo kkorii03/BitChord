@@ -57,6 +57,21 @@ class KoHomeFeedRecentsTest {
         val item = KoHomeFeed.withContentCountryChart(listOf(shelf), null).single().items.single()
         assertEquals("Marigold (cover)", item.title)
         assertEquals("오화요", item.subtitle)
+        assertTrue(item.isVideo)
+    }
+
+    @Test
+    fun `a plain song named Take Cover is not cleaned into a cover`() {
+        val shelf = HomeShelf(
+            title = "커버 및 리믹스",
+            items = listOf(
+                ShelfItem("Take Cover", "A Band", null, "v4", null),
+            ),
+        )
+        val item = KoHomeFeed.withContentCountryChart(listOf(shelf), null).single().items.single()
+        assertEquals("Take Cover", item.title)
+        assertEquals("A Band", item.subtitle)
+        assertTrue(!item.isVideo)
     }
 
     @Test

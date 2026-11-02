@@ -137,10 +137,10 @@ internal object KoHomeFeed {
      * 리믹스" showed raw uploads, "한결 - 마음짓기(心做し) Live Cover" credited
      * to the channel). Every Home page path goes through [withContentCountryChart].
      *
-     * Every row with a video id, not only the ones still flagged as video: the
-     * flag is the same fact Recents lost, and a cover read without it still
-     * keeps its "(cover)" title and singer. The youtube.com Home path already
-     * cleans every row this way.
+     * A row that still has its video flag, or whose title is a cover outright:
+     * the flag is the same fact Recents lost, and a cover read without it still
+     * keeps its "(cover)" title and singer. A plain song stays as it is. The
+     * youtube.com Home path already cleans every video row this way.
      */
     internal fun cleanVideoRows(shelves: List<HomeShelf>): List<HomeShelf> = shelves.map { shelf ->
         if (shelf.items.none { !it.videoId.isNullOrBlank() }) {
@@ -152,18 +152,24 @@ internal object KoHomeFeed {
 
     private fun cleanVideoRow(item: ShelfItem): ShelfItem {
         val videoId = item.videoId?.takeIf { it.isNotBlank() } ?: return item
-        val song = CoverTitles.applyTo(
-            StoredSongDisplay.clean(
-                Song(
-                    videoId = videoId,
-                    title = item.title,
-                    artist = item.subtitle,
-                    thumbnailUrl = item.thumbnailUrl,
-                    isVideo = item.isVideo,
-                ),
-            ),
+        val raw = Song(
+            videoId = videoId,
+            title = item.title,
+            artist = item.subtitle,
+            thumbnailUrl = item.thumbnailUrl,
+            isVideo = item.isVideo,
         )
-        return item.copy(title = song.title, subtitle = song.artist.ifBlank { item.subtitle })
+        // A row without the video flag is touched only when its title is a
+        // cover outright; a plain song called "Take Cover" is not one.
+        val cover = CoverTitles.read(raw)
+        if (!item.isVideo && cover == null) return item
+        val song = CoverTitles.applyTo(StoredSongDisplay.clean(raw))
+        return item.copy(
+            title = song.title,
+            subtitle = song.artist.ifBlank { item.subtitle },
+            // The flag the row lost is a cover's: it still plays as its upload.
+            isVideo = item.isVideo || cover != null,
+        )
     }
 
     private fun withChart(
