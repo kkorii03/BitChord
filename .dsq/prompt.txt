@@ -1,0 +1,19 @@
+Task: tag every lyrics timing correction with the audio clock it was measured on, and convert it to the clock that is playing. Kotlin Android app. Use grep. Follow AGENTS.md (ponytail). Design draft + key assumptions first in your summary, then implement, test, self-review.
+
+Background (verified by Opus): the app plays a song from YouTube and may swap mid-song to a verified high-quality substitute (HQ, '#alt' rendition). HqVerificationStore keeps per (youtubeId, sourceConfigId, trackId) the map HQ = offsetMs + rate * YouTube (HqMatchPolicy.mapFor; KoPlaybackLosslessSwap uses the same map for the seek position). Facts:
+- LyricsTiming.Store (lyrics_timing_v1.json) persists auto (measured), ai*, refine*, manualMs, heardWords, refineHeardWords per videoId with NO record of which audio was measured.
+- VersionAudioAligner.chooseMeasurementCopy / renditionToMeasure falls back to the '#alt' HQ copy when the YouTube copy is too short, and after a mid-song swap the YouTube copy is deleted, so later measurement/refine hears HQ while the result is treated as YouTube clock.
+- LyricsTiming.hqAdjustment applies the HQ map only behind syncSafetyHqSync (default off) because applying it to an HQ-measured result moved the lyrics twice.
+- A mid-song swap records StreamChoice but nothing refreshes the lyric timing (LyricsController refreshes on LyricsTiming.changes only).
+- The new per-line layer (LyricsPerLine, LyricsTiming PerLineWords) uses the same key for words and current audio (TODO(clock tags)).
+
+Build:
+1. A clock identity: YOUTUBE, or SUBSTITUTE(sourceConfigId, trackId). Record it with each stored correction at the moment it is made: auto/measured, ai answer, refine, heard words, manualMs (hand nudge = clock playing when the user nudged). Determine it from the rendition actually read (renditionToMeasure key endsWith '#alt' -> the StreamChoice substitute's sourceConfigId/trackId) - not from what is playing now. Store version bump with migration: old untagged records read as UNKNOWN.
+2. In LyricsTiming timing()/apply: convert each correction from its clock to the playing clock: YOUTUBE->SUBSTITUTE = verified map; SUBSTITUTE->YOUTUBE = inverse map; SUBSTITUTE a -> SUBSTITUTE b = inverse a then map b; same clock = unchanged; no verified map for a needed conversion = drop that correction (log it) rather than show it on the wrong clock. UNKNOWN keeps today's behavior exactly (including the syncSafetyHqSync switch) so old data does not change.
+3. Per-line: use real clock identities for words vs playing (replace the TODO); words on another clock are converted with the same map.
+4. Mid-song swap: emit the existing LyricsTiming change signal (event, no polling) when StreamChoice records a substitute for the playing song so the screen, notification/lockscreen and next-prep recompute.
+5. Log once per song: 'sync clock: playing=<clock> base=<clock> refine=<clock> manual=<clock> converted=<n> dropped=<n>'.
+Keep composition order base -> hq -> refine -> per-line -> hand. Battery first: no timers or polling. Re-read every caller and type you change. Do not change grading thresholds or unrelated behavior.
+
+Tests (JVM): YouTube-measured base shown while HQ plays (mapped); HQ-measured base shown on YouTube (inverse); alt a -> alt b; same clock unchanged; missing map drops; UNKNOWN legacy identical to old output with switch on and off; manual nudge made on HQ shown on YouTube; store migration reads old JSON. List the new test class names in your summary (Opus adds them to CI).
+Finish with a summary of at most 15 lines: design + assumptions / files / tests and result / open problems.
