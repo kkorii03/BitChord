@@ -1,4 +1,4 @@
-Goal: stop the lyrics sync measurement from re-measuring a song that already has an answer, and from spending the single decode slot on songs that are no longer playing or next.
+﻿Goal: stop the lyrics sync measurement from re-measuring a song that already has an answer, and from spending the single decode slot on songs that are no longer playing or next.
 
 Evidence (sync-g emulator log, 11-02, app on task/u19-tg):
 - Song ekzHIouo8Q4 played 09:02:42-09:03:43 ('lyrics-sync: ekzHIouo8Q4 late version th92jw2CFOA -> measuring' was logged TWICE, 09:02:47.240 and 09:02:47.311, after 'song version: ... via search shared' and again '... via retry').
@@ -14,3 +14,15 @@ Do (systematic debugging: root cause first, failing test first):
 
 Rules: battery first (event-based, no polling/timers), read every caller and type of what you change, keep all existing guards (IO offload, pending flags, low-power guards, deadlines, clamps, null checks, catch-and-log, locks) unless the summary justifies it; REMOVED-LINES AUDIT required. Do not touch .github/workflows/, keys/, signing. Use grep/Select-String (rg is not installed). Unknown Android/Media3 API -> context7. AGENTS.md (ponytail) rules apply.
 At the end, summary within 10 lines: files changed / key change / test result / open problems (include your root-cause statement and key assumptions).
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 4
+HIGH — app/src/main/java/com/music/bitchord/playback/smart/LyricsTiming.kt:1524 (helper at :1547): the new short-circuit keys only on `videoId`, so once any stored answer exists (possibly from a different, guessed/search-found original, or an opening-only pass) the late-version path never measures against the authoritative `original` it was called with; the `(video, original)` pair is used for in-flight dedupe but not for stored answers, defeating the purpose of `measureLateVersion`. Fix: persist/compare the original id (or `CoverOriginals`) and reuse only when the stored answer is for this same pair.
+MEDIUM — LyricsTiming.kt:1524,1480: `hasMeasurementAnswer` is checked outside the per-video `measuring` mutex, so an ordinary `measure()` already running can store a partial answer while the late caller waits, after which `runMeasurement` only re-checks `worthMeasuring` and measures again; this leaves the late path able to duplicate an in-flight ordinary measurement. Fix: re-check the stored answer inside `runMeasurement` under the lock, or share one in-flight gate across both paths.
+MEDIUM — app/src/test/java/com/music/bitchord/playback/smart/LyricsTimingMeasurementGateTest.kt:16-40: the tests exercise only the new pure helpers; the risky changes (`hasMeasurementAnswer` provenance and the retry-from-zero at LyricsTiming.kt:2069) have no behavioral test, and the "fails on old code" proof only holds because the old tree cannot compile the new symbols. Fix: add a test covering the stored-answer/re-measure decision and the stale-reading retry so it fails on old behavior, not on compilation.
+MEDIUM — LyricsTiming.kt:1547: `hasMeasurementAnswer` duplicates the stored-answer predicate already in `measuredTiming` (:3616) and `stored` (:3235); reuse one helper instead of a third copy (AGENTS.md no-copied-blocks rule).
+LOW — LyricsTiming.kt:2069: the retry fires on any null decode when `from > 0`, not specifically on `no-first-sample`, so a transient codec/gate failure re-decodes the whole prefix from zero; restrict the retry to the no-first-sample case and cap it.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
