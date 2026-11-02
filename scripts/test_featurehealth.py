@@ -1231,6 +1231,32 @@ class DiagnosticsRowsTests(unittest.TestCase):
         self.assertEqual(0, metric(report, "D19-exit").attempts)
         self.assertEqual({"count": 0, "worst_ms": 0}, report.stats["main_stall"])
 
+    def test_exit_reason_warnings_are_not_counted_as_exits(self) -> None:
+        report = analyze(
+            log_text(
+                line("19:00:00.000", "exit-reason: preferences unreadable: boom"),
+                line("19:00:00.100", "exit-reason: history unreadable: boom"),
+                line("19:00:00.200", "exit-reason: ANR trace unreadable: boom"),
+                line(
+                    "19:00:01.000",
+                    "exit-reason: ANR Input dispatch timeout at "
+                    "2026-10-28 19:00:00 pss=1234",
+                ),
+            )
+        )
+        self.assertEqual({"ANR": 1}, report.stats["exit_reason"])
+        self.assertEqual(1, metric(report, "D19-exit").attempts)
+
+    def test_rows_without_an_emitter_say_no_data(self) -> None:
+        report = analyze(log_text(play("19:00:00.000", "id1", "Song")))
+        for key in ("D12-direct", "D13-automix", "D14-sleep", "D15-lyrics", "D16-sync-clock"):
+            self.assertTrue(metric(report, key).emitter_pending)
+            self.assertIn(
+                "no data (emitter pending)", featurehealth.render_console(report)
+            )
+        for key in ("D17-perline", "D18-stall", "D19-exit"):
+            self.assertFalse(metric(report, key).emitter_pending)
+
 
 class FeatureHealthHeaderTests(unittest.TestCase):
     def test_app_counters_are_read_and_shown_beside_log_counts(self) -> None:

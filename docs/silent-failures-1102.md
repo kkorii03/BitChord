@@ -139,3 +139,35 @@ edited.
 | 130 | `shared/src/jvmSharedMain/kotlin/com/music/bitchord/ko/KoLyricsTranslation.kt:866` | `val parse = { text: String -> runCatching { parseTranscript(geminiText(text), durationMs) }.getOrNull() }` | `runCatching { ... }.onFailure { TrackLog.w("KoLyricsTranslation", "KoLyricsTranslation failed: ${it.message}") }` |
 
 Total: 130 sites.
+
+## In-scope fixes
+
+The logging/diagnostics lane fixed its own swallowed reads, so they are not in
+the table above: `app/src/main/java/com/music/bitchord/data/DiagnosticsExport.kt`
+(cookie read, download cleanup, oldest-line and network-type fallbacks, WebView
+cookie names) and `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/TrackLog.kt`
+(persistence init, flush, append, export read, crash write). Each now logs its
+failure instead of discarding it.
+
+## Log lines to add
+
+These featurehealth rows have no emitter in the tree yet (grep finds no exact
+line). They stay visible but read `no data (emitter pending)` rather than 0%.
+The owning lane must emit the exact wording below for the rows to score.
+
+| row | exact line format expected |
+| --- | --- |
+| D12 direct source | `direct-source: <videoId> settled=<addon\|youtube\|...> source=<addon\|youtube>` (also matches `direct source:` / `direct-source-stream:`) |
+| D13 automix analysis | `automix-analysis: <videoId> done in <ms>ms` or `automix-analysis: <videoId> failed reason=<reason> in <ms>ms`; append `main-thread=yes` when it ran on the main thread |
+| D14 sleep timer | `sleep-timer: set <duration>` and `sleep-timer: fired after <duration>` |
+| D15 lyrics lookup failure | `lyrics: deadline after <ms>ms` and `lyrics: script-mismatch provider=<name>` |
+| D16 sync clock | `sync clock: converted=<n> dropped=<n>` |
+
+Rows that already have an emitter and need no change:
+
+| row | emitted as |
+| --- | --- |
+| D17 per-line sync | `sync perline: anchors=<n> applied=<n> maxAbsMs=<n>` (`LyricsTiming.kt`) |
+| D18 main-thread stall | `main-stall: <ms>ms <message target>` (`KoDiagnostics.kt`) |
+| D19 exit reason | `exit-reason: <ANR\|CRASH\|CRASH_NATIVE\|LOW_MEMORY\|EXCESSIVE_RESOURCE_USAGE\|...> <description> at <yyyy-MM-dd HH:mm:ss> pss=<kb>` (`ExitReasonsKo.kt`); ANR stack lines are `exit-anr: <line>` |
+

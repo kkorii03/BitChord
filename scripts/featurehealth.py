@@ -209,9 +209,19 @@ PERLINE_RE = re.compile(
     re.IGNORECASE,
 )
 MAIN_STALL_RE = re.compile(r"^main-stall:\s*(?P<ms>\d+)ms\b", re.IGNORECASE)
+# Only the names ExitReasonsKo emits, and only a complete exit line: its
+# `... unreadable` warnings also start with `exit-reason:` but carry no pss.
 EXIT_REASON_RE = re.compile(
-    r"^exit(?:-reason)?:\s*(?:reason=)?(?P<reason>[A-Z_]+)\b", re.IGNORECASE
+    r"^exit(?:-reason)?:\s*(?:reason=)?"
+    r"(?P<reason>ANR|CRASH_NATIVE|CRASH|LOW_MEMORY|EXCESSIVE_RESOURCE_USAGE|"
+    r"SIGNALED|EXIT_SELF|INITIALIZATION_FAILURE|PERMISSION_CHANGE|"
+    r"USER_REQUESTED|USER_STOPPED|DEPENDENCY_DIED|OTHER(?:\(\d+\))?|FREEZER|"
+    r"PACKAGE_STATE_CHANGE|PACKAGE_UPDATED|UNKNOWN)"
+    r"(?=\s)[^\n]*\bpss=\d+\s*$"
 )
+# Rows D12..D16 have no emitter in the tree yet; their rows are kept but say so
+# rather than reading as a 0% score. See docs/silent-failures-1102.md.
+NO_EMITTER = "no data (emitter pending)"
 
 QUALITY_TRIGGER_RE = re.compile(
     r"manual upgrade unnecessary|upgrade reverted|falling back to YouTube audio|"
@@ -287,6 +297,7 @@ class Metric:
     passed: bool | None = None
     failures: list[Failure] = field(default_factory=list)
     notes: str = ""
+    emitter_pending: bool = False
 
     @property
     def rate(self) -> float | None:
@@ -423,6 +434,7 @@ def _rate_metric(
     threshold: float | None,
     failures: Iterable[Failure] = (),
     notes: str = "",
+    emitter_pending: bool = False,
 ) -> Metric:
     passed: bool | None = None
     if threshold is not None and attempts > 0:
@@ -436,6 +448,7 @@ def _rate_metric(
         passed=passed,
         failures=list(failures),
         notes=notes,
+        emitter_pending=emitter_pending,
     )
 
 
@@ -447,6 +460,7 @@ def _info_metric(
     successes: int | None = None,
     failures: Iterable[Failure] = (),
     notes: str = "",
+    emitter_pending: bool = False,
 ) -> Metric:
     return Metric(
         key=key,
@@ -457,6 +471,7 @@ def _info_metric(
         passed=None,
         failures=list(failures),
         notes=notes,
+        emitter_pending=emitter_pending,
     )
 
 
@@ -2458,6 +2473,7 @@ def analyze(log: Log) -> Report:
             direct_source["settled"],
             "settled 90% 이상",
             0.90,
+            emitter_pending=True,
         )
     )
     stats["direct_source"] = direct_source
@@ -2471,6 +2487,7 @@ def analyze(log: Log) -> Report:
             automix_analysis["done"],
             "실패·main-thread 위반 0건",
             0.95,
+            emitter_pending=True,
         )
     )
     stats["automix_analysis"] = {
@@ -2492,6 +2509,7 @@ def analyze(log: Log) -> Report:
             sleep_timer["set"],
             "set/fired 기록",
             successes=sleep_timer["fired"],
+            emitter_pending=True,
         )
     )
     stats["sleep_timer"] = sleep_timer
@@ -2507,6 +2525,7 @@ def analyze(log: Log) -> Report:
                 f"deadline {lyrics_failures['deadline']} · "
                 f"script-mismatch {lyrics_failures['script-mismatch']}"
             ),
+            emitter_pending=True,
         )
     )
     stats["lyrics_failures"] = lyrics_failures
@@ -2518,6 +2537,7 @@ def analyze(log: Log) -> Report:
             sync_clock["converted"] + sync_clock["dropped"],
             "converted/dropped 기록",
             notes=f"converted {sync_clock['converted']} · dropped {sync_clock['dropped']}",
+            emitter_pending=True,
         )
     )
     stats["sync_clock"] = sync_clock
@@ -2595,6 +2615,8 @@ def _pad(text: str, width: int) -> str:
 
 
 def _rate_text(metric: Metric) -> str:
+    if metric.emitter_pending and metric.attempts == 0:
+        return NO_EMITTER
     rate = metric.rate
     return "—" if rate is None else f"{rate * 100:.1f}%"
 

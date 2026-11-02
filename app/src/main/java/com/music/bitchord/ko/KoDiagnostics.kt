@@ -27,8 +27,9 @@ internal object KoDiagnostics {
     private var lastLoggedAt = 0L
 
     fun install() {
-        if (!AppSettings.mainStallLog.value) return
         Looper.getMainLooper().setMessageLogging(Printer { line ->
+            // Read live: the kill switch can be turned off without a restart.
+            if (!AppSettings.mainStallLog.value) return@Printer
             if (line.startsWith(">>>>>")) {
                 startedAt = SystemClock.uptimeMillis()
                 startLine = line

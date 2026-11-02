@@ -1544,6 +1544,12 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_NERD_STATS, value).apply()
     }
 
+    /** Persists the main-thread stall kill switch; the printer reads it live. */
+    fun setMainStallLog(value: Boolean) {
+        mainStallLog.value = value
+        prefs.edit().putBoolean(KEY_MAIN_STALL_LOG, value).apply()
+    }
+
     fun setShowListenTogetherButton(value: Boolean) {
         showListenTogetherButton.value = value
         prefs.edit().putBoolean(KEY_LISTEN_TOGETHER_BUTTON, value).apply()

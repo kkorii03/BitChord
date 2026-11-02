@@ -97,6 +97,8 @@ object DiagnosticsExport {
                 val cookie = runCatching {
                     val store = AuthStore(context)
                     store.activeSession?.cookie ?: store.cookie
+                }.onFailure {
+                    TrackLog.w("BitChord", "diagnostic export cookie unreadable: ${it.message}")
                 }.getOrNull()
                 val authCookieNames = cookieNames(cookie)
                 val logText = LogRedactor.redact(TrackLog.exportText())
@@ -241,7 +243,9 @@ object DiagnosticsExport {
             uri
         }.getOrElse {
             TrackLog.w("BitChord", "diagnostic export download write failed: ${it.message}")
-            runCatching { resolver.delete(uri, null, null) }
+            runCatching { resolver.delete(uri, null, null) }.onFailure { failure ->
+                TrackLog.w("BitChord", "diagnostic export download cleanup failed: ${failure.message}")
+            }
             null
         }
     }
@@ -304,6 +308,8 @@ object DiagnosticsExport {
             } else {
                 first.substringBefore(' ')
             }
+        }.onFailure {
+            TrackLog.w("BitChord", "diagnostic export oldest line unreadable: ${it.message}")
         }.getOrElse { "(unknown)" }
     }
 
@@ -328,6 +334,8 @@ object DiagnosticsExport {
             caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) -> "vpn"
             else -> "other"
         }
+    }.onFailure {
+        TrackLog.w("BitChord", "diagnostic export network type unreadable: ${it.message}")
     }.getOrElse { "unknown" }
 
     private fun cookieNames(header: String?): List<String> = header.orEmpty()
@@ -351,5 +359,7 @@ object DiagnosticsExport {
             "webview cookie names ${origin.substringAfter("://")}: " +
                 names.joinToString(", ").ifEmpty { "(none)" }
         }
+    }.onFailure {
+        TrackLog.w("BitChord", "webview cookie names unreadable: ${it.message}")
     }.getOrElse { listOf("webview cookie names: unreadable (${it.message})") }
 }
