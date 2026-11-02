@@ -991,6 +991,19 @@ object LyricsRepository {
     /** [LOOKUP_DEADLINE_MS] as used; a seam so tests need not wait it out. */
     internal var lookupDeadlineMs = LOOKUP_DEADLINE_MS
 
+    /** The search deadline in force, for the lyrics panel's own backstop. */
+    val lookupDeadline: Long get() = lookupDeadlineMs
+
+    // [KO] sync-test: an emulator behind the test proxy searches 3-5x slower
+    // than a phone (11-02: 13 deadline hits in one emulator run, none in a
+    // day on the S24), so songs lost their lyrics and could not be scored.
+    // Only sync-test mode calls this; it never shortens the deadline.
+    fun allowSlowTestDevice() {
+        lookupDeadlineMs = maxOf(lookupDeadlineMs, SLOW_TEST_DEADLINE_MS)
+    }
+
+    private const val SLOW_TEST_DEADLINE_MS = 30_000L
+
     /**
      * The longest the Gemini transcription fallback is waited for, apart from
      * the search's deadline. Before 11-02 it had no bound at all.

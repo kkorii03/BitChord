@@ -71,8 +71,23 @@ SCREEN_W=${SCREEN_W:-1080}
 SCREEN_H=${SCREEN_H:-2400}
 TAB_MIN_Y=$(( SCREEN_H * 17 / 20 ))
 
+# A slow emulator start can leave Android's "앱이 응답하지 않음" dialog over the
+# app (11-02: a whole tour was captured under it). Press Wait, never Close.
+dismiss_anr() {
+  dump_ui
+  grep -qE '응답하지 않음|not responding' /tmp/ui.xml 2>/dev/null || return 0
+  local at
+  at=$(find_center '=대기'); [ -z "$at" ] && at=$(find_center '=Wait')
+  if [ -n "$at" ]; then
+    adb shell input tap $at
+    echo "tour: dismissed an app-not-responding dialog (Wait) before shot $((n + 1))" | tee -a "$OUT/anr-dismissed.txt"
+    sleep 5
+  fi
+}
+
 # Screenshot + hierarchy + one line in index.txt: name, then what it should show.
 shot() {
+  dismiss_anr
   n=$((n + 1)); name=$(printf "%02d-%s" "$n" "$1")
   adb exec-out screencap -p > "$OUT/$name.png"
   adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 && adb pull /sdcard/ui.xml "$OUT/$name.xml" >/dev/null 2>&1
@@ -733,6 +748,10 @@ else
   section_settings_sheets() { reset_home; OUT="$OUT" bash scripts/ui-tour-settings.sh; }
   [ -f scripts/ui-tour-settings.sh ] && run_section section_settings_sheets settings-sheets
 fi
+
+# Broken text on every captured screen (cut, split words, overlaps, English
+# left, size jumps, 1-2 character lines) -> shots/ui-text-issues.md.
+python3 scripts/ui/ui_textcheck.py --shots "$OUT" || echo "ui_textcheck failed; screens are still in $OUT"
 
 adb logcat -d > "$OUT/logcat.txt"
 # Why playback did not start, if it did not (bot check, 403, source error...).

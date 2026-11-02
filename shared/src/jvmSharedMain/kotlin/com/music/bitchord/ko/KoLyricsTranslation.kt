@@ -33,9 +33,12 @@ import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import okio.BufferedSink
 import java.io.IOException
+import java.io.OutputStream
 
 /**
  * Korean fork additions to [LyricsTranslation], kept here so the upstream file
@@ -94,6 +97,13 @@ object KoLyricsTranslation {
         "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.6-flash-lite", "gemini-3.5-flash", "gemini-3.6-flash",
     )
     private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
+
+    /**
+     * Marks where the streamed audio belongs in a Gemini request. The body is
+     * never built with the encoded audio String: [StreamingAudioJsonBody]
+     * writes this part straight from the WAV while OkHttp sends it.
+     */
+    internal const val AUDIO_DATA_PLACEHOLDER = "__BITCHORD_AUDIO_BASE64__"
 
     private val geminiClient by lazy {
         Http.client.newBuilder()
@@ -358,18 +368,21 @@ object KoLyricsTranslation {
         models: List<String> = GEMINI_MODELS,
         /** Collects each model's status code, for a caller that retries on what they were. */
         codes: MutableList<Int>? = null,
+        /** Audio inlined as a stream; the request body encodes it while sending. */
+        audioWav: ByteArray? = null,
         parse: (String) -> T?,
     ): T? {
         val key = cleanGeminiKey()
         if (key.isEmpty() || key == rejectedGeminiKey) return null
         if (System.currentTimeMillis() < geminiCooldownUntil) return null
         var quotaRefusals = 0
+        val requestBody = geminiRequestBody(body, audioWav)
         for (model in models) {
             val request = Request.Builder()
                 .url(GEMINI_ENDPOINT.format(model))
                 .header("x-goog-api-key", key)
                 .header("Accept", "application/json")
-                .post(body.toRequestBody(JSON_MEDIA))
+                .post(requestBody)
                 .build()
             val (code, text) = try {
                 client.newCall(request).awaitResponse()
@@ -777,12 +790,24 @@ object KoLyricsTranslation {
             // model or a used-up quota falls through to the next.
             val codes = mutableListOf<Int>()
             val parse = { text: String -> runCatching { parsePlacements(geminiText(text), lines.size) }.getOrNull() }
-            askGemini(body(quick = true), geminiVideoClient, models = VIDEO_MODELS, codes = codes, parse = parse)
-                ?: if (codes.isNotEmpty() && codes.all { it == 400 }) {
-                    askGemini(body(quick = false), geminiVideoClient, models = VIDEO_MODELS, parse = parse)
-                } else {
-                    null
-                }
+            askGemini(
+                body(quick = true),
+                geminiVideoClient,
+                models = VIDEO_MODELS,
+                codes = codes,
+                audioWav = audioWav,
+                parse = parse,
+            ) ?: if (codes.isNotEmpty() && codes.all { it == 400 }) {
+                askGemini(
+                    body(quick = false),
+                    geminiVideoClient,
+                    models = VIDEO_MODELS,
+                    audioWav = audioWav,
+                    parse = parse,
+                )
+            } else {
+                null
+            }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
@@ -793,6 +818,54 @@ object KoLyricsTranslation {
     private val VIDEO_MODELS = (listOf("gemini-3.5-flash") + GEMINI_MODELS).distinct()
 
     /**
+     * The request body for [body]. With audio, the base64 travels straight
+     * from the WAV into the socket, so a whole-song clip is never held twice.
+     */
+    internal fun geminiRequestBody(body: String, audioWav: ByteArray?): RequestBody {
+        if (audioWav == null) return body.toRequestBody(JSON_MEDIA)
+        val at = body.indexOf(AUDIO_DATA_PLACEHOLDER)
+        if (at < 0) return body.toRequestBody(JSON_MEDIA)
+        return StreamingAudioJsonBody(
+            prefix = body.substring(0, at),
+            audio = audioWav,
+            suffix = body.substring(at + AUDIO_DATA_PLACEHOLDER.length),
+        )
+    }
+
+    private class StreamingAudioJsonBody(
+        prefix: String,
+        private val audio: ByteArray,
+        suffix: String,
+    ) : RequestBody() {
+        private val prefixBytes = prefix.toByteArray(Charsets.UTF_8)
+        private val suffixBytes = suffix.toByteArray(Charsets.UTF_8)
+        private val base64Length = 4L * ((audio.size + 2L) / 3L)
+
+        override fun contentType() = JSON_MEDIA
+
+        override fun contentLength(): Long = prefixBytes.size.toLong() + base64Length + suffixBytes.size
+
+        override fun writeTo(sink: BufferedSink) {
+            sink.write(prefixBytes)
+            // A sink-backed stream with a no-op close: the encoder flushes its
+            // last quantum without closing the request body's sink.
+            val withoutClose = object : OutputStream() {
+                override fun write(b: Int) {
+                    sink.writeByte(b)
+                }
+
+                override fun write(b: ByteArray, off: Int, len: Int) {
+                    sink.write(b, off, len)
+                }
+            }
+            java.util.Base64.getEncoder().wrap(withoutClose).use { encoded ->
+                audio.inputStream().use { it.copyTo(encoded, 16 * 1024) }
+            }
+            sink.write(suffixBytes)
+        }
+    }
+
+    /**
      * What Gemini listens to: the video's sound sent along (16 kHz WAV —
      * seconds to take in), or the YouTube address for it to fetch and watch,
      * which is what made these requests take a minute.
@@ -801,7 +874,7 @@ object KoLyricsTranslation {
         if (audioWav != null) {
             putJsonObject("inlineData") {
                 put("mimeType", "audio/wav")
-                put("data", java.util.Base64.getEncoder().encodeToString(audioWav))
+                put("data", AUDIO_DATA_PLACEHOLDER)
             }
         } else {
             putJsonObject("fileData") {
@@ -864,12 +937,24 @@ object KoLyricsTranslation {
         return try {
             val codes = mutableListOf<Int>()
             val parse = { text: String -> runCatching { parseTranscript(geminiText(text), durationMs) }.getOrNull() }
-            askGemini(body(quick = true), geminiVideoClient, models = VIDEO_MODELS, codes = codes, parse = parse)
-                ?: if (codes.isNotEmpty() && codes.all { it == 400 }) {
-                    askGemini(body(quick = false), geminiVideoClient, models = VIDEO_MODELS, parse = parse)
-                } else {
-                    null
-                }
+            askGemini(
+                body(quick = true),
+                geminiVideoClient,
+                models = VIDEO_MODELS,
+                codes = codes,
+                audioWav = audioWav,
+                parse = parse,
+            ) ?: if (codes.isNotEmpty() && codes.all { it == 400 }) {
+                askGemini(
+                    body(quick = false),
+                    geminiVideoClient,
+                    models = VIDEO_MODELS,
+                    audioWav = audioWav,
+                    parse = parse,
+                )
+            } else {
+                null
+            }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {

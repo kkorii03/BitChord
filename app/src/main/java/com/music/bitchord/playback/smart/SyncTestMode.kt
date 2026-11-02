@@ -35,6 +35,17 @@ object SyncTestMode {
     /** The last block written, so a refresh that changes nothing is not logged twice. */
     private var lastSignature: String? = null
 
+    /**
+     * At app start: with the flag present, the lyrics search gets the slow
+     * test device's longer deadline (see [com.music.bitchord.data.lyrics.LyricsRepository.allowSlowTestDevice]).
+     */
+    fun applyTestAllowances(context: Context) {
+        val on = runCatching { externalRoot(context)?.let { File(it, FLAG_NAME).isFile } == true }.getOrDefault(false)
+        if (!on) return
+        com.music.bitchord.data.lyrics.LyricsRepository.allowSlowTestDevice()
+        TrackLog.i(TAG, "sync-test: lyrics search deadline ${com.music.bitchord.data.lyrics.LyricsRepository.lookupDeadline} ms")
+    }
+
     /** Whether sync-test mode is on for [videoId]; the flag file is checked once per song. */
     fun enabled(context: Context, videoId: String): Boolean = synchronized(this) {
         appContext = context.applicationContext

@@ -213,7 +213,7 @@
     <string name="quality_upgrade_reason_unavailable">지금은 시도할 수 없습니다</string>
     <string name="dolby_atmos">Dolby Atmos</string>
     <string name="dolby_atmos_subtitle">서라운드 버전이 있으면 재생</string>
-    <string name="dolby_atmos_unavailable">이 기기에서는 Dolby Atmos를 재생할 수 없어 일반 음원으로 재생됩니다.</string>
+    <string name="dolby_atmos_unavailable">이 기기에서 지원되지 않음</string>
     <string name="spatial_audio">공간 음향</string>
     <string name="spatial_audio_subtitle">스테레오를 넓게 재생</string>
     <string name="spatial_audio_atmos_subtitle">Dolby Atmos 재생 중에는 꺼짐</string>

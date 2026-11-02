@@ -3,6 +3,7 @@ package com.music.bitchord.ui
 import android.app.Application
 import com.music.bitchord.data.TrackDiagnostics
 import com.music.bitchord.data.TrackLog
+import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.lyrics.EmbeddedLyrics
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsAiGuard
@@ -78,7 +79,7 @@ class LyricsController(
      * repository's deadline so the repository's best-so-far answer still wins.
      * A provider that ignores cancellation must not keep the panel spinning.
      */
-    internal var lookupTimeoutMs: Long = 12_000L + 1_000L
+    internal var lookupTimeoutMs: Long = LyricsRepository.lookupDeadline + 1_000L
 
     /**
      * Added to [lookupTimeoutMs] when the lookup may fall back to Gemini
@@ -216,6 +217,28 @@ class LyricsController(
                 }
             }
         }
+    }
+
+    /**
+     * The lyrics call for a queue row: the same search the next-song bundle
+     * makes, including whether the row is a video/cover. That flag is part of
+     * the stored AI answer's key, so a screen that guessed it wrong could not
+     * see the answer the bundle had already paid for.
+     */
+    fun loadLyricsFor(song: Song, durationMs: Long) {
+        val query = CoverTitles.lyricsQuery(song)
+        loadLyrics(
+            videoId = song.videoId,
+            title = query.title,
+            artist = query.artist,
+            durationMs = durationMs,
+            album = song.albumName,
+            localUri = song.localUri,
+            isVideo = query.isVideo,
+            alternatives = query.alternatives,
+            artistKnown = query.artistKnown,
+            artistAliases = query.artistAliases,
+        )
     }
 
     /**
