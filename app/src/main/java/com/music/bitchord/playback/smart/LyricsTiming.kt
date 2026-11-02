@@ -764,6 +764,18 @@ object LyricsTiming {
         )
     }
 
+    /** One line per (song, stored lyrics, shown lyrics): why a kept AI answer was not used. */
+    private val loggedAiOtherLyrics = ConcurrentHashMap.newKeySet<String>()
+
+    private fun logAiForOtherLyrics(videoId: String?, entry: Entry?, key: Int) {
+        val answerKey = entry?.aiTextKey ?: return
+        if (answerKey == key || videoId == null) return
+        if (entry.ai == null && entry.aiShiftMs == null && entry.aiStarts == null) return
+        if (!loggedAiOtherLyrics.add("$videoId|$answerKey|$key")) return
+        if (loggedAiOtherLyrics.size > 3_000) loggedAiOtherLyrics.clear()
+        TrackLog.d(TAG, "ai answer for other lyrics: $answerKey", videoId)
+    }
+
     private fun baseOf(
         entry: Entry,
         lines: List<LyricLine>,
@@ -773,6 +785,7 @@ object LyricsTiming {
         key: Int = textKey(lines, audioSource),
         videoId: String? = null,
     ): Adjustment? {
+        logAiForOtherLyrics(videoId, entry, key)
         val measuredAdjustment = entry.auto
             ?.takeIf { measuredAllowed && entry.autoVersion == AUTO_VERSION }
             ?.toAdjustment(byAi = false)
@@ -2297,7 +2310,10 @@ object LyricsTiming {
         }
         // Paid for and agreed, or already spent on these lyrics: reuse it
         // without decoding the audio again or paying an engine twice.
-        if (engines.isEmpty()) return entry?.let { aiOf(it, lines, isVideo, audioSource) }
+        if (engines.isEmpty()) {
+            logAiForOtherLyrics(videoId, entry, key)
+            return entry?.let { aiOf(it, lines, isVideo, audioSource) }
+        }
         // One request per video, lyrics and kind, whoever asks — the button,
         // the song starting, the next-song preparation. The engines are no
         // longer part of the key: two callers that read the cache a moment
@@ -2793,7 +2809,10 @@ object LyricsTiming {
         val timeable = !fromFile || query.isVideo
         val recordTimed = timeable && (!fromFile || source != null) &&
             !timedToVideo(source)
-        val audioSource = if (song.isVideo) {
+        // A cover is an upload even when its queue row lost the video flag —
+        // the same [CoverTitles.lyricsQuery] test the screen and the cache use,
+        // so the saved answer is looked up under the key it was stored with.
+        val audioSource = if (query.isVideo) {
             null
         } else {
             audioSourceKey(song.videoId, song.localUri != null)
@@ -2801,7 +2820,7 @@ object LyricsTiming {
         // A video is measured against its original from the bytes read-ahead
         // already wrote. A song version has no other recording to measure
         // against; its existing path is the AI song check.
-        if (recordTimed && song.isVideo && worthMeasuring(context, song.videoId)) {
+        if (recordTimed && query.isVideo && worthMeasuring(context, song.videoId)) {
             measure(
                 context = context,
                 video = song,
@@ -2847,14 +2866,16 @@ object LyricsTiming {
         val recordTimed = timeable && (!fromFile || source != null) &&
             !timedToVideo(source)
         if (!recordTimed) return timing
-        val audioSource = if (song.isVideo) {
+        // Same video/cover test as the screen and the first-frame cache: the
+        // answer and its key must agree with what the lyrics screen will ask.
+        val audioSource = if (query.isVideo) {
             null
         } else {
             audioSourceKey(song.videoId, song.localUri != null)
         }
         var result = timing
 
-        if (song.isVideo) {
+        if (query.isVideo) {
             // The existing automatic fallback: Gemini/Deepgram only once the
             // measurement has given up, with the same wantsAi policy.
             if (measurementGaveUp(context, song.videoId) &&
@@ -2890,7 +2911,7 @@ object LyricsTiming {
             // it already has or hear the next row's opening. Same policy and caps.
             ensureRefineHeard(context, song.videoId, song, lines, result, audioSource)
             result = timing(
-                context, song.videoId, lines, timeable, recordTimed, song.isVideo, audioSource,
+                context, song.videoId, lines, timeable, recordTimed, query.isVideo, audioSource,
             )
         }
         return result
