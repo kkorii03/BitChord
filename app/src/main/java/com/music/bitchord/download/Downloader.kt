@@ -462,7 +462,7 @@ object Downloader {
      */
     internal fun clientFor(url: String) = ProxyPlayback.mediaClientFor(url)
 
-    private fun open(url: String, position: Long, length: Long) = clientFor(url)
+    internal fun open(url: String, position: Long, length: Long) = clientFor(url)
         .newCall(
             Request.Builder()
                 .url(url)

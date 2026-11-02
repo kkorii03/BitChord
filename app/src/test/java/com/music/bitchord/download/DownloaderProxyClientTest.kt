@@ -7,7 +7,12 @@ import com.music.bitchord.data.net.ProxyMode
 import com.music.bitchord.data.net.ProxyPlayback
 import com.music.bitchord.data.net.ProxyScope
 import com.music.bitchord.data.net.YouTubeProxy
+import java.util.concurrent.TimeUnit
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertSame
 import org.junit.Before
 import org.junit.Test
@@ -47,6 +52,38 @@ class DownloaderProxyClientTest {
         ProxyHealthMonitor.recordUnreachable("test")
 
         assertSame(Http.proxyMediaClient, Downloader.clientFor(url))
+    }
+
+    @Test
+    fun `a proxied range fetch really leaves through the proxy`() {
+        MockWebServer().use { proxy ->
+            proxy.start()
+            YouTubeProxy.update(
+                ProxyConfig(
+                    mode = ProxyMode.HTTP,
+                    host = proxy.hostName,
+                    port = proxy.port,
+                    scope = ProxyScope.ALL_YOUTUBE,
+                ),
+            )
+            val id = "download-proxy-range-${System.nanoTime()}"
+            // A host that does not resolve: only the proxy can answer it.
+            val url = "http://proxied-test.googlevideo.com/videoplayback?x=$id"
+            ProxyPlayback.markResolved(id, url)
+            ProxyHealthMonitor.recordUnreachable("test")
+            proxy.enqueue(
+                MockResponse()
+                    .setResponseCode(206)
+                    .setHeader("Content-Range", "bytes 0-0/100")
+                    .setBody("through-proxy"),
+            )
+
+            Downloader.open(url, 0, 1).use { response ->
+                assertEquals(206, response.code)
+                assertEquals("through-proxy", response.body.string())
+            }
+            assertNotNull(proxy.takeRequest(2, TimeUnit.SECONDS))
+        }
     }
 
     @Test
