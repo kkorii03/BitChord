@@ -1,0 +1,19 @@
+﻿Kotlin Android app = upstream v1.9 + our Korean fork, on branch task/u19-tg. The Korean fork as it was on 1.8 is origin/task/telegram (fetch it: git fetch origin task/telegram). Battery first: event-driven, no polling/timers; never block the main thread. Use grep/Select-String, not rg. Unknown Android/Media3/Compose APIs: check with context7.
+
+Problem: the 1.9 merge silently dropped Korean-fork behaviour. Found on the phone tonight: fetchHistory lost its StoredSongDisplay.clean, the Recents shelf dropped isVideo, a [KO] first-sound change deadlocked DirectSourceGate, cleanCoverTitle grew "( )" on every pass. The user says 1.9 is a mess: wrong titles, odd Korean wording, features that do nothing.
+
+YOUR AREA: Media notification, lock screen, media session metadata (title/artist/art), Android Auto
+Start from these files (and what they call): app/.../playback/PlaybackService.kt (metadata parts), MediaSession code
+Task: compare the area on origin/task/telegram (1.8 fork) with task/u19-tg (git diff origin/task/telegram task/u19-tg -- <files>, plus git log -S on key symbols). List every user-visible behaviour of 1.8 that is missing or changed in 1.9 (titles/artists shown, Korean wording, a button or feature that no longer does anything, a hook whose call disappeared, a flag no longer passed through). Fix each real regression with the smallest change, keeping v1.9's own improvements (on overlap the better one wins). Each fix gets a JVM test that fails on the current task/u19-tg code; tests must not need network.
+Do not touch .github/workflows. Do not refactor or move upstream code. Keep edits inside YOUR AREA's files where possible (other lanes run in parallel); list any needed change outside it in the summary instead of making it.
+Finish with a summary of at most 12 lines: regressions found (1.8 behaviour -> 1.9 behaviour), files, REMOVED-LINES AUDIT, tests (fail-before/pass-after, class names for the CI list), what you did not do. Follow AGENTS.md (ponytail) rules.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 3
+MEDIUM — app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:2846 — `isLiked` re-implements `sessionFavoriteStatus`'s override/persisted lookup and calls `MediaWidgetSnapshot.load` synchronously from the main-thread notification/layout refresh, unlike the off-main loads used elsewhere. Fix: delegate the online branch to `sessionFavoriteStatus(song.videoId)` and load the snapshot off the main thread or from cached state.
+MEDIUM — app/src/test/java/com/music/bitchord/playback/SessionFavoriteStateTest.kt:67 — the test only calls the new `queueItemLiked` helper, so reverting `PlaybackService.isLiked` to its pre-fix form leaves every test passing; the required fail-before regression test does not cover the actual fix. Fix: test the full star decision (persisted only for online/no-override) through an extracted pure function that the service calls.
+MEDIUM — app/src/main/java/com/music/bitchord/ui/LyricsController.kt:859 — this is an out-of-area edit, absent from the summary's "Files changed", and violates the instruction to list outside-area changes instead of making them; the swallowed-failure branch also has no JVM test. Fix: move it to its own lane/list it in the summary, or revert it here.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
