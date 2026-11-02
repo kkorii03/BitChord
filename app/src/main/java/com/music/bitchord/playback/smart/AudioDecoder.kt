@@ -30,6 +30,8 @@ import android.media.MediaFormat
 import android.util.Log
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.playback.DecoderMonitor
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runInterruptible
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -65,6 +67,15 @@ object AudioDecoder {
 
     /** [KO] decode-priority: true (via asContextElement) for work done ahead for a track not yet playing. */
     val aheadOfTime: ThreadLocal<Boolean> = ThreadLocal.withInitial { false }
+
+    /**
+     * Runs a blocking decode so a cancelled coroutine interrupts it — including
+     * its wait at [decodeGate], which otherwise only notices the abort after
+     * the slot is finally free. That was the 25 s "dropped at the gate" after
+     * the next-prep bundle had already been cancelled on 11-02.
+     */
+    internal suspend fun <T> interruptibleDecode(block: () -> T): T =
+        runInterruptible(Dispatchers.IO) { block() }
 
     /** Decoded mono PCM at the container's own sample rate; the caller resamples. */
     data class Pcm(val samples: FloatArray, val sampleRate: Double)

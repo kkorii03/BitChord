@@ -393,6 +393,7 @@ internal class NextTrackPreparation(
                                             source = found.source,
                                             timing = prepared,
                                             probe = probe,
+                                            cancelWithCaller = true,
                                         )
                                     }
                                 }
