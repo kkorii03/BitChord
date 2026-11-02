@@ -1,0 +1,13 @@
+Task: READ-ONLY quality and performance audit of the Android app (Kotlin). Do NOT change any source file. Your only output is ONE new file: docs/audit-1102.md. Use grep. Follow AGENTS.md (ponytail) - its "laziest senior dev" view applies to findings: what to delete, merge, or simplify.
+
+Priorities of this app (in order): right song, lyrics sync, stability (no crash/ANR), battery, speed (first sound, startup), hi-res audio, UI. The phone is an S24 Ultra; only battery matters, not storage or data.
+
+Find and rank (HIGH/MEDIUM/LOW), each with file:line, the concrete problem, the evidence (quote 1-3 lines), the smallest fix, and a risk note:
+1. Battery: periodic polling, timers, repeating handlers/coroutines with delay loops, wake locks or foreground work held too long, work done while the screen is off that is not needed, repeated network calls that could be cached.
+2. ANR / main thread: disk or network I/O, JSON/large parsing, SharedPreferences commit, runBlocking on the main thread or in Compose; heavy work in composables (recomputed every recomposition, missing remember/derivedStateOf); collectAsState of fast flows that recompose the whole screen.
+3. Startup and first sound: work on Application.onCreate / MainActivity start / PlaybackService start that can be deferred; serial waits that could run in parallel.
+4. Memory: whole files or bitmaps loaded into memory, unbounded caches/maps, leaks (static Context/Activity refs, listeners never removed).
+5. Dead and duplicated code: code copied instead of reused (known example: app/.../ko/KoSongActionsSheet.kt duplicates large parts of ui/components/SongActionsSheet.kt), unused functions/classes/settings, two implementations of one feature (fork vs upstream v1.9) where one is unreachable.
+Do not report style. Do not suggest moving upstream code into ko/ files. Mark which findings touch upstream files vs our ko/ files.
+End docs/audit-1102.md with a top-10 fix list ordered by (user impact / risk), each sized S/M/L.
+Finish with a summary of at most 10 lines: counts per severity and the top 5.
