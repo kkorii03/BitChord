@@ -162,6 +162,41 @@ class DownloaderTelegramTest {
         }
     }
 
+    @Test
+    fun `a telegram file swapped for a shorter one at the window edge fails`() {
+        // The replacement is exactly as long as what the failed window had
+        // already written, so the reader's next read is EOF. The length check
+        // cannot see the swap; the file id has to be checked on that -1 read.
+        val original = ByteArray(WINDOW_BYTES + 1_000) { 0x11 }
+        val replacement = ByteArray(WINDOW_BYTES) { 0x22 }
+        val transport = SwappingTransport(original, replacement, failAtCall = 2)
+        Downloader.telegramReaderOpener = { trackId, position, length ->
+            TelegramAudioReader.openWithTransport(
+                trackId,
+                position,
+                length,
+                TelegramAudioReader.REASON_VERIFY,
+                transport,
+            )
+        }
+        try {
+            val out = ByteArrayOutputStream()
+            val failure = assertThrows(IllegalStateException::class.java) {
+                runBlocking {
+                    Downloader.fetchDirect(TELEGRAM_URL, emptyMap(), out) { _, _ -> }
+                }
+            }
+
+            assertTrue(
+                "unexpected failure: ${failure.message}",
+                failure.message.orEmpty().contains("Telegram file changed"),
+            )
+            assertEquals(WINDOW_BYTES.toLong(), out.size().toLong())
+        } finally {
+            transport.cleanup()
+        }
+    }
+
     private class FakeTransport(private val data: ByteArray) : TelegramFileTransport {
         private val file = File.createTempFile("telegram-download-", ".bin").apply { writeBytes(data) }
 

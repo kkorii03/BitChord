@@ -355,7 +355,11 @@ object Downloader {
                 total = { total },
                 read = { buffer, offset, length ->
                     val read = reader.read(buffer, offset, length)
-                    if (read > 0 && reader.fileId != expectedFileId) {
+                    // Checked even when the read returned -1: a refresh can
+                    // replace the file with one whose length is exactly what
+                    // was already written, so the loop would exit at EOF and
+                    // the length check would pass on a mixed file.
+                    if (reader.fileId != expectedFileId) {
                         if (writtenBefore > 0L) {
                             error("Telegram file changed during download — try again")
                         }
