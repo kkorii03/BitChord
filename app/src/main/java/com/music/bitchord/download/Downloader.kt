@@ -88,6 +88,13 @@ object Downloader {
     @Volatile
     internal var telegramReaderOpener: ((String, Long, Long) -> TelegramAudioReader)? = null
 
+    /**
+     * Test seam: observes the stream lease even when no TDLib client is
+     * configured, so the begin/end pairing can be asserted on the JVM.
+     */
+    @Volatile
+    internal var telegramLeaseObserver: ((trackId: String, begin: Boolean) -> Unit)? = null
+
     /** Matches the range size read-ahead settled on; large enough to amortise, small enough to cancel promptly. */
     private const val CHUNK_BYTES = 2L * 1024 * 1024
 
@@ -302,17 +309,14 @@ object Downloader {
             val body = response.body ?: error("Download failed: empty response")
             val total = response.header("Content-Length")?.toLongOrNull()?.takeIf { it > 0 }
             val source = body.byteStream()
-            val buffer = ByteArray(BUFFER_BYTES)
-            var written = 0L
-
-            while (true) {
-                coroutineContext.ensureActive()
-                val read = source.read(buffer)
-                if (read == -1) break
-                sink.write(buffer, 0, read)
-                written += read
-                if (total != null) onProgress(written, total)
-            }
+            val context = coroutineContext
+            val written = copySequential(
+                checkActive = { context.ensureActive() },
+                total = { total ?: 0L },
+                read = { buffer, offset, length -> source.read(buffer, offset, length) },
+                write = { buffer, offset, length -> sink.write(buffer, offset, length) },
+                onProgress = onProgress,
+            )
             sink.flush()
 
             // A stated length that didn't all arrive is the one failure the
@@ -330,43 +334,99 @@ object Downloader {
 
     /**
      * Copy a Telegram file through the same sequential reader the player uses.
-     * The stream lease keeps TDLib open for the read and is released in
-     * [finally] even when opening or reading fails; [runInterruptible] lets a
-     * cancelled download stop a blocked TDLib request.
+     * The stream lease keeps TDLib open for the read and is released in the
+     * helper's [finally] even when opening or reading fails; [runInterruptible]
+     * lets a cancelled download stop a blocked TDLib request.
      */
     private suspend fun fetchTelegram(
         trackId: String,
         sink: OutputStream,
         onProgress: (written: Long, total: Long) -> Unit,
-    ): Long = runInterruptible {
-        TelegramClientManager.beginStream(trackId)
-        try {
-            openTelegram(trackId, 0L, -1L).use { reader ->
-                val total = reader.total
-                val buffer = ByteArray(BUFFER_BYTES)
-                var written = 0L
-                while (true) {
-                    val read = reader.read(buffer, 0, buffer.size)
-                    if (read == -1) break
-                    sink.write(buffer, 0, read)
-                    written += read
-                    if (total > 0) onProgress(written, total)
-                }
-                sink.flush()
+    ): Long = withTelegramLease(trackId) {
+        openTelegram(trackId, 0L, -1L).use { reader ->
+            val total = reader.total
+            // A length check alone cannot see a TDLib refresh that swaps the
+            // file for a same-size replacement: the sink would then hold bytes
+            // from both files. Keep the file that opened and stop if it moves.
+            var expectedFileId = reader.fileId
+            var writtenBefore = 0L
+            val written = copySequential(
+                checkActive = {},
+                total = { total },
+                read = { buffer, offset, length ->
+                    val read = reader.read(buffer, offset, length)
+                    if (read > 0 && reader.fileId != expectedFileId) {
+                        if (writtenBefore > 0L) {
+                            error("Telegram file changed during download — try again")
+                        }
+                        expectedFileId = reader.fileId
+                    }
+                    read
+                },
+                write = { buffer, offset, length ->
+                    sink.write(buffer, offset, length)
+                    writtenBefore += length
+                },
+                onProgress = onProgress,
+            )
+            sink.flush()
 
-                if (written == 0L) error("Download failed: nothing was sent")
-                // A refresh may have moved the file's length, so compare with
-                // the reader's final one rather than the opening measurement.
-                val finalTotal = reader.total
-                if (finalTotal > 0 && written < finalTotal) {
-                    error("Download stopped at ${written}B of $finalTotal — try again")
-                }
-                Log.d(TAG, "fetched ${written}B from Telegram")
-                written
+            if (written == 0L) error("Download failed: nothing was sent")
+            // A refresh may have moved the file's length, so compare with
+            // the reader's final one rather than the opening measurement.
+            val finalTotal = reader.total
+            if (finalTotal > 0 && written < finalTotal) {
+                error("Download stopped at ${written}B of $finalTotal — try again")
             }
-        } finally {
-            TelegramClientManager.endStream(trackId)
+            Log.d(TAG, "fetched ${written}B from Telegram")
+            written
         }
+    }
+
+    /** Runs [block] under one balanced Telegram stream lease, interrupting it on cancellation. */
+    private suspend fun <T> withTelegramLease(trackId: String, block: () -> T): T =
+        runInterruptible {
+            beginTelegramStream(trackId)
+            try {
+                block()
+            } finally {
+                endTelegramStream(trackId)
+            }
+        }
+
+    private fun beginTelegramStream(trackId: String) {
+        telegramLeaseObserver?.invoke(trackId, true)
+        TelegramClientManager.beginStream(trackId)
+    }
+
+    private fun endTelegramStream(trackId: String) {
+        TelegramClientManager.endStream(trackId)
+        telegramLeaseObserver?.invoke(trackId, false)
+    }
+
+    /**
+     * Copies a sequential source into [sink]. Shared by the HTTP and Telegram
+     * paths so the progress, flush and length rules only exist once.
+     */
+    private fun copySequential(
+        checkActive: () -> Unit,
+        total: () -> Long,
+        read: (ByteArray, Int, Int) -> Int,
+        write: (ByteArray, Int, Int) -> Unit,
+        onProgress: (written: Long, total: Long) -> Unit,
+    ): Long {
+        val buffer = ByteArray(BUFFER_BYTES)
+        var written = 0L
+        while (true) {
+            checkActive()
+            val read = read(buffer, 0, buffer.size)
+            if (read == -1) break
+            write(buffer, 0, read)
+            written += read
+            val size = total()
+            if (size > 0) onProgress(written, size)
+        }
+        return written
     }
 
     /**
@@ -487,26 +547,21 @@ object Downloader {
 
     /** Reads the first [PROBE_BYTES] through TDLib, under the same stream lease as playback. */
     private suspend fun probeTelegram(trackId: String, statedCodec: String?): Probe? =
-        runInterruptible {
-            TelegramClientManager.beginStream(trackId)
-            try {
-                openTelegram(trackId, 0L, PROBE_BYTES.toLong()).use { reader ->
-                    val head = ByteArray(PROBE_BYTES)
-                    var filled = 0
-                    while (filled < head.size) {
-                        val read = reader.read(head, filled, head.size - filled)
-                        if (read == -1) break
-                        filled += read
-                    }
-                    sniff(
-                        head = head.copyOf(filled),
-                        contentType = reader.mimeType,
-                        statedCodec = statedCodec,
-                        totalBytes = reader.total.takeIf { it > 0 },
-                    )
+        withTelegramLease(trackId) {
+            openTelegram(trackId, 0L, PROBE_BYTES.toLong()).use { reader ->
+                val head = ByteArray(PROBE_BYTES)
+                var filled = 0
+                while (filled < head.size) {
+                    val read = reader.read(head, filled, head.size - filled)
+                    if (read == -1) break
+                    filled += read
                 }
-            } finally {
-                TelegramClientManager.endStream(trackId)
+                sniff(
+                    head = head.copyOf(filled),
+                    contentType = reader.mimeType,
+                    statedCodec = statedCodec,
+                    totalBytes = reader.total.takeIf { it > 0 },
+                )
             }
         }
 
