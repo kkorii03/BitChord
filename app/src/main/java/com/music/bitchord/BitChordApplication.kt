@@ -446,7 +446,12 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory, Configu
         }
         // Initialize LastFM with saved settings if available
         initLastfm()
-        // The public "apps open right now" count; see Presence.
+        // The public "apps open right now" count; see Presence. Its keep-alive
+        // ping is skipped while the listener has asked for power saving: the
+        // count resumes at the next interval, and a ping already counted still
+        // gets its close. Reading the flow is event-free; Presence only asks
+        // before a ping it was about to send anyway.
+        com.music.bitchord.data.presence.Presence.powerSaveEnabled = { AppSettings.lowPower.value }
         com.music.bitchord.data.presence.AndroidPresence.install(this)
         StartupTrace.applicationCreated()
     }

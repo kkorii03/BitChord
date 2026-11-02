@@ -40,6 +40,8 @@ class Presence(
     private val platform: PresencePlatform,
     private val installId: String,
     private val endpoint: String = ENDPOINT,
+    /** Checked before each ping; the app points the default at its power-save setting. */
+    private val powerSave: () -> Boolean = { powerSaveEnabled() },
 ) {
     private val open = MutableStateFlow(false)
     @Volatile private var announced = false
@@ -53,7 +55,9 @@ class Presence(
             open.collectLatest { isOpen ->
                 if (isOpen) {
                     while (true) {
-                        send(open = true)
+                        // Power saving means no keep-alive traffic. A ping that
+                        // was already counted still gets its close below.
+                        if (!powerSave()) send(open = true)
                         delay(nextDelayMs())
                     }
                 } else if (announced) {
@@ -116,6 +120,14 @@ class Presence(
 
     companion object {
         const val ENDPOINT = "https://api.bitchord.kushagrasingh.in/api/presence"
+
+        /**
+         * Set once by the app. Read on every loop turn, so a change of mode is
+         * seen without a watcher or an extra timer.
+         */
+        @Volatile
+        var powerSaveEnabled: () -> Boolean = { false }
+
         private const val TAG = "Presence"
         private const val DEFAULT_INTERVAL_SEC = 300
         private const val MIN_INTERVAL_SEC = 60

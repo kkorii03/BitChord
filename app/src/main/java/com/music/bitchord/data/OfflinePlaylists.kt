@@ -3,6 +3,8 @@ package com.music.bitchord.data
 import android.content.Context
 import android.content.SharedPreferences
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.spotify.LoadOnce
+import com.music.bitchord.startup.StartupWork
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -70,17 +72,32 @@ object OfflinePlaylists {
     /** The [Song.localUri]s in [LIKED_ID], for a heart to be drawn without a scan. */
     val liked: StateFlow<Set<String>> = _liked.asStateFlow()
 
+    /** The list [loadAndPublish] produced, so the writer does not rewrite it. */
+    @Volatile private var loadedSnapshot: List<OfflinePlaylist>? = null
+
+    /**
+     * The read runs once, on whichever caller arrives first. [init] hands it to
+     * the startup thread; a like or a read that gets there first runs it on the
+     * asking thread instead of seeing the empty list this object starts with.
+     */
+    private val loadGate = LoadOnce(::loadAndPublish)
+
     fun init(context: Context, likedTitle: String) {
         if (this::prefs.isInitialized) return
         this.likedTitle = likedTitle
         prefs = context.applicationContext.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-        publish(load())
         // Everything after what was just read, however soon it comes: a like
         // made before this collector is up is still the newest state when it is.
-        val loaded = _playlists.value
+        // The initial value and the loaded one are skipped as well, so startup
+        // never writes an empty list over a file that has not been read yet.
+        val initial = _playlists.value
         io.launch {
-            playlists.filter { it !== loaded }.conflate().collect { persist(it) }
+            playlists
+                .filter { it !== initial && it !== loadedSnapshot }
+                .conflate()
+                .collect { persist(it) }
         }
+        StartupWork.background("offline-playlists") { loadGate.ensureLoaded() }
     }
 
     fun isOfflinePlaylist(browseId: String?): Boolean = browseId?.startsWith(PREFIX) == true
@@ -89,10 +106,14 @@ object OfflinePlaylists {
 
     fun get(browseId: String?): OfflinePlaylist? {
         val id = browseId?.takeIf { it.startsWith(PREFIX) }?.removePrefix(PREFIX) ?: return null
+        loadGate.ensureLoaded()
         return _playlists.value.firstOrNull { it.id == id }
     }
 
-    fun isLiked(song: Song): Boolean = song.localUri?.let { it in _liked.value } == true
+    fun isLiked(song: Song): Boolean {
+        loadGate.ensureLoaded()
+        return song.localUri?.let { it in _liked.value } == true
+    }
 
     /** Likes or unlikes a device file; returns whether it is liked now. */
     fun toggleLike(song: Song): Boolean {
@@ -169,15 +190,31 @@ object OfflinePlaylists {
     }
 
     private inline fun mutate(change: (List<OfflinePlaylist>) -> List<OfflinePlaylist>) {
+        loadGate.ensureLoaded()
         synchronized(lock) { publish(change(_playlists.value)) }
     }
 
     /** Sets the list and the liked set together, Liked pinned first. */
     private fun publish(list: List<OfflinePlaylist>) {
+        emit(ordered(list))
+    }
+
+    private fun ordered(list: List<OfflinePlaylist>): List<OfflinePlaylist> {
         val liked = list.firstOrNull { it.isLiked } ?: OfflinePlaylist(LIKED_ID, likedTitle, emptyList())
-        val ordered = listOf(liked.copy(title = likedTitle)) + list.filterNot { it.isLiked }
+        return listOf(liked.copy(title = likedTitle)) + list.filterNot { it.isLiked }
+    }
+
+    private fun emit(ordered: List<OfflinePlaylist>) {
         _playlists.value = ordered
-        _liked.value = liked.songs.mapNotNullTo(HashSet()) { it.localUri }
+        _liked.value = ordered.first { it.isLiked }.songs.mapNotNullTo(HashSet()) { it.localUri }
+    }
+
+    private fun loadAndPublish() {
+        val loaded = ordered(load())
+        // Before publishing: the writer must recognise this emission as the
+        // read, not as an edit it should save back to disk.
+        loadedSnapshot = loaded
+        emit(loaded)
     }
 
     /**

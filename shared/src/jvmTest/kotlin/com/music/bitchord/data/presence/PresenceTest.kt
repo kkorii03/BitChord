@@ -68,6 +68,15 @@ class PresenceTest {
     }
 
     @Test
+    fun powerSaveSkipsPings() {
+        val presence = Presence(PresencePlatform.Pc, id, server.url("/api/presence").toString()) { true }
+        presence.setOpen(true)
+        assertNull(nextPing(timeoutSec = 1), "no ping while power saving")
+        presence.setOpen(false)
+        assertNull(nextPing(timeoutSec = 1), "nothing was announced, so no close")
+    }
+
+    @Test
     fun neverOpenedSendsNothing() {
         val presence = Presence(PresencePlatform.Pc, id, server.url("/api/presence").toString())
         presence.setOpen(false)
