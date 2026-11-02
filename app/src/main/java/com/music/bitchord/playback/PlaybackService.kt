@@ -2529,29 +2529,18 @@ class PlaybackService : MediaLibraryService() {
         observeScrobbling()
         observeDiscord()
         watchSleepTimer()
-        val restored = if (PartyPersonalQueueStash.hasStash()) {
-            val stashed = PartyPersonalQueueStash.load()
-            PartyPersonalQueueStash.clear()
-            if (stashed != null && stashed.songs.isNotEmpty()) {
-                persistedQueueStart = 0
-                exoPlayer.setMediaItems(stashed.songs.map { it.toMediaItem() }, stashed.index, stashed.positionMs)
-                TrackLog.i(
-                    "BitChord",
-                    "queue: restore n=${stashed.songs.size} at=${stashed.index} " +
-                        "emptyMeta=${stashed.songs.count { it.title.isBlank() || it.artist.isBlank() }} by=restore",
-                )
-                true
+        // The queue snapshot (and the bounded-context blob beside it) is read
+        // and decoded off the main thread; the player is touched only once the
+        // snapshot is in hand. The listener and session below still come up
+        // first, so a restore that lands later is an ordinary timeline change.
+        scope.launch {
+            val restored = restoreQueue(exoPlayer)
+            if (restored) {
+                publishWidgetState()
             } else {
-                restoreLastQueue(exoPlayer)
+                MediaWidgetSnapshot.save(this@PlaybackService, MediaWidgetSnapshot.EMPTY)
+                MediaWidget.refresh(this@PlaybackService)
             }
-        } else {
-            restoreBoundedQueueOrLast(exoPlayer)
-        }
-        if (restored) {
-            publishWidgetState()
-        } else {
-            MediaWidgetSnapshot.save(this, MediaWidgetSnapshot.EMPTY)
-            MediaWidget.refresh(this)
         }
         // History pings fire once a track is actually audible — both when
         // playback starts and when the queue moves on while already playing.
@@ -8937,9 +8926,42 @@ class PlaybackService : MediaLibraryService() {
         }
     }
 
+    /**
+     * Reads the saved queue off the main thread, then installs it on the
+     * player's own thread. A queue the listener already chose while the read
+     * was in flight wins: restoring over it would replace what they pressed.
+     */
+    private suspend fun restoreQueue(player: ExoPlayer): Boolean {
+        val (hadStash, stashed) = withContext(Dispatchers.IO) {
+            if (!PartyPersonalQueueStash.hasStash()) {
+                false to null
+            } else {
+                val loaded = PartyPersonalQueueStash.load()
+                PartyPersonalQueueStash.clear()
+                true to loaded
+            }
+        }
+        if (!queueRestoreApplies(player.mediaItemCount)) return false
+        if (hadStash) {
+            if (stashed != null && stashed.songs.isNotEmpty()) {
+                persistedQueueStart = 0
+                player.setMediaItems(stashed.songs.map { it.toMediaItem() }, stashed.index, stashed.positionMs)
+                TrackLog.i(
+                    "BitChord",
+                    "queue: restore n=${stashed.songs.size} at=${stashed.index} " +
+                        "emptyMeta=${stashed.songs.count { it.title.isBlank() || it.artist.isBlank() }} by=restore",
+                )
+                return true
+            }
+            return restoreLastQueue(player)
+        }
+        return restoreBoundedQueueOrLast(player)
+    }
+
     /** Restore the bounded queue without preparing or resolving a stream. */
-    private fun restoreLastQueue(player: ExoPlayer): Boolean {
-        val last = LastPlayed.load() ?: return false
+    private suspend fun restoreLastQueue(player: ExoPlayer): Boolean {
+        val last = withContext(Dispatchers.IO) { LastPlayed.load() } ?: return false
+        if (!queueRestoreApplies(player.mediaItemCount)) return false
         persistedQueueStart = 0
         player.setMediaItems(last.songs.map { it.toMediaItem() }, last.index, last.positionMs)
         TrackLog.i(
@@ -8962,8 +8984,8 @@ class PlaybackService : MediaLibraryService() {
      * Restore the logical bounded context first, falling back to the unchanged
      * LastPlayed physical snapshot when the new record is absent or unsafe.
      */
-    private fun restoreBoundedQueueOrLast(player: ExoPlayer): Boolean {
-        val persisted = BoundedContextPersistence.load()
+    private suspend fun restoreBoundedQueueOrLast(player: ExoPlayer): Boolean {
+        val persisted = withContext(Dispatchers.IO) { BoundedContextPersistence.load() }
         if (persisted != null && restoreBoundedQueue(player, persisted)) return true
         if (persisted != null) BoundedContextPersistence.clearImmediately()
         return restoreLastQueue(player)
@@ -8973,6 +8995,7 @@ class PlaybackService : MediaLibraryService() {
         exoPlayer: ExoPlayer,
         persisted: BoundedContextPersistence.State,
     ): Boolean {
+        if (!queueRestoreApplies(exoPlayer.mediaItemCount)) return false
         val projected = BoundedContextPersistence.restoreProjection(
             persisted,
             repeatAll = exoPlayer.repeatMode == Player.REPEAT_MODE_ALL,
@@ -13426,3 +13449,9 @@ private fun withoutPlatformAlac(selector: MediaCodecSelector) =
 
 /** Asked once per process, and only when an ALAC track is first looked at. */
 private val ffmpegDecodesAlac by lazy { FfmpegLibrary.supportsFormat(MimeTypes.AUDIO_ALAC) }
+
+/**
+ * A restored snapshot only lands on a player that has no queue yet: anything
+ * the listener chose while the snapshot was being read must not be replaced.
+ */
+internal fun queueRestoreApplies(existingMediaItemCount: Int): Boolean = existingMediaItemCount == 0

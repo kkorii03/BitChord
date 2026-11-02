@@ -3,7 +3,9 @@ package com.music.bitchord.ko
 import android.net.Uri
 import android.os.SystemClock
 import androidx.media3.datasource.DataSpec
+import androidx.media3.datasource.cache.Cache
 import androidx.media3.datasource.cache.CacheKeyFactory
+import androidx.media3.datasource.cache.CacheSpan
 import androidx.media3.datasource.cache.SimpleCache
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.innertube.StreamResolver
@@ -13,9 +15,11 @@ import com.music.bitchord.playback.analysisHeadHeldClaimMayRetry
 import com.music.bitchord.playback.analysisHeadMayClaimOrRetry
 import com.music.bitchord.playback.analysisHeadShouldRetry
 import com.music.bitchord.playback.smart.AutomixAnalysisSource
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * [KO] analysis-head
@@ -43,11 +47,15 @@ class KoAnalysisHeadEngine(
     private val recordContentLength: (String, Long) -> Unit,
     private val invalidateRenditionKeys: (String) -> Unit,
     private val forgetPurgeCandidate: (String) -> Unit,
+    private val waitKeys: (String) -> List<String>,
 ) {
     private val tag = "BitChord"
 
+    /** Waits currently parked on [videoId]; the cache's span event and a round's end both wake them. */
+    private val waitWakeups = ConcurrentHashMap<String, MutableSet<Channel<Unit>>>()
+
     suspend fun awaitAnalysisHead(uri: Uri, timeoutMs: Long = 20_000L): Boolean {
-        if (cache() == null) return false
+        val openedCache = cache() ?: return false
         val videoId = uri.getQueryParameter("v") ?: return false
         if (alignmentHeadComplete(videoId)) return true
         val opus = Uri.parse(AutomixAnalysisSource.opusUri(videoId))
@@ -72,21 +80,44 @@ class KoAnalysisHeadEngine(
         // enough. One round is still allowed after they let go: the entry is
         // free then even if the other writer wrote nothing.
         var waitedForWriter = anotherWriterHas(videoId)
-        while (SystemClock.elapsedRealtime() < deadline) {
-            if (alignmentHeadComplete(videoId)) return true
-            if (anotherWriterHas(videoId)) {
-                waitedForWriter = true
-                // Bounded by the deadline; a quarter second is fine-grained
-                // enough for an analysis that is not on the audible path, and
-                // keeps a whole track's wait from waking the CPU 25 times a
-                // second.
-                delay(250)
-                continue
+        // Wakes on the cache's own span event instead of polling: every write
+        // this wait is interested in raises onSpanAdded, and a round ending
+        // without a byte raises the completion signal below.
+        val wake = Channel<Unit>(Channel.CONFLATED)
+        val listener = object : Cache.Listener {
+            override fun onSpanAdded(cache: Cache, span: CacheSpan) {
+                wake.trySend(Unit)
             }
-            if (videoId !in inFlight) {
-                if (rounds >= MAX_ALIGNMENT_HEAD_ROUNDS) return alignmentHeadComplete(videoId)
-                val now = SystemClock.elapsedRealtime()
-                if (now - askedAt >= HEAD_ROUND_SETTLE_MS) {
+
+            override fun onSpanRemoved(cache: Cache, span: CacheSpan) {
+                wake.trySend(Unit)
+            }
+
+            override fun onSpanTouched(cache: Cache, oldSpan: CacheSpan, newSpan: CacheSpan) {
+                wake.trySend(Unit)
+            }
+        }
+        val keys = waitKeys(videoId)
+        keys.forEach { key -> runCatching { openedCache.addListener(key, listener) } }
+        registerWakeup(videoId, wake)
+        try {
+            while (SystemClock.elapsedRealtime() < deadline) {
+                if (alignmentHeadComplete(videoId)) return true
+                if (anotherWriterHas(videoId)) {
+                    waitedForWriter = true
+                    awaitWake(wake, deadline)
+                    continue
+                }
+                if (videoId !in inFlight) {
+                    if (rounds >= MAX_ALIGNMENT_HEAD_ROUNDS) return alignmentHeadComplete(videoId)
+                    val now = SystemClock.elapsedRealtime()
+                    val settleAt = askedAt + HEAD_ROUND_SETTLE_MS
+                    if (now < settleAt) {
+                        // Claiming and registering the claim are two statements;
+                        // wait out the gap before looking again.
+                        awaitWake(wake, minOf(deadline, settleAt))
+                        continue
+                    }
                     // A round that got as far as its lock probe — the few
                     // dozen kilobytes written before the stream underneath
                     // them was refused — used to count as bytes on disk and
@@ -120,11 +151,50 @@ class KoAnalysisHeadEngine(
                         rounds++
                     }
                     askedAt = now
+                } else {
+                    awaitWake(wake, deadline)
                 }
             }
-            delay(40)
+            return alignmentHeadComplete(videoId)
+        } finally {
+            keys.forEach { key -> runCatching { openedCache.removeListener(key, listener) } }
+            unregisterWakeup(videoId, wake)
+            wake.close()
         }
-        return alignmentHeadComplete(videoId)
+    }
+
+    /** Completes when the round for [videoId] ends, or after [timeoutMs]. Never polls. */
+    suspend fun awaitRoundDone(videoId: String, timeoutMs: Long) {
+        if (videoId !in inFlight) return
+        val wake = Channel<Unit>(Channel.CONFLATED)
+        registerWakeup(videoId, wake)
+        try {
+            if (videoId !in inFlight) return
+            withTimeoutOrNull(timeoutMs) { wake.receive() }
+        } finally {
+            unregisterWakeup(videoId, wake)
+            wake.close()
+        }
+    }
+
+    private suspend fun awaitWake(wake: Channel<Unit>, deadline: Long) {
+        val left = deadline - SystemClock.elapsedRealtime()
+        if (left <= 0L) return
+        withTimeoutOrNull(left) { wake.receive() }
+    }
+
+    private fun registerWakeup(videoId: String, wake: Channel<Unit>) {
+        waitWakeups.computeIfAbsent(videoId) { ConcurrentHashMap.newKeySet() }.add(wake)
+    }
+
+    private fun unregisterWakeup(videoId: String, wake: Channel<Unit>) {
+        val waiting = waitWakeups[videoId] ?: return
+        waiting.remove(wake)
+        if (waiting.isEmpty()) waitWakeups.remove(videoId, waiting)
+    }
+
+    private fun signalWaiters(videoId: String) {
+        waitWakeups[videoId]?.forEach { it.trySend(Unit) }
     }
 
     fun requestAnalysisHead(uri: Uri) {
@@ -288,6 +358,7 @@ class KoAnalysisHeadEngine(
                 }
             } finally {
                 inFlight.remove(videoId)
+                signalWaiters(videoId)
                 // A round stopped for playback left its claim for the reader's
                 // release event. If that release already came while this job
                 // was unwinding, retry here so the claim does not become one

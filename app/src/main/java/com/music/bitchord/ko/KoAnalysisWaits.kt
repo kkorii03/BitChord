@@ -4,9 +4,7 @@ import android.net.Uri
 import android.os.SystemClock
 import androidx.media3.datasource.cache.Cache
 import androidx.media3.datasource.cache.CacheSpan
-import com.music.bitchord.playback.AudioCache
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
@@ -18,9 +16,9 @@ import kotlinx.coroutines.withTimeoutOrNull
  */
 class KoAnalysisWaits(
     private val cache: () -> Cache?,
-    private val renditionsOf: (Uri) -> List<AudioCache.Rendition>,
-    private val awaitAnalysisHead: suspend (Uri, Long) -> Boolean,
-    private val analysisHeadsInFlight: Set<String>,
+    private val hasCompleteNonAltRendition: (String) -> Boolean,
+    private val awaitAnalysisHead: suspend (String, Long) -> Boolean,
+    private val awaitAnalysisRound: suspend (String, Long) -> Unit,
     private val alignmentPrefixBytes: (String) -> Long,
     private val renditionKeysFor: (String) -> List<String>,
     private val refreshRenditionKeys: (String) -> Unit,
@@ -29,13 +27,18 @@ class KoAnalysisWaits(
     suspend fun awaitAnalysisTrack(uri: Uri, timeoutMs: Long = 60_000L): Boolean {
         if (cache() == null) return false
         val videoId = uri.getQueryParameter("v") ?: return false
-        val watch = Uri.parse("bitchord://watch?v=$videoId")
-        if (renditionsOf(watch).any { it.isComplete && !it.key.endsWith(altSuffix) }) return true
+        return awaitAnalysisTrackFor(videoId, timeoutMs)
+    }
+
+    /** The same wait by id, so the completion path is testable without a URI. */
+    internal suspend fun awaitAnalysisTrackFor(videoId: String, timeoutMs: Long): Boolean {
+        if (hasCompleteNonAltRendition(videoId)) return true
         val deadline = SystemClock.elapsedRealtime() + timeoutMs
-        if (!awaitAnalysisHead(uri, timeoutMs)) return false
-        while (videoId in analysisHeadsInFlight && SystemClock.elapsedRealtime() < deadline) {
-            delay(100)
-        }
+        if (!awaitAnalysisHead(videoId, timeoutMs)) return false
+        // The head wait may return as soon as the opening is measurable while
+        // the rest of the track is still being written. Wake on the round's
+        // completion event rather than checking the in-flight set on a timer.
+        awaitAnalysisRound(videoId, (deadline - SystemClock.elapsedRealtime()).coerceAtLeast(0L))
         return true
     }
 
@@ -45,12 +48,7 @@ class KoAnalysisWaits(
             refreshRenditionKeys(videoId)
             return true
         }
-        val keys = LinkedHashSet<String>().apply {
-            add(videoId)
-            add("$videoId#alt")
-            add("$videoId#alt-noatmos")
-            addAll(renditionKeysFor(videoId))
-        }
+        val keys = analysisWaitKeys(videoId, altSuffix, renditionKeysFor(videoId))
         val reached = CompletableDeferred<Unit>()
         val listener = object : Cache.Listener {
             override fun onSpanAdded(cache: Cache, span: CacheSpan) {
@@ -79,3 +77,16 @@ class KoAnalysisWaits(
         }
     }
 }
+
+/** Every cache key a head or prefix wait may be woken by: the track's renditions. */
+internal fun analysisWaitKeys(
+    videoId: String,
+    altSuffix: String,
+    renditionKeys: List<String>,
+): List<String> = LinkedHashSet<String>().apply {
+    add(videoId)
+    add("$videoId$altSuffix")
+    add("$videoId$altSuffix-noatmos")
+    addAll(renditionKeys)
+}.toList()
+
