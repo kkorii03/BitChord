@@ -12,7 +12,7 @@ class owns them, grouped by that chain.
 
 Reads Android dumps as written (Android-only records included) and standard
 JVM dumps; the id size comes from the header.
-Usage: hprof_report.py dump.hprof [--min-array 32768] [--levels 8]
+Usage: hprof_report.py dump.hprof [--min-array 32768] [--levels 14]
 """
 import argparse
 import struct
@@ -191,10 +191,17 @@ def referrers(d, targets):
                     ref = d.rid(body, o + i * I)
                     if ref in targets and ref not in out:
                         out[ref] = (oid, cls, "[]")
-            elif t == 0x20:
-                # A static field: the class itself is the holder.
-                pass
+            elif t in ROOT_NAME:
+                ref = d.rid(body, s)
+                if ref in targets and ref not in out:
+                    out[ref] = (None, f"<root:{ROOT_NAME[t]}>", "")
     return out
+
+
+ROOT_NAME = {0xFF: "unknown", 0x01: "jni-global", 0x02: "jni-local", 0x03: "java-frame",
+             0x04: "native-stack", 0x05: "sticky-class", 0x06: "thread-block",
+             0x07: "monitor", 0x08: "thread", 0x89: "interned", 0x8A: "finalizing",
+             0x8B: "debugger", 0x8C: "ref-cleanup", 0x8D: "vm-internal", 0x8E: "jni-monitor"}
 
 
 def statics(d, targets):
@@ -227,7 +234,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("dump")
     ap.add_argument("--min-array", type=int, default=32768)
-    ap.add_argument("--levels", type=int, default=8)
+    ap.add_argument("--levels", type=int, default=14)
     a = ap.parse_args()
     d = Dump(a.dump)
     d.read_classes()
@@ -248,6 +255,7 @@ def main():
     # current holder id -> the original arrays it leads to (a map's table
     # holds many of them, so one holder carries a list)
     frontier = {t: [t] for t in big}
+    seen = {t: {t} for t in big}
     for _ in range(a.levels):
         if not frontier:
             break
@@ -258,8 +266,15 @@ def main():
             hit = found.get(cur)
             for orig in origs:
                 chain[orig].append(f"{hit[1]}.{hit[2]}" if hit else "<root/unreferenced>")
-            if hit and hit[1].startswith(PASS_THROUGH) and "(static)" not in hit[1]:
-                nxt[hit[0]].extend(origs)
+            # Up to a static field or a GC root: an app class that holds the
+            # array is only the first answer (11-02: VideoAudio$Resampler held
+            # 90 MB, and what held the Resampler was the real question).
+            if hit and hit[0] is not None and "(static)" not in hit[1]:
+                for orig in origs:
+                    if hit[0] in seen[orig]:
+                        chain[orig].append("<cycle>")
+                    else:
+                        seen[orig].add(hit[0]); nxt[hit[0]].append(orig)
         frontier = nxt
     groups = defaultdict(lambda: [0, 0])
     for t, (cls, size) in big.items():

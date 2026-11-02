@@ -131,7 +131,24 @@ internal class NextTrackPreparation(
         completedRowId = null
         completedQueueKey = null
         job?.cancel()
-        job = scope.launch { run(snapshot) }
+        job = scope.launch {
+            // Start and cancel lines: a bundle that never reaches its result
+            // line (11-02 1.9 smoke: 0 `next-prep:` lines in 10 songs) has to
+            // say whether it ran at all and how long it lived.
+            val startedAt = SystemClock.elapsedRealtime()
+            val id = snapshot.song.videoId
+            TrackLog.d("BitChord", "next-prep start: $id", about = id)
+            try {
+                run(snapshot)
+            } catch (cancelled: CancellationException) {
+                TrackLog.d(
+                    "BitChord",
+                    "next-prep cancelled: $id after ${SystemClock.elapsedRealtime() - startedAt}ms",
+                    about = id,
+                )
+                throw cancelled
+            }
+        }
     }
 
     /** Stops the bundle and forgets what was prepared for the old next row. */
