@@ -535,13 +535,20 @@ internal class NextTrackPreparation(
                             prepareMix(player)
                             try {
                                 mix = awaitMix(song.videoId)
-                                mixPass.finished()
+                                // false is also awaitMix's own 20 s wait ending
+                                // with the analysis still running: keep the pass
+                                // so a later replacement of this row stops it.
+                                if (mix) mixPass.finished()
                             } catch (cancelled: CancellationException) {
                                 // Only a replaced bundle cancels the analysis
                                 // it started; a step deadline ends the wait
                                 // and leaves the pass for the crossfade path,
                                 // which [cancelPreparedMix] later stops.
-                                if (bundleJob?.isActive != true) cancelPreparedMix()
+                                // Only this bundle's own pass: a replacement may
+                                // already have requested one for its new row.
+                                if (bundleJob?.isActive != true) {
+                                    mixPass.cancelFor(song.videoId, currentPlayer()?.currentMediaItem?.mediaId)
+                                }
                                 throw cancelled
                             }
                         }
@@ -1190,5 +1197,10 @@ internal class PreparedMixPass(private val cancel: (String) -> Unit) {
         val id = videoId ?: return
         videoId = null
         if (id != playingVideoId) cancel(id)
+    }
+
+    /** [cancelUnlessPlaying], but only while the pass is still [ownVideoId]'s. */
+    fun cancelFor(ownVideoId: String, playingVideoId: String?) {
+        if (videoId == ownVideoId) cancelUnlessPlaying(playingVideoId)
     }
 }

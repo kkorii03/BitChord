@@ -38,6 +38,16 @@ class PreparedMixPassTest {
     }
 
     @Test
+    fun `a stale bundle does not cancel the pass its replacement requested`() {
+        pass.requested("old")
+        pass.requested("new")
+        pass.cancelFor(ownVideoId = "old", playingVideoId = "current")
+        assertTrue(cancelled.isEmpty())
+        pass.cancelFor(ownVideoId = "new", playingVideoId = "current")
+        assertEquals(listOf("new"), cancelled)
+    }
+
+    @Test
     fun `a bundle that never requested a pass cancels nothing`() {
         pass.cancelUnlessPlaying(playingVideoId = "current")
         assertTrue(cancelled.isEmpty())
