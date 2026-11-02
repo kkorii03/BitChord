@@ -830,7 +830,7 @@ private fun SuggestionRow(
             // The first row is the deliberate action to search the exact text
             // in the field, not a server-provided completion. Naming it makes
             // the otherwise duplicated wording read as intentional.
-            text = if (isQueryAction) "${stringResource(Res.string.search)} ‘$term’" else term,
+            text = if (isQueryAction) stringResource(Res.string.search_query_action, term) else term,
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onBackground,
             maxLines = 1,

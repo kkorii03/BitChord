@@ -653,10 +653,10 @@ object YtMusicRepository {
 
     /**
      * What YouTube Music would suggest completing [input] to, for the search
-     * field's typeahead. Unfiltered on purpose: a suggestion is a query, and
-     * which tab it is then run against is the user's to pick afterwards.
+     * field's typeahead, plus the music rows the same answer returned. The
+     * caller drops general-YouTube completions no music row supports.
      */
-    suspend fun searchSuggestions(input: String): Result<List<String>> =
+    suspend fun searchSuggestions(input: String): Result<InnertubeParser.SearchSuggestions> =
         call("suggest") {
             InnertubeParser.parseSearchSuggestions(Innertube.searchSuggestions(input))
         }

@@ -31,17 +31,86 @@ fun typeaheadLookupTarget(
 fun typeaheadCacheKey(input: String): String = input.trim()
 
 /**
- * The rows the suggestion dropdown shows: the text as typed, then YouTube's
- * completions without a repeat of it.
+ * The rows the suggestion dropdown shows: the text as typed, then the
+ * completions backed by a song, artist or album in the same
+ * `music/get_search_suggestions` answer.
+ *
+ * That endpoint also answers with general YouTube suggestions ("· 로또 당첨
+ * 번호", "강진 뉴스"); a row is kept only when every word it adds to the typed
+ * text appears in a music entity's title or credit. This drops the general
+ * rows without guessing from Korean category words. A punctuation-only prefix
+ * has no music answer at all, so it keeps just the query action rather than
+ * YouTube's punctuation-echoed junk ("· 강진🙏…").
  *
  * Duplicates are removed because the rows become LazyColumn keys; two equal
  * completions from the server used to crash the list with "Key … was already
  * used". The typed text always stays first, so submitting exactly what is in
  * the field is the nearest action even when the server names it back.
  */
-fun suggestionRows(input: String, fetched: List<String>): List<String> =
-    (listOf(input) + fetched.filterNot { it.equals(input, ignoreCase = true) })
+fun suggestionRows(
+    input: String,
+    fetched: List<String>,
+    musicTerms: List<String>,
+): List<String> {
+    val typed = input.trim()
+    val musicWords = musicTerms.flatMap { it.words() }.toSet()
+    // A prefix with no letter or digit is not a query YouTube Music can
+    // complete: the endpoint falls back to YouTube's general suggestions,
+    // which arrive with the punctuation echoed in front of every row.
+    val completions = if (typed.any { it.isLetterOrDigit() }) {
+        fetched.mapNotNull { row ->
+            row.trim().takeIf { it.isNotBlank() && !it.hasEmoji() }
+                ?.takeIf { it.startsWith(typed, ignoreCase = true) }
+                ?.takeIf { it.isMusicCompletion(typed, musicWords) }
+        }
+    } else {
+        emptyList()
+    }
+    return (listOf(typed) + completions.filterNot { it.equals(typed, ignoreCase = true) })
         .distinctBy { it.lowercase() }
+}
+
+/**
+ * Whether what the completion adds beyond the typed text is accounted for by
+ * a music entity. The full extra phrase is checked first (song titles keep
+ * their words together), then each word, so a row carrying an unrelated
+ * general-YouTube word is dropped.
+ */
+private fun String.isMusicCompletion(typed: String, musicWords: Set<String>): Boolean {
+    val extra = substring(typed.length).trim { !it.isLetterOrDigit() }.lowercase()
+    if (extra.isEmpty()) return true
+    if (musicWords.any { it.contains(extra) }) return true
+    val extraWords = extra.words()
+    return extraWords.isNotEmpty() && extraWords.all { word -> musicWords.any { it.contains(word) } }
+}
+
+private fun String.words(): List<String> =
+    lowercase().split(NON_WORD).filter { it.length >= 2 }
+
+private val NON_WORD = Regex("[^\\p{L}\\p{N}]+")
+
+/**
+ * Emoji and their variation selectors only appear in channel-name junk
+ * suggestions (⭐ U+2B50, ✅ U+2705, ✨ U+2728 included). Only symbol blocks
+ * a music title can use (©, ™) are left alone.
+ */
+private val EMOJI_RANGES = listOf(
+    0x1F000..0x1FAFF,
+    0x2600..0x27BF,
+    0x2B00..0x2BFF,
+    0xFE00..0xFE0F,
+    0x200D..0x200D,
+)
+
+private fun String.hasEmoji(): Boolean {
+    var index = 0
+    while (index < length) {
+        val codePoint = codePointAt(index)
+        if (EMOJI_RANGES.any { codePoint in it }) return true
+        index += Character.charCount(codePoint)
+    }
+    return false
+}
 
 /**
  * Whether an answer still belongs on screen. A late response from an older

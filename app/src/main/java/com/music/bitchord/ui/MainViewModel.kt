@@ -2613,7 +2613,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (typeaheadLookupTarget(input, _query.value, searchSubmitted) == null) {
                     return@collectLatest
                 }
-                val rows = suggestionRows(target, fetched)
+                val rows = suggestionRows(target, fetched.queries, fetched.musicTerms)
                 koTypeahead.putSuggestions(key, rows)
                 _suggestions.value = rows
             }

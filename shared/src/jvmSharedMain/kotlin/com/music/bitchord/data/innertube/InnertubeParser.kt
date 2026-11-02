@@ -213,28 +213,67 @@ object InnertubeParser {
             .ifBlank { fallback }
 
     /**
-     * The typeahead queries out of a `music/get_search_suggestions` response.
+     * The typeahead out of a `music/get_search_suggestions` response.
      *
-     * Two sections come back. The first is what this reads: query strings, as
-     * `searchSuggestionRenderer`. The second — present signed in, and for
-     * some terms signed out — is entity rows for songs and artists, as the
-     * same `musicResponsiveListItemRenderer` a search result uses. Those are
-     * deliberately ignored: what the field is being filled in with is a
-     * query, and a row that navigates straight to a track instead is a
-     * different feature with a different tap target.
+     * Two sections come back. The first is query strings, as
+     * `searchSuggestionRenderer`; it can also carry general YouTube rows for
+     * some inputs. The second — present signed in, and for some terms signed
+     * out — is entity rows for songs, artists and albums, as the same
+     * `musicResponsiveListItemRenderer` a search result uses.
+     *
+     * Both are returned: the caller fills the field with the queries and uses
+     * the entities to keep only the music ones. A row that navigates straight
+     * to a track is still not a suggestion, but its title and credit are what
+     * prove a query completion is about music.
      *
      * `searchEndpoint.query` is preferred over the display text because the
      * display text arrives split into runs purely so the typed prefix can be
      * bold-faced, with no separator of its own to rejoin on.
      */
-    fun parseSearchSuggestions(response: JsonObject): List<String> =
-        collectRenderers(response, "searchSuggestionRenderer")
-            .mapNotNull { renderer ->
-                val query = renderer.o("navigationEndpoint").o("searchEndpoint").s("query")
-                    ?: renderer.o("suggestion").runs()
-                query.takeIf { it.isNotBlank() }
+    data class SearchSuggestions(
+        /** Query completions from YouTube's suggest section. */
+        val queries: List<String>,
+        /**
+         * Titles and credits of the music rows in the same answer. Podcast,
+         * video and other non-music entity rows contribute nothing, so a
+         * general or spoken-word completion has no term to stand on.
+         */
+        val musicTerms: List<String>,
+    )
+
+    fun parseSearchSuggestions(response: JsonObject): SearchSuggestions =
+        SearchSuggestions(
+            queries = collectRenderers(response, "searchSuggestionRenderer")
+                .mapNotNull { renderer ->
+                    val query = renderer.o("navigationEndpoint").o("searchEndpoint").s("query")
+                        ?: renderer.o("suggestion").runs()
+                    query.takeIf { it.isNotBlank() }
+                }
+                .distinct(),
+            musicTerms = collectRenderers(response, "musicResponsiveListItemRenderer")
+                .flatMap(::suggestionMusicTerms)
+                .filter { it.isNotBlank() }
+                .distinct(),
+        )
+
+    /**
+     * The title and credit of one suggestion entity row, or empty when the row
+     * is the kind the default search keeps out (a video upload, a podcast
+     * show or episode).
+     */
+    private fun suggestionMusicTerms(renderer: JsonObject): List<String> {
+        val browse = parseBrowseItem(renderer)
+        if (browse != null) {
+            return if (browse.type == BrowseType.OTHER) {
+                emptyList()
+            } else {
+                listOf(browse.title, browse.subtitle)
             }
-            .distinct()
+        }
+        val song = parseResponsiveListItem(renderer) ?: return emptyList()
+        if (song.isVideo || song.isEpisode) return emptyList()
+        return listOf(song.title, song.artist, song.albumName.orEmpty())
+    }
 
     /** Depth-first collection of a named renderer, preserving document order. */
     private fun collectRenderers(root: JsonElement, name: String): List<JsonObject> {
