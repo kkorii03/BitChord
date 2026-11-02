@@ -4922,9 +4922,7 @@ class PlaybackService : MediaLibraryService() {
                 // has fallen out of the visible 25-song window to the end
                 // instead of deleting it; it becomes upcoming again in the
                 // same order and the loop can continue indefinitely.
-                repeat(expiredHistory) {
-                    exoPlayer.moveMediaItem(0, exoPlayer.mediaItemCount - 1)
-                }
+                exoPlayer.rotateExpiredHistory(expiredHistory)
                 TrackLog.d(
                     "BitChord",
                     "queue: move n=$expiredHistory at=0 to=${exoPlayer.mediaItemCount - 1} " +
