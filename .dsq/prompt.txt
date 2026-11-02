@@ -1,0 +1,20 @@
+﻿Goal: the FIRST song a user plays (nothing prepared ahead) must get its lyrics sync correction while it is still playing - today it lands ~3 minutes after the song starts.
+
+Evidence (emulator log 11-02, task/u19-tg): song QYh6mYIJG2Y started 09:00:02; 'song check: stream 90s 2812KB' at 09:00:55; 'LyricsTiming: Deepgram Whisper timing (en, 67s): 478 words, rate 1.000, shift 517 ms, 82% agree' at 09:03:03 - correct (the true error was -0.56 s) but 3 minutes late. Another: 'Deepgram Whisper timing (en, 76s)'. So: ~50 s before the request is sent, ~70 s for Deepgram whisper-large to answer 90 s of audio.
+Code: app/.../playback/smart/LyricsTiming.kt (the Deepgram loop ~line 2280-2340, fitAi, aiMayApply), VideoAudio.kt (decodeSong, openSongSource, OPENING_WAIT_MS, the 90 s 'song check' stream), shared/.../data/lyrics/Deepgram.kt (listen), AudioDecoder.kt (DecodePriorityGate).
+
+Do:
+1. Map the exact critical path for the current song from 'lyrics arrive' to 'correction applied on screen': every wait, gate, download, decode, network call, with where each one's time goes (use the log lines above and the code). Put the timeline in the summary.
+2. Design and implement the smallest change that gets a first correction applied within ~60 s of song start on a cold song, without lowering accuracy rules (LyricsAiGuard thresholds, MIN_MATCH_PERCENT, shiftAllows stay as they are). Candidates to evaluate (pick by evidence, list assumptions): ask Deepgram with a shorter opening first (e.g. the first 30-45 s that are already downloaded) and refine later with the longer clip; start the request as soon as enough audio is cached instead of waiting for 90 s; avoid waiting on the decode gate behind background work for the current song.
+3. Tests that fail on old code and pass on new (JVM unit tests). Name the exact test classes in the summary (Opus adds them to CI).
+
+Rules: battery first (event-based, no polling/timers, no extra Deepgram calls on songs that already have a stored answer), read every caller and type of what you change, keep all existing guards unless justified in the summary; REMOVED-LINES AUDIT required. Do not touch .github/workflows/, keys/, signing. grep/Select-String only (no rg). Unknown Android/Media3 API -> context7. AGENTS.md (ponytail) rules apply.
+At the end, summary within 10 lines (plus the timeline): files changed / key change / test result / open problems / design assumptions.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 1
+MEDIUM app/src/main/java/com/music/bitchord/playback/smart/LyricsTiming.kt:2790 — the full pass reuses the first pass's probe, so when the first pass set a failure (e.g. TOO_FEW_LINES) and the full pass answers `no-fit`/`refused-*`, the stale failure survives because only `full.fitted != null` clears it; `recordSongAttempt` at :2957 then skips recording the engine answer, causing a repeated paid Deepgram call on the next playback and a false `failed:` diagnostic. Fix: clear `probe.failure` at the start of each `runSongCheck` call (or whenever the full pass actually produced an engine answer).
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
