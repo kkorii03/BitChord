@@ -4,8 +4,11 @@ import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.ShelfLayout
 import com.music.bitchord.data.settings.LibraryViewType
+import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /**
  * The 1.9 merge kept only the lead index for Recents and ignored Quick picks
@@ -48,5 +51,21 @@ class HomeShelfRowKindTest {
     fun `the Recents switch flips both ways`() {
         assertEquals(LibraryViewType.GRID, toggledRecentsViewType(LibraryViewType.LIST))
         assertEquals(LibraryViewType.LIST, toggledRecentsViewType(LibraryViewType.GRID))
+    }
+
+    // The 1.9 merge dropped the skeleton's layout flag, so grid view loaded as
+    // list rows; the skeleton now reserves the same shape the shelf draws.
+    @Test
+    fun `the Recents skeleton reserves the shelf's own shape`() {
+        assertTrue(recentsShowsRows(LibraryViewType.LIST))
+        assertFalse(recentsShowsRows(LibraryViewType.GRID))
+    }
+
+    @Test
+    fun `HomeScreen hands the saved layout to the Recents skeleton`() {
+        val source = File("src/jvmSharedMain/kotlin/com/music/bitchord/ui/screens/HomeScreen.kt").readText()
+        assertTrue(
+            source.contains("recentlyPlayedSkeleton(listLayout = recentsShowsRows(recentsViewType))"),
+        )
     }
 }

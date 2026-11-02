@@ -4316,9 +4316,12 @@ object LyricsTiming {
     private fun store(context: Context): Store =
         store ?: synchronized(this) {
             // A bare Application has no applicationContext (the JVM tests build
-            // one); fall back to it so a late timing job reads no storage
-            // instead of throwing out of the coroutine.
-            val root = context.applicationContext?.filesDir ?: File(System.getProperty("java.io.tmpdir"))
-            store ?: Store(File(root, "lyrics_timing_v1.json")).also { store = it }
+            // one); a late timing job must read no storage instead of throwing
+            // out of its coroutine. Such a store is not latched onto the
+            // process-wide field: it has no durable directory to keep.
+            if (context.applicationContext == null) {
+                return Store(File.createTempFile("lyrics_timing_v1", ".json").apply { delete() })
+            }
+            store ?: Store(File(context.applicationContext.filesDir, "lyrics_timing_v1.json")).also { store = it }
         }
 }

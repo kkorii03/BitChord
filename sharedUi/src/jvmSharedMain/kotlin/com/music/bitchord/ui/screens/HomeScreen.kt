@@ -155,6 +155,10 @@ internal fun homeShelfKind(shelf: HomeShelf, index: Int, firstIsHero: Boolean): 
 internal fun toggledRecentsViewType(viewType: LibraryViewType): LibraryViewType =
     if (viewType == LibraryViewType.LIST) LibraryViewType.GRID else LibraryViewType.LIST
 
+/** Recents' row shape: track rows in list view, cards in grid — the skeleton reserves the same. */
+internal fun recentsShowsRows(viewType: LibraryViewType): Boolean =
+    viewType == LibraryViewType.LIST
+
 internal fun ShelfItem.matchesCurrentlyPlaying(song: Song?): Boolean {
     song ?: return false
     if (videoId == null) return false
@@ -307,7 +311,7 @@ fun HomeScreen(
                     if (loadingTimedOut) {
                         item { LoadingTimeoutState(onRetry = retry) }
                     } else if (recentlyPlayedLoading) {
-                        recentlyPlayedSkeleton()
+                        recentlyPlayedSkeleton(listLayout = recentsShowsRows(recentsViewType))
                         // Recents owns the leading layout while its request is
                         // pending, so the feed behind it starts with ordinary
                         // shelf placeholders rather than another hero card.
@@ -321,7 +325,7 @@ fun HomeScreen(
                 }
                 is UiState.Success -> {
                     if (recentlyPlayedLoading) {
-                        recentlyPlayedSkeleton()
+                        recentlyPlayedSkeleton(listLayout = recentsShowsRows(recentsViewType))
                     }
                     // The loading skeleton already owns the hero slot. Until
                     // Recently Played lands, every real shelf must retain its
@@ -461,7 +465,7 @@ private fun RecentShelf(
             onViewTypeToggle = onViewTypeToggle,
         )
         val isCurrentItem = shelf.items.playingItemMatcher(currentSong)
-        if (viewType == LibraryViewType.LIST) {
+        if (recentsShowsRows(viewType)) {
             BoxWithConstraints {
                 val columnWidth = trackColumnWidth(maxWidth)
                 ShelfRow(
