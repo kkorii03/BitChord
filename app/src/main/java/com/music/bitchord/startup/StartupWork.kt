@@ -1,6 +1,9 @@
 package com.music.bitchord.startup
 
+import com.music.bitchord.auth.AuthStore
 import com.music.bitchord.data.TrackLog
+import kotlinx.coroutines.CompletableDeferred
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 
@@ -52,5 +55,59 @@ object StartupWork {
                 TrackLog.w(TAG, "startup open failed: $name", failure)
             }
         }
+    }
+
+    /**
+     * Restores the session on the serial encrypted thread, then attaches it
+     * only after [settingsReady] and after [restore] has returned. Both run on
+     * the same thread, so the attach can never race the restored cookie or
+     * channel even if the settings read finishes first.
+     */
+    fun startSession(
+        settingsReady: CountDownLatch,
+        restore: () -> Unit,
+        attach: () -> Unit,
+    ) {
+        background("auth-store", restore)
+        background("auth-store") {
+            settingsReady.await()
+            attach()
+        }
+    }
+}
+
+/**
+ * The session the startup thread restored, published once its cookie and
+ * channel are in place.
+ *
+ * A reader that starts before that — the playback service in a process
+ * without the UI, a stream resolve, a proxy publish — takes the value from
+ * here or waits for it, instead of opening the Keystore on the main thread.
+ */
+object StartupSession {
+
+    @Volatile
+    private var published: AuthStore? = null
+
+    @Volatile
+    private var ready = CompletableDeferred<AuthStore?>()
+
+    /** The published store, or null while the startup thread has not finished. */
+    fun publishedOrNull(): AuthStore? = published
+
+    /**
+     * Completes when the cookie and channel are published. The value is null
+     * when the auth open failed, so a caller can still resolve anonymously.
+     */
+    suspend fun awaitPublished(): AuthStore? = ready.await()
+
+    internal fun publish(store: AuthStore?) {
+        published = store
+        ready.complete(store)
+    }
+
+    internal fun resetForTest() {
+        published = null
+        ready = CompletableDeferred()
     }
 }

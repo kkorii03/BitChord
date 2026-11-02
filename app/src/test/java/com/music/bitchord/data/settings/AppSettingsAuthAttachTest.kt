@@ -42,9 +42,9 @@ class AppSettingsAuthAttachTest {
 
     @After
     fun tearDown() {
-        if (originalPrefs != null) prefsField.set(AppSettings, originalPrefs)
-        if (originalContext != null) contextField.set(AppSettings, originalContext)
-        if (originalAuth != null) authField.set(AppSettings, originalAuth)
+        prefsField.set(AppSettings, originalPrefs)
+        contextField.set(AppSettings, originalContext)
+        authField.set(AppSettings, originalAuth)
         directory.deleteRecursively()
     }
 

@@ -36,9 +36,12 @@ class AppSettingsProxyInitTest {
 
     @After
     fun tearDown() {
-        if (originalPrefs != null) prefsField.set(AppSettings, originalPrefs)
-        if (originalContext != null) contextField.set(AppSettings, originalContext)
-        if (originalAuth != null) authField.set(AppSettings, originalAuth)
+        // Always reset all three, including a field that was uninitialised:
+        // otherwise the fake store or prefs stay installed in the global object
+        // and the next test runs against them.
+        prefsField.set(AppSettings, originalPrefs)
+        contextField.set(AppSettings, originalContext)
+        authField.set(AppSettings, originalAuth)
         YouTubeProxy.update(ProxyConfig())
         directory.deleteRecursively()
     }

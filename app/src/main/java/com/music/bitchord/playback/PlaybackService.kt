@@ -1969,8 +1969,19 @@ class PlaybackService : MediaLibraryService() {
     override fun onCreate() {
         super.onCreate()
 
-        if (com.music.bitchord.data.innertube.Innertube.cookie == null) {
-            com.music.bitchord.data.innertube.Innertube.cookie = com.music.bitchord.auth.AuthStore(this).cookie
+        // The session is restored on the startup thread. Never open the
+        // encrypted store here: take the published value, or let the startup
+        // thread's result land on IO once it exists.
+        com.music.bitchord.startup.StartupSession.publishedOrNull()?.let { session ->
+            if (com.music.bitchord.data.innertube.Innertube.cookie == null) {
+                com.music.bitchord.data.innertube.Innertube.cookie = session.cookie
+            }
+        }
+        CoroutineScope(Dispatchers.IO).launch {
+            val session = com.music.bitchord.startup.StartupSession.awaitPublished() ?: return@launch
+            if (com.music.bitchord.data.innertube.Innertube.cookie == null) {
+                com.music.bitchord.data.innertube.Innertube.cookie = session.cookie
+            }
         }
 
         // First, because everything below assumes it is standing up fresh and
@@ -2110,6 +2121,12 @@ class PlaybackService : MediaLibraryService() {
             // usually *not* the one playing, which is exactly why the lines
             // have to say. See [TrackLog.about].
             val about = TrackLog.about(mediaIdIn(dataSpec.uri))
+            // The session is restored on the startup thread; a resolve that
+            // gets here first waits for it on this loader thread, never on
+            // main, so the first request is not sent anonymously.
+            if (com.music.bitchord.data.innertube.Innertube.cookie == null) {
+                runBlocking(about) { com.music.bitchord.startup.StartupSession.awaitPublished() }
+            }
             // A source-backed track is resolved by whichever source can serve
             // it, which is not necessarily the one it was queued from — see
             // [SourceResolver.resolve]. Handled ahead of the YouTube path

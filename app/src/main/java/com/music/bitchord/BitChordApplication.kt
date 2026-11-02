@@ -47,6 +47,7 @@ import com.music.bitchord.data.stats.ListeningStats
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.download.PlaylistSync
 import com.music.bitchord.startup.AppForeground
+import com.music.bitchord.startup.StartupSession
 import com.music.bitchord.startup.StartupTrace
 import com.music.bitchord.startup.StartupWork
 import androidx.work.Configuration
@@ -117,43 +118,11 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory, Configu
         // Keystore) and the startup thread attaches the secrets once they exist.
         val settingsReady = java.util.concurrent.CountDownLatch(1)
         StartupWork.background("auth-store") { AuthStore.prewarm(this) }
-        StartupWork.background("auth-store") {
-            // Restore the cookie and channel before waiting for the main-thread
-            // settings read: a service started without the UI (a widget or a
-            // restored queue) then finds the session already published. Nothing
-            // here touches settings or the network.
-            val store = AuthStore(this)
-            openedAuthStore = store
-            val restoredSession = store.activeSession
-            if (restoredSession != null && store.activeAccountId == null) {
-                store.select(restoredSession.accountId, restoredSession.activeProfileId)
-            }
-            store.cookie = restoredSession?.cookie
-            Innertube.cookie = restoredSession?.cookie
-            if (restoredSession != null) {
-                // After the cookie, never before: setting the cookie clears any
-                // channel the last session was acting as, so restoring the
-                // choice first would restore it into the value about to be
-                // wiped.
-                restoredSession.profiles.firstOrNull { it.profileId == restoredSession.activeProfileId }
-                    ?.let { Innertube.selectChannel(it.pageId, it.dataSyncId, it.authUser) }
-            }
-        }
-        StartupWork.background("auth-store") {
-            // Settings are plain preferences; the auth open must not race the
-            // readAll() that uses them.
-            settingsReady.await()
-            val store = openedAuthStore ?: AuthStore(this)
-            authStore = store
-            AppSettings.attachAuthStore(store)
-            if (store.activeSession != null) {
-                // The proxy is published by AppSettings.init before this runs,
-                // so the scope lookup does not go direct from Korea.
-                CoroutineScope(Dispatchers.IO).launch { Innertube.ensureSessionScope() }
-            }
-            initLastfm()
-            ListenTogether.init(this)
-        }
+        StartupWork.startSession(
+            settingsReady = settingsReady,
+            restore = { restoreSession() },
+            attach = { attachSession() },
+        )
         com.music.bitchord.data.FeatureHealthCounters.init(File(logDirectory, "feature-health"))
         // [KO] exit-reasons: an ANR/crash leaves no line in this process's own
         // log, because the process that hung is gone. Android's historical exit
@@ -631,6 +600,54 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory, Configu
         TrackLog.w("BitChord", "lifecycle: low memory")
         TrackLog.flush()
         com.music.bitchord.data.FeatureHealthCounters.flush()
+    }
+
+    /**
+     * Restores the cookie and channel before the settings read finishes: a
+     * service started without the UI (a widget or a restored queue) then finds
+     * the session already published. Nothing here touches settings or the
+     * network. Runs on the startup thread; [StartupSession] publishes the
+     * result so the main thread never opens the Keystore for it.
+     */
+    private fun restoreSession() {
+        var store: AuthStore? = null
+        try {
+            val opened = AuthStore(this)
+            store = opened
+            openedAuthStore = opened
+            val restoredSession = opened.activeSession
+            if (restoredSession != null && opened.activeAccountId == null) {
+                opened.select(restoredSession.accountId, restoredSession.activeProfileId)
+            }
+            opened.cookie = restoredSession?.cookie
+            Innertube.cookie = restoredSession?.cookie
+            if (restoredSession != null) {
+                // After the cookie, never before: setting the cookie clears any
+                // channel the last session was acting as, so restoring the
+                // choice first would restore it into the value about to be
+                // wiped.
+                restoredSession.profiles.firstOrNull { it.profileId == restoredSession.activeProfileId }
+                    ?.let { Innertube.selectChannel(it.pageId, it.dataSyncId, it.authUser) }
+            }
+        } finally {
+            // Publish even on failure: a reader that waits here must not hang,
+            // and a null store simply keeps the old signed-out behaviour.
+            StartupSession.publish(store)
+        }
+    }
+
+    /** Runs on the startup thread, after the settings read and the restore. */
+    private fun attachSession() {
+        val store = openedAuthStore ?: StartupSession.publishedOrNull() ?: AuthStore(this)
+        authStore = store
+        AppSettings.attachAuthStore(store)
+        if (store.activeSession != null) {
+            // The proxy is published by AppSettings.init before this runs,
+            // so the scope lookup does not go direct from Korea.
+            CoroutineScope(Dispatchers.IO).launch { Innertube.ensureSessionScope() }
+        }
+        initLastfm()
+        ListenTogether.init(this)
     }
 
     private fun initLastfm() {
