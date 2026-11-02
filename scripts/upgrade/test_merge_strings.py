@@ -204,11 +204,16 @@ class DuplicateGuardTest(unittest.TestCase):
 
             duplicates = merge_strings.find_duplicates(merged, merged_text)
             self.assertEqual(
-                {(name, path.name) for name, path in duplicates},
-                {("shared", "strings_ko_fork.xml"), ("shared", "strings_extra.xml")},
+                {(key, path.name) for key, path in duplicates},
+                {
+                    (("string", "shared"), "strings_ko_fork.xml"),
+                    (("string", "shared"), "strings_extra.xml"),
+                },
             )
 
-            fixed = merge_strings.remove_resources_by_names(donor_text, ["shared"])
+            fixed = merge_strings.remove_resources_by_keys(
+                donor_text, [("string", "shared")]
+            )
             self.assertNotIn('name="shared"', fixed)
             self.assertIn('<string name="donor_only">Donor</string>', fixed)
 
@@ -218,6 +223,90 @@ class DuplicateGuardTest(unittest.TestCase):
             text = '<resources><string name="shared">Merged</string></resources>'
             merged.write_text(text, encoding="utf-8")
             self.assertEqual(merge_strings.find_duplicates(merged, text), [])
+
+    def test_distinct_tags_with_same_name_are_not_duplicates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            merged = folder / "strings.xml"
+            other = folder / "strings_extra.xml"
+            merged_text = '<resources><string name="shared">Merged</string></resources>'
+            other_text = (
+                "<resources>"
+                '<plurals name="shared"><item quantity="other">Other</item></plurals>'
+                "</resources>"
+            )
+            merged.write_text(merged_text, encoding="utf-8")
+            other.write_text(other_text, encoding="utf-8")
+            self.assertEqual(
+                merge_strings.find_duplicates(merged, merged_text), []
+            )
+
+            updated, _, fixed, other_writes = merge_strings.process_duplicates(
+                [(merged, merged_text)], fix=True
+            )
+            self.assertEqual(fixed, [])
+            self.assertEqual(other_writes, {})
+            self.assertIn('name="shared"', updated[merged.resolve()])
+
+    def test_fix_dupes_runs_after_all_files_are_merged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            canonical = folder / "strings.xml"
+            fork = folder / "strings_ko_fork.xml"
+            canonical_text = (
+                "<resources>"
+                '<string name="shared">Canonical</string>'
+                "</resources>"
+            )
+            fork_text = (
+                "<resources>"
+                '<string name="shared">Fork</string>'
+                '<string name="fork_only">Fork only</string>'
+                "</resources>"
+            )
+            canonical.write_text(canonical_text, encoding="utf-8")
+            fork.write_text(fork_text, encoding="utf-8")
+
+            updated, duplicates, fixed, _ = merge_strings.process_duplicates(
+                [(canonical, canonical_text), (fork, fork_text)], fix=True
+            )
+            self.assertIn('name="shared"', updated[canonical.resolve()])
+            self.assertNotIn('name="shared"', updated[fork.resolve()])
+            self.assertIn('name="fork_only"', updated[fork.resolve()])
+            self.assertIn((("string", "shared"), fork.resolve()), fixed)
+            self.assertTrue(
+                any(
+                    key == ("string", "shared")
+                    for key, _ in duplicates[canonical.resolve()]
+                )
+            )
+
+    def test_non_canonical_merged_target_loses_to_strings_xml(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            canonical = folder / "strings.xml"
+            fork = folder / "strings_ko_fork.xml"
+            canonical_text = (
+                "<resources>"
+                '<string name="shared">Canonical</string>'
+                "</resources>"
+            )
+            fork_text = (
+                "<resources>"
+                '<string name="shared">Fork</string>'
+                "</resources>"
+            )
+            canonical.write_text(canonical_text, encoding="utf-8")
+            fork.write_text(fork_text, encoding="utf-8")
+
+            updated, _, fixed, other_writes = merge_strings.process_duplicates(
+                [(fork, fork_text)], fix=True
+            )
+            self.assertNotIn('name="shared"', updated[fork.resolve()])
+            self.assertEqual(other_writes, {})
+            self.assertEqual(
+                fixed, [(("string", "shared"), fork.resolve())]
+            )
 
 
 if __name__ == "__main__":

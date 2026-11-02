@@ -274,17 +274,21 @@ def merge_texts(
     return result
 
 
-def collect_names(text: Optional[str]) -> Set[str]:
-    return {resource.name for resource in parse_resources(text)}
+def collect_keys(text: Optional[str]) -> Set[Tuple[str, str]]:
+    return {resource.key for resource in parse_resources(text)}
 
 
 def find_duplicates(
     merged_path: Path, merged_text: str
-) -> List[Tuple[str, Path]]:
-    """Find names in merged_text that another XML file in the folder defines."""
+) -> List[Tuple[Tuple[str, str], Path]]:
+    """Find resource ids in merged_text that another XML file in the folder defines.
 
-    merged_names = collect_names(merged_text)
-    duplicates: List[Tuple[str, Path]] = []
+    Identity is ``(tag, name)`` so a ``<string name="x">`` and a distinct
+    ``<plurals name="x">`` are not treated as duplicates.
+    """
+
+    merged_keys = collect_keys(merged_text)
+    duplicates: List[Tuple[Tuple[str, str], Path]] = []
     folder = merged_path.parent
     if not folder.is_dir():
         return duplicates
@@ -298,21 +302,121 @@ def find_duplicates(
             other_text = other.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        for name in sorted(merged_names & collect_names(other_text)):
-            duplicates.append((name, other))
+        for key in sorted(merged_keys & collect_keys(other_text)):
+            duplicates.append((key, other))
     return duplicates
 
 
-def remove_resources_by_names(text: str, names: Iterable[str]) -> str:
-    wanted = set(names)
+def remove_resources_by_keys(
+    text: str, keys: Iterable[Tuple[str, str]]
+) -> str:
+    wanted = set(keys)
     pieces: List[str] = []
     cursor = 0
     for resource in parse_resources(text):
-        if resource.name in wanted:
+        if resource.key in wanted:
             pieces.append(text[cursor:resource.start])
             cursor = resource.end
     pieces.append(text[cursor:])
     return "".join(pieces)
+
+
+def process_duplicates(
+    merged_texts: Sequence[Tuple[Path, str]],
+    fix: bool,
+) -> Tuple[
+    Dict[Path, str],
+    Dict[Path, List[Tuple[Tuple[str, str], Path]]],
+    List[Tuple[Tuple[str, str], Path]],
+    Dict[Path, str],
+]:
+    """Detect (and optionally remove) duplicate resources across a folder.
+
+    All merged files are considered together, so a resource removed from one
+    merged file can never be reintroduced by the merge of a later file. The
+    function only computes text; the caller is responsible for writing.
+    """
+
+    updated: Dict[Path, str] = {}
+    merged_order: List[Path] = []
+    for target, text in merged_texts:
+        resolved = target.resolve()
+        updated[resolved] = text
+        merged_order.append(resolved)
+    merged_set = set(merged_order)
+    order_index = {path: index for index, path in enumerate(merged_order)}
+
+    folders: List[Path] = []
+    seen_folders: Set[Path] = set()
+    for path in merged_order:
+        if path.parent not in seen_folders:
+            seen_folders.add(path.parent)
+            folders.append(path.parent)
+
+    duplicates_by_path: Dict[Path, List[Tuple[Tuple[str, str], Path]]] = {
+        path: [] for path in merged_order
+    }
+    fixed: List[Tuple[Tuple[str, str], Path]] = []
+    other_writes: Dict[Path, str] = {}
+
+    for folder in folders:
+        texts: Dict[Path, str] = {}
+        for other in sorted(folder.iterdir()):
+            if not other.is_file() or other.suffix.lower() != ".xml":
+                continue
+            resolved = other.resolve()
+            if resolved in updated:
+                texts[resolved] = updated[resolved]
+                continue
+            try:
+                texts[resolved] = other.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+
+        owners: Dict[Tuple[str, str], List[Path]] = {}
+        for path, text in texts.items():
+            for key in collect_keys(text):
+                owners.setdefault(key, []).append(path)
+
+        for key, paths in owners.items():
+            if len(paths) < 2 or not (set(paths) & merged_set):
+                continue
+
+            for path in paths:
+                if path not in merged_set:
+                    continue
+                for other in paths:
+                    if other != path:
+                        duplicates_by_path[path].append((key, other))
+
+            if not fix:
+                continue
+
+            canonical = [path for path in paths if path.name == "strings.xml"]
+            candidates = [path for path in paths if path in merged_set]
+            if canonical:
+                winner = canonical[0]
+            elif candidates:
+                winner = min(candidates, key=lambda path: order_index[path])
+            else:
+                winner = sorted(paths, key=str)[0]
+
+            for loser in paths:
+                if loser == winner:
+                    continue
+                if loser in updated:
+                    updated[loser] = remove_resources_by_keys(
+                        updated[loser], [key]
+                    )
+                else:
+                    if loser not in other_writes:
+                        other_writes[loser] = texts[loser]
+                    other_writes[loser] = remove_resources_by_keys(
+                        other_writes[loser], [key]
+                    )
+                fixed.append((key, loser))
+
+    return updated, duplicates_by_path, fixed, other_writes
 
 
 def _read_stage(path: str, stage: int) -> Optional[str]:
@@ -348,8 +452,7 @@ def _is_korean_locale(path: str) -> bool:
 def _print_report(
     path: str,
     result: MergeResult,
-    duplicates: Sequence[Tuple[str, Path]],
-    fixed_duplicates: Sequence[Tuple[str, Path]],
+    duplicates: Sequence[Tuple[Tuple[str, str], Path]],
 ) -> None:
     print(f"== {path} ==")
     for rule in _RULE_ORDER:
@@ -367,14 +470,10 @@ def _print_report(
     print(f"  both-changed keys: {rendered}")
 
     if duplicates:
-        for name, other in duplicates:
-            print(f"  duplicate: {name} also in {other}")
+        for (tag, name), other in duplicates:
+            print(f"  duplicate: {tag}:{name} also in {other}")
     else:
         print("  duplicates: (none)")
-
-    if fixed_duplicates:
-        for name, other in fixed_duplicates:
-            print(f"  fixed-duplicate: removed {name} from {other}")
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -408,6 +507,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print("No conflicted strings resources found.")
         return 0
 
+    merged: List[Tuple[str, Path, MergeResult]] = []
     for path in paths:
         base = _read_stage(path, 1)
         ours = _read_stage(path, 2)
@@ -421,33 +521,33 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             theirs=theirs,
             is_korean=_is_korean_locale(path),
         )
-        target = Path(path)
-        duplicates = find_duplicates(target, result.text)
+        merged.append((path, Path(path), result))
 
-        fixed: List[Tuple[str, Path]] = []
-        if not args.dry_run:
-            target.write_bytes(result.text.encode("utf-8"))
+    updated, duplicates_by_path, fixed, other_writes = process_duplicates(
+        [(target, result.text) for _, target, result in merged],
+        fix=args.fix_dupes,
+    )
+
+    if not args.dry_run:
+        for path, target, result in merged:
+            final_text = updated.get(target.resolve(), result.text)
+            target.write_bytes(final_text.encode("utf-8"))
             if args.stage:
                 subprocess.run(["git", "add", "--", path], check=True)
-            if args.fix_dupes and duplicates:
-                by_file: Dict[Path, Set[str]] = {}
-                for name, other in duplicates:
-                    if other.name == "strings.xml":
-                        continue
-                    by_file.setdefault(other, set()).add(name)
-                for other, names in by_file.items():
-                    text = other.read_text(encoding="utf-8")
-                    other.write_bytes(
-                        remove_resources_by_names(text, names).encode("utf-8")
-                    )
-                    if args.stage:
-                        subprocess.run(
-                            ["git", "add", "--", str(other)], check=True
-                        )
-                    for name in sorted(names):
-                        fixed.append((name, other))
+        for other, text in other_writes.items():
+            other.write_bytes(text.encode("utf-8"))
+            if args.stage:
+                subprocess.run(["git", "add", "--", str(other)], check=True)
 
-        _print_report(path, result, duplicates, fixed)
+    for path, target, result in merged:
+        _print_report(path, result, duplicates_by_path.get(target.resolve(), []))
+
+    if args.fix_dupes:
+        if fixed:
+            for (tag, name), other in fixed:
+                print(f"fixed-duplicate: removed {tag}:{name} from {other}")
+        else:
+            print("fixed-duplicate: (none)")
 
     return 0
 
