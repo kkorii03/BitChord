@@ -468,6 +468,13 @@ object AppSettings {
     /** Put the playing track's codec, bitrate and sample rate on the player. */
     val showNerdStats = MutableStateFlow(false)
 
+    /**
+     * Keep the diagnostic main-thread stall line (one per 200 ms+ message,
+     * rate-limited to one every two seconds). On by default; the kill switch
+     * exists because a stall log costs a write on the main thread's account.
+     */
+    val mainStallLog = MutableStateFlow(true)
+
     /** Show the output / Listen Together pill under the player's transport. */
     val showListenTogetherButton = MutableStateFlow(false)
 
@@ -1100,6 +1107,7 @@ object AppSettings {
         )
         reconcileAutoplayWithRepeatAll()
         showNerdStats.value = prefs.getBoolean(KEY_NERD_STATS, false)
+        mainStallLog.value = prefs.getBoolean(KEY_MAIN_STALL_LOG, true)
         showListenTogetherButton.value = prefs.getBoolean(KEY_LISTEN_TOGETHER_BUTTON, false)
         reduceAnimation.value = prefs.getBoolean(KEY_REDUCE_ANIMATION, false)
         KoAppSettings.readLowPowerAndOnboarding(onboardingSaved, existingInstall) // [KO] low power
@@ -2500,6 +2508,7 @@ object AppSettings {
     private const val KEY_SHUFFLE_ENABLED = "shuffle_enabled"
     private const val KEY_REPEAT_MODE = "repeat_mode"
     private const val KEY_NERD_STATS = "show_nerd_stats"
+    private const val KEY_MAIN_STALL_LOG = "main_stall_log"
     private const val KEY_LISTEN_TOGETHER_BUTTON = "show_listen_together_button"
     private const val KEY_CACHE_LIMIT = "audio_cache_limit_bytes"
     private const val KEY_REDUCE_ANIMATION = "reduce_animation"

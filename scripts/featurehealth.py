@@ -193,6 +193,26 @@ NETWORK_LINE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# The app's own diagnostics from v1.9 on. Each one is a line the app writes
+# itself; the reader only tallies it, so a log without the line stays at 0.
+DIRECT_SOURCE_RE = re.compile(
+    r"^direct[- ]source(?:[- ]stream)?:\s*(?P<rest>.*)$", re.IGNORECASE
+)
+AUTOMIX_ANALYSIS_RE = re.compile(
+    r"^automix[- ]analysis:\s*(?P<rest>.*)$", re.IGNORECASE
+)
+SLEEP_TIMER_RE = re.compile(r"^sleep[- ]timer:\s*(?P<rest>.*)$", re.IGNORECASE)
+SYNC_CLOCK_RE = re.compile(r"^sync clock:\s*(?P<rest>.*)$", re.IGNORECASE)
+PERLINE_RE = re.compile(
+    r"^sync perline:\s*anchors=(?P<anchors>\d+)\s+applied=(?P<applied>\d+)\s+"
+    r"maxAbsMs=(?P<max>-?\d+)",
+    re.IGNORECASE,
+)
+MAIN_STALL_RE = re.compile(r"^main-stall:\s*(?P<ms>\d+)ms\b", re.IGNORECASE)
+EXIT_REASON_RE = re.compile(
+    r"^exit(?:-reason)?:\s*(?:reason=)?(?P<reason>[A-Z_]+)\b", re.IGNORECASE
+)
+
 QUALITY_TRIGGER_RE = re.compile(
     r"manual upgrade unnecessary|upgrade reverted|falling back to YouTube audio|"
     r"\breverted\b",
@@ -2354,6 +2374,188 @@ def analyze(log: Log) -> Report:
         "known": quality_known,
         "opus": quality_bad,
     }
+
+    # ---- D12-D19: the fork's own diagnostics ---------------------------
+    direct_source = {"events": 0, "settled": 0, "addon": 0, "youtube": 0, "other": 0}
+    automix_analysis = {"done": 0, "failed": 0, "ms": [], "main_thread": 0}
+    sleep_timer = {"set": 0, "fired": 0}
+    lyrics_failures = {"deadline": 0, "script-mismatch": 0}
+    sync_clock = {"converted": 0, "dropped": 0}
+    perline = {"lines": 0, "anchors": 0, "applied": 0, "max_abs": 0}
+    stalls: list[int] = []
+    exit_reasons: Counter[str] = Counter()
+    for line in lines:
+        text = line.text
+        match = DIRECT_SOURCE_RE.match(text)
+        if match:
+            rest = match.group("rest").casefold()
+            direct_source["events"] += 1
+            if "settled" in rest:
+                direct_source["settled"] += 1
+            if "addon" in rest:
+                direct_source["addon"] += 1
+            if "youtube" in rest or re.search(r"\byt\b", rest):
+                direct_source["youtube"] += 1
+            if "addon" not in rest and "youtube" not in rest and not re.search(r"\byt\b", rest):
+                direct_source["other"] += 1
+            continue
+        match = AUTOMIX_ANALYSIS_RE.match(text)
+        if match:
+            rest = match.group("rest").casefold()
+            ms_match = re.search(r"(\d+)\s*ms\b", rest)
+            if ms_match:
+                automix_analysis["ms"].append(int(ms_match.group(1)))
+            if "fail" in rest or "error" in rest:
+                automix_analysis["failed"] += 1
+            elif any(word in rest for word in ("done", "complete", "ok")):
+                automix_analysis["done"] += 1
+            if "main-thread" in rest or "main_thread" in rest or "mainthread" in rest:
+                automix_analysis["main_thread"] += 1
+            continue
+        match = SLEEP_TIMER_RE.match(text)
+        if match:
+            rest = match.group("rest").casefold()
+            if "fire" in rest or "due" in rest or "done" in rest:
+                sleep_timer["fired"] += 1
+            if "set" in rest or "arm" in rest or "start" in rest:
+                sleep_timer["set"] += 1
+            continue
+        match = SYNC_CLOCK_RE.match(text)
+        if match:
+            rest = match.group("rest").casefold()
+            for key in ("converted", "dropped"):
+                if key in rest:
+                    count_match = re.search(key + r"=(\d+)", rest)
+                    sync_clock[key] += int(count_match.group(1)) if count_match else 1
+            continue
+        match = PERLINE_RE.match(text)
+        if match:
+            perline["lines"] += 1
+            perline["anchors"] += int(match.group("anchors"))
+            perline["applied"] += int(match.group("applied"))
+            perline["max_abs"] = max(perline["max_abs"], abs(int(match.group("max"))))
+            continue
+        match = MAIN_STALL_RE.match(text)
+        if match:
+            stalls.append(int(match.group("ms")))
+            continue
+        match = EXIT_REASON_RE.match(text)
+        if match:
+            exit_reasons[match.group("reason").upper()] += 1
+            continue
+        if text.startswith("lyrics: "):
+            lowered = text.casefold()
+            if "script-mismatch" in lowered:
+                lyrics_failures["script-mismatch"] += 1
+            elif "deadline" in lowered:
+                lyrics_failures["deadline"] += 1
+
+    metrics.append(
+        _rate_metric(
+            "D12-direct",
+            "D12 직접 소스 스트림",
+            direct_source["events"],
+            direct_source["settled"],
+            "settled 90% 이상",
+            0.90,
+        )
+    )
+    stats["direct_source"] = direct_source
+
+    automix_attempts = automix_analysis["done"] + automix_analysis["failed"]
+    metrics.append(
+        _rate_metric(
+            "D13-automix",
+            "D13 Automix 분석",
+            automix_attempts,
+            automix_analysis["done"],
+            "실패·main-thread 위반 0건",
+            0.95,
+        )
+    )
+    stats["automix_analysis"] = {
+        "done": automix_analysis["done"],
+        "failed": automix_analysis["failed"],
+        "main_thread": automix_analysis["main_thread"],
+        "avg_ms": (
+            round(statistics.mean(automix_analysis["ms"]))
+            if automix_analysis["ms"]
+            else 0
+        ),
+        "max_ms": max(automix_analysis["ms"]) if automix_analysis["ms"] else 0,
+    }
+
+    metrics.append(
+        _info_metric(
+            "D14-sleep",
+            "D14 수면 타이머",
+            sleep_timer["set"],
+            "set/fired 기록",
+            successes=sleep_timer["fired"],
+        )
+    )
+    stats["sleep_timer"] = sleep_timer
+
+    lyrics_failure_count = lyrics_failures["deadline"] + lyrics_failures["script-mismatch"]
+    metrics.append(
+        _info_metric(
+            "D15-lyrics",
+            "D15 가사 조회 실패",
+            lyrics_failure_count,
+            "deadline·script-mismatch 0건",
+            notes=(
+                f"deadline {lyrics_failures['deadline']} · "
+                f"script-mismatch {lyrics_failures['script-mismatch']}"
+            ),
+        )
+    )
+    stats["lyrics_failures"] = lyrics_failures
+
+    metrics.append(
+        _info_metric(
+            "D16-sync-clock",
+            "D16 동기화 시계",
+            sync_clock["converted"] + sync_clock["dropped"],
+            "converted/dropped 기록",
+            notes=f"converted {sync_clock['converted']} · dropped {sync_clock['dropped']}",
+        )
+    )
+    stats["sync_clock"] = sync_clock
+
+    metrics.append(
+        _info_metric(
+            "D17-perline",
+            "D17 라인별 동기화",
+            perline["lines"],
+            f"applied>0 · maxAbsMs {perline['max_abs']}ms",
+            successes=perline["applied"],
+            notes=f"anchors {perline['anchors']}",
+        )
+    )
+    stats["perline"] = perline
+
+    worst_stall = max(stalls) if stalls else 0
+    metrics.append(
+        _info_metric(
+            "D18-stall",
+            "D18 메인 스레드 정지",
+            len(stalls),
+            f"200ms 이상 정지 {len(stalls)}건 · 최악 {worst_stall}ms",
+        )
+    )
+    stats["main_stall"] = {"count": len(stalls), "worst_ms": worst_stall}
+
+    exit_count = sum(exit_reasons.values())
+    metrics.append(
+        _info_metric(
+            "D19-exit",
+            "D19 프로세스 종료 사유",
+            exit_count,
+            "ANR·CRASH·LOW_MEMORY·EXCESSIVE 사유 기록",
+            notes=" · ".join(f"{name} {count}" for name, count in sorted(exit_reasons.items())),
+        )
+    )
+    stats["exit_reason"] = dict(exit_reasons)
 
     stats["feature_health"] = app_counters
     stats["played_songs"] = len(plays) if plays else len(summaries)

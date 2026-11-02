@@ -35,7 +35,7 @@ internal object ExitReasonsKo {
     private const val MAX_EXITS = 5
 
     /** Enough of the ANR stack to see the call that stalled the main thread. */
-    private const val MAX_ANR_TRACE_LINES = 60
+    private const val MAX_ANR_TRACE_LINES = 40
 
     fun report(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
@@ -43,13 +43,19 @@ internal object ExitReasonsKo {
         val app = context.applicationContext
         val prefs = runCatching {
             app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        }.getOrNull() ?: return
+        }.getOrElse {
+            TrackLog.w(TAG, "exit-reason: preferences unreadable: ${it.message}")
+            return
+        }
         val lastReportedAt = prefs.getLong(KEY_LAST_REPORTED_AT, 0L)
 
         val manager = app.getSystemService(ActivityManager::class.java) ?: return
         val exits = runCatching {
             manager.getHistoricalProcessExitReasons(app.packageName, 0, MAX_EXITS)
-        }.getOrNull().orEmpty()
+        }.getOrElse {
+            TrackLog.w(TAG, "exit-reason: history unreadable: ${it.message}")
+            return
+        }
 
         var newest = lastReportedAt
         // Oldest first, so the export reads chronologically and a failure on
@@ -61,8 +67,8 @@ internal object ExitReasonsKo {
                 formatExitLine(
                     reason = exit.reason,
                     atMs = exit.timestamp,
-                    importance = exit.importance,
                     description = exit.description,
+                    pssKb = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) exit.pss else 0,
                 ),
             )
             if (exit.reason == ApplicationExitInfo.REASON_ANR) {
@@ -71,6 +77,8 @@ internal object ExitReasonsKo {
                         mainThreadTraceLines(reader.lineSequence(), MAX_ANR_TRACE_LINES)
                             .forEach { line -> TrackLog.i(TAG, "exit-anr: $line") }
                     }
+                }.onFailure {
+                    TrackLog.w(TAG, "exit-reason: ANR trace unreadable: ${it.message}")
                 }
             }
             if (exit.timestamp > newest) newest = exit.timestamp
@@ -108,8 +116,8 @@ internal fun exitReasonName(reason: Int): String = when (reason) {
 internal fun formatExitLine(
     reason: Int,
     atMs: Long,
-    importance: Int,
     description: String?,
+    pssKb: Long,
 ): String {
     val at = EXIT_CLOCK.get().format(Date(atMs))
     val desc = description
@@ -119,7 +127,7 @@ internal fun formatExitLine(
         ?.joinToString(" ")
         ?.takeIf(String::isNotEmpty)
         ?: "-"
-    return "exit: reason=${exitReasonName(reason)} at=$at importance=$importance desc=$desc"
+    return "exit-reason: ${exitReasonName(reason)} $desc at $at pss=$pssKb"
 }
 
 /**
@@ -127,7 +135,7 @@ internal fun formatExitLine(
  * stack up to the next thread or [maxLines]. Streamed rather than read whole,
  * so a tombstone with every thread costs no more than the section wanted.
  */
-internal fun mainThreadTraceLines(lines: Sequence<String>, maxLines: Int = 60): List<String> {
+internal fun mainThreadTraceLines(lines: Sequence<String>, maxLines: Int = 40): List<String> {
     if (maxLines <= 0) return emptyList()
     val out = ArrayList<String>(maxLines)
     var inMain = false
