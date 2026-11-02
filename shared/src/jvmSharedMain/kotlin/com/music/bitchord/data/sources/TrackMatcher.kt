@@ -964,7 +964,7 @@ object TrackMatcher {
         // A stem is not the song. "Vocals Only", "Acapella", "Backing Track"
         // and friends carry the right title and the right artist and are not
         // remotely the recording anybody asked for.
-        "vocals", "vocal", "acapella", "acappella", "backing", "stems", "stem",
+        "vocals", "vocal", "acapella", "acappella", "cappella", "backing", "stems", "stem",
         "cover", "demo", "reprise", "remake", "rework", "extended", "edit",
         "version", "mix", "dub", "vip", "session", "sessions",
         "sped", "slowed", "reverb", "nightcore", "lofi", "orchestral", "symphonic",
@@ -985,7 +985,7 @@ object TrackMatcher {
      * for the original.
      */
     internal val TRAILING_TAKES = setOf( // [KO] track-matcher
-        "instrumental", "karaoke", "acapella", "acappella", "remix", "rmx", "nightcore",
+        "instrumental", "karaoke", "acapella", "acappella", "cappella", "remix", "rmx", "nightcore",
     )
 
     /**
@@ -997,7 +997,7 @@ object TrackMatcher {
      * standing in for the 256s vocal no duration check can separate.
      */
     internal val NOVOCAL_TAKES = setOf( // [KO] track-matcher
-        "instrumental", "karaoke", "acapella", "acappella", "backing", "stems", "stem",
+        "instrumental", "karaoke", "acapella", "acappella", "cappella", "backing", "stems", "stem",
     )
 
     /**

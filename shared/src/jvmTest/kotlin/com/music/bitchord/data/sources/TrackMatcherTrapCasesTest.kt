@@ -59,6 +59,17 @@ class TrackMatcherTrapCasesTest {
         )
     }
 
+    // Phone 11-02: a blocked "Blue Valentine (A Cappella Ver.)" was swapped for
+    // the band take, because "a cappella" written as two words was no take.
+    @Test
+    fun `an a cappella take and the studio take are not each other`() {
+        val aCappella = TrackMatcher.Target("Blue Valentine (A Cappella Ver.)", "NMIXX", durationSec = 186)
+        assertFalse(accepted(aCappella, song("Blue Valentine", "NMIXX", "3:06")))
+        val studio = TrackMatcher.Target("Blue Valentine", "NMIXX", durationSec = 186)
+        assertFalse(accepted(studio, song("Blue Valentine (A Cappella Ver.)", "NMIXX", "3:06")))
+        assertTrue(accepted(aCappella, song("Blue Valentine (A Cappella Ver.)", "NMIXX", "3:06")))
+    }
+
     @Test
     fun `cruel summer LP Giobbi remix is rejected`() {
         assertFalse(
