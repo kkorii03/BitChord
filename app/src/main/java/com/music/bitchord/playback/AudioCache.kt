@@ -30,6 +30,7 @@ import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.DeviceCodecs
 import com.music.bitchord.ko.KoAnalysisHeadEngine
 import com.music.bitchord.ko.KoAnalysisWaits
+import com.music.bitchord.ko.analysisWaitKeys
 import com.music.bitchord.ko.KoCacheHolder
 import com.music.bitchord.ko.KoNetworkPolicy
 import com.music.bitchord.ko.KoCacheRetention
@@ -1237,38 +1238,21 @@ object AudioCache {
      */
     fun dropForeignEntries(keep: Set<String>, keepAnalysis: Boolean = false) {
         if (openedCache == null) return
-        scope.launch {
-            var dropped = 0
-            cache.keys.toList().forEach { key ->
-                val meta = runCatching { cache.getContentMetadata(key) }.getOrNull() ?: return@forEach
-                val foreign = meta.get(META_ORIGIN, null as String?) == Origin.OTHER.name &&
-                    !keepsAddonCopy(key)
-                val analysisOnly = !keepAnalysis &&
-                    meta.get(META_ANALYSIS, null as String?) != null &&
-                    meta.get(META_PLAYBACK, null as String?) == null &&
-                    meta.get(META_PLAYED, null as String?) == null
-                if (!foreign && !analysisOnly) return@forEach
-                val mediaId = meta.get(META_MEDIA_ID, null as String?)
-                if (mediaId != null && (mediaId in keep || koRetention.keptForTiming(mediaId))) {
-                    return@forEach
-                }
-                runCatching { cache.removeResource(key) }
-                    .onSuccess {
-                        dropped++
-                        forgetPurgeCandidate(key)
-                        mediaId?.let { id ->
-                            analysisHeads.remove(id)
-                            analysisHeadDeferredLogged.remove(id)
-                            analysisHeadsHeldElsewhere.remove(id)
-                            analysisHeadWant.remove(id)
-                            stalledAnalysisHeads.remove(id)
-                            renditionKeys.remove(id)
-                        }
-                    }
-                    .onFailure { TrackLog.d(TAG, "unkept cache entry $key still in use: ${it.message}") }
-            }
-            if (dropped > 0) TrackLog.d(TAG, "dropped $dropped addon / analysis-only cache entries")
-        }
+        koRetention.dropForeignEntries(
+            cache = cache,
+            keep = keep,
+            keepAnalysis = keepAnalysis,
+            keepsAddonCopy = ::keepsAddonCopy,
+            scope = scope,
+            onDropped = { id ->
+                analysisHeads.remove(id)
+                analysisHeadDeferredLogged.remove(id)
+                analysisHeadsHeldElsewhere.remove(id)
+                analysisHeadWant.remove(id)
+                stalledAnalysisHeads.remove(id)
+                renditionKeys.remove(id)
+            },
+        )
     }
 
     /**
@@ -2111,13 +2095,19 @@ object AudioCache {
         recordContentLength = ::recordContentLength,
         invalidateRenditionKeys = { renditionKeys.remove(it) },
         forgetPurgeCandidate = ::forgetPurgeCandidate,
+        waitKeys = { videoId -> analysisWaitKeys(videoId, ALT_SUFFIX, renditionKeysFor(videoId)) },
     )
 
     private val koAnalysisWaits = KoAnalysisWaits( // [KO] analysis-waits
         cache = { openedCache },
-        renditionsOf = ::renditionsOf,
-        awaitAnalysisHead = ::awaitAnalysisHead,
-        analysisHeadsInFlight = analysisHeadsInFlight,
+        hasCompleteNonAltRendition = { videoId ->
+            renditionsOf(Uri.parse("bitchord://watch?v=$videoId"))
+                .any { it.isComplete && !it.key.endsWith(ALT_SUFFIX) }
+        },
+        awaitAnalysisHead = { videoId, timeoutMs ->
+            awaitAnalysisHead(Uri.parse("bitchord://watch?v=$videoId"), timeoutMs)
+        },
+        awaitAnalysisRound = { videoId, timeoutMs -> koAnalysis.awaitRoundDone(videoId, timeoutMs) },
         alignmentPrefixBytes = ::alignmentPrefixBytes,
         renditionKeysFor = ::renditionKeysFor,
         refreshRenditionKeys = ::refreshRenditionKeys,
