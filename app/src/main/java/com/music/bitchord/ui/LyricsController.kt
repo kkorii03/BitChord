@@ -6,6 +6,7 @@ import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.lyrics.EmbeddedLyrics
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsAiGuard
+import com.music.bitchord.data.lyrics.LyricsFailure
 import com.music.bitchord.data.lyrics.LyricsOverrideFile
 import com.music.bitchord.data.lyrics.LyricsOverrideStore
 import com.music.bitchord.data.lyrics.LyricsRepository
@@ -37,6 +38,27 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
+/** The repository's lookup signature, so a test can stand in for it. */
+internal typealias LyricsLookup = suspend (
+    videoId: String,
+    title: String,
+    artist: String,
+    durationMs: Long,
+    album: String?,
+    sources: Set<LyricsSource>,
+    order: List<LyricsSource>,
+    prioritizeSyllableSync: Boolean,
+    isrc: String?,
+    onSourceStarted: ((LyricsSource) -> Unit)?,
+    onSourceResult: ((LyricsSource, LyricsRepository.Result?, LyricsFailure?) -> Unit)?,
+    onSourceCancelled: ((LyricsSource) -> Unit)?,
+    isVideo: Boolean,
+    alternatives: List<Pair<String, String>>,
+    artistKnown: Boolean,
+    artistAliases: List<String>,
+    transcribe: Boolean,
+) -> LyricsRepository.Result?
+
 /**
  * Loading, provider selection and timing for the lyrics of the playing track.
  *
@@ -47,6 +69,16 @@ class LyricsController(
     private val app: Application,
     private val scope: CoroutineScope,
 ) {
+
+    /** The repository call; a seam for tests, as [LyricsRepository.transcriber] is there. */
+    internal var lyricsLookup: LyricsLookup = LyricsRepository::lyrics
+
+    /**
+     * The controller's own backstop on the whole lookup, a beat past the
+     * repository's deadline so the repository's best-so-far answer still wins.
+     * A provider that ignores cancellation must not keep the panel spinning.
+     */
+    internal var lookupTimeoutMs: Long = 12_000L + 1_000L
 
     /** Synced lyrics for whatever is playing; null while unknown or absent. */
     private val _lyrics = MutableStateFlow<List<LyricLine>?>(null)
@@ -164,7 +196,7 @@ class LyricsController(
      * from its downloaded file to the song stream, and the check of the old
      * recording must not stand for the new one.
      */
-    private var lyricsFor: LyricsLoadKey? = null
+    private val requestGate = LyricsRequestGate()
 
     init {
         // Kept lyrics a background check has since bettered (word timing where
@@ -218,15 +250,16 @@ class LyricsController(
             order = AppSettings.lyricsSourceOrder.value,
             prioritizeSyllableSync = AppSettings.prioritizeSyllableSync.value,
         )
-        if (lyricsFor == key) return
-        // The duration lands a beat after the track, and a database match needs
-        // it. Turned away here rather than inside the job below: claiming the
-        // lookup first and giving it up asynchronously means the very re-trigger
-        // that carries the duration can arrive while the claim still stands, be
-        // dropped as a duplicate, and leave the track marked as being looked up
-        // by nobody — which is what left a paused track loading for ever, since
-        // pausing is when the duration is most likely to arrive a frame late.
-        if (localUri == null && durationMs <= 0L) return
+        val action = requestGate.begin(key, durationMs, hasLocalFile = localUri != null)
+        if (action == LyricsRequestAction.ALREADY_LOADED || action == LyricsRequestAction.WAIT_FOR_DURATION) return
+        // The duration lands a beat after the track, and a network lookup waits
+        // for it before claiming the key. Claiming first and giving it up inside
+        // the job meant the re-trigger carrying the duration could arrive while
+        // the claim still stood, be dropped as a duplicate, and leave the track
+        // looked up by nobody (a59AuyMjb68). A local file's own lyrics need no
+        // length, so they may show as a preview until it arrives; only the
+        // network request is withheld.
+        val previewOnly = action == LyricsRequestAction.LOCAL_PREVIEW
         if (currentLyricsRequest?.videoId != videoId ||
             (currentLyricsRequest?.localUri != null) != (localUri != null)
         ) {
@@ -234,7 +267,6 @@ class LyricsController(
             refineHeardStartedFor = null
             mismatchReloadedFor = null
         }
-        lyricsFor = key
         lyricsGeneration += 1
         val generation = lyricsGeneration
         currentLyricsRequest = LyricsRequest(
@@ -364,10 +396,11 @@ class LyricsController(
                 }
                 return@launch
             }
-            // The file first, and without the duration gate below: a length is
-            // only needed to *match* a track against a stranger's database, and
-            // nothing is being matched here — these lyrics were written into
-            // this exact file, for this exact recording.
+            // The file first: a length is only needed to *match* a track
+            // against a stranger's database, and nothing is being matched here
+            // — these lyrics were written into this exact file, for this exact
+            // recording. The caller has already had the player's length for
+            // every track before this job starts.
             if (localUri != null) {
                 EmbeddedLyrics.withSource(app, localUri)?.let { file ->
                     val embedded = file.lines
@@ -423,25 +456,31 @@ class LyricsController(
                     return@launch
                 }
             }
-            if (durationMs <= 0L) {
-                // Duration arrives a beat after the track does; wait for it.
-                lyricsFor = null
-                return@launch
+            if (previewOnly) return@launch
+            var finished = false
+            val answer = withTimeoutOrNull(lookupTimeoutMs) {
+                lyricsLookup(
+                    videoId, title, artist, durationMs, album, sources,
+                    AppSettings.lyricsSourceOrder.value, AppSettings.prioritizeSyllableSync.value,
+                    null,
+                    { source -> providerStarted(generation, source) },
+                    { source, result, failure -> providerFinished(generation, source, result, failure) },
+                    { source -> providerCancelled(generation, source) },
+                    isVideo,
+                    alternatives,
+                    artistKnown,
+                    artistAliases,
+                    localUri == null,
+                ).also { finished = true }
             }
-            val found = LyricsRepository.lyrics(
-                videoId, title, artist, durationMs, album, sources,
-                AppSettings.lyricsSourceOrder.value, AppSettings.prioritizeSyllableSync.value,
-                onSourceStarted = { source -> providerStarted(generation, source) },
-                onSourceResult = { source, result, failure ->
-                    providerFinished(generation, source, result, failure)
-                },
-                onSourceCancelled = { source -> providerCancelled(generation, source) },
-                isVideo = isVideo,
-                alternatives = alternatives,
-                artistKnown = artistKnown,
-                artistAliases = artistAliases,
-                transcribe = localUri == null,
-            )
+            // The repository ends its own lookup at LOOKUP_DEADLINE_MS with
+            // whatever it already found. This is only the backstop if that
+            // answer never comes; a provider nobody can cancel must not leave
+            // the panel spinning (MA9BrvtKvhM).
+            val found = if (finished) answer else bestSoFar()
+            if (!finished) {
+                TrackLog.i("BitChord", "lyrics: deadline after ${lookupTimeoutMs}ms", about = videoId)
+            }
             val selected = selectedLyricsSource?.let(lyricsProviderResults::get) ?: found
             publishLyrics(selected)
             _lyricsChecked.value = true
@@ -449,7 +488,7 @@ class LyricsController(
             // phone offline. Forget the claim so a later look at the same
             // track (a settings change, reopening the panel) asks again,
             // instead of being dropped as a duplicate for the whole session.
-            if (selected == null) lyricsFor = null
+            if (selected == null) requestGate.release()
         }
     }
 
@@ -463,7 +502,7 @@ class LyricsController(
         if (!LyricsRetry.shouldRetry(
                 checked = _lyricsChecked.value,
                 hasLyrics = !_lyrics.value.isNullOrEmpty(),
-                lookupClaimed = lyricsFor != null,
+                lookupClaimed = requestGate.lookupClaimed,
                 hasRequest = true,
             )
         ) return
@@ -642,6 +681,12 @@ class LyricsController(
         _lyricsChecked.value = true
     }
 
+    /** The best provider answer already delivered when the lookup's backstop fires. */
+    private fun bestSoFar(): LyricsRepository.Result? =
+        selectedLyricsSource?.let(lyricsProviderResults::get)
+            ?: lyricsRaceOrder.firstNotNullOfOrNull { lyricsProviderResults[it] }
+            ?: lyricsProviderResults.values.firstOrNull()
+
     /**
      * Puts [result] on screen as its source timed it, then — for timed lyrics
      * that aren't the video's own — on the video's clock. See [startTiming].
@@ -695,16 +740,24 @@ class LyricsController(
      * Deepgram-only setup had no action for the rest of playback even after
      * the copy finished caching. Recomputed only on that event, never polled.
      */
-    private fun aiTimingAvailable(request: LyricsRequest, lines: List<LyricLine>?): Boolean =
-        LyricsAiGuard.manualTimingAvailable(
-            geminiUsable = LyricsTranslation.geminiKeyUsable,
-            deepgramUsable = com.music.bitchord.data.lyrics.Deepgram.usable,
+    private fun aiTimingAvailable(request: LyricsRequest, lines: List<LyricLine>?): Boolean {
+        val texts = lines.orEmpty().map { it.text }
+        // Answer the same as [LyricsAiGuard.manualTimingAvailable] without
+        // reading the audio cache when there is nothing either engine could do.
+        if (texts.count { it.isNotBlank() } < LyricsAiGuard.MIN_AI_LINES) return false
+        val gemini = LyricsTranslation.geminiKeyUsable
+        val deepgram = com.music.bitchord.data.lyrics.Deepgram.usable
+        if (!gemini && !deepgram) return false
+        return LyricsAiGuard.manualTimingAvailable(
+            geminiUsable = gemini,
+            deepgramUsable = deepgram,
             audioAvailable = VideoAudio.audioReadyForTiming(request.videoId),
             durationMs = request.durationMs,
             title = request.title,
             artist = request.artist,
-            lyricsTexts = lines.orEmpty().map { it.text },
+            lyricsTexts = texts,
         )
+    }
 
     /**
      * Applies what is known about this track's timing to [lines] at once —
@@ -1264,7 +1317,7 @@ class LyricsController(
                 com.music.bitchord.data.lyrics.LyricsMismatch.logLine(result.source, verdict),
                 about = request.videoId,
             )
-            lyricsFor = null
+            requestGate.release()
             loadLyrics(
                 videoId = request.videoId,
                 title = request.title,
@@ -1469,6 +1522,41 @@ class LyricsController(
             LyricsTiming.setManual(app, request.videoId, value)
             refreshTiming(generation, lines)
         }
+    }
+}
+
+/**
+ * What [LyricsController.loadLyrics] should do with a call.
+ *
+ * A track's length arrives from the player a beat after the track itself; until
+ * it does, a network lookup stays unclaimed so the event that carries it starts
+ * the one request (a59AuyMjb68). A local file's embedded lyrics need no length,
+ * so they may be shown as a preview while the network lookup still waits.
+ */
+internal enum class LyricsRequestAction { ALREADY_LOADED, WAIT_FOR_DURATION, LOCAL_PREVIEW, LOOKUP }
+
+internal class LyricsRequestGate {
+    private var claimed: LyricsLoadKey? = null
+    private var previewed: LyricsLoadKey? = null
+
+    val lookupClaimed: Boolean get() = claimed != null
+
+    fun begin(key: LyricsLoadKey, durationMs: Long, hasLocalFile: Boolean): LyricsRequestAction {
+        if (claimed == key) return LyricsRequestAction.ALREADY_LOADED
+        if (durationMs <= 0L) {
+            if (!hasLocalFile) return LyricsRequestAction.WAIT_FOR_DURATION
+            if (previewed == key) return LyricsRequestAction.ALREADY_LOADED
+            previewed = key
+            return LyricsRequestAction.LOCAL_PREVIEW
+        }
+        claimed = key
+        previewed = null
+        return LyricsRequestAction.LOOKUP
+    }
+
+    /** A miss is not final: a later look may ask again. */
+    fun release() {
+        claimed = null
     }
 }
 

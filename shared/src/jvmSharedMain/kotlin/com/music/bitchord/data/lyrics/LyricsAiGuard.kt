@@ -132,8 +132,15 @@ object LyricsAiGuard {
     }
 
     /** Korean when the name is written in Hangul or the words themselves are. */
-    fun isKoreanSong(title: String, artist: String, lyricsTexts: List<String>): Boolean =
-        OriginalNames.worthTrying(title, artist) || Deepgram.languageFor(lyricsTexts) == "ko"
+    fun isKoreanSong(title: String, artist: String, lyricsTexts: List<String>): Boolean {
+        // "Lethe (ENG cover)" by a Korean artist is an English cover, not a
+        // Korean recording: an explicit non-Korean version tag wins over the
+        // Hangul in the artist credit. Without this it skipped the transcript
+        // and kept the Korean original's sheet.
+        val named = namedLanguage(title)
+        if (named != null && named != Language.KOREAN) return false
+        return OriginalNames.worthTrying(title, artist) || Deepgram.languageFor(lyricsTexts) == "ko"
+    }
 
     /**
      * An upload labelled as an instrumental: there are no words to transcribe,
@@ -142,6 +149,92 @@ object LyricsAiGuard {
     fun isInstrumentalTitle(title: String): Boolean =
         title.isNotBlank() &&
             (INSTRUMENTAL.containsMatchIn(title) || INST.containsMatchIn(title) || MR.containsMatchIn(title))
+
+    /**
+     * The language a title names when it says a version rather than an
+     * original: "(ENG cover)", "English ver.", "Japanese ver.", "(JP)",
+     * "日本語", "Korean ver.". Only an explicit tag is returned; a title that
+     * names two is ambiguous and returns null.
+     */
+    enum class Language { KOREAN, JAPANESE, ENGLISH }
+
+    fun namedLanguage(title: String): Language? {
+        val named = buildSet {
+            if (ENGLISH_TAG.containsMatchIn(title)) add(Language.ENGLISH)
+            if (JAPANESE_TAG.containsMatchIn(title)) add(Language.JAPANESE)
+            if (KOREAN_TAG.containsMatchIn(title)) add(Language.KOREAN)
+        }
+        return named.singleOrNull()
+    }
+
+    private val ENGLISH_TAG = Regex("""(?i)(?<![a-z])(eng|english)(?![a-z])""")
+    private val JAPANESE_TAG = Regex("""(?i)(?<![a-z])(jp|jpn|japanese)(?![a-z])|日本語|日語|日本语""")
+    private val KOREAN_TAG = Regex("""(?i)(?<![a-z])(kr|kor|korean)(?![a-z])|한국어|한국말|韓国語|韓語|국어""")
+
+    /**
+     * The script most of a sheet is written in. Latin wins English, Hangul
+     * wins Korean, kana (with its Kanji) wins Japanese; a tie or a sheet with
+     * no letters (an instrumental placeholder) is not evidence either way.
+     */
+    fun dominantLanguage(lines: List<LyricLine>): Language? {
+        var hangul = 0
+        var kana = 0
+        var han = 0
+        var latin = 0
+        for (line in lines) {
+            for (ch in line.text) {
+                when (Character.UnicodeScript.of(ch.code)) {
+                    Character.UnicodeScript.HANGUL -> hangul++
+                    Character.UnicodeScript.HIRAGANA,
+                    Character.UnicodeScript.KATAKANA,
+                    -> kana++
+                    Character.UnicodeScript.HAN -> han++
+                    Character.UnicodeScript.LATIN -> latin++
+                    else -> Unit
+                }
+            }
+        }
+        // Kanji without kana may be Chinese, and the title tags this rule
+        // knows are Korean/Japanese/English; it is not evidence for them.
+        val japanese = if (kana > 0) kana + han else 0
+        val top = maxOf(hangul, japanese, latin)
+        if (top <= 0) return null
+        if (listOf(hangul, japanese, latin).count { it == top } != 1) return null
+        return when (top) {
+            hangul -> Language.KOREAN
+            japanese -> Language.JAPANESE
+            else -> Language.ENGLISH
+        }
+    }
+
+    /** Whether [lines] contradict the language [title] names. Nothing named means nothing to check. */
+    fun scriptMismatch(title: String, lines: List<LyricLine>): Boolean =
+        namedLanguage(title)?.let { scriptMismatch(it, lines) } ?: false
+
+    fun scriptMismatch(language: Language, lines: List<LyricLine>): Boolean {
+        val dominant = dominantLanguage(lines) ?: return false
+        return language != dominant
+    }
+
+    /** Sheets thrown away for a title's language, so a later lookup does not fetch them again. */
+    private const val REMEMBERED = 64
+
+    private val rejected = object : LinkedHashMap<String, Boolean>(REMEMBERED, 0.75f, true) {
+        override fun removeEldestEntry(eldest: Map.Entry<String, Boolean>) = size > REMEMBERED
+    }
+
+    private fun rejectionKey(videoId: String, source: LyricsSource, lines: List<LyricLine>): String =
+        buildString {
+            append(videoId).append('\u0000').append(source.name).append('\u0000')
+            lines.forEach { line -> append(line.timeMs).append('\u0001').append(line.text).append('\u0002') }
+        }
+
+    fun isScriptRejected(videoId: String, source: LyricsSource, lines: List<LyricLine>): Boolean =
+        synchronized(rejected) { rejected.containsKey(rejectionKey(videoId, source, lines)) }
+
+    fun rememberScriptRejected(videoId: String, source: LyricsSource, lines: List<LyricLine>) {
+        synchronized(rejected) { rejected[rejectionKey(videoId, source, lines)] = true }
+    }
 
     private val INSTRUMENTAL = Regex("""\binstrumental\b""", RegexOption.IGNORE_CASE)
 
