@@ -25,7 +25,7 @@ class IntegrationImportHygieneTest {
 
     @Test
     fun targetFilesDoNotImportTheSameSymbolTwice() {
-        val root = repositoryRoot()
+        val root = TestFiles.repositoryRoot()
         val duplicates = files.flatMap { relative ->
             val imports = File(root, relative).readLines()
                 .map(String::trim)
@@ -38,14 +38,5 @@ class IntegrationImportHygieneTest {
 
         assertTrue("repository root not found", root.isDirectory)
         assertEquals(emptyList<String>(), duplicates)
-    }
-
-    private fun repositoryRoot(): File {
-        var directory = File(System.getProperty("user.dir")).absoluteFile
-        while (!File(directory, "settings.gradle.kts").isFile) {
-            directory = directory.parentFile
-                ?: error("settings.gradle.kts not found above ${System.getProperty("user.dir")}")
-        }
-        return directory
     }
 }

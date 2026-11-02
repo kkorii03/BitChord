@@ -358,7 +358,7 @@
     <string name="synced_lyrics">실시간 가사</string>
     <string name="settings_lyrics">가사</string>
     <string name="synced_lyrics_subtitle">재생에 맞춰 가사 강조</string>
-    <string name="lyrics_sources">가사 제공처</string>
+    <string name="lyrics_sources">가사 소스</string>
     <string name="song_cache_limit">오프라인 임시 저장 한도</string>
     <string name="clear_song_cache">오프라인 임시 저장 지우기</string>
     <string name="clear_song_cache_subtitle">오프라인 임시 저장 삭제</string>
