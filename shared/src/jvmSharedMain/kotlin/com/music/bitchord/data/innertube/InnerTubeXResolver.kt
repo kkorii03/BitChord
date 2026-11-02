@@ -448,6 +448,8 @@ object InnerTubeXResolver {
      * (`WEB_CREATOR` with its PoToken) is the one profile known to work here.
      *
      * [ask] receives the client to ask, or null for the regular video ranking.
+     * Only an empty ranking or [NO_PLAYABLE_STREAM][StreamResolveException.Reason.NO_PLAYABLE_STREAM]
+     * asks the fallback; a network or age-gate failure is the caller's to retry.
      */
     internal suspend fun extractVideoWithFallback(
         preferredClientId: String?,
@@ -462,7 +464,13 @@ object InnerTubeXResolver {
             rankedFailure = e
             null
         }
-        if (ranked != null || preferredClientId == null) return ranked
+        if (ranked != null) return ranked
+        if (preferredClientId == null) return null
+        if (rankedFailure != null &&
+            rankedFailure.reason != StreamResolveException.Reason.NO_PLAYABLE_STREAM
+        ) {
+            throw rankedFailure
+        }
         if (isExcluded(preferredClientId, excludedClients)) {
             if (rankedFailure != null) throw rankedFailure
             return null

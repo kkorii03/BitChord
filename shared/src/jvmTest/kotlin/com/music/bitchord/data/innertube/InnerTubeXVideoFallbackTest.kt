@@ -43,6 +43,40 @@ class InnerTubeXVideoFallbackTest {
     }
 
     @Test
+    fun `an empty video ranking asks the learned audio client`() = runBlocking {
+        val asked = mutableListOf<String?>()
+        val preferred = stream()
+        val found = InnerTubeXResolver.extractVideoWithFallback("WEB_CREATOR", emptySet()) { client ->
+            asked += client
+            if (client == null) null else preferred
+        }
+
+        assertSame(preferred, found)
+        assertEquals(listOf(null, "WEB_CREATOR"), asked)
+    }
+
+    @Test
+    fun `a ranking failure other than no playable stream is not retried`() = runBlocking {
+        for (reason in listOf(
+            StreamResolveException.Reason.NETWORK,
+            StreamResolveException.Reason.AGE_RESTRICTED,
+        )) {
+            val asked = mutableListOf<String?>()
+            val rankedFailure = StreamResolveException(reason, "ranking failed")
+            val failure = assertFailsWith<StreamResolveException> {
+                InnerTubeXResolver.extractVideoWithFallback("WEB_CREATOR", emptySet()) { client ->
+                    asked += client
+                    throw rankedFailure
+                }
+            }
+
+            assertSame(rankedFailure, failure)
+            assertEquals(reason, failure.reason)
+            assertEquals(listOf<String?>(null), asked)
+        }
+    }
+
+    @Test
     fun `a ranked picture is not asked again with the learned client`() = runBlocking {
         val asked = mutableListOf<String?>()
         val ranked = stream(720)
