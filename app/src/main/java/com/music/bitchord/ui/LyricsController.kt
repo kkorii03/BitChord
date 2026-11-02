@@ -1048,10 +1048,15 @@ class LyricsController(
                     }
                     if (!LyricsTiming.worthMeasuring(context, request.videoId)) return true
                     attempts++
-                    LyricsTiming.measure(context, video, names, request.durationMs, lines = lines)
-                    refreshTiming(generation, lines)
-                    autoAiIfNeeded(generation, lines)
-                    return !LyricsTiming.measured(context, request.videoId)
+                    return measureThen(
+                        measure = {
+                            LyricsTiming.measure(context, video, names, request.durationMs, lines = lines)
+                        },
+                    ) {
+                        refreshTiming(generation, lines)
+                        autoAiIfNeeded(generation, lines)
+                        !LyricsTiming.measured(context, request.videoId)
+                    }
                 }
                 if (measureOnce() && LocalTimingPolicy.measureWaitsForStream(video.localUri)) {
                     // Event-driven: a stream open is the point where more of the
@@ -1611,3 +1616,16 @@ internal fun lyricsMeasurementAllowed(
     giveUpAt: Long,
     measured: Boolean,
 ): Boolean = attempts < maxAttempts && nowMs < giveUpAt && !measured
+
+/**
+ * Runs a measurement and only then lets its caller read the timing store.
+ *
+ * [measure] blocks on decode, so a cancel can arrive while it is in flight and
+ * the caller's job reports it only here: a cancelled job must not refresh the
+ * screen or read the store while unwinding.
+ */
+internal suspend fun <T> measureThen(measure: suspend () -> Unit, then: suspend () -> T): T {
+    measure()
+    currentCoroutineContext().ensureActive()
+    return then()
+}
