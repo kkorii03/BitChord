@@ -4297,7 +4297,8 @@ object LyricsTiming {
 
     /** The whole timing memory as text, for a device-migration backup. */
     internal suspend fun exportBackupText(context: Context): String? = withContext(Dispatchers.IO) {
-        val file = File(context.applicationContext.filesDir, "lyrics_timing_v1.json")
+        val directory = (context.applicationContext ?: context).filesDir ?: return@withContext null
+        val file = File(directory, "lyrics_timing_v1.json")
         runCatching { file.takeIf { it.isFile }?.readText() }.getOrNull()
     }
 
@@ -4318,11 +4319,16 @@ object LyricsTiming {
     @Volatile
     private var store: Store? = null
 
-    private fun store(context: Context): Store =
-        store ?: synchronized(this) {
-            store ?: Store(
-                (context.applicationContext ?: context).filesDir
-                    ?.let { File(it, "lyrics_timing_v1.json") },
-            ).also { store = it }
+    private fun store(context: Context): Store {
+        store?.let { return it }
+        synchronized(this) {
+            store?.let { return it }
+            val file = (context.applicationContext ?: context).filesDir
+                ?.let { File(it, "lyrics_timing_v1.json") }
+                // Not cached: a directory can appear later, and this store could
+                // never save. The next call builds a real one.
+                ?: return Store(null)
+            return Store(file).also { store = it }
         }
+    }
 }
