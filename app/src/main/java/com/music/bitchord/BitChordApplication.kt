@@ -114,6 +114,7 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory, Configu
         // EncryptedPrefs serialises the two opens and behaviour is unchanged.
         StartupWork.background("auth-store") { AuthStore.prewarm(this) }
         com.music.bitchord.data.FeatureHealthCounters.init(File(logDirectory, "feature-health"))
+        com.music.bitchord.playback.smart.SyncTestMode.applyTestAllowances(this) // [KO] sync-test
         // [KO] exit-reasons: an ANR/crash leaves no line in this process's own
         // log, because the process that hung is gone. Android's historical exit
         // reasons are the only record, read once per start off the main thread.

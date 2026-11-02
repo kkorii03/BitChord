@@ -30,6 +30,8 @@ import android.media.MediaFormat
 import android.util.Log
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.playback.DecoderMonitor
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runInterruptible
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -65,6 +67,15 @@ object AudioDecoder {
 
     /** [KO] decode-priority: true (via asContextElement) for work done ahead for a track not yet playing. */
     val aheadOfTime: ThreadLocal<Boolean> = ThreadLocal.withInitial { false }
+
+    /**
+     * Runs a blocking decode so a cancelled coroutine interrupts it — including
+     * its wait at [decodeGate], which otherwise only notices the abort after
+     * the slot is finally free. That was the 25 s "dropped at the gate" after
+     * the next-prep bundle had already been cancelled on 11-02.
+     */
+    internal suspend fun <T> interruptibleDecode(block: () -> T): T =
+        runInterruptible(Dispatchers.IO) { block() }
 
     /** Decoded mono PCM at the container's own sample rate; the caller resamples. */
     data class Pcm(val samples: FloatArray, val sampleRate: Double)
@@ -284,8 +295,17 @@ object AudioDecoder {
         label: String,
         onBuffer: (ByteBuffer, MediaCodec.BufferInfo, Int, Int) -> Unit,
     ): Pair<Double, Double>? {
+        // Each decode is synchronous on the caller's thread, so a thread-local
+        // stage cannot be confused by another caller's decode.
+        lastFailure.remove()
         if (endSeconds <= startSeconds) {
             fail(label, "range", "start=$startSeconds end=$endSeconds")
+            return null
+        }
+        // Refuse before waiting on the gate: a request whose track has left
+        // must not sit in the queue ahead of work that is still wanted.
+        if (abort()) {
+            TrackLog.d(TAG, "decode: $label dropped at the gate (caller gave up)")
             return null
         }
         val acquired = try {
@@ -458,8 +478,22 @@ object AudioDecoder {
 
     /** One line per failed decode, in the track log rather than only in logcat. */
     private fun fail(label: String, stage: String, message: String) {
+        lastFailure.set(stage)
         TrackLog.w(TAG, "decode: $label failed at=$stage ${message.replace('\n', ' ').trim()}")
     }
+
+    /**
+     * The stage a decode on this thread failed at, cleared by the read.
+     *
+     * [LyricsTiming] restarts a stale read from zero only when the extractor
+     * found no sample at all; a codec or gate failure must not re-decode the
+     * whole prefix.
+     */
+    internal fun takeLastFailure(): String? = lastFailure.get().also { lastFailure.remove() }
+
+    internal const val FAILURE_NO_FIRST_SAMPLE = "no-first-sample"
+
+    private val lastFailure = ThreadLocal<String?>()
 
     private fun reason(error: Throwable): String =
         error.message?.takeIf { it.isNotBlank() } ?: error.javaClass.simpleName

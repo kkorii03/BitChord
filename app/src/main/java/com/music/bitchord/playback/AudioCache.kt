@@ -2367,101 +2367,39 @@ object AudioCache {
      *
      * The key is pinned rather than derived, because [keyFactory] resolves a
      * YouTube URI to whichever rendition is live *now* — which is precisely the
-     * heavy one this exists to avoid reading. The URI is still passed along for
-     * [CacheDataSource] to open against; only the key decides which bytes come
-     * back.
+     * heavy one this exists to avoid reading. Only committed spans are read,
+     * directly from their files: going through [CacheDataSource] made every
+     * decoder open touch the span and store the index under SimpleCache's
+     * monitor, which stalled the player's next cache open.
      */
     fun renditionDataSource(uri: Uri, rendition: Rendition): MediaDataSource =
-        CacheMediaDataSource(
-            CacheDataSource.Factory()
-                .setCache(cache)
-                .setUpstreamDataSourceFactory(NoUpstream)
-                .setCacheKeyFactory { rendition.key }
-                .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
-                .createDataSource(),
-            uri,
+        CommittedSpanMediaDataSource(
+            CommittedSpanReader(
+                spans = runCatching { cache.getCachedSpans(rendition.key) }
+                    .getOrDefault(emptySet())
+                    .mapNotNull { span ->
+                        val file = span.file
+                        if (!span.isCached || file == null) {
+                            null
+                        } else {
+                            CommittedSpan(span.position, span.length, file)
+                        }
+                    }
+                    .sortedBy { it.position },
+                contentLength = rendition.contentLength,
+            ),
         )
 
-    /**
-     * Never fetches. For a fully cached rendition nothing should reach this; for
-     * a partially cached one, throwing is how a read past the cached prefix
-     * becomes an end-of-stream instead of a download.
-     */
-    private object NoUpstream : DataSource.Factory {
-        override fun createDataSource(): DataSource = object : DataSource {
-            override fun addTransferListener(transferListener: TransferListener) {}
-            override fun open(dataSpec: DataSpec): Long =
-                throw IOException("Automix analysis reads only cached bytes; no upstream is wired up")
-            override fun read(buffer: ByteArray, offset: Int, length: Int): Int =
-                throw IOException("Automix analysis reads only cached bytes; no upstream is wired up")
-            override fun getUri(): Uri? = null
-            override fun close() {}
-        }
-    }
-
-    /**
-     * Adapts a Media3 [DataSource] (reading only from [cache]) to the
-     * [MediaDataSource] interface [android.media.MediaExtractor] wants.
-     *
-     * Keeps the underlying source open across consecutive sequential reads —
-     * the pattern MediaExtractor actually uses — and only reopens at a new
-     * position when the read pattern jumps, e.g. a seek.
-     */
-    private class CacheMediaDataSource(
-        private val dataSource: DataSource,
-        private val uri: Uri,
+    /** The [MediaDataSource] view [android.media.MediaExtractor] needs. */
+    private class CommittedSpanMediaDataSource(
+        private val reader: CommittedSpanReader,
     ) : MediaDataSource() {
-        private var isOpen = false
-        private var openPosition = -1L
+        override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int =
+            reader.read(position, buffer, offset, size)
 
-        override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int {
-            if (size == 0) return 0
-            if (!isOpen || position != openPosition) {
-                closeUpstream()
-                val available = try {
-                    dataSource.open(DataSpec.Builder().setUri(uri).setPosition(position).build())
-                } catch (error: IOException) {
-                    return -1
-                }
-                isOpen = true
-                openPosition = position
-                if (available == 0L) return -1
-            }
-            val count = try {
-                dataSource.read(buffer, offset, size)
-            } catch (error: IOException) {
-                closeUpstream()
-                return -1
-            }
-            if (count == C.RESULT_END_OF_INPUT) {
-                closeUpstream()
-                return -1
-            }
-            openPosition += count
-            return count
-        }
+        override fun getSize(): Long = reader.size()
 
-        override fun getSize(): Long {
-            closeUpstream()
-            return try {
-                dataSource.open(DataSpec(uri))
-            } catch (error: IOException) {
-                -1L
-            } finally {
-                closeUpstream()
-            }
-        }
-
-        override fun close() {
-            closeUpstream()
-        }
-
-        private fun closeUpstream() {
-            if (isOpen) {
-                runCatching { dataSource.close() }
-                isOpen = false
-            }
-        }
+        override fun close() = reader.close()
     }
 
     /**
