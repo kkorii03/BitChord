@@ -36,6 +36,7 @@ import com.metrolist.innertubex.extraction.StreamResolveException
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.innertube.InnerTubeXResolver
+import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.playback.ChunkedDataSource
@@ -392,7 +393,14 @@ object MusicVideoEngine {
         val skip = refused[videoId].orEmpty().toSet()
         if (videoId !in ageGated) {
             val plain = try {
-                withContext(Dispatchers.IO) { InnerTubeXResolver.extractVideo(videoId, cap, skip) }
+                withContext(Dispatchers.IO) {
+                    InnerTubeXResolver.extractVideo(
+                        videoId,
+                        cap,
+                        skip,
+                        preferredClientId = StreamResolver.preferredInnerTubeXClient(),
+                    )
+                }
             } catch (e: StreamResolveException) {
                 if (e.reason !in ESCALATED_REASONS) throw e
                 null
@@ -401,7 +409,13 @@ object MusicVideoEngine {
             TrackLog.d(TAG, "video: nothing asked plainly; asking as age-restricted", about = videoId)
         }
         return withContext(Dispatchers.IO) {
-            InnerTubeXResolver.extractVideo(videoId, cap, skip, ageRestricted = true)
+            InnerTubeXResolver.extractVideo(
+                videoId,
+                cap,
+                skip,
+                ageRestricted = true,
+                preferredClientId = StreamResolver.preferredInnerTubeXClient(),
+            )
         }?.also { ageGated += videoId }
     }
 

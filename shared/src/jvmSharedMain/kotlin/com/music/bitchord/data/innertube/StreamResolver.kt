@@ -626,6 +626,14 @@ object StreamResolver {
         order.attach(store)
     }
 
+    /**
+     * The InnerTubeX manifest that served audio last — `WEB_CREATOR` on the
+     * Korean no-Premium path — so the picture can ask the one client known to
+     * work there when the video ranking finds nothing. Null for a direct or
+     * NewPipe winner, or before anything has been learned.
+     */
+    fun preferredInnerTubeXClient(): String? = ResolutionOrder.itxManifest(order.preferred())
+
     private suspend fun resolveUncached(videoId: String): Stream {
         val resolveStart = MonotonicClock.nowMs()
         // A blocked start is one budget, not one timeout per stage. The first

@@ -11,6 +11,7 @@ import com.metrolist.innertubex.extraction.AudioQuality
 import com.metrolist.innertubex.extraction.ContentHints
 import com.metrolist.innertubex.extraction.InnerTubeExtractor
 import com.metrolist.innertubex.extraction.PoTokenResult
+import com.metrolist.innertubex.extraction.StreamResolveException
 import com.metrolist.innertubex.extraction.TokenProvider
 import com.metrolist.innertubex.extraction.TokenProviderCapabilities
 
@@ -419,6 +420,9 @@ object InnerTubeXResolver {
      * the signed-in clients first and retries a refused one with a fresh PoToken.
      *
      * @param skipClients profiles refused for this picture already.
+     * @param preferredClientId the manifest that served the audio last (see
+     *   [StreamResolver.preferredInnerTubeXClient]), retried for the picture
+     *   when the video ranking finds nothing. Null keeps the old one-shot walk.
      * @return null when InnerTubeX found no video-only stream, which for a
      *   catalogue track (a still image as its "video") is the normal answer.
      * @throws com.metrolist.innertubex.extraction.StreamResolveException with
@@ -430,6 +434,69 @@ object InnerTubeXResolver {
         maxHeight: Int,
         skipClients: Set<String> = emptySet(),
         ageRestricted: Boolean = false,
+        preferredClientId: String? = null,
+    ): VideoStream? {
+        val excluded = excludedFor(videoId) + skipClients
+        return extractVideoWithFallback(preferredClientId, excluded) { clientId ->
+            askVideo(videoId, maxHeight, excluded, ageRestricted, clientId)
+        }
+    }
+
+    /**
+     * The video ranking demotes the web clients that can actually answer a
+     * music video; when it finds nothing, asking the client audio learned
+     * (`WEB_CREATOR` with its PoToken) is the one profile known to work here.
+     *
+     * [ask] receives the client to ask, or null for the regular video ranking.
+     * Only an empty ranking or [NO_PLAYABLE_STREAM][StreamResolveException.Reason.NO_PLAYABLE_STREAM]
+     * asks the fallback; a network or age-gate failure is the caller's to retry.
+     */
+    internal suspend fun extractVideoWithFallback(
+        preferredClientId: String?,
+        excludedClients: Set<String>,
+        ask: suspend (clientId: String?) -> VideoStream?,
+    ): VideoStream? {
+        var rankedFailure: StreamResolveException? = null
+        val ranked = try {
+            ask(null)
+        } catch (e: StreamResolveException) {
+            if (preferredClientId == null) throw e
+            rankedFailure = e
+            null
+        }
+        if (ranked != null) return ranked
+        if (preferredClientId == null) return null
+        if (rankedFailure != null &&
+            rankedFailure.reason != StreamResolveException.Reason.NO_PLAYABLE_STREAM
+        ) {
+            throw rankedFailure
+        }
+        if (isExcluded(preferredClientId, excludedClients)) {
+            if (rankedFailure != null) throw rankedFailure
+            return null
+        }
+        val fallback = ask(preferredClientId)
+        if (fallback != null) return fallback
+        if (rankedFailure != null) throw rankedFailure
+        return null
+    }
+
+    private fun isExcluded(manifestId: String, excludedClients: Set<String>): Boolean {
+        // An id the catalog no longer knows cannot be asked as an override.
+        val manifest = PlaybackClientCatalog.findManifest(manifestId) ?: return true
+        // The override forces a PoToken; a refusal of the untokenized variant
+        // does not rule out the tokenized profile the fallback is asking for.
+        return manifestId in excludedClients ||
+            manifest.client.clientName in excludedClients ||
+            PlaybackClientCatalog.profileIds(manifest, usedPoToken = true).any { it in excludedClients }
+    }
+
+    private suspend fun askVideo(
+        videoId: String,
+        maxHeight: Int,
+        excludedClients: Set<String>,
+        ageRestricted: Boolean,
+        preferredClientId: String?,
     ): VideoStream? {
         innerTube.cookie = Innertube.cookie
         innerTube.visitorData = Innertube.ensureVisitorData()
@@ -440,8 +507,9 @@ object InnerTubeXResolver {
                 isAgeRestricted = true.takeIf { ageRestricted },
                 wantVideo = true,
                 maxVideoHeight = maxHeight,
+                playbackClientOverrideId = preferredClientId,
             ).withStreamCapabilities(allowHls = false, allowSabr = false, allowBoundedRange = true),
-            excludedClients = excludedFor(videoId) + skipClients,
+            excludedClients = excludedClients,
             audioQuality = AudioQuality.LOW,
             clientPlaybackNonce = generateClientPlaybackNonce(),
         ) ?: return null
