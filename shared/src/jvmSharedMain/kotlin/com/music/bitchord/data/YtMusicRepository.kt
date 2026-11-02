@@ -565,10 +565,29 @@ object YtMusicRepository {
         anonymous: Boolean = true,
         kind: SearchKind = SearchKind.TYPED,
     ): Result<SearchPage> =
+        searchPage(query, filter, anonymous, kind, ::searchMusic)
+
+    /** The music search [searchPage] makes, with its kind kept for the privacy log. */
+    internal suspend fun searchMusic(
+        query: String,
+        filter: SearchFilter,
+        anonymous: Boolean,
+        kind: SearchKind,
+    ): JsonObject =
+        Innertube.search(query, filter.params, anonymous = anonymous, kind = kind)
+
+    /** [searchPage] with its music request injectable, so a JVM test needs no network. */
+    internal suspend fun searchPage(
+        query: String,
+        filter: SearchFilter,
+        anonymous: Boolean,
+        kind: SearchKind,
+        music: suspend (String, SearchFilter, Boolean, SearchKind) -> JsonObject,
+    ): Result<SearchPage> =
         call("search:${filter.name}") {
-            val music = runCatching {
+            val musicPage = runCatching {
                 InnertubeParser.parseSearchPage(
-                    Innertube.search(query, filter.params, anonymous = anonymous),
+                    music(query, filter, anonymous, kind),
                     includeVideos = filter == SearchFilter.VIDEOS,
                     includeEpisodes = filter == SearchFilter.EPISODES,
                 ).let { page ->
@@ -579,7 +598,7 @@ object YtMusicRepository {
             // rows (and the gated session may refuse outright); the same tracks
             // come back from an anonymous youtube.com search. See YouTubeWebSearch.
             val wantsTracks = filter == SearchFilter.SONGS || filter == SearchFilter.VIDEOS
-            val page = music.getOrNull()
+            val page = musicPage.getOrNull()
             if (wantsTracks && (page == null || page.rows.isEmpty())) {
                 Log.w(
                     TAG,
@@ -612,9 +631,9 @@ object YtMusicRepository {
                 // answered. Returning the empty Music page here would show
                 // "no results" for a broken connection; let the failure reach
                 // the screen so its retry can run.
-                fallbackFailureWhenMusicHasNoRows(music, fallback)?.let { throw it }
+                fallbackFailureWhenMusicHasNoRows(musicPage, fallback)?.let { throw it }
             }
-            music.getOrThrow()
+            musicPage.getOrThrow()
         }
 
     /** Fetches the next page of a search only when the result list needs it. */
@@ -1135,7 +1154,7 @@ object YtMusicRepository {
             if (normalizedArtistName(name).isEmpty()) return@call null
             val filter = SearchFilter.ARTISTS
             val candidates = InnertubeParser.parseSearchPage(
-                Innertube.search(name, filter.params),
+                Innertube.search(name, filter.params, kind = SearchKind.ARTIST),
             ).rows
                 .filterIsInstance<SearchResult.Browse>()
                 .map { it.item }
