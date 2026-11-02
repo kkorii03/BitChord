@@ -1,0 +1,14 @@
+﻿Kotlin Android app (v1.9 + Korean fork). Inputs: docs/audit-1102.md (performance audit; its reviewer note: ActionRow/SheetTrackHeader are still used, never delete whole blocks blindly). Battery first: event-driven, no polling/timers; never block the main thread. Every change gets a JVM test that fails on the old code. Do not touch files outside YOUR SCOPE (other lanes edit them in parallel); list needed outside changes in the summary.
+Task: (1) port v1.9's manifest download path (git show origin/task/upstream-19: Downloads.kt Kept/sourceRoute with Downloader.Probe.Manifest, ManifestFile, OfflineDash) into our KoDownloadPipeline so an HLS/DASH lossless candidate is assembled into one ordinary file instead of being skipped (Downloads.keepable currently returns null for Probe.Manifest with a 'shortcut:' comment - replace that shortcut). (2) audit L4: tagging a download holds the whole track in memory (~3 copies) - stream it or cap it. Keep the allowDownloads rule and every download test green.
+YOUR SCOPE: download/**, ko/KoDownload*.kt (+ tests).
+Finish with a summary of at most 12 lines: files, REMOVED-LINES AUDIT, tests (fail-before/pass-after, names for CI), what you did not do.
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 3
+MEDIUM — app/src/main/java/com/music/bitchord/ko/downloads/KoDownloadPipeline.kt:98-100 — `manifestShape` still trusts the URL when the probe returned `Probe.File`, so an ordinary audio file at a `.mpd`/`.m3u8` URL is routed to `ManifestFile`/`OfflineDash` and the download fails — when `probe` is non-null, derive both `packaged` and `dash` solely from it, and add the File-probe + manifest-looking-URL test.
+MEDIUM — app/src/main/java/com/music/bitchord/download/Downloads.kt:2049 — `keptFor` keeps a manifest the assembler cannot file even with exports enabled, unlike v1.9's `keepable`, so `fromSources` can lock onto it and `routeFromSource` then declines it, falling to YouTube without trying the next candidate — restore the `export && extension !in ManifestFile.EXTENSIONS -> null` gate inside the keep callback.
+MEDIUM — app/src/main/java/com/music/bitchord/download/MediaTagger.kt:274-278,500 — the new size lookup and guard are untested (only the pure `canTagInMemory` helper is), so the actual cap could regress without a failing test — add a test that the guard rejects a >32 MiB file before `readAll` or that `sizeOf` reads the expected size.
+Not re-run: the full Gradle suite; `proof.log` only shows the fail-before compilation run, so pass-after counts are unverified here.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
