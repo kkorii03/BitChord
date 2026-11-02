@@ -4,6 +4,7 @@ import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.LocalPlayHistory
 import com.music.bitchord.data.RecentShelf
 import com.music.bitchord.data.StoredSongDisplay
+import com.music.bitchord.data.YouTubeDisplayCleaner
 import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.innertube.Innertube
 import com.music.bitchord.data.innertube.InnertubeParser
@@ -160,9 +161,17 @@ internal object KoHomeFeed {
             isVideo = item.isVideo,
         )
         // A row without the video flag is touched only when its title is a
-        // cover outright; a plain song called "Take Cover" is not one.
+        // cover outright; a plain song called "Take Cover" is not one. It is
+        // still cleaned, so a row that lost the flag does not keep a label's
+        // "[MV] Artist - Song" packaging.
         val cover = CoverTitles.read(raw)
-        if (!item.isVideo && cover == null) return item
+        if (!item.isVideo && cover == null) {
+            val cleaned = YouTubeDisplayCleaner.clean(raw.title, raw.artist)
+            return item.copy(
+                title = cleaned.title,
+                subtitle = cleaned.artist.ifBlank { item.subtitle },
+            )
+        }
         val song = CoverTitles.applyTo(StoredSongDisplay.clean(raw))
         return item.copy(
             title = song.title,

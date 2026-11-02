@@ -74,6 +74,22 @@ class KoHomeFeedRecentsTest {
         assertTrue(!item.isVideo)
     }
 
+    // The same lost flag left a non-cover upload's label packaging on screen:
+    // the early return skipped the cleaner for every row without isVideo.
+    @Test
+    fun `a home row without its video flag still loses label packaging`() {
+        val shelf = HomeShelf(
+            title = "인기곡",
+            items = listOf(
+                ShelfItem("[MV] IU - Friday", "1theK (원더케이)", null, "v5", null),
+            ),
+        )
+        val item = KoHomeFeed.withContentCountryChart(listOf(shelf), null).single().items.single()
+        assertEquals("Friday", item.title)
+        assertEquals("IU", item.subtitle)
+        assertTrue(!item.isVideo)
+    }
+
     @Test
     fun `repainting the shelf does not change the title`() {
         val first = KoHomeFeed.recentsShelf(listOf(cover)).items.single()
