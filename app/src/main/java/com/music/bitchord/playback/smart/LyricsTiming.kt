@@ -113,6 +113,16 @@ object LyricsTiming {
     class NextSyncProbe {
         @Volatile
         var failure: NextPrepPolicy.SyncFailure? = null
+
+        /**
+         * Starts one check pass. A pass reports only its own engine-stage
+         * failure: the short opening's "too few words" must not survive a
+         * later pass that reached the engine, or that pass's answer is not
+         * stored and the next playback pays for the same song again.
+         */
+        fun beginPass() {
+            failure = null
+        }
     }
 
     /**
@@ -2886,10 +2896,54 @@ object LyricsTiming {
             probe?.failure = NextPrepPolicy.SyncFailure.RATE_LIMIT
             return@withLock false
         }
-        val check = runSongCheck(context, song, lines, key, engine, probe)
-            ?: return@withLock false
-        if (check.failure != null) return@withLock false
-        if (check.result == "no-words") return@withLock false
+        // The first pass listens to the short opening that is already on disk,
+        // so the screen is corrected while the song is still playing. The full
+        // opening follows on the same cold playback: applied as a refinement,
+        // or as the first answer when the short one could not fit.
+        val first = runSongCheck(
+            context,
+            song,
+            lines,
+            key,
+            engine,
+            probe,
+            untilSeconds = SongCheckWindow.FIRST_SECONDS,
+        ) ?: return@withLock false
+        val firstOk = applySongCheck(context, song, key, engine, first)
+        if (!SongCheckWindow.needsFullOpening(first.result)) return@withLock firstOk
+        val full = runSongCheck(
+            context,
+            song,
+            lines,
+            key,
+            engine,
+            probe,
+            untilSeconds = VideoAudio.SONG_CHECK_SECONDS,
+        ) ?: return@withLock firstOk
+        if (!SongCheckWindow.fullMayReplace(
+                firstFitted = first.fitted != null,
+                fullFitted = full.fitted != null,
+            )
+        ) {
+            return@withLock firstOk
+        }
+        val fullOk = applySongCheck(context, song, key, engine, full)
+        fullOk || firstOk
+    }
+
+    /**
+     * Keeps what one song check found: the answer when it fitted, or the words
+     * heard as wrong-song evidence. Returns whether the check reached an engine.
+     */
+    private suspend fun applySongCheck(
+        context: Context,
+        song: Song,
+        key: Int,
+        engine: String,
+        check: SongCheck,
+    ): Boolean {
+        if (check.failure != null) return false
+        if (check.result == "no-words") return false
         val checkClock = check.clock
         val fitted = check.fitted
         if (fitted == null) {
@@ -2906,7 +2960,7 @@ object LyricsTiming {
                     )
                 }
             }
-            return@withLock true
+            return true
         }
         store(context).update(song.videoId) {
             it.copy(
@@ -2940,7 +2994,7 @@ object LyricsTiming {
             words = check.words,
             http = check.http,
         )
-        true
+        return true
     }
 
     /**
@@ -2956,10 +3010,12 @@ object LyricsTiming {
         key: Int,
         engine: String,
         probe: NextSyncProbe? = null,
+        untilSeconds: Double = VideoAudio.SONG_CHECK_SECONDS,
     ): SongCheck? {
+        probe?.beginPass()
         // Straight off the file, or the streaming copy's opening; null when
         // there is nothing to listen to yet.
-        val copy = VideoAudio.songWavCopy(context, song) ?: run {
+        val copy = VideoAudio.songWavCopy(context, song, untilSeconds) ?: run {
             songLog(song.videoId, "no-audio", null, null, 0)
             probe?.failure = NextPrepPolicy.SyncFailure.NO_AUDIO
             return null
