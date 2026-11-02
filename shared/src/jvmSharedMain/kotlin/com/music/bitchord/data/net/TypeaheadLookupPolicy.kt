@@ -53,6 +53,11 @@ fun suggestionRows(
     musicTerms: List<String>,
 ): List<String> {
     val typed = input.trim()
+    // When YouTube returns no music entity rows at all there is nothing to
+    // vouch for a completion, so the prefix itself is all that can be checked;
+    // dropping every row left the dropdown with only the typed action.
+    val requireMusic = musicTerms.isNotEmpty()
+    val musicPhrases = musicTerms.map { it.lowercase() }
     val musicWords = musicTerms.flatMap { it.words() }.toSet()
     // A prefix with no letter or digit is not a query YouTube Music can
     // complete: the endpoint falls back to YouTube's general suggestions,
@@ -61,7 +66,7 @@ fun suggestionRows(
         fetched.mapNotNull { row ->
             row.trim().takeIf { it.isNotBlank() && !it.hasEmoji() }
                 ?.takeIf { it.startsWith(typed, ignoreCase = true) }
-                ?.takeIf { it.isMusicCompletion(typed, musicWords) }
+                ?.takeIf { it.isMusicCompletion(typed, musicWords, musicPhrases, requireMusic) }
         }
     } else {
         emptyList()
@@ -74,15 +79,35 @@ fun suggestionRows(
  * Whether what the completion adds beyond the typed text is accounted for by
  * a music entity. The full extra phrase is checked first (song titles keep
  * their words together), then each word, so a row carrying an unrelated
- * general-YouTube word is dropped.
+ * general-YouTube word is dropped. Plain music modifiers ("playlist", "live")
+ * are allowed because the suggest endpoint adds them to an artist without any
+ * entity carrying the word. A row that adds only punctuation is not a
+ * completion at all.
  */
-private fun String.isMusicCompletion(typed: String, musicWords: Set<String>): Boolean {
-    val extra = substring(typed.length).trim { !it.isLetterOrDigit() }.lowercase()
-    if (extra.isEmpty()) return true
+private fun String.isMusicCompletion(
+    typed: String,
+    musicWords: Set<String>,
+    musicPhrases: List<String>,
+    requireMusic: Boolean,
+): Boolean {
+    val rawExtra = substring(typed.length)
+    if (rawExtra.none { it.isLetterOrDigit() }) return false
+    val extra = rawExtra.trim { !it.isLetterOrDigit() }.lowercase()
+    if (extra.isEmpty()) return false
+    if (!requireMusic) return true
+    if (musicPhrases.any { it.contains(extra) }) return true
     if (musicWords.any { it.contains(extra) }) return true
     val extraWords = extra.words()
-    return extraWords.isNotEmpty() && extraWords.all { word -> musicWords.any { it.contains(word) } }
+    return extraWords.isNotEmpty() && extraWords.all { word ->
+        word in MUSIC_MODIFIERS || musicWords.any { it.contains(word) }
+    }
 }
+
+/** Words YouTube appends to a query without a matching entity of its own. */
+private val MUSIC_MODIFIERS = setOf(
+    "song", "songs", "playlist", "playlists", "album", "albums",
+    "artist", "artists", "live", "audio", "lyrics",
+)
 
 private fun String.words(): List<String> =
     lowercase().split(NON_WORD).filter { it.length >= 2 }
@@ -96,10 +121,15 @@ private val NON_WORD = Regex("[^\\p{L}\\p{N}]+")
  */
 private val EMOJI_RANGES = listOf(
     0x1F000..0x1FAFF,
+    0x2190..0x21FF,
+    0x2300..0x23FF,
     0x2600..0x27BF,
+    0x2900..0x297F,
     0x2B00..0x2BFF,
     0xFE00..0xFE0F,
     0x200D..0x200D,
+    0x20E3..0x20E3,
+    0xE0020..0xE007F,
 )
 
 private fun String.hasEmoji(): Boolean {

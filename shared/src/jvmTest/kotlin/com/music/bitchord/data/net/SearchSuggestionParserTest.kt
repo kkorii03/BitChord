@@ -43,6 +43,9 @@ class SearchSuggestionParserTest {
     private val artistNavigation =
         """{ "browseEndpoint": { "browseId": "UCartist", "browseEndpointContextSupportedConfigs": { "browseEndpointContextMusicConfig": { "pageType": "MUSIC_PAGE_TYPE_ARTIST" } } } }"""
 
+    private val albumNavigation =
+        """{ "browseEndpoint": { "browseId": "MPREalbum", "browseEndpointContextSupportedConfigs": { "browseEndpointContextMusicConfig": { "pageType": "MUSIC_PAGE_TYPE_ALBUM" } } } }"""
+
     private fun watchNavigation(videoId: String) =
         """{ "watchEndpoint": { "videoId": "$videoId", "watchEndpointMusicSupportedConfigs": { "watchEndpointMusicConfig": { "musicVideoType": "MUSIC_VIDEO_TYPE_ATV" } } } }"""
 
@@ -84,5 +87,22 @@ class SearchSuggestionParserTest {
             listOf("iu", "iu good day"),
             suggestionRows("iu", parsed.queries, parsed.musicTerms),
         )
+    }
+
+    @Test
+    fun `an album entity whose title says video still backs a completion`() {
+        val videoTitle = json(
+            """
+            { "contents": [
+              { "searchSuggestionsSectionRenderer": { "contents": [
+                ${entity("Video Games", "Album • Lana Del Rey", 60, 60, albumNavigation)}
+              ] } }
+            ] }
+            """,
+        )
+
+        val parsed = InnertubeParser.parseSearchSuggestions(videoTitle)
+
+        assertEquals(listOf("Video Games", "Album • Lana Del Rey"), parsed.musicTerms)
     }
 }

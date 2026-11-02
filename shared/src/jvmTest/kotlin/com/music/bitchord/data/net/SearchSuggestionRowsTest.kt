@@ -62,6 +62,39 @@ class SearchSuggestionRowsTest {
     }
 
     @Test
+    fun `without entity rows clean prefix completions are kept`() {
+        val rows = suggestionRows(
+            "coldplay",
+            listOf("coldplay yellow", "coldplay live"),
+            musicTerms = emptyList(),
+        )
+
+        assertEquals(listOf("coldplay", "coldplay yellow", "coldplay live"), rows)
+    }
+
+    @Test
+    fun `a music modifier extends a completion even when no entity says it`() {
+        val rows = suggestionRows(
+            "radiohead",
+            listOf("radiohead playlist"),
+            musicTerms = listOf("Creep", "Song • Radiohead", "Kid A"),
+        )
+
+        assertEquals(listOf("radiohead", "radiohead playlist"), rows)
+    }
+
+    @Test
+    fun `a row adding only punctuation or a non-dingbat emoji is not a completion`() {
+        val rows = suggestionRows(
+            "iu",
+            listOf("iu!", "iu⏰", "iu™", "iu⏰ good day", "iu good day"),
+            musicTerms = listOf("Good Day", "Song · IU"),
+        )
+
+        assertEquals(listOf("iu", "iu good day"), rows)
+    }
+
+    @Test
     fun `a completion backed by a music title is kept`() {
         val rows = suggestionRows(
             "coldplay",

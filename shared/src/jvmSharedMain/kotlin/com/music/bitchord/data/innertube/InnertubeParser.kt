@@ -262,7 +262,10 @@ object InnertubeParser {
      * show or episode).
      */
     private fun suggestionMusicTerms(renderer: JsonObject): List<String> {
-        val browse = parseBrowseItem(renderer)
+        // A suggestion entity is only a title/credit to match completions
+        // against, not a card that navigates anywhere, so "Video Games" or an
+        // album called "… Videos" must still be able to back a row.
+        val browse = parseBrowseItem(renderer, keepVideoWord = true)
         if (browse != null) {
             return if (browse.type == BrowseType.OTHER) {
                 emptyList()
@@ -292,7 +295,7 @@ object InnertubeParser {
         return out
     }
 
-    private fun parseBrowseItem(renderer: JsonObject): BrowseItem? {
+    private fun parseBrowseItem(renderer: JsonObject, keepVideoWord: Boolean = false): BrowseItem? {
         val endpoint = renderer.o("navigationEndpoint").o("browseEndpoint") ?: return null
         val browseId = endpoint.s("browseId") ?: return null
         val pageType = endpoint.o("browseEndpointContextSupportedConfigs")
@@ -310,7 +313,11 @@ object InnertubeParser {
         // Music Videos" — would have every row dropped by
         // parseResponsiveListItem anyway, so skip the dead-end card rather
         // than link to an empty page.
-        if (VIDEO_WORD.containsMatchIn(title) || VIDEO_WORD.containsMatchIn(subtitle)) return null
+        if (!keepVideoWord &&
+            (VIDEO_WORD.containsMatchIn(title) || VIDEO_WORD.containsMatchIn(subtitle))
+        ) {
+            return null
+        }
 
         return BrowseItem(
             browseId = browseId,
