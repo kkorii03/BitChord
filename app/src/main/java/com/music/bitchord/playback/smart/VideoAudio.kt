@@ -5,6 +5,7 @@ import android.media.MediaDataSource
 import android.net.Uri
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.ko.downloads.KoDownloadRecords
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.PowerState
@@ -48,6 +49,13 @@ object VideoAudio {
 
     /** How long a song check waits for its opening to reach the disk. */
     private const val HEAD_TIMEOUT_MS = 20_000L
+
+    /**
+     * How long a song check waits, off the decode gate, for its opening to be
+     * on disk: a stream fills at about playback speed, so the ninety-second
+     * opening of a track that just started takes about that long.
+     */
+    private const val OPENING_WAIT_MS = 120_000L
 
     /**
      * Sound read from one copy, with the rendition it came from. The clock a
@@ -198,7 +206,7 @@ object VideoAudio {
         // Skipping it in a pocket let a wrong song play unchecked, and the
         // listener then spent more battery on the screen fixing it by hand.
         // It is one bounded opening per track, not the whole video.
-        val opened = openSongSource(context, song) ?: return@withContext null
+        val opened = openSongSource(context, song, until) ?: return@withContext null
         synchronized(songLocks.getOrPut(key) { Any() }) {
             synchronized(recentSongs) { recentSongs[key] }?.let {
                 runCatching { opened.data.close() }
@@ -226,7 +234,7 @@ object VideoAudio {
         val localTrackId: String? = null,
     )
 
-    private suspend fun openSongSource(context: Context, song: Song): SongSource? {
+    private suspend fun openSongSource(context: Context, song: Song, untilSeconds: Double): SongSource? {
         val local = song.localUri?.takeIf { it.isNotBlank() }?.let { Uri.parse(it) }
         val fromFile = local != null && LocalAudioSource.isLocal(local)
         if (!fromFile) {
@@ -256,6 +264,24 @@ object VideoAudio {
                 meta?.hqSourceConfigId,
                 meta?.hqTrackId,
             )
+        }
+        // The decode holds AudioDecoder's one-at-a-time gate, and reading past
+        // what is on disk there waits for the stream at playback speed: song
+        // checks held the gate 70-130 s each on the 11-02 smoke while hq-verify,
+        // the next track's sync and automix queued behind them. Wait for the
+        // opening's bytes here instead, off the gate and on cache events. Past
+        // the wait the decode goes ahead as before, so no check is lost.
+        VersionAudioAligner.renditionToMeasure(song.videoId)?.let { first ->
+            val totalMs = song.durationMillis()
+            if (!first.isComplete && first.contentLength > 0 && totalMs > 0) {
+                val need = (first.contentLength * ((untilSeconds + 1.0) * 1000.0 / totalMs))
+                    .toLong().coerceAtMost(first.contentLength)
+                if (first.cachedPrefix < need &&
+                    !AudioCache.awaitRenditionPrefix(song.videoId, need, OPENING_WAIT_MS)
+                ) {
+                    TrackLog.d(TAG, "song check: opening still downloading; decoding as it comes", song.videoId)
+                }
+            }
         }
         // Pick once and open that exact copy: asking again after the listen
         // could name a different rendition than the one whose words were heard.
