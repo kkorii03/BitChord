@@ -90,6 +90,8 @@ fun SongActionsMenu(
     onToggleAudioVersion: (() -> Unit)? = null,
     /** Which cut is playing now, so the row can offer the other one. */
     isAudioVersion: Boolean = false,
+    /** The other cut was already looked for and does not exist, so the row says so. */
+    audioVersionMissing: Boolean = false,
     onShare: (() -> Unit)? = null,
     /**
      * Copies what the app logged while starting this track. Null everywhere
@@ -151,6 +153,7 @@ fun SongActionsMenu(
         redownloadQualityAtBest = redownloadQualityAtBest,
         onToggleAudioVersion = onToggleAudioVersion,
         isAudioVersion = isAudioVersion,
+        audioVersionMissing = audioVersionMissing,
         onShare = onShare,
         onCopyLog = onCopyLog,
         onReportProblem = onReportProblem,

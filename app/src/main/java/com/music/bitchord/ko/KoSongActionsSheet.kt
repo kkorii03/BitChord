@@ -110,6 +110,7 @@ import com.music.bitchord.ui.components.SongInfoDialog
 import com.music.bitchord.ui.components.SongInfoPage
 import com.music.bitchord.ui.components.rememberRemoteArtworkUrl
 import com.music.bitchord.ui.components.thumbnailBorder
+import com.music.bitchord.ui.components.trackArtSize
 import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.ui.player.coverSingerChannelId
 import com.music.bitchord.ui.theme.ArtworkPalette
@@ -229,6 +230,8 @@ internal fun KoSongActionsSheet(
     onToggleAudioVersion: (() -> Unit)? = null,
     /** Which cut is playing now, so the row can offer the other one. */
     isAudioVersion: Boolean = false,
+    /** The other cut was already looked for and does not exist, so the row says so. */
+    audioVersionMissing: Boolean = false,
     onShare: (() -> Unit)? = null,
     /**
      * Copies what the app logged while starting this track. Null everywhere
@@ -445,9 +448,15 @@ internal fun KoSongActionsSheet(
                 ActionRow(
                     icon = if (isAudioVersion) Icons.Rounded.Videocam else BitChordIcons.MusicNote,
                     label = stringResource(
-                        if (isAudioVersion) R.string.convert_to_video else R.string.convert_to_audio,
+                        when {
+                            audioVersionMissing && isAudioVersion -> R.string.no_video_version
+                            audioVersionMissing -> R.string.no_audio_version
+                            isAudioVersion -> R.string.convert_to_video
+                            else -> R.string.convert_to_audio
+                        },
                     ),
                     accent = palette.accent,
+                    enabled = !audioVersionMissing,
                     onClick = it,
                 )
             }
@@ -1362,7 +1371,7 @@ internal fun SheetTrackHeader(
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier
-                .size(52.dp)
+                .trackArtSize(52.dp, song.isVideo)
                 .clip(RoundedCornerShape(8.dp))
                 .thumbnailBorder(RoundedCornerShape(8.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant),

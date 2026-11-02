@@ -1097,8 +1097,9 @@ fun SettingsScreen(
 
         // The lyrics page is a screen of its own now — see [LyricsSettingsScreen].
         // This row takes the old expanded group's place (and its first row's
-        // glyph) so the list keeps one lyrics entry where the group was.
-        SearchableSettingsGroup(search) {
+        // glyph) so the list keeps one lyrics entry where the group was. It
+        // belongs to the main page only; the category page is that screen.
+        if (section == null) SearchableSettingsGroup(search) {
             KoLyricsEntryRow(onOpenLyrics) // [KO] lyrics-entry
         }
 

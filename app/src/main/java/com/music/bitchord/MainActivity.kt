@@ -224,6 +224,7 @@ import com.music.bitchord.ui.screens.ListenTogetherScreen
 import com.music.bitchord.ui.screens.PartyServerEditor
 import com.music.bitchord.ui.screens.SignatureApiEditor
 import com.music.bitchord.ui.screens.SettingsScreen
+import com.music.bitchord.ui.screens.SettingsCategory
 import com.music.bitchord.ui.screens.SettingsChoicePage
 import com.music.bitchord.ui.screens.SourceEditorAlert
 import com.music.bitchord.ui.screens.SourcesScreen
@@ -3421,7 +3422,8 @@ private fun BitChordApp(
                                 onConfirmBitPerfect = { confirmBitPerfect = it },
                                 contentPadding = listPadding,
                             )
-                        } else if (pageRoute == AppRoute.Lyrics) {
+                        } else if (pageRoute == AppRoute.Lyrics ||
+                            (pageRoute is AppRoute.SettingsSection && pageRoute.category == SettingsCategory.LYRICS)) {
                             KoLyricsSettingsRoute(listPadding, context, scope, { showLyricsSources = true }, { showTranslationLanguage = true }, { showGeminiKey = true }, { showDeepgramKey = true }) // [KO] lyrics-settings-route
                         } else if (pageRoute == AppRoute.Settings || pageRoute is AppRoute.SettingsSection) {
                             // The main page and every category's page are the
@@ -5141,6 +5143,7 @@ private fun BitChordApp(
                 redownloadQualityAtBest = redownloadAtBest,
                 onToggleAudioVersion = onToggleVersion,
                 isAudioVersion = menuIsAudioVersion,
+                audioVersionMissing = song.videoId in missingVersions,
                 // Hidden outright when there's no real YouTube id behind
                 // this row to build a link from — SongActionsMenu already
                 // drops it for a local file via `isOffline`, this catches
