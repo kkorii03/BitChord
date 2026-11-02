@@ -885,7 +885,13 @@ object InnertubeParser {
             // art where a catalogue track has square album cover art. Not an
             // episode, whose art is a widescreen still too: it is listened to,
             // and a "video" is dropped from the All tab's results.
-            isVideo = !episode && (rowType == "video" || thumbnails.isNotSquare()),
+            // [KO] The row's own `musicVideoType` is authoritative where present:
+            // an OMV/UGC row is a video even with square art, and an ATV row
+            // beside it is the catalogue song (lost in the 1.9 merge).
+            isVideo = !episode && when (val videoType = renderer.findString("musicVideoType")) {
+                null -> rowType == "video" || thumbnails.isNotSquare()
+                else -> !videoType.contains("ATV", ignoreCase = true)
+            },
             isEpisode = episode,
             isExplicit = renderer.hasExplicitBadge(),
             // Extract the "Remove from history" feedback token from the row's menu, if present.

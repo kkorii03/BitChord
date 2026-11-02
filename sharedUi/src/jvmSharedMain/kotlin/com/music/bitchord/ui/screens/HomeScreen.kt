@@ -82,6 +82,8 @@ import com.music.bitchord.data.model.TopPickMood
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.appleCardKind
 import com.music.bitchord.data.model.artworkAt
+import com.music.bitchord.data.model.withoutShortsShelves
+import com.music.bitchord.data.settings.LibraryViewType
 import com.music.bitchord.ui.components.HERO_CARD_RATIO
 import com.music.bitchord.ui.components.LARGE_CARD_CORNER
 import com.music.bitchord.ui.components.MessageState
@@ -90,6 +92,7 @@ import com.music.bitchord.ui.components.rememberLoadingTimedOut
 import com.music.bitchord.ui.components.PAGE_GUTTER
 import com.music.bitchord.ui.components.SMALL_ART_CORNER
 import com.music.bitchord.ui.components.RowMoreButton
+import com.music.bitchord.ui.components.PlayingAccent
 import com.music.bitchord.ui.components.PullToRefresh
 import com.music.bitchord.ui.components.SHELF_CARD_WIDTH
 import com.music.bitchord.ui.components.SearchPlayingBars
@@ -110,7 +113,7 @@ private const val RECENTS_TITLE = "Recents"
 private const val RECENT_TRACKS_PER_COLUMN = 4
 
 /** The app's own Recents key, whichever index the feed puts it at. */
-private fun isRecentsShelf(shelf: HomeShelf): Boolean =
+internal fun isRecentsShelf(shelf: HomeShelf): Boolean =
     shelf.title.trim().equals(RECENTS_TITLE, ignoreCase = true)
 
 /** "Listen again", in the feed's own words — its subtitle is the account name. */
@@ -119,19 +122,6 @@ private fun isListenAgainShelf(title: String): Boolean =
         "listen again", "다시 듣기", "もう一度聴く", "nghe lại" -> true
         else -> false
     }
-
-/**
- * YouTube's Shorts rail is a video feed, not music: Apple Music has no
- * equivalent, so the Home page never draws it. Matched by title because the
- * shelf carries no type of its own, in the languages this fork serves.
- */
-private fun isShortsShelf(shelf: HomeShelf): Boolean {
-    val title = shelf.title.trim().lowercase(Locale.ROOT)
-    return title.startsWith("shorts") ||
-        title == "short" ||
-        title.startsWith("숏") ||
-        title == "ショート"
-}
 
 /**
  * YouTube Music's Quick picks, in the feed's own words whichever language
@@ -143,6 +133,27 @@ private fun isQuickPicksShelf(shelf: HomeShelf): Boolean =
         "lựa chọn nhanh", "chọn nhanh đài phát" -> true
         else -> false
     }
+
+/** How one Home shelf is drawn; [RECENTS] and [LIST] share the row pager. */
+internal enum class HomeShelfKind { RECENTS, QUICK_PICKS, HERO, LIST, SHELF }
+
+/**
+ * The row a shelf gets: Recents wherever the feed puts it, Quick picks in its
+ * own words even when the feed forgot its row layout, then the lead hero and
+ * the ordinary carousels. Kept pure so a JVM test can pin the 1.8 rules.
+ */
+internal fun homeShelfKind(shelf: HomeShelf, index: Int, firstIsHero: Boolean): HomeShelfKind =
+    when {
+        isRecentsShelf(shelf) -> HomeShelfKind.RECENTS
+        isQuickPicksShelf(shelf) -> HomeShelfKind.QUICK_PICKS
+        shelf.layout == ShelfLayout.LIST -> HomeShelfKind.LIST
+        index == 0 && firstIsHero && shelf.layout == ShelfLayout.CARDS -> HomeShelfKind.HERO
+        else -> HomeShelfKind.SHELF
+    }
+
+/** Recents' list/grid switch. */
+internal fun toggledRecentsViewType(viewType: LibraryViewType): LibraryViewType =
+    if (viewType == LibraryViewType.LIST) LibraryViewType.GRID else LibraryViewType.LIST
 
 private fun ShelfItem.matchesCurrentlyPlaying(song: Song?): Boolean {
     song ?: return false
@@ -199,6 +210,13 @@ fun HomeScreen(
     currentSong: Song? = null,
     isPlaying: Boolean = false,
     /**
+     * Whether a private session is running, so the notice can sit above the
+     * Recents shelf and say why it is standing still.
+     */
+    privateListening: Boolean = false,
+    /** Turns that session off from the notice. Null on a host with no switch. */
+    onDisablePrivateListening: (() -> Unit)? = null,
+    /**
      * The "Top Picks for You" row above Recents. Null while it has not been
      * built yet, empty when there is nothing to pick from. The row is only
      * drawn by a caller that can act on it, i.e. passes [onTopPickClick].
@@ -216,6 +234,17 @@ fun HomeScreen(
     /** Whether the Top Picks and mood artwork may animate — see [LocalArtworkMotion]. */
     artworkMotion: Boolean = true,
 ) {
+    val recentsViewType by AppUi.host.homeRecentsViewType.collectAsStateWithLifecycle()
+    var loadAttempt by remember { mutableIntStateOf(0) }
+    val loadingTimedOut = rememberLoadingTimedOut(
+        loading = state is UiState.Loading,
+        tag = "home",
+        requestKey = loadAttempt,
+    )
+    val retry = {
+        loadAttempt += 1
+        onRetry()
+    }
     // Top Picks' pictures and motion wait for the feed — see LocalArtworkImages.
     val feedReady = state !is UiState.Loading
     CompositionLocalProvider(
@@ -275,7 +304,9 @@ fun HomeScreen(
             }
             when (state) {
                 is UiState.Loading -> {
-                    if (recentlyPlayedLoading) {
+                    if (loadingTimedOut) {
+                        item { LoadingTimeoutState(onRetry = retry) }
+                    } else if (recentlyPlayedLoading) {
                         recentlyPlayedSkeleton()
                         // Recents owns the leading layout while its request is
                         // pending, so the feed behind it starts with ordinary
@@ -286,7 +317,7 @@ fun HomeScreen(
                     }
                 }
                 is UiState.Error -> item {
-                    MessageState(state.message, actionLabel = stringResource(Res.string.retry), onAction = onRetry)
+                    MessageState(state.message, actionLabel = stringResource(Res.string.retry), onAction = retry)
                 }
                 is UiState.Success -> {
                     if (recentlyPlayedLoading) {
@@ -304,6 +335,12 @@ fun HomeScreen(
                         currentSong = currentSong,
                         isPlaying = isPlaying,
                         firstIsHero = leadHero && !recentlyPlayedLoading,
+                        recentsViewType = recentsViewType,
+                        privateListening = privateListening,
+                        onDisablePrivateListening = onDisablePrivateListening,
+                        onRecentsViewTypeToggle = {
+                            AppUi.host.setHomeRecentsViewType(toggledRecentsViewType(recentsViewType))
+                        },
                     )
                     if (loadingMore) feedMoreSkeleton()
                 }
@@ -345,38 +382,55 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
     currentSong: Song?,
     isPlaying: Boolean,
     firstIsHero: Boolean = true,
+    recentsViewType: LibraryViewType,
+    privateListening: Boolean = false,
+    onDisablePrivateListening: (() -> Unit)? = null,
+    onRecentsViewTypeToggle: () -> Unit,
     onMoodClick: ((TopPickMood, String) -> Unit)? = null,
     onMoodsShowAll: () -> Unit = {},
 ) {
-    shelves.forEachIndexed { index, shelf ->
+    shelves.withoutShortsShelves().forEachIndexed { index, shelf ->
         // Find Your Mood follows the lead shelf, as on Apple Music's Home.
         if (index == 1 && onMoodClick != null) {
             item(key = "find-your-mood") { FindYourMoodShelf(onMoodClick, onMoodsShowAll) }
         }
         item(key = shelf.title + index) {
             val openItem: (ShelfItem) -> Unit = { item -> onItemClick(item, shelf.title) }
-            // Listen again and Quick picks are lists on the web player, as
-            // Recents is here: one pager for all three.
-            if (shelf.layout == ShelfLayout.LIST ||
-                (index == 0 && shelf.title.equals(RECENTS_TITLE, ignoreCase = true))
-            ) {
-                RecentShelf(
+            when (homeShelfKind(shelf, index, firstIsHero)) {
+                // Recents keeps its pager and toggle wherever the feed puts it
+                // — leading it is the norm, but an empty or reordered feed must
+                // not turn it into ordinary cards.
+                HomeShelfKind.RECENTS -> Column {
+                    if (privateListening) {
+                        PrivateListeningNotice(onDisablePrivateListening)
+                    }
+                    RecentShelf(
+                        shelf = shelf,
+                        onItemClick = openItem,
+                        onItemLongPress = onItemLongPress,
+                        currentSong = currentSong,
+                        isPlaying = isPlaying,
+                        viewType = recentsViewType,
+                        onViewTypeToggle = onRecentsViewTypeToggle,
+                    )
+                }
+                // Quick picks and Listen again are lists on the web player,
+                // as Recents is here: the same compact pager, no toggle.
+                HomeShelfKind.QUICK_PICKS, HomeShelfKind.LIST -> QuickPicksShelf(
                     shelf = shelf,
                     onItemClick = openItem,
                     onItemLongPress = onItemLongPress,
                     currentSong = currentSong,
                     isPlaying = isPlaying,
                 )
-            } else if (index == 0 && firstIsHero && shelf.layout == ShelfLayout.CARDS) {
-                HeroShelf(
+                HomeShelfKind.HERO -> HeroShelf(
                     shelf = shelf,
                     onItemClick = openItem,
                     onItemLongPress = onItemLongPress,
                     currentSong = currentSong,
                     isPlaying = isPlaying,
                 )
-            } else {
-                Shelf(
+                HomeShelfKind.SHELF -> Shelf(
                     shelf = shelf,
                     onItemClick = openItem,
                     onItemLongPress = onItemLongPress,
@@ -396,27 +450,55 @@ private fun RecentShelf(
     onItemLongPress: ((ShelfItem) -> Unit)?,
     currentSong: Song?,
     isPlaying: Boolean,
+    viewType: LibraryViewType,
+    onViewTypeToggle: () -> Unit,
 ) {
     Column(Modifier.padding(bottom = 26.dp)) {
-        RecentSectionHeader(title = localizeShelfTitle(shelf.title), subtitle = localizeShelfSubtitle(shelf.subtitle))
+        RecentSectionHeader(
+            title = shelf.title,
+            subtitle = shelf.subtitle,
+            viewType = viewType,
+            onViewTypeToggle = onViewTypeToggle,
+        )
         val isCurrentItem = shelf.items.playingItemMatcher(currentSong)
-        BoxWithConstraints {
-            val columnWidth = trackColumnWidth(maxWidth)
-            ShelfRow(
-                contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                items(shelf.items.chunked(RECENT_TRACKS_PER_COLUMN)) { column ->
-                    Column(Modifier.width(columnWidth)) {
-                        column.forEach { item ->
-                            RecentTrackRow(
-                                item = item,
-                                onClick = { onItemClick(item) },
-                                onLongPress = onItemLongPress?.let { { it(item) } },
-                                isCurrent = isCurrentItem(item),
-                                isPlaying = isCurrentItem(item) && isPlaying,
-                            )
+        if (viewType == LibraryViewType.LIST) {
+            BoxWithConstraints {
+                val columnWidth = trackColumnWidth(maxWidth)
+                ShelfRow(
+                    contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    items(shelf.items.chunked(RECENT_TRACKS_PER_COLUMN)) { column ->
+                        Column(Modifier.width(columnWidth)) {
+                            column.forEach { item ->
+                                RecentTrackRow(
+                                    item = item,
+                                    onClick = { onItemClick(item) },
+                                    onLongPress = onItemLongPress?.let { { it(item) } },
+                                    isCurrent = isCurrentItem(item),
+                                    isPlaying = isCurrentItem(item) && isPlaying,
+                                )
+                            }
                         }
+                    }
+                }
+            }
+        } else {
+            BoxWithConstraints {
+                val cardWidth = heroCardWidth(maxWidth)
+                ShelfRow(
+                    contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    items(shelf.items) { item ->
+                        HeroCard(
+                            item = item,
+                            onClick = { onItemClick(item) },
+                            onLongPress = onItemLongPress?.let { { it(item) } },
+                            modifier = Modifier.width(cardWidth),
+                            isCurrent = isCurrentItem(item),
+                            isPlaying = isCurrentItem(item) && isPlaying,
+                        )
                     }
                 }
             }
@@ -482,26 +564,60 @@ private fun TrackColumns(
 }
 
 @Composable
-private fun RecentSectionHeader(title: String, subtitle: String) {
-    Column(
+private fun RecentSectionHeader(
+    title: String,
+    subtitle: String,
+    viewType: LibraryViewType,
+    onViewTypeToggle: () -> Unit,
+) {
+    Row(
         modifier = Modifier
             .padding(horizontal = PAGE_GUTTER, vertical = 10.dp)
             .fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onBackground,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        if (subtitle.isNotBlank()) {
+        Column(Modifier.weight(1f)) {
             Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                // "Recents" is the app's own key; shown in the listener's words.
+                text = localizeShelfTitle(title),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onBackground,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+            )
+            if (subtitle.isNotBlank()) {
+                Text(
+                    text = localizeShelfSubtitle(subtitle),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        Spacer(Modifier.width(8.dp))
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .clip(CircleShape)
+                .clickable(onClick = onViewTypeToggle),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = if (viewType == LibraryViewType.LIST) {
+                    BitChordIcons.GridView
+                } else {
+                    BitChordIcons.ListView
+                },
+                contentDescription = stringResource(
+                    if (viewType == LibraryViewType.LIST) {
+                        Res.string.switch_to_grid_view
+                    } else {
+                        Res.string.switch_to_list_view
+                    },
+                ),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(19.dp),
             )
         }
     }
@@ -617,7 +733,7 @@ fun CompactTrackRow(
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onBackground,
+                color = if (isCurrent) PlayingAccent else MaterialTheme.colorScheme.onBackground,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -983,7 +1099,7 @@ private fun HeroCard(
             Text(
                 text = item.title,
                 style = MaterialTheme.typography.titleLarge,
-                color = Color.White,
+                color = if (isCurrent) PlayingAccent else Color.White,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -1337,7 +1453,7 @@ internal fun ShelfCard(
             Text(
                 text = item.title,
                 style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onBackground,
+                color = if (isCurrent) PlayingAccent else MaterialTheme.colorScheme.onBackground,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f, fill = false),

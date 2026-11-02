@@ -11,6 +11,7 @@ import com.music.bitchord.data.model.HomeFeed
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.withoutShortsShelves
 import com.music.bitchord.data.net.SharedLookups
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -130,7 +131,7 @@ internal object KoHomeFeed {
     internal fun withContentCountryChart(
         shelves: List<HomeShelf>,
         chart: HomeShelf?,
-    ): List<HomeShelf> = cleanVideoRows(withChart(shelves, chart))
+    ): List<HomeShelf> = cleanVideoRows(withChart(shelves.withoutShortsShelves(), chart))
 
     /**
      * Video rows read the way the player shows them (phone 11-03: "커버 및

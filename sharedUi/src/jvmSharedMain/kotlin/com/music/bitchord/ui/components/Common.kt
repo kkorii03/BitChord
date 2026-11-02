@@ -787,6 +787,9 @@ fun RowMoreButton(
 /** How far a row's [RowMoreButton] reaches past the content edge into the gutter. */
 val ROW_MORE_OUTSET = 14.dp
 
+/** The accent a current song's title takes in lists that mark it with [SearchPlayingBars]. */
+val PlayingAccent = Color(0xFFFB4A62)
+
 /**
  * Lays a trailing control out [outset] narrower than it draws, so it overhangs
  * its row's end edge by that much: for buttons whose glyph is far smaller than

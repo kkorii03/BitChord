@@ -596,6 +596,22 @@ fun shelfLayoutFor(title: String, items: List<ShelfItem>, fromList: Boolean): Sh
 }
 
 /**
+ * YouTube's Shorts rail is a video feed, not music: Apple Music has no
+ * equivalent, so Home never draws it. Matched by title because the shelf
+ * carries no type of its own, in the languages this fork serves.
+ */
+fun HomeShelf.isShortsShelf(): Boolean {
+    val title = title.trim().lowercase()
+    return title.startsWith("shorts") ||
+        title == "short" ||
+        title.startsWith("숏") ||
+        title == "ショート"
+}
+
+/** [this] without YouTube's Shorts rail — see [isShortsShelf]. */
+fun List<HomeShelf>.withoutShortsShelves(): List<HomeShelf> = filterNot { it.isShortsShelf() }
+
+/**
  * These shelves minus any that mostly repeat one already on the page, or one earlier in this
  * batch. YouTube serves the same new releases from FEmusic_new_releases ("Albums & singles") and
  * FEmusic_explore ("New albums & singles"), lightly reordered under a different heading, so a
