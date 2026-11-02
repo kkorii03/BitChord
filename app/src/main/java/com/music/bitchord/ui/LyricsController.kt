@@ -853,6 +853,20 @@ class LyricsController(
             aiAvailable = request != null && aiTimingAvailable(request, lines),
         )
         val hasRequest = request != null
+        // Sync-test mode only: every played song keeps its opening, even when
+        // its song check is skipped, and a sheet that never gets a timing pass
+        // still logs the lines the screen shows (otherwise it has no sync-dump
+        // at all). Off the main thread: the flag check and the decode are I/O.
+        if (request != null && lines != null) {
+            val provider = shownProvider(lines)
+            val untimed = !timed
+            scope.launch(Dispatchers.IO) {
+                if (untimed) {
+                    SyncTestMode.report(app, request.videoId, provider, "none", 0L, null, lines)
+                }
+                SyncTestMode.keepHead(app, request.videoId, request.localUri)
+            }
+        }
         if (!timed || !hasRequest || lines == null) {
             TrackLog.d(
                 "BitChord",
@@ -1205,6 +1219,13 @@ class LyricsController(
         }
     }
 
+    /** Which provider's answer is on screen, for the sync-test dump. */
+    private fun shownProvider(shown: List<LyricLine>?): String =
+        selectedLyricsSource?.label
+            ?: _lyricsSource.value?.label
+            ?: fileLyricsLabel
+            ?: if (shown?.isNotEmpty() == true) "file" else "none"
+
     /** Puts what [LyricsTiming] knows for the current video onto [lines] and the line under them. */
     private suspend fun refreshTiming(generation: Long, lines: List<LyricLine>) {
         val request = currentLyricsRequest ?: return
@@ -1253,10 +1274,7 @@ class LyricsController(
             base.byAi -> "ai"
             else -> "measured"
         }
-        val provider = selectedLyricsSource?.label
-            ?: _lyricsSource.value?.label
-            ?: fileLyricsLabel
-            ?: if (shown?.isNotEmpty() == true) "file" else "none"
+        val provider = shownProvider(shown)
         val (storedSync, recheck) = LyricsTiming.syncDiagnostics(
             app,
             request.videoId,
@@ -1308,14 +1326,6 @@ class LyricsController(
             matchPercent = matchPercent,
             lines = shown ?: lines,
         )
-        // Sync-test mode only: a downloaded file's own opening. With the
-        // download re-check off no song check runs for it, so nothing else
-        // keeps the audio its stored lyrics are shown against.
-        request.localUri?.let { local ->
-            if (SyncTestMode.enabled(app, request.videoId)) {
-                scope.launch(Dispatchers.IO) { SyncTestMode.keepLocalHead(app, request.videoId, local) }
-            }
-        }
         _lyricsTiming.update {
             it.copy(
                 shiftMs = shiftMs,

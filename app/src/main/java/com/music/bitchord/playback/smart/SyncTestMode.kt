@@ -36,6 +36,13 @@ object SyncTestMode {
     private var lastSignature: String? = null
 
     /**
+     * Decodes a song's opening for [keepHead]; a seam because the JVM test has
+     * no media decoder.
+     */
+    internal var decodeHead: suspend (Context, Song) -> ByteArray? =
+        { context, song -> VideoAudio.songWav(context, song) }
+
+    /**
      * At app start: with the flag present, the lyrics search gets the slow
      * test device's longer deadline (see [com.music.bitchord.data.lyrics.LyricsRepository.allowSlowTestDevice]).
      */
@@ -117,15 +124,24 @@ object SyncTestMode {
     }
 
     /**
-     * Keeps the opening of a downloaded file [localUri] as `synctest/<videoId>.wav`
-     * — the same name a song check's WAV takes — unless one is already there.
+     * Keeps the opening of [videoId] as `synctest/<videoId>.wav` — the same
+     * name a song check's WAV takes — unless one is already there. Uses the
+     * downloaded file [localUri] when the song plays from one, otherwise the
+     * copy on disk. This runs for every played song in test mode, not only for
+     * ones whose song check (which also keeps its WAV) was allowed to run.
      */
-    suspend fun keepLocalHead(context: Context, videoId: String, localUri: String) {
+    suspend fun keepHead(context: Context, videoId: String, localUri: String?) {
         if (!enabled(context, videoId)) return
         val existing = externalRoot(context)?.let { File(File(it, WAV_DIR), "${safeName(videoId)}.wav") }
         if (existing?.isFile == true) return
         val song = Song(videoId = videoId, title = "", artist = "", thumbnailUrl = null, localUri = localUri)
-        val wav = VideoAudio.songWav(context, song) ?: return
+        val wav = try {
+            decodeHead(context, song)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            null
+        } ?: return
         write(context, videoId, wav)
     }
 
