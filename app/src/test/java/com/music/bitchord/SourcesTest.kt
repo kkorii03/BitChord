@@ -367,12 +367,13 @@ class SourcesTest {
     /**
      * Film catalogues credit from opposite ends: YouTube Music files this
      * under the composer, every store under the singer, and the two credits
-     * share nothing at all. An exact runtime is what says they are the same
-     * master anyway.
+     * share nothing at all. v1.9 let an exact runtime stand in for the credit;
+     * this fork refuses it, because the same shape admits a string-quartet
+     * cover. A localised credit is kept as a sound-check candidate instead.
      */
     @Test
-    fun `accepts a composer credit against a singer credit on an exact runtime`() {
-        assertTrue(
+    fun `refuses a composer credit against a singer credit on an exact runtime`() {
+        assertFalse(
             matches(
                 song("Jhak Maar Ke", "Neeraj Shridhar", duration = "3:53"),
                 title = "Jhak Maar Ke",
@@ -1231,6 +1232,100 @@ class SourcesTest {
     }
 
     private fun raceTarget() = TrackMatcher.Target(RACE_TITLE, RACE_ARTIST, durationSec = 120)
+
+    /** A source holding several rows, each streaming its own format. */
+    private class RowSource(
+        private val rows: List<Pair<Song, StreamFormat>>,
+    ) : MusicSource {
+        override val displayName = "Soundlink"
+        override val configId = displayName
+        override val kind = SourceKind.ADDON
+
+        override suspend fun health() = SourceHealth.Ok()
+
+        override suspend fun search(
+            query: String,
+            limit: Int,
+            waitForAll: Boolean,
+            request: StreamRequest?,
+        ): List<Song> = rows.map { it.first }
+
+        override suspend fun stream(trackId: String, request: StreamRequest): SourceStream? =
+            rows.firstOrNull { it.first.videoId == trackId }
+                ?.let { (_, format) -> SourceStream(url = "https://soundlink/$trackId", format = format) }
+    }
+
+    /**
+     * The reported case, 'Take on Me' starting on YouTube's 3:45 and looking
+     * for a better copy: the addon holds the 16-bit album cut at 3:45 and a
+     * 24-bit/192 kHz remaster at 3:48, listed in that order, neither row
+     * saying which is hi-res.
+     */
+    private fun takeOnMeRows() = RowSource(
+        listOf(
+            song("Take on Me", "a-ha", "3:45").copy(videoId = "album-cut", sourceQuality = "LOSSLESS") to
+                StreamFormat("flac", sampleRateHz = 44_100, bitDepth = 16),
+            song("Take on Me", "a-ha", "3:48").copy(videoId = "remaster", sourceQuality = "LOSSLESS") to
+                StreamFormat("flac", sampleRateHz = 192_000, bitDepth = 24),
+        ),
+    )
+
+    private val takeOnMe = TrackMatcher.Target("Take on Me", "a-ha", durationSec = 225)
+
+    /** Three seconds out, inside a tolerance of five: the remaster is eligible, and it wins. */
+    @Test
+    fun `upgrade takes the hi-res copy inside the listener's length tolerance`() = runBlocking {
+        val (_, stream) = SourceResolver.bestAcross(
+            listOf(takeOnMeRows()),
+            takeOnMe,
+            StreamRequest.Lossless,
+            waitForAll = true,
+            strictLength = true,
+            requireSharedArtist = true,
+            driftSec = 5,
+        )!!
+        assertEquals(24, stream.format.bitDepth)
+        assertEquals(192_000, stream.format.sampleRateHz)
+    }
+
+    /** The old fixed bar of two seconds, which is what left it on 16-bit. */
+    @Test
+    fun `upgrade under a two second bar never sees the remaster`() = runBlocking {
+        val (_, stream) = SourceResolver.bestAcross(
+            listOf(takeOnMeRows()),
+            takeOnMe,
+            StreamRequest.Lossless,
+            waitForAll = true,
+            strictLength = true,
+            requireSharedArtist = true,
+            driftSec = 2,
+        )!!
+        assertEquals(16, stream.format.bitDepth)
+    }
+
+    /** Depth, then rate, between two lossless copies — bitrate says nothing there. */
+    @Test
+    fun `ranks hi-res lossless above CD quality`() {
+        val hiRes = StreamFormat("flac", sampleRateHz = 192_000, bitDepth = 24)
+        val cd = StreamFormat("flac", sampleRateHz = 44_100, bitDepth = 16)
+        assertTrue(SourceResolver.isBetter(hiRes, cd))
+        assertFalse(SourceResolver.isBetter(cd, hiRes))
+        assertTrue(
+            SourceResolver.isBetter(
+                StreamFormat("flac", sampleRateHz = 192_000, bitDepth = 24),
+                StreamFormat("flac", sampleRateHz = 96_000, bitDepth = 24),
+            ),
+        )
+    }
+
+    /** A row that says it is hi-res is opened ahead of one that only says lossless. */
+    @Test
+    fun `prefers the hi-res row among lossless ones`() {
+        val target = TrackMatcher.Target("Take on Me", "a-ha", durationSec = 225)
+        val cd = song("Take on Me", "a-ha", "3:45").copy(sourceQuality = "LOSSLESS")
+        val hiRes = song("Take on Me", "a-ha", "3:45").copy(sourceQuality = "LOSSLESS", sourceHiRes = true)
+        assertEquals(listOf(hiRes, cd), SourceResolver.preferred(listOf(cd, hiRes), target, wantsLossless = true))
+    }
 
     @Test
     fun `JioSaavn substitution refuses conflicting albums without a target album`() = runBlocking {
