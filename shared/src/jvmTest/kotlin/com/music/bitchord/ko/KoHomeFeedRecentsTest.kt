@@ -44,6 +44,21 @@ class KoHomeFeedRecentsTest {
         assertEquals("Aimyon", song.subtitle)
     }
 
+    // The same flag loss that hit Recents: a cover row without isVideo was
+    // skipped and kept its upload title and channel on Home.
+    @Test
+    fun `a home cover row without its video flag still reads as its song and singer`() {
+        val shelf = HomeShelf(
+            title = "커버 및 리믹스",
+            items = listOf(
+                ShelfItem("아이묭 - Marigold / cover by 오화요", "Ohwayo", null, "v3", null),
+            ),
+        )
+        val item = KoHomeFeed.withContentCountryChart(listOf(shelf), null).single().items.single()
+        assertEquals("Marigold (cover)", item.title)
+        assertEquals("오화요", item.subtitle)
+    }
+
     @Test
     fun `repainting the shelf does not change the title`() {
         val first = KoHomeFeed.recentsShelf(listOf(cover)).items.single()

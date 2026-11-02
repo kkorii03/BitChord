@@ -854,6 +854,8 @@ class LyricsController(
         val generation = lyricsGeneration
         val context = app
         lyricsTimingJob = scope.launch {
+            // A timing pass is background work: log a failure instead of crashing playback.
+            runCatching {
             // Whatever else changes this video's timing — the lock screen, the
             // next-song preparation measuring it first — shows here too.
             launch {
@@ -1142,6 +1144,10 @@ class LyricsController(
                 lines,
             )
             refreshTiming(generation, lines)
+            }.onFailure {
+                if (it is kotlinx.coroutines.CancellationException) throw it
+                TrackLog.w("BitChord", "lyrics-timing: pass failed", it, request.videoId)
+            }
         }
     }
 
