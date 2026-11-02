@@ -5,6 +5,7 @@ import com.music.bitchord.R
 import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -43,6 +44,7 @@ import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.FileUpload
 import androidx.compose.material.icons.rounded.HighQuality
+import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Radio
@@ -67,6 +69,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -83,6 +86,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -98,6 +102,7 @@ import com.music.bitchord.data.webdav.WebDavUploads
 import com.music.bitchord.download.DownloadState
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.playback.PlaybackParametersMath
+import com.music.bitchord.ui.player.ThinSlider
 import com.music.bitchord.playback.SleepTimer
 import com.music.bitchord.ui.components.ArtworkBackdrop
 import com.music.bitchord.ui.components.ExplicitSongTitle
@@ -177,6 +182,11 @@ internal fun KoSongActionsSheet(
      * passes one only while the cache actually holds some of it.
      */
     onRemoveFromCache: (() -> Unit)? = null,
+    /**
+     * Removes this track from the account's listening history. Null hides the
+     * row — the History screen passes one only when the menu is opened there.
+     */
+    onRemoveFromHistory: (() -> Unit)? = null,
     showSleepTimer: Boolean = false,
     showPlaybackSpeed: Boolean = false,
     /**
@@ -397,6 +407,14 @@ internal fun KoSongActionsSheet(
             )
         }
         WebDavUploadRow(song, palette, onUploadToWebDav)
+        onRemoveFromHistory?.let {
+            ActionRow(
+                icon = Icons.Rounded.History,
+                label = stringResource(R.string.remove_from_history),
+                accent = palette.accent,
+                onClick = it,
+            )
+        }
         ActionRow(
             icon = Icons.Rounded.Radio,
             label = stringResource(R.string.start_radio),
@@ -958,6 +976,22 @@ private fun SleepTimerPicker(palette: ArtworkPalette, onBack: () -> Unit) {
     val chosen by SleepTimer.minutes.collectAsStateWithLifecycle()
     val afterTrack by SleepTimer.afterTrack.collectAsStateWithLifecycle()
     val countdown = sleepTimerCountdown()
+    // A running timer no preset matches is a custom one: the row ticks and names it.
+    val custom = chosen?.takeIf { it !in SleepTimer.PRESETS }
+    var pickingCustom by remember { mutableStateOf(false) }
+
+    if (pickingCustom) {
+        CustomSleepTimerPage(
+            palette = palette,
+            initialMinutes = custom ?: 90,
+            onBack = { pickingCustom = false },
+            onStart = { minutes ->
+                SleepTimer.start(minutes)
+                onBack()
+            },
+        )
+        return
+    }
 
     Column(Modifier.fillMaxWidth()) {
         Row(
@@ -1016,6 +1050,13 @@ private fun SleepTimerPicker(palette: ArtworkPalette, onBack: () -> Unit) {
                 onBack()
             }
         }
+        SleepOption(
+            label = custom?.let {
+                stringResource(R.string.sleep_timer_custom) + " · " + sleepDuration(it)
+            } ?: stringResource(R.string.sleep_timer_custom),
+            selected = custom != null,
+            accent = palette.accent,
+        ) { pickingCustom = true }
         if (chosen != null || afterTrack) {
             ActionRow(Icons.Rounded.Close, stringResource(R.string.turn_off_timer), accent = palette.accent) {
                 SleepTimer.cancel()
@@ -1024,6 +1065,113 @@ private fun SleepTimerPicker(palette: ArtworkPalette, onBack: () -> Unit) {
         }
         Spacer(Modifier.height(24.dp))
     }
+}
+
+/**
+ * Any length up to twelve hours, set the way the player's lyrics offset is:
+ * a large readout over the player's own thin slider, with − and + for a
+ * single step either way. A page of this menu rather than an alert on top
+ * of it, so it stays on the panel like the presets it sits with.
+ */
+@Composable
+private fun CustomSleepTimerPage(
+    palette: ArtworkPalette,
+    initialMinutes: Int,
+    onBack: () -> Unit,
+    onStart: (Int) -> Unit,
+) {
+    var minutes by remember { mutableIntStateOf(initialMinutes) }
+    val foreground = MaterialTheme.colorScheme.onBackground
+
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 8.dp, end = 22.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(
+                    Icons.AutoMirrored.Rounded.ArrowBack,
+                    contentDescription = stringResource(R.string.back),
+                    tint = foreground,
+                )
+            }
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.sleep_timer_custom),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = foreground,
+                )
+                Text(
+                    text = stringResource(R.string.pause_after_a_while),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        HorizontalDivider(thickness = 0.5.dp, color = palette.divider)
+
+        Text(
+            text = sleepDuration(minutes),
+            style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.SemiBold),
+            color = foreground,
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 24.dp, bottom = 8.dp),
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            IconButton(
+                onClick = { minutes -= SleepTimer.STEP_MINUTES },
+                enabled = minutes > SleepTimer.STEP_MINUTES,
+            ) {
+                Icon(
+                    Icons.Rounded.Remove,
+                    contentDescription = stringResource(R.string.less),
+                    tint = foreground,
+                )
+            }
+            ThinSlider(
+                value = SleepTimer.fractionOf(minutes),
+                onValueChange = { minutes = SleepTimer.minutesAt(it) },
+                idleHeight = 6.dp,
+                activeHeight = 10.dp,
+                activeColor = foreground.copy(alpha = 0.92f),
+                inactiveColor = foreground.copy(alpha = 0.26f),
+                modifier = Modifier.weight(1f),
+            )
+            IconButton(
+                onClick = { minutes += SleepTimer.STEP_MINUTES },
+                enabled = minutes < SleepTimer.MAX_MINUTES,
+            ) {
+                Icon(
+                    Icons.Rounded.Add,
+                    contentDescription = stringResource(R.string.more),
+                    tint = foreground,
+                )
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+        HorizontalDivider(thickness = 0.5.dp, color = palette.divider)
+        ActionRow(Icons.Rounded.Bedtime, stringResource(R.string.start_sleep_timer), accent = palette.accent) {
+            onStart(minutes)
+        }
+    }
+}
+
+/** "45 min", or "1h 25m" from an hour up. */
+@Composable
+private fun sleepDuration(minutes: Int): String = if (minutes >= 60) {
+    stringResource(R.string.hours_minutes_short, minutes / 60, minutes % 60)
+} else {
+    stringResource(R.string.minutes_short, minutes)
 }
 
 @Composable

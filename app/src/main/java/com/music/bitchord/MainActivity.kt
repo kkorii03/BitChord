@@ -205,6 +205,7 @@ import com.music.bitchord.ui.components.VolumeHud
 import com.music.bitchord.ui.navigation.AppDestination
 import com.music.bitchord.ui.navigation.AppRoute
 import com.music.bitchord.ui.components.SpotifyImportAlert
+import com.music.bitchord.ui.components.DownloadManagerPage
 import com.music.bitchord.ui.screens.WearOsScreen
 import com.music.bitchord.ui.screens.AccountAndScrobblingScreen
 import com.music.bitchord.ui.screens.TelegramSettingsScreen
@@ -212,6 +213,7 @@ import com.music.bitchord.ui.screens.DiscordDialog
 import com.music.bitchord.ui.screens.DiscordDialogHost
 import com.music.bitchord.ui.screens.DiscordScreen
 import com.music.bitchord.ui.screens.EqualizerScreen
+import com.music.bitchord.ui.screens.EqualizerPresetPage
 import com.music.bitchord.ui.screens.HistoryScreen
 import com.music.bitchord.ui.screens.LibraryReplayEntry
 import com.music.bitchord.ui.screens.libraryDeviceItems
@@ -222,6 +224,7 @@ import com.music.bitchord.ui.screens.ListenTogetherScreen
 import com.music.bitchord.ui.screens.PartyServerEditor
 import com.music.bitchord.ui.screens.SignatureApiEditor
 import com.music.bitchord.ui.screens.SettingsScreen
+import com.music.bitchord.ui.screens.SettingsChoicePage
 import com.music.bitchord.ui.screens.SourceEditorAlert
 import com.music.bitchord.ui.screens.SourcesScreen
 import com.music.bitchord.data.sources.TrackMatcher
@@ -3377,7 +3380,13 @@ private fun BitChordApp(
                                 onEditWebDav = { showWebDavEditor = true },
                                 onEditSmb = { showSmbEditor = true },
                                 onConfirmJioSaavn = { confirmJioSaavn = true },
-                            )                        } else if (pageRoute == AppRoute.WearOs) {
+                            )
+                        } else if (pageRoute == AppRoute.Downloads) {
+                            DownloadManagerPage(
+                                onCleared = { navigator.pop() },
+                                contentPadding = listPadding,
+                            )
+                        } else if (pageRoute == AppRoute.WearOs) {
                             WearOsScreen(contentPadding = listPadding)
                         } else if (pageRoute == AppRoute.ListenTogether) {
                             ListenTogetherScreen(
@@ -3396,11 +3405,31 @@ private fun BitChordApp(
                                 onEditServer = { editingPartyServer = true },
                             )
                         } else if (pageRoute == AppRoute.Equalizer) {
-                            EqualizerScreen(contentPadding = listPadding)
+                            EqualizerScreen(
+                                contentPadding = listPadding,
+                                onOpenPresets = { navigator.push(AppRoute.EqualizerPresets) },
+                            )
+                        } else if (pageRoute == AppRoute.EqualizerPresets) {
+                            EqualizerPresetPage(
+                                onChosen = { navigator.pop() },
+                                contentPadding = listPadding,
+                            )
+                        } else if (pageRoute is AppRoute.SettingsChoice) {
+                            SettingsChoicePage(
+                                choice = pageRoute.choice,
+                                onChosen = { navigator.pop() },
+                                onConfirmBitPerfect = { confirmBitPerfect = it },
+                                contentPadding = listPadding,
+                            )
                         } else if (pageRoute == AppRoute.Lyrics) {
                             KoLyricsSettingsRoute(listPadding, context, scope, { showLyricsSources = true }, { showTranslationLanguage = true }, { showGeminiKey = true }, { showDeepgramKey = true }) // [KO] lyrics-settings-route
-                        } else if (pageRoute == AppRoute.Settings) {
+                        } else if (pageRoute == AppRoute.Settings || pageRoute is AppRoute.SettingsSection) {
+                            // The main page and every category's page are the
+                            // one screen, each showing its own share of the rows.
                             SettingsScreen(
+                                section = (pageRoute as? AppRoute.SettingsSection)?.category,
+                                onOpenSection = { navigator.push(AppRoute.SettingsSection(it)) },
+                                onOpenChoice = { navigator.push(AppRoute.SettingsChoice(it)) },
                                 windowWidth = windowWidth,
                                 signedIn = signedIn,
                                 account = account,
@@ -3432,6 +3461,8 @@ private fun BitChordApp(
                                 },
                                 onEditSignatureApi = { editingSignatureApi = true },
                                 onOpenLyrics = { navigator.push(AppRoute.Lyrics) },
+                                onConfirmBitPerfect = { confirmBitPerfect = it },
+                                onConfirmFixedVolume = { confirmFixedVolume = true },
                                 contentPadding = listPadding,
                             )
                         } else if (page != null) {
@@ -4988,6 +5019,14 @@ private fun BitChordApp(
                     }
                 } else {
                     null
+                },
+                onRemoveFromHistory = song.feedbackToken?.takeIf { menuFromHistory }?.let { token ->
+                    {
+                        songActions = null
+                        viewModel.removeFromHistory(token, onFailure = {
+                            Toast.makeText(context, R.string.remove_from_history_failed, Toast.LENGTH_SHORT).show()
+                        })
+                    }
                 },
                 onOpenAlbum = { id ->
                     openPage(
@@ -6629,6 +6668,7 @@ private fun playingYouTubesOwn(videoId: String, controller: MediaController?): B
     return QualityUpgrade.isKnownToBePlayingYouTubesOwn(
         videoId,
         uri?.let(QualityUpgrade::cacheTag),
+        uri?.let(AudioCache::originOf),
     )
 }
 

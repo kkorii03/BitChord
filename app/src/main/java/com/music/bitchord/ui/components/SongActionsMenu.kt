@@ -43,6 +43,11 @@ fun SongActionsMenu(
      * passes one only while the cache actually holds some of it.
      */
     onRemoveFromCache: (() -> Unit)? = null,
+    /**
+     * Removes this track from the account's listening history. Null hides the
+     * row — the History screen passes one only when the menu is opened there.
+     */
+    onRemoveFromHistory: (() -> Unit)? = null,
     showSleepTimer: Boolean = false,
     showPlaybackSpeed: Boolean = false,
     /**
@@ -134,6 +139,7 @@ fun SongActionsMenu(
         modifier = modifier,
         onRemoveFromPlaylist = onRemoveFromPlaylist,
         onRemoveFromCache = onRemoveFromCache,
+        onRemoveFromHistory = onRemoveFromHistory,
         showSleepTimer = showSleepTimer,
         showPlaybackSpeed = showPlaybackSpeed,
         privateListening = privateListening,
