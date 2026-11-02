@@ -298,6 +298,15 @@ object AudioDecoder {
             return null
         }
         try {
+            // A request can wait here behind several others, and its caller
+            // may have moved on meanwhile (the track changed, the coroutine was
+            // cancelled). Opening the source for it anyway kept the queue full
+            // of dead work: 18 waiting requests on the 11-02 smoke, and the
+            // next-track bundle behind them never finished inside a track.
+            if (abort()) {
+                TrackLog.d(TAG, "decode: $label dropped at the gate (caller gave up)")
+                return null
+            }
             return decodeRawLocked(openSource, startSeconds, endSeconds, abort, label, onBuffer)
         } finally {
             decodeGate.release()

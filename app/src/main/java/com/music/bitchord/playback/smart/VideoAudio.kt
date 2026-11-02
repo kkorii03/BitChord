@@ -9,6 +9,7 @@ import com.music.bitchord.ko.downloads.KoDownloadRecords
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.PowerState
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -80,6 +81,7 @@ object VideoAudio {
 
     /** [wav] with the rendition it was read from, so its clock is not guessed afterwards. */
     suspend fun wavCopy(context: Context, videoId: String): SongAudio? = withContext(Dispatchers.IO) {
+        val job = coroutineContext[Job]
         synchronized(recent) { recent[videoId] }?.let { return@withContext it }
         if (!PowerState.screenOn) {
             TrackLog.d(TAG, "AI timing: the screen is off", videoId)
@@ -106,7 +108,7 @@ object VideoAudio {
         }
         synchronized(locks.getOrPut(videoId) { Any() }) {
             synchronized(recent) { recent[videoId] }?.let { return@synchronized it }
-            val audio = decode(videoId, copy) ?: return@synchronized null
+            val audio = decode(videoId, copy) { job?.isActive != false } ?: return@synchronized null
             synchronized(recent) { recent[videoId] = audio }
             audio
         }
@@ -188,6 +190,7 @@ object VideoAudio {
     ): SongAudio? = withContext(Dispatchers.IO) {
         if (!untilSeconds.isFinite() || untilSeconds <= 0.0) return@withContext null
         val until = untilSeconds.coerceAtMost(MAX_SECONDS)
+        val job = coroutineContext[Job]
         val key = songCacheKey(song, until)
         synchronized(recentSongs) { recentSongs[key] }?.let { return@withContext it }
         // Runs with the screen off too (11-01 user decision): this opening is
@@ -201,7 +204,8 @@ object VideoAudio {
                 runCatching { opened.data.close() }
                 return@synchronized it
             }
-            val bytes = decodeSong(song, opened.data, opened.fromFile, until) ?: return@synchronized null
+            val bytes = decodeSong(song, opened.data, opened.fromFile, until) { job?.isActive != false }
+                ?: return@synchronized null
             val audio = SongAudio(
                 bytes,
                 opened.renditionKey,
@@ -273,6 +277,8 @@ object VideoAudio {
     private fun decode(
         videoId: String,
         copy: AudioCache.Rendition,
+        /** False once the caller has gone, so a request still queued at the decode gate is dropped. */
+        wanted: () -> Boolean,
     ): SongAudio? {
         if (!PowerState.screenOn) return null
         val source = AudioCache.renditionDataSource(
@@ -285,7 +291,7 @@ object VideoAudio {
                 source,
                 0.0,
                 MAX_SECONDS + 1,
-                abort = { !PowerState.screenOn },
+                abort = { !PowerState.screenOn || !wanted() },
                 label = "video-wav",
             ) { samples, sampleRate, _ ->
                 if (!resampler.push(samples, sampleRate)) return@decodeMonoStream
@@ -332,6 +338,8 @@ object VideoAudio {
         source: MediaDataSource,
         fromFile: Boolean,
         untilSeconds: Double,
+        /** False once the caller has gone; see [decode]. */
+        wanted: () -> Boolean,
     ): ByteArray? {
         // One second past the window, then cut at the sample: a decoded chunk
         // that starts inside the window may run past its end. Not stopped by
@@ -342,7 +350,7 @@ object VideoAudio {
                 source,
                 0.0,
                 untilSeconds + 1,
-                abort = { false },
+                abort = { !wanted() },
                 label = "video-wav",
             ) { samples, sampleRate, _ ->
                 if (!resampler.push(samples, sampleRate)) return@decodeMonoStream
@@ -374,8 +382,14 @@ object VideoAudio {
      * output sample the mean of the input samples in its slot — a box filter,
      * enough to keep the singing clear of aliasing.
      */
-    private class Resampler(initialBytes: Int) {
-        private val pcm = ByteArrayOutputStream(initialBytes)
+    internal class Resampler(private val initialBytes: Int) {
+        // Sized at the first decoded chunk, not here: a request is made before
+        // AudioDecoder's one-at-a-time gate and can wait there for minutes.
+        // Allocated up front, 16 waiting requests held 90 MB of a 165 MB heap
+        // (11-02 smoke heap report) until playback died of OutOfMemoryError.
+        private var buffer: ByteArrayOutputStream? = null
+        private val pcm: ByteArrayOutputStream
+            get() = buffer ?: ByteArrayOutputStream(initialBytes).also { buffer = it }
         private var carry = 0.0
         private var sum = 0.0
         private var count = 0
@@ -403,7 +417,7 @@ object VideoAudio {
             return true
         }
 
-        fun bytes(): ByteArray = pcm.toByteArray()
+        fun bytes(): ByteArray = buffer?.toByteArray() ?: ByteArray(0)
     }
 
     private fun header(dataBytes: Int): ByteArray = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN).apply {
