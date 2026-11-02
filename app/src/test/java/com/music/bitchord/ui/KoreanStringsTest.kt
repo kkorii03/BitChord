@@ -61,6 +61,14 @@ class KoreanStringsTest {
     }
 
     @Test
+    fun videoAutomixLineKeepsThePlainCrossfadeWording() {
+        assertEquals(
+            "자동 믹스 · 비디오 노래: 단순 크로스페이드",
+            value("sharedUi", "automix_not_supported_video"),
+        )
+    }
+
+    @Test
     fun advancedSyncFooterUsesTheKoreanQualityTerm() {
         val subtitle = value("app", "sync_safety_hq_sync_subtitle").orEmpty()
         assertFalse(subtitle.contains("HQ"))

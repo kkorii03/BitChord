@@ -7,7 +7,6 @@ import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.playback.CrossfadeArmPolicy
 import com.music.bitchord.playback.CrossfadeController
 import com.music.bitchord.playback.applyPlaybackSpeed
-import com.music.bitchord.playback.smart.AutomixWorkPolicy
 
 /**
  * [KO] crossfade-rearm
@@ -46,7 +45,6 @@ internal fun CrossfadeController.koRearmIncoming(
     into.prepare()
     ko.armStartedAt = SystemClock.elapsedRealtime()
     ko.armPausedAt = 0L
-    armDeadline = ko.armStartedAt + AutomixWorkPolicy.STANDBY_LEAD_MS +
-        CrossfadeArmPolicy.armTimeoutMs(rampSteps * rampStepMs)
+    armDeadline = CrossfadeArmPolicy.armDeadlineFrom(ko.armStartedAt, rampSteps * rampStepMs)
     return true
 }

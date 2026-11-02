@@ -1,5 +1,7 @@
 package com.music.bitchord.playback
 
+import com.music.bitchord.playback.smart.AutomixWorkPolicy
+
 /**
  * Why a transition was abandoned before either side became audible.
  *
@@ -63,6 +65,14 @@ internal object CrossfadeArmPolicy {
     /** The deadline for one arming attempt, including any tempo-ramp beats. */
     fun armTimeoutMs(rampMs: Long = 0L): Long =
         (ARM_TIMEOUT_MS + rampMs.coerceAtLeast(0L)).coerceAtLeast(1L)
+
+    /**
+     * The deadline for a newly armed standby. The start already sits the whole
+     * [AutomixWorkPolicy.STANDBY_LEAD_MS] before the transition, so the
+     * readiness timeout is counted from after that lead rather than from now.
+     */
+    fun armDeadlineFrom(startedAt: Long, rampMs: Long = 0L): Long =
+        startedAt + AutomixWorkPolicy.STANDBY_LEAD_MS + armTimeoutMs(rampMs)
 
     /** The arming loop's normal step while the outgoing track can still reach the fade. */
     const val ARM_STEP_MS = 40L

@@ -1,5 +1,6 @@
 package com.music.bitchord.playback
 
+import com.music.bitchord.playback.smart.AutomixWorkPolicy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -13,6 +14,19 @@ class CrossfadeArmPolicyTest {
         assertEquals(3_000L, CrossfadeArmPolicy.armTimeoutMs())
         assertEquals(4_500L, CrossfadeArmPolicy.armTimeoutMs(rampMs = 1_500L))
         assertEquals(3_000L, CrossfadeArmPolicy.armTimeoutMs(rampMs = -1_000L))
+    }
+
+    @Test
+    fun aFreshArmKeepsTheWholeStandbyLeadBeforeItsReadinessTimeout() {
+        val startedAt = 5_000L
+        assertEquals(
+            startedAt + AutomixWorkPolicy.STANDBY_LEAD_MS + 3_000L,
+            CrossfadeArmPolicy.armDeadlineFrom(startedAt),
+        )
+        assertEquals(
+            startedAt + AutomixWorkPolicy.STANDBY_LEAD_MS + 4_500L,
+            CrossfadeArmPolicy.armDeadlineFrom(startedAt, rampMs = 1_500L),
+        )
     }
 
     @Test

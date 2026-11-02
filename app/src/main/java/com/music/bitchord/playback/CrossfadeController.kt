@@ -1366,18 +1366,7 @@ class CrossfadeController(
             playbackRate = plan.incomingPlaybackRate,
             outgoingRate = plan.outgoingPlaybackRate,
             beatMs = beatMs,
-            renderStyle = Render(
-                style = plan.transitionStyle,
-                bassSwap = plan.bassSwap,
-                bassSwapFraction = plan.bassSwapFraction,
-                filterSweep = plan.filterSweep,
-                filterVariant = plan.filterVariant,
-                vocalOverlap = plan.vocalOverlap,
-                advanced = advanced,
-                beats = if (plan.beatSeconds > 0) plan.fadeSeconds / plan.beatSeconds else 0.0,
-                lockPhase = plan.phaseLock,
-                echoSeconds = plan.echoSeconds,
-            ),
+            renderStyle = renderFromPlan(plan, advanced),
             plan = plan,
         )
     }
@@ -1566,10 +1555,8 @@ class CrossfadeController(
         // that lead rather than immediately. Otherwise a cold stream that is
         // merely slower than three seconds would be dropped with twelve seconds
         // of the lead still to run.
-        armDeadline = ko.armStartedAt + AutomixWorkPolicy.STANDBY_LEAD_MS +
-            CrossfadeArmPolicy.armTimeoutMs(rampSteps * beatMs)
+        armDeadline = CrossfadeArmPolicy.armDeadlineFrom(ko.armStartedAt, rampSteps * beatMs)
         planInFlight = plan
-        armDeadline = SystemClock.elapsedRealtime() + CrossfadeArmPolicy.armTimeoutMs(rampSteps * beatMs)
         handedOff = false
         outgoing = out
         incoming = into
@@ -3954,6 +3941,22 @@ class CrossfadeController(
     // equal-power is right everywhere.
 
     internal companion object { // [KO] crossfade-log
+        /** The render settings a smart plan arms, including its transition-only loudness match. */
+        internal fun renderFromPlan(plan: TransitionPlan, advanced: Boolean): Render = Render(
+            style = plan.transitionStyle,
+            bassSwap = plan.bassSwap,
+            bassSwapFraction = plan.bassSwapFraction,
+            filterSweep = plan.filterSweep,
+            filterVariant = plan.filterVariant,
+            vocalOverlap = plan.vocalOverlap,
+            advanced = advanced,
+            beats = if (plan.beatSeconds > 0) plan.fadeSeconds / plan.beatSeconds else 0.0,
+            lockPhase = plan.phaseLock,
+            echoSeconds = plan.echoSeconds,
+            incomingGain = plan.incomingGain,
+            outgoingGain = plan.outgoingGain,
+        )
+
         /** How much of each track either side of the overlap the mix popup shows, as a fraction of the overlap. */
         const val MIX_VIEW_CONTEXT = 0.24
 
