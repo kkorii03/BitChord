@@ -1,0 +1,18 @@
+Task: restore v1.9 code that the merge on this branch (task/u19-tg) dropped. Branch facts: it is task/telegram (our Korean fork with Telegram, sync, HQ work) + task/upstream-19 (upstream v1.9 merged earlier, with 1.9 fixes) merged by an automated resolver that often kept only our side of a conflict and silently dropped v1.9 code.
+
+Evidence: scripts/upgrade/lost-u19.txt lists every v1.9-side line (grouped by the commit that wrote it, '!! LOST n  date sha subject') that exists in origin/task/upstream-19 but is missing from this branch. scripts/upgrade/lost-ours.txt lists lines of OUR side that are missing (also restore those that are in your files). The checker is scripts/upgrade/patch_survival.py. First run: git fetch --unshallow origin || true; git fetch origin task/upstream-19 task/telegram. Then:
+  python3 scripts/upgrade/patch_survival.py --repo . --base 018c841b --ours origin/task/upstream-19 --result HEAD --all
+  python3 scripts/upgrade/patch_survival.py --repo . --base 018c841b --ours origin/task/telegram --result HEAD --all
+Use `git show origin/task/upstream-19:<path>` to see the working v1.9 version of a file and `git show origin/task/telegram:<path>` for ours.
+
+Rules:
+- ONLY edit the files in YOUR SCOPE below (new files are allowed if they belong to your scope's feature). If a restore needs a change outside your scope, do not make it: list it in your summary.
+- Restore every lost v1.9 feature / fix in your scope: bring back its code and its call sites so it actually runs (a function with no caller is not restored).
+- Keep OUR side where the two implement the same thing differently in these areas only: song-version judgment (TrackMatcher verdicts), lyrics sync/timing, Telegram source, HQ upgrade/verify (hq-verify, lossless swap). There, keep ours and note which v1.9 lines you deliberately left out and why (one line per group).
+- Keep every '// [KO]' hook and every Korean-fork feature. Do not move upstream code into ko/ files.
+- Follow AGENTS.md (ponytail): smallest change that fully restores; no new abstractions.
+- Compile (./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true) and run the tests of the files you touched (and the CI test list entries for them in .github/workflows/ko-wip-check.yml) until they pass.
+- At the end re-run both checker commands and report, for the files in your scope only: v1.9 LOST lines before -> after, ours LOST before -> after.
+Battery first (no polling/timers). Re-read callers and types of everything you change.
+Finish with a summary of at most 15 lines: features restored (by commit subject) / deliberately kept ours (why) / LOST counts before->after for your files / compile+tests / changes needed outside your scope.
+YOUR SCOPE: app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt, shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt, app/src/main/java/com/music/bitchord/playback/QualityUpgrade.kt, app/src/test/java/com/music/bitchord/SourcesTest.kt, app/src/main/java/com/music/bitchord/ko/KoSourceResolver*.kt (v1.9 upgrade drift slack upgradeSlackSec/sameRecordingAs, source failure API, search core; TrackMatcher verdicts stay ours).
