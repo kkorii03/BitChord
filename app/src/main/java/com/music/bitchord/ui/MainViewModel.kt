@@ -432,6 +432,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * Called as the playing track changes; cheap no-op when already loaded.
+     * See [LyricsController.loadLyricsFor].
+     */
+    fun loadLyrics(song: Song, durationMs: Long) = lyricsController.loadLyricsFor(song, durationMs)
+
+    /**
+     * Called as the playing track changes; cheap no-op when already loaded.
      * See [LyricsController.loadLyrics].
      */
     fun loadLyrics(

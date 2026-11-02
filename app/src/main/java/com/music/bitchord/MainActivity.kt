@@ -1332,20 +1332,14 @@ private fun BitChordApp(
         lyricsSourceOrder, prioritizeSyllableSync,
     ) {
         player.song?.let {
-            // A cover is looked up as the song it covers — see CoverTitles.
-            val query = com.music.bitchord.data.cover.CoverTitles.lyricsQuery(it)
+            // The player's own length, and the catalogue's where it has none
+            // yet. Paused, ExoPlayer never finishes preparing the track it was
+            // skipped to, so it reports no duration at all — and a lookup that
+            // waits for one waits for ever, which left the lyrics of a paused
+            // track loading until it was played.
             viewModel.loadLyrics(
-                it.videoId,
-                query.title,
-                query.artist,
-                // The player's own length, and the catalogue's where it has
-                // none yet. Paused, ExoPlayer never finishes preparing the
-                // track it was skipped to, so it reports no duration at all —
-                // and a lookup that waits for one waits for ever, which left
-                // the lyrics of a paused track loading until it was played.
+                it,
                 player.durationMs.takeIf { ms -> ms > 0L } ?: it.durationMillis(),
-                it.albumName,
-                it.localUri,
             )
         }
     }
