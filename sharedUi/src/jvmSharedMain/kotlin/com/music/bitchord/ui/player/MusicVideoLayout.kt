@@ -196,8 +196,18 @@ internal fun FullscreenVideoPlayer(
  * fullscreen landscape player.
  */
 @Composable
-internal fun VideoLoadingBackdrop(modifier: Modifier = Modifier) {
+internal fun VideoLoadingBackdrop(modifier: Modifier = Modifier, artworkUrl: String? = null) {
     Box(modifier.background(Color.Black), contentAlignment = Alignment.Center) {
+        // [KO] video-fallback: the upload's thumbnail under the spinner, so a
+        // picture that never comes (phone 11-03) still shows the song.
+        if (artworkUrl != null) {
+            coil3.compose.AsyncImage(
+                model = artworkUrl,
+                contentDescription = null,
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                modifier = Modifier.matchParentSize(),
+            )
+        }
         CircularProgressIndicator(
             color = Color.White,
             strokeWidth = 3.dp,

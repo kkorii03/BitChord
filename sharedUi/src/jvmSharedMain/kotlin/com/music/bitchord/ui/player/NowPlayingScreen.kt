@@ -3683,6 +3683,7 @@ fun NowPlayingScreen(
                                             Modifier
                                                 .fillMaxSize()
                                                 .clip(RoundedCornerShape(10.dp)),
+                                            artworkUrl = song.thumbnailUrl,
                                         )
                                     }
                                     MusicVideoSurface(
