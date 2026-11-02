@@ -2,7 +2,10 @@ package com.music.bitchord.data.lyrics
 
 import com.music.bitchord.data.Http
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
@@ -10,9 +13,11 @@ import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.Call
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import java.util.concurrent.TimeUnit
 
 /**
@@ -64,6 +69,30 @@ object Deepgram {
             .build()
     }
 
+    /** The endpoint [listen] posts to; a test points this at a local server. */
+    internal var listenEndpoint: String = ENDPOINT
+
+    /**
+     * Runs the blocking [Call] on the IO dispatcher and cancels it when the
+     * coroutine is cancelled, so a blocked execute/read returns at once
+     * instead of waiting out [client]'s 240 s timeout.
+     */
+    private suspend fun <T> Call.runCancellable(block: (Response) -> T): T =
+        withContext(Dispatchers.IO) {
+            val watchdog = launch(start = CoroutineStart.UNDISPATCHED) {
+                try {
+                    awaitCancellation()
+                } finally {
+                    cancel()
+                }
+            }
+            try {
+                execute().use(block)
+            } finally {
+                watchdog.cancel()
+            }
+        }
+
     /**
      * What Deepgram answered: the [words] it heard, or null, and the [httpCode]
      * it answered with (null when no response came back at all — offline, a
@@ -90,30 +119,28 @@ object Deepgram {
         val key = apiKey.trim()
         if (key.isEmpty() || key == rejectedKey) return Answer(null)
         val spoken = if (model == MODEL_WHISPER && language == "multi") "detect_language=true" else "language=$language"
-        val url = "$ENDPOINT?model=$model&$spoken&punctuate=false&smart_format=false&numerals=false"
+        val url = "$listenEndpoint?model=$model&$spoken&punctuate=false&smart_format=false&numerals=false"
         val request = Request.Builder()
             .url(url)
             .header("Authorization", "Token $key")
             .post(audioWav.toRequestBody("audio/wav".toMediaType()))
             .build()
         return try {
-            withContext(Dispatchers.IO) {
-                client.newCall(request).execute().use { response ->
-                    if (response.code == 401 || response.code == 403) {
-                        rejectedKey = key
-                        keyRejected.value = true
-                        return@withContext Answer(null, response.code)
-                    }
-                    if (!response.isSuccessful) {
-                        return@withContext Answer(
-                            null,
-                            response.code,
-                            retryAfterMs(response.header("Retry-After")),
-                        )
-                    }
-                    val body = response.body?.string() ?: return@withContext Answer(null, response.code)
-                    Answer(parse(body), response.code)
+            client.newCall(request).runCancellable { response ->
+                if (response.code == 401 || response.code == 403) {
+                    rejectedKey = key
+                    keyRejected.value = true
+                    return@runCancellable Answer(null, response.code)
                 }
+                if (!response.isSuccessful) {
+                    return@runCancellable Answer(
+                        null,
+                        response.code,
+                        retryAfterMs(response.header("Retry-After")),
+                    )
+                }
+                val body = response.body?.string() ?: return@runCancellable Answer(null, response.code)
+                Answer(parse(body), response.code)
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -135,13 +162,11 @@ object Deepgram {
             .get()
             .build()
         return try {
-            withContext(Dispatchers.IO) {
-                client.newCall(request).execute().use { response ->
-                    when {
-                        response.isSuccessful -> true
-                        response.code == 401 || response.code == 403 -> false
-                        else -> null
-                    }
+            client.newCall(request).runCancellable { response ->
+                when {
+                    response.isSuccessful -> true
+                    response.code == 401 || response.code == 403 -> false
+                    else -> null
                 }
             }
         } catch (cancelled: CancellationException) {

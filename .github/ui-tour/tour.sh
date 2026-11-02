@@ -734,6 +734,10 @@ else
   [ -f scripts/ui-tour-settings.sh ] && run_section section_settings_sheets settings-sheets
 fi
 
+# Broken text on every captured screen (cut, split words, overlaps, English
+# left, size jumps, 1-2 character lines) -> shots/ui-text-issues.md.
+python3 scripts/ui/ui_textcheck.py --shots "$OUT" || echo "ui_textcheck failed; screens are still in $OUT"
+
 adb logcat -d > "$OUT/logcat.txt"
 # Why playback did not start, if it did not (bot check, 403, source error...).
 adb logcat -d | grep -E 'playback failed|resolve failed|SignInConfirmNotBot|ExoPlaybackException|Playback error' > "$OUT/playback-errors.txt" 2>/dev/null || true

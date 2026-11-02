@@ -24,6 +24,10 @@ object DiagnosticsState {
     @Volatile
     var currentTrackId: String? = null
 
+    /** The row prepared after the current one; a measurement is wanted only for these two. */
+    @Volatile
+    var nextTrackId: String? = null
+
     @Volatile
     var currentTitle: String? = null
 

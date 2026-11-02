@@ -9,8 +9,11 @@ import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.ko.downloads.KoDownloadRecords
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.PowerState
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -76,13 +79,13 @@ object VideoAudio {
     private val recent = object : LinkedHashMap<String, SongAudio>(4, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, SongAudio>) = size > 2
     }
-    private val locks = ConcurrentHashMap<String, Any>()
+    private val locks = ConcurrentHashMap<String, Mutex>()
 
     /** The last two song checks, by recording, file and length — a retry asks again. */
     private val recentSongs = object : LinkedHashMap<String, SongAudio>(4, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, SongAudio>) = size > 2
     }
-    private val songLocks = ConcurrentHashMap<String, Any>()
+    private val songLocks = ConcurrentHashMap<String, Mutex>()
 
     suspend fun wav(context: Context, videoId: String): ByteArray? =
         wavCopy(context, videoId)?.bytes
@@ -114,9 +117,13 @@ object VideoAudio {
             )
             return@withContext null
         }
-        synchronized(locks.getOrPut(videoId) { Any() }) {
-            synchronized(recent) { recent[videoId] }?.let { return@synchronized it }
-            val audio = decode(videoId, copy) { job?.isActive != false } ?: return@synchronized null
+        locks.getOrPut(videoId) { Mutex() }.withLock {
+            synchronized(recent) { recent[videoId] }?.let { return@withLock it }
+            // A cancelled caller must stop waiting at AudioDecoder's gate at
+            // once; runInterruptible turns the cancellation into an interrupt
+            // of the blocking decode instead of leaving it queued for minutes.
+            val audio = AudioDecoder.interruptibleDecode { decode(videoId, copy) { job?.isActive != false } }
+                ?: return@withLock null
             synchronized(recent) { recent[videoId] = audio }
             audio
         }
@@ -207,22 +214,31 @@ object VideoAudio {
         // listener then spent more battery on the screen fixing it by hand.
         // It is one bounded opening per track, not the whole video.
         val opened = openSongSource(context, song, until) ?: return@withContext null
-        synchronized(songLocks.getOrPut(key) { Any() }) {
-            synchronized(recentSongs) { recentSongs[key] }?.let {
-                runCatching { opened.data.close() }
-                return@synchronized it
+        try {
+            songLocks.getOrPut(key) { Mutex() }.withLock {
+                synchronized(recentSongs) { recentSongs[key] }?.let {
+                    runCatching { opened.data.close() }
+                    return@withLock it
+                }
+                val bytes = AudioDecoder.interruptibleDecode {
+                    decodeSong(song, opened.data, opened.fromFile, until) { job?.isActive != false }
+                } ?: return@withLock null
+                val audio = SongAudio(
+                    bytes,
+                    opened.renditionKey,
+                    opened.fromFile,
+                    opened.localSourceConfigId,
+                    opened.localTrackId,
+                )
+                synchronized(recentSongs) { recentSongs[key] = audio }
+                audio
             }
-            val bytes = decodeSong(song, opened.data, opened.fromFile, until) { job?.isActive != false }
-                ?: return@synchronized null
-            val audio = SongAudio(
-                bytes,
-                opened.renditionKey,
-                opened.fromFile,
-                opened.localSourceConfigId,
-                opened.localTrackId,
-            )
-            synchronized(recentSongs) { recentSongs[key] = audio }
-            audio
+        } catch (cancelled: CancellationException) {
+            // Cancelled while waiting for another decode of this song: the
+            // source opened above was never handed to decodeSong, which closes
+            // its own in a finally.
+            runCatching { opened.data.close() }
+            throw cancelled
         }
     }
 

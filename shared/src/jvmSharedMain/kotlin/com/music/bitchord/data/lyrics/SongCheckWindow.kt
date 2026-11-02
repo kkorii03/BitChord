@@ -13,6 +13,31 @@ package com.music.bitchord.data.lyrics
  */
 object SongCheckWindow {
 
+    /**
+     * The opening a cold song check asks about first. The full ninety seconds
+     * answer three minutes after the song starts: most of that is waiting for
+     * the longer opening to reach the disk and Whisper reading it. Forty
+     * seconds is an intro and a verse, and it still has to clear the same
+     * agreement and shift floors; the full opening follows to refine it.
+     */
+    const val FIRST_SECONDS = 40.0
+
+    /**
+     * Whether the full opening follows a first pass that ended with [result].
+     * A `no-answer` either spent the engine on a refusal (a 429, no network)
+     * or never reached it, so it must not be asked again; every other result
+     * is worth the longer audio — applied to refine it, otherwise to try.
+     */
+    fun needsFullOpening(result: String): Boolean = result != "no-answer"
+
+    /**
+     * Whether the full pass may be written over the first. An early correction
+     * is never replaced by a full pass that found no fit; without a first fit
+     * the full answer stands whether or not it fit.
+     */
+    fun fullMayReplace(firstFitted: Boolean, fullFitted: Boolean): Boolean =
+        !firstFitted || fullFitted
+
     /** RIFF/WAVE header before the samples: 16 kHz, mono, 16-bit WAV. */
     const val WAV_HEADER_BYTES = 44
 
