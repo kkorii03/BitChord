@@ -90,6 +90,7 @@ import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.ui.components.LikedMusicCover
 import com.music.bitchord.ko.ui.koBrowseFallbackLabel
 import com.music.bitchord.ko.ui.koHasNoResults
+import com.music.bitchord.ko.ui.koSearchFilterLabel
 import com.music.bitchord.ui.components.appleSubtitleText
 import com.music.bitchord.ui.components.artworkCorner
 import com.music.bitchord.ui.components.LIST_ROW_VERTICAL_PADDING
@@ -304,7 +305,7 @@ fun SearchScreen(
             // the app has one look for "pick one of these".
             if (results != null && !suggesting && !searchingLibrary && !searchingAddons) {
                 PillSegmentedControl(
-                    options = SearchFilter.entries.map { it.label },
+                    options = SearchFilter.entries.map { stringResource(koSearchFilterLabel(it)) },
                     selectedIndex = filter.ordinal,
                     onSelect = { onFilterChange(SearchFilter.entries[it]) },
                     modifier = Modifier.padding(start = PAGE_GUTTER, end = PAGE_GUTTER, bottom = 6.dp),

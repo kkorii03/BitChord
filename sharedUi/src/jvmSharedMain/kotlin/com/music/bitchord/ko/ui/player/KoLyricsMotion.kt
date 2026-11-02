@@ -72,6 +72,22 @@ internal fun koLineBlurDp(distance: Int, narrow: Boolean): Dp {
     return raw.coerceAtMost(KO_LINE_BLUR_CAP_PX).dp
 }
 
+/**
+ * Whether an unfocused lyric row may carry its blur. Reduce-animation and low
+ * power keep it off: a blur is an offscreen layer and a RenderEffect rebuilt
+ * per row, which those settings exist to stop.
+ */
+internal fun koLineBlurAllowed(
+    isSynced: Boolean,
+    reduceDynamicBlur: Boolean,
+    reduceAnimation: Boolean,
+    lowPower: Boolean,
+    lyricsBlur: Boolean,
+    browsing: Boolean,
+    isActive: Boolean,
+): Boolean = isSynced && !reduceDynamicBlur && !reduceAnimation && !lowPower &&
+    lyricsBlur && !browsing && !isActive
+
 /** The cascade: the first row starts now, each later one 6% of the run behind. */
 internal const val KO_STAGGER_STEPS = 3
 internal const val KO_STAGGER_FRACTION = 0.06f

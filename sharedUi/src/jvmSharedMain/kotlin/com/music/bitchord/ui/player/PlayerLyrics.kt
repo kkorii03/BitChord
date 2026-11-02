@@ -9,7 +9,6 @@ import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animate
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
@@ -150,6 +149,7 @@ import com.music.bitchord.ko.ui.player.koInterludeContainerAlpha
 import com.music.bitchord.ko.ui.player.koInterludeDotEntryAlpha
 import com.music.bitchord.ko.ui.player.koInterludeExitAlpha
 import com.music.bitchord.ko.ui.player.koLineBlurDp
+import com.music.bitchord.ko.ui.player.koLineBlurAllowed
 import com.music.bitchord.ko.ui.player.koLyricSpringForInterval
 import com.music.bitchord.ko.ui.player.koLyricsStatusWithTiming
 import com.music.bitchord.ko.ui.player.koLyricsTimingDetail
@@ -2215,14 +2215,21 @@ internal fun LyricsPanel(
             // the same floor rather than fading to nothing.
             val falloff = if (centerFocus) LINE_FALLOFF_ALPHA else LINE_FALLOFF_ALPHA_PHONE
             val step = distance.coerceAtMost(falloff.lastIndex)
-            val blur by animateDpAsState(
-                targetValue = when {
-                    !isSynced || reduceDynamicBlur || !lyricsBlur || browsing || isActive -> 0.dp
-                    else -> koLineBlurDp(distance, narrowViewport)
-                },
-                animationSpec = tween(LYRIC_SETTLE_MS, easing = LYRIC_EASING),
-                label = "lyricBlur",
-            )
+            // A step rather than a tween: a radius that changes every frame
+            // rebuilds the offscreen layer and its RenderEffect with it. The
+            // alpha beside it still eases, and that is what the eye follows.
+            val blur: Dp = when {
+                !koLineBlurAllowed(
+                    isSynced = isSynced,
+                    reduceDynamicBlur = reduceDynamicBlur,
+                    reduceAnimation = reduceAnimation,
+                    lowPower = lowPower,
+                    lyricsBlur = lyricsBlur,
+                    browsing = browsing,
+                    isActive = isActive,
+                ) -> 0.dp
+                else -> koLineBlurDp(distance, narrowViewport)
+            }
             val lineAlpha by animateFloatAsState(
                 targetValue = when {
                     !isSynced -> 0.95f
