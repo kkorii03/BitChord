@@ -1798,6 +1798,7 @@ class PlaybackService : MediaLibraryService() {
             }
             DiagnosticsState.queueSize = exoPlayer.mediaItemCount
             DiagnosticsState.queueIndex = exoPlayer.currentMediaItemIndex
+            DiagnosticsState.nextTrackId = nextMediaIdOf(exoPlayer)
             if (exoPlayer.isPlaying) prefetchAround(exoPlayer)
             // A queue edit can change what follows gaplessly, and the loudness
             // stage switches to that track on its own at the boundary.
@@ -5002,6 +5003,7 @@ class PlaybackService : MediaLibraryService() {
             about = mediaItem?.mediaId,
         )
         DiagnosticsState.currentTrackId = mediaItem?.mediaId
+        DiagnosticsState.nextTrackId = nextMediaIdOf(exoPlayer)
         DiagnosticsState.currentTitle = played?.title
         DiagnosticsState.queueSize = exoPlayer.mediaItemCount
         DiagnosticsState.queueIndex = exoPlayer.currentMediaItemIndex
