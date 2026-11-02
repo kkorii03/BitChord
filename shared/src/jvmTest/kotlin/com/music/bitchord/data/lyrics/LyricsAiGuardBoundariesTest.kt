@@ -89,6 +89,18 @@ class LyricsAiGuardBoundariesTest {
     }
 
     @Test
+    fun koreanArtistJoinerDoesNotMakeAForeignSongKorean() {
+        // YouTube Music in Korean joins credits with "및" ("A, B 및 C") and
+        // "외 N명"; those words are the UI's, not the song's language.
+        val golden = listOf("I was a ghost, I was alone", "Gonna be, gonna be golden")
+        assertTrue(LyricsAiGuard.wantsDeepgram("Golden", "HUNTR/X, EJAE, AUDREY NUNA 및 REI AMI", golden))
+        assertTrue(LyricsAiGuard.wantsDeepgram("Dancing With A Stranger", "Sam Smith 및 Normani", listOf("I don't wanna be alone tonight")))
+        assertTrue(LyricsAiGuard.wantsDeepgram("Golden", "HUNTR/X 외 3명", golden))
+        assertFalse(LyricsAiGuard.wantsDeepgram("Loved", "아이유 및 IU", listOf("I love you")))
+        assertFalse(LyricsAiGuard.wantsDeepgram("Golden", "HUNTR/X 및 REI AMI", listOf("사랑해 너를 영원히")))
+    }
+
+    @Test
     fun koreanIsDecidedByTitleArtistOrLyrics() {
         assertTrue(LyricsAiGuard.isKoreanSong("사랑해", "IU", listOf("I love you")))
         assertTrue(LyricsAiGuard.isKoreanSong("Loved", "아이유", listOf("I love you")))

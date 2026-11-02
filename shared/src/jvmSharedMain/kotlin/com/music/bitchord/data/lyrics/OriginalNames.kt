@@ -36,8 +36,16 @@ object OriginalNames {
 
     data class Name(val title: String, val artist: String)
 
-    /** Whether a name is worth looking up in another language at all. */
-    fun worthTrying(title: String, artist: String): Boolean = hasHangul(title) || hasHangul(artist)
+    /**
+     * Whether a name is worth looking up in another language at all. The
+     * artist is read without the Korean UI's credit joiners ("A, B 및 C",
+     * "A 외 3명"): those are the app's words, not the song's, and made every
+     * multi-artist foreign song count as Korean (no sync check, extra lookups).
+     */
+    fun worthTrying(title: String, artist: String): Boolean =
+        hasHangul(title) || hasHangul(artist.replace(CREDIT_JOINER, ", "))
+
+    private val CREDIT_JOINER = Regex("""\s+및\s+|\s+외\s*\d+\s*명""")
 
     /**
      * The original release's name as YouTube Music lists it, or null when the
