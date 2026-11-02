@@ -757,6 +757,7 @@
     <string name="minutes">분</string>
     <string name="minutes_grouped_short">%1$s분</string>
     <string name="minutes_listened">청취 시간</string>
+    <string name="minutes_listened_value">%1$s분</string>
     <string name="minutes_short">%1$d분</string>
     <string name="not_enough_listening">청취 기록이 부족합니다</string>
     <string name="not_enough_this_month">이번 달에 노래를 더 들으면 Replay를 확인할 수 있습니다.</string>

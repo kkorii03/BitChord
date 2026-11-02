@@ -273,7 +273,7 @@
     <string name="top_pick_made_for_you">나를 위한 맞춤</string>
     <string name="top_pick_mood_for_you">나를 위한 분위기</string>
     <string name="top_pick_featuring">%1$s 피처링</string>
-    <string name="top_pick_and_similar">%1$s 외 비슷한 아티스트</string>
+    <string name="top_pick_and_similar">%1$s &amp; 비슷한 아티스트</string>
     <string name="top_pick_named_station">%1$s 스테이션</string>
     <string name="top_pick_your_station">내 스테이션</string>
     <string name="top_pick_discovery_station">새로운 발견 스테이션</string>

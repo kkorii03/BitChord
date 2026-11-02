@@ -484,6 +484,7 @@
     <string name="minutes">דקות</string>
     <string name="minutes_grouped_short">%1$s דק\'</string>
     <string name="minutes_listened">דקות שהואזנו</string>
+    <string name="minutes_listened_value">%1$s</string>
     <string name="minutes_short">%1$d דק\'</string>
     <string name="not_enough_listening">אין עדיין מספיק האזנה</string>
     <string name="not_enough_this_month">הפעל עוד כמה שירים החודש כדי לבטל את הנעילה של ה-Replay שלך.</string>

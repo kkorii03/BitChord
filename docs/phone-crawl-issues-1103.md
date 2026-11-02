@@ -6,7 +6,7 @@ whether this lane fixed it.
 
 Counts by kind: **raw/data titles 14**, **odd Korean or Apple-wording drift 8**,
 **untranslated English 5**, **duplicated/truncated labels 10**, **no-op taps 5**.
-This lane fixed **5 string resources** (see "Fixed here").
+This lane fixed **6 string resources** (see "Fixed here").
 
 ## Fixed here (plain string/label resources)
 
@@ -15,7 +15,8 @@ This lane fixed **5 string resources** (see "Fixed here").
 | s001 | `find_your_mood` is `분위기 찾기` in the app resource but the shelf header is `내 분위기 찾기` (the crawl shows the shelf text). Screen title and section header name the same place differently. | app `values-ko`: `내 분위기 찾기` |
 | s034, s044 | `좋아요 표시한 음악에서 제거` uses 음악 while the rest of the app and the crawl use `좋아요 표시한 노래`. | app + sharedUi `remove_from_liked` -> `좋아요 표시한 노래에서 제거` |
 | s001 (For You) | sharedUi `personalized_recommendations` is a verb label (`나를 위한 맞춤 추천 받기`) while the app/crawl label is the noun form `나를 위한 추천`. | sharedUi `values-ko`: `나를 위한 추천` |
-| s029 | `minutes_listened` was `청취 시간(분)`, a bracketed unit inside the noun label. Apple Music puts the unit on the value. | app `values-ko`: `청취 시간`, and the Replay card/poster value now uses `minutes_grouped_short` (`1,237분`) |
+| s001, s042 | `One Direction 외 비슷한 아티스트` uses `외`; the English source is `%1$s & Similar Artists`, and the apple-compare doc asks for the display joiner. | sharedUi `values-ko`: `%1$s & 비슷한 아티스트` |
+| s029 | `minutes_listened` was `청취 시간(분)`, a bracketed unit inside the noun label. Apple Music puts the unit on the value. | app `values-ko`: `청취 시간`, and the Replay card/poster value uses `minutes_listened_value` (`%1$s분` in ko, `%1$s` elsewhere). Every non-Korean label keeps its unit, so `再生時間（分）` is not followed by a second `分`. |
 
 ## Raw upload titles / data (left to the title-cleaning lane)
 

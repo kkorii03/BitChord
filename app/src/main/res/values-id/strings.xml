@@ -505,6 +505,7 @@
     <string name="minutes">Menit</string>
     <string name="minutes_grouped_short">%1$s mnt</string>
     <string name="minutes_listened">Menit yang didengarkan</string>
+    <string name="minutes_listened_value">%1$s</string>
     <string name="minutes_short">%1$d mnt</string>
     <string name="not_enough_listening">Belum cukup riwayat mendengarkan</string>
     <string name="not_enough_this_month">Putar beberapa lagu lagi bulan ini untuk membuka Replay Anda.</string>

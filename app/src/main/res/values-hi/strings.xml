@@ -520,6 +520,7 @@
     <string name="minutes">मिनट</string>
     <string name="minutes_grouped_short">%1$s मि.</string>
     <string name="minutes_listened">सुने गए मिनट</string>
+    <string name="minutes_listened_value">%1$s</string>
     <string name="minutes_short">%1$d मि.</string>
     <string name="not_enough_listening">अभी पर्याप्त सुनना नहीं हुआ</string>
     <string name="not_enough_this_month">अपना Replay अनलॉक करने के लिए इस महीने कुछ और गाने चलाएं।</string>

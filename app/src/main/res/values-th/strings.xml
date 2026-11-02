@@ -533,6 +533,7 @@
     <string name="minutes">นาที</string>
     <string name="minutes_grouped_short">%1$s นาที</string>
     <string name="minutes_listened">นาทีที่ฟัง</string>
+    <string name="minutes_listened_value">%1$s</string>
     <string name="minutes_short">%1$d นาที</string>
     <string name="not_enough_listening">ยังฟังไม่มากพอ</string>
     <string name="not_enough_this_month">ฟังเพลงเพิ่มอีกสักหน่อยในเดือนนี้เพื่อปลดล็อก Replay ของคุณ</string>

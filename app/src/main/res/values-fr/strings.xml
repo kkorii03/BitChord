@@ -521,6 +521,7 @@
     <string name="minutes">Minutes</string>
     <string name="minutes_grouped_short">%1$s min</string>
     <string name="minutes_listened">Minutes écoutées</string>
+    <string name="minutes_listened_value">%1$s</string>
     <string name="minutes_short">%1$d min</string>
     <string name="not_enough_listening">Pas encore assez d\'écoute</string>
     <string name="not_enough_this_month">Écoutez encore quelques chansons ce mois-ci pour débloquer votre Replay.</string>

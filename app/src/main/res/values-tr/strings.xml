@@ -549,6 +549,7 @@
     <string name="minutes">Dakika</string>
     <string name="minutes_grouped_short">%1$s dk</string>
     <string name="minutes_listened">Dinlenen dakika</string>
+    <string name="minutes_listened_value">%1$s</string>
     <string name="minutes_short">%1$d dk</string>
     <string name="not_enough_listening">Henüz yeterli dinleme yok</string>
     <string name="not_enough_this_month">Replay\'ini açmak için bu ay birkaç şarkı daha çal.</string>

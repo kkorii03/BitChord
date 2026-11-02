@@ -847,6 +847,7 @@
     <string name="minutes">Minutes</string>
     <string name="minutes_grouped_short">%1$s min</string>
     <string name="minutes_listened">Minutes listened</string>
+    <string name="minutes_listened_value">%1$s</string>
     <string name="minutes_short">%1$d min</string>
     <string name="not_enough_listening">Not enough listening yet</string>
     <string name="not_enough_this_month">Play a few more songs this month to unlock your Replay.</string>
