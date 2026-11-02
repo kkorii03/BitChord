@@ -2,6 +2,7 @@ package com.music.bitchord.data.innertube
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
+import com.music.bitchord.data.model.SearchResult
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -106,5 +107,85 @@ class PlaylistAlbumRowParseTest {
         )
 
         assertEquals(listOf("lockupTrack"), songs.map { it.videoId })
+    }
+
+    @Test
+    fun `a widescreen private upload row stays a song`() {
+        val page = InnertubeParser.parsePlaylistShelf(
+            json(
+                playlist(
+                    playlistRow("privateUp02", "MUSIC_VIDEO_TYPE_PRIVATELY_OWNED_TRACK", 480, 270),
+                ),
+            ),
+        )
+
+        assertFalse(page?.songs?.single()?.isVideo == true)
+    }
+
+    @Test
+    fun `a promoted private upload is not filtered out of the All tab`() {
+        val rows = InnertubeParser.parseSearchPage(
+            json(
+                """
+                {"contents":{"sectionListRenderer":{"contents":[
+                  {"musicCardShelfRenderer":{
+                    "onTap":{"watchEndpoint":{
+                      "videoId":"privateUp03",
+                      "watchEndpointMusicSupportedConfigs":{
+                        "watchEndpointMusicConfig":{
+                          "musicVideoType":"MUSIC_VIDEO_TYPE_PRIVATELY_OWNED_TRACK"
+                        }
+                      }
+                    }},
+                    "title":{"runs":[{"text":"My Upload"}]},
+                    "subtitle":{"runs":[{"text":"My Upload"}]},
+                    "thumbnail":{"musicThumbnailRenderer":{"thumbnail":{"thumbnails":[
+                      {"url":"https://i.ytimg.com/vi/privateUp03/hq.jpg","width":480,"height":270}
+                    ]}}}
+                  }}
+                ]}}}
+                """,
+            ),
+        ).rows
+
+        assertEquals(
+            listOf("privateUp03"),
+            rows.mapNotNull {
+                when (it) {
+                    is SearchResult.TopTrack -> it.song.videoId
+                    is SearchResult.Track -> it.song.videoId
+                    else -> null
+                }
+            },
+        )
+    }
+
+    @Test
+    fun `artist cards keep their isArtist flag`() {
+        val items = InnertubeParser.parseLibraryItems(
+            json(
+                """
+                {"contents":{"sectionListRenderer":{"contents":[
+                  {"musicTwoRowItemRenderer":{
+                    "title":{"runs":[{"text":"An Artist"}]},
+                    "subtitle":{"runs":[{"text":"Artist"}]},
+                    "navigationEndpoint":{"browseEndpoint":{
+                      "browseId":"MPREbNonUcArtist",
+                      "browseEndpointContextSupportedConfigs":{
+                        "browseEndpointContextMusicConfig":{
+                          "pageType":"MUSIC_PAGE_TYPE_ARTIST"
+                        }
+                      }
+                    }},
+                    "thumbnailRenderer":{"musicThumbnailRenderer":{"thumbnail":{"thumbnails":[
+                      {"url":"https://i.ytimg.com/vi/artist01/hq.jpg","width":480,"height":480}
+                    ]}}}
+                  }}
+                ]}}}
+                """,
+            ),
+        )
+
+        assertTrue(items.single().isArtist)
     }
 }

@@ -859,7 +859,6 @@ object InnertubeParser {
         val show = if (episode) showNameFromRuns(subtitleRuns) else null
 
         val thumbnails = renderer.bestThumbnailSources()
-        val videoType = renderer.findString("musicVideoType")
 
         return Song(
             videoId = videoId,
@@ -892,12 +891,9 @@ object InnertubeParser {
             // private upload) are not videos by default. Not an episode, whose
             // art is a widescreen still too: it is listened to, and a "video"
             // is dropped from the All tab's results.
-            isVideo = !episode && when {
-                videoType?.contains("ATV", ignoreCase = true) == true -> false
-                videoType?.contains("OMV", ignoreCase = true) == true ||
-                    videoType?.contains("UGC", ignoreCase = true) == true -> true
-                else -> rowType == "video" || thumbnails.isNotSquare()
-            },
+            isVideo = !episode && (
+                renderer.videoTypeVerdict() ?: (rowType == "video" || thumbnails.isNotSquare())
+            ),
             isEpisode = episode,
             isExplicit = renderer.hasExplicitBadge(),
             // Extract the "Remove from history" feedback token from the row's menu, if present.
@@ -998,6 +994,7 @@ object InnertubeParser {
         val duration = parts.lastOrNull()?.takeIf { it.matches(DURATION) }
         val rowType = parts.firstOrNull { it.lowercase(Locale.ROOT) in TYPE_WORDS }
             ?.let { TYPE_WORDS[it.lowercase(Locale.ROOT)] }
+        val episode = rowType == "episode" || renderer.isPodcastEpisode()
         val credits = creditsOf(subtitleRuns)
         val creditedArtists = artistNamesFromRuns(subtitleRuns)
         val artist = parts.firstOrNull {
@@ -1020,12 +1017,10 @@ object InnertubeParser {
             artists = completeArtistCredits(artist.orEmpty(), credits.artists),
             albumId = credits.albumId,
             albumName = credits.albumName,
-            isVideo = when (val videoType = renderer.findString("musicVideoType")) {
-                null -> rowType == "video" || thumbnails.isNotSquare()
-                else -> !videoType.contains("ATV", ignoreCase = true)
-            },
-            isEpisode = rowType == "episode" ||
-                renderer.findString("musicVideoType") == "MUSIC_VIDEO_TYPE_PODCAST_EPISODE",
+            isVideo = !episode && (
+                renderer.videoTypeVerdict() ?: (rowType == "video" || thumbnails.isNotSquare())
+            ),
+            isEpisode = episode,
             isExplicit = renderer["subtitleBadges"].hasExplicitBadge(),
         )
     }
@@ -1503,7 +1498,6 @@ object InnertubeParser {
             run.o("navigationEndpoint").o("browseEndpoint").s("browseId")
                 ?.takeIf { it.isNotBlank() }
         }
-        val videoType = renderer.findString("musicVideoType")
         return Song(
             videoId = videoId,
             title = title,
@@ -1523,13 +1517,8 @@ object InnertubeParser {
             // without it.
             // [KO] The byline tally is localised ("조회수" on a Korean device),
             // which is how official MVs came to play as MVs on 11-01.
-            isVideo = when {
-                videoType?.contains("ATV", ignoreCase = true) == true -> false
-                videoType?.contains("OMV", ignoreCase = true) == true ||
-                    videoType?.contains("UGC", ignoreCase = true) == true -> true
-                else -> byline.any {
-                    it.contains("views", ignoreCase = true) || it.contains("조회수")
-                }
+            isVideo = renderer.videoTypeVerdict() ?: byline.any {
+                it.contains("views", ignoreCase = true) || it.contains("조회수")
             },
             isExplicit = renderer.hasExplicitBadge(),
         )
@@ -1946,6 +1935,7 @@ object InnertubeParser {
             thumbnailUrl = thumbnails.best() ?: videoId?.let(::videoThumbnailUrl),
             videoId = videoId,
             browseId = resolvedBrowseId,
+            isArtist = "ARTIST" in pageType,
             isVideo = isVideo,
         )
     }
@@ -2076,6 +2066,28 @@ private fun JsonObject.isPodcastEpisode(): Boolean =
 private fun JsonObject.isPrivateUpload(): Boolean =
     hasKey("musicDeletePrivatelyOwnedEntityCommand") ||
         findString("musicVideoType")?.contains("PRIVATELY_OWNED", ignoreCase = true) == true
+
+/**
+ * The upload type's own verdict on whether a row is a video, or null when the
+ * type says nothing and each reader has to fall back to its own signal (the
+ * row's type word, the shape of its art, the byline tally).
+ *
+ * An ATV row is the catalogue song, an OMV/UGC row is a music video, and one
+ * of the signed-in user's own uploads is audio even when it is offered as a
+ * promoted card beside real videos.
+ */
+private fun JsonObject.videoTypeVerdict(): Boolean? {
+    if (isPrivateUpload()) return false
+    return when (val type = findString("musicVideoType")) {
+        null -> null
+        else -> when {
+            type.contains("ATV", ignoreCase = true) -> false
+            type.contains("OMV", ignoreCase = true) ||
+                type.contains("UGC", ignoreCase = true) -> true
+            else -> null
+        }
+    }
+}
 
 private fun JsonElement?.runs(): String =
     this.a("runs")?.joinToString("") { it.s("text").orEmpty() }.orEmpty()
