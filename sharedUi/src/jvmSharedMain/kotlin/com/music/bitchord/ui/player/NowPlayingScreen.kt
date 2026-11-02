@@ -1906,8 +1906,9 @@ fun NowPlayingScreen(
         // Straight away when it is the main player's backdrop too: the decode
         // and blur run off the main thread, and the last cover's blur is held
         // on screen until this one is ready.
-        prepare = !legacyMesh || landscape || tabletArtworkBackdrop || lyricsOpen || queueOpen ||
-            playerPrewarmStage >= 1,
+        prepare = !lowPower &&
+            (!legacyMesh || landscape || tabletArtworkBackdrop || lyricsOpen || queueOpen ||
+                playerPrewarmStage >= 1),
     )
     // One movable Image node, not two backdrop call sites. Compose carries it
     // between the portrait and landscape players; only the cached bitmap
@@ -3828,6 +3829,7 @@ fun NowPlayingScreen(
                                             ),
                                             color = Color.White,
                                             enabled = scrolling,
+                                            running = isPlaying,
                                             // Before the title, in the artist line's
                                             // colour.
                                             leading = if (song.isExplicit == true) {

@@ -1,6 +1,6 @@
 package com.music.bitchord.ui
 
-import android.content.Context
+import android.app.Application
 import com.music.bitchord.data.TrackDiagnostics
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.cover.CoverTitles
@@ -26,6 +26,7 @@ import com.music.bitchord.playback.smart.SyncTestMode
 import com.music.bitchord.playback.smart.VideoAudio
 import com.music.bitchord.ui.player.LyricsTimingUi
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -67,7 +68,7 @@ internal typealias LyricsLookup = suspend (
  * state and delegates commands; the logic, logs and timing are unchanged.
  */
 class LyricsController(
-    private val app: Context,
+    private val app: Application,
     private val scope: CoroutineScope,
 ) {
 
@@ -115,6 +116,14 @@ class LyricsController(
     private var lyricsRaceOrder: List<LyricsSource> = emptyList()
     private var lyricsTimingJob: Job? = null
     private var aiTimingJob: Job? = null
+
+    /**
+     * A failing measurement or automatic AI pass is a background detail, not a
+     * reason to take the playback down with it; the plain lyrics stay on screen.
+     */
+    private val timingFailureHandler = CoroutineExceptionHandler { _, error ->
+        TrackLog.w("BitChord", "lyrics timing failed", error)
+    }
 
     /**
      * The song whose check was started in this playback. It keeps a check that
@@ -853,7 +862,7 @@ class LyricsController(
         }
         val generation = lyricsGeneration
         val context = app
-        lyricsTimingJob = scope.launch {
+        lyricsTimingJob = scope.launch(timingFailureHandler) {
             // Whatever else changes this video's timing — the lock screen, the
             // next-song preparation measuring it first — shows here too.
             launch {
@@ -1410,7 +1419,7 @@ class LyricsController(
         }
     }
 
-    private suspend fun aiAhead(context: Context, videoId: String, lines: List<LyricLine>) {
+    private suspend fun aiAhead(context: Application, videoId: String, lines: List<LyricLine>) {
         // Automatic only — the manual button calls [runAiTiming] directly and
         // still works while the phone saves power.
         if (!AppSettings.heavyWorkAllowed) return
