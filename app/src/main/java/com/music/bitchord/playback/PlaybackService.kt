@@ -9000,8 +9000,11 @@ class PlaybackService : MediaLibraryService() {
                 QueueRestore.RESTORED -> return QueueRestore.RESTORED
                 QueueRestore.SUPERSEDED -> return QueueRestore.SUPERSEDED
                 // A malformed record is treated as absent; the fallback below
-                // gets the next chance at the queue.
-                QueueRestore.NOTHING -> BoundedContextPersistence.clearImmediately()
+                // gets the next chance at the queue. The clear commits to
+                // prefs synchronously, so it must not run on the main thread.
+                QueueRestore.NOTHING -> withContext(Dispatchers.IO) {
+                    BoundedContextPersistence.clearImmediately()
+                }
             }
         }
         return restoreLastQueue(player)
