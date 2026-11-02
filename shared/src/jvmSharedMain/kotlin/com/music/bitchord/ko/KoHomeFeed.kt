@@ -91,6 +91,7 @@ internal object KoHomeFeed {
                 title = item.title,
                 artist = item.subtitle,
                 thumbnailUrl = item.thumbnailUrl,
+                isVideo = item.isVideo,
             )
         }
         return recentsShelf(RecentShelf.merge(local, remote, RECENT_LIMIT))
@@ -110,6 +111,9 @@ internal object KoHomeFeed {
                 thumbnailUrl = it.thumbnailUrl,
                 videoId = it.videoId,
                 browseId = null,
+                // Phone 11-03: without this a cover video tapped here played
+                // as a plain song (no song version, music radio with no picks).
+                isVideo = it.isVideo,
             )
         }
         return HomeShelf(title = RECENT_TITLE, items = items)

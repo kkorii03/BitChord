@@ -81,6 +81,21 @@ class YouTubeDisplayCleanerTest {
         assertEquals("Jane", cleaned.artist)
     }
 
+    // Phone 11-03: each pass turned "(cover)" into "( )" and added another
+    // "(cover)", so the title grew "( ) ( ) ( )" and lyrics search failed.
+    @Test
+    fun `a title ending in (cover) stays the same however often it is cleaned`() {
+        val once = YouTubeDisplayCleaner.clean(song("화조도 花鳥圖 (cover)", "오화요"))
+        assertEquals("화조도 花鳥圖 (cover)", once.title)
+        assertEquals(once.title, YouTubeDisplayCleaner.clean(once).title)
+    }
+
+    @Test
+    fun `a title saved with empty brackets is mended`() {
+        val cleaned = YouTubeDisplayCleaner.clean(song("Night We Shine ( ) ( ) (cover)", "오화요"))
+        assertEquals("Night We Shine (cover)", cleaned.title)
+    }
+
     @Test
     fun `cleaning a video row keeps its artwork url`() {
         val video = Song(

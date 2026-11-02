@@ -109,8 +109,13 @@ internal object YouTubeDisplayCleaner {
      */
     private fun cleanCoverTitle(song: Song): Song {
         val alreadyMarked = song.title.trim().endsWith(COVER_SUFFIX, ignoreCase = true)
+        // Taking "cover" out of "Song (cover)" left "Song ( )", and every pass
+        // added another pair (phone 11-03: "화조도 花鳥圖 ( ) ( ) ( ) (cover)",
+        // which no lyrics search could find). Empty brackets go too, which
+        // also mends titles saved by that bug.
         val title = song.title.trim()
             .replace(COVER_MARKER, " ")
+            .replace(EMPTY_BRACKETS, " ")
             .replace(WHITESPACE, " ")
             .trim()
             .ifBlank { song.title.trim() }
@@ -350,6 +355,9 @@ internal object YouTubeDisplayCleaner {
     private val COVER_MARKER = Regex(
         """(?i)(?<![a-z])cover(?:ed)?\s*by|커버|(?<![a-z])cover(?![a-z])""",
     )
+
+    /** A bracket pair with nothing but spaces inside, left by [COVER_MARKER]. */
+    private val EMPTY_BRACKETS = Regex("""[(\[（【]\s*[)\]）】]""")
 
     private val LABEL_MARKERS = listOf(
         "1thek", "stone music", "smtown", "sm town", "starship",
