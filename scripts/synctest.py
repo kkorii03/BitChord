@@ -595,8 +595,14 @@ def run_song(vid, seconds, dry):
 
 # Precise onsets (11-02): scripts/syncjudge/judge.py on a runner re-times each line
 # whisper placed, by forced alignment on the separated vocals (tools\syncjudge.ps1).
-FA_MIN_SCORE = 0.2   # mean letter probability below this: the aligner did not find the line
-FA_MAX_MOVE_S = 0.6  # farther than this from whisper's place: a different stretch, not a refinement
+# Calibrated 11-02 on 14 AMLL hand-timed sheets (sync_calibrate.py): forced alignment on
+# singing is no more precise than whisper (taken alone it passed 2-4/14), but the two
+# err independently, so a line both put within FA_MAX_MOVE_S of each other is trusted
+# and the rest is left out: 10/14 correct sheets pass the unchanged strict rules
+# (whisper alone 5/14), 97% of their lines within 0.3 s.
+FA_MIN_SCORE = 0.0      # MMS_FA letter probabilities on sung vocals run 0.01-0.36; not a usable gate
+FA_MAX_MOVE_S = 0.1     # whisper and the aligner must agree this closely
+MIN_EVIDENCE_RATIO = 0.8  # and the line's opening must read as the sheet's text this well
 
 
 def write_fa_in(vid, audio, offset, lines, both):
@@ -617,17 +623,21 @@ def refine_with_fa(vid, both):
     """`both` re-timed by the runner's forced alignment when its answer is here:
     (lines, label). Only lines the aligner timed confidently and near whisper's place
     are kept, so whisper's own timing error does not mix back in."""
+    # Whisper alone, its well-read lines only (calibration: 7/14 correct sheets pass
+    # against 5/14 on every line); all of them when too few read that well.
+    strong = [b for b in both if b[3] >= MIN_EVIDENCE_RATIO]
+    whisper = strong if len(strong) >= STRICT["min_lines"] else both
     path = OUT / f"{vid}.fa-out.json"
     if not path.exists():
-        return both, "whisper"
+        return whisper, "whisper"
     fa = {r["n"]: r for r in json.loads(path.read_text(encoding="utf-8")).get("lines", [])}
     out = []
     for n, shown, sung, ratio in both:
         r = fa.get(n)
-        if r and r["score"] >= FA_MIN_SCORE and abs(r["fa"] - sung) <= FA_MAX_MOVE_S:
+        if ratio >= MIN_EVIDENCE_RATIO and r and r["score"] >= FA_MIN_SCORE and abs(r["fa"] - sung) <= FA_MAX_MOVE_S:
             out.append((n, shown, r["fa"], ratio))
     if len(out) < STRICT["min_lines"]:
-        return both, f"whisper (fa timed {len(out)}/{len(both)})"
+        return whisper, f"whisper (fa agreed on {len(out)}/{len(both)})"
     return out, f"fa {len(out)}/{len(both)}"
 
 

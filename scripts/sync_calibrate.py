@@ -145,6 +145,11 @@ def main():
         if override:
             st.STRICT.update(json.loads(override))
         floor = float(__import__("os").environ.get("CALIB_MIN_RATIO", "0"))
+        env = __import__("os").environ
+        if "CALIB_FA_MIN" in env:
+            st.FA_MIN_SCORE = float(env["CALIB_FA_MIN"])
+        if "CALIB_FA_MOVE" in env:
+            st.FA_MAX_MOVE_S = float(env["CALIB_FA_MOVE"])
         both = [b for b in both if b[3] >= floor]
         # The runner's forced alignment (tools\syncjudge.ps1 -Dir phone-out\synctest)
         # re-times these lines once its answer is in st.OUT; until then whisper's.
