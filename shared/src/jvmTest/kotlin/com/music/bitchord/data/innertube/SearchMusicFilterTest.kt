@@ -21,9 +21,15 @@ class SearchMusicFilterTest {
         subtitle: String,
         width: Int,
         height: Int,
-    ) = """
+        musicVideoType: String? = null,
+    ): String {
+        val type = musicVideoType?.let {
+            """"watchEndpointMusicSupportedConfigs": { "watchEndpointMusicConfig": { "musicVideoType": "$it" } },"""
+        } ?: ""
+        return """
         { "musicResponsiveListItemRenderer": {
           "playlistItemData": { "videoId": "$videoId" },
+          $type
           "thumbnail": { "musicThumbnailRenderer": { "thumbnail": { "thumbnails": [
             { "url": "https://i.ytimg.com/vi/$videoId/hqdefault.jpg", "width": $width, "height": $height }
           ] } } },
@@ -32,7 +38,8 @@ class SearchMusicFilterTest {
             { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [ { "text": "$subtitle" } ] } } }
           ]
         } }
-    """
+        """
+    }
 
     private val response = json(
         """
@@ -65,6 +72,36 @@ class SearchMusicFilterTest {
         assertEquals(
             listOf("TALK0000001"),
             ids(InnertubeParser.parseSearchPage(response, includeVideos = true)),
+        )
+    }
+
+    @Test
+    fun anAtvSongWithWidescreenArtStaysOnTheAllTab() {
+        val page = json(
+            """
+            { "contents": [
+              ${row("ATV00000001", "넓은 커버", "Song • 아티스트 • 3:00", 640, 360, "MUSIC_VIDEO_TYPE_ATV")}
+            ] }
+            """,
+        )
+
+        assertEquals(listOf("ATV00000001"), ids(InnertubeParser.parseSearchPage(page)))
+    }
+
+    @Test
+    fun anOfficialVideoWithSquareArtLeavesTheAllTab() {
+        val page = json(
+            """
+            { "contents": [
+              ${row("OMV00000001", "뮤직비디오", "Song • 아티스트 • 3:00", 400, 400, "MUSIC_VIDEO_TYPE_OMV")}
+            ] }
+            """,
+        )
+
+        assertEquals(emptyList(), ids(InnertubeParser.parseSearchPage(page)))
+        assertEquals(
+            listOf("OMV00000001"),
+            ids(InnertubeParser.parseSearchPage(page, includeVideos = true)),
         )
     }
 }

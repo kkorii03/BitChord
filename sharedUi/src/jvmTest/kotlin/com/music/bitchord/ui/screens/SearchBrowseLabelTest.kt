@@ -3,6 +3,7 @@ package com.music.bitchord.ui.screens
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.ko.ui.koBrowseFallbackLabel
+import com.music.bitchord.ko.ui.koSearchFilterLabel
 import com.music.bitchord.sharedui.resources.Res
 import com.music.bitchord.sharedui.resources.album
 import com.music.bitchord.sharedui.resources.albums
@@ -15,7 +16,6 @@ import com.music.bitchord.sharedui.resources.search_filter_episodes
 import com.music.bitchord.sharedui.resources.search_filter_videos
 import com.music.bitchord.sharedui.resources.song
 import com.music.bitchord.sharedui.resources.songs
-import org.jetbrains.compose.resources.StringResource
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -31,22 +31,12 @@ class SearchBrowseLabelTest {
 
     @Test
     fun `result tabs use localized labels instead of the enum's Korean text`() {
-        assertEquals(Res.string.search_filter_all, SearchFilter.ALL.filterTabLabel())
-        assertEquals(Res.string.songs, SearchFilter.SONGS.filterTabLabel())
-        assertEquals(Res.string.search_filter_videos, SearchFilter.VIDEOS.filterTabLabel())
-        assertEquals(Res.string.search_filter_episodes, SearchFilter.EPISODES.filterTabLabel())
-        assertEquals(Res.string.albums, SearchFilter.ALBUMS.filterTabLabel())
-        assertEquals(Res.string.artists, SearchFilter.ARTISTS.filterTabLabel())
-        assertEquals(Res.string.playlists, SearchFilter.PLAYLISTS.filterTabLabel())
+        assertEquals(Res.string.search_filter_all, SearchFilter.ALL.koSearchFilterLabel())
+        assertEquals(Res.string.songs, SearchFilter.SONGS.koSearchFilterLabel())
+        assertEquals(Res.string.search_filter_videos, SearchFilter.VIDEOS.koSearchFilterLabel())
+        assertEquals(Res.string.search_filter_episodes, SearchFilter.EPISODES.koSearchFilterLabel())
+        assertEquals(Res.string.albums, SearchFilter.ALBUMS.koSearchFilterLabel())
+        assertEquals(Res.string.artists, SearchFilter.ARTISTS.koSearchFilterLabel())
+        assertEquals(Res.string.playlists, SearchFilter.PLAYLISTS.koSearchFilterLabel())
     }
-}
-
-private fun SearchFilter.filterTabLabel(): StringResource = when (this) {
-    SearchFilter.ALL -> Res.string.search_filter_all
-    SearchFilter.SONGS -> Res.string.songs
-    SearchFilter.VIDEOS -> Res.string.search_filter_videos
-    SearchFilter.EPISODES -> Res.string.search_filter_episodes
-    SearchFilter.ALBUMS -> Res.string.albums
-    SearchFilter.ARTISTS -> Res.string.artists
-    SearchFilter.PLAYLISTS -> Res.string.playlists
 }
