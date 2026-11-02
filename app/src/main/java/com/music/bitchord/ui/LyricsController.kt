@@ -1,6 +1,6 @@
 package com.music.bitchord.ui
 
-import android.app.Application
+import android.content.Context
 import com.music.bitchord.data.TrackDiagnostics
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.cover.CoverTitles
@@ -67,7 +67,7 @@ internal typealias LyricsLookup = suspend (
  * state and delegates commands; the logic, logs and timing are unchanged.
  */
 class LyricsController(
-    private val app: Application,
+    private val app: Context,
     private val scope: CoroutineScope,
 ) {
 
@@ -1410,7 +1410,7 @@ class LyricsController(
         }
     }
 
-    private suspend fun aiAhead(context: Application, videoId: String, lines: List<LyricLine>) {
+    private suspend fun aiAhead(context: Context, videoId: String, lines: List<LyricLine>) {
         // Automatic only — the manual button calls [runAiTiming] directly and
         // still works while the phone saves power.
         if (!AppSettings.heavyWorkAllowed) return

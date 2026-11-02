@@ -1,6 +1,5 @@
 package com.music.bitchord.ui
 
-import android.app.Application
 import android.content.Context
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.lyrics.LyricLine
@@ -66,7 +65,7 @@ class LyricsControllerCoverAiTest {
         AppSettings.lyricsSourceOrder.value = listOf(LyricsSource.KUGOU)
         directory = Files.createTempDirectory("bitchord-cover-ai").toFile()
         storeField.set(LyricsTiming, null)
-        controller = LyricsController(Application(), scope)
+        controller = LyricsController(FakeContext.create(FakePreferences(), directory), scope)
     }
 
     @After
