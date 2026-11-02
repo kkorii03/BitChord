@@ -1,0 +1,26 @@
+﻿Task: add a word-level human-timed lyrics source so line times are accurate at the source. Kotlin Android app. Use grep. Follow AGENTS.md (ponytail). Design draft + assumptions first in your summary, then implement, test, self-review. You may use webfetch to read public docs/repos.
+
+Why: strict sync grading shows many songs fail because the lyrics file's own line times scatter +-0.2-0.3 s (mostly provider lrc.red); the whole-song correction cannot fix that. Human word-timed lyrics (Apple-Music-style TTML) are far more precise.
+
+Research first (keep it short, cite URLs in the summary): the AMLL TTML DB (github.com/Steve-xmh/amll-ttml-db or its current home) - how files are indexed (by Apple Music / NetEase / QQ / Spotify id), the raw file URL pattern, license/usage terms, and a free way to get the needed id from title + artist + duration (e.g. iTunes Search API for the Apple Music track id). If the DB is not usable without login/paid API or its license forbids this use, STOP and report instead of building.
+
+Build (only if usable):
+- A lyrics provider next to the existing ones (find the provider list/registry used by the lyrics fetcher; reuse its interfaces, HTTP client, caching and the Korean-fork hook style '// [KO]'). Parse TTML (begin/end per <p> line and per <span> word) into the app's LyricLine (and word timings if the app model has them; otherwise line times only).
+- Ranking: when this source has the song (same title/artist, duration within 3 s), prefer it over lrc.red/LRCLIB/KuGou etc.; otherwise current behavior unchanged. Respect the existing lyrics-mismatch / wrong-song guards (never accept another song's lyrics).
+- Network only when lyrics are requested (no polling), cache results like other providers, one lookup per song.
+- Log once per song: 'lyrics source ttml: hit|miss id=<id> lines=<n>'.
+Do not touch LyricsTiming / LyricsPerLine / sync measurement code (another task is changing them). Do not touch .github/.
+Tests (JVM): TTML parsing (lines, words, nested spans, background vocals if present), id lookup parsing from a saved JSON sample, ranking prefers TTML when durations match and not when they differ. List new test class names in the summary.
+Finish with a summary of at most 15 lines: research result with URLs / design / files / tests / open problems.
+
+ROUND 2 NOTE (Opus): fix every reviewer finding: extract ONE shared recording matcher used by both LrcRed and AmllTtml (no copied code - AGENTS.md); reject an iTunes hit with unknown duration when the song's duration is known; look the iTunes id up once per song (memoize across query variants). Keep the tests and add one per fix.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 3
+- MEDIUM `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/lyrics/AmllTtml.kt:75` — `best`, `coreOf`, `versionOf`, `artistsOf`, `normalized`, and both word sets are copied verbatim from `LrcRed.kt:119+`; the two match rules can now drift independently. Fix: extract one shared recording matcher and call it from both providers.
+- MEDIUM `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/lyrics/AmllTtml.kt:81` — `distance()` returns 0 when `trackTimeMillis` is null, so a known-length song accepts any same-title/artist hit without the required ±3 s check, risking another edit's lyrics. Fix: reject hits with unknown duration when `durationMs > 0`.
+- LOW `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/lyrics/AmllTtml.kt:41` — the title/artist key means `searchRounds` calls this source again for every query variant, violating “one lookup per song” and multiplying iTunes requests/log lines. Fix: memoize the iTunes id lookup per song/variant set.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
