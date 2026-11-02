@@ -36,10 +36,11 @@ class LyricsAiGuardTest {
     }
 
     @Test
-    fun koreanSongsSkipDeepgram() {
-        assertFalse(LyricsAiGuard.wantsDeepgram("사랑해", "아이유", listOf("사랑해 너를")))
-        assertFalse(LyricsAiGuard.wantsDeepgram("Loved", "아이유", listOf("I love you")))
-        assertFalse(LyricsAiGuard.wantsDeepgram("Loved", "IU", listOf("사랑해 너를 영원히")))
+    fun koreanSongsAskDeepgramToo() {
+        // whisper-large hears Korean singing; the refusal was nova-3's (11-02).
+        assertTrue(LyricsAiGuard.wantsDeepgram("사랑해", "아이유", listOf("사랑해 너를")))
+        assertTrue(LyricsAiGuard.wantsDeepgram("Loved", "아이유", listOf("I love you")))
+        assertTrue(LyricsAiGuard.wantsDeepgram("Loved", "IU", listOf("사랑해 너를 영원히")))
         assertTrue(LyricsAiGuard.wantsDeepgram("Loved", "IU", listOf("I love you forever")))
     }
 
