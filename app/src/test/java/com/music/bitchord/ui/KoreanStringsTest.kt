@@ -61,6 +61,14 @@ class KoreanStringsTest {
     }
 
     @Test
+    fun telegramSourceSignInWarningUsesHapnidaStyle() {
+        assertEquals(
+            "이 소스를 사용하려면 텔레그램에 로그인합니다.",
+            value("app", "telegram_source_login_required"),
+        )
+    }
+
+    @Test
     fun advancedSyncFooterUsesTheKoreanQualityTerm() {
         val subtitle = value("app", "sync_safety_hq_sync_subtitle").orEmpty()
         assertFalse(subtitle.contains("HQ"))

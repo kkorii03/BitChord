@@ -1483,7 +1483,7 @@
     <string name="telegram_chat_private">대화방</string>
     <string name="telegram_chat_other">채팅</string>
     <string name="telegram_source_setup_required">텔레그램 설정에서 앱 API 자격 증명을 입력합니다.</string>
-    <string name="telegram_source_login_required">이 소스를 사용하려면 텔레그램에 로그인하십시오.</string>
+    <string name="telegram_source_login_required">이 소스를 사용하려면 텔레그램에 로그인합니다.</string>
     <string name="telegram_source_no_chats">텔레그램 설정에서 검색할 채팅을 선택합니다.</string>
     <string name="telegram_source_connects_on_search">검색할 때 텔레그램에 연결합니다.</string>
     <string name="search_source_youtube" translatable="false">YouTube</string>
