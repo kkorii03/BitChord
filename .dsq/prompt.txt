@@ -1,0 +1,1098 @@
+﻿Kotlin Android app = upstream v1.9 + Korean fork (task/u19-tg). Use grep/Select-String, not rg. Apple Music KR style: 합니다체, noun labels, 보관함/플레이리스트, no 해요체.
+Below is what a robot saw tapping through the app on the user's phone tonight (vc131): each screen's visible texts, in order. The user says 1.9 is a mess: broken titles, odd Korean, English left untranslated, things that do nothing ('no screen change' lines = a tap that did nothing visible).
+Task: (1) list every problem you can see in these texts (raw upload titles, '( )', duplicated words, untranslated English UI strings, inconsistent wording vs Apple Music KR, truncated or garbled labels, taps that did nothing that should open something), each with the screen id; write the list to docs/phone-crawl-issues-1103.md. (2) Fix the ones that are plain string/label problems in values-ko strings (app/src/main/res/values-ko/strings.xml, sharedUi composeResources values-ko) or obvious UI text code, with a JVM test where a resource/key is involved. Do not touch .github/workflows. Leave data/title-cleaning logic alone (another lane owns it) but list those cases.
+Summary of at most 12 lines: counts by kind, files changed, REMOVED-LINES AUDIT, tests (names for CI), what you did not do. Follow AGENTS.md (ponytail) rules.
+
+=== CRAWL TEXTS ===
+## s001 5ebe69474e
+path: (start)
+- 계정 전환
+- 나를 위한 추천
+- One Direction의 신곡
+- Perfect - EP
+- EP • 2015년
+- One Direction 피처링
+- One Direction 외 비슷한 아티스트
+- 최근 재생한 항목
+- SOS (feat. Aloe Blacc)
+- Avicii
+- 더 보기
+- Blue Rock (cover)
+- 아카네 리제
+- The Weeknd
+- 내 분위기 찾기
+- 모두 보기
+- My Kink Is Karma
+- Chappell Roan
+- 재생
+- 다음
+- 홈
+- 둘러보기
+- 보관함
+- 검색
+
+## s002 7890da9cde
+path: One Direction의 신곡 Perfect - EP EP • 2015
+- Perfect - EP
+- One Direction
+- 앨범 · 2015
+- 재생
+- 셔플
+- 1
+- Perfect (Stripped)
+- 더 보기
+- 2
+- Home
+- 3
+- Perfect (Matoma Remix)
+- 4
+- Drag Me Down (Big Payno x AFTERHRS Remix) (feat. LunchMoney Lewis)
+- 2015년
+- 뒤로
+- 이 목록에서 검색
+- 노래 정렬
+- 보관함에 추가
+- My Kink Is Karma
+- Chappell Roan
+- 다음
+- 홈
+- 둘러보기
+- 보관함
+- 검색
+
+## s003 c0c2287b8c
+path: One Direction의 신곡 Perfect - EP EP • 2015 > One Direction
+- One Direction
+- 셔플
+- 재생
+- 구독
+- 앨범
+- Made In The A.M. (Deluxe Edition)
+- 최근 앨범
+- 보관함에 추가
+- 인기곡
+- Story of My Life
+- 더 보기
+- 뒤로
+- 공유
+- 계정 전환
+- My Kink Is Karma
+- Chappell Roan
+- 다음
+- 홈
+- 둘러보기
+- 보관함
+- 검색
+
+## s004 68bb08dc3d
+path: One Direction의 신곡 Perfect - EP EP • 2015 > One Direction > 셔플
+- One Direction
+- 셔플
+- 재생
+- 구독
+- 앨범
+- Made In The A.M. (Deluxe Edition)
+- 최근 앨범
+- 보관함에 추가
+- 인기곡
+- Story of My Life
+- 더 보기
+- 뒤로
+- 공유
+- 계정 전환
+- Youngblood
+- 5 Seconds of Summer
+- 일시 정지
+- 다음
+- 홈
+- 둘러보기
+- 보관함
+- 검색
+
+## s005 ffb19d8cc8
+path: One Direction의 신곡 Perfect - EP EP • 2015 > One Direction > 셔플 > 셔플
+- One Direction
+- 셔플
+- 재생
+- 구독
+- 앨범
+- Made In The A.M. (Deluxe Edition)
+- 최근 앨범
+- 보관함에 추가
+- 인기곡
+- Story of My Life
+- 더 보기
+- 뒤로
+- 공유
+- 계정 전환
+- Stole My Heart
+- 일시 정지
+- 다음
+- 홈
+- 둘러보기
+- 보관함
+- 검색
+
+## s006 835005c372
+path: One Direction의 신곡 Perfect - EP EP • 2015 > One Direction > 재생
+- One Direction
+- 셔플
+- 재생
+- 구독
+- 앨범
+- Made In The A.M. (Deluxe Edition)
+- 최근 앨범
+- 보관함에 추가
+- 인기곡
+- Story of My Life
+- 더 보기
+- 뒤로
+- 공유
+- 계정 전환
+- Night Changes
+- 일시 정지
+- 다음
+- 홈
+- 둘러보기
+- 보관함
+- 검색
+
+## s007 06dbbfe27b
+path: One Direction의 신곡 Perfect - EP EP • 2015 > One Direction > 재생 > 셔플
+- One Direction
+- 셔플
+- 재생
+- 구독
+- 앨범
+- Made In The A.M. (Deluxe Edition)
+- 최근 앨범
+- 보관함에 추가
+- 인기곡
+- Story of My Life
+- 더 보기
+- 뒤로
+- 공유
+- 계정 전환
+- A.M.
+- 일시 정지
+- 다음
+- 홈
+- 둘러보기
+- 보관함
+- 검색
+
+## s008 bac899c6ad
+path: One Direction의 신곡 Perfect - EP EP • 2015 > One Direction > One Direction > 셔플
+- One Direction
+- 셔플
+- 재생
+- 구독
+- 앨범
+- Made In The A.M. (Deluxe Edition)
+- 최근 앨범
+- 보관함에 추가
+- 인기곡
+- Story of My Life
+- 더 보기
+- 뒤로
+- 공유
+- 계정 전환
+- What a Feeling
+- 일시 정지
+- 다음
+- 홈
+- 둘러보기
+- 보관함
+- 검색
+
+## s009 0aeb6adfdf
+path: One Direction의 신곡 Perfect - EP EP • 2015 > One Direction > Story of My Life One Direction 더 보기
+- One Direction
+- 셔플
+- 재생
+- 구독
+- 앨범
+- Made In The A.M. (Deluxe Edition)
+- 최근 앨범
+- 보관함에 추가
+- 인기곡
+- Story of My Life
+- 더 보기
+- 뒤로
+- 공유
+- 계정 전환
+- 7 rings
+- Ariana Grande
+- 일시 정지
+- 다음
+- 홈
+- 둘러보기
+- 보관함
+- 검색
+
+## s010 785d488bf9
+path: One Direction의 신곡 Perfect - EP EP • 2015 > One Direction > 뒤로
+- Perfect - EP
+- One Direction
+- 앨범 · 2015
+- 재생
+- 셔플
+- 1
+- Perfect (Stripped)
+- 더 보기
+- 2
+- Home
+- 3
+- Perfect (Matoma Remix)
+- 4
+- Drag Me Down (Big Payno x AFTERHRS Remix) (feat. LunchMoney Lewis)
+- 2015년
+- 뒤로
+- 이 목록에서 검색
+- 노래 정렬
+- 보관함에 추가
+- Night Changes
+- 일시 정지
+- 다음
+- 홈
+- 둘러보기
+- 보관함
+- 검색
+
+## s011 2aaed78204
+path: One Direction의 신곡 Perfect - EP EP • 2015 > One Direction > 뒤로 > 재생
+- Perfect - EP
+- One Direction
+- 앨범 · 2015
+- 재생
+- 셔플
+- Perfect (Stripped)
+- 고해상도 무손실
+- 더 보기
+- 2
+- Home
+- 3
+- Perfect (Matoma Remix)
+- 4
+- Drag Me Down (Big Payno x AFTERHRS Remix) (feat. LunchMoney Lewis)
+- 2015년
+- 뒤로
+- 이 목록에서 검색
+- 노래 정렬
+- 보관함에 추가
+- 일시 정지
+- 다음
+- 홈
+- 둘러보기
+- 보관함
+- 검색
+
+## s012 f7816aedb2
+path: One Direction의 신곡 Perfect - EP EP • 2015 > One Direction > 뒤로 > 셔플
+- Perfect - EP
+- One Direction
+- 앨범 · 2015
+- 재생
+- 셔플
+- 1
+- Perfect (Stripped)
+- 더 보기
+- 2
+- Home
+- 3
+- Perfect (Matoma Remix)
+- Drag Me Down (Big Payno x AFTERHRS Remix) (feat. LunchMoney Lewis)
+- 2015년
+- 뒤로
+- 이 목록에서 검색
+- 노래 정렬
+- 보관함에 추가
+- 일시 정지
+- 다음
+- 홈
+- 둘러보기
+- 보관함
+- 검색
+
+## s013 523b97928e
+path: One Direction의 신곡 Perfect - EP EP • 2015 > One Direction > 뒤로 > 더 보기
+- Perfect (Stripped)
+- One Direction
+- 보관함에 추가
+- 플레이리스트에 추가
+- 다음 항목 재생
+- 나중에 재생
+- 공유
+- 앨범으로 이동
+- 아티스트로 이동
+- 좋아요
+- 이런 항목 덜 추천
+- 다운로드
+- 스테이션 시작
+
+## s014 5e2abde18b
+path: One Direction의 신곡 Perfect - EP EP • 2015 > One Direction > My Kink Is Karma Chappell Roan 재생 다음
+- Perfect (Stripped)
+- One Direction
+- 좋아요
+- 더 보기
+
+## s015 c24eb139cf
+path: One Direction의 신곡 Perfect - EP EP • 2015 > 재생
+- Perfect - EP
+- One Direction
+- 앨범 · 2015
+- 재생
+- 셔플
+- 1
+- Perfect (Stripped)
+- 더 보기
+- 2
+- Home
+- 3
+- Perfect (Matoma Remix)
+- 4
+- Drag Me Down (Big Payno x AFTERHRS Remix) (feat. LunchMoney Lewis)
+- 2015년
+- 뒤로
+- 이 목록에서 검색
+- 노래 정렬
+- 보관함에 추가
+- Golden
+- HUNTR/X, EJAE, AUDREY NUNA 및 REI AMI
+- 일시 정지
+- 다음
+- 홈
+- 둘러보기
+- 보관함
+- 검색
+
+## s016 fa47bfffe4
+path: One Direction의 신곡 Perfect - EP EP • 2015 > 재생 > One Direction
+- One Direction
+- 셔플
+- 재생
+- 구독
+- 앨범
+- Made In The A.M. (Deluxe Edition)
+- 최근 앨범
+- 보관함에 추가
+- 인기곡
+- Story of My Life
+- 더 보기
+- 뒤로
+- 공유
+- 계정 전환
+- Golden
+- HUNTR/X, EJAE, AUDREY NUNA 및 REI AMI
+- 일시 정지
+- 다음
+- 홈
+- 둘러보기
+- 보관함
+- 검색
+
+## s017 ede024740d
+path: One Direction의 신곡 Perfect - EP EP • 2015 > 재생 > One Direction > 셔플
+- One Direction
+- 셔플
+- 재생
+- 구독
+- 앨범
+- Made In The A.M. (Deluxe Edition)
+- 최근 앨범
+- 보관함에 추가
+- 인기곡
+- Story of My Life
+- 더 보기
+- 뒤로
+- 공유
+- 계정 전환
+- Does He Know?
+- 일시 정지
+- 다음
+- 홈
+- 둘러보기
+- 보관함
+- 검색
+
+## s018 4397787980
+path: One Direction의 신곡 Perfect - EP EP • 2015 > 재생 > 재생 > One Direction
+- One Direction
+- 셔플
+- 재생
+- 구독
+- 앨범
+- Made In The A.M. (Deluxe Edition)
+- 최근 앨범
+- 보관함에 추가
+- 인기곡
+- Story of My Life
+- 더 보기
+- 뒤로
+- 공유
+- 계정 전환
+- Perfect (Stripped)
+- 일시 정지
+- 다음
+- 홈
+- 둘러보기
+- 보관함
+- 검색
+  . '재생' on 2aaed78204: no screen change
+  . '셔플' on 2aaed78204: no screen change
+  . 'Perfect (Stripped) 고해상도 무손실 더 보기' on 2aaed78204: no screen change
+
+## s019 b1755516bb
+path: One Direction의 신곡 Perfect - EP EP • 2015 > 재생 > 재생 > 더 보기
+- Perfect (Stripped)
+- One Direction
+- 보관함에 추가
+- 플레이리스트에 추가
+- 다음 항목 재생
+- 나중에 재생
+- 공유
+- 앨범으로 이동
+- 아티스트로 이동
+- 좋아요
+- 이런 항목 덜 추천
+- 다운로드
+- 오프라인 임시 저장에서 삭제
+  . '3 Perfect (Matoma Remix) 더 보기' on 2aaed78204: no screen change
+  . '4 Drag Me Down (Big Payno x AFTERHRS Rem' on 2aaed78204: no screen change
+
+## s020 3b41415edb
+path: One Direction의 신곡 Perfect - EP EP • 2015 > 재생 > 재생 > 뒤로
+- 계정 전환
+- 나를 위한 추천
+- One Direction의 신곡
+- Perfect - EP
+- EP • 2015년
+- One Direction 피처링
+- One Direction 외 비슷한 아티스트
+- 최근 재생한 항목
+- Perfect (Stripped)
+- One Direction
+- 더 보기
+- Does He Know?
+- HUNTR/X, EJAE, AUDREY NUNA 및 REI AMI
+- 내 분위기 찾기
+- 모두 보기
+- 일시 정지
+- 다음
+- 홈
+- 둘러보기
+- 보관함
+- 검색
+
+## s021 c52c87aba8
+path: One Direction의 신곡 Perfect - EP EP • 2015 > 재생 > 재생 > 이 목록에서 검색
+- Perfect - EP
+- One Direction
+- 앨범 · 2015
+- 재생
+- 셔플
+- 검색 닫기
+- Perfect (Stripped)
+- 고해상도 무손실
+- 더 보기
+- 2
+- Home
+- 3
+- Perfect (Matoma Remix)
+- 4
+- Drag Me Down (Big Payno x AFTERHRS Remix) (feat. LunchMoney Lewis)
+- 2015년
+- 4곡, 14분
+- 뒤로
+- 노래 정렬
+- 보관함에 추가
+- 일시 정지
+- 다음
+- 홈
+- 둘러보기
+- 보관함
+- 검색
+
+## s022 f52e96c146
+path: One Direction의 신곡 Perfect - EP EP • 2015 > 셔플
+- Perfect - EP
+- One Direction
+- 앨범 · 2015
+- 재생
+- 셔플
+- 1
+- Perfect (Stripped)
+- 더 보기
+- Home
+- 3
+- Perfect (Matoma Remix)
+- 4
+- Drag Me Down (Big Payno x AFTERHRS Remix) (feat. LunchMoney Lewis)
+- 2015년
+- 뒤로
+- 이 목록에서 검색
+- 노래 정렬
+- 보관함에 추가
+- 일시 정지
+- 다음
+- 홈
+- 둘러보기
+- 보관함
+- 검색
+
+## s023 8dc43671a5
+path: One Direction의 신곡 Perfect - EP EP • 2015 > 셔플 > One Direction
+- One Direction
+- 셔플
+- 재생
+- 구독
+- 앨범
+- Made In The A.M. (Deluxe Edition)
+- 최근 앨범
+- 보관함에 추가
+- 인기곡
+- Story of My Life
+- 더 보기
+- 뒤로
+- 공유
+- 계정 전환
+- Home
+- 일시 정지
+- 다음
+- 홈
+- 둘러보기
+- 보관함
+- 검색
+
+## s024 e78980d771
+path: One Direction의 신곡 Perfect - EP EP • 2015 > 셔플 > One Direction > 셔플
+- One Direction
+- 셔플
+- 재생
+- 구독
+- 앨범
+- Made In The A.M. (Deluxe Edition)
+- 최근 앨범
+- 보관함에 추가
+- 인기곡
+- Story of My Life
+- 더 보기
+- 뒤로
+- 공유
+- 계정 전환
+- Gotta Be You (Steve Smart & Westfunk Remix)
+- 다음
+- 홈
+- 둘러보기
+- 보관함
+- 검색
+
+## s025 3a9e848cc4
+path: One Direction의 신곡 Perfect - EP EP • 2015 > 셔플 > 재생 > 노래 정렬
+- 추가한 날짜
+- 기본 순서
+- 제목(A–Z, 가–하)
+- 제목(Z–A, 하–가)
+
+## s026 5f2d0786f5
+path: One Direction의 신곡 Perfect - EP EP • 2015 > 셔플 > 재생 > 일시 정지
+- Perfect - EP
+- One Direction
+- 앨범 · 2015
+- 재생
+- 셔플
+- 1
+- Perfect (Stripped)
+- 더 보기
+- 2
+- Home
+- 3
+- Perfect (Matoma Remix)
+- 4
+- Drag Me Down (Big Payno x AFTERHRS Remix) (feat. LunchMoney Lewis)
+- 2015년
+- 뒤로
+- 이 목록에서 검색
+- 노래 정렬
+- 보관함에 추가
+- 벼랑위의 포뇨 ost (cover)
+- 오화요
+- 다음
+- 홈
+- 둘러보기
+- 보관함
+- 검색
+
+## s027 753d930f8a
+path: One Direction의 신곡 Perfect - EP EP • 2015 > 셔플 > 재생 > 홈 홈
+- 계정 전환
+- 나를 위한 추천
+- One Direction의 신곡
+- Perfect - EP
+- EP • 2015년
+- One Direction 피처링
+- One Direction 외 비슷한 아티스트
+- 최근 재생한 항목
+- Perfect (Stripped)
+- One Direction
+- 더 보기
+- Drag Me Down (Big Payno x AFTERHRS Remix) (feat. LunchMoney Lewis)
+- 내 분위기 찾기
+- 모두 보기
+- 일시 정지
+- 다음
+- 홈
+- 둘러보기
+- 보관함
+- 검색
+
+## s028 c8191a5c6c
+path: One Direction의 신곡 Perfect - EP EP • 2015 > 셔플 > 재생 > 둘러보기 둘러보기
+- 둘러보기
+- 게임
+- 사랑 노래
+- 슬픔
+- 에너지 충전
+- 운동할 때
+- 잠잘 때
+- 출퇴근 & 등하교
+- 편안한 분위기
+- 파티
+- 가족
+- 계정 전환
+- Perfect (Stripped)
+- One Direction
+- 일시 정지
+- 다음
+- 홈
+- 보관함
+- 검색
+
+## s029 4e93615de9
+path: One Direction의 신곡 Perfect - EP EP • 2015 > 셔플 > 재생 > 보관함 보관함
+- 보관함
+- 나의 청취 기록
+- 4,435
+- 청취 시간(분)
+- 장재훈
+- 1,237회 재생 · 2026
+- 가입일
+- 10/26
+- Dance Monkey
+- 인기곡
+- Tones And I · 21회 재생
+- 다운로드
+- 이 기기의 음악
+- 오프라인 임시 저장
+- Spotify
+- 자주 들은 노래
+- 반복 재생 중
+- 다시 듣기
+- 좋아요 표시했지만 덜 들은 노래
+- 이 기기
+- 모두 보기
+- 청취 기록
+- 계정 전환
+- Perfect (Stripped)
+- One Direction
+- 일시 정지
+- 다음
+- 홈
+- 둘러보기
+- 검색
+
+## s030 acb5be2f01
+path: One Direction의 신곡 Perfect - EP EP • 2015 > 셔플 > 재생 > 검색
+- YouTube
+- 보관함
+- 애드온
+- 최근 검색
+- 지우기
+- 시인의 마을
+- 정태춘,박은옥
+- 최근 검색에서 ‘시인의 마을’ 제거
+- 영시의 사랑
+- Various Artists
+- 최근 검색에서 ‘영시의 사랑’ 제거
+- 바나나차차 (BANANA CHACHA)
+- 뽀로로 (Pororo the Little Penguin)
+- 최근 검색에서 ‘바나나차차 (BANANA CHACHA)’ 제거
+- Creep
+- Radiohead
+- 최근 검색에서 ‘Creep’ 제거
+- Unholy
+- Sam Smith, Kim Petras
+- 최근 검색에서 ‘Unholy’ 제거
+- Golden Boy
+- Harpazz
+- 최근 검색에서 ‘Golden Boy’ 제거
+- Cruel Summer
+- Taylor Swift
+- 최근 검색에서 ‘Cruel Summer’ 제거
+- Flowers
+- Miley Cyrus
+- 최근 검색에서 ‘Flowers’ 제거
+- 플레이리스트 · Original Soundtrack
+- Viva La Vida
+- Coldplay
+- 최근 검색에서 ‘Viva La Vida’ 제거
+- 검색
+- 계정 전환
+- Perfect (Stripped)
+- One Direction
+- 일시 정지
+- 다음
+- 홈
+- 둘러보기
+
+## s031 0a180f4f01
+path: One Direction의 신곡 Perfect - EP EP • 2015 > 셔플 > 1 Perfect (Stripped) 더 보기
+- Perfect - EP
+- One Direction
+- 앨범 · 2015
+- 재생
+- 셔플
+- 1
+- Perfect (Stripped)
+- 더 보기
+- 2
+- Home
+- Perfect (Matoma Remix)
+- 4
+- Drag Me Down (Big Payno x AFTERHRS Remix) (feat. LunchMoney Lewis)
+- 2015년
+- 뒤로
+- 이 목록에서 검색
+- 노래 정렬
+- 보관함에 추가
+- 일시 정지
+- 다음
+- 홈
+- 둘러보기
+- 보관함
+- 검색
+
+## s032 d65f5de3c2
+path: One Direction의 신곡 Perfect - EP EP • 2015 > 셔플 > 1 Perfect (Stripped) 더 보기 > One Direction
+- One Direction
+- 셔플
+- 재생
+- 구독
+- 앨범
+- Made In The A.M. (Deluxe Edition)
+- 최근 앨범
+- 보관함에 추가
+- 인기곡
+- Story of My Life
+- 더 보기
+- 뒤로
+- 공유
+- 계정 전환
+- Perfect (Matoma Remix)
+- 일시 정지
+- 다음
+- 홈
+- 둘러보기
+- 보관함
+- 검색
+
+## s033 aab8b06bfb
+path: One Direction의 신곡 Perfect - EP EP • 2015 > 셔플 > 더 보기 > One Direction
+- One Direction
+- 셔플
+- 재생
+- 구독
+- 앨범
+- Made In The A.M. (Deluxe Edition)
+- 최근 앨범
+- 보관함에 추가
+- 인기곡
+- Story of My Life
+- 더 보기
+- 뒤로
+- 공유
+- 계정 전환
+- Drag Me Down (Big Payno x AFTERHRS Remix) (feat. LunchMoney Lewis)
+- 일시 정지
+- 다음
+- 홈
+- 둘러보기
+- 보관함
+- 검색
+
+## s034 fbc4220184
+path: One Direction의 신곡 Perfect - EP EP • 2015 > 셔플 > 더 보기 > 셔플
+- Perfect (Stripped)
+- One Direction
+- 보관함에서 삭제
+- 플레이리스트에 추가
+- 다음 항목 재생
+- 나중에 재생
+- 공유
+- 앨범으로 이동
+- 아티스트로 이동
+- 좋아요 표시한 음악에서 제거
+- 이런 항목 덜 추천
+- 다운로드 폴더에 저장됨
+- 삭제
+
+## s035 936bd53d33
+path: One Direction의 신곡 Perfect - EP EP • 2015 > 셔플 > Home 더 보기
+- Perfect - EP
+- One Direction
+- 앨범 · 2015
+- 재생
+- 셔플
+- Perfect (Stripped)
+- 고해상도 무손실
+- 다운로드됨
+- 더 보기
+- 2
+- Home
+- 3
+- Perfect (Matoma Remix)
+- 4
+- Drag Me Down (Big Payno x AFTERHRS Remix) (feat. LunchMoney Lewis)
+- 2015년
+- 뒤로
+- 이 목록에서 검색
+- 노래 정렬
+- 보관함에 추가
+- 다운로드 완료
+- 일시 정지
+- 다음
+- 홈
+- 둘러보기
+- 보관함
+- 검색
+  . 'One Direction' on 936bd53d33: no screen change
+
+## s036 2be5a38fc9
+path: One Direction의 신곡 Perfect - EP EP • 2015 > 셔플 > Home 더 보기 > 재생
+- 3 페이지 중 1 페이지입니다.
+- StickerView
+- 헬스
+- 배터리 상태(원형)
+- 88
+- 지금 재생 중 4×1
+- 앨범 아트워크
+- ファンサ - Fansa (cover) - 오화요
+- 좋아요
+- 이전
+- 일시 정지
+- 다음
+- 셔플 켬
+- 전화
+- 브라우저
+- 메시지
+- 카메라
+
+## s037 f8a8e9b842
+path: One Direction의 신곡 Perfect - EP EP • 2015 > 셔플 > 3 Perfect (Matoma Remix) 더 보기
+- Perfect - EP
+- One Direction
+- 앨범 · 2015
+- 재생
+- 셔플
+- 1
+- Perfect (Stripped)
+- 다운로드됨
+- 더 보기
+- 2
+- Home
+- Perfect (Matoma Remix)
+- 4
+- Drag Me Down (Big Payno x AFTERHRS Remix) (feat. LunchMoney Lewis)
+- 2015년
+- 뒤로
+- 이 목록에서 검색
+- 노래 정렬
+- 보관함에 추가
+- 일시 정지
+- 다음
+- 홈
+- 둘러보기
+- 보관함
+- 검색
+
+## s038 aa084f0ddd
+path: One Direction의 신곡 Perfect - EP EP • 2015 > 셔플 > 3 Perfect (Matoma Remix) 더 보기 > 재생
+- Perfect - EP
+- One Direction
+- 앨범 · 2015
+- 재생
+- 셔플
+- 지금 재생 중
+- Perfect (Stripped)
+- 다운로드됨
+- 더 보기
+- 2
+- Home
+- 3
+- Perfect (Matoma Remix)
+- 4
+- Drag Me Down (Big Payno x AFTERHRS Remix) (feat. LunchMoney Lewis)
+- 2015년
+- 뒤로
+- 이 목록에서 검색
+- 노래 정렬
+- 보관함에 추가
+- 다음
+- 홈
+- 둘러보기
+- 보관함
+- 검색
+
+## s039 7fa262c4c7
+path: One Direction의 신곡 Perfect - EP EP • 2015 > 셔플 > 4 Drag Me Down (Big Payno x AFTERHRS Rem
+- Perfect - EP
+- One Direction
+- 앨범 · 2015
+- 재생
+- 셔플
+- Perfect (Stripped)
+- 다운로드됨
+- 더 보기
+- 2
+- Home
+- 3
+- Perfect (Matoma Remix)
+- 4
+- Drag Me Down (Big Payno x AFTERHRS Remix) (feat. LunchMoney Lewis)
+- 2015년
+- 뒤로
+- 이 목록에서 검색
+- 노래 정렬
+- 보관함에 추가
+- 일시 정지
+- 다음
+- 홈
+- 둘러보기
+- 보관함
+- 검색
+
+## s040 236215e3c0
+path: One Direction의 신곡 Perfect - EP EP • 2015 > 셔플 > 뒤로
+- 계정 전환
+- 나를 위한 추천
+- One Direction의 신곡
+- Perfect - EP
+- EP • 2015년
+- One Direction 피처링
+- One Direction 외 비슷한 아티스트
+- 최근 재생한 항목
+- Home
+- One Direction
+- 더 보기
+- ii (cover)
+- 오화요
+- 내 분위기 찾기
+- 모두 보기
+- 일시 정지
+- 다음
+- 홈
+- 둘러보기
+- 보관함
+- 검색
+
+## s041 40c817ae6e
+path: One Direction의 신곡 Perfect - EP EP • 2015 > 셔플 > 뒤로 > One Direction의 신곡 Perfect - EP EP • 2015
+- Perfect - EP
+- One Direction
+- 앨범 · 2015
+- 재생
+- 셔플
+- 1
+- Perfect (Stripped)
+- 다운로드됨
+- 더 보기
+- Home
+- 3
+- Perfect (Matoma Remix)
+- 4
+- Drag Me Down (Big Payno x AFTERHRS Remix) (feat. LunchMoney Lewis)
+- 2015년
+- 뒤로
+- 이 목록에서 검색
+- 노래 정렬
+- 보관함에 추가
+- 일시 정지
+- 다음
+- 홈
+- 둘러보기
+- 보관함
+- 검색
+
+## s042 e2d83af4e8
+path: One Direction의 신곡 Perfect - EP EP • 2015 > 셔플 > 뒤로 > One Direction 피처링 One Direction 외 비슷한 아티
+- 계정 전환
+- 나를 위한 추천
+- One Direction의 신곡
+- Perfect - EP
+- EP • 2015년
+- One Direction 피처링
+- One Direction 외 비슷한 아티스트
+- 최근 재생한 항목
+- Home
+- One Direction
+- 더 보기
+- ii (cover)
+- 오화요
+- 내 분위기 찾기
+- 모두 보기
+- What Makes You Beautiful
+- 다음
+- 홈
+- 둘러보기
+- 보관함
+- 검색
+
+## s043 3a124b040c
+path: One Direction의 신곡 Perfect - EP EP • 2015 > 셔플 > 뒤로 > Home One Direction 더 보기
+- 계정 전환
+- 나를 위한 추천
+- One Direction의 신곡
+- Perfect - EP
+- EP • 2015년
+- One Direction 피처링
+- One Direction 외 비슷한 아티스트
+- 최근 재생한 항목
+- Home
+- One Direction
+- 더 보기
+- What Makes You Beautiful
+- 오화요
+- 내 분위기 찾기
+- 모두 보기
+- 일시 정지
+- 다음
+- 홈
+- 둘러보기
+- 보관함
+- 검색
+
+## s044 f70c51670d
+path: One Direction의 신곡 Perfect - EP EP • 2015 > 셔플 > 뒤로 > 더 보기
+- Perfect (Stripped)
+- One Direction
+- 보관함에서 삭제
+- 플레이리스트에 추가
+- 다음 항목 재생
+- 나중에 재생
+- 공유
+- 앨범으로 이동
+- 아티스트로 이동
+- 좋아요 표시한 음악에서 제거
+- 이런 항목 덜 추천
+- 다운로드
+- 오프라인 임시 저장에서 삭제
+
+
+== 3 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 1
+- MEDIUM `app/src/main/java/com/music/bitchord/ui/replay/ReplayModel.kt:411` and `ReplayPoster.kt:434` — appending `minutes_grouped_short` affects every locale, but only `values-ko` removed the unit from `minutes_listened`, so e.g. Japanese `再生時間（分）` now renders next to `1,237分` (and Chinese labels already say 分鐘), duplicating the unit the summary says it did not touch. Apply the suffix only where the localized label omits the unit, or update all locale labels, and assert the rendered Korean value in the test.
+Skipped runtime render check; risk is duplicated units in non-Korean Replay cards/poster.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
