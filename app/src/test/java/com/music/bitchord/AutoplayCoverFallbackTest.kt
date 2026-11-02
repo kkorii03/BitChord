@@ -4,8 +4,10 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.ko.coverSeedFallback
 import com.music.bitchord.ko.coverSeedOriginal
+import com.music.bitchord.ko.loadAutoplayTracks
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -44,6 +46,15 @@ class AutoplayCoverFallbackTest {
         coverOriginalArtist = "아이유",
     )
 
+    private val musicCover = Song(
+        videoId = "cover-video",
+        title = "밤편지",
+        artist = "싱어",
+        thumbnailUrl = null,
+        originalTitle = "밤편지 - 싱어",
+        originalArtist = "싱어",
+    )
+
     private fun <T> withPlainAutoplay(block: () -> T): T {
         val personalised = AppSettings.personalisedAutoplay.value
         val musicOnly = AppSettings.preferMusicOnly.value
@@ -54,6 +65,42 @@ class AutoplayCoverFallbackTest {
         } finally {
             AppSettings.personalisedAutoplay.value = personalised
             AppSettings.preferMusicOnly.value = musicOnly
+        }
+    }
+
+    private fun loadCover(
+        videoRadio: Boolean,
+        inParty: Boolean,
+        seedSong: Song = cover,
+        seedFor: suspend (Song) -> String? = { "original-id" },
+        radio: suspend (String, Boolean) -> Result<List<Song>>,
+    ): List<Song> {
+        val personalised = AppSettings.personalisedAutoplay.value
+        val musicOnly = AppSettings.preferMusicOnly.value
+        val video = AppSettings.videoRadio.value
+        val metered = AppSettings.meteredConnection.value
+        AppSettings.personalisedAutoplay.value = false
+        AppSettings.preferMusicOnly.value = false
+        AppSettings.videoRadio.value = videoRadio
+        AppSettings.meteredConnection.value = false
+        return try {
+            runBlocking {
+                loadAutoplayTracks(
+                    existing = listOf(seedSong),
+                    seedSong = seedSong,
+                    limit = 10,
+                    sessionSong = null,
+                    sessionIds = emptySet(),
+                    radio = radio,
+                    inParty = inParty,
+                    seedFor = seedFor,
+                )
+            }.getOrThrow()
+        } finally {
+            AppSettings.personalisedAutoplay.value = personalised
+            AppSettings.preferMusicOnly.value = musicOnly
+            AppSettings.videoRadio.value = video
+            AppSettings.meteredConnection.value = metered
         }
     }
 
@@ -75,6 +122,7 @@ class AutoplayCoverFallbackTest {
                 coverSeedFallback(
                     existing = listOf(cover),
                     seedSong = cover,
+                    videoSeed = cover.videoId,
                     limit = 10,
                     sessionSong = null,
                     sessionIds = emptySet(),
@@ -108,6 +156,7 @@ class AutoplayCoverFallbackTest {
                 coverSeedFallback(
                     existing = listOf(cover),
                     seedSong = cover,
+                    videoSeed = cover.videoId,
                     limit = 10,
                     sessionSong = null,
                     sessionIds = emptySet(),
@@ -127,5 +176,62 @@ class AutoplayCoverFallbackTest {
         assertEquals(listOf("original-id:false", "cover-video:true"), asked)
         assertEquals(listOf("v1", "v2", "v3"), rows.map { it.videoId })
         assertTrue(rows.all { it.videoRadio })
+    }
+
+    @Test
+    fun `the video mix is not asked when the video radio setting is off`() {
+        val asked = mutableListOf<String>()
+        val rows = loadCover(
+            videoRadio = false,
+            inParty = false,
+            radio = { id, preferVideo ->
+                asked += "$id:$preferVideo"
+                Result.success(emptyList())
+            },
+        )
+
+        assertTrue(rows.isEmpty())
+        assertFalse(asked.any { it.endsWith(":true") })
+    }
+
+    @Test
+    fun `the video mix is not asked in a party`() {
+        val asked = mutableListOf<String>()
+        val rows = loadCover(
+            videoRadio = true,
+            inParty = true,
+            radio = { id, preferVideo ->
+                asked += "$id:$preferVideo"
+                Result.success(emptyList())
+            },
+        )
+
+        assertTrue(rows.isEmpty())
+        assertFalse(asked.any { it.endsWith(":true") })
+    }
+
+    @Test
+    fun `a cover seed asks the resolved seed for the video mix, not its own id`() {
+        val videoRows = listOf(
+            song("v1", "첫 곡 (Cover)", "가수 A", isVideo = true, duration = "3:20"),
+        )
+        val asked = mutableListOf<String>()
+        val rows = loadCover(
+            videoRadio = true,
+            inParty = false,
+            seedSong = musicCover,
+            seedFor = { if (it.videoId == musicCover.videoId) "resolved-seed" else null },
+            radio = { id, preferVideo ->
+                asked += "$id:$preferVideo"
+                if (id == "resolved-seed" && preferVideo) {
+                    Result.success(videoRows)
+                } else {
+                    Result.success(emptyList())
+                }
+            },
+        )
+
+        assertTrue(asked.contains("resolved-seed:true"))
+        assertEquals(listOf("v1"), rows.map { it.videoId })
     }
 }
