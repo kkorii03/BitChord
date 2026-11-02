@@ -1,0 +1,29 @@
+﻿Goal: the app must not run out of memory in long listening sessions. Emulator heap limit is 192 MB; two runs hit OutOfMemoryError after ~25-50 minutes (11-02).
+
+Evidence: heap dump at the end of a 50-minute run (131 MB live), largest owners:
+- 18.75 MB char[] String held by com.music.bitchord.ko.KoLyricsTranslation askGemini continuation (L$0), plus 7.03 MB byte[] in KoLyricsTranslation transcribeVideo (L$1): the Gemini audio transcription builds the whole audio as one base64 String (and keeps the WAV) in memory = ~26 MB per call.
+- 2 x 7.48 MB Strings in com.metrolist.innertubex.cipher.EjsChallengeSolver preprocessed cache, plus 3 x 2.67 MB player code Strings (YouTubeCipherService CachedSolver.playerCode / playerCode cache, a ktor SavedHttpResponse body): ~23 MB of cipher caches for more than one player version.
+- 8.26 MB + 2.88 MB VideoAudio SongAudio.bytes in VideoAudio.recent / recentSongs LRU caches.
+- 2 x 2.67 MB io.ktor SavedHttpResponse bodies still referenced.
+
+Do (root cause first, failing tests first where possible):
+1. Gemini audio requests: never hold the audio twice. Stream the base64 encoding straight into the request body (OkHttp/ktor streaming body, or android.util.Base64OutputStream / java.util.Base64.getEncoder().wrap(...)), release the WAV once sent, and make sure the continuation does not keep the encoded String. Check every caller of the transcription/askGemini path (KoLyricsTranslation, LyricsTranslation.placeLinesInVideo).
+2. Cipher caches: keep only the newest player version (one preprocessed solver + one player code), and drop the ktor saved response once its body is read. Find where these caches live (innertubex module in this repo) and bound them; do not change cipher behaviour.
+3. VideoAudio recent caches: bound them by total bytes (e.g. 8 MB total across both), evicting oldest.
+4. JVM tests for each bound (cache sizes, streaming encoder produces the same body as the old String path for a small input). Name test classes in the summary (Opus adds them to CI).
+
+Rules: battery first (no polling/timers), read every caller and type of what you change, keep all existing guards unless justified; REMOVED-LINES AUDIT required. Do not touch .github/workflows/, keys/, signing. grep/Select-String only (no rg). Unknown OkHttp/ktor/Android API -> context7. AGENTS.md (ponytail) rules apply.
+At the end, summary within 10 lines: files changed / MB saved per item (estimate) / test result / open problems.
+
+OPUS DECISION FOR ROUND 2 (overrides item 2): remove the reflection-based trimming of InnerTubeX in-memory caches (CachedSolver/CachedZemerSolver/playerCode) entirely - it skips the library's own dispose() and can leak native QuickJS/Zemer engines; a third-party artifact's internals are not ours to edit. Keep only the on-disk player-file trim if it uses no reflection. Do not attempt the ktor SavedHttpResponse release (it lives inside that artifact). Fix the VideoAudio ByteLru: a single value larger than maxBytes must not flush the cache (do not cache it, return early). Keep the Gemini streaming change.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 3
+HIGH — `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/InnerTubeXResolver.kt:631`: `trimToNewest` removes `CachedSolver`/`CachedZemerSolver` entries directly, skipping the `QuickJsEngine.dispose()` / `ZemerCipherSolver.dispose()` the artifact's own eviction path performs, leaking native QuickJS memory on every player-version rotation. Fix: dispose the evicted solvers (or drive the artifact's real eviction/dispose path) instead of raw map removal.
+MEDIUM — `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/InnerTubeXResolver.kt:609`: Requirement 2's "drop the ktor SavedHttpResponse once its body is read" is not implemented anywhere (the summary admits it), so those ~2.67 MB response bodies can still remain retained. Fix: release/close the saved response where it is read, or bound the structure that holds it.
+MEDIUM — `app/src/main/java/com/music/bitchord/playback/smart/VideoAudio.kt:502`: inserting a value larger than `maxBytes` first evicts every existing entry and then itself, so a normal >8 MB clip (a 7-minute WAV is ~13.4 MB) flushes the whole cache. Fix: return early from `put` when `sizeOf(value) > maxBytes` so existing cached clips survive, and add that case to `VideoAudioByteLruTest`.
+Skipped: full test-suite rerun (I used the committed proof/log and source inspection); risk: the native-dispose leak only manifests after a player-version rotation, so the short JVM tests cannot catch it.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
