@@ -1,0 +1,20 @@
+Task: per-line lyrics timing correction from words the app already heard. Kotlin Android app, package app/src/main/java/com/music/bitchord. Use grep / Select-String, not rg (not installed). Design draft first (in the summary), then implement, test, self-review.
+
+Why: strict sync grading shows the whole-song map (base -> hq -> refine -> hand in LyricsTiming.apply, LyricsTiming.kt ~455-477) is usually right (median ~0 s) but single lines are off: 4 of 16 songs fail only because 1-2 lines are 1-14 s wrong, 5 songs because lines scatter +-0.2-0.3 s around a correct median (lyrics file line times are imprecise, mostly lrc.red). Today heard words (Deepgram whisper word timestamps, stored as heardWords / refineHeardWords in LyricsTiming.Store) go through LyricsWordAlign.placeLines + TimingFit.fit / RefinePolicy.compute into ONE whole-song map; the word<->line pairs are discarded.
+
+Build: a per-line residual layer applied after refine and before the hand adjustment, computed at display/timing time from the stored heard words (not stored separately, memoized per timing change; no timers, no polling - battery first).
+Core numbers (use these, tune only with a reason in the summary):
+- Anchor line = at least 2 heard words matched to that line in order (reuse LyricsWordAlign matching, monotonic). Residual r = heard time of the line's first matched word (minus its offset inside the line if known) - line time after base/hq/refine. Per-word residual spread (MAD) must be <= 120 ms or the line is not an anchor.
+- Apply r only if |r| >= 40 ms. Cap |r| <= 4000 ms when >= 3 words matched, else <= 600 ms.
+- Lines between two anchors: linear interpolation of r by time only if the anchors are <= 30 s apart and their residuals differ by < 400 ms; otherwise hold the nearest anchor's r within 8 s; else 0.
+- Outside the heard time range (+-8 s) r = 0.
+- Never reorder lines: clamp so each line start >= previous line start + 50 ms.
+- Only use words heard on the same audio as is playing now: if the words' audio identity (existing audioSourceKey / refineHeardKey, '#alt' substitute vs YouTube) does not match the current rendition, skip the layer (clock tags come in a later task - leave a TODO naming it).
+- Respect existing kill switches / SyncSafetyPolicy style: add a switch defaulting ON, reuse the existing settings pattern in ko/KoAppSettings.kt.
+Make all three consumers use it through LyricsTiming.apply (lyrics screen, notification/lockscreen in PlaybackService, NextTrackPreparation) - do not duplicate logic. Heard-word sweep display (timing() ~281-294) must stay consistent.
+Diagnostics: log one line per song 'sync perline: anchors=N applied=M maxAbsMs=X' when the layer is computed (once, not per frame).
+
+Tests (JVM unit tests, new class e.g. LyricsPerLineTest): constant scatter fixed; single 10 s outlier line fixed when 3 words match; 2-word outlier capped at 600 ms; no reorder; outside heard range untouched; mismatched audio skips; empty words = identity. Add the new test class to the test list in .github/workflows/ko-wip-check.yml is NOT allowed for you - instead list the test class name in your summary so Opus adds it.
+
+Rules: battery first (event based). Re-read every caller and type of every function you change. When you remove an existing comment or design intent, give the reason in the summary. Do not touch .github/, keys/, signing, upstream behavior unrelated to lyrics timing.
+Finish with a summary of at most 15 lines: design draft + key assumptions / files changed / tests and result / open problems.
