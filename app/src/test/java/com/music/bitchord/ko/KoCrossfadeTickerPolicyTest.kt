@@ -1,13 +1,14 @@
 package com.music.bitchord.ko
 
 import com.music.bitchord.playback.CrossfadeController
+import com.music.bitchord.playback.smart.AutomixWorkPolicy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class KoCrossfadeTickerPolicyTest {
 
-    private val armLeadMs = 15_000L
+    private val armLeadMs = AutomixWorkPolicy.STANDBY_LEAD_MS
     private val fadeMs = 6_000L
 
     private fun idleStep(
@@ -107,5 +108,28 @@ class KoCrossfadeTickerPolicyTest {
         val withoutRamp = idleStep(positionMs = 0L, plannedCueMs = 120_000L)
         val withRamp = idleStep(positionMs = 0L, plannedCueMs = 120_000L, plannedRampMs = 4_000L)
         assertEquals(withoutRamp - 4_000L, withRamp)
+    }
+
+    @Test
+    fun `the planned window arms the standby lead and the tempo ramp before the cue`() {
+        val cueMs = 120_000L
+        val rampMs = 4_000L
+        assertEquals(
+            cueMs - AutomixWorkPolicy.STANDBY_LEAD_MS - rampMs,
+            idleStep(plannedCueMs = cueMs, plannedRampMs = rampMs),
+        )
+    }
+
+    @Test
+    fun `at double speed the wall wait reaches the cue before the media wait would`() {
+        val cueMs = 120_000L
+        val rampMs = 4_000L
+        val normal = idleStep(plannedCueMs = cueMs, plannedRampMs = rampMs)
+        val double = idleStep(plannedCueMs = cueMs, plannedRampMs = rampMs, playbackSpeed = 2f)
+        assertTrue("double=$double normal=$normal", double < normal)
+        assertEquals(
+            (cueMs - AutomixWorkPolicy.STANDBY_LEAD_MS - rampMs) / 2L,
+            double,
+        )
     }
 }

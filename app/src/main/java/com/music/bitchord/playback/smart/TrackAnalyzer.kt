@@ -40,6 +40,7 @@ import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.AutomixPerformanceMode
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.TrackMatcher
+import com.music.bitchord.ko.koCrossfadeAnalysisCompleted
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.BatteryPolicy
 import kotlinx.coroutines.CompletableDeferred
@@ -549,6 +550,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
 
     private fun completeWindow(trackId: String, window: AnalysisWindow) {
         windowWaiters.remove("$trackId@${window.name}")?.complete(Unit)
+        // A finished window can move the planned cue earlier, so the idle
+        // ticker must re-plan instead of sleeping to the end-of-track window.
+        koCrossfadeAnalysisCompleted()
     }
 
     /**

@@ -13,6 +13,7 @@ import com.music.bitchord.data.TrackLog
 import com.music.bitchord.ko.AutomixStatusKo
 import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.listentogether.ListenTogether
+import com.music.bitchord.ko.KoCrossfadeAnalysisWake
 import com.music.bitchord.ko.KoCrossfadeGain
 import com.music.bitchord.ko.KoCrossfadeLog
 import com.music.bitchord.ko.KoCrossfadeLyricCache
@@ -364,6 +365,9 @@ class CrossfadeController(
     private var listeningTo: ExoPlayer? = null
     private var tickerJob: Job? = null
     private var settingsWakeJob: Job? = null
+
+    /** Bound to the analyzer's completion event while this controller is running. */
+    private val analysisWake: () -> Unit = { wakeTicker() } // [KO] crossfade-analysis
 
     internal fun wakeTicker() { // [KO] crossfade-ticker
         ko.tickerWake.trySend(Unit)
@@ -877,9 +881,11 @@ class CrossfadeController(
         // makes or moves a transition has to wake it like a player event does.
         settingsWakeJob?.cancel()
         settingsWakeJob = koLaunchSettingsWake(scope) // [KO] crossfade-ticker
+        KoCrossfadeAnalysisWake.bind(analysisWake) // [KO] crossfade-analysis
     }
 
     fun release() {
+        KoCrossfadeAnalysisWake.unbind(analysisWake) // [KO] crossfade-analysis
         tickerJob?.cancel()
         tickerJob = null
         settingsWakeJob?.cancel()

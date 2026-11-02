@@ -16,6 +16,34 @@ import kotlin.math.roundToLong
 /**
  * [KO] crossfade-ticker
  *
+ * Why the parked ticker has to be woken from outside the player: analysis
+ * finishing can move the planned cue earlier than the unplanned end-of-track
+ * window the idle sleep was computed from.
+ */
+internal object KoCrossfadeAnalysisWake {
+    @Volatile private var wake: (() -> Unit)? = null
+
+    fun bind(listener: (() -> Unit)?) {
+        wake = listener
+    }
+
+    fun unbind(listener: () -> Unit) {
+        if (wake === listener) wake = null
+    }
+
+    fun analysisCompleted() {
+        wake?.invoke()
+    }
+}
+
+/** Called by the analyzer when a window lands, so the ticker re-plans the cue. */
+internal fun koCrossfadeAnalysisCompleted() {
+    KoCrossfadeAnalysisWake.analysisCompleted()
+}
+
+/**
+ * [KO] crossfade-ticker
+ *
  * Event-driven tick cadence: the loop sleeps until a player callback wakes it
  * instead of polling through a pause, and off screen the idle step is slower.
  */
