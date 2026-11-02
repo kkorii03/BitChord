@@ -1,5 +1,15 @@
-Kotlin Android app = upstream v1.9 + Korean fork (task/u19-tg; 1.8 fork = origin/task/telegram). Battery first: event-driven, no polling/timers, never block the main thread. Use grep/Select-String, not rg. Unknown Android/Media3 APIs: context7. Every fix gets a JVM test that fails on current code (no network). Do not touch .github/workflows. Smallest change; keep v1.9's improvements.
+﻿Kotlin Android app = upstream v1.9 + Korean fork (task/u19-tg; 1.8 fork = origin/task/telegram). Battery first: event-driven, no polling/timers, never block the main thread. Use grep/Select-String, not rg. Unknown Android/Media3 APIs: context7. Every fix gets a JVM test that fails on current code (no network). Do not touch .github/workflows. Smallest change; keep v1.9's improvements.
 
 Video songs show no picture on the phone: MusicVideoEngine (app/.../ui/player/MusicVideoPlayer.kt) resolves via InnerTubeXResolver.extractVideo, which ends in 'ITX InnerTubeExtractor: no playable clients' (clients WEB_EMBEDDED_PLAYER, VISIONOS, TVHTML5_SIMPLY all 'client response unavailable'), while audio for the same video resolves fine via WEB_CREATOR__po. Make the picture use the client order/profile that works for audio (learned order, PoToken WEB_CREATOR) when the video ranking fails, without changing audio resolution. Test the fallback choice with fakes.
 
 Summary of at most 12 lines: cause, files, REMOVED-LINES AUDIT, tests (class names for CI), what you did not do. Follow AGENTS.md (ponytail) rules.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 3
+- MEDIUM `shared/src/jvmTest/kotlin/com/music/bitchord/data/innertube/InnerTubeXVideoFallbackTest.kt:30` — No test covers the branch where the ranked ask returns `null` (the documented normal "no video-only stream" result) with a preferred client set, so the main null→fallback path is unverified. Add a fake that returns null for `ask(null)` and asserts `ask(preferred)` is called.
+- LOW `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/InnerTubeXResolver.kt:460` — The fallback retries the learned client for every `StreamResolveException` (NETWORK, UNAVAILABLE, NO_MUSIC_VIDEO) and for null, adding a second full InnerTubeX walk that usually cannot help. Restrict the retry to NO_PLAYABLE_STREAM and let age escalation handle AGE_RESTRICTED.
+Skipped: I did not re-run the Gradle tests or verify the library override/PoToken path beyond its existing audio use; risk is that the extra fallback request still costs a walk on ordinary failures.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
