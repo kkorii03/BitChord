@@ -1,0 +1,28 @@
+﻿Goal: an accepted AI timing answer for the song on screen must reach the screen; an answer computed for different lyrics must not be lost silently either (log why it was not used).
+
+Evidence (emulator 11-02, song v59g4HRNIkc, times relative to the song start):
+- -159s next-prep start (lyrics step), -150s next-prep step: sync, -7s 'next-prep cancelled: v59g4HRNIkc after 151926ms'
+- +0s lyrics-sync: v59g4HRNIkc source=KuGou base=none (the screen shows KuGou lyrics)
+- +19s 'Deepgram Whisper (ko, 79s): 109 words, 27 of 31 lines placed: not enough'
+- +70s '[v59g4HRNIkc] AI timing (audio, 199s): rate 1.000, shift -505 ms, 97% agree' (accepted wording; started 199 s earlier = during next-prep)
+- +144s track-summary ... lyrics=KuGou sync=none shift=- -> the accepted answer never reached the screen; no lyrics-sync line after +70s.
+Code: app/.../playback/smart/LyricsTiming.kt (the AI/Gemini branch ~2340-2430: aiMayApply, store update aiTextKey = key, _changes.tryEmit), the reader of the stored AI answer (where base/ai is chosen for display: base-choice, aiTextKey == current lyrics key), app/.../ui/LyricsController.kt refreshTiming, NextTrackPreparation sync step.
+
+Do (systematic debugging: root cause first, failing test first):
+1. Find why this accepted answer was not applied: is the stored aiTextKey (lyrics text + audio source key) different from the key of the lyrics shown (next-prep asked with other lyrics than KuGou's?), was the store update skipped because the request was cancelled, or does the display only read AI answers at lyrics load time and ignore a later _changes event? State the root cause with file:line.
+2. Fix it: an answer for the lyrics on screen applies as soon as it arrives; an answer for other lyrics is either re-fitted to the shown lines (only if the existing design supports it) or logged as 'ai answer for other lyrics: <key>'. A cancelled next-prep request must not keep running (if still possible on this base) - but do not duplicate the prep-cancel work already merged on task/u19-tg.
+3. JVM test that fails on the old code and passes on the new. Name it in the summary.
+
+Rules: battery first (event-based, no polling/timers), read every caller and type, keep all guards unless justified; REMOVED-LINES AUDIT required. Do not touch .github/workflows/, keys/, signing. grep/Select-String only (no rg). context7 for unknown APIs. AGENTS.md (ponytail) rules apply.
+At the end, summary within 10 lines: root cause / files changed / key change / test result / open problems.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 3
+- MEDIUM `app/src/main/java/com/music/bitchord/playback/smart/LyricsTiming.kt:2840` — `prepareNextFree` now keys the answer with `query.isVideo` (:2815) but still passes `isVideo = song.isVideo`; for a cover row whose queue row lost the video flag, the answer is read on the video key yet guarded by the audio shift rule, so prep timing can be accepted there and rejected by the screen (which uses `query.isVideo`). Fix: pass `query.isVideo` to that `timing(...)` call too.
+- MEDIUM `app/src/test/java/com/music/bitchord/ui/LyricsControllerCoverAiTest.kt:106` — the regression test calls the new `loadLyricsFor`, so it bypasses the actual buggy `MainActivity` call site and would still pass if that call were reverted; it also cannot compile against the old code, so it does not satisfy "fails on the old code." Fix: drive the production song→request path (or assert the screen request's `isVideo`) so reverting the call site fails.
+- MEDIUM `change.diff` summary/commit message — no REMOVED-LINES AUDIT is present for the removed `MainActivity` query/argument construction or the four `song.isVideo`→`query.isVideo` condition rewrites, which the task requires. Fix: add the audit naming each removed/changed line and its justification.
+Not checked: emulator behaviour; I ran `:app:testProdDebugUnitTest --tests LyricsControllerCoverAiTest` (passes), but it cannot prove the old-code failure.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
