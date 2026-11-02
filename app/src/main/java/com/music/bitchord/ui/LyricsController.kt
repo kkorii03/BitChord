@@ -26,6 +26,7 @@ import com.music.bitchord.playback.smart.SyncTestMode
 import com.music.bitchord.playback.smart.VideoAudio
 import com.music.bitchord.ui.player.LyricsTimingUi
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -73,6 +74,11 @@ class LyricsController(
 
     /** The repository call; a seam for tests, as [LyricsRepository.transcriber] is there. */
     internal var lyricsLookup: LyricsLookup = LyricsRepository::lyrics
+
+    /** A background timing failure is logged, not thrown to the process's default handler. */
+    private val timingFailureHandler = CoroutineExceptionHandler { _, failure ->
+        TrackLog.w("BitChord", "lyrics-timing: background pass failed", failure)
+    }
 
     /**
      * The controller's own backstop on the whole lookup, a beat past the
@@ -853,7 +859,7 @@ class LyricsController(
         }
         val generation = lyricsGeneration
         val context = app
-        lyricsTimingJob = scope.launch {
+        lyricsTimingJob = scope.launch(timingFailureHandler) {
             // Whatever else changes this video's timing — the lock screen, the
             // next-song preparation measuring it first — shows here too.
             launch {
@@ -1179,7 +1185,7 @@ class LyricsController(
             localUri = LocalTimingPolicy.measurementUri(localUri, isVideo, timingForeign = false),
         )
         val names = (listOf(title to artist) + alternatives).distinct()
-        earlyMeasureJob = scope.launch {
+        earlyMeasureJob = scope.launch(timingFailureHandler) {
             if (LyricsTiming.worthMeasuring(context, videoId)) {
                 LyricsTiming.measure(context, video, names, durationMs)
             }

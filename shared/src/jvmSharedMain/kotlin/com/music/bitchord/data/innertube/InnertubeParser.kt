@@ -462,7 +462,7 @@ object InnertubeParser {
                 // cards play, now that the player can show them.
                 val items = carousel.a("contents").orEmpty().mapNotNull {
                     parseTwoRowItem(it.o("musicTwoRowItemRenderer"))
-                }.filter { it.browseId != null || it.isVideo }
+                }.filter { it.browseId != null || it.videoId != null }
                 val moreEndpoint = header.o("title").a("runs")?.firstNotNullOfOrNull {
                     it.o("navigationEndpoint").o("browseEndpoint")
                 }
@@ -1934,6 +1934,7 @@ object InnertubeParser {
             thumbnailUrl = thumbnails.best() ?: videoId?.let(::videoThumbnailUrl),
             videoId = videoId,
             browseId = resolvedBrowseId,
+            isArtist = "ARTIST" in pageType,
             isVideo = isVideo,
         )
     }
