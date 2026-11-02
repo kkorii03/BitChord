@@ -254,6 +254,8 @@ import com.music.bitchord.playback.hasYouTubeOriginal
 import com.music.bitchord.playback.loadAutoplayTracks
 import com.music.bitchord.playback.videoRadioEnabledFor
 import com.music.bitchord.playback.playSongs
+import com.music.bitchord.playback.appendSongs
+import com.music.bitchord.playback.playStationIncrementally
 import com.music.bitchord.playback.BoundedQueuePlanner
 import com.music.bitchord.playback.playBoundedContext
 import com.music.bitchord.playback.contextEntryKey
@@ -1961,16 +1963,9 @@ private fun BitChordApp(
             )
         } else if (controller != null && !refusedByHost()) {
             val request = ++playRequestGeneration
-            scope.launch {
-                val songs = TopPicks.queue(pick).getOrNull().orEmpty()
-                if (request != playRequestGeneration) return@launch
-                val activeController = controller ?: return@launch
-                if (songs.isEmpty()) {
-                    Toast.makeText(context, R.string.couldnt_load_tracks, Toast.LENGTH_SHORT).show()
-                    return@launch
-                }
-                val sourceId = pick.watch?.playlistId ?: pick.mood?.name
-                val station = songs.map {
+            val sourceId = pick.watch?.playlistId ?: pick.mood?.name
+            val asStation = { songs: List<Song> ->
+                songs.map {
                     it.copy(
                         radioName = label,
                         playbackSource = label,
@@ -1978,10 +1973,31 @@ private fun BitChordApp(
                         playbackSourceId = sourceId,
                     )
                 }
-                activeRadioSeed = null
-                activeController.beginRadioQueue()
-                activeController.playSongs(station, 0)
-                activeController.commitRadioQueue()
+            }
+            scope.launch {
+                val activeController = controller ?: return@launch
+                playStationIncrementally(
+                    load = { onFirstBatch -> TopPicks.queue(pick, onFirstBatch) },
+                    isCurrent = { request == playRequestGeneration },
+                    begin = {
+                        activeRadioSeed = null
+                        activeController.beginRadioQueue()
+                    },
+                    playFirst = { songs ->
+                        activeController.playSongs(asStation(songs), 0)
+                        if (request == playRequestGeneration) activeController.commitRadioQueue()
+                    },
+                    append = { songs ->
+                        val appended = activeController.appendSongs(
+                            asStation(songs),
+                            isCurrent = { request == playRequestGeneration },
+                        )
+                        if (appended) activeController.commitRadioQueue()
+                    },
+                    onEmpty = {
+                        Toast.makeText(context, R.string.couldnt_load_tracks, Toast.LENGTH_SHORT).show()
+                    },
+                )
             }
         }
     }

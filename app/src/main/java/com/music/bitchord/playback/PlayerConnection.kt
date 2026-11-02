@@ -986,3 +986,44 @@ suspend fun MediaController.playSongs(songs: List<Song>, startIndex: Int) {
  */
 internal fun queueStartIndex(requestedIndex: Int, itemCount: Int, shuffled: Boolean): Int =
     if (shuffled) 0 else requestedIndex.coerceIn(0, itemCount - 1)
+
+/**
+ * Adds [songs] to the end of the queue as ordinary context entries, stamped the
+ * same way [playSongs] stamps a queue's first batch.
+ *
+ * Without the entry id and canonical index the appended rows would look
+ * unplaced to [QueueShuffle] — shuffle would not move them and un-shuffling
+ * after a restart could not put them back. Mapping runs off the main thread for
+ * the same reason it does in [playSongs]: [toMediaItem] stats every downloaded
+ * track it is handed.
+ */
+internal fun buildAppendedItems(
+    songs: List<Song>,
+    existing: List<MediaItem>,
+): Pair<List<MediaItem>, List<MediaItem>> {
+    var canonical = existing.size
+    val built = songs.map { song ->
+        val entryId = song.queueEntryId ?: java.util.UUID.randomUUID().toString()
+        val item = song.copy(queueEntryId = entryId).toMediaItem()
+        if (song.queueTier == QueueTier.CONTEXT) {
+            QueueShuffle.withQueueMetadata(item, newEntryId = entryId, newCanonicalIndex = canonical++)
+        } else {
+            item
+        }
+    }
+    return built to (existing + built.filter { it.queueTier == QueueTier.CONTEXT })
+}
+
+suspend fun MediaController.appendSongs(songs: List<Song>, isCurrent: () -> Boolean = { true }): Boolean {
+    if (songs.isEmpty()) return false
+    val (items, context) = withContext(Dispatchers.Default) {
+        buildAppendedItems(songs, QueueShuffle.canonicalContext)
+    }
+    // The queue can have been replaced while the tracks were mapped; a stale
+    // tail must not land on the new one.
+    if (!isCurrent()) return false
+    QueueShuffle.setCanonicalContext(context)
+    addMediaItems(mediaItemCount, items)
+    return true
+}
+
