@@ -514,6 +514,7 @@ fun SearchScreen(
                                     isCurrent = isCurrentRow(row.song),
                                     isPlaying = isPlaying && isCurrentRow(row.song),
                                     searchPlayingStyle = true,
+                                    showDuration = false,
                                 )
                                 is SearchResult.Browse -> BrowseRow(
                                     item = row.item,

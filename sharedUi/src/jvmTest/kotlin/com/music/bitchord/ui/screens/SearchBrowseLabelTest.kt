@@ -56,6 +56,18 @@ class SearchBrowseLabelTest {
         )
     }
 
+    @Test
+    fun `youtube search rows keep the duration hidden`() {
+        val source = searchScreenSource().readText()
+        val youtubeRow = source
+            .substringAfter("is SearchResult.Track -> SongRow(")
+            .substringBefore("is SearchResult.Browse")
+        assertTrue(
+            "YouTube search rows must hide the duration like the library and Addon rows",
+            youtubeRow.contains("showDuration = false"),
+        )
+    }
+
     private fun searchScreenSource(): File =
         listOf(
             "src/jvmSharedMain/kotlin/com/music/bitchord/ui/screens/SearchScreen.kt",
