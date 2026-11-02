@@ -288,6 +288,12 @@ object AudioDecoder {
             fail(label, "range", "start=$startSeconds end=$endSeconds")
             return null
         }
+        // Refuse before waiting on the gate: a request whose track has left
+        // must not sit in the queue ahead of work that is still wanted.
+        if (abort()) {
+            TrackLog.d(TAG, "decode: $label dropped at the gate (caller gave up)")
+            return null
+        }
         val acquired = try {
             decodeGate.acquire(background = aheadOfTime.get() == true) // [KO] decode-priority
             true
