@@ -1,0 +1,15 @@
+﻿Kotlin Android app = upstream v1.9 + Korean fork (task/u19-tg; 1.8 fork = origin/task/telegram). Battery first, no polling. Use grep/Select-String, not rg.
+
+Phone 11-03, search box with "·" typed: the suggestion list shows general YouTube suggestions ("· 강진🙏👯‍♀️💃 가수이현희tv(월", "· 로또 당첨 번호", "· 2ne1"), i.e. not music-only, emoji/channel junk, and the first row reads "검색 ' · '". The user (Korean, Apple Music style UI) says search suggestions look wrong. Earlier the user also asked: search must be music only (no news/variety/podcasts).
+Task: find where search suggestions come from in 1.9 (typeahead / music.youtube.com vs youtube.com suggest, TypeaheadLookupPolicy, Search screen), compare with 1.8, and make suggestions music-only and clean (drop non-music/junk rows, no leading punctuation echo, Korean label like Apple Music: '"·" 검색' style per values-ko conventions). Keep v1.9's request pipeline (SearchRequestPipeline) unchanged. JVM tests that fail on current code (no network).
+Do not touch .github/workflows. Summary of at most 10 lines: cause, files, REMOVED-LINES AUDIT, tests (names for CI), what you did not do. Follow AGENTS.md (ponytail) rules.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 3
+HIGH shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/net/TypeaheadLookupPolicy.kt:49 — A non-music general-YouTube row that merely starts with the typed text (e.g. "강진 뉴스") and has no emoji still passes, so the "music-only" requirement is not actually implemented. Fix: source/filter suggestions through the music-filtered path (or cross-check against the music typeahead results) and add a test for a prefix-matching non-music row.
+MEDIUM app/src/main/java/com/music/bitchord/ui/LyricsController.kt:902 — This unrelated production branch was added only to make a test's leaked measurement job stop on a null `applicationContext`; it silently skips download recheck/timing/AI for any null context and has no test. Fix: remove it and cancel/join the controller scope in the test teardown.
+MEDIUM shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/net/TypeaheadLookupPolicy.kt:62 — `hasEmoji` only covers U+1F000–1FAFF and FE00–FE0F, so common channel junk with ⭐ (U+2B50), ✅ (U+2705), ☀ (U+2600), or ✨ (U+2728) survives the "clean" filter. Fix: broaden the check to the full extended-pictographic/emoji set and add a test for one of those code points.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
