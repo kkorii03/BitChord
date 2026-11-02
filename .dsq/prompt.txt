@@ -1,0 +1,17 @@
+﻿Kotlin Android app = upstream v1.9 + Korean fork (task/u19-tg; 1.8 fork = origin/task/telegram). Battery first, no polling. Use grep/Select-String, not rg.
+
+Phone 11-03, search box with "·" typed: the suggestion list shows general YouTube suggestions ("· 강진🙏👯‍♀️💃 가수이현희tv(월", "· 로또 당첨 번호", "· 2ne1"), i.e. not music-only, emoji/channel junk, and the first row reads "검색 ' · '". The user (Korean, Apple Music style UI) says search suggestions look wrong. Earlier the user also asked: search must be music only (no news/variety/podcasts).
+Task: find where search suggestions come from in 1.9 (typeahead / music.youtube.com vs youtube.com suggest, TypeaheadLookupPolicy, Search screen), compare with 1.8, and make suggestions music-only and clean (drop non-music/junk rows, no leading punctuation echo, Korean label like Apple Music: '"·" 검색' style per values-ko conventions). Keep v1.9's request pipeline (SearchRequestPipeline) unchanged. JVM tests that fail on current code (no network).
+Do not touch .github/workflows. Summary of at most 10 lines: cause, files, REMOVED-LINES AUDIT, tests (names for CI), what you did not do. Follow AGENTS.md (ponytail) rules.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 4
+MEDIUM shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/net/TypeaheadLookupPolicy.kt:56-64 — `musicTerms` is optional but empty means every fetched completion is rejected, and suggest is always sent anonymously (`KoInnertube.isAnonymousRequest`), so answers without entity rows now cache/show only the typed action; fix by falling back to prefix filtering or the parallel `searchTypeahead` rows when no entity terms exist.
+MEDIUM shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/net/TypeaheadLookupPolicy.kt:79-84 — `isMusicCompletion` requires every added word to occur inside an entity word, so a valid music completion like `radiohead playlist` from the repo's own `web/fixtures/innertube/search-suggestions.json` is dropped; fix by matching against full entity terms/phrases and allowing music modifiers such as playlist/songs/live.
+MEDIUM shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/net/TypeaheadLookupPolicy.kt:81,97-103 — a row whose only addition is punctuation or an emoji outside the shrunken ranges (e.g. `iu⏰` U+23F0 or `iu™`) is accepted because the extra trims to empty and `hasEmoji` no longer covers 0x2300..0x23FF or the other removed blocks; fix by rejecting a non-exact row with an empty extra and restoring the omitted emoji/dingbat ranges.
+LOW shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/InnertubeParser.kt:264-270 — reusing `parseBrowseItem` drops valid album/artist entities whose title or subtitle contains “video” via its `VIDEO_WORD` guard, so names like “Video Games” cannot back completions; fix by reading the suggestion row's title/subtitle directly or adding a flag to skip that browse-card rejection.
+Skipped: full `:shared:jvmTest` and UI rendering; ran only the two suggestion test classes.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
