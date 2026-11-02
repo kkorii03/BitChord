@@ -748,7 +748,7 @@
     <string name="lyrics_share_title">가사 공유</string>
     <string name="lyrics_share_description">선택한 가사를 아트워크와 함께 카드로 만듭니다.</string>
     <string name="lyrics_share_story">스토리</string>
-    <string name="lyrics_share_story_revert">카드로</string>
+    <string name="lyrics_share_story_revert">카드로 돌아가기</string>
     <string name="listening_shape">나의 청취 패턴</string>
     <string name="member_since">가입일</string>
     <string name="member_since_value">가입일 %1$s</string>
@@ -1076,7 +1076,7 @@
     <string name="shelf_new_releases">최신 발매</string>
     <string name="shelf_top_music_videos">인기 뮤직비디오</string>
     <string name="shelf_for_you">나를 위한 추천</string>
-    <string name="shelf_energy_boosters">에너지</string>
+    <string name="shelf_energy_boosters">에너지 충전</string>
     <string name="shelf_feel_good">기분 좋음</string>
     <string name="shelf_commute">출퇴근</string>
     <string name="shelf_workout">운동</string>
@@ -1181,7 +1181,7 @@
     <string name="hidden_explore_categories_none">숨긴 카테고리가 없습니다</string>
     <string name="hidden_explore_categories_count">%1$d개 숨김</string>
     <string name="show_again">다시 보기</string>
-    <string name="show_all_again">모두 보기</string>
+    <string name="show_all_again">모두 다시 보기</string>
     <string name="resume_on_headphones">헤드폰 연결 시 재생</string>
     <string name="resume_on_headphones_subtitle">Bluetooth 또는 유선 헤드폰을 연결하면 30분 안에 멈춘 노래를 이어서 재생합니다.</string>
     <string name="charts">차트</string>
@@ -1299,6 +1299,16 @@
     <string name="app_icon_pixel_glass_dark">픽셀 글래스 어둡게</string>
     <string name="app_icon_pixel_glass_clear">픽셀 글래스 투명</string>
     <string name="app_icon_pixel_glass_clear_dark">픽셀 글래스 투명 어둡게</string>
+    <string name="app_icon_monochrome">모노크롬</string>
+    <string name="app_icon_neon_silver">네온 실버</string>
+    <string name="app_icon_neon_cyan">네온 시안</string>
+    <string name="app_icon_neon_violet">네온 바이올렛</string>
+    <string name="app_icon_samsung_neon_silver">삼성 네온 실버</string>
+    <string name="app_icon_samsung_neon_cyan">삼성 네온 시안</string>
+    <string name="app_icon_samsung_neon_violet">삼성 네온 바이올렛</string>
+    <string name="app_icon_pixel_neon_silver">픽셀 네온 실버</string>
+    <string name="app_icon_pixel_neon_cyan">픽셀 네온 시안</string>
+    <string name="app_icon_pixel_neon_violet">픽셀 네온 바이올렛</string>
     <string name="app_name">BitChord</string>
     <string name="artist_signatures">아티스트 사인</string>
     <string name="artist_signatures_subtitle">아티스트 사인 표시</string>
@@ -1548,7 +1558,7 @@
     <string name="convert_for_limited_dac">저사양 DAC에 맞게 변환</string>
     <string name="convert_for_limited_dac_subtitle">DAC 한도를 넘는 노래를 DAC의 최고 포맷으로 변환합니다. 노래 시작이 더 오래 걸릴 수 있으며 원본 대비 비트 퍼펙트가 아닙니다.</string>
     <string name="bit_perfect_confirm_title">비트 퍼펙트 출력을 켤까요?</string>
-    <string name="bit_perfect_confirm_message">DAC에 음악이 최대 레벨로 전달되며 휴대전화의 음량 버튼이 작동하지 않을 수 있습니다. 재생하기 전에 DAC나 앰프의 음량을 낮추세요.</string>
+    <string name="bit_perfect_confirm_message">DAC에 음악이 최대 레벨로 전달되며 휴대전화의 음량 버튼이 작동하지 않을 수 있습니다. 재생하기 전에 DAC나 앰프의 음량을 낮추십시오.</string>
     <string name="bit_perfect_status_active">%1$s · %2$s kHz · %3$d비트</string>
     <string name="bit_perfect_status_dac_limited">%1$s · %2$s kHz · %3$d비트 · DAC 최대치, 이 노래의 포맷에서 변환됨</string>
     <string name="bit_perfect_status_inexact">%1$s · 정확하지 않음: 이 소스는 무손실 PCM이 아닙니다</string>

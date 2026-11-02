@@ -23,7 +23,7 @@ class KoreanStringsTest {
     @Test
     fun koreanCopyHasNoCasualHaeyoEndings() {
         val casual = listOf(
-            "하세요", "해 주세요", "해주세요", "보세요", "주세요",
+            "세요", "하세요", "해 주세요", "해주세요", "보세요", "주세요",
             "있어요", "없어요", "돼요", "할게요", "거예요", "예요", "이에요",
             "나요", "가요",
         )
@@ -68,6 +68,47 @@ class KoreanStringsTest {
             "이 소스를 사용하려면 텔레그램에 로그인합니다.",
             value("app", "telegram_source_login_required"),
         )
+    }
+
+    @Test
+    fun autoplayEmptyCopyFollowsTheV19English() {
+        // 1.9 changed the English from "No recommendations found" to
+        // "Similar music will keep playing"; the Korean still said nothing was found.
+        assertEquals("비슷한 음악이 계속 재생됩니다", value("sharedUi", "autoplay_empty_description"))
+    }
+
+    @Test
+    fun automixVideoCopyKeepsTheSimpleCrossfadeDetail() {
+        assertEquals(
+            "자동 믹스 · 비디오 노래: 단순 크로스페이드",
+            value("sharedUi", "automix_not_supported_video"),
+        )
+    }
+
+    @Test
+    fun restoredLabelsKeepTheV18Meaning() {
+        assertEquals("카드로 돌아가기", value("app", "lyrics_share_story_revert"))
+        assertEquals("모두 다시 보기", value("app", "show_all_again"))
+        assertEquals("에너지 충전", value("app", "shelf_energy_boosters"))
+    }
+
+    @Test
+    fun appIconChoicesHaveKoreanNames() {
+        val expected = mapOf(
+            "app_icon_monochrome" to "모노크롬",
+            "app_icon_neon_silver" to "네온 실버",
+            "app_icon_neon_cyan" to "네온 시안",
+            "app_icon_neon_violet" to "네온 바이올렛",
+            "app_icon_samsung_neon_silver" to "삼성 네온 실버",
+            "app_icon_samsung_neon_cyan" to "삼성 네온 시안",
+            "app_icon_samsung_neon_violet" to "삼성 네온 바이올렛",
+            "app_icon_pixel_neon_silver" to "픽셀 네온 실버",
+            "app_icon_pixel_neon_cyan" to "픽셀 네온 시안",
+            "app_icon_pixel_neon_violet" to "픽셀 네온 바이올렛",
+        )
+        for ((key, korean) in expected) {
+            assertEquals("$key must not fall back to the English icon name", korean, value("app", key))
+        }
     }
 
     @Test
