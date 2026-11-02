@@ -75,10 +75,9 @@ object LyricsPerLine {
     ): Layer {
         if (heardAudioKey != currentAudioKey) return Layer.identity(lines.size)
         if (lines.isEmpty() || heard.isEmpty()) return Layer.identity(lines.size)
-        // TODO(clock tags): sound identity is only the existing words/source key
-        // today. A later task will give each rendition its own clock tag so a
-        // `#alt` substitute can be told from the YouTube video even when both
-        // share the same audio-source key.
+        // The words are expected on the same clock as the lines: LyricsTiming
+        // converts them from the rendition they were heard on, and drops them
+        // when no verified map can carry them onto the playing clock.
         val matched = LyricsWordAlign.matchedWords(lines.map { it.text }, heard)
         val anchors = ArrayList<Anchor>(lines.size)
         for (index in lines.indices) {

@@ -150,6 +150,11 @@ object StreamChoice {
         }
         chosen[videoId] = Choice(stream, SystemClock.elapsedRealtime(), substituted)
         _revisions.update { it + 1L }
+        // A mid-song swap changes which audio clock the lyrics must be shown
+        // on. Event only: the screens and the next-row bundle recompute now.
+        if (substituted) {
+            com.music.bitchord.playback.smart.LyricsTiming.notifyStreamChoice(videoId)
+        }
     }
 
     /**
