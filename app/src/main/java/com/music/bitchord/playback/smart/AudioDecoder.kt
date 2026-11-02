@@ -33,7 +33,6 @@ import com.music.bitchord.playback.DecoderMonitor
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.util.concurrent.Semaphore
 import kotlin.math.max
 
 /**
@@ -62,7 +61,10 @@ object AudioDecoder {
      * must not run beside transition preparation. The gate is taken here rather
      * than at each caller so a new path cannot forget it.
      */
-    private val decodeGate = Semaphore(1, true)
+    private val decodeGate = DecodePriorityGate() // [KO] decode-priority
+
+    /** [KO] decode-priority: true (via asContextElement) for work done ahead for a track not yet playing. */
+    val aheadOfTime: ThreadLocal<Boolean> = ThreadLocal.withInitial { false }
 
     /** Decoded mono PCM at the container's own sample rate; the caller resamples. */
     data class Pcm(val samples: FloatArray, val sampleRate: Double)
@@ -287,7 +289,7 @@ object AudioDecoder {
             return null
         }
         val acquired = try {
-            decodeGate.acquire()
+            decodeGate.acquire(background = aheadOfTime.get() == true) // [KO] decode-priority
             true
         } catch (_: InterruptedException) {
             Thread.currentThread().interrupt()

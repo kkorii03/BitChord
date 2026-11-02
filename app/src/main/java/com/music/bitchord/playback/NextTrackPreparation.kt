@@ -23,11 +23,13 @@ import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.playback.NextPrepPolicy.Step
+import com.music.bitchord.playback.smart.AudioDecoder
 import com.music.bitchord.playback.smart.HqVerificationStore
 import com.music.bitchord.playback.smart.LyricsTiming
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.asContextElement
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -131,7 +133,9 @@ internal class NextTrackPreparation(
         completedRowId = null
         completedQueueKey = null
         job?.cancel()
-        job = scope.launch {
+        // Every decode this bundle makes is for a row not playing yet: it waits
+        // at the decode gate while the playing track's own decode is queued.
+        job = scope.launch(AudioDecoder.aheadOfTime.asContextElement(true)) {
             // Start and cancel lines: a bundle that never reaches its result
             // line (11-02 1.9 smoke: 0 `next-prep:` lines in 10 songs) has to
             // say whether it ran at all and how long it lived.
