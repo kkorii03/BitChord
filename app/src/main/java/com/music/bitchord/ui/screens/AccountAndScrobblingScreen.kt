@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.icons.SfIcons
 import com.music.bitchord.auth.clearSpotifyWebSession
 import androidx.compose.foundation.layout.Column
 import android.content.Intent
@@ -117,7 +118,7 @@ fun AccountAndScrobblingScreen(
             if (signedIn) {
                 FullWidthDivider()
                 SettingsRow(
-                    icon = Icons.Rounded.SwitchAccount,
+                    icon = SfIcons.SwitchAccount,
                     title = stringResource(R.string.listen_as),
                     subtitle = channelName ?: stringResource(R.string.default_youtube_profile),
                     onClick = onSwitchChannel,
@@ -140,7 +141,7 @@ fun AccountAndScrobblingScreen(
 
         SettingsGroup(header = stringResource(R.string.diagnostics)) {
             SettingsRow(
-                icon = Icons.Rounded.BugReport,
+                icon = SfIcons.Bug,
                 title = stringResource(R.string.export_diagnostic_log),
                 subtitle = stringResource(R.string.export_diagnostic_log_subtitle),
                 onClick = {
@@ -190,7 +191,7 @@ fun AccountAndScrobblingScreen(
 
         SettingsGroup(header = stringResource(R.string.telegram)) {
             SettingsRow(
-                icon = Icons.Rounded.Send,
+                icon = SfIcons.Send,
                 title = stringResource(R.string.telegram),
                 subtitle = stringResource(
                     if (telegramState.stage == TelegramAuthStage.READY) {
@@ -226,7 +227,7 @@ fun AccountAndScrobblingScreen(
                 footer = stringResource(R.string.scrobbling_footer),
             ) {
                 SettingsRow(
-                    icon = Icons.Rounded.Cloud,
+                    icon = SfIcons.Cloud,
                     title = "ListenBrainz",
                     subtitle = if (listenBrainzEnabled && listenBrainzToken.isNotBlank()) {
                         stringResource(R.string.connected)
@@ -254,7 +255,7 @@ fun AccountAndScrobblingScreen(
                 if (listenBrainzEnabled && listenBrainzToken.isNotBlank()) {
                     RowDivider()
                     SettingsRow(
-                        icon = Icons.Rounded.GraphicEq,
+                        icon = SfIcons.GraphicEq,
                         title = stringResource(R.string.scrobble_primary_artist_only),
                         subtitle = stringResource(R.string.scrobble_primary_artist_only_subtitle),
                         trailing = {
@@ -272,7 +273,7 @@ fun AccountAndScrobblingScreen(
                 }
                 RowDivider()
                 SettingsRow(
-                    icon = Icons.Rounded.History,
+                    icon = SfIcons.History,
                     title = "Last.fm",
                     subtitle = if (lastfmSessionKey.isNotBlank()) {
                         stringResource(R.string.signed_in_as, lastfmUsername)
@@ -310,7 +311,7 @@ fun AccountAndScrobblingScreen(
                 if (lastfmEnabled && lastfmSessionKey.isNotBlank()) {
                     RowDivider()
                     SettingsRow(
-                        icon = Icons.Rounded.GraphicEq,
+                        icon = SfIcons.GraphicEq,
                         title = stringResource(R.string.scrobble_tracks),
                         subtitle = stringResource(R.string.scrobble_tracks_subtitle),
                         trailing = {
@@ -327,7 +328,7 @@ fun AccountAndScrobblingScreen(
                     )
                     RowDivider()
                     SettingsRow(
-                        icon = Icons.Rounded.GraphicEq,
+                        icon = SfIcons.GraphicEq,
                         title = stringResource(R.string.scrobble_primary_artist_only),
                         subtitle = stringResource(R.string.scrobble_primary_artist_only_subtitle),
                         trailing = {
@@ -345,7 +346,7 @@ fun AccountAndScrobblingScreen(
                     if (lastfmScrobbleEnabled) {
                         RowDivider()
                         SettingsRow(
-                            icon = Icons.Rounded.GraphicEq,
+                            icon = SfIcons.GraphicEq,
                             title = stringResource(R.string.now_playing),
                             subtitle = stringResource(R.string.lastfm_now_playing_subtitle),
                             trailing = {
@@ -367,7 +368,7 @@ fun AccountAndScrobblingScreen(
             if (lastfmEnabled && lastfmSessionKey.isNotBlank()) {
                 SettingsGroup(header = stringResource(R.string.scrobble_timing)) {
                     SliderRow(
-                        icon = Icons.Rounded.Tune,
+                        icon = SfIcons.Tune,
                         title = stringResource(R.string.min_song_duration),
                         subtitle = stringResource(R.string.min_song_duration_subtitle),
                         value = "${scrobbleMinDuration}s",
@@ -378,7 +379,7 @@ fun AccountAndScrobblingScreen(
                     )
                     RowDivider()
                     SliderRow(
-                        icon = Icons.Rounded.Tune,
+                        icon = SfIcons.Tune,
                         title = stringResource(R.string.scrobble_delay),
                         subtitle = stringResource(R.string.scrobble_delay_subtitle),
                         value = "${(scrobbleDelayPercent * 100).roundToInt()}%",
@@ -389,7 +390,7 @@ fun AccountAndScrobblingScreen(
                     )
                     RowDivider()
                     SliderRow(
-                        icon = Icons.Rounded.Tune,
+                        icon = SfIcons.Tune,
                         title = stringResource(R.string.max_delay),
                         subtitle = stringResource(R.string.max_delay_subtitle),
                         value = "${scrobbleDelaySeconds}s",
@@ -409,14 +410,14 @@ fun AccountAndScrobblingScreen(
                 footer = stringResource(R.string.scrobbling_paused_footer),
             ) {
                 SettingsRow(
-                    icon = Icons.Rounded.Cloud,
+                    icon = SfIcons.Cloud,
                     title = "ListenBrainz",
                     subtitle = stringResource(R.string.back_in_future_version),
                     enabled = false,
                 )
                 RowDivider()
                 SettingsRow(
-                    icon = Icons.Rounded.History,
+                    icon = SfIcons.History,
                     title = "Last.fm",
                     subtitle = stringResource(R.string.back_in_future_version),
                     enabled = false,

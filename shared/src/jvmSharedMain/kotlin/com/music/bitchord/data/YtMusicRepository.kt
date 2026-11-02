@@ -566,6 +566,7 @@ object YtMusicRepository {
                 InnertubeParser.parseSearchPage(
                     Innertube.search(query, filter.params, anonymous = anonymous),
                     includeVideos = filter == SearchFilter.VIDEOS,
+                    includeEpisodes = filter == SearchFilter.EPISODES,
                 ).let { page ->
                     SearchPage(page.rows.distinctBy { it.identityKey() }, page.continuation)
                 }
@@ -621,6 +622,7 @@ object YtMusicRepository {
         InnertubeParser.parseSearchPage(
             Innertube.searchContinuation(token, kind),
             includeVideos = filter == SearchFilter.VIDEOS,
+            includeEpisodes = filter == SearchFilter.EPISODES,
         ).let { page ->
             SearchPage(page.rows.distinctBy { it.identityKey() }, page.continuation)
         }
@@ -675,6 +677,7 @@ object YtMusicRepository {
             InnertubeParser.parseSearchPage(
                 Innertube.searchTypeahead(input),
                 includeVideos = false,
+                includeEpisodes = false,
             ).let { page ->
                 SearchPage(page.rows.distinctBy { it.identityKey() }, page.continuation)
             }

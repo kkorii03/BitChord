@@ -56,7 +56,7 @@ enum class LyricsSource(
     ),
     BINI_LYRICS(
         label = "BiniLyrics",
-        detail = "같은 Apple 타이밍을 녹음 자체에 맞춰 매칭",
+        detail = "같은 Apple 타이밍을 녹음 자체에 맞춰 일치",
         wordSynced = true,
     ),
     BETTER_LYRICS(
@@ -105,7 +105,7 @@ enum class LyricsSource(
     ),
     SIMP_MUSIC(
         label = "SimpMusic",
-        detail = "비디오 기준으로 매칭되어 다른 버전과 헷갈리지 않음",
+        detail = "비디오 기준으로 일치되어 다른 버전과 헷갈리지 않음",
         wordSynced = true,
         hidden = true,
     ),

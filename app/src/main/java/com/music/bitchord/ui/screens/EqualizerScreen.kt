@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.icons.SfIcons
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -117,7 +118,7 @@ fun EqualizerScreen(
             topSpacing = 8.dp,
         ) {
             SettingsRow(
-                icon = Icons.Rounded.Tune,
+                icon = SfIcons.Tune,
                 title = stringResource(R.string.equalizer),
                 trailing = {
                     Switch(
@@ -196,7 +197,7 @@ fun EqualizerScreen(
                 EqualizerMode.MANUAL -> {
                     SettingsGroup {
                         SettingsRow(
-                            icon = Icons.Rounded.GraphicEq,
+                            icon = SfIcons.GraphicEq,
                             title = stringResource(R.string.equalizer_preset),
                             value = preset.localizedLabel(),
                             onClick = onOpenPresets,
@@ -250,7 +251,7 @@ fun EqualizerScreen(
             if (!outputStatus.dspAvailable) {
                 SettingsGroup(footer = stringResource(R.string.equalizer_bitstream_footer)) {
                     SettingsRow(
-                        icon = Icons.Rounded.Warning,
+                        icon = SfIcons.Warning,
                         title = stringResource(R.string.equalizer_bitstream_title),
                         subtitle = stringResource(R.string.equalizer_bitstream_subtitle),
                     )
@@ -264,7 +265,7 @@ fun EqualizerScreen(
         // somebody else's equaliser would be claiming ground we do not hold.
         SettingsGroup(footer = stringResource(R.string.system_equalizer_footer)) {
             SettingsRow(
-                icon = Icons.Rounded.GraphicEq,
+                icon = SfIcons.GraphicEq,
                 title = stringResource(R.string.system_equalizer),
                 subtitle = stringResource(R.string.system_equalizer_subtitle),
                 onClick = { openEqualizer(context, sessionId) },
@@ -429,7 +430,7 @@ private fun ToneReadout(x: Int, y: Int) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
-            imageVector = Icons.Rounded.Waves,
+            imageVector = SfIcons.Waves,
             contentDescription = stringResource(R.string.equalizer_tilt),
             tint = MaterialTheme.colorScheme.onBackground,
             modifier = Modifier.size(20.dp),
@@ -442,7 +443,7 @@ private fun ToneReadout(x: Int, y: Int) {
         )
         Spacer(Modifier.width(22.dp))
         Icon(
-            imageVector = Icons.AutoMirrored.Rounded.ShowChart,
+            imageVector = SfIcons.ShowChart,
             contentDescription = stringResource(R.string.equalizer_contour),
             tint = MaterialTheme.colorScheme.onBackground,
             modifier = Modifier.size(20.dp),
@@ -488,7 +489,7 @@ private fun ChoiceRow(
         )
         if (selected) {
             Icon(
-                imageVector = Icons.Rounded.Check,
+                imageVector = SfIcons.Check,
                 contentDescription = stringResource(R.string.selected),
                 tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(22.dp),

@@ -195,7 +195,7 @@ internal fun videoQualityLabel(height: Int): String = when {
     height >= 4320 -> "8K"
     height >= 2160 -> "4K"
     height >= 1440 -> "2K"
-    height >= 1080 -> "FullHD"
+    height >= 1080 -> "1080p"
     height >= 720 -> "HD"
     else -> "${height}p"
 }

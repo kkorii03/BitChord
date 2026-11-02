@@ -37,8 +37,8 @@ class ExploreCategoriesTest {
     @Test
     fun `queries are the Korean mood and genre terms themselves`() {
         assertEquals("운동", ExploreCategories.find("ytq:workout")!!.query)
-        assertEquals("잠잘 때", ExploreCategories.find("ytq:sleep")!!.query)
-        assertEquals("편안한", ExploreCategories.find("ytq:chill")!!.query)
+        assertEquals("수면", ExploreCategories.find("ytq:sleep")!!.query)
+        assertEquals("휴식", ExploreCategories.find("ytq:chill")!!.query)
         assertEquals("K-pop", ExploreCategories.find("ytq:kpop")!!.query)
         assertEquals("로맨스", ExploreCategories.find("ytq:romance")!!.query)
         // The measured per-tile override is optional and unused by default.
@@ -57,8 +57,8 @@ class ExploreCategoriesTest {
     fun `mood titles match the music app grid`() {
         assertEquals(
             listOf(
-                "게임", "에너지 충전", "잠잘 때", "집중할 때", "출퇴근 & 등하교",
-                "편안한 분위기", "행복한 기분", "파티", "로맨스", "슬플 때",
+                "게임", "에너지", "수면", "집중", "출퇴근",
+                "휴식", "기분 좋음", "파티", "로맨스", "슬픔",
                 "운동", "가족", "비 오는 날", "드라이브", "공부",
             ),
             ExploreCategories.moods.map { it.title },

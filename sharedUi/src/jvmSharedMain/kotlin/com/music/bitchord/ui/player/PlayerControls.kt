@@ -466,8 +466,6 @@ internal fun SleeveNerdStats(
         current = smartAnalysis.current,
         next = smartAnalysis.next,
     )
-    // The measured stream for this track only; see [PlaybackQualityLabel].
-    val playingStats = PlayingAudioFormat.forTrack(song.videoId, nerdStats)
     // A plain white line reads fine over the usual dark tile, but a light
     // stretch of an animated cover — sky, snow, a pale sleeve — washes it out
     // entirely. The shadow costs nothing on a dark background and is what
@@ -483,16 +481,6 @@ internal fun SleeveNerdStats(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = modifier,
     ) {
-        playingStats?.describe()?.let { stats ->
-            Text(
-                text = stats,
-                style = nerdStyle,
-                color = Color.White.copy(alpha = 0.65f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Center,
-            )
-        }
         val statusText = when (statusLine) {
             AutomixStatusLine.Hidden -> null
             AutomixStatusLine.StoppedInParty -> stringResource(Res.string.automix_stopped_in_party)
@@ -2056,51 +2044,6 @@ private fun ShimmerText(
                 )
             },
     )
-}
-
-/**
- * "FLAC · 24-bit · 96.0 kHz · 4608 kbps · Stereo" — whichever of those the
- * player has actually reported. A figure it hasn't is dropped rather than
- * filled in, so a short line means little was known, never that something was
- * invented.
- *
- * Bitrate is stated for a lossless stream too, and is the rate its samples
- * decode to — 1411 for 16-bit/44.1kHz, 4608 for 24-bit/96kHz. It is the same
- * figure Tidal, Qobuz and Apple Music print next to a lossless track, and the
- * one a listener can carry from track to track; a FLAC's compressed rate
- * cannot, because it says more about how compressible that recording was than
- * about the copy being played.
- */
-@Composable
-private fun NerdStats.Snapshot.describe(): String? {
-    val parts = buildList {
-        codecLabel(mimeType)?.let(::add)
-        bitDepth?.let { add(stringResource(Res.string.bit_depth, it)) }
-        sampleRateHz?.let { add(NerdStats.megahertzLabel(it) ?: "%.1f kHz".format(Locale.ROOT, it / 1000f)) }
-        bitrateKbps?.let { add("$it kbps") }
-        channels?.let {
-            add(
-                when (it) {
-                    1 -> stringResource(Res.string.mono)
-                    2 -> stringResource(Res.string.stereo)
-                    else -> stringResource(Res.string.channel_count, it)
-                },
-            )
-        }
-    }
-    return parts.joinToString(" · ").takeIf { it.isNotEmpty() }
-}
-
-/** The codec under its usual name rather than its MIME type. */
-private fun codecLabel(mimeType: String?): String? = when {
-    mimeType == null -> null
-    mimeType.endsWith("opus") -> "Opus"
-    mimeType.endsWith("mp4a-latm") -> "AAC"
-    mimeType.endsWith("vorbis") -> "Vorbis"
-    mimeType.endsWith("mpeg") -> "MP3"
-    mimeType.endsWith("flac") -> "FLAC"
-    mimeType.endsWith("alac") -> "ALAC"
-    else -> mimeType.substringAfter('/').uppercase(Locale.ROOT)
 }
 
 /** Wording for the Automix status line; see [TrackAnalysisState]. */

@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.icons.SfIcons
 import com.music.bitchord.ui.theme.AppType
 
 import android.content.Intent
@@ -237,7 +238,7 @@ fun DiscordScreen(
                 footer = stringResource(R.string.discord_sign_in_footer),
             ) {
                 SettingsRow(
-                    icon = Icons.Rounded.Key,
+                    icon = SfIcons.Key,
                     title = stringResource(R.string.enter_token_instead),
                     subtitle = stringResource(R.string.enter_token_instead_subtitle),
                     onClick = { onOpenDialog(DiscordDialog.TOKEN) },
@@ -276,7 +277,7 @@ fun DiscordScreen(
             )
             RowDivider()
             SettingsRow(
-                icon = Icons.AutoMirrored.Rounded.Label,
+                icon = SfIcons.Label,
                 title = stringResource(R.string.lead_with_song),
                 subtitle = stringResource(R.string.lead_with_song_subtitle),
                 enabled = connected && rpcEnabled,
@@ -295,7 +296,7 @@ fun DiscordScreen(
             )
             RowDivider()
             SettingsRow(
-                icon = Icons.Rounded.GraphicEq,
+                icon = SfIcons.GraphicEq,
                 title = stringResource(R.string.discord_show_audio_quality),
                 subtitle = stringResource(R.string.discord_show_audio_quality_subtitle),
                 enabled = connected && rpcEnabled,
@@ -314,7 +315,7 @@ fun DiscordScreen(
             )
             RowDivider()
             SettingsRow(
-                icon = Icons.Rounded.Tune,
+                icon = SfIcons.Tune,
                 title = stringResource(R.string.customize_card),
                 subtitle = stringResource(R.string.customize_card_subtitle),
                 enabled = connected && rpcEnabled,
@@ -337,21 +338,21 @@ fun DiscordScreen(
             Column(Modifier.fillMaxWidth()) {
                 SettingsGroup(header = stringResource(R.string.presence)) {
                     SettingsRow(
-                        icon = Icons.Rounded.RadioButtonChecked,
+                        icon = SfIcons.RadioButtonChecked,
                         title = stringResource(R.string.status),
                         value = statusOf(status).localizedLabel(),
                         onClick = { onOpenDialog(DiscordDialog.STATUS) },
                     )
                     RowDivider()
                     SettingsRow(
-                        icon = Icons.Rounded.Tune,
+                        icon = SfIcons.Tune,
                         title = stringResource(R.string.activity),
                         value = kindOf(activityType).localizedLabel(),
                         onClick = { onOpenDialog(DiscordDialog.ACTIVITY_TYPE) },
                     )
                     RowDivider()
                     SettingsRow(
-                        icon = Icons.AutoMirrored.Rounded.Label,
+                        icon = SfIcons.Label,
                         title = stringResource(R.string.name),
                         subtitle = activityName.ifEmpty { appName() },
                         onClick = { onOpenDialog(DiscordDialog.ACTIVITY_NAME) },
@@ -363,7 +364,7 @@ fun DiscordScreen(
                     footer = stringResource(R.string.discord_buttons_footer),
                 ) {
                     SettingsRow(
-                        icon = Icons.Rounded.SmartButton,
+                        icon = SfIcons.SmartButton,
                         title = stringResource(R.string.first_button),
                         subtitle = button1Text.ifEmpty { DiscordRPC.DEFAULT_BUTTON_1 },
                         trailing = {
@@ -380,7 +381,7 @@ fun DiscordScreen(
                     )
                     RowDivider()
                     SettingsRow(
-                        icon = Icons.Rounded.SmartButton,
+                        icon = SfIcons.SmartButton,
                         title = stringResource(R.string.second_button),
                         subtitle = button2Text.ifEmpty { DiscordRPC.DEFAULT_BUTTON_2 },
                         trailing = {

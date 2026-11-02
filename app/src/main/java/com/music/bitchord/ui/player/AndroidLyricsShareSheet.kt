@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.player
 
+import com.music.bitchord.ui.icons.SfIcons
 import android.content.Intent
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
@@ -137,7 +138,7 @@ internal fun AndroidLyricsShareSheet(
 
             ShareAction(
                 label = stringResource(if (story) R.string.lyrics_share_story_revert else R.string.lyrics_share_story),
-                icon = if (story) Icons.Rounded.Undo else Icons.Rounded.PhoneIphone,
+                icon = if (story) SfIcons.Revert else SfIcons.Phone,
                 accent = false,
                 enabled = image != null,
                 modifier = Modifier.fillMaxWidth(),
@@ -162,7 +163,7 @@ internal fun AndroidLyricsShareSheet(
             ) {
                 ShareAction(
                     label = stringResource(R.string.save),
-                    icon = Icons.Rounded.Download,
+                    icon = SfIcons.Download,
                     accent = false,
                     enabled = image != null,
                     modifier = Modifier.weight(1f),
@@ -188,7 +189,7 @@ internal fun AndroidLyricsShareSheet(
                 )
                 ShareAction(
                     label = stringResource(R.string.share),
-                    icon = Icons.Rounded.IosShare,
+                    icon = SfIcons.Share,
                     accent = true,
                     enabled = image != null,
                     modifier = Modifier.weight(1f),

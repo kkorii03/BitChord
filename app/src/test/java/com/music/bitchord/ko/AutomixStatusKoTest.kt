@@ -68,11 +68,11 @@ class AutomixStatusKoTest {
     fun `korean analysis states use the Apple Music wording`() {
         val analysed = Label.Analysed(120, "C", modelGrid = true, confidence = 0.82, refining = false)
         assertEquals(
-            "자동 믹스 · 현재 노래: 분석됨(120 BPM C, 모델 그리드 0.82) · 다음 노래: 분석 중…",
+            "자동 믹스 · 현재 노래: 분석됨(120 BPM C, 분석 모드 0.82) · 다음 노래: 분석 중…",
             render(Language.KO, Status.Analysis(analysed, Label.Analysing)),
         )
         assertEquals(
-            "자동 믹스 · 현재 노래: 분석 실패 · 다음 노래: 분석됨(128 BPM, DSP 그리드 0.50, 다듬는 중)",
+            "자동 믹스 · 현재 노래: 분석 실패 · 다음 노래: 분석됨(128 BPM, 신호 처리 모드 0.50, 다듬는 중)",
             render(
                 Language.KO,
                 Status.Analysis(

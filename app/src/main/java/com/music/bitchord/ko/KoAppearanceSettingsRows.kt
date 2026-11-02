@@ -1,5 +1,6 @@
 package com.music.bitchord.ko
 
+import com.music.bitchord.ui.icons.SfIcons
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.BatterySaver
 import androidx.compose.runtime.Composable
@@ -24,7 +25,7 @@ internal fun SettingsGroupScope.KoLowPowerRow() {
     val lowPowerTitle = stringResource(R.string.low_power_mode)
     row(lowPowerTitle, "battery", "heat", "power saving") {
         SettingsRow(
-            icon = Icons.Rounded.BatterySaver,
+            icon = SfIcons.BatterySaver,
             title = lowPowerTitle,
             subtitle = stringResource(R.string.low_power_mode_subtitle),
         )

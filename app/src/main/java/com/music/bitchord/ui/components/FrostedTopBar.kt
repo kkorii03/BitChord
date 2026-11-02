@@ -689,7 +689,7 @@ fun TopBarAccountButton(
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    Icons.Rounded.Person,
+                    SfIcons.Person,
                     contentDescription = stringResource(R.string.switch_account),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(20.dp),

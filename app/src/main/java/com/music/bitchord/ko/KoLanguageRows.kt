@@ -1,5 +1,6 @@
 package com.music.bitchord.ko
 
+import com.music.bitchord.ui.icons.SfIcons
 import androidx.annotation.StringRes
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Public
@@ -21,7 +22,7 @@ internal fun SettingsGroupScope.KoContentCountryRow(onContentCountry: () -> Unit
     val contentCountryTitle = stringResource(R.string.content_country)
     row(contentCountryTitle, "country", "region", "chart", "gl", "국가", "지역") {
         SettingsRow(
-            icon = Icons.Rounded.Public,
+            icon = SfIcons.Language,
             title = contentCountryTitle,
             subtitle = countryDisplayName(contentCountry),
             trailing = { Chevron() },

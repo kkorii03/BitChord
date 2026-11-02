@@ -9,6 +9,7 @@
 
 package com.music.bitchord.ui.components
 
+import com.music.bitchord.ui.icons.SfIcons
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
@@ -451,7 +452,7 @@ private fun GlassNowPlaying(
                     modifier = Modifier.size(glyphSlot),
                 ) {
                     Icon(
-                        imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                        imageVector = if (isPlaying) SfIcons.Pause else SfIcons.Play,
                         contentDescription = stringResource(if (isPlaying) R.string.pause else R.string.play),
                         tint = contentColor,
                         modifier = Modifier.size(glyphSize),

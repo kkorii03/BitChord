@@ -1,5 +1,6 @@
 package com.music.bitchord.ko
 
+import com.music.bitchord.ui.icons.SfIcons
 import android.content.Context
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -156,7 +157,7 @@ internal fun SettingsGroupScope.KoSettingsTransferRows(state: KoSettingsTransfer
     val sendSettingsTitle = stringResource(R.string.settings_transfer_send)
     row(sendSettingsTitle, "settings", "transfer", "share", "proxy") {
         SettingsRow(
-            icon = Icons.Rounded.IosShare,
+            icon = SfIcons.Share,
             title = sendSettingsTitle,
             subtitle = state.sendStatus
                 ?: stringResource(R.string.settings_transfer_send_subtitle),
@@ -166,7 +167,7 @@ internal fun SettingsGroupScope.KoSettingsTransferRows(state: KoSettingsTransfer
     val importSettingsTitle = stringResource(R.string.settings_transfer_import)
     row(importSettingsTitle, "settings", "transfer", "import", "proxy") {
         SettingsRow(
-            icon = Icons.Rounded.FileDownload,
+            icon = SfIcons.FileDownload,
             title = importSettingsTitle,
             subtitle = state.importStatus
                 ?: stringResource(R.string.settings_transfer_import_subtitle),

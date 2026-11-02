@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.components
 
+import com.music.bitchord.ui.icons.SfIcons
 import com.music.bitchord.ui.theme.AppType
 
 import androidx.compose.foundation.background
@@ -200,7 +201,7 @@ private fun CheckRow(label: String, selected: Boolean, onClick: () -> Unit) {
         )
         if (selected) {
             Icon(
-                imageVector = Icons.Rounded.Check,
+                imageVector = SfIcons.Check,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(19.dp),

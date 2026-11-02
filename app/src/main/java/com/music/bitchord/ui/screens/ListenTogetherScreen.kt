@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.icons.SfIcons
 import com.music.bitchord.ui.theme.AppSpacing
 
 import android.content.Intent
@@ -502,7 +503,7 @@ fun ListenTogetherScreen(
         if (!signedIn) {
             SettingsGroup(footer = stringResource(R.string.listen_together_sign_in_footer)) {
                 SettingsRow(
-                    icon = Icons.Rounded.Login,
+                    icon = SfIcons.Login,
                     title = stringResource(R.string.sign_in),
                     subtitle = stringResource(R.string.not_signed_in),
                     onClick = onSignIn,
@@ -573,7 +574,7 @@ fun ListenTogetherScreen(
             footer = stringResource(R.string.listen_together_custom_server_footer),
         ) {
             SettingsRow(
-                icon = Icons.Rounded.Dns,
+                icon = SfIcons.Dns,
                 title = stringResource(R.string.listen_together_custom_server),
                 subtitleContent = {
                     Text(
@@ -622,17 +623,17 @@ private fun ServerConnectionLine(connection: ServerConnectionState) {
             stringResource(R.string.listen_together_server_checking),
         )
         is ServerConnectionState.CustomOnline -> Triple(
-            Icons.Rounded.CloudDone,
+            SfIcons.CloudDone,
             MaterialTheme.colorScheme.primary,
             stringResource(R.string.listen_together_status_custom_online, connection.latencyMs),
         )
         is ServerConnectionState.CustomFallback -> Triple(
-            Icons.Rounded.CloudOff,
+            SfIcons.CloudOff,
             MaterialTheme.colorScheme.error,
             stringResource(R.string.listen_together_status_custom_fallback, connection.latencyMs),
         )
         ServerConnectionState.Offline -> Triple(
-            Icons.Rounded.CloudOff,
+            SfIcons.CloudOff,
             MaterialTheme.colorScheme.error,
             stringResource(R.string.listen_together_status_all_offline),
         )
@@ -835,13 +836,13 @@ private fun InAParty(
         )
         RowDivider()
         SettingsRow(
-            icon = Icons.Rounded.ContentCopy,
+            icon = SfIcons.ContentCopy,
             title = stringResource(R.string.copy_code),
             onClick = onCopy,
         )
         RowDivider()
         SettingsRow(
-            icon = Icons.Rounded.Share,
+            icon = SfIcons.Share,
             title = stringResource(R.string.share),
             onClick = onShare,
         )
@@ -876,7 +877,7 @@ private fun InAParty(
             }
             RowDivider()
             SettingsRow(
-                icon = Icons.Rounded.Lock,
+                icon = SfIcons.Lock,
                 title = stringResource(R.string.listen_together_host_only),
                 subtitle = stringResource(R.string.listen_together_host_only_subtitle),
                 trailing = {
@@ -901,7 +902,7 @@ private fun InAParty(
 
     SettingsGroup {
         SettingsRow(
-            icon = Icons.Rounded.Logout,
+            icon = SfIcons.Logout,
             title = stringResource(R.string.listen_together_leave),
             subtitle = stringResource(R.string.listen_together_leave_subtitle),
             onClick = onLeave,
@@ -944,7 +945,7 @@ private fun NowPlayingInTheParty(state: ListenTogether.State) {
 
     SettingsGroup(header = stringResource(R.string.listen_together_now_playing)) {
         SettingsRow(
-            icon = Icons.Rounded.MusicNote,
+            icon = SfIcons.MusicNote,
             title = track?.title?.takeIf { it.isNotBlank() } ?: nothingPlaying,
             subtitle = if (track == null) {
                 connection
@@ -995,7 +996,7 @@ private fun PartyAvatar(url: String?, size: Dp = ICON_SIZE) {
         )
     } else {
         Icon(
-            Icons.Rounded.Person,
+            SfIcons.Person,
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onBackground,
             modifier = Modifier.size(size),

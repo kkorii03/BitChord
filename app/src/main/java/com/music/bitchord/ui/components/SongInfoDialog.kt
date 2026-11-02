@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.components
 
+import com.music.bitchord.ui.icons.SfIcons
 import com.music.bitchord.ui.theme.AppType
 
 import androidx.compose.foundation.background
@@ -204,7 +205,7 @@ internal fun SongInfoPage(song: Song, palette: ArtworkPalette, onBack: () -> Uni
         ) {
             IconButton(onClick = onBack) {
                 Icon(
-                    Icons.AutoMirrored.Rounded.ArrowBack,
+                    SfIcons.ArrowBack,
                     contentDescription = stringResource(R.string.back),
                     tint = MaterialTheme.colorScheme.onBackground,
                 )
@@ -240,7 +241,7 @@ internal fun SongInfoPage(song: Song, palette: ArtworkPalette, onBack: () -> Uni
         }
 
         if (info?.failed == true) {
-            ActionRow(Icons.Rounded.Refresh, stringResource(R.string.song_info_retry), accent = palette.accent) {
+            ActionRow(SfIcons.Cached, stringResource(R.string.song_info_retry), accent = palette.accent) {
                 retry++
             }
             Text(

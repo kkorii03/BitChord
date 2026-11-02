@@ -701,7 +701,7 @@ object StreamResolver {
 
         fun blockedReason(): String =
             directUnplayableReason ?: itxUnplayableReason
-                ?: "이 국가에서는 이용할 수 없는 트랙입니다"
+                ?: "이 국가에서는 이용할 수 없는 노래입니다"
 
         // A claim, a takedown or a private upload names the recording itself.
         // A region/Premium gate, an age-restricted or a paid track is not gone:
@@ -970,7 +970,7 @@ object StreamResolver {
                     )
                     throw PermanentlyUnplayableException(
                         directUnplayableReason ?: itxUnplayableReason
-                            ?: "이 국가에서는 이용할 수 없는 트랙입니다",
+                            ?: "이 국가에서는 이용할 수 없는 노래입니다",
                     )
                 }
             }
@@ -1016,7 +1016,7 @@ object StreamResolver {
                 // every client, so settle it once instead of spending the
                 // retry budget on an answer already in hand.
                 throw PermanentlyUnplayableException(
-                    goneReason() ?: "이 트랙은 재생할 수 없습니다",
+                    goneReason() ?: "이 노래는 재생할 수 없습니다",
                 )
             }
             // Parenthesised so the extraction failsafe below applies to every
@@ -1141,7 +1141,7 @@ object StreamResolver {
                 // the deletion. Extraction reads the same watch page and would
                 // spend its attempts repeating that answer.
                 throw PermanentlyUnplayableException(
-                    goneReason() ?: "이 트랙은 재생할 수 없습니다",
+                    goneReason() ?: "이 노래는 재생할 수 없습니다",
                 )
             } else if (blockedSignal) {
                 // The first region/refusal signal already said what extraction
@@ -1234,7 +1234,7 @@ object StreamResolver {
                         throw BotChallengeException(BOT_CHALLENGE_REASON)
                     }
                     val reason = permanentReason(proxyFailure)
-                        ?: "이 국가에서는 이용할 수 없는 트랙입니다"
+                        ?: "이 국가에서는 이용할 수 없는 노래입니다"
                     rememberUnplayable(videoId, reason)
                     TrackLog.w(TAG, "$videoId is not playable: $reason; not asking again for 10 minutes")
                     throw PermanentlyUnplayableException(reason)
@@ -2161,7 +2161,7 @@ object StreamResolver {
             proxyFallback?.let { return@withContext it }
             found?.let { return@withContext it }
             if (offered) error("지금은 다운로드 가능한 사본에 연결할 수 없습니다 — 다시 시도하십시오")
-            error("이 트랙에는 다운로드 가능한 오디오가 없습니다")
+            error("이 노래에는 다운로드 가능한 오디오가 없습니다")
         }
 
     /**
@@ -2576,7 +2576,7 @@ object StreamResolver {
                 failure = e
             }
         }
-        throw failure ?: IllegalStateException("트랙 사용 불가: 오디오 스트림 없음")
+        throw failure ?: IllegalStateException("노래 사용 불가: 오디오 스트림 없음")
     }
 
     /**
@@ -2631,32 +2631,32 @@ object StreamResolver {
      * different thing to be told than `ERROR_CODE_IO_UNSPECIFIED`.
      */
     private fun permanentReason(e: Throwable): String? = when (e) {
-        is PermanentlyUnplayableException -> e.message ?: "이 트랙은 재생할 수 없습니다"
+        is PermanentlyUnplayableException -> e.message ?: "이 노래는 재생할 수 없습니다"
         // The whole reason this function exists — see [newPipeStream].
         is AgeRestrictedContentException ->
             if (Innertube.cookie == null) {
-                "연령 제한 트랙입니다. 재생하려면 YouTube에 로그인하십시오."
+                "연령 제한 노래입니다. 재생하려면 YouTube에 로그인하십시오."
             } else {
-                "YouTube가 이 앱에 연령 제한 트랙을 제공하지 않습니다."
+                "YouTube가 이 앱에 연령 제한 노래를 제공하지 않습니다."
             }
-        is GeographicRestrictionException -> "이 국가에서는 이용할 수 없는 트랙입니다"
-        is UnsupportedContentInCountryException -> "이 국가에서는 이용할 수 없는 트랙입니다"
+        is GeographicRestrictionException -> "이 국가에서는 이용할 수 없는 노래입니다"
+        is UnsupportedContentInCountryException -> "이 국가에서는 이용할 수 없는 노래입니다"
         // The direct path's own signal for this same gate. It is classified
         // only after [resolveUncached] has had its one chance to re-ask through
         // the proxy, so a configured proxy still gets to play the track.
         is SignInConfirmNotBotException -> "YouTube가 이 네트워크에서 봇 확인을 요구합니다"
-        is PaidContentException -> "유료 콘텐츠 트랙입니다"
+        is PaidContentException -> "유료 콘텐츠 노래입니다"
         is YoutubeMusicPremiumContentException -> {
             // This is the class NewPipe throws when the web player is served
             // the Korea/no-Premium gate. Remembering it lets the rest of the
             // session use the youtube.com fallback instead of retrying a
             // refusal that will read the same on every track.
             MusicGateFallback.observePremiumFailure("YoutubeMusicPremiumContentException")
-            "YouTube Music Premium이 필요한 트랙입니다"
+            "YouTube Music Premium이 필요한 노래입니다"
         }
-        is PrivateContentException -> "비공개 트랙입니다"
-        is AccountTerminatedException -> "이 트랙의 채널이 해지되었습니다"
-        is SoundCloudGoPlusContentException -> "SoundCloud Go+가 필요한 트랙입니다"
+        is PrivateContentException -> "비공개 노래입니다"
+        is AccountTerminatedException -> "이 노래의 채널이 해지되었습니다"
+        is SoundCloudGoPlusContentException -> "SoundCloud Go+가 필요한 노래입니다"
         // ExoPlayer and the coroutine machinery both wrap freely, and the
         // classification has to survive being wrapped or it never fires: the
         // failure that reaches [resolveUncached] arrives as whatever the last
@@ -2714,7 +2714,7 @@ object StreamResolver {
                         it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP
                 }
             val stream = select(candidates.map { it.averageBitrate to it })
-                ?: error("트랙 사용 불가: 오디오 스트림 없음")
+                ?: error("노래 사용 불가: 오디오 스트림 없음")
             TrackLog.d(
                 TAG,
                 "resolved $videoId via NewPipe ${stream.format?.name} @ ${stream.averageBitrate}kbps " +

@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.components
 
+import com.music.bitchord.ui.icons.SfIcons
 import com.music.bitchord.ui.FriendlyError
 import com.music.bitchord.ui.theme.AppType
 
@@ -875,7 +876,7 @@ private fun ChoiceRow(
         Spacer(Modifier.width(10.dp))
         if (checked) {
             Icon(
-                imageVector = Icons.Rounded.Check,
+                imageVector = SfIcons.Check,
                 contentDescription = stringResource(R.string.selected),
                 tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(19.dp),

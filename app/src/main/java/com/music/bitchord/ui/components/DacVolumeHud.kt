@@ -9,6 +9,7 @@
  */
 package com.music.bitchord.ui.components
 
+import com.music.bitchord.ui.icons.SfIcons
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
@@ -313,9 +314,9 @@ fun DacVolumeHud(hazeState: HazeState) {
                 if (width > COMPACT_WIDTH + 18.dp) {
                     Icon(
                         imageVector = when {
-                            current <= 0f -> Icons.AutoMirrored.Rounded.VolumeMute
-                            current < 0.5f -> Icons.AutoMirrored.Rounded.VolumeDown
-                            else -> Icons.AutoMirrored.Rounded.VolumeUp
+                            current <= 0f -> SfIcons.VolumeOff
+                            current < 0.5f -> SfIcons.VolumeDown
+                            else -> SfIcons.VolumeUp
                         },
                         contentDescription = null,
                         // Dark where the white fill is behind it, as on iOS.

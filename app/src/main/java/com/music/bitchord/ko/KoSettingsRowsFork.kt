@@ -1,5 +1,6 @@
 package com.music.bitchord.ko
 
+import com.music.bitchord.ui.icons.SfIcons
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.VolumeOff
 import androidx.compose.material.icons.rounded.AutoAwesome
@@ -19,12 +20,14 @@ import com.music.bitchord.ui.screens.SettingsRow
 internal fun KoWifiQualityRow(
     title: String,
     value: String,
+    badge: String? = null,
     onClick: () -> Unit,
 ) {
     SettingsRow(
-        icon = Icons.Rounded.Wifi,
+        icon = SfIcons.Wifi,
         title = title,
         value = value,
+        badge = badge,
         onClick = onClick,
     )
 }
@@ -33,12 +36,14 @@ internal fun KoWifiQualityRow(
 internal fun KoCellularQualityRow(
     title: String,
     value: String,
+    badge: String? = null,
     onClick: () -> Unit,
 ) {
     SettingsRow(
-        icon = Icons.Rounded.SignalCellularAlt,
+        icon = SfIcons.SignalCellularAlt,
         title = title,
         value = value,
+        badge = badge,
         onClick = onClick,
     )
 }
@@ -78,7 +83,7 @@ internal fun KoSkipSilenceRow(
     checked: Boolean,
 ) {
     SettingsRow(
-        icon = Icons.AutoMirrored.Rounded.VolumeOff,
+        icon = SfIcons.VolumeOff,
         title = title,
         // The low-level Media3 processor only runs on its 16-bit branch, so
         // the precision sink now trims float and direct output itself before
@@ -103,7 +108,7 @@ internal fun KoSpatialAudioRow(
     playingDolbyAtmos: Boolean,
 ) {
     SettingsRow(
-        icon = Icons.Rounded.SurroundSound,
+        icon = SfIcons.SurroundSound,
         title = title,
         // Widening a JOC stream would fight the object-based mix Dolby has
         // already spatialized, so the service holds this off for the duration
@@ -133,7 +138,7 @@ internal fun KoAutomixRow(
     checked: Boolean,
 ) {
     SettingsRow(
-        icon = Icons.Rounded.AutoAwesome,
+        icon = SfIcons.AutoAwesome,
         title = title,
         trailing = {
             Switch(
@@ -152,7 +157,7 @@ internal fun KoPreferMusicOnlyRow(
     checked: Boolean,
 ) {
     SettingsRow(
-        icon = Icons.Rounded.SmartDisplay,
+        icon = SfIcons.SmartDisplay,
         title = title,
         subtitle = stringResource(R.string.prefer_music_only_subtitle),
         trailing = {

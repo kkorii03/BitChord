@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.replay
 
+import com.music.bitchord.ui.icons.SfIcons
 import com.music.bitchord.ui.theme.AppType
 
 import androidx.compose.animation.core.Animatable
@@ -375,7 +376,7 @@ private fun StoryChrome(
     Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
         Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.End) {
             Icon(
-                imageVector = Icons.Rounded.Close,
+                imageVector = SfIcons.Close,
                 contentDescription = stringResource(R.string.close_replay),
                 tint = Color.White,
                 modifier = Modifier
@@ -497,7 +498,7 @@ private fun StoryPage(
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    imageVector = Icons.Rounded.IosShare,
+                    imageVector = SfIcons.Share,
                     contentDescription = stringResource(R.string.share_my_replay),
                     tint = Color.White,
                     modifier = Modifier.size(20.dp),

@@ -22,9 +22,9 @@ internal object YouTubeCategoryRules {
     /** The owner YouTube Music bills its editorial playlists to. */
     const val OFFICIAL_PLAYLIST_AUTHOR = "YouTube Music"
 
-    const val OFFICIAL_SHELF_TITLE = "YouTube Music 추천 재생목록"
+    const val OFFICIAL_SHELF_TITLE = "YouTube Music 추천 플레이리스트"
     const val SONGS_SHELF_TITLE = "노래"
-    const val COMMUNITY_SHELF_TITLE = "커뮤니티 재생목록"
+    const val COMMUNITY_SHELF_TITLE = "커뮤니티 플레이리스트"
 
     /** The songs shelf is the top official playlist's first page of tracks. */
     const val OFFICIAL_TRACK_LIMIT = 25

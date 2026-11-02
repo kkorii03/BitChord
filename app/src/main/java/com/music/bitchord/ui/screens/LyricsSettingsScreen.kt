@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.icons.SfIcons
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
@@ -139,7 +140,7 @@ fun LyricsSettingsScreen(
             // Same reasoning as Animated cover art on the main page: the lyrics
             // source and translation rows are only here while this is on.
             SettingsRow(
-                icon = Icons.AutoMirrored.Rounded.Notes,
+                icon = SfIcons.Notes,
                 title = syncedLyricsTitle,
                 subtitle = stringResource(R.string.synced_lyrics_subtitle),
                 trailing = {
@@ -158,7 +159,7 @@ fun LyricsSettingsScreen(
                 RowDivider()
                 val lyricsBlurTitle = stringResource(R.string.blur_unfocused_lyrics)
                 SettingsRow(
-                    icon = Icons.Rounded.BlurOn,
+                    icon = SfIcons.BlurOn,
                     title = lyricsBlurTitle,
                     subtitle = stringResource(R.string.blur_unfocused_lyrics_subtitle),
                     trailing = {
@@ -173,7 +174,7 @@ fun LyricsSettingsScreen(
                 RowDivider()
                 val lyricsSourcesTitle = stringResource(R.string.lyrics_sources)
                 SettingsRow(
-                    icon = Icons.Rounded.Language,
+                    icon = SfIcons.Language,
                     title = lyricsSourcesTitle,
                     subtitle = lyricsSources
                         .sortedBy { it.ordinal }
@@ -185,7 +186,7 @@ fun LyricsSettingsScreen(
                 RowDivider()
                 val translationLanguageTitle = stringResource(R.string.translation_language)
                 SettingsRow(
-                    icon = Icons.Rounded.Translate,
+                    icon = SfIcons.Translate,
                     title = translationLanguageTitle,
                     subtitle = if (translationLanguage.isBlank()) {
                         stringResource(R.string.translation_language_subtitle)
@@ -201,7 +202,7 @@ fun LyricsSettingsScreen(
                 RowDivider()
                 val geminiTranslationTitle = stringResource(R.string.gemini_translation)
                 SettingsRow(
-                    icon = Icons.Rounded.AutoAwesome,
+                    icon = SfIcons.AutoAwesome,
                     title = geminiTranslationTitle,
                     subtitle = stringResource(
                         when {
@@ -225,7 +226,7 @@ fun LyricsSettingsScreen(
                 RowDivider()
                 val autoTranslateTitle = stringResource(R.string.auto_translate_lyrics)
                 SettingsRow(
-                    icon = Icons.Rounded.Translate,
+                    icon = SfIcons.Translate,
                     title = autoTranslateTitle,
                     subtitle = stringResource(R.string.auto_translate_lyrics_subtitle),
                     trailing = {
@@ -240,7 +241,7 @@ fun LyricsSettingsScreen(
                 RowDivider()
                 val autoLyricsTimingTitle = stringResource(R.string.auto_lyrics_timing)
                 SettingsRow(
-                    icon = Icons.Rounded.Timer,
+                    icon = SfIcons.Clock,
                     title = autoLyricsTimingTitle,
                     subtitle = stringResource(
                         if (aiTimingMissingKey) R.string.ai_timing_missing_key_subtitle
@@ -264,7 +265,7 @@ fun LyricsSettingsScreen(
                 RowDivider()
                 val aiTimingAheadTitle = stringResource(R.string.ai_timing_ahead)
                 SettingsRow(
-                    icon = Icons.Rounded.Timer,
+                    icon = SfIcons.Clock,
                     title = aiTimingAheadTitle,
                     subtitle = stringResource(
                         if (aiTimingMissingKey) R.string.ai_timing_missing_key_subtitle
@@ -288,7 +289,7 @@ fun LyricsSettingsScreen(
                 RowDivider()
                 val resetDownloadSyncTitle = stringResource(R.string.reset_download_sync)
                 SettingsRow(
-                    icon = Icons.Rounded.Cached,
+                    icon = SfIcons.Cached,
                     title = resetDownloadSyncTitle,
                     subtitle = stringResource(R.string.reset_download_sync_subtitle),
                     trailing = { Chevron() },
@@ -297,7 +298,7 @@ fun LyricsSettingsScreen(
                 RowDivider()
                 val deepgramTitle = stringResource(R.string.deepgram_api_key)
                 SettingsRow(
-                    icon = Icons.Rounded.AutoAwesome,
+                    icon = SfIcons.AutoAwesome,
                     title = deepgramTitle,
                     subtitle = stringResource(
                         when {
@@ -313,7 +314,7 @@ fun LyricsSettingsScreen(
                 RowDivider()
                 val aiLyricsTitle = stringResource(R.string.ai_lyrics)
                 SettingsRow(
-                    icon = Icons.Rounded.Timer,
+                    icon = SfIcons.Clock,
                     title = aiLyricsTitle,
                     subtitle = stringResource(
                         if (aiLyricsMissingKey) R.string.ai_lyrics_missing_key_subtitle
@@ -337,7 +338,7 @@ fun LyricsSettingsScreen(
                 RowDivider()
                 val prefetchTranslationTitle = stringResource(R.string.prefetch_translation)
                 SettingsRow(
-                    icon = Icons.Rounded.Cached,
+                    icon = SfIcons.Cached,
                     title = prefetchTranslationTitle,
                     subtitle = stringResource(R.string.prefetch_translation_subtitle),
                     trailing = {
@@ -352,7 +353,7 @@ fun LyricsSettingsScreen(
                 RowDivider()
                 val keepDownloadTranslationTitle = stringResource(R.string.keep_download_translation)
                 SettingsRow(
-                    icon = Icons.Rounded.Download,
+                    icon = SfIcons.Download,
                     title = keepDownloadTranslationTitle,
                     subtitle = stringResource(R.string.keep_download_translation_subtitle),
                     trailing = {
@@ -367,7 +368,7 @@ fun LyricsSettingsScreen(
                 RowDivider()
                 val lockScreenLyricsTitle = stringResource(R.string.lock_screen_lyrics)
                 SettingsRow(
-                    icon = Icons.Rounded.Lock,
+                    icon = SfIcons.Lock,
                     title = lockScreenLyricsTitle,
                     subtitle = stringResource(
                         if (lockScreenLyrics && !canDrawOverlays) {

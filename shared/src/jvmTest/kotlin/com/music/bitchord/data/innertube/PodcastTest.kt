@@ -7,6 +7,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /** Shapes trimmed from YouTube Music's own responses for a podcast show (`MPSPP…`). */
 class PodcastTest {
@@ -100,7 +101,7 @@ class PodcastTest {
     }
 
     @Test
-    fun searchEpisode_isCreditedToItsShowAndKeptOnTheAllTab() {
+    fun searchEpisode_isCreditedToItsShowAndListedOnlyUnderEpisodes() {
         val response = json(
             """
             { "contents": [ { "musicResponsiveListItemRenderer": {
@@ -130,9 +131,14 @@ class PodcastTest {
             } } ] }
             """,
         )
-        val song = InnertubeParser.parseSearchSongs(response).single()
+        assertTrue(InnertubeParser.parseSearchSongs(response).isEmpty())
+        val song = InnertubeParser.parseSearchPage(response, includeEpisodes = true)
+            .rows.filterIsInstance<com.music.bitchord.data.model.SearchResult.Track>()
+            .single()
+            .song
         assertEquals("Y566_T-YlNQ", song.videoId)
         assertEquals("Figuring Out With Raj Shamani", song.artist)
         assertFalse(song.isVideo)
+        assertTrue(song.isEpisode)
     }
 }

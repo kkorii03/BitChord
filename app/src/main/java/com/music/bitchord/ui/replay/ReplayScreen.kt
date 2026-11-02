@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.replay
 
+import com.music.bitchord.ui.icons.SfIcons
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -254,7 +255,7 @@ fun ReplayScreen(
                     item("habits") { Habits(summary, dark) }
                     item("share") {
                         ReplayActionRow(
-                            Icons.Rounded.IosShare,
+                            SfIcons.Share,
                             stringResource(R.string.share_my_replay),
                             dark,
                             onShare,

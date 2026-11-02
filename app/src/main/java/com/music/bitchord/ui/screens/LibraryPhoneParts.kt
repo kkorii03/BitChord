@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.icons.SfIcons
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -48,7 +49,7 @@ fun libraryLinks(): List<LibraryLink> {
     val smbShare by AppSettings.smbShare.collectAsStateWithLifecycle()
     val showCacheFolder by AppSettings.showCacheFolder.collectAsStateWithLifecycle()
     val spotifyConnected by AppSettings.spotifySpdcToken.collectAsStateWithLifecycle()
-    fun link(title: String, subtitle: String, browseId: String, icon: ImageVector = deviceFolderIcon(browseId) ?: Icons.Rounded.Cloud) = LibraryLink(
+    fun link(title: String, subtitle: String, browseId: String, icon: ImageVector = deviceFolderIcon(browseId) ?: SfIcons.Cloud) = LibraryLink(
         item = ShelfItem(
             title = title,
             subtitle = subtitle,
@@ -99,25 +100,25 @@ fun libraryLinks(): List<LibraryLink> {
             title = stringResource(R.string.smart_top),
             subtitle = stringResource(R.string.smart_top_subtitle),
             browseId = SmartPlaylist.TOP.browseId,
-            icon = Icons.Rounded.Leaderboard,
+            icon = SfIcons.BarChart,
         ),
         link(
             title = stringResource(R.string.smart_repeat),
             subtitle = stringResource(R.string.smart_repeat_subtitle),
             browseId = SmartPlaylist.ON_REPEAT.browseId,
-            icon = Icons.Rounded.Repeat,
+            icon = SfIcons.Repeat,
         ),
         link(
             title = stringResource(R.string.smart_rediscover),
             subtitle = stringResource(R.string.smart_rediscover_subtitle),
             browseId = SmartPlaylist.REDISCOVER.browseId,
-            icon = Icons.Rounded.History,
+            icon = SfIcons.History,
         ),
         link(
             title = stringResource(R.string.smart_liked_unplayed),
             subtitle = stringResource(R.string.smart_liked_unplayed_subtitle),
             browseId = SmartPlaylist.LIKED_UNPLAYED.browseId,
-            icon = Icons.Rounded.FavoriteBorder,
+            icon = SfIcons.Heart,
         ),
     )
 }
@@ -154,11 +155,11 @@ fun libraryDeviceItems(downloadedReleases: List<SavedCollection>): List<ShelfIte
  * one of the folders.
  */
 fun deviceFolderIcon(browseId: String): ImageVector? = when (browseId) {
-    "local:downloads" -> Icons.Rounded.Download
-    "local:all" -> Icons.Rounded.Folder
-    CACHE_FOLDER_BROWSE_ID -> Icons.Rounded.Storage
-    com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID -> Icons.Rounded.Cloud
-    com.music.bitchord.data.smb.SmbConfig.BROWSE_ID -> Icons.Rounded.Lan
+    "local:downloads" -> SfIcons.Download
+    "local:all" -> SfIcons.Folder
+    CACHE_FOLDER_BROWSE_ID -> SfIcons.Storage
+    com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID -> SfIcons.Cloud
+    com.music.bitchord.data.smb.SmbConfig.BROWSE_ID -> SfIcons.Lan
     else -> null
 }
 

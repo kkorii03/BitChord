@@ -1,5 +1,6 @@
 package com.music.bitchord.ko
 
+import com.music.bitchord.ui.icons.SfIcons
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Cached
 import androidx.compose.runtime.Composable
@@ -76,7 +77,7 @@ internal fun SettingsGroupScope.KoDownloadExtrasRows() {
         stringResource(R.string.download_health_recheck_subtitle)
     row(recheckDownloadsTitle, "download", "recheck", "verify", "다운로드", "점검", divided = false) {
         SettingsRow(
-            icon = Icons.Rounded.Cached,
+            icon = SfIcons.Cached,
             title = recheckDownloadsTitle,
             subtitle = recheckDownloadsSubtitle,
             trailing = { Chevron() },

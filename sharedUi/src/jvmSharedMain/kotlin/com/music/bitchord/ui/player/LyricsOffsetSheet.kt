@@ -608,6 +608,6 @@ private fun formatOffset(offsetMs: Int): String = formatOffset(offsetMs.toLong()
 
 private fun formatOffset(offsetMs: Long): String = String.format(
     Locale.getDefault(),
-    "%+.1f s",
+    "%+.1f초",
     offsetMs / 1_000f,
 )

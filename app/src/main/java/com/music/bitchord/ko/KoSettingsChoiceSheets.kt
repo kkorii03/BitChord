@@ -1,5 +1,6 @@
 package com.music.bitchord.ko
 
+import com.music.bitchord.ui.icons.SfIcons
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -45,7 +46,7 @@ internal fun KoQualitySheet(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
-                imageVector = if (isWifi) Icons.Rounded.Wifi else Icons.Rounded.SignalCellularAlt,
+                imageVector = if (isWifi) SfIcons.Wifi else SfIcons.SignalCellularAlt,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onBackground,
                 modifier = Modifier.size(22.dp),
@@ -97,7 +98,7 @@ internal fun KoQualitySheet(
                 if (chosen) {
                     Spacer(Modifier.width(12.dp))
                     Icon(
-                        Icons.Rounded.Check,
+                        SfIcons.Check,
                         contentDescription = stringResource(R.string.selected),
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(22.dp),
@@ -121,7 +122,7 @@ internal fun KoAutomixPerformanceSheet(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
-                imageVector = Icons.Rounded.Tune,
+                imageVector = SfIcons.Tune,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onBackground,
                 modifier = Modifier.size(22.dp),
@@ -174,7 +175,7 @@ internal fun KoAutomixPerformanceSheet(
                 if (chosen) {
                     Spacer(Modifier.width(12.dp))
                     Icon(
-                        Icons.Rounded.Check,
+                        SfIcons.Check,
                         contentDescription = stringResource(R.string.selected),
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(22.dp),
@@ -206,7 +207,7 @@ internal fun KoDownloadQualitySheet(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
-                imageVector = Icons.Rounded.Download,
+                imageVector = SfIcons.Download,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onBackground,
                 modifier = Modifier.size(22.dp),
@@ -256,7 +257,7 @@ internal fun KoDownloadQualitySheet(
                 if (chosen) {
                     Spacer(Modifier.width(12.dp))
                     Icon(
-                        Icons.Rounded.Check,
+                        SfIcons.Check,
                         contentDescription = stringResource(R.string.selected),
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(22.dp),
