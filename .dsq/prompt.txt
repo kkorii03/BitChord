@@ -1,0 +1,9 @@
+Kotlin Android app = upstream v1.9 + our Korean fork, on branch task/u19-tg. The Korean fork as it was on 1.8 is origin/task/telegram (fetch it: git fetch origin task/telegram). Battery first: event-driven, no polling/timers; never block the main thread. Use grep/Select-String, not rg. Unknown Android/Media3/Compose APIs: check with context7.
+
+Problem: the 1.9 merge silently dropped Korean-fork behaviour. Found on the phone tonight: fetchHistory lost its StoredSongDisplay.clean, the Recents shelf dropped isVideo, a [KO] first-sound change deadlocked DirectSourceGate, cleanCoverTitle grew "( )" on every pass. The user says 1.9 is a mess: wrong titles, odd Korean wording, features that do nothing.
+
+YOUR AREA: Downloads and the Korean download pipeline, auto-download, download-check upgrade
+Start from these files (and what they call): app/.../download/*, app/.../ko/downloads/*
+Task: compare the area on origin/task/telegram (1.8 fork) with task/u19-tg (git diff origin/task/telegram task/u19-tg -- <files>, plus git log -S on key symbols). List every user-visible behaviour of 1.8 that is missing or changed in 1.9 (titles/artists shown, Korean wording, a button or feature that no longer does anything, a hook whose call disappeared, a flag no longer passed through). Fix each real regression with the smallest change, keeping v1.9's own improvements (on overlap the better one wins). Each fix gets a JVM test that fails on the current task/u19-tg code; tests must not need network.
+Do not touch .github/workflows. Do not refactor or move upstream code. Keep edits inside YOUR AREA's files where possible (other lanes run in parallel); list any needed change outside it in the summary instead of making it.
+Finish with a summary of at most 12 lines: regressions found (1.8 behaviour -> 1.9 behaviour), files, REMOVED-LINES AUDIT, tests (fail-before/pass-after, class names for the CI list), what you did not do. Follow AGENTS.md (ponytail) rules.
