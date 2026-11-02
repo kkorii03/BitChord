@@ -9,12 +9,12 @@ Do not touch .github/workflows. Do not refactor or move upstream code. Keep edit
 Finish with a summary of at most 12 lines: regressions found (1.8 behaviour -> 1.9 behaviour), files, REMOVED-LINES AUDIT, tests (fail-before/pass-after, class names for the CI list), what you did not do. Follow AGENTS.md (ponytail) rules.
 
 
-== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+== 3 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
 ?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
 寃??吏??
-VERDICT: ISSUES 3
-- MEDIUM — app/src/main/java/com/music/bitchord/ui/LyricsController.kt:1023,1188: This concurrency/cancellation change is outside the Search area, so it can collide with the parallel lyrics lane and it ships with no test. Revert it (or list it for the owning lane) unless it is demonstrably needed here, and add a JVM test if kept.
-- MEDIUM — /home/runner/work/_temp/ds/change.diff:1 (commit b28e056d): No task summary/REMOVED-LINES AUDIT was supplied; the removed test helper (`filterTabLabel`) is only implicitly justified by the move, not audited. Add the required audit naming each removed line and why.
-- LOW — sharedUi/src/jvmTest/kotlin/com/music/bitchord/ui/screens/SearchBrowseLabelTest.kt:33: The test only checks the new mapping helper, not that SearchScreen.kt:308 actually uses it, so the original `it.label` regression could recur unnoticed. Add an assertion/UI-level test that the rendered tab options come from `koSearchFilterLabel()`.
-Skipped: I did not run the full app build; only the two affected JVM test classes. Risk: the out-of-scope LyricsController edit was not reviewed against its owning lane's fixes.
+VERDICT: ISSUES 4
+- MEDIUM — `sharedUi/src/jvmTest/kotlin/com/music/bitchord/ui/screens/SearchBrowseLabelTest.kt:51`: The wiring guard only checks `source.contains("koSearchFilterLabel")`, which the import at `SearchScreen.kt:93` already satisfies, so reverting line 308 to `it.label` would leave the test green; assert the actual `entries.map { stringResource(it.koSearchFilterLabel()) }` call site instead.
+- MEDIUM — `SearchBrowseLabelTest.kt:47`: The new test passes on the base tree (commit says `proof=weak`), so it does not meet the task's "test that fails on the current code" requirement and guards nothing; make it fail on the pre-fix `SearchScreen` or replace it with a real behavior test.
+- MEDIUM — `change.diff` (no summary): No REMOVED-LINES AUDIT accompanies the diff despite the task requiring one; add an audit naming every removed line and where its behavior went.
+Skipped: did not run the Gradle suites; risk: the workflow edits may be pipeline infrastructure rather than this developer's change and should be excluded rather than reverted.
 留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
