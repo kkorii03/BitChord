@@ -57,13 +57,20 @@ object LyricsAiGuard {
         agreementAllows(matchPercent) && shiftAllows(isVideo, firstLineShiftMs)
 
     /**
-     * Whether Deepgram is worth asking for this song. On Korean songs it
-     * answered "not enough" five times out of five in the logs, and on
-     * instrumental uploads there is nothing to hear: both spend the upload and
-     * the request for an answer that cannot come.
+     * Whether Deepgram is worth asking for this song: not for an instrumental
+     * upload, which has nothing to hear.
+     *
+     * Korean songs were refused here too, on the evidence of nova-3 answering
+     * "not enough" five times out of five. Every check now asks Deepgram's
+     * whisper-large ([Deepgram.MODEL_WHISPER], language read off the lyrics),
+     * which hears Korean singing: the sync scorer, on the same model, places
+     * 50-92% of the lines of the Korean covers in the user's test set. With
+     * the refusal, every Korean cover — half that set — was never checked at
+     * all (11-02 smoke: "song check skipped by its guard" on each one).
      */
+    @Suppress("UNUSED_PARAMETER") // kept: callers name the song the same way as before
     fun wantsDeepgram(title: String, artist: String, lyricsTexts: List<String>): Boolean =
-        !isKoreanSong(title, artist, lyricsTexts) && !isInstrumentalTitle(title)
+        !isInstrumentalTitle(title)
 
     /**
      * Whether a record-timed song's own lyrics are worth checking against its

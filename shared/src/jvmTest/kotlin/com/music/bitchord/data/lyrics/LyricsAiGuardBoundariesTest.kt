@@ -77,10 +77,11 @@ class LyricsAiGuardBoundariesTest {
     }
 
     @Test
-    fun deepgramIsSkippedForKoreanAndInstrumentalSongs() {
-        assertFalse(LyricsAiGuard.wantsDeepgram("사랑해", "아이유", listOf("사랑해 너를")))
-        assertFalse(LyricsAiGuard.wantsDeepgram("Loved", "아이유", listOf("I love you")))
-        assertFalse(LyricsAiGuard.wantsDeepgram("Loved", "IU", listOf("사랑해 너를 영원히")))
+    fun deepgramIsSkippedForInstrumentalSongsOnly() {
+        // whisper-large hears Korean singing; the refusal was nova-3's (11-02).
+        assertTrue(LyricsAiGuard.wantsDeepgram("사랑해", "아이유", listOf("사랑해 너를")))
+        assertTrue(LyricsAiGuard.wantsDeepgram("Loved", "아이유", listOf("I love you")))
+        assertTrue(LyricsAiGuard.wantsDeepgram("Loved", "IU", listOf("사랑해 너를 영원히")))
         assertFalse(LyricsAiGuard.wantsDeepgram("Loved (Instrumental)", "IU", listOf("I love you forever")))
         assertFalse(LyricsAiGuard.wantsDeepgram("Loved (Inst.)", "IU", listOf("I love you forever")))
         assertFalse(LyricsAiGuard.wantsDeepgram("Loved (MR)", "IU", listOf("I love you forever")))
@@ -96,8 +97,20 @@ class LyricsAiGuardBoundariesTest {
         assertTrue(LyricsAiGuard.wantsDeepgram("Golden", "HUNTR/X, EJAE, AUDREY NUNA 및 REI AMI", golden))
         assertTrue(LyricsAiGuard.wantsDeepgram("Dancing With A Stranger", "Sam Smith 및 Normani", listOf("I don't wanna be alone tonight")))
         assertTrue(LyricsAiGuard.wantsDeepgram("Golden", "HUNTR/X 외 3명", golden))
-        assertFalse(LyricsAiGuard.wantsDeepgram("Loved", "아이유 및 IU", listOf("I love you")))
-        assertFalse(LyricsAiGuard.wantsDeepgram("Golden", "HUNTR/X 및 REI AMI", listOf("사랑해 너를 영원히")))
+        assertTrue(LyricsAiGuard.wantsDeepgram("Loved", "아이유 및 IU", listOf("I love you")))
+        assertTrue(LyricsAiGuard.wantsDeepgram("Golden", "HUNTR/X 및 REI AMI", listOf("사랑해 너를 영원히")))
+    }
+
+    @Test
+    fun aKoreanCoverGetsItsSongCheck() {
+        // 11-02 smoke: every Korean cover logged "song check skipped by its guard".
+        val sung = listOf("내가 사랑했던 모든 날들이", "너에게 닿기를 바라며", "오늘도 노래해", "그대 곁에서")
+        assertTrue(
+            LyricsAiGuard.songTimingWanted(
+                isVideo = false, timed = true, sungLines = sung.size, title = "WINTER FLOWER (cover)",
+                artist = "오화요", texts = sung,
+            ),
+        )
     }
 
     @Test
