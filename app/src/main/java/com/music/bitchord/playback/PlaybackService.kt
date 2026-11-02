@@ -1209,6 +1209,13 @@ class PlaybackService : MediaLibraryService() {
     @Volatile private var persistedFavoriteLoaded = false
 
     /**
+     * Whether the cached snapshot belonged to a listener that has since signed
+     * out or been switched away. It is never lent to the new listener, whose
+     * rating belongs to a different account; see [MediaWidgetSnapshot.clearLiked].
+     */
+    @Volatile private var persistedFavoriteInvalidated = false
+
+    /**
      * The last repeat mode seen, so [onRepeatModeChanged] can tell which
      * direction the change went in: the callback reports where the player has
      * arrived, and leaving repeat-all is the half that has to restore.
@@ -2060,6 +2067,8 @@ class PlaybackService : MediaLibraryService() {
             SignedIn.state(this@PlaybackService)
                 .drop(1)
                 .collectLatest {
+                    persistedFavorite = null
+                    persistedFavoriteInvalidated = true
                     refreshCustomLayouts()
                     publishWidgetState()
                 }
@@ -2089,6 +2098,19 @@ class PlaybackService : MediaLibraryService() {
             persistedFavoriteLoaded = true
             refreshCustomLayouts()
             publishWidgetState()
+        }
+        // A sign-out or account switch clears the stored rating from the app
+        // (MainViewModel calls clearLiked). Drop the cached copy with it, or the
+        // next publish would save the departed account's like back over it.
+        scope.launch {
+            MediaWidgetSnapshot.likedCleared
+                .drop(1)
+                .collect {
+                    persistedFavorite = null
+                    persistedFavoriteInvalidated = true
+                    refreshCustomLayouts()
+                    publishWidgetState()
+                }
         }
         // A device file's heart, liked from the app, the notification or a widget.
         scope.launch {
@@ -2873,6 +2895,8 @@ class PlaybackService : MediaLibraryService() {
             onDevice = onDevice,
             deviceLiked = onDevice && OfflinePlaylists.isLiked(song),
             override = LikeState.overrides.value[song.videoId],
+            loaded = persistedFavoriteLoaded,
+            invalidated = persistedFavoriteInvalidated,
             persisted = { persistedFavorite },
         )
     }
@@ -2884,18 +2908,32 @@ class PlaybackService : MediaLibraryService() {
      */
     private fun sessionFavoriteStatus(videoId: String?): LikeStatus {
         val override = videoId?.let { LikeState.overrides.value[it] }
-        val persisted = if (videoId != null && override == null) persistedFavorite else null
+        val persisted = SessionFavoriteState.persistedOrNull(
+            loaded = persistedFavoriteLoaded,
+            invalidated = persistedFavoriteInvalidated,
+            override = override,
+            persisted = persistedFavorite,
+        )
         return SessionFavoriteState.status(videoId, override, persisted)
     }
 
     /** Favorite and Shuffle: the only actions shown on the phone notification. */
     private fun notificationButtons(): List<CommandButton> {
         val current = player?.currentMediaItem
+        val currentSong = current?.toSong()
         val liked = isLiked(current)
+        // Without the persisted read an online track with no override would
+        // draw an empty star and its first tap would send LIKE over a stored
+        // unlike; the star appears when the read lands (see persistedFavorite).
+        val favoriteReady = currentSong != null && SessionFavoriteState.favoriteActionReady(
+            loaded = persistedFavoriteLoaded,
+            onDevice = currentSong.localUri != null,
+            override = LikeState.overrides.value[currentSong.videoId],
+        )
         // The icon constant tells controllers like Android Auto what the button
         // means; the custom drawable swaps Material's sharp star for the
         // player's rounded one on the notification itself.
-        val favorite = if (!canLike(current)) null else CommandButton.Builder(
+        val favorite = if (!canLike(current) || !favoriteReady) null else CommandButton.Builder(
             if (liked) CommandButton.ICON_STAR_FILLED else CommandButton.ICON_STAR_UNFILLED,
         )
             .setCustomIconResId(if (liked) R.drawable.ic_notification_star_filled else R.drawable.ic_notification_star)
@@ -4500,6 +4538,18 @@ class PlaybackService : MediaLibraryService() {
     }
 
     private fun toggleFavoriteFromNotification(videoId: String) {
+        val item = player?.currentMediaItem?.takeIf { it.mediaId == videoId }
+        if (!SessionFavoriteState.favoriteActionReady(
+                loaded = persistedFavoriteLoaded,
+                onDevice = item?.toSong()?.localUri != null,
+                override = LikeState.overrides.value[videoId],
+            )
+        ) {
+            // The read that tells the star which way a tap goes is still in
+            // flight. The star is not offered until it lands; a tap that got
+            // here anyway must not be treated as "not liked" and send LIKE.
+            return
+        }
         favoriteActionJob?.cancel()
         val previous = sessionFavoriteStatus(videoId)
         val target = if (previous == LikeStatus.LIKE) {

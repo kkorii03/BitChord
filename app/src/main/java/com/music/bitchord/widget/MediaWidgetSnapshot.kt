@@ -5,6 +5,9 @@ import com.music.bitchord.data.StoredSongDisplay
 import com.music.bitchord.data.cover.videoThumbnailUrl
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.SongOrigins
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Everything a home-screen widget needs to know about playback.
@@ -136,7 +139,16 @@ internal data class MediaWidgetSnapshot(
          */
         fun clearLiked(context: Context) {
             prefs(context).edit().putBoolean(KEY_LIKED, false).apply()
+            _likedCleared.value += 1
         }
+
+        private val _likedCleared = MutableStateFlow(0L)
+
+        /**
+         * Emits after [clearLiked] so a live service drops the rating it cached
+         * for the notification star; process-local because the cache is too.
+         */
+        internal val likedCleared: StateFlow<Long> = _likedCleared.asStateFlow()
 
         /** The last state published by the live playback service. */
         fun load(context: Context): MediaWidgetSnapshot {

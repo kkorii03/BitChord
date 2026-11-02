@@ -71,6 +71,8 @@ class SessionFavoriteStateTest {
                 onDevice = false,
                 deviceLiked = false,
                 override = null,
+                loaded = true,
+                invalidated = false,
                 persisted = { likedSnapshot },
             ),
         )
@@ -85,6 +87,8 @@ class SessionFavoriteStateTest {
                 onDevice = false,
                 deviceLiked = false,
                 override = LikeStatus.INDIFFERENT,
+                loaded = true,
+                invalidated = false,
                 persisted = {
                     reads++
                     likedSnapshot
@@ -103,6 +107,8 @@ class SessionFavoriteStateTest {
                 onDevice = true,
                 deviceLiked = false,
                 override = null,
+                loaded = true,
+                invalidated = false,
                 persisted = {
                     reads++
                     likedSnapshot
@@ -115,6 +121,8 @@ class SessionFavoriteStateTest {
                 onDevice = true,
                 deviceLiked = true,
                 override = null,
+                loaded = true,
+                invalidated = false,
                 persisted = {
                     reads++
                     null
@@ -139,6 +147,94 @@ class SessionFavoriteStateTest {
             SessionFavoriteState.toggled(
                 videoId = "dQw4w9WgXcQ",
                 override = LikeStatus.INDIFFERENT,
+                persisted = likedSnapshot,
+            ),
+        )
+    }
+
+    @Test
+    fun `a persisted like is not used before its read completes`() {
+        assertFalse(
+            SessionFavoriteState.queueItemLiked(
+                videoId = "dQw4w9WgXcQ",
+                onDevice = false,
+                deviceLiked = false,
+                override = null,
+                loaded = false,
+                invalidated = false,
+                persisted = { likedSnapshot },
+            ),
+        )
+    }
+
+    @Test
+    fun `the star waits for the persisted read on an online track`() {
+        assertFalse(
+            SessionFavoriteState.favoriteActionReady(
+                loaded = false,
+                onDevice = false,
+                override = null,
+            ),
+        )
+        assertTrue(
+            SessionFavoriteState.favoriteActionReady(
+                loaded = false,
+                onDevice = false,
+                override = LikeStatus.LIKE,
+            ),
+        )
+        assertTrue(
+            SessionFavoriteState.favoriteActionReady(
+                loaded = false,
+                onDevice = true,
+                override = null,
+            ),
+        )
+        assertTrue(
+            SessionFavoriteState.favoriteActionReady(
+                loaded = true,
+                onDevice = false,
+                override = null,
+            ),
+        )
+    }
+
+    @Test
+    fun `a cleared listener does not lend the previous account's like`() {
+        assertFalse(
+            SessionFavoriteState.queueItemLiked(
+                videoId = "dQw4w9WgXcQ",
+                onDevice = false,
+                deviceLiked = false,
+                override = null,
+                loaded = true,
+                invalidated = true,
+                persisted = { likedSnapshot },
+            ),
+        )
+        assertEquals(
+            LikeStatus.LIKE,
+            SessionFavoriteState.toggled(
+                videoId = "dQw4w9WgXcQ",
+                override = null,
+                persisted = SessionFavoriteState.persistedOrNull(
+                    loaded = true,
+                    invalidated = true,
+                    override = null,
+                    persisted = likedSnapshot,
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `a loaded snapshot is still used while the listener stays the same`() {
+        assertEquals(
+            likedSnapshot,
+            SessionFavoriteState.persistedOrNull(
+                loaded = true,
+                invalidated = false,
+                override = null,
                 persisted = likedSnapshot,
             ),
         )

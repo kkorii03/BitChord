@@ -36,6 +36,35 @@ internal object SessionFavoriteState {
     ): Boolean = status(videoId, override, persisted) == LikeStatus.LIKE
 
     /**
+     * The persisted snapshot a surface may trust right now.
+     *
+     * It says nothing until the off-main read has finished ([loaded]), and it
+     * was written for the identity that was signed in then, so [invalidated]
+     * drops it after a sign-out, account switch or other listener reset. A
+     * session override already answers for this track and makes it unnecessary.
+     */
+    fun persistedOrNull(
+        loaded: Boolean,
+        invalidated: Boolean,
+        override: LikeStatus?,
+        persisted: MediaWidgetSnapshot?,
+    ): MediaWidgetSnapshot? =
+        if (!loaded || invalidated || override != null) null else persisted
+
+    /**
+     * Whether the star may be offered and tapped. A device file's rating lives
+     * in [OfflinePlaylists][com.music.bitchord.data.OfflinePlaylists] and needs
+     * no read. An online track with no session override needs [persistedOrNull]
+     * to know which way the tap goes, so it has to wait for [loaded]; showing
+     * the star first would let a tap send LIKE over a stored unlike.
+     */
+    fun favoriteActionReady(
+        loaded: Boolean,
+        onDevice: Boolean,
+        override: LikeStatus?,
+    ): Boolean = onDevice || override != null || loaded
+
+    /**
      * The star a queue item draws. A device file is liked into the device's own
      * Liked playlist, so [deviceLiked] decides it; an online track goes through
      * [isLiked], which keeps the persisted snapshot after a process restart.
@@ -47,11 +76,22 @@ internal object SessionFavoriteState {
         onDevice: Boolean,
         deviceLiked: Boolean,
         override: LikeStatus?,
+        loaded: Boolean,
+        invalidated: Boolean,
         persisted: () -> MediaWidgetSnapshot?,
     ): Boolean {
         if (videoId == null) return false
         if (onDevice) return deviceLiked
-        val snapshot = if (override == null) persisted() else null
+        val snapshot = if (override == null) {
+            persistedOrNull(
+                loaded = loaded,
+                invalidated = invalidated,
+                override = null,
+                persisted = persisted(),
+            )
+        } else {
+            null
+        }
         return isLiked(videoId, override, snapshot)
     }
 
