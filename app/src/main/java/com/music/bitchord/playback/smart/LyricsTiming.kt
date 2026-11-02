@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.SystemClock
 import androidx.media3.common.util.UnstableApi
+import com.music.bitchord.data.DiagnosticsState
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.YtMusicRepository
@@ -1390,6 +1391,23 @@ object LyricsTiming {
     private val measuring = ConcurrentHashMap<String, Mutex>()
 
     /**
+     * (video, original) pairs whose late-version measurement is already
+     * running. The shared lookup and the timed-out retry both land at first
+     * sound, and both used to start the same pair: the mutex serialised them,
+     * but the second then remeasured the still-partial answer. One pair, one
+     * measurement at a time.
+     */
+    private val lateMeasurements = MeasurementFlights()
+
+    /**
+     * Whether measuring [videoId] now is still wanted: it is the song playing
+     * or the one prepared after it. A measurement for any other row gives up
+     * before it takes [AudioDecoder]'s decode gate.
+     */
+    internal fun measurementWanted(videoId: String, currentId: String?, nextId: String?): Boolean =
+        videoId == currentId || videoId == nextId
+
+    /**
      * Measures how [video] runs against its original recording, on as much of
      * the video as is on disk, and keeps the answer. The record is searched
      * for under [names] — (title, artist), most trusted first, see
@@ -1430,6 +1448,29 @@ object LyricsTiming {
         cancelWithCaller: Boolean = false,
         /** The sung lines, when the caller has them, for the lateness sample. */
         lines: List<LyricLine>? = null,
+        /**
+         * Whether the answer is still worth having. A measurement runs on
+         * [measureScope], so a screen closing or the track changing does not
+         * cancel it; without this, a decode for a song that had already left
+         * kept the one decode slot (11-02 sync-g: four accepted measurements
+         * of a song that ended 3½ minutes earlier).
+         */
+        wanted: () -> Boolean = {
+            measurementWanted(
+                video.videoId,
+                DiagnosticsState.currentTrackId,
+                DiagnosticsState.nextTrackId,
+            )
+        },
+        /**
+         * The recording a late-version event is measuring against. With it the
+         * pass is not gated by the generic [worthMeasuring] (a complete answer
+         * from a guessed original must not block the authoritative one); it
+         * stops only when an answer for this same pair is already kept. The
+         * check runs again under the per-video lock, so an ordinary pass that
+         * stores its answer while this one waits is reused instead of repeated.
+         */
+        lateOriginalId: String? = null,
     ) {
         // The song version already resolved for this row. Measuring against
         // the right recording first is what stops a karaoke arrangement or a
@@ -1445,14 +1486,25 @@ object LyricsTiming {
         // the next-row bundle opts into its own job instead.
         suspend fun runMeasurement() {
             lock.withLock {
-                if (!worthMeasuring(context, video.videoId)) return@withLock
+                if (!wanted()) return@withLock
+                if (lateOriginalId != null) {
+                    if (measurementAnswerFor(store(context).get(video.videoId), lateOriginalId)) {
+                        return@withLock
+                    }
+                } else if (!worthMeasuring(context, video.videoId)) {
+                    return@withLock
+                }
                 val outcome = try {
-                    measureFresh(context, video, names, videoMs, preferred, awaitCacheSignal) { early ->
+                    measureFresh(context, video, names, videoMs, preferred, awaitCacheSignal, wanted) { early ->
                         // A quick answer only where there is none yet: a second pass
                         // (more of the video has arrived) must not trade an answer from
                         // the whole record for one from its opening, even for a minute.
+                        // An answer from a different original is not that answer, so the
+                        // authoritative late pass may replace it.
                         val had = store(context).get(video.videoId)
-                        if (had?.autoVersion != AUTO_VERSION || had.auto == null) {
+                        val sameOriginal = had?.autoVersion == AUTO_VERSION && had.autoOriginal != null &&
+                            had.autoOriginal == early.originalId
+                        if (!sameOriginal) {
                             keep(context, video.videoId, early, lines)
                         }
                     }
@@ -1484,19 +1536,59 @@ object LyricsTiming {
      */
     suspend fun measureLateVersion(context: Context, video: Song, original: Song, videoMs: Long) {
         if (original.videoId.isBlank() || original.videoId == video.videoId) return
-        if (!worthMeasuring(context, video.videoId)) return
-        TrackLog.i(
-            "BitChord",
-            "lyrics-sync: ${video.videoId} late version ${original.videoId} -> measuring",
-            video.videoId,
-        )
-        measure(
-            context,
-            video,
-            listOf(video.title to video.artist),
-            videoMs,
-            preferredOriginal = original,
-        )
+        // An answer already kept for this exact (video, original) pair is
+        // reused: the late-version event must not buy the same measurement
+        // again. An answer from another original does not count — this event
+        // is the authoritative pairing. A partial answer is an answer; the
+        // ordinary paths still extend it while the song is playing, but
+        // nothing starts one for a song that has gone.
+        if (measurementAnswerFor(store(context).get(video.videoId), original.videoId)) return
+        val pair = "${video.videoId}\u0000${original.videoId}"
+        if (!lateMeasurements.begin(pair)) return
+        try {
+            TrackLog.i(
+                "BitChord",
+                "lyrics-sync: ${video.videoId} late version ${original.videoId} -> measuring",
+                video.videoId,
+            )
+            measure(
+                context,
+                video,
+                listOf(video.title to video.artist),
+                videoMs,
+                preferredOriginal = original,
+                lateOriginalId = original.videoId,
+            )
+        } finally {
+            lateMeasurements.end(pair)
+        }
+    }
+
+    /**
+     * Whether [entry] already holds a measurement made against [originalId].
+     *
+     * A record from before the original was kept (null) has unknown
+     * provenance, so it is measured once more rather than reused for a pair it
+     * may not belong to.
+     */
+    internal fun measurementAnswerFor(entry: Entry?, originalId: String): Boolean =
+        entry != null && hasAutoAnswer(entry) && !searchOutdated(entry) &&
+            entry.autoOriginal == originalId
+
+    /** A chroma measurement (even a partial one) or a "no shift needed" finding is kept. */
+    private fun hasAutoAnswer(entry: Entry?): Boolean =
+        entry != null && entry.autoVersion == AUTO_VERSION && (entry.auto != null || entry.autoNoChange)
+
+    /** Pairs whose late-version measurement is running; see [lateMeasurements]. */
+    internal class MeasurementFlights {
+        private val running = ConcurrentHashMap.newKeySet<String>()
+
+        /** True for the caller that now owns [key]; false while another one is running. */
+        fun begin(key: String): Boolean = running.add(key)
+
+        fun end(key: String) {
+            running.remove(key)
+        }
     }
 
     private suspend fun keep(
@@ -1519,6 +1611,7 @@ object LyricsTiming {
                     noChange = done.noChange,
                 ),
                 autoClock = if (keepEarlier) it.autoClock else done.clock.saved(),
+                autoOriginal = if (keepEarlier) it.autoOriginal else done.originalId,
                 autoComplete = done.complete,
                 autoRecordPartial = done.recordPartial,
                 autoNoChange = done.noChange,
@@ -1560,18 +1653,21 @@ object LyricsTiming {
             val recordPartial: Boolean = false,
             /** The audio clock the rendition actually read was on. */
             val clock: Clock = Clock.Unknown,
+            /** The recording this answer was measured against, for reuse by the late-version path. */
+            val originalId: String? = null,
         ) : Measured
 
         data object Retry : Measured
     }
 
     /** The video's own upload is the record: it is always on YouTube's clock. */
-    internal fun originalNoChangeMeasurement(): Measured.Done = Measured.Done(
+    internal fun originalNoChangeMeasurement(originalId: String? = null): Measured.Done = Measured.Done(
         null,
         complete = true,
         noChange = true,
         note = "비디오가 원곡과 같음",
         clock = Clock.YouTube,
+        originalId = originalId,
     )
 
     /** How one candidate recording fared. */
@@ -1592,6 +1688,7 @@ object LyricsTiming {
         videoMs: Long,
         preferredOriginal: Song?,
         awaitCacheSignal: Boolean,
+        wanted: () -> Boolean,
         early: suspend (Measured.Done) -> Unit,
     ): Measured {
         val began = System.currentTimeMillis()
@@ -1622,7 +1719,7 @@ object LyricsTiming {
         // The video is the record itself: nothing to move.
         if (candidates.any { it.videoId == video.videoId }) {
             CoverOriginals.remember(video.videoId, candidates.first { it.videoId == video.videoId })
-            return originalNoChangeMeasurement()
+            return originalNoChangeMeasurement(video.videoId)
         }
 
         // The records start coming down now, while the video's opening is
@@ -1659,7 +1756,7 @@ object LyricsTiming {
         // The video's opening first: decoding all of it before any answer was the
         // slowest step (two minutes on a slow device). The rest is read on in the
         // background — from where the opening stopped — for the whole-record pass.
-        val opening = withContext(analysis) { videoFeatures(context, video, copy.key, job, VIDEO_OPENING_SECONDS) }
+        val opening = withContext(analysis) { videoFeatures(context, video, copy.key, job, VIDEO_OPENING_SECONDS, wanted) }
             ?: return Measured.Retry
         lap("비디오 앞부분 분석", mark)
         val openingIsAll = opening.durationSeconds < VIDEO_OPENING_SECONDS - 5
@@ -1670,10 +1767,10 @@ object LyricsTiming {
         val earlyGate = Mutex()
         var earlySent = false
         val (tried, clip) = coroutineScope {
-            val full = async(analysis) { if (openingIsAll) opening else videoFeatures(context, video, copy.key, job) ?: opening }
+            val full = async(analysis) { if (openingIsAll) opening else videoFeatures(context, video, copy.key, job, MAX_SECONDS, wanted) ?: opening }
             candidates.map { original ->
                 async {
-                    tryRecording(context, original, video, opening, openingIsAll && complete, full, complete, job) { firstResult, firstNote ->
+                    tryRecording(context, original, video, opening, openingIsAll && complete, full, complete, job, wanted) { firstResult, firstNote ->
                         earlyGate.withLock {
                             if (earlySent) return@withLock
                             earlySent = true
@@ -1684,6 +1781,7 @@ object LyricsTiming {
                                     videoSeconds = opening.durationSeconds, recordPartial = true,
                                     note = "$firstNote\n$times · $earlyNote (원곡 앞부분으로 먼저 맞춤)",
                                     clock = measurementClock,
+                                    originalId = original.videoId,
                                 ),
                             )
                         }
@@ -1714,7 +1812,7 @@ object LyricsTiming {
         return Measured.Done(
             found.takeUnless { same }, complete, copy.cachedPrefix, clip.durationSeconds,
             noChange = same, note = note, recordPartial = recordPartial,
-            clock = measurementClock,
+            clock = measurementClock, originalId = best.original.videoId,
         )
     }
 
@@ -1733,6 +1831,7 @@ object LyricsTiming {
         full: kotlinx.coroutines.Deferred<ChromaAlignment.Features>,
         complete: Boolean,
         job: Job?,
+        wanted: () -> Boolean,
         first: suspend (ChromaAlignment.Result, String) -> Unit,
     ): Tried {
         val began = System.currentTimeMillis()
@@ -1773,7 +1872,7 @@ object LyricsTiming {
                 // measurement to be dropped; its first ~70 s decode in a quarter of
                 // the time, and the rest only refines the answer.
                 val until = if (alreadyWhole) OPENING_SECONDS else MAX_SECONDS
-                withContext(analysis) { recordFeatures(context, original, job, until) }?.let { start ->
+                withContext(analysis) { recordFeatures(context, original, job, until, wanted) }?.let { start ->
                     val (result, verdict) = aligned(start, whole = false)
                     log(verdict, start, "opening")
                     if (result != null) {
@@ -1783,7 +1882,7 @@ object LyricsTiming {
                 withTimeoutOrNull(RECORD_TIMEOUT_MS + 2_000L) { AudioCache.awaitAnalysisTrack(uri, RECORD_TIMEOUT_MS) }
             }
             val downloaded = System.currentTimeMillis()
-            val record = withContext(analysis) { recordFeatures(context, original, job) }
+            val record = withContext(analysis) { recordFeatures(context, original, job, wanted = wanted) }
                 ?: return Tried(original, null, reached = false, partial = false, note = "$name: 원곡을 읽지 못함")
             val whole = VersionAudioAligner.renditionToMeasure(original.videoId)?.isComplete == true
             if (whole) keep(context, original.videoId, record)
@@ -1795,7 +1894,7 @@ object LyricsTiming {
                 (if (whole) "" else " · 원곡 일부만") + ")"
             return Tried(original, result, reached = true, partial = !whole, note = note)
         }
-        val record = withContext(analysis) { recordFeatures(context, original, job) }
+        val record = withContext(analysis) { recordFeatures(context, original, job, wanted = wanted) }
             ?: return Tried(original, null, reached = false, partial = false, note = "$name: 원곡을 읽지 못함")
         keep(context, original.videoId, record)
         val (result, verdict) = aligned(record)
@@ -1937,10 +2036,13 @@ object LyricsTiming {
         job: Job?,
         /** Read no further than this (seconds into the audio); later calls carry on from there. */
         untilSeconds: Double = MAX_SECONDS,
+        wanted: () -> Boolean = { true },
     ): ChromaAlignment.Features? =
         // One reader per recording at a time: two covers of one song measured
         // at once may both be reading its record.
-        synchronized(readingLocks.getOrPut(video.videoId) { Any() }) { readFeatures(context, video, copyKey, job, untilSeconds) }
+        synchronized(readingLocks.getOrPut(video.videoId) { Any() }) {
+            readFeatures(context, video, copyKey, job, untilSeconds, wanted)
+        }
 
     private val readingLocks = ConcurrentHashMap<String, Any>()
 
@@ -1962,8 +2064,10 @@ object LyricsTiming {
         copyKey: String,
         job: Job?,
         untilSeconds: Double = MAX_SECONDS,
+        wanted: () -> Boolean = { true },
+        restartedStaleReading: Boolean = false,
     ): ChromaAlignment.Features? {
-        if (!PowerState.screenOn) return null
+        if (!PowerState.screenOn || !wanted()) return null
         var reading = synchronized(videoReadings) { videoReadings[video.videoId] }?.takeIf { it.copyKey == copyKey }
         val from = reading?.untilSeconds ?: 0.0
         // Already read this far (an opening pass asked for less than is there): nothing new to decode.
@@ -1971,12 +2075,12 @@ object LyricsTiming {
             return reading.extractor.finish(startSeconds = reading.startSeconds).takeIf { it.frames > 0 }
         }
         val source = VersionAudioAligner.openDataSource(context, video) ?: return null
-        try {
+        val decoded = try {
             AudioDecoder.decodeMonoStream(
                 source,
                 from,
                 minOf(MAX_SECONDS, untilSeconds),
-                abort = { job?.isActive == false || !PowerState.screenOn },
+                abort = { job?.isActive == false || !PowerState.screenOn || !wanted() },
                 label = "lyrics-timing",
             ) { chunk, sampleRate, at ->
                 val r = reading ?: VideoReading(copyKey, ChromaAlignment.Extractor(sampleRate), sampleRate, at, at)
@@ -1993,6 +2097,19 @@ object LyricsTiming {
         } finally {
             runCatching { source.close() }
         }
+        // A kept read position can outlive the bytes it described: the entry
+        // was evicted, rewritten, or only ever held a prefix. Seeking to it then
+        // finds no sample at all ("no-first-sample", 11-02 sync-g x6). Start
+        // this recording over once rather than lose the measurement. Any other
+        // decode failure (codec, gate, aborted pass) keeps the position: reading
+        // the whole prefix again would only cost battery.
+        val failure = if (decoded == null) AudioDecoder.takeLastFailure() else null
+        if (decoded == null && staleReadingNeedsRestart(from, failure, restartedStaleReading) &&
+            job?.isActive != false && PowerState.screenOn && wanted()
+        ) {
+            synchronized(videoReadings) { videoReadings.remove(video.videoId) }
+            return readFeatures(context, video, copyKey, job, untilSeconds, wanted, restartedStaleReading = true)
+        }
         if (job?.isActive == false) return null
         // The screen going off aborts the decoder mid-read; what is in
         // [videoReadings] is a prefix, not a measurement, and must not be
@@ -2008,6 +2125,14 @@ object LyricsTiming {
     }
 
     /**
+     * Whether a failed read should be restarted from zero. Only a stale
+     * position ("no-first-sample") on a read that had already advanced is
+     * restarted, and only once.
+     */
+    internal fun staleReadingNeedsRestart(from: Double, failure: String?, alreadyRestarted: Boolean): Boolean =
+        !alreadyRestarted && from > 0.0 && failure == AudioDecoder.FAILURE_NO_FIRST_SAMPLE
+
+    /**
      * A record's profiles read the same way as a video's: its opening first,
      * then only what came after it, rather than the opening decoded twice.
      */
@@ -2016,8 +2141,16 @@ object LyricsTiming {
         original: Song,
         job: Job?,
         untilSeconds: Double = MAX_SECONDS,
+        wanted: () -> Boolean = { true },
     ): ChromaAlignment.Features? =
-        videoFeatures(context, original, VersionAudioAligner.renditionToMeasure(original.videoId)?.key ?: "record", job, untilSeconds)
+        videoFeatures(
+            context,
+            original,
+            VersionAudioAligner.renditionToMeasure(original.videoId)?.key ?: "record",
+            job,
+            untilSeconds,
+            wanted,
+        )
 
     /** Readings kept: the video playing, the next one, and two records each. */
     private const val VIDEOS_KEPT = 6
@@ -2075,7 +2208,7 @@ object LyricsTiming {
      * reference recording rules changed, so a kept shift may describe a
      * karaoke arrangement or a namesake by the same artist (The Hills).
      */
-    private const val AUTO_VERSION = 4
+    internal const val AUTO_VERSION = 4
 
     // ---- AI ----------------------------------------------------------------------------
 
@@ -3093,6 +3226,7 @@ object LyricsTiming {
                 autoVersion = 0,
                 auto = null,
                 autoClock = null,
+                autoOriginal = null,
                 autoComplete = false,
                 autoNoChange = false,
                 autoRecordPartial = false,
@@ -3148,8 +3282,7 @@ object LyricsTiming {
         // measurement had just been saved.
         val stored = (entry?.aiTextKey == key &&
             (entry.ai != null || entry.aiShiftMs != null || entry.aiStarts != null)) ||
-            (entry?.autoVersion == AUTO_VERSION &&
-                (entry.auto != null || entry.autoNoChange))
+            hasAutoAnswer(entry)
         val recheck = if (!downloaded) {
             DownloadedSyncCheck.Recheck.NONE.token
         } else {
@@ -3529,7 +3662,7 @@ object LyricsTiming {
      * needs nothing) — then an AI request would only spend an upload.
      */
     suspend fun measuredTiming(context: Context, videoId: String): Boolean =
-        store(context).get(videoId)?.let { it.autoVersion == AUTO_VERSION && (it.auto != null || it.autoNoChange) } == true
+        hasAutoAnswer(store(context).get(videoId))
 
     /**
      * One video in [CALIBRATION_EVERY] still gets an AI answer alongside its
@@ -3757,6 +3890,8 @@ object LyricsTiming {
         val auto: SavedMap? = null,
         /** The audio clock [auto] was measured on; null on entries saved before clocks. */
         val autoClock: String? = null,
+        /** The recording [auto] was measured against; null on entries saved before this was kept. */
+        val autoOriginal: String? = null,
         /** The whole video was measured, or there was nothing to measure it against. */
         val autoComplete: Boolean = false,
         /** Measured, and the video keeps the record's time: nothing to move. */
