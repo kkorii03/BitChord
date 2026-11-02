@@ -1,0 +1,14 @@
+Task: READ-ONLY audit of the Korean UI wording against Apple Music (Korea). Do NOT change any source or resource file. Only output: one new file docs/ko-wording-audit.md. Use grep. Follow AGENTS.md (ponytail).
+
+Product rule (the user's decision): the app must read and feel exactly like Apple Music in Korean.
+- Labels, buttons, menu items, tabs, section titles: short NOUN phrases as Apple Music KR uses them (e.g. 보관함, 플레이리스트, 다음 항목 재생, 나중에 재생, 셔플, 반복, 가사, 공유, 다운로드, 설정, 아티스트, 앨범, 노래). No verb-ending labels like '재생해요', no '~하기' where Apple uses a noun.
+- Sentences (descriptions, dialogs, toasts, errors, subtitles): formal 합니다체 (…합니다, …습니까, …하십시오/…하세요 only where Apple does). Never 해요체 (…해요, …돼요, …있어요), never 반말.
+- Terms: 보관함 (not 라이브러리), 플레이리스트 (not 재생목록), 노래 (not 곡 in user-facing Apple contexts), 아티스트, 앨범, 다음 항목 재생, 나중에 재생. Consistency: one term per concept across the whole app.
+- No leftover English in Korean UI unless Apple keeps it (Dolby Atmos, Lossless as Apple shows it, brand names). No machine-translation phrasing, no developer jargon shown to users (e.g. 'hq-verify', 'offset', 'fallback'), no emoji in UI text.
+- Punctuation and spacing as Apple: no trailing period on labels; Korean spacing rules (띄어쓰기) correct.
+
+Scope: app/src/main/res/values-ko/strings*.xml, sharedUi composeResources Korean strings if any (find them), plus Korean literals hard-coded in Kotlin (grep for Hangul in app/src/main/java and sharedUi/shared Kotlin, excluding tests and log-only strings - a string passed to TrackLog/Log is not UI).
+Also flag: values/strings.xml keys that have no values-ko translation (shown in English to Korean users), and Korean strings whose meaning does not match the English source.
+
+docs/ko-wording-audit.md format: a table per category (해요체/반말, verb labels, term inconsistency, leftover English/jargon, missing translation, meaning mismatch, spacing/punctuation) with columns: key or file:line | current text | proposed Apple-style text | why. Then a count summary.
+Finish with a summary of at most 10 lines: counts per category and 10 worst examples.
