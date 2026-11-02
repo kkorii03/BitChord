@@ -69,8 +69,9 @@ class LyricsAiGuardTest {
                 isVideo = false, timed = false, sungLines = 4, title = "Loved", artist = "IU", texts = english,
             ),
         )
-        // Korean songs and instrumentals are refused by the same test as on video.
-        assertFalse(
+        // Instrumentals are refused by the same test as on video; Korean songs
+        // are checked (whisper-large hears them, 11-02).
+        assertTrue(
             LyricsAiGuard.songTimingWanted(
                 isVideo = false,
                 timed = true,
@@ -156,7 +157,8 @@ class LyricsAiGuardTest {
                 lyricsTexts = english,
             ),
         )
-        assertFalse(
+        // A Korean song can be answered by Deepgram's whisper-large (11-02).
+        assertTrue(
             LyricsAiGuard.manualTimingAvailable(
                 geminiUsable = false,
                 deepgramUsable = true,

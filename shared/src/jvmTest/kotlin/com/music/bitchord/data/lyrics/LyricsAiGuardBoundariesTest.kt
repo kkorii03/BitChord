@@ -160,7 +160,8 @@ class LyricsAiGuardBoundariesTest {
                 texts = english,
             ),
         )
-        assertFalse(
+        // A Korean title is checked like any other (whisper-large, 11-02).
+        assertTrue(
             LyricsAiGuard.songTimingWanted(
                 isVideo = false, timed = true, sungLines = 4, title = "사랑해", artist = "아이유", texts = english,
             ),
