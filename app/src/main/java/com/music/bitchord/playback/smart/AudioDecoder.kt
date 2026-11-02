@@ -284,6 +284,9 @@ object AudioDecoder {
         label: String,
         onBuffer: (ByteBuffer, MediaCodec.BufferInfo, Int, Int) -> Unit,
     ): Pair<Double, Double>? {
+        // Each decode is synchronous on the caller's thread, so a thread-local
+        // stage cannot be confused by another caller's decode.
+        lastFailure.remove()
         if (endSeconds <= startSeconds) {
             fail(label, "range", "start=$startSeconds end=$endSeconds")
             return null
@@ -464,8 +467,22 @@ object AudioDecoder {
 
     /** One line per failed decode, in the track log rather than only in logcat. */
     private fun fail(label: String, stage: String, message: String) {
+        lastFailure.set(stage)
         TrackLog.w(TAG, "decode: $label failed at=$stage ${message.replace('\n', ' ').trim()}")
     }
+
+    /**
+     * The stage a decode on this thread failed at, cleared by the read.
+     *
+     * [LyricsTiming] restarts a stale read from zero only when the extractor
+     * found no sample at all; a codec or gate failure must not re-decode the
+     * whole prefix.
+     */
+    internal fun takeLastFailure(): String? = lastFailure.get().also { lastFailure.remove() }
+
+    internal const val FAILURE_NO_FIRST_SAMPLE = "no-first-sample"
+
+    private val lastFailure = ThreadLocal<String?>()
 
     private fun reason(error: Throwable): String =
         error.message?.takeIf { it.isNotBlank() } ?: error.javaClass.simpleName
