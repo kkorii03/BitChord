@@ -659,7 +659,7 @@
     <string name="quality_hi_res_detail">최고 음질 · 약 300MB/시간 이상</string>
     <string name="queued">대기 중</string>
     <string name="remove">제거</string>
-    <string name="remove_from_liked">좋아요 표시한 음악에서 제거</string>
+    <string name="remove_from_liked">좋아요 표시한 노래에서 제거</string>
     <string name="remove_from_playlist">플레이리스트에서 제거</string>
     <string name="rename_playlist">플레이리스트 이름 변경</string>
     <string name="reorder_songs">노래 순서 변경</string>
@@ -1508,7 +1508,7 @@
     <string name="offline_playlist_empty">아직 이 플레이리스트에 노래가 없습니다. 노래 메뉴에서 추가하십시오.</string>
     <string name="offline_liked_empty">이 기기에서 좋아요한 노래가 여기에 표시됩니다</string>
     <string name="saved_on_this_device">이 기기에 저장됨</string>
-    <string name="find_your_mood">분위기 찾기</string>
+    <string name="find_your_mood">내 분위기 찾기</string>
     <string name="no_audio_version">이 동영상의 오디오 버전을 찾을 수 없습니다</string>
     <string name="no_video_version">이 노래의 동영상 버전을 찾을 수 없습니다</string>
     <string name="version_switch_in_party">함께 듣기에서는 모두가 같은 버전을 듣습니다</string>

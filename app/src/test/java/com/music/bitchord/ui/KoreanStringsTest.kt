@@ -74,6 +74,19 @@ class KoreanStringsTest {
         assertEquals("플레이리스트에 추가", value("tv", "tv_add_to_playlist"))
     }
 
+    @Test
+    fun crawledLabelsUseOneAppleMusicTermAcrossScreens() {
+        // 11-03 crawl: the shelf says 내 분위기 찾기 but the screen title said
+        // 분위기 찾기, and the liked-song action said 음악 where every list says 노래.
+        assertEquals("내 분위기 찾기", value("app", "find_your_mood"))
+        assertEquals("내 분위기 찾기", value("sharedUi", "find_your_mood"))
+        assertEquals("좋아요 표시한 노래에서 제거", value("app", "remove_from_liked"))
+        assertEquals("좋아요 표시한 노래에서 제거", value("sharedUi", "remove_from_liked"))
+        // For You is a noun label in Apple Music, not a verb instruction.
+        assertEquals("나를 위한 추천", value("app", "personalized_recommendations"))
+        assertEquals("나를 위한 추천", value("sharedUi", "personalized_recommendations"))
+    }
+
     private fun value(module: String, key: String): String? =
         strings(koreanFiles().first { it.first == module }.second)[key]
 
