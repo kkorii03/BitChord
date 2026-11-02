@@ -256,6 +256,33 @@ fun beatAlignmentRate(outgoingBpm: Double, incomingBpm: Double): Double {
     return if (rate.isFinite() && rate > 0) kotlin.math.round(rate * 10000.0) / 10000.0 else 1.0
 }
 
+/**
+ * The blend's stretch window: the incoming song may be slowed down by at most
+ * 10% and sped up by at most 25% to meet the outgoing tempo. Asymmetric
+ * because the two directions fail differently: a stretch that speeds up drops
+ * slivers of audio and stays clean far past 10%, while one that slows down has
+ * to repeat them, which is where the metallic smear comes from. Past either
+ * end the pair is not beatmatched (the filter mix). The web player uses the
+ * same window.
+ */
+const val MIN_INCOMING_RATE = 0.9
+const val MAX_INCOMING_RATE = 1.25
+
+/**
+ * The rate the incoming song plays at to meet [outgoingBpm] (its tempo folded
+ * into the outgoing octave first): above 1 speeds it up.
+ */
+fun incomingRateBetween(outgoingBpm: Double, incomingBpm: Double): Double {
+    if (outgoingBpm <= 0 || incomingBpm <= 0) return Double.NaN
+    return outgoingBpm / alignTempoOctave(outgoingBpm, incomingBpm)
+}
+
+/** Whether a blend can beatmatch this pair inside [MIN_INCOMING_RATE]..[MAX_INCOMING_RATE]. */
+fun stretchReachable(outgoingBpm: Double, incomingBpm: Double): Boolean {
+    val rate = incomingRateBetween(outgoingBpm, incomingBpm)
+    return rate.isFinite() && rate >= MIN_INCOMING_RATE - 1e-9 && rate <= MAX_INCOMING_RATE + 1e-9
+}
+
 /** Whether the tempi can share a grid under [beatAlignmentRate]'s rules. */
 fun beatMatchable(outgoingBpm: Double, incomingBpm: Double): Boolean {
     if (outgoingBpm <= 0 || incomingBpm <= 0) return false

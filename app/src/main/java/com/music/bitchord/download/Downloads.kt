@@ -17,6 +17,7 @@ import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.DownloadQuality
 import com.music.bitchord.data.sources.HqQuality
 import com.music.bitchord.data.sources.HqTier
+import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
@@ -905,20 +906,31 @@ object Downloads {
      * device — the "delete download" a whole album or playlist card offers,
      * where a single track only ever offers [delete].
      *
+     * A file another downloaded release also lists stays, since deleting it
+     * would take it out of that release as well.
+     *
      * Returns true only when every recorded file was deleted. The collection
      * record is kept when any of them could not be, because it is still the
      * only thing that knows those files belong to this release; the tracks
      * that did go are forgotten individually. A false here is the caller's
      * cue to say so rather than let the card disappear.
      */
-    suspend fun deleteCollection(context: Context, id: String): Boolean {
+    suspend fun deleteCollection(context: Context, id: String): Boolean =
+        deleteCollection(id) { videoId -> delete(context, videoId) }
+
+    /** [deleteCollection]'s decision, with the file removal supplied by the caller. */
+    internal suspend fun deleteCollection(
+        id: String,
+        delete: suspend (String) -> Boolean,
+    ): Boolean {
         open()
-        val record = _collections.value[id] ?: return false
+        if (id !in _collections.value) return false
+        val saved = _saved.value
+        val tracks = tracksOnlyIn(id, _collections.value, saved)
         var failedAny = false
-        record.videoIds.forEach { videoId ->
-            if (videoId !in _saved.value) return@forEach
-            if (!delete(context, videoId)) failedAny = true
-        }
+        // A track with no saved file is already gone (a failed or individually
+        // deleted download), not a deletion that failed.
+        tracks.forEach { videoId -> if (!delete(videoId) && videoId in saved) failedAny = true }
         if (failedAny) {
             Log.w(TAG, "kept the record for $id: some of its downloads could not be deleted")
         } else {
@@ -947,7 +959,12 @@ object Downloads {
      */
     const val PLAYLIST_PREFIX = "local:playlist:"
 
-    /** The page id for the release recorded under [id]. */
+    /**
+     * The tracks of release [id] whose file no other release lists.
+     *
+     * Compared by file as well as by id, because one file answers to two ids
+     * when a music video was swapped for its catalogue track — see [remember].
+     */
     internal fun tracksOnlyIn(
         id: String,
         collections: Map<String, SavedCollection>,
@@ -1546,7 +1563,10 @@ object Downloads {
         // be lossless are worth guessing at: an `.m4a` may be this app's ALAC
         // or its AAC, and adopting the wrong one would quietly answer a request
         // for lossless with a transcode.
-        if (hq == null && !forceReplace && quality.keepsLossless) {
+        // Asked on every rung, not just Lossless: High keeps an addon's FLAC
+        // when nothing lossy beats YouTube (see [SourceResolver.forDownload]),
+        // and a FLAC already on disk is the song whatever the setting.
+        if (hq == null && !forceReplace) {
             LOSSLESS_EXTENSIONS.firstNotNullOfOrNull { extension ->
                 existingDownload(context, track, extension)
             }?.takeIf { Downloads.savedFileIsRecording(track.videoId, it.toString()) }?.let { uri ->
@@ -1871,8 +1891,18 @@ object Downloads {
         youtubeOnly: Boolean = false,
     ): Route {
         if (!youtubeOnly) {
+            val row = SourceRegistry.parseTrackKey(track.videoId)
+            row?.takeIf { it.first != avoidSourceConfigId }?.let { (configId, trackId) ->
+                fromRow(track, configId, trackId, quality)?.let { (stream, storable) ->
+                    routeFromSource(context, track, stream, storable)?.let { return it }
+                }
+            }
             fromSources(track, quality, avoidSourceConfigId)?.let { (stream, storable) ->
                 routeFromSource(context, track, stream, storable)?.let { return it }
+            }
+            if (row != null && row.first != avoidSourceConfigId) {
+                val name = SourceRegistry.config(row.first)?.displayName ?: "its source"
+                error("Couldn't download this song from $name — check that it's still connected")
             }
         }
         // MediaStore.Audio refuses audio/webm on affected Android versions.
@@ -1954,6 +1984,52 @@ object Downloads {
     }
 
     /**
+     * [track] from the source it is a row of, as itself — see
+     * [SourceResolver.forDownloadOfRow] — or null to match it elsewhere.
+     */
+    private suspend fun fromRow(
+        track: Song,
+        configId: String,
+        trackId: String,
+        quality: DownloadQuality,
+    ): Pair<SourceStream, DownloadStore.Storable>? {
+        val stream = try {
+            SourceResolver.forDownloadOfRow(
+                configId,
+                trackId,
+                track.sourceQuality,
+                SourceResolver.requestForDownload(quality),
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "row lookup failed for ${track.videoId}: ${e.message}")
+            null
+        } ?: run {
+            Log.d(TAG, "${track.videoId}: its own source has nothing to download; matching it elsewhere")
+            return null
+        }
+        val storable = DownloadStore.storable(stream.format.codec)
+        if (storable == null) {
+            Log.d(TAG, "nothing to file a '${stream.format.codec}' as; taking YouTube for ${track.videoId}")
+            return null
+        }
+        return keepable(stream, storable)
+    }
+
+    /** The v1.9 [SourceResolver.forDownload] gate, keeping the fork's file routing. */
+    private suspend fun keepable(
+        stream: SourceStream,
+        storable: DownloadStore.Storable,
+    ): Pair<SourceStream, DownloadStore.Storable>? {
+        if (Downloader.probe(stream.url, stream.headers, stream.format.codec) == null) {
+            Log.d(TAG, "${stream.format.summary}: not a file a download can keep; passing")
+            return null
+        }
+        return stream to storable
+    }
+
+    /**
      * The stream to keep for [track] from a configured source, with how to file
      * it — or null, which is not a failure, just YouTube's turn.
      *
@@ -1990,13 +2066,25 @@ object Downloads {
         // recording" is a fact about the track, and "the clock ran out" is a
         // fact about [SOURCE_LOOKUP_MS] — which is what silently sent a whole
         // Lossless queue to YouTube's AAC while the log said nothing at all.
+        // The outer bound adds [LOOKUP_BACKSTOP_MS] so it cannot cancel the
+        // resolver at the instant its own budget expires, before it returns an
+        // answer already in hand.
+        val kept = java.util.concurrent.ConcurrentHashMap<String, Pair<SourceStream, DownloadStore.Storable>>()
         var timedOut = true
-        val stream = withTimeoutOrNull(SOURCE_LOOKUP_MS) {
+        val stream = withTimeoutOrNull(SOURCE_LOOKUP_MS + LOOKUP_BACKSTOP_MS) {
             try {
                 SourceResolver.forDownload(
                     TrackMatcher.targetOf(track),
                     SourceResolver.requestForDownload(quality),
+                    keep = { candidate ->
+                        DownloadStore.storable(candidate.format.codec)?.let { storable ->
+                            keepable(candidate, storable)
+                                ?.also { kept[it.first.url] = it }
+                                ?.first
+                        }
+                    },
                     excludeSources = setOfNotNull(avoidSourceConfigId),
+                    budgetMs = SOURCE_LOOKUP_MS,
                 )
             } catch (e: CancellationException) {
                 throw e
@@ -2009,19 +2097,13 @@ object Downloads {
             if (timedOut) {
                 Log.w(
                     TAG,
-                    "source lookup for ${track.videoId} ran past ${SOURCE_LOOKUP_MS}ms; " +
+                    "source lookup for ${track.videoId} ran past ${SOURCE_LOOKUP_MS + LOOKUP_BACKSTOP_MS}ms; " +
                         "downloading it from YouTube instead of ${quality.label}",
                 )
             }
             return null
         }
-
-        val storable = DownloadStore.storable(stream.format.codec)
-        if (storable == null) {
-            Log.d(TAG, "nothing to file a '${stream.format.codec}' as; taking YouTube for ${track.videoId}")
-            return null
-        }
-        return stream to storable
+        return kept[stream.url]
     }
 
     /** Back to "not downloaded" — used for success, where [saved] takes over, and for cancellation. */
@@ -2127,6 +2209,9 @@ object Downloads {
      * waiting for a module and never be asked.
      */
     private const val SOURCE_LOOKUP_MS = 85_000L
+
+    /** How far past [SOURCE_LOOKUP_MS] the outer backstop in [fromSources] waits. */
+    private const val LOOKUP_BACKSTOP_MS = 15_000L
 
     /**
      * The extensions a file in Music can carry that say, on their own, that a

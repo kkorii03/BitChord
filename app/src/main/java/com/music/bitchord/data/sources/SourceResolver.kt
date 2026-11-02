@@ -259,6 +259,33 @@ object SourceResolver {
         else -> MIX_STEREO
     }
 
+    /**
+     * The stream for downloading a source row as itself — a track picked from
+     * the Addons search, or one queued from such a pick — or null when its
+     * source can't serve it now.
+     *
+     * [forDownload] matches a recording by title across every source, which is
+     * the right question for a YouTube track and the wrong one for a row the
+     * listener chose from a particular addon: it could come back as JioSaavn's
+     * copy, or as the Atmos mix of a stereo pick. Same rules as [resolve]'s
+     * pinned play, minus a source whose manifest forbids downloads.
+     */
+    suspend fun forDownloadOfRow(
+        configId: String,
+        trackId: String,
+        sourceQuality: String?,
+        request: StreamRequest = requestForDownload(),
+    ): SourceStream? {
+        val source = SourceRegistry.activeForDownload().firstOrNull { it.configId == configId } ?: return null
+        return attempt(source) {
+            if (source is AddonSource) {
+                source.stream(trackId, request, stereoOnly = mixOf(sourceQuality) == MIX_STEREO)
+            } else {
+                source.stream(trackId, request)
+            }
+        }?.copy(sourceConfigId = source.configId)
+    }
+
     fun directAddons(): List<MusicSource> {
         val active = SourceRegistry.activeForPlayback()
         val youtube = active.firstOrNull { it.kind == SourceKind.YOUTUBE } ?: return emptyList()
@@ -743,10 +770,9 @@ object SourceResolver {
      * On the **High** rung step 1 is empty and every ranked source goes into
      * step 2's race, asked for [StreamRequest.Best]. A bit-exact answer to that
      * is refused rather than kept: someone who chose High over Lossless chose
-     * the smaller file, and a FLAC filed under this setting would additionally
-     * be missed by the already-on-disk check in `Downloads.prepare` — which only
-     * looks for lossless extensions when the setting keeps lossless — and so be
-     * re-downloaded on every pass through the queue.
+     * the smaller file, and a FLAC filed under this setting is still found by
+     * the already-on-disk check in `Downloads.prepare`, which looks for
+     * lossless extensions on every rung.
      *
      * ### The floor, and why a lossy answer can still lose to YouTube
      *
@@ -783,12 +809,24 @@ object SourceResolver {
      *   and costs the length check rather than the search.
      * @param request what the download is for, pinned by the caller for the
      *   duration of one file — see [requestForDownload].
+     * @param keep the caller's word on whether a candidate can become a file,
+     *   asked of *every* candidate before it may win: a winner thrown away
+     *   afterwards sends the download to YouTube past a runner-up that could
+     *   have been kept. It may also return the stream better described — see
+     *   `Downloads.keepable`, which reads the bytes for the codec a source
+     *   left unstated.
+     * @param budgetMs when to stop and decide on whatever has answered. Bounded
+     *   from outside instead, a slow addon used to take every answer with it —
+     *   JioSaavn's included — and the download went to YouTube.
      */
     suspend fun forDownload(
         target: TrackMatcher.Target,
         request: StreamRequest = requestForDownload(),
+        keep: suspend (SourceStream) -> SourceStream? = { it },
         excludeSources: Set<String> = emptySet(),
+        budgetMs: Long? = null,
     ): SourceStream? = coroutineScope {
+        val until = budgetMs?.let { System.nanoTime() + it * 1_000_000 }
         if (target.title.isBlank()) return@coroutineScope null
         val wantsLossless = when (request) {
             is StreamRequest.Lossless -> true
@@ -833,6 +871,11 @@ object SourceResolver {
         // tenths of a second is what that rule is tuned for, and a module that
         // beats it to the line with something thin is a case the floor below
         // catches by sending the download to YouTube.
+        // On the High rung a bit-exact answer is held back rather than thrown
+        // away: someone who picked High picked the ~8MB file, so any lossy copy
+        // that beats YouTube's AAC still wins, but a FLAC from their own addon
+        // is a better answer than YouTube's Opus when nothing lossy is on offer.
+        var losslessOverBudget: Pair<MusicSource, SourceStream>? = null
         val elsewhereBest = async {
             bestAcross(
                 elsewhere,
@@ -846,20 +889,22 @@ object SourceResolver {
                 strictLength = strictLength,
                 strictOriginal = true,
                 sourceTimeoutMs = DOWNLOAD_SOURCE_TIMEOUT_MS,
+                refine = { _, stream -> keep(stream) },
+                timeoutMs = budgetMs,
             ) { source, stream ->
-                // Bit-exact audio is *over* budget on the High rung, not a
-                // bonus on it. Someone who picked High over Lossless picked the
-                // ~8MB file, and a FLAC filed under this setting would also be
-                // missed by the already-on-disk check in `Downloads.prepare`,
-                // which only looks for lossless extensions when the setting
-                // keeps lossless — so it would be re-downloaded every time.
+                // Bit-exact audio is *over* budget on the High rung. Someone
+                // who picked High over Lossless picked the ~8MB file, and a
+                // FLAC filed under this setting is still found by the
+                // already-on-disk check in `Downloads.prepare`, which looks for
+                // lossless extensions on every rung.
                 val ok = wantsLossless || stream.format.isLossless != true
                 if (!ok) {
                     TrackLog.d(
                         TAG,
                         "${source.displayName} offered ${stream.format.summary}; " +
-                            "more than this download asked for",
+                            "more than this download asked for, kept in reserve",
                     )
+                    if (losslessOverBudget == null) losslessOverBudget = source to stream
                 }
                 ok
             }
@@ -870,6 +915,8 @@ object SourceResolver {
         // the only record of it there will be once it is on disk.
         var best: Pair<MusicSource, SourceStream>? = null
         for (source in bitExact) {
+            val remaining = until?.let { remainingMs(it) }
+            if (remaining != null && remaining <= 0L) break
             val stream = matchAndStreamWithin(
                 source,
                 target,
@@ -880,7 +927,7 @@ object SourceResolver {
                 strictLength = strictLength,
                 strictOriginal = true,
                 baseTimeoutMs = DOWNLOAD_SOURCE_TIMEOUT_MS,
-            )?.stream ?: continue
+            )?.stream?.let { keep(it) } ?: continue
             // Dolby Atmos is not bit-exact PCM, but it is the native premium
             // rendition that playback already prefers.  Keep it on the same
             // first-class download path instead of throwing it away and
@@ -908,13 +955,25 @@ object SourceResolver {
         elsewhereBest.await()?.let { (source, stream) ->
             if (isBetter(stream.format, best?.second?.format)) best = source to stream
         }
-        val (winner, chosen) = best ?: return@coroutineScope null
-        if (!beatsYouTubeAac(chosen.format)) {
-            TrackLog.d(
-                TAG,
-                "best offered for '${target.title}' is ${winner.displayName}'s " +
-                    "${chosen.format.summary}; taking YouTube's AAC over that",
-            )
+        val lossy = best?.takeIf { beatsYouTubeAac(it.second.format) }
+        if (lossy == null) {
+            losslessOverBudget?.let { (source, stream) ->
+                TrackLog.d(
+                    TAG,
+                    "download: nothing lossy for '${target.title}' beats YouTube's AAC; " +
+                        "keeping ${source.displayName}'s ${stream.format.summary} instead",
+                )
+                return@coroutineScope stream
+            }
+        }
+        val (winner, chosen) = lossy ?: run {
+            best?.let { (source, stream) ->
+                TrackLog.d(
+                    TAG,
+                    "best offered for '${target.title}' is ${source.displayName}'s " +
+                        "${stream.format.summary}; taking YouTube's AAC over that",
+                )
+            }
             return@coroutineScope null
         }
         TrackLog.d(
@@ -1173,8 +1232,13 @@ object SourceResolver {
          * cost more than the re-search this list exists to avoid.
          */
         collectGate: (suspend (MusicSource, SourceStream) -> Boolean)? = null,
+        /** Runs on each source's answer inside its own lookup, so its cost is paid in parallel. */
+        refine: suspend (MusicSource, SourceStream) -> SourceStream? = { _, stream -> stream },
+        /** Ends the race at that point with whatever has already answered. */
+        timeoutMs: Long? = null,
         accept: suspend (MusicSource, SourceStream) -> Boolean = { _, _ -> true },
     ): Pair<MusicSource, SourceStream>? = coroutineScope {
+        val until = timeoutMs?.let { System.nanoTime() + it * 1_000_000 }
         val lookupTimeoutMs = sourceLookupTimeoutMs(manual, sourceTimeoutMs)
         val usable = sources.filterNot { source ->
             val resting = SourceCooldown.isResting(source.configId)
@@ -1269,7 +1333,12 @@ object SourceResolver {
                         // source gets to prove it is back. A complete answer is
                         // enough evidence, even when the catalogue held nothing.
                         if (manual && answer.conclusive) SourceCooldown.succeeded(source.configId)
-                        source to answer
+                        val refined = if (answer.stream != null) {
+                            answer.copy(stream = refine(source, answer.stream))
+                        } else {
+                            answer
+                        }
+                        source to refined
                     }
                 }
             }
@@ -1278,8 +1347,15 @@ object SourceResolver {
         var bestVerdict: String? = null
         try {
             while (running.isNotEmpty()) {
-                val first = select {
-                    running.forEach { candidate -> candidate.onAwait { candidate } }
+                val awaiting = suspend {
+                    select {
+                        running.forEach { candidate -> candidate.onAwait { candidate } }
+                    }
+                }
+                val first = if (until == null) {
+                    awaiting()
+                } else {
+                    withTimeoutOrNull(remainingMs(until)) { awaiting() } ?: break
                 }
                 // Anything that crossed the line while that one was being waited
                 // on is already sitting there. Folding those in costs no time at
@@ -2009,6 +2085,10 @@ object SourceResolver {
     }
 
     internal fun isNetworkFault(failure: Throwable): Boolean = failure.isNetworkFailure() // [KO] network-fault
+
+    /** Milliseconds left before [until], a [System.nanoTime] instant; never negative. */
+    private fun remainingMs(until: Long): Long =
+        ((until - System.nanoTime()) / 1_000_000).coerceAtLeast(0)
 
     /**
      * How many answers per query are worth weighing.
