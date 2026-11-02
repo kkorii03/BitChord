@@ -248,7 +248,9 @@ object TopPicks {
             seeds.forEach { seed -> add { radio(seed) } }
         }
         val answers = firstAnswer(sources) { index, songs ->
-            val batch = if (index == 0) mixBatch(songs) else radioBatch(songs)
+            // Capped here, not only after the radio, so the first answer a
+            // player is handed cannot grow past the station it belongs to.
+            val batch = (if (index == 0) mixBatch(songs) else radioBatch(songs)).take(STATION_SIZE)
             if (batch.isEmpty()) {
                 false
             } else {
@@ -577,7 +579,7 @@ object TopPicks {
         val answers = firstAnswer(chosen.map { item -> suspend { songsOf(item) } }) { _, songs ->
             // A row YouTube couldn't pair stays the video, and plays as one;
             // the player menu's version switch turns it into the song.
-            val batch = songs.distinctBy { it.videoId }.shuffled()
+            val batch = songs.distinctBy { it.videoId }.shuffled().take(MOOD_QUEUE)
             if (batch.isEmpty()) {
                 false
             } else {

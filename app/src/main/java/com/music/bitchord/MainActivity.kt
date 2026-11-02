@@ -254,6 +254,8 @@ import com.music.bitchord.playback.hasYouTubeOriginal
 import com.music.bitchord.playback.loadAutoplayTracks
 import com.music.bitchord.playback.videoRadioEnabledFor
 import com.music.bitchord.playback.playSongs
+import com.music.bitchord.playback.appendSongs
+import com.music.bitchord.playback.playStationIncrementally
 import com.music.bitchord.playback.BoundedQueuePlanner
 import com.music.bitchord.playback.playBoundedContext
 import com.music.bitchord.playback.contextEntryKey
@@ -1973,47 +1975,29 @@ private fun BitChordApp(
                 }
             }
             scope.launch {
-                var firstIds: Set<String> = emptySet()
-                var started = false
-                val songs = TopPicks.queue(
-                    pick,
-                    onFirstBatch = first@{ first ->
-                        if (request != playRequestGeneration) return@first
-                        val activeController = controller ?: return@first
-                        firstIds = first.mapTo(HashSet()) { it.videoId }
+                val activeController = controller ?: return@launch
+                playStationIncrementally(
+                    load = { onFirstBatch -> TopPicks.queue(pick, onFirstBatch) },
+                    isCurrent = { request == playRequestGeneration },
+                    begin = {
                         activeRadioSeed = null
                         activeController.beginRadioQueue()
-                        activeController.playSongs(asStation(first), 0)
-                        activeController.commitRadioQueue()
-                        started = true
                     },
-                ).getOrNull().orEmpty()
-                if (request != playRequestGeneration) return@launch
-                if (songs.isEmpty()) {
-                    if (!started) {
+                    playFirst = { songs ->
+                        activeController.playSongs(asStation(songs), 0)
+                        if (request == playRequestGeneration) activeController.commitRadioQueue()
+                    },
+                    append = { songs ->
+                        val appended = activeController.appendSongs(
+                            asStation(songs),
+                            isCurrent = { request == playRequestGeneration },
+                        )
+                        if (appended) activeController.commitRadioQueue()
+                    },
+                    onEmpty = {
                         Toast.makeText(context, R.string.couldnt_load_tracks, Toast.LENGTH_SHORT).show()
-                    }
-                    return@launch
-                }
-                if (!started) {
-                    val activeController = controller ?: return@launch
-                    activeRadioSeed = null
-                    activeController.beginRadioQueue()
-                    activeController.playSongs(asStation(songs), 0)
-                    activeController.commitRadioQueue()
-                } else {
-                    // The first answer is already playing. Add what the other
-                    // radios brought once they land, without touching it.
-                    val activeController = controller ?: return@launch
-                    val rest = songs.filterNot { it.videoId in firstIds }
-                    if (rest.isNotEmpty()) {
-                        val items = withContext(Dispatchers.Default) {
-                            asStation(rest).map { it.toMediaItem() }
-                        }
-                        activeController.addMediaItems(activeController.mediaItemCount, items)
-                        activeController.commitRadioQueue()
-                    }
-                }
+                    },
+                )
             }
         }
     }

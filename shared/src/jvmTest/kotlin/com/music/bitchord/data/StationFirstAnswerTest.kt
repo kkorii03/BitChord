@@ -125,6 +125,42 @@ class StationFirstAnswerTest {
     }
 
     @Test
+    fun `a first radio answer longer than a station starts no more than the station cap`() = runBlocking {
+        val firstEmitted = CompletableDeferred<List<Song>>()
+        val huge = (1..120).map { song("fast$it") }
+
+        TopPicks.buildFreshStation(
+            kind = TopPickKind.PERSONAL_STATION,
+            mix = { emptyList() },
+            history = { listOf(song("seed")) },
+            radio = { huge },
+            onFirstBatch = { firstEmitted.complete(it) },
+        )
+
+        val early = withTimeout(2_000) { firstEmitted.await() }
+        assertTrue(early.size <= 60, "the first answer must not put more than a station's worth in the queue")
+    }
+
+    @Test
+    fun `a mood's first playlist longer than its queue starts no more than the queue cap`() = runBlocking {
+        val firstEmitted = CompletableDeferred<List<Song>>()
+        val shelves = listOf(
+            HomeShelf(title = "Pop romance", items = listOf(playlist("first"))),
+        )
+
+        TopPicks.buildMoodQueue(
+            mood = TopPickMood.LOVE,
+            shelves = shelves,
+            hints = emptyList(),
+            onFirstBatch = { firstEmitted.complete(it) },
+            songsOf = { (1..120).map { index -> song("first$index") } },
+        )
+
+        val early = withTimeout(2_000) { firstEmitted.await() }
+        assertTrue(early.size <= 60, "the first playlist must not put more than the mood queue's worth in the queue")
+    }
+
+    @Test
     fun `a mood starts on its first playlist before the others answer`() = runBlocking {
         val slow = CompletableDeferred<Unit>()
         val firstEmitted = CompletableDeferred<List<Song>>()
