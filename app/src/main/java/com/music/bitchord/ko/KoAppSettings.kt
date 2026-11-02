@@ -538,13 +538,17 @@ internal object KoAppSettings {
         get() = bundledDeepgramApiKey.isNotBlank() && deepgramApiKey.value == bundledDeepgramApiKey
 
     fun readBundledKeys() {
-        deepgramApiKey.value = AppSettings.authStore.secret(KEY_DEEPGRAM_API_KEY) ?: bundledDeepgramApiKey
+        deepgramApiKey.value = if (AppSettings.authReady()) {
+            AppSettings.authStore.secret(KEY_DEEPGRAM_API_KEY) ?: bundledDeepgramApiKey
+        } else {
+            bundledDeepgramApiKey
+        }
         com.music.bitchord.data.lyrics.Deepgram.apiKey = deepgramApiKey.value
     }
 
     fun readLyricsAndAiSettings() {
         val prefs = AppSettings.prefs
-        val authStore = AppSettings.authStore
+        val authStore = if (AppSettings.authReady()) AppSettings.authStore else null
         // This fork wants the word-by-word sweep wherever any source has one,
         // so the switch starts on — and is turned on once for an install that
         // had saved it off before the fork changed the default.
@@ -564,9 +568,9 @@ internal object KoAppSettings {
         syncSafetyDownloadRecheck.value = prefs.getBoolean(KEY_SYNC_SAFETY_DOWNLOAD_RECHECK, false)
         syncSafetyHqSync.value = prefs.getBoolean(KEY_SYNC_SAFETY_HQ_SYNC, false)
         syncSafetyPerLine.value = prefs.getBoolean(KEY_SYNC_SAFETY_PER_LINE, true)
-        AppSettings.paxSenixApiKey.value = authStore.secret(AppSettings.KEY_PAXSENIX_API_KEY).orEmpty()
+        AppSettings.paxSenixApiKey.value = authStore?.secret(AppSettings.KEY_PAXSENIX_API_KEY).orEmpty()
         com.music.bitchord.data.lyrics.PaxSenix.setApiKey(AppSettings.paxSenixApiKey.value)
-        geminiApiKey.value = authStore.secret(KEY_GEMINI_API_KEY) ?: bundledGeminiApiKey
+        geminiApiKey.value = authStore?.secret(KEY_GEMINI_API_KEY) ?: bundledGeminiApiKey
         geminiTranslation.value = prefs.getBoolean(KEY_GEMINI_TRANSLATION, bundledGeminiApiKey.isNotBlank())
         com.music.bitchord.data.lyrics.LyricsTranslation.geminiApiKey = geminiApiKey.value
         com.music.bitchord.data.lyrics.LyricsTranslation.geminiEnabled = geminiTranslation.value
@@ -752,10 +756,9 @@ internal object KoAppSettings {
      * Loads only the saved proxy route, synchronously and without the rest of
      * the settings.
      */
-    fun initProxy(context: Context, authStore: com.music.bitchord.auth.AuthStore) {
+    fun initProxy(context: Context) {
         AppSettings.appContext = context.applicationContext
         AppSettings.prefs = AppSettings.appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        AppSettings.authStore = authStore
         readProxy()
     }
 
@@ -806,7 +809,7 @@ internal object KoAppSettings {
         proxyBackupHost.value = prefs.getString(KEY_PROXY_BACKUP_HOST, "").orEmpty()
         proxyBackupPort.value = prefs.getInt(KEY_PROXY_BACKUP_PORT, 0)
         proxyUsername.value = prefs.getString(KEY_PROXY_USERNAME, "").orEmpty()
-        proxyPassword.value = AppSettings.authStore.proxyPassword.orEmpty()
+        proxyPassword.value = if (AppSettings.authReady()) AppSettings.authStore.proxyPassword.orEmpty() else ""
         proxyScope.value = runCatching {
             ProxyScope.valueOf(prefs.getString(KEY_PROXY_SCOPE, null) ?: ProxyScope.MUSIC_ONLY.name)
         }.getOrDefault(ProxyScope.MUSIC_ONLY)

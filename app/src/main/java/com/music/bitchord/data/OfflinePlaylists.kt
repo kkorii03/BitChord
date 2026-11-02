@@ -7,6 +7,7 @@ import com.music.bitchord.data.spotify.LoadOnce
 import com.music.bitchord.startup.StartupWork
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -58,6 +59,8 @@ object OfflinePlaylists {
     private const val KEY_PLAYLISTS = "playlists_json"
 
     private lateinit var prefs: SharedPreferences
+    private var initialized = false
+    private var writer: Job? = null
     private val lock = Any()
     private val io = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -75,6 +78,10 @@ object OfflinePlaylists {
     /** The list [loadAndPublish] produced, so the writer does not rewrite it. */
     @Volatile private var loadedSnapshot: List<OfflinePlaylist>? = null
 
+    /** Test seams: the JVM android.jar stubs org.json, so tests inject the codec. */
+    internal var loadParserForTest: ((String) -> List<OfflinePlaylist>)? = null
+    internal var onPersistForTest: ((List<OfflinePlaylist>) -> Unit)? = null
+
     /**
      * The read runs once, on whichever caller arrives first. [init] hands it to
      * the startup thread; a like or a read that gets there first runs it on the
@@ -83,7 +90,8 @@ object OfflinePlaylists {
     private val loadGate = LoadOnce(::loadAndPublish)
 
     fun init(context: Context, likedTitle: String) {
-        if (this::prefs.isInitialized) return
+        if (initialized) return
+        initialized = true
         this.likedTitle = likedTitle
         prefs = context.applicationContext.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
         // Everything after what was just read, however soon it comes: a like
@@ -91,13 +99,25 @@ object OfflinePlaylists {
         // The initial value and the loaded one are skipped as well, so startup
         // never writes an empty list over a file that has not been read yet.
         val initial = _playlists.value
-        io.launch {
+        writer = io.launch {
             playlists
                 .filter { it !== initial && it !== loadedSnapshot }
                 .conflate()
                 .collect { persist(it) }
         }
         StartupWork.background("offline-playlists") { loadGate.ensureLoaded() }
+    }
+
+    /** Forgets the last load so a unit test can start from a fresh preference file. */
+    internal fun resetForTest() {
+        writer?.cancel()
+        writer = null
+        loadGate.reset()
+        loadedSnapshot = null
+        loadParserForTest = null
+        onPersistForTest = null
+        initialized = false
+        synchronized(lock) { emit(listOf(OfflinePlaylist(LIKED_ID, likedTitle, emptyList()))) }
     }
 
     fun isOfflinePlaylist(browseId: String?): Boolean = browseId?.startsWith(PREFIX) == true
@@ -240,6 +260,7 @@ object OfflinePlaylists {
 
     private fun load(): List<OfflinePlaylist> {
         val raw = prefs.getString(KEY_PLAYLISTS, null) ?: return emptyList()
+        loadParserForTest?.let { return it(raw) }
         return runCatching {
             val array = JSONArray(raw)
             (0 until array.length()).map { i ->
@@ -258,6 +279,7 @@ object OfflinePlaylists {
     }
 
     private fun persist(list: List<OfflinePlaylist>) {
+        onPersistForTest?.invoke(list)
         runCatching {
             val array = JSONArray()
             list.forEach { playlist ->

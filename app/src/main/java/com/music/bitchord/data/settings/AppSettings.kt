@@ -214,6 +214,10 @@ object AppSettings {
     /** Only for the Discord, WebDAV and SMB secrets — everything else on here is plain prefs. */
     internal lateinit var authStore: AuthStore
 
+    /** The onboarding answers [readAll] saw before the encrypted session was available. */
+    private var onboardingBeforeAuth: Boolean? = null
+    private var existingInstallBeforeAuth = false
+
     /**
      * Quality ceilings, one per kind of connection ??the point of the split is
      * that Wi-Fi can stay on Lossless while mobile data is capped. Wi-Fi
@@ -993,21 +997,19 @@ object AppSettings {
      * still runs later for everything else; reading the same preferences in
      * both places converges on one published configuration.
      */
-    fun initProxy(context: Context, authStore: AuthStore) =
-        KoAppSettings.initProxy(context, authStore) // [KO] proxy
+    fun initProxy(context: Context) =
+        KoAppSettings.initProxy(context) // [KO] proxy
 
     /**
-     * [authStore] is the application's own, passed in rather than opened again:
-     * each open of the encrypted store is a keystore round trip, and a second
-     * one here was a measurable slice of cold start.
+     * Reads everything that does not come from the encrypted store. The auth
+     * secrets are attached later, from the startup thread, by [attachAuthStore]:
+     * [init] runs in Application.onCreate, which must not open the Keystore.
      */
-    fun init(context: Context, authStore: AuthStore) {
+    fun init(context: Context) {
         appContext = context.applicationContext
         prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         KoAppSettings.installSettingsChangeListener() // [KO] settings log
         KoAppSettings.prepareBundledKeys(context) // [KO] bundled keys
-        this.authStore = authStore
-        migrateSecretsToAuthStore()
         sanitizeStoredPreferences()
         KoAppSettings.readBundledKeys() // [KO] bundled keys
         com.music.bitchord.data.spotify.LocalPlaylistStore.init(context)
@@ -1017,6 +1019,26 @@ object AppSettings {
         )
         readAll()
         watchConnection(context)
+    }
+
+    /**
+     * First touch of the encrypted store: migrate old secrets, then publish the
+     * credentials the first [init] had to leave at their defaults. Called on the
+     * startup thread after the auth open, so the main thread never pays it.
+     */
+    fun attachAuthStore(authStore: AuthStore) {
+        this.authStore = authStore
+        migrateSecretsToAuthStore()
+        KoAppSettings.readBundledKeys() // [KO] bundled keys
+        KoAppSettings.readLyricsAndAiSettings() // [KO] lyrics ai
+        readAuthSecrets()
+        // The first read could not see a signed-in session. An install whose only
+        // trace is that session is still an existing install, not a fresh one.
+        val saved = onboardingBeforeAuth
+        if (saved != null && !saved && !existingInstallBeforeAuth && authStore.isSignedIn) {
+            KoAppSettings.readLowPowerAndOnboarding(saved, true) // [KO] onboarding
+        }
+        onboardingBeforeAuth = null
     }
 
     /**
@@ -1035,6 +1057,34 @@ object AppSettings {
         readAll()
     }
 
+    /** Reads the credentials that only exist behind the encrypted store. */
+    private fun readAuthSecrets() {
+        lastfmSessionKey.value = storedSecret { secret(KEY_LASTFM_SESSION_KEY) }.orEmpty()
+        lastfmApiKey.value = storedSecret { secret(KEY_LASTFM_API_KEY) }.orEmpty().ifBlank { BuildConfig.LASTFM_API_KEY }
+        lastfmSecret.value = storedSecret { secret(KEY_LASTFM_SECRET) }.orEmpty().ifBlank { BuildConfig.LASTFM_SECRET }
+        listenBrainzToken.value = storedSecret { secret(KEY_LISTENBRAINZ_TOKEN) }.orEmpty()
+        spotifySpdcToken.value = storedSecret { secret(KEY_SPOTIFY_SPDC_TOKEN) }.orEmpty()
+        webdavPassword.value = storedSecret { webdavPassword }.orEmpty()
+        smbPassword.value = storedSecret { smbPassword }.orEmpty()
+        com.music.bitchord.data.smb.SmbAuth.update(
+            smbHost.value,
+            smbShare.value,
+            smbBasePath.value,
+            smbUsername.value,
+            smbPassword.value,
+        )
+        com.music.bitchord.data.webdav.WebDavAuth.update(
+            webdavUrl.value,
+            webdavUsername.value,
+            webdavPassword.value,
+        )
+        readProxy()
+        discordToken.value = storedSecret { discordToken }.orEmpty()
+    }
+
+    private fun storedSecret(reader: AuthStore.() -> String?): String? =
+        if (authReady()) authStore.reader() else null
+
     private fun readAll() {
         sanitizeStoredPreferences()
         // Read before the migrations below write their defaults: on a fresh
@@ -1042,6 +1092,10 @@ object AppSettings {
         val onboardingSaved = prefs.getBoolean(KEY_ONBOARDING_COMPLETE, false)
         val hadSettingsBeforeMigrations = prefs.all.isNotEmpty()
         val existingInstall = !onboardingSaved && KoAppSettings.hadDataBeforeOnboarding() // [KO] onboarding
+        if (!authReady()) {
+            onboardingBeforeAuth = onboardingSaved
+            existingInstallBeforeAuth = existingInstall
+        }
         migrateCellularQualityDefault()
         migrateSingleQuality()
         audioQualityWifi.value = readQuality(KEY_QUALITY_WIFI)
@@ -1164,9 +1218,6 @@ object AppSettings {
         showCacheFolder.value = prefs.getBoolean(KEY_SHOW_CACHE_FOLDER, false)
         lastfmEnabled.value = prefs.getBoolean(KEY_LASTFM_ENABLED, false)
         lastfmUsername.value = prefs.getString(KEY_LASTFM_USERNAME, "").orEmpty()
-        lastfmSessionKey.value = authStore.secret(KEY_LASTFM_SESSION_KEY).orEmpty()
-        lastfmApiKey.value = authStore.secret(KEY_LASTFM_API_KEY).orEmpty().ifBlank { BuildConfig.LASTFM_API_KEY }
-        lastfmSecret.value = authStore.secret(KEY_LASTFM_SECRET).orEmpty().ifBlank { BuildConfig.LASTFM_SECRET }
         lastfmEndpoint.value = prefs.getString(KEY_LASTFM_ENDPOINT, "").orEmpty()
         lastfmScrobbleEnabled.value = prefs.getBoolean(KEY_LASTFM_SCROBBLE_ENABLED, false)
         lastfmNowPlaying.value = prefs.getBoolean(KEY_LASTFM_NOW_PLAYING, false) && lastfmScrobbleEnabled.value
@@ -1177,9 +1228,7 @@ object AppSettings {
         )
         scrobbleDelaySeconds.value = prefs.getInt(KEY_SCROBBLE_DELAY_SECONDS, 180)
         listenBrainzEnabled.value = prefs.getBoolean(KEY_LISTENBRAINZ_ENABLED, false)
-        listenBrainzToken.value = authStore.secret(KEY_LISTENBRAINZ_TOKEN).orEmpty()
         listenBrainzPrimaryArtistOnly.value = prefs.getBoolean(KEY_LISTENBRAINZ_PRIMARY_ARTIST_ONLY, false)
-        spotifySpdcToken.value = authStore.secret(KEY_SPOTIFY_SPDC_TOKEN).orEmpty()
         replayGenres.value = prefs.getBoolean(KEY_REPLAY_GENRES, true)
         filterNonMusicAudio.value = prefs.getBoolean(KEY_FILTER_NON_MUSIC_AUDIO, true)
         localMusicSort.value = readLocalMusicSort(KEY_LOCAL_MUSIC_SORT)
@@ -1193,27 +1242,12 @@ object AppSettings {
         localMusicFolderUri.value = prefs.getString(KEY_LOCAL_MUSIC_FOLDER_URI, "").orEmpty()
         webdavUrl.value = prefs.getString(KEY_WEBDAV_URL, "").orEmpty()
         webdavUsername.value = prefs.getString(KEY_WEBDAV_USERNAME, "").orEmpty()
-        webdavPassword.value = authStore.webdavPassword.orEmpty()
         smbHost.value = prefs.getString(KEY_SMB_HOST, "").orEmpty()
         smbShare.value = prefs.getString(KEY_SMB_SHARE, "").orEmpty()
         smbBasePath.value = prefs.getString(KEY_SMB_BASE_PATH, "").orEmpty()
         smbUsername.value = prefs.getString(KEY_SMB_USERNAME, "").orEmpty()
-        smbPassword.value = authStore.smbPassword.orEmpty()
-        com.music.bitchord.data.smb.SmbAuth.update(
-            smbHost.value,
-            smbShare.value,
-            smbBasePath.value,
-            smbUsername.value,
-            smbPassword.value,
-        )
-        com.music.bitchord.data.webdav.WebDavAuth.update(
-            webdavUrl.value,
-            webdavUsername.value,
-            webdavPassword.value,
-        )
-        readProxy()
+        readAuthSecrets()
         pinnedPlaylists.value = readPinnedPlaylists()
-        discordToken.value = authStore.discordToken.orEmpty()
         discordUsername.value = prefs.getString(KEY_DISCORD_USERNAME, "").orEmpty()
         discordName.value = prefs.getString(KEY_DISCORD_NAME, "").orEmpty()
         discordAvatar.value = prefs.getString(KEY_DISCORD_AVATAR, "").orEmpty()

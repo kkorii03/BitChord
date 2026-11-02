@@ -105,14 +105,39 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory, Configu
         TrackLog.initPersistence(logDirectory)
         installCrashHandler()
         // The encrypted stores cannot be opened concurrently on a first launch
-        // (they share one Keystore master key), so the open that the main thread
-        // needs below is started here, on the serial startup thread, before the
-        // thousands of other launch tasks. Tink's one-time key-manager
-        // registration is the slowest part of that open; doing it now lets
-        // AuthStore(this) find the same store already cached instead of paying
-        // it on the main thread. If the main thread still gets there first,
-        // EncryptedPrefs serialises the two opens and behaviour is unchanged.
+        // (they share one Keystore master key), so the open runs on the serial
+        // startup thread, before the thousands of other launch tasks. Tink's
+        // one-time key-manager registration is the slowest part of that open.
+        // The session is resolved there and published, so onCreate never opens
+        // the Keystore itself: main only waits for settings (which need no
+        // Keystore) and the startup thread attaches the secrets once they exist.
+        val settingsReady = java.util.concurrent.CountDownLatch(1)
         StartupWork.background("auth-store") { AuthStore.prewarm(this) }
+        StartupWork.background("auth-store") {
+            // Settings are plain preferences; the auth open must not race the
+            // readAll() that uses them.
+            settingsReady.await()
+            val store = AuthStore(this)
+            authStore = store
+            val restoredSession = store.activeSession
+            if (restoredSession != null && store.activeAccountId == null) {
+                store.select(restoredSession.accountId, restoredSession.activeProfileId)
+            }
+            store.cookie = restoredSession?.cookie
+            Innertube.cookie = restoredSession?.cookie
+            AppSettings.attachAuthStore(store)
+            if (restoredSession != null) {
+                // After the cookie, never before: setting the cookie clears any
+                // channel the last session was acting as, so restoring the
+                // choice first would restore it into the value about to be
+                // wiped.
+                restoredSession.profiles.firstOrNull { it.profileId == restoredSession.activeProfileId }
+                    ?.let { Innertube.selectChannel(it.pageId, it.dataSyncId, it.authUser) }
+                CoroutineScope(Dispatchers.IO).launch { Innertube.ensureSessionScope() }
+            }
+            initLastfm()
+            ListenTogether.init(this)
+        }
         com.music.bitchord.data.FeatureHealthCounters.init(File(logDirectory, "feature-health"))
         // [KO] exit-reasons: an ANR/crash leaves no line in this process's own
         // log, because the process that hung is gone. Android's historical exit
@@ -189,16 +214,14 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory, Configu
         }
         LyricsTranslation.cacheDir = cacheDir
         LyricsTranslation.keepDir = filesDir
-        // PlaybackService shares this process, so seeding the cookie here means
-        // stream resolution is authenticated from the first play onwards.
-        authStore = AuthStore(this)
         // The proxy route has to be in YouTubeProxy before this process makes
         // its first YouTube request. Everything below can start such a request
         // — a source open or the session-scope lookup a few lines down — while
         // the full settings read is still running, and a direct first browse
         // from Korea is exactly what stores a GATED verdict even though a
-        // working proxy is configured. This is only the small proxy read.
-        AppSettings.initProxy(this, authStore)
+        // working proxy is configured. This is only the small proxy read; the
+        // password and the final publish happen once the auth open finishes.
+        AppSettings.initProxy(this)
         // The refused-track memory that decides "proxy first" next launch. It
         // reads one small preference file and installs a debounced writer; no
         // request is made from here.
@@ -241,26 +264,13 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory, Configu
         CanvasCache.init(this)
         // Migration-safe: an old single cookie becomes the first encrypted
         // session, while newer installs restore the profile the listener chose.
-        val restoredSession = authStore.activeSession
-        if (restoredSession != null && authStore.activeAccountId == null) {
-            authStore.select(restoredSession.accountId, restoredSession.activeProfileId)
+        // That happens on the startup thread above, which then seeds the cookie
+        // before any stream resolution can need it.
+        try {
+            AppSettings.init(this)
+        } finally {
+            settingsReady.countDown()
         }
-        authStore.cookie = restoredSession?.cookie
-        Innertube.cookie = restoredSession?.cookie
-        // Which account that cookie actually acts as. Read here rather than on
-        // demand so the answer is usually in hand before the first request needs
-        // it: a play registered under the wrong account is indistinguishable, to
-        // the listener, from one that was never registered at all. Fire and
-        // forget — every caller works without it, just less precisely.
-        if (restoredSession != null) {
-            // After the cookie, never before: setting the cookie clears any
-            // channel the last session was acting as, so restoring the choice
-            // first would restore it into the value about to be wiped.
-            restoredSession.profiles.firstOrNull { it.profileId == restoredSession.activeProfileId }
-                ?.let { Innertube.selectChannel(it.pageId, it.dataSyncId, it.authUser) }
-            CoroutineScope(Dispatchers.IO).launch { Innertube.ensureSessionScope() }
-        }
-        AppSettings.init(this, authStore)
         // [KO] main-stall: the main Looper already measures every message; this
         // only records the slow ones (event-driven, no timer).
         com.music.bitchord.ko.KoDiagnostics.install()
@@ -278,7 +288,7 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory, Configu
         // mid-session is something the rest of the party never sees. The socket
         // and the clock offset are not restored — both are re-established on
         // the next connect, which is the only way to be sure they are current.
-        ListenTogether.init(this)
+        // Started from the auth block above, which owns [authStore].
         SearchHistory.init(this)
         LastPlayed.init(this)
         BoundedContextPersistence.init(this)
@@ -444,8 +454,7 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory, Configu
                 CoroutineScope(Dispatchers.IO).launch { loader.diskCache?.clear() }
             }
         }
-        // Initialize LastFM with saved settings if available
-        initLastfm()
+        // LastFM is configured from the auth block, once its saved key is read.
         // The public "apps open right now" count; see Presence. Its keep-alive
         // ping is skipped while the listener has asked for power saving: the
         // count resumes at the next interval, and a ping already counted still
@@ -624,6 +633,7 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory, Configu
     }
 
     companion object {
+        @Volatile
         lateinit var authStore: AuthStore
             private set
 
