@@ -43,6 +43,11 @@ fun SongActionsMenu(
      * passes one only while the cache actually holds some of it.
      */
     onRemoveFromCache: (() -> Unit)? = null,
+    /**
+     * Removes this track from the account's listening history. Null hides the
+     * row — the History screen passes one only when the menu is opened there.
+     */
+    onRemoveFromHistory: (() -> Unit)? = null,
     showSleepTimer: Boolean = false,
     showPlaybackSpeed: Boolean = false,
     /**
@@ -85,6 +90,8 @@ fun SongActionsMenu(
     onToggleAudioVersion: (() -> Unit)? = null,
     /** Which cut is playing now, so the row can offer the other one. */
     isAudioVersion: Boolean = false,
+    /** The other cut was already looked for and does not exist, so the row says so. */
+    audioVersionMissing: Boolean = false,
     onShare: (() -> Unit)? = null,
     /**
      * Copies what the app logged while starting this track. Null everywhere
@@ -134,6 +141,7 @@ fun SongActionsMenu(
         modifier = modifier,
         onRemoveFromPlaylist = onRemoveFromPlaylist,
         onRemoveFromCache = onRemoveFromCache,
+        onRemoveFromHistory = onRemoveFromHistory,
         showSleepTimer = showSleepTimer,
         showPlaybackSpeed = showPlaybackSpeed,
         privateListening = privateListening,
@@ -145,6 +153,7 @@ fun SongActionsMenu(
         redownloadQualityAtBest = redownloadQualityAtBest,
         onToggleAudioVersion = onToggleAudioVersion,
         isAudioVersion = isAudioVersion,
+        audioVersionMissing = audioVersionMissing,
         onShare = onShare,
         onCopyLog = onCopyLog,
         onReportProblem = onReportProblem,

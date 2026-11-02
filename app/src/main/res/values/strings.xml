@@ -905,8 +905,8 @@
         <item quantity="other">%1$s artists</item>
     </plurals>
     <plurals name="replay_play_count">
-        <item quantity="one">%1$s Play</item>
-        <item quantity="other">%1$s Plays</item>
+        <item quantity="one">%1$s play</item>
+        <item quantity="other">%1$s plays</item>
     </plurals>
     <plurals name="replay_song_count">
         <item quantity="one">%1$s song</item>
