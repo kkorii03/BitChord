@@ -151,6 +151,19 @@ internal class NextTrackPreparation(
         }
     }
 
+    /**
+     * When each step began, from the bundle's start: 1.9 bundles outlived the
+     * tracks they ran under (11-02 smoke: 8 started, none finished) and the
+     * result line alone could not say which step held them.
+     */
+    private fun stepLog(step: String, videoId: String, startedAt: Long) {
+        TrackLog.d(
+            "BitChord",
+            "next-prep step: ${step.lowercase(Locale.ROOT)} $videoId at ${SystemClock.elapsedRealtime() - startedAt}ms",
+            about = videoId,
+        )
+    }
+
     /** Stops the bundle and forgets what was prepared for the old next row. */
     fun cancel() {
         job?.cancel()
@@ -307,6 +320,7 @@ internal class NextTrackPreparation(
             }
             steps += step
             triedThisRun += step
+            stepLog(step.name, song.videoId, startedAt)
             // The deadline is not just a gate before the step: a measurement,
             // an AI wait or a search can outlast the time it was given. The
             // step runs under the same remaining allowance, so the handoff is
@@ -458,6 +472,7 @@ internal class NextTrackPreparation(
             if (!stillCurrent()) return
             val beforeHq = currentPlayer()?.let { remainingMs(it) } ?: Long.MAX_VALUE
             if (NextPrepPolicy.canStartStep(beforeHq)) {
+                stepLog("hq-download", song.videoId, startedAt)
                 try {
                     if (awaitLosslessDownload(song, beforeHq)) deadlineHit = true
                 } catch (cancelled: CancellationException) {
@@ -485,6 +500,7 @@ internal class NextTrackPreparation(
             } else {
                 steps += Step.MIX
                 triedThisRun += Step.MIX
+                stepLog(Step.MIX.name, song.videoId, startedAt)
                 val completed: Boolean? = try {
                     withRemaining(beforeMix) {
                         val player = currentPlayer()
