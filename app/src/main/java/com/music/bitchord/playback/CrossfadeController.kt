@@ -29,6 +29,8 @@ import com.music.bitchord.ko.koLogFadeGains
 import com.music.bitchord.ko.koMatchGain
 import com.music.bitchord.ko.koLaunchTicker
 import com.music.bitchord.ko.koLaunchSettingsWake
+import com.music.bitchord.ko.koLaunchAnalysisWake
+import com.music.bitchord.ko.koCrossfadeAnalysisCompleted
 import com.music.bitchord.ko.koRearmIncoming
 import com.music.bitchord.ko.koReconcileQueue
 import com.music.bitchord.ko.koRequestAnalysisAround
@@ -62,6 +64,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -195,6 +198,12 @@ class CrossfadeController(
     // [KO] crossfade-analysis — stats only; nothing waits on it
     private val analysisTimeMs: (MediaItem) -> Long = { 0L },
     internal val analysisWindowMeasured: (MediaItem, AnalysisWindow) -> Boolean = { _, _ -> false }, // [KO] crossfade-analysis
+    /**
+     * Emits when an analysis pass publishes a result. The idle ticker parks
+     * between cues, so this is what wakes it when a newly-landed analysis
+     * moves the planned cue earlier.
+     */
+    internal val analysisCompleted: Flow<Unit> = koCrossfadeAnalysisCompleted,
     /**
      * The track about to be loaded onto the standby player, announced at the
      * moment [begin] arms rather than at the handoff.
@@ -364,6 +373,7 @@ class CrossfadeController(
     private var listeningTo: ExoPlayer? = null
     private var tickerJob: Job? = null
     private var settingsWakeJob: Job? = null
+    private var analysisWakeJob: Job? = null
 
     internal fun wakeTicker() { // [KO] crossfade-ticker
         ko.tickerWake.trySend(Unit)
@@ -877,6 +887,8 @@ class CrossfadeController(
         // makes or moves a transition has to wake it like a player event does.
         settingsWakeJob?.cancel()
         settingsWakeJob = koLaunchSettingsWake(scope) // [KO] crossfade-ticker
+        analysisWakeJob?.cancel()
+        analysisWakeJob = koLaunchAnalysisWake(scope) // [KO] crossfade-ticker
     }
 
     fun release() {
@@ -884,6 +896,8 @@ class CrossfadeController(
         tickerJob = null
         settingsWakeJob?.cancel()
         settingsWakeJob = null
+        analysisWakeJob?.cancel()
+        analysisWakeJob = null
         loopBuildJob?.cancel()
         loopAlignJob?.cancel()
         loopSession?.let {
@@ -1059,10 +1073,16 @@ class CrossfadeController(
     internal fun koPlannedCueMs(): Long? =
         plannedTransitionFor(active().currentMediaItem?.mediaId ?: return null)
 
+    /** The tempo ramp [koPlannedCueMs] needs to run before its cue, in media ms. */
+    internal fun koPlannedRampMs(): Long = plannedTransitionRampMs
+
     private var plannedTransition: Pair<String, Long>? = null
+    /** Ramp length belonging to [plannedTransition]; zero for a plain fade or loop plan. */
+    private var plannedTransitionRampMs = 0L
 
     private fun planAutoTransition(player: ExoPlayer) {
         plannedTransition = null
+        plannedTransitionRampMs = 0L
         // Not while a version swap owns the standby player — see
         // [versionSwapActive]. Nothing to clean up on the way out unlike the
         // party case below: a version swap is a between-tracks affair on the
@@ -1143,6 +1163,7 @@ class CrossfadeController(
         val fade = choice.fadeMs
 
         player.currentMediaItem?.mediaId?.let { plannedTransition = it to duration - fade }
+        plannedTransitionRampMs = 0L
         val remaining = duration - player.currentPosition
         if (SleepTimer.afterTrack.value) {
             // The sleep timer is due when this track ends. There is no next
@@ -1260,6 +1281,7 @@ class CrossfadeController(
             )
             if (markerOnly) return
             plannedTransition = currentItem.mediaId to loopStartMs
+            plannedTransitionRampMs = 0L
             holdAhead(player, duration)
             if (loopStartMs - player.currentPosition > LOOP_ARM_LEAD_MS) return
             beginLoop(player, loop, currentItem, nextItem, duration, nextDuration)
@@ -1372,6 +1394,7 @@ class CrossfadeController(
         // starts that much earlier, from arming.
         val beatMs = (plan.beatSeconds * 1000).roundToLong()
         val rampMs = if (beatMs > 0L) rampStepsFor(plan.outgoingPlaybackRate) * beatMs else 0L
+        plannedTransitionRampMs = rampMs
         if (!AutomixWorkPolicy.shouldArmStandby(remaining, rampMs = rampMs, leadMs = armLeadMs())) return
 
         begin(

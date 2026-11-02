@@ -19,6 +19,8 @@ class KoCrossfadeTickerPolicyTest {
         durationMs: Long = 240_000L,
         positionMs: Long = 0L,
         plannedCueMs: Long? = null,
+        plannedRampMs: Long = 0L,
+        playbackSpeed: Float = 1f,
         screenOn: Boolean = true,
     ) = KoCrossfadeTickerPolicy.idleStepMs(
         playing = playing,
@@ -29,8 +31,10 @@ class KoCrossfadeTickerPolicyTest {
         durationMs = durationMs,
         positionMs = positionMs,
         plannedCueMs = plannedCueMs,
+        plannedRampMs = plannedRampMs,
         armLeadMs = armLeadMs,
         fadeMs = fadeMs,
+        playbackSpeed = playbackSpeed,
         screenOn = screenOn,
         onScreenStepMs = CrossfadeController.IDLE_STEP_MS,
         offScreenStepMs = CrossfadeController.SCREEN_OFF_IDLE_STEP_MS,
@@ -89,5 +93,19 @@ class KoCrossfadeTickerPolicyTest {
         val planned = idleStep(positionMs = 0L, plannedCueMs = 120_000L)
         assertTrue("planned=$planned unplanned=$unplanned", planned < unplanned)
         assertEquals(120_000L - armLeadMs, planned)
+    }
+
+    @Test
+    fun `the idle wait is divided by the playback speed`() {
+        val atNormalSpeed = idleStep(positionMs = 0L, plannedCueMs = 120_000L)
+        val atDoubleSpeed = idleStep(positionMs = 0L, plannedCueMs = 120_000L, playbackSpeed = 2f)
+        assertEquals(atNormalSpeed / 2L, atDoubleSpeed)
+    }
+
+    @Test
+    fun `a slow-tempo plan wakes before its ramp`() {
+        val withoutRamp = idleStep(positionMs = 0L, plannedCueMs = 120_000L)
+        val withRamp = idleStep(positionMs = 0L, plannedCueMs = 120_000L, plannedRampMs = 4_000L)
+        assertEquals(withoutRamp - 4_000L, withRamp)
     }
 }

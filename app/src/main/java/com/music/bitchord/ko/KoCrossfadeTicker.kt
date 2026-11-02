@@ -6,11 +6,20 @@ import com.music.bitchord.playback.CrossfadeController
 import com.music.bitchord.playback.smart.AutomixWorkPolicy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.math.roundToLong
+
+/**
+ * Emits whenever an analysis pass publishes a result. The idle ticker parks
+ * between cues, so this is the event that lets a newly-landed analysis move
+ * the planned cue without polling [com.music.bitchord.playback.smart.TrackAnalyzer].
+ */
+internal val koCrossfadeAnalysisCompleted = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
 
 /**
  * [KO] crossfade-ticker
@@ -38,6 +47,9 @@ internal fun CrossfadeController.koLaunchTicker(scope: CoroutineScope): Job =
  * Wakes the parked ticker when crossfade/Automix is switched, since an idle
  * tick no longer polls and a settings change would otherwise wait for the
  * next track.
+ *
+ * Playback speed belongs here too: the idle wait is media time, so a speed
+ * change moves the real moment the cue arrives.
  */
 internal fun CrossfadeController.koLaunchSettingsWake(scope: CoroutineScope): Job =
     scope.launch {
@@ -46,9 +58,20 @@ internal fun CrossfadeController.koLaunchSettingsWake(scope: CoroutineScope): Jo
             AppSettings.smartFadeEnabled,
             AppSettings.automixVideos,
             AppSettings.lowPower,
-        ) { _, _, _, _ -> Unit }
+            AppSettings.playbackSpeed,
+        ) { _, _, _, _, _ -> Unit }
             .drop(1)
             .collect { wakeTicker() }
+    }
+
+/**
+ * Wakes the parked ticker when an analysis pass lands. Without this an
+ * earlier analyzed cue (and the Automix marker) would stay at the fallback
+ * until the horizon tick even though the plan just became available.
+ */
+internal fun CrossfadeController.koLaunchAnalysisWake(scope: CoroutineScope): Job =
+    scope.launch {
+        analysisCompleted.collect { wakeTicker() }
     }
 
 /**
@@ -84,8 +107,10 @@ private fun CrossfadeController.koIdleStepMs(): Long {
         durationMs = duration,
         positionMs = player.currentPosition,
         plannedCueMs = koPlannedCueMs(),
+        plannedRampMs = koPlannedRampMs(),
         armLeadMs = AutomixWorkPolicy.STANDBY_LEAD_MS,
         fadeMs = fadeFor(duration),
+        playbackSpeed = AppSettings.playbackSpeed.value,
         screenOn = screenOn(),
         onScreenStepMs = CrossfadeController.IDLE_STEP_MS,
         offScreenStepMs = CrossfadeController.SCREEN_OFF_IDLE_STEP_MS,
@@ -109,8 +134,10 @@ internal object KoCrossfadeTickerPolicy {
         durationMs: Long,
         positionMs: Long,
         plannedCueMs: Long?,
+        plannedRampMs: Long,
         armLeadMs: Long,
         fadeMs: Long,
+        playbackSpeed: Float,
         screenOn: Boolean,
         onScreenStepMs: Long,
         offScreenStepMs: Long,
@@ -130,8 +157,17 @@ internal object KoCrossfadeTickerPolicy {
                 0L
             }
         val toUnplannedCue = durationMs - positionMs - horizon
-        val toPlannedCue = plannedCueMs?.let { it - positionMs - armLeadMs.coerceAtLeast(0L) }
+        // Arming needs the lead and the tempo ramp the plan starts with; a
+        // slow-tempo plan would otherwise wake after its ramp was due.
+        val toPlannedCue = plannedCueMs?.let {
+            it - positionMs - armLeadMs.coerceAtLeast(0L) - plannedRampMs.coerceAtLeast(0L)
+        }
         val wait = minOf(toUnplannedCue, toPlannedCue ?: Long.MAX_VALUE)
-        return if (wait <= 0L) nearStep else wait
+        if (wait <= 0L) return nearStep
+        // The player's position and duration are media time. At anything but
+        // 1x the wall clock reaches that cue sooner or later than the media
+        // distance says.
+        val speed = playbackSpeed.toDouble().takeIf { it > 0.0 } ?: 1.0
+        return (wait / speed).roundToLong().coerceAtLeast(1L)
     }
 }
