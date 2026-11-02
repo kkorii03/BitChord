@@ -102,14 +102,6 @@ class LyricsController(
     /** How long to keep looking — longer than any video worth measuring takes to arrive. */
     private val MEASURE_WINDOW_MS = 15 * 60_000L
 
-    /**
-     * A measurement runs in the background after the screen has its lyrics; an
-     * exception there must stop that job, not the process or the next lookup.
-     */
-    private val timingFailureHandler = CoroutineExceptionHandler { _, error ->
-        TrackLog.e("BitChord", "lyrics-timing: background pass failed", error)
-    }
-
     /** How the lyrics on screen were moved onto the video's clock — see [LyricsTiming]. */
     private val _lyricsTiming = MutableStateFlow(LyricsTimingUi())
     val lyricsTiming: StateFlow<LyricsTimingUi> = _lyricsTiming.asStateFlow()
@@ -124,6 +116,14 @@ class LyricsController(
     private var lyricsRaceOrder: List<LyricsSource> = emptyList()
     private var lyricsTimingJob: Job? = null
     private var aiTimingJob: Job? = null
+
+    /**
+     * A failing measurement or automatic AI pass is a background detail, not a
+     * reason to take the playback down with it; the plain lyrics stay on screen.
+     */
+    private val timingFailureHandler = CoroutineExceptionHandler { _, error ->
+        TrackLog.w("BitChord", "lyrics timing failed", error)
+    }
 
     /**
      * The song whose check was started in this playback. It keeps a check that
