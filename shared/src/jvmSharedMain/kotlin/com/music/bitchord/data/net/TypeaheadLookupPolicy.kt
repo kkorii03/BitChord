@@ -37,10 +37,12 @@ fun typeaheadCacheKey(input: String): String = input.trim()
  *
  * That endpoint also answers with general YouTube suggestions ("· 로또 당첨
  * 번호", "강진 뉴스"); a row is kept only when every word it adds to the typed
- * text appears in a music entity's title or credit. This drops the general
- * rows without guessing from Korean category words. A punctuation-only prefix
- * has no music answer at all, so it keeps just the query action rather than
- * YouTube's punctuation-echoed junk ("· 강진🙏…").
+ * text appears in a music entity's title or credit, or is one of YouTube's
+ * music modifiers. When the answer carries no music entity rows, no specific
+ * title or artist can be vouched for, so only those modifiers are kept — an
+ * earlier "no entity means anything goes" rule let every general row back in.
+ * A punctuation-only prefix has no music answer at all, so it keeps just the
+ * query action rather than YouTube's punctuation-echoed junk ("· 강진🙏…").
  *
  * Duplicates are removed because the rows become LazyColumn keys; two equal
  * completions from the server used to crash the list with "Key … was already
@@ -53,10 +55,6 @@ fun suggestionRows(
     musicTerms: List<String>,
 ): List<String> {
     val typed = input.trim()
-    // When YouTube returns no music entity rows at all there is nothing to
-    // vouch for a completion, so the prefix itself is all that can be checked;
-    // dropping every row left the dropdown with only the typed action.
-    val requireMusic = musicTerms.isNotEmpty()
     val musicPhrases = musicTerms.map { it.lowercase() }
     val musicWords = musicTerms.flatMap { it.words() }.toSet()
     // A prefix with no letter or digit is not a query YouTube Music can
@@ -66,7 +64,7 @@ fun suggestionRows(
         fetched.mapNotNull { row ->
             row.trim().takeIf { it.isNotBlank() && !it.hasEmoji() }
                 ?.takeIf { it.startsWith(typed, ignoreCase = true) }
-                ?.takeIf { it.isMusicCompletion(typed, musicWords, musicPhrases, requireMusic) }
+                ?.takeIf { it.isMusicCompletion(typed, musicWords, musicPhrases) }
         }
     } else {
         emptyList()
@@ -88,16 +86,16 @@ private fun String.isMusicCompletion(
     typed: String,
     musicWords: Set<String>,
     musicPhrases: List<String>,
-    requireMusic: Boolean,
 ): Boolean {
     val rawExtra = substring(typed.length)
     if (rawExtra.none { it.isLetterOrDigit() }) return false
     val extra = rawExtra.trim { !it.isLetterOrDigit() }.lowercase()
     if (extra.isEmpty()) return false
-    if (!requireMusic) return true
     if (musicPhrases.any { it.contains(extra) }) return true
     if (musicWords.any { it.contains(extra) }) return true
     val extraWords = extra.words()
+    // With no entity rows there is no title or credit to vouch for a word, so
+    // only YouTube's own music modifiers may extend the typed text.
     return extraWords.isNotEmpty() && extraWords.all { word ->
         word in MUSIC_MODIFIERS || musicWords.any { it.contains(word) }
     }

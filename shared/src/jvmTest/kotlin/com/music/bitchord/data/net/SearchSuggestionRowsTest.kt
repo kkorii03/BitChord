@@ -62,14 +62,25 @@ class SearchSuggestionRowsTest {
     }
 
     @Test
-    fun `without entity rows clean prefix completions are kept`() {
+    fun `without entity rows general youtube completions are dropped`() {
+        val rows = suggestionRows(
+            "iu",
+            listOf("iu 뉴스", "iu good day", "iu playlist"),
+            musicTerms = emptyList(),
+        )
+
+        assertEquals(listOf("iu", "iu playlist"), rows)
+    }
+
+    @Test
+    fun `without entity rows a specific song completion is not guessed at`() {
         val rows = suggestionRows(
             "coldplay",
             listOf("coldplay yellow", "coldplay live"),
             musicTerms = emptyList(),
         )
 
-        assertEquals(listOf("coldplay", "coldplay yellow", "coldplay live"), rows)
+        assertEquals(listOf("coldplay", "coldplay live"), rows)
     }
 
     @Test
