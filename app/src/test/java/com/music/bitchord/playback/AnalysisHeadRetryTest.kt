@@ -122,8 +122,7 @@ class AnalysisHeadRetryTest {
     }
 
     @Test
-    fun aClaimKeptWhileAReaderHeldThePartialIsNotRetriedUntilTheReaderLetsGo() {
-        // Dropping the claim on HeldElsewhere let the 250 ms idle tick launch
+    fun aClaimKeptWhileAReaderHeldThePartialIsNotRetriedUntilTheReaderLetsGo() {        // Dropping the claim on HeldElsewhere let the 250 ms idle tick launch
         // a round, resolve contentLength and retry the locked removeResource
         // for as long as the player/read-ahead held the entry.
         assertFalse(
@@ -159,6 +158,59 @@ class AnalysisHeadRetryTest {
                 alreadyRequested = true,
                 heldForReader = false,
                 anotherWriterHas = false,
+                inFlight = false,
+            ),
+        )
+    }
+
+    @Test
+    fun aReleaseThatArrivesWhileTheRoundIsUnwindingWaitsForItsCompletion() {
+        // The release hook must not start a second round on top of one still
+        // unwinding; the finally block runs the retry once inFlight is clear.
+        assertFalse(
+            analysisHeadHeldClaimMayRetry(
+                heldForReader = true,
+                alreadyRequested = true,
+                anotherWriterHas = false,
+                inFlight = true,
+            ),
+        )
+        assertTrue(
+            analysisHeadHeldClaimMayRetry(
+                heldForReader = true,
+                alreadyRequested = true,
+                anotherWriterHas = false,
+                inFlight = false,
+            ),
+        )
+    }
+
+    @Test
+    fun aReleaseAfterTheClaimIsKeptStartsExactlyOneDeferredRound() {
+        // Held for a reader, round already gone: the release event owns the
+        // retry. A claim that is no longer in the map is not retried, and a
+        // writer that still holds the entry defers again.
+        assertTrue(
+            analysisHeadHeldClaimMayRetry(
+                heldForReader = true,
+                alreadyRequested = true,
+                anotherWriterHas = false,
+                inFlight = false,
+            ),
+        )
+        assertFalse(
+            analysisHeadHeldClaimMayRetry(
+                heldForReader = true,
+                alreadyRequested = false,
+                anotherWriterHas = false,
+                inFlight = false,
+            ),
+        )
+        assertFalse(
+            analysisHeadHeldClaimMayRetry(
+                heldForReader = true,
+                alreadyRequested = true,
+                anotherWriterHas = true,
                 inFlight = false,
             ),
         )

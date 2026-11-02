@@ -1214,12 +1214,72 @@ object AudioCache {
      * except the ones belonging to [keep] — the tracks around the playhead,
      * whose bytes are still being read, seeked through and analysed.
      *
-     * This is what "only the YouTube and JioSaavn audio that played is cached"
-     * means in practice: the bytes an addon serves pass through the cache so
-     * playback behaves the same as ever, and leave it once the track does.
+     * A complete addon copy stays, and plays straight off disk next time —
+     * after a restart, or with no connection at all. What goes is what cannot
+     * be finished safely: a partial addon file has nobody left to finish it
+     * once its signed URL and its [StreamChoice] are gone, and the next
+     * resolve may land on a different file and stream it into the middle.
      * Analysis results are kept in their own store, so the analysis-only
      * audio has done its job by then.
+     *
+     * @param keepAnalysis leaves the analysis-only copies alone, for a caller
+     *   that is only after the addon entries — a lowered quality ceiling, which
+     *   says nothing about Automix's YouTube Opus heads for the tracks ahead.
      */
+    fun dropForeignEntries(keep: Set<String>, keepAnalysis: Boolean = false) {
+        if (openedCache == null) return
+        scope.launch {
+            var dropped = 0
+            cache.keys.toList().forEach { key ->
+                val meta = runCatching { cache.getContentMetadata(key) }.getOrNull() ?: return@forEach
+                val foreign = meta.get(META_ORIGIN, null as String?) == Origin.OTHER.name &&
+                    !keepsAddonCopy(key)
+                val analysisOnly = !keepAnalysis &&
+                    meta.get(META_ANALYSIS, null as String?) != null &&
+                    meta.get(META_PLAYBACK, null as String?) == null &&
+                    meta.get(META_PLAYED, null as String?) == null
+                if (!foreign && !analysisOnly) return@forEach
+                val mediaId = meta.get(META_MEDIA_ID, null as String?)
+                if (mediaId != null && (mediaId in keep || koRetention.keptForTiming(mediaId))) {
+                    return@forEach
+                }
+                runCatching { cache.removeResource(key) }
+                    .onSuccess {
+                        dropped++
+                        forgetPurgeCandidate(key)
+                        mediaId?.let { id ->
+                            analysisHeads.remove(id)
+                            analysisHeadDeferredLogged.remove(id)
+                            analysisHeadsHeldElsewhere.remove(id)
+                            analysisHeadWant.remove(id)
+                            stalledAnalysisHeads.remove(id)
+                            renditionKeys.remove(id)
+                        }
+                    }
+                    .onFailure { TrackLog.d(TAG, "unkept cache entry $key still in use: ${it.message}") }
+            }
+            if (dropped > 0) TrackLog.d(TAG, "dropped $dropped addon / analysis-only cache entries")
+        }
+    }
+
+    /**
+     * Whether the addon or module file under [key] is worth keeping once the
+     * queue has moved past it. Three things, each ruling out a copy that would
+     * do harm if it were read again:
+     *
+     *  - **Complete.** A whole entry is never written to again, so it can't
+     *    become the mixed-file seam a partial one is.
+     *  - **Not an upgrade's rendition.** A `#hifi` entry is reached only
+     *    through the marked item that swapped it in, which no restored or
+     *    newly queued item carries — kept, it would sit on disk unread.
+     *  - **Audio, by its first bytes.** Tidal answers with a DASH manifest, and
+     *    the XML lands under the track's own key; kept, the next play would
+     *    read a manifest of expired segment URLs off disk as if it were the
+     *    song. WebM, MP4 and FLAC pass, as [cachedContainerOf] reads them.
+     */
+    private fun keepsAddonCopy(key: String): Boolean =
+        !key.contains("#hifi") && isComplete(key) && containerOf(key) != null
+
     private val koRetention = KoCacheRetention() // [KO] purge-index
 
     /** [KO] timing-keep */
@@ -1233,20 +1293,6 @@ object AudioCache {
 
     /** [KO] purge-index */
     private fun forgetPurgeCandidate(key: String) = koRetention.forget(key) // [KO] purge-index
-
-    /** [KO] purge-index */
-    fun dropForeignEntries(keep: Set<String>) {
-        if (openedCache == null) return
-        // [KO] purge-index
-        koRetention.dropForeignEntries(openedCache!!, keep, scope) { mediaId -> // [KO] purge-index
-            analysisHeads.remove(mediaId)
-            analysisHeadDeferredLogged.remove(mediaId)
-            analysisHeadsHeldElsewhere.remove(mediaId)
-            analysisHeadWant.remove(mediaId)
-            stalledAnalysisHeads.remove(mediaId)
-            renditionKeys.remove(mediaId)
-        }
-    }
 
     /** The part of a cache key that names the track, before any `#rendition`; see [keyFactory]. */
     private fun cacheKeyBaseOf(mediaId: String): String =

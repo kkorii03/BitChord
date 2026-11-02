@@ -30,6 +30,27 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
+ * Whether read-ahead may write the next track's bytes.
+ *
+ * Byte read-ahead is independent of substitution when no substitute is being
+ * considered: `warmed == null` already blocks the substitute path, while the
+ * ordinary YouTube read-ahead must still fill a partially cached next track.
+ * Only a track pinned to another source (or to its own original) and one the
+ * player already owns are refused outright.
+ */
+internal fun readAheadBytesAllowed(
+    metered: Boolean,
+    lowPower: Boolean,
+    substitutable: Boolean,
+    substitutePinned: Boolean,
+    pinnedToYouTube: Boolean,
+    playerHoldsHead: Boolean,
+): Boolean = BatteryPolicy.cachePrefetchBytesAllowed(metered, lowPower) &&
+    (!substitutable || substitutePinned) &&
+    !pinnedToYouTube &&
+    !playerHoldsHead
+
+/**
  * [KO] prefetch-queue
  *
  * The fork's read-ahead scheduling: verify the next source candidate, honour
@@ -213,12 +234,14 @@ class KoPrefetchQueue(
                 // same answer for the bytes half — the URL is still warmed so a
                 // transition does not wait on a client walk.
                 val metered = AppSettings.meteredConnection.value == true
-                val cacheBytes = BatteryPolicy.cachePrefetchBytesAllowed(
+                val cacheBytes = readAheadBytesAllowed(
                     metered = metered,
                     lowPower = AppSettings.lowPower.value,
-                ) && (!substitutable || warmed != null) && !pinnedToYouTube && !youTubeFilled &&
-                    // The player already owns this entry; see heldHead.
-                    next != heldHead
+                    substitutable = substitutable,
+                    substitutePinned = warmed != null,
+                    pinnedToYouTube = pinnedToYouTube,
+                    playerHoldsHead = next == heldHead,
+                )
                 if (cacheBytes) {
                     launch(TrackLog.about(next)) {
                         delay(PREFETCH_DELAY_MS)

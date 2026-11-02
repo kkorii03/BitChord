@@ -9,6 +9,7 @@ import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.playback.AnalysisHeadClear
 import com.music.bitchord.playback.analysisHeadClearOutcome
+import com.music.bitchord.playback.analysisHeadHeldClaimMayRetry
 import com.music.bitchord.playback.analysisHeadMayClaimOrRetry
 import com.music.bitchord.playback.analysisHeadShouldRetry
 import com.music.bitchord.playback.smart.AutomixAnalysisSource
@@ -291,9 +292,12 @@ class KoAnalysisHeadEngine(
                 // release event. If that release already came while this job
                 // was unwinding, retry here so the claim does not become one
                 // that can never start a round.
-                if (videoId in heldElsewhere &&
-                    analysisHeads.containsKey(videoId) &&
-                    !anotherWriterHas(videoId)
+                if (analysisHeadHeldClaimMayRetry(
+                        heldForReader = videoId in heldElsewhere,
+                        alreadyRequested = analysisHeads.containsKey(videoId),
+                        anotherWriterHas = anotherWriterHas(videoId),
+                        inFlight = videoId in inFlight,
+                    )
                 ) {
                     heldElsewhere.remove(videoId)
                     analysisHeads.remove(videoId)
@@ -306,12 +310,18 @@ class KoAnalysisHeadEngine(
 
     /** A reader just let go; retry a held claim only when no other writer has it. */
     fun retryAnalysisHeadIfReaderReleased(videoId: String) {
-        if (videoId !in heldElsewhere) return
-        if (anotherWriterHas(videoId)) return
         // The cancelled round may still be unwinding. Its own completion
         // retries once the in-flight set is clear, so the claim is not lost to
         // a release that arrives during teardown.
-        if (videoId in inFlight) return
+        if (!analysisHeadHeldClaimMayRetry(
+                heldForReader = videoId in heldElsewhere,
+                alreadyRequested = analysisHeads.containsKey(videoId),
+                anotherWriterHas = anotherWriterHas(videoId),
+                inFlight = videoId in inFlight,
+            )
+        ) {
+            return
+        }
         heldElsewhere.remove(videoId)
         analysisHeads.remove(videoId)
         deferredLogged.remove(videoId)
