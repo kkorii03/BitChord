@@ -36,8 +36,8 @@ class YouTubeCategoryRulesTest {
     fun `a category searches its own Korean term`() {
         assertEquals("K-pop", YouTubeCategoryRules.searchTerm(ExploreCategories.find("ytq:kpop")!!))
         assertEquals("운동", YouTubeCategoryRules.searchTerm(ExploreCategories.find("ytq:workout")!!))
-        assertEquals("휴식", YouTubeCategoryRules.searchTerm(ExploreCategories.find("ytq:chill")!!))
-        assertEquals("수면", YouTubeCategoryRules.searchTerm(ExploreCategories.find("ytq:sleep")!!))
+        assertEquals("편안한", YouTubeCategoryRules.searchTerm(ExploreCategories.find("ytq:chill")!!))
+        assertEquals("잠잘 때", YouTubeCategoryRules.searchTerm(ExploreCategories.find("ytq:sleep")!!))
     }
 
     @Test
