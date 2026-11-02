@@ -67,16 +67,16 @@ internal fun analysisHeadMayClaimOrRetry(
  * The same rule covers both ends of the handoff: the release hook that fires
  * while the round is still unwinding must not start a second round (the
  * completion path will), and a release that arrives after the round is gone
- * starts exactly one. [heldForReader] is the kept claim, [alreadyRequested]
- * its presence in the claim map, and [inFlight] the round still on its way
- * out.
+ * starts exactly one. [heldForReader] is the kept claim and [inFlight] the
+ * round still on its way out. As in v1.9 the claim map is not consulted: a
+ * claim cleared there while held for a reader must still be retried, or the
+ * track never gets its analysis head (the request itself dedupes).
  */
 internal fun analysisHeadHeldClaimMayRetry(
     heldForReader: Boolean,
-    alreadyRequested: Boolean,
     anotherWriterHas: Boolean,
     inFlight: Boolean,
-): Boolean = heldForReader && alreadyRequested && !anotherWriterHas && !inFlight
+): Boolean = heldForReader && !anotherWriterHas && !inFlight
 
 /**
  * Whether a running analysis round has to stop for playback.

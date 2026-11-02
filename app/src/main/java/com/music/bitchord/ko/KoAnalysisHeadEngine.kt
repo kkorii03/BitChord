@@ -294,7 +294,6 @@ class KoAnalysisHeadEngine(
                 // that can never start a round.
                 if (analysisHeadHeldClaimMayRetry(
                         heldForReader = videoId in heldElsewhere,
-                        alreadyRequested = analysisHeads.containsKey(videoId),
                         anotherWriterHas = anotherWriterHas(videoId),
                         inFlight = videoId in inFlight,
                     )
@@ -315,7 +314,6 @@ class KoAnalysisHeadEngine(
         // a release that arrives during teardown.
         if (!analysisHeadHeldClaimMayRetry(
                 heldForReader = videoId in heldElsewhere,
-                alreadyRequested = analysisHeads.containsKey(videoId),
                 anotherWriterHas = anotherWriterHas(videoId),
                 inFlight = videoId in inFlight,
             )

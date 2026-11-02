@@ -170,7 +170,6 @@ class AnalysisHeadRetryTest {
         assertFalse(
             analysisHeadHeldClaimMayRetry(
                 heldForReader = true,
-                alreadyRequested = true,
                 anotherWriterHas = false,
                 inFlight = true,
             ),
@@ -178,7 +177,6 @@ class AnalysisHeadRetryTest {
         assertTrue(
             analysisHeadHeldClaimMayRetry(
                 heldForReader = true,
-                alreadyRequested = true,
                 anotherWriterHas = false,
                 inFlight = false,
             ),
@@ -188,12 +186,19 @@ class AnalysisHeadRetryTest {
     @Test
     fun aReleaseAfterTheClaimIsKeptStartsExactlyOneDeferredRound() {
         // Held for a reader, round already gone: the release event owns the
-        // retry. A claim that is no longer in the map is not retried, and a
-        // writer that still holds the entry defers again.
+        // retry whether or not the claim map still has it (as v1.9), a claim
+        // not held for a reader is not this hook's, and a writer that still
+        // holds the entry defers again.
         assertTrue(
             analysisHeadHeldClaimMayRetry(
                 heldForReader = true,
-                alreadyRequested = true,
+                anotherWriterHas = false,
+                inFlight = false,
+            ),
+        )
+        assertFalse(
+            analysisHeadHeldClaimMayRetry(
+                heldForReader = false,
                 anotherWriterHas = false,
                 inFlight = false,
             ),
@@ -201,15 +206,6 @@ class AnalysisHeadRetryTest {
         assertFalse(
             analysisHeadHeldClaimMayRetry(
                 heldForReader = true,
-                alreadyRequested = false,
-                anotherWriterHas = false,
-                inFlight = false,
-            ),
-        )
-        assertFalse(
-            analysisHeadHeldClaimMayRetry(
-                heldForReader = true,
-                alreadyRequested = true,
                 anotherWriterHas = true,
                 inFlight = false,
             ),
