@@ -66,6 +66,10 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory, Configu
     /** Foreground/background transitions, logged as they happen rather than sampled. */
     private var startedActivities = 0
 
+    /** The startup thread's open store, handed to the block that attaches its secrets. */
+    @Volatile
+    private var openedAuthStore: AuthStore? = null
+
     private val activityLifecycle = object : Application.ActivityLifecycleCallbacks {
         override fun onActivityCreated(activity: android.app.Activity, savedInstanceState: Bundle?) = Unit
 
@@ -114,18 +118,18 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory, Configu
         val settingsReady = java.util.concurrent.CountDownLatch(1)
         StartupWork.background("auth-store") { AuthStore.prewarm(this) }
         StartupWork.background("auth-store") {
-            // Settings are plain preferences; the auth open must not race the
-            // readAll() that uses them.
-            settingsReady.await()
+            // Restore the cookie and channel before waiting for the main-thread
+            // settings read: a service started without the UI (a widget or a
+            // restored queue) then finds the session already published. Nothing
+            // here touches settings or the network.
             val store = AuthStore(this)
-            authStore = store
+            openedAuthStore = store
             val restoredSession = store.activeSession
             if (restoredSession != null && store.activeAccountId == null) {
                 store.select(restoredSession.accountId, restoredSession.activeProfileId)
             }
             store.cookie = restoredSession?.cookie
             Innertube.cookie = restoredSession?.cookie
-            AppSettings.attachAuthStore(store)
             if (restoredSession != null) {
                 // After the cookie, never before: setting the cookie clears any
                 // channel the last session was acting as, so restoring the
@@ -133,6 +137,18 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory, Configu
                 // wiped.
                 restoredSession.profiles.firstOrNull { it.profileId == restoredSession.activeProfileId }
                     ?.let { Innertube.selectChannel(it.pageId, it.dataSyncId, it.authUser) }
+            }
+        }
+        StartupWork.background("auth-store") {
+            // Settings are plain preferences; the auth open must not race the
+            // readAll() that uses them.
+            settingsReady.await()
+            val store = openedAuthStore ?: AuthStore(this)
+            authStore = store
+            AppSettings.attachAuthStore(store)
+            if (store.activeSession != null) {
+                // The proxy is published by AppSettings.init before this runs,
+                // so the scope lookup does not go direct from Korea.
                 CoroutineScope(Dispatchers.IO).launch { Innertube.ensureSessionScope() }
             }
             initLastfm()

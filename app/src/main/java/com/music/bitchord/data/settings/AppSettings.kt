@@ -211,7 +211,12 @@ object AppSettings {
     /** Kept so a setting the widgets read can redraw them without a caller passing one. */
     internal lateinit var appContext: Context
 
-    /** Only for the Discord, WebDAV and SMB secrets — everything else on here is plain prefs. */
+    /**
+     * Only for the Discord, WebDAV and SMB secrets — everything else on here is
+     * plain prefs. Volatile because the startup thread publishes it and the
+     * main thread reads [authReady] before using it.
+     */
+    @Volatile
     internal lateinit var authStore: AuthStore
 
     /** The onboarding answers [readAll] saw before the encrypted session was available. */
@@ -997,8 +1002,14 @@ object AppSettings {
      * still runs later for everything else; reading the same preferences in
      * both places converges on one published configuration.
      */
-    fun initProxy(context: Context) =
+    fun initProxy(context: Context) {
         KoAppSettings.initProxy(context) // [KO] proxy
+        // The encrypted store is not open yet, so its password is empty for
+        // now. Publish the plain route anyway: a first browse before the auth
+        // attach must not go direct. [attachAuthStore] publishes again with
+        // the password once the store exists.
+        YouTubeProxy.update(currentProxyConfig())
+    }
 
     /**
      * Reads everything that does not come from the encrypted store. The auth
@@ -1035,11 +1046,21 @@ object AppSettings {
         // The first read could not see a signed-in session. An install whose only
         // trace is that session is still an existing install, not a fresh one.
         val saved = onboardingBeforeAuth
-        if (saved != null && !saved && !existingInstallBeforeAuth && authStore.isSignedIn) {
-            KoAppSettings.readLowPowerAndOnboarding(saved, true) // [KO] onboarding
+        if (onboardingWasMissedBeforeAuth(saved, existingInstallBeforeAuth, authStore.isSignedIn)) {
+            KoAppSettings.readLowPowerAndOnboarding(saved ?: false, true) // [KO] onboarding
         }
         onboardingBeforeAuth = null
     }
+
+    /**
+     * An install whose only trace is the encrypted session was still an existing
+     * install; the first plain read could not see it.
+     */
+    internal fun onboardingWasMissedBeforeAuth(
+        saved: Boolean?,
+        existingInstall: Boolean,
+        signedIn: Boolean,
+    ): Boolean = saved == false && !existingInstall && signedIn
 
     /**
      * Re-reads every setting off disk.
