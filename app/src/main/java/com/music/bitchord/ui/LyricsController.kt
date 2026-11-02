@@ -164,7 +164,7 @@ class LyricsController(
      * from its downloaded file to the song stream, and the check of the old
      * recording must not stand for the new one.
      */
-    private var lyricsFor: LyricsLoadKey? = null
+    private val requestGate = LyricsRequestGate()
 
     init {
         // Kept lyrics a background check has since bettered (word timing where
@@ -218,14 +218,16 @@ class LyricsController(
             order = AppSettings.lyricsSourceOrder.value,
             prioritizeSyllableSync = AppSettings.prioritizeSyllableSync.value,
         )
-        if (lyricsFor == key) return
-        // The duration lands a beat after the track, and every lookup — a
-        // network search and a downloaded file's own tags alike — now waits for
-        // it before claiming the key. Claiming first and giving it up inside
+        val action = requestGate.begin(key, durationMs, hasLocalFile = localUri != null)
+        if (action == LyricsRequestAction.ALREADY_LOADED || action == LyricsRequestAction.WAIT_FOR_DURATION) return
+        // The duration lands a beat after the track, and a network lookup waits
+        // for it before claiming the key. Claiming first and giving it up inside
         // the job meant the re-trigger carrying the duration could arrive while
         // the claim still stood, be dropped as a duplicate, and leave the track
-        // looked up by nobody (a59AuyMjb68). One rule for all tracks.
-        if (!LyricsRequestGate.canClaim(durationMs)) return
+        // looked up by nobody (a59AuyMjb68). A local file's own lyrics need no
+        // length, so they may show as a preview until it arrives; only the
+        // network request is withheld.
+        val previewOnly = action == LyricsRequestAction.LOCAL_PREVIEW
         if (currentLyricsRequest?.videoId != videoId ||
             (currentLyricsRequest?.localUri != null) != (localUri != null)
         ) {
@@ -233,7 +235,6 @@ class LyricsController(
             refineHeardStartedFor = null
             mismatchReloadedFor = null
         }
-        lyricsFor = key
         lyricsGeneration += 1
         val generation = lyricsGeneration
         currentLyricsRequest = LyricsRequest(
@@ -423,6 +424,7 @@ class LyricsController(
                     return@launch
                 }
             }
+            if (previewOnly) return@launch
             val found = LyricsRepository.lyrics(
                 videoId, title, artist, durationMs, album, sources,
                 AppSettings.lyricsSourceOrder.value, AppSettings.prioritizeSyllableSync.value,
@@ -444,7 +446,7 @@ class LyricsController(
             // phone offline. Forget the claim so a later look at the same
             // track (a settings change, reopening the panel) asks again,
             // instead of being dropped as a duplicate for the whole session.
-            if (selected == null) lyricsFor = null
+            if (selected == null) requestGate.release()
         }
     }
 
@@ -458,7 +460,7 @@ class LyricsController(
         if (!LyricsRetry.shouldRetry(
                 checked = _lyricsChecked.value,
                 hasLyrics = !_lyrics.value.isNullOrEmpty(),
-                lookupClaimed = lyricsFor != null,
+                lookupClaimed = requestGate.lookupClaimed,
                 hasRequest = true,
             )
         ) return
@@ -1259,7 +1261,7 @@ class LyricsController(
                 com.music.bitchord.data.lyrics.LyricsMismatch.logLine(result.source, verdict),
                 about = request.videoId,
             )
-            lyricsFor = null
+            requestGate.release()
             loadLyrics(
                 videoId = request.videoId,
                 title = request.title,
@@ -1468,12 +1470,38 @@ class LyricsController(
 }
 
 /**
- * Whether this call may claim the lookup key. A track's length arrives from the
- * player a beat after the track itself; until it does, the lookup stays
- * unclaimed so the event that carries it starts the one request.
+ * What [LyricsController.loadLyrics] should do with a call.
+ *
+ * A track's length arrives from the player a beat after the track itself; until
+ * it does, a network lookup stays unclaimed so the event that carries it starts
+ * the one request (a59AuyMjb68). A local file's embedded lyrics need no length,
+ * so they may be shown as a preview while the network lookup still waits.
  */
-internal object LyricsRequestGate {
-    fun canClaim(durationMs: Long): Boolean = durationMs > 0L
+internal enum class LyricsRequestAction { ALREADY_LOADED, WAIT_FOR_DURATION, LOCAL_PREVIEW, LOOKUP }
+
+internal class LyricsRequestGate {
+    private var claimed: LyricsLoadKey? = null
+    private var previewed: LyricsLoadKey? = null
+
+    val lookupClaimed: Boolean get() = claimed != null
+
+    fun begin(key: LyricsLoadKey, durationMs: Long, hasLocalFile: Boolean): LyricsRequestAction {
+        if (claimed == key) return LyricsRequestAction.ALREADY_LOADED
+        if (durationMs <= 0L) {
+            if (!hasLocalFile) return LyricsRequestAction.WAIT_FOR_DURATION
+            if (previewed == key) return LyricsRequestAction.ALREADY_LOADED
+            previewed = key
+            return LyricsRequestAction.LOCAL_PREVIEW
+        }
+        claimed = key
+        previewed = null
+        return LyricsRequestAction.LOOKUP
+    }
+
+    /** A miss is not final: a later look may ask again. */
+    fun release() {
+        claimed = null
+    }
 }
 
 /**

@@ -158,15 +158,28 @@ object LyricsRepository {
         // cover)"). Passed all the way down so every provider's sheet is
         // checked before it can be accepted.
         val language = LyricsAiGuard.namedLanguage(title)
+        // One deadline for the whole answer, the transcription fallback
+        // included. Made here rather than inside the search so a Gemini
+        // request after a miss cannot keep the panel spinning past it.
+        val deadline = LookupDeadline()
         val found = lookUpAll(
             videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
             onSourceStarted, onSourceResult, onSourceCancelled, isVideo, alternatives, artistKnown,
-            artistAliases, language,
+            artistAliases, language, deadline,
         )
         // An upload labelled an instrumental has no words to write down: skip
         // the paid Gemini request before it is made.
         if (found != null || !transcribe || sources.isEmpty() || LyricsAiGuard.isInstrumentalTitle(title)) return found
-        return transcribed(videoId, durationMs)?.also { heard ->
+        val remainingMs = deadline.remainingMs()
+        val heard = if (remainingMs > 0L) {
+            beforeLookupDeadline(deadline) { transcribed(videoId, durationMs) }
+        } else {
+            null
+        }
+        if (remainingMs > 0L && heard == null && deadline.expired()) {
+            TrackLog.i(TAG, "lyrics: deadline after ${deadline.totalMs}ms (transcribe)", about = videoId)
+        }
+        return heard?.also {
             // Kept like any answer, so the next play — today or after a
             // restart — shows it without listening again.
             val key = questionKey(
@@ -289,6 +302,7 @@ object LyricsRepository {
         artistKnown: Boolean,
         artistAliases: List<String>,
         language: LyricsAiGuard.Language?,
+        deadline: LookupDeadline,
     ): Result? {
         // The whole answer — retries and original-language names included —
         // kept against the whole question, so the lookup the next-track
@@ -362,7 +376,7 @@ object LyricsRepository {
             return search(
                 videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
                 onSourceStarted, onSourceResult, onSourceCancelled, isVideo, alternatives, artistKnown,
-                artistAliases, language,
+                artistAliases, language, deadline,
             )
         }
         // Everyone asking hears every provider as it starts and answers — not
@@ -381,7 +395,7 @@ object LyricsRepository {
                     search(
                         videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
                         lookup::started, lookup::answered, lookup::cancelled, isVideo, alternatives, artistKnown,
-                        artistAliases, language,
+                        artistAliases, language, deadline,
                     ).also {
                         answers.put(key, Answer(it))
                         // Only answers go on disk: "nothing found" may only
@@ -642,6 +656,7 @@ object LyricsRepository {
         artistKnown: Boolean,
         artistAliases: List<String>,
         language: LyricsAiGuard.Language?,
+        deadline: LookupDeadline = LookupDeadline(),
     ): Result? = coroutineScope {
         // The original-language name is one cheap search away and needed the
         // moment the first round comes back empty, so it is asked for now,
@@ -656,7 +671,7 @@ object LyricsRepository {
             searchRounds(
                 videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
                 onSourceStarted, onSourceResult, onSourceCancelled, isVideo, alternatives, artistKnown,
-                artistAliases, language, nameAhead,
+                artistAliases, language, deadline, nameAhead,
             )
         } finally {
             nameAhead?.cancel()
@@ -681,6 +696,7 @@ object LyricsRepository {
         artistKnown: Boolean,
         artistAliases: List<String>,
         language: LyricsAiGuard.Language?,
+        deadline: LookupDeadline,
         nameAhead: Deferred<OriginalNames.Name?>?,
     ): Result? {
         val ordered = if (isVideo && LyricsSource.YOUTUBE_TRANSCRIPT in sources) {
@@ -688,10 +704,10 @@ object LyricsRepository {
         } else {
             order
         }
-        // One deadline for the whole lookup, every name and catalogue retry
-        // included. Without it a name that kept missing spent a provider budget
-        // per variant and the panel never left its spinner (MA9BrvtKvhM).
-        val deadline = LookupDeadline()
+        // The deadline was made at the head of the whole lookup, so every name,
+        // catalogue retry and the transcription fallback share it. Without it
+        // a name that kept missing spent a provider budget per variant and the
+        // panel never left its spinner (MA9BrvtKvhM).
         var deadlineLogged = false
         // A plain-text answer is kept, but never at the price of a synced one
         // a later name could still find: the bug's "통가사 only" was the first
@@ -970,12 +986,18 @@ object LyricsRepository {
 
     internal class LookupDeadline(
         val totalMs: Long = LOOKUP_DEADLINE_MS,
-        private val startedAtMs: Long = System.currentTimeMillis(),
+        // Monotonic: a wall-clock read can jump backwards and hand the lookup
+        // more time than it promised (a spinner past the deadline again).
+        private val clock: () -> Long = System::nanoTime,
     ) {
-        fun remainingMs(nowMs: Long = System.currentTimeMillis()): Long =
-            (startedAtMs + totalMs - nowMs).coerceAtLeast(0L)
+        private val startedAtNs: Long = clock()
 
-        fun expired(nowMs: Long = System.currentTimeMillis()): Boolean = remainingMs(nowMs) <= 0L
+        fun remainingMs(nowNs: Long = clock()): Long {
+            val elapsedMs = (nowNs - startedAtNs) / 1_000_000L
+            return (totalMs - elapsedMs).coerceIn(0L, totalMs)
+        }
+
+        fun expired(nowNs: Long = clock()): Boolean = remainingMs(nowNs) <= 0L
     }
 
     /** Runs [block] only while [deadline] has time left; null when it is already gone or runs out. */
