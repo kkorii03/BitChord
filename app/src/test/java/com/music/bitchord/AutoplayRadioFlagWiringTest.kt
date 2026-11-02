@@ -40,4 +40,12 @@ class AutoplayRadioFlagWiringTest {
             "preferVideos = videos" in source,
         )
     }
+
+    @Test
+    fun `the personalised session radio asks for the same video pairing`() {
+        assertTrue(
+            "session radio lost the queue's preferVideos; see rankedExtensions",
+            "sessionRadioFor(seedSong, sessionSong, preferVideo = preferVideos)" in source,
+        )
+    }
 }

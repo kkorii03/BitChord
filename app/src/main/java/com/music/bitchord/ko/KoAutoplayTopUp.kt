@@ -543,7 +543,7 @@ private suspend fun rankedExtensions(
     preferVideos: Boolean = false,
 ): List<Song> {
     val sessionRadio = autoplayRowsAfterCoverFilter(
-        sessionRadioFor(seedSong, sessionSong),
+        sessionRadioFor(seedSong, sessionSong, preferVideo = preferVideos),
         seedSong,
     )
     val now = System.currentTimeMillis()
