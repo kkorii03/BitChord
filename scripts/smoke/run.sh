@@ -562,6 +562,34 @@ force_final_summary() {
 }
 force_final_summary
 
+# Heap report (11-02 leak hunt): the retained heap grows ~7 MB a minute until
+# playback fails with OutOfMemoryError. The raw dump holds the app's strings
+# (API keys among them) and never leaves the runner; only the class/size
+# report from hprof_report.py is kept.
+heap_report() {
+  local dev=/data/local/tmp/bitchord-heap.hprof host=/tmp/bitchord-heap.hprof last=-1 size i
+  adb shell dumpsys meminfo "$PKG" > "$OUT/meminfo.txt" 2>/dev/null || true
+  adb shell rm -f "$dev" >/dev/null 2>&1 || true
+  adb shell am dumpheap -g "$PKG" "$dev" >/dev/null 2>&1 || {
+    echo "heap report: dumpheap failed" > "$OUT/heap-report.txt"; return 0; }
+  # dumpheap returns before the file is complete: wait for its size to settle.
+  for i in $(seq 1 60); do
+    sleep 2
+    size=$(adb shell stat -c %s "$dev" 2>/dev/null | tr -d '\r')
+    [ -n "$size" ] && [ "$size" != 0 ] && [ "$size" = "$last" ] && break
+    last=$size
+  done
+  if adb pull "$dev" "$host" >/dev/null 2>&1; then
+    timeout 1200 python3 scripts/smoke/hprof_report.py "$host" > "$OUT/heap-report.txt" 2>&1 ||
+      echo "heap report: analysis failed" >> "$OUT/heap-report.txt"
+  else
+    echo "heap report: pull failed" > "$OUT/heap-report.txt"
+  fi
+  rm -f "$host"
+  adb shell rm -f "$dev" >/dev/null 2>&1 || true
+}
+heap_report
+
 cleanup_logcat
 trap - EXIT
 
