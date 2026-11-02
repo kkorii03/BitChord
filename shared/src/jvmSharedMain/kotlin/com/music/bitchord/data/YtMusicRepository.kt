@@ -1010,7 +1010,7 @@ object YtMusicRepository {
         return call("radio:$key") {
             // [KO] korea-gate: behind the music.youtube.com gate `next` answers
             // with the seed alone, which left AutoPlay empty on every track.
-            if (ensureGateKnown()) return@call YouTubeFallback.radio(videoId)
+            if (ensureGateKnown()) return@call YouTubeFallback.radio(videoId, preferVideo)
             InnertubeParser.parseWatchQueue(Innertube.next(videoId), preferVideo = preferVideo)
         }.onSuccess { songs ->
             synchronized(radioCache) { radioCache[key] = songs }

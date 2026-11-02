@@ -109,4 +109,20 @@ class AutoplayCoverSeedTest {
         )
         assertTrue(kept.isEmpty())
     }
+
+    @Test
+    fun `a cover seed whose title never says cover still keeps its station`() {
+        val seed = Song(
+            videoId = "seed",
+            title = "달콤레나 - 고추잠자리(조용필) [26.09.06]",
+            artist = "레나의 노래 일기",
+            thumbnailUrl = null,
+            isVideo = true,
+        )
+        val rows = listOf(song("고추잠자리 (Cover)", "다른 이름"))
+        assertEquals(
+            listOf("다른 이름"),
+            autoplayRowsAfterCoverFilter(rows, seed).map { it.artist },
+        )
+    }
 }
