@@ -108,7 +108,7 @@ checking `heavyWorkAllowed`. They are not regressions from this merge wave.
 ## Tests
 
 - `./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain -q` — pass.
-- `./gradlew :shared:jvmTest --tests 'com.music.bitchord.data.lyrics.SongCheckFirstPassTest'` — 4 tests, 0 failures after the fix; before it, compile failed on the unresolved `firstPassSeconds`.
+- `./gradlew :shared:jvmTest --tests 'com.music.bitchord.data.lyrics.SongCheckFirstPassTest'` — 5 tests, 0 failures after the fix, including `no second pass once the screen is off or the first pass was refused`; before it, compile failed on the unresolved `firstPassSeconds`.
 - `./gradlew :shared:jvmTest --tests 'com.music.bitchord.data.lyrics.SongCheck*'` — pass.
 - `./gradlew :app:testProdReleaseUnitTest --tests '*LyricsTiming*Test' --tests '*SongCheck*Test'` — 17 classes, 67 tests, 0 failures.
 - Merged-lane tests also re-run clean: `CommittedSpanReaderTest`,
