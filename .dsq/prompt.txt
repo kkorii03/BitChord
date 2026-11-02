@@ -1,0 +1,27 @@
+Task: bring upstream v1.9 into our current line by merging branch origin/task/upstream-19 into this branch (task/telegram). Use grep / Select-String, not rg (not installed). This is a merge-resolution task: no new features, no refactors.
+
+Facts: merge base 018c841b. origin/task/upstream-19 (280 commits) = our older line + upstream v1.9 merged + 1.9 fixes (first sound, mix start, ANR fixes: download record IO, ExitInfo, home savedReleases IO; Korean view-count MV check). task/telegram (213 commits) = Telegram source, sync fixes, HQ upgrade work, and 'ko-conflict' / 'ko-split' lanes that MOVED Korean-fork code out of upstream files into app/.../ko/*.kt with one-line '// [KO]' hooks. `git merge --no-commit --no-ff origin/task/upstream-19` gives 30 conflicted files, 1676 our-side lines (biggest: PlaybackService, SongActionsMenu, SourceResolver, MainActivityKo, MainActivity, SettingsSheet, AudioCache, AudioOutputStatus, Downloads, CrossfadeController).
+
+Resolution rules:
+1. Keep BOTH sides' intent. Never delete upstream v1.9 code and never drop one of our features to make it compile.
+2. When our side moved Korean code into a ko/ file and the upstream-19 side edited that same Korean code at the old place, apply the upstream-19 edit inside the ko/ file and keep the hook.
+3. Same logic changed on both sides: song-version judgment (TrackMatcher), lyrics sync, Telegram, HQ upgrade/verify -> ours wins, but keep any upstream v1.9 bug fix that does not contradict it. Generic upstream v1.9 behavior and the 1.9 fixes (first sound, mix start, ANR) -> theirs wins.
+4. strings.xml (values, values-ko): union by resource name; values-ko wording ours wins; no duplicate names.
+5. .github/ files: you may not edit them. Resolve with `git checkout --ours` for .github/* and list in the summary every test class the upstream-19 side added to ko-wip-check.yml so Opus merges the list.
+6. Remove .dsq/ and leave .github/workflows/ds-cloud.yml as HEAD.
+
+Proof (all required, report numbers):
+a) No conflict markers anywhere (grep '<<<<<<<|>>>>>>>' over app/ shared/ sharedUi/).
+b) Symbol check script (write it to scripts/upgrade/symbol_check.py, keep it): for every conflicted .kt file, collect fun/val/class names declared in each parent (git show HEAD:path, git show MERGE_HEAD:path); every name must exist in the result either in that file or in some app/**/ko/*.kt file. Print missing names; must be 0 or each one explained.
+c) Every '// [KO]' hook present in HEAD's version of conflicted files still present.
+d) ./gradlew :app:compileProdReleaseKotlin passes; run the unit tests listed in BOTH sides' ko-wip-check.yml test lists (union) and report pass/fail counts; known old failures (LocaleStringsTest, ProviderLyricsTest, BluetoothAudioTrackerTest, playback.audio) may fail - list them separately.
+e) Commit the merge (message: 'Merge task/upstream-19 (v1.9) into task/telegram').
+
+Battery first (no polling/timers in anything you write). Re-read callers and types of everything you touch. When you drop a comment or design intent, say why.
+Finish with a summary of at most 15 lines: per-file notes for the 10 biggest files / symbol check result / hooks result / compile + test counts / test classes to add to CI / open problems.
+
+TIME AND ORDER (a first attempt ran out of time): finish within 100 minutes.
+1. Start the merge. For strings conflicts run: python3 scripts/upgrade/merge_strings.py --stage --fix-dupes (the repo's own tool) instead of resolving strings by hand.
+2. Resolve the Kotlin conflicts file by file, biggest first. As soon as there are no conflict markers left, COMMIT the merge (git commit --no-edit -m 'Merge task/upstream-19 (v1.9) into task/telegram') BEFORE compiling, so the work is kept even if time runs out.
+3. Then compile, fix errors in follow-up commits, run the symbol check and the tests.
+Keep the summary short. Follow AGENTS.md (ponytail).
