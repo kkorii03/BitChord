@@ -1,0 +1,22 @@
+﻿Goal: when next-song preparation is cancelled (the user skips or picks another song), everything it started must stop at once and free the single decode slot and the network.
+
+Evidence (emulator log 11-02, task/u19-tg): 'next-prep cancelled: GJY8OMJXRAk after 89227ms' at 09:00:02, yet 'decode: video-wav dropped at the gate (caller gave up)' only at 09:00:27 and 'song check: stream 90s 2812KB' still at 09:00:55; same pattern after every cancel ('next-prep cancelled ... after ~100000ms' then 'decode: hq-verify dropped at the gate' 25 s later). A Deepgram request ('LyricsTiming: Deepgram Whisper timing (en, 76s)') for a prepared song ran ~70 s.
+Code: app/.../playback/NextTrackPreparation.kt (job, stepLog, aheadOfTime context element), VideoAudio.kt (decode/decodeSong 'wanted' lambdas, openSongSource, AudioCache.awaitRenditionPrefix up to OPENING_WAIT_MS 120 s), AudioDecoder.kt (DecodePriorityGate acquire/abort), shared/.../data/lyrics/Deepgram.kt (listen - is the HTTP call cancellable?), LyricsTiming.kt.
+
+Do (root cause first, failing test first):
+1. Trace every child task next-prep starts and check each one stops when the job is cancelled: blocking waits (awaitRenditionPrefix, gate acquire, network reads, Deepgram HTTP) that ignore coroutine cancellation, work launched in another scope (GlobalScope/app scope) that outlives the job, abort lambdas checked only before the gate.
+2. Fix each so cancel -> stops within ~1 s (cancellable waits, ensureActive/runInterruptible, calling the HTTP client's cancel, passing the job down). No polling loops/timers.
+3. JVM tests that fail on old code and pass on new. Name exact test classes in the summary (Opus adds them to CI).
+
+Rules: battery first, read every caller and type of what you change, keep all existing guards unless justified; REMOVED-LINES AUDIT required. Do not touch .github/workflows/, keys/, signing. grep/Select-String only (no rg). Unknown Android/Media3/OkHttp API -> context7. AGENTS.md (ponytail) rules apply.
+At the end, summary within 10 lines: files changed / key change / test result / open problems / root cause.
+
+
+== 3 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 2
+HIGH — app/src/main/java/com/music/bitchord/playback/NextTrackPreparation.kt:516-522: `cancelMix` is called only when cancellation interrupts `awaitMix`, so a MIX pass deliberately left running by an earlier `withRemaining` timeout is never stopped when the row is later replaced via `cancel()`/`schedule()`, leaving the decode and single decode slot occupied. Fix: retain the mix `videoId` when a pass is requested and call `cancelMix` from `cancel()` / row replacement, not only from the await catch.
+MEDIUM — app/src/main/java/com/music/bitchord/playback/smart/LyricsTiming.kt:2203: `leave` cancels whenever `protected <= 0`, even while another `cancelWithCaller = true` waiter (another live next-prep bundle) is still awaiting, so a cancelled joiner can cancel the shared flight out from under its starter; this is newly reachable because r2 now registers joiners too. Fix: cancel only when no live waiter remains, or track all cancelling waiters rather than only non-cancelling ones.
+Not run: device-level cancellation timing; reviewed the JVM tests and caller paths.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
