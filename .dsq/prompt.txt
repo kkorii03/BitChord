@@ -1,0 +1,16 @@
+Goal: stop the lyrics sync measurement from re-measuring a song that already has an answer, and from spending the single decode slot on songs that are no longer playing or next.
+
+Evidence (sync-g emulator log, 11-02, app on task/u19-tg):
+- Song ekzHIouo8Q4 played 09:02:42-09:03:43 ('lyrics-sync: ekzHIouo8Q4 late version th92jw2CFOA -> measuring' was logged TWICE, 09:02:47.240 and 09:02:47.311, after 'song version: ... via search shared' and again '... via retry').
+- The chroma answer for it ('LyricsTiming: chroma ... (th92jw2CFOA) -> ekzHIouo8Q4 [part]: accepted') came at 09:07:03, then AGAIN at 09:09:51 [opening], 09:12:45 [part], 09:17:11 [opening] - four accepted measurements of the same pair, all after the song had left. No other song got a chroma measurement in the whole 25-minute run.
+- Meanwhile 'decode: lyrics-timing failed at=no-first-sample' x6, 'decode: ... dropped at the gate (caller gave up)' x6, and 'Long monitor contention with owner lyrics-timing at androidx.media3.datasource.cache.CacheSpan' (a decode holding the Media3 cache lock while the player reads).
+Relevant code: app/.../playback/smart/LyricsTiming.kt, VersionAudioAligner, VideoAudio.kt, AudioDecoder.kt (DecodePriorityGate, aheadOfTime), NextTrackPreparation.kt, wherever 'late version ... -> measuring' is logged.
+
+Do (systematic debugging: root cause first, failing test first):
+1. Find why the same (song, version) pair is measured 4 times and why the 'late version -> measuring' start fires twice. Fix so one pair is measured at most once per lyrics text while a result or an in-flight job exists (dedupe in-flight, reuse the stored answer; an accepted [part] answer must not be thrown away by a later [opening] run or vice versa unless that is the existing intended design - if it is, explain in the summary).
+2. A measurement for a song that is neither the current song nor the prepared next song must give up before taking the decode gate (the gate already has abort()/wanted() hooks - wire them, do not add polling).
+3. Find why 'lyrics-timing failed at=no-first-sample' happens (likely decoding a cache entry still being written / in use) and fix or explain.
+4. Tests that fail on the old code and pass on the new (JVM unit tests where possible). Write the exact test class names in your summary (Opus adds them to CI).
+
+Rules: battery first (event-based, no polling/timers), read every caller and type of what you change, keep all existing guards (IO offload, pending flags, low-power guards, deadlines, clamps, null checks, catch-and-log, locks) unless the summary justifies it; REMOVED-LINES AUDIT required. Do not touch .github/workflows/, keys/, signing. Use grep/Select-String (rg is not installed). Unknown Android/Media3 API -> context7. AGENTS.md (ponytail) rules apply.
+At the end, summary within 10 lines: files changed / key change / test result / open problems (include your root-cause statement and key assumptions).
