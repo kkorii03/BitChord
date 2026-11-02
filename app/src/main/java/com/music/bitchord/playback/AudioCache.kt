@@ -626,6 +626,41 @@ object AudioCache {
         origin == Origin.YOUTUBE.name || origin == Origin.JIOSAAVN.name
     }.getOrDefault(false)
 
+    /**
+     * Who filled the entry the player reads [uri] from, as [recordServed]
+     * tagged it — null when nothing is cached for it, or the tag is missing.
+     *
+     * The one record of a track's provenance that outlives the process.
+     * [StreamChoice] answers the same question only for a track resolved in
+     * this one, and a track replayed from disk after a restart is never
+     * resolved at all.
+     */
+    fun originOf(uri: Uri): Origin? {
+        if (openedCache == null || uri.scheme != "bitchord") return null
+        val key = keyFactory.buildCacheKey(DataSpec(uri))
+        return runCatching { cache.getContentMetadata(key).get(META_ORIGIN, null as String?) }
+            .getOrNull()
+            ?.let { name -> Origin.values().firstOrNull { it.name == name } }
+    }
+
+    /**
+     * Whether [key] already holds bytes of YouTube's own stream.
+     *
+     * Such an entry may only be finished by YouTube. [CacheDataSource] serves
+     * what is on disk without a resolve and calls the resolver only where the
+     * bytes run out, so any other source answering that call is a different
+     * file streamed into the middle of a WebM — the corruption [StreamChoice]
+     * exists to prevent, reachable whenever [StreamChoice] has nothing to say:
+     * after a restart, or once its choice has expired.
+     */
+    fun heldByYouTube(key: String?): Boolean {
+        if (key == null || openedCache == null) return false
+        return runCatching {
+            cache.getCachedSpans(key).isNotEmpty() &&
+                cache.getContentMetadata(key).get(META_ORIGIN, null as String?) == Origin.YOUTUBE.name
+        }.getOrDefault(false)
+    }
+
     /** Whether every byte of the entry [key] is on disk. */
     private fun isComplete(key: String): Boolean = runCatching {
         val length = ContentMetadata.getContentLength(cache.getContentMetadata(key))
@@ -1417,6 +1452,23 @@ object AudioCache {
     fun prefetchQueue(upcoming: List<Upcoming>) {
         // [KO] prefetch-queue
         koPrefetch.prefetchQueue(upcoming) // [KO] prefetch-queue
+    }
+
+    /**
+     * Direct Source Stream's read-ahead: one track, the next, started once the
+     * playing one is inside the gate's window of its transition.
+     *
+     * The fork's [KoPrefetchQueue] owns the scheduling, so this is the one-track
+     * form of [prefetchQueue]; keeping the v1.9 entry point means its callers
+     * need no fork-specific branch.
+     */
+    fun prefetchDirect(upcoming: Upcoming) {
+        prefetchQueue(listOf(upcoming))
+    }
+
+    /** Drops [prefetchDirect]'s work for a track the queue has moved away from. */
+    fun cancelDirect() {
+        koPrefetch.cancel()
     }
 
     /**

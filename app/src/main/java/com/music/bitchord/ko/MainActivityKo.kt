@@ -18,6 +18,8 @@ import com.music.bitchord.startup.LaunchReplay
 import com.music.bitchord.ui.player.PlayerSheetMotion
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.net.SongVersionPolicy
 
 private const val STATE_HANDLED_LAUNCH = "bitchord.handledLaunch"
 private const val EXTRA_FORCE_MUSIC_GATE = "bitchord.debug.forceMusicGate"
@@ -181,3 +183,9 @@ internal object KoMainActivity {
  */
 internal fun Intent.isLaunchedFromHistory(): Boolean =
     flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0
+/**
+ * Rows from a preview listing (a downloaded copy shown while the network
+ * response is still on its way) do not know whether they are videos. Keep
+ * them as audio rows but mark the type unknown, so the service and the
+ * pre-audio lookup still ask for a song version — see [Song.typeUnknown].
+ */

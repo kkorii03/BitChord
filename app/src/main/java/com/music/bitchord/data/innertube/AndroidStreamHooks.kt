@@ -13,6 +13,7 @@ import com.music.bitchord.data.innertube.potoken.PoTokenStore
 import com.music.bitchord.data.innertube.potoken.PoTokenWebView
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.SourceResolver
+import com.music.bitchord.ko.forgetUrlKo
 
 /**
  * The phone's answers to what the shared stream resolution asks of its
@@ -32,7 +33,11 @@ object AndroidStreamHooks {
             // `adb shell setprop log.tag.BitChord DEBUG` opens a tag's chatter on a
             // release build too, for a phone being diagnosed over USB.
             if (BuildConfig.DEBUG || level != 'D' || tag in RELEASE_DEBUG_TAGS || Log.isLoggable(tag.take(23), Log.DEBUG)) {
-                val text = if (BuildConfig.DEBUG || message.length <= RELEASE_LINE_CHARS) message else message.take(RELEASE_LINE_CHARS) + "…"
+                val text = if (BuildConfig.DEBUG || message.length <= RELEASE_LINE_CHARS) {
+                    message
+                } else {
+                    message.take(RELEASE_LINE_CHARS) + "…"
+                }
                 when (level) {
                     'D' -> Log.d(tag, text, error)
                     'I' -> Log.i(tag, text, error)
@@ -61,7 +66,7 @@ object AndroidStreamHooks {
                 com.music.bitchord.playback.QualityUpgrade.forget(videoId)
             }
             // A forced module upgrade has no YouTube id; match its URL instead.
-            com.music.bitchord.playback.StreamChoice.forgetUrl(url)
+            com.music.bitchord.playback.StreamChoice.forgetUrlKo(url) // [KO] release TrackLog.echo
             com.music.bitchord.playback.QualityUpgrade.forgetUrl(url)
         }
         InnerTubeXResolver.debugLogging = BuildConfig.DEBUG

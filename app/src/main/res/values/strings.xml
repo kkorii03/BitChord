@@ -1035,8 +1035,6 @@
     <string name="use_this_profile">Use this profile</string>
     <string name="switch_profile_hint">Switch using the avatar, then use this profile.</string>
     <string name="profile_unavailable">No signed-in profile is available on this page yet.</string>
-
-    <!-- Listen together -->
     <string name="listen_together">Listen together</string>
     <string name="listen_together_subtitle">Share a code and play the same music, in time</string>
     <string name="listen_together_in_party">In a party · %1$s</string>
@@ -1137,149 +1135,77 @@
     <string name="listen_together_status_custom_fallback">Custom server unreachable · Using default fallback (%1$d ms)</string>
     <string name="listen_together_status_all_offline">Both custom server and default server are offline</string>
     <string name="listen_together_top_bar_fallback">Fallback · %1$s</string>
-
     <string name="vietnamese">Vietnamese</string>
-
     <string name="miscellaneous_footer">When enabled, closing the app from the recent apps screen will also stop music playback.</string>
-
     <string name="export_compatible_downloads">Export compatible downloads</string>
-
     <string name="output_precision">Output precision</string>
-
     <string name="prefer_usb_dac">Prefer USB DAC</string>
-
     <string name="loudness_normalization">Loudness normalization</string>
-
     <string name="loudness_normalization_subtitle">Levels every track to the same loudness</string>
     <string name="loudness_off_on_speaker">Disable on Phone Speaker</string>
-
     <string name="loudness_target">Target loudness</string>
-
     <string name="loudness_target_subtitle">Quieter suits headphones; louder suits a car or a phone speaker</string>
-
     <string name="loudness_target_value">%1$s LUFS</string>
-
     <string name="pipeline_loudness">Loudness</string>
-
     <string name="pipeline_loudness_gain">Gain</string>
-
     <string name="pipeline_loudness_measured">Measured</string>
-
     <string name="pipeline_bit_exact">Bit-exact</string>
-
     <string name="loudness_measuring">Measuring…</string>
-
     <string name="loudness_gain_db">%1$s dB</string>
-
     <string name="loudness_lufs">%1$s LUFS</string>
-
     <string name="blur_unfocused_lyrics">Blur unfocused lyrics</string>
-
     <string name="blur_unfocused_lyrics_subtitle">Keeps the spotlight on the current line</string>
-
     <string name="advanced_options">Advanced &amp; experimental options</string>
     <string name="settings_footer_advanced">Developer options and experiments. Leave these at their defaults unless asked to change them.</string>
-
     <string name="sync_safety_next_prep">Next-song lyrics preparation</string>
-
     <string name="sync_safety_next_prep_subtitle">Developer option. Looks up and verifies the next song\'s lyrics and sync before it starts. Off keeps the earlier sync path.</string>
-
     <string name="sync_safety_download_recheck">Downloaded lyrics re-check</string>
-
     <string name="sync_safety_download_recheck_subtitle">Developer option. Re-checks a downloaded file\'s saved lyrics and sync, and reads a stored override. Off ignores both.</string>
-
     <string name="sync_safety_hq_sync">HQ sync re-apply</string>
-
     <string name="sync_safety_hq_sync_subtitle">Developer option. Re-applies a saved HQ offset and rate to lyrics. Off shows the provider\'s own timing.</string>
-
     <string name="lyrics_debug_logs">Lyrics debug logs</string>
-
     <string name="lyrics_debug_logs_subtitle">Show live API queries and scraper activity in the lyrics panel</string>
-
     <string name="shelf_trending_community_playlists">Trending community playlists</string>
-
     <string name="shelf_featured_playlists_for_you">Featured playlists for you</string>
-
     <string name="shelf_quick_picks">Quick picks</string>
-
     <string name="shelf_listen_again">Listen again</string>
-
     <string name="shelf_mixed_for_you">Mixed for you</string>
-
     <string name="shelf_similar_to">Similar to %1$s</string>
-
     <string name="shelf_forgotten_favorites">Forgotten favorites</string>
-
     <string name="shelf_recommended_music_videos">Recommended music videos</string>
-
     <string name="shelf_from_your_library">From your library</string>
-
     <string name="shelf_charts">Charts</string>
-
     <string name="shelf_new_releases">New releases</string>
-
     <string name="shelf_top_music_videos">Top music videos</string>
-
     <string name="shelf_for_you">For you</string>
-
     <string name="shelf_energy_boosters">Energy boosters</string>
-
     <string name="shelf_feel_good">Feel good</string>
-
     <string name="shelf_commute">Commute</string>
-
     <string name="shelf_workout">Workout</string>
-
     <string name="shelf_focus">Focus</string>
-
     <string name="shelf_relax">Relax</string>
-
     <string name="shelf_sleep">Sleep</string>
-
     <string name="shelf_party">Party</string>
-
     <string name="shelf_romance">Romance</string>
-
     <string name="shelf_sad">Sad</string>
-
     <string name="shelf_100_on_repeat">100% on repeat</string>
-
     <string name="shelf_new_albums_singles">New albums &amp; singles</string>
-
     <string name="shelf_hits_today">Hits today</string>
-
     <string name="shelf_artists_on_the_rise">Artists on the rise</string>
-
-
     <string name="shelf_top_tunes_right_now">Top tunes right now</string>
-
     <string name="shelf_concerts">Concerts</string>
-
     <string name="shelf_shorts">Shorts</string>
-
     <string name="shelf_single">Single</string>
-
     <string name="shelf_chart">Chart</string>
-
     <string name="shelf_song_item">Song</string>
-
     <string name="shelf_from_the_community">From the community</string>
-
     <string name="shelf_youtube_charts">YouTube Charts</string>
-
     <string name="shelf_trending">Trending</string>
-
     <string name="shelf_recents">Recents</string>
-
     <string name="subscriptions">Subscriptions</string>
-
-
     <string name="card_views_format">%1$s views</string>
-
     <string name="card_plays_format">%1$s plays</string>
-
     <string name="card_songs_format">%1$s songs</string>
-
     <string name="source_needs_lossless_output">Needs a lossless output · use a lossless supported device</string>
     <string name="source_needs_lossless_bt_codec">Needs a lossless output · Bluetooth is on %1$s; use a lossless supported device</string>
     <string name="source_needs_lossless_bt_unknown">Needs a lossless output · can’t tell which Bluetooth codec is in use</string>
@@ -1346,7 +1272,6 @@
     <string name="song_info_unknown">No information</string>
     <string name="song_info_error">Some information could not be loaded.</string>
     <string name="song_info_retry">Retry</string>
-    <!-- Settings: BitChord for Wear OS -->
     <string name="wear_os_section">BitChord for Wear OS</string>
     <string name="wear_os_page_title">Wear OS</string>
     <string name="wear_os_your_watches">Your watches</string>
@@ -1388,7 +1313,6 @@
     <string name="gemini_api_key">Gemini API key</string>
     <string name="gemini_api_key_description">Create a free key at aistudio.google.com/apikey and paste it here. It stays on this device and is sent only to Google. Leave it empty to use Google Translate.</string>
     <string name="korean">Korean</string>
-    <!-- Filled in only in a personal build, after it is built. Keep empty in the repository. -->
     <string name="default_gemini_api_key" translatable="false"></string>
     <string name="default_deepgram_api_key" translatable="false"></string>
     <string name="prefetch_translation">Translate the next song\'s lyrics ahead</string>
@@ -1586,4 +1510,80 @@
     <string name="telegram_source_login_required">Sign in to Telegram to use this source.</string>
     <string name="telegram_source_no_chats">Choose chats to search in Telegram settings.</string>
     <string name="telegram_source_connects_on_search">Connects to Telegram when you search.</string>
+    <string name="addon_blocked_title">Can\'t play this song</string>
+    <string name="addon_blocked_quality">Audio quality on %1$s is set to %2$s. Songs from %3$s only play at Lossless — change it in Settings → Audio quality to play this one.</string>
+    <string name="addon_blocked_watch">Music is playing through your watch, which limits audio below Lossless. Songs from %1$s play again once your phone takes the music back.</string>
+    <string name="download_addon_left_out_title">Downloading without %1$s</string>
+    <string name="download_addon_not_allowed">%1$s doesn\'t allow downloads, so your songs are being saved from your other sources instead.</string>
+    <string name="download_addon_needs_lossless_output">%1$s only serves music while wired, USB or LDAC-class headphones are connected. Downloads skip it until one is, so your songs are being saved from your other sources instead.</string>
+    <string name="direct_source_stream">Direct Source Stream</string>
+    <string name="direct_source_stream_in_party">Off while you\'re in a Listen Together party</string>
+    <string name="show_listen_together_button">Show Listen Together button</string>
+    <string name="show_listen_together_button_subtitle">Off, the player shows only the audio output button between lyrics and the queue</string>
+    <string name="app_icon_monochrome" translatable="false">Monochrome</string>
+    <string name="app_icon_neon_silver" translatable="false">Neon Silver</string>
+    <string name="app_icon_neon_cyan" translatable="false">Neon Cyan</string>
+    <string name="app_icon_neon_violet" translatable="false">Neon Violet</string>
+    <string name="app_icon_samsung_neon_silver" translatable="false">Samsung Neon Silver</string>
+    <string name="app_icon_samsung_neon_cyan" translatable="false">Samsung Neon Cyan</string>
+    <string name="app_icon_samsung_neon_violet" translatable="false">Samsung Neon Violet</string>
+    <string name="app_icon_pixel_neon_silver" translatable="false">Pixel Neon Silver</string>
+    <string name="app_icon_pixel_neon_cyan" translatable="false">Pixel Neon Cyan</string>
+    <string name="app_icon_pixel_neon_violet" translatable="false">Pixel Neon Violet</string>
+    <string name="font">Font</string>
+    <string name="font_default">Default</string>
+    <string name="font_legacy">Legacy</string>
+    <string name="font_default_subtitle">SF Pro Display · Apple Music weights</string>
+    <string name="font_legacy_subtitle">SF Pro Display · Original heavy weights</string>
+    <string name="font_footer">Legacy brings back the heavier, tighter type the app used before it was matched to Apple Music.</string>
+    <string name="progressive_blur">Progressive Blur</string>
+    <string name="opened_file">Opened file</string>
+    <string name="sleep_timer_custom">Custom</string>
+    <string name="start_sleep_timer">Start timer</string>
+    <string name="sync_downloaded_playlists">Keep playlists updated</string>
+    <string name="sync_downloaded_playlists_subtitle">Checks twice a day and downloads songs newly added to your downloaded playlists</string>
+    <string name="playlist_sync_ask_title">New songs in %1$s: %2$d</string>
+    <string name="playlist_sync_ask_text">Tap to download</string>
+    <string name="playlist_sync_done_title">Added to %1$s: %2$d</string>
+    <string name="playlist_updates_channel">Playlist updates</string>
+    <string name="bit_perfect_output">Bit-perfect output</string>
+    <string name="bit_perfect_bypassed_footer">Bit-perfect output is ready, so the faded settings are bypassed and Dolby Atmos versions aren\'t requested. They work again when the DAC is disconnected or the mode is off.</string>
+    <string name="bit_perfect_sheet_warning">Sends the track to the DAC unchanged. The equalizer, loudness normalization, crossfade, Automix, playback speed and BitChord\'s volume are bypassed.</string>
+    <string name="bit_perfect_mode_off_subtitle">Audio goes through Android\'s mixer and BitChord\'s effects.</string>
+    <string name="bit_perfect_mode_usb_android">USB DAC</string>
+    <string name="bit_perfect_mode_usb_android_subtitle">Android 14 opens the DAC at each track\'s own rate and bit depth, without mixing or resampling.</string>
+    <string name="bit_perfect_requires_android_14">Requires Android 14 or later</string>
+    <string name="bit_perfect_mode_dap_exclusive">Built-in DAC (AAudio exclusive)</string>
+    <string name="bit_perfect_mode_dap_exclusive_subtitle">For music players with their own DAC. Opens the headphone or line output exclusively at each track\'s own rate. Not every device grants exclusive mode.</string>
+    <string name="bit_perfect_requires_android_8_1">Requires Android 8.1 or later</string>
+    <string name="bit_perfect_mode_usb_direct">USB DAC (direct driver)</string>
+    <string name="bit_perfect_mode_usb_direct_subtitle">BitChord drives the DAC itself, on any Android version, and sets its volume on the DAC. Asks for USB permission. Can be much louder than normal output.</string>
+    <string name="dac_volume">DAC volume</string>
+    <string name="dac_volume_subtitle">Set on the DAC itself; the music is not scaled</string>
+    <string name="usb_allow_fixed_volume">Allow DACs without volume control</string>
+    <string name="usb_allow_fixed_volume_subtitle">Otherwise such a DAC plays through normal output</string>
+    <string name="usb_allow_fixed_volume_confirm_title">Play at full scale?</string>
+    <string name="usb_allow_fixed_volume_confirm_message">BitChord can\'t set this kind of DAC\'s volume, so it plays at full scale and only the DAC\'s own knob, if it has one, controls loudness. This can be dangerously loud with sensitive headphones.</string>
+    <string name="convert_for_limited_dac">Convert for lower-spec DACs</string>
+    <string name="convert_for_limited_dac_subtitle">Converts tracks above your DAC\'s limit to its highest format. Tracks may take longer to start and won\'t be bit-perfect to the original.</string>
+    <string name="bit_perfect_confirm_title">Turn on bit-perfect output?</string>
+    <string name="bit_perfect_confirm_message">The DAC gets the music at full scale, and the phone\'s volume buttons may stop working. Turn the DAC or amplifier down before you play.</string>
+    <string name="bit_perfect_status_active">%1$s · %2$s kHz · %3$d-bit</string>
+    <string name="bit_perfect_status_dac_limited">%1$s · %2$s kHz · %3$d-bit · DAC max, converted from this track\'s format</string>
+    <string name="bit_perfect_status_inexact">%1$s · not exact: this source isn\'t lossless PCM</string>
+    <string name="bit_perfect_status_waiting">Waiting for a lossless track on a supported output</string>
+    <string name="bit_perfect_status_unavailable">Not available for this track (%1$s)</string>
+    <string name="source_downloads_on">Downloads allowed</string>
+    <string name="remove_from_history">Remove from history</string>
+    <string name="remove_from_history_failed">Couldn\'t remove from history</string>
+    <string name="folders">Folders</string>
+    <string name="folder">Folder</string>
+    <string name="no_local_folders">No folders with music in them</string>
+    <string name="offline_playlist_empty">Nothing in this playlist yet. Add songs to it from their menu.</string>
+    <string name="offline_liked_empty">Songs you like on this device show up here</string>
+    <string name="saved_on_this_device">Saved on this device</string>
+    <string name="find_your_mood">Find Your Mood</string>
+    <string name="no_audio_version">No audio version found for this video</string>
+    <string name="no_video_version">No video version found for this song</string>
+    <string name="version_switch_in_party">Everyone in Listen Together hears the same version</string>
 </resources>

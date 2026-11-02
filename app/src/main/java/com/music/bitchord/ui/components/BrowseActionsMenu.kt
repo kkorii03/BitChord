@@ -1,57 +1,26 @@
 package com.music.bitchord.ui.components
 
-import androidx.compose.foundation.background
+import com.music.bitchord.ui.icons.SfIcons
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
-import androidx.compose.material.icons.automirrored.rounded.QueueMusic
-import androidx.compose.material.icons.rounded.Delete
-import androidx.compose.material.icons.rounded.DeleteForever
-import androidx.compose.material.icons.rounded.Edit
-import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.Share
-import androidx.compose.material.icons.rounded.SwapVert
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import coil3.compose.AsyncImage
 import com.music.bitchord.R
 import com.music.bitchord.data.model.BrowseType
-import com.music.bitchord.data.model.ROW_ART_PX
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UserPlaylist
-import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.download.DownloadState
 import com.music.bitchord.download.Downloads
-import com.music.bitchord.ui.icons.BitChordIcons
-import java.util.Locale
 
 /**
  * The album or playlist a long-press is acting on.
@@ -84,9 +53,9 @@ data class BrowseTarget(
      * Set when this is one of the account's own playlists, which is the only
      * case where renaming and deleting are things that can be done to it.
      *
-     * Filled in where the sheet is raised rather than by whatever built the
+     * Filled in where the menu is raised rather than by whatever built the
      * target: only the playlist's own page states who made it, so for a card
-     * this has to be sent for and arrives after the sheet is already up. Left
+     * this has to be sent for and arrives after the menu is already up. Left
      * null by every caller, and null is also the honest answer while the
      * question is still out.
      */
@@ -94,7 +63,7 @@ data class BrowseTarget(
     /**
      * False when the menu was opened from the page it would otherwise navigate
      * to — the release page's own overflow. Play, Shuffle and Open are already
-     * on that page, so there they are left off the sheet.
+     * on that page, so there they are left off the menu.
      */
     val fromCard: Boolean = true,
     /**
@@ -107,20 +76,21 @@ data class BrowseTarget(
      * Local Music screen has no browse id to derive it from at all (see
      * `albumEntries` in `LocalMusicScreen`), while a real page's id needs
      * `Downloads.recordIdOf` run on it first for a downloaded playlist. Both are
-     * questions about the download record, not about what this sheet is.
+     * questions about the download record, not about what this menu is.
      */
     val downloadId: String? = null,
 )
 
 /**
  * Long-press menu for an album or playlist — the collection-level counterpart
- * to [SongActionsSheet].
+ * to [SongActionsMenu], and like it only the rows: the frame is the host's,
+ * [IosMenuPopover] off a ⋯ or [HeldContextMenu] under a held card.
  *
  * Every action is optional, and which ones a caller passes is how the same
- * sheet serves a card on the home feed and the page that card opens. A card
+ * menu serves a card on the home feed and the page that card opens. A card
  * has no other way to play its album without navigating to it, so it gets Play
  * and Shuffle; the page's own header already carries both, so there they are
- * null and the sheet is the queue rows and the download.
+ * null and the menu is the queue rows and the download.
  *
  * The queue rows are always offered. They are the reason this menu exists: a
  * release is exactly the kind of thing someone wants *after* what is playing
@@ -132,19 +102,19 @@ data class BrowseTarget(
  * mis-tapped card in a shelf is exactly how it would happen.
  */
 @Composable
-fun BrowseActionsSheet(
+fun BrowseActionsMenu(
     target: BrowseTarget,
     onPlayNext: () -> Unit,
     onAddToQueue: () -> Unit,
     modifier: Modifier = Modifier,
     onPlay: (() -> Unit)? = null,
     onShuffle: (() -> Unit)? = null,
-    /** Null where the sheet was opened from the page it would navigate to. */
+    /** Null where the menu was opened from the page it would navigate to. */
     onOpen: (() -> Unit)? = null,
     onDownloadAll: (() -> Unit)? = null,
     /**
      * Shares the release's own YouTube Music link — the album/playlist
-     * counterpart to a track's own Share row in [SongActionsSheet]. Null for
+     * counterpart to a track's own Share tile in [SongActionsMenu]. Null for
      * anything with no such link to share: an artist card, or a page built
      * from something other than a real browse id (a Local Music grouping).
      */
@@ -174,20 +144,13 @@ fun BrowseActionsSheet(
      */
     onDeleteDownload: (() -> Unit)? = null,
     /**
-     * [SongActionsPresentation.Menu] draws only the rows, compact, for the
-     * popup a held card lifts into — [HeldContextMenu] shows the card itself,
-     * so the header here would only say the same thing twice.
-     */
-    presentation: SongActionsPresentation = SongActionsPresentation.Sheet,
-    /**
-     * Rename in the popup: a text field and its keyboard have no place on a
-     * menu floating over the page, so the popup hands the job to the sheet,
-     * which then opens straight on the form via [startRenaming].
+     * Rename: a text field and its keyboard have no place on a menu floating
+     * over the page, so the row hands the job to the host, which raises a
+     * sheet holding only the form — this, composed again with [startRenaming].
      */
     onRenameInSheet: (() -> Unit)? = null,
     startRenaming: Boolean = false,
 ) {
-    val menu = presentation == SongActionsPresentation.Menu
     var renaming by remember { mutableStateOf(startRenaming) }
     var confirmingDelete by remember { mutableStateOf(false) }
     var confirmingDeleteDownload by remember { mutableStateOf(false) }
@@ -203,31 +166,21 @@ fun BrowseActionsSheet(
         return
     }
 
-    CompositionLocalProvider(LocalActionRowStyle provides if (menu) ActionRowStyle.Menu else ActionRowStyle.Sheet) {
+    CompositionLocalProvider(LocalActionRowStyle provides ActionRowStyle.Menu) {
         Column(
             modifier
                 .fillMaxWidth()
-                // Scrolls in both presentations: the sheet can carry every
-                // optional row at once, and the popup is already height-capped
-                // by HeldContextMenu. Its own insets keep the last row above
-                // the gesture bar.
-                .verticalScroll(rememberScrollState())
-                .then(if (menu) Modifier else Modifier.navigationBarsPadding()),
+                .verticalScroll(rememberScrollState()),
         ) {
-            if (!menu) {
-                BrowseSheetHeader(target)
-                HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline)
-            }
-
-            onPlay?.let { ActionRow(Icons.Rounded.PlayArrow, stringResource(R.string.play), onClick = it) }
-            onShuffle?.let { ActionRow(BitChordIcons.Shuffle, stringResource(R.string.shuffle), onClick = it) }
+            onPlay?.let { ActionRow(SfIcons.Play, stringResource(R.string.play), onClick = it) }
+            onShuffle?.let { ActionRow(SfIcons.Shuffle, stringResource(R.string.shuffle), onClick = it) }
             ActionRow(
-                Icons.AutoMirrored.Rounded.PlaylistPlay,
+                SfIcons.PlayNext,
                 stringResource(R.string.play_next),
                 onClick = onPlayNext,
             )
             ActionRow(
-                Icons.AutoMirrored.Rounded.QueueMusic,
+                SfIcons.PlayLast,
                 stringResource(R.string.add_to_queue),
                 onClick = onAddToQueue,
             )
@@ -259,9 +212,9 @@ fun BrowseActionsSheet(
                 val downloaded = !waiting && ids.isNotEmpty() && ids.all { it in saved }
                 ActionRow(
                     icon = when {
-                        waiting -> BitChordIcons.Clock
-                        downloaded -> BitChordIcons.Check
-                        else -> BitChordIcons.Download
+                        waiting -> SfIcons.Clock
+                        downloaded -> SfIcons.Downloaded
+                        else -> SfIcons.Download
                     },
                     label = stringResource(R.string.download_all),
                     value = when {
@@ -274,24 +227,24 @@ fun BrowseActionsSheet(
             }
             onOpen?.let {
                 ActionRow(
-                    BitChordIcons.ChevronRight,
+                    SfIcons.Open,
                     target.type.localizedOpenLabel(),
                     onClick = it,
                 )
             }
             onShare?.let {
-                ActionRow(Icons.Rounded.Share, stringResource(R.string.share), onClick = it)
+                ActionRow(SfIcons.Share, stringResource(R.string.share), onClick = it)
             }
             onTogglePin?.let {
                 ActionRow(
-                    BitChordIcons.Pin,
+                    SfIcons.Pin,
                     stringResource(if (isPinned) R.string.unpin else R.string.pin),
                     onClick = it,
                 )
             }
             if (onRename != null) {
-                ActionRow(Icons.Rounded.Edit, stringResource(R.string.rename)) {
-                    if (menu && onRenameInSheet != null) {
+                ActionRow(SfIcons.Pencil, stringResource(R.string.rename)) {
+                    if (onRenameInSheet != null) {
                         onRenameInSheet()
                     } else {
                         renaming = true
@@ -299,100 +252,36 @@ fun BrowseActionsSheet(
                 }
             }
             onReorder?.let {
-                ActionRow(Icons.Rounded.SwapVert, stringResource(R.string.reorder_songs), onClick = it)
+                ActionRow(SfIcons.Reorder, stringResource(R.string.reorder_songs), onClick = it)
             }
             if (onDelete != null) {
                 if (confirmingDelete) {
                     ActionRow(
-                        icon = Icons.Rounded.DeleteForever,
+                        icon = SfIcons.Trash,
                         label = stringResource(R.string.delete_playlist_confirmation, target.title),
                         tint = MaterialTheme.colorScheme.error,
                         onClick = onDelete,
                     )
                 } else {
-                    ActionRow(Icons.Rounded.Delete, stringResource(R.string.delete_playlist)) { confirmingDelete = true }
+                    ActionRow(SfIcons.Trash, stringResource(R.string.delete_playlist)) { confirmingDelete = true }
                 }
             }
             if (onDeleteDownload != null) {
                 if (confirmingDeleteDownload) {
                     ActionRow(
-                        icon = Icons.Rounded.DeleteForever,
+                        icon = SfIcons.Trash,
                         label = stringResource(R.string.delete_download_confirmation, target.title),
                         tint = MaterialTheme.colorScheme.error,
                         onClick = onDeleteDownload,
                     )
                 } else {
-                    ActionRow(Icons.Rounded.Delete, stringResource(R.string.delete_download)) {
+                    ActionRow(SfIcons.Trash, stringResource(R.string.delete_download)) {
                         confirmingDeleteDownload = true
                     }
                 }
             }
-            if (!menu) Spacer(Modifier.height(24.dp))
         }
     }
-}
-
-/** Which release the sheet is about: the same row the shelf card was. */
-@Composable
-private fun BrowseSheetHeader(target: BrowseTarget) {
-    val shape = if (target.type == BrowseType.ARTIST) CircleShape else RoundedCornerShape(8.dp)
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        AsyncImage(
-            model = target.thumbnailUrl.artworkAt(ROW_ART_PX),
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .size(52.dp)
-                .clip(shape)
-                .thumbnailBorder(shape)
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-        )
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text(
-                text = target.title,
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onBackground,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                // A card frequently has no subtitle at all, and the kind of
-                // thing it is beats a blank line under the title. A card of
-                // unknown kind has neither, and gets the track count instead —
-                // which by then is the one thing actually known about it.
-                text = target.subtitle.ifBlank {
-                    target.type.localizedNoun().replaceFirstChar { it.uppercase(Locale.getDefault()) }.ifBlank {
-                        target.songs.size.takeIf { it > 0 }
-                            ?.let { pluralStringResource(R.plurals.song_count_plural, it, it) }
-                            .orEmpty()
-                    }
-                },
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-}
-
-/**
- * What to call the thing the sheet is about, in a sentence. [BrowseType.OTHER]
- * is a home card nobody has identified yet — "Open" without a noun is still a
- * true label for it, and guessing "album" would not be.
- */
-@Composable
-private fun BrowseType.localizedNoun(): String = when (this) {
-    BrowseType.ALBUM -> stringResource(R.string.album)
-    BrowseType.PLAYLIST -> stringResource(R.string.playlist)
-    BrowseType.ARTIST -> stringResource(R.string.artist)
-    BrowseType.OTHER -> ""
 }
 
 @Composable

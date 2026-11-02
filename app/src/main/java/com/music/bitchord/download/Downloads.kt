@@ -31,6 +31,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -39,6 +40,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
@@ -321,6 +324,62 @@ object Downloads {
         wakeWorkers()
 
         com.music.bitchord.ko.downloads.KoDownloadQueue.startAfterEnqueue(context, id) // [KO] queue-state
+    }
+
+    /** As `DownloadService.WORKERS`: how many of one playlist sync's rows are fetched at once. */
+    private const val BATCH_WORKERS = 4
+
+    internal suspend fun downloadNow(context: Context, songs: List<Song>, from: String?): Set<String> {
+        val handled = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+        val claimed = synchronized(lock) {
+            songs.filter { song ->
+                val id = song.videoId
+                if (id in pending || id in running) {
+                    handled += id
+                    false
+                } else {
+                    running[id] = null
+                    true
+                }
+            }
+        }
+        claimed.forEach { song ->
+            _active.update { it + (song.videoId to DownloadState.Queued) }
+            DownloadSession.queued(song, from)
+        }
+        val slots = Semaphore(BATCH_WORKERS)
+        try {
+            coroutineScope {
+                claimed.forEach { song ->
+                    launch {
+                        slots.withPermit {
+                            val id = song.videoId
+                            if (synchronized(lock) { id !in running }) {
+                                handled += id
+                                return@withPermit
+                            }
+                            if (!AppSettings.downloadsAllowedNow) return@withPermit
+                            val job = launch { run(context, song) }
+                            onRunning(id, job)
+                            job.join()
+                            val calledOff = synchronized(lock) { id !in running }
+                            if (calledOff || id in _saved.value) handled += id
+                        }
+                    }
+                }
+            }
+        } finally {
+            claimed.forEach { song ->
+                val id = song.videoId
+                onIdle(id)
+                val state = _active.value[id]
+                if (state is DownloadState.Queued || state is DownloadState.Running) {
+                    clear(id)
+                    DownloadSession.forget(id)
+                }
+            }
+        }
+        return handled
     }
 
     /**
@@ -889,6 +948,17 @@ object Downloads {
     const val PLAYLIST_PREFIX = "local:playlist:"
 
     /** The page id for the release recorded under [id]. */
+    internal fun tracksOnlyIn(
+        id: String,
+        collections: Map<String, SavedCollection>,
+        saved: Map<String, String>,
+    ): List<String> {
+        val record = collections[id] ?: return emptyList()
+        val others = collections.values.filter { it.id != id }.flatMapTo(HashSet()) { it.videoIds }
+        val otherFiles = others.mapNotNullTo(HashSet()) { saved[it] }
+        return record.videoIds.filter { it !in others && saved[it] !in otherFiles }
+    }
+
     fun pageIdFor(id: String): String = PLAYLIST_PREFIX + id
 
     /** The release [pageIdFor] built [browseId] from, or null if it didn't. */

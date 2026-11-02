@@ -4,6 +4,7 @@ import com.music.bitchord.data.BoundedMemo
 import com.music.bitchord.data.model.ArtistNameIndex
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.ko.KoTrackMatcher // [KO] track-matcher
+import com.music.bitchord.ko.KoTitleRules // [KO] title-rules
 import kotlin.math.abs
 import java.text.Normalizer
 import java.util.Locale
@@ -347,13 +348,16 @@ object TrackMatcher {
         val wanted = parseTitle(target.title, target.artist)
         val got = parseTitle(candidate.title, candidate.artist)
         if (wanted.core.isBlank() || got.core.isBlank()) return null
-        // Same word, different script: katakana コイコガレ vs romaji
-        // koikogare. Hepburn transliteration bridges kana; kanji has no
-        // algorithmic reading and stays exact-only (mixed titles carry their
-        // romaji tail instead, and English loans like ドア/door don't
-        // transliterate to each other either). Past that, a guarded
-        // containment absorbs minor punctuation and symbol differences.
-        val isTitleMatch = coresMatch(wanted.cores(), got.cores(), containment = true)
+        // Same word, different script: katakana vs romaji is bridged by
+        // Hepburn transliteration; kanji has no algorithmic reading and stays
+        // exact-only. Past that, a guarded containment absorbs minor
+        // punctuation and symbol differences. A bracketed translation is the
+        // same title in another script: the bracket word lives in
+        // [TitleParts.context], so a core appearing verbatim as the other
+        // side's context is accepted — but only across scripts (CJK-only vs
+        // Latin), so same-script packaging never rescues a different title.
+        val isTitleMatch = coresMatch(wanted.cores(), got.cores(), containment = true) ||
+            isTranslationMatch(wanted, got) // [KO] title-rules
         if (!isTitleMatch) return null
         // Direction matters both ways round: asking for the album cut must not
         // land on the live take, and asking for the live take must not land on
@@ -417,7 +421,8 @@ object TrackMatcher {
         // people. This exact exception is what admitted the 3:30 Lovely
         // track for Yo Yo Honey Singh's 3:31 "Brown Rang" video.
             ?: CREDITS_DISAGREE.takeIf {
-                !target.isVideo && withinSeconds(candidate, target, CREDIT_OVERRIDE_SEC)
+                !target.isVideo && withinSeconds(candidate, target, CREDIT_OVERRIDE_SEC) &&
+                    KoTitleRules.creditsOverrideAllowed(target.artist, candidate.artist) // [KO] artist-script override
             }
             ?: return null
         val explicit = explicitScore(target.isExplicit, candidate.isExplicit) ?: return null
@@ -567,6 +572,42 @@ object TrackMatcher {
      * marker ("絆ノ奇跡 -instrumental-") carries no filing — without this the
      * marker alone would keep the unmatchable script as the identity.
      */
+
+    /**
+     * Whether a bracketed aside is the same title in another script rather
+     * than packaging around it.
+     *
+     * True when one core is CJK-only, the other is Latin, and the other's
+     * aside is that core in full (spaced CJK joins back to it). Same-script
+     * asides never qualify.
+     */
+    internal fun isTranslationMatch(wanted: TitleParts, got: TitleParts): Boolean {
+        val wantedCJK = containsCJKChar(wanted.core) && !hasFilingLatin(wanted.core)
+        val gotCJK = containsCJKChar(got.core) && !hasFilingLatin(got.core)
+        val wantedLatin = hasFilingLatin(wanted.core)
+        val gotLatin = hasFilingLatin(got.core)
+        // Checking both asides covers both orders: Latin in the CJK row's
+        // brackets, and CJK in the Latin row's brackets. The aside must be
+        // the whole title — one word of "(Racing Into The Night)" is not the
+        // song "Night".
+        if ((wantedCJK && gotLatin) || (gotCJK && wantedLatin)) {
+            if (wanted.context.joinToString("") == got.core) return true
+            if (got.context.joinToString("") == wanted.core) return true
+        }
+        return false
+    }
+
+    private fun containsCJKChar(text: String): Boolean = text.any {
+        Character.UnicodeBlock.of(it) in CJK_BLOCKS
+    }
+
+    private val CJK_BLOCKS = setOf(
+        Character.UnicodeBlock.HIRAGANA,
+        Character.UnicodeBlock.KATAKANA,
+        Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS,
+        Character.UnicodeBlock.HANGUL_SYLLABLES,
+    )
+
     internal fun hasFilingLatin(text: String): Boolean =
         text.split(WORD_SPLIT)
             .map { it.replace(NON_ALNUM, "") }
@@ -970,6 +1011,7 @@ object TrackMatcher {
         "studioversion", "fullversion", "standardversion", "explicitversion",
         "deluxeversion", "originaltrack",
     )
+
 
     /** Packaging words, worth nothing as a tie-break because everything has them. */
     internal val NOISE_WORDS = setOf( // [KO] track-matcher

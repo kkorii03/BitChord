@@ -70,7 +70,7 @@ class AppSettingsDefaultsTest {
         assertEquals(Long.MAX_VALUE, AppSettings.UNLIMITED_CACHE_LIMIT_BYTES)
         assertEquals(-5_000, AppSettings.MIN_LYRICS_OFFSET_MS)
         assertEquals(5_000, AppSettings.MAX_LYRICS_OFFSET_MS)
-        assertEquals(3, AppSettings.DEFAULT_UPGRADE_LENGTH_SLACK_SECONDS)
+        assertEquals(5, AppSettings.DEFAULT_UPGRADE_LENGTH_SLACK_SECONDS)
         assertEquals(0, AppSettings.MIN_UPGRADE_LENGTH_SLACK_SECONDS)
         assertEquals(10, AppSettings.MAX_UPGRADE_LENGTH_SLACK_SECONDS)
         assertEquals(5, AppSettings.MAX_PINNED_PLAYLISTS)

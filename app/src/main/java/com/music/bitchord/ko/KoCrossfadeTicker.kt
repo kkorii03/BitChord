@@ -47,4 +47,7 @@ internal fun CrossfadeController.koTickStepMs(): Long = when (phase) {
     CrossfadeController.Phase.FADING -> CrossfadeController.FADE_STEP_MS
     CrossfadeController.Phase.SLEEP_FADE -> CrossfadeController.FADE_STEP_MS
     CrossfadeController.Phase.BAILING -> CrossfadeController.BAIL_STEP_MS
+    CrossfadeController.Phase.LOOP_ARMING ->
+        CrossfadeArmPolicy.armingStepMs(outgoing?.playWhenReady != false)
+    CrossfadeController.Phase.LOOP_RUNNING -> CrossfadeController.LOOP_STEP_MS
 }

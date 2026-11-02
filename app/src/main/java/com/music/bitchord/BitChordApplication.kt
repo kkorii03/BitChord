@@ -3,6 +3,8 @@ package com.music.bitchord
 import android.app.Application
 import android.os.Bundle
 import androidx.annotation.OptIn
+import androidx.compose.ui.ComposeUiFlags
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.media3.common.util.UnstableApi
 import coil3.ImageLoader
 import coil3.PlatformContext
@@ -10,6 +12,7 @@ import coil3.SingletonImageLoader
 import coil3.disk.DiskCache
 import coil3.disk.directory
 import coil3.memory.MemoryCache
+import coil3.request.allowHardware
 import coil3.request.crossfade
 import coil3.svg.SvgDecoder
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
@@ -42,9 +45,11 @@ import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.stats.ArtistFacts
 import com.music.bitchord.data.stats.ListeningStats
 import com.music.bitchord.download.Downloads
+import com.music.bitchord.download.PlaylistSync
 import com.music.bitchord.startup.AppForeground
 import com.music.bitchord.startup.StartupTrace
 import com.music.bitchord.startup.StartupWork
+import androidx.work.Configuration
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.combine
@@ -52,7 +57,11 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import java.io.File
 
-class BitChordApplication : Application(), SingletonImageLoader.Factory {
+class BitChordApplication : Application(), SingletonImageLoader.Factory, Configuration.Provider {
+
+    /** Asked for on first use rather than at launch; see [PlaylistSync.init]. */
+    override val workManagerConfiguration: Configuration
+        get() = Configuration.Builder().build()
 
     /** Foreground/background transitions, logged as they happen rather than sampled. */
     private var startedActivities = 0
@@ -87,14 +96,30 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
     }
 
     @OptIn(UnstableApi::class)
+    @kotlin.OptIn(ExperimentalComposeUiApi::class)
     override fun onCreate() {
         super.onCreate()
         // First, before anything below can fail: a crash during startup has to
         // leave the same evidence as one while a track plays.
         val logDirectory = File(filesDir, "logs")
         TrackLog.initPersistence(logDirectory)
-        com.music.bitchord.data.FeatureHealthCounters.init(File(logDirectory, "feature-health"))
         installCrashHandler()
+        // The encrypted stores cannot be opened concurrently on a first launch
+        // (they share one Keystore master key), so the open that the main thread
+        // needs below is started here, on the serial startup thread, before the
+        // thousands of other launch tasks. Tink's one-time key-manager
+        // registration is the slowest part of that open; doing it now lets
+        // AuthStore(this) find the same store already cached instead of paying
+        // it on the main thread. If the main thread still gets there first,
+        // EncryptedPrefs serialises the two opens and behaviour is unchanged.
+        StartupWork.background("auth-store") { AuthStore.prewarm(this) }
+        com.music.bitchord.data.FeatureHealthCounters.init(File(logDirectory, "feature-health"))
+        // [KO] exit-reasons: an ANR/crash leaves no line in this process's own
+        // log, because the process that hung is gone. Android's historical exit
+        // reasons are the only record, read once per start off the main thread.
+        CoroutineScope(Dispatchers.IO).launch {
+            com.music.bitchord.ko.ExitReasonsKo.report(this@BitChordApplication)
+        }
         // Reading and rewriting the warm-start marker is disk I/O on the launch
         // path. The line it emits is diagnostic, so it can land a moment later
         // without holding up the first frame.
@@ -119,6 +144,23 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         DebugLog.sink = DebugLog.Sink { level, tag, message, error ->
             TrackLog.write(level, tag, message, error)
         }
+        if (!BuildConfig.DEBUG) {
+            // R8 strips android.util.Log from a release build (proguard-rules.pro);
+            // this stops Media3 composing the lines it would have handed it.
+            androidx.media3.common.util.Log.setLogLevel(androidx.media3.common.util.Log.LOG_LEVEL_OFF)
+            // java.util.logging reaches logcat without android.util.Log, through
+            // the handler Android installs on its root logger — the Discord
+            // gateway's connection chatter went out that way.
+            java.util.logging.LogManager.getLogManager().reset()
+            java.util.logging.Logger.getLogger("").level = java.util.logging.Level.OFF
+        }
+        // Compose re-votes the window's frame rate from dispatchDraw on every
+        // frame (API 35+), and Samsung's View logs each vote together with a
+        // stack walk of its caller: measured on an S22, 8,000 lines in two
+        // minutes, two stack traces built on the main thread per frame. The app
+        // asks for its refresh rate itself (MainActivity.applyPerformanceMode),
+        // so those votes buy nothing — and they kept resetting that request.
+        ComposeUiFlags.isAdaptiveRefreshRateEnabled = false
         // The Spotify library and import live in the shared module; the tokens are the WebView's.
         SpotifyLibrary.auth = SpotifyLibrary.Auth {
             SpotifyToken.accessToken()?.let { SpotifyLibrary.Tokens(it, SpotifyToken.clientToken()) }
@@ -332,6 +374,8 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
             com.music.bitchord.playback.smart.HqVerificationStore.init(this@BitChordApplication)
         }
         com.music.bitchord.download.LikedAutoDownload.init(this)
+        // After both of the things a check reads: the setting and the record.
+        PlaylistSync.init(this)
         // The device's own listening record. Opened here rather than in
         // PlaybackService because the Replay page reads it from the UI side and
         // both live in this process — one owner, one directory.
@@ -471,7 +515,29 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
             // Covers arriving with a hard cut read as the list flickering as
             // it scrolls; a short fade reads as them developing.
             .crossfade(200)
+            .allowHardware(!emulatedGpu)
             .build()
+
+    /**
+     * Whether graphics here go through an emulator's GL translator rather than
+     * a real GPU driver — see [newImageLoader].
+     *
+     * On BlueStacks (Android 9) uploading a hardware bitmap aborts the whole
+     * process: the renderer turns a cover into a texture, the translator
+     * answers GL_INVALID_ENUM, and hwui's own error check kills the app —
+     * `glGenTextures error! GL_INVALID_ENUM`, from RenderThread, each time the
+     * app came back to the foreground with a 640px cover to decode. Covers in
+     * ordinary bitmaps never take that path.
+     *
+     * Asked of the driver on disk rather than of build properties, because
+     * emulators spoof those — BlueStacks reports itself as a Qualcomm Galaxy
+     * S22. `libEGL_emulation` is the AOSP emulator's translator, which no
+     * phone ships.
+     */
+    private val emulatedGpu: Boolean by lazy {
+        listOf("/vendor/lib64", "/vendor/lib", "/system/lib64", "/system/lib")
+            .any { java.io.File("$it/egl/libEGL_emulation.so").exists() }
+    }
 
     /**
      * Chains the platform's own handler rather than replacing it.

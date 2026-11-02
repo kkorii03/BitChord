@@ -41,31 +41,8 @@ internal fun SongSort.localizedLabel(): String = when (this) {
 internal fun String?.isDeviceFolder(): Boolean =
     this != null && startsWith("local:") && !startsWith(Downloads.PLAYLIST_PREFIX)
 
-/**
- * Whether [videoId] is the track playing, and is known to be playing YouTube's
- * own copy — which decides whether the player menu leads with "Revert to
- * original" or with "Upgrade quality".
- *
- * See [QualityUpgrade.isKnownToBePlayingYouTubesOwn] for why "known" is doing
- * real work here: an unresolved track playing off the disk cache answers false,
- * and keeps the revert on offer.
- */
-internal fun playingYouTubesOwn(videoId: String, controller: MediaController?): Boolean {
-    val item = controller?.currentMediaItem?.takeIf { it.mediaId == videoId } ?: return false
-    return QualityUpgrade.isKnownToBePlayingYouTubesOwn(
-        videoId,
-        item.localConfiguration?.uri?.let(QualityUpgrade::cacheTag),
-    )
-}
-
-/** `M:SS`/`H:MM:SS`, the same shape [String?.durationMillis] parses back. */
-internal fun formatDurationText(ms: Long): String {
-    val totalSeconds = ms / 1000
-    val minutes = totalSeconds / 60
-    val seconds = totalSeconds % 60
-    return "%d:%02d".format(Locale.ROOT, minutes, seconds)
-}
-
+// playingYouTubesOwn and formatDurationText live in MainActivity.kt again:
+// v1.9 keeps them there (its playingYouTubesOwn also reads the cache origin).
 internal fun shouldSkipAfterDislike(
     previousStatus: LikeStatus,
     targetVideoId: String,

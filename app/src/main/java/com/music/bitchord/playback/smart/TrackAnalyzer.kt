@@ -98,6 +98,29 @@ internal fun headAnalysis(
  * track simply reads as no evidence, which the policy ladder answers with a
  * plain fade.
  */
+/** Moves every time in [TrackFeatures.Features] by [offset] seconds. */
+internal fun TrackFeatures.Features.shiftedBy(offset: Double): TrackFeatures.Features {
+    if (offset == 0.0) return this
+    fun List<Double>.shifted() = map { it + offset }
+    fun List<EnergySample>.shifted() = map { it.copy(time = it.time + offset) }
+    fun List<MixCandidate>.shifted() = map { it.copy(time = it.time + offset) }
+    return copy(
+        audibleStartTime = audibleStartTime + offset,
+        pickupTime = pickupTime + offset,
+        introEndTime = introEndTime + offset,
+        outroStartTime = outroStartTime + offset,
+        contentEndTime = contentEndTime + offset,
+        mixInTime = mixInTime + offset,
+        mixOutTime = mixOutTime + offset,
+        downbeats = downbeats.shifted(),
+        phraseBoundaries = phraseBoundaries.shifted(),
+        energyCurve = energyCurve.shifted(),
+        lowEnergyCurve = lowEnergyCurve.shifted(),
+        mixInCandidates = mixInCandidates.shifted(),
+        mixOutCandidates = mixOutCandidates.shifted(),
+    )
+}
+
 @UnstableApi
 class TrackAnalyzer(private val context: Context, private val cache: AudioCache) {
 
@@ -882,29 +905,6 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         )
     }
 
-    /** Moves every time in [TrackFeatures.Features] by [offset] seconds. */
-    private fun TrackFeatures.Features.shiftedBy(offset: Double): TrackFeatures.Features {
-        if (offset == 0.0) return this
-        fun List<Double>.shifted() = map { it + offset }
-        fun List<EnergySample>.shifted() = map { it.copy(time = it.time + offset) }
-        fun List<MixCandidate>.shifted() = map { it.copy(time = it.time + offset) }
-        return copy(
-            audibleStartTime = audibleStartTime + offset,
-            pickupTime = pickupTime + offset,
-            introEndTime = introEndTime + offset,
-            outroStartTime = outroStartTime + offset,
-            contentEndTime = contentEndTime + offset,
-            mixInTime = mixInTime + offset,
-            mixOutTime = mixOutTime + offset,
-            downbeats = downbeats.shifted(),
-            phraseBoundaries = phraseBoundaries.shifted(),
-            energyCurve = energyCurve.shifted(),
-            lowEnergyCurve = lowEnergyCurve.shifted(),
-            mixInCandidates = mixInCandidates.shifted(),
-            mixOutCandidates = mixOutCandidates.shifted(),
-        )
-    }
-
     private fun analyzeHead(
         trackId: String,
         uri: Uri,
@@ -1409,7 +1409,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                 // absent mask and a neutral one identically — as "no evidence" — so a failed model
                 // pass would otherwise silently discard the estimate Phase 1 already had.
                 vocalActivityMask = mergeMasks(features.energyCurve.size, head?.vocalMask, tail?.vocalMask)
-                    ?: features.vocalActivityMask,
+                    ?: features.vocalActivityMask.map(::heuristicVocalOnModelScale),
                 vocalProbability = features.vocalProbability,
             ),
         )
@@ -1589,6 +1589,84 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         trackId = trackId,
         duration = durationSeconds,
     )
+
+    /**
+     * Stereo audio of [fromSeconds]..[toSeconds] of [trackId] at [sampleRate],
+     * for a loop mix deck, read off the copy analysis measured (so the deck's
+     * loop is cut from the same audio its downbeats were found in). Null for a
+     * source-backed track: its analysis reads a matched YouTube recording, not
+     * what the player plays, and a deck spliced in from another master would
+     * land off the song it takes over from. Blocking — call it off the main
+     * thread.
+     */
+    fun loopRegion(
+        trackId: String,
+        uri: Uri,
+        durationSeconds: Double,
+        fromSeconds: Double,
+        toSeconds: Double,
+        sampleRate: Int,
+    ): com.music.bitchord.playback.loopmix.LoopRegion? {
+        if (uri.getQueryParameter("v") == null && uri.authority == "source") return null
+        val began = SystemClock.elapsedRealtime()
+        val copy = runCatching { copyToRead(trackId, uri, durationSeconds) }.getOrNull() ?: return null
+        val (stereo, start) = copy.open()?.use { source ->
+            AudioDecoder.decodeRegionStereo(source, max(0.0, fromSeconds), toSeconds, abort = { stopped })
+        } ?: return null
+        if (stereo.left.isEmpty()) return null
+        val rate = sampleRate.toDouble()
+        val left: FloatArray
+        val right: FloatArray
+        if (abs(stereo.sampleRate - rate) > 0.5) {
+            left = MelSpectrogram.resample(stereo.left, stereo.sampleRate, rate) ?: return null
+            right = MelSpectrogram.resample(stereo.right, stereo.sampleRate, rate) ?: return null
+        } else {
+            left = stereo.left
+            right = stereo.right
+        }
+        Log.d(
+            TAG,
+            "Loop region $trackId from ${copy.key}: asked ${"%.2f".format(Locale.ROOT, fromSeconds)}s, " +
+                "got ${"%.3f".format(Locale.ROOT, start)}s + ${"%.2f".format(Locale.ROOT, left.size / rate)}s " +
+                "at ${stereo.sampleRate.toInt()}->$sampleRate Hz in ${SystemClock.elapsedRealtime() - began}ms",
+        )
+        return com.music.bitchord.playback.loopmix.LoopRegion(left, right, start)
+    }
+
+    /**
+     * A three-band waveform of [fromSeconds]..[toSeconds] of [trackId], for the
+     * Automix popup, read off the same copy analysis measured; null when there
+     * is no such copy to read. Blocking — call it off the main thread.
+     */
+    fun mixWaveform(
+        trackId: String,
+        uri: Uri,
+        durationSeconds: Double,
+        fromSeconds: Double,
+        toSeconds: Double,
+        bins: Int,
+    ): MixWaveform.Bands? {
+        // Not [analysisUriFor]: that starts a catalogue search, and this only
+        // wants whatever analysis already settled on.
+        val analysisUri = if (uri.getQueryParameter("v") != null || uri.authority != "source") {
+            uri
+        } else {
+            sourceAnalysisUris[trackId] ?: return null
+        }
+        val began = SystemClock.elapsedRealtime()
+        val copy = runCatching { copyToRead(trackId, analysisUri, durationSeconds) }.getOrNull() ?: return null
+        val chosen = SystemClock.elapsedRealtime()
+        val bands = copy.open()?.use { source ->
+            MixWaveform.build(source, fromSeconds, toSeconds, bins) { stopped }
+        }
+        Log.d(
+            TAG,
+            "Mix waveform $trackId: copy ${chosen - began}ms, decode ${SystemClock.elapsedRealtime() - chosen}ms, " +
+                "asked ${"%.1f".format(Locale.ROOT, fromSeconds)}s, decoder started " +
+                "${bands?.decodedFrom?.let { "%.1f".format(Locale.ROOT, it) } ?: "-"}s",
+        )
+        return bands
+    }
 
     fun release() {
         executor.shutdownNow()

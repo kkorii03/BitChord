@@ -21,7 +21,7 @@ import android.content.SharedPreferences
 class AuthStore(context: Context) {
 
     private val prefs: SharedPreferences =
-        EncryptedPrefs.open(context, "bitchord_auth", "bitchord_auth_plain")
+        EncryptedPrefs.open(context, PREFS_FILE, PLAIN_PREFS_FILE)
 
     var cookie: String?
         get() = prefs.getString(KEY_COOKIE, null)
@@ -235,6 +235,25 @@ class AuthStore(context: Context) {
     }
 
     companion object {
+        private const val PREFS_FILE = "bitchord_auth"
+        private const val PLAIN_PREFS_FILE = "bitchord_auth_plain"
+
+        /**
+         * Opens the encrypted store on the startup thread, ahead of [AuthStore]'s
+         * first use.
+         *
+         * Tink's one-time key-manager registration and the Keystore master key
+         * are the slowest part of the first open. Starting them here means the
+         * synchronous open in [com.music.bitchord.BitChordApplication.onCreate]
+         * normally finds the same cached store already open. If the main thread
+         * gets there first, [EncryptedPrefs] serialises the two opens and the
+         * result is exactly as before, only slower — no data, key or file name
+         * changes.
+         */
+        fun prewarm(context: Context) {
+            EncryptedPrefs.open(context.applicationContext, PREFS_FILE, PLAIN_PREFS_FILE)
+        }
+
         /**
          * Whether a cookie header carries a secret Innertube requests can be
          * signed with.

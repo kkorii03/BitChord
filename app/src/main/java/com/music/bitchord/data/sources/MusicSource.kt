@@ -86,6 +86,16 @@ data class SourceStream(
      * asking again without the hint can swap in its Atmos sibling.
      */
     val stereoOnly: Boolean = false,
+    /**
+     * Whether the artist credit is written in another script and the match was
+     * only possible by [TrackMatcher.isArtistUnverifiedOriginal].
+     *
+     * Such a stream is a search candidate, not a replacement verdict: the
+     * quality-upgrade path must have [HqAudioVerify][com.music.bitchord.playback.smart.HqAudioVerify]
+     * accept the audio before it may play. Defaults false so every existing
+     * constructor and every ordinary match keeps its meaning.
+     */
+    val artistUnverified: Boolean = false,
 )
 
 /**

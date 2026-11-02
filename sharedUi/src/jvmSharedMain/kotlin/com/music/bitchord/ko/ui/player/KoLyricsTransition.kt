@@ -19,12 +19,10 @@ internal fun <S> AnimatedContentTransitionScope<S>.koCurrentLyricTransition(calm
             SizeTransform(clip = false, sizeAnimationSpec = { _, _ -> snap() })
         )
     } else {
-        // A full-height slide rather than a crossfade: the outgoing line
-        // leaves through the top while the incoming one comes up from the
-        // bottom, so the two never sit on the same baseline and read as one
-        // garbled line mid-transition.
-        (fadeIn(animationSpec = tween(duration, easing = FastOutSlowInEasing)) +
-            slideInVertically(animationSpec = tween(duration, easing = FastOutSlowInEasing)) { height -> height })
+        // The arriving line is not faded in: each line's own dynamic fade (see
+        // the strip content) has already taken the old line out, so the new one
+        // slides straight up at full strength.
+        slideInVertically(animationSpec = tween(duration, easing = FastOutSlowInEasing)) { height -> (height * 0.35f).toInt() }
             .togetherWith(
                 fadeOut(animationSpec = tween(duration, easing = FastOutSlowInEasing)) +
                     slideOutVertically(animationSpec = tween(duration, easing = FastOutSlowInEasing)) { height -> -height }

@@ -1,5 +1,7 @@
 package com.music.bitchord.data.model
 
+import com.music.bitchord.ko.isArtist
+
 /**
  * The page a card on a detail screen opens when it is tapped.
  *

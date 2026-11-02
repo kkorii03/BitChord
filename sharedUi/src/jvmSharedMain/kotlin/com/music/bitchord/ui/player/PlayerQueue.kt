@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.player
 
+import com.music.bitchord.ui.components.trackArtSize
+import androidx.compose.ui.layout.ContentScale
 import com.music.bitchord.sharedui.resources.*
 import com.music.bitchord.ui.components.ExplicitSongTitle
 
@@ -63,7 +65,6 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
@@ -850,7 +851,7 @@ private fun InlineQueueRow(
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier
-                .size(44.dp)
+                .trackArtSize(44.dp, song.isVideo)
                 .clip(RoundedCornerShape(6.dp))
                 .thumbnailBorder(RoundedCornerShape(6.dp))
                 .background(Color.White.copy(alpha = 0.08f)),

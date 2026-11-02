@@ -45,6 +45,7 @@ import com.music.bitchord.ui.tv.dialogs.TvEqualizerDialog
 import com.music.bitchord.ui.tv.dialogs.TvLyricsSourcesDialog
 import com.music.bitchord.ui.tv.dialogs.TvRefreshRateDialog
 import com.music.bitchord.ui.tv.dialogs.TvScrobbleDialog
+import com.music.bitchord.data.settings.TvPlayerStyle
 import com.music.bitchord.ui.tv.dialogs.TvThemeDialog
 import com.music.bitchord.ui.tv.dialogs.TvUpdateDialog
 import com.music.bitchord.ui.tv.display.TvRefreshRateController
@@ -87,6 +88,7 @@ fun TvSettingsScreen(
     val lyricsCanvas by TvSettings.tvLyricsCanvasEnabled.collectAsState()
     val nerdStats by AppSettings.showNerdStats.collectAsState()
     val themeId by TvSettings.tvTheme.collectAsState()
+    val playerStyle by TvSettings.tvPlayerStyle.collectAsState()
     val uiScale by TvSettings.tvUiScale.collectAsState()
     val refreshRate by TvRefreshRateController.preference.collectAsState()
     val reduceMotion by AppSettings.reduceAnimation.collectAsState()
@@ -286,7 +288,18 @@ fun TvSettingsScreen(
             }
             item {
                 TvListRow(
-                    title = stringResource(R.string.tv_interface_size),
+                    title = "Player Background",
+                    value = playerStyle.label,
+                    onFocused = { blurb = "What Now Playing shows behind the song: the artwork's colours, or AMOLED's pure black." },
+                    onClick = {
+                        val styles = TvPlayerStyle.entries
+                        TvSettings.setTvPlayerStyle(styles[(playerStyle.ordinal + 1) % styles.size])
+                    },
+                )
+            }
+            item {
+                TvListRow(
+                    title = "Interface Size",
                     value = "${(uiScale * 100).toInt()}%",
                     onFocused = { blurbRes = R.string.tv_interface_size_blurb },
                     onClick = {

@@ -253,6 +253,30 @@ object SourceResolver {
     const val MIX_STEREO = "stereo"
     const val MIX_ATMOS = "atmos"
     const val MIX_ANY = "any"
+    fun mixOf(sourceQuality: String?): String = when (sourceQuality) {
+        null -> MIX_ANY
+        ModuleSource.DOLBY -> MIX_ATMOS
+        else -> MIX_STEREO
+    }
+
+    fun directAddons(): List<MusicSource> {
+        val active = SourceRegistry.activeForPlayback()
+        val youtube = active.firstOrNull { it.kind == SourceKind.YOUTUBE } ?: return emptyList()
+        return rankedAbove(youtube.configId, active).filter { it.kind == SourceKind.ADDON }
+    }
+
+    suspend fun directStream(target: TrackMatcher.Target): SourceStream? {
+        if (target.title.isBlank() || target.isVideo) return null
+        val addons = directAddons()
+        if (addons.isEmpty()) return null
+        val (source, stream) = bestAcross(addons, target, requestForNow()) ?: return null
+        TrackLog.d(
+            TAG,
+            "direct: '${target.title}' from ${source.displayName} at ${stream.format.summary}" +
+                if (stream.belowRequest) " (below request)" else "",
+        )
+        return stream
+    }
 
     /** Whether [uri] is an addon row played as itself — see [MIX_PARAM]. */
     fun isPickedAddonRow(uri: Uri): Boolean =
@@ -462,6 +486,7 @@ object SourceResolver {
          * source is skipped and the real recording from a slower one is still
          * found — rather than the fastest answer becoming the only answer.
          */
+        allowArtistUnverified: Boolean = false,
         accept: suspend (MusicSource, SourceStream) -> Boolean = { _, _ -> true },
     ): SourceStream? {
         if (target.title.isBlank() || target.isVideo) return null
@@ -478,6 +503,7 @@ object SourceResolver {
             requestForNow(),
             waitForAll = true,
             strictOriginal = true,
+            allowArtistUnverified = allowArtistUnverified,
             accept = accept,
         )
         if (found == null) {
@@ -974,11 +1000,33 @@ object SourceResolver {
      * Either side being unknown is a no. An unverifiable length is not a
      * length that agrees, and the cost of being wrong here is a listener's
      * song replaced mid-play by a different cut of it.
+     *
+     * @param slackSec the listener's own tolerance when it is a swap being
+     *   decided — see [upgradeSlackSec].
      */
-    fun sameRecordingAs(candidateSec: Int?, playingSec: Int?): Boolean {
+    fun sameRecordingAs(
+        candidateSec: Int?,
+        playingSec: Int?,
+        slackSec: Int = UPGRADE_DRIFT_SEC,
+    ): Boolean {
         if (candidateSec == null || playingSec == null) return false
-        return kotlin.math.abs(candidateSec - playingSec) <= UPGRADE_DRIFT_SEC
+        return kotlin.math.abs(candidateSec - playingSec) <= slackSec
     }
+
+    /**
+     * How far a replacement's runtime may sit from the playing track's for a
+     * mid-song swap: Settings' "Track length tolerance".
+     *
+     * The setting used to reach only the audition and the check after the
+     * swap, both of which run on a stream already chosen. Choosing it ran on
+     * [UPGRADE_DRIFT_SEC] alone, so every candidate between two seconds and
+     * the setting was thrown out before the setting was ever consulted — the
+     * slider could tighten the bar and never loosen it. Measured on 'Take on
+     * Me': a 24-bit/192 kHz remaster at 3:48 against YouTube's 3:45, refused
+     * three seconds out under a tolerance set to five, and the upgrade landed
+     * on the 16-bit album cut instead.
+     */
+    fun upgradeSlackSec(): Int = AppSettings.upgradeLengthSlackSeconds.value
 
     /**
      * Whether anything outranks YouTube right now — i.e. whether a YouTube

@@ -9,6 +9,7 @@ import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 import com.music.bitchord.data.model.SearchHistoryEntity
+import com.music.bitchord.data.model.withCorrectedType
 import com.music.bitchord.startup.StartupWork
 import java.util.concurrent.Executors
 
@@ -182,6 +183,7 @@ object SearchHistory {
     private fun load() {
         _recent.value = runCatching {
             json.decodeFromString(serializer, prefs.getString(KEY_HISTORY, null) ?: "[]")
+                .map { it.withCorrectedType() }
         }.getOrDefault(emptyList())
         _addonRecent.value = runCatching {
             json.decodeFromString(addonSerializer, prefs.getString(KEY_ADDON_HISTORY, null) ?: "[]")

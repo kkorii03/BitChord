@@ -18,6 +18,19 @@ import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.LikeState
 import com.music.bitchord.widget.MediaWidgetSnapshot
 import com.music.bitchord.data.YtMusicRepository
+import com.music.bitchord.data.TopPicks
+import com.music.bitchord.data.AppleArtistPhotos
+import com.music.bitchord.data.model.ArtistRef
+import com.music.bitchord.data.model.TopPick
+import com.music.bitchord.data.stats.ListeningStats
+import com.music.bitchord.data.stats.ReplayPeriod
+import android.util.Log
+import java.io.File
+import java.time.LocalDate
+import java.time.LocalDateTime
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.first
+import kotlin.coroutines.cancellation.CancellationException
 import com.music.bitchord.data.model.SPOTIFY_MISSING_PREFIX
 import com.music.bitchord.data.model.SPOTIFY_PENDING_PREFIX
 import com.music.bitchord.data.net.TYPEAHEAD_DEBOUNCE_MS
@@ -105,11 +118,13 @@ import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.BoundedContextRequests
+import com.music.bitchord.playback.DirectSourceGate
 import com.music.bitchord.playback.contextEntryKey
 import com.music.bitchord.playback.StreamChoice
 import com.music.bitchord.ui.screens.CACHE_FOLDER_BROWSE_ID
 import com.music.bitchord.data.LocalGroup
 import com.music.bitchord.data.LocalGroups
+import com.music.bitchord.data.OfflinePlaylists
 import com.music.bitchord.data.matchesSearch
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
@@ -191,17 +206,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val homeRecentlyPlayedLoading: StateFlow<Boolean> = _homeRecentlyPlayedLoading.asStateFlow()
     private val homeLoadGeneration = AtomicLong(0L)
 
-    /**
-     * The first-page load in flight, if any.
-     *
-     * A load and a refresh ask the same endpoints (core feed, recently played)
-     * and used to be able to run together: the refresh guard below only knew
-     * about other refreshes. A tab shown while the launch load was still
-     * arriving therefore started a second copy of both requests. The refresh
-     * joins this load instead: it does not bump the generation, so the load's
-     * own answer is still the one that lands.
-     */
+    /** The launch doing a full Home load, so a refresh joins it. */ // [KO] home load dedupe
     private var homeLoadJob: Job? = null
+
+    /**
+     * Home's "Top Picks for You" row: null until built, empty if there was
+     * nothing to build it from. Declared ahead of [init] for the same reason
+     * as [homeContinuation] — [loadHome] reaches it synchronously.
+     */
+    private val _topPicks = MutableStateFlow<List<TopPick>?>(null)
+    val topPicks: StateFlow<List<TopPick>?> = _topPicks.asStateFlow()
+    private val _topPicksLoading = MutableStateFlow(false)
+    val topPicksLoading: StateFlow<Boolean> = _topPicksLoading.asStateFlow()
+    private var topPicksJob: Job? = null
 
     internal val _explore = MutableStateFlow<UiState<List<MoodGenreSection>>>(UiState.Loading)
     val explore: StateFlow<UiState<List<MoodGenreSection>>> = _explore.asStateFlow()
@@ -1424,27 +1441,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         startSuggestPipeline()
         startTypeaheadMediaPipeline()
         loadHome()
-        // Explore, Library and the account menus are none of them on the first
-        // screen, and each one starts network work. The two feeds load only
-        // from the tab that shows them (onExploreShown/onLibraryShown), so a
-        // launch does not spend requests on a page the listener never opens.
-        // What is left here is the account identity and the once-a-day update
-        // check — neither blocks or competes with Home's first row.
-        viewModelScope.launch {
-            delay(STARTUP_DEFER_MS)
-            for (work in startupDeferredWork(_signedIn.value)) {
-                when (work) {
-                    StartupDeferredWork.ACCOUNT -> loadAccount()
-                    StartupDeferredWork.UPDATE_CHECK -> {
-                        // A leftover APK only means "Install Now" for the session
-                        // that downloaded it ??see AppUpdateChecker.clearCache.
-                        AppUpdateChecker.clearCache(getApplication())
-                        // The GitHub round trip is not part of opening the app:
-                        // ask at most once a day rather than on every cold start.
-                        AppUpdateChecker.checkDaily(getApplication())
-                    }
-                }
-            }
+        // Explore waits for its tab (see [onExploreShown]): its category list
+        // and the dozen-odd artwork browses after it went out at launch with
+        // Home's own requests, to the same host, for a page not yet opened.
+        if (_signedIn.value) {
+            loadLibrary()
+            loadAccount()
+            loadPlaylists()
         }
         viewModelScope.launch {
             // drop(1): the current value is just the count so far, not a play.
@@ -1505,18 +1508,25 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (!homeStale) return
         homeStale = false
         // A first load already in flight will pick the new play up by itself.
-        if (_home.value is UiState.Success) refresh(Feed.HOME, reason = "tab")
+        if (_home.value is UiState.Success) refreshHomeRecents()
     }
 
     /**
-     * Call when the explore tab becomes visible.
-     *
-     * Its page is no longer fetched during init, so this is what makes the tab
-     * show itself the first time. A page already loaded (or failing, which the
-     * screen offers a retry for) is left alone.
+     * Re-fetches only the Recents shelf, swapping it in place. The rest of
+     * Home stays exactly as it was, so a shelf someone was eyeing doesn't
+     * vanish because a track started playing.
      */
-    fun onExploreShown() {
-        if (_explore.value is UiState.Loading && exploreLoadJob?.isActive != true) loadExplore()
+    private fun refreshHomeRecents() {
+        if (!_signedIn.value) return
+        val identity = listenerKey()
+        val generation = homeLoadGeneration.get()
+        viewModelScope.launch {
+            YtMusicRepository.homeRecentlyPlayed().onSuccess { shelf ->
+                // A full load that started meanwhile fetches Recents itself.
+                if (!isCurrentHomeLoad(identity, generation)) return@onSuccess
+                shelf?.let { publishHomeShelves(listOf(it), prepend = true) }
+            }
+        }
     }
 
     private fun loadAccount() {
@@ -1635,10 +1645,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun loadExplore() {
-        rawExploreSections = emptyList()
+        exploreRequested = true
         _explore.value = UiState.Loading
         exploreLoadJob?.cancel()
         exploreLoadJob = viewModelScope.launch { fetchExplore() }
+    }
+
+    private var exploreRequested = false
+
+    /** Call when the Explore tab becomes visible; loads it the first time. */
+    fun onExploreShown() {
+        if (!exploreRequested) loadExplore()
     }
 
     private suspend fun fetchExplore() {
@@ -1716,6 +1733,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // out: it has its own skeleton at the head of the page rather than the
         // one at the tail.
         _homePendingShelves.value = 1 + YtMusicRepository.HOME_SUPPLEMENT_BROWSE_IDS.size
+        loadTopPicks(identity, rebuild = false)
         homeLoadJob = viewModelScope.launch {
             launch {
                 try {
@@ -1768,6 +1786,94 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * Puts the Top Picks row on screen. A row lasts one hour of the clock —
+     * 3:00 to 4:00, not sixty minutes from whenever it was first built — and
+     * the first open in a new hour builds the next one. Until that's ready the
+     * last row stays up, so Home never waits on it; within the hour an open
+     * makes no requests for it at all. [rebuild] builds one regardless.
+     */
+    private fun loadTopPicks(identity: String?, rebuild: Boolean) {
+        topPicksJob?.cancel()
+        val file = File(getApplication<Application>().filesDir, TOP_PICKS_FILE)
+        val slot = topPicksSlot()
+        topPicksJob = viewModelScope.launch {
+            val stored = withContext(Dispatchers.IO) {
+                runCatching { file.takeIf { it.exists() }?.readText() }.getOrNull()?.let(TopPicks::decode)
+            }?.takeIf { it.listener == identity && it.picks.isNotEmpty() }
+            stored?.let { AppleArtistPhotos.seed(it.photos) }
+            if (stored != null) {
+                _topPicks.value = stored.picks
+                topPicksSlotShown = stored.day
+            } else if (!rebuild) {
+                _topPicks.value = null
+            }
+            if (!rebuild && stored?.day == slot) {
+                _topPicksLoading.value = false
+                return@launch
+            }
+            _topPicksLoading.value = _topPicks.value == null
+            val picks = buildTopPicks()?.takeIf { it.isNotEmpty() }
+            if (identity != listenerKey()) return@launch
+            _topPicksLoading.value = false
+            if (picks == null) {
+                if (_topPicks.value == null) _topPicks.value = emptyList()
+                return@launch
+            }
+            _topPicks.value = picks
+            topPicksSlotShown = slot
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    file.writeText(TopPicks.encode(TopPicks.Stored(identity, slot, picks, AppleArtistPhotos.snapshot())))
+                }
+            }
+        }
+    }
+
+    /** The hour the row on screen was built in, e.g. `2026-10-21T15`. */
+    private var topPicksSlotShown: String? = null
+
+    /**
+     * Called when the app comes back to the foreground: if the clock has
+     * crossed into a new hour since the row on screen was built, build the
+     * next one. A no-op otherwise, and while one is building.
+     */
+    fun refreshTopPicksIfStale() {
+        if (topPicksJob?.isActive == true) return
+        if (topPicksSlotShown == null || topPicksSlotShown == topPicksSlot()) return
+        loadTopPicks(listenerKey(), rebuild = false)
+    }
+
+    /** Which hour of the clock [now] falls in: the date and the hour, 00 to 23. */
+    private fun topPicksSlot(now: LocalDateTime = LocalDateTime.now()): String =
+        "${now.toLocalDate()}T%02d".format(now.hour)
+
+    private suspend fun buildTopPicks(): List<TopPick>? {
+        // Home's first page may already hold the account's mixes; give it a
+        // moment to land so the builder reads them off it instead of asking.
+        val shelves = withTimeoutOrNull(8_000L) { _home.first { it !is UiState.Loading } }
+            .let { (it as? UiState.Success)?.data.orEmpty() }
+        return try {
+            TopPicks.build(shelves, localTaste())
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("BitChord", "topPicks failed: ${e.message}")
+            null
+        }
+    }
+
+    /** This app's own Replay chart for the month — Top Picks' second opinion, and all it has signed out. */
+    private suspend fun localTaste(): TopPicks.LocalTaste {
+        val month = runCatching { ListeningStats.summary(ReplayPeriod.THIS_MONTH) }.getOrNull()
+            ?: return TopPicks.LocalTaste()
+        return TopPicks.LocalTaste(
+            artists = month.artists.take(10).map { ArtistRef(name = it.title, browseId = it.browseId) },
+            songs = month.songs.take(5).map { it.song },
+            genres = month.genres.take(3).map { it.title },
+        )
+    }
+
+    /**
      * One of the parallel first-page requests has finished. Ignored once a newer
      * load has taken over, which has already reset the count for its own fan-out.
      */
@@ -1806,21 +1912,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (added.isNotEmpty()) _home.value = UiState.Success(existing + added)
     }
 
-    /**
-     * Refreshes the core feed without blanking the current Play page first.
-     *
-     * A refresh is smaller than the first load (no supplements) and the
-     * youtube.com fallback can answer short when one of its requests fails, so
-     * the answer is merged with what is already on screen: shelves it did not
-     * return stay instead of disappearing until the next full load. The
-     * continuation belongs to the previous feed, so it is dropped before the
-     * fetch and only the new page's token is kept; a [loadMoreHome] already in
-     * flight is discarded by the generation bump.
-     *
-     * [force] is set by pull-to-refresh only. The automatic refresh when the
-     * tab is shown again leaves it false, so the ten-minute gated feed cache
-     * still answers there.
-     */
+    /** Refreshes the core feed without blanking the current Play page first. */
     private suspend fun refreshHome(
         identity: String?,
         force: Boolean = false,
@@ -1831,12 +1923,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val generation = homeLoadGeneration.incrementAndGet()
         homeContinuation = null
         _homeLoadingMore.value = false
-        // Any fan-out of a load this refresh superseded can no longer settle
-        // (its generation check now fails), so their counters are reset here.
         _homePendingShelves.value = 0
         _homeRecentlyPlayedLoading.value = false
         val previous = (_home.value as? UiState.Success)?.data.orEmpty()
-        val recent = async { YtMusicRepository.homeRecentlyPlayed() }
+        val recent = if (_signedIn.value) async { YtMusicRepository.homeRecentlyPlayed() } else null
+        // Top Picks keeps to its hour; a pull refreshes the feed, not the
+        // picks, unless the hour has already turned over.
+        if (topPicksJob?.isActive != true) loadTopPicks(identity, rebuild = false)
         YtMusicRepository.home(force = force).onSuccess { feed ->
             if (!isCurrentHomeLoad(identity, generation)) return@onSuccess
             val merge = mergeHomeShelves(
@@ -1868,7 +1961,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
         }
-        recent.await().onSuccess { shelf ->
+        recent?.await()?.onSuccess { shelf ->
             if (isCurrentHomeLoad(identity, generation)) {
                 shelf?.let {
                     publishHomeShelves(listOf(it), prepend = true)
@@ -1980,6 +2073,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 onFailure = { UiState.Error(it.friendly()) },
             )
             if (identity == listenerKey()) _history.value = next
+        }
+    }
+
+    /** Removes a track from the account's listening history via its feedback token. Optimistically removes it from the in-memory list on success; leaves the list untouched on failure. */
+    fun removeFromHistory(token: String, onSuccess: () -> Unit = {}, onFailure: (Throwable) -> Unit = {}) {
+        viewModelScope.launch {
+            YtMusicRepository.removeFromHistory(token).onSuccess {
+                // Optimistically remove only the first entry whose feedbackToken matches, so the list updates immediately without a loading flash
+                val current = _history.value
+                if (current is UiState.Success) {
+                    _history.value = current.copy(data = current.data.filterNot { it.feedbackToken == token })
+                }
+                // Invalidate the in-memory history cache so the next load fetches fresh data from YouTube
+                YtMusicRepository.invalidateHistoryCache()
+                onSuccess()
+            }.onFailure {
+                // Keep the existing history list untouched — do NOT replace it with an error
+                Log.w("BitChord", "removeFromHistory failed: ${it.message}")
+                onFailure(it)
+            }
         }
     }
 
@@ -2571,6 +2684,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 is SearchResult.Browse -> null
             }
         } ?: return
+        // Direct Source Stream fetches nothing before it is played. Warming
+        // here would also pin JioSaavn's quick answer ahead of the addon.
+        if (DirectSourceGate.isActive()) return
         viewModelScope.launch {
             runCatching {
                 val audio = song
@@ -2597,12 +2713,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // The same sound check the queue's read-ahead runs, applied
                 // inside the race so a refused cover does not hide a slower
                 // source's real recording.
-                val warmed = SourceResolver.prefetchSubstitute(target, remember = false) { _, candidate ->
-                    com.music.bitchord.playback.smart.HqAudioVerify
-                        .verify(getApplication(), playSong.videoId, target, candidate) != null
-                }
+                // [KO] v1.9 Direct Source owns pinning; prefetch only warms the tap path.
+                val warmed = SourceResolver.prefetchSubstitute(
+                    target,
+                    remember = true,
+                    accept = { _, candidate ->
+                        com.music.bitchord.playback.smart.HqAudioVerify
+                            .verify(getApplication(), playSong.videoId, target, candidate) != null
+                    },
+                    allowArtistUnverified = true,
+                )
                 if (warmed != null) {
-                    SourceResolver.rememberOriginal(target, warmed)
                     StreamChoice.remember(playSong.videoId, warmed, substituted = true)
                     return@runCatching
                 }
@@ -2616,6 +2737,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     companion object {
         /** How long startup has to settle before the non-start tabs are fetched. */
         private const val STARTUP_DEFER_MS = 2_000L
+
+        /** The app's own Recents key, as the feed and the shelf-title localiser use it. */ // [KO]
+        private const val RECENTS_TITLE = "Recents"
+
+        /** Today's Top Picks row, kept so the next launch paints it before any request. */
+        private const val TOP_PICKS_FILE = "top_picks_v4.json"
 
         /** Per-addon budget for the Addons search tab; a slow addon is left out, not waited on. */
         private const val ADDON_SEARCH_TIMEOUT_MS = 12_000L
@@ -2662,6 +2789,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     ?.let { BrowseType.ALBUM }
                     ?: BrowseType.PLAYLIST
             browseId.startsWith(LocalGroups.PREFIX) -> LocalGroups.typeOf(browseId) ?: fallback
+            browseId.startsWith(OfflinePlaylists.PREFIX) -> BrowseType.PLAYLIST
             browseId.startsWith("UC") -> BrowseType.ARTIST
             browseId.startsWith("MPREb") || browseId.startsWith("VLOLAK") || browseId.startsWith("OLAK") -> BrowseType.ALBUM
             browseId.startsWith("VL") || browseId.startsWith("PL") -> BrowseType.PLAYLIST
@@ -2805,7 +2933,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 credit = getApplication<Application>().getString(R.string.local_playlist_subtitle, localPlaylist.songs.size)
                 artwork = localPlaylist.songs.firstOrNull { !it.thumbnailUrl.isNullOrBlank() }?.thumbnailUrl
             }
+            // Named by the store rather than by whatever opened it, which
+            // may be a "Playing from" label from before a rename.
+            OfflinePlaylists.get(browseId)?.let { name = it.title }
             val local = localPageState(browseId)
+            // Reopened by id alone — the player's "Playing from" — a page off
+            // the device arrives with only its title, and offline nothing from
+            // YouTube or Apple ever lends it a cover. It takes the cover and
+            // credit its own card had instead.
+            if (local is UiState.Success) {
+                val record = Downloads.recordIdOf(browseId)?.let { Downloads.collections.value[it] }
+                val group = LocalGroups.groupOf(browseId, local.data)
+                if (thumbnailUrl == null) artwork = record?.thumbnailUrl ?: group?.thumbnailUrl
+                if (subtitle.isBlank()) credit = (record?.subtitle ?: group?.subtitle)?.ifBlank { null }
+            }
             val state = when {
                 local != null -> {
                     // Smart playlists are not a page of their own file read, so
@@ -3026,6 +3167,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
+    /** Renames an open page in place — a device playlist, whose title is the store's. */
+    fun retitleDetail(browseId: String, title: String) {
+        if (title.isBlank()) return
+        _detailStack.value = _detailStack.value.map { if (it.browseId == browseId) it.copy(title = title) else it }
+    }
+
     fun reloadLocalDetail(browseId: String) {
         viewModelScope.launch {
             val state = localPageState(browseId) ?: return@launch
@@ -3051,6 +3198,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         fun nonEmpty(songs: List<Song>, empty: () -> String): UiState<List<Song>> =
             if (songs.isEmpty()) UiState.Error(empty()) else UiState.Success(songs)
 
+        if (OfflinePlaylists.isOfflinePlaylist(browseId)) {
+            // A playlist deleted while its page was still reachable — from
+            // "Playing from", say — is an empty page, not a YouTube lookup.
+            val playlist = OfflinePlaylists.get(browseId) ?: return UiState.Error(text(R.string.no_tracks_here))
+            return nonEmpty(LocalMediaRepository.present(context, playlist.songs)) {
+                text(if (playlist.isLiked) R.string.offline_liked_empty else R.string.offline_playlist_empty)
+            }
+        }
         com.music.bitchord.data.spotify.LocalPlaylistStore.getPlaylist(browseId)?.let { playlist ->
             return nonEmpty(playlist.songs) { text(R.string.spotify_import_empty_playlist) }
         }
@@ -3761,3 +3916,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun quantity(id: Int, count: Int): String =
         getApplication<Application>().resources.getQuantityString(id, count, count)
 }
+/**
+ * What one lyrics lookup for the playing track was made under. The order and
+ * the syllable preference pick a different answer from the same providers, so
+ * a change in either is a new lookup, as switching a source on or off is.
+ */
+internal fun lyricsLookupKey(
+    videoId: String,
+    sources: Set<LyricsSource>,
+    order: List<LyricsSource>,
+    prioritizeSyllableSync: Boolean,
+): List<Any> = listOf(videoId, sources, order, prioritizeSyllableSync)

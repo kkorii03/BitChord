@@ -93,7 +93,24 @@ fun speedUpBetween(outgoingBpm: Double, incomingBpm: Double): Double {
  * analyzer that emits a flat 0.5 mask never trips vocal logic; only a real
  * mask can.
  */
-const val VOCAL_ACTIVE_THRESHOLD = 0.6
+const val VOCAL_ACTIVE_THRESHOLD = 0.25
+/**
+ * The DSP heuristic's vocal value, moved onto the model's scale: its own
+ * decision boundary (0.6, where it was tuned) lands on [VOCAL_ACTIVE_THRESHOLD],
+ * linearly on either side, so it decides exactly what it used to.
+ */
+fun heuristicVocalOnModelScale(value: Double): Double {
+    if (!value.isFinite()) return value
+    val v = value.coerceIn(0.0, 1.0)
+    return if (v < HEURISTIC_VOCAL_THRESHOLD) {
+        v / HEURISTIC_VOCAL_THRESHOLD * VOCAL_ACTIVE_THRESHOLD
+    } else {
+        VOCAL_ACTIVE_THRESHOLD + (v - HEURISTIC_VOCAL_THRESHOLD) / (1 - HEURISTIC_VOCAL_THRESHOLD) * (1 - VOCAL_ACTIVE_THRESHOLD)
+    }
+}
+
+/** Where the DSP heuristic was tuned to call a frame sung. */
+private const val HEURISTIC_VOCAL_THRESHOLD = 0.6
 
 /**
  * How much of the outgoing track's remaining *music* a transition may skip by

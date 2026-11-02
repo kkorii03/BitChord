@@ -103,14 +103,16 @@ class TrackMatcherJudgementEdgeTest {
         assertEquals(165, TrackMatcher.score(song(title = "Song", artist = "Artist", duration = "3:20"), base))
         assertEquals(150, TrackMatcher.score(song(title = "Song", artist = "Artist, Other", duration = "3:20"), base))
         assertEquals(140, TrackMatcher.score(song(title = "Song", artist = "", duration = "3:20"), base))
-        assertEquals(110, TrackMatcher.score(song(title = "Song", artist = "Other", duration = "3:20"), base))
+        // [KO] same-script credit override refused: cover risk outweighs composer-vs-singer credits for this fork
+        assertNull(TrackMatcher.score(song(title = "Song", artist = "Other", duration = "3:20"), base))
     }
 
     @Test
-    fun `an exact runtime may stand in for a missing shared credit only within two seconds`() {
+    fun `an exact runtime may stand in for a missing shared credit only across scripts`() {
         val different = TrackMatcher.Target("Song", "Artist", durationSec = 200)
-        assertEquals(110, TrackMatcher.score(song(title = "Song", artist = "Other", duration = "3:20"), different))
-        assertEquals(110, TrackMatcher.score(song(title = "Song", artist = "Other", duration = "3:22"), different))
+        // [KO] same-script credit override refused: cover risk outweighs composer-vs-singer credits for this fork
+        assertNull(TrackMatcher.score(song(title = "Song", artist = "Other", duration = "3:20"), different))
+        assertNull(TrackMatcher.score(song(title = "Song", artist = "Other", duration = "3:22"), different))
         assertNull(TrackMatcher.score(song(title = "Song", artist = "Other", duration = "3:23"), different))
         assertNull(TrackMatcher.score(song(title = "Song", artist = "Other", duration = null), different))
         assertNull(
@@ -245,9 +247,9 @@ class TrackMatcherJudgementEdgeTest {
             listOf(credited),
             TrackMatcher.ranked(listOf(richerDifferent, credited), target),
         )
-        // With no credited row at all, a runtime-vouched row is still kept.
+        // [KO] same-script credit override refused: cover risk outweighs composer-vs-singer credits for this fork
         assertEquals(
-            listOf(richerDifferent),
+            emptyList<Song>(),
             TrackMatcher.ranked(listOf(richerDifferent), target.copy(album = null, isExplicit = null)),
         )
     }

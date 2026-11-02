@@ -106,6 +106,10 @@ object Innertube {
     val currentRegion: String
         get() = com.music.bitchord.data.LocaleTags.ytGl(currentLocaleTag)
 
+    /** [currentRegion] for search, where null lets YouTube place us — see [LocaleTags.ytSearchGl]. */
+    private val searchRegion: String?
+        get() = com.music.bitchord.data.LocaleTags.ytSearchGl(currentLocaleTag)
+
     internal val acceptLanguageHeader: String // [KO] request-plumbing
         get() = com.music.bitchord.data.LocaleTags.acceptLanguage(currentLocaleTag)
 
@@ -760,6 +764,19 @@ object Innertube {
         put("isAudioOnly", true)
     }
 
+    /**
+     * A watch queue started from a playlist rather than a track: a mix such as
+     * My Supermix, a playlist radio (`RDAMPL…`), or an artist's Mix / Shuffle
+     * button, which also carry their own seed [videoId] and [params].
+     */
+    suspend fun nextPlaylist(playlistId: String, videoId: String? = null, params: String? = null): JsonObject =
+        postMusic("next") {
+            videoId?.let { put("videoId", it) }
+            put("playlistId", playlistId)
+            params?.let { put("params", it) }
+            put("isAudioOnly", true)
+        }
+
     /** Timed caption transcript used as a last-resort lyrics source. */
     suspend fun transcript(videoId: String): JsonObject = postMusic("get_transcript") {
         // get_transcript expects a tiny protobuf: field 1, length, video id.
@@ -804,6 +821,7 @@ object Innertube {
         gl: String = "US",
         kind: SearchKind = SearchKind.TYPED,
     ): JsonObject = KoInnertube.searchAnonymous(query, params, hl, gl, kind)
+
 
     /** The stats endpoints a player response nominates for one playback. */
     data class PlaybackTracking(
@@ -1471,6 +1489,7 @@ object Innertube {
         authorization,
         anonymous,
     )
+
 
     /** First string value under [key] anywhere in [element], depth-first. */
     private fun findString(element: JsonElement, key: String): String? = when (element) {
