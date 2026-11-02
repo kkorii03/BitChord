@@ -287,6 +287,19 @@ class KoAnalysisHeadEngine(
                 }
             } finally {
                 inFlight.remove(videoId)
+                // A round stopped for playback left its claim for the reader's
+                // release event. If that release already came while this job
+                // was unwinding, retry here so the claim does not become one
+                // that can never start a round.
+                if (videoId in heldElsewhere &&
+                    analysisHeads.containsKey(videoId) &&
+                    !anotherWriterHas(videoId)
+                ) {
+                    heldElsewhere.remove(videoId)
+                    analysisHeads.remove(videoId)
+                    deferredLogged.remove(videoId)
+                    requestAnalysisHead(Uri.parse(AutomixAnalysisSource.opusUri(videoId)))
+                }
             }
         }
     }
@@ -295,6 +308,10 @@ class KoAnalysisHeadEngine(
     fun retryAnalysisHeadIfReaderReleased(videoId: String) {
         if (videoId !in heldElsewhere) return
         if (anotherWriterHas(videoId)) return
+        // The cancelled round may still be unwinding. Its own completion
+        // retries once the in-flight set is clear, so the claim is not lost to
+        // a release that arrives during teardown.
+        if (videoId in inFlight) return
         heldElsewhere.remove(videoId)
         analysisHeads.remove(videoId)
         deferredLogged.remove(videoId)

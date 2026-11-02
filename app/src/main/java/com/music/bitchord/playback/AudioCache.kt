@@ -1639,6 +1639,7 @@ object AudioCache {
                     if (addon != null && heldByYouTube(key)) dropYouTubeEntry(key, id)
                     if (addon != null && heldByYouTube(key)) return@launch
                     StreamChoice.remember(id, stream, substituted = addon != null)
+                    if (addon == null) DirectSourceGate.startedOnYouTube(id, upcoming.target)
                 }
             }
             fetch(id, 0, PRELOAD_BYTES)

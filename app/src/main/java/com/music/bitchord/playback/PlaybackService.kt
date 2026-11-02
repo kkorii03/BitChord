@@ -72,6 +72,7 @@ import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.SonicAudioProcessor
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.decoder.ffmpeg.FfmpegAudioRenderer
+import androidx.media3.decoder.ffmpeg.FfmpegLibrary
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.exoplayer.DecoderReuseEvaluation
@@ -121,6 +122,11 @@ import com.music.bitchord.playback.cast.RemoteSpeaker
 import com.music.bitchord.playback.cast.Speakers
 import com.music.bitchord.playback.cast.CastStream
 import com.music.bitchord.playback.audio.PrecisionAudioSink
+import com.music.bitchord.playback.audio.bitperfect.BitPerfectAudioSink
+import com.music.bitchord.playback.audio.bitperfect.BitPerfectOutput
+import com.music.bitchord.playback.audio.bitperfect.BitPerfectRoutingSink
+import com.music.bitchord.playback.audio.bitperfect.DacVolume
+import com.music.bitchord.playback.audio.bitperfect.usb.UsbDirectDevices
 import com.music.bitchord.playback.audio.ResamplingAudioProcessor
 import com.music.bitchord.playback.audio.SilenceSkipper
 import com.music.bitchord.playback.dsd.DsdExtractorsFactory
@@ -200,6 +206,7 @@ import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.scrobbling.ListenBrainzManager
 import com.music.bitchord.data.scrobbling.ScrobbleManager
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.settings.BitPerfectMode
 import com.music.bitchord.data.settings.EqualizerMode
 import com.music.bitchord.data.settings.ListeningSink
 import com.music.bitchord.data.settings.OutputPcmMode
@@ -2627,10 +2634,28 @@ class PlaybackService : MediaLibraryService() {
         val resolver = streamResolver ?: return@withContext null
         // Ungated: the receiver plays items this player is not on.
         val resolved = DirectSourceGate.ungated { resolver.resolveDataSpec(DataSpec(uri)) }.uri
-        if (resolved.scheme != "http" && resolved.scheme != "https") {
-            null
-        } else {
+        if (resolved.scheme == "http" || resolved.scheme == "https") {
             CastStream(resolved.toString(), CastPlayback.mimeTypeOf(resolved))
+        } else {
+            // The item's URI may be a local/offline path for a downloaded track.
+            // Fall back to resolving the remote stream URL using the same path
+            // non-downloaded tracks use, so the receiver gets an HTTP URL it can
+            // reach — see #1085. Only allow this when the videoId is a known
+            // downloaded YouTube id (key in Downloads.saved); reject external
+            // local files whose videoId is a content:// URI that cannot resolve.
+            val fallback = if (uri.scheme == "content" || uri.scheme == "file") {
+                item.mediaId.takeIf { it.isNotBlank() }?.let { vid ->
+                    if (Downloads.saved.value.containsKey(vid)) "bitchord://watch?v=$vid" else null
+                }
+            } else null
+            if (fallback != null) {
+                runCatching {
+                    DirectSourceGate.ungated { resolver.resolveDataSpec(DataSpec(fallback.toUri())) }.uri
+                        .takeIf { it.scheme == "http" || it.scheme == "https" }
+                }.getOrNull()?.let { url ->
+                    CastStream(url.toString(), CastPlayback.mimeTypeOf(url))
+                }
+            } else null
         }
     }
 
@@ -3406,7 +3431,10 @@ class PlaybackService : MediaLibraryService() {
 
         val position = activePlayer.currentPosition
         val wasPlaying = activePlayer.isPlaying
-        swappingMediaId = song.videoId
+        // The new item has a different id, so the transition callback must be
+        // told to treat it as the same listen, not a new track to record.
+        swappingMediaId = targetVideoId
+        PlaybackTracker.onVersionSwapped(song.videoId, targetVideoId)
 
         // Create the target song with the appropriate flags
         val targetSong = song.copy(
@@ -5044,6 +5072,9 @@ class PlaybackService : MediaLibraryService() {
 
     /** Which track [upgradeJob] is hunting for — see [lookForBetterCopy]. */
     private var upgradeFor: String? = null
+
+    /** Rate limit for listener-requested retries; automatic upgrades do not touch it. */
+    private val manualUpgradeThrottle = ManualUpgradeThrottle(MANUAL_UPGRADE_COOLDOWN_MS)
 
     /**
      * The track whose lossless copy is being handed to the spare player right
@@ -6694,6 +6725,15 @@ class PlaybackService : MediaLibraryService() {
             ).show()
             return
         }
+        val remaining = manualUpgradeThrottle.tryAcquire(SystemClock.elapsedRealtime())
+        if (remaining > 0) {
+            TrackLog.d(
+                "BitChord",
+                "manual upgrade ignored for $mediaId: ${remaining}ms cooldown remaining",
+                about = mediaId,
+            )
+            return
+        }
         OriginalVersion.unpin(mediaId)
         // A manual retry is a request for the addon's state *now*. In
         // particular, do not replay a successful empty search cached while one
@@ -7643,6 +7683,10 @@ class PlaybackService : MediaLibraryService() {
      * player.
      */
     private fun buildAuditionPlayer(meter: BandwidthMeter): ExoPlayer = ExoPlayer.Builder(this)
+        // The fallback is not optional: without it a rendition only FFmpeg is
+        // given (ALAC) can never leave STATE_BUFFERING, and every upgrade to
+        // one times out unproven.
+        .setRenderersFactory(FfmpegFallbackRenderersFactory(this))
         .setMediaSourceFactory(requireNotNull(mediaSourceFactory))
         .setBandwidthMeter(meter)
         .setLoadControl(
@@ -9479,7 +9523,7 @@ class PlaybackService : MediaLibraryService() {
         equalizer: EqualizerProcessor,
         transition: TransitionFilterProcessor,
         loudness: LoudnessProcessor,
-    ) = object : DefaultRenderersFactory(this) {
+    ) = object : FfmpegFallbackRenderersFactory(this) {
         init {
             // Do not force PCM_FLOAT onto an OEM speaker mixer merely because
             // the preference asks for it. The selected route must advertise
@@ -9519,29 +9563,6 @@ class PlaybackService : MediaLibraryService() {
         // Dolby's decoder, which is the only thing that can read it.
         // Same sink as the MediaCodec renderer, so the DSP chain and the
         // precision path see no difference between the two.
-        override fun buildAudioRenderers(
-            context: Context,
-            extensionRendererMode: Int,
-            mediaCodecSelector: MediaCodecSelector,
-            enableDecoderFallback: Boolean,
-            audioSink: AudioSink,
-            eventHandler: Handler,
-            eventListener: AudioRendererEventListener,
-            out: ArrayList<Renderer>,
-        ) {
-            super.buildAudioRenderers(
-                context,
-                extensionRendererMode,
-                mediaCodecSelector,
-                enableDecoderFallback,
-                audioSink,
-                eventHandler,
-                eventListener,
-                out,
-            )
-            out.add(FfmpegAudioRenderer(eventHandler, eventListener, audioSink))
-        }
-
         override fun buildAudioSink(
             context: Context,
             enableFloatOutput: Boolean,
@@ -9594,18 +9615,23 @@ class PlaybackService : MediaLibraryService() {
             // the whole session, while the transition filter belongs to
             // one handoff and has to have the last word on it.
             val dspChain = DspChain(spatial, equalizer, transition, loudness)
-            return PrecisionAudioSink(
-                delegate = defaultSink,
-                dspChain = dspChain,
-                enableFloatOutput = enableFloatOutput,
-                preferredOutputEncodingProvider = { format -> resolvePreferredOutputEncoding(format) },
-                resampleRateProvider = { rate -> resampleTargetRate(rate) },
-                // Which of the two sinks the listener can hear, told by the
-                // role its transition filter currently holds — [activeFilter]
-                // and [spareFilter] trade places at every handoff. Only the
-                // audible one writes telemetry, so the idle player's reset
-                // cannot publish "not exact" over the playing track's verdict.
-                isAudible = { transition === activeFilter },
+            // In front of everything above: a track the bit-perfect output can
+            // carry skips the DSP chain and Media3's sink altogether.
+            return BitPerfectRoutingSink(
+                PrecisionAudioSink(
+                    delegate = defaultSink,
+                    dspChain = dspChain,
+                    enableFloatOutput = enableFloatOutput,
+                    preferredOutputEncodingProvider = { format -> resolvePreferredOutputEncoding(format) },
+                    resampleRateProvider = { rate -> resampleTargetRate(rate) },
+                    // Which of the two sinks the listener can hear, told by the
+                    // role its transition filter currently holds — [activeFilter]
+                    // and [spareFilter] trade places at every handoff. Only the
+                    // audible one writes telemetry, so the idle player's reset
+                    // cannot publish "not exact" over the playing track's verdict.
+                    isAudible = { transition === activeFilter },
+                ),
+                BitPerfectAudioSink(BitPerfectOutput.forContext(context)),
             )
         }
     }
@@ -9829,7 +9855,7 @@ class PlaybackService : MediaLibraryService() {
         return negotiation.output.encoding
     }
 
-    private fun requestOutputReconfiguration() {
+    private fun requestOutputReconfiguration(rebuild: Boolean = false) {
         outputReconfigureJob?.cancel()
         outputReconfigureJob = null
         // Replacing two renderers during a blend would cut one half of it. Park
@@ -9841,7 +9867,7 @@ class PlaybackService : MediaLibraryService() {
                 outputReconfigureGate.request(transitioning = true)
                 return@launch
             }
-            applyOutputReconfiguration()
+            applyOutputReconfiguration(rebuild)
         }
     }
 
@@ -9853,6 +9879,15 @@ class PlaybackService : MediaLibraryService() {
             markAudioTrackReason("output-rebuild")
             rebuildPlayersForOutput(requestedFloat)
         }
+    }
+
+    private fun applyOutputReconfiguration(rebuild: Boolean) {
+        if (!rebuild) {
+            applyOutputReconfiguration()
+            return
+        }
+        markAudioTrackReason("output-rebuild")
+        rebuildPlayersForOutput(shouldEnableFloatOutput())
     }
 
     /**
@@ -10059,6 +10094,53 @@ class PlaybackService : MediaLibraryService() {
         }
         scope.launch {
             AppSettings.outputPcmMode.drop(1).collect { requestOutputReconfiguration() }
+        }
+        // Direct USB needs Android's permission to the DAC, asked for when the
+        // mode is chosen and again whenever a DAC is attached; an answer, an
+        // attach or a detach all send the playing track back to be re-routed.
+        UsbDirectDevices.init(this)
+        BitPerfectOutput.watch(this)
+        scope.launch {
+            var available = false
+            DacVolume.level.collect { level ->
+                val now = level != null
+                (mediaSession?.player as? SessionPlayer)?.onDacVolumeChanged(routeChanged = now != available)
+                available = now
+            }
+        }
+        UsbDirectDevices.onChanged = {
+            BitPerfectOutput.refreshReady(this)
+            scope.launch {
+                if (AppSettings.bitPerfectMode.value == BitPerfectMode.USB_DIRECT) {
+                    UsbDirectDevices.requestPermission(this@PlaybackService)
+                    requestOutputReconfiguration(rebuild = true)
+                }
+            }
+        }
+        scope.launch {
+            // The sinks decide per format, so the playing track only moves on
+            // or off the exclusive output when its sink is configured again.
+            AppSettings.bitPerfectMode.collect { mode ->
+                BitPerfectOutput.refreshReady(this@PlaybackService)
+                if (mode == BitPerfectMode.USB_DIRECT) UsbDirectDevices.requestPermission(this@PlaybackService)
+            }
+        }
+        scope.launch {
+            AppSettings.bitPerfectMode.drop(1).collect { requestOutputReconfiguration(rebuild = true) }
+        }
+        scope.launch {
+            AppSettings.usbAllowFixedVolume.drop(1).collect {
+                if (AppSettings.bitPerfectMode.value == BitPerfectMode.USB_DIRECT) {
+                    requestOutputReconfiguration(rebuild = true)
+                }
+            }
+        }
+        scope.launch {
+            AppSettings.convertForLimitedDac.drop(1).collect {
+                if (AppSettings.bitPerfectMode.value != BitPerfectMode.OFF) {
+                    requestOutputReconfiguration(rebuild = true)
+                }
+            }
         }
         scope.launch {
             // Not applied to a player mid-transition: [CrossfadeController]
@@ -11125,6 +11207,53 @@ class PlaybackService : MediaLibraryService() {
 
             /** A hardware key press, as a share of the receiver's range. */
             const val VOLUME_STEP = 0.05f
+
+            /**
+             * A DAC on direct USB output, whose volume is its own hardware
+             * attenuator: remote, as far as Android's volume keys are
+             * concerned, since the music stream no longer reaches it.
+             */
+            val DAC_DEVICE: DeviceInfo = DeviceInfo.Builder(DeviceInfo.PLAYBACK_TYPE_REMOTE)
+                .setMinVolume(0)
+                .setMaxVolume(100)
+                .build()
+
+            val DEVICE_VOLUME_COMMANDS = intArrayOf(
+                Player.COMMAND_GET_DEVICE_VOLUME,
+                Player.COMMAND_SET_DEVICE_VOLUME,
+                Player.COMMAND_SET_DEVICE_VOLUME_WITH_FLAGS,
+                Player.COMMAND_ADJUST_DEVICE_VOLUME,
+                Player.COMMAND_ADJUST_DEVICE_VOLUME_WITH_FLAGS,
+            )
+        }
+
+        /** The DAC's own volume stands in for the device's, unless a receiver is the speaker. */
+        private val dac: Boolean get() = !cast.active && DacVolume.level.value != null
+
+        private fun dacVolume(): Int = ((DacVolume.level.value ?: 0f) * 100).roundToInt()
+
+        override fun getAvailableCommands(): Player.Commands =
+            if (dac) super.getAvailableCommands().buildUpon().addAll(*DEVICE_VOLUME_COMMANDS).build()
+            else super.getAvailableCommands()
+
+        override fun isCommandAvailable(command: Int): Boolean =
+            (dac && command in DEVICE_VOLUME_COMMANDS) || super.isCommandAvailable(command)
+
+        /**
+         * The DAC volume came or went ([routeChanged]), or moved. Told by the
+         * service, since this wrapper is replaced at every handoff.
+         */
+        fun onDacVolumeChanged(routeChanged: Boolean) {
+            if (cast.active) return
+            if (routeChanged) {
+                val commands = availableCommands
+                listeners.forEach { it.onAvailableCommandsChanged(commands) }
+                val events = Player.Events(FlagSet.Builder().add(Player.EVENT_AVAILABLE_COMMANDS_CHANGED).build())
+                listeners.forEach { it.onEvents(this, events) }
+                onRemoteRouteChanged()
+            } else {
+                onRemoteVolumeChanged()
+            }
         }
 
         override fun addListener(listener: Player.Listener) {
@@ -11164,46 +11293,78 @@ class PlaybackService : MediaLibraryService() {
 
         // The receiver is a remote output with a volume of its own, which is
         // what makes the hardware keys move it instead of the phone's.
-        override fun getDeviceInfo(): DeviceInfo = if (cast.active) CAST_DEVICE else super.getDeviceInfo()
+        override fun getDeviceInfo(): DeviceInfo = when {
+            cast.active -> CAST_DEVICE
+            dac -> DAC_DEVICE
+            else -> super.getDeviceInfo()
+        }
 
-        override fun getDeviceVolume(): Int = if (cast.active) cast.deviceVolume else super.getDeviceVolume()
+        override fun getDeviceVolume(): Int = when {
+            cast.active -> cast.deviceVolume
+            dac -> dacVolume()
+            else -> super.getDeviceVolume()
+        }
 
-        override fun isDeviceMuted(): Boolean = if (cast.active) false else super.isDeviceMuted()
+        override fun isDeviceMuted(): Boolean = if (cast.active || dac) false else super.isDeviceMuted()
 
         override fun setDeviceVolume(volume: Int, flags: Int) {
-            if (cast.active) cast.setVolume(volume / 100f) else super.setDeviceVolume(volume, flags)
+            when {
+                cast.active -> cast.setVolume(volume / 100f)
+                dac -> DacVolume.set(volume / 100f)
+                else -> super.setDeviceVolume(volume, flags)
+            }
         }
 
         @Suppress("DEPRECATION")
         override fun setDeviceVolume(volume: Int) {
-            if (cast.active) cast.setVolume(volume / 100f) else super.setDeviceVolume(volume)
+            when {
+                cast.active -> cast.setVolume(volume / 100f)
+                dac -> DacVolume.set(volume / 100f)
+                else -> super.setDeviceVolume(volume)
+            }
         }
 
         override fun increaseDeviceVolume(flags: Int) {
-            if (cast.active) nudgeReceiverVolume(+VOLUME_STEP) else super.increaseDeviceVolume(flags)
+            when {
+                cast.active -> nudgeReceiverVolume(+VOLUME_STEP)
+                dac -> DacVolume.step(+1)
+                else -> super.increaseDeviceVolume(flags)
+            }
         }
 
         @Suppress("DEPRECATION")
         override fun increaseDeviceVolume() {
-            if (cast.active) nudgeReceiverVolume(+VOLUME_STEP) else super.increaseDeviceVolume()
+            when {
+                cast.active -> nudgeReceiverVolume(+VOLUME_STEP)
+                dac -> DacVolume.step(+1)
+                else -> super.increaseDeviceVolume()
+            }
         }
 
         override fun decreaseDeviceVolume(flags: Int) {
-            if (cast.active) nudgeReceiverVolume(-VOLUME_STEP) else super.decreaseDeviceVolume(flags)
+            when {
+                cast.active -> nudgeReceiverVolume(-VOLUME_STEP)
+                dac -> DacVolume.step(-1)
+                else -> super.decreaseDeviceVolume(flags)
+            }
         }
 
         @Suppress("DEPRECATION")
         override fun decreaseDeviceVolume() {
-            if (cast.active) nudgeReceiverVolume(-VOLUME_STEP) else super.decreaseDeviceVolume()
+            when {
+                cast.active -> nudgeReceiverVolume(-VOLUME_STEP)
+                dac -> DacVolume.step(-1)
+                else -> super.decreaseDeviceVolume()
+            }
         }
 
         override fun setDeviceMuted(muted: Boolean, flags: Int) {
-            if (!cast.active) super.setDeviceMuted(muted, flags)
+            if (!cast.active && !dac) super.setDeviceMuted(muted, flags)
         }
 
         @Suppress("DEPRECATION")
         override fun setDeviceMuted(muted: Boolean) {
-            if (!cast.active) super.setDeviceMuted(muted)
+            if (!cast.active && !dac) super.setDeviceMuted(muted)
         }
 
         private fun nudgeReceiverVolume(delta: Float) =
@@ -12574,6 +12735,8 @@ class PlaybackService : MediaLibraryService() {
         const val MAX_AUTO_SEARCH_CACHE_ENTRIES = 20
         /** Ceiling for [songCache]; see [cacheSong]. */
         const val MAX_SONG_CACHE_ENTRIES = 2_048
+        /** Rate limit for listener-requested quality retries. */
+        const val MANUAL_UPGRADE_COOLDOWN_MS = 30_000L
 
         // Android Auto Content Style Hints
         const val EXTRA_CONTENT_STYLE_SUPPORTED = "android.media.browse.extra.CONTENT_STYLE_SUPPORTED"
@@ -12991,3 +13154,54 @@ internal fun rowSoundingAfterVersionHold(
     alreadySounding: Boolean,
     versionHeld: Boolean,
 ): Boolean = alreadySounding && !versionHeld
+
+/**
+ * The stock renderers, plus FFmpeg after the MediaCodec one.
+ *
+ * Shared by the real players and the upgrade audition, which must be able to
+ * decode whatever it is auditioning or it can never prove it. ALAC goes to
+ * FFmpeg on every device; see [withoutPlatformAlac].
+ */
+private open class FfmpegFallbackRenderersFactory(context: Context) : DefaultRenderersFactory(context) {
+    override fun buildAudioRenderers(
+        context: Context,
+        extensionRendererMode: Int,
+        mediaCodecSelector: MediaCodecSelector,
+        enableDecoderFallback: Boolean,
+        audioSink: AudioSink,
+        eventHandler: Handler,
+        eventListener: AudioRendererEventListener,
+        out: ArrayList<Renderer>,
+    ) {
+        super.buildAudioRenderers(
+            context,
+            extensionRendererMode,
+            withoutPlatformAlac(mediaCodecSelector),
+            enableDecoderFallback,
+            audioSink,
+            eventHandler,
+            eventListener,
+            out,
+        )
+        out.add(FfmpegAudioRenderer(eventHandler, eventListener, audioSink))
+    }
+}
+
+/**
+ * [selector] with no decoders for ALAC, so `MediaCodecAudioRenderer` reports
+ * it unsupported and the track selector hands it to FFmpeg — unless this
+ * build's FFmpeg cannot decode it (an ABI it was not built for), where a
+ * vendor codec is still better than none. Wraps rather than replaces, so a
+ * subclass's own selector (the FLAC one) keeps working underneath.
+ */
+private fun withoutPlatformAlac(selector: MediaCodecSelector) =
+    MediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunnelingDecoder ->
+        if (mimeType == MimeTypes.AUDIO_ALAC && ffmpegDecodesAlac) {
+            emptyList()
+        } else {
+            selector.getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunnelingDecoder)
+        }
+    }
+
+/** Asked once per process, and only when an ALAC track is first looked at. */
+private val ffmpegDecodesAlac by lazy { FfmpegLibrary.supportsFormat(MimeTypes.AUDIO_ALAC) }

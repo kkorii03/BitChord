@@ -1,6 +1,7 @@
 package com.music.bitchord.ko
 
 import android.content.Context
+import android.net.Uri
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.HqQuality
@@ -138,6 +139,13 @@ class KoPrefetchQueue(
             // never going to use. The URL half below is still worth having: a
             // reverted track resolves through YouTube, which is what it warms.
             val pinnedToYouTube = OriginalVersion.isPinned(next)
+            // Not over an entry YouTube's own bytes already fill, from an
+            // earlier play: the player reads that head straight off disk,
+            // and the pin would then stream the substitute after it. That
+            // track's way up is the second look — see [AudioCache.heldByYouTube].
+            val youTubeFilled = AudioCache.heldByYouTube(
+                AudioCache.cacheKeyOf(Uri.parse("bitchord://watch?v=$next")),
+            )
             val nextFlight = if (next == headId) headFlight else null
             scope.launch {
                 // With substitution on, the *bytes* half above used to be
@@ -159,7 +167,7 @@ class KoPrefetchQueue(
                 // leaves nothing pinned, and this falls through to the same
                 // URL-only warm-up it did before — YouTube resolves the track at
                 // playback time as usual.
-                val warmed = if (substitutable && target != null && !pinnedToYouTube) {
+                val warmed = if (substitutable && target != null && !pinnedToYouTube && !youTubeFilled) {
                     // The sound comparison is the gate: a candidate that is a
                     // cover, a live take or a different edit is refused here,
                     // before it can be pinned for the next play. Because it is
@@ -208,7 +216,7 @@ class KoPrefetchQueue(
                 val cacheBytes = BatteryPolicy.cachePrefetchBytesAllowed(
                     metered = metered,
                     lowPower = AppSettings.lowPower.value,
-                ) && (!substitutable || warmed != null) && !pinnedToYouTube &&
+                ) && (!substitutable || warmed != null) && !pinnedToYouTube && !youTubeFilled &&
                     // The player already owns this entry; see heldHead.
                     next != heldHead
                 if (cacheBytes) {
