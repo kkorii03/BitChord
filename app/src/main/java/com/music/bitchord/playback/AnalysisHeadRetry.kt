@@ -62,6 +62,23 @@ internal fun analysisHeadMayClaimOrRetry(
 ): Boolean = !inFlight && !anotherWriterHas && (!alreadyRequested || heldForReader)
 
 /**
+ * Whether a claim kept for a reader's release may start its deferred round now.
+ *
+ * The same rule covers both ends of the handoff: the release hook that fires
+ * while the round is still unwinding must not start a second round (the
+ * completion path will), and a release that arrives after the round is gone
+ * starts exactly one. [heldForReader] is the kept claim, [alreadyRequested]
+ * its presence in the claim map, and [inFlight] the round still on its way
+ * out.
+ */
+internal fun analysisHeadHeldClaimMayRetry(
+    heldForReader: Boolean,
+    alreadyRequested: Boolean,
+    anotherWriterHas: Boolean,
+    inFlight: Boolean,
+): Boolean = heldForReader && alreadyRequested && !anotherWriterHas && !inFlight
+
+/**
  * Whether a running analysis round has to stop for playback.
  *
  * Playback always wins: its first byte is on the audible path, while the

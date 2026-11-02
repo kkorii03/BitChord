@@ -1,6 +1,7 @@
 package com.music.bitchord.ko
 
 import android.content.Context
+import android.net.Uri
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.HqQuality
@@ -27,6 +28,27 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+
+/**
+ * Whether read-ahead may write the next track's bytes.
+ *
+ * Byte read-ahead is independent of substitution when no substitute is being
+ * considered: `warmed == null` already blocks the substitute path, while the
+ * ordinary YouTube read-ahead must still fill a partially cached next track.
+ * Only a track pinned to another source (or to its own original) and one the
+ * player already owns are refused outright.
+ */
+internal fun readAheadBytesAllowed(
+    metered: Boolean,
+    lowPower: Boolean,
+    substitutable: Boolean,
+    substitutePinned: Boolean,
+    pinnedToYouTube: Boolean,
+    playerHoldsHead: Boolean,
+): Boolean = BatteryPolicy.cachePrefetchBytesAllowed(metered, lowPower) &&
+    (!substitutable || substitutePinned) &&
+    !pinnedToYouTube &&
+    !playerHoldsHead
 
 /**
  * [KO] prefetch-queue
@@ -138,6 +160,13 @@ class KoPrefetchQueue(
             // never going to use. The URL half below is still worth having: a
             // reverted track resolves through YouTube, which is what it warms.
             val pinnedToYouTube = OriginalVersion.isPinned(next)
+            // Not over an entry YouTube's own bytes already fill, from an
+            // earlier play: the player reads that head straight off disk,
+            // and the pin would then stream the substitute after it. That
+            // track's way up is the second look — see [AudioCache.heldByYouTube].
+            val youTubeFilled = AudioCache.heldByYouTube(
+                AudioCache.cacheKeyOf(Uri.parse("bitchord://watch?v=$next")),
+            )
             val nextFlight = if (next == headId) headFlight else null
             scope.launch {
                 // With substitution on, the *bytes* half above used to be
@@ -159,7 +188,7 @@ class KoPrefetchQueue(
                 // leaves nothing pinned, and this falls through to the same
                 // URL-only warm-up it did before — YouTube resolves the track at
                 // playback time as usual.
-                val warmed = if (substitutable && target != null && !pinnedToYouTube) {
+                val warmed = if (substitutable && target != null && !pinnedToYouTube && !youTubeFilled) {
                     // The sound comparison is the gate: a candidate that is a
                     // cover, a live take or a different edit is refused here,
                     // before it can be pinned for the next play. Because it is
@@ -205,12 +234,14 @@ class KoPrefetchQueue(
                 // same answer for the bytes half — the URL is still warmed so a
                 // transition does not wait on a client walk.
                 val metered = AppSettings.meteredConnection.value == true
-                val cacheBytes = BatteryPolicy.cachePrefetchBytesAllowed(
+                val cacheBytes = readAheadBytesAllowed(
                     metered = metered,
                     lowPower = AppSettings.lowPower.value,
-                ) && (!substitutable || warmed != null) && !pinnedToYouTube &&
-                    // The player already owns this entry; see heldHead.
-                    next != heldHead
+                    substitutable = substitutable,
+                    substitutePinned = warmed != null,
+                    pinnedToYouTube = pinnedToYouTube,
+                    playerHoldsHead = next == heldHead,
+                )
                 if (cacheBytes) {
                     launch(TrackLog.about(next)) {
                         delay(PREFETCH_DELAY_MS)
