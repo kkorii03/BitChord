@@ -60,6 +60,21 @@ object MediaTagger {
     private const val COPY_BUFFER = 64 * 1024
 
     /**
+     * Largest file the in-memory taggers may load.
+     *
+     * MP4 and WebM tagging needs random access, so [embed] reads the whole file
+     * and the tagger builds two more copies — roughly 3× the file in byte
+     * arrays. A 40MB lossless track is ~120MB, enough to fail near the heap
+     * ceiling. FLAC never takes this path (see [tagFlacStreaming]); anything
+     * bigger than this keeps its bytes and loses only the embedded tags.
+     */
+    private const val MAX_IN_MEMORY_TAG_BYTES = 32L * 1024 * 1024
+
+    /** Whether a [sizeBytes]-long file is safe for the ~3-copies in-memory taggers. */
+    internal fun canTagInMemory(sizeBytes: Long?): Boolean =
+        sizeBytes != null && sizeBytes in 0..MAX_IN_MEMORY_TAG_BYTES
+
+    /**
      * The containers there is a tagger for.
      *
      * A download can land as something else — `.wav` from a source that serves
@@ -251,6 +266,14 @@ object MediaTagger {
         if (extension == "flac" &&
             tagFlacStreaming(context, uri, track, plain, words, artwork)
         ) {
+            return
+        }
+
+        // FLAC that could not be streamed, plus the two containers that can
+        // only be tagged in memory, must stay under the ~3-copy heap budget.
+        val size = sizeOf(context, uri)
+        if (!canTagInMemory(size)) {
+            Log.w(TAG, "not tagging ${track.videoId}: ${size ?: "unknown"}B $extension would not fit in memory")
             return
         }
 
@@ -472,6 +495,15 @@ object MediaTagger {
             context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
         }
     }.onFailure { Log.w(TAG, "could not read $uri for tagging: ${it.message}") }.getOrNull()
+
+    /** The file's length without opening its bytes, or null when it cannot be read. */
+    private fun sizeOf(context: Context, uri: Uri): Long? = runCatching {
+        if (uri.scheme == "file") {
+            File(requireNotNull(uri.path)).length()
+        } else {
+            context.contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize }
+        }
+    }.onFailure { Log.w(TAG, "could not measure $uri for tagging: ${it.message}") }.getOrNull()
 
     private fun writeAll(context: Context, uri: Uri, bytes: ByteArray) {
         runCatching {

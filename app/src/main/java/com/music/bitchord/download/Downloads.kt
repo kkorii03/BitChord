@@ -1893,12 +1893,12 @@ object Downloads {
         if (!youtubeOnly) {
             val row = SourceRegistry.parseTrackKey(track.videoId)
             row?.takeIf { it.first != avoidSourceConfigId }?.let { (configId, trackId) ->
-                fromRow(track, configId, trackId, quality)?.let { (stream, storable) ->
-                    routeFromSource(context, track, stream, storable)?.let { return it }
+                fromRow(track, configId, trackId, quality)?.let { kept ->
+                    routeFromSource(context, track, kept.stream, kept.storable, kept.probe)?.let { return it }
                 }
             }
-            fromSources(track, quality, avoidSourceConfigId)?.let { (stream, storable) ->
-                routeFromSource(context, track, stream, storable)?.let { return it }
+            fromSources(track, quality, avoidSourceConfigId)?.let { kept ->
+                routeFromSource(context, track, kept.stream, kept.storable, kept.probe)?.let { return it }
             }
             if (row != null && row.first != avoidSourceConfigId) {
                 val name = SourceRegistry.config(row.first)?.displayName ?: "its source"
@@ -1959,11 +1959,13 @@ object Downloads {
         track: Song,
         stream: SourceStream,
         storable: DownloadStore.Storable,
+        probe: Downloader.Probe? = null,
     ): Route? = com.music.bitchord.ko.downloads.KoDownloadPipeline.routeFromSource(
         context,
         track,
         stream,
         storable,
+        probe,
     ) // [KO] pipeline
 
     /**
@@ -1992,7 +1994,7 @@ object Downloads {
         configId: String,
         trackId: String,
         quality: DownloadQuality,
-    ): Pair<SourceStream, DownloadStore.Storable>? {
+    ): Kept? {
         val stream = try {
             SourceResolver.forDownloadOfRow(
                 configId,
@@ -2017,26 +2019,35 @@ object Downloads {
         return keepable(stream, storable)
     }
 
+    /** A source's stream with how it will be filed and what [Downloader.probe] found there. */
+    internal class Kept(
+        val stream: SourceStream,
+        val storable: DownloadStore.Storable,
+        val probe: Downloader.Probe,
+    )
+
     /** The v1.9 [SourceResolver.forDownload] gate, keeping the fork's file routing. */
     private suspend fun keepable(
         stream: SourceStream,
         storable: DownloadStore.Storable,
-    ): Pair<SourceStream, DownloadStore.Storable>? {
-        when (Downloader.probe(stream.url, stream.headers, stream.format.codec)) {
-            null -> {
-                Log.d(TAG, "${stream.format.summary}: not a file a download can keep; passing")
-                return null
-            }
-            // The fork's pipeline writes the bytes it fetches as one file; a
-            // manifest (extensionless HLS, DASH) would land as a tiny `.flac`.
-            // shortcut: skip manifests until v1.9's ManifestFile assembly is
-            // ported into KoDownloadPipeline.
-            is Downloader.Probe.Manifest -> {
-                Log.d(TAG, "${stream.format.summary}: a manifest, not a file; passing")
-                return null
-            }
-            is Downloader.Probe.File -> return stream to storable
+    ): Kept? = keptFor(stream, storable, Downloader.probe(stream.url, stream.headers, stream.format.codec))
+
+    /** [keepable]'s judgement, apart from the request so it can be tested on a probe alone. */
+    internal fun keptFor(
+        stream: SourceStream,
+        storable: DownloadStore.Storable,
+        probe: Downloader.Probe?,
+    ): Kept? = when (probe) {
+        null -> {
+            Log.d(TAG, "${stream.format.summary}: not a file a download can keep; passing")
+            null
         }
+        // A manifest's segments are joined back into one ordinary file by
+        // KoDownloadPipeline, so it stays here rather than falling through to
+        // YouTube; [routeFromSource] decides whether it can be filed (an
+        // exported manifest the assembler cannot write still declines).
+        is Downloader.Probe.Manifest -> Kept(stream, storable, probe)
+        is Downloader.Probe.File -> Kept(stream, storable, probe)
     }
 
     /**
@@ -2069,7 +2080,7 @@ object Downloads {
         track: Song,
         quality: DownloadQuality,
         avoidSourceConfigId: String? = null,
-    ): Pair<SourceStream, DownloadStore.Storable>? {
+    ): Kept? {
         // Wrapped so the two ways this can come back empty stay apart in the
         // log. `withTimeoutOrNull` collapses them into one null, and the
         // difference is the whole diagnosis: "no enabled source holds this
@@ -2079,7 +2090,7 @@ object Downloads {
         // The outer bound adds [LOOKUP_BACKSTOP_MS] so it cannot cancel the
         // resolver at the instant its own budget expires, before it returns an
         // answer already in hand.
-        val kept = java.util.concurrent.ConcurrentHashMap<String, Pair<SourceStream, DownloadStore.Storable>>()
+        val kept = java.util.concurrent.ConcurrentHashMap<String, Kept>()
         var timedOut = true
         val stream = withTimeoutOrNull(SOURCE_LOOKUP_MS + LOOKUP_BACKSTOP_MS) {
             try {
@@ -2089,8 +2100,8 @@ object Downloads {
                     keep = { candidate ->
                         DownloadStore.storable(candidate.format.codec)?.let { storable ->
                             keepable(candidate, storable)
-                                ?.also { kept[it.first.url] = it }
-                                ?.first
+                                ?.also { kept[it.stream.url] = it }
+                                ?.stream
                         }
                     },
                     excludeSources = setOfNotNull(avoidSourceConfigId),

@@ -1,10 +1,12 @@
 package com.music.bitchord
 
 import com.music.bitchord.download.FlacTagger
+import com.music.bitchord.download.MediaTagger
 import com.music.bitchord.download.Mp4Tagger
 import com.music.bitchord.download.WebmTagger
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
@@ -449,6 +451,20 @@ class MediaTaggerTest {
         assertTrue(tagged.indexOfBytes("LYRICS=$LRC".toByteArray(Charsets.UTF_8)) >= 0)
     }
 
+
+    /**
+     * The in-memory taggers hold roughly three copies of the file. A file past
+     * the cap keeps its bytes and loses only its tags, rather than failing the
+     * whole download near the heap ceiling; an unknown size is not trusted.
+     */
+    @Test
+    fun `in-memory tagging is capped and refuses unknown sizes`() {
+        assertTrue(MediaTagger.canTagInMemory(0L))
+        assertTrue(MediaTagger.canTagInMemory(32L * 1024 * 1024))
+        assertFalse(MediaTagger.canTagInMemory(32L * 1024 * 1024 + 1))
+        assertFalse(MediaTagger.canTagInMemory(-1L))
+        assertFalse(MediaTagger.canTagInMemory(null))
+    }
 
     private companion object {
         const val TYPE_STREAMINFO = 0
