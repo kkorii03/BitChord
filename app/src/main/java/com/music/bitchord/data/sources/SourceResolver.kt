@@ -666,6 +666,7 @@ object SourceResolver {
             request,
             waitForAll = true,
             strictLength = true,
+            driftSec = upgradeSlackSec(),
             requireSharedArtist = true,
             strictOriginal = true,
             allowArtistUnverified = true,
@@ -1126,6 +1127,12 @@ object SourceResolver {
         request: StreamRequest,
         waitForAll: Boolean = false,
         strictLength: Boolean = false,
+        /**
+         * The runtime bar [strictLength] applies. A mid-song upgrade passes
+         * the listener's own tolerance ([upgradeSlackSec]); a download and the
+         * YouTube fallback keep the fixed [UPGRADE_DRIFT_SEC].
+         */
+        driftSec: Int = UPGRADE_DRIFT_SEC,
         requireSharedArtist: Boolean = false,
         strictOriginal: Boolean = false,
         /**
@@ -1232,6 +1239,7 @@ object SourceResolver {
                             strictOriginal,
                             manual,
                             allowArtistUnverified,
+                            driftSec,
                         )
                     }
                     if (answer == null) {
@@ -1433,11 +1441,16 @@ object SourceResolver {
      *   instead of answering from whichever of them are quick — affordable only
      *   when nobody is waiting on the first note.
      * @param strictLength requires a candidate's runtime to agree with
-     *   [target]'s to within [UPGRADE_DRIFT_SEC]. Kept apart from [waitForAll]
+     *   [target]'s to within [driftSec]. Kept apart from [waitForAll]
      *   because it is only meaningful when the target *has* a runtime:
      *   [TrackMatcher.withinSeconds] answers false for every candidate against a
      *   null one, so asking for this against a target that never carried a
      *   duration is not a strict search but an empty one.
+     * @param driftSec [UPGRADE_DRIFT_SEC] unless the caller is deciding a
+     *   mid-song swap, which answers to the listener's tolerance instead — see
+     *   [upgradeSlackSec]. A download and the YouTube fallback keep the fixed
+     *   bar: neither cuts into audio already playing, which is what the setting
+     *   is about.
      */
     private suspend fun matchAndStream(
         source: MusicSource,
@@ -1449,6 +1462,7 @@ object SourceResolver {
         strictOriginal: Boolean = false,
         manual: Boolean = false,
         allowArtistUnverified: Boolean = false,
+        driftSec: Int = UPGRADE_DRIFT_SEC,
     ): SearchOutcome {
         var last = SearchOutcome()
         for (query in TrackMatcher.queries(target)) {
@@ -1589,7 +1603,7 @@ object SourceResolver {
                     val drift = if (it in artistUnverified) {
                         TrackMatcher.ARTIST_UNVERIFIED_DRIFT_SEC
                     } else {
-                        UPGRADE_DRIFT_SEC
+                        driftSec
                     }
                     TrackMatcher.withinSeconds(it, target, drift)
                 }
@@ -1612,7 +1626,7 @@ object SourceResolver {
                         strictOriginal = strictOriginal,
                         requireSharedArtist = requireSharedArtist,
                         strictLength = strictLength,
-                        driftSec = UPGRADE_DRIFT_SEC,
+                        driftSec = driftSec,
                         allowArtistUnverified = allowArtistUnverified,
                     )
                 }
@@ -1638,10 +1652,20 @@ object SourceResolver {
             // the source race applies afterwards.
             val verifiedMatches = matches.filterNot { it in artistUnverified }
             val unverifiedMatches = matches.filter { it in artistUnverified }
+            val sameLengthSec =
+                if (strictLength) maxOf(SAME_RECORDING_SEC, driftSec) else SAME_RECORDING_SEC
             val verifiedOpened = if (verifiedMatches.isEmpty()) {
                 null
             } else {
-                streamBest(source, verifiedMatches, target, request)
+                streamBest(
+                    source,
+                    verifiedMatches,
+                    target,
+                    request,
+                    sameLengthSec = sameLengthSec,
+                    // Only the patient lookups can afford to open more than one row.
+                    compareRows = waitForAll,
+                )
             }
             // When the credited copy already serves the request, the localised
             // row is only an alternate for hq-verify, not something worth
@@ -1784,8 +1808,9 @@ object SourceResolver {
         matches: List<Song>,
         target: TrackMatcher.Target,
         wantsLossless: Boolean,
+        sameLengthSec: Int = SAME_RECORDING_SEC,
     ): List<Song> {
-        val sameLength = matches.filter { TrackMatcher.withinSeconds(it, target, SAME_RECORDING_SEC) }
+        val sameLength = matches.filter { TrackMatcher.withinSeconds(it, target, sameLengthSec) }
         val eligible = sameLength.ifEmpty { matches }
         // The immersive mix goes first when the listener asked for immersive
         // audio and the device can decode it. This is not a quality rung and
@@ -1842,19 +1867,33 @@ object SourceResolver {
          * an unused copy failing says nothing about the copy that opened.
          */
         countFailure: Boolean = true,
+        sameLengthSec: Int = SAME_RECORDING_SEC,
+        /**
+         * Keep opening the remaining lossless rows after one has answered, and
+         * return the best of them by [isBetter], rather than the first. Only
+         * for a caller that is not holding up a first note: each row is another
+         * stream call.
+         */
+        compareRows: Boolean = false,
     ): Pair<Song, SourceStream>? {
         val wantsLossless = request is StreamRequest.Lossless
-        val ordered = if (preserveOrder) matches else preferred(matches, target, wantsLossless)
+        val ordered = if (preserveOrder) matches else preferred(matches, target, wantsLossless, sameLengthSec)
         var settleFor: Pair<Song, SourceStream>? = null
+        var best: Pair<Song, SourceStream>? = null
         // A credential refusal is not a property of this row: every other row
         // will be refused the same way. Stop after the first refusal instead of
         // spending up to three `/stream` calls (and raising the source's
         // failure mark each time) against a source that just said no.
         val authMark = SourceCooldown.authMark(source.configId)
         for (match in ordered.take(STREAM_ATTEMPTS)) {
+            if (best != null) {
+                // Past the first answer, only rows that could beat it: another
+                // lossless one. An immersive answer is beaten by nothing.
+                if (best.second.format.isDolbyAtmos || match.sourceQuality != ModuleSource.LOSSLESS) break
+            }
             val trackId = SourceRegistry.parseTrackKey(match.videoId)?.second ?: match.videoId
             val opened = attempt(source, countFailure) { source.stream(trackId, request) }
-            if (SourceCooldown.authMark(source.configId) != authMark) return settleFor
+            if (SourceCooldown.authMark(source.configId) != authMark) return best ?: settleFor
             if (opened == null) continue
             // The row this URL came from knows how long the recording is; the
             // URL itself doesn't. Carried along so a caller swapping this into
@@ -1875,7 +1914,9 @@ object SourceResolver {
                         "duration=${match.durationText ?: "?"} explicit=${match.isExplicit ?: "?"} " +
                         "→ ${served.summary}",
                 )
-                return match to stream
+                if (!compareRows) return match to stream
+                if (best == null || isBetter(stream.format, best.second.format)) best = match to stream
+                continue
             }
             TrackLog.d(
                 TAG,
@@ -1894,7 +1935,7 @@ object SourceResolver {
                 settleFor = lower
             }
         }
-        return settleFor
+        return best ?: settleFor
     }
 
     /**
