@@ -57,6 +57,68 @@ object LyricsWordAlign {
      * judging a wrong song must not read it as one.
      */
     fun placeLinesDetailed(lines: List<String>, words: List<Heard>): Placement {
+        val aligned = align(lines, words)
+            ?: return Placement(List(lines.size) { null }, attempted = false)
+        val starts = arrayOfNulls<Long>(lines.size)
+        var k = 0
+        while (k < aligned.lyricChars.size) {
+            val line = aligned.lyricLine[k]
+            var end = k
+            while (end < aligned.lyricChars.size && aligned.lyricLine[end] == line) end++
+            // The opening letters of the line: two of the first few heard,
+            // the first of them giving the start.
+            val opening = (k until minOf(end, k + LEAD_LETTERS + 2)).filter { aligned.heardFor[it] >= 0 }
+            if (opening.size >= 2 && aligned.lyricPos[opening.first()] <= LEAD_LETTERS) {
+                val first = opening.first()
+                starts[line] = (aligned.heardMs[aligned.heardFor[first]] -
+                    aligned.lyricPos[first] * LETTER_MS).coerceAtLeast(0L)
+            }
+            k = end
+        }
+        return Placement(starts.toList(), attempted = true)
+    }
+
+    /** A heard word matched to a line, with how far into that line its first matched letter sits. */
+    data class MatchedWord(val word: Heard, val offsetMs: Long)
+
+    /**
+     * The heard words matched to each line by the same monotonic letter
+     * alignment [placeLines] uses, with the time before each word inside its
+     * line (from its first matched lyric letter). Empty lines have no words.
+     *
+     * A line with at least two of these was heard as that line, so the per-line
+     * residual layer can move just it instead of the whole song. Words are in
+     * the order they were matched, so the first is the line's opening.
+     */
+    fun matchedWords(lines: List<String>, words: List<Heard>): List<List<MatchedWord>> {
+        val aligned = align(lines, words) ?: return List(lines.size) { emptyList() }
+        val perLine = List(lines.size) { LinkedHashMap<Int, Int>() }
+        for (i in aligned.lyricChars.indices) {
+            val heardAt = aligned.heardFor[i]
+            if (heardAt < 0) continue
+            val line = aligned.lyricLine[i]
+            val word = aligned.heardWord[heardAt]
+            val firstPositions = perLine[line]
+            if (!firstPositions.containsKey(word)) firstPositions[word] = aligned.lyricPos[i]
+        }
+        return perLine.map { firstPositions ->
+            firstPositions.map { (word, position) ->
+                MatchedWord(words[word], position * LETTER_MS)
+            }
+        }
+    }
+
+    /** The lyrics' and transcript's letters aligned end to end, or null when too large to try. */
+    private class Alignment(
+        val lyricChars: CharArray,
+        val lyricLine: IntArray,
+        val lyricPos: IntArray,
+        val heardMs: LongArray,
+        val heardWord: IntArray,
+        val heardFor: IntArray,
+    )
+
+    private fun align(lines: List<String>, words: List<Heard>): Alignment? {
         val lyricChars = StringBuilder()
         val lyricLine = ArrayList<Int>()
         val lyricPos = ArrayList<Int>()
@@ -69,19 +131,20 @@ object LyricsWordAlign {
         }
         val heardChars = StringBuilder()
         val heardMs = ArrayList<Long>()
-        for (word in words) {
+        val heardWord = ArrayList<Int>()
+        words.forEachIndexed { index, word ->
             val letters = fold(word.text)
-            if (letters.isEmpty()) continue
+            if (letters.isEmpty()) return@forEachIndexed
             val span = (word.endMs - word.startMs).coerceAtLeast(0L)
             letters.forEachIndexed { k, c ->
                 heardChars.append(c)
                 heardMs += word.startMs + span * k / letters.length
+                heardWord += index
             }
         }
         val n = lyricChars.length
         val m = heardChars.length
-        val none = List<Long?>(lines.size) { null }
-        if (n == 0 || m == 0 || n.toLong() * m > MAX_CELLS) return Placement(none, attempted = false)
+        if (n == 0 || m == 0 || n.toLong() * m > MAX_CELLS) return null
 
         // Semi-global: leading and trailing gaps on either side cost nothing —
         // the video may sing only part of the lyrics, and say things besides.
@@ -121,22 +184,13 @@ object LyricsWordAlign {
                 else -> j--
             }
         }
-
-        val starts = arrayOfNulls<Long>(lines.size)
-        var k = 0
-        while (k < n) {
-            val line = lyricLine[k]
-            var end = k
-            while (end < n && lyricLine[end] == line) end++
-            // The opening letters of the line: two of the first few heard,
-            // the first of them giving the start.
-            val opening = (k until minOf(end, k + LEAD_LETTERS + 2)).filter { heardFor[it] >= 0 }
-            if (opening.size >= 2 && lyricPos[opening.first()] <= LEAD_LETTERS) {
-                val first = opening.first()
-                starts[line] = (heardMs[heardFor[first]] - lyricPos[first] * LETTER_MS).coerceAtLeast(0L)
-            }
-            k = end
-        }
-        return Placement(starts.toList(), attempted = true)
+        return Alignment(
+            lyricChars = lyricChars.toString().toCharArray(),
+            lyricLine = lyricLine.toIntArray(),
+            lyricPos = lyricPos.toIntArray(),
+            heardMs = heardMs.toLongArray(),
+            heardWord = heardWord.toIntArray(),
+            heardFor = heardFor,
+        )
     }
 }

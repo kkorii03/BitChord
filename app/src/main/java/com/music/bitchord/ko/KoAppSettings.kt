@@ -424,13 +424,15 @@ internal object KoAppSettings {
     val syncSafetyNextPrep = MutableStateFlow(true)
     val syncSafetyDownloadRecheck = MutableStateFlow(false)
     val syncSafetyHqSync = MutableStateFlow(false)
+    val syncSafetyPerLine = MutableStateFlow(true)
 
-    /** The three switches above as the pure policy sees them. */
+    /** The four switches above as the pure policy sees them. */
     val syncSafetySwitches: SyncSafetyPolicy.Switches
         get() = SyncSafetyPolicy.Switches(
             nextPrepLyrics = syncSafetyNextPrep.value,
             downloadedRecheck = syncSafetyDownloadRecheck.value,
             hqReapply = syncSafetyHqSync.value,
+            perLineTiming = syncSafetyPerLine.value,
         )
 
     fun setSyncSafetyNextPrep(value: Boolean) {
@@ -446,6 +448,11 @@ internal object KoAppSettings {
     fun setSyncSafetyHqSync(value: Boolean) {
         syncSafetyHqSync.value = value
         AppSettings.prefs.edit().putBoolean(KEY_SYNC_SAFETY_HQ_SYNC, value).apply()
+    }
+
+    fun setSyncSafetyPerLine(value: Boolean) {
+        syncSafetyPerLine.value = value
+        AppSettings.prefs.edit().putBoolean(KEY_SYNC_SAFETY_PER_LINE, value).apply()
     }
 
     // ── Widgets ────────────────────────────────────────────────────────────
@@ -556,6 +563,7 @@ internal object KoAppSettings {
         syncSafetyNextPrep.value = prefs.getBoolean(KEY_SYNC_SAFETY_NEXT_PREP, true)
         syncSafetyDownloadRecheck.value = prefs.getBoolean(KEY_SYNC_SAFETY_DOWNLOAD_RECHECK, false)
         syncSafetyHqSync.value = prefs.getBoolean(KEY_SYNC_SAFETY_HQ_SYNC, false)
+        syncSafetyPerLine.value = prefs.getBoolean(KEY_SYNC_SAFETY_PER_LINE, true)
         AppSettings.paxSenixApiKey.value = authStore.secret(AppSettings.KEY_PAXSENIX_API_KEY).orEmpty()
         com.music.bitchord.data.lyrics.PaxSenix.setApiKey(AppSettings.paxSenixApiKey.value)
         geminiApiKey.value = authStore.secret(KEY_GEMINI_API_KEY) ?: bundledGeminiApiKey

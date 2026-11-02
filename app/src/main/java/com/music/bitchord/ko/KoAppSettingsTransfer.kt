@@ -290,6 +290,7 @@ internal object KoAppSettingsTransfer {
             KEY_SYNC_SAFETY_NEXT_PREP,
             KEY_SYNC_SAFETY_DOWNLOAD_RECHECK,
             KEY_SYNC_SAFETY_HQ_SYNC,
+            KEY_SYNC_SAFETY_PER_LINE,
             KEY_RESUME_ON_HEADPHONES,
             KEY_REPLAY_GENRES,
             KEY_FILTER_NON_MUSIC_AUDIO,
@@ -310,6 +311,7 @@ internal object KoAppSettingsTransfer {
             KEY_SYNC_SAFETY_NEXT_PREP,
             KEY_SYNC_SAFETY_DOWNLOAD_RECHECK,
             KEY_SYNC_SAFETY_HQ_SYNC,
+            KEY_SYNC_SAFETY_PER_LINE,
         )
         ints(
             KEY_UPGRADE_LENGTH_SLACK_SECONDS,

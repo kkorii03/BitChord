@@ -1191,6 +1191,8 @@
     <string name="sync_safety_hq_sync">HQ sync re-apply</string>
 
     <string name="sync_safety_hq_sync_subtitle">Developer option. Re-applies a saved HQ offset and rate to lyrics. Off shows the provider\'s own timing.</string>
+    <string name="sync_safety_per_line">Per-line lyrics timing correction</string>
+    <string name="sync_safety_per_line_subtitle">Developer option. Corrects each line\'s timing from the words heard. Off keeps only the whole-song correction.</string>
 
     <string name="lyrics_debug_logs">Lyrics debug logs</string>
 

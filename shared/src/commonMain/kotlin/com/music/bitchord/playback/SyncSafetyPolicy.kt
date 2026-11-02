@@ -5,29 +5,35 @@ import com.music.bitchord.playback.NextPrepPolicy.Step
 /**
  * Which of the post-ko-101 lyrics-sync paths are allowed to run.
  *
- * The pure switches default off. AppSettings turns the next-prep lyrics switch
- * on by default so its sync work runs before the next song starts; the other
- * two stay off. The paths they guard were added after ko-101, whose sync the
- * listener asked to keep, and each one can move or replace a song's lyrics:
- * the next-song bundle's lyrics/sync steps and first-frame cache, the
- * downloaded-file re-check and its override file, and the saved HQ offset/rate
- * applied on top of a song's timing. Turning a switch back on runs the existing
- * code; nothing here deletes it.
+ * The pure switches default off except the per-line residual layer, which is
+ * on by default because it only moves lines the heard words clearly place
+ * elsewhere. AppSettings turns the next-prep lyrics switch on by default so its
+ * sync work runs before the next song starts; the download re-check and saved
+ * HQ offset/rate stay off. The paths they guard were added after ko-101, whose
+ * sync the listener asked to keep, and each one can move or replace a song's
+ * lyrics: the next-song bundle's lyrics/sync steps and first-frame cache, the
+ * downloaded-file re-check and its override file, the saved HQ offset/rate
+ * applied on top of a song's timing, and the per-line residual learned from
+ * words already heard. Turning a switch back on runs the existing code;
+ * nothing here deletes it.
  */
 object SyncSafetyPolicy {
 
-    enum class Path { NEXT_PREP_LYRICS, DOWNLOADED_RECHECK, HQ_REAPPLY }
+    enum class Path { NEXT_PREP_LYRICS, DOWNLOADED_RECHECK, HQ_REAPPLY, PER_LINE_TIMING }
 
     data class Switches(
         val nextPrepLyrics: Boolean = false,
         val downloadedRecheck: Boolean = false,
         val hqReapply: Boolean = false,
+        /** The per-line residual layer, on by default: it only moves lines the words clearly heard. */
+        val perLineTiming: Boolean = true,
     )
 
     fun isEnabled(path: Path, switches: Switches): Boolean = when (path) {
         Path.NEXT_PREP_LYRICS -> switches.nextPrepLyrics
         Path.DOWNLOADED_RECHECK -> switches.downloadedRecheck
         Path.HQ_REAPPLY -> switches.hqReapply
+        Path.PER_LINE_TIMING -> switches.perLineTiming
     }
 
     /**
@@ -81,6 +87,9 @@ object SyncSafetyPolicy {
 
     /** Whether a saved HQ offset/rate may be applied to lyrics. */
     fun hqAdjustmentAllowed(switches: Switches): Boolean = switches.hqReapply
+
+    /** Whether the per-line residual layer may move individual lines from the words heard. */
+    fun perLineTimingAllowed(switches: Switches): Boolean = switches.perLineTiming
 
     private val LYRICS_AND_SYNC = setOf(Step.LYRICS, Step.SYNC)
 }

@@ -124,6 +124,13 @@ fun List<LyricLine>.timedBy(map: LyricsTimeMap?, extraMs: Long = 0L): List<Lyric
 /** [lines] retimed by [at], for a correction that is not a straight map (a capped refine). */
 fun List<LyricLine>.retimedBy(at: (Long) -> Long): List<LyricLine> = map { it.retimed(at) }
 
+/** [lines] each moved by its own [shiftsMs]; the per-line residual layer. */
+fun List<LyricLine>.retimedByLine(shiftsMs: List<Long>): List<LyricLine> =
+    mapIndexed { index, line ->
+        val shift = shiftsMs.getOrElse(index) { 0L }
+        if (shift == 0L) line else line.retimed { ms -> (ms + shift).coerceAtLeast(0L) }
+    }
+
 private fun LyricLine.retimed(at: (Long) -> Long): LyricLine = copy(
     timeMs = at(timeMs),
     words = words.map { it.retimed(at) },
