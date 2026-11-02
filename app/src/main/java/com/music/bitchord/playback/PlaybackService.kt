@@ -2535,11 +2535,12 @@ class PlaybackService : MediaLibraryService() {
         // first, so a restore that lands later is an ordinary timeline change.
         scope.launch {
             val restored = restoreQueue(exoPlayer)
-            if (restored) {
-                publishWidgetState()
-            } else {
-                MediaWidgetSnapshot.save(this@PlaybackService, MediaWidgetSnapshot.EMPTY)
-                MediaWidget.refresh(this@PlaybackService)
+            when {
+                restored == QueueRestore.RESTORED -> publishWidgetState()
+                queueRestoreSavesEmptyWidget(restored) -> {
+                    MediaWidgetSnapshot.save(this@PlaybackService, MediaWidgetSnapshot.EMPTY)
+                    MediaWidget.refresh(this@PlaybackService)
+                }
             }
         }
         // History pings fire once a track is actually audible — both when
@@ -8931,18 +8932,16 @@ class PlaybackService : MediaLibraryService() {
      * player's own thread. A queue the listener already chose while the read
      * was in flight wins: restoring over it would replace what they pressed.
      */
-    private suspend fun restoreQueue(player: ExoPlayer): Boolean {
+    private suspend fun restoreQueue(player: ExoPlayer): QueueRestore {
         val (hadStash, stashed) = withContext(Dispatchers.IO) {
             if (!PartyPersonalQueueStash.hasStash()) {
                 false to null
             } else {
-                val loaded = PartyPersonalQueueStash.load()
-                PartyPersonalQueueStash.clear()
-                true to loaded
+                true to PartyPersonalQueueStash.load()
             }
         }
-        if (!queueRestoreApplies(player.mediaItemCount)) return false
-        if (hadStash) {
+        if (!queueRestoreApplies(player.mediaItemCount)) return QueueRestore.SUPERSEDED
+        val outcome = if (hadStash) {
             if (stashed != null && stashed.songs.isNotEmpty()) {
                 persistedQueueStart = 0
                 player.setMediaItems(stashed.songs.map { it.toMediaItem() }, stashed.index, stashed.positionMs)
@@ -8951,17 +8950,26 @@ class PlaybackService : MediaLibraryService() {
                     "queue: restore n=${stashed.songs.size} at=${stashed.index} " +
                         "emptyMeta=${stashed.songs.count { it.title.isBlank() || it.artist.isBlank() }} by=restore",
                 )
-                return true
+                QueueRestore.RESTORED
+            } else {
+                restoreLastQueue(player)
             }
-            return restoreLastQueue(player)
+        } else {
+            restoreBoundedQueueOrLast(player)
         }
-        return restoreBoundedQueueOrLast(player)
+        // A stash is a one-shot handoff: drop it only once a queue was really
+        // installed. A queue chosen while this read was in flight leaves it
+        // for the next cold start.
+        if (queueStashMayClear(outcome = outcome, hadStash = hadStash)) {
+            withContext(Dispatchers.IO) { PartyPersonalQueueStash.clear() }
+        }
+        return outcome
     }
 
     /** Restore the bounded queue without preparing or resolving a stream. */
-    private suspend fun restoreLastQueue(player: ExoPlayer): Boolean {
-        val last = withContext(Dispatchers.IO) { LastPlayed.load() } ?: return false
-        if (!queueRestoreApplies(player.mediaItemCount)) return false
+    private suspend fun restoreLastQueue(player: ExoPlayer): QueueRestore {
+        val last = withContext(Dispatchers.IO) { LastPlayed.load() } ?: return QueueRestore.NOTHING
+        if (!queueRestoreApplies(player.mediaItemCount)) return QueueRestore.SUPERSEDED
         persistedQueueStart = 0
         player.setMediaItems(last.songs.map { it.toMediaItem() }, last.index, last.positionMs)
         TrackLog.i(
@@ -8977,39 +8985,47 @@ class PlaybackService : MediaLibraryService() {
             enabled = AppSettings.shuffleEnabled.value,
             order = last.shuffleOrder,
         )
-        return true
+        return QueueRestore.RESTORED
     }
 
     /**
      * Restore the logical bounded context first, falling back to the unchanged
      * LastPlayed physical snapshot when the new record is absent or unsafe.
      */
-    private suspend fun restoreBoundedQueueOrLast(player: ExoPlayer): Boolean {
+    private suspend fun restoreBoundedQueueOrLast(player: ExoPlayer): QueueRestore {
         val persisted = withContext(Dispatchers.IO) { BoundedContextPersistence.load() }
-        if (persisted != null && restoreBoundedQueue(player, persisted)) return true
-        if (persisted != null) BoundedContextPersistence.clearImmediately()
+        if (!queueRestoreApplies(player.mediaItemCount)) return QueueRestore.SUPERSEDED
+        if (persisted != null) {
+            when (restoreBoundedQueue(player, persisted)) {
+                QueueRestore.RESTORED -> return QueueRestore.RESTORED
+                QueueRestore.SUPERSEDED -> return QueueRestore.SUPERSEDED
+                // A malformed record is treated as absent; the fallback below
+                // gets the next chance at the queue.
+                QueueRestore.NOTHING -> BoundedContextPersistence.clearImmediately()
+            }
+        }
         return restoreLastQueue(player)
     }
 
     private fun restoreBoundedQueue(
         exoPlayer: ExoPlayer,
         persisted: BoundedContextPersistence.State,
-    ): Boolean {
-        if (!queueRestoreApplies(exoPlayer.mediaItemCount)) return false
+    ): QueueRestore {
+        if (!queueRestoreApplies(exoPlayer.mediaItemCount)) return QueueRestore.SUPERSEDED
         val projected = BoundedContextPersistence.restoreProjection(
             persisted,
             repeatAll = exoPlayer.repeatMode == Player.REPEAT_MODE_ALL,
-        ) ?: return false
+        ) ?: return QueueRestore.NOTHING
         val restoredWindow = runCatching { QueueWindow.restore(projected.window) }.getOrNull()
-            ?: return false
-        if (restoredWindow.canonicalSize != projected.context.songs.size) return false
-        val restoredCurrent = restoredWindow.currentCanonicalIndex ?: return false
-        if (projected.currentIndex !in projected.entries.indices) return false
+            ?: return QueueRestore.NOTHING
+        if (restoredWindow.canonicalSize != projected.context.songs.size) return QueueRestore.NOTHING
+        val restoredCurrent = restoredWindow.currentCanonicalIndex ?: return QueueRestore.NOTHING
+        if (projected.currentIndex !in projected.entries.indices) return QueueRestore.NOTHING
 
         val restoredContext = runCatching {
             boundedContextRegistry.restore(projected.context)
-        }.getOrNull() ?: return false
-        if (restoredContext.songs.isEmpty()) return false
+        }.getOrNull() ?: return QueueRestore.NOTHING
+        if (restoredContext.songs.isEmpty()) return QueueRestore.NOTHING
 
         val contextToken = restoredContext.contextToken
         val canonicalMediaItems = restoredContext.songs.mapIndexed { index, song ->
@@ -9035,7 +9051,7 @@ class PlaybackService : MediaLibraryService() {
                 )
             }
         }
-        if (items.size != projected.entries.size) return false
+        if (items.size != projected.entries.size) return QueueRestore.NOTHING
 
         boundedContextWindow = restoredWindow
         boundedContextToken = contextToken
@@ -9053,7 +9069,7 @@ class PlaybackService : MediaLibraryService() {
         persistedQueueStart = 0
         exoPlayer.setMediaItems(items, projected.currentIndex, projected.positionMs)
         startBoundedContinuationLoading(contextToken)
-        return true
+        return QueueRestore.RESTORED
     }
 
     /**
@@ -13455,3 +13471,14 @@ private val ffmpegDecodesAlac by lazy { FfmpegLibrary.supportsFormat(MimeTypes.A
  * the listener chose while the snapshot was being read must not be replaced.
  */
 internal fun queueRestoreApplies(existingMediaItemCount: Int): Boolean = existingMediaItemCount == 0
+
+/** How a cold-start restore ended, so the caller can leave a live queue alone. */
+internal enum class QueueRestore { RESTORED, SUPERSEDED, NOTHING }
+
+/** A stash is spent only when a restored queue actually reached the player. */
+internal fun queueStashMayClear(outcome: QueueRestore, hadStash: Boolean): Boolean =
+    hadStash && outcome == QueueRestore.RESTORED
+
+/** A queue the listener just chose is not overwritten with an empty widget. */
+internal fun queueRestoreSavesEmptyWidget(outcome: QueueRestore): Boolean =
+    outcome == QueueRestore.NOTHING

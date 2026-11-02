@@ -20,4 +20,19 @@ class QueueRestoreGuardTest {
         assertFalse(queueRestoreApplies(existingMediaItemCount = 1))
         assertFalse(queueRestoreApplies(existingMediaItemCount = 25))
     }
+
+    @Test
+    fun `a superseded restore keeps the stash for the next cold start`() {
+        assertFalse(queueStashMayClear(QueueRestore.SUPERSEDED, hadStash = true))
+        assertFalse(queueStashMayClear(QueueRestore.NOTHING, hadStash = true))
+        assertTrue(queueStashMayClear(QueueRestore.RESTORED, hadStash = true))
+        assertFalse(queueStashMayClear(QueueRestore.RESTORED, hadStash = false))
+    }
+
+    @Test
+    fun `a superseded restore leaves the widget state alone`() {
+        assertFalse(queueRestoreSavesEmptyWidget(QueueRestore.SUPERSEDED))
+        assertFalse(queueRestoreSavesEmptyWidget(QueueRestore.RESTORED))
+        assertTrue(queueRestoreSavesEmptyWidget(QueueRestore.NOTHING))
+    }
 }
