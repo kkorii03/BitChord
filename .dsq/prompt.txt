@@ -1,0 +1,28 @@
+﻿Task: add a word-level human-timed lyrics source so line times are accurate at the source. Kotlin Android app. Use grep. Follow AGENTS.md (ponytail). Design draft + assumptions first in your summary, then implement, test, self-review. You may use webfetch to read public docs/repos.
+
+Why: strict sync grading shows many songs fail because the lyrics file's own line times scatter +-0.2-0.3 s (mostly provider lrc.red); the whole-song correction cannot fix that. Human word-timed lyrics (Apple-Music-style TTML) are far more precise.
+
+Research first (keep it short, cite URLs in the summary): the AMLL TTML DB (github.com/Steve-xmh/amll-ttml-db or its current home) - how files are indexed (by Apple Music / NetEase / QQ / Spotify id), the raw file URL pattern, license/usage terms, and a free way to get the needed id from title + artist + duration (e.g. iTunes Search API for the Apple Music track id). If the DB is not usable without login/paid API or its license forbids this use, STOP and report instead of building.
+
+Build (only if usable):
+- A lyrics provider next to the existing ones (find the provider list/registry used by the lyrics fetcher; reuse its interfaces, HTTP client, caching and the Korean-fork hook style '// [KO]'). Parse TTML (begin/end per <p> line and per <span> word) into the app's LyricLine (and word timings if the app model has them; otherwise line times only).
+- Ranking: when this source has the song (same title/artist, duration within 3 s), prefer it over lrc.red/LRCLIB/KuGou etc.; otherwise current behavior unchanged. Respect the existing lyrics-mismatch / wrong-song guards (never accept another song's lyrics).
+- Network only when lyrics are requested (no polling), cache results like other providers, one lookup per song.
+- Log once per song: 'lyrics source ttml: hit|miss id=<id> lines=<n>'.
+Do not touch LyricsTiming / LyricsPerLine / sync measurement code (another task is changing them). Do not touch .github/.
+Tests (JVM): TTML parsing (lines, words, nested spans, background vocals if present), id lookup parsing from a saved JSON sample, ranking prefers TTML when durations match and not when they differ. List new test class names in the summary.
+Finish with a summary of at most 15 lines: research result with URLs / design / files / tests / open problems.
+
+ROUND 2 NOTE (Opus): fix every reviewer finding: extract ONE shared recording matcher used by both LrcRed and AmllTtml (no copied code - AGENTS.md); reject an iTunes hit with unknown duration when the song's duration is known; look the iTunes id up once per song (memoize across query variants). Keep the tests and add one per fix.
+
+ROUND 3 NOTE (Opus): key the iTunes miss cache by the normalized query (title+artist+length), not only videoId, so a later round with the real/original name can still hit; make the lookup single-flight per key (concurrent callers share one request). Keep the stricter unknown-length rule for both sources (Opus accepts it as safer) and say so in a code comment. Add tests.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 3
+- MEDIUM `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/lyrics/AmllTtml.kt:53-62` — a cached miss keyed only by `videoId`+length is reused for every later query round, so after a noisy/cover title misses, `LyricsRepository.kt:716-729` can never ask iTunes under the real or catalog-original name; the added test covers only the cached-hit path, not this. Fix: remember hits per video but key misses by the actual search title/artist (or don't cache misses), and test the retry-after-miss case.
+- LOW `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/lyrics/RecordingMatch.kt:50` — the shared matcher now applies the iTunes-only unknown-length rejection to `LrcRed` search hits too, although the task only asked to reject unknown-length iTunes hits and leave other sources' behavior unchanged; such hits were previously accepted. Fix: add a per-source policy flag (e.g. `allowUnknownDuration`) so LrcRed keeps its old rule.
+- LOW `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/lyrics/AmllTtml.kt:53-62` — the get/search/put sequence is not atomic, so concurrent lookups for the same video (prefetch plus playback) both miss and issue duplicate iTunes requests and duplicate log lines, violating “one lookup per song.” Fix: publish an in-flight placeholder with `putIfAbsent` before searching.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
