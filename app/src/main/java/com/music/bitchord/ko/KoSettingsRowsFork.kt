@@ -140,6 +140,9 @@ internal fun KoAutomixRow(
     SettingsRow(
         icon = SfIcons.AutoAwesome,
         title = title,
+        subtitle = stringResource(
+            if (checked) R.string.automix_enabled_subtitle else R.string.automix_disabled_subtitle,
+        ),
         trailing = {
             Switch(
                 checked = checked,

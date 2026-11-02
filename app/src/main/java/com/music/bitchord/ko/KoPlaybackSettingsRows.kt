@@ -31,6 +31,7 @@ internal fun SettingsGroupScope.KoPlaybackTopRows() {
         SettingsRow(
             icon = SfIcons.Bluetooth,
             title = resumeOnHeadphonesTitle,
+            subtitle = stringResource(R.string.resume_on_headphones_subtitle),
             trailing = {
                 Switch(
                     checked = resumeOnHeadphones,
@@ -46,6 +47,7 @@ internal fun SettingsGroupScope.KoPlaybackTopRows() {
         SettingsRow(
             icon = SfIcons.AutoAwesome,
             title = personalisedAutoplayTitle,
+            subtitle = stringResource(R.string.personalised_autoplay_subtitle),
             trailing = {
                 Switch(
                     checked = personalisedAutoplay,
@@ -61,6 +63,7 @@ internal fun SettingsGroupScope.KoPlaybackTopRows() {
         SettingsRow(
             icon = SfIcons.SmartDisplay,
             title = videoRadioTitle,
+            subtitle = stringResource(R.string.video_radio_continue_subtitle),
             trailing = {
                 Switch(
                     checked = videoRadio,
