@@ -1,5 +1,7 @@
 package com.music.bitchord.ko
 
+import com.music.bitchord.data.model.HomeShelf
+import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -23,6 +25,23 @@ class KoHomeFeedRecentsTest {
     @Test
     fun `a video row stays a video on the recents shelf`() {
         assertTrue(KoHomeFeed.recentsShelf(listOf(cover)).items.single().isVideo)
+    }
+
+    // Phone 11-03: "커버 및 리믹스" showed raw upload titles and channel names.
+    @Test
+    fun `a home video row reads as its song and singer, a song row is untouched`() {
+        val shelf = HomeShelf(
+            title = "커버 및 리믹스",
+            items = listOf(
+                ShelfItem("아이묭 - Marigold / cover by 오화요", "Ohwayo", null, "v1", null, isVideo = true),
+                ShelfItem("Marigold", "Aimyon", null, "v2", null),
+            ),
+        )
+        val (video, song) = KoHomeFeed.withContentCountryChart(listOf(shelf), null).single().items
+        assertEquals("Marigold (cover)", video.title)
+        assertEquals("오화요", video.subtitle)
+        assertEquals("Marigold", song.title)
+        assertEquals("Aimyon", song.subtitle)
     }
 
     @Test

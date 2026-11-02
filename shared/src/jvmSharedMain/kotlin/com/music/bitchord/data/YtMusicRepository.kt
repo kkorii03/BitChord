@@ -345,6 +345,7 @@ object YtMusicRepository {
         historyMemo?.takeIf { it.cookie == cookie && System.currentTimeMillis() - it.at < HISTORY_SHARE_MS }
             ?.let { return@withLock it.songs }
         InnertubeParser.collectSongsDeep(Innertube.browse(HISTORY)).distinctBy { it.videoId }
+            .map(StoredSongDisplay::clean) // [KO] history-titles: kept from 1.8, lost in the 1.9 merge
             .also { historyMemo = HistoryMemo(cookie, System.currentTimeMillis(), it) }
     }
 

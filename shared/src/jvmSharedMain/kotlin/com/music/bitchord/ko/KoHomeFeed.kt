@@ -130,6 +130,40 @@ internal object KoHomeFeed {
     internal fun withContentCountryChart(
         shelves: List<HomeShelf>,
         chart: HomeShelf?,
+    ): List<HomeShelf> = cleanVideoRows(withChart(shelves, chart))
+
+    /**
+     * Video rows read the way the player shows them (phone 11-03: "커버 및
+     * 리믹스" showed raw uploads, "한결 - 마음짓기(心做し) Live Cover" credited
+     * to the channel). Every Home page path goes through [withContentCountryChart].
+     */
+    internal fun cleanVideoRows(shelves: List<HomeShelf>): List<HomeShelf> = shelves.map { shelf ->
+        if (shelf.items.none { it.isVideo && !it.videoId.isNullOrBlank() }) {
+            shelf
+        } else {
+            shelf.copy(items = shelf.items.map(::cleanVideoRow))
+        }
+    }
+
+    private fun cleanVideoRow(item: ShelfItem): ShelfItem {
+        val videoId = item.videoId?.takeIf { item.isVideo && it.isNotBlank() } ?: return item
+        val song = CoverTitles.applyTo(
+            StoredSongDisplay.clean(
+                Song(
+                    videoId = videoId,
+                    title = item.title,
+                    artist = item.subtitle,
+                    thumbnailUrl = item.thumbnailUrl,
+                    isVideo = true,
+                ),
+            ),
+        )
+        return item.copy(title = song.title, subtitle = song.artist.ifBlank { item.subtitle })
+    }
+
+    private fun withChart(
+        shelves: List<HomeShelf>,
+        chart: HomeShelf?,
     ): List<HomeShelf> {
         if (shelves.none { TRENDING_TITLE.matches(it.title) }) return shelves
         chart ?: return shelves
