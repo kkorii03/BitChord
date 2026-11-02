@@ -2,10 +2,8 @@ package com.music.bitchord.ui.player
 
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
@@ -15,10 +13,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clipToBounds
@@ -138,27 +138,49 @@ fun MeshGradientBackground(
     }
     val baseColor by animateColorAsState(tuned.first().dimmed(), colorSpec, label = "meshBase")
 
-    // Read in the draw lambda, not here: an Animatable read during draw
-    // invalidates only the drawing, leaving composition out of the loop.
-    val phase = remember { Animatable(0f) }
-    LaunchedEffect(trackKey, reduceAnimation, continuous, animated, paused) {
+    // Read in the draw lambda, not here: a phase read during draw invalidates
+    // only the drawing, leaving composition out of the loop.
+    val phase = remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(trackKey, reduceAnimation, lowPower, continuous, animated, paused, foreground) {
         when {
-            !animated || reduceAnimation -> phase.snapTo(0f)
-            paused -> Unit
-            // A full turn at a time, restarted rather than looped with an
-            // infinite spec: the blobs' speeds are irrational multiples of each
-            // other, so the pattern never repeats, and a linear phase keeps the
-            // orbit even instead of easing to a halt each lap.
-            continuous -> while (isActive) {
-                phase.animateTo(
-                    targetValue = phase.value + (2 * PI).toFloat(),
-                    animationSpec = tween(driftMillis * 4, easing = LinearEasing),
-                )
+            !animated || reduceAnimation || lowPower -> phase.floatValue = 0f
+            paused || !foreground -> Unit
+            // AMLL caps the mesh renderer at 30 fps. The frame clock still ticks
+            // at the display rate, so frames shorter than one 33 ms step are
+            // skipped; phase advances by elapsed time, not per frame. The phase
+            // is never wrapped: the blobs run at 1, -0.7, 0.85 and -1.15 times
+            // the base rate, so a shared 2π wrap would jump each blob by a
+            // different offset once per turn. A constant rate keeps the orbit
+            // even, and an unwrapped float stays precise for a session.
+            continuous -> {
+                var last = 0L
+                while (isActive) {
+                    withFrameNanos { now ->
+                        val tick = meshPhaseTick(phase.floatValue, now, last, driftMillis)
+                        phase.floatValue = tick.phase
+                        last = tick.lastNanos
+                    }
+                }
             }
-            else -> phase.animateTo(
-                targetValue = phase.value + DRIFT_RADIANS,
-                animationSpec = tween(driftMillis, easing = FastOutSlowInEasing),
-            )
+            else -> {
+                val from = phase.floatValue
+                var start = 0L
+                var last = 0L
+                var done = false
+                while (isActive && !done) {
+                    withFrameNanos { now ->
+                        if (start == 0L) {
+                            start = now
+                            last = now
+                        } else if (now - last >= MESH_FRAME_NANOS) {
+                            val t = ((now - start) / 1_000_000f / driftMillis).coerceIn(0f, 1f)
+                            phase.floatValue = from + DRIFT_RADIANS * FastOutSlowInEasing.transform(t)
+                            last = now
+                            done = t >= 1f
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -194,7 +216,7 @@ fun MeshGradientBackground(
             Offset(0.25f, 0.75f),
         )
         val speeds = listOf(1f, -0.7f, 0.85f, -1.15f)
-        val drift = phase.value
+        val drift = phase.floatValue
 
         animatedColors.forEachIndexed { index, color ->
             val anchor = anchors[index]
@@ -234,6 +256,27 @@ fun MeshGradientBackground(
 
 /** A blob's opacity at its centre. */
 private const val BLOB_ALPHA = 0.85f
+
+/** ~30 fps, AMLL's mesh renderer cap: skip frames shorter than this. */
+private const val MESH_FRAME_NANOS = 33_000_000L
+
+/** One frame-clock step for the continuous mesh; [lastNanos] 0 arms the clock. */
+internal data class MeshPhaseTick(val phase: Float, val lastNanos: Long)
+
+/** The elapsed-time phase step. No modulo: see the continuous branch above. */
+internal fun meshPhaseAdvance(phase: Float, elapsedNanos: Long, driftMillis: Int): Float {
+    if (driftMillis <= 0 || elapsedNanos <= 0L) return phase
+    val seconds = elapsedNanos / 1_000_000_000.0
+    return phase + (2 * PI * seconds / (driftMillis * 4 / 1000.0)).toFloat()
+}
+
+/** Advance the mesh phase only when a 30 fps frame is due. */
+internal fun meshPhaseTick(phase: Float, nowNanos: Long, lastNanos: Long, driftMillis: Int): MeshPhaseTick =
+    when {
+        lastNanos == 0L -> MeshPhaseTick(phase, nowNanos)
+        nowNanos - lastNanos < MESH_FRAME_NANOS -> MeshPhaseTick(phase, lastNanos)
+        else -> MeshPhaseTick(meshPhaseAdvance(phase, nowNanos - lastNanos, driftMillis), nowNanos)
+    }
 
 /**
  * How long each palette in a [cyclingMeshPalette] is held, which is also how
