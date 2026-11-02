@@ -1,0 +1,16 @@
+﻿Kotlin Android app = upstream v1.9 + Korean fork (task/u19-tg; 1.8 fork = origin/task/telegram). Battery first: event-driven, no polling/timers, never block the main thread. Use grep/Select-String, not rg. Unknown Android/Media3 APIs: context7. Every fix gets a JVM test that fails on current code (no network). Do not touch .github/workflows. Smallest change; keep v1.9's improvements.
+
+Tonight ~12 DeepSeek lanes were merged into task/u19-tg (git log --since='2026-11-03 00:00' --merges). Audit only those merged diffs for battery/ANR regressions: new timers or polling, work on the main thread, wakeups while paused or screen off, unbounded caches, coroutines that outlive their screen. Fix real ones minimally with tests; list the rest in docs/battery-audit-1103.md.
+
+Summary of at most 12 lines: cause, files, REMOVED-LINES AUDIT, tests (class names for CI), what you did not do. Follow AGENTS.md (ponytail) rules.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 3
+- MEDIUM app/src/main/java/com/music/bitchord/playback/smart/LyricsTiming.kt:3002 — `screenOn` is snapshotted before the 40 s first pass and never re-read, so if the screen turns off during that pass the second full pass at line 3015 still runs, leaving the targeted screen-off battery regression in place; re-read `PowerState.screenOn` immediately before the second `runSongCheck` (and return if off).
+- MEDIUM shared/src/jvmTest/kotlin/com/music/bitchord/data/lyrics/SongCheckFirstPassTest.kt:22 — the new test only checks `firstPassSeconds`; it still passes if the `if (!screenOn) return` branch at LyricsTiming.kt:3013 is removed, so the actual "no second pass" behavior has no failing test; fold the screen decision into a pure pass-plan function and test that, or add an app-level seam.
+- MEDIUM docs/battery-audit-1103.md:1 — the task summary/commit body omits the required REMOVED-LINES AUDIT, leaving the replaced `FIRST_SECONDS` call and removed comment lines unjustified; add an explicit audit stating only the window constant/comment changed and no guard, timeout, clamp, or offload was dropped.
+Skipped device profiling and re-auditing every merged lane beyond the doc claims; risk is the stale-screen snapshot and untested second-pass branch above.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
