@@ -25,6 +25,7 @@ import java.util.concurrent.ConcurrentHashMap
  * defaulting to [LyricsSource.offered]; a [hidden][LyricsSource.hidden] one is
  * never asked, whatever the saved settings say:
  *
+ *  - [AmllTtml] — the AMLL TTML DB, human word-timed TTML keyed by Apple id.
  *  - [LrcRed] — Apple Music TTML filed by ISRC, and the catalogue
  *    [BiniLyrics] itself answers from.
  *  - [BetterLyrics], [PaxSenix] and [BiniLyrics] — Apple Music TTML,
@@ -1076,6 +1077,7 @@ object LyricsRepository {
         get: suspend (String) -> String?,
     ): List<LyricLine>? {
         val found = when (source) {
+            LyricsSource.AMLL_TTML -> AmllTtml.lyrics(title, artist, durationMs, videoId, get)
             LyricsSource.LRC_RED -> LrcRed.lyrics(title, artist, durationMs, isrc, get)
             LyricsSource.BETTER_LYRICS -> BetterLyrics.lyrics(title, artist, durationMs, album)
             LyricsSource.BETTER_LYRICS_PORTATO -> BetterLyrics.portato(title, artist, durationMs, album)
