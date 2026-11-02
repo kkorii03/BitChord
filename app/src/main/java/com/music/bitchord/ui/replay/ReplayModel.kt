@@ -408,7 +408,7 @@ fun ReplaySummary.cards(context: Context): List<ReplayHeroCard> = buildList {
     add(
         ReplayHeroCard(
             label = context.getString(R.string.minutes_listened),
-            value = formatMinutes(totalMs),
+            value = context.getString(R.string.minutes_grouped_short, formatMinutes(totalMs)),
             detail = "${context.replayCount(totalPlays, R.plurals.replay_play_count)} · " +
                 localizedLabel(context),
             artworkUrl = songs.firstOrNull()?.song?.thumbnailUrl,

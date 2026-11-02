@@ -85,6 +85,9 @@ class KoreanStringsTest {
         // For You is a noun label in Apple Music, not a verb instruction.
         assertEquals("나를 위한 추천", value("app", "personalized_recommendations"))
         assertEquals("나를 위한 추천", value("sharedUi", "personalized_recommendations"))
+        // Replay card: Apple Music puts the unit on the value, not in the label.
+        assertEquals("청취 시간", value("app", "minutes_listened"))
+        assertEquals("%1\$s분", value("app", "minutes_grouped_short"))
     }
 
     private fun value(module: String, key: String): String? =

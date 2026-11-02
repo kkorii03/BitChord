@@ -4,9 +4,9 @@ Texts below come from the on-device accessibility crawl attached to the task
 (s001–s044). Screen ids are the crawl ids. Each entry says what is wrong and
 whether this lane fixed it.
 
-Counts by kind: **raw/data titles 14**, **odd Korean or Apple-wording drift 9**,
+Counts by kind: **raw/data titles 14**, **odd Korean or Apple-wording drift 8**,
 **untranslated English 5**, **duplicated/truncated labels 10**, **no-op taps 5**.
-This lane fixed **4 string resources** (see "Fixed here").
+This lane fixed **5 string resources** (see "Fixed here").
 
 ## Fixed here (plain string/label resources)
 
@@ -15,6 +15,7 @@ This lane fixed **4 string resources** (see "Fixed here").
 | s001 | `find_your_mood` is `분위기 찾기` in the app resource but the shelf header is `내 분위기 찾기` (the crawl shows the shelf text). Screen title and section header name the same place differently. | app `values-ko`: `내 분위기 찾기` |
 | s034, s044 | `좋아요 표시한 음악에서 제거` uses 음악 while the rest of the app and the crawl use `좋아요 표시한 노래`. | app + sharedUi `remove_from_liked` -> `좋아요 표시한 노래에서 제거` |
 | s001 (For You) | sharedUi `personalized_recommendations` is a verb label (`나를 위한 맞춤 추천 받기`) while the app/crawl label is the noun form `나를 위한 추천`. | sharedUi `values-ko`: `나를 위한 추천` |
+| s029 | `minutes_listened` was `청취 시간(분)`, a bracketed unit inside the noun label. Apple Music puts the unit on the value. | app `values-ko`: `청취 시간`, and the Replay card/poster value now uses `minutes_grouped_short` (`1,237분`) |
 
 ## Raw upload titles / data (left to the title-cleaning lane)
 
@@ -41,14 +42,13 @@ that other lane's work. Listed for that lane.
 
 | screen | text | problem |
 |---|---|---|
-| s029 | `청취 시간(분)` | parenthetical unit label; Apple Music uses a unit on the value, not a bracketed word in the noun label. |
 | s029 | `1,237회 재생 · 2026` | year appears without `년`, while album pages write `2015년` and `EP • 2015년`. |
 | s029 | `가입일 10/26` | `M/YY` date format is English-style; Apple KR would write `2026년 10월`. The value is built as `%02d/%02d` in `ReplayModel.kt`. |
 | s029 | `Spotify` row has no Korean role label | brand is fine, but it sits between `다운로드` and `자주 들은 노래` with no description. |
 | s013, s034 | `이런 항목 덜 추천` | YouTube-style phrase; Apple has no equivalent. Kept because it is this app's own action. |
 | s025 | `추가한 날짜`, `기본 순서`, `제목(A–Z, 가–하)`, `제목(Z–A, 하–가)` | acceptable, but `추가한 날짜` and `최근 추가된 항목` name the same sort in two places. |
 | s028 | `출퇴근 & 등하교` | uses `&` while settings copy uses `및`; the Apple comparison doc prefers `&` for display, so this is a consistency note only. |
-| s029 | `청취 시간(분)` + `1,237회 재생 · 2026` + `가입일 10/26` | three meta lines use three different formats (parenthetical unit, bare year, slash date). |
+| s029 | `1,237회 재생 · 2026` + `가입일 10/26` | two meta lines use different formats (bare year, slash date). |
 | s036 | `3 페이지 중 1 페이지입니다.` | awkward spacing (`3페이지 중 1페이지입니다.` is the Apple/standard form). This text comes from the launcher's widget picker, not BitChord. |
 
 ## Untranslated English UI
@@ -98,4 +98,4 @@ was left alone.
 - Missing track numbers and the no-op `더 보기` / artist taps are UI/state
   behavior, not string resources.
 - Replay date/number formats (`%02d/%02d`, bare year) come from
-  `ReplayModel.kt`, not `values-ko`.
+  `ReplayModel.kt`, not `values-ko`; the `분` unit label is fixed above.
