@@ -15,6 +15,7 @@ import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.ko.KoCrossfadeGain
 import com.music.bitchord.ko.KoCrossfadeLog
+import com.music.bitchord.ko.KoCrossfadeLyricCache
 import com.music.bitchord.ko.KoCrossfadeState
 import com.music.bitchord.ko.koFadeGainsAt
 import com.music.bitchord.ko.koArmOutgoingMoved
@@ -27,6 +28,7 @@ import com.music.bitchord.ko.koIncomingQueueChanged
 import com.music.bitchord.ko.koLogFadeGains
 import com.music.bitchord.ko.koMatchGain
 import com.music.bitchord.ko.koLaunchTicker
+import com.music.bitchord.ko.koLaunchSettingsWake
 import com.music.bitchord.ko.koRearmIncoming
 import com.music.bitchord.ko.koReconcileQueue
 import com.music.bitchord.ko.koRequestAnalysisAround
@@ -361,6 +363,7 @@ class CrossfadeController(
     /** Which player this class's own listener is currently attached to. */
     private var listeningTo: ExoPlayer? = null
     private var tickerJob: Job? = null
+    private var settingsWakeJob: Job? = null
 
     internal fun wakeTicker() { // [KO] crossfade-ticker
         ko.tickerWake.trySend(Unit)
@@ -686,6 +689,9 @@ class CrossfadeController(
 
     /** The player still coming off a beatmatch stretch after its blend finished, or null. */
     private var easing: ExoPlayer? = null
+
+    /** Whether a tempo ease-back still needs the ticker's cadence. */
+    internal fun koIsEasing(): Boolean = easing != null
     private var easeRate = 1.0
     private var easeStep = 0.0
     private var easeStepMs = 0L
@@ -867,11 +873,17 @@ class CrossfadeController(
         listenTo(active())
         tickerJob?.cancel()
         tickerJob = koLaunchTicker(scope) // [KO] crossfade-ticker
+        // The idle ticker now parks far from the cue, so a settings change that
+        // makes or moves a transition has to wake it like a player event does.
+        settingsWakeJob?.cancel()
+        settingsWakeJob = koLaunchSettingsWake(scope) // [KO] crossfade-ticker
     }
 
     fun release() {
         tickerJob?.cancel()
         tickerJob = null
+        settingsWakeJob?.cancel()
+        settingsWakeJob = null
         loopBuildJob?.cancel()
         loopAlignJob?.cancel()
         loopSession?.let {
@@ -1042,6 +1054,10 @@ class CrossfadeController(
      */
     fun plannedTransitionFor(mediaId: String): Long? =
         plannedTransition?.takeIf { it.first == mediaId }?.second
+
+    /** The planned cue for the track currently playing, for the idle ticker's next wake. */
+    internal fun koPlannedCueMs(): Long? =
+        plannedTransitionFor(active().currentMediaItem?.mediaId ?: return null)
 
     private var plannedTransition: Pair<String, Long>? = null
 
@@ -2454,13 +2470,12 @@ class CrossfadeController(
     /** Synced-lyric spans per media id, once asked: [LyricSpans.spans] null when the song has none. */
     private class LyricSpans(val spans: List<LoopMix.Span>?)
 
-    private val lyricSpans = java.util.concurrent.ConcurrentHashMap<String, LyricSpans>()
-    private val lyricsAsked = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val lyricSpans = KoCrossfadeLyricCache<LyricSpans>()
 
     /** Asks for [item]'s synced lyrics once; a loop they vouch for needs no vocal mask. */
     private fun askLyrics(item: MediaItem, durationMs: Long) {
         val id = item.mediaId
-        if (!lyricsAsked.add(id)) return
+        if (!lyricSpans.markAsked(id)) return
         scope.launch(Dispatchers.IO) {
             val lines = runCatching { syncedLines(item, durationMs) }.getOrNull()
             // Only line-synced lyrics say where a voice is; plain text says nothing about time.
@@ -2472,7 +2487,7 @@ class CrossfadeController(
                     },
                 )
             }
-            lyricSpans[id] = LyricSpans(spans)
+            lyricSpans.put(id, LyricSpans(spans))
         }
     }
 
