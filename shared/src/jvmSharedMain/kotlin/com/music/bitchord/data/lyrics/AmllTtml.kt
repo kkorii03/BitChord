@@ -1,11 +1,13 @@
 package com.music.bitchord.data.lyrics
 
 import com.music.bitchord.data.TrackLog
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import java.util.Collections
+import java.util.Locale
 
 /**
  * AMLL TTML DB — human-timed word-level lyrics, filed by platform id.
@@ -18,8 +20,10 @@ import java.util.Collections
  *
  * The iTunes result is also the song guard: title, artists and length all have
  * to agree with what is playing before its id is allowed to name a document —
- * see [RecordingMatch]. The id is remembered per song, so the query variants
- * the repository tries do not each ask iTunes again.
+ * see [RecordingMatch]. A hit is remembered per song, so the query variants
+ * the repository tries reuse it. A miss is remembered per *query* instead: a
+ * noisy cover title must not stop a later round asking under the real name.
+ * Concurrent lookups of the same query share one request.
  */
 object AmllTtml {
 
@@ -35,9 +39,12 @@ object AmllTtml {
     /**
      * [songKey] identifies the song across the repository's query variants (it
      * passes the video id); without one the name is the key. The length bucket
-     * keeps a lookup made without a length apart from one made with it. A
-     * remembered miss is a miss too: the same song is not asked for again this
-     * session.
+     * keeps a lookup made without a length apart from one made with it.
+     *
+     * A hit is cached per song. A miss is cached per normalised query instead,
+     * so a later round with the real or catalogue-original name still asks
+     * iTunes. Callers asking the same query at the same time await one
+     * request, and only the caller that made it writes the log line.
      */
     suspend fun lyrics(
         title: String,
@@ -46,34 +53,79 @@ object AmllTtml {
         songKey: String? = null,
         get: suspend (String) -> String? = { lyricsGet(it) },
     ): List<LyricLine>? = withContext(Dispatchers.IO) {
-        // One id per song across the query variants, but a lookup made without
-        // a length stays apart: it may have settled on a different edit.
-        val length = if (durationMs <= 0L) "unknown" else ((durationMs + 5_000L) / 10_000L).toString()
-        val key = "${songKey?.takeIf { it.isNotBlank() } ?: "$title\u0000$artist"}\u0000$length"
-        val remembered = synchronized(appleIds) { appleIds[key] }
-        val id = if (remembered != null) {
-            remembered.id
-        } else {
-            val hits = search(title, artist, get)
-            val found = hits?.let { best(it, title, artist, durationMs)?.trackId }
-            // Only a search that got an answer is worth remembering: offline
-            // is no verdict on the song, and must be retried by a later name.
-            if (hits != null) synchronized(appleIds) { appleIds[key] = AppleId(found) }
-            found
-        }
-        val log = remembered == null
-        if (id == null) {
-            if (log) TrackLog.i(TAG, "lyrics source ttml: miss id=unknown lines=0")
+        val lookup = appleId(title, artist, durationMs, songKey, get)
+        val id = lookup.id ?: run {
+            if (lookup.fresh) TrackLog.i(TAG, "lyrics source ttml: miss id=unknown lines=0")
             return@withContext null
         }
         val lines = get(documentUrl(id))?.let(TtmlLyrics::parse)?.takeIf { it.isNotEmpty() }
         if (lines == null) {
-            if (log) TrackLog.i(TAG, "lyrics source ttml: miss id=$id lines=0")
+            if (lookup.fresh) TrackLog.i(TAG, "lyrics source ttml: miss id=$id lines=0")
             return@withContext null
         }
-        if (log) TrackLog.i(TAG, "lyrics source ttml: hit id=$id lines=${lines.size}")
+        if (lookup.fresh) TrackLog.i(TAG, "lyrics source ttml: hit id=$id lines=${lines.size}")
         lines
     }
+
+    /** The iTunes id for this song, or null; [fresh] means this call searched. */
+    private suspend fun appleId(
+        title: String,
+        artist: String,
+        durationMs: Long,
+        songKey: String?,
+        get: suspend (String) -> String?,
+    ): AppleLookup {
+        // One id per song across the query variants, but a lookup made without
+        // a length stays apart: it may have settled on a different edit.
+        val length = if (durationMs <= 0L) "unknown" else ((durationMs + 5_000L) / 10_000L).toString()
+        val song = songKey?.takeIf { it.isNotBlank() } ?: "${title}\u0000$artist"
+        val hitKey = "$song\u0000$length"
+        val missKey = "${normalized(title)}\u0000${normalized(artist)}\u0000$length"
+
+        synchronized(hits) { hits[hitKey] }?.let { return AppleLookup(it.id, false) }
+        // A miss is only a verdict on this name and length, never on the song:
+        // the repository's later rounds try the plain and original names.
+        synchronized(misses) { if (missKey in misses) return AppleLookup(null, false) }
+
+        var owned: CompletableDeferred<AppleLookup>? = null
+        val flight = synchronized(flights) {
+            flights[missKey] ?: CompletableDeferred<AppleLookup>().also {
+                flights[missKey] = it
+                owned = it
+            }
+        }
+        // Someone else is already asking this exact query: share their answer.
+        if (owned == null) return flight.await().copy(fresh = false)
+        return try {
+            val results = search(title, artist, get)
+            val found = results?.let { best(it, title, artist, durationMs)?.trackId }
+            val answer = AppleLookup(found, true)
+            if (results != null) {
+                // Only a search that got an answer is worth remembering:
+                // offline is no verdict on the song, and must be retried by a
+                // later name.
+                if (found != null) {
+                    synchronized(hits) { hits[hitKey] = AppleId(found) }
+                } else {
+                    synchronized(misses) { misses.add(missKey) }
+                }
+            }
+            flight.complete(answer)
+            answer
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            flight.completeExceptionally(cancelled)
+            throw cancelled
+        } catch (error: Throwable) {
+            flight.completeExceptionally(error)
+            throw error
+        } finally {
+            synchronized(flights) { flights.remove(missKey) }
+        }
+    }
+
+    /** Case and spacing folded, so equivalent queries share a miss or flight. */
+    private fun normalized(value: String): String =
+        value.trim().lowercase(Locale.ROOT).replace(WHITESPACE, " ")
 
     /** The iTunes hits, or null when the request or its answer failed. */
     private suspend fun search(
@@ -112,11 +164,22 @@ object AmllTtml {
 
     private class AppleId(val id: Long?)
 
-    private val appleIds: MutableMap<String, AppleId> = Collections.synchronizedMap(
-        object : LinkedHashMap<String, AppleId>(REMEMBERED, 0.75f, true) {
-            override fun removeEldestEntry(eldest: Map.Entry<String, AppleId>) = size > REMEMBERED
+    private data class AppleLookup(val id: Long?, val fresh: Boolean)
+
+    /** Hits live per song; misses per query; in-flight searches per query. */
+    private val hits: MutableMap<String, AppleId> = object : LinkedHashMap<String, AppleId>(REMEMBERED, 0.75f, true) {
+        override fun removeEldestEntry(eldest: Map.Entry<String, AppleId>) = size > REMEMBERED
+    }
+
+    private val misses: MutableSet<String> = Collections.newSetFromMap(
+        object : LinkedHashMap<String, Boolean>(REMEMBERED, 0.75f, true) {
+            override fun removeEldestEntry(eldest: Map.Entry<String, Boolean>) = size > REMEMBERED
         },
     )
+
+    private val flights: MutableMap<String, CompletableDeferred<AppleLookup>> = mutableMapOf()
+
+    private val WHITESPACE = Regex("""\s+""")
 
     @Serializable
     internal data class Response(

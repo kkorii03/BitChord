@@ -1,5 +1,7 @@
 package com.music.bitchord.data.lyrics
 
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -104,6 +106,67 @@ class AmllTtmlTest {
             1202046879L,
             AmllTtml.best(hits, "Shape of You (Acoustic)", "Ed Sheeran", 223_000)?.trackId,
         )
+    }
+
+    @Test
+    fun `a miss under one name still asks under another`() = runBlocking {
+        var searches = 0
+        val json = """
+            {"resultCount":1,"results":[
+              {"trackId":555,"artistName":"Real Artist","trackName":"Retry Song",
+               "trackTimeMillis":200000}
+            ]}
+        """.trimIndent()
+        val ttml = """
+            <tt xmlns="http://www.w3.org/ns/ttml"><body><div>
+            <p begin="1.0" end="2.0">Hi</p>
+            </div></body></tt>
+        """.trimIndent()
+        val get: suspend (String) -> String? = { url ->
+            if (url.startsWith("https://itunes.apple.com/")) {
+                searches++
+                json
+            } else {
+                ttml
+            }
+        }
+        assertNull(AmllTtml.lyrics("Retry Song (Cover)", "Cover Artist", 200_000, "retry-video", get))
+        // Same query, different case and spacing: the cached miss stands.
+        assertNull(AmllTtml.lyrics("retry song (cover)", "cover  artist", 200_000, "retry-video", get))
+        assertEquals(1, searches)
+        // The real name is a different query, so it still asks iTunes.
+        assertTrue(AmllTtml.lyrics("Retry Song", "Real Artist", 200_000, "retry-video", get)!!.isNotEmpty())
+        assertEquals(2, searches)
+    }
+
+    @Test
+    fun `concurrent lookups of one query share a request`() = runBlocking {
+        var searches = 0
+        val json = """
+            {"resultCount":1,"results":[
+              {"trackId":777,"artistName":"Same Artist","trackName":"Concurrent Song",
+               "trackTimeMillis":200000}
+            ]}
+        """.trimIndent()
+        val ttml = """
+            <tt xmlns="http://www.w3.org/ns/ttml"><body><div>
+            <p begin="1.0" end="2.0">Hi</p>
+            </div></body></tt>
+        """.trimIndent()
+        val get: suspend (String) -> String? = { url ->
+            if (url.startsWith("https://itunes.apple.com/")) {
+                searches++
+                delay(100)
+                json
+            } else {
+                ttml
+            }
+        }
+        val first = async { AmllTtml.lyrics("Concurrent Song", "Same Artist", 200_000, "concurrent-video", get) }
+        val second = async { AmllTtml.lyrics("Concurrent Song", "Same Artist", 200_000, "concurrent-video", get) }
+        assertTrue(first.await()!!.isNotEmpty())
+        assertTrue(second.await()!!.isNotEmpty())
+        assertEquals(1, searches)
     }
 
     @Test

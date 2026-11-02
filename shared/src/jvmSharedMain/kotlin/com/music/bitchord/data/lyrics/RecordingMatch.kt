@@ -14,7 +14,10 @@ import kotlin.math.abs
  * name a different recording ([VERSION_WORDS]: live, remix, acoustic…) must
  * agree; at least one credited artist must be shared; and the length must be
  * within [DURATION_TOLERANCE_SECONDS] when both sides know it. A hit with no
- * length at all is refused once the song's own length is known.
+ * length at all is refused once the song's own length is known — deliberately
+ * for every source, not just iTunes: an unverified edit is the wrong words in
+ * time with the right song, and no provider's row is trustworthy enough to
+ * waive it.
  */
 internal object RecordingMatch {
 
@@ -47,6 +50,8 @@ internal object RecordingMatch {
                     coreOf(name) == wantedTitle &&
                     versionOf(name) == wantedVersion &&
                     (wantedArtists.isEmpty() || artistsOf(candidate.artist.orEmpty()).any { it in wantedArtists }) &&
+                    // The unknown-length refusal above applies to every source:
+                    // a wrong edit can never be repaired by a whole-song shift.
                     (durationMs <= 0L ||
                         (candidate.seconds != null && distance(candidate) <= DURATION_TOLERANCE_SECONDS))
             }
