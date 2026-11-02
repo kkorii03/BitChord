@@ -22,6 +22,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import soundfile
 import torch
 import torchaudio
 import uroman
@@ -50,7 +51,10 @@ def vocals_of(audio, work):
                    check=True)
     subprocess.run([sys.executable, "-m", "demucs", "--two-stems=vocals", "-n", "htdemucs", "-o", str(work / "sep"),
                     str(wav)], check=True, capture_output=True)
-    voc, rate = torchaudio.load(str(work / "sep" / "htdemucs" / "song" / "vocals.wav"))
+    # soundfile, not torchaudio.load: torchaudio 2.9 needs torchcodec for that (judge/calib2).
+    data, rate = soundfile.read(str(work / "sep" / "htdemucs" / "song" / "vocals.wav"), dtype="float32",
+                                always_2d=True)
+    voc = torch.from_numpy(data.T.copy())
     return torchaudio.functional.resample(voc.mean(0, keepdim=True), rate, bundle.sample_rate)
 
 
