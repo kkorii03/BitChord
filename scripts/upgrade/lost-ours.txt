@@ -1,0 +1,43 @@
+base 018c841b  ours task/telegram  result HEAD
+checked added lines: 101295  moved elsewhere: 1  LOST: 14  revived removed lines: 33
+!! LOST    2  11-02 08:20  3b17bd68  cloud: ko-conflict-settingssheet-1102 (compiled, proof=none)
+        app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt: KoWifiQualityRow(onWifiTitle, wifiQuality.localizedLabel()) { picking = QualityTarget.WIFI } // [KO] wifi-quality
+        app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt: KoCellularQualityRow(onMobileDataTitle, cellularQuality.localizedLabel()) { picking = QualityTarget.CELLULAR } // [KO] cellular-quality
+!! LOST    7  11-02 05:00  98ae99e1  cloud: ko-split-playerlyrics-1102 (compiled, proof=none)
+        sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ko/ui/player/KoLyricsFrameGate.kt: internal const val KO_LYRIC_FRAME_INTERVAL_NANOS = 16_000_000L
+        sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ko/ui/player/KoLyricsTransition.kt: // A full-height slide rather than a crossfade: the outgoing line
+        sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ko/ui/player/KoLyricsTransition.kt: // leaves through the top while the incoming one comes up from the
+        sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ko/ui/player/KoLyricsTransition.kt: // bottom, so the two never sit on the same baseline and read as one
+        sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ko/ui/player/KoLyricsTransition.kt: // garbled line mid-transition.
+        sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ko/ui/player/KoLyricsTransition.kt: (fadeIn(animationSpec = tween(duration, easing = FastOutSlowInEasing)) +
+        sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ko/ui/player/KoLyricsTransition.kt: slideInVertically(animationSpec = tween(duration, easing = FastOutSlowInEasing)) { height -> height })
+!! LOST    1  11-02 04:58  46d67f08  cloud: ko-split-qualityupgrade-1102 (compiled, proof=none)
+        app/src/main/java/com/music/bitchord/playback/QualityUpgrade.kt: if (late != null &&
+!! LOST    2  11-02 03:55  efbcc2b0  cloud: ko-split-crossfade-1102 (compiled, proof=ok)
+        app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt: private fun mixRise(progress: Float): Float = KoCrossfadeGain.mixRise(progress)
+        app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt: private fun mixFall(progress: Float): Float = KoCrossfadeGain.mixFall(progress)
+!! LOST    1  11-02 01:54  1e0658f0  cloud: ko-split-settingssheet-1102 (compiled, proof=none)
+        app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt: internal class SettingsSearch(query: String) {
+!! LOST    1  11-02 01:51  cdf9acad  cloud: ko-split-ytmusicrepository-1102 (compiled, proof=none)
+        shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt: /** Whether the Music gate is active, settling an UNKNOWN verdict first. */
+REVIVED   17  app/src/main/java/com/music/bitchord/MainActivity.kt
+        // The one way the player is raised, whoever asks: M3 moving it, the app
+        // moving it, or a widget's deep link. A raise has to follow a touch the
+        // activity saw since it last resumed — or be that deep link — so a
+        // programmatic open while the app is coming back to the foreground cannot
+REVIVED    3  app/src/main/java/com/music/bitchord/data/settings/AppSettings.kt
+        private const val KEY_AUTOPLAY_BEFORE_REPEAT_ALL = "autoplay_before_repeat_all"
+        private const val KEY_PERSONALISED_AUTOPLAY = "personalised_autoplay"
+        private const val KEY_VIDEO_RADIO = "video_radio"
+REVIVED    1  app/src/main/java/com/music/bitchord/download/Downloads.kt
+        DownloadSession.queued(song, from)
+REVIVED    9  app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt
+        * The queue index the incoming track occupied when the standby was loaded.
+        * Tail edits leave it alone, so it is also what locates the row when the
+        * handoff rebuilds the standby's tail.
+        private var incomingItemIndex = C.INDEX_UNSET
+REVIVED    1  app/src/main/java/com/music/bitchord/ui/components/DownloadManagerSheet.kt
+        onRetry = { Downloads.enqueue(context, item.song, item.from) },
+REVIVED    2  app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt
+        private fun LowPowerMode.localizedLabel(): String = stringResource(
+        private fun settingsSubtitleStyle() = MaterialTheme.typography.bodyLarge.copy(
