@@ -11,6 +11,7 @@ import com.music.bitchord.ko.ui.player.koInterludeContainerAlpha
 import com.music.bitchord.ko.ui.player.koInterludeDotEntryAlpha
 import com.music.bitchord.ko.ui.player.koInterludeExitAlpha
 import com.music.bitchord.ko.ui.player.koLineBlurDp
+import com.music.bitchord.ko.ui.player.koLineBlurAllowed
 import com.music.bitchord.ko.ui.player.koLyricSpringForInterval
 import com.music.bitchord.ko.ui.player.koStaggerDelayMs
 import com.music.bitchord.ko.ui.player.koWordFeatherPx
@@ -67,6 +68,32 @@ class KoLyricsMotionTest {
         assertEquals(5.dp, koLineBlurDp(12, narrow = false))
         assertEquals(4f, koLineBlurDp(4, narrow = true).value, 0.001f)
         assertEquals(5.dp, koLineBlurDp(20, narrow = true))
+    }
+
+    @Test fun lineBlurHonoursReduceAnimationAndLowPower() {
+        fun allowed(reduceAnimation: Boolean = false, lowPower: Boolean = false) = koLineBlurAllowed(
+            isSynced = true,
+            reduceDynamicBlur = false,
+            reduceAnimation = reduceAnimation,
+            lowPower = lowPower,
+            lyricsBlur = true,
+            browsing = false,
+            isActive = false,
+        )
+        assertTrue(allowed())
+        assertFalse(allowed(reduceAnimation = true))
+        assertFalse(allowed(lowPower = true))
+        assertFalse(
+            koLineBlurAllowed(
+                isSynced = true,
+                reduceDynamicBlur = false,
+                reduceAnimation = false,
+                lowPower = false,
+                lyricsBlur = true,
+                browsing = false,
+                isActive = true,
+            ),
+        )
     }
 
     @Test fun staggerFansOutThenWrapsAtThreeSteps() {

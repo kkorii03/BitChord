@@ -150,6 +150,7 @@ import com.music.bitchord.ko.ui.player.koInterludeContainerAlpha
 import com.music.bitchord.ko.ui.player.koInterludeDotEntryAlpha
 import com.music.bitchord.ko.ui.player.koInterludeExitAlpha
 import com.music.bitchord.ko.ui.player.koLineBlurDp
+import com.music.bitchord.ko.ui.player.koLineBlurAllowed
 import com.music.bitchord.ko.ui.player.koLyricSpringForInterval
 import com.music.bitchord.ko.ui.player.koLyricsStatusWithTiming
 import com.music.bitchord.ko.ui.player.koLyricsTimingDetail
@@ -2217,7 +2218,15 @@ internal fun LyricsPanel(
             val step = distance.coerceAtMost(falloff.lastIndex)
             val blur by animateDpAsState(
                 targetValue = when {
-                    !isSynced || reduceDynamicBlur || !lyricsBlur || browsing || isActive -> 0.dp
+                    !koLineBlurAllowed(
+                        isSynced = isSynced,
+                        reduceDynamicBlur = reduceDynamicBlur,
+                        reduceAnimation = reduceAnimation,
+                        lowPower = lowPower,
+                        lyricsBlur = lyricsBlur,
+                        browsing = browsing,
+                        isActive = isActive,
+                    ) -> 0.dp
                     else -> koLineBlurDp(distance, narrowViewport)
                 },
                 animationSpec = tween(LYRIC_SETTLE_MS, easing = LYRIC_EASING),

@@ -1,12 +1,20 @@
 package com.music.bitchord.ko.ui
 
 import com.music.bitchord.data.model.BrowseType
+import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.sharedui.resources.Res
 import com.music.bitchord.sharedui.resources.album
+import com.music.bitchord.sharedui.resources.albums
 import com.music.bitchord.sharedui.resources.artist
+import com.music.bitchord.sharedui.resources.artists
 import com.music.bitchord.sharedui.resources.playlist
+import com.music.bitchord.sharedui.resources.playlists
+import com.music.bitchord.sharedui.resources.search_filter_all
+import com.music.bitchord.sharedui.resources.search_filter_episodes
+import com.music.bitchord.sharedui.resources.search_filter_videos
 import com.music.bitchord.sharedui.resources.song
+import com.music.bitchord.sharedui.resources.songs
 import org.jetbrains.compose.resources.StringResource
 
 /**
@@ -30,3 +38,18 @@ fun koBrowseFallbackLabel(type: BrowseType): StringResource = when (type) {
  */
 fun <T> koHasNoResults(state: UiState<List<T>>?): Boolean =
     state is UiState.Success && state.data.isEmpty()
+
+/**
+ * The search filter tab's name in the app's language, not the enum's hardcoded
+ * Korean. Restored with the fork's pill row, which v1.9 replaced with the
+ * enum label and left every other locale reading Korean.
+ */
+fun koSearchFilterLabel(filter: SearchFilter): StringResource = when (filter) {
+    SearchFilter.ALL -> Res.string.search_filter_all
+    SearchFilter.SONGS -> Res.string.songs
+    SearchFilter.VIDEOS -> Res.string.search_filter_videos
+    SearchFilter.EPISODES -> Res.string.search_filter_episodes
+    SearchFilter.ALBUMS -> Res.string.albums
+    SearchFilter.ARTISTS -> Res.string.artists
+    SearchFilter.PLAYLISTS -> Res.string.playlists
+}
