@@ -9,10 +9,11 @@ Do not touch .github/workflows. Do not refactor or move upstream code. Keep edit
 Finish with a summary of at most 12 lines: regressions found (1.8 behaviour -> 1.9 behaviour), files, REMOVED-LINES AUDIT, tests (fail-before/pass-after, class names for the CI list), what you did not do. Follow AGENTS.md (ponytail) rules.
 
 
-== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+== 3 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
 ?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
 寃??吏??
-VERDICT: ISSUES 1
-MEDIUM app/src/main/java/com/music/bitchord/ui/LyricsController.kt:105 (used at :865) — unrelated out-of-area change: a new CoroutineExceptionHandler silently swallows background timing failures, is not a settings regression, is untested, and was not listed as a needed outside-area change. Fix: revert it, or split it into its own lane with a test and a summary note.
-Did not verify the actual `origin/task/telegram` branch (not present in this clone), so the 1.8 comparison relies on nearby history.
+VERDICT: ISSUES 2
+MEDIUM app/src/main/java/com/music/bitchord/ui/LyricsController.kt:124 — the previous round's blocking finding is unaddressed: the out-of-area CoroutineExceptionHandler still swallows timing failures (only its log level dropped `e`→`w`), with no test or outside-area summary note. Fix: revert it, or isolate it in its own lane with a test and a summary note.
+MEDIUM app/src/main/java/com/music/bitchord/ui/LyricsController.kt:120-126 (used at :865 vs :1479,:1525) — the rewritten comment claims failures of the "automatic AI pass" are handled, but `aiTimingJob` launches never receive `timingFailureHandler`, so AI-timing exceptions still propagate. Fix: pass the handler to those launches or narrow the comment to the measurement path.
+Did not audit the workflow/.dsq hunks (committed by the harness, not the developer).
 留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
