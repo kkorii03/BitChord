@@ -11,10 +11,11 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * The whole lyrics lookup — every variant, catalogue retry and the
- * transcription fallback — must end at one deadline instead of waiting out
- * each provider again. On expiry the caller gets what was already found, or
- * null, never an endless spinner.
+ * The whole lyrics search — every variant and catalogue retry — must end at
+ * one deadline instead of waiting out each provider again. On expiry the
+ * caller gets what was already found, or null, never an endless spinner. The
+ * Gemini transcription after a miss has its own, longer limit: it needs tens
+ * of seconds, and the search's deadline would end every AI sheet.
  */
 class LyricsLookupDeadlineTest {
 
@@ -82,8 +83,10 @@ class LyricsLookupDeadlineTest {
     }
 
     @Test
-    fun aHangingTranscriptionCannotHoldTheLookupPastTheDeadline() = runBlocking {
+    fun aHangingTranscriptionEndsAtItsOwnLimit() = runBlocking {
         val previous = LyricsRepository.transcriber
+        val previousLimit = LyricsRepository.transcribeLimitMs
+        LyricsRepository.transcribeLimitMs = 500L
         LyricsRepository.transcriber = { _, _ ->
             delay(60_000)
             null
@@ -105,11 +108,42 @@ class LyricsLookupDeadlineTest {
                 assertNull(found)
             }
             assertTrue(
-                elapsed < LyricsRepository.LOOKUP_DEADLINE_MS + 5_000L,
-                "the lookup ran ${elapsed}ms, past its ${LyricsRepository.LOOKUP_DEADLINE_MS}ms deadline",
+                elapsed < LyricsRepository.transcribeLimitMs + 5_000L,
+                "the lookup ran ${elapsed}ms, past its ${LyricsRepository.transcribeLimitMs}ms transcription limit",
             )
         } finally {
             LyricsRepository.transcriber = previous
+            LyricsRepository.transcribeLimitMs = previousLimit
+        }
+    }
+
+    /**
+     * Gemini writing a sheet takes tens of seconds. Held to the 12 s search
+     * deadline (lyrics-missing-fix r3 as delivered), every AI sheet was lost.
+     */
+    @Test
+    fun aTranscriptionSlowerThanTheSearchDeadlineStillAnswers() = runBlocking {
+        val previous = LyricsRepository.transcriber
+        val previousDeadline = LyricsRepository.lookupDeadlineMs
+        LyricsRepository.lookupDeadlineMs = 200L
+        LyricsRepository.transcriber = { _, _ ->
+            delay(1_000)
+            listOf(LyricLine(timeMs = 1_000L, text = "written down by ear"))
+        }
+        try {
+            val found = LyricsRepository.lyrics(
+                videoId = "deadline-transcribe-slow",
+                title = "Only Heard",
+                artist = "Nobody",
+                durationMs = 200_000L,
+                sources = setOf(LyricsSource.SIMP_MUSIC),
+                order = listOf(LyricsSource.SIMP_MUSIC),
+                transcribe = true,
+            )
+            assertEquals(LyricsSource.GEMINI_TRANSCRIPT, found?.source)
+        } finally {
+            LyricsRepository.transcriber = previous
+            LyricsRepository.lookupDeadlineMs = previousDeadline
         }
     }
 }

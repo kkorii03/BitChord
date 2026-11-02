@@ -80,6 +80,13 @@ class LyricsController(
      */
     internal var lookupTimeoutMs: Long = 12_000L + 1_000L
 
+    /**
+     * Added to [lookupTimeoutMs] when the lookup may fall back to Gemini
+     * writing the lyrics down, which has its own longer limit in the
+     * repository; without it this backstop ended every AI sheet at 13 s.
+     */
+    internal var transcribeTimeoutMs: Long = 120_000L // LyricsRepository.transcribeLimitMs (shared-internal)
+
     /** Synced lyrics for whatever is playing; null while unknown or absent. */
     private val _lyrics = MutableStateFlow<List<LyricLine>?>(null)
     val lyrics: StateFlow<List<LyricLine>?> = _lyrics.asStateFlow()
@@ -458,7 +465,9 @@ class LyricsController(
             }
             if (previewOnly) return@launch
             var finished = false
-            val answer = withTimeoutOrNull(lookupTimeoutMs) {
+            val transcribe = localUri == null
+            val backstopMs = lookupTimeoutMs + if (transcribe) transcribeTimeoutMs else 0L
+            val answer = withTimeoutOrNull(backstopMs) {
                 lyricsLookup(
                     videoId, title, artist, durationMs, album, sources,
                     AppSettings.lyricsSourceOrder.value, AppSettings.prioritizeSyllableSync.value,
@@ -470,7 +479,7 @@ class LyricsController(
                     alternatives,
                     artistKnown,
                     artistAliases,
-                    localUri == null,
+                    transcribe,
                 ).also { finished = true }
             }
             // The repository ends its own lookup at LOOKUP_DEADLINE_MS with
@@ -479,7 +488,7 @@ class LyricsController(
             // the panel spinning (MA9BrvtKvhM).
             val found = if (finished) answer else bestSoFar()
             if (!finished) {
-                TrackLog.i("BitChord", "lyrics: deadline after ${lookupTimeoutMs}ms", about = videoId)
+                TrackLog.i("BitChord", "lyrics: deadline after ${backstopMs}ms", about = videoId)
             }
             val selected = selectedLyricsSource?.let(lyricsProviderResults::get) ?: found
             publishLyrics(selected)

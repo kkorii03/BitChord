@@ -102,6 +102,7 @@ class LyricsControllerRequestTest {
         )
         val entered = CompletableDeferred<Unit>()
         controller.lookupTimeoutMs = 100L
+        controller.transcribeTimeoutMs = 0L
         controller.lyricsLookup = { _, _, _, _, _, _, _, _, _, _, onResult, _, _, _, _, _, _ ->
             onResult?.invoke(LyricsSource.LRCLIB, sheet, null)
             entered.complete(Unit)
@@ -120,6 +121,7 @@ class LyricsControllerRequestTest {
     fun aProviderThatNeverReturnsAndFoundNothingEndsWithNoLyrics() = runBlocking {
         val entered = CompletableDeferred<Unit>()
         controller.lookupTimeoutMs = 100L
+        controller.transcribeTimeoutMs = 0L
         controller.lyricsLookup = { _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ ->
             entered.complete(Unit)
             awaitCancellation()

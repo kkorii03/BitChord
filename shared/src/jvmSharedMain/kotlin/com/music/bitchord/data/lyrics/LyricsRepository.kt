@@ -161,7 +161,7 @@ object LyricsRepository {
         // One deadline for the whole answer, the transcription fallback
         // included. Made here rather than inside the search so a Gemini
         // request after a miss cannot keep the panel spinning past it.
-        val deadline = LookupDeadline()
+        val deadline = LookupDeadline(lookupDeadlineMs)
         val found = lookUpAll(
             videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
             onSourceStarted, onSourceResult, onSourceCancelled, isVideo, alternatives, artistKnown,
@@ -170,14 +170,18 @@ object LyricsRepository {
         // An upload labelled an instrumental has no words to write down: skip
         // the paid Gemini request before it is made.
         if (found != null || !transcribe || sources.isEmpty() || LyricsAiGuard.isInstrumentalTitle(title)) return found
-        val remainingMs = deadline.remainingMs()
-        val heard = if (remainingMs > 0L) {
-            beforeLookupDeadline(deadline) { transcribed(videoId, durationMs) }
-        } else {
-            null
+        // Not held to the search's deadline: Gemini listening to the whole
+        // track takes tens of seconds (next-prep with lyrics=gemini_transcript
+        // took 55 s), so the 12 s bound would end every AI sheet before it was
+        // written. Its own, longer bound keeps a stuck request from spinning
+        // the panel for ever; the request itself runs on [background] and
+        // still lands in [heard] for the next look if this wait gives up.
+        var answered = false
+        val heard = withTimeoutOrNull(transcribeLimitMs) {
+            transcribed(videoId, durationMs).also { answered = true }
         }
-        if (remainingMs > 0L && heard == null && deadline.expired()) {
-            TrackLog.i(TAG, "lyrics: deadline after ${deadline.totalMs}ms (transcribe)", about = videoId)
+        if (!answered) {
+            TrackLog.i(TAG, "lyrics: transcription limit after ${transcribeLimitMs}ms", about = videoId)
         }
         return heard?.also {
             // Kept like any answer, so the next play — today or after a
@@ -983,6 +987,15 @@ object LyricsRepository {
      * every variant; on expiry the best sheet already found is returned.
      */
     internal const val LOOKUP_DEADLINE_MS = 12_000L
+
+    /** [LOOKUP_DEADLINE_MS] as used; a seam so tests need not wait it out. */
+    internal var lookupDeadlineMs = LOOKUP_DEADLINE_MS
+
+    /**
+     * The longest the Gemini transcription fallback is waited for, apart from
+     * the search's deadline. Before 11-02 it had no bound at all.
+     */
+    internal var transcribeLimitMs = 120_000L
 
     internal class LookupDeadline(
         val totalMs: Long = LOOKUP_DEADLINE_MS,
