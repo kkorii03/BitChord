@@ -47,6 +47,7 @@ import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.startup.StartupWork
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -60,6 +61,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Locale
@@ -1321,13 +1323,118 @@ object AudioCache {
         )
     }
 
-    private fun cacheFactory(upstream: DataSource.Factory) = CacheDataSource.Factory()
-        .setCache(cache)
-        .setUpstreamDataSourceFactory(upstream)
-        .setCacheKeyFactory(keyFactory)
-        // A cache write that fails (full disk, evicted mid-write) should drop
-        // to streaming, not surface as a playback error.
-        .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+    /**
+     * Direct Source Stream's half of [heldByYouTube]: a track whose entry holds
+     * YouTube's Opus from an earlier play — one made before the setting was
+     * on, or one that started on YouTube and swapped up mid-song — goes to the
+     * addon that has it rather than being played from that entry.
+     *
+     * Direct mode is decided in the resolver, and [CacheDataSource] never
+     * calls the resolver for bytes it already holds. So the Opus played
+     * instead, and nothing said so: until something pins YouTube, Direct Source
+     * Stream also holds the second look off (see
+     * [QualityUpgrade.couldStillUpgrade]), so there was no badge and no upgrade,
+     * and only clearing the song from the cache brought the addon's copy back.
+     *
+     * Asked here, before the cache is read, and once per track: an addon
+     * answer is pinned in [StreamChoice] and the Opus dropped, so the open that
+     * follows misses and resolves to that pin. No answer pins YouTube instead
+     * — what the direct resolve falls back to anyway — so the entry is
+     * finished by the stream that started it, and the addon's late answer swaps
+     * in under it. Either pin ends this check for every later open of the track.
+     *
+     * Runs on the loader thread, which the resolver blocks in exactly the same
+     * way on a direct-mode miss.
+     */
+    private fun settleDirectEntry(uri: Uri) {
+        if (uri.scheme != "bitchord" || uri.authority != "watch") return
+        val videoId = uri.getQueryParameter("v") ?: return
+        // A rendition of its own (an upgrade, a revert), the watch's capped
+        // copy and Automix's Opus are none of this: each has its own entry.
+        if (QualityUpgrade.cacheTag(uri) != null ||
+            uri.getQueryParameter(WATCH_READ_PARAM) != null ||
+            AutomixAnalysisSource.requestsYouTubeOpus(
+                uri.getQueryParameter(AutomixAnalysisSource.OPUS_QUERY_PARAMETER),
+            )
+        ) {
+            return
+        }
+        if (!DirectSourceGate.isActive() || StreamChoice.of(videoId) != null) return
+        val key = keyFactory.buildCacheKey(DataSpec(uri))
+        if (!heldByYouTube(key) || isOffline()) return
+        try {
+            runBlocking<Unit>(TrackLog.about(videoId)) {
+                // The same hold the resolver applies, so a track prepared early
+                // for a gapless start is not searched for before its window.
+                DirectSourceGate.awaitOpen(videoId)
+                val addon = runCatching { DirectSourceGate.lookup(videoId, SourceResolver.targetIn(uri)) }
+                    .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
+                    .getOrNull()
+                // Read-ahead may have settled it while this waited.
+                if (StreamChoice.of(videoId) != null) return@runBlocking
+                if (addon != null) {
+                    dropYouTubeEntry(key, videoId)
+                    // Pinned only once the Opus is really gone. Otherwise the
+                    // addon's file would continue it, and YouTube finishing its
+                    // own entry is the lesser loss.
+                    if (!heldByYouTube(key)) {
+                        StreamChoice.remember(videoId, addon, substituted = true)
+                        return@runBlocking
+                    }
+                }
+                runCatching { StreamResolver.resolve(videoId) }
+                    .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
+                    .getOrNull()
+                    ?.let { url ->
+                        StreamChoice.remember(
+                            videoId,
+                            SourceStream(url, headers = StreamResolver.mediaHeadersFor(url)),
+                            substituted = false,
+                        )
+                        DirectSourceGate.startedOnYouTube(videoId, SourceResolver.targetIn(uri))
+                    }
+            }
+        } catch (e: InterruptedException) {
+            // A released media period interrupts its loader; that is a skip.
+            throw java.io.InterruptedIOException("direct lookup for $videoId interrupted")
+        }
+    }
+
+    /** Clears [key]'s YouTube bytes so an addon's file can fill it from the top. */
+    private fun dropYouTubeEntry(key: String, videoId: String) {
+        runCatching { cache.removeResource(key) }
+            .onSuccess { TrackLog.d(TAG, "dropped cached YouTube copy $key for the addon's", about = videoId) }
+            .onFailure { TrackLog.d(TAG, "cache entry $key still in use: ${it.message}", about = videoId) }
+    }
+
+    private fun cacheFactory(upstream: DataSource.Factory): DataSource.Factory = DataSource.Factory {
+        val inner = CacheDataSource.Factory()
+            .setCache(cache)
+            .setUpstreamDataSourceFactory(upstream)
+            .setCacheKeyFactory(keyFactory)
+            // A cache write that fails (full disk, evicted mid-write) should drop
+            // to streaming, not surface as a playback error.
+            .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+            .createDataSource()
+        // [KO] first-audio: the player takes the entry back before reading it.
+        object : DataSource {
+            override fun addTransferListener(transferListener: TransferListener) =
+                inner.addTransferListener(transferListener)
+
+            override fun open(dataSpec: DataSpec): Long {
+                settleDirectEntry(dataSpec.uri)
+                yieldAnalysisHeadToPlayback(cacheKeyOf(dataSpec.uri), dataSpec.uri.getQueryParameter("v"))
+                return inner.open(dataSpec)
+            }
+
+            override fun read(buffer: ByteArray, offset: Int, length: Int): Int =
+                inner.read(buffer, offset, length)
+
+            override fun getUri(): Uri? = inner.uri
+
+            override fun close() = inner.close()
+        }
+    }
 
     /**
      * As [cacheFactory], minus [CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR] —
@@ -1394,6 +1501,33 @@ object AudioCache {
     private fun retryAnalysisHeadIfReaderReleased(videoId: String) =
         koAnalysis.retryAnalysisHeadIfReaderReleased(videoId) // [KO] analysis-head
 
+    /**
+     * Stops an analysis round that is holding the entry playback is about to
+     * read. Playback always wins: the player's first byte is on the audible
+     * path, while the analysis fetch is only measurement and may wait or fetch
+     * again once the reader has let go.
+     *
+     * The claim is kept as [analysisHeadsHeldElsewhere] so the retry is the
+     * same event-driven one a round deferred at its start gets — the reader's
+     * release, never a poll.
+     */
+    private fun yieldAnalysisHeadToPlayback(key: String, videoId: String?) {
+        val id = videoId ?: return
+        if (!analysisHeadMustYieldToPlayback(
+                analysisWriteKey = id,
+                playbackReadKey = key,
+                roundInFlight = id in analysisHeadsInFlight,
+                playerHoldsVideo = playerHoldsVideo(id),
+            )
+        ) {
+            return
+        }
+        if (analysisHeads.containsKey(id)) analysisHeadsHeldElsewhere.add(id)
+        analysisHeadDeferredLogged.remove(id)
+        analysisHeadJobs.remove(id)?.cancel(CancellationException("playback needs the cache entry"))
+        TrackLog.d(TAG, "analysis head for $id yielded to playback", about = id)
+    }
+
     /** Set once the player exists; read-ahead resolves streams the same way. */
     private var upstreamFactory: DataSource.Factory? = null
 
@@ -1454,21 +1588,67 @@ object AudioCache {
         koPrefetch.prefetchQueue(upcoming) // [KO] prefetch-queue
     }
 
+    private var directJob: Job? = null
+
     /**
      * Direct Source Stream's read-ahead: one track, the next, started once the
-     * playing one is inside the gate's window of its transition.
+     * playing one is inside [DirectSourceGate.WINDOW_MS] of its transition.
      *
-     * The fork's [KoPrefetchQueue] owns the scheduling, so this is the one-track
-     * form of [prefetchQueue]; keeping the v1.9 entry point means its callers
-     * need no fork-specific branch.
+     * Resolves the track the way playback will — the addon first, YouTube when
+     * no addon has it — pins the answer in [StreamChoice] so the player's own
+     * open lands on the same stream, and caches the first [PRELOAD_BYTES] of
+     * it. Only the head: the player reads the rest itself a few seconds later,
+     * so fetching more here would only download it twice.
+     *
+     * The pin is skipped when something is already pinned. The player may
+     * have got there first and settled on YouTube after the addon timed out,
+     * and an addon answer arriving late must not be written over that half-
+     * filled entry — see [StreamChoice].
      */
     fun prefetchDirect(upcoming: Upcoming) {
-        prefetchQueue(listOf(upcoming))
+        directJob?.cancel()
+        val id = upcoming.mediaId
+        // A source-backed row resolves through its own source when opened, and
+        // a downloaded or reverted track never reads this entry at all.
+        if (SourceRegistry.parseTrackKey(id) != null || id in Downloads.saved.value || OriginalVersion.isPinned(id)) {
+            directJob = null
+            return
+        }
+        directJob = scope.launch(TrackLog.about(id)) {
+            if (StreamChoice.of(id) == null) {
+                val addon = runCatching { DirectSourceGate.lookup(id, upcoming.target) }
+                    .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
+                    .getOrNull()
+                val stream = addon ?: runCatching {
+                    val url = StreamResolver.resolve(id)
+                    SourceStream(url, headers = StreamResolver.mediaHeadersFor(url))
+                }
+                    .onFailure {
+                        if (it is kotlinx.coroutines.CancellationException) throw it
+                        TrackLog.d(TAG, "direct read-ahead could not resolve $id: ${it.message}", about = id)
+                    }
+                    .getOrNull()
+                    ?: return@launch
+                if (StreamChoice.of(id) == null) {
+                    // An addon pinned over YouTube's Opus from an earlier play
+                    // would have its head read straight off that Opus and its
+                    // rest streamed after it — see [settleDirectEntry]. The
+                    // Opus goes first, or the addon is not pinned at all and
+                    // playback's own open settles it.
+                    val key = cacheKeyOf(Uri.parse("bitchord://watch?v=$id"))
+                    if (addon != null && heldByYouTube(key)) dropYouTubeEntry(key, id)
+                    if (addon != null && heldByYouTube(key)) return@launch
+                    StreamChoice.remember(id, stream, substituted = addon != null)
+                }
+            }
+            fetch(id, 0, PRELOAD_BYTES)
+        }
     }
 
     /** Drops [prefetchDirect]'s work for a track the queue has moved away from. */
     fun cancelDirect() {
-        koPrefetch.cancel()
+        directJob?.cancel()
+        directJob = null
     }
 
     /**
@@ -1704,6 +1884,15 @@ object AudioCache {
 
     /** Video ids with a head fetch in the air, so a tick cannot stack another on top. */
     private val analysisHeadsInFlight = ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * The round writing each id's analysis head, so playback can take the
+     * entry back the moment it needs it. Media3 grants one writer per cache
+     * entry, so a round that started first would otherwise make the player's
+     * open wait until the whole file had been written — measured as 3s of
+     * silence after the YouTube URL was already resolved.
+     */
+    private val analysisHeadJobs = ConcurrentHashMap<String, Job>()
 
     /**
      * Video ids whose last round ended without adding a byte. The round is
@@ -2287,6 +2476,16 @@ object AudioCache {
             return outcome
         }
 
+        // [KO] first-audio: let playback take the entry back mid-round. The
+        // round's own job is what stops the CacheWriter; the claim stays held
+        // for the reader's release event to retry.
+        if (pinKey && about != null) {
+            if (about in analysisHeadsHeldElsewhere) {
+                throw CancellationException("playback needs the cache entry")
+            }
+            analysisHeadJobs[about] = coroutineContext.job
+        }
+        try {
         // A cheap first knock rather than the whole range on the door.
         // Losing this entry to another writer isn't something
         // [CacheDataSource] surfaces as a failure — it quietly falls through
@@ -2325,6 +2524,9 @@ object AudioCache {
             }
         }
         pullTracked(position, length)
+        } finally {
+            if (pinKey && about != null) analysisHeadJobs.remove(about, coroutineContext.job)
+        }
         // One summary for the whole operation, where there used to be a line
         // before and after every probe. The duration is what makes a
         // read-ahead overlapping a resolve visible; the byte count is what
