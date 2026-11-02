@@ -1,0 +1,26 @@
+﻿Goal: the emulator UI tour must reach every screen, sheet, dialog and menu of the app, and every captured screen must be checked automatically for broken text: Korean words split across lines, a line holding only 1-2 characters, text cut with an ellipsis or clipped by its box, overlapping texts, English left in the Korean UI, and odd font/size jumps inside one list.
+
+Context: .github/ui-tour/tour.sh drives the debug app on an API 34 Korean emulator and saves per screen a PNG and a uiautomator XML dump (artifact 'ui-tour', shots/). The last full run reached 65 screens (screen-texts.md 1311 lines). The user asks: capture every corner of the app and catch every UI/UX/font/line-break problem.
+
+Do:
+1. Build a coverage list: walk the Compose navigation (routes, screens, bottom sheets, dialogs, menus, settings sub-pages, player screens, lyrics screen, queue, library tabs, search tabs, download/upgrade screens, onboarding) from the code (grep for NavHost/composable(/ModalBottomSheet/AlertDialog/DropdownMenu). Compare with what tour.sh visits. Write docs/ui-tour-coverage.md: every screen, whether the tour reaches it, and how to reach it.
+2. Extend .github/ui-tour/tour.sh (this file is allowed; .github/workflows/ is NOT) so the full (TOUR_QUICK=0) tour visits every reachable screen/sheet/dialog/menu in the list, scrolling long screens (one capture per screen height) and opening each settings sub-page. Keep the quick mode unchanged. Each step must fail soft (a missing element logs and moves on, as the existing helpers do).
+3. Add scripts/ui/ui_textcheck.py: reads every shots/*.xml (uiautomator dump) and writes shots/ui-text-issues.md listing per screen: (a) TextView text whose rendered bounds are narrower than its text needs and the text ends in '…' or is cut; (b) Korean text where a line break would split a word (use node bounds height vs line count where available, and text containing '\n' splitting Hangul words); (c) texts whose bounds overlap another text's bounds; (d) Latin-alphabet UI words in a Korean screen that are not proper nouns/song/artist names (heuristic: from resource strings that have a values-ko translation); (e) same list item siblings with different text sizes. Include a small self-test with fixture XML. Make tour.sh call it at the end so the artifact contains the report.
+4. Unit/self tests for the checker; name them in the summary.
+
+Rules: battery irrelevant here (test tooling) but do not change app code. Do not touch .github/workflows/, keys/, signing. grep/Select-String only (no rg). AGENTS.md (ponytail) rules apply. REMOVED-LINES AUDIT required for tour.sh.
+At the end, summary within 10 lines: files changed / screens covered before->after (count) / checker categories / test result / open problems.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 8
+HIGH docs/ui-tour-coverage.md:5,18-77,106 — the doc claims dozens of screens are now reached and the checker runs after every tour, but the diff contains no `tour.sh` changes to back this. Fix: remove the claims or implement the tour steps.
+HIGH scripts/ui/ui_textcheck.py:272-294 — there is no check for a line holding only 1-2 characters, an explicit goal requirement; add a per-line length check and report it.
+MEDIUM scripts/ui/ui_textcheck.py:131-138 — any text containing `…` or `...` is reported as cut even when it fits (e.g. a 1000px box holding `더 보기…`), flooding false positives; apply the width/height overflow test to ellipsized text too.
+MEDIUM scripts/ui/ui_textcheck.py:191-199 — `_size_jump` compares whole node heights, so a two-line row and a one-line row with the same font are reported as a size jump; compare per-line height or `_font_px` instead.
+MEDIUM scripts/ui/ui_textcheck.py:263 — the whole-text branch suppresses a translated multiword string if it contains any `PROPER_NOUNS` substring ("os", "cast"), so English like "Broadcast settings" goes unreported; match whole tokens.
+MEDIUM scripts/ui/ui_textcheck.py:147-158 — `_split_hangul` only inspects literal `\n`, so wrapped line breaks Android renders without a newline are never detected despite the requirement to use bounds/line count. Fix: infer line count from height and flag 1-2 char trailing lines.
+LOW scripts/ui/ui_textcheck.py:299-311 — `has_hangul` is inferred from issue kinds, so a Korean screen with zero issues prints "No Korean text found"; derive it from the parsed text instead.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
