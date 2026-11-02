@@ -14,10 +14,17 @@ class SyncSafetyPolicyTest {
     private val off = Switches()
 
     @Test
-    fun everySwitchDefaultsOff() {
-        Path.entries.forEach { path ->
+    fun everySwitchButPerLineDefaultsOff() {
+        Path.entries.filter { it != Path.PER_LINE_TIMING }.forEach { path ->
             assertFalse(SyncSafetyPolicy.isEnabled(path, off), "$path must default off")
         }
+    }
+
+    @Test
+    fun perLineTimingDefaultsOn() {
+        assertTrue(SyncSafetyPolicy.isEnabled(Path.PER_LINE_TIMING, off))
+        assertTrue(SyncSafetyPolicy.perLineTimingAllowed(off))
+        assertFalse(SyncSafetyPolicy.perLineTimingAllowed(Switches(perLineTiming = false)))
     }
 
     @Test

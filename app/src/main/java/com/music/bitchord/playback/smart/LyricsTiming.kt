@@ -14,6 +14,7 @@ import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsAiGuard
 import com.music.bitchord.data.lyrics.LyricsOverrideFile
 import com.music.bitchord.data.lyrics.LyricsOverrideStore
+import com.music.bitchord.data.lyrics.LyricsPerLine
 import com.music.bitchord.data.lyrics.LyricsRepository
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.lyrics.LyricsTimeMap
@@ -26,6 +27,7 @@ import com.music.bitchord.data.lyrics.SongCheckWindow
 import com.music.bitchord.data.lyrics.SongSyncRetry
 import com.music.bitchord.data.lyrics.TimingFit
 import com.music.bitchord.data.lyrics.retimedBy
+import com.music.bitchord.data.lyrics.retimedByLine
 import com.music.bitchord.data.lyrics.timedBy
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.durationMillis
@@ -132,6 +134,13 @@ object LyricsTiming {
         ) : Adjustment
     }
 
+    /** Heard words for the per-line layer, with the rendition key they belong to and the playing one. */
+    data class PerLineWords(
+        val words: List<LyricsWordAlign.Heard>,
+        val wordsKey: Int,
+        val currentKey: Int,
+    )
+
     /**
      * Everything applied to one video's lyrics: [base], then [manualMs] on
      * top — and, for Gemini's answer, [aiBiasMs] taken off: how late its
@@ -175,10 +184,19 @@ object LyricsTiming {
          * late with a fresh drift the song never had).
          */
         val refineUntilMs: Long = Long.MAX_VALUE,
+        /**
+         * The words the per-line layer uses, on the base/HQ/refine clock (the
+         * hand's correction is not in them), and the rendition keys they were
+         * heard on. Null when no word-level transcript belongs to the sound
+         * now playing. See [LyricsPerLine].
+         */
+        val perLine: PerLineWords? = null,
+        /** The song these words belong to, for the per-line log line. */
+        val videoId: String? = null,
     ) {
         val isEmpty: Boolean
             get() = base == null && manualMs == 0L && hq == null &&
-                refineMs == 0L && refineSlopePerMin == 0.0
+                refineMs == 0L && refineSlopePerMin == 0.0 && perLine == null
 
         /** What goes on top of [base]: the hand's correction, less Gemini's lateness. */
         val extraMs: Long get() = manualMs - if (base?.byAi == true) aiBiasMs else 0L
@@ -252,6 +270,7 @@ object LyricsTiming {
             aiBiasMs = bias,
             aiEngine = engine,
             hq = hqAdjustment(context, videoId),
+            videoId = videoId,
         )
         // The provider's own line times can stay a fifth of a second early or
         // late even when [base] has already put the record on the video's
@@ -262,7 +281,15 @@ object LyricsTiming {
         val refineClock = onHqClock(refineWords, timing)
         val refine = if (baseAllowed && refineClock.isNotEmpty()) {
             RefinePolicy.compute(
-                apply(lines, timing.copy(manualMs = 0L, refineMs = 0L, refineSlopePerMin = 0.0)),
+                apply(
+                    lines,
+                    timing.copy(
+                        manualMs = 0L,
+                        refineMs = 0L,
+                        refineSlopePerMin = 0.0,
+                        perLine = null,
+                    ),
+                ),
                 refineClock,
             )
         } else {
@@ -273,16 +300,49 @@ object LyricsTiming {
             refineSlopePerMin = if (refine.applied) refine.slopePerMin else 0.0,
             refineUntilMs = refineClock.maxOfOrNull { it.endMs } ?: Long.MAX_VALUE,
         )
+        // The per-line layer runs after refine and under the hand's correction.
+        // Its words are put on the same clock here, without extraMs, so [apply]
+        // can compare them with the lines it has after base, HQ and refine.
+        val perLineWords = if (baseAllowed && refineClock.isNotEmpty() &&
+            SyncSafetyPolicy.perLineTimingAllowed(AppSettings.syncSafetySwitches)
+        ) {
+            refineClock.map { word ->
+                val start = (word.startMs + refined.refineAt(word.startMs)).coerceAtLeast(0L)
+                val end = (word.endMs + refined.refineAt(word.endMs)).coerceAtLeast(start)
+                LyricsWordAlign.Heard(word.text, start, end)
+            }
+        } else {
+            emptyList()
+        }
+        val perLine = perLineWords.takeIf { it.isNotEmpty() }?.let {
+            PerLineWords(words = it, wordsKey = key, currentKey = key)
+        }
+        val refinedWithPerLine = refined.copy(perLine = perLine)
+        val refinedLines = applyThroughRefine(lines, refinedWithPerLine)
+        // What the per-line layer does to the lines, so the sweep's words can
+        // move with their own line instead of staying on the unshifted clock.
+        val perLineLayer = perLine?.let { words ->
+            LyricsPerLine.compute(refinedLines, words.words, words.wordsKey, words.currentKey)
+        } ?: LyricsPerLine.Layer.identity(lines.size)
+        fun perLineShiftAt(ms: Long): Long {
+            var index = -1
+            for (i in refinedLines.indices) {
+                if (refinedLines[i].timeMs <= ms) index = i else break
+            }
+            return perLineLayer.shiftsMs.getOrElse(index) { 0L }
+        }
         // The transcript is kept on the video's own clock, and a displayed line
-        // is map(record) + refine + extraMs; the words are already video time,
-        // so the rest is still missing. Read it here rather than bake it into
-        // the kept words: a correction by hand, a refine, or a newly learned
-        // engine lateness must move the heard words with their line.
+        // is map(record) + refine + per-line + extraMs; the words are already
+        // video time, so the rest is still missing. Read it here rather than
+        // bake it into the kept words: a correction by hand, a refine, a
+        // per-line move, or a newly learned engine lateness must move the heard
+        // words with their line.
         val heard = if (base?.byAi == true && entry.aiTextKey == key) {
             val hqMap = refined.hq?.map
             fun heardAt(ms: Long): Long {
                 val onClock = hqMap?.map(ms) ?: ms
-                return (onClock + refined.refineAt(onClock) + refined.extraMs).coerceAtLeast(0L)
+                val refinedAt = (onClock + refined.refineAt(onClock)).coerceAtLeast(0L)
+                return (refinedAt + perLineShiftAt(refinedAt) + refined.extraMs).coerceAtLeast(0L)
             }
             entry.heardWords.map { word ->
                 val start = heardAt(word.s)
@@ -295,7 +355,7 @@ object LyricsTiming {
         } else {
             emptyList()
         }
-        return refined.copy(heardWords = heard).takeUnless { it.isEmpty }
+        return refinedWithPerLine.copy(heardWords = heard).takeUnless { it.isEmpty }
     }
 
     /**
@@ -453,6 +513,19 @@ object LyricsTiming {
 
     /** [lines] as [timing] puts them; words, syllables and backing vocals move with their line. */
     fun apply(lines: List<LyricLine>, timing: Timing): List<LyricLine> {
+        val refined = applyThroughRefine(lines, timing)
+        // The per-line residual goes between the whole-song refine and the
+        // listener's own correction: only lines the heard words clearly place
+        // elsewhere move, and their neighbours follow or hold as
+        // [LyricsPerLine] decides. Memoised per timing and lines, so the
+        // display does not re-run the alignment on every frame.
+        val layered = refined.retimedByLine(perLineLayer(refined, timing).shiftsMs)
+        if (timing.extraMs == 0L) return layered
+        return layered.retimedBy { ms -> (ms + timing.extraMs).coerceAtLeast(0L) }
+    }
+
+    /** [lines] after base, HQ and refine, before the per-line layer and the hand. */
+    private fun applyThroughRefine(lines: List<LyricLine>, timing: Timing): List<LyricLine> {
         val baseMap = when (val base = timing.base) {
             null -> null
             is Adjustment.Shift -> LyricsTimeMap.shift(base.ms)
@@ -464,16 +537,38 @@ object LyricsTiming {
         // an offset and a drift — capped at ±[RefinePolicy.MAX_SHIFT_MS] even
         // where the transcript only covered the opening, or at the wide
         // window's ±[RefinePolicy.MAX_WIDE_SHIFT_MS] for an arrangement-sized
-        // constant. A manual correction belongs on top of all of them, in the
-        // clock the listener is hearing.
+        // constant.
         val mapped = if (hq == null) {
             lines.timedBy(baseMap)
         } else {
             lines.timedBy(baseMap).timedBy(hq)
         }
-        return mapped.retimedBy { ms ->
-            (ms + timing.refineAt(ms) + timing.extraMs).coerceAtLeast(0L)
+        return mapped.retimedBy { ms -> (ms + timing.refineAt(ms)).coerceAtLeast(0L) }
+    }
+
+    private class PerLineMemo(
+        val timing: Timing,
+        val lines: List<LyricLine>,
+        val layer: LyricsPerLine.Layer,
+    )
+
+    @Volatile
+    private var perLineMemo: PerLineMemo? = null
+
+    /** The memoised per-line layer for this timing, logging the one diagnostic line when it is computed. */
+    private fun perLineLayer(lines: List<LyricLine>, timing: Timing): LyricsPerLine.Layer {
+        val words = timing.perLine ?: return LyricsPerLine.Layer.identity(lines.size)
+        perLineMemo?.let { memo ->
+            if (memo.timing == timing && memo.lines == lines) return memo.layer
         }
+        val layer = LyricsPerLine.compute(lines, words.words, words.wordsKey, words.currentKey)
+        TrackLog.i(
+            "BitChord",
+            "sync perline: anchors=${layer.anchors} applied=${layer.applied} maxAbsMs=${layer.maxAbsMs}",
+            timing.videoId,
+        )
+        perLineMemo = PerLineMemo(timing, lines, layer)
+        return layer
     }
 
     /**
@@ -673,7 +768,15 @@ object LyricsTiming {
         val words = refineWords(entry, key, base)
         if (words.isEmpty()) return RefinePolicy.Result.NONE
         return RefinePolicy.compute(
-            apply(lines, timing.copy(manualMs = 0L, refineMs = 0L, refineSlopePerMin = 0.0)),
+            apply(
+                lines,
+                timing.copy(
+                    manualMs = 0L,
+                    refineMs = 0L,
+                    refineSlopePerMin = 0.0,
+                    perLine = null,
+                ),
+            ),
             onHqClock(words, timing),
         )
     }
