@@ -99,6 +99,9 @@ object StreamChoice {
         if (nowMs - choice.at > TTL_MS) {
             chosen.remove(videoId)
             expired.add(videoId)
+            if (choice.substituted) {
+                com.music.bitchord.playback.smart.LyricsTiming.notifyStreamChoice(videoId)
+            }
             return null
         }
         return choice.stream
@@ -128,6 +131,7 @@ object StreamChoice {
      *   that fails has not.
      */
     fun remember(videoId: String, stream: SourceStream, substituted: Boolean) {
+        val before = chosen[videoId]
         if (chosen.size >= MAX_REMEMBERED) {
             // Drop what can no longer be honoured, and only then the oldest of
             // what can. This used to `clear()`, which is the one eviction
@@ -148,13 +152,24 @@ object StreamChoice {
                 chosen.minByOrNull { it.value.at }?.let { chosen.remove(it.key) }
             }
         }
-        chosen[videoId] = Choice(stream, SystemClock.elapsedRealtime(), substituted)
+        val after = Choice(stream, SystemClock.elapsedRealtime(), substituted)
+        chosen[videoId] = after
         _revisions.update { it + 1L }
-        // A mid-song swap changes which audio clock the lyrics must be shown
-        // on. Event only: the screens and the next-row bundle recompute now.
-        if (substituted) {
+        // A change of the audio clock changes which one the lyrics must be
+        // shown on, whether it swaps to a substitute or falls back to YouTube.
+        // Event only: the screens and the next-row bundle recompute now.
+        if (!sameClock(before, after)) {
             com.music.bitchord.playback.smart.LyricsTiming.notifyStreamChoice(videoId)
         }
+    }
+
+    /** Whether two choices name the same audio clock, regardless of their URLs. */
+    private fun sameClock(before: Choice?, after: Choice?): Boolean {
+        if (before == null || after == null) return before == null && after == null
+        if (before.substituted != after.substituted) return false
+        if (!after.substituted) return true
+        return before.stream.sourceConfigId == after.stream.sourceConfigId &&
+            before.stream.trackId == after.stream.trackId
     }
 
     /**
@@ -180,7 +195,10 @@ object StreamChoice {
      * one.
      */
     fun forget(videoId: String) {
-        chosen.remove(videoId)
+        val removed = chosen.remove(videoId) ?: return
+        if (removed.substituted) {
+            com.music.bitchord.playback.smart.LyricsTiming.notifyStreamChoice(videoId)
+        }
     }
 
     /**
@@ -192,7 +210,13 @@ object StreamChoice {
      * is why the caller passes the tracks around the playhead in [keep].
      */
     fun forgetWhere(keep: Set<String>, drop: (SourceStream) -> Boolean) {
-        chosen.entries.removeIf { (videoId, choice) -> videoId !in keep && drop(choice.stream) }
+        val released = chosen.entries.filter { (videoId, choice) ->
+            videoId !in keep && drop(choice.stream)
+        }
+        released.forEach { (videoId, _) -> chosen.remove(videoId) }
+        released.filter { it.value.substituted }.forEach { (videoId, _) ->
+            com.music.bitchord.playback.smart.LyricsTiming.notifyStreamChoice(videoId)
+        }
     }
 
     /**
