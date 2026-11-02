@@ -764,6 +764,14 @@ object LyricsTiming {
         )
     }
 
+    /**
+     * Video or cover upload, by the one test the lyrics screen, the next-song
+     * bundle and the cache all use (11-02: the screen read every MV and cover
+     * as a song, so answers stored under the video key were never found).
+     */
+    private fun isVideoRow(song: Song): Boolean =
+        com.music.bitchord.data.cover.CoverTitles.lyricsQuery(song).isVideo
+
     /** One line per (song, stored lyrics, shown lyrics): why a kept AI answer was not used. */
     private val loggedAiOtherLyrics = ConcurrentHashMap.newKeySet<String>()
 
@@ -2702,7 +2710,7 @@ object LyricsTiming {
         val sung = lines.withIndex().filter { it.value.text.isNotBlank() }
         val timed = lines.any { it.timeMs > 0 }
         if (!LyricsAiGuard.songTimingWanted(
-                isVideo = song.isVideo,
+                isVideo = isVideoRow(song),
                 timed = timed,
                 sungLines = sung.size,
                 title = song.title,
@@ -2712,7 +2720,7 @@ object LyricsTiming {
         ) {
             TrackLog.d(
                 TAG,
-                "lyrics-sync: song-check skipped by guard video=${song.isVideo} " +
+                "lyrics-sync: song-check skipped by guard video=${isVideoRow(song)} " +
                     "timed=$timed sung=${sung.size}",
                 song.videoId,
             )
@@ -2837,7 +2845,9 @@ object LyricsTiming {
             lines = lines,
             baseAllowed = timeable,
             measuredAllowed = recordTimed,
-            isVideo = song.isVideo,
+            // Same test as audioSource above: a video key read with the song
+            // version's shift rule would refuse a video's honest offset.
+            isVideo = query.isVideo,
             audioSource = audioSource,
         )
     }
@@ -3486,7 +3496,7 @@ object LyricsTiming {
         }
         val sung = lines.withIndex().filter { it.value.text.isNotBlank() }
         if (!LyricsAiGuard.songTimingWanted(
-                isVideo = song.isVideo,
+                isVideo = isVideoRow(song),
                 timed = true,
                 sungLines = sung.size,
                 title = title,
@@ -3496,7 +3506,7 @@ object LyricsTiming {
         ) {
             TrackLog.d(
                 TAG,
-                "lyrics-sync: download re-check skipped by guard video=${song.isVideo} " +
+                "lyrics-sync: download re-check skipped by guard video=${isVideoRow(song)} " +
                     "sung=${sung.size}",
                 song.videoId,
             )
@@ -3680,7 +3690,7 @@ object LyricsTiming {
                 sources = sources,
                 order = AppSettings.lyricsSourceOrder.value,
                 prioritizeSyllableSync = AppSettings.prioritizeSyllableSync.value,
-                isVideo = song.isVideo,
+                isVideo = isVideoRow(song),
                 alternatives = alternatives,
                 artistKnown = artistKnown,
                 artistAliases = artistAliases,

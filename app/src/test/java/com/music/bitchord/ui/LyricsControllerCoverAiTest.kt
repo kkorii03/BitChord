@@ -119,6 +119,19 @@ class LyricsControllerCoverAiTest {
     }
 
     @Test
+    fun `the player screen asks for lyrics with the whole row, so MVs and covers keep their video flag`() {
+        // The 11-02 bug was at this call site: it passed title/artist only and
+        // the controller's isVideo defaulted to false for every MV and cover.
+        val main = File("src/main/java/com/music/bitchord/MainActivity.kt").readText()
+        assertTrue(
+            "MainActivity must hand the Song to loadLyrics (see LyricsController.loadLyricsFor)",
+            Regex("""viewModel\.loadLyrics\(\s*it,""").containsMatchIn(main),
+        )
+        val model = File("src/main/java/com/music/bitchord/ui/MainViewModel.kt").readText()
+        assertTrue(model.contains("lyricsController.loadLyricsFor(song, durationMs)"))
+    }
+
+    @Test
     fun `an answer kept for other lyrics says why it was not used`() = runBlocking {
         val otherLines = listOf(LyricLine(1_000L, "uno"), LyricLine(2_000L, "dos"))
         val otherKey = otherLines.joinToString("\n") { it.text }.hashCode()
