@@ -112,6 +112,16 @@ object LyricsTiming {
     class NextSyncProbe {
         @Volatile
         var failure: NextPrepPolicy.SyncFailure? = null
+
+        /**
+         * Starts one check pass. A pass reports only its own engine-stage
+         * failure: the short opening's "too few words" must not survive a
+         * later pass that reached the engine, or that pass's answer is not
+         * stored and the next playback pays for the same song again.
+         */
+        fun beginPass() {
+            failure = null
+        }
     }
 
     /**
@@ -2785,9 +2795,6 @@ object LyricsTiming {
             return@withLock firstOk
         }
         val fullOk = applySongCheck(context, song, key, engine, full)
-        // The long opening answered: the short pass's "too few words" or
-        // "no fit" no longer describes what this playback knows.
-        if (full.fitted != null) probe?.failure = null
         fullOk || firstOk
     }
 
@@ -2872,6 +2879,7 @@ object LyricsTiming {
         probe: NextSyncProbe? = null,
         untilSeconds: Double = VideoAudio.SONG_CHECK_SECONDS,
     ): SongCheck? {
+        probe?.beginPass()
         // Straight off the file, or the streaming copy's opening; null when
         // there is nothing to listen to yet.
         val copy = VideoAudio.songWavCopy(context, song, untilSeconds) ?: run {
