@@ -1,0 +1,5 @@
+Kotlin Android app = upstream v1.9 + Korean fork (task/u19-tg; 1.8 fork = origin/task/telegram). Battery first: event-driven, no polling/timers, never block the main thread. Use grep/Select-String, not rg. Unknown Android/Media3 APIs: context7. Every fix gets a JVM test that fails on current code (no network). Do not touch .github/workflows. Smallest change; keep v1.9's improvements.
+
+Phone sync round 11-03 (vc132): song v59g4HRNIkc (cover video, lyrics lrc.red) drifts later +0.10 s per minute (median 0.48 s, 2.4 s worst line by the end), another drifts -0.08 s/min. Find why a constant-rate song shows a linear drift: refine/rate fit (TimingFit, LyricsTiming refine, PACE_EVIDENCE_MS, chroma line rate), clock conversion between YouTube/HQ copies (sync-three-clocks tags), or playback speed. Make a song whose evidence does not support a rate keep rate 1.0, and a supported rate apply from the first line. Tests with synthetic timings.
+
+Summary of at most 12 lines: cause, files, REMOVED-LINES AUDIT, tests (class names for CI), what you did not do. Follow AGENTS.md (ponytail) rules.
