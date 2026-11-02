@@ -997,11 +997,30 @@ object YtMusicRepository {
      * seed track itself comes back first, so callers filter what they have.
      * [preferVideo] takes each song YouTube pairs with its music video as the
      * video — a station played on from a video stays videos.
+     *
+     * Answers are kept for the run, misses included only as long as the cache
+     * slot lives. AutoPlay tops up from the same seed across several track
+     * changes, and every one of those used to be another `next` round trip for
+     * an answer the station had already given.
      */
-    suspend fun radio(videoId: String, preferVideo: Boolean = false): Result<List<Song>> =
-        call("radio:$videoId:$preferVideo") {
+    suspend fun radio(videoId: String, preferVideo: Boolean = false): Result<List<Song>> {
+        val key = "$videoId:$preferVideo"
+        synchronized(radioCache) { radioCache[key] }?.let { return Result.success(it) }
+        return call("radio:$key") {
+            // [KO] korea-gate: behind the music.youtube.com gate `next` answers
+            // with the seed alone, which left AutoPlay empty on every track.
+            if (ensureGateKnown()) return@call YouTubeFallback.radio(videoId)
             InnertubeParser.parseWatchQueue(Innertube.next(videoId), preferVideo = preferVideo)
+        }.onSuccess { songs ->
+            synchronized(radioCache) { radioCache[key] = songs }
         }
+    }
+
+    /** Radio answers by seed id, least recently asked first out; a bounded LRU. */
+    private val radioCache = object : LinkedHashMap<String, List<Song>>(RADIO_CACHE_SIZE, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<Song>>) =
+            size > RADIO_CACHE_SIZE
+    }
 
     /**
      * The page of the artist named [name], or null when there is none.
