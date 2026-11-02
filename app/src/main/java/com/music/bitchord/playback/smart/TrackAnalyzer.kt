@@ -80,6 +80,29 @@ internal fun TrackFeatures.Features.shiftedBy(offset: Double): TrackFeatures.Fea
 }
 
 /**
+ * Stops the analysis a next-prep bundle started for a row that is no longer
+ * next. A running pass is aborted at its next decode check; a queued one is
+ * dropped when it reaches the front, and the next request for the same track
+ * starts clean.
+ */
+internal class AnalysisCancel {
+    private val cancelled = ConcurrentHashMap.newKeySet<String>()
+
+    fun cancel(trackId: String) {
+        cancelled.add(trackId)
+    }
+
+    /** True once for a queued pass that should be dropped instead of started. */
+    fun consume(trackId: String): Boolean = cancelled.remove(trackId)
+
+    fun isCancelled(trackId: String): Boolean = trackId in cancelled
+
+    fun finished(trackId: String) {
+        cancelled.remove(trackId)
+    }
+}
+
+/**
  * Produces [TrackAnalysis] for tracks that are about to be mixed, and hands it
  * to [TransitionPlanner].
  *
@@ -256,6 +279,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      * playback thread.
      */
     private val requestPending = ConcurrentHashMap.newKeySet<String>()
+
+    /** Aborts the pass this bundle started for a row that has just been replaced. */
+    private val analysisCancel = AnalysisCancel()
     private val sourceAnalysisUris = ConcurrentHashMap<String, Uri>()
     private val sourceResolutions = ConcurrentHashMap.newKeySet<String>()
     private val sourceResolutionAttempted = ConcurrentHashMap.newKeySet<String>()
@@ -396,6 +422,19 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
     fun isAnalysing(trackId: String): Boolean = trackId in running
 
     /**
+     * Stops a queued or running pass for [trackId]. Only the next-prep bundle
+     * calls this, when the row it asked for is no longer the row that will
+     * play; the crossfade tick requests again if the track is still wanted.
+     */
+    fun cancelAnalysis(trackId: String) {
+        if (trackId.isBlank()) return
+        val pending = "$trackId@${AnalysisWindow.HEAD.name}" in requestPending ||
+            "$trackId@${AnalysisWindow.TAIL.name}" in requestPending
+        if (!pending && trackId !in running) return
+        analysisCancel.cancel(trackId)
+    }
+
+    /**
      * Queues [trackId] (playing at [uri]) for analysis if it is not already
      * done or in flight. Cheap to call repeatedly; callers re-request as
      * caching progresses.
@@ -463,6 +502,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         durationSeconds: Double,
         window: AnalysisWindow,
     ) {
+        if (analysisCancel.consume(trackId)) return
         if (stopped || trackId in running || hasWindow(trackId, window)) return
         val analysisUri = analysisUriFor(trackId, uri) ?: return
 
@@ -575,7 +615,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                     Process.THREAD_PRIORITY_DEFAULT
                 },
             )
-            if (stopped || hasWindow(trackId, window)) return
+            if (stopped || analysisCancel.isCancelled(trackId) || hasWindow(trackId, window)) return
             val analysis = if (headRendition != null) {
                 analyzeHead(trackId, uri, durationSeconds, headRendition)
             } else {
@@ -584,7 +624,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             }
             if (analysis != null) {
                 publishWindow(trackId, window, analysis, durationSeconds)
-            } else if (!stopped) {
+            } else if (!stopped && !analysisCancel.isCancelled(trackId)) {
                 recordRegionFailure(trackId, window, durationSeconds)
             }
         } catch (error: Throwable) {
@@ -592,10 +632,13 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             // or codec-level Error uncaught on a pool thread that is nobody's
             // parent takes the whole app down.
             Log.w(TAG, "Analysis of $trackId ($window) failed", error)
-            if (!stopped) recordRegionFailure(trackId, window, durationSeconds)
+            if (!stopped && !analysisCancel.isCancelled(trackId)) {
+                recordRegionFailure(trackId, window, durationSeconds)
+            }
         } finally {
             analysisMillis.merge(trackId, SystemClock.elapsedRealtime() - startedAt, Long::plus)
             running.remove(trackId)
+            analysisCancel.finished(trackId)
             // The session holds the model's arena and a parsed ONNX graph in
             // native heap for as long as it is open, which a backgrounded music
             // player cannot justify between transitions.
@@ -880,6 +923,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         copy: Copy,
     ): TrackAnalysis? {
         val openSource = copy.open
+        val shouldAbort = { stopped || analysisCancel.isCancelled(trackId) }
         var effectiveDuration = durationSeconds
         if (!effectiveDuration.isFinite() || effectiveDuration <= 0) {
             effectiveDuration = openSource()?.use(AudioDecoder::containerDurationSeconds) ?: 0.0
@@ -903,8 +947,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             features = null,
             deriveFeatures = true,
             featureOffsetSeconds = start,
+            abort = shouldAbort,
         ) ?: return null
-        if (stopped) return null
+        if (shouldAbort()) return null
         if (model.seconds < minOf(MIN_HEAD_SECONDS, end - start)) {
             Log.d(
                 TAG,
@@ -957,6 +1002,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         rendition: AudioCache.Rendition,
     ): TrackAnalysis? {
         fun openSource(): MediaDataSource? = cache.renditionDataSource(uri, rendition)
+        val shouldAbort = { stopped || analysisCancel.isCancelled(trackId) }
 
         // Same guard the whole-track pass applies, for the same reason: a
         // sibling rendition can be a different cut, and a beat grid borrowed
@@ -987,14 +1033,21 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         }
 
         val window = minOf(AutomixWorkPolicy.TRANSITION_WINDOW_SECONDS, durationSeconds)
-        val head = region(::openSource, 0.0, window, features = null, deriveFeatures = true)
+        val head = region(
+            ::openSource,
+            0.0,
+            window,
+            features = null,
+            deriveFeatures = true,
+            abort = shouldAbort,
+        )
             ?: run {
                 // An abandoned decode comes back the same way a broken one
                 // does, and only one of the two is worth a warning: see
                 // [stopped]. Nothing is recorded either way — the caller
                 // publishes only a non-null result — so the track is simply
                 // left unmeasured, which is what it is.
-                if (stopped) return null
+                if (shouldAbort()) return null
                 Log.d(TAG, "Head pass for $trackId could not decode rendition ${rendition.key}")
                 return null
             }
@@ -1249,13 +1302,14 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         uri: Uri,
         copy: Copy,
         effectiveDuration: Double,
+        abort: () -> Boolean,
     ): Structural {
         val structRate = TrackFeatures.sampleRate
         val decoded = copy.open()?.use {
-            AudioDecoder.decodeRegion(it, 0.0, effectiveDuration, abort = { stopped }, label = "automix")
+            AudioDecoder.decodeRegion(it, 0.0, effectiveDuration, abort = abort, label = "automix")
         } ?: return Structural(null)
         val (pcm, _) = decoded
-        if (stopped) return Structural(null)
+        if (abort()) return Structural(null)
 
         // A decode that stops early is indistinguishable, downstream, from a
         // track that simply goes quiet: [TrackFeatures] is handed the
@@ -1344,6 +1398,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // re-decode the same file on every tick.
         triedRenditions.add(copy.key)
         val openSource = copy.open
+        val shouldAbort = { stopped || analysisCancel.isCancelled(trackId) }
 
         var effectiveDuration = durationSeconds
         if (!effectiveDuration.isFinite() || effectiveDuration <= 0) {
@@ -1367,7 +1422,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // held while the models ran, in a process that was reaching a 256 MB heap limit and had
         // died on it. Returning is what releases them — a `val` cannot be nulled, and a narrower
         // scope alone does not make ART treat one as dead.
-        val structural = structure(trackId, uri, copy, effectiveDuration)
+        val structural = structure(trackId, uri, copy, effectiveDuration, shouldAbort)
         // A party started while Pass 1 was decoding. Dropped as "no result"
         // rather than as a failure — the track was never measured, so nothing
         // should be recorded against it and nothing should stop it being
@@ -1377,7 +1432,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // back from [structure] as a decode that produced nothing, and that is
         // exactly what those lines write a permanent "cannot be analysed" for.
         // The screen going off is the same kind of interruption.
-        if (stopped) return WholeTrack(null)
+        if (shouldAbort()) return WholeTrack(null)
         if (structural.decodedShort) return WholeTrack(null, decodedShort = true)
         val features = structural.features ?: return WholeTrack(empty(trackId, effectiveDuration))
 
@@ -1399,10 +1454,10 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             // that would be published, and persisted, with the DSP estimate
             // standing in. A result assembled out of a half-finished analysis
             // is worse than none.
-            if (stopped) return WholeTrack(null)
-            region(openSource, from, to, features)?.let(regions::add)
+            if (shouldAbort()) return WholeTrack(null)
+            region(openSource, from, to, features, abort = shouldAbort)?.let(regions::add)
         }
-        if (stopped) return WholeTrack(null)
+        if (shouldAbort()) return WholeTrack(null)
 
         val beats = seamBeats(regions)
         val headSide = beatSide(beats, 0.0, headEnd)
@@ -1618,9 +1673,10 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         features: TrackFeatures.Features?,
         deriveFeatures: Boolean = false,
         featureOffsetSeconds: Double = 0.0,
+        abort: () -> Boolean = { stopped },
     ): Region? {
         val decoded = openSource()?.use {
-            AudioDecoder.decodeRegionStereo(it, startSeconds, endSeconds, abort = { stopped }, label = "automix")
+            AudioDecoder.decodeRegionStereo(it, startSeconds, endSeconds, abort = abort, label = "automix")
         } ?: run {
                 // The two ways this comes back empty mean opposite things and
                 // were reported identically, which cost a round of guessing:

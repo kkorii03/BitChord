@@ -44,6 +44,7 @@ import com.music.bitchord.playback.StreamChoice
 import com.music.bitchord.playback.SyncSafetyPolicy
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
@@ -65,6 +66,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.onSubscription
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -1766,7 +1768,7 @@ object LyricsTiming {
         // The video's opening first: decoding all of it before any answer was the
         // slowest step (two minutes on a slow device). The rest is read on in the
         // background — from where the opening stopped — for the whole-record pass.
-        val opening = withContext(analysis) { videoFeatures(context, video, copy.key, job, VIDEO_OPENING_SECONDS, wanted) }
+        val opening = runInterruptible(analysis) { videoFeatures(context, video, copy.key, job, VIDEO_OPENING_SECONDS, wanted) }
             ?: return Measured.Retry
         lap("비디오 앞부분 분석", mark)
         val openingIsAll = opening.durationSeconds < VIDEO_OPENING_SECONDS - 5
@@ -1777,7 +1779,9 @@ object LyricsTiming {
         val earlyGate = Mutex()
         var earlySent = false
         val (tried, clip) = coroutineScope {
-            val full = async(analysis) { if (openingIsAll) opening else videoFeatures(context, video, copy.key, job, MAX_SECONDS, wanted) ?: opening }
+            val full = async(analysis) {
+                if (openingIsAll) opening else runInterruptible { videoFeatures(context, video, copy.key, job, MAX_SECONDS, wanted) } ?: opening
+            }
             candidates.map { original ->
                 async {
                     tryRecording(context, original, video, opening, openingIsAll && complete, full, complete, job, wanted) { firstResult, firstNote ->
@@ -1882,7 +1886,7 @@ object LyricsTiming {
                 // measurement to be dropped; its first ~70 s decode in a quarter of
                 // the time, and the rest only refines the answer.
                 val until = if (alreadyWhole) OPENING_SECONDS else MAX_SECONDS
-                withContext(analysis) { recordFeatures(context, original, job, until, wanted) }?.let { start ->
+                runInterruptible(analysis) { recordFeatures(context, original, job, until, wanted) }?.let { start ->
                     val (result, verdict) = aligned(start, whole = false)
                     log(verdict, start, "opening")
                     if (result != null) {
@@ -1892,7 +1896,7 @@ object LyricsTiming {
                 withTimeoutOrNull(RECORD_TIMEOUT_MS + 2_000L) { AudioCache.awaitAnalysisTrack(uri, RECORD_TIMEOUT_MS) }
             }
             val downloaded = System.currentTimeMillis()
-            val record = withContext(analysis) { recordFeatures(context, original, job, wanted = wanted) }
+            val record = runInterruptible(analysis) { recordFeatures(context, original, job, wanted = wanted) }
                 ?: return Tried(original, null, reached = false, partial = false, note = "$name: 원곡을 읽지 못함")
             val whole = VersionAudioAligner.renditionToMeasure(original.videoId)?.isComplete == true
             if (whole) keep(context, original.videoId, record)
@@ -1904,7 +1908,7 @@ object LyricsTiming {
                 (if (whole) "" else " · 원곡 일부만") + ")"
             return Tried(original, result, reached = true, partial = !whole, note = note)
         }
-        val record = withContext(analysis) { recordFeatures(context, original, job, wanted = wanted) }
+        val record = runInterruptible(analysis) { recordFeatures(context, original, job, wanted = wanted) }
             ?: return Tried(original, null, reached = false, partial = false, note = "$name: 원곡을 읽지 못함")
         keep(context, original.videoId, record)
         val (result, verdict) = aligned(record)
@@ -2264,6 +2268,8 @@ object LyricsTiming {
         isVideo: Boolean = false,
         audioSource: String? = null,
         probe: NextSyncProbe? = null,
+        /** The next-prep bundle stops its own request when its row is replaced. */
+        cancelWithCaller: Boolean = false,
     ): Adjustment? {
         val sung = lines.withIndex().filter { it.value.text.isNotBlank() }
         if (sung.size < MIN_AI_LINES) {
@@ -2302,6 +2308,7 @@ object LyricsTiming {
             askAi(context, videoId, lines, sung, key, engines, title, artist, isVideo, probe)
         }
         val running = aiInFlight.putIfAbsent(flight, fresh) ?: fresh
+        running.cancelledWithCaller(currentCoroutineContext()[Job], cancelWithCaller)
         if (running === fresh) {
             fresh.invokeOnCompletion { aiInFlight.remove(flight, fresh) }
             fresh.start()
@@ -2318,6 +2325,58 @@ object LyricsTiming {
 
     private val aiScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val aiInFlight = ConcurrentHashMap<String, kotlinx.coroutines.Deferred<Adjustment.Mapped?>>()
+
+    /**
+     * Who is still waiting on a shared flight. A next-prep bundle may start one
+     * and a screen or another bundle may join it; the flight is only cancelled
+     * once no live waiter remains, so a cancelled joiner cannot cancel work the
+     * other caller still expects.
+     */
+    private class FlightWaiters {
+        private var total = 0
+
+        @Synchronized fun join() {
+            total++
+        }
+
+        @Synchronized fun leave(cancelWithCaller: Boolean, cancelled: Boolean): Boolean {
+            total--
+            return cancelled && cancelWithCaller && total <= 0
+        }
+
+        @Synchronized fun isEmpty(): Boolean = total <= 0
+    }
+
+    private val flightWaiters = ConcurrentHashMap<kotlinx.coroutines.Deferred<*>, FlightWaiters>()
+
+    /**
+     * Ties an app-lifetime flight to the callers waiting on it when those
+     * callers are next-prep bundles: cancelling the bundle must stop its own
+     * request, not leave it paying for two more minutes after the row is gone.
+     * A flight another caller started is only awaited, never cancelled here
+     * while a caller that expects it to outlive its screen is still waiting.
+     */
+    internal fun <T> kotlinx.coroutines.Deferred<T>.cancelledWithCaller(
+        caller: Job?,
+        cancelWithCaller: Boolean,
+    ): kotlinx.coroutines.Deferred<T> {
+        if (caller == null) return this
+        val waiters = flightWaiters.computeIfAbsent(this) { FlightWaiters() }
+        waiters.join()
+        val left = AtomicBoolean(false)
+        fun leave(cancelled: Boolean) {
+            if (!left.compareAndSet(false, true)) return
+            if (waiters.leave(cancelWithCaller, cancelled)) {
+                cancel(CancellationException("caller cancelled"))
+            }
+            if (waiters.isEmpty()) flightWaiters.remove(this, waiters)
+        }
+        caller.invokeOnCompletion { cause -> leave(cause != null) }
+        // A flight that finishes on its own stops being awaited; drop its
+        // waiter bookkeeping rather than keeping it for the session.
+        invokeOnCompletion { leave(false) }
+        return this
+    }
 
     private suspend fun askAi(
         context: Context,
@@ -2621,6 +2680,8 @@ object LyricsTiming {
         song: Song,
         lines: List<LyricLine>,
         probe: NextSyncProbe? = null,
+        /** The next-prep bundle stops its own request when its row is replaced. */
+        cancelWithCaller: Boolean = false,
     ): Boolean {
         val sung = lines.withIndex().filter { it.value.text.isNotBlank() }
         val timed = lines.any { it.timeMs > 0 }
@@ -2699,6 +2760,7 @@ object LyricsTiming {
             verifySongRequest(context.applicationContext, song, lines, key, engine, probe)
         }
         val running = songInFlight.putIfAbsent(flight, fresh) ?: fresh
+        running.cancelledWithCaller(currentCoroutineContext()[Job], cancelWithCaller)
         if (running === fresh) {
             fresh.invokeOnCompletion { songInFlight.remove(flight, fresh) }
             fresh.start()
@@ -2777,6 +2839,8 @@ object LyricsTiming {
         source: LyricsSource?,
         timing: Timing?,
         probe: NextSyncProbe? = null,
+        /** The next-prep bundle stops the requests it started when its row is replaced. */
+        cancelWithCaller: Boolean = false,
     ): Timing? {
         val query = CoverTitles.lyricsQuery(song)
         val timeable = !fromFile || query.isVideo
@@ -2806,6 +2870,7 @@ object LyricsTiming {
                     isVideo = true,
                     audioSource = audioSource,
                     probe = probe,
+                    cancelWithCaller = cancelWithCaller,
                 )
                 result = timing(
                     context, song.videoId, lines, timeable, recordTimed, true, audioSource,
@@ -2814,7 +2879,7 @@ object LyricsTiming {
         } else if (!songVerified(context, song, lines)) {
             // The record-timed song check: same Deepgram/Whisper request and
             // same fit/guard the screen runs when the lyrics arrive.
-            verifySong(context, song, lines, probe)
+            verifySong(context, song, lines, probe, cancelWithCaller = cancelWithCaller)
             result = timing(
                 context, song.videoId, lines, timeable, recordTimed, false, audioSource,
             )
