@@ -78,7 +78,7 @@ class LyricsController(
      * repository's deadline so the repository's best-so-far answer still wins.
      * A provider that ignores cancellation must not keep the panel spinning.
      */
-    internal var lookupTimeoutMs: Long = 12_000L + 1_000L
+    internal var lookupTimeoutMs: Long = LyricsRepository.lookupDeadline + 1_000L
 
     /**
      * Added to [lookupTimeoutMs] when the lookup may fall back to Gemini
