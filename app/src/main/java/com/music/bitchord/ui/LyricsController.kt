@@ -6,6 +6,7 @@ import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.lyrics.EmbeddedLyrics
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsAiGuard
+import com.music.bitchord.data.lyrics.LyricsFailure
 import com.music.bitchord.data.lyrics.LyricsOverrideFile
 import com.music.bitchord.data.lyrics.LyricsOverrideStore
 import com.music.bitchord.data.lyrics.LyricsRepository
@@ -37,6 +38,27 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
+/** The repository's lookup signature, so a test can stand in for it. */
+internal typealias LyricsLookup = suspend (
+    videoId: String,
+    title: String,
+    artist: String,
+    durationMs: Long,
+    album: String?,
+    sources: Set<LyricsSource>,
+    order: List<LyricsSource>,
+    prioritizeSyllableSync: Boolean,
+    isrc: String?,
+    onSourceStarted: ((LyricsSource) -> Unit)?,
+    onSourceResult: ((LyricsSource, LyricsRepository.Result?, LyricsFailure?) -> Unit)?,
+    onSourceCancelled: ((LyricsSource) -> Unit)?,
+    isVideo: Boolean,
+    alternatives: List<Pair<String, String>>,
+    artistKnown: Boolean,
+    artistAliases: List<String>,
+    transcribe: Boolean,
+) -> LyricsRepository.Result?
+
 /**
  * Loading, provider selection and timing for the lyrics of the playing track.
  *
@@ -47,6 +69,16 @@ class LyricsController(
     private val app: Application,
     private val scope: CoroutineScope,
 ) {
+
+    /** The repository call; a seam for tests, as [LyricsRepository.transcriber] is there. */
+    internal var lyricsLookup: LyricsLookup = LyricsRepository::lyrics
+
+    /**
+     * The controller's own backstop on the whole lookup, a beat past the
+     * repository's deadline so the repository's best-so-far answer still wins.
+     * A provider that ignores cancellation must not keep the panel spinning.
+     */
+    internal var lookupTimeoutMs: Long = 12_000L + 1_000L
 
     /** Synced lyrics for whatever is playing; null while unknown or absent. */
     private val _lyrics = MutableStateFlow<List<LyricLine>?>(null)
@@ -425,20 +457,30 @@ class LyricsController(
                 }
             }
             if (previewOnly) return@launch
-            val found = LyricsRepository.lyrics(
-                videoId, title, artist, durationMs, album, sources,
-                AppSettings.lyricsSourceOrder.value, AppSettings.prioritizeSyllableSync.value,
-                onSourceStarted = { source -> providerStarted(generation, source) },
-                onSourceResult = { source, result, failure ->
-                    providerFinished(generation, source, result, failure)
-                },
-                onSourceCancelled = { source -> providerCancelled(generation, source) },
-                isVideo = isVideo,
-                alternatives = alternatives,
-                artistKnown = artistKnown,
-                artistAliases = artistAliases,
-                transcribe = localUri == null,
-            )
+            var finished = false
+            val answer = withTimeoutOrNull(lookupTimeoutMs) {
+                lyricsLookup(
+                    videoId, title, artist, durationMs, album, sources,
+                    AppSettings.lyricsSourceOrder.value, AppSettings.prioritizeSyllableSync.value,
+                    null,
+                    { source -> providerStarted(generation, source) },
+                    { source, result, failure -> providerFinished(generation, source, result, failure) },
+                    { source -> providerCancelled(generation, source) },
+                    isVideo,
+                    alternatives,
+                    artistKnown,
+                    artistAliases,
+                    localUri == null,
+                ).also { finished = true }
+            }
+            // The repository ends its own lookup at LOOKUP_DEADLINE_MS with
+            // whatever it already found. This is only the backstop if that
+            // answer never comes; a provider nobody can cancel must not leave
+            // the panel spinning (MA9BrvtKvhM).
+            val found = if (finished) answer else bestSoFar()
+            if (!finished) {
+                TrackLog.i("BitChord", "lyrics: deadline after ${lookupTimeoutMs}ms", about = videoId)
+            }
             val selected = selectedLyricsSource?.let(lyricsProviderResults::get) ?: found
             publishLyrics(selected)
             _lyricsChecked.value = true
@@ -639,6 +681,12 @@ class LyricsController(
         _lyricsChecked.value = true
     }
 
+    /** The best provider answer already delivered when the lookup's backstop fires. */
+    private fun bestSoFar(): LyricsRepository.Result? =
+        selectedLyricsSource?.let(lyricsProviderResults::get)
+            ?: lyricsRaceOrder.firstNotNullOfOrNull { lyricsProviderResults[it] }
+            ?: lyricsProviderResults.values.firstOrNull()
+
     /**
      * Puts [result] on screen as its source timed it, then — for timed lyrics
      * that aren't the video's own — on the video's clock. See [startTiming].
@@ -692,16 +740,24 @@ class LyricsController(
      * Deepgram-only setup had no action for the rest of playback even after
      * the copy finished caching. Recomputed only on that event, never polled.
      */
-    private fun aiTimingAvailable(request: LyricsRequest, lines: List<LyricLine>?): Boolean =
-        LyricsAiGuard.manualTimingAvailable(
-            geminiUsable = LyricsTranslation.geminiKeyUsable,
-            deepgramUsable = com.music.bitchord.data.lyrics.Deepgram.usable,
+    private fun aiTimingAvailable(request: LyricsRequest, lines: List<LyricLine>?): Boolean {
+        val texts = lines.orEmpty().map { it.text }
+        // Answer the same as [LyricsAiGuard.manualTimingAvailable] without
+        // reading the audio cache when there is nothing either engine could do.
+        if (texts.count { it.isNotBlank() } < LyricsAiGuard.MIN_AI_LINES) return false
+        val gemini = LyricsTranslation.geminiKeyUsable
+        val deepgram = com.music.bitchord.data.lyrics.Deepgram.usable
+        if (!gemini && !deepgram) return false
+        return LyricsAiGuard.manualTimingAvailable(
+            geminiUsable = gemini,
+            deepgramUsable = deepgram,
             audioAvailable = VideoAudio.audioReadyForTiming(request.videoId),
             durationMs = request.durationMs,
             title = request.title,
             artist = request.artist,
-            lyricsTexts = lines.orEmpty().map { it.text },
+            lyricsTexts = texts,
         )
+    }
 
     /**
      * Applies what is known about this track's timing to [lines] at once —
