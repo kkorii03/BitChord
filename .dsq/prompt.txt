@@ -1,0 +1,13 @@
+﻿Kotlin Android app (v1.9 + Korean fork). Inputs: docs/audit-1102.md (performance audit; its reviewer note: ActionRow/SheetTrackHeader are still used, never delete whole blocks blindly). Battery first: event-driven, no polling/timers; never block the main thread. Every change gets a JVM test that fails on the old code. Do not touch files outside YOUR SCOPE (other lanes edit them in parallel); list needed outside changes in the summary.
+Task: audit findings M1 (the crossfade ticker wakes 4x/s for the whole time music plays even when nothing will cross-fade: park it on events and run the timed loop only near the planned cue) and L3 (crossfade lyric caches grow for the whole session: bound them). Keep every existing crossfade behavior and its tests green.
+YOUR SCOPE: playback/CrossfadeController.kt, ko/KoCrossfade*.kt and the file holding the crossfade lyric caches (find it from the audit) (+ tests).
+Finish with a summary of at most 12 lines: files, REMOVED-LINES AUDIT, tests (fail-before/pass-after, names for CI), what you did not do.
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 3
+1. HIGH `app/src/main/java/com/music/bitchord/ko/KoCrossfadeTicker.kt:132-135` — the idle wait is computed in media milliseconds but `withTimeoutOrNull` consumes it as wall time; at supported playback speeds above 1x the ticker wakes after the cue or track end, so crossfades are missed. Fix: pass `AppSettings.playbackSpeed`, divide the wait by it, and wake the ticker on speed changes.
+2. HIGH `app/src/main/java/com/music/bitchord/ko/KoCrossfadeTicker.kt:41-53` — no event wakes the parked ticker when analysis completes, so the Automix marker/plan and any earlier cue stay at the fallback until the ~81s horizon tick instead of appearing shortly after analysis as before. Fix: call `wakeTicker()` on analysis completion (or collect a dedicated completion signal) and test it.
+3. MEDIUM `app/src/main/java/com/music/bitchord/ko/KoCrossfadeTicker.kt:133` — after a smart plan is set, the wake subtracts only `STANDBY_LEAD_MS`, but arming needs `STANDBY_LEAD_MS + rampMs` (`CrossfadeController.kt:1374-1375`), so slow-tempo plans start the beat ramp late. Fix: carry the plan's ramp into `koPlannedCueMs`/the sleep and test a slow-tempo case.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
