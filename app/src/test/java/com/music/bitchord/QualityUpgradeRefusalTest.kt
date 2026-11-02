@@ -1,11 +1,14 @@
 package com.music.bitchord
 
+import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.playback.QualityUpgrade
 import com.music.bitchord.playback.QualityUpgrade.Refusal
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -56,5 +59,28 @@ class QualityUpgradeRefusalTest {
             Refusal.NO_STREAM,
             QualityUpgrade.refusalOf(hasStream = false, musicVideo = false, canSubstitute = true),
         )
+    }
+
+    /**
+     * A second look that ran while a source failed, timed out or was resting
+     * says nothing about the catalogue. Recording it as a verdict would keep
+     * the track at its lossy copy for the rest of the session; 1.8 recorded
+     * only a walk whose every source answered.
+     */
+    @Test
+    fun `an inconclusive second look is not recorded as a verdict`() = runBlocking {
+        val id = "inconclusive-second-look"
+        val target = TrackMatcher.Target(title = "Some Song", artist = "Some Artist", durationSec = 200)
+        QualityUpgrade.markPendingForTest(id, target)
+        val report = SourceResolver.SearchReport()
+        report.record(SourceResolver.SearchOutcome(verdict = "timeout", conclusive = false))
+
+        assertNull(QualityUpgrade.lookAgain(id, playingDurationSec = 200, report = report))
+
+        assertFalse(
+            "a source timed out, so the track must stay open for a later retry",
+            QualityUpgrade.hasAnsweredFor(id),
+        )
+        QualityUpgrade.forget(id)
     }
 }

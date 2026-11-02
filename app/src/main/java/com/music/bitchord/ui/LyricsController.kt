@@ -26,6 +26,7 @@ import com.music.bitchord.playback.smart.SyncTestMode
 import com.music.bitchord.playback.smart.VideoAudio
 import com.music.bitchord.ui.player.LyricsTimingUi
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -115,6 +116,14 @@ class LyricsController(
     private var lyricsRaceOrder: List<LyricsSource> = emptyList()
     private var lyricsTimingJob: Job? = null
     private var aiTimingJob: Job? = null
+
+    /**
+     * A failing measurement or automatic AI pass is a background detail, not a
+     * reason to take the playback down with it; the plain lyrics stay on screen.
+     */
+    private val timingFailureHandler = CoroutineExceptionHandler { _, error ->
+        TrackLog.w("BitChord", "lyrics timing failed", error)
+    }
 
     /**
      * The song whose check was started in this playback. It keeps a check that
@@ -853,7 +862,7 @@ class LyricsController(
         }
         val generation = lyricsGeneration
         val context = app
-        lyricsTimingJob = scope.launch {
+        lyricsTimingJob = scope.launch(timingFailureHandler) {
             // Whatever else changes this video's timing — the lock screen, the
             // next-song preparation measuring it first — shows here too.
             launch {
