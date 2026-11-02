@@ -13,6 +13,12 @@ jobs:
   smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 100
+    # statuses: scripts/smoke/run.sh posts one live progress line per song.
+    permissions:
+      contents: read
+      statuses: write
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

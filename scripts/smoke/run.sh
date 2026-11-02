@@ -482,6 +482,26 @@ if [ "$SCENARIO_MODE" = 1 ]; then
   exit "$SCENARIO_EXIT"
 fi
 
+# Live progress while the job runs: GitHub shows a step's log only after the
+# job ends, but a commit status is readable at once (tools\runwatch.ps1 prints
+# it). One line per song; a failed post never stops the run.
+SONGS_TOTAL=$(grep -cvE '^\s*(#|$)' "$SONGS_FILE" 2>/dev/null || echo 0)
+progress_report() {
+  [ -n "${GITHUB_TOKEN:-}" ] && [ -n "${GITHUB_REPOSITORY:-}" ] && [ -n "${GITHUB_SHA:-}" ] || return 0
+  local log="$OUT/smoke-logcat.txt" audio measured heard crashes desc state
+  audio=$(grep -cE 'track-summary:.*firstAudio=[0-9]' "$log" 2>/dev/null || echo 0)
+  measured=$(grep -E 'lyrics-sync: ' "$log" 2>/dev/null | grep -vc 'base=none' || echo 0)
+  heard=$(grep -c 'Whisper timing' "$log" 2>/dev/null || echo 0)
+  crashes=$(grep -cE 'FATAL EXCEPTION|ANR in ' "$log" 2>/dev/null || echo 0)
+  desc="${1:+$1 | }song ${SONGS_DONE:-0}/$SONGS_TOTAL audio=$audio sync-applied=$measured heard=$heard crash=$crashes"
+  state=pending
+  case "${1:-}" in STOP*) state=failure ;; esac
+  curl -s -m 10 -o /dev/null -X POST \
+    -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
+    "https://api.github.com/repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+    -d "{\"state\":\"$state\",\"context\":\"smoke-progress/${GITHUB_RUN_ID:-0}\",\"description\":\"${desc:0:138}\"}" || true
+}
+
 # fd 3, not stdin: adb shell inside the loop reads stdin and swallowed the
 # rest of the song list after the first song on the first run.
 while IFS=$'\t' read -r -u 3 key kind _rest || [ -n "$key" ]; do
@@ -498,6 +518,23 @@ while IFS=$'\t' read -r -u 3 key kind _rest || [ -n "$key" ]; do
   # No audio after three songs means YouTube refused this network (the runner
   # IPs get "confirm you're not a bot"); say so now instead of after an hour.
   SONGS_DONE=$(( ${SONGS_DONE:-0} + 1 ))
+  progress_report
+  # Stop at once when the run can no longer give a useful answer, instead of
+  # spending the rest of the hour: a crash/ANR already fails it, and with the
+  # sync engine off (no Deepgram key: 'deepgram=false') every sync score only
+  # grades the lyrics files (the invalid 11-02 baseline).
+  if [ "$SONGS_DONE" -ge 2 ]; then
+    if grep -qE 'FATAL EXCEPTION|ANR in com\.(dev\.)?bitchord|ANR in com\.music\.bitchord' "$OUT/smoke-logcat.txt"; then
+      progress_report "STOP crash/ANR"
+      echo "smoke: STOP - crash or ANR after $SONGS_DONE songs" >&2
+      exit 4
+    fi
+    if grep -qE 'song check skipped heavy=[a-z]+ ahead=[a-z]+ deepgram=false' "$OUT/smoke-logcat.txt"; then
+      progress_report "STOP no sync engine"
+      echo "smoke: STOP - sync engine off (no Deepgram key in this build)" >&2
+      exit 5
+    fi
+  fi
   if [ "$SONGS_DONE" -eq 3 ] && ! grep -qE 'track-summary:.*firstAudio=[0-9]' "$OUT/smoke-logcat.txt"; then
     if grep -qE 'LOGIN_REQUIRED|SignInConfirmNotBot' "$OUT/smoke-logcat.txt"; then
       echo "smoke: NO AUDIO - YouTube bot check on this network (proxy not used or refused)" >&2
