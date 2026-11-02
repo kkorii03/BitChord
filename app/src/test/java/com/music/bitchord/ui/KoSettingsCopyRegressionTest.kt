@@ -49,6 +49,23 @@ class KoSettingsCopyRegressionTest {
         assertTrue("1.8 searched the lyrics rows with 가사 소스", entry.contains("가사 소스"))
     }
 
+    @Test
+    fun replayGenresSwitchStaysClosedWithoutLastfmKey() {
+        val sheet = source("app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt")
+        val row = sheet
+            .substringAfter("val workOutGenresTitle = stringResource(R.string.work_out_genres)")
+            .substringBefore("val exportDataTitle")
+        val toggle = row.substringAfter("IosSwitch(").substringBefore(")")
+        assertTrue(
+            "1.8 showed the switch off when Last.fm has no key",
+            toggle.contains("checked = replayGenres && genresSupported"),
+        )
+        assertTrue(
+            "1.8 closed the switch itself, not only the row around it",
+            toggle.contains("enabled = genresSupported"),
+        )
+    }
+
     private fun source(path: String): String {
         val root = generateSequence(File(".").canonicalFile) { it.parentFile }
             .first { File(it, "app/src/main/AndroidManifest.xml").exists() }

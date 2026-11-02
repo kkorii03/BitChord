@@ -1319,8 +1319,9 @@ fun SettingsScreen(
                     enabled = genresSupported,
                     trailing = {
                         IosSwitch(
-                            checked = replayGenres,
+                            checked = replayGenres && genresSupported,
                             onCheckedChange = AppSettings::setReplayGenres,
+                            enabled = genresSupported,
                         )
                     },
                     onClick = { AppSettings.setReplayGenres(!replayGenres) },
