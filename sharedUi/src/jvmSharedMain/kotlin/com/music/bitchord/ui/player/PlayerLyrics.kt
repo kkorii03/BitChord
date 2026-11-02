@@ -1,3 +1,4 @@
+// Ported in part from AMLL (applemusic-like-lyrics, AGPL-3.0, (c) amll-dev contributors)
 package com.music.bitchord.ui.player
 
 import androidx.compose.animation.AnimatedContent
@@ -14,6 +15,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -137,9 +139,18 @@ import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.lyrics.LyricsWordAlign
 import com.music.bitchord.data.lyrics.translationLanguageName
+import com.music.bitchord.ko.ui.player.KO_ACTIVE_LINE_ALPHA
+import com.music.bitchord.ko.ui.player.KO_INACTIVE_SCALE
 import com.music.bitchord.ko.ui.player.koAutoTranslateEffect
 import com.music.bitchord.ko.ui.player.koChooseProviderButton
 import com.music.bitchord.ko.ui.player.koCurrentLyricTransition
+import com.music.bitchord.ko.ui.player.koInterludeBreathScale
+import com.music.bitchord.ko.ui.player.koInterludeBreathes
+import com.music.bitchord.ko.ui.player.koInterludeContainerAlpha
+import com.music.bitchord.ko.ui.player.koInterludeDotEntryAlpha
+import com.music.bitchord.ko.ui.player.koInterludeExitAlpha
+import com.music.bitchord.ko.ui.player.koLineBlurDp
+import com.music.bitchord.ko.ui.player.koLyricSpringForInterval
 import com.music.bitchord.ko.ui.player.koLyricsStatusWithTiming
 import com.music.bitchord.ko.ui.player.koLyricsTimingDetail
 import com.music.bitchord.ko.ui.player.koRetimedLyricsEffect
@@ -147,9 +158,11 @@ import com.music.bitchord.ko.ui.player.koSameTiming
 import com.music.bitchord.ko.ui.player.koSameWords
 import com.music.bitchord.ko.ui.player.koShouldDrawLyricFrame
 import com.music.bitchord.ko.ui.player.koShownLine
+import com.music.bitchord.ko.ui.player.koStaggerDelayMs
 import com.music.bitchord.ko.ui.player.koStatusChevron
 import com.music.bitchord.ko.ui.player.koSweptLine
 import com.music.bitchord.ko.ui.player.koTranscribingPlaceholder
+import com.music.bitchord.ko.ui.player.koWordFeatherPx
 import com.music.bitchord.ko.ui.player.rememberKoLineIndex
 import com.music.bitchord.ko.ui.player.rememberKoLyricPanelIndexes
 import com.music.bitchord.ui.haptics.Haptic
@@ -299,7 +312,9 @@ private const val GAP_RUNNING = -1f
  */
 private const val BACKING_LEAD_MS = 250L
 private const val BACKING_CLOSE_MS = 450
-private val BACKING_RISE = 6.dp
+// AMLL's trailing background line waits above the lead and slides down into
+// place (hiddenSlideY = -80), rather than rising from below.
+private val BACKING_RISE = (-80).dp
 private const val BACKING_REST_SCALE = 0.94f
 
 /** The words reach full opacity when the room is this far open (1 / 1.6). */
@@ -309,26 +324,20 @@ private const val BACKING_FADE_LEAD = 1.6f
  * The romanization or translation hung under each line — caption-sized, the
  * way Apple Music prints pronunciation under the lyric, and tucked up into the
  * lead's glow inset so the two read as one line rather than two rows.
+ *
+ * AMLL sets subtitles at max(0.5em, 10px) and alpha 0.3. At our 34sp line
+ * that is 17sp; the words stay readable at the caption weight while sitting
+ * clearly behind the lead rather than competing with it as a second lyric.
  */
-private val SUB_LYRIC_FONT_SIZE = 20.sp
+private val SUB_LYRIC_FONT_SIZE = 17.sp
 
-private val SUB_LYRIC_LINE_HEIGHT = 25.sp
-private val SUB_BACKING_FONT_SIZE = 16.sp
-private val SUB_BACKING_LINE_HEIGHT = 21.sp
-private const val SUB_LYRIC_ALPHA = 0.85f
+private val SUB_LYRIC_LINE_HEIGHT = 22.sp
+private val SUB_BACKING_FONT_SIZE = 14.sp
+private val SUB_BACKING_LINE_HEIGHT = 19.sp
+private const val SUB_LYRIC_ALPHA = 0.3f
 private val SUB_LYRIC_TUCK = 6.dp
 private const val SUB_LYRIC_OPEN_MS = 460
 private const val SUB_LYRIC_CLOSE_MS = 260
-
-/**
- * How far the sweep's leading edge fades out instead of ending on a cut.
- *
- * A hard boundary is legible as a boundary: the eye reads a bar travelling
- * across the words rather than the words themselves lighting up as they are
- * sung. Feathering it over roughly a character and a half is what turns the
- * cut back into a wavefront.
- */
-private val WIPE_FEATHER = 30.dp
 
 /**
  * How far the word being sung lifts off the line.
@@ -381,14 +390,6 @@ private val GAP_ROW_SPACING = 16.dp
  * further out, which is most of the list.
  */
 private val LINE_FALLOFF_ALPHA = floatArrayOf(1f, 0.8f, 0.7f, 0.58f, 0.46f)
-/**
- * The blur on the same ladder, quantised to three radii.
- *
- * A blur is a RenderEffect and an offscreen layer, and an animated radius
- * rebuilt both on every frame of a hand-over. Whole steps cost the same look
- * with a layer that is reused for as long as its radius is.
- */
-private val LINE_FALLOFF_BLUR = arrayOf(0.dp, 1.dp, 1.dp, 2.dp, 2.dp)
 
 /**
  * The same falloff for a phone, where the sung line is read from the top and
@@ -430,8 +431,7 @@ private const val SKELETON_PERIOD_MS = 1_400
 /** What a line reads at while the list is being scrolled by hand. */
 private const val BROWSING_ALPHA = 0.8f
 
-/** The playing line sits at 1; the rest sit fractionally back from it. */
-private const val INACTIVE_SCALE = 0.98f
+/** The playing line comes forward; AMLL steps the rest back to 0.97. */
 
 /** A line under a finger dips, the way a button does. */
 private const val PRESSED_SCALE = 0.96f
@@ -1361,8 +1361,9 @@ private fun horizontalAt(
  * time. [spans] are the line's timed pieces, [LyricLine.sweepSpans]; empty, the
  * cut goes letter by letter.
  *
- * The boundary itself is then feathered over the [WIPE_FEATHER] ahead of it
- * rather than left as the cut, which needs the caller to give this an offscreen layer to erase
+ * The boundary itself is then feathered over the font's word feather ahead of
+ * it rather than left as the cut, which needs the caller to give this an
+ * offscreen layer to erase
  * into — see [SweptLyricLine]. Only the line actually being sung carries one;
  * everywhere else the boundary is at one end of the text or the other and
  * there is nothing to soften.
@@ -1415,7 +1416,7 @@ private fun ContentDrawScope.sweepTo(
         val safeCharPos = charPos.coerceIn(lineLeft, lineRight)
 
         // The feather runs *ahead* of the boundary, into what is still to be
-        // sung: lit solid up to now, fading out over the next [WIPE_FEATHER].
+        // sung: lit solid up to now, fading out over the next word feather.
         // Trailing behind it instead, the letter being sung right now was the
         // dimmest part of the lit copy, and the line ran out of time with a
         // faded tail still on it and then snapped to full — which read as the
@@ -1423,12 +1424,13 @@ private fun ContentDrawScope.sweepTo(
         // text as the last letter is reached, and the line finishes already
         // whole.
         //
-        // Grown in over the first [WIPE_FEATHER] of each row rather than
-        // opened at full width, or the first letter of every row would pop in
-        // half-lit the frame the sweep reached it.
+        // Grown in over the first word feather of each row rather than opened
+        // at full width, or the first letter of every row would pop in half-lit
+        // the frame the sweep reached it. The width is read off the font the
+        // line is actually drawn in, so a bigger line gets a softer edge.
         val featherPx = if (feather && cut) {
             minOf(
-                WIPE_FEATHER.toPx(),
+                koWordFeatherPx(layout.layoutInput.style.fontSize.toPx()),
                 if (rtl) lineRight - safeCharPos else safeCharPos - lineLeft,
             )
         } else {
@@ -1902,6 +1904,12 @@ internal fun LyricsPanel(
     val viewportHeight by remember(listState) {
         derivedStateOf { listState.layoutInfo.viewportSize.height }
     }
+    // AMLL blurs a narrow viewport less (0.8x) so a phone column does not go
+    // soft all at once; the read is the same cheap layout-info read as above.
+    val viewportWidth by remember(listState) {
+        derivedStateOf { listState.layoutInfo.viewportSize.width }
+    }
+    val narrowViewport = viewportWidth in 1..1024
     val keepScroll = remember(listState) { keepScrollInList(listState) }
     var browsingByDrag by remember { mutableStateOf(false) }
     // While picking lines, the panel must not auto-scroll — the reader needs
@@ -2019,7 +2027,7 @@ internal fun LyricsPanel(
     // browse on their own terms.
     // A newer line replaces an unfinished automatic scroll. Only a user's
     // browsing gesture should suspend following, not our own animation.
-    LaunchedEffect(focusLine, browsing, controlsOpen, active) {
+    LaunchedEffect(focusLine, browsing, controlsOpen, active, reduceAnimation, lowPower) {
         if (active && isSynced && !browsing &&
             focusLine >= 0 && focusLine in lines.indices
         ) {
@@ -2044,20 +2052,32 @@ internal fun LyricsPanel(
                     placed = true
                 }
                 // Already on screen, which is the ordinary case of handing over
-                // to the next line: its distance is known, so the move can be
-                // given the run-up's own duration and curve instead of the
-                // list's default spring.
+                // to the next line: its distance is known, so the move runs on
+                // AMLL's interval-adaptive spring instead of the list's default.
                 visible != null -> {
-                    val span = scrollLead(lines, koIndexes.rowIndex.lineAt(clock.longValue)).toInt()
+                    val nowIndex = koIndexes.rowIndex.lineAt(clock.longValue)
+                    val span = scrollLead(lines, nowIndex).toInt()
+                    val interval = lines.getOrNull(nowIndex)?.let { current ->
+                        lines.getOrNull(nowIndex - 1)?.let { previous ->
+                            current.timeMs - previous.timeMs
+                        }
+                    }
                     val distance = (visible.offset - focusOffset(visible.size)).toFloat()
                     run = ScrollRun(run.id + 1, distance, span)
-                    // The same curve the rows catch up on. Two different
-                    // curves and a row with no delay at all still trails the
-                    // list it is sitting in, which is most of the way to
-                    // looking like the panel cannot keep up with itself.
+                    // Low power and reduce-animation keep the old fixed tween:
+                    // a physical spring is a lot of frames of motion for a
+                    // setting that exists to stop exactly that.
+                    val springSpec = koLyricSpringForInterval(interval)
                     listState.animateScrollBy(
                         value = distance,
-                        animationSpec = tween(durationMillis = span, easing = LYRIC_EASING),
+                        animationSpec = if (reduceAnimation || lowPower) {
+                            tween(durationMillis = span, easing = LYRIC_EASING)
+                        } else {
+                            spring(
+                                stiffness = springSpec.stiffness,
+                                dampingRatio = springSpec.dampingRatio,
+                            )
+                        },
                     )
                 }
                 // Somewhere off screen — after a seek, or a long instrumental
@@ -2195,7 +2215,7 @@ internal fun LyricsPanel(
             val blur by animateDpAsState(
                 targetValue = when {
                     !isSynced || reduceDynamicBlur || !lyricsBlur || browsing || isActive -> 0.dp
-                    else -> LINE_FALLOFF_BLUR[step.coerceAtMost(LINE_FALLOFF_BLUR.lastIndex)]
+                    else -> koLineBlurDp(distance, narrowViewport)
                 },
                 animationSpec = tween(LYRIC_SETTLE_MS, easing = LYRIC_EASING),
                 label = "lyricBlur",
@@ -2203,7 +2223,7 @@ internal fun LyricsPanel(
             val lineAlpha by animateFloatAsState(
                 targetValue = when {
                     !isSynced -> 0.95f
-                    isActive -> 1f
+                    isActive -> KO_ACTIVE_LINE_ALPHA
                     // Reading by hand is not following along: the stack flattens
                     // to one brightness so no row is being pointed at.
                     browsing -> BROWSING_ALPHA
@@ -2218,6 +2238,11 @@ internal fun LyricsPanel(
                 // reads as time running down instead of a symbol parked on
                 // screen waiting for the singing to come back.
                 val until = lines.getOrNull(index + 1)?.timeMs ?: line.endMs
+                val gapMs = (until - line.timeMs).coerceAtLeast(0L)
+                // AMLL only breathes a break from 7 s; a shorter one keeps the
+                // static three-dot fill. Reduce-animation and low power hold
+                // the dots at rest and skip the whole breath.
+                val breathing = koInterludeBreathes(gapMs) && !reduceAnimation && !lowPower
                 // How far through the break the song is, held at 0 before it and
                 // 1 after: the dots read the clock only while it is running, so
                 // a break that is not playing never redraws — see SweptLyricLine.
@@ -2274,23 +2299,42 @@ internal fun LyricsPanel(
                         }
                         .drawBehind {
                             // Read here rather than in composition: the fill
-                            // moves every frame, and this way a break costs a
-                            // redraw of three circles, not a recomposition.
+                            // and the breath move every frame, and this way a
+                            // break costs a redraw of three circles, not a
+                            // recomposition.
+                            val now = clock.longValue
                             val span = (until - line.timeMs).coerceAtLeast(1L)
                             val through = gapFill.value.takeUnless { it == GAP_RUNNING }
-                                ?: ((clock.longValue - line.timeMs).toFloat() / span).coerceIn(0f, 1f)
+                                ?: ((now - line.timeMs).toFloat() / span).coerceIn(0f, 1f)
+                            val since = (now - line.timeMs).coerceAtLeast(0L)
+                            val remaining = (until - now).coerceAtLeast(0L)
+                            val container = koInterludeContainerAlpha(since)
+                            val exit = koInterludeExitAlpha(remaining)
+                            val breath = if (breathing) {
+                                koInterludeBreathScale(since, gapMs)
+                            } else {
+                                1f
+                            }
                             val radius = GAP_DOT_SIZE.toPx() / 2f
                             val stride = (GAP_DOT_SIZE + GAP_DOT_GAP).toPx()
+                            val pivotX = size.width / 2f
+                            val pivotY = size.height / 2f
                             repeat(GAP_DOTS) { dot ->
                                 // Each dot owns its share of the break and
                                 // fills across it, so they light left to right.
                                 val lit = (through * GAP_DOTS - dot).coerceIn(0f, 1f)
+                                val entry = koInterludeDotEntryAlpha(dot, since)
+                                val rawCenter = Offset(radius + dot * stride, pivotY)
                                 drawCircle(
                                     color = Color.White.copy(
-                                        alpha = GAP_DOT_REST + (1f - GAP_DOT_REST) * lit,
+                                        alpha = (GAP_DOT_REST + (1f - GAP_DOT_REST) * lit) *
+                                            container * entry * exit,
                                     ),
-                                    radius = radius,
-                                    center = Offset(radius + dot * stride, size.height / 2f),
+                                    radius = radius * breath,
+                                    center = Offset(
+                                        pivotX + (rawCenter.x - pivotX) * breath,
+                                        pivotY + (rawCenter.y - pivotY) * breath,
+                                    ),
                                 )
                             }
                         }
@@ -2333,15 +2377,14 @@ internal fun LyricsPanel(
                 // Rows behind the one being scrolled to are the ones that
                 // fan out; the ones it is moving away from arrive together.
                 val behind = if (run.delta >= 0f) index - focusLine else focusLine - index
-                val staggerDelay = behind.coerceIn(0, STAGGER_STEPS) *
-                    STAGGER_FRACTION * run.durationMs
+                val staggerDelay = koStaggerDelayMs(behind, run.durationMs)
                 val interaction = remember { MutableInteractionSource() }
                 val pressed by interaction.collectIsPressedAsState()
                 val scale by animateFloatAsState(
                     targetValue = when {
                         pressed -> PRESSED_SCALE
                         isActive -> 1f
-                        else -> INACTIVE_SCALE
+                        else -> KO_INACTIVE_SCALE
                     },
                     animationSpec = tween(
                         durationMillis = if (pressed) 120 else LYRIC_SETTLE_MS,
@@ -2830,10 +2873,10 @@ private fun Modifier.revealBelow(progress: State<Float>): Modifier = this
  * Opens the answering voice under its lead as [progress] runs from 0 to 1.
  *
  * The room it takes opens with it, so the rows below make way rather than
- * jump; the words fade in a little ahead of the room being made, and rise the
- * last few pixels into place from a hair smaller — the same small arrival
- * am-lyrics gives its backing line. Scaled from the edge the line is written
- * from, so a right-hand duet line grows out of its own margin.
+ * jump; the words fade in a little ahead of the room being made, and slide
+ * down from above (AMLL's `hiddenSlideY = -80`) from a hair smaller. Scaled
+ * from the edge the line is written from, so a right-hand duet line grows out
+ * of its own margin.
  *
  * Nothing is drawn at all once it is closed: the layer is at zero alpha, and
  * the sweep inside it is never asked for a frame.
