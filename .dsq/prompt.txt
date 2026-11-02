@@ -1,0 +1,17 @@
+﻿Kotlin Android app = upstream v1.9 + Korean fork (task/u19-tg; 1.8 fork = origin/task/telegram). Battery first: event-driven, no polling/timers, never block the main thread. Use grep/Select-String, not rg. Unknown Android/Media3 APIs: context7. Every fix gets a JVM test that fails on current code (no network). Do not touch .github/workflows. Smallest change; keep v1.9's improvements.
+
+Right song is priority 1. TrackMatcher (shared/.../data/sources/TrackMatcher.kt VERSION_WORDS/TRAILING_TAKES/NOVOCAL_TAKES, ko/KoTrackMatcher.kt) missed 'A Cappella' written as two words (fixed). Audit for other take spellings that let a different recording match the original: 'Ver.'/'ver' with a qualifier (Japanese Ver., Band Ver., Piano Ver., Acoustic Ver.), Korean takes (어쿠스틱, 피아노, 밴드, 일본어, 영어 버전, 리믹스, 라이브, 커버, 리메이크, MR, 반주, 인스트), sped up/slowed variants, '(Live at ...)', 'Remastered' (neutral), 'Radio Edit' (neutral?). Add what is missing with tests both directions; keep neutral ones neutral.
+
+Summary of at most 12 lines: cause, files, REMOVED-LINES AUDIT, tests (class names for CI), what you did not do. Follow AGENTS.md (ponytail) rules.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 5
+- HIGH `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:972,982` (`+ ko/KoTrackMatcher.kt:1622`): adding `piano`/`band`/`inst`/`mr` as unconditional `VERSION_WORDS` makes any bracket containing them a take, so `Song (From Band of Brothers)` no longer matches `Song` and `Song (Mr. Jones)` matches `Song (Instrumental)` (both verified); gate qualifier/`MR` detection to segments that are only the take phrase, and add regression tests.
+- HIGH `shared/src/jvmSharedMain/kotlin/com/music/bitchord/ko/KoTrackMatcher.kt:1248-1260`: the new `phraseTakes` is never used by the trailing-token loop, so unbracketed `Song Sped Up`, `Song Speed Up` and `Song Sped-Up` get no version marker and still match the original `Song` (verified); strip trailing speed/slow phrases in the loop, record `sped`/`slowed`, and test those forms.
+- MEDIUM `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/TrackMatcher.kt:969,992-997`: `ver` is now a take unconditionally, so neutral trailing `Song Ver` stops matching `Song`/`Song Version`, while the comment's promised bare `Song Band Ver.` still fails to match `Song (Band Version)` because only `ver` is stripped and `band` stays in the core; require a qualifier for `ver`-as-take and strip qualifier+`ver` together, keeping bare `ver` neutral like `version`.
+- LOW `shared/src/jvmSharedMain/kotlin/com/music/bitchord/ko/KoTrackMatcher.kt:1610-1627`: `TAKE_ALIASES` omits existing Korean/Japanese takes (`리믹스`, `라이브`, `커버`, `インスト`, `カバー`), so `Song (리믹스)` still does not match `Song (Remix)` etc., contrary to the canonicalisation comment; add the aliases or narrow the claim, with tests for every listed spelling.
+- MEDIUM `change.diff`/commit: no 12-line summary and no REMOVED-LINES AUDIT is present, so the explicitly required removed-line audit is missing; supply the summary with an explicit audit (the removed lines are only set/list expansions, no guards, offloads or timeouts).
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
