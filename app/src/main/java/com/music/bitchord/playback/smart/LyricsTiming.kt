@@ -2996,7 +2996,10 @@ object LyricsTiming {
         // The first pass listens to the short opening that is already on disk,
         // so the screen is corrected while the song is still playing. The full
         // opening follows on the same cold playback: applied as a refinement,
-        // or as the first answer when the short one could not fit.
+        // or as the first answer when the short one could not fit. With the
+        // screen off there is no correction to show, so the first pass is the
+        // full opening and no second pass runs.
+        val screenOn = PowerState.screenOn
         val first = runSongCheck(
             context,
             song,
@@ -3004,9 +3007,10 @@ object LyricsTiming {
             key,
             engine,
             probe,
-            untilSeconds = SongCheckWindow.FIRST_SECONDS,
+            untilSeconds = SongCheckWindow.firstPassSeconds(screenOn, VideoAudio.SONG_CHECK_SECONDS),
         ) ?: return@withLock false
         val firstOk = applySongCheck(context, song, key, engine, first)
+        if (!screenOn) return@withLock firstOk
         if (!SongCheckWindow.needsFullOpening(first.result)) return@withLock firstOk
         val full = runSongCheck(
             context,

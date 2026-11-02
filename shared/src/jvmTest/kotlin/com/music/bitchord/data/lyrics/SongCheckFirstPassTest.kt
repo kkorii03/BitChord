@@ -1,6 +1,7 @@
 package com.music.bitchord.data.lyrics
 
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -15,6 +16,21 @@ class SongCheckFirstPassTest {
     @Test
     fun `the first opening is short enough to answer within a minute`() {
         assertTrue(SongCheckWindow.FIRST_SECONDS in 30.0..45.0)
+    }
+
+    @Test
+    fun `a screen-off first pass is the full opening, not the short one`() {
+        // Nobody is looking at the screen, so the short pass has no correction
+        // to show; a second full pass would only decode and transcribe the
+        // same opening twice. The pocket keeps v1.9's single full pass.
+        assertEquals(
+            SongCheckWindow.FIRST_SECONDS,
+            SongCheckWindow.firstPassSeconds(screenOn = true, fullSeconds = 90.0),
+        )
+        assertEquals(
+            90.0,
+            SongCheckWindow.firstPassSeconds(screenOn = false, fullSeconds = 90.0),
+        )
     }
 
     @Test

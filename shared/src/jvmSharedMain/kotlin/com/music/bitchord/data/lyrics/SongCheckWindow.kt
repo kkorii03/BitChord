@@ -23,6 +23,15 @@ object SongCheckWindow {
     const val FIRST_SECONDS = 40.0
 
     /**
+     * The opening the first pass reads. The short one exists to correct a
+     * visible screen while the song plays; with the screen off nobody sees
+     * that correction, so the first pass reads the full opening as it did
+     * before and no second pass runs (one decode and one engine call, not two).
+     */
+    fun firstPassSeconds(screenOn: Boolean, fullSeconds: Double): Double =
+        if (screenOn) FIRST_SECONDS else fullSeconds
+
+    /**
      * Whether the full opening follows a first pass that ended with [result].
      * A `no-answer` either spent the engine on a refusal (a 429, no network)
      * or never reached it, so it must not be asked again; every other result
