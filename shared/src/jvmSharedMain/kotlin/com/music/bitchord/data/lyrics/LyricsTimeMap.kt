@@ -173,7 +173,9 @@ private fun LyricWord.retimed(at: (Long) -> Long): LyricWord {
  *     confident wrong one.
  *  4. A pace counts only when it moves the answers by [PACE_EVIDENCE_MS]
  *     across their own stretch. A smaller one is the answers' jitter, not a
- *     slower video, and the record's pace stands. The same evidence test is
+ *     slower video, and the record's pace stands. A pace off 1 by at most
+ *     [SNAP_RATE] measured over a stretch shorter than [SNAP_RATE_SPAN_MS] is
+ *     jitter too, however far it moves in total. The same evidence test is
  *     used by the chroma alignment and the line-level refine.
  */
 object TimingFit {
@@ -194,10 +196,13 @@ object TimingFit {
     const val INLIER_MS = 1_500L
 
     /**
-     * The old absolute snap for a short answer stretch. Kept for callers that
-     * still name it; a pace is now judged by [PACE_EVIDENCE_MS] across its span.
+     * A pace off 1 by at most this over a stretch shorter than
+     * [SNAP_RATE_SPAN_MS] is the answers' jitter, not a slower video.
      */
     const val SNAP_RATE = 0.006
+
+    /** Shorter than this span (4 min), [SNAP_RATE] rejects a short stretch's jitter. */
+    const val SNAP_RATE_SPAN_MS = 240_000L
 
     /**
      * How far a pace must move the answers across their own stretch, ms, to be
@@ -214,7 +219,9 @@ object TimingFit {
      */
     fun rateForSpan(rate: Double, spanMs: Long): Double {
         if (!rate.isFinite() || spanMs <= 0L) return 1.0
-        return if (abs(rate - 1.0) * spanMs < PACE_EVIDENCE_MS) 1.0 else rate
+        val off = abs(rate - 1.0)
+        if (off <= SNAP_RATE && spanMs < SNAP_RATE_SPAN_MS) return 1.0
+        return if (off * spanMs < PACE_EVIDENCE_MS) 1.0 else rate
     }
 
     /** Paces beyond these are not a cover of the same song; they're a wrong answer. */

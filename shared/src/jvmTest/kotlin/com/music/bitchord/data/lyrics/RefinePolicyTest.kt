@@ -120,11 +120,11 @@ class RefinePolicyTest {
 
     @Test
     fun aSteadyDriftIsFittedAsALine() {
-        // 500 ms per minute over 63 s moves the last line 525 ms: enough
-        // evidence across the span for a rate, not just a constant move.
+        // 260 ms per minute over 63 s moves the last line 273 ms: below the
+        // evidence bar but above MIN_SLOPE, so the refine still keeps the rate.
         val startMs = 10_000L
         val stepMs = 7_000L
-        val slopePerMs = 500.0 / 60_000.0
+        val slopePerMs = 260.0 / 60_000.0
         val lines = List(10) { index -> line(startMs + index * stepMs, "line$index") }
         val heard = lines.map { line ->
             heard(line.text, line.timeMs + (slopePerMs * line.timeMs).toLong())
@@ -133,7 +133,7 @@ class RefinePolicyTest {
 
         assertTrue(result.applied)
         assertEquals(RefinePolicy.Model.LINEAR, result.model)
-        assertTrue(abs(result.slopePerMin - 500.0) <= 50.0, "slope ${result.slopePerMin} ms/min")
+        assertTrue(abs(result.slopePerMin - 260.0) <= 50.0, "slope ${result.slopePerMin} ms/min")
         assertEquals(lines.size, result.lines)
     }
 

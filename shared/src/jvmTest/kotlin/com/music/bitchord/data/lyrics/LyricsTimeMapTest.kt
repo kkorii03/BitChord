@@ -254,13 +254,14 @@ class LyricsTimeMapTest {
     }
 
     @Test
-    fun aPaceWithinTheSnapWindowBecomesTheRecordsPace() {
+    fun aSmallPaceOnAShortStretchIsSnappedEvenWhenItsMovementClearsTheEvidence() {
         val snapped = listOf(0L to 0L, 10_000L to 9_950L, 20_000L to 19_900L, 30_000L to 29_850L)
         assertEquals(1.0, assertNotNull(TimingFit.fit(snapped)).rate)
 
-        // Over 90 s a 0.6% pace moves the answers 540 ms: enough to believe.
-        val justOutside = listOf(0L to 0L, 30_000L to 29_820L, 60_000L to 59_640L, 90_000L to 89_460L)
-        assertEquals(0.994, assertNotNull(TimingFit.fit(justOutside)).rate)
+        // 0.5% over 90 s moves the answers 450 ms, past PACE_EVIDENCE_MS, but
+        // the qzXa short-stretch jitter guard still snaps a sub-0.6% pace.
+        val shortStretch = listOf(0L to 0L, 30_000L to 29_850L, 60_000L to 59_700L, 90_000L to 89_550L)
+        assertEquals(1.0, assertNotNull(TimingFit.fit(shortStretch)).rate)
     }
 
     @Test

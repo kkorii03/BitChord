@@ -22,9 +22,9 @@ import kotlin.math.roundToLong
  * spread is small. When enough lines also span enough of the song and the
  * residual grows steadily with time, a robust straight line is fitted instead
  * and its slope is kept with the offset. That is the drift a constant move
- * cannot follow. The slope counts only when it moves the lines by
- * [TimingFit.PACE_EVIDENCE_MS] across their span; a smaller one is jitter, not
- * a rate, and the constant move stands.
+ * cannot follow. The slope counts when it is at least [MIN_SLOPE], or when it
+ * moves the lines by [TimingFit.PACE_EVIDENCE_MS] across their span; a smaller
+ * one is jitter, not a rate, and the constant move stands.
  *
  * A provider's line times can also be a whole arrangement apart — a cover
  * whose lyric file was timed to a different recording with a long intro. When
@@ -120,8 +120,8 @@ object RefinePolicy {
     const val MIN_LINEAR_SPAN_MS = 40_000L
 
     /**
-     * The old absolute minimum rate. Kept for callers that still name it; a
-     * drift is now judged by [TimingFit.PACE_EVIDENCE_MS] across its span.
+     * The smallest slope the refine keeps on its own, without the evidence
+     * test: 120 ms/min. A slower drift needs [TimingFit.PACE_EVIDENCE_MS].
      */
     const val MIN_SLOPE = 0.002
 
@@ -389,7 +389,11 @@ object RefinePolicy {
         var slope = median(slopes)
         if (!slope.isFinite()) return null
         slope = slope.coerceIn(-MAX_SLOPE, MAX_SLOPE)
-        val rate = TimingFit.rateForSpan(1.0 + slope, span)
+        val rate = if (abs(slope) >= MIN_SLOPE) {
+            1.0 + slope
+        } else {
+            TimingFit.rateForSpan(1.0 + slope, span)
+        }
         if (rate == 1.0) return null
         slope = rate - 1.0
         val offset = median(times.indices.map { residuals[it] - slope * times[it] })
