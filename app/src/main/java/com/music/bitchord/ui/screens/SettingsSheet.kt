@@ -574,13 +574,21 @@ fun SettingsScreen(
                 }
                 val onWifiTitle = stringResource(R.string.on_wifi)
                 row(onWifiTitle, "wi-fi", "streaming quality") {
-                    KoWifiQualityRow(onWifiTitle, wifiQuality.localizedLabel()) { // [KO] wifi-quality
+                    KoWifiQualityRow(
+                            onWifiTitle,
+                            wifiQuality.localizedLabel(),
+                            badge = stringResource(R.string.in_use).takeIf { metered == false },
+                        ) { // [KO] wifi-quality
                         onOpenChoice(SettingsChoiceKind.AUDIO_QUALITY_WIFI)
                     }
                 }
                 val onMobileDataTitle = stringResource(R.string.on_mobile_data)
                 row(onMobileDataTitle, "cellular", "streaming quality") {
-                    KoCellularQualityRow(onMobileDataTitle, cellularQuality.localizedLabel()) { // [KO] cellular-quality
+                    KoCellularQualityRow(
+                            onMobileDataTitle,
+                            cellularQuality.localizedLabel(),
+                            badge = stringResource(R.string.in_use).takeIf { metered == true },
+                        ) { // [KO] cellular-quality
                         onOpenChoice(SettingsChoiceKind.AUDIO_QUALITY_CELLULAR)
                     }
                 }
@@ -877,7 +885,7 @@ fun SettingsScreen(
         if (shows(SettingsCategory.APPEARANCE)) SearchableSettingsGroup(search, header = stringResource(R.string.appearance)) {
             val themeTitle = stringResource(R.string.theme)
             row(themeTitle, "dark mode", "light mode") {
-                SettingsRow(icon = Icons.Rounded.Brightness4, title = themeTitle)
+                SettingsRow(icon = SfIcons.Brightness, title = themeTitle)
                 SettingsSegmentedControl(
                     options = ThemeMode.entries.map { it.localizedLabel() },
                     selectedIndex = ThemeMode.entries.indexOf(theme),
@@ -1093,14 +1101,6 @@ fun SettingsScreen(
                 }
             }
             KoHiddenExploreRow(koHiddenExplore) // [KO] hidden-explore
-        }
-
-        // The lyrics page is a screen of its own now — see [LyricsSettingsScreen].
-        // This row takes the old expanded group's place (and its first row's
-        // glyph) so the list keeps one lyrics entry where the group was. It
-        // belongs to the main page only; the category page is that screen.
-        if (section == null) SearchableSettingsGroup(search) {
-            KoLyricsEntryRow(onOpenLyrics) // [KO] lyrics-entry
         }
 
         if (shows(SettingsCategory.PERFORMANCE)) SearchableSettingsGroup(search, header = stringResource(R.string.performance)) {
@@ -1579,7 +1579,7 @@ fun SettingsScreen(
         if (section == null && searchQuery.isBlank()) {
         Text(
             text = buildAnnotatedString {
-                append("bitchord $version  ")
+                append("BitChord $version · ")
                 val linkStyles = TextLinkStyles(
                     style = SpanStyle(
                         color = MaterialTheme.colorScheme.primary,
@@ -1589,19 +1589,19 @@ fun SettingsScreen(
                 withLink(LinkAnnotation.Url("https://github.com/kushagrasinghx/BitChord", linkStyles)) {
                     append("GitHub")
                 }
-                append("  ")
+                append(" · ")
                 withLink(LinkAnnotation.Url("https://github.com/kushagrasinghx", linkStyles)) {
                     append("개발자")
                 }
-                append("  ")
+                append(" · ")
                 withLink(LinkAnnotation.Url("https://discord.gg/pDdKfrdHY6", linkStyles)) {
                     append("Discord")
                 }
-                append("  ")
+                append(" · ")
                 withLink(LinkAnnotation.Url("https://bitchord.kushagrasingh.in/", linkStyles)) {
                     append("웹사이트")
                 }
-                append("\n~YouTube Music & Listen Together Backend")
+                append("\nYouTube Music 및 함께 듣기 서비스")
             },
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2027,8 +2027,8 @@ internal fun AccountCard(
 
 /** Which ceiling the open picker is editing. */
 private enum class QualityTarget(val icon: ImageVector) {
-    WIFI(Icons.Rounded.Wifi),
-    CELLULAR(Icons.Rounded.SignalCellularAlt),
+    WIFI(SfIcons.Wifi),
+    CELLULAR(SfIcons.SignalCellularAlt),
 }
 
 /** The quality options for one connection, with what each costs in data. */
@@ -2316,7 +2316,7 @@ internal fun SettingsGroup(
 ) {
     if (header != null) {
         Text(
-            text = header.uppercase(Locale.ROOT),
+            text = header,
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(

@@ -61,6 +61,8 @@ data class Song(
     val albumName: String? = null,
     /** A music-video upload rather than the catalogue track. */
     val isVideo: Boolean = false,
+    /** A podcast episode; listed only under the Episodes search tab. */
+    val isEpisode: Boolean = false,
     /**
      * A preview row whose upload type has not been confirmed yet.
      *
@@ -467,9 +469,10 @@ enum class SearchFilter(val label: String, val params: String?) {
     ALL("전체", null),
     SONGS("노래", "EgWKAQIIAWoKEAkQChAFEAMQBA=="),
     VIDEOS("비디오", "EgWKAQIQAWoKEAkQChAFEAMQBA=="),
+    EPISODES("에피소드", null),
     ALBUMS("앨범", "EgWKAQIYAWoKEAkQChAFEAMQBA=="),
     ARTISTS("아티스트", "EgWKAQIgAWoKEAkQChAFEAMQBA=="),
-    PLAYLISTS("재생목록", "EgWKAQIoAWoKEAkQChAFEAMQBA=="),
+    PLAYLISTS("플레이리스트", "EgWKAQIoAWoKEAkQChAFEAMQBA=="),
 }
 
 /** A card in a home-feed carousel: either a track (videoId) or an album/playlist (browseId). */

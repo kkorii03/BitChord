@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.components
 
+import com.music.bitchord.ui.icons.SfIcons
 import com.music.bitchord.ui.theme.AppType
 import com.music.bitchord.ui.theme.trackingFor
 
@@ -378,7 +379,7 @@ fun AudioPipelineDialog(
             PipelineRule()
             PipelineSection(
                 stageIndex = 0,
-                icon = Icons.AutoMirrored.Rounded.InsertDriveFile,
+                icon = SfIcons.Document,
                 title = stringResource(R.string.pipeline_track_info),
                 columnCoordinates = columnCoordinates,
                 stageActivationProvider = stageActivation,
@@ -404,7 +405,7 @@ fun AudioPipelineDialog(
             PipelineRule()
             PipelineSection(
                 stageIndex = 1,
-                icon = Icons.Rounded.Memory,
+                icon = SfIcons.Memory,
                 title = stringResource(R.string.pipeline_decoder),
                 columnCoordinates = columnCoordinates,
                 stageActivationProvider = stageActivation,
@@ -452,14 +453,14 @@ fun AudioPipelineDialog(
             val qualityText = when {
                 dsdRateHz != null -> stringResource(R.string.pipeline_dsd_full_band)
                 inRate == null || outRate == null -> "—"
-                isPassthrough -> "패스스루"
-                else -> "리샘플링됨"
+                isPassthrough -> "원본 그대로"
+                else -> "리샘플링"
             }
 
             PipelineRule()
             PipelineSection(
                 stageIndex = 2,
-                icon = Icons.Rounded.Tune,
+                icon = SfIcons.Tune,
                 title = if (dsdRateHz != null) {
                     stringResource(R.string.pipeline_dsd_to_pcm)
                 } else {
@@ -521,7 +522,7 @@ fun AudioPipelineDialog(
             PipelineRule()
             PipelineSection(
                 stageIndex = 3,
-                icon = Icons.Rounded.GraphicEq,
+                icon = SfIcons.GraphicEq,
                 title = stringResource(R.string.pipeline_dsp),
                 columnCoordinates = columnCoordinates,
                 stageActivationProvider = stageActivation,
@@ -575,21 +576,21 @@ fun AudioPipelineDialog(
             PipelineRule()
             PipelineSection(
                 stageIndex = 4,
-                icon = Icons.AutoMirrored.Rounded.VolumeUp,
+                icon = SfIcons.VolumeUp,
                 title = stringResource(R.string.pipeline_output_device),
                 columnCoordinates = columnCoordinates,
                 stageActivationProvider = stageActivation,
                 onStageIconPositioned = onStageIconPositioned,
             ) {
                 PipelineRow(stringResource(R.string.pipeline_device_name), deviceName)
-                PipelineRow("Route", outputStatus.routeKind.name)
-                PipelineRow("Transport", bitPerfect.driver.takeIf { bitPerfect.active } ?: outputStatus.transportType.label)
+                PipelineRow("경로", outputStatus.routeKind.name)
+                PipelineRow("전송", bitPerfect.driver.takeIf { bitPerfect.active } ?: outputStatus.transportType.label)
 
                 val directStatusText = when {
                     bitPerfect.active ->
-                        "Active (${bitPerfect.driver}, bypasses mixer)"
+                        "활성(${bitPerfect.driver}, 믹서 우회)"
                     outputStatus.directPlaybackActual ->
-                        "활성 (Direct AudioTrack, 믹서 우회)"
+                        "활성(믹서 우회)"
                     outputStatus.directPlaybackRejected ->
                         "거부됨"
                     outputStatus.directPlaybackSupported ->
@@ -597,24 +598,24 @@ fun AudioPipelineDialog(
                     else ->
                         "지원 안 됨 (믹스 경로)"
                 }
-                PipelineRow("Direct", directStatusText)
+                PipelineRow("직접", directStatusText)
                 PipelineRow(
-                    if (bitPerfect.active) "Output" else "AudioTrack",
+                    if (bitPerfect.active) "출력" else "오디오 트랙",
                     if (bitPerfect.active) "PCM${bitPerfect.outputBits} / ${rateText(bitPerfect.sampleRateHz)}" else audioTrackText,
                 )
 
                 val mixerText = when {
                     bitPerfect.active ->
-                        if (bitPerfect.dacLimited) "Bypassed (DAC max)" else "Bypassed (bit-perfect)"
+                        if (bitPerfect.dacLimited) "우회됨(DAC 최대)" else "우회됨(비트 퍼펙트)"
                     outputStatus.directPlaybackActual ->
-                        "Direct 경로 활성, 출력단 포맷은 별도로 확인되지 않음"
+                        "직접 경로 활성, 출력단 포맷은 별도로 확인되지 않음"
                     outputStatus.systemMixerRateHz != null -> {
                         val hal = outputStatus.halFormat
                         val mixerRate = outputStatus.systemMixerRateHz?.let(::rateText)
                         if (hal != null) {
-                            "AudioFlinger Mixer $mixerRate, HAL $hal"
+                            "시스템 믹서 $mixerRate, 하드웨어 $hal"
                         } else {
-                            "AudioFlinger Mixer $mixerRate"
+                            "시스템 믹서 $mixerRate"
                         }
                     }
                     else -> null

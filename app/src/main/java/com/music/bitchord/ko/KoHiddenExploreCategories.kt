@@ -1,5 +1,6 @@
 package com.music.bitchord.ko
 
+import com.music.bitchord.ui.icons.SfIcons
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -43,7 +44,7 @@ internal fun SettingsGroupScope.KoHiddenExploreRow(state: KoHiddenExploreState) 
     val hiddenCategoriesTitle = stringResource(R.string.hidden_explore_categories)
     row(hiddenCategoriesTitle, "explore", "category", "filter", "hide") {
         SettingsRow(
-            icon = Icons.Rounded.VisibilityOff,
+            icon = SfIcons.VisibilityOff,
             title = hiddenCategoriesTitle,
             subtitle = if (hiddenExploreCategories.isEmpty()) {
                 stringResource(R.string.hidden_explore_categories_none)

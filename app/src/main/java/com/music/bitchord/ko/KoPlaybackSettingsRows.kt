@@ -1,5 +1,6 @@
 package com.music.bitchord.ko
 
+import com.music.bitchord.ui.icons.SfIcons
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Headphones
@@ -28,7 +29,7 @@ internal fun SettingsGroupScope.KoPlaybackTopRows() {
     val resumeOnHeadphonesTitle = stringResource(R.string.resume_on_headphones)
     row(resumeOnHeadphonesTitle, "headphones", "earbuds", "bluetooth", "resume", "이어폰") {
         SettingsRow(
-            icon = Icons.Rounded.Headphones,
+            icon = SfIcons.Bluetooth,
             title = resumeOnHeadphonesTitle,
             trailing = {
                 Switch(
@@ -43,7 +44,7 @@ internal fun SettingsGroupScope.KoPlaybackTopRows() {
     val personalisedAutoplayTitle = stringResource(R.string.personalised_autoplay)
     row(personalisedAutoplayTitle, "autoplay", "radio", "recommend", "추천") {
         SettingsRow(
-            icon = Icons.Rounded.AutoAwesome,
+            icon = SfIcons.AutoAwesome,
             title = personalisedAutoplayTitle,
             trailing = {
                 Switch(
@@ -58,7 +59,7 @@ internal fun SettingsGroupScope.KoPlaybackTopRows() {
     val videoRadioTitle = stringResource(R.string.video_radio_continue)
     row(videoRadioTitle, "video", "radio", "cover", "비디오") {
         SettingsRow(
-            icon = Icons.Rounded.SmartDisplay,
+            icon = SfIcons.SmartDisplay,
             title = videoRadioTitle,
             trailing = {
                 Switch(
@@ -80,7 +81,7 @@ internal fun SettingsGroupScope.KoSkipPartsRows() {
     val skipNonMusicPartsTitle = stringResource(R.string.skip_non_music_parts)
     row(skipNonMusicPartsTitle, "sponsor", "skip", "intro", "outro", "건너뛰기") {
         SettingsRow(
-            icon = Icons.Rounded.MusicOff,
+            icon = SfIcons.MusicOff,
             title = skipNonMusicPartsTitle,
             subtitle = stringResource(R.string.skip_non_music_parts_subtitle),
             trailing = {
@@ -128,7 +129,7 @@ internal fun SettingsGroupScope.KoPlaybackPrivacyRows() {
     val privateListeningTitle = stringResource(R.string.private_listening)
     row(privateListeningTitle, "private", "incognito", "history", "privacy") {
         SettingsRow(
-            icon = Icons.Rounded.VisibilityOff,
+            icon = SfIcons.VisibilityOff,
             title = privateListeningTitle,
             subtitle = stringResource(R.string.private_listening_subtitle),
             trailing = {
@@ -151,7 +152,7 @@ internal fun SettingsGroupScope.KoPlaybackPrivacyRows() {
     val widgetOpensPlayerTitle = stringResource(R.string.widget_opens_player)
     row(widgetOpensPlayerTitle, "widget", "home screen", "player") {
         SettingsRow(
-            icon = Icons.Rounded.Widgets,
+            icon = SfIcons.Apps,
             title = widgetOpensPlayerTitle,
             subtitle = stringResource(R.string.widget_opens_player_subtitle),
             trailing = {

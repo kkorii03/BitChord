@@ -57,12 +57,16 @@ object InnertubeParser {
      */
     fun parseSearch(response: JsonObject): List<SearchResult> = parseSearchPage(response).rows
 
-    fun parseSearchPage(response: JsonObject, includeVideos: Boolean = false): SearchPage {
+    fun parseSearchPage(
+        response: JsonObject,
+        includeVideos: Boolean = false,
+        includeEpisodes: Boolean = false,
+    ): SearchPage {
         // The "All" tab spreads results across several shelf types (card shelf
         // for the top result, then one shelf per category). Its promoted top
         // result lives on the card itself, not in a responsive row, so read it
         // first before walking the ordinary result rows.
-        val topResults: List<SearchResult> = if (includeVideos) emptyList() else {
+        val topResults: List<SearchResult> = if (includeVideos || includeEpisodes) emptyList() else {
             collectRenderers(response, "musicCardShelfRenderer")
                 .mapNotNull { card ->
                     parseCardShelfSong(card)?.let(SearchResult::TopTrack)
@@ -89,7 +93,9 @@ object InnertubeParser {
                     is SearchResult.TopTrack -> {
                         // The mixed All page stays music-only; music-video uploads
                         // belong exclusively to the dedicated Videos tab.
-                        if (!result.song.isVideo && seen.add("v:${result.song.videoId}")) add(result)
+                        if (!result.song.isVideo && !result.song.isEpisode &&
+                            seen.add("v:${result.song.videoId}")
+                        ) add(result)
                     }
                     is SearchResult.Browse -> {
                         if (seen.add("b:${result.item.browseId}")) add(result)
@@ -103,13 +109,22 @@ object InnertubeParser {
             // first would misread every album as a single song.
                 val browse = parseBrowseItem(renderer)
                 if (browse != null) {
-                    if (seen.add("b:${browse.browseId}")) add(SearchResult.Browse(browse))
+                    // Episodes are a track-only list; cards for albums and
+                    // artists come from the same mixed response but not this tab.
+                    if (!includeEpisodes && seen.add("b:${browse.browseId}")) {
+                        add(SearchResult.Browse(browse))
+                    }
                 } else {
                     val fallback = cardCredits.firstOrNull { it.first === renderer }?.second
                     parseResponsiveListItem(renderer, fallback ?: Credits())?.let { song ->
-                        // The mixed All page stays music-only; the dedicated Videos
-                        // filter is the one place music-video uploads belong.
-                        if (song.isVideo == includeVideos && seen.add("v:${song.videoId}")) {
+                        // The mixed All page stays music-only: video uploads belong
+                        // to Videos, podcast episodes to Episodes.
+                        val keep = if (includeEpisodes) {
+                            song.isEpisode && !song.isVideo
+                        } else {
+                            song.isVideo == includeVideos && !song.isEpisode
+                        }
+                        if (keep && seen.add("v:${song.videoId}")) {
                             add(SearchResult.Track(song))
                         }
                     }
@@ -262,8 +277,13 @@ object InnertubeParser {
             browseId = browseId,
             title = title,
             subtitle = subtitle,
-            thumbnailUrl = renderer.o("thumbnail").o("musicThumbnailRenderer")
-                .o("thumbnail").a("thumbnails").best(),
+            thumbnailUrl = (renderer.o("thumbnail").o("musicThumbnailRenderer")
+                .o("thumbnail").a("thumbnails")
+                ?: renderer.o("thumbnail").a("thumbnails")
+                ?: renderer.o("thumbnail").o("thumbnailViewModel").a("sources")
+                ?: renderer.o("thumbnailViewModel").a("sources")
+                ?: renderer.o("contentImage").o("thumbnailViewModel").a("sources")
+                ?: renderer.o("contentImage").a("sources")).best(),
             type = when {
                 "ALBUM" in pageType -> BrowseType.ALBUM
                 "ARTIST" in pageType -> BrowseType.ARTIST
@@ -844,7 +864,9 @@ object InnertubeParser {
             .o("thumbnail").a("thumbnails")
             ?: renderer.o("thumbnail").a("thumbnails")
             ?: renderer.o("thumbnail").o("thumbnailViewModel").o("image").a("sources")
+            ?: renderer.o("thumbnail").o("thumbnailViewModel").a("sources")
             ?: renderer.o("thumbnailViewModel").o("image").a("sources")
+            ?: renderer.o("thumbnailViewModel").a("sources")
             ?: renderer.o("contentImage")
                 ?.let { it.o("thumbnailViewModel").o("image").a("sources") }
             ?: renderer.o("contentImage").a("sources")
@@ -879,6 +901,7 @@ object InnertubeParser {
             // episode, whose art is a widescreen still too: it is listened to,
             // and a "video" is dropped from the All tab's results.
             isVideo = !episode && (rowType == "video" || thumbnails.isNotSquare()),
+            isEpisode = episode,
             isExplicit = renderer.hasExplicitBadge(),
             // Extract the "Remove from history" feedback token from the row's menu, if present.
             feedbackToken = extractFeedbackToken(renderer),
@@ -921,6 +944,7 @@ object InnertubeParser {
                 renderer.o("playbackProgress").o("musicPlaybackProgressRenderer")
                     .o("durationText").runs(),
             ),
+            isEpisode = true,
             isExplicit = renderer.hasExplicitBadge(),
         )
     }
@@ -1003,6 +1027,8 @@ object InnertubeParser {
                 null -> rowType == "video" || thumbnails.isNotSquare()
                 else -> !videoType.contains("ATV", ignoreCase = true)
             },
+            isEpisode = rowType == "episode" ||
+                renderer.findString("musicVideoType") == "MUSIC_VIDEO_TYPE_PODCAST_EPISODE",
             isExplicit = renderer["subtitleBadges"].hasExplicitBadge(),
         )
     }
@@ -1058,8 +1084,13 @@ object InnertubeParser {
             browseId = browseId,
             title = title,
             subtitle = subtitle,
-            thumbnailUrl = renderer.o("thumbnail").o("musicThumbnailRenderer")
-                .o("thumbnail").a("thumbnails").best(),
+            thumbnailUrl = (renderer.o("thumbnail").o("musicThumbnailRenderer")
+                .o("thumbnail").a("thumbnails")
+                ?: renderer.o("thumbnail").a("thumbnails")
+                ?: renderer.o("thumbnail").o("thumbnailViewModel").a("sources")
+                ?: renderer.o("thumbnailViewModel").a("sources")
+                ?: renderer.o("contentImage").o("thumbnailViewModel").a("sources")
+                ?: renderer.o("contentImage").a("sources")).best(),
             type = when {
                 "ALBUM" in pageType -> BrowseType.ALBUM
                 "ARTIST" in pageType -> BrowseType.ARTIST

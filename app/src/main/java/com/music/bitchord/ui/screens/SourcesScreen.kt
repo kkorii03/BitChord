@@ -796,7 +796,7 @@ private fun SourceRow(
                 SourceKind.CUSTOM_MODULE -> SfIcons.Extension
                 SourceKind.MODULE -> SfIcons.Extension
                 SourceKind.JIOSAAVN -> SfIcons.GraphicEq // or some other icon
-                SourceKind.TELEGRAM -> Icons.Rounded.Send
+                SourceKind.TELEGRAM -> SfIcons.Send
                 SourceKind.YOUTUBE -> SfIcons.PlayCircle
             },
             contentDescription = null,

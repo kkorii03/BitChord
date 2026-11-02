@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.components
 
+import com.music.bitchord.ui.icons.SfIcons
 import com.music.bitchord.ui.theme.AppType
 
 import androidx.compose.foundation.background
@@ -63,7 +64,7 @@ private val NOTES_MAX_HEIGHT = 220.dp
 
 /**
  * Once-per-launch nudge that a newer build is on GitHub Releases — the top
- * bar's [Icons.Rounded.Upgrade][androidx.compose.material.icons.rounded.Upgrade]
+ * bar's [SfIcons.Upgrade][androidx.compose.material.icons.rounded.Upgrade]
  * icon is the quiet, always-there version of this; this is the one-time,
  * hard-to-miss version shown the moment the check comes back.
  *

@@ -73,7 +73,7 @@ enum class SourceKind(
         label = "애드온",
         detail = "직접 운영하거나 링크로 받은 애드온 서버입니다. 일반 HTTP로 검색 및 " +
             "스트리밍하며, 코드를 다운로드하거나 실행하지 않습니다.",
-        labels = listOf("FLAC", "무손실", "Hi-Res"),
+        labels = listOf("FLAC", "무손실", "고해상도 무손실"),
         needsServer = true,
         canServeLossless = true,
         // Literal, not [USER_ADDED]: an enum entry is constructed before
@@ -92,7 +92,7 @@ enum class SourceKind(
     CUSTOM_MODULE(
         label = "사용자 지정 모듈",
         detail = "직접 지정한 호환 모듈 인덱스입니다. 기본 제공 인덱스보다 먼저 시도됩니다.",
-        labels = listOf("FLAC", "무손실", "Hi-Res", "플러그인"),
+        labels = listOf("FLAC", "무손실", "고해상도 무손실", "플러그인"),
         needsServer = true,
         canServeLossless = true,
         // Literal, not [USER_ADDED]: an enum entry is constructed before
@@ -120,8 +120,8 @@ enum class SourceKind(
     MODULE(
         label = "모듈 소스",
         detail = "호환 모듈 인덱스의 URL입니다. 모듈은 Tidal, Qobuz, Apple Music 등에서 " +
-            "검색 및 스트리밍할 수 있는 JS 플러그인입니다.",
-        labels = listOf("FLAC", "무손실", "Hi-Res", "플러그인"),
+            "검색 및 스트리밍할 수 있는 플러그인입니다.",
+        labels = listOf("FLAC", "무손실", "고해상도 무손실", "플러그인"),
         needsServer = true,
         canServeLossless = true,
         rank = 1,

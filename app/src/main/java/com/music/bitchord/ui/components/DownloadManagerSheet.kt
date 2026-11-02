@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.components
 
+import com.music.bitchord.ui.icons.SfIcons
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandHorizontally
@@ -150,12 +151,12 @@ fun TopBarDownloadButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
                 }
                 Icon(
                     imageVector = when {
-                        failed -> Icons.Rounded.ErrorOutline
+                        failed -> SfIcons.ErrorOutline
                         // A bare arrow inside the ring, not the tray-and-arrow: the
                         // ring is already saying "downloading", and a second glyph
                         // that says it too is detail nobody can resolve at 15dp.
-                        session.busy -> Icons.Rounded.ArrowDownward
-                        else -> Icons.Rounded.DownloadDone
+                        session.busy -> SfIcons.ArrowDown
+                        else -> SfIcons.Downloaded
                     },
                     contentDescription = when {
                         session.busy -> stringResource(
@@ -544,9 +545,9 @@ private fun DownloadManagerRow(
                 ) {
                     Icon(
                         imageVector = if (failed != null) {
-                            Icons.Rounded.ErrorOutline
+                            SfIcons.ErrorOutline
                         } else {
-                            Icons.Rounded.DownloadDone
+                            SfIcons.Downloaded
                         },
                         contentDescription = null,
                         tint = if (failed != null) {
@@ -615,8 +616,8 @@ private fun DownloadManagerRow(
         // track can be stopped, a failed one can be asked for again, and a
         // finished one needs nothing at all.
         when {
-            failed != null -> RowAction(Icons.Rounded.Refresh, stringResource(R.string.retry), onRetry)
-            !progress.settled -> RowAction(Icons.Rounded.Close, stringResource(R.string.cancel), onCancel)
+            failed != null -> RowAction(SfIcons.Cached, stringResource(R.string.retry), onRetry)
+            !progress.settled -> RowAction(SfIcons.Close, stringResource(R.string.cancel), onCancel)
             else -> Spacer(Modifier.width(36.dp))
         }
     }

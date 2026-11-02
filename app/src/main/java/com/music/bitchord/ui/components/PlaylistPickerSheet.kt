@@ -326,7 +326,7 @@ private fun PlaylistRow(playlist: UserPlaylist, selected: Boolean, onClick: () -
         }
         Spacer(Modifier.width(12.dp))
         Icon(
-            imageVector = if (selected) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked,
+            imageVector = if (selected) SfIcons.Downloaded else SfIcons.RadioButtonUnchecked,
             contentDescription = null,
             tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.size(24.dp),
@@ -431,7 +431,7 @@ private fun NewPlaylistForm(
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
-                        Icons.Rounded.Close,
+                        SfIcons.Close,
                         contentDescription = stringResource(R.string.clear_name),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(18.dp),
@@ -562,9 +562,9 @@ internal fun RenamePlaylistForm(
  */
 private val PlaylistPrivacy.icon: ImageVector
     get() = when (this) {
-        PlaylistPrivacy.PRIVATE -> Icons.Rounded.Lock
-        PlaylistPrivacy.UNLISTED -> Icons.Rounded.Link
-        PlaylistPrivacy.PUBLIC -> Icons.Rounded.Public
+        PlaylistPrivacy.PRIVATE -> SfIcons.Lock
+        PlaylistPrivacy.UNLISTED -> SfIcons.Link
+        PlaylistPrivacy.PUBLIC -> SfIcons.Language
     }
 
 /** The search filters' pill, carrying an icon ahead of its label. */

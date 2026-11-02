@@ -7,7 +7,7 @@
     <string name="audio_output_playing">여기에서 재생 중</string>
     <string name="audio_pipeline">오디오 파이프라인</string>
     <string name="automix_analysis_status">자동 믹스 · 현재 노래: %1$s · 다음 노래: %2$s</string>
-    <string name="automix_not_supported_video">자동 믹스 · 비디오 노래: 단순 크로스페이드</string>
+    <string name="automix_not_supported_video">자동 믹스 · 비디오 노래 크로스페이드</string>
     <string name="automix_stopped_in_party">자동 믹스: 함께 듣기 중에는 중단됨</string>
     <string name="autoplay">자동 재생</string>
     <string name="autoplay_empty_description">추천 곡을 찾지 못했습니다</string>
@@ -135,7 +135,7 @@
     <string name="upgrading_quality">품질 업그레이드 중</string>
     <string name="waiting">대기 중</string>
     <string name="volume">음량</string>
-    <string name="widget_next">다음</string>
+    <string name="widget_next">다음 항목</string>
     <string name="widget_previous">이전</string>
     <string name="wired_headphones">유선 헤드폰</string>
     <string name="usb_audio">USB 오디오</string>
@@ -176,6 +176,7 @@
     <string name="search_empty">YouTube Music에서 수백만 곡의 노래를 검색하십시오.</string>
     <string name="search_filter_all">전체</string>
     <string name="search_filter_videos">비디오</string>
+    <string name="search_filter_episodes">에피소드</string>
     <string name="search_top_result">상위 검색 결과</string>
     <string name="search_hint">아티스트, 노래, 가사 등</string>
     <string name="search_no_results">‘%1$s’에 대한 결과 없음</string>
@@ -243,7 +244,7 @@
     <string name="lyrics_offset_song">이 노래</string>
     <string name="lyrics_offset_song_description">이 노래에만 적용되며, 자동 보정 위에 더해집니다.</string>
     <string name="lyrics_offset_all">모든 노래</string>
-    <string name="lyrics_tap_sync">탭해서 맞추기</string>
+    <string name="lyrics_tap_sync">탭하여 동기화</string>
     <string name="lyrics_tap_sync_hint">이 가사가 들리기 시작할 때 탭하십시오.</string>
     <string name="lyrics_tap_now">지금</string>
     <string name="lyrics_tap_previous_line">이전 줄</string>
@@ -268,9 +269,9 @@
     <string name="sign_in_with_google">Google로 로그인</string>
     <string name="watch_output">워치</string>
     <string name="watch_output_subtitle">워치 스피커나 헤드폰으로 재생</string>
-    <string name="top_picks_for_you">회원님을 위한 추천</string>
-    <string name="top_pick_made_for_you">회원님을 위한 맞춤</string>
-    <string name="top_pick_mood_for_you">회원님을 위한 분위기</string>
+    <string name="top_picks_for_you">나를 위한 추천</string>
+    <string name="top_pick_made_for_you">나를 위한 맞춤</string>
+    <string name="top_pick_mood_for_you">나를 위한 분위기</string>
     <string name="top_pick_featuring">%1$s 피처링</string>
     <string name="top_pick_and_similar">%1$s 외 비슷한 아티스트</string>
     <string name="top_pick_named_station">%1$s 스테이션</string>
@@ -278,12 +279,12 @@
     <string name="top_pick_discovery_station">새로운 발견 스테이션</string>
     <string name="top_pick_new_from">%1$s의 신곡</string>
     <string name="mood_energy">에너지</string>
-    <string name="mood_energy_line">계속 움직이게 해 줄 강렬한 트랙.</string>
+    <string name="mood_energy_line">계속 움직이게 해 줄 강렬한 노래.</string>
     <string name="mood_relax">휴식</string>
     <string name="mood_relax_line">잠시 쉬어 가게 해 줄 편안한 사운드.</string>
-    <string name="mood_feeling_blue">우울할 때</string>
+    <string name="mood_feeling_blue">슬픔</string>
     <string name="mood_feeling_blue_line">위로가 필요할 때 듣는 슬픈 노래.</string>
-    <string name="mood_feel_good">기분 좋은</string>
+    <string name="mood_feel_good">기분 좋음</string>
     <string name="mood_feel_good_line">하루를 밝혀 줄 경쾌한 노래.</string>
     <string name="mood_focus">집중</string>
     <string name="mood_focus_line">몰입을 유지해 줄 차분한 음악.</string>
@@ -305,7 +306,7 @@
     <string name="mood_evening">저녁</string>
     <string name="mood_evening_line">하루를 마무리하는 부드러운 노래.</string>
     <string name="mood_fitness">운동</string>
-    <string name="mood_fitness_line">한계를 넘게 해 줄 강렬한 트랙.</string>
+    <string name="mood_fitness_line">한계를 넘게 해 줄 강렬한 노래.</string>
     <string name="mood_gaming">게임</string>
     <string name="mood_gaming_line">레벨 업을 위한 사운드트랙.</string>
     <string name="mood_home">집에서</string>

@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.components
 
+import com.music.bitchord.ui.icons.SfIcons
 import com.music.bitchord.ui.theme.AppType
 
 import com.music.bitchord.R
@@ -290,7 +291,7 @@ private fun SyllableSyncToggle(checked: Boolean, onToggle: () -> Unit) {
         Spacer(Modifier.width(10.dp))
         if (checked) {
             Icon(
-                imageVector = Icons.Rounded.Check,
+                imageVector = SfIcons.Check,
                 contentDescription = stringResource(R.string.enabled),
                 tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(19.dp),
@@ -546,7 +547,7 @@ private fun ReorderableSourceList(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Icon(
-                            imageVector = Icons.Rounded.DragHandle,
+                            imageVector = SfIcons.DragHandle,
                             contentDescription = stringResource(R.string.drag_to_reorder),
                             tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f),
                             modifier = Modifier
@@ -606,7 +607,7 @@ private fun ReorderableSourceList(
                         Spacer(Modifier.width(10.dp))
                         if (checked) {
                             Icon(
-                                imageVector = Icons.Rounded.Check,
+                                imageVector = SfIcons.Check,
                                 contentDescription = stringResource(R.string.enabled),
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(19.dp),

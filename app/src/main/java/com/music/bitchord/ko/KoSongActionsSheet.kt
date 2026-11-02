@@ -1,5 +1,6 @@
 package com.music.bitchord.ko
 
+import com.music.bitchord.ui.icons.SfIcons
 import com.music.bitchord.R
 
 import android.net.Uri
@@ -295,7 +296,7 @@ internal fun KoSongActionsSheet(
         if (signedIn && !isLocalFile) {
             onToggleLibrary?.let {
                 ActionRow(
-                    icon = if (inLibrary) Icons.Rounded.Check else Icons.Rounded.Add,
+                    icon = if (inLibrary) SfIcons.Check else SfIcons.Add,
                     label = stringResource(
                         if (inLibrary) R.string.remove_from_library else R.string.add_to_library,
                     ),
@@ -305,14 +306,14 @@ internal fun KoSongActionsSheet(
                 )
             }
             ActionRow(
-                icon = Icons.AutoMirrored.Rounded.PlaylistAdd,
+                icon = SfIcons.AddToPlaylist,
                 label = stringResource(R.string.add_to_playlist),
                 accent = palette.accent,
                 onClick = onAddToPlaylist,
             )
             onRemoveFromPlaylist?.let {
                 ActionRow(
-                    icon = Icons.Rounded.PlaylistRemove,
+                    icon = SfIcons.RemoveFromPlaylist,
                     label = stringResource(R.string.remove_from_playlist),
                     accent = palette.accent,
                     onClick = it,
@@ -321,30 +322,30 @@ internal fun KoSongActionsSheet(
         }
 
         ActionRow(
-            icon = Icons.AutoMirrored.Rounded.PlaylistPlay,
+            icon = SfIcons.PlaylistPlay,
             label = stringResource(R.string.play_next),
             accent = palette.accent,
             onClick = onPlayNext,
         )
         ActionRow(
-            icon = Icons.AutoMirrored.Rounded.QueueMusic,
+            icon = SfIcons.PlaylistPlay,
             label = stringResource(R.string.add_to_queue),
             accent = palette.accent,
             onClick = onAddToQueue,
         )
         if (!isLocalFile) {
             onShare?.let {
-                ActionRow(Icons.Rounded.Share, stringResource(R.string.share), accent = palette.accent, onClick = it)
+                ActionRow(SfIcons.Share, stringResource(R.string.share), accent = palette.accent, onClick = it)
             }
         }
 
         if (!isLocalFile) {
             when (val id = song.albumId) {
                 null -> if (resolvingLinks) {
-                    LoadingActionRow(Icons.Rounded.Album, stringResource(R.string.open_album), palette)
+                    LoadingActionRow(SfIcons.Album, stringResource(R.string.open_album), palette)
                 }
                 else -> ActionRow(
-                    Icons.Rounded.Album,
+                    SfIcons.Album,
                     stringResource(R.string.open_album),
                     accent = palette.accent,
                 ) { onOpenAlbum(id) }
@@ -353,10 +354,10 @@ internal fun KoSongActionsSheet(
             // cover fields even when the row carried no artist id.
             when (val id = coverSingerChannelId(song)) {
                 null -> if (resolvingLinks) {
-                    LoadingActionRow(Icons.Rounded.Person, stringResource(R.string.open_artist), palette)
+                    LoadingActionRow(SfIcons.Person, stringResource(R.string.open_artist), palette)
                 }
                 else -> ActionRow(
-                    Icons.Rounded.Person,
+                    SfIcons.Person,
                     stringResource(R.string.open_artist),
                     accent = palette.accent,
                 ) { onOpenArtist(id) }
@@ -365,14 +366,14 @@ internal fun KoSongActionsSheet(
 
         if (signedIn && !isLocalFile) {
             ActionRow(
-                icon = if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                icon = if (liked) SfIcons.HeartFill else SfIcons.Heart,
                 label = if (liked) stringResource(R.string.remove_from_liked) else stringResource(R.string.like),
                 tint = if (liked) palette.accent else null,
                 accent = palette.accent,
                 onClick = onToggleLike,
             )
             ActionRow(
-                icon = if (disliked) Icons.Rounded.ThumbDown else Icons.Rounded.ThumbDownOffAlt,
+                icon = if (disliked) SfIcons.ThumbDown else SfIcons.ThumbDownOffAlt,
                 label = if (disliked) stringResource(R.string.undo_dislike) else stringResource(R.string.dislike),
                 tint = if (disliked) palette.accent else null,
                 accent = palette.accent,
@@ -403,7 +404,7 @@ internal fun KoSongActionsSheet(
         }
         onRemoveFromCache?.let {
             ActionRow(
-                icon = Icons.Rounded.DeleteSweep,
+                icon = SfIcons.DeleteSweep,
                 label = stringResource(R.string.remove_from_cache),
                 accent = palette.accent,
                 onClick = it,
@@ -412,14 +413,14 @@ internal fun KoSongActionsSheet(
         WebDavUploadRow(song, palette, onUploadToWebDav)
         onRemoveFromHistory?.let {
             ActionRow(
-                icon = Icons.Rounded.History,
+                icon = SfIcons.History,
                 label = stringResource(R.string.remove_from_history),
                 accent = palette.accent,
                 onClick = it,
             )
         }
         ActionRow(
-            icon = Icons.Rounded.Radio,
+            icon = SfIcons.Radio,
             label = stringResource(R.string.start_radio),
             accent = palette.accent,
             onClick = onStartRadio,
@@ -428,7 +429,7 @@ internal fun KoSongActionsSheet(
             (onRollbackToOriginal ?: onUpgradeQuality)?.let {
                 ActionRow(
                     icon = if (onRollbackToOriginal != null) {
-                        Icons.AutoMirrored.Rounded.Undo
+                        SfIcons.Revert
                     } else {
                         Icons.Rounded.HighQuality
                     },
@@ -446,7 +447,7 @@ internal fun KoSongActionsSheet(
             }
             onToggleAudioVersion?.let {
                 ActionRow(
-                    icon = if (isAudioVersion) Icons.Rounded.Videocam else BitChordIcons.MusicNote,
+                    icon = if (isAudioVersion) SfIcons.Video else BitChordIcons.MusicNote,
                     label = stringResource(
                         when {
                             audioVersionMissing && isAudioVersion -> R.string.no_video_version
@@ -466,7 +467,7 @@ internal fun KoSongActionsSheet(
         song.originalTitle?.let { original ->
             val context = LocalContext.current
             ActionRow(
-                icon = Icons.Rounded.Subtitles,
+                icon = SfIcons.Subtitles,
                 label = stringResource(R.string.cover_original_title, original),
                 accent = palette.accent,
             ) {
@@ -487,7 +488,7 @@ internal fun KoSongActionsSheet(
             val coverChannels by com.music.bitchord.data.settings.AppSettings.coverChannels.collectAsStateWithLifecycle()
             val designated = channelId in coverChannels
             ActionRow(
-                icon = Icons.Rounded.RecordVoiceOver,
+                icon = SfIcons.RecordVoiceOver,
                 label = stringResource(if (designated) R.string.cover_channel_unset else R.string.cover_channel_set),
                 tint = if (designated) palette.accent else null,
                 accent = palette.accent,
@@ -500,12 +501,12 @@ internal fun KoSongActionsSheet(
                 ).show()
             }
         }
-        ActionRow(Icons.Rounded.Info, stringResource(R.string.song_info), accent = palette.accent) {
+        ActionRow(SfIcons.Info, stringResource(R.string.song_info), accent = palette.accent) {
             showingSongInfo = true
         }
         if (showSleepTimer) {
             ActionRow(
-                icon = Icons.Rounded.Bedtime,
+                icon = SfIcons.SleepTimer,
                 label = stringResource(R.string.sleep_timer),
                 value = sleepTimerStatus(),
                 accent = palette.accent,
@@ -515,7 +516,7 @@ internal fun KoSongActionsSheet(
             val speed by AppSettings.playbackSpeed.collectAsStateWithLifecycle()
             val semitones by AppSettings.pitchSemitones.collectAsStateWithLifecycle()
             ActionRow(
-                icon = Icons.Rounded.Speed,
+                icon = SfIcons.Performance,
                 label = stringResource(R.string.playback_speed),
                 value = speedPitchLabel(speed, semitones),
                 accent = palette.accent,
@@ -523,7 +524,7 @@ internal fun KoSongActionsSheet(
         }
         onTogglePrivateListening?.let {
             ActionRow(
-                icon = Icons.Rounded.VisibilityOff,
+                icon = SfIcons.VisibilityOff,
                 label = stringResource(R.string.private_listening),
                 value = stringResource(if (privateListening) R.string.enabled else R.string.off),
                 tint = if (privateListening) palette.accent else null,
@@ -537,7 +538,7 @@ internal fun KoSongActionsSheet(
         // streamed songs do.
         onLyricsOffset?.let {
             ActionRow(
-                icon = Icons.Rounded.Tune,
+                icon = SfIcons.Tune,
                 label = stringResource(R.string.lyrics_offset),
                 accent = palette.accent,
                 onClick = it,
@@ -547,13 +548,13 @@ internal fun KoSongActionsSheet(
         // now rather than about the song as a thing in a library, and it is
         // the one row here nobody reaches for by accident.
         onCopyLog?.let {
-            ActionRow(Icons.Rounded.BugReport, stringResource(R.string.copy_log), accent = palette.accent, onClick = it)
+            ActionRow(SfIcons.Bug, stringResource(R.string.copy_log), accent = palette.accent, onClick = it)
         }
         // Beside Copy log: that one hands over the whole story, this one puts
         // a pin in the moment the listener is looking at.
         onReportProblem?.let {
             ActionRow(
-                icon = Icons.Rounded.Flag,
+                icon = SfIcons.Flag,
                 label = stringResource(R.string.problem_mark),
                 accent = palette.accent,
                 onClick = it,
@@ -759,14 +760,14 @@ private fun DownloadRow(song: Song, palette: ArtworkPalette, isLocalFile: Boolea
 
     when (val state = active[song.videoId]) {
         is DownloadState.Queued -> ActionRow(
-            icon = Icons.Rounded.Downloading,
+            icon = SfIcons.Download,
             label = stringResource(R.string.queued),
             value = stringResource(R.string.cancel),
             accent = palette.accent,
         ) { Downloads.cancel(song.videoId) }
 
         is DownloadState.Running -> ActionRow(
-            icon = Icons.Rounded.Downloading,
+            icon = SfIcons.Download,
             label = stringResource(R.string.download_notification_title),
             // Indeterminate until the first response names a length; a
             // stuck "0%" reads as broken where a bare label reads as starting.
@@ -776,7 +777,7 @@ private fun DownloadRow(song: Song, palette: ArtworkPalette, isLocalFile: Boolea
         ) { Downloads.cancel(song.videoId) }
 
         is DownloadState.Failed -> ActionRow(
-            icon = Icons.Rounded.ErrorOutline,
+            icon = SfIcons.ErrorOutline,
             label = state.reason,
             value = stringResource(R.string.retry),
             // Not the artwork's colour: a failure has to stay legible as a
@@ -788,7 +789,7 @@ private fun DownloadRow(song: Song, palette: ArtworkPalette, isLocalFile: Boolea
 
         null -> if (file != null) {
             ActionRow(
-                icon = Icons.Rounded.DownloadDone,
+                icon = SfIcons.Downloaded,
                 label = stringResource(R.string.saved_to_downloads),
                 value = stringResource(R.string.delete),
                 tint = palette.accent,
@@ -806,7 +807,7 @@ private fun DownloadRow(song: Song, palette: ArtworkPalette, isLocalFile: Boolea
             }
         } else if (!isLocalFile) {
             ActionRow(
-                icon = Icons.Rounded.Download,
+                icon = SfIcons.Download,
                 label = stringResource(R.string.download),
                 accent = palette.accent,
                 onClick = onDownload,
@@ -837,7 +838,7 @@ private fun WebDavUploadRow(
     val active by WebDavUploads.active.collectAsStateWithLifecycle()
     when (val state = active[song.videoId]) {
         is WebDavUploads.TrackState.Running -> ActionRow(
-            icon = Icons.Rounded.FileUpload,
+            icon = SfIcons.FileUpload,
             label = stringResource(R.string.upload_to_webdav),
             value = "${(state.fraction * 100).toInt()}%",
             tint = palette.accent,
@@ -846,7 +847,7 @@ private fun WebDavUploadRow(
             onClick = {},
         )
         is WebDavUploads.TrackState.Failed -> ActionRow(
-            icon = Icons.Rounded.FileUpload,
+            icon = SfIcons.FileUpload,
             label = state.reason,
             value = stringResource(R.string.try_again),
             tint = MaterialTheme.colorScheme.error,
@@ -854,7 +855,7 @@ private fun WebDavUploadRow(
             onClick = onUpload,
         )
         else -> ActionRow(
-            icon = Icons.Rounded.FileUpload,
+            icon = SfIcons.FileUpload,
             label = stringResource(R.string.upload_to_webdav),
             accent = palette.accent,
             onClick = onUpload,
@@ -878,7 +879,7 @@ private fun PlaybackSpeedPicker(palette: ArtworkPalette, onBack: () -> Unit) {
         ) {
             IconButton(onClick = onBack) {
                 Icon(
-                    Icons.AutoMirrored.Rounded.ArrowBack,
+                    SfIcons.ArrowBack,
                     contentDescription = stringResource(R.string.back),
                     tint = MaterialTheme.colorScheme.onBackground,
                 )
@@ -933,7 +934,7 @@ private fun PlaybackSpeedPicker(palette: ArtworkPalette, onBack: () -> Unit) {
                 enabled = semitones > PlaybackParametersMath.MIN_PITCH_SEMITONES,
             ) {
                 Icon(
-                    Icons.Rounded.Remove,
+                    SfIcons.Remove,
                     contentDescription = stringResource(R.string.pitch_lower),
                     tint = MaterialTheme.colorScheme.onBackground,
                 )
@@ -950,7 +951,7 @@ private fun PlaybackSpeedPicker(palette: ArtworkPalette, onBack: () -> Unit) {
                 enabled = semitones < PlaybackParametersMath.MAX_PITCH_SEMITONES,
             ) {
                 Icon(
-                    Icons.Rounded.Add,
+                    SfIcons.Add,
                     contentDescription = stringResource(R.string.pitch_upper),
                     tint = MaterialTheme.colorScheme.onBackground,
                 )
@@ -958,7 +959,7 @@ private fun PlaybackSpeedPicker(palette: ArtworkPalette, onBack: () -> Unit) {
         }
 
         ActionRow(
-            icon = Icons.AutoMirrored.Rounded.Undo,
+            icon = SfIcons.Revert,
             label = stringResource(R.string.reset_to_default),
             accent = palette.accent,
             enabled = speed != 1f || semitones != 0,
@@ -1011,7 +1012,7 @@ private fun SleepTimerPicker(palette: ArtworkPalette, onBack: () -> Unit) {
         ) {
             IconButton(onClick = onBack) {
                 Icon(
-                    Icons.AutoMirrored.Rounded.ArrowBack,
+                    SfIcons.ArrowBack,
                     contentDescription = stringResource(R.string.back),
                     tint = MaterialTheme.colorScheme.onBackground,
                 )
@@ -1067,7 +1068,7 @@ private fun SleepTimerPicker(palette: ArtworkPalette, onBack: () -> Unit) {
             accent = palette.accent,
         ) { pickingCustom = true }
         if (chosen != null || afterTrack) {
-            ActionRow(Icons.Rounded.Close, stringResource(R.string.turn_off_timer), accent = palette.accent) {
+            ActionRow(SfIcons.Close, stringResource(R.string.turn_off_timer), accent = palette.accent) {
                 SleepTimer.cancel()
                 onBack()
             }
@@ -1101,7 +1102,7 @@ private fun CustomSleepTimerPage(
         ) {
             IconButton(onClick = onBack) {
                 Icon(
-                    Icons.AutoMirrored.Rounded.ArrowBack,
+                    SfIcons.ArrowBack,
                     contentDescription = stringResource(R.string.back),
                     tint = foreground,
                 )
@@ -1142,7 +1143,7 @@ private fun CustomSleepTimerPage(
                 enabled = minutes > SleepTimer.STEP_MINUTES,
             ) {
                 Icon(
-                    Icons.Rounded.Remove,
+                    SfIcons.Remove,
                     contentDescription = stringResource(R.string.less),
                     tint = foreground,
                 )
@@ -1161,7 +1162,7 @@ private fun CustomSleepTimerPage(
                 enabled = minutes < SleepTimer.MAX_MINUTES,
             ) {
                 Icon(
-                    Icons.Rounded.Add,
+                    SfIcons.Add,
                     contentDescription = stringResource(R.string.more),
                     tint = foreground,
                 )
@@ -1169,7 +1170,7 @@ private fun CustomSleepTimerPage(
         }
         Spacer(Modifier.height(16.dp))
         HorizontalDivider(thickness = 0.5.dp, color = palette.divider)
-        ActionRow(Icons.Rounded.Bedtime, stringResource(R.string.start_sleep_timer), accent = palette.accent) {
+        ActionRow(SfIcons.SleepTimer, stringResource(R.string.start_sleep_timer), accent = palette.accent) {
             onStart(minutes)
         }
     }
@@ -1205,7 +1206,7 @@ private fun SleepOption(
         )
         if (selected) {
             Icon(
-                Icons.Rounded.Check,
+                SfIcons.Check,
                 contentDescription = stringResource(R.string.running),
                 tint = accent,
                 modifier = Modifier.size(22.dp),

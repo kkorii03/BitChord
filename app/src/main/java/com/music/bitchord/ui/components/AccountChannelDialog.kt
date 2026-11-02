@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.components
 
+import com.music.bitchord.ui.icons.SfIcons
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -214,7 +215,7 @@ private fun ChannelRow(channel: AccountChannel, selected: Boolean, onClick: () -
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    Icons.Rounded.Person,
+                    SfIcons.Person,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(17.dp),
@@ -246,7 +247,7 @@ private fun ChannelRow(channel: AccountChannel, selected: Boolean, onClick: () -
         if (selected) {
             Spacer(Modifier.width(8.dp))
             Icon(
-                imageVector = Icons.Rounded.Check,
+                imageVector = SfIcons.Check,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(19.dp),

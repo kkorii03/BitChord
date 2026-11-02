@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.components
 
+import com.music.bitchord.ui.icons.SfIcons
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -104,7 +105,7 @@ fun ReorderPlaylistPage(
         ) {
             IconButton(onClick = onClose) {
                 Icon(
-                    Icons.Rounded.Close,
+                    SfIcons.Close,
                     contentDescription = stringResource(R.string.back),
                     tint = palette.onBackground,
                 )
@@ -346,7 +347,7 @@ private fun ReorderRow(
             )
         }
         Icon(
-            imageVector = Icons.Rounded.DragHandle,
+            imageVector = SfIcons.DragHandle,
             contentDescription = stringResource(R.string.drag_to_reorder),
             tint = palette.onBackgroundVariant,
             modifier = Modifier

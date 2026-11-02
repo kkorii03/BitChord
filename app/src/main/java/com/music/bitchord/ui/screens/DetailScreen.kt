@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.icons.SfIcons
 import com.music.bitchord.ui.components.trackArtSize
 import android.os.Build
 import com.music.bitchord.R
@@ -1236,7 +1237,7 @@ private fun ReleaseHeader(
                 if (page.browseId.startsWith("local:")) {
                     onDownloadAll?.let {
                         CircleIconButton(
-                            icon = Icons.Rounded.Download,
+                            icon = SfIcons.Download,
                             contentDescription = stringResource(R.string.download_all),
                             onClick = it,
                             size = RELEASE_SIDE_BUTTON,
@@ -1331,7 +1332,7 @@ private fun DetailSearchField(
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                imageVector = Icons.Rounded.Close,
+                imageVector = SfIcons.Close,
                 contentDescription = stringResource(
                     if (query.isEmpty()) R.string.close_search else R.string.clear_search,
                 ),
@@ -1697,7 +1698,7 @@ private fun ActionRow(
 
         if (subscription != null) {
             CircleIconButton(
-                icon = if (subscription.subscribed) Icons.Rounded.Star else Icons.Rounded.StarBorder,
+                icon = if (subscription.subscribed) SfIcons.StarFill else SfIcons.Star,
                 contentDescription = stringResource(
                     if (subscription.subscribed) R.string.unsubscribe else R.string.subscribe,
                 ),
@@ -1707,7 +1708,7 @@ private fun ActionRow(
             )
         } else {
             CircleIconButton(
-                icon = Icons.Rounded.StarBorder,
+                icon = SfIcons.Star,
                 contentDescription = stringResource(R.string.subscribe),
                 onClick = {},
                 size = ARTIST_SIDE_BUTTON,
@@ -1913,14 +1914,14 @@ private fun ArtistStatsRow(
         // its chip rather than showing the label twice.
         artistCountValue(subscriberCountText)?.let {
             StatChip(
-                icon = Icons.Rounded.Person,
+                icon = SfIcons.Person,
                 text = stringResource(R.string.subscribers, it),
                 palette = palette,
             )
         }
         artistCountValue(monthlyListenerCount)?.let {
             StatChip(
-                icon = Icons.Rounded.GraphicEq,
+                icon = SfIcons.GraphicEq,
                 text = stringResource(R.string.monthly_listeners, it),
                 palette = palette,
             )
@@ -2256,7 +2257,7 @@ private fun SuggestedSongRow(
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                Icons.Rounded.Add,
+                SfIcons.Add,
                 contentDescription = stringResource(R.string.add_to_playlist),
                 tint = palette.accent,
                 modifier = Modifier.size(20.dp),
@@ -2405,7 +2406,7 @@ private fun TopReleaseCard(
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    imageVector = if (saved) Icons.Rounded.Check else Icons.Rounded.Add,
+                    imageVector = if (saved) SfIcons.Check else SfIcons.Add,
                     contentDescription = stringResource(
                         if (saved) R.string.remove_from_library else R.string.add_to_library,
                     ),
@@ -2575,11 +2576,11 @@ private fun DetailPage.headerLines(trackCount: Int, playtime: String? = null): P
 
 /** The glyph on a release page's placeholder sleeve: what kind of thing has no cover. */
 private fun DetailPage.placeholderIcon(): ImageVector = deviceFolderIcon(browseId) ?: when {
-    LocalGroups.isArtist(browseId) -> Icons.Rounded.Person
-    OfflinePlaylists.isLikedPage(browseId) -> Icons.Rounded.Favorite
-    LocalGroups.isDirectory(browseId) -> Icons.Rounded.Folder
-    type == BrowseType.ALBUM -> Icons.Rounded.Album
-    type == BrowseType.PLAYLIST -> Icons.AutoMirrored.Rounded.QueueMusic
+    LocalGroups.isArtist(browseId) -> SfIcons.Person
+    OfflinePlaylists.isLikedPage(browseId) -> SfIcons.HeartFill
+    LocalGroups.isDirectory(browseId) -> SfIcons.Folder
+    type == BrowseType.ALBUM -> SfIcons.Album
+    type == BrowseType.PLAYLIST -> SfIcons.PlaylistPlay
     else -> BitChordIcons.MusicNote
 }
 

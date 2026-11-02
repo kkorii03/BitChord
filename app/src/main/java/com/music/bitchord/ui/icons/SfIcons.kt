@@ -108,6 +108,25 @@ import com.composables.sfsymbols.monochrome.SFWaveform
 import com.composables.sfsymbols.monochrome.SFWifi
 import com.composables.sfsymbols.monochrome.SFWrenchAndScrewdriver
 import com.composables.sfsymbols.monochrome.SFXmark
+import com.composables.sfsymbols.monochrome.SFArrowDown
+import com.composables.sfsymbols.monochrome.SFBattery50percent
+import com.composables.sfsymbols.monochrome.SFCaptionsBubble
+import com.composables.sfsymbols.monochrome.SFChevronDown
+import com.composables.sfsymbols.monochrome.SFCircle
+import com.composables.sfsymbols.monochrome.SFDisplay
+import com.composables.sfsymbols.monochrome.SFDocument
+import com.composables.sfsymbols.monochrome.SFFlag
+import com.composables.sfsymbols.monochrome.SFHandThumbsdown
+import com.composables.sfsymbols.monochrome.SFIphone
+import com.composables.sfsymbols.monochrome.SFLane
+import com.composables.sfsymbols.monochrome.SFLink
+import com.composables.sfsymbols.monochrome.SFMagnifyingglass
+import com.composables.sfsymbols.monochrome.SFMemorychip
+import com.composables.sfsymbols.monochrome.SFMinus
+import com.composables.sfsymbols.monochrome.SFPaperplane
+import com.composables.sfsymbols.monochrome.SFPause
+import com.composables.sfsymbols.monochrome.SFPlayDisplay
+import com.composables.sfsymbols.monochrome.SFRepeat
 
 /**
  * The SF Symbols the settings pages and the iOS-style menus draw, named for
@@ -236,6 +255,30 @@ object SfIcons {
     val Upgrade: ImageVector by lazy { bold(SfSymbols.Monochrome.SFSparkles) }
     val Upload: ImageVector by lazy { bold(SfSymbols.Monochrome.SFArrowUpCircle) }
     val Video: ImageVector by lazy { bold(SfSymbols.Monochrome.SFVideo) }
+
+    // ---- Fork extensions ----
+    val ArrowDown: ImageVector by lazy { bold(SfSymbols.Monochrome.SFArrowDown) }
+    val BatterySaver: ImageVector by lazy { bold(SfSymbols.Monochrome.SFBattery50percent) }
+    val Cast: ImageVector by lazy { bold(SfSymbols.Monochrome.SFDisplay) }
+    val CastConnected: ImageVector by lazy { bold(SfSymbols.Monochrome.SFDisplay) }
+    val ChevronDown: ImageVector by lazy { bold(SfSymbols.Monochrome.SFChevronDown) }
+    val Document: ImageVector by lazy { bold(SfSymbols.Monochrome.SFDocument) }
+    val Flag: ImageVector by lazy { bold(SfSymbols.Monochrome.SFFlag) }
+    val Lan: ImageVector by lazy { bold(SfSymbols.Monochrome.SFLane) }
+    val Link: ImageVector by lazy { bold(SfSymbols.Monochrome.SFLink) }
+    val Memory: ImageVector by lazy { bold(SfSymbols.Monochrome.SFMemorychip) }
+    val Pause: ImageVector by lazy { bold(SfSymbols.Monochrome.SFPause) }
+    val Phone: ImageVector by lazy { bold(SfSymbols.Monochrome.SFIphone) }
+    val RadioButtonUnchecked: ImageVector by lazy { bold(SfSymbols.Monochrome.SFCircle) }
+    val RecordVoiceOver: ImageVector by lazy { bold(SfSymbols.Monochrome.SFWaveform) }
+    val Remove: ImageVector by lazy { bold(SfSymbols.Monochrome.SFMinus) }
+    val Repeat: ImageVector by lazy { bold(SfSymbols.Monochrome.SFRepeat) }
+    val Search: ImageVector by lazy { bold(SfSymbols.Monochrome.SFMagnifyingglass) }
+    val Send: ImageVector by lazy { bold(SfSymbols.Monochrome.SFPaperplane) }
+    val SmartDisplay: ImageVector by lazy { bold(SfSymbols.Monochrome.SFPlayDisplay) }
+    val Subtitles: ImageVector by lazy { bold(SfSymbols.Monochrome.SFCaptionsBubble) }
+    val ThumbDown: ImageVector by lazy { bold(SfSymbols.Monochrome.SFHandThumbsdown) }
+    val ThumbDownOffAlt: ImageVector by lazy { bold(SfSymbols.Monochrome.SFHandThumbsdown) }
 
     /** Added to every line, in the symbols' own units: Regular's ~1.7 to Bold's ~2.6. */
     internal const val BOLD_STROKE = 0.9f

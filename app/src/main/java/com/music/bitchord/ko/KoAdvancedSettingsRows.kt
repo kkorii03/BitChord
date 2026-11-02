@@ -1,5 +1,6 @@
 package com.music.bitchord.ko
 
+import com.music.bitchord.ui.icons.SfIcons
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Cached
 import androidx.compose.material.icons.rounded.GraphicEq
@@ -24,7 +25,7 @@ internal fun SettingsGroupScope.KoAdvancedSyncSafetyRows() {
     val syncSafetyNextPrepTitle = stringResource(R.string.sync_safety_next_prep)
     row(syncSafetyNextPrepTitle, "lyrics", "sync", "next", "developer", "experimental") {
         SettingsRow(
-            icon = Icons.Rounded.Timer,
+            icon = SfIcons.Clock,
             title = syncSafetyNextPrepTitle,
             trailing = {
                 Switch(
@@ -39,7 +40,7 @@ internal fun SettingsGroupScope.KoAdvancedSyncSafetyRows() {
     val syncSafetyDownloadRecheckTitle = stringResource(R.string.sync_safety_download_recheck)
     row(syncSafetyDownloadRecheckTitle, "lyrics", "sync", "download", "recheck", "developer", "experimental") {
         SettingsRow(
-            icon = Icons.Rounded.Cached,
+            icon = SfIcons.Cached,
             title = syncSafetyDownloadRecheckTitle,
             trailing = {
                 Switch(
@@ -54,7 +55,7 @@ internal fun SettingsGroupScope.KoAdvancedSyncSafetyRows() {
     val syncSafetyHqSyncTitle = stringResource(R.string.sync_safety_hq_sync)
     row(syncSafetyHqSyncTitle, "lyrics", "sync", "hq", "developer", "experimental") {
         SettingsRow(
-            icon = Icons.Rounded.GraphicEq,
+            icon = SfIcons.GraphicEq,
             title = syncSafetyHqSyncTitle,
             trailing = {
                 Switch(
@@ -69,7 +70,7 @@ internal fun SettingsGroupScope.KoAdvancedSyncSafetyRows() {
     val syncSafetyPerLineTitle = stringResource(R.string.sync_safety_per_line)
     row(syncSafetyPerLineTitle, "lyrics", "sync", "line", "developer", "experimental") {
         SettingsRow(
-            icon = Icons.Rounded.Timer,
+            icon = SfIcons.Clock,
             title = syncSafetyPerLineTitle,
             trailing = {
                 Switch(

@@ -232,7 +232,7 @@ object AutomixStatusKo {
         Label.Failed -> "분석 실패"
         is Label.Analysed -> {
             val key = label.key.takeIf { it.isNotBlank() }?.let { " $it" }.orEmpty()
-            val grid = if (label.modelGrid) "모델 그리드" else "DSP 그리드"
+            val grid = if (label.modelGrid) "분석 모드" else "신호 처리 모드"
             val refining = if (label.refining) ", 다듬는 중" else ""
             "분석됨(${label.bpm} BPM$key, $grid ${"%.2f".format(Locale.ROOT, label.confidence)}$refining)"
         }

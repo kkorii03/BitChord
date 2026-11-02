@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.icons.SfIcons
 import com.music.bitchord.ui.theme.AppType
 
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -174,7 +175,7 @@ internal fun GlowingAvatar(
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    Icons.Rounded.Person,
+                    SfIcons.Person,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(size * 0.45f),
@@ -413,7 +414,7 @@ private fun PartySheetAvatar(url: String?, size: Dp = 40.dp) {
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                Icons.Rounded.Person,
+                SfIcons.Person,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(size * 0.5f),
@@ -580,7 +581,7 @@ internal fun JoinConfirmSheet(
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
-                    Icons.Rounded.Person,
+                    SfIcons.Person,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(16.dp),
@@ -678,7 +679,7 @@ internal fun InviteSheet(
             shape = RoundedCornerShape(percent = 50),
             modifier = Modifier.fillMaxWidth().height(52.dp),
         ) {
-            Icon(Icons.Rounded.Link, contentDescription = null, modifier = Modifier.size(20.dp))
+            Icon(SfIcons.Link, contentDescription = null, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(8.dp))
             Text(
                 text = stringResource(R.string.listen_together_share_link),

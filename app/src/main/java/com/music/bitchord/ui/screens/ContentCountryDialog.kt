@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.icons.SfIcons
 import com.music.bitchord.ui.theme.AppType
 
 import androidx.appcompat.app.AppCompatDelegate
@@ -116,7 +117,7 @@ internal fun ChartCountryChips(
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Icon(
-                imageVector = Icons.Rounded.ArrowDropDown,
+                imageVector = SfIcons.ChevronDown,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = 2.dp).size(22.dp),
@@ -144,7 +145,7 @@ internal fun ChartCountryChips(
                     modifier = Modifier.weight(1f),
                 )
                 IconButton(onClick = { sheetOpen = false }) {
-                    Icon(Icons.Rounded.Close, contentDescription = stringResource(R.string.close))
+                    Icon(SfIcons.Close, contentDescription = stringResource(R.string.close))
                 }
             }
             LazyColumn(
@@ -200,7 +201,7 @@ private fun ChartCountryRow(code: String, selected: Boolean, onClick: () -> Unit
         Box(modifier = Modifier.size(22.dp), contentAlignment = Alignment.Center) {
             if (selected) {
                 Icon(
-                    imageVector = Icons.Rounded.Check,
+                    imageVector = SfIcons.Check,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(20.dp),

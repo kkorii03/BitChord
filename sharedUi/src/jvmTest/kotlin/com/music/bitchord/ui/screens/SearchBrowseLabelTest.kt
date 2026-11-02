@@ -11,6 +11,7 @@ import com.music.bitchord.sharedui.resources.artists
 import com.music.bitchord.sharedui.resources.playlist
 import com.music.bitchord.sharedui.resources.playlists
 import com.music.bitchord.sharedui.resources.search_filter_all
+import com.music.bitchord.sharedui.resources.search_filter_episodes
 import com.music.bitchord.sharedui.resources.search_filter_videos
 import com.music.bitchord.sharedui.resources.song
 import com.music.bitchord.sharedui.resources.songs
@@ -33,6 +34,7 @@ class SearchBrowseLabelTest {
         assertEquals(Res.string.search_filter_all, SearchFilter.ALL.filterTabLabel())
         assertEquals(Res.string.songs, SearchFilter.SONGS.filterTabLabel())
         assertEquals(Res.string.search_filter_videos, SearchFilter.VIDEOS.filterTabLabel())
+        assertEquals(Res.string.search_filter_episodes, SearchFilter.EPISODES.filterTabLabel())
         assertEquals(Res.string.albums, SearchFilter.ALBUMS.filterTabLabel())
         assertEquals(Res.string.artists, SearchFilter.ARTISTS.filterTabLabel())
         assertEquals(Res.string.playlists, SearchFilter.PLAYLISTS.filterTabLabel())
@@ -43,6 +45,7 @@ private fun SearchFilter.filterTabLabel(): StringResource = when (this) {
     SearchFilter.ALL -> Res.string.search_filter_all
     SearchFilter.SONGS -> Res.string.songs
     SearchFilter.VIDEOS -> Res.string.search_filter_videos
+    SearchFilter.EPISODES -> Res.string.search_filter_episodes
     SearchFilter.ALBUMS -> Res.string.albums
     SearchFilter.ARTISTS -> Res.string.artists
     SearchFilter.PLAYLISTS -> Res.string.playlists

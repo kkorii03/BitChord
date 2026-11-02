@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.replay
 
+import com.music.bitchord.ui.icons.SfIcons
 import com.music.bitchord.R
 
 import android.content.ContentValues
@@ -170,7 +171,7 @@ fun ReplayShareSheet(
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             ShareAction(
                 label = if (saved) stringResource(R.string.saved) else stringResource(R.string.save),
-                icon = Icons.Rounded.Download,
+                icon = SfIcons.Download,
                 accent = false,
                 enabled = ready && !saved,
                 modifier = Modifier.weight(1f),
@@ -180,7 +181,7 @@ fun ReplayShareSheet(
             }
             ShareAction(
                 label = stringResource(R.string.share),
-                icon = Icons.Rounded.IosShare,
+                icon = SfIcons.Share,
                 accent = true,
                 enabled = ready,
                 modifier = Modifier.weight(1f),
@@ -244,7 +245,7 @@ internal fun ShareAction(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(
-                    imageVector = if (isSaved) Icons.Rounded.Check else icon,
+                    imageVector = if (isSaved) SfIcons.Check else icon,
                     contentDescription = null,
                     tint = foreground,
                     modifier = Modifier.size(19.dp),

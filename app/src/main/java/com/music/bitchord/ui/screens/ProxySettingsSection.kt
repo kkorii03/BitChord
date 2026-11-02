@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.icons.SfIcons
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -122,14 +123,14 @@ internal fun ProxySettingsSection() {
         footer = stringResource(R.string.network_proxy_footer),
     ) {
         SettingsRow(
-            icon = Icons.Rounded.Language,
+            icon = SfIcons.Language,
             title = stringResource(R.string.proxy_type),
             subtitle = stringResource(mode.labelRes()),
             onClick = { editing = true },
         )
         RowDivider()
         SettingsRow(
-            icon = Icons.Rounded.CheckCircle,
+            icon = SfIcons.Downloaded,
             title = stringResource(R.string.proxy_gate_state),
             subtitle = stringResource(
                 if (gateActive) R.string.proxy_gate_fallback else R.string.proxy_gate_direct,
@@ -149,7 +150,7 @@ internal fun ProxySettingsSection() {
         if (mode != ProxyMode.OFF) {
             RowDivider()
             SettingsRow(
-                icon = Icons.Rounded.Dns,
+                icon = SfIcons.Dns,
                 title = stringResource(R.string.proxy_server),
                 subtitle = if (host.isBlank()) {
                     stringResource(R.string.proxy_server_not_set)
@@ -160,7 +161,7 @@ internal fun ProxySettingsSection() {
             )
             RowDivider()
             SettingsRow(
-                icon = Icons.Rounded.Dns,
+                icon = SfIcons.Dns,
                 title = stringResource(R.string.proxy_active_server),
                 subtitle = when {
                     activeRoute == ProxyRoute.BACKUP && backupHost.isNotBlank() ->
@@ -171,7 +172,7 @@ internal fun ProxySettingsSection() {
             )
             RowDivider()
             SettingsRow(
-                icon = Icons.Rounded.Dns,
+                icon = SfIcons.Dns,
                 title = stringResource(R.string.proxy_backup_server),
                 subtitle = if (backupHost.isBlank()) {
                     stringResource(R.string.proxy_backup_not_set)
@@ -182,7 +183,7 @@ internal fun ProxySettingsSection() {
             )
             RowDivider()
             SettingsRow(
-                icon = Icons.Rounded.Language,
+                icon = SfIcons.Language,
                 title = stringResource(
                     if (proxyScope == ProxyScope.ALL_YOUTUBE) {
                         R.string.proxy_scope_all
@@ -214,7 +215,7 @@ internal fun ProxySettingsSection() {
             )
             RowDivider()
             SettingsRow(
-                icon = Icons.Rounded.CheckCircle,
+                icon = SfIcons.Downloaded,
                 title = stringResource(R.string.proxy_connection_test),
                 subtitle = testSubtitle,
                 enabled = !testing && host.isNotBlank(),
