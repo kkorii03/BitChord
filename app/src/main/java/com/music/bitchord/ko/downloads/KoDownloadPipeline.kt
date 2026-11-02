@@ -93,12 +93,16 @@ internal object KoDownloadPipeline {
      */
     class ManifestShape(val packaged: Boolean, val dash: Boolean)
 
-    fun manifestShape(url: String, probe: Downloader.Probe?): ManifestShape {
-        val manifest = probe as? Downloader.Probe.Manifest
-        val dash = manifest?.dash ?: OfflineDash.handles(url)
-        val hls = manifest?.dash == false ||
-            url.substringBefore('?').endsWith(".m3u8", ignoreCase = true)
-        return ManifestShape(packaged = hls || dash, dash = dash)
+    fun manifestShape(url: String, probe: Downloader.Probe?): ManifestShape = when (probe) {
+        // The bytes decide. A server can serve an ordinary file from a `.mpd`
+        // or `.m3u8` URL, and as a file it must stay one.
+        is Downloader.Probe.Manifest -> ManifestShape(packaged = true, dash = probe.dash)
+        is Downloader.Probe.File -> ManifestShape(packaged = false, dash = false)
+        null -> {
+            val dash = OfflineDash.handles(url)
+            val hls = url.substringBefore('?').endsWith(".m3u8", ignoreCase = true)
+            ManifestShape(packaged = hls || dash, dash = dash)
+        }
     }
 
     /**

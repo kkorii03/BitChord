@@ -2044,9 +2044,17 @@ object Downloads {
         }
         // A manifest's segments are joined back into one ordinary file by
         // KoDownloadPipeline, so it stays here rather than falling through to
-        // YouTube; [routeFromSource] decides whether it can be filed (an
-        // exported manifest the assembler cannot write still declines).
-        is Downloader.Probe.Manifest -> Kept(stream, storable, probe)
+        // YouTube. An export can only take one the assembler can file: keeping
+        // an unfilable one would make [fromSources] lock onto it only for
+        // [routeFromSource] to decline it, without trying the next candidate.
+        is Downloader.Probe.Manifest -> {
+            if (AppSettings.exportDownloads.value && storable.extension !in ManifestFile.EXTENSIONS) {
+                Log.d(TAG, "${stream.format.summary}: a manifest an export can't file; passing")
+                null
+            } else {
+                Kept(stream, storable, probe)
+            }
+        }
         is Downloader.Probe.File -> Kept(stream, storable, probe)
     }
 

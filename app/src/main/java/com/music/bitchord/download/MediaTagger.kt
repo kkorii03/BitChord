@@ -497,7 +497,7 @@ object MediaTagger {
     }.onFailure { Log.w(TAG, "could not read $uri for tagging: ${it.message}") }.getOrNull()
 
     /** The file's length without opening its bytes, or null when it cannot be read. */
-    private fun sizeOf(context: Context, uri: Uri): Long? = runCatching {
+    internal fun sizeOf(context: Context, uri: Uri): Long? = runCatching {
         if (uri.scheme == "file") {
             File(requireNotNull(uri.path)).length()
         } else {

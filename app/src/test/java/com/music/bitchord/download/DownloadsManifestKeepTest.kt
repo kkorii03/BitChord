@@ -1,5 +1,6 @@
 package com.music.bitchord.download
 
+import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.ko.downloads.KoDownloadPipeline
@@ -71,5 +72,35 @@ class DownloadsManifestKeepTest {
         )
         assertEquals(false, shape.packaged)
         assertEquals(false, shape.dash)
+    }
+
+    /** A file served from a manifest-looking URL is still a file; the probe wins. */
+    @Test
+    fun `a file probe beats a manifest-looking url`() {
+        val file = Downloader.Probe.File(Downloader.Container.FLAC, totalBytes = 1_000L)
+        listOf("https://cdn.example/x.mpd?token=1", "https://cdn.example/x.m3u8?token=1").forEach { url ->
+            val shape = KoDownloadPipeline.manifestShape(url, file)
+            assertEquals("$url must not be packaged", false, shape.packaged)
+            assertEquals("$url must not be DASH", false, shape.dash)
+        }
+    }
+
+    /**
+     * An export can only take a manifest the assembler can file. Declining it
+     * here lets the resolver keep looking instead of locking onto this source
+     * and then falling all the way to YouTube.
+     */
+    @Test
+    fun `an exported manifest the assembler cannot file is declined`() {
+        val webm = DownloadStore.Storable("webm", "audio/webm")
+        try {
+            AppSettings.exportDownloads.value = true
+            assertNull(Downloads.keptFor(stream, webm, Downloader.Probe.Manifest(dash = true)))
+            // A manifest the assembler can file is still kept while exporting.
+            assertNotNull(Downloads.keptFor(stream, flac, Downloader.Probe.Manifest(dash = false)))
+        } finally {
+            AppSettings.exportDownloads.value = false
+        }
+        assertNotNull(Downloads.keptFor(stream, webm, Downloader.Probe.Manifest(dash = true)))
     }
 }
