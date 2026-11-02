@@ -1,0 +1,14 @@
+Goal: background audio decodes must never hold the Media3 cache lock in a way that stalls playback or other reads.
+
+Evidence (emulator log 11-02, task/u19-tg), repeated several times while music played:
+'W om.dev.bitchord: Long monitor contention with owner lyrics-timing (8539) at androidx.media3.datasource.cache.CacheSpan androidx.media3.datasource.cache.SimpleCache...'
+plus 'decode: lyrics-timing failed at=no-first-sample' and 'decode: analysis failed at=set-data-source Failed to instantiate extractor.' and 'read-ahead <id>: 1 probes, 0.1 MB not kept (entry in use)'.
+Code: app/.../playback/smart/AudioDecoder.kt, VideoAudio.kt, AudioCache (awaitRenditionPrefix, cachedPrefix), whatever DataSource/CacheDataSource the lyrics-timing decode uses, the player's cache setup.
+
+Do (systematic debugging, root cause first):
+1. Find which call in the lyrics-timing decode path holds SimpleCache's monitor for a long time (e.g. a blocking read/wait inside a CacheDataSource while holding a span lock, startReadWrite blocking, a lock held across network) and who is blocked by it (the player? read-ahead?). Quote the code path in the summary.
+2. Fix so decodes read only what is already cached, or read without holding the cache lock across waits, or use the non-blocking API (check Media3 docs via context7: SimpleCache.startReadWriteNonBlocking, CacheDataSource flags). Also explain/fix 'no-first-sample' and 'Failed to instantiate extractor' if they come from reading a span still being written.
+3. Tests that fail on old code and pass on new where possible (JVM). Name exact test classes in the summary (Opus adds them to CI).
+
+Rules: battery first (no polling/timers), read every caller and type of what you change, keep all existing guards unless justified; REMOVED-LINES AUDIT required. Do not touch .github/workflows/, keys/, signing. grep/Select-String only (no rg). AGENTS.md (ponytail) rules apply.
+At the end, summary within 10 lines: files changed / key change / test result / open problems / root cause.
