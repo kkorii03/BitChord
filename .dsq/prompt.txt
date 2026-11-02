@@ -1,0 +1,15 @@
+﻿Kotlin Android app = upstream v1.9 + Korean fork (task/u19-tg; 1.8 fork = origin/task/telegram). Battery first: event-driven, no polling/timers, never block the main thread. Use grep/Select-String, not rg. Unknown Android/Media3 APIs: context7. Every fix gets a JVM test that fails on current code (no network). Do not touch .github/workflows. Smallest change; keep v1.9's improvements.
+
+Home '내 분위기 찾기' (TopPicks/mood stations, sharedUi TopPicksShelf.kt, shared data/model/TopPicks.kt, YtMusicRepository station code: 'station PERSONAL_STATION: mix= core= radios= extra=') takes long before a song plays. Measure the request chain from tap to queue set (watch:RDAMVM... calls run several radios before playing), and make the first song start as soon as the first radio answers, filling the rest after. Tests with fake sources.
+
+Summary of at most 12 lines: cause, files, REMOVED-LINES AUDIT, tests (class names for CI), what you did not do. Follow AGENTS.md (ponytail) rules.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 3
+HIGH app/src/main/java/com/music/bitchord/MainActivity.kt:1986 — `onFirstBatch` passes the entire first answer to `playSongs`, which maps every track on `Dispatchers.Default` before `setMediaItems/play`, so a large first mood playlist delays the first song and bypasses the `MOOD_QUEUE`/`STATION_SIZE` caps (`TopPicks.kt:584` hands over the uncapped batch, so the summary's "prefix"/"cap preserved" claim is false); fix: play only the first track (or a capped prefix) immediately, then append the remainder under the station cap.
+MEDIUM app/src/main/java/com/music/bitchord/MainActivity.kt:2011 — the appended tail is built with raw `toMediaItem` instead of `playSongs`' queue-entry path, so rows lack `queueEntryId`/canonical index and `QueueShuffle` treats them as unplaced, while adding at absolute `mediaItemCount` can attach them to a queue changed since the first batch; fix: build/stamp through the same queue-metadata helper and re-check queue identity before appending.
+MEDIUM shared/src/jvmTest/kotlin/com/music/bitchord/data/StationFirstAnswerTest.kt:24 — tests cover only `buildFreshStation`/`buildMoodQueue`, leaving the new MainActivity early-play/late-append branch where the cap and queue-metadata regressions live untested; fix: add a fake-controller test asserting the first song is committed before the remaining answers and the tail is appended once.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
