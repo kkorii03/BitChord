@@ -337,7 +337,7 @@ object VersionAudioAligner {
      */
     internal fun chooseMeasurementCopy(onDisk: List<AudioCache.Rendition>): AudioCache.Rendition? {
         val sameSource = onDisk
-            .filter { !it.key.endsWith("#alt") }
+            .filter { !AutomixAnalysisSource.isSubstituteRendition(it.key) }
             .maxByOrNull { it.cachedPrefix }
         return if (sameSource != null &&
             sameSource.cachedPrefix >= AudioCache.MIN_ALIGNMENT_PREFIX_BYTES

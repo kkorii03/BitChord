@@ -575,7 +575,7 @@ object LyricsTiming {
     }
 
     /** The copy actually serving [videoId] — not the copy it may swap to later. */
-    private fun playingClock(videoId: String): Clock = when {
+    internal fun playingClock(videoId: String): Clock = when {
         StreamChoice.isSubstitute(videoId) -> substituteClock(videoId)
         // An explicit YouTube choice is the stream; a saved file only answers
         // when nothing has been chosen yet.
@@ -586,9 +586,29 @@ object LyricsTiming {
         }
     }
 
-    /** The clock of the rendition a measurement read; a `#alt` key is the substitute's. */
+    /** The clock of the rendition a measurement read; any substitute key is the substitute's. */
     private fun clockForRendition(videoId: String, key: String?): Clock =
-        if (key?.endsWith("#alt") == true) substituteClock(videoId) else Clock.YouTube
+        if (key != null && AutomixAnalysisSource.isSubstituteRendition(videoId, key)) {
+            substituteClock(videoId)
+        } else {
+            Clock.YouTube
+        }
+
+    /**
+     * The clock a remembered [StreamChoice] names, without asking the store.
+     * Used when a choice is removed: what the playing clock was just before.
+     */
+    internal fun clockOfChoice(
+        substituted: Boolean,
+        sourceConfigId: String?,
+        trackId: String?,
+    ): Clock = if (!substituted) {
+        Clock.YouTube
+    } else if (sourceConfigId != null && trackId != null) {
+        Clock.Substitute(sourceConfigId, trackId)
+    } else {
+        Clock.Unknown
+    }
 
     /**
      * The clock of a local file: an HQ download carries the source pair it was
@@ -604,8 +624,8 @@ object LyricsTiming {
     /** The clock of the audio a song check listened to, from the copy it actually opened. */
     internal fun clockForSongAudio(song: Song, copy: VideoAudio.SongAudio): Clock =
         if (copy.fromFile) {
-            val meta = KoDownloadRecords.savedMetadataFor(song.videoId)
-            clockForLocalCopy(meta?.hqSourceConfigId, meta?.hqTrackId)
+            // Captured when the data source was opened; see [VideoAudio.SongAudio].
+            clockForLocalCopy(copy.localSourceConfigId, copy.localTrackId)
         } else {
             clockForRendition(song.videoId, copy.renditionKey)
         }

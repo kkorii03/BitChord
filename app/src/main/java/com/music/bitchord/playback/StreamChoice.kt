@@ -4,6 +4,7 @@ import android.os.SystemClock
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.net.LogUrl
 import com.music.bitchord.data.sources.SourceStream
+import com.music.bitchord.playback.smart.LyricsTiming
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -99,8 +100,8 @@ object StreamChoice {
         if (nowMs - choice.at > TTL_MS) {
             chosen.remove(videoId)
             expired.add(videoId)
-            if (choice.substituted) {
-                com.music.bitchord.playback.smart.LyricsTiming.notifyStreamChoice(videoId)
+            if (LyricsTiming.playingClock(videoId) != clockOf(choice)) {
+                LyricsTiming.notifyStreamChoice(videoId)
             }
             return null
         }
@@ -163,6 +164,10 @@ object StreamChoice {
         }
     }
 
+    /** The clock a remembered choice names, before it is removed. */
+    private fun clockOf(choice: Choice): LyricsTiming.Clock =
+        LyricsTiming.clockOfChoice(choice.substituted, choice.stream.sourceConfigId, choice.stream.trackId)
+
     /** Whether two choices name the same audio clock, regardless of their URLs. */
     private fun sameClock(before: Choice?, after: Choice?): Boolean {
         if (before == null || after == null) return before == null && after == null
@@ -196,8 +201,8 @@ object StreamChoice {
      */
     fun forget(videoId: String) {
         val removed = chosen.remove(videoId) ?: return
-        if (removed.substituted) {
-            com.music.bitchord.playback.smart.LyricsTiming.notifyStreamChoice(videoId)
+        if (LyricsTiming.playingClock(videoId) != clockOf(removed)) {
+            LyricsTiming.notifyStreamChoice(videoId)
         }
     }
 
@@ -213,9 +218,11 @@ object StreamChoice {
         val released = chosen.entries.filter { (videoId, choice) ->
             videoId !in keep && drop(choice.stream)
         }
-        released.forEach { (videoId, _) -> chosen.remove(videoId) }
-        released.filter { it.value.substituted }.forEach { (videoId, _) ->
-            com.music.bitchord.playback.smart.LyricsTiming.notifyStreamChoice(videoId)
+        released.forEach { (videoId, choice) ->
+            chosen.remove(videoId)
+            if (LyricsTiming.playingClock(videoId) != clockOf(choice)) {
+                LyricsTiming.notifyStreamChoice(videoId)
+            }
         }
     }
 

@@ -2,6 +2,9 @@ package com.music.bitchord.playback.smart
 
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.SourceStream
+import com.music.bitchord.download.Downloads
+import com.music.bitchord.download.SavedSongMetadata
+import com.music.bitchord.ko.downloads.KoDownloadRecords
 import com.music.bitchord.playback.StreamChoice
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -21,6 +24,7 @@ class LyricsTimingOpenedCopyClockTest {
     @After
     fun reset() {
         StreamChoice.forget("clock-copy")
+        Downloads.setSavedMetadata(emptyMap())
     }
 
     private fun playingSubstitute() {
@@ -40,6 +44,49 @@ class LyricsTimingOpenedCopyClockTest {
         playingSubstitute()
 
         val copy = VideoAudio.SongAudio(ByteArray(0), "audio#alt", fromFile = false)
+
+        assertEquals(
+            LyricsTiming.Clock.Substitute("src", "track"),
+            LyricsTiming.clockForSongAudio(song, copy),
+        )
+    }
+
+    @Test
+    fun `a noatmos or upgrade copy is still the substitute's clock`() {
+        playingSubstitute()
+
+        listOf("audio#alt-noatmos", "audio#hifi", "audio#hifi-2").forEach { key ->
+            val copy = VideoAudio.SongAudio(ByteArray(0), key, fromFile = false)
+            assertEquals(
+                key,
+                LyricsTiming.Clock.Substitute("src", "track"),
+                LyricsTiming.clockForSongAudio(song, copy),
+            )
+        }
+    }
+
+    @Test
+    fun `a local file keeps the clock captured when its source was opened`() {
+        KoDownloadRecords.ensureOpen()
+        Downloads.setSavedMetadata(
+            mapOf(
+                "clock-copy" to SavedSongMetadata(
+                    videoId = "clock-copy",
+                    title = "t",
+                    artist = "a",
+                    uri = "file:///clock-copy.flac",
+                    hqSourceConfigId = "repair",
+                    hqTrackId = "later",
+                ),
+            ),
+        )
+        val copy = VideoAudio.SongAudio(
+            ByteArray(0),
+            renditionKey = null,
+            fromFile = true,
+            localSourceConfigId = "src",
+            localTrackId = "track",
+        )
 
         assertEquals(
             LyricsTiming.Clock.Substitute("src", "track"),

@@ -4,7 +4,10 @@ import android.content.Context
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.sources.HqTier
 import com.music.bitchord.data.sources.SourceStream
+import com.music.bitchord.download.Downloads
+import com.music.bitchord.download.SavedSongMetadata
 import com.music.bitchord.ko.KoAppSettings
+import com.music.bitchord.ko.downloads.KoDownloadRecords
 import com.music.bitchord.playback.StreamChoice
 import com.music.bitchord.testutil.FakeContext
 import com.music.bitchord.testutil.FakePreferences
@@ -46,7 +49,8 @@ class LyricsTimingClockTest {
         storeField.set(LyricsTiming, null)
         hqCacheField.set(HqVerificationStore, null)
         KoAppSettings.syncSafetyHqSync.value = false
-        listOf("v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8").forEach(StreamChoice::forget)
+        listOf("v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9").forEach(StreamChoice::forget)
+        Downloads.setSavedMetadata(emptyMap())
     }
 
     @After
@@ -54,7 +58,8 @@ class LyricsTimingClockTest {
         storeField.set(LyricsTiming, null)
         hqCacheField.set(HqVerificationStore, null)
         KoAppSettings.syncSafetyHqSync.value = false
-        listOf("v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8").forEach(StreamChoice::forget)
+        listOf("v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9").forEach(StreamChoice::forget)
+        Downloads.setSavedMetadata(emptyMap())
         directory.deleteRecursively()
     }
 
@@ -209,6 +214,27 @@ class LyricsTimingClockTest {
             LyricsTiming.timing(context, "v8", lines, baseAllowed = true)
         }
         assertEquals(10_500L, timing?.let { LyricsTiming.apply(lines, it) }?.first()?.timeMs)
+    }
+
+    @Test
+    fun `a saved hq download is the playing clock when no stream is chosen`() {
+        write("""{"v9":${entry(autoMs = 500L, autoClock = "yt")}}""")
+        verified("v9", offsetMs = 1_000L)
+        KoDownloadRecords.ensureOpen()
+        Downloads.setSavedMetadata(
+            mapOf(
+                "v9" to SavedSongMetadata(
+                    videoId = "v9",
+                    title = "t",
+                    artist = "a",
+                    uri = "file:///v9.flac",
+                    hqSourceConfigId = "src",
+                    hqTrackId = "track",
+                ),
+            ),
+        )
+
+        assertEquals(11_500L, shown("v9"))
     }
 
     @Test

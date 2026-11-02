@@ -5,6 +5,7 @@ import android.media.MediaDataSource
 import android.net.Uri
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.ko.downloads.KoDownloadRecords
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.PowerState
 import kotlinx.coroutines.Dispatchers
@@ -57,6 +58,9 @@ object VideoAudio {
         /** The cache rendition key, or null when read straight off a local file. */
         val renditionKey: String?,
         val fromFile: Boolean,
+        /** The verified source pair recorded for a local file, captured when it was opened. */
+        val localSourceConfigId: String? = null,
+        val localTrackId: String? = null,
     )
 
     /** The last two, by video: the AI timing and the AI lyrics often ask for the same song. */
@@ -198,7 +202,13 @@ object VideoAudio {
                 return@synchronized it
             }
             val bytes = decodeSong(song, opened.data, opened.fromFile, until) ?: return@synchronized null
-            val audio = SongAudio(bytes, opened.renditionKey, opened.fromFile)
+            val audio = SongAudio(
+                bytes,
+                opened.renditionKey,
+                opened.fromFile,
+                opened.localSourceConfigId,
+                opened.localTrackId,
+            )
             synchronized(recentSongs) { recentSongs[key] = audio }
             audio
         }
@@ -208,6 +218,8 @@ object VideoAudio {
         val data: MediaDataSource,
         val fromFile: Boolean,
         val renditionKey: String?,
+        val localSourceConfigId: String? = null,
+        val localTrackId: String? = null,
     )
 
     private suspend fun openSongSource(context: Context, song: Song): SongSource? {
@@ -224,12 +236,22 @@ object VideoAudio {
             }
         }
         if (fromFile) {
+            // Read the file's clock here, when its data source is opened. Asking
+            // again after the ninety-second decode could tag the words with a
+            // repair that landed meanwhile.
+            val meta = KoDownloadRecords.savedMetadataFor(song.videoId)
             val data = VersionAudioAligner.openDataSource(context, song)
             if (data == null) {
                 TrackLog.d(TAG, "song check: no audio to listen to", song.videoId)
                 return null
             }
-            return SongSource(data, true, null)
+            return SongSource(
+                data,
+                true,
+                null,
+                meta?.hqSourceConfigId,
+                meta?.hqTrackId,
+            )
         }
         // Pick once and open that exact copy: asking again after the listen
         // could name a different rendition than the one whose words were heard.

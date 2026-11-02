@@ -1,6 +1,10 @@
 package com.music.bitchord.playback
 
+import android.os.SystemClock
 import com.music.bitchord.data.sources.SourceStream
+import com.music.bitchord.download.Downloads
+import com.music.bitchord.download.SavedSongMetadata
+import com.music.bitchord.ko.downloads.KoDownloadRecords
 import com.music.bitchord.playback.smart.LyricsTiming
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -18,12 +22,13 @@ import org.junit.Test
  */
 class StreamClockChangeSignalTest {
 
-    private val ids = (1..4).map { "clock-signal-$it" }
+    private val ids = (1..7).map { "clock-signal-$it" }
 
     @Before
     @After
     fun reset() {
         ids.forEach(StreamChoice::forget)
+        Downloads.setSavedMetadata(emptyMap())
     }
 
     private fun substitute(host: String, track: String = "track") = SourceStream(
@@ -33,6 +38,22 @@ class StreamClockChangeSignalTest {
     )
 
     private fun youtube(host: String) = SourceStream(url = "https://$host/track")
+
+    private fun savedHq(videoId: String) {
+        KoDownloadRecords.ensureOpen()
+        Downloads.setSavedMetadata(
+            mapOf(
+                videoId to SavedSongMetadata(
+                    videoId = videoId,
+                    title = "t",
+                    artist = "a",
+                    uri = "file:///$videoId.flac",
+                    hqSourceConfigId = "src",
+                    hqTrackId = "track",
+                ),
+            ),
+        )
+    }
 
     private fun collectSignals(block: suspend (MutableList<String>) -> Unit): List<String> = runBlocking {
         val got = mutableListOf<String>()
@@ -85,5 +106,41 @@ class StreamClockChangeSignalTest {
         }
 
         assertEquals(listOf(ids[3]), signals)
+    }
+
+    @Test
+    fun `forgetting a youtube choice that falls back to an hq download announces it`() {
+        savedHq(ids[4])
+        StreamChoice.remember(ids[4], youtube("googlevideo.example"), substituted = false)
+
+        val signals = collectSignals { _ ->
+            StreamChoice.forget(ids[4])
+        }
+
+        assertEquals(listOf(ids[4]), signals)
+    }
+
+    @Test
+    fun `expiry of a youtube choice that falls back to an hq download announces it`() {
+        savedHq(ids[5])
+        StreamChoice.remember(ids[5], youtube("expiry.example"), substituted = false)
+
+        val signals = collectSignals { _ ->
+            StreamChoice.of(ids[5], nowMs = SystemClock.elapsedRealtime() + 24 * 60 * 60 * 1000L)
+        }
+
+        assertEquals(listOf(ids[5]), signals)
+    }
+
+    @Test
+    fun `forgetWhere announces a youtube choice that falls back to an hq download`() {
+        savedHq(ids[6])
+        StreamChoice.remember(ids[6], youtube("forgetwhere.example"), substituted = false)
+
+        val signals = collectSignals { _ ->
+            StreamChoice.forgetWhere(keep = emptySet()) { it.url.contains("forgetwhere.example") }
+        }
+
+        assertEquals(listOf(ids[6]), signals)
     }
 }
