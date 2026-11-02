@@ -125,7 +125,10 @@ internal fun TrackFeatures.Features.shiftedBy(offset: Double): TrackFeatures.Fea
 class TrackAnalyzer(private val context: Context, private val cache: AudioCache) {
 
     private val tracker = BeatTracker(
-        modelPath = { unpackedAsset(BeatTracker.MODEL_ASSET) },
+        modelPath = {
+            java.io.File(context.filesDir, BeatTracker.RETIRED_MODEL_ASSET).delete()
+            unpackedAsset(BeatTracker.MODEL_ASSET)
+        },
         inferenceThreads = { AppSettings.automixPerformanceMode.value.inferenceThreads },
     )
     private val vocals = VocalTracker(
