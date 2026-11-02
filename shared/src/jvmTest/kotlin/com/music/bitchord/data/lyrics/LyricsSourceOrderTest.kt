@@ -61,9 +61,15 @@ class LyricsSourceOrderTest {
         )
         val order = LyricsSource.ordered(saved)
         assertTrue(order.none { it.hidden })
-        assertEquals(LyricsSource.GENIUS, order.first())
-        assertEquals(LyricsSource.LRC_RED, order[1])
-        assertEquals(LyricsSource.offered.filterNot { it == LyricsSource.GENIUS || it == LyricsSource.LRC_RED }, order.drop(2))
+        assertEquals(LyricsSource.AMLL_TTML, order.first())
+        assertEquals(LyricsSource.GENIUS, order[1])
+        assertEquals(LyricsSource.LRC_RED, order[2])
+        assertEquals(
+            LyricsSource.offered.filterNot {
+                it == LyricsSource.GENIUS || it == LyricsSource.LRC_RED || it == LyricsSource.AMLL_TTML
+            },
+            order.drop(3),
+        )
     }
 
     @Test

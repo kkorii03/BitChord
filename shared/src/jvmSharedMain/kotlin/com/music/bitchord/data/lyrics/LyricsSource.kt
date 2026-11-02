@@ -37,7 +37,16 @@ enum class LyricsSource(
     // wait on a mirror that is down to be told what three other hosts already
     // had.
     //
-    // [LRC_RED] is ahead of all of them: it is where [BINI_LYRICS] gets its
+    // [AMLL_TTML] leads: its line stamps are timed by people against the
+    // recording rather than generated, which is the one thing a whole-song
+    // correction cannot repair. A track it does not have falls straight
+    // through to the Apple hosts below.
+    AMLL_TTML(
+        label = "AMLL TTML",
+        detail = "사람이 직접 맞춘 단어 단위 타이밍",
+        wordSynced = true,
+    ),
+    // [LRC_RED] is ahead of the Apple hosts: it is where [BINI_LYRICS] gets its
     // documents now, so asking it directly is the same Apple timing without
     // the middleman, and it is the one a dead mirror can't take down with it.
     LRC_RED(
