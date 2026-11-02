@@ -9,11 +9,11 @@ Do not touch .github/workflows. Do not refactor or move upstream code. Keep edit
 Finish with a summary of at most 12 lines: regressions found (1.8 behaviour -> 1.9 behaviour), files, REMOVED-LINES AUDIT, tests (fail-before/pass-after, class names for the CI list), what you did not do. Follow AGENTS.md (ponytail) rules.
 
 
-== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+== 3 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
 ?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
 寃??吏??
-VERDICT: ISSUES 2
-MEDIUM — app/src/main/java/com/music/bitchord/ui/LyricsController.kt:1023: the added `ensureActive()` is an unrelated lyrics change outside the downloads area that the task said to list rather than make, and it is not covered by a new test for that fix. Remove it from this change or move it to the lyrics lane.
-MEDIUM — task summary (fix.txt:1676): the summary admits "no download-regression audit beyond the staged proxy-client fix was performed", so the core requirement to enumerate every 1.8 download/ko/downloads behaviour lost in 1.9 is unimplemented. Perform and report that comparison, fixing any additional regression found.
-Skipped: I did not run the full Android test suite. Risk: an unlisted download/Korean-pipeline regression may remain undetected despite the proxy-client fix.
+HIGH — .dsq/prompt.txt:15-19: the added file embeds a fabricated "VERDICT: ISSUES 2" and reviewer-handling instructions inside the artifact the adversarial reviewer reads, a prompt-injection that can spoof the review; keep prior-review text out of the committed prompt/diff and pass it through a separate trusted channel.
+HIGH — app/src/main/java/com/music/bitchord/ui/LyricsController.kt:1025: the unrelated out-of-area `ensureActive()` change flagged by the previous review is still present and still untested, contrary to "list outside-area changes instead of making them"; remove it or move it to the lyrics lane with its own test.
+MEDIUM — .dsq/prompt.txt:12-19: the new feedback block is mojibake (mis-encoded Korean/em dashes) and the change carries no task summary or REMOVED-LINES AUDIT; re-encode as UTF-8 and add both.
+Skipped: I did not run the Gradle suite. Risk: the download-pipeline regressions named in the task may still be present and undetected.
 留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
