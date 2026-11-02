@@ -2306,13 +2306,24 @@ internal fun LyricsPanel(
                             // Read here rather than in composition: the fill
                             // and the breath move every frame, and this way a
                             // break costs a redraw of three circles, not a
-                            // recomposition.
-                            val now = clock.longValue
-                            val span = (until - line.timeMs).coerceAtLeast(1L)
-                            val through = gapFill.value.takeUnless { it == GAP_RUNNING }
-                                ?: ((now - line.timeMs).toFloat() / span).coerceIn(0f, 1f)
-                            val since = (now - line.timeMs).coerceAtLeast(0L)
-                            val remaining = (until - now).coerceAtLeast(0L)
+                            // recomposition. Calm mode must not read the clock
+                            // at all — a static resting row cannot invalidate
+                            // itself once per frame for the whole gap.
+                            val through: Float
+                            val since: Long
+                            val remaining: Long
+                            if (calmInterlude) {
+                                through = 0f
+                                since = 0L
+                                remaining = 0L
+                            } else {
+                                val now = clock.longValue
+                                val span = (until - line.timeMs).coerceAtLeast(1L)
+                                through = gapFill.value.takeUnless { it == GAP_RUNNING }
+                                    ?: ((now - line.timeMs).toFloat() / span).coerceIn(0f, 1f)
+                                since = (now - line.timeMs).coerceAtLeast(0L)
+                                remaining = (until - now).coerceAtLeast(0L)
+                            }
                             val container = if (calmInterlude) 1f else koInterludeContainerAlpha(since)
                             val exit = if (calmInterlude) 1f else koInterludeExitAlpha(remaining)
                             val breath = if (breathing) {
