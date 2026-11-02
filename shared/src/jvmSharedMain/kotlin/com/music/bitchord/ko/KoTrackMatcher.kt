@@ -1033,12 +1033,12 @@ internal object KoTrackMatcher {
         // the tail turns an "edit"/"mix" word into a version and the plain
         // catalogue row stops matching.
         val takeWords = wordsOf(takeText)
-        if (takeWords.joinToString("") in NEUTRAL_SEGMENTS) return emptyList()
+        if (takeWords.map(::canonicalTake).joinToString("") in NEUTRAL_SEGMENTS) return emptyList()
         val languageTake = isLanguageVersion(takeText)
-        return words.filter {
+        return (words.filter {
             (it in VERSION_WORDS && it !in NEUTRAL_SUFFIX_WORDS) ||
                 (languageTake && it in VERSION_LANGUAGES)
-        }
+        } + phraseTakes(words)).distinct()
     }
 
     /**
@@ -1053,6 +1053,7 @@ internal object KoTrackMatcher {
             .map { it.replace(NON_ALNUM, "") }
             .filter { it.isNotEmpty() }
         if (words.isEmpty()) return true
+        if (phraseTakes(words).isNotEmpty()) return true
         return words.all {
             it in VERSION_WORDS || it in TRAILING_NOISE || it in NOISE_WORDS ||
                 it in PACKAGING_CONNECTORS || it.all(Char::isDigit)
@@ -1066,10 +1067,12 @@ internal object KoTrackMatcher {
      * still hands over from the performer as before.
      */
     private fun startsWithTakeMarker(text: String): Boolean {
-        val first = normalize(text).split(WORD_SPLIT)
+        val words = normalize(text).split(WORD_SPLIT)
             .map { it.replace(NON_ALNUM, "") }
-            .firstOrNull { it.isNotEmpty() } ?: return false
-        return first in VERSION_WORDS || first in TRAILING_TAKES
+            .filter { it.isNotEmpty() }
+        val first = words.firstOrNull() ?: return false
+        return first in VERSION_WORDS || first in TRAILING_TAKES ||
+            phraseTakes(words).isNotEmpty()
     }
 
     private val PACKAGING_CONNECTORS = setOf(
@@ -1251,7 +1254,7 @@ internal object KoTrackMatcher {
                 words = words.dropLast(1)
                 droppedTail++
             } else if (last in TRAILING_TAKES) {
-                versions += last
+                versions += canonicalTake(last)
                 words = words.dropLast(1)
                 droppedTail++
             } else break
@@ -1372,10 +1375,15 @@ internal object KoTrackMatcher {
         context: MutableSet<String>,
         takeMarkers: Boolean = true,
     ) {
-        val words = segment.split(WORD_SPLIT)
+        val rawWords = segment.split(WORD_SPLIT)
             .map { it.replace(NON_ALNUM, "") }
             .filter { it.isNotEmpty() }
-        if (words.isEmpty()) return
+        if (rawWords.isEmpty()) return
+        // One canonical key per take, so the Korean, Japanese and English
+        // spellings of the same recording meet instead of each staying its own
+        // version. Applied before the neutral check so "Radio Ver." folds to
+        // the neutral "Radio Version".
+        val words = rawWords.map(::canonicalTake)
         if (words.joinToString("") in NEUTRAL_SEGMENTS) return
         // Text before a named soundtrack label is the work name, not the
         // song's take: "Korean OST Drama" names a Korean-drama soundtrack,
@@ -1412,12 +1420,23 @@ internal object KoTrackMatcher {
             versions += words.filter { it in VERSION_WORDS && it !in LANGUAGE_PACKAGING }
             return
         }
-        val marks = words.filter { it in VERSION_WORDS }
+        val marks = words.filter { it in VERSION_WORDS } + phraseTakes(words)
         if (marks.isNotEmpty()) {
             versions += marks
             return
         }
         context += words.filter { it.length > 2 && it !in NOISE_WORDS }
+    }
+
+    /** Multi-word take spellings whose words are harmless on their own. */
+    private fun phraseTakes(words: List<String>): List<String> = buildList {
+        words.forEachIndexed { at, word ->
+            val next = words.getOrNull(at + 1)
+            when {
+                word in setOf("sped", "speed") && next == "up" -> add("sped")
+                word == "slow" && next == "down" -> add("slowed")
+            }
+        }
     }
 
     /**
@@ -1580,8 +1599,34 @@ internal object KoTrackMatcher {
         "chinese" to "chinese", "중국어" to "chinese", "中国語" to "chinese",
     )
 
-    /** Packaging around a language marker: "Version", "Ver.". */
-    private val LANGUAGE_PACKAGING = setOf("version", "ver")
+    /** Packaging around a language marker: "Version", "Ver.", 버전, バージョン. */
+    private val LANGUAGE_PACKAGING = setOf("version", "ver", "버전", "バージョン")
+
+    /**
+     * Canonical take keys, so the same recording spelled in another language
+     * is not treated as a second take. Only words that already mean a take in
+     * [VERSION_WORDS] are mapped; anything else keeps its own spelling.
+     */
+    private val TAKE_ALIASES = mapOf(
+        "ver" to "version",
+        "버전" to "version",
+        "バージョン" to "version",
+        "어쿠스틱" to "acoustic",
+        "피아노" to "piano",
+        "밴드" to "band",
+        "리메이크" to "remake",
+        // Backing tracks: no lead vocal, so they never stand in for the record.
+        "반주" to "instrumental",
+        "인스트" to "instrumental",
+        "inst" to "instrumental",
+        "mr" to "instrumental",
+        "spedup" to "sped",
+        "speedup" to "sped",
+        "sloweddown" to "slowed",
+        "slowdown" to "slowed",
+    )
+
+    private fun canonicalTake(word: String): String = TAKE_ALIASES[word] ?: word
 
     /** Packaging words that follow a soundtrack label without naming a take. */
     private val NEUTRAL_SUFFIX_WORDS = setOf("version", "edition")

@@ -966,15 +966,20 @@ object TrackMatcher {
         // remotely the recording anybody asked for.
         "vocals", "vocal", "acapella", "acappella", "cappella", "backing", "stems", "stem",
         "cover", "demo", "reprise", "remake", "rework", "extended", "edit",
-        "version", "mix", "dub", "vip", "session", "sessions",
-        "sped", "slowed", "reverb", "nightcore", "lofi", "orchestral", "symphonic",
+        "version", "ver", "mix", "dub", "vip", "session", "sessions",
+        // A qualified take ("Piano Ver.", "Band Version"). They are not in
+        // TRAILING_TAKES, so a bare trailing "Song Piano" keeps its title.
+        "piano", "band", "inst",
+        "sped", "spedup", "speedup", "slowed", "sloweddown", "slowdown",
+        "reverb", "nightcore", "lofi", "orchestral", "symphonic",
         "part", "pt", "chapter",
         // Non-Latin spellings of the same takes. Without these a `カバー` or
         // `カラオケ` row carries no version marker and scores as the original.
         "カバー", "カラオケ", "リミックス", "ライブ", "アコースティック",
         "インスト", "バージョン", "歌ってみた", "踊ってみた", "弾いてみた",
         "翻唱", "现场", "混音",
-        "커버", "라이브", "리믹스",
+        "커버", "라이브", "리믹스", "어쿠스틱", "피아노", "밴드", "리메이크",
+        "반주", "인스트", "버전", "mr",
     )
 
     /**
@@ -986,6 +991,10 @@ object TrackMatcher {
      */
     internal val TRAILING_TAKES = setOf( // [KO] track-matcher
         "instrumental", "karaoke", "acapella", "acappella", "cappella", "remix", "rmx", "nightcore",
+        // "Ver." is never a title-ending word by itself; without it a bare
+        // "Song Band Ver." keeps the qualifier in the core and matches neither
+        // the original nor "Song (Band Version)".
+        "ver",
     )
 
     /**
