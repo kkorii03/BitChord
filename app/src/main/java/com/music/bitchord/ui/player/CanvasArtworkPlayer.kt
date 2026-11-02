@@ -334,6 +334,16 @@ internal fun AndroidCanvasArtworkPlayer(
         reportAspect(0f)
         val item = MediaItem.Builder().setUri(url)
         mimeTypeOf(url)?.let { item.setMimeType(it) }
+        // A loop cut from a video plays only its own stretch: without the clip
+        // window REPEAT_MODE_ONE replays the whole upload instead.
+        canvas.clipStartMs?.let { start ->
+            item.setClippingConfiguration(
+                MediaItem.ClippingConfiguration.Builder()
+                    .setStartPositionMs(start)
+                    .apply { canvas.clipEndMs?.let { end -> setEndPositionMs(end) } }
+                    .build(),
+            )
+        }
         // From where a still of this clip was taken, if there is one, so the
         // first frame painted is that still and takes over from it unseen.
         val startAt = currentStartPositionMs
