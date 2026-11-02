@@ -18,6 +18,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.resetMain
@@ -25,6 +26,7 @@ import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -35,6 +37,10 @@ import org.junit.Test
  * [LyricsController] nothing about the video flag, so it asked for the stream
  * key and never saw the answer the next-song bundle had already paid for
  * (11-02, v59g4HRNIkc).
+ *
+ * The row here keeps `isVideo = false`, so the production [Song] path has to
+ * read the cover from the title — passing the row flag would ask for the
+ * stream key and this answer would not be found.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class LyricsControllerCoverAiTest {
@@ -58,6 +64,14 @@ class LyricsControllerCoverAiTest {
         LyricLine(3_000L, "three"),
     )
 
+    private val cover = Song(
+        videoId = "v59g4HRNIkc",
+        title = "에피톤 프로젝트 - 회전목마 / cover by 오화요(허니즈)",
+        artist = "젤리의 노래저장소",
+        thumbnailUrl = null,
+        isVideo = false,
+    )
+
     @Before
     fun setUp() {
         Dispatchers.setMain(Dispatchers.Default)
@@ -66,7 +80,7 @@ class LyricsControllerCoverAiTest {
         AppSettings.lyricsSourceOrder.value = listOf(LyricsSource.KUGOU)
         directory = Files.createTempDirectory("bitchord-cover-ai").toFile()
         storeField.set(LyricsTiming, null)
-        controller = LyricsController(Application(), scope)
+        controller = LyricsController(TestApplication(directory), scope)
     }
 
     @After
@@ -103,16 +117,36 @@ class LyricsControllerCoverAiTest {
             LyricsRepository.Result(source = LyricsSource.KUGOU, lines = lines)
         }
 
-        controller.loadLyricsFor(
-            Song(
-                videoId = "v59g4HRNIkc",
-                title = "Ponyo",
-                artist = "Someone",
-                thumbnailUrl = null,
-                isVideo = true,
-            ),
-            durationMs = 215_000L,
+        controller.loadLyricsFor(cover, durationMs = 215_000L)
+
+        val timing = withTimeout(5_000L) { controller.lyricsTiming.first { it.byAi } }
+        assertTrue(timing.byAi)
+    }
+
+    @Test
+    fun `an answer accepted after the lyrics load reaches the screen`() = runBlocking {
+        val song = Song(
+            videoId = "v59g4HRNIkc",
+            title = "Ponyo",
+            artist = "Someone",
+            thumbnailUrl = null,
+            isVideo = false,
         )
+        controller.lyricsLookup = { _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ ->
+            LyricsRepository.Result(source = LyricsSource.KUGOU, lines = lines)
+        }
+        controller.loadLyricsFor(song, durationMs = 215_000L)
+        withTimeout(5_000L) { controller.lyricsChecked.first { it } }
+        withTimeout(5_000L) { controller.lyrics.first { !it.isNullOrEmpty() } }
+        assertFalse(controller.lyricsTiming.value.byAi)
+        // The display subscribes as the lyrics load finishes; only then is a
+        // later answer's change event seen.
+        delay(100L)
+
+        val words = lines.joinToString("\n") { it.text }.hashCode()
+        val stream = LyricsTiming.audioSourceKey(song.videoId, localFile = false)
+        seedAnswer(31 * stream.hashCode() + words)
+        LyricsTiming.notifyStreamChoice(song.videoId)
 
         val timing = withTimeout(5_000L) { controller.lyricsTiming.first { it.byAi } }
         assertTrue(timing.byAi)
@@ -140,4 +174,11 @@ class LyricsControllerCoverAiTest {
             TrackLog.exportText().contains("ai answer for other lyrics: $otherKey"),
         )
     }
+
+}
+
+/** An [Application] whose context is itself, so timing work has a files dir. */
+private class TestApplication(private val dir: File) : Application() {
+    override fun getApplicationContext(): Context = this
+    override fun getFilesDir(): File = dir
 }

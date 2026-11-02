@@ -2837,7 +2837,9 @@ object LyricsTiming {
             lines = lines,
             baseAllowed = timeable,
             measuredAllowed = recordTimed,
-            isVideo = song.isVideo,
+            // The same video/cover test that chose the key above: the screen
+            // reads the answer under that key and guards it with [query.isVideo].
+            isVideo = query.isVideo,
             audioSource = audioSource,
         )
     }
