@@ -71,10 +71,11 @@ class KoreanStringsTest {
     }
 
     @Test
-    fun autoplayEmptyCopyFollowsTheV19English() {
-        // 1.9 changed the English from "No recommendations found" to
-        // "Similar music will keep playing"; the Korean still said nothing was found.
-        assertEquals("비슷한 음악이 계속 재생됩니다", value("sharedUi", "autoplay_empty_description"))
+    fun autoplayEmptyCopySaysNothingWasFound() {
+        // EMPTY is set only after a real request returned zero songs, so the
+        // v1.9 "similar music will keep playing" would promise playback that
+        // never happens. Keep v1.8's accurate "nothing found".
+        assertEquals("추천 곡을 찾지 못했습니다", value("sharedUi", "autoplay_empty_description"))
     }
 
     @Test
