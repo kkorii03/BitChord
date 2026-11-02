@@ -1,0 +1,31 @@
+﻿Task: restore v1.9 code that the merge on this branch (task/u19-tg) dropped. Branch facts: it is task/telegram (our Korean fork with Telegram, sync, HQ work) + task/upstream-19 (upstream v1.9 merged earlier, with 1.9 fixes) merged by an automated resolver that often kept only our side of a conflict and silently dropped v1.9 code.
+
+Evidence: scripts/upgrade/lost-u19.txt lists every v1.9-side line (grouped by the commit that wrote it, '!! LOST n  date sha subject') that exists in origin/task/upstream-19 but is missing from this branch. scripts/upgrade/lost-ours.txt lists lines of OUR side that are missing (also restore those that are in your files). The checker is scripts/upgrade/patch_survival.py. First run: git fetch --unshallow origin || true; git fetch origin task/upstream-19 task/telegram. Then:
+  python3 scripts/upgrade/patch_survival.py --repo . --base 018c841b --ours origin/task/upstream-19 --result HEAD --all
+  python3 scripts/upgrade/patch_survival.py --repo . --base 018c841b --ours origin/task/telegram --result HEAD --all
+Use `git show origin/task/upstream-19:<path>` to see the working v1.9 version of a file and `git show origin/task/telegram:<path>` for ours.
+
+Rules:
+- ONLY edit the files in YOUR SCOPE below (new files are allowed if they belong to your scope's feature). If a restore needs a change outside your scope, do not make it: list it in your summary.
+- Restore every lost v1.9 feature / fix in your scope: bring back its code and its call sites so it actually runs (a function with no caller is not restored).
+- Keep OUR side where the two implement the same thing differently in these areas only: song-version judgment (TrackMatcher verdicts), lyrics sync/timing, Telegram source, HQ upgrade/verify (hq-verify, lossless swap). There, keep ours and note which v1.9 lines you deliberately left out and why (one line per group).
+- Keep every '// [KO]' hook and every Korean-fork feature. Do not move upstream code into ko/ files.
+- Follow AGENTS.md (ponytail): smallest change that fully restores; no new abstractions.
+- Compile (./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true) and run the tests of the files you touched (and the CI test list entries for them in .github/workflows/ko-wip-check.yml) until they pass.
+- At the end re-run both checker commands and report, for the files in your scope only: v1.9 LOST lines before -> after, ours LOST before -> after.
+Battery first (no polling/timers). Re-read callers and types of everything you change.
+Finish with a summary of at most 15 lines: features restored (by commit subject) / deliberately kept ours (why) / LOST counts before->after for your files / compile+tests / changes needed outside your scope.
+YOUR SCOPE: app/src/main/java/com/music/bitchord/MainActivity.kt, app/src/main/java/com/music/bitchord/ui/** (SettingsSheet, SongActionsMenu, ListenTogetherScreen, DownloadManagerSheet, MainViewModel, SongInfoDialog, ...), app/src/main/java/com/music/bitchord/ko/*Settings*.kt, app/src/main/java/com/music/bitchord/ko/KoSongActionsSheet.kt, sharedUi/**, app/src/main/res/values*/strings.xml (sleep timer custom duration page, history remove, settings categories, Korean wifi/cellular quality rows, cachedOrigin menu arg, ...). Do not edit AppSettings.kt (list needs).
+
+ROUND 2 NOTE (Opus): the first round restored only part of the scope. Fix every reviewer finding AND go through EVERY remaining '!! LOST' group of the files in your scope in scripts/upgrade/lost-u19.txt, not only the headline feature. For each group either restore it (code + call sites) or write one line in the summary why it is deliberately ours (only the keep-ours areas listed above count; 'different architecture' alone is not a reason - port the behavior into our structure). Battery rule still applies: replace v1.9 polling with existing events, as round 1 did. Report LOST before -> after per file again.
+Also: show the Korean lyrics-entry row only on the main settings page, and make SettingsCategory.LYRICS open the fork's lyrics settings page (the full-window lyrics catalog/route) instead of an empty category.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 2
+1. MEDIUM `app/src/main/java/com/music/bitchord/ui/screens/SettingsSheet.kt:1101` — the Korean lyrics-entry group is unconditional, so now that every category is routed to this screen, every category page (Downloads, Playback, …) also shows the lyrics/translation row. Fix: wrap it in `if (section == null)` or `shows(SettingsCategory.LYRICS)`.
+2. MEDIUM `app/src/main/java/com/music/bitchord/MainActivity.kt:3431` / `SettingsSheet.kt:2695` — `SettingsCategory.LYRICS` is listed and now navigable, but no `shows(SettingsCategory.LYRICS)` block was restored (cf749036), so that page contains only the duplicate entry row instead of the lyrics settings. Fix: route `LYRICS` to `AppRoute.Lyrics` or restore the v1.9 category rows.
+Did not run the Android build/tests; findings are from the diff, current sources, and the survival checker.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
