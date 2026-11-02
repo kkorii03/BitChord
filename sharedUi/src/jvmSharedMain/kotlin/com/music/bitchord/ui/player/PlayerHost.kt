@@ -61,6 +61,12 @@ interface PlayerHost {
     /** The playing music video's width over its height. */
     val musicVideoAspect: StateFlow<Float> get() = DefaultVideoAspect
 
+    /**
+     * [KO] video-fallback: videos found to have no picture this session. The
+     * player shows their artwork instead of a black box spinning forever.
+     */
+    val musicVideoMissing: StateFlow<Set<String>> get() = NoMissingVideos
+
     /** The heights the playing music video offers, and which one is held. */
     val musicVideoQuality: StateFlow<MusicVideoQualityUi> get() = NoVideoQuality
 
@@ -214,6 +220,8 @@ internal fun MusicVideoSurface(
 ) = PlayerPlatform.host.MusicVideo(videoId, fit, onRenderedChanged, modifier)
 
 private val NoWatch = MutableStateFlow(WatchOutputUi())
+
+private val NoMissingVideos = MutableStateFlow<Set<String>>(emptySet())
 
 /** What the output drawer needs to draw the watch's row. */
 data class WatchOutputUi(

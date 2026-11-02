@@ -124,6 +124,19 @@ object MusicVideoEngine {
      */
     private val noPicture = HashSet<String>()
 
+    private val _missing = MutableStateFlow<Set<String>>(emptySet())
+
+    /**
+     * [KO] video-fallback: [noPicture] plus pictures that failed to load this
+     * time, for the player to show their artwork instead of an endless spinner.
+     */
+    val missing: StateFlow<Set<String>> = _missing.asStateFlow()
+
+    private fun markMissing(videoId: String, settled: Boolean) {
+        if (settled) noPicture += videoId
+        _missing.value = _missing.value + videoId
+    }
+
     /** Videos the age gate stopped, asked as age-restricted from the start. */
     private val ageGated = HashSet<String>()
 
@@ -139,6 +152,7 @@ object MusicVideoEngine {
         scope.launch {
             InnerTubeXResolver.sessionGeneration.drop(1).collect {
                 noPicture.clear()
+                _missing.value = emptySet()
                 streams.clear()
                 refused.clear()
                 refresh()
@@ -241,7 +255,7 @@ object MusicVideoEngine {
                 load(id)
                 return
             }
-            noPicture += id
+            markMissing(id, settled = true)
             unload()
         }
     }
@@ -409,19 +423,22 @@ object MusicVideoEngine {
                 // Settled until something changes it: the age gate by a sign-in
                 // (which clears [noPicture]), the rest not at all. A network
                 // failure is asked again on the next surface or track change.
-                if (e.reason != StreamResolveException.Reason.NETWORK) noPicture += videoId
+                markMissing(videoId, settled = e.reason != StreamResolveException.Reason.NETWORK)
                 return@launch
             } catch (e: Exception) {
                 // Not remembered as pictureless: the next surface or track
                 // change asks again.
                 TrackLog.w(TAG, "video: couldn't resolve the picture: ${e.message}", about = videoId)
                 if (loadedId == videoId) loadedId = null
+                markMissing(videoId, settled = false)
                 return@launch
             }
             if (loadedId != videoId) return@launch
             // A catalogue track's "video" is its cover held still; nothing to show.
             if (stream == null || stream.aspect < MIN_VIDEO_ASPECT) {
-                noPicture += videoId
+                // [KO] video-fallback: said, so a phone log shows why there is no picture.
+                TrackLog.w(TAG, "video: no picture (${if (stream == null) "no stream" else "still image"})", about = videoId)
+                markMissing(videoId, settled = true)
                 loadedId = null
                 return@launch
             }

@@ -121,6 +121,8 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
 
     override val musicVideoAspect: StateFlow<Float> get() = MusicVideoEngine.aspect
 
+    override val musicVideoMissing: StateFlow<Set<String>> get() = MusicVideoEngine.missing
+
     override val musicVideoQuality: StateFlow<MusicVideoQualityUi> get() = MusicVideoEngine.quality
 
     override fun setMusicVideoQuality(height: Int?) = MusicVideoEngine.setQuality(height)
