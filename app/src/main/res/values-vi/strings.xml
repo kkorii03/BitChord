@@ -542,6 +542,7 @@
     <string name="minutes">Phút</string>
     <string name="minutes_grouped_short">%1$s phút</string>
     <string name="minutes_listened">Số phút đã nghe</string>
+    <string name="minutes_listened_value">%1$s</string>
     <string name="minutes_short">%1$d phút</string>
     <string name="not_enough_listening">Chưa có đủ dữ liệu nghe nhạc</string>
     <string name="not_enough_this_month">Hãy nghe thêm vài bài hát trong tháng này để mở khóa Replay của bạn.</string>

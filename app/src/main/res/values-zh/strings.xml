@@ -505,6 +505,7 @@
     <string name="minutes">分钟</string>
     <string name="minutes_grouped_short">%1$s 分钟</string>
     <string name="minutes_listened">收听分钟数</string>
+    <string name="minutes_listened_value">%1$s</string>
     <string name="minutes_short">%1$d 分钟</string>
     <string name="not_enough_listening">收听记录还不够多</string>
     <string name="not_enough_this_month">本月再多播放几首歌曲即可解锁你的 Replay。</string>

@@ -540,6 +540,7 @@
     <string name="minutes">Минуты</string>
     <string name="minutes_grouped_short">%1$s мин</string>
     <string name="minutes_listened">Минут прослушано</string>
+    <string name="minutes_listened_value">%1$s</string>
     <string name="minutes_short">%1$d мин</string>
     <string name="not_enough_listening">Пока недостаточно данных о прослушивании</string>
     <string name="not_enough_this_month">Прослушайте ещё немного песен в этом месяце, чтобы открыть свой Replay.</string>

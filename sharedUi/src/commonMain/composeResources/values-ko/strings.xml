@@ -118,7 +118,7 @@
     <string name="playing_from">%1$s에서 재생 중</string>
     <string name="playing_radio">%1$s 스테이션 재생 중</string>
     <string name="queue">대기열</string>
-    <string name="remove_from_liked">좋아요 표시한 음악에서 제거</string>
+    <string name="remove_from_liked">좋아요 표시한 노래에서 제거</string>
     <string name="remove_from_queue">대기열에서 제거</string>
     <string name="repeat_all">반복: 전체</string>
     <string name="repeat_off">반복: 끔</string>
@@ -158,7 +158,7 @@
     <string name="library_sign_in_description">좋아요 표시한 노래, 플레이리스트, YouTube Music 기록을 보려면 Google 계정에 로그인하십시오.</string>
     <string name="new_playlist">새 플레이리스트</string>
     <string name="on_device">이 기기</string>
-    <string name="personalized_recommendations">나를 위한 맞춤 추천 받기</string>
+    <string name="personalized_recommendations">나를 위한 추천</string>
     <string name="pinned">고정됨</string>
     <string name="play_next">다음 항목 재생</string>
     <string name="playlist">플레이리스트</string>
@@ -273,7 +273,7 @@
     <string name="top_pick_made_for_you">나를 위한 맞춤</string>
     <string name="top_pick_mood_for_you">나를 위한 분위기</string>
     <string name="top_pick_featuring">%1$s 피처링</string>
-    <string name="top_pick_and_similar">%1$s 외 비슷한 아티스트</string>
+    <string name="top_pick_and_similar">%1$s &amp; 비슷한 아티스트</string>
     <string name="top_pick_named_station">%1$s 스테이션</string>
     <string name="top_pick_your_station">내 스테이션</string>
     <string name="top_pick_discovery_station">새로운 발견 스테이션</string>

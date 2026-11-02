@@ -505,6 +505,7 @@
     <string name="minutes">分</string>
     <string name="minutes_grouped_short">%1$s分</string>
     <string name="minutes_listened">再生時間（分）</string>
+    <string name="minutes_listened_value">%1$s</string>
     <string name="minutes_short">%1$d分</string>
     <string name="not_enough_listening">再生履歴がまだ十分ではありません</string>
     <string name="not_enough_this_month">今月もう少し曲を再生するとReplayが解放されます。</string>

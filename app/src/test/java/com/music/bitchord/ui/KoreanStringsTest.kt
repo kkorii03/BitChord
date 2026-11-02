@@ -1,11 +1,13 @@
 package com.music.bitchord.ui
 
+import com.music.bitchord.ui.replay.formatMinutes
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.w3c.dom.Element
 import java.io.File
+import java.util.Locale
 import javax.xml.parsers.DocumentBuilderFactory
 
 /**
@@ -81,6 +83,45 @@ class KoreanStringsTest {
         assertEquals("새 플레이리스트", value("tv", "tv_new_playlist"))
         assertEquals("플레이리스트에 추가", value("tv", "tv_add_to_playlist"))
     }
+
+    @Test
+    fun crawledLabelsUseOneAppleMusicTermAcrossScreens() {
+        // 11-03 crawl: the shelf says 내 분위기 찾기 but the screen title said
+        // 분위기 찾기, and the liked-song action said 음악 where every list says 노래.
+        assertEquals("내 분위기 찾기", value("app", "find_your_mood"))
+        assertEquals("내 분위기 찾기", value("sharedUi", "find_your_mood"))
+        assertEquals("좋아요 표시한 노래에서 제거", value("app", "remove_from_liked"))
+        assertEquals("좋아요 표시한 노래에서 제거", value("sharedUi", "remove_from_liked"))
+        // For You is a noun label in Apple Music, not a verb instruction.
+        assertEquals("나를 위한 추천", value("app", "personalized_recommendations"))
+        assertEquals("나를 위한 추천", value("sharedUi", "personalized_recommendations"))
+        // Shelf title uses the display joiner, not the awkward "X 외 비슷한".
+        assertEquals("%1\$s & 비슷한 아티스트", value("sharedUi", "top_pick_and_similar"))
+    }
+
+    @Test
+    fun replayMinutesPutTheUnitOnTheValueOnlyWhereTheLabelLacksIt() {
+        // Replay card: Apple Music puts the unit on the value, not in the label.
+        assertEquals("청취 시간", value("app", "minutes_listened"))
+        assertEquals("%1\$s분", value("app", "minutes_listened_value"))
+        // Every other locale keeps the unit in the label, so its value must not
+        // repeat it (ja 再生時間（分） + 1,237分 was the review finding).
+        assertEquals("%1\$s", defaultValue("minutes_listened_value"))
+        assertEquals("%1\$s", localeValue("ja", "minutes_listened_value"))
+        assertEquals("%1\$s", localeValue("zh", "minutes_listened_value"))
+        val koreanValue = String.format(
+            Locale.KOREA,
+            value("app", "minutes_listened_value").orEmpty(),
+            formatMinutes(1_237L * 60_000),
+        )
+        assertEquals("1,237분", koreanValue)
+    }
+
+    private fun defaultValue(key: String): String? =
+        strings(File(root, "app/src/main/res/values/strings.xml"))[key]
+
+    private fun localeValue(qualifier: String, key: String): String? =
+        strings(File(root, "app/src/main/res/values-$qualifier/strings.xml"))[key]
 
     private fun value(module: String, key: String): String? =
         strings(koreanFiles().first { it.first == module }.second)[key]
