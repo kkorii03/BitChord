@@ -1,0 +1,9 @@
+Kotlin Android app (v1.9 + Korean fork). Use grep/Select-String, not rg. Unknown kotlinx-coroutines-test APIs: check with context7.
+
+CI failure (app unit tests, ./gradlew :app:testProdDebugUnitTest, ko-wip-check.yml app test list):
+  SearchRequestPipelineTest > a request superseded before it starts never reaches the network FAILED
+      kotlinx.coroutines.test.UncaughtExceptionsBeforeTest at SearchRequestPipelineTest.kt:41
+SearchRequestPipeline itself is correct; UncaughtExceptionsBeforeTest means an EARLIER test in the same JVM leaked an uncaught exception from a coroutine (GlobalScope, an object-level scope, a Dispatchers.IO launch that outlives its test) which runTest then reports. It started with commit a5eeed3b (Gemini audio streamed into the request; VideoAudio 16 MB LRU) / 0f5cbbfd; earlier CI was green.
+Task: run the app unit tests from the CI list, find which test (or production object it drives) throws the uncaught exception, and fix the ROOT cause (the leak or the exception), not by disabling or reordering tests. Show the exception you found in the summary.
+YOUR SCOPE: the leaking test and the production file it exposes (+ tests). Do not touch .github/workflows.
+Finish with a summary of at most 10 lines: the leaking test + exception, files, REMOVED-LINES AUDIT, tests, what you did not do. Follow AGENTS.md (ponytail) rules.
