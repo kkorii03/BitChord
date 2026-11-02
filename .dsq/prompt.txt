@@ -1,0 +1,20 @@
+﻿Task: bring the Apple Music lyrics feel to our lyrics screen by porting AMLL's behavior. Kotlin / Jetpack Compose. Inputs in the repo: docs/amll-notes-1102.md (AMLL research, ranked 8 changes; reviewer corrections: the wide-layout anchor is computed from the cover centre, not a fixed 25%; a trailing background-vocal line slides DOWN from above (hiddenSlideY = -80); our long-word rule is max(900 ms, 200 ms x chars)), docs/cider-notes-1102.md, docs/apple-compare-1102.md.
+License: our repo is GPL-3.0; AMLL (github.com/amll-dev/applemusic-like-lyrics) is AGPL-3.0 and MAY be ported. You may clone it (git clone --depth 1 into /tmp/amll) and translate its logic/numbers to Kotlin. Put this header on every file that contains ported logic: "// Ported in part from AMLL (applemusic-like-lyrics, AGPL-3.0, (c) amll-dev contributors)".
+Do the 8 ranked changes of docs/amll-notes-1102.md in order, as far as they fit: word fill feather tied to font height; breathing interlude dots (gap >= 7 s, staged entry/exit); background gated (pause when not visible / screen off, fps cap); AMLL line hierarchy (opacity/scale/blur by distance); duration-first long-word emphasis; lighter translation sub-lines; cached line layout and clock-free rows outside the animation window; spring scrolling with per-line stagger and user-scroll pause + auto-return.
+Battery is the first priority after correctness: no per-frame work for lines outside the visible window, nothing animates when the screen is off or the lyrics are hidden, honour the app's low-power / reduce-animation settings (existing settings), cap frame rate where AMLL does.
+Keep sync correctness: lines and words must use the timings LyricsTiming.apply produces (base/hq/refine/per-line/hand); do not change timing logic.
+SCOPE: sharedUi/.../ui/player/PlayerLyrics.kt and sharedUi/.../ko/ui/player/* (lyrics panel parts, frame gate, transition), plus new files under sharedUi/.../ko/ui/player/. Do not edit PlaybackService, LyricsTiming, LyricsController, strings beyond new labels.
+Tests: JVM tests for the pure parts (word fill progress, emphasis threshold, interlude detection, blur/scale by distance, stagger delay) that fail on the old code. List names for CI.
+Finish with a summary of at most 15 lines: which of the 8 changes landed (with numbers), battery gates, files, tests, what you did not do.
+
+
+== 3 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 4
+- MEDIUM — `sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/MeshGradient.kt:163`: wrapping the shared phase with `% 2π` makes the 0.85/-0.7/-1.15-speed blobs jump once per turn because those offsets are not multiples of a full circle. Fix: keep the phase unwrapped or wrap each blob's angle only after multiplying by its speed.
+- MEDIUM — `MeshGradient.kt:144-146`: `lowPower` is read but only affects colour snapping, so `continuous` still animates the mesh in low-power mode. Fix: treat `lowPower` like `reduceAnimation` in the phase branch and add it to the `LaunchedEffect` keys.
+- MEDIUM — `sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/PlayerLyrics.kt:2310-2331`: `calmInterlude` forces only container/entry/exit; `through` still reads the clock every frame and animates the dot fill, so low-power/reduce still draws per-frame for the whole gap. Fix: hold `through` constant and skip the clock read in calm mode.
+- MEDIUM — `MeshGradient.kt:151-183`: the new frame-gated timing loop has no test, which is why the wrap discontinuity was not caught. Fix: extract the phase step into a pure function and add frame-skip/wrap tests.
+Skipped runtime visual instrumentation; risk is the visible periodic mesh jump and remaining low-power animation.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
