@@ -1906,10 +1906,13 @@ internal fun LyricsPanel(
     }
     // AMLL blurs a narrow viewport less (0.8x) so a phone column does not go
     // soft all at once; the read is the same cheap layout-info read as above.
+    // viewportSize is in physical pixels, so it must go through density first:
+    // a high-density phone is well over 1024 px wide but still a phone column.
     val viewportWidth by remember(listState) {
         derivedStateOf { listState.layoutInfo.viewportSize.width }
     }
-    val narrowViewport = viewportWidth in 1..1024
+    val narrowViewport = viewportWidth > 0 &&
+        with(LocalDensity.current) { viewportWidth.toDp() } <= 1024.dp
     val keepScroll = remember(listState) { keepScrollInList(listState) }
     var browsingByDrag by remember { mutableStateOf(false) }
     // While picking lines, the panel must not auto-scroll — the reader needs
@@ -2241,8 +2244,10 @@ internal fun LyricsPanel(
                 val gapMs = (until - line.timeMs).coerceAtLeast(0L)
                 // AMLL only breathes a break from 7 s; a shorter one keeps the
                 // static three-dot fill. Reduce-animation and low power hold
-                // the dots at rest and skip the whole breath.
-                val breathing = koInterludeBreathes(gapMs) && !reduceAnimation && !lowPower
+                // the dots at rest and skip the breath and the staged
+                // entry/exit, so there is no per-frame flourish left to draw.
+                val calmInterlude = reduceAnimation || lowPower
+                val breathing = koInterludeBreathes(gapMs) && !calmInterlude
                 // How far through the break the song is, held at 0 before it and
                 // 1 after: the dots read the clock only while it is running, so
                 // a break that is not playing never redraws — see SweptLyricLine.
@@ -2308,8 +2313,8 @@ internal fun LyricsPanel(
                                 ?: ((now - line.timeMs).toFloat() / span).coerceIn(0f, 1f)
                             val since = (now - line.timeMs).coerceAtLeast(0L)
                             val remaining = (until - now).coerceAtLeast(0L)
-                            val container = koInterludeContainerAlpha(since)
-                            val exit = koInterludeExitAlpha(remaining)
+                            val container = if (calmInterlude) 1f else koInterludeContainerAlpha(since)
+                            val exit = if (calmInterlude) 1f else koInterludeExitAlpha(remaining)
                             val breath = if (breathing) {
                                 koInterludeBreathScale(since, gapMs)
                             } else {
@@ -2323,7 +2328,7 @@ internal fun LyricsPanel(
                                 // Each dot owns its share of the break and
                                 // fills across it, so they light left to right.
                                 val lit = (through * GAP_DOTS - dot).coerceIn(0f, 1f)
-                                val entry = koInterludeDotEntryAlpha(dot, since)
+                                val entry = if (calmInterlude) 1f else koInterludeDotEntryAlpha(dot, since)
                                 val rawCenter = Offset(radius + dot * stride, pivotY)
                                 drawCircle(
                                     color = Color.White.copy(

@@ -62,10 +62,10 @@ class KoLyricsMotionTest {
         assertEquals(0.85f, KO_ACTIVE_LINE_ALPHA, 0.001f)
         assertEquals(0.97f, KO_INACTIVE_SCALE, 0.001f)
         assertEquals(0.dp, koLineBlurDp(0, narrow = false))
-        assertEquals(1.dp, koLineBlurDp(1, narrow = false))
-        assertEquals(3.dp, koLineBlurDp(3, narrow = false))
+        assertEquals(2.dp, koLineBlurDp(1, narrow = false))
+        assertEquals(4.dp, koLineBlurDp(3, narrow = false))
         assertEquals(5.dp, koLineBlurDp(12, narrow = false))
-        assertEquals(3.2f, koLineBlurDp(4, narrow = true).value, 0.001f)
+        assertEquals(4f, koLineBlurDp(4, narrow = true).value, 0.001f)
         assertEquals(5.dp, koLineBlurDp(20, narrow = true))
     }
 

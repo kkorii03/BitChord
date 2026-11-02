@@ -68,7 +68,7 @@ internal const val KO_NARROW_BLUR_SCALE = 0.8f
 
 internal fun koLineBlurDp(distance: Int, narrow: Boolean): Dp {
     if (distance <= 0) return 0.dp
-    val raw = distance.toFloat() * if (narrow) KO_NARROW_BLUR_SCALE else 1f
+    val raw = (1f + distance) * if (narrow) KO_NARROW_BLUR_SCALE else 1f
     return raw.coerceAtMost(KO_LINE_BLUR_CAP_PX).dp
 }
 
