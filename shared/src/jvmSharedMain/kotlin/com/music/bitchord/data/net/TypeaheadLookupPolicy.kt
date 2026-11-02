@@ -32,16 +32,44 @@ fun typeaheadCacheKey(input: String): String = input.trim()
 
 /**
  * The rows the suggestion dropdown shows: the text as typed, then YouTube's
- * completions without a repeat of it.
+ * completions without a repeat of it or the general-YouTube junk that comes
+ * back for a punctuation-only prefix ("·" returned news, anime and emoji
+ * channel names).
  *
  * Duplicates are removed because the rows become LazyColumn keys; two equal
  * completions from the server used to crash the list with "Key … was already
  * used". The typed text always stays first, so submitting exactly what is in
  * the field is the nearest action even when the server names it back.
  */
-fun suggestionRows(input: String, fetched: List<String>): List<String> =
-    (listOf(input) + fetched.filterNot { it.equals(input, ignoreCase = true) })
+fun suggestionRows(input: String, fetched: List<String>): List<String> {
+    val typed = input.trim()
+    // A prefix with no letter or digit is not a query YouTube Music can
+    // complete: its endpoint falls back to YouTube's general suggestions,
+    // which arrive with the punctuation echoed in front of every row.
+    val completions = if (typed.any { it.isLetterOrDigit() }) {
+        fetched.mapNotNull { row ->
+            row.trim().takeIf { it.isNotBlank() && !it.hasEmoji() }
+                ?.takeIf { it.startsWith(typed, ignoreCase = true) }
+        }
+    } else {
+        emptyList()
+    }
+    return (listOf(typed) + completions.filterNot { it.equals(typed, ignoreCase = true) })
         .distinctBy { it.lowercase() }
+}
+
+/** Emoji and variation selectors only appear in channel-name junk suggestions. */
+private fun String.hasEmoji(): Boolean {
+    var index = 0
+    while (index < length) {
+        val codePoint = codePointAt(index)
+        if (codePoint in 0x1F000..0x1FAFF || codePoint in 0xFE00..0xFE0F) {
+            return true
+        }
+        index += Character.charCount(codePoint)
+    }
+    return false
+}
 
 /**
  * Whether an answer still belongs on screen. A late response from an older
