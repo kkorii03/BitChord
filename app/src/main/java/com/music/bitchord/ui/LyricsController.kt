@@ -26,6 +26,7 @@ import com.music.bitchord.playback.smart.SyncTestMode
 import com.music.bitchord.playback.smart.VideoAudio
 import com.music.bitchord.ui.player.LyricsTimingUi
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -76,6 +77,9 @@ class LyricsController(
 
     /** The repository call; a seam for tests, as [LyricsRepository.transcriber] is there. */
     internal var lyricsLookup: LyricsLookup = LyricsRepository::lyrics
+
+    /** Where sync-test dumps keep their wav and log; [Dispatchers.IO], controllable in tests. */
+    internal var syncDumpDispatcher: CoroutineDispatcher = Dispatchers.IO
 
     /**
      * The controller's own backstop on the whole lookup, a beat past the
@@ -197,6 +201,9 @@ class LyricsController(
     )
 
     private var currentLyricsRequest: LyricsRequest? = null
+
+    /** Read from the sync-dump IO coroutine too, so the guard sees a track switch. */
+    @Volatile
     private var lyricsGeneration = 0L
     private var selectedLyricsSource: LyricsSource? = null
 
@@ -764,6 +771,7 @@ class LyricsController(
     }
 
     /** The lines on screen before any timing moved them; what [LyricsTiming] works from. */
+    @Volatile
     private var timingLines: List<LyricLine>? = null
 
     /** Whether [timingLines] may be moved onto the video's clock, or only corrected by hand. */
@@ -853,6 +861,7 @@ class LyricsController(
             aiAvailable = request != null && aiTimingAvailable(request, lines),
         )
         val hasRequest = request != null
+        val generation = lyricsGeneration
         // Sync-test mode only: every played song keeps its opening, even when
         // its song check is skipped, and a sheet that never gets a timing pass
         // still logs the lines the screen shows (otherwise it has no sync-dump
@@ -860,8 +869,11 @@ class LyricsController(
         if (request != null && lines != null) {
             val provider = shownProvider(lines)
             val untimed = !timed
-            scope.launch(Dispatchers.IO) {
-                if (untimed) {
+            scope.launch(syncDumpDispatcher) {
+                // A later timing pass for the same video must not be preceded
+                // by this sheet's stale base=none block: the scorer takes the
+                // last block, so it would score 0 ms lines from the old sheet.
+                if (untimed && generation == lyricsGeneration && timingLines === lines) {
                     SyncTestMode.report(app, request.videoId, provider, "none", 0L, null, lines)
                 }
                 SyncTestMode.keepHead(app, request.videoId, request.localUri)
@@ -876,7 +888,6 @@ class LyricsController(
             )
             return
         }
-        val generation = lyricsGeneration
         val context = app
         lyricsTimingJob = scope.launch(timingFailureHandler) {
             // Whatever else changes this video's timing — the lock screen, the

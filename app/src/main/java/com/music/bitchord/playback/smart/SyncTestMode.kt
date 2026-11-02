@@ -145,12 +145,16 @@ object SyncTestMode {
         write(context, videoId, wav)
     }
 
+    // Serialized: keepHead and a song check can keep the same id at once, and
+    // the rename fallback deletes the target before replacing it. Unique temp
+    // names keep a write from ever sharing another's partial file.
+    @Synchronized
     private fun write(context: Context, id: String, wav: ByteArray) {
         runCatching {
             val root = externalRoot(context) ?: return@runCatching
             val dir = File(root, WAV_DIR).apply { mkdirs() }
             val file = File(dir, "${safeName(id)}.wav")
-            val temporary = File(dir, "${file.name}.tmp")
+            val temporary = File.createTempFile("${file.name}.", ".tmp", dir)
             try {
                 temporary.writeBytes(wav)
                 if (!temporary.renameTo(file)) {
