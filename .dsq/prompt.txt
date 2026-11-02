@@ -1,0 +1,20 @@
+﻿Kotlin Android app = upstream v1.9 + our Korean fork, on branch task/u19-tg. The Korean fork as it was on 1.8 is origin/task/telegram (fetch it: git fetch origin task/telegram). Battery first: event-driven, no polling/timers; never block the main thread. Use grep/Select-String, not rg. Unknown Android/Media3/Compose APIs: check with context7.
+
+Problem: the 1.9 merge silently dropped Korean-fork behaviour. Found on the phone tonight: fetchHistory lost its StoredSongDisplay.clean, the Recents shelf dropped isVideo, a [KO] first-sound change deadlocked DirectSourceGate, cleanCoverTitle grew "( )" on every pass. The user says 1.9 is a mess: wrong titles, odd Korean wording, features that do nothing.
+
+YOUR AREA: Library (보관함): playlists, liked songs, downloads list, albums, artists tabs
+Start from these files (and what they call): sharedUi/.../ui/screens/Library*.kt, app/.../ko/*Library*, download list screens
+Task: compare the area on origin/task/telegram (1.8 fork) with task/u19-tg (git diff origin/task/telegram task/u19-tg -- <files>, plus git log -S on key symbols). List every user-visible behaviour of 1.8 that is missing or changed in 1.9 (titles/artists shown, Korean wording, a button or feature that no longer does anything, a hook whose call disappeared, a flag no longer passed through). Fix each real regression with the smallest change, keeping v1.9's own improvements (on overlap the better one wins). Each fix gets a JVM test that fails on the current task/u19-tg code; tests must not need network.
+Do not touch .github/workflows. Do not refactor or move upstream code. Keep edits inside YOUR AREA's files where possible (other lanes run in parallel); list any needed change outside it in the summary instead of making it.
+Finish with a summary of at most 12 lines: regressions found (1.8 behaviour -> 1.9 behaviour), files, REMOVED-LINES AUDIT, tests (fail-before/pass-after, class names for the CI list), what you did not do. Follow AGENTS.md (ponytail) rules.
+
+
+== 3 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 3
+1. MEDIUM — app/src/main/java/com/music/bitchord/ui/LyricsController.kt:1479 (also :1191, :1525) — the new `timingFailureHandler` is installed only on `lyricsTimingJob`; `aiTimingJob` and `earlyMeasureJob` are separate `scope.launch` calls on the Main dispatcher, so an automatic/manual AI or measurement failure still reaches the uncaught handler and can crash the app, contrary to the comment at :121. Fix: launch those jobs with the handler or wrap their bodies, and add a test that forces a throw.
+2. MEDIUM — commit c482fb99 summary — it has no regression list, test class names, or REMOVED-LINES AUDIT for the removed `conclusive = true`, `Context` type/import, `scope.cancel()`, and old `prepare =` expression. Fix: supply the required audit (and confirm each removal is justified).
+3. MEDIUM — app/src/main/java/com/music/bitchord/playback/QualityUpgrade.kt:588, app/src/main/java/com/music/bitchord/ui/player/CanvasArtworkPlayer.kt:339, sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/NowPlayingScreen.kt:1909 — these hunks duplicate the already-merged hq/player/ci lane commits (ef8458b3, 33b13f7d, 48d4d5b9) outside the Library area; the prompt says to list such changes instead of making them, and re-applying them risks merge conflicts. Fix: drop them from this lane and list them in the summary.
+Not checked: full test suite execution.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
