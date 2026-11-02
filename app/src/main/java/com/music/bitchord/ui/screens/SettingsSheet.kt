@@ -1103,6 +1103,13 @@ fun SettingsScreen(
             KoHiddenExploreRow(koHiddenExplore) // [KO] hidden-explore
         }
 
+        // The lyrics page is its own route (the LYRICS category opens it), so
+        // its rows are not in this sheet; while searching, this entry is what
+        // a "가사 싱크"-style query finds.
+        if (searching) SearchableSettingsGroup(search) {
+            KoLyricsEntryRow(onOpenLyrics) // [KO] lyrics-entry
+        }
+
         if (shows(SettingsCategory.PERFORMANCE)) SearchableSettingsGroup(search, header = stringResource(R.string.performance)) {
             val highPerformanceModeTitle = stringResource(R.string.high_performance_mode)
             row(highPerformanceModeTitle, "frame rate", "refresh rate", "hz", "battery", "smooth") {
