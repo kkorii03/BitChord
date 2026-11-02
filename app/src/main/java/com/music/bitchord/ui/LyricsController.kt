@@ -29,7 +29,9 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -1018,6 +1020,9 @@ class LyricsController(
                 var attempts = 0
                 val giveUpAt = System.currentTimeMillis() + MEASURE_WINDOW_MS
                 suspend fun measureOnce(): Boolean {
+                    // A job cancelled between steps (a new track, or the owner
+                    // going away) must stop before touching the timing store.
+                    currentCoroutineContext().ensureActive()
                     if (!lyricsMeasurementAllowed(
                             attempts = attempts,
                             maxAttempts = MAX_MEASURE_ATTEMPTS,
@@ -1064,6 +1069,7 @@ class LyricsController(
                         if (!measureOnce()) break
                     }
                 }
+                currentCoroutineContext().ensureActive()
                 if (!calibration && !LyricsTiming.measuredTiming(context, request.videoId)) {
                     aiAhead(context, request.videoId, lines)
                     refreshTiming(generation, lines)

@@ -79,6 +79,8 @@ suspend fun loadAutoplayTracks(
         mode == AutoplayMode.VIDEO_RADIO &&
         !ListenTogether.state.value.inParty
     val offline = AppSettings.meteredConnection.value == null
+    // A music video plays on with music videos, as YouTube Music does.
+    val videos = seedSong.isVideo && seed == seedSong.videoId
 
     // Offline the only video songs that can play are the downloaded ones; no
     // station request is worth starting just to fail.
@@ -114,7 +116,7 @@ suspend fun loadAutoplayTracks(
         var radioResult: Result<List<Song>>? = null
 
         if (pick.ordered.size < MIN_VIDEO_RADIO_TRACKS) {
-            radioResult = YtMusicRepository.radio(seed)
+            radioResult = YtMusicRepository.radio(seed, preferVideo = true)
             val radio = radioResult.getOrElse { emptyList() }
             if (radio.isNotEmpty()) {
                 val merged = mergeVideoSources(sourceSongs, sourceMap, radio, VideoSource.RADIO)
@@ -141,7 +143,7 @@ suspend fun loadAutoplayTracks(
         // of the same world, and is normally already in the radio cache. This
         // is only paid when the seed's own material was too thin.
         if (pick.ordered.size < MIN_VIDEO_RADIO_TRACKS && AppSettings.heavyWorkAllowed) {
-            val sessionRadio = sessionRadioFor(seedSong, sessionSong)
+            val sessionRadio = sessionRadioFor(seedSong, sessionSong, preferVideo = true)
             if (sessionRadio.isNotEmpty()) {
                 val merged = mergeVideoSources(
                     sourceSongs,
@@ -177,7 +179,7 @@ suspend fun loadAutoplayTracks(
             TrackLog.i("BitChord", pick.logLine(stage.wire), about = seedSong.videoId)
         }
         val fallback = radioResult ?: try {
-            YtMusicRepository.radio(seed)
+            YtMusicRepository.radio(seed, preferVideo = true)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Throwable) {
@@ -200,6 +202,7 @@ suspend fun loadAutoplayTracks(
                 limit = limit,
                 sessionSong = sessionSong,
                 sessionIds = sessionIds,
+                preferVideos = true,
                 onEmpty = { fallbackLog(VideoRadioFallback.EMPTY) },
                 onFilled = { fallbackLog(VideoRadioFallback.NORMAL) },
             )
@@ -231,6 +234,7 @@ suspend fun loadAutoplayTracks(
             limit = limit,
             sessionSong = sessionSong,
             sessionIds = sessionIds,
+            preferVideos = true,
             onEmpty = { fallbackLog(VideoRadioFallback.EMPTY) },
             onFilled = { fallbackLog(VideoRadioFallback.NORMAL) },
         )
@@ -249,7 +253,8 @@ suspend fun loadAutoplayTracks(
         return normal
     }
 
-    val radio = YtMusicRepository.radio(seed).getOrElse { return Result.failure(it) }
+    val radio = YtMusicRepository.radio(seed, preferVideo = videos)
+        .getOrElse { return Result.failure(it) }
     return loadNormalAutoplayTracks(
         existing = existing,
         seedSong = seedSong,
@@ -257,6 +262,7 @@ suspend fun loadAutoplayTracks(
         limit = limit,
         sessionSong = sessionSong,
         sessionIds = sessionIds,
+        preferVideos = videos,
         onEmpty = {
             TrackLog.i(
                 "BitChord",
@@ -427,6 +433,7 @@ private suspend fun loadNormalAutoplayTracks(
     limit: Int,
     sessionSong: Song?,
     sessionIds: Set<String>,
+    preferVideos: Boolean = false,
     onEmpty: () -> Unit,
     onFilled: (Int) -> Unit,
 ): Result<List<Song>> {
@@ -437,9 +444,15 @@ private suspend fun loadNormalAutoplayTracks(
     // (queue exactly as YouTube returned it) is held to the same rule.
     val related = coverFilteredRadio(seedSong, radio)
     val extra = if (AppSettings.personalisedAutoplay.value) {
-        rankedExtensions(existing, seedSong, sessionSong, related, limit, sessionIds)
+        rankedExtensions(existing, seedSong, sessionSong, related, limit, sessionIds, preferVideos)
     } else {
-        QueueBuilder.extend(existing, related, limit, seedArtist = seedSong.artist)
+        QueueBuilder.extend(
+            existing,
+            related,
+            limit,
+            preferVideos = preferVideos,
+            seedArtist = seedSong.artist,
+        )
             .filterNot { it.videoId in sessionIds }
             .also { songs ->
                 TrackLog.i(
@@ -527,6 +540,7 @@ private suspend fun rankedExtensions(
     seedRadio: List<Song>,
     limit: Int,
     sessionIds: Set<String>,
+    preferVideos: Boolean = false,
 ): List<Song> {
     val sessionRadio = autoplayRowsAfterCoverFilter(
         sessionRadioFor(seedSong, sessionSong),
@@ -575,7 +589,13 @@ private suspend fun rankedExtensions(
     // Apply the queue's de-duplication and per-artist caps first, with room to
     // spare, so the ordering pass below sees rows that will really be playable.
     val rankedSongs = ranked.mapNotNull { known[it.videoId] }
-    val eligible = QueueBuilder.extend(existing, rankedSongs, limit * 2, seedArtist = seedSong.artist)
+    val eligible = QueueBuilder.extend(
+        existing,
+        rankedSongs,
+        limit * 2,
+        preferVideos = preferVideos,
+        seedArtist = seedSong.artist,
+    )
     val eligibleIds = eligible.mapTo(HashSet()) { it.videoId }
     val ordered = AutoplayOrder.order(
         candidates = ranked.filter { it.videoId in eligibleIds },
@@ -674,12 +694,16 @@ private suspend fun localTracksWithMetadata(seedSong: Song): List<LocalTrack> {
 private const val METADATA_LOOKUP_LIMIT = 600
 
 /** The last completed track's radio, or empty when it would repeat the seed. */
-private suspend fun sessionRadioFor(seedSong: Song, sessionSong: Song?): List<Song> {
+private suspend fun sessionRadioFor(
+    seedSong: Song,
+    sessionSong: Song?,
+    preferVideo: Boolean = false,
+): List<Song> {
     if (sessionSong == null) return emptyList()
     // The same recording is the same statement of intent; don't pay for its
     // radio twice just because the upload ids differ.
     if (QueueBuilder.isSameRecording(sessionSong, seedSong)) return emptyList()
     if (!AppSettings.heavyWorkAllowed) return emptyList()
     val seed = youtubeSeedFor(sessionSong) ?: return emptyList()
-    return YtMusicRepository.radio(seed).getOrNull().orEmpty()
+    return YtMusicRepository.radio(seed, preferVideo = preferVideo).getOrNull().orEmpty()
 }
