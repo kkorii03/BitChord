@@ -304,7 +304,7 @@ fun SearchScreen(
             // the app has one look for "pick one of these".
             if (results != null && !suggesting && !searchingLibrary && !searchingAddons) {
                 PillSegmentedControl(
-                    options = SearchFilter.entries.map { it.label },
+                    options = SearchFilter.entries.map { it.localizedLabel() },
                     selectedIndex = filter.ordinal,
                     onSelect = { onFilterChange(SearchFilter.entries[it]) },
                     modifier = Modifier.padding(start = PAGE_GUTTER, end = PAGE_GUTTER, bottom = 6.dp),
@@ -1269,3 +1269,17 @@ internal fun <T> UiState<List<T>>?.hasNoResults(): Boolean = koHasNoResults(this
 
 // [KO] search-browse-label — restored Korean-fork helper, now in ko/ui.
 internal fun browseFallbackLabel(type: BrowseType): StringResource = koBrowseFallbackLabel(type)
+
+// [KO] search-filter-label — the filter pills follow the app language (lost in the 1.9 merge).
+internal fun SearchFilter.labelResource(): StringResource = when (this) {
+    SearchFilter.ALL -> Res.string.search_filter_all
+    SearchFilter.SONGS -> Res.string.songs
+    SearchFilter.VIDEOS -> Res.string.search_filter_videos
+    SearchFilter.EPISODES -> Res.string.search_filter_episodes
+    SearchFilter.ALBUMS -> Res.string.albums
+    SearchFilter.ARTISTS -> Res.string.artists
+    SearchFilter.PLAYLISTS -> Res.string.playlists
+}
+
+@Composable
+private fun SearchFilter.localizedLabel(): String = stringResource(labelResource())

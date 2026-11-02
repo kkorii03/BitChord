@@ -21,7 +21,7 @@ class KoreanStringsTest {
     @Test
     fun koreanCopyHasNoCasualHaeyoEndings() {
         val casual = listOf(
-            "하세요", "해 주세요", "해주세요", "보세요", "주세요",
+            "세요", "하세요", "해 주세요", "해주세요", "보세요", "주세요",
             "있어요", "없어요", "돼요", "할게요", "거예요", "예요", "이에요",
             "나요", "가요",
         )
@@ -58,6 +58,11 @@ class KoreanStringsTest {
         assertEquals("다음 항목", value("tv", "tv_up_next"))
         assertEquals("나중에 재생", value("tv", "tv_play_last"))
         assertEquals("다음 항목 재생", value("wearos", "up_next"))
+    }
+
+    @Test
+    fun autoplayEmptyCopyFollowsTheV19Behaviour() {
+        assertEquals("비슷한 음악이 계속 재생됩니다", value("sharedUi", "autoplay_empty_description"))
     }
 
     @Test

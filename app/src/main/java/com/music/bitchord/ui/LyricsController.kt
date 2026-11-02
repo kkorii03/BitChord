@@ -26,10 +26,13 @@ import com.music.bitchord.playback.smart.SyncTestMode
 import com.music.bitchord.playback.smart.VideoAudio
 import com.music.bitchord.ui.player.LyricsTimingUi
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -853,7 +856,15 @@ class LyricsController(
         }
         val generation = lyricsGeneration
         val context = app
-        lyricsTimingJob = scope.launch {
+        // Measurement is best-effort. A store read that fails while this job is
+        // being cancelled (a new track, a cleared view model) must not become
+        // an uncaught exception in the player's scope.
+        val timingFailureHandler = CoroutineExceptionHandler { _, error ->
+            if (error !is kotlinx.coroutines.CancellationException) {
+                TrackLog.w("BitChord", "lyrics-timing pass failed", error, request.videoId)
+            }
+        }
+        lyricsTimingJob = scope.launch(timingFailureHandler) {
             // Whatever else changes this video's timing — the lock screen, the
             // next-song preparation measuring it first — shows here too.
             launch {
@@ -1018,6 +1029,10 @@ class LyricsController(
                 var attempts = 0
                 val giveUpAt = System.currentTimeMillis() + MEASURE_WINDOW_MS
                 suspend fun measureOnce(): Boolean {
+                    // A new track (or a cleared view model) cancels this job;
+                    // stop before the next store read instead of measuring on
+                    // for a playback that is gone.
+                    currentCoroutineContext().ensureActive()
                     if (!lyricsMeasurementAllowed(
                             attempts = attempts,
                             maxAttempts = MAX_MEASURE_ATTEMPTS,
@@ -1188,6 +1203,7 @@ class LyricsController(
 
     /** Puts what [LyricsTiming] knows for the current video onto [lines] and the line under them. */
     private suspend fun refreshTiming(generation: Long, lines: List<LyricLine>) {
+        currentCoroutineContext().ensureActive()
         val request = currentLyricsRequest ?: return
         // A substituted file has a different clock from the YouTube upload the
         // saved measurement/AI answer was made against. Checked here as well as
