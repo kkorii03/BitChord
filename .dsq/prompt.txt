@@ -1,0 +1,12 @@
+Kotlin Android app = upstream v1.9 + Korean fork (task/u19-tg; 1.8 fork = origin/task/telegram). Right song is priority 1: an official music video must play as its song version (audio), never as the MV. Use grep/Select-String, not rg. Every fix gets a JVM test that fails on current code (no network). Do not touch .github/workflows.
+
+Phone 11-03 08:49, YouTube Music playlist '기분 좋은 팝과 록' (official MVs): many rows switched fine, but:
+  audio switch: query=chocolate the 1975
+  audio switch: reject E6ZZbPB8WSQ Chocolate reason=artist
+  audio switch: reject x4kijUl0lrM Chocolate reason=artist
+  audio switch: reject q_8rnM4d9HU Chocolate reason=artist
+  song version: CHk5SWVO4p8 kept (timeout) / kept (retry) / -> none via none
+so 'Chocolate' by 'The 1975' stayed the MV (black video box, 'video song crossfade'). Likely the artist comparison breaks on an artist name that is a number or starts with 'The' ('The 1975' vs '1975', digits dropped by normalisation). Also:
+  audio switch: no official song match for 'Get Lucky (feat. Pharrell Williams, Nile Rodgers)' by 'Daft Punk' (rejects: reason=artist for imDKnNvqpq0).
+Fix the audio-switch matcher (TrackMatcher / KoTrackMatcher / the audio switch in YtMusicRepository / Player 'audio switch' code) so these official songs match while covers, karaoke and different songs stay rejected; also check why the first attempt timed out ('kept (timeout)'). Tests with these exact titles/artists both ways (right song accepted, cover/karaoke/other artist rejected).
+Summary of at most 12 lines: cause (file:line), fix, REMOVED-LINES AUDIT, tests (class names for CI), what you did not do. Follow AGENTS.md (ponytail) rules.
