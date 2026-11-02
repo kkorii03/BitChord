@@ -35,9 +35,14 @@ case "${GITHUB_REF_NAME:-}" in *review*) SCENARIO_MODE=1 ;; esac
 if [ "$SCENARIO_MODE" = 0 ]; then
   case "${GITHUB_REF_NAME:-}" in *mv*) SONGS_FILE=scripts/smoke/songs-mv.txt ;; esac
 fi
-WAIT_PER_SONG=45
-HQ_WAIT_PER_SONG=90
-SYNC_WAIT_PER_SONG=75
+# Long enough for the song check to land (11-02): on the emulator the sync
+# correction arrives 2-3.7 min after a track starts (the stream comes through
+# the home proxy at about playback speed), so at 45-75 s per song every song
+# was scored on the lyrics as they were before any correction, and the
+# corrections that did arrive were dropped as stale. 10 songs x 150 s = 25 min.
+WAIT_PER_SONG=${SMOKE_WAIT_S:-150}
+HQ_WAIT_PER_SONG=${SMOKE_WAIT_S:-150}
+SYNC_WAIT_PER_SONG=${SMOKE_WAIT_S:-150}
 START_TIMEOUT=20
 FALLBACK_TIMEOUT=15
 HQ_CONFIGURED=0
