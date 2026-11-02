@@ -26,6 +26,7 @@ import com.music.bitchord.playback.smart.SyncTestMode
 import com.music.bitchord.playback.smart.VideoAudio
 import com.music.bitchord.ui.player.LyricsTimingUi
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -100,6 +101,11 @@ class LyricsController(
 
     /** How long to keep looking — longer than any video worth measuring takes to arrive. */
     private val MEASURE_WINDOW_MS = 15 * 60_000L
+
+    /** A failed measurement pass is logged, not left as an uncaught coroutine failure. */
+    private val timingFailureHandler = CoroutineExceptionHandler { _, error ->
+        TrackLog.d("BitChord", "lyrics-timing: pass failed: ${error.message}")
+    }
 
     /** How the lyrics on screen were moved onto the video's clock — see [LyricsTiming]. */
     private val _lyricsTiming = MutableStateFlow(LyricsTimingUi())
@@ -853,7 +859,7 @@ class LyricsController(
         }
         val generation = lyricsGeneration
         val context = app
-        lyricsTimingJob = scope.launch {
+        lyricsTimingJob = scope.launch(timingFailureHandler) {
             // Whatever else changes this video's timing — the lock screen, the
             // next-song preparation measuring it first — shows here too.
             launch {
