@@ -1055,8 +1055,8 @@ internal object KoTrackMatcher {
         if (words.isEmpty()) return true
         if (phraseTakes(words).isNotEmpty()) return true
         return words.all {
-            it in VERSION_WORDS || it in TRAILING_NOISE || it in NOISE_WORDS ||
-                it in PACKAGING_CONNECTORS || it.all(Char::isDigit)
+            it in VERSION_WORDS || it in NEUTRAL_SUFFIX_WORDS || it in TRAILING_NOISE ||
+                it in NOISE_WORDS || it in PACKAGING_CONNECTORS || it.all(Char::isDigit)
         }
     }
 
@@ -1247,16 +1247,30 @@ internal object KoTrackMatcher {
         // its name.
         while (words.size > 1) {
             val last = words.last()
+            val previous = words.getOrNull(words.size - 2)
+            val speedTake = trailingPhraseTake(words)
+            // "Song Band Ver." / "Song Piano Version": the qualifier and its
+            // version word are one take, so both leave the core together.
+            if (words.size > 2 && previous != null &&
+                previous in QUALIFIER_TAKES && last in LANGUAGE_PACKAGING
+            ) {
+                versions += canonicalTake(previous)
+                words = words.dropLast(2)
+                droppedTail += 2
             // "Version"/"Edition" after a bracketed take is packaging, not a
             // take: "Song (Live) Version" is the live recording of "Song", and
             // leaving the word in the core made the exact-title gates refuse it.
-            if (last in TRAILING_NOISE || last in NEUTRAL_SUFFIX_WORDS) {
+            } else if (last in TRAILING_NOISE || last in NEUTRAL_SUFFIX_WORDS) {
                 words = words.dropLast(1)
                 droppedTail++
             } else if (last in TRAILING_TAKES) {
                 versions += canonicalTake(last)
                 words = words.dropLast(1)
                 droppedTail++
+            } else if (words.size > 2 && speedTake != null) {
+                versions += speedTake
+                words = words.dropLast(2)
+                droppedTail += 2
             } else break
         }
 
@@ -1385,6 +1399,17 @@ internal object KoTrackMatcher {
         // the neutral "Radio Version".
         val words = rawWords.map(::canonicalTake)
         if (words.joinToString("") in NEUTRAL_SEGMENTS) return
+        // A qualifier word counts only as the whole segment or when a version
+        // word qualifies it ("Band Ver."). Otherwise "From Band of Brothers"
+        // and "Mr. Jones" would read as takes and stop matching the original.
+        val qualifiers = rawWords.filter { it in QUALIFIER_TAKES }
+        val qualified = qualifiers.size == rawWords.size ||
+            rawWords.any { it in LANGUAGE_PACKAGING }
+        // Drop an unqualified qualifier before canonicalisation: "inst" and
+        // "mr" would otherwise fold to "instrumental" and become takes again.
+        val identity = rawWords
+            .filter { it !in QUALIFIER_TAKES || qualified }
+            .map(::canonicalTake)
         // Text before a named soundtrack label is the work name, not the
         // song's take: "Korean OST Drama" names a Korean-drama soundtrack,
         // while the language of the take can only follow the label
@@ -1417,10 +1442,11 @@ internal object KoTrackMatcher {
             // Translation") names the work or the listing, not a take, so it
             // stays out of versions and cannot reject the plain catalogue row.
             versions += languages
-            versions += words.filter { it in VERSION_WORDS && it !in LANGUAGE_PACKAGING }
+            versions += identity.filter { it in VERSION_WORDS && it !in LANGUAGE_PACKAGING }
             return
         }
-        val marks = words.filter { it in VERSION_WORDS } + phraseTakes(words)
+        val qualifierMarks = if (qualified) qualifiers.map(::canonicalTake) else emptyList()
+        val marks = identity.filter { it in VERSION_WORDS } + qualifierMarks + phraseTakes(words)
         if (marks.isNotEmpty()) {
             versions += marks
             return
@@ -1434,10 +1460,14 @@ internal object KoTrackMatcher {
             val next = words.getOrNull(at + 1)
             when {
                 word in setOf("sped", "speed") && next == "up" -> add("sped")
-                word == "slow" && next == "down" -> add("slowed")
+                word in setOf("slow", "slowed") && next == "down" -> add("slowed")
             }
         }
     }
+
+    /** The canonical key of a two-word speed/slow edit at the end of [words]. */
+    private fun trailingPhraseTake(words: List<String>): String? =
+        if (words.size < 2) null else phraseTakes(words.takeLast(2)).firstOrNull()
 
     /**
      * Whether [text] is only a language version of the title ("Korean",
@@ -1615,6 +1645,13 @@ internal object KoTrackMatcher {
         "피아노" to "piano",
         "밴드" to "band",
         "리메이크" to "remake",
+        "리믹스" to "remix",
+        "라이브" to "live",
+        "커버" to "cover",
+        "リミックス" to "remix",
+        "ライブ" to "live",
+        "カバー" to "cover",
+        "インスト" to "instrumental",
         // Backing tracks: no lead vocal, so they never stand in for the record.
         "반주" to "instrumental",
         "인스트" to "instrumental",
@@ -1629,7 +1666,7 @@ internal object KoTrackMatcher {
     private fun canonicalTake(word: String): String = TAKE_ALIASES[word] ?: word
 
     /** Packaging words that follow a soundtrack label without naming a take. */
-    private val NEUTRAL_SUFFIX_WORDS = setOf("version", "edition")
+    private val NEUTRAL_SUFFIX_WORDS = setOf("version", "ver", "버전", "バージョン", "edition")
 
     // Forwarders to upstream members that remain in TrackMatcher.
     internal fun normalize(text: String): String = TrackMatcher.normalize(text)
@@ -1655,6 +1692,7 @@ internal object KoTrackMatcher {
     private val CJK_CLOSE: Regex get() = TrackMatcher.CJK_CLOSE
     private val ARTIST_SEPARATORS: Regex get() = TrackMatcher.ARTIST_SEPARATORS
     private val VERSION_WORDS: Set<String> get() = TrackMatcher.VERSION_WORDS
+    private val QUALIFIER_TAKES: Set<String> get() = TrackMatcher.QUALIFIER_TAKES
     private val TRAILING_TAKES: Set<String> get() = TrackMatcher.TRAILING_TAKES
     private val NOVOCAL_TAKES: Set<String> get() = TrackMatcher.NOVOCAL_TAKES
     private val NEUTRAL_SEGMENTS: Set<String> get() = TrackMatcher.NEUTRAL_SEGMENTS

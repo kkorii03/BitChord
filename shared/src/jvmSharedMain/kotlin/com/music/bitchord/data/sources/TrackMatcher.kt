@@ -966,20 +966,27 @@ object TrackMatcher {
         // remotely the recording anybody asked for.
         "vocals", "vocal", "acapella", "acappella", "cappella", "backing", "stems", "stem",
         "cover", "demo", "reprise", "remake", "rework", "extended", "edit",
-        "version", "ver", "mix", "dub", "vip", "session", "sessions",
-        // A qualified take ("Piano Ver.", "Band Version"). They are not in
-        // TRAILING_TAKES, so a bare trailing "Song Piano" keeps its title.
-        "piano", "band", "inst",
+        "mix", "dub", "vip", "session", "sessions",
         "sped", "spedup", "speedup", "slowed", "sloweddown", "slowdown",
         "reverb", "nightcore", "lofi", "orchestral", "symphonic",
         "part", "pt", "chapter",
         // Non-Latin spellings of the same takes. Without these a `カバー` or
         // `カラオケ` row carries no version marker and scores as the original.
         "カバー", "カラオケ", "リミックス", "ライブ", "アコースティック",
-        "インスト", "バージョン", "歌ってみた", "踊ってみた", "弾いてみた",
+        "インスト", "歌ってみた", "踊ってみた", "弾いてみた",
         "翻唱", "现场", "混音",
-        "커버", "라이브", "리믹스", "어쿠스틱", "피아노", "밴드", "리메이크",
-        "반주", "인스트", "버전", "mr",
+        "커버", "라이브", "리믹스", "어쿠스틱", "리메이크",
+        "반주", "인스트",
+    )
+
+    /**
+     * Words that only mean a take as the whole segment ("Song (Piano)") or
+     * when a version word qualifies them ("Piano Ver.", "Band Version").
+     * Inside a longer title they are ordinary words: "From Band of Brothers"
+     * and "Mr. Jones" are not takes.
+     */
+    internal val QUALIFIER_TAKES = setOf( // [KO] track-matcher
+        "piano", "band", "inst", "mr", "피아노", "밴드", "인스트",
     )
 
     /**
@@ -991,10 +998,9 @@ object TrackMatcher {
      */
     internal val TRAILING_TAKES = setOf( // [KO] track-matcher
         "instrumental", "karaoke", "acapella", "acappella", "cappella", "remix", "rmx", "nightcore",
-        // "Ver." is never a title-ending word by itself; without it a bare
-        // "Song Band Ver." keeps the qualifier in the core and matches neither
-        // the original nor "Song (Band Version)".
-        "ver",
+        // Hyphenated speed edits arrive as one token; the spaced forms are
+        // handled as phrases in the title parser.
+        "spedup", "speedup", "sloweddown", "slowdown",
     )
 
     /**

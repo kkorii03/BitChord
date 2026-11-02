@@ -63,6 +63,63 @@ class TrackMatcherTakeSpellingTest {
     }
 
     @Test
+    fun `qualifier words inside a longer bracket are not takes`() {
+        val original = TrackMatcher.Target("Song", "Artist", durationSec = 200)
+        listOf(
+            "Song (From Band of Brothers)",
+            "Song (Mr. Jones)",
+        ).forEach { neutral ->
+            assertTrue(
+                "$neutral must match Song",
+                accepted(original, song(neutral, "Artist", "3:20")),
+            )
+            assertTrue(
+                "Song must match $neutral",
+                accepted(TrackMatcher.Target(neutral, "Artist", durationSec = 200), song("Song", "Artist", "3:20")),
+            )
+        }
+        assertFalse(
+            "Song (Mr. Jones) must not match Song (Instrumental)",
+            accepted(
+                TrackMatcher.Target("Song (Instrumental)", "Artist", durationSec = 200),
+                song("Song (Mr. Jones)", "Artist", "3:20"),
+            ),
+        )
+        assertFalse(
+            "Song (From Band of Brothers) must not match Song (Band Version)",
+            accepted(
+                TrackMatcher.Target("Song (Band Version)", "Artist", durationSec = 200),
+                song("Song (From Band of Brothers)", "Artist", "3:20"),
+            ),
+        )
+    }
+
+    @Test
+    fun `bare version and ver stay neutral`() {
+        val original = TrackMatcher.Target("Song", "Artist", durationSec = 200)
+        listOf("Song (Ver.)", "Song (Version)", "Song Ver", "Song Version").forEach { neutral ->
+            assertTrue(
+                "$neutral must match Song",
+                accepted(original, song(neutral, "Artist", "3:20")),
+            )
+            assertTrue(
+                "Song must match $neutral",
+                accepted(TrackMatcher.Target(neutral, "Artist", durationSec = 200), song("Song", "Artist", "3:20")),
+            )
+        }
+    }
+
+    @Test
+    fun `qualified ver strips its qualifier as one take`() {
+        val short = TrackMatcher.Target("Song Band Ver.", "Artist", durationSec = 200)
+        val long = TrackMatcher.Target("Song (Band Version)", "Artist", durationSec = 200)
+        assertTrue(accepted(short, song("Song (Band Version)", "Artist", "3:20")))
+        assertTrue(accepted(long, song("Song Band Ver.", "Artist", "3:20")))
+        assertFalse(accepted(TrackMatcher.Target("Song", "Artist", durationSec = 200),
+            song("Song Band Ver.", "Artist", "3:20")))
+    }
+
+    @Test
     fun `korean take names are takes`() {
         listOf(
             "Song (어쿠스틱)",
@@ -109,6 +166,43 @@ class TrackMatcherTakeSpellingTest {
             "Song (Slow Down)",
             "Song (Slowed + Reverb)",
         ).forEach { assertTakeSeparated(it) }
+    }
+
+    @Test
+    fun `unbracketed trailing speed edits are takes`() {
+        listOf(
+            "Song Sped Up",
+            "Song Speed Up",
+            "Song Sped-Up",
+            "Song Slowed Down",
+            "Song Slow Down",
+        ).forEach { assertTakeSeparated(it) }
+    }
+
+    @Test
+    fun `korean and japanese take spellings agree with their english names`() {
+        val pairs = listOf(
+            "Song (리믹스)" to "Song (Remix)",
+            "Song (라이브)" to "Song (Live)",
+            "Song (커버)" to "Song (Cover)",
+            "Song (인스트)" to "Song (Instrumental)",
+            "Song (リミックス)" to "Song (Remix)",
+            "Song (ライブ)" to "Song (Live)",
+            "Song (カバー)" to "Song (Cover)",
+            "Song (インスト)" to "Song (Instrumental)",
+        )
+        pairs.forEach { (localized, english) ->
+            val localizedTarget = TrackMatcher.Target(localized, "Artist", durationSec = 200)
+            assertTrue(
+                "$localized must accept $english",
+                accepted(localizedTarget, song(english, "Artist", "3:20")),
+            )
+            val englishTarget = TrackMatcher.Target(english, "Artist", durationSec = 200)
+            assertTrue(
+                "$english must accept $localized",
+                accepted(englishTarget, song(localized, "Artist", "3:20")),
+            )
+        }
     }
 
     @Test
