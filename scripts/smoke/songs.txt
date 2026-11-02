@@ -1,12 +1,11 @@
-# Default smoke list: fixed 10-song set (11-02 user: 10 songs, 1.9 only).
-# 3 MV (song-version swap), 2 HQ (upgrade), 5 covers from the sync set.
--RJSbO8UZVY	mv
-QYh6mYIJG2Y	mv
-ekzHIouo8Q4	mv
-TuzfXgUpboA	hq
-cCfPDrRQp9k	hq
-v59g4HRNIkc	cover	PL-ODED49YdZByxxHBLaIIOOePlhj8nWcc
-xK5bBgpt4XA	cover	PL-ODED49YdZByxxHBLaIIOOePlhj8nWcc
-7PgA6kyqVTc	cover	PL-ODED49YdZByxxHBLaIIOOePlhj8nWcc
-vRjfYdwM5L4	cover	PL-ODED49YdZByxxHBLaIIOOePlhj8nWcc
-5nxb792c-b4	cover	PL-ODED49YdZByxxHBLaIIOOePlhj8nWcc
+# smoke10 set B: Ohwayo covers (PL02cg...) 11-02
+US2I6tSRjcE	cover	PL02cgYzp6Oi4kOisQAh691u0phBtC4PVD
+nSkTw6Z4hKY	cover	PL02cgYzp6Oi4kOisQAh691u0phBtC4PVD
+qzXaSNyGZxY	cover	PL02cgYzp6Oi4kOisQAh691u0phBtC4PVD
+sbSupauK3H0	cover	PL02cgYzp6Oi4kOisQAh691u0phBtC4PVD
+Mecb5hrcaLA	cover	PL02cgYzp6Oi4kOisQAh691u0phBtC4PVD
+EUU5Bv92vks	cover	PL02cgYzp6Oi4kOisQAh691u0phBtC4PVD
+Q7Q-ul7AlIk	cover	PL02cgYzp6Oi4kOisQAh691u0phBtC4PVD
+4UVsEgFTw_c	cover	PL02cgYzp6Oi4kOisQAh691u0phBtC4PVD
+FK9oTm4qCRg	cover	PL02cgYzp6Oi4kOisQAh691u0phBtC4PVD
+DXPZQ5j4r-g	cover	PL02cgYzp6Oi4kOisQAh691u0phBtC4PVD
