@@ -1,0 +1,10 @@
+Task: READ-ONLY. Build the regression checklist for the v1.9 upgrade: every feature the current 1.8.1-based Korean fork has, so we can prove the v1.9 build lost none. Do NOT change source. Only output: docs/feature-inventory-1102.md. Use grep. Follow AGENTS.md (ponytail).
+
+Reference = branch origin/task/telegram (the 1.8.1 fork as the user uses it today). Run: git fetch origin task/telegram. Read it with git show/git grep on origin/task/telegram, NOT the working tree.
+
+Collect features from: every '// [KO]' hook and every file under app/src/main/java/com/music/bitchord/ko/ and sharedUi .../ko/; every user setting key (AppSettings / KoAppSettings / settings screens); every settings row and menu action; the Telegram source; HQ upgrade/verify/lossless swap; next-track preparation (lyrics, sync, HQ, mix); lyrics features (sources, sync engines, per-line, translation, word sweep); automix/crossfade; downloads; song-version (MV -> song) judgment; Korea music gate/proxy handling; playlists/library; listen together; diagnostics/featurehealth log lines.
+
+For each feature one row: id | feature (Korean, one line) | visible or invisible | where (main files) | how to verify on 1.9: a JVM test name that covers it (grep app/src/test, shared/src/*Test), or an exact log line featurehealth/smoke can count, or a ui-tour screen name | present on origin/task/u19-tg? (git grep the key symbol there: yes/no/changed).
+Group by area. Mark every row 'NO VERIFY' when nothing covers it, and every row 'MISSING ON 1.9' when its key symbol is absent on origin/task/u19-tg (run git fetch origin task/u19-tg).
+End with: counts (features, verified by test/log/tour, NO VERIFY, MISSING ON 1.9) and the list of MISSING ON 1.9 rows.
+Finish with a summary of at most 10 lines.
