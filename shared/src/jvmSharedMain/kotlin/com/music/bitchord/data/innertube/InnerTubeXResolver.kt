@@ -37,6 +37,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import java.io.File
@@ -178,6 +180,7 @@ object InnerTubeXResolver {
             }.onFailure { if (it is CancellationException) throw it }
                 .onFailure { TrackLog.w(TAG, "InnerTubeX warm-up failed: ${it.message}") }
                 .onSuccess { TrackLog.d(TAG, "InnerTubeX warmed in ${MonotonicClock.nowMs() - start}ms") }
+            trimCipherCaches(cipherService)
             poPrewarm?.join()
         }
     }
@@ -200,9 +203,7 @@ object InnerTubeXResolver {
         val tmp = File(dir, "$key.tmp")
         tmp.writeText(value)
         tmp.renameTo(file)
-        // Players rotate every few days; only the newest are worth their megabytes.
-        dir.listFiles()?.filter { !it.name.endsWith(".tmp") }?.sortedByDescending { it.lastModified() }
-            ?.drop(KEPT_PLAYERS)?.forEach { it.delete() }
+        trimPlayerFiles(dir, KEPT_PLAYERS)
     }
 
     /** The installed PoToken provider, or one that can mint nothing when there is not one. */
@@ -388,6 +389,7 @@ object InnerTubeXResolver {
         )
         if (minted.size >= MAX_REMEMBERED) minted.clear()
         minted[extracted.url] = extracted
+        trimCipherCaches(if (viaProxy) proxyCipherService else cipherService)
         return extracted
     }
 
@@ -457,6 +459,7 @@ object InnerTubeXResolver {
                 if (ageRestricted) " (age-restricted)" else "",
             about = videoId,
         )
+        trimCipherCaches(cipherService)
         return VideoStream(
             videoId = videoId,
             url = url,
@@ -580,5 +583,53 @@ object InnerTubeXResolver {
     private const val LOW_KBPS = 64
     private const val EXCLUDE_MS = 10 * 60 * 1000L
     private const val MAX_REMEMBERED = 64
-    private const val KEPT_PLAYERS = 3
+    private const val KEPT_PLAYERS = 1
 }
+
+/**
+ * Keeps only the newest [keep] preprocessed player files. Solving a version
+ * from scratch is slow, but every older version is megabytes that the app
+ * will never use again.
+ */
+internal fun trimPlayerFiles(dir: File, keep: Int) {
+    dir.listFiles()
+        ?.filter { !it.name.endsWith(".tmp") }
+        ?.sortedByDescending { it.lastModified() }
+        ?.drop(keep)
+        ?.forEach { it.delete() }
+}
+
+/**
+ * 11-02 heap report: the pinned InnerTubeX keeps up to four player versions in
+ * each in-memory cipher cache — 23 MB once YouTube rotates. Keeping the newest
+ * entry costs at most one re-solve or download and changes no cipher output.
+ * Reflection because the artifact exposes no eviction seam; a renamed field
+ * just skips that trim.
+ */
+internal suspend fun trimCipherCaches(service: Any) {
+    try {
+        val cacheMutex = fieldOf(service, "cacheMutex") as? Mutex ?: return
+        cacheMutex.withLock {
+            trimToNewest(fieldOf(service, "playerCodeCache") as? MutableMap<*, *>)
+            trimToNewest(fieldOf(service, "cache") as? MutableMap<*, *>)
+            trimToNewest(fieldOf(service, "zemerCache") as? MutableMap<*, *>)
+        }
+        val ejs = fieldOf(service, "ejs") ?: return
+        val preprocessedMutex = fieldOf(ejs, "preprocessedMutex") as? Mutex ?: return
+        preprocessedMutex.withLock {
+            trimToNewest(fieldOf(ejs, "preprocessedByPlayerUrl") as? MutableMap<*, *>)
+        }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Exception) {
+        // Memory trim only: never fail a resolved stream over it.
+    }
+}
+
+internal fun trimToNewest(cache: MutableMap<*, *>?) {
+    if (cache == null) return
+    while (cache.size > 1) cache.remove(cache.keys.first())
+}
+
+private fun fieldOf(owner: Any, name: String): Any? =
+    runCatching { owner.javaClass.getDeclaredField(name).apply { isAccessible = true }.get(owner) }.getOrNull()

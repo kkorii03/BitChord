@@ -39,6 +39,9 @@ object VideoAudio {
     /** Inline requests are capped at 20 MB; base64 adds a third. Seven minutes stays well under. */
     private const val MAX_SECONDS = 7.0 * 60
 
+    /** Both decoded-audio caches together stay under this, oldest evicted first. */
+    private const val MAX_CACHED_AUDIO_BYTES = 8 * 1024 * 1024
+
     /** How long to wait for the rest of the track to come down. */
     private const val FETCH_TIMEOUT_MS = 60_000L
 
@@ -75,17 +78,18 @@ object VideoAudio {
         val localTrackId: String? = null,
     )
 
-    /** The last two, by video: the AI timing and the AI lyrics often ask for the same song. */
-    private val recent = object : LinkedHashMap<String, SongAudio>(4, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, SongAudio>) = size > 2
-    }
+    /**
+     * The AI timing and the AI lyrics often ask for the same song. A long
+     * session can otherwise keep every decoded clip: 11-02's heap report had
+     * 11 MB of them. One access-ordered cache with an 8 MB shared budget
+     * covers both the video WAVs and the song-check openings.
+     */
+    private val recent = ByteLru<String, SongAudio>(MAX_CACHED_AUDIO_BYTES) { it.bytes.size }
     private val locks = ConcurrentHashMap<String, Mutex>()
-
-    /** The last two song checks, by recording, file and length — a retry asks again. */
-    private val recentSongs = object : LinkedHashMap<String, SongAudio>(4, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, SongAudio>) = size > 2
-    }
     private val songLocks = ConcurrentHashMap<String, Mutex>()
+
+    private fun videoKey(videoId: String) = "video\u0000$videoId"
+    private fun songKey(key: String) = "song\u0000$key"
 
     suspend fun wav(context: Context, videoId: String): ByteArray? =
         wavCopy(context, videoId)?.bytes
@@ -93,7 +97,7 @@ object VideoAudio {
     /** [wav] with the rendition it was read from, so its clock is not guessed afterwards. */
     suspend fun wavCopy(context: Context, videoId: String): SongAudio? = withContext(Dispatchers.IO) {
         val job = coroutineContext[Job]
-        synchronized(recent) { recent[videoId] }?.let { return@withContext it }
+        recent.get(videoKey(videoId))?.let { return@withContext it }
         if (!PowerState.screenOn) {
             TrackLog.d(TAG, "AI timing: the screen is off", videoId)
             return@withContext null
@@ -118,13 +122,13 @@ object VideoAudio {
             return@withContext null
         }
         locks.getOrPut(videoId) { Mutex() }.withLock {
-            synchronized(recent) { recent[videoId] }?.let { return@withLock it }
+            recent.get(videoKey(videoId))?.let { return@withLock it }
             // A cancelled caller must stop waiting at AudioDecoder's gate at
             // once; runInterruptible turns the cancellation into an interrupt
             // of the blocking decode instead of leaving it queued for minutes.
             val audio = AudioDecoder.interruptibleDecode { decode(videoId, copy) { job?.isActive != false } }
                 ?: return@withLock null
-            synchronized(recent) { recent[videoId] = audio }
+            recent.put(videoKey(videoId), audio)
             audio
         }
     }
@@ -144,7 +148,7 @@ object VideoAudio {
      * ([VersionAudioAligner.chooseMeasurementCopy]) being complete.
      */
     fun audioReadyForTiming(videoId: String): Boolean {
-        val cached = synchronized(recent) { recent[videoId] } != null
+        val cached = recent.get(videoKey(videoId)) != null
         if (cached) return true
         val screenOn = PowerState.screenOn
         if (!screenOn) return false
@@ -207,7 +211,7 @@ object VideoAudio {
         val until = untilSeconds.coerceAtMost(MAX_SECONDS)
         val job = coroutineContext[Job]
         val key = songCacheKey(song, until)
-        synchronized(recentSongs) { recentSongs[key] }?.let { return@withContext it }
+        recent.get(songKey(key))?.let { return@withContext it }
         // Runs with the screen off too (11-01 user decision): this opening is
         // what the song check and the quality-upgrade comparison listen to.
         // Skipping it in a pocket let a wrong song play unchecked, and the
@@ -216,7 +220,7 @@ object VideoAudio {
         val opened = openSongSource(context, song, until) ?: return@withContext null
         try {
             songLocks.getOrPut(key) { Mutex() }.withLock {
-                synchronized(recentSongs) { recentSongs[key] }?.let {
+                recent.get(songKey(key))?.let {
                     runCatching { opened.data.close() }
                     return@withLock it
                 }
@@ -230,7 +234,7 @@ object VideoAudio {
                     opened.localSourceConfigId,
                     opened.localTrackId,
                 )
-                synchronized(recentSongs) { recentSongs[key] = audio }
+                recent.put(songKey(key), audio)
                 audio
             }
         } catch (cancelled: CancellationException) {
@@ -477,4 +481,38 @@ object VideoAudio {
         put("data".toByteArray())
         putInt(dataBytes)
     }.array()
+}
+
+/**
+ * Access-ordered LRU whose values share a byte budget. Reads promote, writes
+ * evict the oldest until the total fits — including a single value larger
+ * than the budget, which is simply returned by the caller and not cached.
+ */
+internal class ByteLru<K, V>(
+    private val maxBytes: Int,
+    private val sizeOf: (V) -> Int,
+) {
+    private val entries = LinkedHashMap<K, V>(16, 0.75f, true)
+    private var bytes = 0
+
+    @Synchronized
+    fun get(key: K): V? = entries[key]
+
+    @Synchronized
+    fun put(key: K, value: V) {
+        entries.remove(key)?.let { bytes -= sizeOf(it) }
+        entries[key] = value
+        bytes += sizeOf(value)
+        while (bytes > maxBytes) {
+            val eldest = entries.entries.iterator().next()
+            entries.remove(eldest.key)
+            bytes -= sizeOf(eldest.value)
+        }
+    }
+
+    @Synchronized
+    fun sizeBytes(): Int = bytes
+
+    @Synchronized
+    fun size(): Int = entries.size
 }
