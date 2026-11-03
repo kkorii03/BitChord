@@ -1,0 +1,9 @@
+Kotlin Android app (task/u19-tg). User 11-03 13:24 (phone): pressed 음질 업그레이드 on 'Watermelon Sugar' (KPM_BYl-EaQ, was YouTube 323 kbps AAC). The app answered '고음질로 전환합니다' and really switched, but NO quality label (고음질 / 무손실 / 24-bit) appeared under the seek bar on the Now Playing screen. Log:
+13:24:04.319 queue: replace n=1 at=0 size=11 by=upgrade
+13:24:04.341 upgraded to FLAC · 24-bit · 44.1 kHz at 69177ms (텔레그램)
+13:24:04.356 manual upgrade answer for KPM_BYl-EaQ: 고음질로 전환합니다
+13:24:04.403 AUDIO_OUT decoder=c2.android.flac.decoder initialized in 67ms
+(screenshot at 1:19 = 13:24:14: under the seek bar nothing, only times 1:19 / -1:34)
+Task: find what the seek-bar quality label reads (format/tier source, MediaItem metadata, a StateFlow) and why a mid-play upgrade (queue replace by=upgrade + swap leg) does not update it; also check the label appears for a track that STARTS on an HQ/lossless source. Fix so the label always shows the format actually playing, updated on upgrade and on fall-back.
+Battery first (no polling timers, event-based). Re-read every caller and type of what you change. Keep upstream code intact (Korean code in ko/ + one-line // [KO] hooks). Unknown Android/Media3/Compose APIs: context7. Use grep/Select-String (no rg). First write a JVM test that FAILS on the current code, then fix; name new test classes in the summary (you may not edit .github/workflows).
+Summary of at most 10 lines: files / root cause with file:line / key change / tests and results / REMOVED-LINES AUDIT / not done. Follow AGENTS.md (ponytail) rules.
