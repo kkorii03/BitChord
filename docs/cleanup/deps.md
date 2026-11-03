@@ -6,15 +6,15 @@ Kotlin metadata 2.3/2.4 breakage).
 
 ## JitPack commit pin
 
-`v0.7.0` of `MetrolistGroup/innertubex` resolves to commit
-`cc74e737b6ae2875343fb2e31c7283e39e1cf72e` (`git ls-remote`). JitPack accepts
-the short commit as a version, so the build files now use `cc74e737b6`:
+`v0.7.4` of `MetrolistGroup/innertubex` resolves to commit
+`a6ca8cb76e9c347d4f21824ca9f19b9db2e5aebd` (`git ls-remote`). JitPack publishes
+the release tag, so the build files use `v0.7.4`:
 
 | Build file | Declaration |
 | --- | --- |
-| `shared/build.gradle.kts` | `com.github.MetrolistGroup.innertubex:innertubex:cc74e737b6` |
-| `app/build.gradle.kts` | `com.github.MetrolistGroup.innertubex:innertubex-android:cc74e737b6` |
-| `tv/build.gradle.kts` | `com.github.MetrolistGroup.innertubex:innertubex-android:cc74e737b6` |
+| `shared/build.gradle.kts` | `com.github.MetrolistGroup.innertubex:innertubex:v0.7.4` |
+| `app/build.gradle.kts` | `com.github.MetrolistGroup.innertubex:innertubex-android:v0.7.4` |
+| `tv/build.gradle.kts` | `com.github.MetrolistGroup.innertubex:innertubex-android:v0.7.4` |
 
 Transitive versions are pinned centrally in the root `build.gradle.kts` with
 `resolutionStrategy.force` for every project configuration.
@@ -30,7 +30,7 @@ Commands:
 
 | Group / artifact | Before (`v0.7.0`) | After (pinned) | Same? |
 | --- | --- | --- | --- |
-| `innertubex`, `innertubex-android`, `innertubex-desktop` | `v0.7.0` | `cc74e737b6` | same commit |
+| `innertubex`, `innertubex-android`, `innertubex-desktop` | `v0.7.0` | `v0.7.4` | yes (upgraded) |
 | `io.ktor:*` | `3.5.2` | `3.5.2` | yes |
 | `kotlinx-serialization-*` | `1.11.0` | `1.11.0` | yes |
 | `kotlinx-coroutines-*` | `1.11.0` | `1.11.0` | yes |
@@ -43,8 +43,8 @@ Module-by-module comparison of the two dependency reports:
 
 | Configuration | Modules compared | Version changes |
 | --- | --- | --- |
-| `:app` `prodReleaseRuntimeClasspath` | 64 | 0 (only the two `innertubex` coordinates changed tag -> hash) |
-| `:shared` `jvmRuntimeClasspath` | 51 | 0 (only the two `innertubex` coordinates changed tag -> hash) |
+| `:app` `prodReleaseRuntimeClasspath` | 64 | 0 (only the two `innertubex` coordinates changed tag -> v0.7.4) |
+| `:shared` `jvmRuntimeClasspath` | 51 | 0 (only the two `innertubex` coordinates changed tag -> v0.7.4) |
 
 ## Dependency locking
 
