@@ -678,6 +678,24 @@ class SongVersionPolicyTest {
     }
 
     @Test
+    fun `an automatic song version swap never runs for a cover`() {
+        val cover = Song(
+            videoId = "COVER",
+            title = "Night We Shine (cover)",
+            artist = "Some Cover Band",
+            thumbnailUrl = null,
+            isVideo = true,
+        )
+        assertFalse(SongVersionPolicy.wantsAutoSongVersion(cover))
+        assertTrue(SongVersionPolicy.wantsAutoSongVersion(cover.copy(title = "Night We Shine")))
+        assertFalse(
+            SongVersionPolicy.wantsAutoSongVersion(
+                cover.copy(title = "Night We Shine", isVideo = false),
+            ),
+        )
+    }
+
+    @Test
     fun `a partially failed audio switch search is not a definitive miss`() {
         assertFalse(
             SongVersionPolicy.audioSwitchSearchIsConclusive(queriesRun = 2, failedQueries = 1),

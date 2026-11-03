@@ -33,7 +33,7 @@ internal fun KoAutoMusicOnlyEffect(
         val song = player.song ?: return@LaunchedEffect
         val c = controller ?: return@LaunchedEffect
         if (preferMusicOnly && !partyInParty && !videoRadioEnabledFor(song) &&
-            SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown) &&
+            SongVersionPolicy.wantsAutoSongVersion(song) &&
             (song.localUri == null || !AudioCache.isOffline()) &&
             song.videoId != keepVideoId && song.videoId !in musicOnlyTried &&
             SongVersionPolicy.mayAutoSwapBeforeAudio(

@@ -101,6 +101,16 @@ object SongVersionPolicy {
         isVideo || typeUnknown
 
     /**
+     * Whether an automatic before-audio swap may be attempted for [row].
+     *
+     * A cover stays the performance the listener chose, exactly as
+     * [mayInstallSongVersion] says, so its video row is never offered the
+     * swap and never tells the listener there is no audio version.
+     */
+    fun wantsAutoSongVersion(row: Song): Boolean =
+        wantsSongVersion(row.isVideo, row.typeUnknown) && mayInstallSongVersion(row)
+
+    /**
      * Whether [resolved] is a song version of [source] rather than the source
      * row a miss returns unchanged.
      *
