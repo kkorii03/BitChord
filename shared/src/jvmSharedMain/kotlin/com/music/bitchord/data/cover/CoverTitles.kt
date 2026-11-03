@@ -126,6 +126,40 @@ object CoverTitles {
     /** A trailing bracket group: the original's credit in a B title, or an agency after a name. */
     private val TRAILING_GROUP = Regex("""\s*[(\[（【]([^()\[\]（）【】]*)[)\]）】]\s*$""")
 
+    private class BracketGroup(val inner: String, val range: IntRange)
+
+    /**
+     * The bracket pair that closes [text], nested brackets included:
+     * "Tomboy((G)I-DLE)" gives "(G)I-DLE". [TRAILING_GROUP] stops at an inner
+     * pair, which is the whole artist in a group name like (G)I-DLE.
+     */
+    private fun trailingBracket(text: String): BracketGroup? {
+        val end = text.indexOfLast { !it.isWhitespace() }
+        if (end < 0) return null
+        val closing = text[end]
+        val opening = when (closing) {
+            ')' -> '('
+            ']' -> '['
+            '）' -> '（'
+            '】' -> '【'
+            else -> return null
+        }
+        var depth = 0
+        for (i in end downTo 0) {
+            when (text[i]) {
+                closing -> depth++
+                opening -> {
+                    depth--
+                    if (depth == 0) {
+                        val inner = text.substring(i + 1, end).trim()
+                        return BracketGroup(inner, i..end)
+                    }
+                }
+            }
+        }
+        return null
+    }
+
     private val ANY_GROUP = Regex("""\s*[(\[（【][^()\[\]（）【】]*[)\]）】]""")
 
     /**
@@ -185,6 +219,7 @@ object CoverTitles {
         // "A - 곡(원곡가수)" with no date and no designated channel: the bracket
         // has to be a plausible original artist, never a translation or a take.
         if (splitTopLevelPipe(raw) == null) readB(undated, requireCredit = true)?.let { return it }
+        readTitleArtist(raw, channel)?.let { return it }
         return null
     }
 
@@ -240,13 +275,68 @@ object CoverTitles {
         // original artist: search both titles under the same singer.
         val (main, subtitle) = splitSubtitle(right)
         if (subtitle != null) return listOf(main to left, subtitle to left)
-        val group = TRAILING_GROUP.find(right) ?: return listOf(song.title to song.artist)
-        val credit = group.groupValues[1].trim()
+        val group = trailingBracket(right)
+            ?: return readArtistDash(raw, channel)
+                ?.let { listOf(it.title to (it.originalArtist ?: it.singer)) }
+                ?: listOf(song.title to song.artist)
+        val credit = group.inner
         val name = right.removeRange(group.range).trim()
         if (credit.isEmpty() || name.isEmpty() || isVersionWord(credit)) return listOf(song.title to song.artist)
         // "X - Song (Y)": either X sings Y's song, or X's song in a version
         // called Y. The second is the usual one, so it is tried first.
         return listOf(name to left, name to credit)
+    }
+
+    /**
+     * The cover a title-only caller (the lyrics name builder) can read: the
+     * upload flag is unknown, so only the shapes that do not need it.
+     */
+    internal fun readForLyrics(title: String, artist: String): Cover? =
+        read(title, artist, null) ?: readArtistDash(title.trim(), artist)
+
+    /**
+     * "Artist - Title" by someone else: the left names whose song it is. Kept
+     * out of [read] because a clip channel's dash title is also their own
+     * artist/title row (see [readKnown]).
+     */
+    private fun readArtistDash(raw: String, channel: String): Cover? {
+        if (ANY_COVER_WORD.containsMatchIn(raw)) return null
+        val (left, right) = splitTopLevelDash(raw) ?: return null
+        // "3.여수밤바다 - Yeosu Night Sea" is a title and its translation.
+        if (isTranslation(left, right)) return null
+        val artist = cleanCredit(left)?.takeUnless {
+            isVersionWord(it) || isDescriptor(it) || isGenericCredit(it)
+        } ?: return null
+        val title = cleanTitle(right) ?: return null
+        if (isChannelName(artist, channel)) return null
+        val singer = cleanName(channel) ?: return null
+        return Cover(title = title, originalArtist = artist, singer = singer)
+    }
+
+    /**
+     * "Tomboy((G)I-DLE)": the song and, in a closing bracket, whose song it is.
+     * Not a version, a translation or a descriptor; not the uploader's own song.
+     */
+    private fun readTitleArtist(raw: String, channel: String): Cover? {
+        if (splitTopLevelDash(raw) != null) return null
+        val (title, artist) = songAndCredit(raw) ?: return null
+        if (artist.isNullOrBlank() || isCreditMarkerOnly(artist)) return null
+        // "(From \"Film\")" names the work, not whose song it is.
+        if (artist.lowercase().startsWith("from ")) return null
+        if (isChannelName(artist, channel)) return null
+        val singer = cleanName(channel) ?: return null
+        return Cover(title = title, originalArtist = artist, singer = singer)
+    }
+
+    /**
+     * An artist credit as written. A group can put its own name in brackets
+     * ("(G)I-DLE"), so only an aside after a name is stripped.
+     */
+    private fun cleanCredit(text: String): String? {
+        val name = text.trim()
+        if (name.isEmpty()) return null
+        if (name.startsWith("(") || name.startsWith("（")) return name.takeIf { it.length <= 60 }
+        return cleanName(name)
     }
 
     /** Whether [name] is a singer/artist rather than a word from the title. */
@@ -896,30 +986,32 @@ object CoverTitles {
         var rest = text.trim()
         var artist: String? = null
         ORIGINAL_CREDIT.find(rest)?.let { match ->
-            artist = cleanName(match.groupValues[1].ifEmpty { match.groupValues[2] })
+            artist = cleanCredit(match.groupValues[1].ifEmpty { match.groupValues[2] })
             rest = rest.removeRange(match.range).trim()
         }
         if (artist == null) {
-            TRAILING_GROUP.find(rest)?.let { group ->
-                val credit = group.groupValues[1].trim()
+            while (true) {
+                val group = trailingBracket(rest) ?: break
+                val credit = group.inner.trim()
                 val inner = rest.removeRange(group.range).trim()
                 when {
-                    inner.isEmpty() -> Unit
+                    inner.isEmpty() -> break
                     // "(『명조』 OST)", "(최애의 아이 OST)": where it is from, not whose.
                     credit.isEmpty() || isGenericCredit(credit) || OST.containsMatchIn(credit) -> rest = inner
-                    isVersionWord(credit) || isDescriptor(credit) || isTranslation(inner, credit) -> Unit
+                    isVersionWord(credit) || isDescriptor(credit) || isTranslation(inner, credit) -> break
                     else -> {
                         // "[恋風邪にのせて - Vaundy]": the original title and the
                         // artist together — the artist is the side in Latin
                         // letters against kana, or else the first.
                         val pair = splitTopLevelDash(credit)
                         artist = if (pair == null) {
-                            cleanName(credit)
+                            cleanCredit(credit)
                         } else {
                             val (a, b) = pair
-                            cleanName(if (hasKanaOrHan(a) && !hasKanaOrHan(b)) b else a)
+                            cleanCredit(if (hasKanaOrHan(a) && !hasKanaOrHan(b)) b else a)
                         }
                         rest = inner
+                        break
                     }
                 }
             }
@@ -1050,9 +1142,13 @@ object CoverTitles {
         // without spaces ("아이유-밤편지") is taken for the split too — though a
         // spaced one, where there is one, still wins.
         val split = splitTopLevelDash(head) ?: if (looseDash) splitTopLevelDash(head, unspaced = true) else null
-        val (artist, song) = if (split != null) split else (null to head)
+        if (split == null) {
+            val (title, artist) = songAndCredit(head) ?: return null
+            return Cover(title = title, originalArtist = artist, singer = singer)
+        }
+        val (artist, song) = split
         val title = cleanTitle(song) ?: return null
-        return Cover(title = title, originalArtist = artist?.let { cleanName(it) }, singer = singer)
+        return Cover(title = title, originalArtist = artist?.let { cleanCredit(it) }, singer = singer)
     }
 
     private fun readB(raw: String, requireCredit: Boolean = false): Cover? {
