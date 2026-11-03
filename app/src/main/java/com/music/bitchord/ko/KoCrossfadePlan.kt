@@ -6,7 +6,8 @@ import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.playback.CrossfadeController
 import com.music.bitchord.playback.CrossfadeSkipReason
-import com.music.bitchord.playback.isVideoOrigin
+import com.music.bitchord.playback.isVideoRow
+import com.music.bitchord.playback.smart.AutomixWorkPolicy
 
 /**
  * [KO] crossfade-skip
@@ -75,10 +76,11 @@ internal fun CrossfadeController.koChooseAutoTransition(
     player: ExoPlayer,
     duration: Long,
 ): KoAutoTransitionPlan? {
-    val videoPair = !AppSettings.automixVideos.value && (
-        player.currentMediaItem?.isVideoOrigin == true ||
-            player.getMediaItemAt(player.nextMediaItemIndex).isVideoOrigin
-        )
+    val videoPair = AutomixWorkPolicy.videoPairNeedsPlainCrossfade(
+        automixVideos = AppSettings.automixVideos.value,
+        currentIsVideo = player.currentMediaItem?.isVideoRow == true,
+        nextIsVideo = player.getMediaItemAt(player.nextMediaItemIndex).isVideoRow,
+    )
     if (AppSettings.smartFadeEnabled.value && !videoPair) {
         return KoAutoTransitionPlan(smartPass = true, fallbackLength = false, fadeMs = 0L)
     }

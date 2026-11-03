@@ -4,7 +4,7 @@ import androidx.media3.common.C
 import androidx.media3.exoplayer.ExoPlayer
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.playback.CrossfadeController
-import com.music.bitchord.playback.isVideoOrigin
+import com.music.bitchord.playback.isVideoRow
 import com.music.bitchord.playback.smart.AnalysisWindow
 import com.music.bitchord.playback.smart.AutomixWorkPolicy
 
@@ -23,7 +23,14 @@ internal fun CrossfadeController.koRequestAnalysisAround(player: ExoPlayer, dura
     val nextIndex = player.nextMediaItemIndex
     if (nextIndex == C.INDEX_UNSET) return true
     val nextItem = player.getMediaItemAt(nextIndex)
-    if (!AppSettings.automixVideos.value && (currentItem.isVideoOrigin || nextItem.isVideoOrigin)) return true
+    if (AutomixWorkPolicy.videoPairNeedsPlainCrossfade(
+            AppSettings.automixVideos.value,
+            currentItem.isVideoRow,
+            nextItem.isVideoRow,
+        )
+    ) {
+        return true
+    }
     val automix = AppSettings.smartFadeEnabled.value
     val nextTarget = AutomixWorkPolicy.nextAnalysisTarget(
         nextId = nextItem.mediaId,
