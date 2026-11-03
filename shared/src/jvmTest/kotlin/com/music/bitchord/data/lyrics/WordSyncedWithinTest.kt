@@ -12,13 +12,13 @@ import kotlin.test.assertTrue
 /** The grace wait takes answers in priority order and wakes on completion. */
 class WordSyncedWithinTest {
 
-    private fun word(source: LyricsSource, text: String) = LyricsRepository.Result(
+    private fun word(source: LyricsSource, text: String, at: Long = 1_000L) = LyricsRepository.Result(
         source = source,
         lines = listOf(
             LyricLine(
-                timeMs = 1_000L,
+                timeMs = at,
                 text = text,
-                words = listOf(LyricWord(1_000L, 2_000L, text)),
+                words = listOf(LyricWord(at, at + 1_000L, text)),
             ),
         ),
     )
@@ -69,6 +69,21 @@ class WordSyncedWithinTest {
         )
         assertEquals("low", found?.lines?.single()?.text)
         assertTrue(System.currentTimeMillis() - started < 400, "returned only after the grace period")
+    }
+
+    @Test
+    fun aHigherPriorityOutlierLosesToTheTwoThatAgree() = runBlocking {
+        val high = CompletableDeferred<LyricsRepository.Result?>()
+        val low = CompletableDeferred<LyricsRepository.Result?>()
+        val lower = CompletableDeferred<LyricsRepository.Result?>()
+        high.complete(word(LyricsSource.LRCLIB, "high", at = 1_000L))
+        low.complete(word(LyricsSource.KUGOU, "low", at = 9_000L))
+        lower.complete(word(LyricsSource.MEGALOBIZ, "lower", at = 9_100L))
+        val found = LyricsRepository.wordSyncedWithin(
+            listOf(LyricsSource.LRCLIB to high, LyricsSource.KUGOU to low, LyricsSource.MEGALOBIZ to lower),
+            graceMs = 500,
+        )
+        assertEquals("low", found?.lines?.single()?.text)
     }
 
     @Test

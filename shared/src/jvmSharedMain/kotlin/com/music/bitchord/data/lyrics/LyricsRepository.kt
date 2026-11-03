@@ -1133,9 +1133,13 @@ object LyricsRepository {
                 // With something in hand already, Genius (plain text) is not worth asking.
                 if (fallback != null && source == LyricsSource.GENIUS) continue
                 val found = runCatching { job.await() }.getOrNull() ?: continue
-                if (found.lines.any { it.isWordSynced }) return@coroutineScope found
+                if (found.lines.any { it.isWordSynced }) {
+                    return@coroutineScope chooseCompleted(racing, wordSynced = true) ?: found
+                }
                 val timed = found.lines.any { it.timeMs > 0 }
-                if (!prioritizeSyllableSync && timed) return@coroutineScope found
+                if (!prioritizeSyllableSync && timed) {
+                    return@coroutineScope chooseCompleted(racing, wordSynced = false) ?: found
+                }
                 if (fallback == null || (timed && fallback.lines.none { it.timeMs > 0 })) fallback = found
                 if (timed) {
                     // A line-synced answer is in hand. The sources still running
@@ -1150,7 +1154,9 @@ object LyricsRepository {
                     return@coroutineScope wordSyncedWithin(rest, SYLLABLE_GRACE_MS) ?: fallback
                 }
             }
-            fallback
+            fallback?.takeIf { it.lines.any { line -> line.timeMs > 0 } }
+                ?.let { chooseCompleted(racing, wordSynced = false) ?: it }
+                ?: fallback
         } finally {
             // Whoever lost the race is no longer worth waiting on, and
             // coroutineScope will not return while they are still running.
@@ -1199,22 +1205,42 @@ object LyricsRepository {
                 val (_, job) = pending.first()
                 val answer = if (job.isCancelled) null else runCatching { job.await() }.getOrNull()
                 if (answer != null && answer.lines.any { it.isWordSynced }) {
-                    return@withTimeoutOrNull answer
+                    return@withTimeoutOrNull chooseCompleted(pending, wordSynced = true) ?: answer
                 }
                 pending = pending.drop(1)
             }
             null
         }
         if (better != null) return better
-        // Time is up: take the best that has answered, in priority order.
-        return rest.firstNotNullOfOrNull { (_, job) ->
-            if (!job.isCompleted || job.isCancelled) {
-                null
-            } else {
-                runCatching { job.await() }.getOrNull()
-                    ?.takeIf { answer -> answer.lines.any { it.isWordSynced } }
-            }
+        // Time is up: take the answer that agrees with the others, in priority order.
+        return chooseCompleted(rest, wordSynced = true)
+    }
+
+    /** The first timed, non-blank line of [result], compared between sources. */
+    private fun firstStart(result: Result): Long? =
+        result.lines.firstOrNull { !it.isGap && it.text.isNotBlank() && it.timeMs > 0L }?.timeMs
+
+    /**
+     * The answered sources in [racing], in priority order, whose sheet is in
+     * the requested tier. [ProviderChoice] keeps the one whose first timed
+     * line agrees with most of the others; priority only breaks ties.
+     */
+    private suspend fun chooseCompleted(
+        racing: List<Pair<LyricsSource, Deferred<Result?>>>,
+        wordSynced: Boolean,
+    ): Result? {
+        val candidates = racing.mapNotNull { (source, job) ->
+            if (!job.isCompleted || job.isCancelled) return@mapNotNull null
+            val result = runCatching { job.await() }.getOrNull() ?: return@mapNotNull null
+            val hasWord = result.lines.any { it.isWordSynced }
+            val timed = result.lines.any { it.timeMs > 0 }
+            val matches = if (wordSynced) hasWord else timed && !hasWord
+            if (!matches) return@mapNotNull null
+            ProviderChoice.Candidate(source, firstStart(result)) to result
         }
+        if (candidates.isEmpty()) return null
+        val chosen = ProviderChoice.choose(candidates.map { it.first }) ?: return null
+        return candidates[chosen].second
     }
 
     private suspend fun fetch(
