@@ -180,3 +180,45 @@
 - `./gradlew :shared:jvmTest --tests 'com.music.bitchord.data.sources.TrackMatcherOstReviewTest' --tests 'com.music.bitchord.data.net.SongVersionPolicyTest' --console=plain -q` → EXIT=0 (수정 전 2건 실패 확인)
 - `./gradlew :shared:jvmTest --console=plain -q` → EXIT=0
 - `./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain -q` → EXIT=0
+
+## 8. 이전 커밋(dfc2785) 제거 라인 감사
+
+r2 문서의 감사는 r2 diff만 다뤘다. 3차 지적대로 직전 커밋 `dfc2785`가 지운
+`ahead` 값과 순차 검색 루프도 어디로 갔는지 여기서 마저 감사한다.
+
+### 8.1 제거된 `ahead` 리터럴
+
+| 제거된 줄 | 지금의 동작 | 근거 |
+|---|---|---|
+| `KoAutoplayTopUp`: `YtMusicRepository.resolveQueueAhead(rows, 0, ahead = 4)` | 저장소 기본값 `UPCOMING_LOOKAHEAD_ROWS + 1` = 6행(현재 + 다음 5)으로 같은 자동 재생 행을 미리 해석 | `SongVersionPolicy.kt:29`, `YtMusicRepository.kt:809`, `KoAutoplayTopUp.kt:639` |
+| `SongVersionKo`: `resolveQueueAhead(songs, index, ahead = 1)` | 같은 기본값 6행. 큐를 세울 때 보이는 "다음" 목록까지 노래 버전으로 맞춘다 | `SongVersionKo.kt:65` |
+| `SongVersionController`: `last = current + 3` | `last = current + UPCOMING_LOOKAHEAD_ROWS` (다음 5 + 이전 1). 이벤트 기반 루프와 in-flight 가드는 그대로 | `SongVersionController.kt:223` |
+| `resolveQueueAhead`/`KoSongVersion.resolveQueueAhead`: `ahead: Int = 4` | 정책 상수 `UPCOMING_LOOKAHEAD_ROWS + 1` = 6. 검색 예산은 여전히 `BEFORE_AUDIO_TIMEOUT_MS`(1.5초/행) | `YtMusicRepository.kt:809`, `KoSongVersion.kt:492` |
+| `KoSongVersion`: `withTimeout(timeoutMs) { songVersion(...) }` | 같은 호출이 `resolve` 기본 람다(`songVersion(it, beforeAudio = true)`)로 이동 | `KoSongVersion.kt:493` |
+
+`ahead` 상향은 의도된 변경이며 상한/안전 규칙을 지우지 않았다. 행별 1.5초 제한,
+`wantsSongVersion` 대상 필터, 커버 행 비치환(`CatalogSongMapper.isCover`), 파티 비활성
+조건은 모두 유지된다. `QueueAheadSongVersionTest`가 현재+다음 5, 7번째 행 미해석을
+검증한다.
+
+### 8.2 제거된 순차 검색 루프 (`for (query in ...)`)
+
+| 제거된 동작 | 지금의 동작 | 근거 |
+|---|---|---|
+| 쿼리를 하나씩 `YtMusicRepository.search(...)` | 같은 검색을 `queries.map { launch { ... } }`로 동시에 시작하고 `Channel` 도착 순서로 판정. 쿼리 수만큼 `answers.receive()` | `KoAudioSwitch.kt:45-108` |
+| 첫 수락 행에서 즉시 return + `audioVersionCache` 기록 | 동시 실행 중 첫 수락 행에서 `return@coroutineScope`, 루프 종료 후 같은 캐시에 기록 | `KoAudioSwitch.kt:75`, `:87`, `:112` |
+| `queriesRun`/`failedQueries`/`videoRowsOnly`/reject 로그 | `repeat(queries.size)` 안에서 그대로 집계. 로그 문구·거부 사유 동일 | `KoAudioSwitch.kt:59-96` |
+| 검색 실패를 확정 아님으로 처리 | `audioSwitchSearchIsConclusive(queriesRun, failedQueries, catalogueFailed)` 그대로 호출 | `KoAudioSwitch.kt:146` |
+
+동시화는 대기 시간만 바꾸고 재생 후보를 바꾸지 않는다. 모든 수락 행은 기존과 같은
+`bestSameArtist`/`bestOfficialAudioForVideo` 게이트를 통과해야 하고, 매치가 나면 남은
+검색 job은 `finally`에서 취소된다. `AudioSwitchQueryConcurrencyTest`가 느린 첫 쿼리
+뒤에 온 공식 곡을 2초 안에 고르는지 검증한다. 남은 위험은 검색 순서가 결과 우선순위를
+더 이상 정하지 않는다는 점이나, 후보별 허용 조건이 동일해 재생되는 곡의 집합은 같다.
+
+### 8.3 같은 커밋에서 바뀐 `KoTrackMatcher` 줄
+
+| 제거된 줄 | 지금의 동작 | 근거 |
+|---|---|---|
+| `val have = artistNames(got)` / `artistNames(wanted).any { it in have }` | 비교는 그대로 하되 양쪽 이름에서 선행 관사(`the`)만 떼고 exact 단어 일치를 유지한다. 긴 이름 안의 공통 단어는 계속 불일치 | `KoTrackMatcher.kt:159-165` |
+| `val words = segment.split(WORD_SPLIT)` | `withoutFeaturingCredit(segment)`로 `feat.` 크레딧을 먼저 제거한 `text`를 같은 `WORD_SPLIT`으로 나눈다. 나머지 분류 규칙은 동일 | `KoTrackMatcher.kt:1378`, `:1413-1414` |
