@@ -79,13 +79,21 @@ object HqAutoDownloadPolicy {
 
     /**
      * Whether a failure is the server asking for a pause rather than a verdict
-     * about the file. A reset stream or a lost connection is included: the
-     * bytes did not arrive, but nothing about the recording was proved wrong.
+     * about the file. A reset stream, a lost connection or a sleeping gateway
+     * is included: the bytes did not arrive, but nothing about the recording
+     * was proved wrong.
      */
     fun isTransientFailure(code: Int?, message: String?): Boolean {
-        if (code != null && HqRetryPolicy.isRateLimited(code)) return true
+        if (code != null && (HqRetryPolicy.isRateLimited(code) || HqRetryPolicy.isSleepingGateway(code))) {
+            return true
+        }
         val text = message?.lowercase() ?: return false
-        if (statusCode(text)?.let(HqRetryPolicy::isRateLimited) == true) return true
+        if (statusCode(text)?.let {
+                HqRetryPolicy.isRateLimited(it) || HqRetryPolicy.isSleepingGateway(it)
+            } == true
+        ) {
+            return true
+        }
         return TRANSIENT_MARKERS.any(text::contains)
     }
 

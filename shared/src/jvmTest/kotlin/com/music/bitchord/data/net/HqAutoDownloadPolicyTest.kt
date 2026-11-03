@@ -43,6 +43,14 @@ class HqAutoDownloadPolicyTest {
     }
 
     @Test
+    fun `a sleeping gateway is transient rather than a verdict about the file`() {
+        assertTrue(HqAutoDownloadPolicy.isTransientFailure(502, "Download failed (HTTP 502)"))
+        assertTrue(HqAutoDownloadPolicy.isTransientFailure(504, "Download failed (HTTP 504)"))
+        assertTrue(HqAutoDownloadPolicy.isTransientFailure(null, "Download failed (HTTP 502)"))
+        assertTrue(HqAutoDownloadPolicy.isTransientFailure(null, "Download failed (HTTP 504)"))
+    }
+
+    @Test
     fun `a lost connection is transient rather than a verdict about the file`() {
         val networkFailures = listOf(
             "Unable to resolve host \"cdn.example.com\": No address associated with hostname",
