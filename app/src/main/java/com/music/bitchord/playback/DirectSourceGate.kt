@@ -61,7 +61,9 @@ object DirectSourceGate {
     const val WINDOW_MS = 25_000L
 
     /**
-     * How long playback waits for the addons before falling back to YouTube.
+     * How long a read-ahead track waits for the addons before falling back to
+     * YouTube. The track that is already current uses
+     * [CURRENT_LOOKUP_GRACE_MS] instead: nobody is waiting on the next row.
      *
      * Shorter than [WINDOW_MS] on purpose: a lookup started when the window
      * opens is answered or given up on with ten seconds still to go, which is
@@ -72,6 +74,18 @@ object DirectSourceGate {
      * this to produce.
      */
     const val LOOKUP_TIMEOUT_MS = 15_000L
+
+    /**
+     * How long the track that is about to play may wait for the addons.
+     *
+     * [LOOKUP_TIMEOUT_MS] is a read-ahead budget: a track that is still next
+     * can be searched for while the current one plays. The current track has
+     * no such cover — every millisecond here is silence the listener hears —
+     * so it gets one short chance at an addon answer and then starts on
+     * YouTube. The lookup itself keeps running and [startedOnYouTube] hands it
+     * to the second look, which is where a slower addon still gets its turn.
+     */
+    const val CURRENT_LOOKUP_GRACE_MS = 1_000L
 
     /**
      * Whether Direct Source Stream is on *and* has an addon to stream from.
@@ -111,6 +125,17 @@ object DirectSourceGate {
     }
 
     private fun Open.admits(mediaId: String) = mediaId in playing || mediaId == next
+
+    /** Whether [mediaId] is one of the tracks the player is on right now. */
+    internal fun isCurrent(mediaId: String): Boolean = mediaId in open.value.playing
+
+    /**
+     * How long [lookup] may hold its caller for [mediaId]: the full read-ahead
+     * window for a track that is not playing, one short grace for the one that
+     * is.
+     */
+    internal fun lookupWaitMs(mediaId: String): Long =
+        if (isCurrent(mediaId)) CURRENT_LOOKUP_GRACE_MS else LOOKUP_TIMEOUT_MS
 
     /**
      * Blocks a resolve for [mediaId] until it is playing or next inside the
@@ -193,7 +218,7 @@ object DirectSourceGate {
      * once. Read-ahead opening the window and the player's own resolve arrive
      * together, and should cost one search, not two.
      *
-     * The wait is bounded by [LOOKUP_TIMEOUT_MS] from when the lookup started,
+     * The wait is bounded by [lookupWaitMs] from when the lookup started,
      * however late the caller joined it. Null means no addon had it in time,
      * and the caller falls back to YouTube and says so with [startedOnYouTube].
      */
@@ -222,9 +247,21 @@ object DirectSourceGate {
             fresh.work.start()
         }
         val lookup = running ?: fresh
-        val waited = android.os.SystemClock.elapsedRealtime() - lookup.startedAtMs
-        return withTimeoutOrNull(LOOKUP_TIMEOUT_MS - waited) { lookup.work.await() }
+        return awaitLookup(lookup.work, lookup.startedAtMs, lookupWaitMs(videoId))
     }
+
+    /**
+     * Waits for [work] until [waitMs] after [startedAtMs], however late the
+     * caller joined it. A fake clock and deferred in the test pin the order:
+     * the current track gives up before a slow addon answers, while read-ahead
+     * waits for it.
+     */
+    internal suspend fun <T> awaitLookup(
+        work: Deferred<T?>,
+        startedAtMs: Long,
+        waitMs: Long,
+        nowMs: () -> Long = { android.os.SystemClock.elapsedRealtime() },
+    ): T? = withTimeoutOrNull((waitMs - (nowMs() - startedAtMs)).coerceAtLeast(0L)) { work.await() }
 
     /**
      * Whether waiting for the addons could still produce an answer. Each flag

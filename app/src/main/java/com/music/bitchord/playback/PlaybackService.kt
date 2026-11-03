@@ -8199,7 +8199,7 @@ class PlaybackService : MediaLibraryService() {
             "BitChord",
             if (running != null) {
                 "no addon answered for '${target.title}' within " +
-                    "${DirectSourceGate.LOOKUP_TIMEOUT_MS / 1000}s; starting it on YouTube and still looking"
+                    "${DirectSourceGate.lookupWaitMs(videoId) / 1000}s; starting it on YouTube and still looking"
             } else {
                 "no addon served '${target.title}' directly; playing it from YouTube"
             },
