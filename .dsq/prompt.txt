@@ -1,0 +1,45 @@
+﻿Kotlin Android app (task/u19-tg, BitChord Korean fork of a YouTube Music client). Real phone logs from the user's S24 on 11-03 (two diagnostic exports, ~90k lines) show this symptom 5688 times:
+SYMPTOM: the extractor walks the same client list (VISIONOS, *_PLAYER, WEB_KIDS…) again and again for the same ids
+Pattern: tDirector: client response
+Sample lines (deduplicated, ids/numbers vary):
+   setting: wifi_only_downloads=false
+   ---
+2026-11-02 06:01:34.371 W/BitChord ITX PlayerClientDirector: client response unavailable [client=WEB_EMBEDDED_PLAYER, profilePresent=true, tokenUnavailable=false, requestFailure=false, failurePresent=true]
+   2026-11-02 06:01:35.880 D/BitChord lyrics: PaxSenix: Musixmatch not_found
+   2026-11-02 06:01:35.916 D/BitChord lyrics: YouTube 자막 not_found
+2026-11-02 06:01:35.947 W/BitChord ITX PlayerClientDirector: client response unavailable [client=VISIONOS, profilePresent=true, tokenUnavailable=false, requestFailure=false, failurePresent=true]
+2026-11-02 06:01:51.764 W/BitChord ITX PlayerClientDirector: client response unavailable [client=WEB_CREATOR, profilePresent=true, tokenUnavailable=false, requestFailure=false, failurePresent=true]
+2026-11-02 06:01:51.984 W/BitChord ITX PlayerClientDirector: client response unavailable [client=TVHTML5_SIMPLY, profilePresent=true, tokenUnavailable=false, requestFailure=false, failurePresent=true]
+2026-11-02 06:01:56.440 W/BitChord ITX PlayerClientDirector: client response unavailable [client=WEB_KIDS, profilePresent=true, tokenUnavailable=false, requestFailure=false, failurePresent=true]
+2026-11-03 12:46:13.165 W/BitChord ITX PlayerClientDirector: client response unavailable [client=WEB_CREATOR, profilePresent=true, tokenUnavailable=false, requestFailure=true, failurePresent=false]
+
+Task:
+1. Find the code that logs these lines and every path that leads to them. Decide: is this an APP DEFECT (wrong decision, wasted retries/network/battery, user-visible failure, wrong song/no audio, UI stall) or the app CORRECTLY handling an outside failure (server refusing, track blocked in Korea) with no better option?
+2. If it is an app defect: fix the root cause with the smallest change. First write a JVM test that FAILS on the current code, then make it pass. Name new test classes in the summary (you may not edit .github/workflows).
+3. If the app already behaves correctly: change NOTHING and say why in the summary (that is a valid, useful answer ??do not invent work).
+Rules: battery first (no polling timers, event-based); never fall back to a music video (MV) for a song; re-read every caller and type of anything you change; keep upstream code intact (Korean code in ko/ with one-line // [KO] hooks); unknown Android/Media3 APIs: context7; use grep/Select-String (no rg).
+Summary of at most 10 lines: verdict (defect / correct) / root cause with file:line / key change / tests and results / REMOVED-LINES AUDIT / not done. Follow AGENTS.md (ponytail) rules.
+
+== 2 차 작업 (현재 브랜치 = 이전 차수 결과) ==
+엄격 기준: 아래 독립 검토자 지적의 HIGH·MEDIUM 은 전부 고칠 것(드문 경우라는 이유로 보류 금지). 그리고 이전 차수가 docs/review-1031/ 문서에 '문서에만 남김/미해결'로 둔 HIGH·MEDIUM 도 이번에 고칠 것 — 재생 핵심 경로(곡 해석·싱크·크로스페이드)라도 고치되 문서 해당 줄에 '폰 검증 필요' 표시. 지적이 틀렸으면 코드 줄 근거로 반박을 요약에. 새로 고친 곳마다 수정 전 실패하는 테스트. 이전 차수에서 고친 것을 되돌리지 말 것.
+검토 지적:
+Error: This request would exceed your available credits given your current in-flight requests. Retry after in-flight requests settle, or add credits.
+> build · deepseek/deepseek-v4.1-flash-1017
+$ cat /home/runner/work/_temp/ds/prompt.txt; echo "=====DIFF====="; cat /home/runner/work/_temp/ds/change.diff
+Kotlin Android app (task/u19-tg, BitChord Korean fork of a YouTube Music client). Real phone logs from the user's S24 on 11-03 (two diagnostic exports, ~90k lines) show this symptom 5688 times:
+SYMPTOM: the extractor walks the same client list (VISIONOS, *_PLAYER, WEB_KIDS…) again and again for the same ids
+Pattern: tDirector: client response
+Sample lines (deduplicated, ids/numbers vary):
+   setting: wifi_only_downloads=false
+   ---
+2026-11-02 06:01:34.371 W/BitChord ITX PlayerClientDirector: client response unavailable [client=WEB_EMBEDDED_PLAYER, profilePresent=true, tokenUnavailable=false, requestFailure=false, failurePresent=true]
+   2026-11-02 06:01:35.880 D/BitChord lyrics: PaxSenix: Musixmatch not_found
+   2026-11-02 06:01:35.916 D/BitChord lyrics: YouTube 자막 not_found
+2026-11-02 06:01:35.947 W/BitChord ITX PlayerClientDirector: client response unavailable [client=VISIONOS, profilePresent=true, tokenUnavailable=false, requestFailure=false, failurePresent=true]
+2026-11-02 06:01:51.764 W/BitChord ITX PlayerClientDirector: client response unavailable [client=WEB_CREATOR, profilePresent=true, tokenUnavailable=false, requestFailure=false, failurePresent=true]
+2026-11-02 06:01:51.984 W/BitChord ITX PlayerClientDirector: client response unavailable [client=TVHTML5_SIMPLY, profilePresent=true, tokenUnavailable=false, requestFailure=false, failurePresent=true]
+2026-11-02 06:01:56.440 W/BitChord ITX PlayerClientDirector: client response unavailable [client=WEB_KIDS, profilePresent=true, tokenUnavailable=false, requestFailure=false, failurePresent=true]
+2026-11-03 12:46:13.165 W/BitChord ITX PlayerClientDirector: client response unavailable [client=WEB_CREATOR, profilePresent=true, tokenUnavailable=false, requestFailure=true, failurePresent=false]
+Task:
+1. Find the code that logs these lines and every path that leads to them. Decide: is this an APP DEFECT (wrong decision, wasted retries/network/battery, user-visible failure, wrong song/no audio, UI stall) or the app CORRECTLY handling an outside failure (server refusing, track blocked in Korea) with no better option?
+마지막 요약에 지적 번호별 처리(고침/반박+근거) 한 줄씩.
