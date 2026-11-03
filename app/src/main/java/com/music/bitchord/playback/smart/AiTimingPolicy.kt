@@ -99,6 +99,11 @@ internal object AiTimingPolicy {
      * [songOnly] is the record-timed song check: its pool is [SONG_ENGINES]
      * (Deepgram's Whisper only), so the video path's Gemini and its one
      * Whisper upgrade are never spent there. The manual button is unchanged.
+     *
+     * [unsettled] means the heard words put the accepted timing beyond any
+     * narrow refine. The answer is then not the answer, and the engines not
+     * yet spent on these lyrics may be asked once, as if the measurement had
+     * given up.
      */
     fun nextEngines(
         knowledge: AiTimingKnowledge,
@@ -106,10 +111,11 @@ internal object AiTimingPolicy {
         manual: Boolean,
         measurementGaveUp: Boolean,
         songOnly: Boolean = false,
+        unsettled: Boolean = false,
     ): List<String> {
         if (manual) return ALL_ENGINES
         val spent = spentOn(knowledge, lyricsKey)
-        if (isAccepted(knowledge, lyricsKey)) {
+        if (isAccepted(knowledge, lyricsKey) && !unsettled) {
             // Once the free measurement has given up, the answer is all the
             // timing this song has, and a quicker engine's is coarser than
             // Whisper's word stamps: Whisper may still upgrade it — once.
@@ -141,7 +147,12 @@ internal object AiTimingPolicy {
             // Only Gemini's "no usable fit" was ever recorded this way.
             if (knowledge.failedKey == lyricsKey) add(GEMINI)
             // A low-agreement answer means that engine already ran for this text.
-            if (knowledge.answerKey == lyricsKey) knowledge.answerEngine?.let(::add)
+            if (knowledge.answerKey == lyricsKey) {
+                knowledge.answerEngine?.let(::add)
+                // Whisper and Deepgram Whisper are the same request; an
+                // unsettled answer must not buy that request again.
+                if (knowledge.answerEngine == WHISPER) add(DEEPGRAM_WHISPER)
+            }
         }
 
     /** Whether any automatic request may still run for these lyrics. */
@@ -151,5 +162,6 @@ internal object AiTimingPolicy {
         manual: Boolean,
         measurementGaveUp: Boolean,
         songOnly: Boolean = false,
-    ): Boolean = nextEngines(knowledge, lyricsKey, manual, measurementGaveUp, songOnly).isNotEmpty()
+        unsettled: Boolean = false,
+    ): Boolean = nextEngines(knowledge, lyricsKey, manual, measurementGaveUp, songOnly, unsettled).isNotEmpty()
 }

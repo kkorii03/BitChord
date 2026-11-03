@@ -1431,6 +1431,53 @@ object LyricsTiming {
         return entry.autoComplete || entry.autoVideoSeconds >= GIVE_UP_AFTER_SECONDS
     }
 
+    /**
+     * [measurementGaveUp], or the kept transcript hears the lines further
+     * from where they are shown than a narrow refine can move. A provider or
+     * an accepted answer this far off is not settled timing: the automatic AI
+     * fallback may still correct it.
+     */
+    suspend fun measurementGaveUp(
+        context: Context,
+        videoId: String,
+        lines: List<LyricLine>,
+        audioSource: String? = null,
+    ): Boolean = measurementGaveUp(context, videoId) || timingUnsettled(context, videoId, lines, audioSource)
+
+    /**
+     * Whether the words already heard put the current line starts beyond
+     * [RefinePolicy.MAX_SHIFT_MS], with enough lines to be the song and not a
+     * guess. The base is applied first so a measurement that correctly moved
+     * a provider's offset is not mistaken for a disagreement.
+     */
+    private suspend fun timingUnsettled(
+        context: Context,
+        videoId: String,
+        lines: List<LyricLine>,
+        audioSource: String?,
+    ): Boolean {
+        val entry = store(context).get(videoId) ?: return false
+        // A correction by hand is the listener's own answer; do not spend
+        // another engine on top of it.
+        if (entry.manualMs != null) return false
+        val key = textKey(lines, audioSource)
+        val heard = savedHeardWords(entry, key)
+        if (heard.isEmpty()) return false
+        val base = baseOf(entry, lines, audioSource = audioSource, key = key, videoId = videoId)
+        val starts: List<Long?> = base?.let { choiceStarts(lines, it) } ?: lines.map { it.timeMs as Long? }
+        // The kept refine already moved the lines toward these words; what is
+        // left to judge is the timing the listener would actually see.
+        val seen = entry.refineMs?.let { refineMs ->
+            starts.map { start ->
+                start?.let { (it + refineMs + entry.refineSlopePerMin / 60_000.0 * it).roundToLong() }
+            }
+        } ?: starts
+        return BaseChoicePolicy.grosslyOff(
+            seen,
+            BaseChoicePolicy.heardStarts(lines.map { it.text }, heard),
+        )
+    }
+
     private val measuring = ConcurrentHashMap<String, Mutex>()
 
     /**
@@ -2317,11 +2364,14 @@ object LyricsTiming {
         // gets it only once the measurement has given up — while the free
         // measurement may still time the video, the quick engines answer ahead.
         val engines = if (automatic) {
+            val gaveUp = measurementGaveUp(context, videoId)
+            val unsettled = !gaveUp && timingUnsettled(context, videoId, lines, audioSource)
             AiTimingPolicy.nextEngines(
                 knowledge(entry),
                 key,
                 manual = false,
-                measurementGaveUp = measurementGaveUp(context, videoId),
+                measurementGaveUp = gaveUp || unsettled,
+                unsettled = unsettled,
             )
         } else {
             AiTimingPolicy.ALL_ENGINES
@@ -2899,7 +2949,7 @@ object LyricsTiming {
         if (query.isVideo) {
             // The existing automatic fallback: Gemini/Deepgram only once the
             // measurement has given up, with the same wantsAi policy.
-            if (measurementGaveUp(context, song.videoId) &&
+            if (measurementGaveUp(context, song.videoId, lines, audioSource) &&
                 wantsAi(context, song.videoId, lines, audioSource)
             ) {
                 placeWithAi(
@@ -3931,13 +3981,17 @@ object LyricsTiming {
         videoId: String,
         lines: List<LyricLine>,
         audioSource: String? = null,
-    ): Boolean =
-        AiTimingPolicy.shouldAskAgain(
+    ): Boolean {
+        val gaveUp = measurementGaveUp(context, videoId)
+        val unsettled = !gaveUp && timingUnsettled(context, videoId, lines, audioSource)
+        return AiTimingPolicy.shouldAskAgain(
             knowledge(store(context).get(videoId)),
             textKey(lines, audioSource),
             manual = false,
-            measurementGaveUp = measurementGaveUp(context, videoId),
+            measurementGaveUp = gaveUp || unsettled,
+            unsettled = unsettled,
         )
+    }
 
     private const val BIAS_PREFS = "lyrics_timing"
     private const val BIAS_KEY = "ai_bias_samples"
