@@ -117,6 +117,26 @@ class CoverTitleFormatsTest {
     }
 
     @Test
+    fun recordingAndPackagingTagsAreNotOriginalArtists() {
+        listOf(
+            "Tomboy (Remastered 2011)",
+            "Tomboy (Deluxe Edition)",
+            "Tomboy (Bonus Track)",
+            "Tomboy (Explicit)",
+            "Tomboy (Mono)",
+            "Tomboy (Stereo)",
+            "Tomboy (Performance Video)",
+        ).forEach { title ->
+            val s = song(title, "어떤 채널")
+            assertNull(CoverTitles.read(s), title)
+            assertFalse(CoverTitles.isCover(s), title)
+            val query = CoverTitles.lyricsQuery(s)
+            assertEquals(title, query.title, title)
+            assertEquals("어떤 채널", query.artist, title)
+        }
+    }
+
+    @Test
     fun fanClipOfTheSingersOwnSongWithAnEnglishSubtitleIsNotACover() {
         CoverTitles.knownSingers = { setOf("아카네 리제") }
         val fan = song("아카네 리제 - 청록(Blue Rock)", "피엔나야 클립따줘")

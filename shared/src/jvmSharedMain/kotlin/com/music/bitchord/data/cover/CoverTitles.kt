@@ -998,7 +998,8 @@ object CoverTitles {
                     inner.isEmpty() -> break
                     // "(『명조』 OST)", "(최애의 아이 OST)": where it is from, not whose.
                     credit.isEmpty() || isGenericCredit(credit) || OST.containsMatchIn(credit) -> rest = inner
-                    isVersionWord(credit) || isDescriptor(credit) || isTranslation(inner, credit) -> break
+                    isVersionWord(credit) || isRecordingMarker(credit) || isDescriptor(credit) ||
+                        isTranslation(inner, credit) -> break
                     else -> {
                         // "[恋風邪にのせて - Vaundy]": the original title and the
                         // artist together — the artist is the side in Latin
@@ -1071,6 +1072,19 @@ object CoverTitles {
     }
 
     /**
+     * A bracket naming the recording or the package, not whose song it is:
+     * "(Remastered 2011)", "(Deluxe Edition)", "(Bonus Track)", "(Explicit)",
+     * "(Mono)", "(Stereo)", "(Performance Video)". These stay in the title, as
+     * [LyricsQuery] keeps recording-specific tags.
+     */
+    private val RECORDING_MARKER = Regex(
+        """(?i)\bremaster(?:ed)?\b|\bdeluxe\b|\bbonus\b|\bexplicit\b|\bmono\b|\bstereo\b|""" +
+            """\bperformance\b|\banniversary\b|\breissue\b|\bexpanded\b|\bedition\b""",
+    )
+
+    private fun isRecordingMarker(text: String): Boolean = RECORDING_MARKER.containsMatchIn(text)
+
+    /**
      * Whether an original credit names no one — a bare version/descriptor tag
      * such as "Live" or "Acoustic". A name that merely contains one of those
      * words is still a name: "Mr. Big", "The Piano Guys", and the singer AI
@@ -1080,6 +1094,7 @@ object CoverTitles {
         val name = text.trim()
         if (name.isEmpty()) return true
         if (isGenericCredit(name) || OST.containsMatchIn(name) || VERSION_WORDS.matches(name)) return true
+        if (isRecordingMarker(name)) return true
         return isDescriptor(name) && !name.equals("ai", ignoreCase = true)
     }
 
@@ -1156,7 +1171,7 @@ object CoverTitles {
         val singer = cleanName(left)?.takeUnless { isVersionWord(it) || isDescriptor(it) } ?: return null
         val group = TRAILING_GROUP.find(right)
         val credit = group?.groupValues?.get(1)?.trim()?.takeIf {
-            it.isNotEmpty() && !isVersionWord(it) && !isDescriptor(it) &&
+            it.isNotEmpty() && !isVersionWord(it) && !isRecordingMarker(it) && !isDescriptor(it) &&
                 !isGenericCredit(it) && !OST.containsMatchIn(it) && !ANY_COVER_WORD.containsMatchIn(it)
         }
         if (requireCredit && (group == null || credit == null)) return null
