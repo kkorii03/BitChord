@@ -167,6 +167,72 @@ class BlockedStartPolicyTest {
     }
 
     @Test
+    fun `a direct probe with no stream also starts the proxy at the hold`() {
+        assertFalse(
+            BlockedStartPolicy.shouldStartProxyEarly(
+                directRefused = false,
+                innerTubeXStillRunning = true,
+                elapsedMs = BlockedStartPolicy.DIRECT_HOLD_MS - 1,
+                directWithoutStream = true,
+            ),
+            "the hold still applies",
+        )
+        assertTrue(
+            BlockedStartPolicy.shouldStartProxyEarly(
+                directRefused = false,
+                innerTubeXStillRunning = true,
+                elapsedMs = BlockedStartPolicy.DIRECT_HOLD_MS,
+                directWithoutStream = true,
+            ),
+            "a benched or slow probe is the same silence as a refusal",
+        )
+        assertFalse(
+            BlockedStartPolicy.shouldStartProxyEarly(
+                directRefused = false,
+                innerTubeXStillRunning = true,
+                elapsedMs = 5_000L,
+                directWithoutStream = false,
+            ),
+            "a direct stream is worth keeping",
+        )
+    }
+
+    @Test
+    fun `a benched direct path is asked anyway when a proxy can rescue the track`() {
+        assertTrue(
+            BlockedStartPolicy.shouldAskDirect(
+                benched = true,
+                gated = true,
+                proxyAvailable = true,
+            ),
+            "the refusal is the signal that starts the proxy",
+        )
+        assertFalse(
+            BlockedStartPolicy.shouldAskDirect(
+                benched = true,
+                gated = false,
+                proxyAvailable = true,
+            ),
+            "outside the gate the bench keeps saving its round trip",
+        )
+        assertFalse(
+            BlockedStartPolicy.shouldAskDirect(
+                benched = true,
+                gated = true,
+                proxyAvailable = false,
+            ),
+            "with no proxy there is nothing the refusal would start",
+        )
+        assertTrue(
+            BlockedStartPolicy.shouldAskDirect(
+                benched = false,
+                gated = false,
+                proxyAvailable = false,
+            ),
+        )
+    }
+
+    @Test
     fun `the plan is the same walk nextStep describes`() {
         val walked = buildList {
             var step: BlockedStartStep? = BlockedStartStep.DIRECT

@@ -179,6 +179,19 @@ object BlockedStartPolicy {
         gated && refused
 
     /**
+     * Whether the anonymous direct path should be asked even though its bench
+     * says it is useless right now.
+     *
+     * The bench saves one ~400 ms refusal per track. With a usable proxy that
+     * refusal is exactly the signal that starts the proxy rescue; skipping it
+     * left the proxy waiting for InnerTubeX's whole walk, and by then the
+     * shared budget was spent. Only a gated region with a proxy to answer pays
+     * the round trip.
+     */
+    fun shouldAskDirect(benched: Boolean, gated: Boolean, proxyAvailable: Boolean): Boolean =
+        !benched || (gated && proxyAvailable)
+
+    /**
      * Whether a direct refusal should start the proxy beside InnerTubeX now.
      *
      * Keeping InnerTubeX in front of an ordinary refusal is deliberate (a
@@ -186,7 +199,9 @@ object BlockedStartPolicy {
      * not hold the track silent for the thirteen-second walk. The same
      * truth table as before, with the elapsed-time term added:
      *
-     *  - direct not refused            -> false (nothing to escalate)
+     *  - direct not refused, has a stream -> false (nothing to escalate)
+     *  - direct not refused, no stream    -> true at the hold (the probe is the
+     *    same silence: it is benched, slow, or answered without a stream)
      *  - refused, InnerTubeX finished  -> false (its answer is already in hand)
      *  - refused, InnerTubeX running, under the hold -> false
      *  - refused, InnerTubeX running, at/over the hold -> true
@@ -195,7 +210,9 @@ object BlockedStartPolicy {
         directRefused: Boolean,
         innerTubeXStillRunning: Boolean,
         elapsedMs: Long,
-    ): Boolean = directRefused && innerTubeXStillRunning && elapsedMs >= DIRECT_HOLD_MS
+        directWithoutStream: Boolean = false,
+    ): Boolean = (directRefused || directWithoutStream) &&
+        innerTubeXStillRunning && elapsedMs >= DIRECT_HOLD_MS
 
     /**
      * Whether the high-quality source is the next step after the alternate

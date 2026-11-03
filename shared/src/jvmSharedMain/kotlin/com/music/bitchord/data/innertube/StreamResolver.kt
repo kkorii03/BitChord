@@ -681,6 +681,13 @@ object StreamResolver {
         // on the Korean connection (see ProxyScopeMatcher), where the Music
         // clients are refused just as when gated, so the same order applies.
         val gated = MusicGateFallback.isActive() || com.music.bitchord.data.net.YouTubeProxy.config.usable
+        // A benched direct path is still worth its one refusal when a proxy is
+        // waiting to answer it: that refusal is what starts the proxy rescue.
+        val directAllowed = BlockedStartPolicy.shouldAskDirect(
+            benched = !order.directAllowed(),
+            gated = gated,
+            proxyAvailable = ProxyPlayback.canResolveViaProxy(),
+        )
 
         // The path that served the last track goes first — see [ResolutionOrder].
         // A winner that has missed twice in a row has already been forgotten, and
@@ -729,7 +736,7 @@ object StreamResolver {
         // cancel the walk. See [raceDirectDefinitive].
         val itxLeads = preferredItx != null || (!preferDirect && !gated)
         var directPrecheck: Deferred<DirectProbe<DirectRun>>? =
-            if (itxLeads && order.directAllowed()) {
+            if (itxLeads && directAllowed) {
                 resolverScope.async(TrackLog.about(videoId)) {
                     timed("$videoId direct") {
                         directProbe(videoId, checkActive = { ensureActive() })
@@ -742,7 +749,7 @@ object StreamResolver {
         suspend fun tryDirect(): Stream? {
             if (directTried) return null
             directTried = true
-            if (!order.directAllowed()) {
+            if (!directAllowed) {
                 // Five refusals in the last six tracks: each one costs about
                 // 400ms before InnerTubeX even starts, so stop paying it until
                 // the bench expires or the process restarts.
@@ -874,16 +881,23 @@ object StreamResolver {
                     UnplayableReason.keepTrackSpecific(directUnplayableReason, directRun.reason)
             }
             val elapsed = MonotonicClock.nowMs() - resolveStart
+            val directWithoutStream = directRun !is DirectProbe.Stream
             if (BlockedStartPolicy.shouldStartProxyEarly(
                     directRefused = directRefused,
                     innerTubeXStillRunning = !itx.isCompleted,
                     elapsedMs = elapsed,
+                    directWithoutStream = directWithoutStream,
                 ) && ProxyPlayback.canResolveViaProxy() && !proxyAttempted
             ) {
                 proxyAttempted = true
                 TrackLog.d(
                     TAG,
-                    BlockedStartPolicy.logLine(videoId, BlockedStartStep.DIRECT, "refused", elapsed),
+                    BlockedStartPolicy.logLine(
+                        videoId,
+                        BlockedStartStep.DIRECT,
+                        if (directRefused) "refused" else "no-stream",
+                        elapsed,
+                    ),
                 )
                 TrackLog.i(
                     TAG,
@@ -892,8 +906,10 @@ object StreamResolver {
                 // Only a real blocked-start signal earns the short proxy
                 // ceiling. An ordinary refusal outside a gated region keeps the
                 // old unbounded race: cutting it at the 2.5 s policy window
-                // would change a path that was not the one being fixed.
-                val proxyTimeout = if (blockedSignal) {
+                // would change a path that was not the one being fixed. A
+                // direct probe with no stream is this same rescue's first
+                // signal, so it is bounded by the same budget.
+                val proxyTimeout = if (blockedSignal || directWithoutStream) {
                     minOf(
                         BlockedStartPolicy.timeoutFor(BlockedStartStep.PROXY, elapsed),
                         blockedBudget.remainingMs(),
@@ -965,7 +981,7 @@ object StreamResolver {
                     throw deadProxy
                 }
                 if (BlockedStartPolicy.shouldSkipExtraction(
-                        directRefused = true,
+                        directRefused = directRefused,
                         proxyFailed = true,
                     )
                 ) {
