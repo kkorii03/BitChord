@@ -1,0 +1,26 @@
+BITCHORD 1.9 (Kotlin Android, branch task/u19-tg, worktree C:\Users\jang\Desktop\BitChord\BitChord-u19tg).
+Goal: the AI lyric-timing answer arrives 174-354 s into songs that are 110-167 s long, so it lands after the song ended (measured on emulator runs; the app's own logcat prints `answer +Ns, song left at +Ms`).
+
+## Working hypothesis to verify or refute (do not trust it)
+The extended listen ("wide refine") decides it needs MORE audio than the song has produced yet, so it waits until the whole song has been buffered/decoded, and only then sends it to the speech engine. For a 150 s song that is 150 s of waiting plus 40-120 s of engine time = the 174-354 s we measure.
+
+Code to check (line numbers from HEAD f661ed152, they may have moved):
+- app/src/main/java/com/music/bitchord/playback/smart/LyricsTiming.kt:1319-1336 (shouldExtend / target seconds), :1381-1387 (extendSeconds returns the whole song for songs shorter than 180 s), :3031-3032 (40 s pass then 90 s pass)
+- shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/lyrics/RefinePolicy.kt:89 (narrow cap), :101 (wide refine needs 10 lines)
+- app/.../playback/smart/VideoAudio.kt:207 songWavCopy, :267 awaitAnalysisHead(HEAD_TIMEOUT_MS 20 s), :311 awaitRenditionPrefix(OPENING_WAIT_MS 120 s)
+
+## Tasks
+1. State with file:line exactly what the extended listen waits for today, and how many seconds it adds for a 150 s song. If the hypothesis is wrong, say what really happens and stop (report the real critical path with numbers instead of changing code).
+2. If it is right: smallest change so the extended listen is not attempted while the audio it needs is not on disk yet. Shape: give the extend decision the seconds actually available on disk and return "no extend now" when that is short of the target; leave the "already extended" marker unset so a later play (with the file cached) tries again. Event-based only — no polling, no timer, no extra download, no second decode.
+3. Keep every existing guard: gates, in-flight/pending flags, timeouts, low-power/heavy-work checks, cache keys, caps. Do not delete a guard to gain speed. Do not touch LyricsPerLine.kt or clockForRendition.
+4. JVM test that FAILS on the current code and passes after (boundary: on-disk audio shorter than the target must not extend; longer must extend). Use the existing RefineExtendPolicy/RefinePolicy test style.
+5. State the user-visible effect: which songs gain an earlier answer, and what they lose (the wide refine on first play).
+
+## Rules
+- Keep upstream code intact (ko/ + `// [KO]` hooks). Unknown Android/Media3 API: context7.
+- Do NOT touch .github/workflows or signing.
+- New test class names in the summary (you may not edit workflows). grep/Select-String, not rg.
+- Follow AGENTS.md (ponytail): smallest complete change.
+
+## Summary (max 10 lines)
+files / what the extended listen waits for today (file:line, seconds) / change / tests on base vs after / REMOVED-LINES AUDIT / what the user gains and loses / not done.
