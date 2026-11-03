@@ -190,6 +190,21 @@ class TrackMatcherTitleEdgeTest {
         assertEquals("goodday", core("Good Day (feat. 팔로알토 (Paloalto))"))
     }
 
+    @Test
+    fun `a take after a featuring credit is still a take`() {
+        val live = TrackMatcher.parseTitle("Song (Album Version with Live Band)")
+        assertEquals("song", live.core)
+        assertTrue(live.versions.toString(), live.versions.contains("live"))
+
+        val remix = TrackMatcher.parseTitle("Song (Radio Edit feat. X Remix)")
+        assertEquals("song", remix.core)
+        assertTrue(remix.versions.toString(), remix.versions.contains("remix"))
+
+        // A plain credit after a neutral phrase is still the ordinary release.
+        assertEquals(emptySet<String>(), TrackMatcher.parseTitle("Song (Radio Edit feat. X)").versions)
+        assertEquals(emptySet<String>(), TrackMatcher.parseTitle("Song (Album Version with X)").versions)
+    }
+
     /**
      * BUG: the featuring regex treats the word "with" anywhere in a title as
      * the start of a credit, so real titles are truncated ("Stay With Me" to

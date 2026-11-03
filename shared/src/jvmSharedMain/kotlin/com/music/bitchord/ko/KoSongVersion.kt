@@ -397,10 +397,10 @@ internal object KoSongVersion {
      * waiters that join it and for later asks.
      */
     private suspend fun resolveSongVersion(song: Song): SongVersionAnswer {
-        // One search, no counterpart request. The `next` pairing answer never
-        // named a catalogue release in three days of logs (0.8–1.1 s each),
-        // and it spent the first song's whole 1.5 s budget before the search
-        // that does find one could even start.
+        // One audio-switch pass, no counterpart request. The `next` pairing
+        // answer never named a catalogue release in three days of logs
+        // (0.8–1.1 s each), and it spent the first song's whole 1.5 s budget
+        // before the search that does find one could even start.
         val search = try {
             Result.success(YtMusicRepository.resolveAudio(song))
         } catch (cancelled: CancellationException) {

@@ -14,8 +14,11 @@ import com.music.bitchord.data.model.Song
 object SongVersionPolicy {
     /**
      * How long a queue build or a track transition may hold the first sound
-     * while the song version is resolved. Long enough for one `next` plus one
-     * search on a normal connection, short enough not to feel like a stall.
+     * while the song version is resolved. One audio-switch pass (its title
+     * queries plus the catalogue fallback) fits on a normal connection and it
+     * is short enough not to feel like a stall. A pass that overruns is not
+     * lost: the lookup keeps running and one retry runs after the first sound,
+     * so the budget never has to cover the slowest connection.
      */
     const val BEFORE_AUDIO_TIMEOUT_MS = 1_500L
 
