@@ -102,6 +102,7 @@ object DownloadHealth {
     private const val TAG = "BitChord"
     private const val PREFS = "download_health"
     private const val KEY_CHECKED = "checked"
+    private const val KEY_FRESH = "fresh_accepted"
     private const val KEY_VERSION = "version"
     private const val KEY_REPAIR_REQUESTED = "repair_requested"
     private const val KEY_PENDING_UPGRADE = "pending_upgrade"
@@ -112,7 +113,7 @@ object DownloadHealth {
      * again. The version is part of each file's signature, so an old entry
      * simply stops matching — no migration is needed.
      */
-    const val CHECK_VERSION = 2
+    const val CHECK_VERSION = 3
 
     data class Outcome(
         val verdict: DownloadHealthPolicy.Verdict,
@@ -186,10 +187,17 @@ object DownloadHealth {
             val version = Downloads.fileVersion(context, meta.uri)
             val signature = signature(meta, version)
             if (isChecked(context, id, signature)) {
-                // A record written before this flag existed gets the earlier
-                // completed verdict promoted, so its file is not kept on the
-                // stream for the rest of its life.
-                if (!meta.recordingVerified) {
+                // A stored check says only that one completed for this file
+                // version. A cached source/track verdict or a retired upgrade
+                // never compared these bytes, so it may not promote the file to
+                // first audio; only a check that recorded a fresh acceptance
+                // may. Older entries have no such marker, and [CHECK_VERSION]
+                // makes them run again instead of trusting a stale completion.
+                if (DownloadedRecordingPolicy.promotesCheckedFile(
+                        alreadyVerified = meta.recordingVerified,
+                        freshAcceptanceRecorded = isFreshlyAccepted(context, id, signature),
+                    )
+                ) {
                     Downloads.markRecordingVerified(id, meta.uri, version)
                     return@withContext Outcome(
                         DownloadHealthPolicy.Verdict.OK,
@@ -221,7 +229,7 @@ object DownloadHealth {
                         // the verdict as done so playback stops decoding the
                         // same file; the ordinary HQ pass can still find a
                         // source later if one appears.
-                        markChecked(context, id, signature)
+                        markChecked(context, id, signature, freshAccepted = false)
                         clearPendingUpgrade(context, id)
                         clearUpgradeAttempts(context, id)
                         TrackLog.i(
@@ -237,7 +245,7 @@ object DownloadHealth {
                 when (HqLibraryUpgrade.requestUpgrade(context, song, automatic = true)) {
                     HqLibraryUpgrade.UpgradeRequest.QUEUED -> {
                         markRepairRequested(context, id, now)
-                        markChecked(context, id, signature)
+                        markChecked(context, id, signature, freshAccepted = false)
                         clearPendingUpgrade(context, id)
                         clearUpgradeAttempts(context, id)
                     }
@@ -258,6 +266,9 @@ object DownloadHealth {
                 sourceConfigId = meta.hqSourceConfigId,
                 trackId = meta.hqTrackId,
                 tier = currentTier,
+                // A stored pair verdict is not proof about these bytes, so an
+                // unverified file is decoded again before it may be promoted.
+                allowCached = meta.recordingVerified,
             )
             val soundAccepted = when (sound) {
                 is HqAudioVerify.DownloadedSound.Accepted -> true
@@ -293,7 +304,8 @@ object DownloadHealth {
             // them so the next play may start on the file instead of the
             // stream; a stored verdict or an unreadable file proves nothing
             // about the bytes now on disk.
-            if (DownloadedRecordingPolicy.recordsVerified(soundFresh, decision.verdict)) {
+            val freshlyAccepted = DownloadedRecordingPolicy.recordsVerified(soundFresh, decision.verdict)
+            if (freshlyAccepted) {
                 Downloads.markRecordingVerified(id, meta.uri, version)
             }
             // A verdict that could not hear the file is not a completed check:
@@ -374,7 +386,7 @@ object DownloadHealth {
                     upgradeAccepted = upgradeQueued,
                 )
             ) {
-                markChecked(context, id, signature)
+                markChecked(context, id, signature, freshAccepted = freshlyAccepted)
                 if (decision.action == DownloadHealthPolicy.Action.UPGRADE) {
                     clearPendingUpgrade(context, id)
                 }
@@ -395,6 +407,7 @@ object DownloadHealth {
         val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         prefs.edit()
             .remove(KEY_CHECKED)
+            .remove(KEY_FRESH)
             .remove(KEY_REPAIR_REQUESTED)
             .remove(KEY_PENDING_UPGRADE)
             .remove(KEY_UPGRADE_ATTEMPTS)
@@ -419,19 +432,40 @@ object DownloadHealth {
     private fun isChecked(context: Context, id: String, signature: String): Boolean {
         val prefs = prefs(context)
         if (prefs.getInt(KEY_VERSION, CHECK_VERSION) != CHECK_VERSION) {
-            prefs.edit().remove(KEY_CHECKED).putInt(KEY_VERSION, CHECK_VERSION).apply()
+            prefs.edit()
+                .remove(KEY_CHECKED)
+                .remove(KEY_FRESH)
+                .putInt(KEY_VERSION, CHECK_VERSION)
+                .apply()
             return false
         }
         return readChecked(prefs)[id] == signature
     }
 
-    private fun markChecked(context: Context, id: String, signature: String) {
+    private fun isFreshlyAccepted(context: Context, id: String, signature: String): Boolean =
+        readFresh(prefs(context))[id] == signature
+
+    private fun markChecked(
+        context: Context,
+        id: String,
+        signature: String,
+        freshAccepted: Boolean,
+    ) {
         val prefs = prefs(context)
         val next = readChecked(prefs) + (id to signature)
+        val fresh = if (freshAccepted) {
+            readFresh(prefs) + (id to signature)
+        } else {
+            readFresh(prefs) - id
+        }
         prefs.edit()
             .putString(
                 KEY_CHECKED,
                 next.entries.joinToString("\n") { (key, value) -> "$key\t$value" },
+            )
+            .putString(
+                KEY_FRESH,
+                fresh.entries.joinToString("\n") { (key, value) -> "$key\t$value" },
             )
             .putInt(KEY_VERSION, CHECK_VERSION)
             .apply()
@@ -464,6 +498,15 @@ object DownloadHealth {
 
     private fun readChecked(prefs: android.content.SharedPreferences): Map<String, String> =
         prefs.getString(KEY_CHECKED, null).orEmpty()
+            .lineSequence()
+            .mapNotNull { line ->
+                val tab = line.indexOf('\t')
+                if (tab <= 0) null else line.substring(0, tab) to line.substring(tab + 1)
+            }
+            .toMap()
+
+    private fun readFresh(prefs: android.content.SharedPreferences): Map<String, String> =
+        prefs.getString(KEY_FRESH, null).orEmpty()
             .lineSequence()
             .mapNotNull { line ->
                 val tab = line.indexOf('\t')

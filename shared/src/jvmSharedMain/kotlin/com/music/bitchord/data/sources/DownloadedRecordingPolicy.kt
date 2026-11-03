@@ -41,4 +41,29 @@ object DownloadedRecordingPolicy {
         freshSoundAccepted &&
             verdict != DownloadHealthPolicy.Verdict.WRONG_RECORDING &&
             verdict != DownloadHealthPolicy.Verdict.ARRANGEMENT
+
+    /**
+     * Whether an already-checked file may be promoted to verified without
+     * hearing it again.
+     *
+     * The stored check says only that some check completed for this file
+     * version. A cached source/track verdict and a retired pending upgrade both
+     * complete without comparing the bytes now on disk, so they must not make
+     * the file first audio. Only a check that recorded a fresh acceptance may.
+     */
+    fun promotesCheckedFile(
+        alreadyVerified: Boolean,
+        freshAcceptanceRecorded: Boolean,
+    ): Boolean = !alreadyVerified && freshAcceptanceRecorded
+
+    /**
+     * Whether probed bytes may be filed under [storableExtension].
+     *
+     * A source can label FLAC while serving AAC in an MP4; saving it as
+     * `.flac` puts bytes the listener did not ask for behind a lossless badge,
+     * and only the later sound check would notice. A manifest has no single
+     * container yet (its segments are assembled), so a null probe passes.
+     */
+    fun containerMatches(storableExtension: String, probedContainer: String?): Boolean =
+        probedContainer == null || probedContainer.equals(storableExtension, ignoreCase = true)
 }

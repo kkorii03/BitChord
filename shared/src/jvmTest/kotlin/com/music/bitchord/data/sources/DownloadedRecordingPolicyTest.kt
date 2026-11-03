@@ -97,4 +97,35 @@ class DownloadedRecordingPolicyTest {
             ),
         )
     }
+
+    @Test
+    fun aStoredCheckPromotesOnlyWhenItRecordedAFreshAcceptance() {
+        assertFalse(
+            DownloadedRecordingPolicy.promotesCheckedFile(
+                alreadyVerified = false,
+                freshAcceptanceRecorded = false,
+            ),
+        )
+        assertTrue(
+            DownloadedRecordingPolicy.promotesCheckedFile(
+                alreadyVerified = false,
+                freshAcceptanceRecorded = true,
+            ),
+        )
+        assertFalse(
+            DownloadedRecordingPolicy.promotesCheckedFile(
+                alreadyVerified = true,
+                freshAcceptanceRecorded = true,
+            ),
+        )
+    }
+
+    @Test
+    fun aProbedContainerMustMatchTheNameTheFileIsSavedUnder() {
+        assertTrue(DownloadedRecordingPolicy.containerMatches("flac", "flac"))
+        assertFalse(DownloadedRecordingPolicy.containerMatches("flac", "m4a"))
+        assertFalse(DownloadedRecordingPolicy.containerMatches("wav", "mp3"))
+        // A manifest has no single container yet; the assembler names it.
+        assertTrue(DownloadedRecordingPolicy.containerMatches("flac", null))
+    }
 }

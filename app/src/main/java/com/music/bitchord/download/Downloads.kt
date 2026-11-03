@@ -15,6 +15,7 @@ import com.music.bitchord.playback.TranslationAhead
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.DownloadQuality
+import com.music.bitchord.data.sources.DownloadedRecordingPolicy
 import com.music.bitchord.data.sources.HqQuality
 import com.music.bitchord.data.sources.HqTier
 import com.music.bitchord.data.sources.SourceRegistry
@@ -2089,7 +2090,26 @@ object Downloads {
                 Kept(stream, storable, probe)
             }
         }
-        is Downloader.Probe.File -> Kept(stream, storable, probe)
+        is Downloader.Probe.File -> {
+            // The bytes decide what the file can be called. A source that
+            // labels FLAC while serving AAC/MP4 must not lock onto this
+            // candidate only to be filed under the wrong extension; passing
+            // here lets the resolver try the next source.
+            if (!DownloadedRecordingPolicy.containerMatches(
+                    storable.extension,
+                    probe.container.extension,
+                )
+            ) {
+                Log.d(
+                    TAG,
+                    "${stream.format.summary}: bytes are .${probe.container.extension}, " +
+                        "not .${storable.extension}; passing",
+                )
+                null
+            } else {
+                Kept(stream, storable, probe)
+            }
+        }
     }
 
     /**

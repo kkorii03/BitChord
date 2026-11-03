@@ -30,6 +30,7 @@ import com.music.bitchord.data.model.NOTIFICATION_ART_PX
 import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.sources.DownloadedRecordingPolicy
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
@@ -740,13 +741,18 @@ fun Song.toMediaItem(useDownloadedFile: Boolean = true): MediaItem {
     // either proves it and moves the player onto the file, or condemns it and
     // the stream simply continues. Offline the file is the only sound, so it
     // keeps playing exactly as before.
+    val downloadedMayPlay = DownloadedRecordingPolicy.fileFirst(
+        downloaded = Downloads.isDownloaded(videoId),
+        wrongRecording = Downloads.isWrongRecording(videoId),
+        verified = Downloads.isRecordingVerified(videoId),
+        offline = AudioCache.isOffline(),
+    )
     val withheldForCheck = useDownloadedFile &&
         !isVideo &&
         Downloads.savedIsVideoFor(videoId) != true &&
         Downloads.isDownloaded(videoId) &&
-        !Downloads.isRecordingVerified(videoId) &&
         !Downloads.isWrongRecording(videoId) &&
-        !AudioCache.isOffline()
+        !downloadedMayPlay
     val offlineUri = if (!useDownloadedFile) null else {
         (localUri?.takeUnless {
             Downloads.isMissingLocalFile(it) || Downloads.isWrongRecording(videoId)

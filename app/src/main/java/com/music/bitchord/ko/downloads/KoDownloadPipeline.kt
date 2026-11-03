@@ -12,6 +12,7 @@ import com.music.bitchord.data.net.HqRetryPolicy
 import com.music.bitchord.data.net.SongVersionPolicy
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.DownloadQuality
+import com.music.bitchord.data.sources.DownloadedRecordingPolicy
 import com.music.bitchord.data.sources.HqQuality
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
@@ -118,6 +119,20 @@ internal object KoDownloadPipeline {
         probe: Downloader.Probe? = null,
         recordingVerified: Boolean = false,
     ): Downloads.Route? {
+        // A probed file is named for what its bytes are, not what the source
+        // called it: an AAC/MP4 served as FLAC must not be saved as `.flac`
+        // and later trusted for its sound alone. A manifest has no single
+        // container yet, so only [Downloader.Probe.File] is checked.
+        if (probe is Downloader.Probe.File &&
+            !DownloadedRecordingPolicy.containerMatches(storable.extension, probe.container.extension)
+        ) {
+            Log.d(
+                TAG,
+                "${stream.format.summary}: bytes are .${probe.container.extension}, " +
+                    "not .${storable.extension}; passing",
+            )
+            return null
+        }
         // A manifest is an index, not audio. Whichever kind it is, fetching
         // it as a file writes the index into something named `.flac` —
         // which is exactly what a `.mpd` did until [OfflineDash] existed:
