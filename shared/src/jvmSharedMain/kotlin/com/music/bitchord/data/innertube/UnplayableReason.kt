@@ -183,13 +183,19 @@ object UnplayableReason {
     /**
      * The resolver's own "unavailable" answers. Deliberately phrases rather
      * than the bare word: addon, module and Media3 failures also say
-     * "unavailable", and those are not verdicts about the recording.
+     * "unavailable", and those are not verdicts about the recording. The
+     * exhausted-catalog phrasing is InnerTubeX's (the log line "no playable
+     * clients") and NewPipe's empty-format answer, and remembering it is what
+     * stops the same id walking every client again on each player retry.
      */
     private val unavailableVerdicts = listOf(
         "video unavailable",
         "video is unavailable",
         "track unavailable",
         "track is unavailable",
+        "no playable stream",
+        "no playable clients",
+        "오디오 스트림 없음",
         "streamresolveexception",
     )
 

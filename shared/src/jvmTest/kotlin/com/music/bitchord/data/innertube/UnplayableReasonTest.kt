@@ -69,6 +69,20 @@ class UnplayableReasonTest {
     }
 
     @Test
+    fun `an exhausted InnerTubeX catalog is a definitive verdict`() {
+        val message = "No playable stream found for this track."
+        assertTrue(UnplayableReason.isDefinitive(message))
+        assertFalse(UnplayableReason.isDefinitelyGone(message))
+    }
+
+    @Test
+    fun `a NewPipe page with no audio formats is a definitive verdict`() {
+        val message = "노래 사용 불가: 오디오 스트림 없음"
+        assertTrue(UnplayableReason.isDefinitive(message))
+        assertFalse(UnplayableReason.isDefinitelyGone(message))
+    }
+
+    @Test
     fun `a deleted or private upload is definitive`() {
         assertTrue(UnplayableReason.isDefinitive("Private video"))
         assertTrue(UnplayableReason.isDefinitelyGone("Private video"))
