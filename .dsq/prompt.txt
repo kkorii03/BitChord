@@ -1,0 +1,21 @@
+﻿Kotlin Android app = upstream v1.9 + Korean fork (task/u19-tg; 1.8 fork = origin/task/telegram). Use grep/Select-String, not rg. Every fix gets a JVM test that fails on current code (no network). Do not touch .github/workflows. Battery first.
+
+Two phone bugs, 11-03 08:24 (build 315467a), playlist '오화요(허니즈)' = covers uploaded by singer 오화요:
+A) USER SPEC (decisive, 11-03): the 1.8 fork showed a cover VIDEO as title = the ORIGINAL song title only (no '(cover)' suffix, no artist in brackets), artist line = '<original artist> · <singer> 커버'. Example: upload 'Tomboy((G)I-DLE)' by channel 오화요 -> title 'Tomboy', artist '(G)I-DLE · 오화요 커버'. 1.9 shows 'Tomboy((G)I-DLE) (cover)' / '오화요' (YouTubeDisplayCleaner.cleanCoverTitle appends ' (cover)'). Restore the 1.8 behaviour everywhere (player, lists, recents, queue, notification): find how origin/task/telegram did it (CoverTitles.applyTo byline '… 커버', coverOriginalArtist) and why 1.9 no longer reaches it. Lyrics search must use the original title + original artist (Tomboy by (G)I-DLE was not found by any provider).
+Also wrong cover credit (artist line) — CoverTitles / YouTubeDisplayCleaner / StoredSongDisplay / ko cover-singer set (setting ko_cover_singers):
+  1. 'instagram (cover)' shows artist '오화요 가사포함' (channel/upload suffix '가사포함' = 'with lyrics' leaked into the singer).
+  2. a 오화요 cover shows artist '콩밥특별시 경찰 야유회' (some other channel/playlist text taken as the singer).
+  3. 'Memories(Smiling Test) / cover...' shows artist '윤미래' — the ORIGINAL artist, not the cover singer 오화요.
+  The playlist rows' channel is 오화요 for all. Make the cover singer come from the uploading channel when the title names the original artist, strip suffixes like 가사포함/가사/lyrics/MV/풀버전 from singer names, and never show the original artist as the cover's artist. Tests with these exact strings (and the title shapes 'Song / cover by X', 'Song (cover)', 'Original Artist - Song / cover').
+B) Video songs: picture never loads; log repeats 'ITX InnerTubeExtractor: no playable clients' about once per second while the song plays (MusicVideoPlayer.resolve / InnerTubeXResolver.extractVideo incl. the new preferredClientId fallback). Stop the retry loop (bounded retries, then MusicVideoEngine.missing so the player shows artwork), and find why every client fails for the picture when audio works (headers, PoToken, client profile, signed-in vs anonymous) — fix if possible.
+Summary of at most 14 lines: causes (file:line), fixes, REMOVED-LINES AUDIT, tests (class names for CI), what you did not do. Follow AGENTS.md (ponytail) rules.
+
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 2
+MEDIUM shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/cover/CoverTitles.kt:682-689 — The new channel-singer branch reimplements `songFirst` but omits its `isVersionWord`/`isGenericCredit` filtering and `orderUnsure`, so a title like `Song - Live / 윤미래 cover` on a known singer's channel records “Live” as the original artist and loses the reversed lyrics query. Fix: reuse `songFirst`'s filtered credit parsing and `orderUnsure` after choosing the uploader as singer.
+MEDIUM shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YouTubeDisplayCleaner.kt:96-100 — When `cover.singer` equals `cover.originalArtist`, `takeUnless` returns null and the safe-call chain skips the `uploader` fallback, so the artist can become empty even though the comment/audit says the uploader is used. Fix: handle the same-name case explicitly and fall back to `uploader` (or another non-blank name) before the soundtrack filter.
+Skipped: real-device/network verification of the video retry loop; risk: the cap only counts `load()` failures, so a once-per-second log emitted inside one extractor pass would remain.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
