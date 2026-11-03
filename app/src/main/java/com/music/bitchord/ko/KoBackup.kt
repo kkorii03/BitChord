@@ -5,6 +5,7 @@ import android.net.Uri
 import com.music.bitchord.BuildConfig
 import com.music.bitchord.data.LikeState
 import com.music.bitchord.data.StoredSongDisplay
+import com.music.bitchord.data.withStoredVideoFlag
 import com.music.bitchord.data.lyrics.LyricsOverrideFile
 import com.music.bitchord.data.lyrics.LyricsOverrideStore
 import com.music.bitchord.data.model.LikeStatus
@@ -697,7 +698,7 @@ internal object KoBackup {
                 downloadFormat = downloadFormat,
                 sourceQuality = sourceQuality,
                 isExplicit = isExplicit,
-            ),
+            ).withStoredVideoFlag(isVideo),
         ).withVideoThumbnailFallback()
 
         companion object {

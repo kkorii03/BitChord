@@ -3929,6 +3929,7 @@ private fun BitChordApp(
                                             subtitle = song.artist.ifEmpty { "" },
                                             artworkUrl = song.thumbnailUrl,
                                             entityType = EntityType.TRACK,
+                                            isVideo = song.isVideo,
                                         ))
                                         playRadio(song, QueueSource(searchLabel, PlaybackSourceType.SEARCH))
                                     }
@@ -3942,6 +3943,7 @@ private fun BitChordApp(
                                         subtitle = song.artist.ifEmpty { "" },
                                         artworkUrl = song.thumbnailUrl,
                                         entityType = EntityType.TRACK,
+                                        isVideo = song.isVideo,
                                     ))
                                     playRadio(song, QueueSource(searchLabel, PlaybackSourceType.SEARCH))
                                 },
@@ -3952,6 +3954,7 @@ private fun BitChordApp(
                                         subtitle = song.artist.ifEmpty { "" },
                                         artworkUrl = song.thumbnailUrl,
                                         entityType = EntityType.TRACK,
+                                        isVideo = song.isVideo,
                                     ))
                                     viewModel.loadPlaylists()
                                     playlistTarget = song

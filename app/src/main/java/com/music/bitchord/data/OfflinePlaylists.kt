@@ -194,6 +194,8 @@ object OfflinePlaylists {
         artistId = artistId,
         albumId = albumId,
         albumName = albumName,
+        isVideo = isVideo,
+        isVideoOrigin = isVideoOrigin,
         localUri = localUri,
         localPath = localPath,
         localDateAddedSeconds = localDateAddedSeconds,
@@ -246,6 +248,8 @@ object OfflinePlaylists {
         putOpt("artistId", artistId)
         putOpt("albumId", albumId)
         putOpt("albumName", albumName)
+        put("isVideo", isVideo)
+        put("isVideoOrigin", isVideoOrigin)
         putOpt("localUri", localUri)
         putOpt("localPath", localPath)
         localDateAddedSeconds?.let { put("added", it) }
@@ -265,12 +269,14 @@ object OfflinePlaylists {
             artistId = obj.text("artistId"),
             albumId = obj.text("albumId"),
             albumName = obj.text("albumName"),
+            isVideo = obj.optBoolean("isVideo", false),
+            isVideoOrigin = obj.optBoolean("isVideoOrigin", false),
             localUri = uri,
             localPath = obj.text("localPath"),
             localDateAddedSeconds = if (obj.has("added")) obj.getLong("added") else null,
             localDateModifiedSeconds = if (obj.has("modified")) obj.getLong("modified") else null,
             trackNumber = if (obj.has("track")) obj.getInt("track") else null,
-        )
+        ).withStoredVideoFlag()
     }
 }
 

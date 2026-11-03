@@ -9,6 +9,7 @@ import android.os.SystemClock
 import com.music.bitchord.R
 import com.music.bitchord.data.StoredSongDisplay
 import com.music.bitchord.data.TrackLog
+import com.music.bitchord.data.withStoredVideoFlag
 import com.music.bitchord.playback.smart.AutomixAnalysisSource
 import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
@@ -1029,6 +1030,7 @@ object AudioCache {
                         thumbnailUrl = art,
                         durationText = field(META_DURATION) ?: noted?.durationText,
                         albumName = field(META_ALBUM) ?: noted?.albumName,
+                        isVideo = noted?.isVideo == true,
                         // The row's second line: where the copy came from, what
                         // it costs on disk, and — when only part of it is there —
                         // that it will need a connection to play to the end.
@@ -1038,7 +1040,7 @@ object AudioCache {
                             appContext?.getString(R.string.cached_song_partial)?.takeUnless { complete },
                         ).joinToString(" · "),
                         localDateAddedSeconds = lastUsed / 1000,
-                    ),
+                    ).withStoredVideoFlag(noted?.isVideo),
                 ),
                 origin = origin,
                 bytes = bytes,

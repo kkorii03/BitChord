@@ -409,6 +409,7 @@ object YtMusicRepository {
                     title = item.title,
                     artist = InnertubeParser.artistFromSubtitle(item.subtitle),
                     thumbnailUrl = item.thumbnailUrl,
+                    isVideo = item.isVideo,
                 )
             }
         }.orEmpty()
@@ -431,6 +432,7 @@ object YtMusicRepository {
                         title = item.title,
                         artist = InnertubeParser.artistFromSubtitle(item.subtitle),
                         thumbnailUrl = item.thumbnailUrl,
+                        isVideo = item.isVideo,
                     )
                 }
             }
@@ -447,6 +449,7 @@ object YtMusicRepository {
                         title = item.title,
                         artist = InnertubeParser.artistFromSubtitle(item.subtitle),
                         thumbnailUrl = item.thumbnailUrl,
+                        isVideo = item.isVideo,
                     )
                 }
             }
@@ -465,6 +468,7 @@ object YtMusicRepository {
                         title = item.title,
                         artist = InnertubeParser.artistFromSubtitle(item.subtitle),
                         thumbnailUrl = item.thumbnailUrl,
+                        isVideo = item.isVideo,
                     )
                 }
             }

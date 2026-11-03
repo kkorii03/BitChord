@@ -1,6 +1,7 @@
 package com.music.bitchord.ko
 
 import com.music.bitchord.data.StoredSongDisplay
+import com.music.bitchord.data.withStoredVideoFlag
 import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.stats.TrackEntry
@@ -33,7 +34,7 @@ internal object KoListeningStatsDisplay {
             artistId = entry.artistId,
             albumId = entry.albumId,
             albumName = entry.album,
-            isVideo = entry.artist.endsWith(" 커버"),
-        ),
+            isVideo = entry.isVideo,
+        ).withStoredVideoFlag(entry.isVideo),
     )
 }

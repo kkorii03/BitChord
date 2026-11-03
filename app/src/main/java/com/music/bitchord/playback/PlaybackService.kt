@@ -12740,7 +12740,7 @@ class PlaybackService : MediaLibraryService() {
                                 resolved.add(cached.toMediaItem())
                             } else {
                                 resolved.add(
-                                    Song(
+                                    item.toSong().copy(
                                         videoId = videoId,
                                         title = item.mediaMetadata.title?.toString()
                                             ?: getString(R.string.unknown_track),
@@ -12928,6 +12928,7 @@ class PlaybackService : MediaLibraryService() {
                 title = title,
                 artist = InnertubeParser.artistFromSubtitle(subtitle),
                 thumbnailUrl = thumbnailUrl,
+                isVideo = isVideo,
             )
             cacheSong(song)
             return song.toMediaItem()
@@ -12958,6 +12959,7 @@ class PlaybackService : MediaLibraryService() {
             title = title,
             artist = InnertubeParser.artistFromSubtitle(subtitle),
             thumbnailUrl = thumbnailUrl,
+            isVideo = isVideo,
         )
     }
 

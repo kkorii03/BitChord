@@ -401,6 +401,7 @@ object TasteSignals {
                     coverSinger = it.coverSinger,
                     thumbnailUrl = it.art,
                     durationText = it.durationText,
+                    isVideo = it.isVideo,
                 )
             }
         }
@@ -603,6 +604,7 @@ object TasteSignals {
         if (track.title.isBlank()) track.title = CoverTitles.read(song)?.title ?: song.title
         if (track.artist.isBlank()) track.artist = credited(song)
         if (track.coverSinger == null) track.coverSinger = singer
+        if (song.isVideo) track.isVideo = true
         if (track.art == null) track.art = song.thumbnailUrl
         if (track.durationText == null) track.durationText = song.durationText
         return track
@@ -717,6 +719,8 @@ data class StoredTrack(
     var coverSinger: String? = null,
     var art: String? = null,
     var durationText: String? = null,
+    /** Whether this row was a video upload; older stores did not keep it. */
+    var isVideo: Boolean = false,
     var plays: DecayedValue = DecayedValue(),
     var completes: DecayedValue = DecayedValue(),
     var skips: DecayedValue = DecayedValue(),

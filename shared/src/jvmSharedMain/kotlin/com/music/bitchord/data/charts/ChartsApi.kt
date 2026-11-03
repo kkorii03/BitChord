@@ -38,6 +38,7 @@ internal data class ChartEntry(
     val videoId: String? = null,
     val browseId: String? = null,
     val thumbnailUrl: String? = null,
+    val isVideo: Boolean = false,
 ) {
     fun shelfItem(): ShelfItem = ShelfItem(
         title = title,
@@ -45,6 +46,7 @@ internal data class ChartEntry(
         thumbnailUrl = thumbnailUrl,
         videoId = videoId,
         browseId = browseId,
+        isVideo = isVideo,
     )
 }
 
@@ -222,6 +224,7 @@ internal object ChartsParser {
                 },
                 browseId = if (type == ChartType.ARTISTS) browseIdOf(entry) else null,
                 thumbnailUrl = thumbnailOf(entry),
+                isVideo = type == ChartType.VIDEOS,
             )
         }
     }

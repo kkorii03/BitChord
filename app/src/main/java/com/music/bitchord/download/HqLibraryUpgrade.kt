@@ -12,6 +12,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.music.bitchord.data.LikeState
 import com.music.bitchord.data.TrackLog
+import com.music.bitchord.data.withStoredVideoFlag
 import com.music.bitchord.data.net.AutomaticRetryPolicy
 import com.music.bitchord.data.net.HqAutoDownloadPolicy
 import com.music.bitchord.data.YtMusicRepository
@@ -1730,6 +1731,7 @@ object HqLibraryUpgrade {
         pending.song.albumName.orEmpty(),
         pending.attempt.toString(),
         pending.notBeforeMs.toString(),
+        pending.song.isVideo.toString(),
     ).joinToString(FIELD_SEPARATOR) { it.sanitizedField() }
 
     private fun parseTarget(line: String): PendingTarget? {
@@ -1756,7 +1758,8 @@ object HqLibraryUpgrade {
             thumbnailUrl = parts[7].takeIf { it.isNotBlank() },
             durationText = parts[8].takeIf { it.isNotBlank() },
             albumName = parts[9].takeIf { it.isNotBlank() },
-        )
+            isVideo = parts.getOrNull(12)?.toBooleanStrictOrNull() == true,
+        ).withStoredVideoFlag()
         if (song.title.isBlank()) return null
         return PendingTarget(
             target = target,

@@ -10,6 +10,7 @@ import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.TrackMatcher
+import com.music.bitchord.data.withStoredVideoFlag
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -1192,6 +1193,7 @@ internal fun Song.toPartyTrack(playerDurationMs: Long): PartyTrack = PartyTrack(
     // otherwise what the row that queued the track claimed.
     durationMs = playerDurationMs.takeIf { it > 0L }
         ?: TrackMatcher.secondsOf(durationText)?.let { it * 1000L },
+    isVideo = isVideo,
     fromAutoplay = fromAutoplay,
 )
 
@@ -1207,8 +1209,9 @@ internal fun PartyTrack.toSong(): Song = Song(
         val total = ms / 1000
         "%d:%02d".format(total / 60, total % 60)
     },
+    isVideo = isVideo,
     queueTier = if (fromAutoplay) QueueTier.AUTOPLAY else QueueTier.USER_QUEUE,
-)
+).withStoredVideoFlag(isVideo)
 
 /**
  * Whether the deferred-play fallback may still start the player.

@@ -799,6 +799,7 @@ private suspend fun localTracksWithMetadata(seedSong: Song): List<LocalTrack> {
             artist = track.artist.ifBlank { entry?.artist.orEmpty() },
             thumbnailUrl = track.thumbnailUrl?.takeIf { it.isNotBlank() } ?: entry?.art,
             durationText = track.durationText?.takeIf { it.isNotBlank() } ?: entry?.durationText,
+            isVideo = track.isVideo || entry?.isVideo == true,
         )
     }
     return enriched.filter { track ->

@@ -403,6 +403,7 @@ internal object YouTubeWebParser {
                     thumbnailUrl = thumbnail,
                     videoId = contentId,
                     browseId = null,
+                    isVideo = lockupIsVideo(lockup),
                 )
             }
             "LOCKUP_CONTENT_TYPE_PLAYLIST", "LOCKUP_CONTENT_TYPE_STATION", "LOCKUP_CONTENT_TYPE_ALBUM" -> {
@@ -514,6 +515,7 @@ internal object YouTubeWebParser {
             thumbnailUrl = rowThumbnail(video, videoId),
             videoId = videoId,
             browseId = null,
+            isVideo = video.isVideoRow(),
         )
     }
 
@@ -530,6 +532,7 @@ internal object YouTubeWebParser {
             thumbnailUrl = rowThumbnail(video, videoId),
             videoId = videoId,
             browseId = null,
+            isVideo = video.isVideoRow(),
         )
     }
 
@@ -544,6 +547,7 @@ internal object YouTubeWebParser {
             thumbnailUrl = rowThumbnail(panel, videoId),
             videoId = videoId,
             browseId = null,
+            isVideo = panel.isVideoRow(),
         )
     }
 

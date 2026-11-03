@@ -388,6 +388,14 @@ object CoverTitles {
             (song.isVideo && song.artist.endsWith(" $COVER_WORD")) || read(song) != null
 
     /**
+     * A cover is an upload whatever a stored row says, so a row whose video
+     * flag was lost on the way through an old store is marked a video again.
+     */
+    fun restoreVideoFlag(song: Song): Song =
+        if (song.isVideo || !(isCover(song) || song.artist.endsWith(" $COVER_WORD"))) song
+        else song.copy(isVideo = true, isVideoOrigin = true)
+
+    /**
      * Who to credit a play to: the singer of a cover, the artist of anything
      * else. Also recovers the singer from a byline that lost its fields on
      * the way through a saved queue.

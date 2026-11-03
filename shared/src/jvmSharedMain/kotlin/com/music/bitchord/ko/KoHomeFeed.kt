@@ -232,7 +232,16 @@ internal object KoHomeFeed {
             ?: return null
         return HomeShelf(
             title = pick.title,
-            items = songs.map { ShelfItem(title = it.title, subtitle = it.artist, thumbnailUrl = it.thumbnailUrl, videoId = it.videoId, browseId = null) },
+            items = songs.map {
+                ShelfItem(
+                    title = it.title,
+                    subtitle = it.artist,
+                    thumbnailUrl = it.thumbnailUrl,
+                    videoId = it.videoId,
+                    browseId = null,
+                    isVideo = it.isVideo,
+                )
+            },
             moreBrowseId = browseId,
         )
     }

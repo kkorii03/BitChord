@@ -35,6 +35,7 @@ type Track struct {
 	Artist       string  `json:"artist"`
 	ThumbnailUrl *string `json:"thumbnailUrl,omitempty"`
 	DurationMs   *int64  `json:"durationMs,omitempty"`
+	IsVideo      bool    `json:"isVideo"`
 	FromAutoplay bool    `json:"fromAutoplay"`
 }
 
@@ -74,6 +75,7 @@ func TrackFromWire(raw map[string]interface{}) *Track {
 		durPtr = &dur
 	}
 
+	isVideo, _ := raw["isVideo"].(bool)
 	fromAutoplay, _ := raw["fromAutoplay"].(bool)
 
 	return &Track{
@@ -82,6 +84,7 @@ func TrackFromWire(raw map[string]interface{}) *Track {
 		Artist:       artist,
 		ThumbnailUrl: thumbPtr,
 		DurationMs:   durPtr,
+		IsVideo:      isVideo,
 		FromAutoplay: fromAutoplay,
 	}
 }

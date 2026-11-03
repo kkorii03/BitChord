@@ -364,7 +364,7 @@ object LocalMediaRepository {
                 localDateAddedSeconds = cursor.getLong(dateAdded),
                 localDateModifiedSeconds = cursor.getLong(dateModified),
                 trackNumber = trackNumber,
-            )
+            ).withStoredVideoFlag()
         }
     }
 
@@ -600,7 +600,7 @@ object LocalMediaRepository {
             localDateAddedSeconds = scanned?.dateAddedSeconds,
             localDateModifiedSeconds = scanned?.dateModifiedSeconds,
             trackNumber = trackNumber,
-        )
+        ).withStoredVideoFlag()
     }
 
     /**

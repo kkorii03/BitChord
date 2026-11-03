@@ -30,6 +30,8 @@ data class PartyTrack(
     val artist: String = "",
     val thumbnailUrl: String? = null,
     val durationMs: Long? = null,
+    /** Whether the sender queued a video upload; older frames did not keep it. */
+    val isVideo: Boolean = false,
     /** Preserves the queue's shared manual/AutoPlay section boundary. */
     val fromAutoplay: Boolean = false,
 )

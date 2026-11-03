@@ -105,6 +105,7 @@ fun TvSearchScreen(
                 subtitle = song.artist,
                 artworkUrl = song.thumbnailUrl,
                 entityType = EntityType.TRACK,
+                isVideo = song.isVideo,
             ),
         )
         playSong(song)

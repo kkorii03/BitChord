@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.music.bitchord.data.LocalArtist
 import com.music.bitchord.data.LocalPlay
+import com.music.bitchord.data.withStoredVideoFlag
 import com.music.bitchord.data.model.Song
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -217,8 +218,10 @@ object ListeningStats {
                     artistId = song.artistId,
                     art = song.thumbnailUrl,
                     durationText = song.durationText,
+                    isVideo = song.isVideo,
                 )
             }
+            if (song.isVideo) track.isVideo = true
             track.ms += playedMs
             track.last = atMs
             // Filled in as it becomes known: a track queued from search reaches
@@ -793,7 +796,8 @@ object ListeningStats {
                                     artistId = entry.artistId,
                                     albumId = entry.albumId,
                                     albumName = entry.album,
-                                ),
+                                    isVideo = entry.isVideo,
+                                ).withStoredVideoFlag(),
                             ), // [KO] listening-display
                             ms = ms,
                             plays = plays,
@@ -813,7 +817,8 @@ object ListeningStats {
                                     artistId = it.artistId,
                                     albumId = it.albumId,
                                     albumName = it.album,
-                                ),
+                                    isVideo = it.isVideo,
+                                ).withStoredVideoFlag(),
                             ), // [KO] listening-display
                             ms = it.ms,
                             plays = it.plays,
@@ -1038,6 +1043,8 @@ data class TrackEntry(
     var artistId: String? = null,
     var art: String? = null,
     var durationText: String? = null,
+    /** Whether this row was a video upload; older buckets did not keep it. */
+    var isVideo: Boolean = false,
     var ms: Long = 0L,
     var plays: Int = 0,
     var last: Long = 0L,
@@ -1056,6 +1063,7 @@ data class TrackEntry(
         if (artistId == null) artistId = other.artistId
         if (art == null) art = other.art
         if (durationText == null) durationText = other.durationText
+        if (other.isVideo) isVideo = true
         // Merge per-day sub-buckets.
         if (other.days.isNotEmpty()) {
             other.days.forEach { (dateKey, stats) ->

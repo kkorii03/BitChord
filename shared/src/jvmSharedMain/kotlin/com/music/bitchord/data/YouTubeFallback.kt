@@ -577,6 +577,7 @@ internal object YouTubeFallback {
                 title = item.title,
                 artist = item.subtitle,
                 thumbnailUrl = item.thumbnailUrl,
+                isVideo = item.isVideo,
             )
         }
         val kept = YouTubeMusicClassifier.filterMusic(songs, songs.size)
@@ -668,6 +669,7 @@ internal object YouTubeFallback {
                     title = item.title,
                     artist = item.subtitle,
                     thumbnailUrl = item.thumbnailUrl,
+                    isVideo = item.isVideo,
                 )
             }
             .distinctBy { it.videoId }
@@ -1241,6 +1243,7 @@ internal object YouTubeFallback {
                         title = item.title,
                         artist = item.subtitle,
                         thumbnailUrl = item.thumbnailUrl,
+                        isVideo = item.isVideo,
                     ),
                 )
             }
@@ -1286,6 +1289,7 @@ internal object YouTubeFallback {
                 title = item.title,
                 artist = item.subtitle,
                 thumbnailUrl = item.thumbnailUrl,
+                isVideo = item.isVideo,
             ),
         )
         return item.copy(
@@ -1305,6 +1309,7 @@ internal object YouTubeFallback {
             thumbnailUrl = shown.thumbnailUrl,
             videoId = shown.videoId,
             browseId = null,
+            isVideo = shown.isVideo,
         )
     }
 }
