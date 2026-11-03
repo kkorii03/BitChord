@@ -1,0 +1,31 @@
+BITCHORD 1.9 (Kotlin Android, branch task/u19-tg, worktree C:\Users\jang\Desktop\BitChord\BitChord-u19tg).
+Goal: lyric sync. Tonight's measurement shows the SAME song passing or failing depending on which lyric provider's timings the app ended up using, and the choice is not stable between runs.
+
+## Evidence (emulator runs, same song, forced-alignment scorer; median = displayed minus sung)
+| song | run | provider used | median error | verdict |
+|---|---|---|---|---|
+| v59g4HRNIkc | yA | KuGou | -8.68 s | FAIL |
+| v59g4HRNIkc | yA300 | Gemini | -0.02 s | PASS |
+| ekzHIouo8Q4 | yA | 벅스 | -11.85 s | FAIL |
+| ekzHIouo8Q4 | yA300 | PaxSenix | -0.046 s | PASS |
+| 7PgA6kyqVTc | yA | lrc.red | +0.37 s | FAIL |
+| 7PgA6kyqVTc | yA300 | LyricsPlus | +4.29 s | FAIL |
+Providers seen across runs for the same 10 songs: lrc.red, 벅스, KuGou, LyricsPlus, PaxSenix, BiniLyrics, Gemini, VIBE, LRCLIB, BetterLyrics.
+A big correction is not itself wrong: -RJSbO8UZVY got a +18619 ms shift and scored +0.063 s. The bad cases are timings that are 4-12 s off and that no correction layer could fix.
+
+## Tasks
+1. Answer with file:line: how the app chooses which provider's lyrics/timings to use (shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/lyrics/LyricsRepository.kt, ProviderLyrics.kt, KoreanLyrics.kt, BaseChoicePolicy.kt, and the per-provider files). Is it a race (first response wins), a fixed priority, a quality score, or the user's setting? Show the code path and say why the same song can land on different providers on two runs.
+2. Say which of the observed bad sources would have been avoidable by a deterministic choice, and what evidence the app already has at that moment to prefer one source over another (e.g. a timing sanity check against the other providers' first-line positions, line count vs song length, whether the source is a synced format at all).
+3. Implement the smallest deterministic improvement the code supports, for example: when more than one provider answers, prefer the source whose first-line timings agree with the others (or with the video's own captions) instead of whichever arrived first. No new setting, no extra network request beyond what is already fetched, no polling.
+4. JVM test that FAILS on the current code and passes after (pure selection logic — keep it testable without Android).
+5. State the cost (requests per song, latency) and what could regress (a provider that is right but unique would now be distrusted).
+
+## Rules
+- Keep upstream code intact (ko/ + `// [KO]` hooks). Unknown Android/Media3 API: context7.
+- Do NOT touch .github/workflows, signing, LyricsTiming.kt, LyricsPerLine.kt, or RefineExtendPolicy.kt — other lanes own them today.
+- Keep every existing guard (timeouts, caches, in-flight flags, low-power checks). Do not delete a guard.
+- New test class names in the summary (you may not edit workflows). grep/Select-String, not rg.
+- Follow AGENTS.md (ponytail): smallest complete change.
+
+## Summary (max 10 lines)
+files / how the provider is chosen today with file:line / the change / tests on base vs after / REMOVED-LINES AUDIT / cost / what could regress.
