@@ -1,0 +1,9 @@
+﻿
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 2
+- MEDIUM | shared/src/jvmSharedMain/kotlin/com/music/bitchord/ko/KoTrackMatcher.kt:1386 | `segment.replace(FEATURING, " ")` deletes everything from the first `feat`/`ft`/`with` to the end before the neutral test, so a take marker after it (`Album Version with Live Band`, `Radio Edit feat. X Remix`) is dropped and a live/remix row can be treated as the ordinary release; the old check kept those markers. | Split at the feat credit and classify the remainder (or skip the neutral return when the discarded tail contains a VERSION_WORD), and add a regression test.
+- MEDIUM | shared/src/jvmSharedMain/kotlin/com/music/bitchord/ko/KoSongVersion.kt:507 | The timeout half of the task is only asserted: the summary says the 1.5s budget "covers 2 sequential searches plus catalogue fallback", but KoSongVersion.kt:400-402 says one counterpart request alone consumed the whole 1.5s budget and the phone log shows `kept (timeout)`, while the diff changes no timeout code and adds no test. | Measure the lookup and either raise/justify the budget with the queue-stall tradeoff or add a test proving the retry recovers, and put that evidence in the summary.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
