@@ -1758,12 +1758,12 @@ private fun BitChordApp(
                 )
                 c.playSongs(timeline, 0)
             } else {
-                // Music-only preference: only the current row carries the
-                // catalogue release before it reaches the player, so playback
-                // starts immediately and the service's look-ahead resolves the
-                // rest as it approaches them. A failed lookup keeps the video
-                // row, never silence. In a party the shared queue is not
-                // version-switched.
+                // Music-only preference: the current row and the next few
+                // carry the catalogue release before they reach the player, so
+                // the visible "next" list already reads as songs; the service
+                // continues the look-ahead as the window moves. A failed
+                // lookup keeps the video row, never silence. In a party the
+                // shared queue is not version-switched.
                 val queueSongs = koResolveQueueAhead(songs, index) // [KO] song-version
                 // A newer tap may have landed while the look-ahead was out.
                 if (request != playRequestGeneration) return@launch

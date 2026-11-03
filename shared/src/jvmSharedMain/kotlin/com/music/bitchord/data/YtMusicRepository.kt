@@ -806,7 +806,7 @@ object YtMusicRepository {
     suspend fun resolveQueueAhead(
         songs: List<Song>,
         startIndex: Int,
-        ahead: Int = 4,
+        ahead: Int = SongVersionPolicy.UPCOMING_LOOKAHEAD_ROWS + 1,
         timeoutMs: Long = SongVersionPolicy.BEFORE_AUDIO_TIMEOUT_MS,
     ): List<Song> =
         KoSongVersion.resolveQueueAhead(songs, startIndex, ahead, timeoutMs) // [KO] song-version

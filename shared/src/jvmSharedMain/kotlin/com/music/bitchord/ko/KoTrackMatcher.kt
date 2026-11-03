@@ -150,10 +150,19 @@ internal object KoTrackMatcher {
                 !isCoverOf(candidate, target)
         }
 
+    /**
+     * A name without its leading article. Catalogues disagree about "The" in
+     * an act's name ("The 1975" vs "1975"), and the article is not identity —
+     * unlike a shared word inside a longer name, which still fails the exact
+     * comparison below.
+     */
+    private fun withoutLeadingArticle(name: List<String>): List<String> =
+        if (name.size > 1 && name.first() == "the") name.drop(1) else name
+
     /** True when one credited artist of [wanted] is exactly one credited artist of [got]. */
     internal fun namesTheSameArtist(wanted: String, got: String): Boolean {
-        val have = artistNames(got)
-        if (artistNames(wanted).any { it in have }) return true
+        val have = artistNames(got).mapTo(HashSet()) { withoutLeadingArticle(it) }
+        if (artistNames(wanted).any { withoutLeadingArticle(it) in have }) return true
         // Two printed names that YouTube has linked to one channel are the
         // same act: a solo member and their group, or an act's former name.
         // Only a channel both names have actually been seen under counts.
@@ -1372,7 +1381,11 @@ internal object KoTrackMatcher {
         context: MutableSet<String>,
         takeMarkers: Boolean = true,
     ) {
-        val words = segment.split(WORD_SPLIT)
+        // A feat. credit belongs to the artist field wherever a catalogue
+        // prints it. Take it off before reading a dropped segment as a take,
+        // so "Radio Edit - feat. …" stays the ordinary release instead of
+        // becoming an "edit" version the plain title never asked for.
+        val words = FEATURING.replace(segment, " ").split(WORD_SPLIT)
             .map { it.replace(NON_ALNUM, "") }
             .filter { it.isNotEmpty() }
         if (words.isEmpty()) return

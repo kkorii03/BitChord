@@ -62,7 +62,7 @@ internal suspend fun koSongBeforeAudio(song: Song): Song =
 internal suspend fun koResolveQueueAhead(songs: List<Song>, index: Int): List<Song> =
     if (AppSettings.preferMusicOnly.value) {
         try {
-            YtMusicRepository.resolveQueueAhead(songs, index, ahead = 1)
+            YtMusicRepository.resolveQueueAhead(songs, index)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Throwable) {

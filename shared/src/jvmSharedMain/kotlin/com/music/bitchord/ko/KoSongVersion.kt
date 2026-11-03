@@ -489,8 +489,9 @@ internal object KoSongVersion {
     suspend fun resolveQueueAhead(
         songs: List<Song>,
         startIndex: Int,
-        ahead: Int = 4,
+        ahead: Int = SongVersionPolicy.UPCOMING_LOOKAHEAD_ROWS + 1,
         timeoutMs: Long = SongVersionPolicy.BEFORE_AUDIO_TIMEOUT_MS,
+        resolve: suspend (Song) -> Song? = { songVersion(it, beforeAudio = true) },
     ): List<Song> {
         if (songs.isEmpty() || ahead <= 0) return songs
         val first = startIndex.coerceIn(0, songs.lastIndex)
@@ -504,7 +505,7 @@ internal object KoSongVersion {
                 async(Dispatchers.IO) {
                     val song = songs[index]
                     val version = try {
-                        withTimeout(timeoutMs) { songVersion(song, beforeAudio = true) }
+                        withTimeout(timeoutMs) { resolve(song) }
                     } catch (timeout: TimeoutCancellationException) {
                         TrackLog.i(TAG, "song version: ${song.videoId} kept (timeout)", about = song.videoId)
                         null

@@ -185,7 +185,7 @@ internal class SongVersionController(
 
     /**
      * With music-only on, the rows either side of the current one are replaced
-     * by their catalogue releases as the queue approaches them: the next three
+     * by their catalogue releases as the queue approaches them: the next five
      * and the previous one, so a skip backwards is as prepared as a skip
      * forwards. The current row was resolved when the queue was built (or held
      * before its first sound); replacing it here would restart a track already
@@ -195,9 +195,9 @@ internal class SongVersionController(
         if (!AppSettings.preferMusicOnly.value) return
         if (ListenTogether.state.value.inParty) return
         // Nothing is looked ahead until this track is audible. Run at the
-        // transition this put five version searches beside the current row's
-        // own resolve and the first sound went from about 2 s to 5.5 s on a
-        // cold queue. [onIsPlayingChanged] schedules it the moment sound
+        // transition this put several version searches beside the current
+        // row's own resolve and the first sound went from about 2 s to 5.5 s
+        // on a cold queue. [onIsPlayingChanged] schedules it the moment sound
         // starts, and the in-flight guard keeps a resume from starting a
         // second pass over the same rows.
         val currentId = exoPlayer.currentMediaItem?.mediaId ?: return
@@ -216,7 +216,8 @@ internal class SongVersionController(
             val current = exoPlayer.currentMediaItemIndex
             if (current !in 0 until exoPlayer.mediaItemCount) return@launch
             val first = (current - 1).coerceAtLeast(0)
-            val last = (current + 3).coerceAtMost(exoPlayer.mediaItemCount - 1)
+            val last = (current + SongVersionPolicy.UPCOMING_LOOKAHEAD_ROWS)
+                .coerceAtMost(exoPlayer.mediaItemCount - 1)
             for (index in first..last) {
                 if (!isActive) return@launch
                 if (index == current) continue

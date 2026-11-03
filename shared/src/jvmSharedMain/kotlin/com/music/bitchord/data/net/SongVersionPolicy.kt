@@ -20,6 +20,15 @@ object SongVersionPolicy {
     const val BEFORE_AUDIO_TIMEOUT_MS = 1_500L
 
     /**
+     * How many upcoming rows a queue resolves ahead of the current one.
+     *
+     * The queue is filled when it is set and again as the window moves, never
+     * by a timer. Five covers the rows a listener sees under "next" without
+     * spending a search on the whole 25-row window at once.
+     */
+    const val UPCOMING_LOOKAHEAD_ROWS = 5
+
+    /**
      * Signed-out `next` responses carried no `playlistPanelVideoWrapperRenderer`
      * at all in the observed sessions (the pairing appears to be a premium
      * feature), so after this many empty answers in a row the counterpart

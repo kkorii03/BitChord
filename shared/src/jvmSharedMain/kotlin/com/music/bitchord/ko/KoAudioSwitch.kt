@@ -10,64 +10,107 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.net.SongVersionPolicy
 import com.music.bitchord.data.sources.TrackMatcher
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.coroutineScope
 
 /** The audio-version search kept out of the upstream file. */
 internal object KoAudioSwitch {
 
     private const val TAG = "BitChord"
 
-    suspend fun resolveAudioUncached(song: Song): Song {
+    suspend fun resolveAudioUncached(song: Song): Song =
+        resolveAudioUncached(song) { query ->
+            YtMusicRepository.search(query, SearchFilter.SONGS, SearchKind.AUDIO_SWITCH)
+        }
+
+    /** The search seam a plain JVM test uses to check the query pass without a network. */
+    internal suspend fun resolveAudioUncached(
+        song: Song,
+        search: suspend (String) -> Result<List<SearchResult>>,
+    ): Song {
         // A row whose type is still unknown is treated as a video for timing:
         // its runtime may already include a visual intro/outro, and refusing
         // that drift is how the song version was written off.
         val target = TrackMatcher.audioSwitchTargetOf(song)
             .copy(isVideo = song.isVideo || song.typeUnknown)
+        // Run every query at once and judge each answer as it arrives.
+        // Sequentially, a second query that would have found the official
+        // song started only after the first one's answer, so the pre-playback
+        // budget expired while the useful search was still queued
+        // ("kept (timeout)"). Whichever query answers with an accepted
+        // recording first wins; every accepted row has already cleared the
+        // same title/artist/cover gates, so this changes only the wait, not
+        // what may play.
+        val queries = TrackMatcher.audioSwitchQueries(song)
         var queriesRun = 0
         var failedQueries = 0
         var videoRowsOnly = false
         val loggedRejects = HashSet<String>()
-        for (query in TrackMatcher.audioSwitchQueries(song)) {
-            queriesRun++
-            Log.d(TAG, "audio switch: query=$query")
-            val page = YtMusicRepository.search(query, SearchFilter.SONGS, SearchKind.AUDIO_SWITCH)
-            if (page.isFailure) failedQueries++
-            val rows = page.getOrNull()
-                ?.filterIsInstance<SearchResult.Track>()
-                ?.map { it.song }
-                .orEmpty()
-            val candidates = rows.filterNot { it.isVideo }
-            if (rows.isNotEmpty() && candidates.isEmpty()) videoRowsOnly = true
-            TrackMatcher.bestSameArtist(candidates, target)?.let { match ->
-                Log.d(
-                    TAG,
-                    "audio switch: '${song.title}' -> '${match.title}' (queryLength=${query.length})",
-                )
-                YtMusicRepository.audioVersionCache[song.videoId] = match
-                return match
+        val match = coroutineScope {
+            val answers = Channel<Pair<String, Result<List<SearchResult>>>>(Channel.UNLIMITED)
+            val jobs = queries.map { query ->
+                launch {
+                    Log.d(TAG, "audio switch: query=$query")
+                    answers.send(query to search(query))
+                }
             }
-            // Music-video timing is visual timing, not the audio release's
-            // timing. The manual switch may therefore use the exact official
-            // song/artist match even when the video has a long intro or outro.
-            TrackMatcher.bestOfficialAudioForVideo(candidates, target)?.let { match ->
-                Log.d(
-                    TAG,
-                    "audio switch: accepted video/runtime drift '${song.title}' -> " +
-                        "'${match.title}' (queryLength=${query.length})",
-                )
-                YtMusicRepository.audioVersionCache[song.videoId] = match
-                return match
+            try {
+                repeat(queries.size) {
+                    val (query, page) = answers.receive()
+                    queriesRun++
+                    if (page.isFailure) failedQueries++
+                    val rows = page.getOrNull()
+                        ?.filterIsInstance<SearchResult.Track>()
+                        ?.map { it.song }
+                        .orEmpty()
+                    val candidates = rows.filterNot { it.isVideo }
+                    if (rows.isNotEmpty() && candidates.isEmpty()) videoRowsOnly = true
+                    TrackMatcher.bestSameArtist(candidates, target)?.let { found ->
+                        Log.d(
+                            TAG,
+                            "audio switch: '${song.title}' -> '${found.title}' " +
+                                "(queryLength=${query.length})",
+                        )
+                        return@coroutineScope found
+                    }
+                    // Music-video timing is visual timing, not the audio
+                    // release's timing. The manual switch may therefore use
+                    // the exact official song/artist match even when the video
+                    // has a long intro or outro.
+                    TrackMatcher.bestOfficialAudioForVideo(candidates, target)?.let { found ->
+                        Log.d(
+                            TAG,
+                            "audio switch: accepted video/runtime drift '${song.title}' -> " +
+                                "'${found.title}' (queryLength=${query.length})",
+                        )
+                        return@coroutineScope found
+                    }
+                    // One line per candidate that did not become the answer,
+                    // so a device log names the failing check instead of only
+                    // the outcome.
+                    for (candidate in rows) {
+                        if (!loggedRejects.add(candidate.videoId)) continue
+                        val reason = TrackMatcher.songVersionRejectReason(candidate, target)
+                            ?: continue
+                        Log.d(
+                            TAG,
+                            "audio switch: reject ${candidate.videoId} ${candidate.title} " +
+                                "reason=$reason",
+                        )
+                    }
+                }
+                null
+            } finally {
+                // A match or a failure ends the pass; no query needs to finish
+                // once its answer cannot change the outcome.
+                jobs.forEach { it.cancel() }
+                answers.close()
             }
-            // One line per candidate that did not become the answer, so a
-            // device log names the failing check instead of only the outcome.
-            for (candidate in rows) {
-                if (!loggedRejects.add(candidate.videoId)) continue
-                val reason = TrackMatcher.songVersionRejectReason(candidate, target) ?: continue
-                Log.d(
-                    TAG,
-                    "audio switch: reject ${candidate.videoId} ${candidate.title} " +
-                        "reason=$reason",
-                )
-            }
+        }
+        if (match != null) {
+            YtMusicRepository.audioVersionCache[song.videoId] = match
+            return match
         }
         // The search answered with uploads only, or nothing at all: the
         // catalogue's own album listing still names the release behind a

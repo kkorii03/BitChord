@@ -636,7 +636,7 @@ private suspend fun loadNormalAutoplayTracks(
     return Result.success(
         if (AppSettings.preferMusicOnly.value) {
             try {
-                YtMusicRepository.resolveQueueAhead(rows, 0, ahead = 4)
+                YtMusicRepository.resolveQueueAhead(rows, 0)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {
