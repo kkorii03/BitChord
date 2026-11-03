@@ -1,0 +1,17 @@
+Kotlin Android app (task/u19-tg, BitChord Korean fork of a YouTube Music client). Real phone logs from the user's S24 on 11-03 (two diagnostic exports, ~90k lines) show this symptom 360 times:
+SYMPTOM: history reporting cannot get a signature timestamp and retries per track
+Pattern: no signature timestamp
+Sample lines (deduplicated, ids/numbers vary):
+   2026-11-02 20:12:45.985 I/BitChord lyrics-sync: NabNBUDelmk source=file:lrc.red@unknown base=none shift=60ms match=-% bias=0ms manual=0ms stored=n recheck=unknown-provider silenceSkipMs=0 video=n
+   2026-11-02 20:12:46.053 D/BitChord TIMING first audio: 207ms since track selected
+2026-11-02 20:12:46.063 W/BitChord no signature timestamp: Could not fetch embedded watch page
+   2026-11-02 20:12:46.053 D/BitChord TIMING first audio: 207ms since track selected
+   2026-11-02 20:12:46.063 W/BitChord no signature timestamp: Could not fetch embedded watch page
+2026-11-02 20:12:46.063 W/BitChord no signature timestamp yet; retrying history for NabNBUDelmk
+
+Task:
+1. Find the code that logs these lines and every path that leads to them. Decide: is this an APP DEFECT (wrong decision, wasted retries/network/battery, user-visible failure, wrong song/no audio, UI stall) or the app CORRECTLY handling an outside failure (server refusing, track blocked in Korea) with no better option?
+2. If it is an app defect: fix the root cause with the smallest change. First write a JVM test that FAILS on the current code, then make it pass. Name new test classes in the summary (you may not edit .github/workflows).
+3. If the app already behaves correctly: change NOTHING and say why in the summary (that is a valid, useful answer ??do not invent work).
+Rules: battery first (no polling timers, event-based); never fall back to a music video (MV) for a song; re-read every caller and type of anything you change; keep upstream code intact (Korean code in ko/ with one-line // [KO] hooks); unknown Android/Media3 APIs: context7; use grep/Select-String (no rg).
+Summary of at most 10 lines: verdict (defect / correct) / root cause with file:line / key change / tests and results / REMOVED-LINES AUDIT / not done. Follow AGENTS.md (ponytail) rules.
