@@ -20,6 +20,8 @@ data class LocalTrack(
     val coverSinger: String? = null,
     val thumbnailUrl: String? = null,
     val durationText: String? = null,
+    /** Null on rows stored before the flag was kept; such rows stay unmarked. */
+    val isVideo: Boolean? = null,
 )
 
 /** Everything one AutoPlay top-up has fetched, before any ranking. */
@@ -199,9 +201,10 @@ object TastePool {
 /**
  * A locally stored row as something the player can queue.
  *
- * Not marked a video: the store never kept that flag, and [QueueBuilder] drops
- * every video row when a batch has any catalogue track, so guessing "video"
- * here would quietly remove the listener's own songs from the station.
+ * The store keeps whether the row was a video upload, so a downloaded cover
+ * stays a video here. Rows written before that field existed stay unmarked:
+ * their cleaned title no longer says "cover", and guessing one would drop the
+ * listener's own rows from an ordinary station.
  */
 fun LocalTrack.asSong(): Song = StoredSongDisplay.clean(
     Song(
@@ -210,5 +213,6 @@ fun LocalTrack.asSong(): Song = StoredSongDisplay.clean(
         artist = artist,
         thumbnailUrl = thumbnailUrl,
         durationText = durationText,
+        isVideo = isVideo == true,
     ),
 )

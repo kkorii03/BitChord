@@ -1,5 +1,6 @@
 package com.music.bitchord.data.model
 
+import com.music.bitchord.data.cover.CoverTitles
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -22,6 +23,11 @@ data class SearchHistoryEntity(
     val artworkUrl: String?,
     /** The kind of entity this represents. */
     val entityType: EntityType,
+    /**
+     * Whether the tapped track was a music-video upload. Null on rows written
+     * before the flag was kept; [toSong] then reads the cover title marks.
+     */
+    val isVideo: Boolean? = null,
     /** Timestamp (epoch millis) — updated on each re-tap to bubble it to the top. */
     val timestamp: Long = System.currentTimeMillis(),
 )
@@ -56,7 +62,7 @@ fun SearchHistoryEntity.toSong(): Song? = if (entityType == EntityType.TRACK && 
         title = title,
         artist = subtitle,
         thumbnailUrl = artworkUrl,
-    )
+    ).let { it.copy(isVideo = isVideo == true || CoverTitles.isCover(it)) }
 } else null
 
 /**

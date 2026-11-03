@@ -235,6 +235,11 @@ object LocalMediaRepository {
         // here really are just local files with nothing to sync.
         Downloads.ensureOpen()
         val videoIdByUri = Downloads.saved.value.entries.associate { (id, uri) -> uri to id }
+        // The scan only has a content URI; the download record is what says
+        // the file behind it is a music-video upload.
+        val isVideoByUri = Downloads.saved.value.entries.associate { (id, uri) ->
+            uri to (Downloads.savedSongFor(id)?.isVideo == true)
+        }
 
         val filterNonMusic = AppSettings.filterNonMusicAudio.value
         val folderUri = AppSettings.localMusicFolderUri.value
@@ -296,7 +301,7 @@ object LocalMediaRepository {
                     if (filterNonMusic && !isEligibleLocalMusic(durationMs, displayName, path)) continue
                     if (treeUri.isNotBlank() && !isInFolder(path, chosen)) continue
 
-                    songs.add(columns.song(cursor, videoIdByUri))
+                    songs.add(columns.song(cursor, videoIdByUri, isVideoByUri))
                 }
             }
         }.onFailure { Log.w(TAG, "Failed scanning device local music: ${it.message}") }
@@ -338,7 +343,11 @@ object LocalMediaRepository {
         val dateModified = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_MODIFIED)
         val track = cursor.getColumnIndex(MediaStore.Audio.Media.TRACK)
 
-        fun song(cursor: Cursor, videoIdByUri: Map<String, String>): Song {
+        fun song(
+            cursor: Cursor,
+            videoIdByUri: Map<String, String>,
+            isVideoByUri: Map<String, Boolean> = emptyMap(),
+        ): Song {
             val rowId = cursor.getLong(id)
             val name = cursor.getString(displayName).orEmpty()
             val artId = cursor.getLong(albumId)
@@ -364,6 +373,8 @@ object LocalMediaRepository {
                 localDateAddedSeconds = cursor.getLong(dateAdded),
                 localDateModifiedSeconds = cursor.getLong(dateModified),
                 trackNumber = trackNumber,
+                isVideo = isVideoByUri[contentUri] == true,
+                isVideoOrigin = isVideoByUri[contentUri] == true,
             )
         }
     }

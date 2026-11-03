@@ -1,6 +1,7 @@
 package com.music.bitchord.ko
 
 import com.music.bitchord.data.stats.TrackEntry
+import kotlinx.serialization.json.Json
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -22,5 +23,15 @@ class KoListeningStatsDisplayTest {
     fun `an ordinary history row stays a song`() {
         val row = TrackEntry(id = "IU", title = "밤편지", artist = "IU")
         assertFalse(KoListeningStatsDisplay.asSong(row).isVideo)
+    }
+
+    @Test
+    fun `a video row survives the history serialization round-trip`() {
+        val row = Json { ignoreUnknownKeys = true }.decodeFromString(
+            TrackEntry.serializer(),
+            """{"id":"mv1","title":"Some MV","artist":"Channel","isVideo":true}""",
+        )
+
+        assertTrue(KoListeningStatsDisplay.asSong(row).isVideo)
     }
 }

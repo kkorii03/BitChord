@@ -32,6 +32,8 @@ data class PartyTrack(
     val durationMs: Long? = null,
     /** Preserves the queue's shared manual/AutoPlay section boundary. */
     val fromAutoplay: Boolean = false,
+    /** Whether this row is still a music-video upload, not a swapped song. */
+    val isVideo: Boolean = false,
 )
 
 /** One signed-in device in the party, as every other device sees it. */

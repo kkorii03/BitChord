@@ -2,6 +2,7 @@ package com.music.bitchord.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.model.Song
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -199,6 +200,8 @@ object OfflinePlaylists {
         localDateAddedSeconds = localDateAddedSeconds,
         localDateModifiedSeconds = localDateModifiedSeconds,
         trackNumber = trackNumber,
+        isVideo = isVideo,
+        isVideoOrigin = isVideoOrigin,
     )
 
     private fun load(): List<OfflinePlaylist> {
@@ -251,12 +254,14 @@ object OfflinePlaylists {
         localDateAddedSeconds?.let { put("added", it) }
         localDateModifiedSeconds?.let { put("modified", it) }
         trackNumber?.let { put("track", it) }
+        if (isVideo) put("isVideo", true)
+        if (isVideoOrigin) put("isVideoOrigin", true)
     }
 
     private fun songFrom(obj: JSONObject): Song? {
         fun JSONObject.text(key: String): String? = if (isNull(key)) null else optString(key).takeIf { it.isNotEmpty() }
         val uri = obj.text("localUri") ?: return null
-        return Song(
+        val song = Song(
             videoId = obj.text("videoId") ?: uri,
             title = obj.optString("title"),
             artist = obj.optString("artist"),
@@ -270,7 +275,11 @@ object OfflinePlaylists {
             localDateAddedSeconds = if (obj.has("added")) obj.getLong("added") else null,
             localDateModifiedSeconds = if (obj.has("modified")) obj.getLong("modified") else null,
             trackNumber = if (obj.has("track")) obj.getInt("track") else null,
+            isVideo = obj.optBoolean("isVideo", false),
+            isVideoOrigin = obj.optBoolean("isVideoOrigin", obj.optBoolean("isVideo", false)),
         )
+        // Rows saved before the flag was kept still name a cover in the title.
+        return if (song.isVideo) song else song.copy(isVideo = CoverTitles.isVideoRow(song))
     }
 }
 
