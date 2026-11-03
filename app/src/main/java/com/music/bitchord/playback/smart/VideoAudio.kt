@@ -186,6 +186,37 @@ object VideoAudio {
     }
 
     /**
+     * Whether [copy] already holds the opening up to [untilSeconds], so a song
+     * check can read it without waiting for the analysis head first. A playing
+     * copy that has the bytes needs no wait at all; asking anyway added the
+     * head's whole timeout to a check that could already answer.
+     *
+     * Unknown length or duration keeps the head wait: there is no way to know
+     * the bytes on disk cover the window.
+     */
+    internal fun hasOpeningOnDisk(
+        copy: AudioCache.Rendition?,
+        untilSeconds: Double,
+        durationMs: Long,
+    ): Boolean {
+        if (copy == null) return false
+        if (copy.isComplete) return true
+        val need = openingBytes(copy, untilSeconds, durationMs) ?: return false
+        return copy.cachedPrefix >= need
+    }
+
+    /** Bytes of [copy] to the end of the [untilSeconds] window, or null when its size or the song's is unknown. */
+    private fun openingBytes(
+        copy: AudioCache.Rendition,
+        untilSeconds: Double,
+        durationMs: Long,
+    ): Long? {
+        if (copy.contentLength <= 0L || durationMs <= 0L) return null
+        return (copy.contentLength * ((untilSeconds + 1.0) * 1000.0 / durationMs))
+            .toLong().coerceAtMost(copy.contentLength)
+    }
+
+    /**
      * The opening of [song] — by default [SONG_CHECK_SECONDS] — as a 16 kHz
      * mono WAV, so a record-timed song's lyrics can be checked against the
      * recording that is playing.
@@ -265,7 +296,16 @@ object VideoAudio {
             // than for the whole track the way the video WAV has to.
             val opus = Uri.parse(AutomixAnalysisSource.opusUri(song.videoId))
             AudioCache.keepForTiming(song.videoId)
-            if (!AudioCache.awaitAnalysisHead(opus, HEAD_TIMEOUT_MS)) {
+            // A playing copy that already holds the opening needs no head
+            // wait: asking anyway spent the head's whole timeout on a check
+            // that could answer from bytes already on disk.
+            if (!hasOpeningOnDisk(
+                    VersionAudioAligner.renditionToMeasure(song.videoId),
+                    untilSeconds,
+                    song.durationMillis(),
+                ) &&
+                !AudioCache.awaitAnalysisHead(opus, HEAD_TIMEOUT_MS)
+            ) {
                 // A blocked video, or one already swapped to its quality copy,
                 // never gets its YouTube opening: listen to the copy that plays
                 // instead. Its key tags the words with that copy's clock.
@@ -304,15 +344,12 @@ object VideoAudio {
         // opening's bytes here instead, off the gate and on cache events. Past
         // the wait the decode goes ahead as before, so no check is lost.
         VersionAudioAligner.renditionToMeasure(song.videoId)?.let { first ->
-            val totalMs = song.durationMillis()
-            if (!first.isComplete && first.contentLength > 0 && totalMs > 0) {
-                val need = (first.contentLength * ((untilSeconds + 1.0) * 1000.0 / totalMs))
-                    .toLong().coerceAtMost(first.contentLength)
-                if (first.cachedPrefix < need &&
-                    !AudioCache.awaitRenditionPrefix(song.videoId, need, OPENING_WAIT_MS)
-                ) {
-                    TrackLog.d(TAG, "song check: opening still downloading; decoding as it comes", song.videoId)
-                }
+            if (first.isComplete) return@let
+            val need = openingBytes(first, untilSeconds, song.durationMillis()) ?: return@let
+            if (first.cachedPrefix < need &&
+                !AudioCache.awaitRenditionPrefix(song.videoId, need, OPENING_WAIT_MS)
+            ) {
+                TrackLog.d(TAG, "song check: opening still downloading; decoding as it comes", song.videoId)
             }
         }
         // Pick once and open that exact copy: asking again after the listen
