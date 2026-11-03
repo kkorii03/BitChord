@@ -1,0 +1,35 @@
+BITCHORD 1.9 (Kotlin Android, branch task/u19-tg, worktree C:\Users\jang\Desktop\BitChord\BitChord-u19tg).
+Goal: lyric sync. Root cause found tonight: the SAME song passes or fails depending on which lyric provider's timings the app accepted, because a grossly wrong provider timing survives every correction layer.
+
+## Evidence (emulator runs, same songs, forced-alignment scorer; median = displayed minus sung)
+| song | run | provider | base | applied shift | median error | verdict |
+|---|---|---|---|---|---|---|
+| v59g4HRNIkc | yA | KuGou | ai | -460 ms | **-8.68 s** | FAIL |
+| v59g4HRNIkc | yA300 | Gemini | none | 0 | -0.02 s | PASS |
+| ekzHIouo8Q4 | yA | 벅스 | none | 0 | **-11.85 s** | FAIL |
+| ekzHIouo8Q4 | yA300 | PaxSenix | ai | +11662 ms | -0.046 s | PASS |
+| 7PgA6kyqVTc | yA | lrc.red | ai | -3010 ms | +0.37 s (drift) | FAIL |
+| 7PgA6kyqVTc | yA300 | LyricsPlus | none | 0 | **+4.29 s** | FAIL |
+| QYh6mYIJG2Y | yA / yA300 | 벅스 / BiniLyrics | ai | +900 / +503 ms | 0.00 / -0.07 s | WARN / PASS |
+A big shift is NOT itself the bug: -RJSbO8UZVY got shift=+18619 ms and scored +0.063 s (correct). The bug is the opposite case: an 8-11 s error that no layer moves at all (base=none) or that a capped refine cannot reach.
+Phone (vc140, 2026-11-04 02:38): `track-summary: dA4qZ4qJGP4 'Shallow' ... lyrics=file:lrc.red@unknown sync=measured shift=-9890 match=90` and a cover `base=measured shift=-4459ms match=98%`.
+
+## Tasks
+1. Answer with file:line: when the app decides whether to run the wide refine and whether to run the AI batch (`measurementGaveUp` and friends in LyricsTiming.kt), what condition lets an 8-11 s disagreement between the heard transcript and the line times pass with no correction? Name the cap that stops it (RefinePolicy narrow/wide) and the exact branch that refuses the AI batch.
+2. Smallest change that makes a gross disagreement escalate instead of being dropped, for example: when the heard words' residual against the current line times is beyond the narrow cap and the transcript covers enough lines, treat the measurement as not settled (so the wide refine / AI batch runs) rather than accepting the source timing. Keep every existing guard (pending/in-flight flags, gates, timeouts, low-power, cache keys, the ±caps). Do not add settings, polling or extra downloads. Do not touch clock tagging (`clockForRendition`) or LyricsPerLine.kt — other lanes own them.
+3. JVM test that FAILS on current code: an 8 s source error with a transcript that clearly hears the words 8 s away must end up corrected (or at least must not be silently accepted). Use the existing test harness style in app/src/test/java/com/music/bitchord/playback/smart/.
+4. Say plainly what you did NOT change and what could regress (e.g. extra AI requests per song, cost, battery).
+
+## Rules
+- Keep upstream code intact (ko/ + `// [KO]` hooks). Unknown Android/Media3 API: context7.
+- Do NOT touch .github/workflows, signing, LyricsPerLine.kt, or clockForRendition.
+- New test class names in the summary (you may not edit workflows). grep/Select-String, not rg.
+- Follow AGENTS.md (ponytail): smallest complete change.
+
+## Summary (max 10 lines)
+files / root cause with file:line / key change / tests and result on base vs after / REMOVED-LINES AUDIT / cost+battery impact / not done.
+
+## ADDED EVIDENCE (11-04 03:30, two lanes and an Opus review already spent on this)
+- The cover case is NOT a clock/rendition-tagging bug: ordinary downloads already measure and play on the same clock, so re-tagging changes nothing. The chroma alignment locks onto a chord loop one period off (a -4459 ms shift at ~108 BPM is about two bars), and match=98% is the chroma path score, not a lyric match score. Chroma ambiguity is out of scope for this task.
+- A same-song comparison shows the app also accepts grossly wrong PROVIDER timings without any correction: v59g4HRNIkc got KuGou (-8.68 s FAIL) in one run and Gemini (-0.02 s PASS) in another; ekzHIouo8Q4 got 벅스 with base=none (-11.85 s FAIL) and PaxSenix with base=ai (+11662 ms, -0.046 s PASS). The selection of provider is not stable across runs.
+- So the target is: when the heard transcript clearly disagrees with the accepted timing by more than the narrow refine can move, the app must not settle. Either escalate (wide refine / AI batch) or prefer a provider whose timings agree with the transcript. Choose the smallest one that the code supports.
