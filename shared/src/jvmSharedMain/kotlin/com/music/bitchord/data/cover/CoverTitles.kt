@@ -181,10 +181,15 @@ object CoverTitles {
         readA(raw, channel, allowBareTag = true)?.let { return it }
         val dated = tidy.dated
         val undated = DATE_TAG.replace(raw, "").trim()
+        val designated = channelId != null && channelId in designatedChannels()
+        // "Title((Artist))": the original's name in a bracket that is itself
+        // bracketed, as "(G)I-DLE" has to be.
+        readNestedArtistBracket(undated, channel)?.let { return it }
         // Before B: a known singer on the right of the dash would read the wrong way round as B.
         readKnown(undated, channel)?.let { return it }
         readDuet(undated, channel)?.let { return it }
-        val designated = channelId != null && channelId in designatedChannels()
+        // "Artist - Title" on a cover channel: the uploader is the singer.
+        readCoverChannelArtistFirst(undated, channel)?.let { return it }
         if (dated || designated) readB(undated)?.let { return it }
         // "A - 곡(원곡가수)" with no date and no designated channel: the bracket
         // has to be a plausible original artist, never a translation or a take.
@@ -1188,6 +1193,44 @@ object CoverTitles {
             return Cover(title = title, originalArtist = null, singer = singer)
         }
         return Cover(title = title, originalArtist = credit, singer = singer)
+    }
+
+    /**
+     * "Title((Artist))": the original's artist in a bracket that is itself
+     * bracketed, as "(G)I-DLE" must be. No word says "cover", so only the
+     * double bracket is read and only when the artist is not the uploader —
+     * on the record's own channel the same title is the record.
+     */
+    private fun readNestedArtistBracket(raw: String, channel: String): Cover? {
+        val (titleText, credit) = nestedTrailingGroup(raw) ?: return null
+        if (!credit.startsWith("(") || !credit.contains(")") || credit.length < 3) return null
+        if (isVersionWord(credit) || isDescriptor(credit) || isGenericCredit(credit) || OST.containsMatchIn(credit)) return null
+        val artist = credit.trim()
+        if (sameName(artist, channel)) return null
+        val title = cleanTitle(titleText) ?: return null
+        val singer = cleanName(channel)?.takeUnless { isVersionWord(it) || isDescriptor(it) } ?: return null
+        return Cover(title = title, originalArtist = artist, singer = singer)
+    }
+
+    /**
+     * "Artist - Title" on a cover channel: the uploader is a singer already
+     * heard on covers, so a dash that names neither the uploader nor a version
+     * is the original's artist followed by the song. Only a channel the app
+     * has evidence for, so an ordinary "IU - 밤편지" upload is left alone.
+     */
+    private fun readCoverChannelArtistFirst(raw: String, channel: String): Cover? {
+        val singer = cleanName(channel)?.takeUnless { isVersionWord(it) || isDescriptor(it) } ?: return null
+        if (compactName(singer) !in knownSingerKeys()) return null
+        val (left, right) = splitTopLevelDash(raw) ?: return null
+        val cleaned = cleanName(left)?.takeUnless {
+            it.isBlank() || isVersionWord(it) || isDescriptor(it) || isGenericCredit(it) ||
+                OST.containsMatchIn(it) || ANY_COVER_WORD.containsMatchIn(it)
+        } ?: return null
+        // "(G)I-DLE": a leading bracket is part of the name, not an agency tag.
+        val artist = left.trim().takeIf { it.startsWith("(") && it.contains(")") } ?: cleaned
+        if (sameName(artist, singer) || isChannelName(artist, channel)) return null
+        val title = cleanTitle(right) ?: return null
+        return Cover(title = title, originalArtist = artist, singer = singer, orderUnsure = true)
     }
 
     // ---- Pieces -------------------------------------------------------------
