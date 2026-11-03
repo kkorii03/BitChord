@@ -1,0 +1,12 @@
+﻿
+
+== 2 차 작업 (현재 브랜치 = 이전 차수 결과) ==
+엄격 기준: 아래 독립 검토자 지적의 HIGH·MEDIUM 은 전부 고칠 것(드문 경우라는 이유로 보류 금지). 그리고 이전 차수가 docs/review-1031/ 문서에 '문서에만 남김/미해결'로 둔 HIGH·MEDIUM 도 이번에 고칠 것 — 재생 핵심 경로(곡 해석·싱크·크로스페이드)라도 고치되 문서 해당 줄에 '폰 검증 필요' 표시. 지적이 틀렸으면 코드 줄 근거로 반박을 요약에. 새로 고친 곳마다 수정 전 실패하는 테스트. 이전 차수에서 고친 것을 되돌리지 말 것.
+검토 지적:
+VERDICT: ISSUES 4
+MEDIUM DirectSourceGate.kt:264 — `awaitLookup` subtracts elapsed time from the 1s current-track grace, so a current track joining a lookup started >1s ago (skip after read-ahead opens) gets `withTimeoutOrNull(0)` and falls back instantly, not the "one short chance" the summary promises; start the grace when the caller joins (or clamp the current-track wait to `CURRENT_LOOKUP_GRACE_MS`) and test with `startedAtMs` in the past.
+MEDIUM PlaybackService.kt:8219 (also AudioCache.kt:1433) — `startedOnYouTube` re-reads `stillLooking` after the fallback await, so a lookup that completes successfully during that walk has already been removed from `lookups` and is dropped and searched again, contradicting the diff's "hands it to the second look" claim; capture the Deferred before awaiting the fallback and pass it into `startedOnYouTube`.
+MEDIUM DirectSourceGateTest.kt:64 — the two new tests copy the same fake-addon/events block instead of sharing a helper, against the AGENTS.md no-copied-blocks rule; extract one parameterized helper and call it from both.
+LOW PlaybackService.kt:8202 — the fallback log recomputes `lookupWaitMs(videoId)` at log time, so after a track change it can report 15s for a wait that was actually 1s; capture the wait used in `lookup` (or log elapsed) and use that.
+Skipped: did not run the full suite or audit the untouched 1.8 paths (hq-verify/analysis-head); risk is that the 1s cap makes cold addon answers start YouTube and swap mid-song for most current tracks, as the summary already notes.
+마지막 요약에 지적 번호별 처리(고침/반박+근거) 한 줄씩.
