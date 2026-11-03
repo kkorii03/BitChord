@@ -3879,6 +3879,7 @@ private fun BitChordApp(
                                 listState = exploreListState,
                                 onCategoryClick = viewModel::openMoodGenre,
                                 onHideCategory = { AppSettings.hideExploreCategory(it.title) },
+                                onArtworkNeeded = viewModel::loadMoodGenreArtwork,
                                 onRetry = viewModel::loadExplore,
                                 refreshing = MainViewModel.Feed.EXPLORE in refreshing,
                                 onRefresh = { viewModel.refresh(MainViewModel.Feed.EXPLORE) },
