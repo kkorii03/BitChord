@@ -1,12 +1,10 @@
-# Default smoke list: fixed 10-song set (11-02 user: 10 songs, 1.9 only).
-# 3 MV (song-version swap), 2 HQ (upgrade), 5 covers from the sync set.
+# Version-decision check: official MVs must be replaced by their song versions
+# before audio; covers must stay themselves.
 -RJSbO8UZVY	mv
 QYh6mYIJG2Y	mv
 ekzHIouo8Q4	mv
-TuzfXgUpboA	hq
-cCfPDrRQp9k	hq
-v59g4HRNIkc	cover	PL-ODED49YdZByxxHBLaIIOOePlhj8nWcc
-xK5bBgpt4XA	cover	PL-ODED49YdZByxxHBLaIIOOePlhj8nWcc
-7PgA6kyqVTc	cover	PL-ODED49YdZByxxHBLaIIOOePlhj8nWcc
-vRjfYdwM5L4	cover	PL-ODED49YdZByxxHBLaIIOOePlhj8nWcc
-5nxb792c-b4	cover	PL-ODED49YdZByxxHBLaIIOOePlhj8nWcc
+av5JD1dfj_c	mv
+CnAmeh0-E-U	mv
+v59g4HRNIkc	cover
+-LqfikBILXs	cover
+US2I6tSRjcE	cover
