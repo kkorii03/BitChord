@@ -48,6 +48,7 @@ import com.music.bitchord.playback.smart.AnalysisWindow
 import com.music.bitchord.playback.smart.AutomixWorkPolicy
 import com.music.bitchord.playback.smart.CrossfadeMode
 import com.music.bitchord.playback.smart.LoopMix
+import com.music.bitchord.playback.smart.LoopMixStallPolicy
 import com.music.bitchord.playback.smart.FILTER_ECHO_AT
 import com.music.bitchord.playback.smart.FilterTransitionVariant
 import com.music.bitchord.playback.smart.MixWaveform
@@ -2453,6 +2454,8 @@ class CrossfadeController(
     private var loopRefusal: String? = null
     private var lastLoopVerdict = ""
     private var loopIncomingStarted = false
+    private var loopIncomingWatch = LoopMixStallPolicy.Watch(0L, 0L)
+    private var loopStallFadeStartedAt = 0L
     private var lastLoopPositionMs = -1L
     private var lastLoopAnnounceAt = 0L
     private var lastLoopBeat = -1
@@ -2677,6 +2680,8 @@ class CrossfadeController(
         session.attach(outPort, inPort)
         loopSession = session
         loopIncomingStarted = false
+        loopIncomingWatch = LoopMixStallPolicy.Watch(0L, 0L)
+        loopStallFadeStartedAt = 0L
         lastLoopPositionMs = -1L
         lastLoopBeat = -1
         Log.d(
@@ -2722,6 +2727,19 @@ class CrossfadeController(
         val out = outgoing ?: return loopBail("no outgoing player")
         val into = incoming ?: return loopBail("no incoming player")
         val sessionPlayer = if (handedOff) into else out
+        // The incoming player stalled: fade the outgoing loop out instead of
+        // letting its deck repeat until the planned release, then hand the
+        // session over so the incoming track's own retry can run.
+        if (loopStallFadeStartedAt != 0L) {
+            if (!sessionPlayer.playWhenReady) return loopBail("paused", settle = true)
+            val fade = (SystemClock.elapsedRealtime() - loopStallFadeStartedAt).toFloat() /
+                LoopMixStallPolicy.FADE_MS
+            out.volume = (1f - fade).coerceIn(0f, 1f)
+            if (fade < 1f) return
+            if (!handedOff) handOff(out, into)
+            finishLoop()
+            return
+        }
         if (session.outPort.interrupted || (loopIncomingStarted && session.inPort.interrupted)) {
             return loopBail("a sink was flushed", settle = false)
         }
@@ -2731,6 +2749,27 @@ class CrossfadeController(
         if (!loopIncomingStarted && m >= session.inStartAt) {
             into.playWhenReady = true
             loopIncomingStarted = true
+            loopIncomingWatch = LoopMixStallPolicy.start(
+                into.currentPosition,
+                SystemClock.elapsedRealtime(),
+            )
+        }
+        if (loopIncomingStarted && loopStallFadeStartedAt == 0L) {
+            val nowMs = SystemClock.elapsedRealtime()
+            loopIncomingWatch = LoopMixStallPolicy.observe(
+                loopIncomingWatch,
+                into.currentPosition,
+                nowMs,
+            )
+            if (LoopMixStallPolicy.stalled(loopIncomingWatch, nowMs)) {
+                Log.d(
+                    TAG,
+                    "loop mix incoming stuck at ${into.currentPosition}ms; " +
+                        "fading the outgoing loop out after ${LoopMixStallPolicy.STALL_MS}ms",
+                )
+                loopStallFadeStartedAt = nowMs
+                return
+            }
         }
         if (loopIncomingStarted && loopAlignJob == null && into.isPlaying &&
             session.inPort.positionUs != C.TIME_UNSET && m >= session.inStartAt + LOOP_ALIGN_SETTLE_SECONDS
@@ -2843,6 +2882,8 @@ class CrossfadeController(
         loopAlignJob?.cancel()
         loopAlignJob = null
         loopSession = null
+        loopIncomingWatch = LoopMixStallPolicy.Watch(0L, 0L)
+        loopStallFadeStartedAt = 0L
         session?.outPort?.disarm()
         session?.inPort?.disarm()
         finish()
@@ -2863,6 +2904,8 @@ class CrossfadeController(
         loopAlignJob?.cancel()
         loopAlignJob = null
         loopSession = null
+        loopIncomingWatch = LoopMixStallPolicy.Watch(0L, 0L)
+        loopStallFadeStartedAt = 0L
         val out = outgoing
         val into = incoming
         val wasHandedOff = handedOff

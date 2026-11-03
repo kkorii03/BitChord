@@ -422,16 +422,13 @@ object LyricsTiming {
             refineUntilMs = refineClock.maxOfOrNull { it.endMs } ?: Long.MAX_VALUE,
         )
         // The per-line layer runs after refine and under the hand's correction.
-        // Its words are put on the same clock here, without extraMs, so [apply]
-        // can compare them with the lines it has after base, HQ and refine.
+        // These are the same words the refine was measured from, already on the
+        // playing clock and without extraMs, so [apply] compares them with the
+        // lines it has after base, HQ and refine — never moving the lines twice.
         val perLineWords = if (baseAllowed && refineClock.isNotEmpty() &&
             SyncSafetyPolicy.perLineTimingAllowed(AppSettings.syncSafetySwitches)
         ) {
-            refineClock.map { word ->
-                val start = (word.startMs + refined.refineAt(word.startMs)).coerceAtLeast(0L)
-                val end = (word.endMs + refined.refineAt(word.endMs)).coerceAtLeast(start)
-                LyricsWordAlign.Heard(word.text, start, end)
-            }
+            refineClock
         } else {
             emptyList()
         }

@@ -558,3 +558,33 @@ object LoopMix {
         return clock.beatAt(t).second
     }
 }
+
+/**
+ * Bounds a loop mix whose incoming player is not producing audio.
+ *
+ * The renderer's clock follows the outgoing sink, so a stalled incoming player
+ * never stops the outgoing deck: without this bound its loop repeated for the
+ * whole planned mix (observed as ~15 s of the same bars before an incoming
+ * FLAC, stuck on its first read, played at all). Once the incoming player has
+ * been started, a position that has not moved for [STALL_MS] is treated as
+ * stuck; the controller fades the outgoing side out over [FADE_MS] and hands
+ * the session to the incoming player so its normal retry can run.
+ */
+object LoopMixStallPolicy {
+    /** How long the incoming player may sit on one position before the loop is cut. */
+    const val STALL_MS = 1_500L
+
+    /** The outgoing loop's short fade before the session moves on. */
+    const val FADE_MS = 250L
+
+    /** The incoming player's last seen position, and when it last advanced. */
+    data class Watch(val positionMs: Long, val lastProgressAtMs: Long)
+
+    fun start(positionMs: Long, nowMs: Long): Watch = Watch(positionMs, nowMs)
+
+    fun observe(watch: Watch, positionMs: Long, nowMs: Long): Watch =
+        if (positionMs > watch.positionMs) Watch(positionMs, nowMs) else watch
+
+    fun stalled(watch: Watch, nowMs: Long): Boolean =
+        nowMs - watch.lastProgressAtMs >= STALL_MS
+}
