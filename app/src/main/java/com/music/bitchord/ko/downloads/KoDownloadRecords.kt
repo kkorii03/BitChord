@@ -248,6 +248,46 @@ internal object KoDownloadRecords {
         return Downloads.savedMetadataValue()[videoId]?.wrongRecording == true
     }
 
+    /** Whether [videoId]'s file passed a fresh recording comparison. */
+    fun isRecordingVerified(videoId: String): Boolean {
+        open()
+        val meta = Downloads.savedMetadataValue()[videoId] ?: return false
+        return meta.recordingVerified && !meta.wrongRecording
+    }
+
+    /**
+     * Records that the file at [inspectedUri] passed the recording check.
+     *
+     * The same guard as [markWrongRecording]: verification takes seconds and a
+     * repair can commit in that window, so a flag about the old file must not
+     * promote the replacement.
+     */
+    fun markRecordingVerified(
+        videoId: String,
+        inspectedUri: String,
+        inspectedVersion: String? = null,
+    ): Boolean {
+        open()
+        val context = appContext
+        Downloads.record(
+            saved = { it },
+            meta = { map ->
+                val current = map[videoId] ?: return@record map
+                val version = context?.let { fileVersion(it, current.uri) }
+                if (current.wrongRecording ||
+                    current.uri != inspectedUri ||
+                    (inspectedVersion != null && version != inspectedVersion)
+                ) {
+                    return@record map
+                }
+                if (current.recordingVerified) return@record map
+                map + (videoId to current.copy(recordingVerified = true))
+            },
+        )
+        val current = Downloads.savedMetadataValue()[videoId] ?: return false
+        return current.recordingVerified && !current.wrongRecording
+    }
+
     /**
      * Marks [videoId]'s file as the wrong recording without touching its bytes.
      *

@@ -8,6 +8,7 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.DownloadHealthPolicy
+import com.music.bitchord.data.sources.DownloadedRecordingPolicy
 import com.music.bitchord.data.sources.SourceTrackKeys
 import com.music.bitchord.playback.smart.HqAudioVerify
 import com.music.bitchord.playback.smart.HqVerificationStore
@@ -184,7 +185,20 @@ object DownloadHealth {
 
             val version = Downloads.fileVersion(context, meta.uri)
             val signature = signature(meta, version)
-            if (isChecked(context, id, signature)) return@withContext null
+            if (isChecked(context, id, signature)) {
+                // A record written before this flag existed gets the earlier
+                // completed verdict promoted, so its file is not kept on the
+                // stream for the rest of its life.
+                if (!meta.recordingVerified) {
+                    Downloads.markRecordingVerified(id, meta.uri, version)
+                    return@withContext Outcome(
+                        DownloadHealthPolicy.Verdict.OK,
+                        DownloadHealthPolicy.Action.NONE,
+                        currentTier.name,
+                    )
+                }
+                return@withContext null
+            }
             // A previous play already decided this file needs a better copy but
             // the queue could not take it (a search was still running, or the
             // Wi-Fi-only rule refused it). Asking again is cheap; decoding the
@@ -251,6 +265,7 @@ object DownloadHealth {
                 HqAudioVerify.DownloadedSound.Unavailable -> null
             }
             val soundCached = sound is HqAudioVerify.DownloadedSound.Accepted && sound.cached
+            val soundFresh = sound is HqAudioVerify.DownloadedSound.Accepted && !sound.cached
             // A repair can commit while the decode is running. The verdict is
             // about the file that was opened, so a different file now in the
             // record must not inherit it — not the wrong flag, not the stream
@@ -274,6 +289,13 @@ object DownloadHealth {
                     online = online,
                 ),
             )
+            // These bytes were just compared with the song version. Promote
+            // them so the next play may start on the file instead of the
+            // stream; a stored verdict or an unreadable file proves nothing
+            // about the bytes now on disk.
+            if (DownloadedRecordingPolicy.recordsVerified(soundFresh, decision.verdict)) {
+                Downloads.markRecordingVerified(id, meta.uri, version)
+            }
             // A verdict that could not hear the file is not a completed check:
             // leave it unchecked so a later play with the screen on can still
             // answer. A decision made from length or names is complete.

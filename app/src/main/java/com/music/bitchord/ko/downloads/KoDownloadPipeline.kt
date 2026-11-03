@@ -82,7 +82,7 @@ internal object KoDownloadPipeline {
         val storable = DownloadStore.storable(stream.format.codec)
             ?: error("이 기기에 저장할 수 없는 형식입니다 (${stream.format.codec})")
         val probe = Downloader.probe(stream.url, stream.headers, stream.format.codec)
-        return routeFromSource(context, track, stream, storable, probe)
+        return routeFromSource(context, track, stream, storable, probe, recordingVerified = true)
             ?: error("고음질 음원을 내보낼 수 없습니다")
     }
 
@@ -116,6 +116,7 @@ internal object KoDownloadPipeline {
         stream: SourceStream,
         storable: DownloadStore.Storable,
         probe: Downloader.Probe? = null,
+        recordingVerified: Boolean = false,
     ): Downloads.Route? {
         // A manifest is an index, not audio. Whichever kind it is, fetching
         // it as a file writes the index into something named `.flac` —
@@ -141,6 +142,7 @@ internal object KoDownloadPipeline {
                 host = HqHostTracker.hostOf(stream.url),
                 downloadFormat = stream.format.downloadBadge(),
                 tier = HqQuality.tierOf(stream.format),
+                recordingVerified = recordingVerified,
                 sourceTitle = stream.trackTitle,
                 sourceArtist = stream.trackArtist,
                 write = { sink, onProgress ->
@@ -165,6 +167,7 @@ internal object KoDownloadPipeline {
             host = HqHostTracker.hostOf(stream.url),
             downloadFormat = stream.format.downloadBadge(),
             tier = HqQuality.tierOf(stream.format),
+            recordingVerified = recordingVerified,
             sourceTitle = stream.trackTitle,
             sourceArtist = stream.trackArtist,
             taggable = true,
@@ -501,6 +504,7 @@ internal object KoDownloadPipeline {
         hq: HqDownloadSource?,
         sourceTitle: String?,
         sourceArtist: String?,
+        recordingVerified: Boolean,
     ): SavedSongMetadata = SavedSongMetadata(
         videoId = song.videoId,
         title = song.title,
@@ -521,6 +525,7 @@ internal object KoDownloadPipeline {
         hqTier = hq?.tier?.name,
         hqSourceTitle = hq?.sourceTitle ?: sourceTitle,
         hqSourceArtist = hq?.sourceArtist ?: sourceArtist,
+        recordingVerified = recordingVerified,
     )
 
 }

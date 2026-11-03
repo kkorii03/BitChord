@@ -580,6 +580,12 @@ internal const val EXTRA_LOCAL_URI = "bitchord.localUri"
 internal const val EXTRA_LOCAL_PATH = "bitchord.localPath"
 
 /**
+ * The item streams because its downloaded file has not passed the recording
+ * check yet; the file is moved in once the check accepts it.
+ */
+internal const val EXTRA_UNVERIFIED_DOWNLOAD = "bitchord.unverifiedDownload"
+
+/**
  * How long the track runs, as the row that queued it said.
  *
  * On the item rather than left to [MediaMetadata.durationMs] because that field
@@ -729,11 +735,24 @@ fun Song.toMediaItem(useDownloadedFile: Boolean = true): MediaItem {
     // [MediaItem.toSong], so an item waiting in the live queue can carry a URI
     // that has become stale since it was created. Checking only the lookup
     // leaves that path unguarded.
+    // A download from an add-on source is only a claim until the recording
+    // check hears it. Online, such a file starts behind the stream; the check
+    // either proves it and moves the player onto the file, or condemns it and
+    // the stream simply continues. Offline the file is the only sound, so it
+    // keeps playing exactly as before.
+    val withheldForCheck = useDownloadedFile &&
+        !isVideo &&
+        Downloads.savedIsVideoFor(videoId) != true &&
+        Downloads.isDownloaded(videoId) &&
+        !Downloads.isRecordingVerified(videoId) &&
+        !Downloads.isWrongRecording(videoId) &&
+        !AudioCache.isOffline()
     val offlineUri = if (!useDownloadedFile) null else {
-        localUri?.takeUnless {
+        (localUri?.takeUnless {
             Downloads.isMissingLocalFile(it) || Downloads.isWrongRecording(videoId)
         }
-            ?: Downloads.verifiedSavedUri(videoId)
+            ?: Downloads.verifiedSavedUri(videoId))
+            ?.takeUnless { withheldForCheck }
     }
     val uriString = offlineUri ?: when {
         videoId.startsWith("content://") || videoId.startsWith("file://") -> videoId
@@ -810,7 +829,7 @@ fun Song.toMediaItem(useDownloadedFile: Boolean = true): MediaItem {
             // depends on.
             .apply {
                 if (queueTier != QueueTier.CONTEXT || queueEntryId != null || fromAutoplay ||
-                    offlineUri != null || durationText != null ||
+                    offlineUri != null || withheldForCheck || durationText != null ||
                     artistId != null || channelId != null || albumId != null || setVideoId != null ||
                     isExplicit != null || isVideo || typeUnknown || isVideoOrigin || videoRadio || radioName != null ||
                     sourceQuality != null ||
@@ -828,6 +847,7 @@ fun Song.toMediaItem(useDownloadedFile: Boolean = true): MediaItem {
                             EXTRA_PLAYBACK_SOURCE_ID to playbackSourceId,
                             EXTRA_LOCAL_URI to offlineUri,
                             EXTRA_LOCAL_PATH to localPath,
+                            EXTRA_UNVERIFIED_DOWNLOAD to withheldForCheck,
                             EXTRA_DURATION to durationText,
                             EXTRA_ARTIST_ID to artistId,
                             EXTRA_CHANNEL_ID to channelId,
