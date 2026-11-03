@@ -457,6 +457,8 @@ object InnerTubeXResolver {
      * The video ranking demotes the web clients that can actually answer a
      * music video; when it finds nothing, asking the client audio learned
      * (`WEB_CREATOR` with its PoToken) is the one profile known to work here.
+     * With no learned client — audio served by the direct path, as in Korea —
+     * `WEB_CREATOR` itself is asked instead of giving up.
      *
      * [ask] receives the client to ask, or null for the regular video ranking.
      * Only an empty ranking or [NO_PLAYABLE_STREAM][StreamResolveException.Reason.NO_PLAYABLE_STREAM]
@@ -467,26 +469,30 @@ object InnerTubeXResolver {
         excludedClients: Set<String>,
         ask: suspend (clientId: String?) -> VideoStream?,
     ): VideoStream? {
+        val fallbackClientId = preferredClientId ?: DEFAULT_VIDEO_FALLBACK_CLIENT
         var rankedFailure: StreamResolveException? = null
         val ranked = try {
             ask(null)
         } catch (e: StreamResolveException) {
-            if (preferredClientId == null) throw e
+            if (preferredClientId == null &&
+                e.reason != StreamResolveException.Reason.NO_PLAYABLE_STREAM
+            ) {
+                throw e
+            }
             rankedFailure = e
             null
         }
         if (ranked != null) return ranked
-        if (preferredClientId == null) return null
         if (rankedFailure != null &&
             rankedFailure.reason != StreamResolveException.Reason.NO_PLAYABLE_STREAM
         ) {
             throw rankedFailure
         }
-        if (isExcluded(preferredClientId, excludedClients)) {
+        if (isExcluded(fallbackClientId, excludedClients)) {
             if (rankedFailure != null) throw rankedFailure
             return null
         }
-        val fallback = ask(preferredClientId)
+        val fallback = ask(fallbackClientId)
         if (fallback != null) return fallback
         if (rankedFailure != null) throw rankedFailure
         return null
@@ -656,6 +662,8 @@ object InnerTubeXResolver {
 
     private const val PLAYER_CONFIG_URL =
         "https://raw.githubusercontent.com/ZemerTeam/zemer-cipher/master/library/src/main/assets/player_configs.json"
+    /** The client a picture asks when the video ranking found nothing and audio learned no InnerTubeX path. */
+    private const val DEFAULT_VIDEO_FALLBACK_CLIENT = "WEB_CREATOR"
     private const val LOW_KBPS = 64
     private const val EXCLUDE_MS = 10 * 60 * 1000L
     private const val MAX_REMEMBERED = 64
