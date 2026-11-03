@@ -1518,6 +1518,13 @@ class PlaybackService : MediaLibraryService() {
                 // new one, and nothing else asks again, so a one-song queue
                 // (a song played from search) stopped at its end (11-03 Creep).
                 if (autoplaySeed != mediaItem.mediaId) loadAutoplayForCurrentTrack()
+                // The swapped row's loader asks the direct-source gate for the
+                // new video id, and only [driveDirectWindow] tells the gate what
+                // is playing — from the playing tick, which never comes before
+                // the first note. A before-audio song version was therefore held
+                // 'until it is within 25s of playing' forever (11-03 Read My Mind,
+                // 32 s of silence under '품질 업그레이드 중').
+                if (DirectSourceGate.isActive()) driveDirectWindow()
                 return
             }
 
