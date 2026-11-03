@@ -15,6 +15,7 @@ import com.music.bitchord.playback.TranslationAhead
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.DownloadQuality
+import com.music.bitchord.data.sources.DownloadedRecordingPolicy
 import com.music.bitchord.data.sources.HqQuality
 import com.music.bitchord.data.sources.HqTier
 import com.music.bitchord.data.sources.SourceRegistry
@@ -590,6 +591,21 @@ object Downloads {
     internal fun hqApplied(videoId: String, hq: HqDownloadSource): Boolean =
         com.music.bitchord.ko.downloads.KoDownloadRecords.hqApplied(videoId, hq) // [KO] downloads-records
 
+    /** Whether [videoId]'s recorded file passed the recording check. */
+    internal fun isRecordingVerified(videoId: String): Boolean =
+        com.music.bitchord.ko.downloads.KoDownloadRecords.isRecordingVerified(videoId) // [KO] downloads-records
+
+    /** Records that the file at [inspectedUri] passed the recording check. */
+    internal fun markRecordingVerified(
+        videoId: String,
+        inspectedUri: String,
+        inspectedVersion: String? = null,
+    ): Boolean = com.music.bitchord.ko.downloads.KoDownloadRecords.markRecordingVerified(
+        videoId,
+        inspectedUri,
+        inspectedVersion,
+    ) // [KO] downloads-records
+
     /**
      * Whether [videoId]'s file was proved to be another recording.
      *
@@ -1099,6 +1115,11 @@ object Downloads {
         hq: HqDownloadSource? = null,
         sourceTitle: String? = null,
         sourceArtist: String? = null,
+        /**
+         * Whether these bytes are proved to be the song. Null keeps the
+         * previous record's answer when it named this same file.
+         */
+        recordingVerified: Boolean? = null,
         /** The real name a staged media-store replacement takes after the old row goes. */
         finalName: String? = null,
         /** The name the staged row was written under before the rename. */
@@ -1139,6 +1160,13 @@ object Downloads {
         // the file's own picture first.
         val askedThumbnail = recordedThumbnail(savedArtwork ?: artworkUri, asked)
         val fetchedThumbnail = recordedThumbnail(savedArtwork ?: artworkUri, fetched)
+        // A record that already named this same file keeps its verification; a
+        // replacement written to the same path must earn a fresh one.
+        val verified = recordingVerified ?: ids.any { id ->
+            val old = _savedMetadata.value[id]
+            old != null && old.uri == uri.toString() && old.recordingVerified &&
+                !old.wrongRecording
+        }
         val metaAsked = com.music.bitchord.ko.downloads.KoDownloadPipeline.metadataFor(
             asked,
             askedThumbnail,
@@ -1150,6 +1178,7 @@ object Downloads {
             hq,
             sourceTitle,
             sourceArtist,
+            verified,
         ) // [KO] pipeline
         val metaFetched = com.music.bitchord.ko.downloads.KoDownloadPipeline.metadataFor(
             fetched,
@@ -1162,6 +1191,7 @@ object Downloads {
             hq,
             sourceTitle,
             sourceArtist,
+            verified,
         ) // [KO] pipeline
         record(
             saved = { it + ids.associateWith { id -> uri.toString() } },
@@ -1666,7 +1696,7 @@ object Downloads {
         // Already there from a previous run the record lost track of — adopt it
         // rather than writing a second copy beside it.
         plan.alreadyAt?.let { uri ->
-            remember(song, track, uri, hq = plan.hq)
+            remember(song, track, uri, hq = plan.hq, recordingVerified = null)
             TranslationAhead.downloaded(context, track, uri.toString())
             DownloadSession.done(id)
             clear(id)
@@ -1719,7 +1749,7 @@ object Downloads {
                     existingIsRecording
                 ) {
                     Log.d(TAG, "$baseName is already in Music; adopting it")
-                    remember(song, track, alreadyThere)
+                    remember(song, track, alreadyThere, recordingVerified = null)
                     TranslationAhead.downloaded(context, track, alreadyThere.toString())
                     DownloadSession.done(id)
                     clear(id)
@@ -1771,6 +1801,7 @@ object Downloads {
                         hq = plan.hq,
                         sourceTitle = route.sourceTitle,
                         sourceArtist = route.sourceArtist,
+                        recordingVerified = plan.hq != null || route.recordingVerified,
                     )
                     TranslationAhead.downloaded(context, track, savedUri.toString())
                     DownloadSession.done(id)
@@ -1805,6 +1836,7 @@ object Downloads {
                     hq = plan.hq,
                     sourceTitle = route.sourceTitle,
                     sourceArtist = route.sourceArtist,
+                    recordingVerified = plan.hq != null || route.recordingVerified,
                     finalName = finalName,
                     stagedName = name,
                 )
@@ -1852,6 +1884,8 @@ object Downloads {
         val downloadFormat: String? = null,
         /** The rung these bytes are actually served at, when known. */
         val tier: HqTier? = null,
+        /** These bytes are the YouTube recording itself or a proved pair. */
+        val recordingVerified: Boolean = false,
         /** The source row's own names, when these bytes came from a catalogue. */
         val sourceTitle: String? = null,
         val sourceArtist: String? = null,
@@ -1922,6 +1956,7 @@ object Downloads {
                     kbps = stream.kbps,
                 ),
             ),
+            recordingVerified = true,
             write = { sink, onProgress ->
                 Downloader.fetch(track.videoId, stream, quality.maxKbps, requireM4a, sink, onProgress)
             },
@@ -2055,7 +2090,26 @@ object Downloads {
                 Kept(stream, storable, probe)
             }
         }
-        is Downloader.Probe.File -> Kept(stream, storable, probe)
+        is Downloader.Probe.File -> {
+            // The bytes decide what the file can be called. A source that
+            // labels FLAC while serving AAC/MP4 must not lock onto this
+            // candidate only to be filed under the wrong extension; passing
+            // here lets the resolver try the next source.
+            if (!DownloadedRecordingPolicy.containerMatches(
+                    storable.extension,
+                    probe.container.extension,
+                )
+            ) {
+                Log.d(
+                    TAG,
+                    "${stream.format.summary}: bytes are .${probe.container.extension}, " +
+                        "not .${storable.extension}; passing",
+                )
+                null
+            } else {
+                Kept(stream, storable, probe)
+            }
+        }
     }
 
     /**
@@ -2340,6 +2394,14 @@ internal data class SavedSongMetadata(
     /** The source row's own title and uploader, for the arrangement check. */
     val hqSourceTitle: String? = null,
     val hqSourceArtist: String? = null,
+    /**
+     * The file's sound was compared with the YouTube song version and accepted.
+     *
+     * A download from an add-on source is only a claim until this is true; see
+     * [com.music.bitchord.data.sources.DownloadedRecordingPolicy]. Defaulted so
+     * older records decode as unverified and get their one check on next play.
+     */
+    val recordingVerified: Boolean = false,
     /**
      * This file's sound was proved not to be the song version.
      *

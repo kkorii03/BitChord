@@ -8,6 +8,7 @@ import com.music.bitchord.playback.toSong
 import com.music.bitchord.playback.toMediaItem
 import com.music.bitchord.playback.StreamChoice
 import com.music.bitchord.playback.QualityUpgrade
+import com.music.bitchord.playback.EXTRA_UNVERIFIED_DOWNLOAD
 
 import com.music.bitchord.ko.koTryAutoplayRefillBeforeStopping
 import com.music.bitchord.ko.koSwitchToAlternateOrSkip
@@ -392,14 +393,57 @@ internal fun PlaybackService.koScheduleDownloadHealthCheck(song: Song?, player: 
         // for a stream that cannot open would turn a wrong recording into
         // no playback at all; keep the local file until the repair lands.
         val canStream = outcome.action == com.music.bitchord.data.sources.DownloadHealthPolicy.Action.STREAM
-        if (!wrong || !canStream || song.localUri == null) return@launch
         withContext(Dispatchers.Main) {
             val live = service.player ?: return@withContext
             val item = live.currentMediaItem ?: return@withContext
             if (item.mediaId != song.videoId) return@withContext
-            koRestreamWrongRecording(live, item, live.currentPosition)
+            val position = live.currentPosition
+            if (wrong) {
+                // The file is already behind the stream when it was unverified;
+                // there is no restart to make. A file that was playing itself
+                // is swapped in place at the same position.
+                if (!canStream || song.localUri == null) return@withContext
+                koRestreamWrongRecording(live, item, position)
+                return@withContext
+            }
+            if (outcome.verdict == com.music.bitchord.data.sources.DownloadHealthPolicy.Verdict.OK &&
+                item.mediaMetadata.extras?.getBoolean(EXTRA_UNVERIFIED_DOWNLOAD) == true
+            ) {
+                koUseVerifiedDownload(live, item, position)
+            }
         }
     }
+}
+
+/**
+ * Moves a playing unverified download from its stream onto the file the check
+ * just accepted, at the position the listener has reached.
+ */
+internal fun PlaybackService.koUseVerifiedDownload(
+    player: ExoPlayer,
+    item: MediaItem,
+    position: Long,
+): Boolean {
+    val id = item.mediaId
+    val file = Downloads.verifiedSavedUri(id) ?: return false
+    val verified = item.toSong().copy(localUri = file, localPath = null).toMediaItem()
+    if (verified.localConfiguration?.uri == item.localConfiguration?.uri) return false
+    TrackLog.i(
+        "BitChord",
+        "$id recording verified; using the downloaded file",
+        about = id,
+    )
+    swappingMediaId = id
+    val replaced = runCatching {
+        player.replaceMediaItem(player.currentMediaItemIndex, verified)
+    }.isSuccess
+    if (!replaced) {
+        swappingMediaId = null
+        return false
+    }
+    player.seekTo(player.currentMediaItemIndex, position)
+    player.prepare()
+    return true
 }
 
 /**
@@ -442,7 +486,16 @@ internal fun PlaybackService.koRestreamWrongRecording(
         about = item.mediaId,
     )
     recoveries.remove(item.mediaId)
-    player.replaceMediaItem(player.currentMediaItemIndex, restreamed)
+    // The same song continues from the stream, so the transition bookkeeping
+    // must not treat this as the queue moving on (which reset the playhead).
+    swappingMediaId = item.mediaId
+    val replaced = runCatching {
+        player.replaceMediaItem(player.currentMediaItemIndex, restreamed)
+    }.isSuccess
+    if (!replaced) {
+        swappingMediaId = null
+        return false
+    }
     player.seekTo(player.currentMediaItemIndex, position)
     player.prepare()
     return true

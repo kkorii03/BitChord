@@ -12,6 +12,7 @@ import com.music.bitchord.data.net.HqRetryPolicy
 import com.music.bitchord.data.net.SongVersionPolicy
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.DownloadQuality
+import com.music.bitchord.data.sources.DownloadedRecordingPolicy
 import com.music.bitchord.data.sources.HqQuality
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
@@ -82,7 +83,7 @@ internal object KoDownloadPipeline {
         val storable = DownloadStore.storable(stream.format.codec)
             ?: error("이 기기에 저장할 수 없는 형식입니다 (${stream.format.codec})")
         val probe = Downloader.probe(stream.url, stream.headers, stream.format.codec)
-        return routeFromSource(context, track, stream, storable, probe)
+        return routeFromSource(context, track, stream, storable, probe, recordingVerified = true)
             ?: error("고음질 음원을 내보낼 수 없습니다")
     }
 
@@ -116,7 +117,22 @@ internal object KoDownloadPipeline {
         stream: SourceStream,
         storable: DownloadStore.Storable,
         probe: Downloader.Probe? = null,
+        recordingVerified: Boolean = false,
     ): Downloads.Route? {
+        // A probed file is named for what its bytes are, not what the source
+        // called it: an AAC/MP4 served as FLAC must not be saved as `.flac`
+        // and later trusted for its sound alone. A manifest has no single
+        // container yet, so only [Downloader.Probe.File] is checked.
+        if (probe is Downloader.Probe.File &&
+            !DownloadedRecordingPolicy.containerMatches(storable.extension, probe.container.extension)
+        ) {
+            Log.d(
+                TAG,
+                "${stream.format.summary}: bytes are .${probe.container.extension}, " +
+                    "not .${storable.extension}; passing",
+            )
+            return null
+        }
         // A manifest is an index, not audio. Whichever kind it is, fetching
         // it as a file writes the index into something named `.flac` —
         // which is exactly what a `.mpd` did until [OfflineDash] existed:
@@ -141,6 +157,7 @@ internal object KoDownloadPipeline {
                 host = HqHostTracker.hostOf(stream.url),
                 downloadFormat = stream.format.downloadBadge(),
                 tier = HqQuality.tierOf(stream.format),
+                recordingVerified = recordingVerified,
                 sourceTitle = stream.trackTitle,
                 sourceArtist = stream.trackArtist,
                 write = { sink, onProgress ->
@@ -165,6 +182,7 @@ internal object KoDownloadPipeline {
             host = HqHostTracker.hostOf(stream.url),
             downloadFormat = stream.format.downloadBadge(),
             tier = HqQuality.tierOf(stream.format),
+            recordingVerified = recordingVerified,
             sourceTitle = stream.trackTitle,
             sourceArtist = stream.trackArtist,
             taggable = true,
@@ -501,6 +519,7 @@ internal object KoDownloadPipeline {
         hq: HqDownloadSource?,
         sourceTitle: String?,
         sourceArtist: String?,
+        recordingVerified: Boolean,
     ): SavedSongMetadata = SavedSongMetadata(
         videoId = song.videoId,
         title = song.title,
@@ -521,6 +540,7 @@ internal object KoDownloadPipeline {
         hqTier = hq?.tier?.name,
         hqSourceTitle = hq?.sourceTitle ?: sourceTitle,
         hqSourceArtist = hq?.sourceArtist ?: sourceArtist,
+        recordingVerified = recordingVerified,
     )
 
 }

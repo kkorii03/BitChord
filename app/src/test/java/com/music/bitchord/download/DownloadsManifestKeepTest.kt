@@ -44,6 +44,36 @@ class DownloadsManifestKeepTest {
         )
     }
 
+    /**
+     * The bytes, not the source label, decide the extension. AAC in an MP4
+     * served as FLAC used to win the source race and be saved as `.flac`, so
+     * only the later sound check could condemn it.
+     */
+    @Test
+    fun `a file whose real container conflicts with its name is declined`() {
+        assertNull(
+            Downloads.keptFor(
+                stream,
+                flac,
+                Downloader.Probe.File(Downloader.Container.MP4, totalBytes = 1_000L),
+            ),
+        )
+        assertNull(
+            Downloads.keptFor(
+                stream,
+                flac,
+                Downloader.Probe.File(Downloader.Container.ADTS, totalBytes = 1_000L),
+            ),
+        )
+        assertNotNull(
+            Downloads.keptFor(
+                stream,
+                DownloadStore.Storable("m4a", "audio/mp4"),
+                Downloader.Probe.File(Downloader.Container.MP4, totalBytes = 1_000L),
+            ),
+        )
+    }
+
     /** The probe, not the extension, decides: an extensionless DASH stream is still a manifest. */
     @Test
     fun `an extensionless manifest is packaged from the probe`() {

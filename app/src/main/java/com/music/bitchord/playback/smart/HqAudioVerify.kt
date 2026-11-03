@@ -818,11 +818,11 @@ object HqAudioVerify {
      * The reference is the same opening [verify] uses, so a downloaded file is
      * held to the same standard as a stream candidate: a cover, a live take or
      * another arrangement is refused. A verdict already stored for the pair is
-     * returned without decoding, and a rejection is remembered for the same
-     * reason. [Unavailable] means the question could not be answered — no
-     * reference, screen off, unreadable file — and must never be treated as a
-     * rejection: deleting a file because the network was down would be worse
-     * than leaving it alone.
+     * returned without decoding when [allowCached] is true, and a rejection is
+     * remembered for the same reason. [Unavailable] means the question could not
+     * be answered — no reference, screen off, unreadable file — and must never
+     * be treated as a rejection: deleting a file because the network was down
+     * would be worse than leaving it alone.
      *
      * The file is decoded as a stream, ninety seconds at a time, never loaded
      * whole. Nothing here polls or schedules itself; the playback health check
@@ -835,6 +835,12 @@ object HqAudioVerify {
         sourceConfigId: String?,
         trackId: String?,
         tier: HqTier?,
+        /**
+         * Whether a stored source/track verdict may answer without decoding.
+         * True only for a file already known to be the recording; an
+         * unverified file must be heard before it can be promoted.
+         */
+        allowCached: Boolean = true,
     ): DownloadedSound = withContext(Dispatchers.IO) {
         if (youtubeId.isBlank() || uri.isBlank()) return@withContext DownloadedSound.Unavailable
         if (SourceTrackKeys.parse(youtubeId) != null) {
@@ -842,8 +848,10 @@ object HqAudioVerify {
                 HqVerificationStore.Verified(0L, 1.0, 100, HqTier.NORMAL),
             )
         }
-        HqVerificationStore.get(context, youtubeId, sourceConfigId, trackId)?.let {
-            return@withContext DownloadedSound.Accepted(it, cached = true)
+        if (allowCached) {
+            HqVerificationStore.get(context, youtubeId, sourceConfigId, trackId)?.let {
+                return@withContext DownloadedSound.Accepted(it, cached = true)
+            }
         }
         if (sourceConfigId != null && HqVerificationStore.isRejected(context, youtubeId, sourceConfigId, trackId)) {
             return@withContext DownloadedSound.Rejected
@@ -853,8 +861,10 @@ object HqAudioVerify {
         try {
             return@withContext lock.withLock {
                 coroutineScope {
-                    HqVerificationStore.get(context, youtubeId, sourceConfigId, trackId)?.let {
-                        return@coroutineScope DownloadedSound.Accepted(it, cached = true)
+                    if (allowCached) {
+                        HqVerificationStore.get(context, youtubeId, sourceConfigId, trackId)?.let {
+                            return@coroutineScope DownloadedSound.Accepted(it, cached = true)
+                        }
                     }
                     if (sourceConfigId != null &&
                         HqVerificationStore.isRejected(context, youtubeId, sourceConfigId, trackId)
