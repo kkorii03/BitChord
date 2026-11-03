@@ -1,0 +1,33 @@
+Kotlin Android app (task/u19-tg, BitChord Korean fork of a YouTube Music client). Real phone logs from the user's S24 on 11-03 (two diagnostic exports, ~90k lines) show this symptom 67 times:
+SYMPTOM: main-thread stalls in the taste/recommendation code
+Pattern: main-stall: .*data\.taste
+Sample lines (deduplicated, ids/numbers vary):
+   2026-11-03 00:16:48.646 I/BitChord video-radio: seed=dv6RgVNb0Rk mode=music picked=5 from=radio dropped= fallback=none
+   2026-11-03 00:16:48.681 I/BitChord queue: autoplay-append n=5 at=11 size=16 by=autoplay
+2026-11-03 00:16:48.682 W/BitChord main-stall: 289ms DispatchedContinuation[Dispatchers.Main, Continuation at com.music.bitchord.data.taste.SimilarCandidates$resolveRecordin
+   2026-11-03 00:20:47.600 I/BitChord video-radio: seed=4J41KdZ3JR8 mode=music picked=4 from=radio dropped= fallback=none
+   2026-11-03 00:20:47.621 I/BitChord queue: autoplay-append n=4 at=1 size=5 by=autoplay
+2026-11-03 00:20:47.622 W/BitChord main-stall: 369ms DispatchedContinuation[Dispatchers.Main, Continuation at com.music.bitchord.data.taste.SimilarCandidates$persist$1@a9136
+2026-11-03 00:24:29.681 W/BitChord main-stall: 345ms DispatchedContinuation[Dispatchers.Main, Continuation at com.music.bitchord.data.taste.SimilarCandidates$persist$1@8da57
+2026-11-03 00:24:31.682 W/BitChord main-stall: 271ms DispatchedContinuation[Dispatchers.Main, Continuation at com.music.bitchord.data.taste.SimilarCandidates$persist$1@4c476
+2026-11-03 00:27:20.696 W/BitChord main-stall: 340ms DispatchedContinuation[Dispatchers.Main, Continuation at com.music.bitchord.data.taste.SimilarCandidates$persist$1@d66dd
+2026-11-03 00:27:31.016 W/BitChord main-stall: 213ms DispatchedContinuation[Dispatchers.Main, Continuation at com.music.bitchord.data.taste.SimilarCandidates$persist$1@735a0
+2026-11-03 00:27:48.363 W/BitChord main-stall: 270ms DispatchedContinuation[Dispatchers.Main, Continuation at com.music.bitchord.data.taste.SimilarCandidates$persist$1@73956
+2026-11-03 00:30:36.010 W/BitChord main-stall: 249ms DispatchedContinuation[Dispatchers.Main, Continuation at com.music.bitchord.data.taste.SimilarCandidates$persist$1@8318e
+2026-11-03 00:34:10.652 W/BitChord main-stall: 229ms DispatchedContinuation[Dispatchers.Main, Continuation at com.music.bitchord.data.taste.SimilarCandidates$persist$1@ceea1
+2026-11-03 01:39:17.902 W/BitChord main-stall: 532ms DispatchedContinuation[Dispatchers.Main, Continuation at com.music.bitchord.data.taste.SimilarCandidates$persist$1@12b24
+2026-11-03 01:44:54.454 W/BitChord main-stall: 320ms DispatchedContinuation[Dispatchers.Main, Continuation at com.music.bitchord.data.taste.SimilarCandidates$ensureLoaded$1@
+2026-11-03 01:46:28.024 W/BitChord main-stall: 261ms DispatchedContinuation[Dispatchers.Main, Continuation at com.music.bitchord.data.taste.SimilarCandidates$persist$1@cda7e
+2026-11-03 02:18:59.545 W/BitChord main-stall: 274ms DispatchedContinuation[Dispatchers.Main, Continuation at com.music.bitchord.data.taste.SimilarCandidates$persist$1@1ebfd
+2026-11-03 02:23:57.468 W/BitChord main-stall: 336ms DispatchedContinuation[Dispatchers.Main, Continuation at com.music.bitchord.data.taste.SimilarCandidates$persist$1@50db6
+2026-11-03 05:12:51.529 W/BitChord main-stall: 219ms DispatchedContinuation[Dispatchers.Main, Continuation at com.music.bitchord.data.taste.SimilarCandidates$persist$1@dedb0
+2026-11-03 08:35:26.976 W/BitChord main-stall: 446ms DispatchedContinuation[Dispatchers.Main, Continuation at com.music.bitchord.data.taste.SimilarCandidates$persist$1@6d6ef
+2026-11-03 13:12:15.856 W/BitChord main-stall: 242ms DispatchedContinuation[Dispatchers.Main, Continuation at com.music.bitchord.data.taste.SimilarCandidates$persist$1@4f67f
+2026-11-03 13:22:38.636 W/BitChord main-stall: 341ms DispatchedContinuation[Dispatchers.Main, Continuation at com.music.bitchord.data.taste.SimilarCandidates$persist$1@536ec
+
+Task:
+1. Find the code that logs these lines and every path that leads to them. Decide: is this an APP DEFECT (wrong decision, wasted retries/network/battery, user-visible failure, wrong song/no audio, UI stall) or the app CORRECTLY handling an outside failure (server refusing, track blocked in Korea) with no better option?
+2. If it is an app defect: fix the root cause with the smallest change. First write a JVM test that FAILS on the current code, then make it pass. Name new test classes in the summary (you may not edit .github/workflows).
+3. If the app already behaves correctly: change NOTHING and say why in the summary (that is a valid, useful answer ??do not invent work).
+Rules: battery first (no polling timers, event-based); never fall back to a music video (MV) for a song; re-read every caller and type of anything you change; keep upstream code intact (Korean code in ko/ with one-line // [KO] hooks); unknown Android/Media3 APIs: context7; use grep/Select-String (no rg).
+Summary of at most 10 lines: verdict (defect / correct) / root cause with file:line / key change / tests and results / REMOVED-LINES AUDIT / not done. Follow AGENTS.md (ponytail) rules.
