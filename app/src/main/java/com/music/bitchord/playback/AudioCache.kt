@@ -1421,6 +1421,10 @@ object AudioCache {
                         return@runBlocking
                     }
                 }
+                // Captured before the YouTube walk: a lookup that answers
+                // successfully during it is removed from [lookups] on
+                // completion, and would otherwise be dropped and searched again.
+                val running = DirectSourceGate.stillLooking(videoId)
                 runCatching { StreamResolver.resolve(videoId) }
                     .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
                     .getOrNull()
@@ -1430,7 +1434,7 @@ object AudioCache {
                             SourceStream(url, headers = StreamResolver.mediaHeadersFor(url)),
                             substituted = false,
                         )
-                        DirectSourceGate.startedOnYouTube(videoId, SourceResolver.targetIn(uri))
+                        DirectSourceGate.startedOnYouTube(videoId, SourceResolver.targetIn(uri), running)
                     }
             }
         } catch (e: InterruptedException) {
@@ -1658,6 +1662,8 @@ object AudioCache {
                 val addon = runCatching { DirectSourceGate.lookup(id, upcoming.target) }
                     .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
                     .getOrNull()
+                // Captured before the YouTube walk; see [prefetchDirect].
+                val running = if (addon == null) DirectSourceGate.stillLooking(id) else null
                 val stream = addon ?: runCatching {
                     val url = StreamResolver.resolve(id)
                     SourceStream(url, headers = StreamResolver.mediaHeadersFor(url))
@@ -1678,7 +1684,7 @@ object AudioCache {
                     if (addon != null && heldByYouTube(key)) dropYouTubeEntry(key, id)
                     if (addon != null && heldByYouTube(key)) return@launch
                     StreamChoice.remember(id, stream, substituted = addon != null)
-                    if (addon == null) DirectSourceGate.startedOnYouTube(id, upcoming.target)
+                    if (addon == null) DirectSourceGate.startedOnYouTube(id, upcoming.target, running)
                 }
             }
             fetch(id, 0, PRELOAD_BYTES)

@@ -134,8 +134,8 @@ object DirectSourceGate {
      * window for a track that is not playing, one short grace for the one that
      * is.
      */
-    internal fun lookupWaitMs(mediaId: String): Long =
-        if (isCurrent(mediaId)) CURRENT_LOOKUP_GRACE_MS else LOOKUP_TIMEOUT_MS
+    internal fun lookupWaitMs(mediaId: String, current: Boolean = isCurrent(mediaId)): Long =
+        if (current) CURRENT_LOOKUP_GRACE_MS else LOOKUP_TIMEOUT_MS
 
     /**
      * Blocks a resolve for [mediaId] until it is playing or next inside the
@@ -219,8 +219,10 @@ object DirectSourceGate {
      * together, and should cost one search, not two.
      *
      * The wait is bounded by [lookupWaitMs] from when the lookup started,
-     * however late the caller joined it. Null means no addon had it in time,
-     * and the caller falls back to YouTube and says so with [startedOnYouTube].
+     * however late the caller joined it — except the current track's short
+     * grace, which starts when the caller joins. Null means no addon had it in
+     * time, and the caller falls back to YouTube and says so with
+     * [startedOnYouTube].
      */
     suspend fun lookup(videoId: String, target: TrackMatcher.Target): SourceStream? {
         // [KO] first-audio: when every addon is resting, the search can only
@@ -247,21 +249,37 @@ object DirectSourceGate {
             fresh.work.start()
         }
         val lookup = running ?: fresh
-        return awaitLookup(lookup.work, lookup.startedAtMs, lookupWaitMs(videoId))
+        // [KO] first-audio: the current track's grace starts when this caller
+        // joins, not when the read-ahead lookup was started. Otherwise a track
+        // that became current after its lookup had run for more than a second
+        // fell back to YouTube at once, with no chance at all.
+        val current = isCurrent(videoId)
+        val waitMs = lookupWaitMs(videoId, current)
+        return awaitLookup(
+            work = lookup.work,
+            startedAtMs = lookup.startedAtMs,
+            waitMs = waitMs,
+            fromJoin = current,
+        )
     }
 
     /**
      * Waits for [work] until [waitMs] after [startedAtMs], however late the
-     * caller joined it. A fake clock and deferred in the test pin the order:
-     * the current track gives up before a slow addon answers, while read-ahead
-     * waits for it.
+     * caller joined it — except a current-track grace, which [fromJoin] starts
+     * when this caller joins. A fake clock and deferred in the test pin the
+     * order: the current track gives up before a slow addon answers, while
+     * read-ahead waits for it.
      */
     internal suspend fun <T> awaitLookup(
         work: Deferred<T?>,
         startedAtMs: Long,
         waitMs: Long,
+        fromJoin: Boolean = false,
         nowMs: () -> Long = { android.os.SystemClock.elapsedRealtime() },
-    ): T? = withTimeoutOrNull((waitMs - (nowMs() - startedAtMs)).coerceAtLeast(0L)) { work.await() }
+    ): T? {
+        val remaining = if (fromJoin) waitMs else (waitMs - (nowMs() - startedAtMs)).coerceAtLeast(0L)
+        return withTimeoutOrNull(remaining) { work.await() }
+    }
 
     /**
      * Whether waiting for the addons could still produce an answer. Each flag
@@ -278,18 +296,23 @@ object DirectSourceGate {
     /**
      * [videoId] is about to play from YouTube because the addons did not
      * answer in time, so it gets the second look it would get with Direct
-     * Source Stream off. A lookup still running is handed over and swaps in
-     * when it lands; one that came back empty leaves the second look to search
-     * for itself.
+     * Source Stream off. [inFlight] is the lookup captured before the fallback
+     * was awaited: it is handed over and swaps in when it lands, even if it
+     * completed and left [lookups] in the meantime. A null leaves the second
+     * look to search for itself.
      *
      * Called only once the YouTube URL is in hand, because that walk is what
      * sets the bitrate a candidate has to beat.
      */
-    fun startedOnYouTube(videoId: String, target: TrackMatcher.Target) {
+    fun startedOnYouTube(
+        videoId: String,
+        target: TrackMatcher.Target,
+        inFlight: Deferred<SourceStream?>?,
+    ) {
         val pending = QualityUpgrade.settledForLess(
             mediaId = videoId,
             target = target,
-            inFlight = stillLooking(videoId),
+            inFlight = inFlight,
             playing = NerdStats.pickedBitrateKbps(videoId)?.let { StreamFormat(kbps = it) },
         )
         if (!pending) NerdStats.onLosslessRaceEnd(videoId)

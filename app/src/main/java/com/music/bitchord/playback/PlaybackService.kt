@@ -8182,6 +8182,7 @@ class PlaybackService : MediaLibraryService() {
         val fallback = scope.async(Dispatchers.IO + TrackLog.about(videoId)) {
             runCatching { StreamResolver.resolve(videoId) }
         }
+        val lookupStartedAt = android.os.SystemClock.elapsedRealtime()
         val direct = try {
             runCatching { DirectSourceGate.lookup(videoId, target) }
                 .onFailure { if (it is CancellationException) throw it }
@@ -8194,12 +8195,13 @@ class PlaybackService : MediaLibraryService() {
             fallback.cancel()
             return Resolved.Module(direct)
         }
+        val waitedMs = android.os.SystemClock.elapsedRealtime() - lookupStartedAt
         val running = DirectSourceGate.stillLooking(videoId)
         TrackLog.d(
             "BitChord",
             if (running != null) {
                 "no addon answered for '${target.title}' within " +
-                    "${DirectSourceGate.lookupWaitMs(videoId) / 1000}s; starting it on YouTube and still looking"
+                    "${waitedMs / 1000}s; starting it on YouTube and still looking"
             } else {
                 "no addon served '${target.title}' directly; playing it from YouTube"
             },
@@ -8216,7 +8218,7 @@ class PlaybackService : MediaLibraryService() {
             // is left, and there is nothing playing for it to swap into.
             return Resolved.Module(running?.await() ?: throw e)
         }
-        DirectSourceGate.startedOnYouTube(videoId, target)
+        DirectSourceGate.startedOnYouTube(videoId, target, running)
         return Resolved.YouTube(url)
     }
 
