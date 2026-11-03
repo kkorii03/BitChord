@@ -304,9 +304,12 @@ object QualityUpgrade {
         if (KoQualityUpgrade.suppressesRetry(mediaId)) return false // [KO] quality-retry
         // Direct Source Stream never swaps an addon's answer on its own. A track
         // it had to start on YouTube is still looked for, as it is with the
-        // setting off. Asking by hand always works: that is the listener
-        // overruling the copy, not a background hunt.
-        if (mediaId !in handAsked && DirectSourceGate.isActive() && !StreamChoice.isYouTube(mediaId)) {
+        // setting off — and so is one playing off the disk cache, which has no
+        // in-memory choice at all and may well be YouTube's own copy. Only a
+        // choice that is known to be a substitute is held back. Asking by hand
+        // always works: that is the listener overruling the copy, not a
+        // background hunt.
+        if (mediaId !in handAsked && DirectSourceGate.isActive() && StreamChoice.isSubstitute(mediaId)) {
             return false
         }
         // Same widening as [settledForLess]: a track playing off the cache is
