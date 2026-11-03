@@ -638,6 +638,10 @@ object InnertubeParser {
                         parseResponsiveListItem(renderer as? JsonObject, pageCredit)
                             ?.let { out[it.videoId] = it }
                     }
+                    node["lockupViewModel"]?.let { renderer ->
+                        YouTubeWebParser.lockupSong(renderer as? JsonObject ?: return@let, musicOnly = false)
+                            ?.let { out[it.videoId] = it }
+                    }
                     node["musicMultiRowListItemRenderer"]?.let { renderer ->
                         parseMultiRowListItem(renderer as? JsonObject, show)
                             ?.let { out[it.videoId] = it }
@@ -882,12 +886,15 @@ object InnertubeParser {
             // is simply absent, which is what makes "remove from playlist"
             // offer itself exactly where it means something.
             setVideoId = renderer.o("playlistItemData").s("playlistSetVideoId"),
-            // The row type word is the clean signal when present ("All" tab);
-            // otherwise a music-video upload gives itself away with widescreen
-            // art where a catalogue track has square album cover art. Not an
-            // episode, whose art is a widescreen still too: it is listened to,
-            // and a "video" is dropped from the All tab's results.
-            isVideo = !episode && (rowType == "video" || thumbnails.isNotSquare()),
+            // The row's own `musicVideoType` says exactly what it is; the
+            // type word and the art are only fallbacks for responses without
+            // it. A video row can carry square art, and an ATV row beside it
+            // must still count as the catalogue song. Episodes are listened
+            // to, never a video, whatever still they carry.
+            isVideo = !episode && when (val videoType = renderer.findString("musicVideoType")) {
+                null -> rowType == "video" || thumbnails.isNotSquare()
+                else -> !videoType.contains("ATV", ignoreCase = true)
+            },
             isEpisode = episode,
             isExplicit = renderer.hasExplicitBadge(),
             // Extract the "Remove from history" feedback token from the row's menu, if present.
