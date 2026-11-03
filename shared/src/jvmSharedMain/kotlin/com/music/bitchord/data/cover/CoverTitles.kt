@@ -289,6 +289,23 @@ object CoverTitles {
     )
 
     /**
+     * The upload [song] was shown from, for a row that already carries the
+     * cover fields: its own title and channel, with the cover fields cleared so
+     * [read] can read it again. Anything else is returned as it is.
+     */
+    fun uploadOf(song: Song): Song =
+        if (song.originalTitle == null) {
+            song
+        } else {
+            song.copy(
+                title = song.originalTitle ?: song.title,
+                artist = song.originalArtist ?: song.artist,
+                originalTitle = null,
+                originalArtist = null,
+            )
+        }
+
+    /**
      * The lyrics search for [song], whether it arrives as the upload or as a
      * queue row already shown as its song ([applyTo]).
      */
@@ -308,16 +325,7 @@ object CoverTitles {
                 artistAliases = ArtistAliases.forSong(song),
             )
         }
-        val upload = if (song.originalTitle != null) {
-            song.copy(
-                title = song.originalTitle ?: song.title,
-                artist = song.originalArtist ?: song.artist,
-                originalTitle = null,
-                originalArtist = null,
-            )
-        } else {
-            song
-        }
+        val upload = uploadOf(song)
         val queries = lyricsQueries(upload)
         val (title, artist) = queries.firstOrNull() ?: (song.title to song.artist)
         val cover = read(upload)

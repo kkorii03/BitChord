@@ -67,6 +67,29 @@ class PlayerConnectionCoverMetadataTest {
     }
 
     @Test
+    fun `a rebuilt row whose upload no longer reads as a cover is still cleaned`() {
+        // What cleanCoverTitle leaves on disk: the upload title it could not
+        // parse, the already-cleaned shown title, and coverSinger marking the
+        // row. Rebuilding the upload for a second read fails here, so the raw
+        // "Take Cover" must not be shown just because coverSinger survives.
+        val stored = Song(
+            videoId = "cover-meta-stale",
+            title = "Take (cover)",
+            artist = "채널",
+            thumbnailUrl = null,
+            isVideo = true,
+            originalTitle = "Take Cover",
+            originalArtist = "Channel",
+            coverSinger = "채널",
+        )
+
+        val metadata = stored.toMediaItem().mediaMetadata
+
+        assertEquals("Take (cover)", metadata.title?.toString())
+        assertEquals("Channel", metadata.artist?.toString())
+    }
+
+    @Test
     fun `a cover of a song named Cover Me keeps its song name`() {
         val upload = Song(
             videoId = "cover-meta-word",

@@ -703,17 +703,16 @@ private fun Song.pickedMixQuery(configId: String): String {
  * cleaner's cover-tag removal.
  */
 private fun Song.sessionDisplay(): Song {
-    val storedUpload = originalTitle?.let { uploadTitle ->
-        copy(
-            title = uploadTitle,
-            artist = originalArtist ?: artist,
-            originalTitle = null,
-            originalArtist = null,
-        )
+    val upload = CoverTitles.uploadOf(this)
+    if (upload !== this) {
+        val reread = CoverTitles.applyTo(upload)
+        // Only a second read that actually parsed the upload is a cover again.
+        // A cleanCoverTitle row keeps its stale coverSinger even though its
+        // stored upload title no longer reads, and showing that raw title would
+        // keep StoredSongDisplay.clean from cleaning it; clean it instead.
+        return if (reread.originalTitle != null) reread else StoredSongDisplay.clean(upload)
     }
-    val shown = storedUpload?.let { CoverTitles.applyTo(it) }
-        ?.takeIf { CoverTitles.isCover(it) }
-        ?: CoverTitles.applyTo(this)
+    val shown = CoverTitles.applyTo(this)
     return if (CoverTitles.isCover(shown)) shown else StoredSongDisplay.clean(shown)
 }
 

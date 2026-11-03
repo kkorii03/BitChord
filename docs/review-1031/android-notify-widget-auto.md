@@ -103,21 +103,21 @@
 
 ---
 
-## 4. 고치지 못한 HIGH/MEDIUM
+## 4. 이전에 남긴 HIGH/MEDIUM (이번에 코드 확인·고침)
 
-### MEDIUM-A. Android Auto 브라우즈가 느린 망에서 조용히 빈 목록
+### MEDIUM-A. Android Auto 브라우즈가 느린 망에서 조용히 빈 목록 — 고침
 
-- 파일: `app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:11655-11710` (`resolveMediaItems`의 `playlist:`/`browse:` 분기)
-- 증거: `withTimeoutOrNull(2500~3000)` 결과가 null/빈 목록이면 로그 없이 `resolved`에 아무것도 추가하지 않는다. Auto에서 플레이리스트를 눌렀을 때 로딩 실패가 “빈 폴더”로 보인다.
-- 이유: 이번에 고치려면 Auto용 오류/재시도 항목의 문구·동작을 정해야 하고, `onGetChildren`과 같은 캐시 경로까지 함께 손봐야 한다. 최소 수정은 `TrackLog.w` + 오류 항목이지만 사용자 노출 문구 결정이 필요해 남겼다.
-- 필요한 작업: 실패 시 `createInfoItem` 재시도 안내 + 로그, 캐시 히트 우선.
+- 파일: `app/src/main/java/com/music/bitchord/playback/PlaybackService.kt` (`onGetChildren`의 `playlist:`/`browse:` 분기, `resolveMediaItems`), 신규 `playback/AutoBrowseFallback.kt`
+- 수정: 실패·타임아웃(null)과 성공했지만 빈 목록을 구분해, 실패는 `TrackLog.w`와 재시도 안내 `createInfoItem`, 성공한 빈 폴더는 기존 빈 폴더 안내를 보여 준다. `onGetChildren`은 캐시 스냅샷을 먼저 쓰고 신선도가 낮을 때만 백그라운드 갱신을 건다.
+- 테스트: `AutoBrowseFallbackTest` (실패/빈 목록/정상 3건).
+- **폰 검증 필요** (Android Auto 실기기에서 느린 망·타임아웃 재현).
 
-### MEDIUM-B. 차량 연결 시 `onPlaybackResumption`이 임의의 다운로드/로컬 곡을 반환
+### MEDIUM-B. 차량 연결 시 `onPlaybackResumption`이 임의의 다운로드/로컬 곡을 반환 — 고침
 
-- 파일: `app/src/main/java/com/music/bitchord/playback/PlaybackService.kt:11522-11587`
-- 증거: 현재 큐가 없으면 2) 다운로드 전체, 3) 로컬 음악 전체, 5) 홈 추천을 반환한다. 차량이 재개를 요청하면 사용자가 마지막으로 듣던 곡이 아니라 목록 첫 곡이 시작될 수 있다. “사용자 조작 없는 백그라운드 시작 11회”의 한 원인 후보.
-- 이유: 이 폴백은 “오프라인에서도 차량이 뭔가 재생되게” 하려는 의도가 주석에 명시돼 있어, 제거는 제품 결정이다. 마지막 재생 기록(`LastPlayed`)이 있으면 1)에서 이미 복원된다.
-- 필요한 작업: 큐가 없을 때 빈 목록을 반환할지, 다운로드 폴더를 명시적으로 선택했을 때만 폴백할지 결정.
+- 파일: `app/src/main/java/com/music/bitchord/playback/PlaybackService.kt` (`onPlaybackResumption`), 신규 `playback/AutoResumptionPolicy.kt`
+- 수정: 현재 큐 → 마지막으로 실제 재생한 큐(`LastPlayed`) 순서만 재개한다. 기록이 없으면 빈 목록을 반환해 차량이 브라우즈 목록을 보여 준다. 다운로드/로컬/홈 첫 곡 폴백은 제거했다.
+- 테스트: `AutoResumptionPolicyTest` (현재 큐, 마지막 큐, 기록 없음).
+- **폰 검증 필요** (차량 연결만으로 재생이 시작되지 않는지 실기기 확인).
 
 ### LOW. 위젯 명령의 무음 스킵
 
@@ -132,7 +132,7 @@
 - **다음 곡 싱크 준비 29%**: 알림/Auto의 스킵은 `SessionPlayer.seekToNextMediaItem`으로 들어와 `onUserAdvance`/`crossfade.onSkipRequested`를 거친다. `onTrackBecameCurrent`는 `isPlaying || alreadyAudible`일 때만 `scheduleNextPrep`을 호출하므로, 일시정지 상태에서 알림으로 다음 곡을 고르면 다음 곡 준비가 시작되지 않는다. 이는 “일시정지 중 스킵은 일시정지 유지”라는 기존 규칙의 부작용이고, 배터리 규칙상 일시정지 중 선행 준비를 켜는 것은 이번에 하지 않았다. 재생 중 스킵 경로 자체는 정상적으로 준비를 건다.
 - **무손실 확인 후 실제 무손실 재생 4%**: 이 영역의 표면(알림/위젯/Auto)은 품질 전환이나 `HqAudioVerify`를 트리거하지 않는다. 낮은 수치는 `playback/smart`·`download` 영역의 검증/재생 경로 문제이지 알림/위젯 때문이 아니다. 이번 수정은 표지·좋아요 상태에만 영향을 준다.
 - **자동 재생 보충 성공 24%**: 큐가 끝났을 때 알림/Auto의 “다음”은 다음 항목이 없으면 `seekToNextMediaItem`이 이동하지 않고, `loadAutoplayForCurrentTrack`은 트랜지션에서만 호출된다. 따라서 끝에서의 보충은 이 표면이 아니라 서비스의 전이/보충 스케줄러가 담당한다. 위젯은 `hasNext=false`를 흐리게 표시해 잘못된 기대를 막는다.
-- **사용자 조작 없는 백그라운드 시작 11회**: 위젯은 `startService` 대신 bind를 써서 백그라운드 시작 제한을 피한다. 다만 Auto의 `onPlaybackResumption` 폴백(MEDIUM-B)은 차량 연결만으로 임의 재생을 시작할 수 있어 이 숫자에 기여할 수 있다.
+- **사용자 조작 없는 백그라운드 시작 11회**: 위젯은 `startService` 대신 bind를 써서 백그라운드 시작 제한을 피한다. Auto의 `onPlaybackResumption` 폴백(MEDIUM-B)은 현재 큐·마지막 재생 기록만 쓰도록 고쳐 차량 연결만으로 임의 재생이 시작되지 않는다.
 - **다운로드·고음질 보관함 실패 140회**: 이 영역은 다운로드 자체를 수행하지 않는다. 다만 HIGH-1 때문에 다운로드된 곡의 차량 표지가 실패로 보였을 수 있고, 수정으로 그 표시 실패는 줄어든다. 실제 다운로드 실패는 `download/HqLibraryUpgrade` 영역 과제다.
 
 ---
@@ -140,6 +140,6 @@
 ## 6. 검증
 
 - `./gradlew :app:compileProdReleaseKotlin -Pbitchord.arm64Only=true --console=plain -q` 통과.
-- `./gradlew :app:testProdReleaseUnitTest --tests 'com.music.bitchord.widget.MediaWidgetSnapshotTest' --tests 'com.music.bitchord.playback.SessionFavoriteStateTest' --tests 'com.music.bitchord.playback.MediaSessionArtworkReadersTest' -Pbitchord.arm64Only=true --console=plain -q` 통과.
-- 신규 테스트: `MediaWidgetSnapshotTest`, `SessionFavoriteStateTest`, `MediaSessionArtworkReadersTest`.
+- `./gradlew :app:testProdReleaseUnitTest --tests 'com.music.bitchord.widget.MediaWidgetSnapshotTest' --tests 'com.music.bitchord.playback.SessionFavoriteStateTest' --tests 'com.music.bitchord.playback.MediaSessionArtworkReadersTest' --tests 'com.music.bitchord.playback.AutoBrowseFallbackTest' --tests 'com.music.bitchord.playback.AutoResumptionPolicyTest' -Pbitchord.arm64Only=true --console=plain -q` 통과.
+- 신규 테스트: `MediaWidgetSnapshotTest`, `SessionFavoriteStateTest`, `MediaSessionArtworkReadersTest`, `AutoBrowseFallbackTest`, `AutoResumptionPolicyTest`.
 - 배터리: 새 주기 폴링/타이머/delay 루프 없음. 모든 갱신은 기존 재생·전이·셔플·좋아요 이벤트에서만 발생.
