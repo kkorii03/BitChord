@@ -36,6 +36,7 @@ class ProxyEarlyRaceTest {
             scope = this,
             proxyTimeoutMs = 50L,
             skipExtraction = true,
+            mapDirect = { it },
             resolveProxy = { null },
             isProxyDown = { false },
             unplayableReason = { "blocked" },
@@ -57,6 +58,7 @@ class ProxyEarlyRaceTest {
             scope = this,
             proxyTimeoutMs = 50L,
             skipExtraction = false,
+            mapDirect = { it },
             resolveProxy = { null },
             isProxyDown = { false },
             unplayableReason = { "blocked" },
@@ -77,6 +79,7 @@ class ProxyEarlyRaceTest {
             scope = this,
             proxyTimeoutMs = 1_000L,
             skipExtraction = false,
+            mapDirect = { it },
             resolveProxy = { "proxy-stream" },
             isProxyDown = { false },
             unplayableReason = { "blocked" },
@@ -98,6 +101,7 @@ class ProxyEarlyRaceTest {
             scope = this,
             proxyTimeoutMs = 2_000L,
             skipExtraction = true,
+            mapDirect = { it },
             resolveProxy = { throw dead },
             isProxyDown = { it.message == "proxy unreachable" },
             unplayableReason = { "blocked" },
@@ -107,4 +111,27 @@ class ProxyEarlyRaceTest {
         assertEquals("proxy unreachable", outcome.failure.message)
         assertTrue(itx.isCancelled)
     }
+
+    @Test
+    fun `an InnerTubeX win in front of the proxy returns the mapped direct stream`() = runBlocking {
+        val itx = CompletableDeferred<DirectRun?>()
+        itx.complete(DirectRun("itx-stream"))
+
+        val outcome = raceProxyEarly(
+            itx = itx,
+            scope = this,
+            proxyTimeoutMs = 1_000L,
+            skipExtraction = false,
+            mapDirect = { it.stream },
+            resolveProxy = { null },
+            isProxyDown = { false },
+            unplayableReason = { "blocked" },
+        )
+
+        assertIs<ProxyEarlyRace.Won<String>>(outcome)
+        assertEquals("direct", outcome.route)
+        assertEquals("itx-stream", outcome.value)
+    }
+
+    private class DirectRun(val stream: String)
 }

@@ -116,17 +116,18 @@ internal sealed class ProxyEarlyRace<out S> {
  * unplayable, or lost to a dead proxy, must not keep extracting in the
  * background, so those paths cancel it here.
  */
-internal suspend fun <S> raceProxyEarly(
-    itx: Deferred<S?>,
+internal suspend fun <T, S> raceProxyEarly(
+    itx: Deferred<T?>,
     scope: CoroutineScope,
     context: CoroutineContext = EmptyCoroutineContext,
     proxyTimeoutMs: Long,
     skipExtraction: Boolean,
+    mapDirect: (T) -> S,
     resolveProxy: suspend () -> S?,
     isProxyDown: (Throwable) -> Boolean,
     unplayableReason: () -> String,
 ): ProxyEarlyRace<S> {
-    val itxStream = scope.async(context) { itx.await() }
+    val itxStream = scope.async(context) { itx.await()?.let(mapDirect) }
     val proxyFailure = AtomicReference<Throwable?>()
     val racedPair = try {
         withTimeoutOrNull(proxyTimeoutMs) {

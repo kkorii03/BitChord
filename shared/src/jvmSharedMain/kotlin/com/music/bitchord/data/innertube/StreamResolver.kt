@@ -944,6 +944,7 @@ object StreamResolver {
                         directRefused = directRefused,
                         proxyFailed = true,
                     ),
+                    mapDirect = { it.stream },
                     resolveProxy = { resolveViaProxy(videoId) },
                     isProxyDown = ProxyFailure::isProxyDown,
                     unplayableReason = {
@@ -961,7 +962,7 @@ object StreamResolver {
                     ),
                 )
                 when (race) {
-                    is ProxyEarlyRace.Won -> return race.value as Stream?
+                    is ProxyEarlyRace.Won -> return race.value
                     is ProxyEarlyRace.ProxyDown -> {
                         TrackLog.w(
                             TAG,
