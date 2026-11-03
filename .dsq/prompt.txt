@@ -1,0 +1,17 @@
+﻿Kotlin Android app = upstream v1.9 + Korean fork (task/u19-tg). Use grep/Select-String, not rg. Every fix gets a JVM test that fails on current code (no network). Do not touch .github/workflows.
+
+Recurring bug the user has reported for days: a video/cover upload is treated as a plain song ("음원") after it passes through some code path, so song version, video picture, video radio and sync (which key their data by video) all break. Fixed so far one path at a time: MainActivity -> lyrics screen (cfa1e02d), Home Recents shelf ShelfItem (751dec90). Still broken today: downloaded cover videos played from Recents log 'song version: <id> skipped (not a video)' and 'video=n'.
+Task: find EVERY place a Song / MediaItem / ShelfItem / queue entry is rebuilt from stored or converted data and check that isVideo survives: LocalPlayHistory and its serialization, RecentShelf, history/recents, download records (KoDownloadRecords, Downloader metadata, local file rows), queue save/restore (PlaybackService restore, QueueShuffle, toMediaItem/toSong extras), playlists/library DB rows, search results, share links, Android Auto/browse, MediaSession extras, CoverTitles/StoredSongDisplay copies, autoplay/radio rows. For each lossy path fix it (store and read the flag; for old rows without it, derive it from the download record or the cover title marks). Add one round-trip test per path ('a video row stays a video after <path>'). Also add a single helper if several places need the same rule, rather than copies.
+Summary of at most 15 lines: each lossy path found (file:line) and fix, REMOVED-LINES AUDIT, tests (class names for CI), what you did not do. Follow AGENTS.md (ponytail) rules.
+
+OPUS NOTE: a previous result of this task conflicted with fixes merged since (sync-download-1103: downloaded covers / CoverTitles; songver-artist: KoTrackMatcher artist names). Start from the current task/u19-tg, keep those fixes, and redo only what is still missing.
+
+
+== 2 차 작업 (현재 브랜치 = 이전 차수 결과) ==
+엄격 기준: 아래 독립 검토자 지적의 HIGH·MEDIUM 은 전부 고칠 것(드문 경우라는 이유로 보류 금지). 그리고 이전 차수가 docs/review-1031/ 문서에 '문서에만 남김/미해결'로 둔 HIGH·MEDIUM 도 이번에 고칠 것 — 재생 핵심 경로(곡 해석·싱크·크로스페이드)라도 고치되 문서 해당 줄에 '폰 검증 필요' 표시. 지적이 틀렸으면 코드 줄 근거로 반박을 요약에. 새로 고친 곳마다 수정 전 실패하는 테스트. 이전 차수에서 고친 것을 되돌리지 말 것.
+검토 지적:
+VERDICT: ISSUES 2
+MEDIUM — app/src/main/java/com/music/bitchord/data/LocalMediaRepository.kt:473 — the second `AudioColumns.song(...)` call (the "Open with"/`songFromUri` MediaStore path) still relies on the new default `isVideoByUri = emptyMap()`, so a downloaded video opened from a file manager is rebuilt with `isVideo=false`; the summary's "local-media scans recover the flag" claim only holds for the library scan. Fix: build the same `isVideoByUri` map there (or pass the download-record flag) when constructing the row.
+MEDIUM — app/src/main/java/com/music/bitchord/data/stats/ListeningStats.kt:790 (and :810) — `ReplaySummary.songs` rows are rebuilt from `TrackEntry` with a raw `Song(...)` and only `KoListeningStatsDisplay.clean` (display-only), so `isVideo` is dropped; tapping a downloaded cover video from the Replay top-songs list (ReplayScreen.kt:210) re-triggers the same "song version skipped" bug this task is fixing. Fix: build these rows through `entry.asSong()`/set `isVideo = entry.isVideo == true` (and origin) before cleaning.
+Not checked: no MediaStore/Android instrumentation run; skipped the Go-side wire test gap for `TrackFromWire`, which is a test-coverage omission rather than a logic defect.
+마지막 요약에 지적 번호별 처리(고침/반박+근거) 한 줄씩.
