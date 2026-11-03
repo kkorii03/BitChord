@@ -37,6 +37,7 @@ import com.music.bitchord.data.Http
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.innertube.InnerTubeXResolver
 import com.music.bitchord.data.innertube.StreamResolver
+import com.music.bitchord.data.innertube.VideoPictureRetry
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.playback.ChunkedDataSource
@@ -125,6 +126,9 @@ object MusicVideoEngine {
      */
     private val noPicture = HashSet<String>()
 
+    /** Failed asks per video, so a transient failure cannot loop forever. */
+    private val attempts = HashMap<String, Int>()
+
     private val _missing = MutableStateFlow<Set<String>>(emptySet())
 
     /**
@@ -136,6 +140,17 @@ object MusicVideoEngine {
     private fun markMissing(videoId: String, settled: Boolean) {
         if (settled) noPicture += videoId
         _missing.value = _missing.value + videoId
+    }
+
+    /**
+     * Records one failed ask. A network failure is retried on the next surface
+     * or track change, up to [VideoPictureRetry.MAX_ATTEMPTS], then settled so
+     * it cannot loop forever; every other failure is settled at once.
+     */
+    private fun noteFailure(videoId: String, transient: Boolean) {
+        val tries = (attempts[videoId] ?: 0) + 1
+        attempts[videoId] = tries
+        markMissing(videoId, settled = VideoPictureRetry.giveUp(tries, transient))
     }
 
     /** Videos the age gate stopped, asked as age-restricted from the start. */
@@ -153,6 +168,7 @@ object MusicVideoEngine {
         scope.launch {
             InnerTubeXResolver.sessionGeneration.drop(1).collect {
                 noPicture.clear()
+                attempts.clear()
                 _missing.value = emptySet()
                 streams.clear()
                 refused.clear()
@@ -435,19 +451,21 @@ object MusicVideoEngine {
                 if (loadedId != videoId) return@launch
                 loadedId = null
                 // Settled until something changes it: the age gate by a sign-in
-                // (which clears [noPicture]), the rest not at all. A network
-                // failure is asked again on the next surface or track change.
-                markMissing(videoId, settled = e.reason != StreamResolveException.Reason.NETWORK)
+                // (which clears [noPicture]), the rest at once except a network
+                // failure, which is asked again on the next surface or track
+                // change until [VideoPictureRetry.MAX_ATTEMPTS] is spent.
+                noteFailure(videoId, transient = e.reason == StreamResolveException.Reason.NETWORK)
                 return@launch
             } catch (e: Exception) {
-                // Not remembered as pictureless: the next surface or track
-                // change asks again.
+                // Bounded like a network failure: a library exception that is
+                // not a [StreamResolveException] must not be asked forever.
                 TrackLog.w(TAG, "video: couldn't resolve the picture: ${e.message}", about = videoId)
                 if (loadedId == videoId) loadedId = null
-                markMissing(videoId, settled = false)
+                noteFailure(videoId, transient = true)
                 return@launch
             }
             if (loadedId != videoId) return@launch
+            attempts.remove(videoId)
             // A catalogue track's "video" is its cover held still; nothing to show.
             if (stream == null || stream.aspect < MIN_VIDEO_ASPECT) {
                 // [KO] video-fallback: said, so a phone log shows why there is no picture.

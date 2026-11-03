@@ -38,8 +38,8 @@ class KoHomeFeedRecentsTest {
             ),
         )
         val (video, song) = KoHomeFeed.withContentCountryChart(listOf(shelf), null).single().items
-        assertEquals("Marigold (cover)", video.title)
-        assertEquals("오화요", video.subtitle)
+        assertEquals("Marigold", video.title)
+        assertEquals("아이묭 · 오화요 커버", video.subtitle)
         assertEquals("Marigold", song.title)
         assertEquals("Aimyon", song.subtitle)
     }
@@ -50,7 +50,7 @@ class KoHomeFeedRecentsTest {
         val again = KoHomeFeed.recentsShelf(
             listOf(cover.copy(title = first.title, artist = first.subtitle)),
         ).items.single()
-        assertEquals("화조도 花鳥圖 (cover)", first.title)
+        assertEquals("화조도 花鳥圖", first.title)
         assertEquals(first.title, again.title)
     }
 }

@@ -436,7 +436,11 @@ object InnerTubeXResolver {
         ageRestricted: Boolean = false,
         preferredClientId: String? = null,
     ): VideoStream? {
-        val excluded = excludedFor(videoId) + skipClients
+        // The picture keeps its own refusals ([skipClients], from the player).
+        // Audio's refusals are for audio: a client that minted a refused audio
+        // URL may still serve the picture, and excluding it here left the one
+        // profile audio learned unavailable to the fallback.
+        val excluded = skipClients
         return extractVideoWithFallback(preferredClientId, excluded) { clientId ->
             askVideo(videoId, maxHeight, excluded, ageRestricted, clientId)
         }
