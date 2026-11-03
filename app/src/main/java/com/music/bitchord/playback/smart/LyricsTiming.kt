@@ -1331,6 +1331,14 @@ object LyricsTiming {
                 return@withLock !hadWords
             }
             val beforeExtend = store(context).get(videoId) ?: Entry()
+            val onDisk = VideoAudio.secondsOnDisk(song)
+            if (!RefineExtendPolicy.hasAudioFor(target, onDisk)) {
+                // Not a failure: the marker stays unset so a later play, with
+                // the file cached, tries the longer listen again.
+                TrackLog.d(TAG, "extend deferred: ${onDisk}s on disk of ${target}s", videoId)
+                if (!hadWords) _changes.tryEmit(videoId)
+                return@withLock !hadWords
+            }
             val copy = VideoAudio.songWavCopy(context, song, target) ?: return@withLock !hadWords
             val extendClock = clockForSongAudio(song, copy)
             val words = listenForRefine(copy.bytes, lines) ?: return@withLock !hadWords

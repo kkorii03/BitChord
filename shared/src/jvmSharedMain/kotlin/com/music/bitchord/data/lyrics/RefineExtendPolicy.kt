@@ -32,4 +32,14 @@ object RefineExtendPolicy {
         val heardMs = (heardSeconds * 1000.0).toLong()
         return lastLineMs >= heardMs + MARGIN_MS
     }
+
+    /**
+     * Whether [targetSeconds] of the song is already on disk. Starting the
+     * longer listen while the stream still has minutes to fill makes it wait
+     * for the rest of the track at playback speed, and its answer lands after
+     * the song ended. [availableSeconds] may be infinite when a file is whole
+     * but its length is not stated.
+     */
+    fun hasAudioFor(targetSeconds: Double, availableSeconds: Double): Boolean =
+        targetSeconds.isFinite() && availableSeconds >= targetSeconds
 }

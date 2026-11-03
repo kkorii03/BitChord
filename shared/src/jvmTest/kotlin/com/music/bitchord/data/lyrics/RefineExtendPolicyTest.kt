@@ -34,4 +34,29 @@ class RefineExtendPolicyTest {
     fun anAlreadyExtendedListenIsNotRepeated() {
         assertFalse(RefineExtendPolicy.shouldExtend(result(), 180.0, 400_000L))
     }
+
+    @Test
+    fun audioShortOfTheTargetDefersTheExtend() {
+        assertFalse(RefineExtendPolicy.hasAudioFor(targetSeconds = 150.0, availableSeconds = 120.0))
+    }
+
+    @Test
+    fun audioPastTheTargetExtends() {
+        assertTrue(RefineExtendPolicy.hasAudioFor(targetSeconds = 150.0, availableSeconds = 160.0))
+    }
+
+    @Test
+    fun audioExactlyAtTheTargetExtends() {
+        assertTrue(RefineExtendPolicy.hasAudioFor(targetSeconds = 150.0, availableSeconds = 150.0))
+    }
+
+    @Test
+    fun aFullyCachedFileWithNoStatedLengthExtends() {
+        assertTrue(
+            RefineExtendPolicy.hasAudioFor(
+                targetSeconds = 180.0,
+                availableSeconds = Double.POSITIVE_INFINITY,
+            ),
+        )
+    }
 }
