@@ -205,10 +205,12 @@ fun SearchScreen(
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
     var loadAttempt by remember { mutableIntStateOf(0) }
+    val activeList = activeSearchList(searchingLibrary, searchingAddons)
+    val requestKey = listOf(query, filter, loadAttempt, activeList)
     val resultsTimedOut = rememberLoadingTimedOut(
-        loading = results is UiState.Loading,
+        loading = waitingOnSearchList(activeList, SearchListSource.RESULTS, results),
         tag = "search",
-        requestKey = Triple(query, filter, loadAttempt),
+        requestKey = requestKey,
     )
     val retrySearch = {
         loadAttempt += 1
@@ -216,9 +218,13 @@ fun SearchScreen(
     }
     val nonMusicResults = if (searchingAddons) addonResults else libraryResults
     val libraryTimedOut = rememberLoadingTimedOut(
-        loading = nonMusicResults is UiState.Loading,
+        loading = waitingOnSearchList(
+            activeList,
+            if (searchingAddons) SearchListSource.ADDONS else SearchListSource.LIBRARY,
+            nonMusicResults,
+        ),
         tag = "search-library",
-        requestKey = Triple(query, filter, loadAttempt),
+        requestKey = requestKey,
     )
     // Resolved here rather than inside the list builder: section headings are
     // our own labels for the result kinds, never YouTube's shelf titles, so
