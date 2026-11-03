@@ -9,8 +9,9 @@ import kotlin.test.assertSame
 
 /**
  * The picture normally follows the video ranking. When that finds nothing, it
- * asks the one client audio learned (WEB_CREATOR with its PoToken) instead of
- * leaving a music video with no picture.
+ * asks the one client audio learned (WEB_CREATOR with its PoToken), or
+ * WEB_CREATOR when audio learned none, instead of leaving a music video with
+ * no picture.
  */
 class InnerTubeXVideoFallbackTest {
 
@@ -40,6 +41,35 @@ class InnerTubeXVideoFallbackTest {
         assertSame(preferred, found)
         assertEquals(listOf(null, "WEB_CREATOR"), asked)
         assertEquals("WEB_CREATOR", InnerTubeXResolver.manifestIdForProfile(found?.profileId))
+    }
+
+    @Test
+    fun `a failed video ranking asks the default client when audio learned none`() = runBlocking {
+        val asked = mutableListOf<String?>()
+        val preferred = stream()
+        val found = InnerTubeXResolver.extractVideoWithFallback(null, emptySet()) { client ->
+            asked += client
+            if (client == null) {
+                throw StreamResolveException(StreamResolveException.Reason.NO_PLAYABLE_STREAM, "no playable clients")
+            }
+            preferred
+        }
+
+        assertSame(preferred, found)
+        assertEquals(listOf(null, "WEB_CREATOR"), asked)
+    }
+
+    @Test
+    fun `an empty video ranking asks the default client when audio learned none`() = runBlocking {
+        val asked = mutableListOf<String?>()
+        val preferred = stream()
+        val found = InnerTubeXResolver.extractVideoWithFallback(null, emptySet()) { client ->
+            asked += client
+            if (client == null) null else preferred
+        }
+
+        assertSame(preferred, found)
+        assertEquals(listOf(null, "WEB_CREATOR"), asked)
     }
 
     @Test
