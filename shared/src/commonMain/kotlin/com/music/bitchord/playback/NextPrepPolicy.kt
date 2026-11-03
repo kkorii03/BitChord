@@ -99,6 +99,21 @@ object NextPrepPolicy {
     ): Boolean = fromFile && !isVideo && !substituted && recheckAllowed
 
     /**
+     * Whether the SYNC step's free half may decode the next row's audio now.
+     *
+     * The stored timing needs no decode, so the SYNC step stays planned while
+     * a paid or low-power gate is closed; but a video's measurement is a heavy
+     * chroma pass and must wait for the same low-power switch the lyrics
+     * lookup already honours.
+     */
+    fun freeMeasureWanted(
+        recordTimed: Boolean,
+        isVideo: Boolean,
+        worthMeasuring: Boolean,
+        heavyWorkAllowed: Boolean,
+    ): Boolean = recordTimed && isVideo && worthMeasuring && heavyWorkAllowed
+
+    /**
      * The steps still worth running, in their fixed order: wanted, not already
      * stored, and not already tried for this row.
      */

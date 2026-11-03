@@ -4,6 +4,7 @@ import android.app.Application
 import com.music.bitchord.data.TrackDiagnostics
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.cover.CoverTitles
+import com.music.bitchord.data.lyrics.DownloadedRecheck
 import com.music.bitchord.data.lyrics.EmbeddedLyrics
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsAiGuard
@@ -934,6 +935,19 @@ class LyricsController(
                 }
                 if (songCheckStartedFor == checkKey) return@launch
                 songCheckStartedFor = checkKey
+                val args = DownloadedRecheck.args(
+                    query = CoverTitles.LyricsQuery(
+                        title = request.title,
+                        artist = request.artist,
+                        alternatives = request.alternatives,
+                        isVideo = request.isVideo,
+                        artistKnown = request.artistKnown,
+                        artistAliases = request.artistAliases,
+                    ),
+                    durationMs = request.durationMs,
+                    album = request.album,
+                    providerUnknown = !request.fileProviderKnown,
+                )
                 val replaced = LyricsTiming.recheckDownloaded(
                     context,
                     Song(
@@ -945,14 +959,14 @@ class LyricsController(
                         localUri = request.localUri,
                     ),
                     lines,
-                    providerUnknown = !request.fileProviderKnown,
-                    title = request.title,
-                    artist = request.artist,
-                    durationMs = request.durationMs,
-                    album = request.album,
-                    alternatives = request.alternatives,
-                    artistKnown = request.artistKnown,
-                    artistAliases = request.artistAliases,
+                    providerUnknown = args.providerUnknown,
+                    title = args.title,
+                    artist = args.artist,
+                    durationMs = args.durationMs,
+                    album = args.album,
+                    alternatives = args.alternatives,
+                    artistKnown = args.artistKnown,
+                    artistAliases = args.artistAliases,
                 )
                 if (replaced != null) {
                     // The re-check found a better sheet and wrote it into the

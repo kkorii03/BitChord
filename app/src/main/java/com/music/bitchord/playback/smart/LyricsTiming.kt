@@ -2839,7 +2839,13 @@ object LyricsTiming {
         // A video is measured against its original from the bytes read-ahead
         // already wrote. A song version has no other recording to measure
         // against; its existing path is the AI song check.
-        if (recordTimed && query.isVideo && worthMeasuring(context, song.videoId)) {
+        if (NextPrepPolicy.freeMeasureWanted(
+                recordTimed = recordTimed,
+                isVideo = query.isVideo,
+                worthMeasuring = worthMeasuring(context, song.videoId),
+                heavyWorkAllowed = AppSettings.heavyWorkAllowed,
+            )
+        ) {
             measure(
                 context = context,
                 video = song,
@@ -3525,6 +3531,8 @@ object LyricsTiming {
         alternatives: List<Pair<String, String>>,
         artistKnown: Boolean,
         artistAliases: List<String>,
+        /** Called once an answer for this file's current rules is stored. */
+        onRecorded: (() -> Unit)? = null,
     ): LyricsRepository.Result? {
         // Captured before any suspension: a reset that runs while this check
         // waits for the gate changes it, and then this answer names old bytes.
@@ -3582,6 +3590,7 @@ object LyricsTiming {
         )
         if (reason == DownloadedSyncCheck.Recheck.NONE) {
             TrackLog.d(TAG, "lyrics-sync: download re-check skipped (already checked)", song.videoId)
+            onRecorded?.invoke()
             return null
         }
         recheckTokens[song.videoId] = reason.token
@@ -3599,6 +3608,7 @@ object LyricsTiming {
             val entry = store(context).get(song.videoId)
             if (!DownloadedSyncCheck.isUnverified(entry?.syncCheckVersion)) {
                 recheckTokens[song.videoId] = DownloadedSyncCheck.Recheck.DONE.token
+                onRecorded?.invoke()
                 return@withLock null
             }
             val existingMatch = entry?.let { e -> e.ai?.match?.takeIf { e.aiTextKey == key } }
@@ -3705,6 +3715,7 @@ object LyricsTiming {
                     keep
                 }
             }
+            if (decision.recordVersion) onRecorded?.invoke()
             if (decision.replace && chosen != null) {
                 songLog(
                     song.videoId,

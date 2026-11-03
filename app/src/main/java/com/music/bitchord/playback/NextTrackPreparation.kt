@@ -10,6 +10,7 @@ import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.lyrics.Deepgram
+import com.music.bitchord.data.lyrics.DownloadedRecheck
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.model.Song
@@ -403,31 +404,45 @@ internal class NextTrackPreparation(
                                         (NextPrepPolicy.canStartStep(leftNow) &&
                                             awaitAiGate(player, leftNow))
                                     if (gateOpen) {
+                                        val args = DownloadedRecheck.args(
+                                            query = query,
+                                            durationMs = song.durationMillis(),
+                                            album = song.albumName,
+                                            providerUnknown = !initial.providerKnown,
+                                        )
+                                        var recorded = false
                                         val replaced = LyricsTiming.recheckDownloaded(
                                             context = context,
                                             song = song,
                                             lines = lines,
-                                            providerUnknown = !initial.providerKnown,
-                                            title = query.title,
-                                            artist = query.artist,
-                                            durationMs = song.durationMillis(),
-                                            album = song.albumName,
-                                            alternatives = query.alternatives,
-                                            artistKnown = query.artistKnown,
-                                            artistAliases = query.artistAliases,
+                                            providerUnknown = args.providerUnknown,
+                                            title = args.title,
+                                            artist = args.artist,
+                                            durationMs = args.durationMs,
+                                            album = args.album,
+                                            alternatives = args.alternatives,
+                                            artistKnown = args.artistKnown,
+                                            artistAliases = args.artistAliases,
+                                            onRecorded = { recorded = true },
                                         )
-                                        val chosenLines = replaced?.lines ?: initial.lines
-                                        val chosenSource = replaced?.source ?: initial.source
-                                        val chosenSearchedAs = replaced?.searchedAs ?: initial.searchedAs
-                                        // The check has run for this file, so its
-                                        // stored answer is the file's sync even
-                                        // when the file's own lines won.
+                                        // The check has run for this file only when it
+                                        // recorded an answer. A skipped guard, a 429
+                                        // or a replaced file must not mark the
+                                        // file's foreign clock as rechecked.
+                                        val kept = DownloadedRecheck.keep(
+                                            originalLines = initial.lines,
+                                            originalSource = initial.source,
+                                            originalSearchedAs = initial.searchedAs,
+                                            originalRecheckOverride = initial.recheckOverride,
+                                            replacement = replaced,
+                                            checkRecorded = recorded,
+                                        )
                                         found = TranslationAhead.AheadLyrics(
-                                            lines = chosenLines,
-                                            source = chosenSource,
-                                            searchedAs = chosenSearchedAs,
+                                            lines = kept.lines,
+                                            source = kept.source,
+                                            searchedAs = kept.searchedAs,
                                             fromFile = true,
-                                            recheckOverride = true,
+                                            recheckOverride = kept.recheckOverride,
                                             providerKnown = initial.providerKnown,
                                         )
                                         lyrics = found
