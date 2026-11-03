@@ -1,6 +1,7 @@
 package com.music.bitchord.data.innertube
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -115,6 +116,18 @@ class DirectVerdictRaceTest {
         assertIs<DirectVerdictRace.ViaInnerTubeX<String>>(outcome)
         delay(500)
         assertFalse(directFinished.get(), "the losing direct probe must not keep working")
+    }
+
+    @Test
+    fun `a null precheck makes InnerTubeX the only ask`() = runBlocking {
+        val noDirect: Deferred<DirectProbe<String?>>? = null
+        val answered = raceDirectDefinitive(noDirect, async<String?> { "itx-stream" })
+        assertIs<DirectVerdictRace.ViaInnerTubeX<String?>>(answered)
+        assertEquals("itx-stream", answered.value)
+
+        val empty = raceDirectDefinitive(noDirect, async<String?> { null })
+        assertIs<DirectVerdictRace.None>(empty)
+        Unit
     }
 
     @Test

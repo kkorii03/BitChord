@@ -1,7 +1,15 @@
 package com.music.bitchord.data.innertube
 
+import com.music.bitchord.data.net.raceForFirstSuccess
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.selects.select
+import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
 
 /**
  * What one direct-client attempt learned before its stream was probed.
@@ -50,12 +58,17 @@ private sealed class RaceEvent<out S> {
  * normal track's first sound still comes from the learned path and its
  * ordering/learning is unchanged. When InnerTubeX wins, the direct probe is
  * cancelled; when InnerTubeX answers nothing, the direct result is left
- * in-flight for the caller's existing fallback to consume.
+ * in-flight for the caller's existing fallback to consume. A null [direct]
+ * means there is no probe to watch, so InnerTubeX is the only ask.
  */
 internal suspend fun <S> raceDirectDefinitive(
-    direct: Deferred<DirectProbe<S>>,
+    direct: Deferred<DirectProbe<S>>?,
     innerTubeX: Deferred<S?>,
 ): DirectVerdictRace<S> {
+    if (direct == null) {
+        return innerTubeX.await()?.let { DirectVerdictRace.ViaInnerTubeX(it) }
+            ?: DirectVerdictRace.None
+    }
     while (true) {
         val event = select<RaceEvent<S>> {
             direct.onAwait { RaceEvent.Direct(it) }
@@ -85,4 +98,78 @@ internal suspend fun <S> raceDirectDefinitive(
             }
         }
     }
+}
+
+/** The outcome of the bounded proxy race the resolver runs before its final race. */
+internal sealed class ProxyEarlyRace<out S> {
+    class Won<out S>(val route: String, val value: S) : ProxyEarlyRace<S>()
+    class ProxyDown(val failure: Throwable) : ProxyEarlyRace<Nothing>()
+    class Unplayable(val reason: String) : ProxyEarlyRace<Nothing>()
+    object Inconclusive : ProxyEarlyRace<Nothing>()
+}
+
+/**
+ * Races the proxy against a still-running InnerTubeX walk under one ceiling.
+ *
+ * The walk belongs to the resolver, not to this race: an expired window leaves
+ * it running for the caller's final race. A track that is settled as
+ * unplayable, or lost to a dead proxy, must not keep extracting in the
+ * background, so those paths cancel it here.
+ */
+internal suspend fun <S> raceProxyEarly(
+    itx: Deferred<S?>,
+    scope: CoroutineScope,
+    context: CoroutineContext = EmptyCoroutineContext,
+    proxyTimeoutMs: Long,
+    skipExtraction: Boolean,
+    resolveProxy: suspend () -> S?,
+    isProxyDown: (Throwable) -> Boolean,
+    unplayableReason: () -> String,
+): ProxyEarlyRace<S> {
+    val itxStream = scope.async(context) { itx.await() }
+    val proxyFailure = AtomicReference<Throwable?>()
+    val racedPair = try {
+        withTimeoutOrNull(proxyTimeoutMs) {
+            raceForFirstSuccess(
+                direct = { itxStream.await() },
+                proxy = {
+                    try {
+                        withTimeoutOrNull(proxyTimeoutMs) { resolveProxy() }
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Exception) {
+                        proxyFailure.set(failure)
+                        null
+                    }
+                },
+            )
+        }
+    } catch (cancelled: CancellationException) {
+        itxStream.cancel()
+        itx.cancel()
+        throw cancelled
+    }
+    val winner = racedPair?.first
+    val won = racedPair?.second
+    if (winner == "proxy") {
+        itxStream.cancel()
+        itx.cancel()
+    } else if (racedPair == null) {
+        // The proxy window closed without an answer. Leave the InnerTubeX walk
+        // running for the final race instead of cancelling it: awaiting a
+        // cancelled deferred would throw and abort the whole resolve.
+        itxStream.cancel()
+    }
+    if (won != null && winner != null) return ProxyEarlyRace.Won(winner, won)
+    val deadProxy = proxyFailure.get()
+    if (deadProxy != null && isProxyDown(deadProxy)) {
+        itxStream.cancel()
+        itx.cancel()
+        return ProxyEarlyRace.ProxyDown(deadProxy)
+    }
+    if (skipExtraction) {
+        itx.cancel()
+        return ProxyEarlyRace.Unplayable(unplayableReason())
+    }
+    return ProxyEarlyRace.Inconclusive
 }

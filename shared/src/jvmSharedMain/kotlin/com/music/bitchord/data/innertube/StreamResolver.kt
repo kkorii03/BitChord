@@ -837,15 +837,11 @@ object StreamResolver {
             // 269 ms. The old truth table is unchanged for every other answer:
             // a stream or an ordinary slow probe still lets InnerTubeX lead.
             val raced = try {
+                // A missing direct probe lets InnerTubeX use the head start,
+                // then the proxy joins it. Awaiting the deferred does not
+                // cancel the walk when the hold expires.
                 withTimeoutOrNull(BlockedStartPolicy.DIRECT_HOLD_MS) {
-                    if (precheck != null) {
-                        raceDirectDefinitive(precheck, itx)
-                    } else {
-                        // No direct probe: let InnerTubeX use the head start,
-                        // then the proxy joins it. Awaiting the deferred does
-                        // not cancel the walk when the hold expires.
-                        itx.await()?.let { DirectVerdictRace.ViaInnerTubeX(it) }
-                    }
+                    raceDirectDefinitive(precheck, itx)
                 }
             } catch (cancelled: CancellationException) {
                 itx.cancel()
@@ -927,7 +923,6 @@ object StreamResolver {
                     elapsedMs = elapsed,
                     remainingMs = blockedBudget.remainingMs(),
                 )
-                val itxStream = resolverScope.async(TrackLog.about(videoId)) { itx.await()?.stream }
                 // The whole race is bounded, not just the proxy leg. A proxy
                 // failure that landed first used to leave the race waiting on
                 // the thirteen-second InnerTubeX walk, which is the same
@@ -940,91 +935,61 @@ object StreamResolver {
                 // handler remembers for ten minutes and which skipped
                 // extraction — the exact guard [ProxyFailure.isProxyDown]
                 // exists to keep transient (see the proxy retry below).
-                var proxyFailure: Throwable? = null
-                val racedPair = try {
-                    withTimeoutOrNull(proxyTimeout) {
-                        raceForFirstSuccess(
-                            direct = { itxStream.await() },
-                            proxy = {
-                                try {
-                                    withTimeoutOrNull(proxyTimeout) { resolveViaProxy(videoId) }
-                                } catch (cancelled: CancellationException) {
-                                    throw cancelled
-                                } catch (failure: Exception) {
-                                    proxyFailure = failure
-                                    null
-                                }
-                            },
-                        )
-                    }
-                } catch (cancelled: CancellationException) {
-                    itxStream.cancel()
-                    itx.cancel()
-                    throw cancelled
-                }
-                val winner = racedPair?.first
-                val won = racedPair?.second
-                if (winner == "proxy") {
-                    itxStream.cancel()
-                    itx.cancel()
-                } else if (racedPair == null) {
-                    // The proxy window closed without an answer. Leave the
-                    // InnerTubeX walk running for the final race below instead
-                    // of cancelling it: awaiting a cancelled deferred would
-                    // throw CancellationException and abort the whole resolve.
-                    itxStream.cancel()
-                }
+                val race = raceProxyEarly(
+                    itx = itx,
+                    scope = resolverScope,
+                    context = TrackLog.about(videoId),
+                    proxyTimeoutMs = proxyTimeout,
+                    skipExtraction = BlockedStartPolicy.shouldSkipExtraction(
+                        directRefused = directRefused,
+                        proxyFailed = true,
+                    ),
+                    resolveProxy = { resolveViaProxy(videoId) },
+                    isProxyDown = ProxyFailure::isProxyDown,
+                    unplayableReason = {
+                        directUnplayableReason ?: itxUnplayableReason
+                            ?: "이 국가에서는 이용할 수 없는 노래입니다"
+                    },
+                )
                 TrackLog.i(
                     TAG,
                     BlockedStartPolicy.logLine(
                         videoId,
                         BlockedStartStep.PROXY,
-                        if (won != null) "ok:$winner" else "failed",
+                        if (race is ProxyEarlyRace.Won) "ok:${race.route}" else "failed",
                         MonotonicClock.nowMs() - resolveStart,
                     ),
                 )
-                if (won != null) return won
-                val deadProxy = proxyFailure
-                if (deadProxy != null && ProxyFailure.isProxyDown(deadProxy)) {
-                    TrackLog.w(
-                        TAG,
-                        "blocked-start: $videoId step=proxy result=error ms=" +
-                            "${MonotonicClock.nowMs() - resolveStart}; " +
-                            "proxy route failed, keeping the track transient",
-                    )
-                    itxStream.cancel()
-                    itx.cancel()
-                    throw deadProxy
-                }
-                if (BlockedStartPolicy.shouldSkipExtraction(
-                        directRefused = directRefused,
-                        proxyFailed = true,
-                    )
-                ) {
-                    // Extraction reads the same watch page and answers the same
-                    // gate; walking it here is the rest of the reported minute.
-                    TrackLog.w(
-                        TAG,
-                        "blocked-start: $videoId direct and proxy both refused; " +
-                            "not spending extraction",
-                    )
-                    throw PermanentlyUnplayableException(
-                        directUnplayableReason ?: itxUnplayableReason
-                            ?: "이 국가에서는 이용할 수 없는 노래입니다",
-                    )
+                when (race) {
+                    is ProxyEarlyRace.Won -> return race.value as Stream?
+                    is ProxyEarlyRace.ProxyDown -> {
+                        TrackLog.w(
+                            TAG,
+                            "blocked-start: $videoId step=proxy result=error ms=" +
+                                "${MonotonicClock.nowMs() - resolveStart}; " +
+                                "proxy route failed, keeping the track transient",
+                        )
+                        throw race.failure
+                    }
+                    is ProxyEarlyRace.Unplayable -> {
+                        // Extraction reads the same watch page and answers the
+                        // same gate; walking it here is the rest of the
+                        // reported minute.
+                        TrackLog.w(
+                            TAG,
+                            "blocked-start: $videoId direct and proxy both refused; " +
+                                "not spending extraction",
+                        )
+                        throw PermanentlyUnplayableException(race.reason)
+                    }
+                    ProxyEarlyRace.Inconclusive -> Unit
                 }
             }
             // No early refusal, or no proxy to ask: preserve the old race
             // exactly. The direct result is already complete, so this costs no
             // second request.
             val outcome = try {
-                if (precheck != null) {
-                    raceDirectDefinitive(precheck, itx)
-                } else {
-                    // No direct probe to watch: InnerTubeX is the only ask.
-                    itx.await()?.let { DirectVerdictRace.ViaInnerTubeX(it) }
-                        ?: DirectVerdictRace.None
-                }
+                raceDirectDefinitive(precheck, itx)
             } catch (cancelled: CancellationException) {
                 itx.cancel()
                 throw cancelled
