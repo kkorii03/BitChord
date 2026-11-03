@@ -409,6 +409,14 @@ internal class SongVersionController(
         fileDurationMs: Long?,
     ): Boolean {
         if (song.isVideo || song.typeUnknown || song.localUri == null) return false
+        // The item is already the recording an accepted upgrade chose. A
+        // version lookup here would rebuild it from the song and drop the swap.
+        if (QualityUpgrade.isUpgradedRendition(
+                exoPlayer.currentMediaItem
+                    ?.takeIf { it.mediaId == mediaId }
+                    ?.localConfiguration?.uri?.toString(),
+            )
+        ) return false
         if (!Downloads.isDownloaded(song.videoId)) return false
         // A downloaded video and its song share one file; the shorter id is
         // the recording the app calls the song.
@@ -501,6 +509,10 @@ internal class SongVersionController(
     ) {
         lateVersionMeasureJob?.cancel()
         val item = mediaItem
+        // An accepted upgrade is a stream already chosen for this recording.
+        // The version paths rebuild the item from the song, which would take
+        // the swap away; leave the playing rendition alone.
+        if (QualityUpgrade.isUpgradedRendition(item?.localConfiguration?.uri?.toString())) return
         val song = item?.toSong()
         val localFile = song?.localUri != null
         val offline = AudioCache.isOffline()
