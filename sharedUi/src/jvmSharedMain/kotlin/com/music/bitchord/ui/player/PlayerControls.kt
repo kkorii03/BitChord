@@ -124,6 +124,7 @@ import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.listentogether.PartyMember
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.settings.TrackAnalysisState
+import com.music.bitchord.playback.smart.AutomixWorkPolicy
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.PlayingAudioFormat
 import java.util.Locale
@@ -419,20 +420,21 @@ internal fun automixStatusLine(
     showNerdStats: Boolean,
     automixEnabled: Boolean,
     inParty: Boolean,
-    isVideoOrigin: Boolean,
+    currentIsVideo: Boolean,
+    nextIsVideo: Boolean,
     automixVideos: Boolean,
     current: TrackAnalysisState,
     next: TrackAnalysisState,
 ): AutomixStatusLine = when {
     !showNerdStats || !automixEnabled -> AutomixStatusLine.Hidden
     inParty -> AutomixStatusLine.StoppedInParty
-    isVideoOrigin && !automixVideos -> AutomixStatusLine.VideoCrossfade
+    AutomixWorkPolicy.videoPairNeedsPlainCrossfade(automixVideos, currentIsVideo, nextIsVideo) ->
+        AutomixStatusLine.VideoCrossfade
     else -> AutomixStatusLine.Analysis(current, next)
 }
 
 @Composable
 internal fun SleeveNerdStats(
-    song: Song,
     modifier: Modifier = Modifier,
     revealed: Boolean = false,
 ) {
@@ -461,7 +463,8 @@ internal fun SleeveNerdStats(
         showNerdStats = alwaysShow,
         automixEnabled = smartFadeOn,
         inParty = inParty,
-        isVideoOrigin = song.isVideoOrigin,
+        currentIsVideo = smartAnalysis.currentIsVideo,
+        nextIsVideo = smartAnalysis.nextIsVideo,
         automixVideos = automixVideos,
         current = smartAnalysis.current,
         next = smartAnalysis.next,
@@ -491,8 +494,6 @@ internal fun SleeveNerdStats(
                 // not, so naming the video limitation there would describe
                 // a rule that is not the one in force.
                 inParty -> stringResource(Res.string.automix_stopped_in_party)
-                song.isVideoOrigin ->
-                    stringResource(Res.string.automix_not_supported_video)
                 // The detailed line once the controller has one: each song's
                 // grid, then the planned mix — the loops and what cleared them.
                 automixDetail != null -> automixDetail!!

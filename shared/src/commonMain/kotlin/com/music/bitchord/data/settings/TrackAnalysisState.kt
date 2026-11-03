@@ -31,6 +31,9 @@ enum class TrackAnalysisState {
 data class SmartAnalysis(
     val current: TrackAnalysisState = TrackAnalysisState.WAITING,
     val next: TrackAnalysisState = TrackAnalysisState.WAITING,
+    /** Whether each side is still a video row, not a song version converted from one. */
+    val currentIsVideo: Boolean = false,
+    val nextIsVideo: Boolean = false,
 )
 
 /**

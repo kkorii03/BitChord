@@ -1168,10 +1168,14 @@ class CrossfadeController(
         val nextIndex = player.nextMediaItemIndex
         if (nextIndex == C.INDEX_UNSET) return
         val nextItem = player.getMediaItemAt(nextIndex)
-        // Even a manual catalogue match is still video-origin. AutoMix's
-        // analysis and cueing are deliberately never applied to either side
-        // of a transition involving a video row.
-        if (!AppSettings.automixVideos.value && (currentItem.isVideoOrigin || nextItem.isVideoOrigin)) {
+        // A song version converted from a video is an ordinary audio row now,
+        // so only a row that is still a video gets the plain crossfade.
+        if (AutomixWorkPolicy.videoPairNeedsPlainCrossfade(
+                AppSettings.automixVideos.value,
+                currentItem.isVideoRow,
+                nextItem.isVideoRow,
+            )
+        ) {
             AppSettings.smartTransitionWindow.value = null
             AppSettings.smartMixInProgress.value = false
             return
@@ -1277,13 +1281,13 @@ class CrossfadeController(
         // window that was already correct. Since the incoming track is now
         // routinely analysed from its opening long before it plays, that was
         // most of the time the marker was missing.
-        val markable = !plan.blocked &&
-            plan.markerVisible &&
-            duration > 0L &&
-            analysisState.current == TrackAnalysisState.ANALYSED &&
-            analysisState.next in MEASURED_ENOUGH_TO_ENTER_ON &&
-            // Last, because it is the only one that can read the cache.
-            nextStreamReady(nextItem)
+        val markable = AutomixWorkPolicy.markerVisible(
+            blocked = plan.blocked,
+            markerVisible = plan.markerVisible,
+            durationMs = duration,
+            currentAnalysed = analysisState.current == TrackAnalysisState.ANALYSED,
+            nextEnterable = analysisState.next in MEASURED_ENOUGH_TO_ENTER_ON,
+        )
         val markerVerdict = when {
             markable -> "shown"
             plan.blocked -> "hidden: plan blocked (${plan.reason})"
@@ -1426,6 +1430,8 @@ class CrossfadeController(
         AppSettings.smartAnalysis.value = SmartAnalysis(
             current = currentItem?.let { stateOf(it, analysisFor(it)) } ?: TrackAnalysisState.WAITING,
             next = nextItem?.let { stateOf(it, analysisFor(it)) } ?: TrackAnalysisState.WAITING,
+            currentIsVideo = currentItem?.isVideoRow == true,
+            nextIsVideo = nextItem?.isVideoRow == true,
         )
     }
 

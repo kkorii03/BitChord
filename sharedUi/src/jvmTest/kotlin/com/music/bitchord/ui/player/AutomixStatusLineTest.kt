@@ -11,7 +11,8 @@ class AutomixStatusLineTest {
         showNerdStats: Boolean = true,
         automixEnabled: Boolean = true,
         inParty: Boolean = false,
-        isVideoOrigin: Boolean = false,
+        currentIsVideo: Boolean = false,
+        nextIsVideo: Boolean = false,
         automixVideos: Boolean = true,
         current: TrackAnalysisState = TrackAnalysisState.WAITING,
         next: TrackAnalysisState = TrackAnalysisState.WAITING,
@@ -19,7 +20,8 @@ class AutomixStatusLineTest {
         showNerdStats = showNerdStats,
         automixEnabled = automixEnabled,
         inParty = inParty,
-        isVideoOrigin = isVideoOrigin,
+        currentIsVideo = currentIsVideo,
+        nextIsVideo = nextIsVideo,
         automixVideos = automixVideos,
         current = current,
         next = next,
@@ -41,15 +43,39 @@ class AutomixStatusLineTest {
     }
 
     @Test
-    fun `a video song says it only crossfades while video automix is off`() {
+    fun `a video on either side says it only crossfades while video automix is off`() {
         assertSame(
             AutomixStatusLine.VideoCrossfade,
-            line(isVideoOrigin = true, automixVideos = false),
+            line(currentIsVideo = true, automixVideos = false),
+        )
+        assertSame(
+            AutomixStatusLine.VideoCrossfade,
+            line(nextIsVideo = true, automixVideos = false),
         )
         // With video Automix on there is nothing special to report.
         assertEquals(
             AutomixStatusLine.Analysis(TrackAnalysisState.WAITING, TrackAnalysisState.WAITING),
-            line(isVideoOrigin = true, automixVideos = true),
+            line(currentIsVideo = true, automixVideos = true),
+        )
+        assertEquals(
+            AutomixStatusLine.Analysis(TrackAnalysisState.WAITING, TrackAnalysisState.WAITING),
+            line(nextIsVideo = true, automixVideos = true),
+        )
+    }
+
+    @Test
+    fun `a song version converted from a video is not a video row`() {
+        // Both sides are ordinary audio rows now: the old video-origin flag
+        // must not keep the caption saying video crossfade.
+        assertEquals(
+            AutomixStatusLine.Analysis(TrackAnalysisState.ANALYSED, TrackAnalysisState.ANALYSED),
+            line(
+                currentIsVideo = false,
+                nextIsVideo = false,
+                automixVideos = false,
+                current = TrackAnalysisState.ANALYSED,
+                next = TrackAnalysisState.ANALYSED,
+            ),
         )
     }
 

@@ -24,6 +24,7 @@ import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.playback.NextPrepPolicy.Step
 import com.music.bitchord.playback.smart.AudioDecoder
+import com.music.bitchord.playback.smart.AutomixWorkPolicy
 import com.music.bitchord.playback.smart.HqVerificationStore
 import com.music.bitchord.playback.smart.LyricsTiming
 import kotlinx.coroutines.CancellationException
@@ -742,8 +743,11 @@ internal class NextTrackPreparation(
     private fun mixSkipReason(song: Song): String? = when {
         !AppSettings.smartFadeEnabled.value -> "off"
         ListenTogether.state.value.inParty -> "party"
-        !AppSettings.automixVideos.value &&
-            (currentPlayer()?.currentMediaItem?.isVideoOrigin == true || song.isVideo) -> "video"
+        AutomixWorkPolicy.videoPairNeedsPlainCrossfade(
+            AppSettings.automixVideos.value,
+            currentPlayer()?.currentMediaItem?.isVideoRow == true,
+            song.isVideo,
+        ) -> "video"
         else -> "not-ready"
     }
 
@@ -1060,7 +1064,12 @@ internal class NextTrackPreparation(
         if (!AppSettings.smartFadeEnabled.value) return false
         if (ListenTogether.state.value.inParty) return false
         val current = currentPlayer()?.currentMediaItem
-        if (!AppSettings.automixVideos.value && (current?.isVideoOrigin == true || song.isVideo)) {
+        if (AutomixWorkPolicy.videoPairNeedsPlainCrossfade(
+                AppSettings.automixVideos.value,
+                current?.isVideoRow == true,
+                song.isVideo,
+            )
+        ) {
             return false
         }
         return true

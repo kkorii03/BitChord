@@ -2301,7 +2301,6 @@ fun NowPlayingScreen(
                             // The stats belong to the player, not to the sleeve, so
                             // they leave it along with the rest of the player.
                             SleeveNerdStats(
-                                song = song,
                                 revealed = nerdStatsRevealed,
                                 modifier = Modifier
                                     .align(Alignment.BottomCenter)
@@ -3633,7 +3632,6 @@ fun NowPlayingScreen(
                             // following the compact credits to the bottom edge.
                             WhileShown({ !collapsePastHalf }) {
                                 SleeveNerdStats(
-                                    song = song,
                                     revealed = nerdStatsRevealed,
                                     modifier = Modifier
                                         .align(Alignment.BottomCenter)

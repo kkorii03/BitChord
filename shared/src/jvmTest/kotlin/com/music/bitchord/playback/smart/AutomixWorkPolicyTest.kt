@@ -131,4 +131,69 @@ class AutomixWorkPolicyTest {
         assertEquals(45.0, AutomixWorkPolicy.TRANSITION_WINDOW_SECONDS)
         assertEquals(15_000L, AutomixWorkPolicy.STANDBY_LEAD_MS)
     }
+
+    @Test
+    fun `only a row that is still a video needs the plain crossfade`() {
+        assertTrue(
+            AutomixWorkPolicy.videoPairNeedsPlainCrossfade(
+                automixVideos = false,
+                currentIsVideo = true,
+                nextIsVideo = false,
+            ),
+        )
+        assertTrue(
+            AutomixWorkPolicy.videoPairNeedsPlainCrossfade(false, false, true),
+        )
+        assertFalse(
+            AutomixWorkPolicy.videoPairNeedsPlainCrossfade(true, true, true),
+        )
+        // A song version converted from a video is an ordinary audio row.
+        assertFalse(
+            AutomixWorkPolicy.videoPairNeedsPlainCrossfade(false, false, false),
+        )
+    }
+
+    @Test
+    fun `the marker needs a plan, a duration and both sides measured`() {
+        assertTrue(
+            AutomixWorkPolicy.markerVisible(
+                blocked = false,
+                markerVisible = true,
+                durationMs = 180_000L,
+                currentAnalysed = true,
+                nextEnterable = true,
+            ),
+        )
+        assertFalse(
+            AutomixWorkPolicy.markerVisible(false, true, 180_000L, true, nextEnterable = false),
+        )
+        assertFalse(
+            AutomixWorkPolicy.markerVisible(false, true, 180_000L, currentAnalysed = false, true),
+        )
+        assertFalse(
+            AutomixWorkPolicy.markerVisible(false, true, durationMs = 0L, true, true),
+        )
+        assertFalse(
+            AutomixWorkPolicy.markerVisible(false, markerVisible = false, 180_000L, true, true),
+        )
+        assertFalse(
+            AutomixWorkPolicy.markerVisible(blocked = true, true, 180_000L, true, true),
+        )
+    }
+
+    @Test
+    fun `the incoming stream's cache is not part of the marker rule`() {
+        // Under Direct Source Stream nothing prefetches the next track until
+        // this same plan opens the window, so gating the marker on its bytes
+        // hid it for the whole song.
+        assertTrue(
+            AutomixWorkPolicy.markerVisible(
+                blocked = false,
+                markerVisible = true,
+                durationMs = 180_000L,
+                currentAnalysed = true,
+                nextEnterable = true,
+            ),
+        )
+    }
 }

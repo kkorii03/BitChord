@@ -96,6 +96,35 @@ object AutomixWorkPolicy {
         if (transitionPossible) STANDBY_LEAD_MS else 0L
 
     /**
+     * Whether a pair must fall back to the plain crossfade because Automix is
+     * not allowed to mix video songs.
+     *
+     * Only a row that is still a video counts. A song version converted from a
+     * video is an ordinary audio row now, so it is mixed like any other song.
+     */
+    fun videoPairNeedsPlainCrossfade(
+        automixVideos: Boolean,
+        currentIsVideo: Boolean,
+        nextIsVideo: Boolean,
+    ): Boolean = !automixVideos && (currentIsVideo || nextIsVideo)
+
+    /**
+     * Whether the seek bar's Automix marker has enough behind it to be drawn.
+     *
+     * The incoming stream's cache is deliberately not part of this. The marker
+     * describes where the plan puts the blend; waiting for the next track's
+     * bytes hid it for most of the song under Direct Source Stream, because
+     * nothing prefetches that track until this same plan opens the window.
+     */
+    fun markerVisible(
+        blocked: Boolean,
+        markerVisible: Boolean,
+        durationMs: Long,
+        currentAnalysed: Boolean,
+        nextEnterable: Boolean,
+    ): Boolean = !blocked && markerVisible && durationMs > 0L && currentAnalysed && nextEnterable
+
+    /**
      * [EARLY_MIX_GUARD_MS] is the largest legitimate gap between where a smart
      * fade starts and the end of the outgoing file: an analyzed outro can pull
      * the start back, but three-quarters of a minute of song is a bad plan, not

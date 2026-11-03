@@ -75,8 +75,8 @@ data class Song(
     val typeUnknown: Boolean = false,
     /**
      * True for a video upload and for its manually selected catalogue match.
-     * The latter remains video-origin so playback policies such as AutoMix do
-     * not mistake a converted video for a normal music track.
+     * The latter remains video-origin so policies that care where a row came
+     * from can still tell it apart from a catalogue track.
      */
     val isVideoOrigin: Boolean = isVideo,
     /**
