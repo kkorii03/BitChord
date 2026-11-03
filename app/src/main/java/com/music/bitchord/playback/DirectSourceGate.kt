@@ -17,6 +17,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.ConcurrentHashMap
 
@@ -112,6 +113,9 @@ object DirectSourceGate {
 
     private fun Open.admits(mediaId: String) = mediaId in playing || mediaId == next
 
+    /** Whether [mediaId] is audible now, rather than a track only warmed for later. */
+    fun isPlaying(mediaId: String): Boolean = mediaId in open.value.playing
+
     /**
      * Blocks a resolve for [mediaId] until it is playing or next inside the
      * window. Returns at once when the gate is off, the track is already
@@ -198,6 +202,20 @@ object DirectSourceGate {
      * and the caller falls back to YouTube and says so with [startedOnYouTube].
      */
     suspend fun lookup(videoId: String, target: TrackMatcher.Target): SourceStream? {
+        val lookup = start(videoId, target) ?: return null
+        val waited = android.os.SystemClock.elapsedRealtime() - lookup.startedAtMs
+        return withTimeoutOrNull(LOOKUP_TIMEOUT_MS - waited) { lookup.work.await() }
+    }
+
+    /**
+     * Starts the addon lookup without waiting, so a track that is already
+     * playing can race it against YouTube instead of sitting out the whole
+     * window — see [firstAnswer].
+     */
+    internal fun startLookup(videoId: String, target: TrackMatcher.Target): Deferred<SourceStream?>? =
+        start(videoId, target)?.work
+
+    private fun start(videoId: String, target: TrackMatcher.Target): Lookup? {
         // [KO] first-audio: when every addon is resting, the search can only
         // time out. Skipping the wait lets YouTube start at once instead of
         // after the whole direct-source window.
@@ -221,9 +239,30 @@ object DirectSourceGate {
             fresh.work.invokeOnCompletion { lookups.remove(videoId, fresh) }
             fresh.work.start()
         }
-        val lookup = running ?: fresh
-        val waited = android.os.SystemClock.elapsedRealtime() - lookup.startedAtMs
-        return withTimeoutOrNull(LOOKUP_TIMEOUT_MS - waited) { lookup.work.await() }
+        return running ?: fresh
+    }
+
+    /**
+     * The first answer from [direct] and [fallback], for a track that is
+     * already playing. Waiting [LOOKUP_TIMEOUT_MS] here buys the addon's
+     * seamless first note at the cost of silence the listener did not ask
+     * for; whichever can serve a note first wins instead. A losing addon is
+     * still running and the caller hands it to the second look.
+     */
+    internal sealed interface FirstAnswer {
+        data class Addon(val stream: SourceStream) : FirstAnswer
+        data class YouTube(val url: String) : FirstAnswer
+    }
+
+    internal suspend fun firstAnswer(
+        direct: Deferred<SourceStream?>,
+        fallback: Deferred<Result<String>>,
+    ): FirstAnswer? = select {
+        direct.onAwait { it?.let(FirstAnswer::Addon) }
+        fallback.onAwait { result ->
+            if (result.isSuccess) FirstAnswer.YouTube(result.getOrThrow())
+            else direct.await()?.let(FirstAnswer::Addon)
+        }
     }
 
     /**

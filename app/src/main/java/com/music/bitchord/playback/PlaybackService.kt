@@ -8182,13 +8182,34 @@ class PlaybackService : MediaLibraryService() {
         val fallback = scope.async(Dispatchers.IO + TrackLog.about(videoId)) {
             runCatching { StreamResolver.resolve(videoId) }
         }
-        val direct = try {
-            runCatching { DirectSourceGate.lookup(videoId, target) }
-                .onFailure { if (it is CancellationException) throw it }
-                .getOrNull()
-        } catch (e: CancellationException) {
-            fallback.cancel()
-            throw e
+        // [KO] first-audio: a track that is already playing does not sit out
+        // the addon window. Its YouTube walk is running beside the lookup, so
+        // whichever can serve a note first wins; a losing addon is handed to
+        // the second look below.
+        val currentTrack = DirectSourceGate.isPlaying(videoId)
+        var direct: SourceStream? = null
+        if (currentTrack) {
+            try {
+                val first = runCatching {
+                    DirectSourceGate.startLookup(videoId, target)
+                        ?.let { DirectSourceGate.firstAnswer(it, fallback) }
+                }
+                    .onFailure { if (it is CancellationException) throw it }
+                    .getOrNull()
+                if (first is DirectSourceGate.FirstAnswer.Addon) direct = first.stream
+            } catch (e: CancellationException) {
+                fallback.cancel()
+                throw e
+            }
+        } else {
+            try {
+                direct = runCatching { DirectSourceGate.lookup(videoId, target) }
+                    .onFailure { if (it is CancellationException) throw it }
+                    .getOrNull()
+            } catch (e: CancellationException) {
+                fallback.cancel()
+                throw e
+            }
         }
         if (direct != null) {
             fallback.cancel()
