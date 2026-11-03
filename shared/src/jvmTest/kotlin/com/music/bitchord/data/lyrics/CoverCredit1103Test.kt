@@ -7,6 +7,7 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 /** Phone 11-03: the artist line of a cover read someone other than its singer. */
 class CoverCredit1103Test {
@@ -90,6 +91,37 @@ class CoverCredit1103Test {
         assertEquals("Song", originalFirst.title)
         assertEquals("Original Artist", originalFirst.originalArtist)
         assertEquals("오화요", originalFirst.singer)
+    }
+
+    @Test
+    fun `a version word before Cover is not the original artist on a known singers channel`() {
+        CoverTitles.knownSingers = { setOf("오화요") }
+        val read = assertNotNull(CoverTitles.read(song("Song - Live / 윤미래 cover", "오화요")))
+        assertEquals("Song", read.title)
+        assertEquals("윤미래", read.originalArtist)
+        assertEquals("오화요", read.singer)
+    }
+
+    @Test
+    fun `a dash credit before Cover keeps the reversed lyrics query`() {
+        CoverTitles.knownSingers = { setOf("오화요") }
+        val upload = song("Song - 진짜가수 / 윤미래 cover", "오화요")
+        val read = assertNotNull(CoverTitles.read(upload))
+        assertEquals("Song", read.title)
+        assertEquals("진짜가수", read.originalArtist)
+        assertEquals("오화요", read.singer)
+        assertTrue(read.orderUnsure)
+        assertTrue(CoverTitles.lyricsQuery(upload).alternatives.contains("진짜가수" to "Song"))
+    }
+
+    @Test
+    fun `a cover whose singer equals the original still falls back to the uploader`() {
+        CoverTitles.knownSingers = { setOf("윤미래") }
+        val upload = song("Song - 윤미래 / 윤미래 cover", "윤미래")
+        val read = assertNotNull(CoverTitles.read(upload))
+        assertEquals("윤미래", read.singer)
+        assertEquals("윤미래", read.originalArtist)
+        assertEquals("윤미래", YouTubeDisplayCleaner.clean(upload).artist)
     }
 
     @Test

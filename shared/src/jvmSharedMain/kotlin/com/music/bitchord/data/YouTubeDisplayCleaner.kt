@@ -93,10 +93,11 @@ internal object YouTubeDisplayCleaner {
         val uploader = cleanChannel(song.artist).ifBlank { song.artist.trim() }
         // The original's artist is never the cover's artist: when the title
         // named it as the singer, the uploader is who actually sings.
-        val performer = cover.singer.trim()
+        val singer = cover.singer.trim()
             .takeUnless { CoverTitles.sameName(it, cover.originalArtist) }
-            ?.ifBlank { uploader }
-            ?.takeUnless { TrackMatcher.isSoundtrackCredit(it) }
+            .orEmpty()
+        val performer = singer.ifBlank { uploader }
+            .takeUnless { TrackMatcher.isSoundtrackCredit(it) }
             .orEmpty()
         return song.copy(
             title = if (title.endsWith(COVER_SUFFIX, ignoreCase = true)) title else "$title$COVER_SUFFIX",

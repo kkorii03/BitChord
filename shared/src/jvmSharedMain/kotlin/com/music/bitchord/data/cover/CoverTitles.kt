@@ -680,13 +680,16 @@ object CoverTitles {
                 // On a singer's own upload the name before "Cover" is the
                 // original's artist, not a second singer: the uploader sings it.
                 if (channelName != null && isKnownChannelSinger(channel) && !sameName(singer, channelName)) {
-                    val (titleText, artist) = splitTopLevelDash(song) ?: (song to null)
-                    val title = cleanTitle(titleText) ?: return null
-                    return Cover(
-                        title = title,
-                        originalArtist = artist?.let { cleanName(it) } ?: singer,
-                        singer = channelName,
-                    )
+                    // A dash names the original song-first (songFirst drops
+                    // version words and keeps the order unsure); without one
+                    // the name before "Cover" is the original's artist.
+                    if (splitTopLevelDash(song) == null) {
+                        val title = cleanTitle(song) ?: return null
+                        return Cover(title = title, originalArtist = singer, singer = channelName)
+                    }
+                    return songFirst(song, channelName)?.let { cover ->
+                        cover.copy(originalArtist = cover.originalArtist ?: singer)
+                    }
                 }
                 songFirst(song, singer)?.let { return it }
             }
