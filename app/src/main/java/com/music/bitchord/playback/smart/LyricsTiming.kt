@@ -181,6 +181,25 @@ object LyricsTiming {
     )
 
     /**
+     * The refine's move at [atMs]: a constant or a drift up to [untilMs],
+     * capped at the narrow or wide limit it belongs to. Shared by the timing
+     * actually displayed and the "is this timing still unsettled?" check, so
+     * the two cannot disagree about how far the refine reached.
+     */
+    private fun refineMove(atMs: Long, refineMs: Long, slopePerMin: Double, untilMs: Long): Long {
+        val move = refineMs + slopePerMin / 60_000.0 * minOf(atMs, untilMs)
+        // A constant move larger than the narrow cap can only be the wide
+        // window's arrangement-sized shift; a drift and every narrow move
+        // keep the ±[RefinePolicy.MAX_SHIFT_MS] guard.
+        val cap = if (slopePerMin == 0.0 && abs(refineMs) > RefinePolicy.MAX_SHIFT_MS) {
+            RefinePolicy.MAX_WIDE_SHIFT_MS
+        } else {
+            RefinePolicy.MAX_SHIFT_MS
+        }
+        return move.roundToLong().coerceIn(-cap, cap)
+    }
+
+    /**
      * Everything applied to one video's lyrics: [base], then [manualMs] on
      * top — and, for Gemini's answer, [aiBiasMs] taken off: how late its
      * answers have run against the measurement, learned over many songs.
@@ -241,18 +260,7 @@ object LyricsTiming {
         val extraMs: Long get() = manualMs - if (base?.byAi == true) aiBiasMs else 0L
 
         /** The refine's move at [atMs], capped at the narrow or wide limit it belongs to. */
-        fun refineAt(atMs: Long): Long {
-            val move = refineMs + refineSlopePerMin / 60_000.0 * minOf(atMs, refineUntilMs)
-            // A constant move larger than the narrow cap can only be the wide
-            // window's arrangement-sized shift; a drift and every narrow move
-            // keep the ±[RefinePolicy.MAX_SHIFT_MS] guard.
-            val cap = if (refineSlopePerMin == 0.0 && abs(refineMs) > RefinePolicy.MAX_SHIFT_MS) {
-                RefinePolicy.MAX_WIDE_SHIFT_MS
-            } else {
-                RefinePolicy.MAX_SHIFT_MS
-            }
-            return move.roundToLong().coerceIn(-cap, cap)
-        }
+        fun refineAt(atMs: Long): Long = refineMove(atMs, refineMs, refineSlopePerMin, refineUntilMs)
     }
 
     /**
@@ -1474,10 +1482,13 @@ object LyricsTiming {
         val base = baseOf(entry, lines, audioSource = audioSource, key = key, videoId = videoId)
         val starts: List<Long?> = base?.let { choiceStarts(lines, it) } ?: lines.map { it.timeMs as Long? }
         // The kept refine already moved the lines toward these words; what is
-        // left to judge is the timing the listener would actually see.
+        // left to judge is the timing the listener would actually see, so the
+        // move goes through the same cap and hold as the displayed timing.
+        // The hold ends with the last word heard, as it does for Timing.
+        val untilMs = heard.maxOfOrNull { it.endMs } ?: Long.MAX_VALUE
         val seen = entry.refineMs?.let { refineMs ->
             starts.map { start ->
-                start?.let { (it + refineMs + entry.refineSlopePerMin / 60_000.0 * it).roundToLong() }
+                start?.let { it + refineMove(it, refineMs, entry.refineSlopePerMin, untilMs) }
             }
         } ?: starts
         return BaseChoicePolicy.grosslyOff(
