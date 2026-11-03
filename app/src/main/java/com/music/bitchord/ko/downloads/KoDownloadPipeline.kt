@@ -522,7 +522,11 @@ internal object KoDownloadPipeline {
 
 /** Whether this record names a music-video row. */
 internal fun SavedSongMetadata.wasVideoRow(): Boolean =
-    isVideo == true || (soundSourceVideoId != null && soundSourceVideoId != videoId)
+    isVideo == true ||
+        // A legacy record with no type at all can still name a cover by its
+        // byline; that upload was a video too.
+        (isVideo == null && isCoverRecording()) ||
+        (soundSourceVideoId != null && soundSourceVideoId != videoId)
 
 /** Whether this record is a cover, live clip or other chosen performance. */
 internal fun SavedSongMetadata.isCoverRecording(): Boolean =

@@ -217,6 +217,7 @@ object ListeningStats {
                     artistId = song.artistId,
                     art = song.thumbnailUrl,
                     durationText = song.durationText,
+                    isVideo = song.isVideo,
                 )
             }
             track.ms += playedMs
@@ -229,6 +230,8 @@ object ListeningStats {
             if (track.artistId == null) track.artistId = song.artistId
             if (track.art == null) track.art = song.thumbnailUrl
             if (track.durationText == null) track.durationText = song.durationText
+            // A row first filed before its upload type was known gains it here.
+            if (track.isVideo == null) track.isVideo = song.isVideo
             if (countsAsPlay) track.plays++
 
             // Day-level sub-bucket for the track.
@@ -784,17 +787,7 @@ object ListeningStats {
                     .map { (entry, msPlays) ->
                         val (ms, plays) = msPlays
                         RankedSong(
-                            song = com.music.bitchord.ko.KoListeningStatsDisplay.clean(
-                                Song(
-                                    videoId = entry.id,
-                                    title = entry.title,
-                                    artist = entry.artist,
-                                    thumbnailUrl = entry.art,
-                                    artistId = entry.artistId,
-                                    albumId = entry.albumId,
-                                    albumName = entry.album,
-                                ),
-                            ), // [KO] listening-display
+                            song = entry.asSong(), // [KO] listening-display
                             ms = ms,
                             plays = plays,
                         )
@@ -804,17 +797,7 @@ object ListeningStats {
                     .sortedWith(compareByDescending<TrackEntry> { it.ms }.thenByDescending { it.plays })
                     .map {
                         RankedSong(
-                            song = com.music.bitchord.ko.KoListeningStatsDisplay.clean(
-                                Song(
-                                    videoId = it.id,
-                                    title = it.title,
-                                    artist = it.artist,
-                                    thumbnailUrl = it.art,
-                                    artistId = it.artistId,
-                                    albumId = it.albumId,
-                                    albumName = it.album,
-                                ),
-                            ), // [KO] listening-display
+                            song = it.asSong(), // [KO] listening-display
                             ms = it.ms,
                             plays = it.plays,
                         )
@@ -1041,6 +1024,12 @@ data class TrackEntry(
     var ms: Long = 0L,
     var plays: Int = 0,
     var last: Long = 0L,
+    /**
+     * Whether the row was a video upload. Null on a row written before this
+     * field existed; [asSong] derives it from the download record or the
+     * cover byline then.
+     */
+    var isVideo: Boolean? = null,
     /** Per-day breakdown for weekly queries. Key: "YYYY-MM-DD". */
     var days: MutableMap<String, DayStats> = mutableMapOf(),
 ) {
@@ -1056,6 +1045,7 @@ data class TrackEntry(
         if (artistId == null) artistId = other.artistId
         if (art == null) art = other.art
         if (durationText == null) durationText = other.durationText
+        if (isVideo == null) isVideo = other.isVideo
         // Merge per-day sub-buckets.
         if (other.days.isNotEmpty()) {
             other.days.forEach { (dateKey, stats) ->

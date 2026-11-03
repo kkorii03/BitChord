@@ -2140,23 +2140,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             it is SearchResult.TopTrack || it is SearchResult.Track
         }
         if (fromTypeahead is SearchResult.Track) {
-            recordEntity(SearchHistoryEntity(
-                id = fromTypeahead.song.videoId,
-                title = fromTypeahead.song.title,
-                subtitle = listOfNotNull(fromTypeahead.song.artist).joinToString(" · "),
-                artworkUrl = fromTypeahead.song.thumbnailUrl,
-                entityType = EntityType.TRACK,
-            ))
+            recordEntity(SearchHistoryEntity.fromSong(fromTypeahead.song))
             return
         }
         if (fromTypeahead is SearchResult.TopTrack) {
-            recordEntity(SearchHistoryEntity(
-                id = fromTypeahead.song.videoId,
-                title = fromTypeahead.song.title,
-                subtitle = listOfNotNull(fromTypeahead.song.artist).joinToString(" · "),
-                artworkUrl = fromTypeahead.song.thumbnailUrl,
-                entityType = EntityType.TRACK,
-            ))
+            recordEntity(SearchHistoryEntity.fromSong(fromTypeahead.song))
             return
         }
         // Fall back to committed search results.
@@ -2164,21 +2152,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             it is SearchResult.TopTrack || it is SearchResult.Track
         }
         if (topResult is SearchResult.Track) {
-            recordEntity(SearchHistoryEntity(
-                id = topResult.song.videoId,
-                title = topResult.song.title,
-                subtitle = listOfNotNull(topResult.song.artist).joinToString(" · "),
-                artworkUrl = topResult.song.thumbnailUrl,
-                entityType = EntityType.TRACK,
-            ))
+            recordEntity(SearchHistoryEntity.fromSong(topResult.song))
         } else if (topResult is SearchResult.TopTrack) {
-            recordEntity(SearchHistoryEntity(
-                id = topResult.song.videoId,
-                title = topResult.song.title,
-                subtitle = listOfNotNull(topResult.song.artist).joinToString(" · "),
-                artworkUrl = topResult.song.thumbnailUrl,
-                entityType = EntityType.TRACK,
-            ))
+            recordEntity(SearchHistoryEntity.fromSong(topResult.song))
         } else {
             // Fallback: record as a raw-text entity for backwards compatibility
             recordEntity(SearchHistoryEntity(

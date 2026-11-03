@@ -657,6 +657,10 @@ object Downloads {
     internal fun savedIsVideoFor(videoId: String): Boolean? =
         com.music.bitchord.ko.downloads.KoDownloadRecords.savedIsVideoFor(videoId) // [KO] downloads-records
 
+    /** The row's upload type including a legacy cover's byline; null if unrecorded. */
+    internal fun savedVideoRowFor(videoId: String): Boolean? =
+        com.music.bitchord.ko.downloads.KoDownloadRecords.savedVideoRowFor(videoId) // [KO] downloads-records
+
     /** Whether the saved row's upload type was still unknown, false if unrecorded. */
     internal fun savedTypeUnknownFor(videoId: String): Boolean =
         com.music.bitchord.ko.downloads.KoDownloadRecords.savedTypeUnknownFor(videoId) // [KO] downloads-records

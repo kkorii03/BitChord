@@ -348,6 +348,16 @@ internal object KoDownloadRecords {
         return Downloads.savedMetadataValue()[videoId]?.isVideo
     }
 
+    /**
+     * The upload type as a display row reads it, including a legacy cover whose
+     * record predates [SavedSongMetadata.isVideo] and only its byline still
+     * names as a video. Null when nothing was recorded for [videoId].
+     */
+    fun savedVideoRowFor(videoId: String): Boolean? {
+        open()
+        return Downloads.savedMetadataValue()[videoId]?.wasVideoRow()
+    }
+
     /** Whether the saved row's upload type was still unknown, false if unrecorded. */
     fun savedTypeUnknownFor(videoId: String): Boolean {
         open()

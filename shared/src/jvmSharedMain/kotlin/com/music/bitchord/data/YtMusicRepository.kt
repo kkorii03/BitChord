@@ -44,6 +44,7 @@ import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.firstArtworkOrStill
 import com.music.bitchord.data.model.ShelfItem
+import com.music.bitchord.data.model.toSong
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.SongMenu
 import com.music.bitchord.data.model.UserPlaylist
@@ -403,14 +404,7 @@ object YtMusicRepository {
                 it.title.contains("recommend", ignoreCase = true)
         }
         val qpSongs = qpShelf?.items?.mapNotNull { item ->
-            item.videoId?.takeUnless { it in excludeSongIds }?.let { vid ->
-                Song(
-                    videoId = vid,
-                    title = item.title,
-                    artist = InnertubeParser.artistFromSubtitle(item.subtitle),
-                    thumbnailUrl = item.thumbnailUrl,
-                )
-            }
+            item.toSong()?.takeUnless { it.videoId in excludeSongIds }
         }.orEmpty()
         if (qpSongs.isNotEmpty()) return@call qpSongs
 
@@ -425,14 +419,7 @@ object YtMusicRepository {
 
         val homeShelfSongs = candidateShelves.flatMap { shelf ->
             shelf.items.mapNotNull { item ->
-                item.videoId?.takeUnless { it in excludeSongIds }?.let { vid ->
-                    Song(
-                        videoId = vid,
-                        title = item.title,
-                        artist = InnertubeParser.artistFromSubtitle(item.subtitle),
-                        thumbnailUrl = item.thumbnailUrl,
-                    )
-                }
+                item.toSong()?.takeUnless { it.videoId in excludeSongIds }
             }
         }.distinctBy { it.videoId }
 
@@ -440,16 +427,7 @@ object YtMusicRepository {
 
         // 3. Any shelf items on Home that have videoId
         val allHomeTrackSongs = shelves.flatMap { shelf ->
-            shelf.items.mapNotNull { item ->
-                item.videoId?.let { vid ->
-                    Song(
-                        videoId = vid,
-                        title = item.title,
-                        artist = InnertubeParser.artistFromSubtitle(item.subtitle),
-                        thumbnailUrl = item.thumbnailUrl,
-                    )
-                }
-            }
+            shelf.items.mapNotNull { item -> item.toSong() }
         }.distinctBy { it.videoId }
 
         val uniqueAllHome = allHomeTrackSongs.filterNot { it.videoId in excludeSongIds }
@@ -459,14 +437,7 @@ object YtMusicRepository {
         val explore = runCatching { shelvesOf("FEmusic_new_releases") }.getOrDefault(emptyList())
         val exploreSongs = explore.flatMap { shelf ->
             shelf.items.mapNotNull { item ->
-                item.videoId?.takeUnless { it in excludeSongIds }?.let { vid ->
-                    Song(
-                        videoId = vid,
-                        title = item.title,
-                        artist = InnertubeParser.artistFromSubtitle(item.subtitle),
-                        thumbnailUrl = item.thumbnailUrl,
-                    )
-                }
+                item.toSong()?.takeUnless { it.videoId in excludeSongIds }
             }
         }.distinctBy { it.videoId }
 

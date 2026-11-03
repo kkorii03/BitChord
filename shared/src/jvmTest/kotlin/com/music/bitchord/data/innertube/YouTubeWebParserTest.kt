@@ -76,6 +76,24 @@ class YouTubeWebParserTest {
     }
 
     @Test
+    fun `a wide video lockup card stays a video`() {
+        val item = parseShelf(
+            """
+            {"lockupViewModel":{
+              "contentId":"videoCard01",
+              "contentType":"LOCKUP_CONTENT_TYPE_VIDEO",
+              "contentImage":{"thumbnailViewModel":{
+                "image":{"sources":[{"url":"https://i.ytimg.com/vi/videoCard01/hq.jpg","width":1280,"height":720}]}
+              }},
+              "metadata":{"lockupMetadataViewModel":{"title":{"content":"Video Card"}}}
+            }}
+            """,
+        ).single()
+
+        assertTrue(item.isVideo)
+    }
+
+    @Test
     fun `a wide lockup upload is a video`() {
         val song = YouTubeWebParser.parsePlaylist(json(PLAYLIST_LOCKUP_WIDE)).songs.single()
 

@@ -4,6 +4,7 @@ import com.music.bitchord.data.StoredSongDisplay
 import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.stats.TrackEntry
+import com.music.bitchord.download.Downloads
 
 /**
  * [KO] listening-display
@@ -22,18 +23,33 @@ internal object KoListeningStatsDisplay {
      * its song, and "원곡자 · 가수 커버" — so it is marked a video again: that
      * byline is what CoverTitles reads a cover back from, for its lyrics,
      * timing and moving cover.
+     *
+     * A row written before [TrackEntry.isVideo] existed reads the flag from
+     * the download record (which also knows a legacy cover's byline), then
+     * from the byline itself, then from an unambiguous cover title.
      */
-    fun asSong(entry: TrackEntry): Song = StoredSongDisplay.clean(
-        Song(
-            videoId = entry.id,
-            title = entry.title,
-            artist = entry.artist,
-            thumbnailUrl = entry.art,
-            durationText = entry.durationText,
-            artistId = entry.artistId,
-            albumId = entry.albumId,
-            albumName = entry.album,
-            isVideo = entry.artist.endsWith(" 커버"),
-        ),
-    )
+    fun asSong(entry: TrackEntry): Song {
+        val isVideo = entry.isVideo
+            ?: Downloads.savedVideoRowFor(entry.id)
+            ?: entry.artist.endsWith(" 커버")
+            ?: CoverTitles.read(
+                entry.title,
+                entry.artist,
+                entry.artistId,
+                unambiguousOnly = true,
+            ) != null
+        return StoredSongDisplay.clean(
+            Song(
+                videoId = entry.id,
+                title = entry.title,
+                artist = entry.artist,
+                thumbnailUrl = entry.art,
+                durationText = entry.durationText,
+                artistId = entry.artistId,
+                albumId = entry.albumId,
+                albumName = entry.album,
+                isVideo = isVideo,
+            ),
+        )
+    }
 }

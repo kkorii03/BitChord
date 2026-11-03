@@ -1,5 +1,6 @@
 package com.music.bitchord.data.model
 
+import com.music.bitchord.data.cover.CoverTitles
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -22,9 +23,23 @@ data class SearchHistoryEntity(
     val artworkUrl: String?,
     /** The kind of entity this represents. */
     val entityType: EntityType,
+    /** Whether a saved TRACK row was a video upload. */
+    val isVideo: Boolean = false,
     /** Timestamp (epoch millis) — updated on each re-tap to bubble it to the top. */
     val timestamp: Long = System.currentTimeMillis(),
-)
+) {
+    companion object {
+        /** A TRACK row for [song], keeping its upload type. */
+        fun fromSong(song: Song): SearchHistoryEntity = SearchHistoryEntity(
+            id = song.videoId,
+            title = song.title,
+            subtitle = song.artist,
+            artworkUrl = song.thumbnailUrl,
+            entityType = EntityType.TRACK,
+            isVideo = song.isVideo,
+        )
+    }
+}
 
 enum class EntityType {
     @SerialName("TRACK") TRACK,
@@ -56,6 +71,14 @@ fun SearchHistoryEntity.toSong(): Song? = if (entityType == EntityType.TRACK && 
         title = title,
         artist = subtitle,
         thumbnailUrl = artworkUrl,
+        // A row saved before the flag existed is still a cover when its title
+        // says so outright.
+        isVideo = isVideo || CoverTitles.read(
+            title,
+            subtitle,
+            null,
+            unambiguousOnly = true,
+        ) != null,
     )
 } else null
 

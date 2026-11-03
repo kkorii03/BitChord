@@ -11,6 +11,7 @@ import com.music.bitchord.data.model.HomeFeed
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.toShelfItem
 import com.music.bitchord.data.net.SharedLookups
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -103,19 +104,10 @@ internal object KoHomeFeed {
         // the upload's own title. A row from an older build is cleaned first,
         // so its stored OST title and "Original Soundtrack" credit never reach
         // the shelf.
+        // toShelfItem keeps isVideo: without it a cover video tapped here
+        // played as a plain song (phone 11-03).
         val items = songs.map(StoredSongDisplay::clean)
-            .map { CoverTitles.applyTo(it) }.map {
-            ShelfItem(
-                title = it.title,
-                subtitle = it.artist,
-                thumbnailUrl = it.thumbnailUrl,
-                videoId = it.videoId,
-                browseId = null,
-                // Phone 11-03: without this a cover video tapped here played
-                // as a plain song (no song version, music radio with no picks).
-                isVideo = it.isVideo,
-            )
-        }
+            .map { CoverTitles.applyTo(it) }.map { it.toShelfItem() }
         return HomeShelf(title = RECENT_TITLE, items = items)
     }
 
@@ -232,7 +224,7 @@ internal object KoHomeFeed {
             ?: return null
         return HomeShelf(
             title = pick.title,
-            items = songs.map { ShelfItem(title = it.title, subtitle = it.artist, thumbnailUrl = it.thumbnailUrl, videoId = it.videoId, browseId = null) },
+            items = songs.map { it.toShelfItem() },
             moreBrowseId = browseId,
         )
     }

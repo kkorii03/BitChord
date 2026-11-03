@@ -902,7 +902,8 @@ object AudioCache {
                 meta.get(META_MEDIA_ID, null as String?) == mediaId &&
                 has(META_PLAYBACK) == usedByPlayback &&
                 (usedByPlayback || has(META_ANALYSIS)) &&
-                has(META_PLAYED) == played
+                has(META_PLAYED) == played &&
+                (song?.isVideo != true || has(META_IS_VIDEO))
             // Every re-open — a seek, a continuation fetch — passes through
             // here. Only write when something would actually change.
             if (tagged && (song == null || has(META_TITLE))) {
@@ -970,6 +971,7 @@ object AudioCache {
         album?.takeIf { it.isNotBlank() }?.let { mutations.set(META_ALBUM, it) }
         duration?.takeIf { it.isNotBlank() }?.let { mutations.set(META_DURATION, it) }
         song?.thumbnailUrl?.takeIf { it.isNotBlank() }?.let { mutations.set(META_ART, it) }
+        if (song?.isVideo == true) mutations.set(META_IS_VIDEO, "1")
     }
 
     /**
@@ -1029,6 +1031,7 @@ object AudioCache {
                         thumbnailUrl = art,
                         durationText = field(META_DURATION) ?: noted?.durationText,
                         albumName = field(META_ALBUM) ?: noted?.albumName,
+                        isVideo = cachedSongIsVideo(noted?.isVideo, field(META_IS_VIDEO)),
                         // The row's second line: where the copy came from, what
                         // it costs on disk, and — when only part of it is there —
                         // that it will need a connection to play to the end.
@@ -1303,6 +1306,10 @@ object AudioCache {
         return if (mb >= 1024) "%.1f GB".format(Locale.ROOT, mb / 1024) else "%.1f MB".format(Locale.ROOT, mb)
     }
 
+    /** A cached row is a video when this run knew it or an older one tagged it. */
+    internal fun cachedSongIsVideo(noted: Boolean?, metadata: String?): Boolean =
+        noted == true || metadata == "1"
+
     private const val META_ORIGIN = "bc_origin"
     private const val META_MEDIA_ID = "bc_media_id"
     private const val META_TITLE = "bc_title"
@@ -1310,6 +1317,7 @@ object AudioCache {
     private const val META_ALBUM = "bc_album"
     private const val META_DURATION = "bc_duration"
     private const val META_ART = "bc_art"
+    private const val META_IS_VIDEO = "bc_is_video"
 
     /** Set once a non-analysis request — the player or its read-ahead — has read this entry. */
     private const val META_PLAYBACK = "bc_playback"

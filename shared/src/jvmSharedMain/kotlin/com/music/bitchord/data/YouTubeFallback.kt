@@ -17,6 +17,7 @@ import com.music.bitchord.data.model.LibraryPage
 import com.music.bitchord.data.model.MoodGenre
 import com.music.bitchord.data.model.MoodGenreSection
 import com.music.bitchord.data.model.ShelfItem
+import com.music.bitchord.data.model.toShelfItem
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UserPlaylist
 import kotlinx.coroutines.CancellationException
@@ -577,6 +578,7 @@ internal object YouTubeFallback {
                 title = item.title,
                 artist = item.subtitle,
                 thumbnailUrl = item.thumbnailUrl,
+                isVideo = item.isVideo,
             )
         }
         val kept = YouTubeMusicClassifier.filterMusic(songs, songs.size)
@@ -668,6 +670,7 @@ internal object YouTubeFallback {
                     title = item.title,
                     artist = item.subtitle,
                     thumbnailUrl = item.thumbnailUrl,
+                    isVideo = item.isVideo,
                 )
             }
             .distinctBy { it.videoId }
@@ -1241,6 +1244,7 @@ internal object YouTubeFallback {
                         title = item.title,
                         artist = item.subtitle,
                         thumbnailUrl = item.thumbnailUrl,
+                        isVideo = item.isVideo,
                     ),
                 )
             }
@@ -1286,6 +1290,7 @@ internal object YouTubeFallback {
                 title = item.title,
                 artist = item.subtitle,
                 thumbnailUrl = item.thumbnailUrl,
+                isVideo = item.isVideo,
             ),
         )
         return item.copy(
@@ -1299,12 +1304,6 @@ internal object YouTubeFallback {
         // A catalogue row (album mapping or a local play) already names its
         // release; the upload cleaner is only for youtube.com packaging.
         val shown = if (song.albumId != null) ensureArtwork(song) else displaySong(song)
-        return ShelfItem(
-            title = shown.title,
-            subtitle = shown.artist,
-            thumbnailUrl = shown.thumbnailUrl,
-            videoId = shown.videoId,
-            browseId = null,
-        )
+        return shown.toShelfItem()
     }
 }

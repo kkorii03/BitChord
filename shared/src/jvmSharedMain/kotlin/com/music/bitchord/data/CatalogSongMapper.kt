@@ -333,6 +333,7 @@ internal object CatalogSongMapper {
                 title = item.title,
                 artist = item.subtitle,
                 thumbnailUrl = item.thumbnailUrl,
+                isVideo = item.isVideo,
             )
         }
         val mapped = mapPage(songs, budget, songs.size)

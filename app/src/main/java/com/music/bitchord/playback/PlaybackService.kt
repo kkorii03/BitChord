@@ -159,7 +159,6 @@ import com.music.bitchord.R
 import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.OfflinePlaylists
 import com.music.bitchord.data.innertube.Innertube
-import com.music.bitchord.data.innertube.InnertubeParser
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.lyrics.EmbeddedLyrics
 import com.music.bitchord.data.lyrics.LyricLine
@@ -171,6 +170,7 @@ import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.BrowseItem
 import com.music.bitchord.data.model.ShelfItem
+import com.music.bitchord.data.model.toSong
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.download.DownloadHealth
 import com.music.bitchord.download.Downloads
@@ -12747,6 +12747,7 @@ class PlaybackService : MediaLibraryService() {
                                         artist = item.mediaMetadata.artist?.toString()
                                             ?: getString(R.string.unknown_artist),
                                         thumbnailUrl = null,
+                                        isVideo = item.isVideoRow,
                                     ).toMediaItem(),
                                 )
                             }
@@ -12921,14 +12922,8 @@ class PlaybackService : MediaLibraryService() {
     }
 
     private fun ShelfItem.toMediaItemOrNull(): MediaItem? {
-        val vid = videoId
-        if (vid != null) {
-            val song = Song(
-                videoId = vid,
-                title = title,
-                artist = InnertubeParser.artistFromSubtitle(subtitle),
-                thumbnailUrl = thumbnailUrl,
-            )
+        val song = toSong()
+        if (song != null) {
             cacheSong(song)
             return song.toMediaItem()
         }
@@ -12951,15 +12946,7 @@ class PlaybackService : MediaLibraryService() {
         return null
     }
 
-    private fun ShelfItem.toSongOrNull(): Song? {
-        val id = videoId ?: return null
-        return Song(
-            videoId = id,
-            title = title,
-            artist = InnertubeParser.artistFromSubtitle(subtitle),
-            thumbnailUrl = thumbnailUrl,
-        )
-    }
+    private fun ShelfItem.toSongOrNull(): Song? = toSong()
 
     private fun createLoginPromptItem(): MediaItem =
         MediaItem.Builder()

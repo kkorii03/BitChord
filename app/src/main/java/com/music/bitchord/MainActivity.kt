@@ -173,6 +173,7 @@ import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.ShelfItem
+import com.music.bitchord.data.model.toSong
 import com.music.bitchord.data.model.detailBrowseType
 import com.music.bitchord.data.model.isTrackCard
 import com.music.bitchord.data.model.Song
@@ -2343,17 +2344,7 @@ private fun BitChordApp(
      * credit belongs in the field the player, mini player and everything
      * downstream read.
      */
-    val shelfSong: (ShelfItem) -> Song? = { item ->
-        item.videoId?.let { videoId ->
-            Song(
-                videoId = videoId,
-                title = item.title,
-                artist = InnertubeParser.artistFromSubtitle(item.subtitle),
-                thumbnailUrl = item.thumbnailUrl,
-                isVideo = item.isVideo,
-            )
-        }
-    }
+    val shelfSong: (ShelfItem) -> Song? = { item -> item.toSong() }
 
     /**
      * Holding a card on a feed whose shelves mix tracks with collections —
@@ -3923,36 +3914,18 @@ private fun BitChordApp(
                                 // order — play the one tapped and build a station from it.
                                 onSongClick = { songs, index ->
                                     songs.getOrNull(index)?.let { song ->
-                                        viewModel.recordEntity(SearchHistoryEntity(
-                                            id = song.videoId,
-                                            title = song.title,
-                                            subtitle = song.artist.ifEmpty { "" },
-                                            artworkUrl = song.thumbnailUrl,
-                                            entityType = EntityType.TRACK,
-                                        ))
+                                        viewModel.recordEntity(SearchHistoryEntity.fromSong(song))
                                         playRadio(song, QueueSource(searchLabel, PlaybackSourceType.SEARCH))
                                     }
                                 },
                                 onSongLongPress = openSongMenu,
                                 onSongSwipe = onSongSwipe,
                                 onTopResultPlay = { song ->
-                                    viewModel.recordEntity(SearchHistoryEntity(
-                                        id = song.videoId,
-                                        title = song.title,
-                                        subtitle = song.artist.ifEmpty { "" },
-                                        artworkUrl = song.thumbnailUrl,
-                                        entityType = EntityType.TRACK,
-                                    ))
+                                    viewModel.recordEntity(SearchHistoryEntity.fromSong(song))
                                     playRadio(song, QueueSource(searchLabel, PlaybackSourceType.SEARCH))
                                 },
                                 onTopResultPlaylist = { song ->
-                                    viewModel.recordEntity(SearchHistoryEntity(
-                                        id = song.videoId,
-                                        title = song.title,
-                                        subtitle = song.artist.ifEmpty { "" },
-                                        artworkUrl = song.thumbnailUrl,
-                                        entityType = EntityType.TRACK,
-                                    ))
+                                    viewModel.recordEntity(SearchHistoryEntity.fromSong(song))
                                     viewModel.loadPlaylists()
                                     playlistTarget = song
                                 },
