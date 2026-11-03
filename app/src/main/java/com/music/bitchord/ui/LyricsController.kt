@@ -1483,7 +1483,7 @@ class LyricsController(
         if (aiTimingJob?.isActive == true) return
         if (!LyricsTranslation.geminiKeyUsable && !com.music.bitchord.data.lyrics.Deepgram.usable) return
         val context = app
-        if (!LyricsTiming.measurementGaveUp(context, request.videoId)) return
+        if (!LyricsTiming.measurementGaveUp(context, request.videoId, lines)) return
         // One policy decides what is left to spend: an accepted answer, an
         // engine already paid for these lyrics, or Whisper once it is due.
         if (!LyricsTiming.wantsAi(context, request.videoId, lines)) return

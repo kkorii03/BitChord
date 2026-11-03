@@ -102,4 +102,18 @@ object BaseChoicePolicy {
     fun latenessSampleAllowed(score: Score): Boolean =
         score.matched >= LATENESS_MIN_MATCHED_LINES &&
             score.withinRatio >= LATENESS_MIN_WITHIN_RATIO
+
+    /** The lines needed before a gross disagreement is the whole song's, not one guess. */
+    const val GROSS_MIN_MATCHED_LINES = RefinePolicy.MIN_WIDE_LINES
+
+    /**
+     * True when enough lines were heard and the median line sits further from
+     * the transcript than a narrow refine can move. That is an
+     * arrangement-sized disagreement, so the timing has not settled.
+     */
+    fun grosslyOff(candidateStarts: List<Long?>, heardStarts: List<Long?>): Boolean {
+        val score = score(candidateStarts, heardStarts)
+        return score.matched >= GROSS_MIN_MATCHED_LINES &&
+            score.medianAbsMs > RefinePolicy.MAX_SHIFT_MS
+    }
 }

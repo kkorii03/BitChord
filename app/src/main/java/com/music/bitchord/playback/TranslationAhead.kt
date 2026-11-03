@@ -384,7 +384,7 @@ internal object TranslationAhead {
                 )
             }
             if ((gemini.geminiKeyUsable || com.music.bitchord.data.lyrics.Deepgram.usable) &&
-                timing.measurementGaveUp(context, song.videoId) &&
+                timing.measurementGaveUp(context, song.videoId, found.lines) &&
                 (AppSettings.autoLyricsTiming.value || AppSettings.aiTimingAhead.value) &&
                 timing.wantsAi(context, song.videoId, found.lines) &&
                 paidGate()
