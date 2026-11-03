@@ -2538,6 +2538,10 @@ class CrossfadeController(
             earliestOutSec = player.currentPosition / 1000.0 + LOOP_SETUP_SECONDS,
             sungOut = outLyrics.spans,
             sungIn = inLyrics.spans,
+            // A music video's audio rarely matches the album cut its lyrics
+            // are timed to, so it is never looped — see [LoopMix.plan].
+            outVideo = current.isVideoOrigin,
+            inVideo = next.isVideoOrigin,
             why = why,
         )
         loopPlanKey = key

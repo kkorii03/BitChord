@@ -1950,12 +1950,9 @@ private fun mixPlan(
     // the beat-match floor may take the blend branch. Every old term stays:
     // tempoBlendable, confidentGrid, and the advanced incoming-rate check.
     val tempoNeedsStretch = abs(1 - normalizedTempoRatio(currentBpm, nextBpm)) > 1e-6
-    val sameBeatBlend = (traits == null || incomingPlaybackRate >= 1.0 - MAX_ALIGN_STRETCH) && (
-        currentBpm > 0 && nextBpm > 0 &&
-        abs(1 - normalizedTempoRatio(currentBpm, nextBpm)) <= 0.05 &&
-        (analysis.beatConfidence.orZero() >= 0.2 || nextAnalysis.beatConfidence.orZero() >= 0.2) ||
-        traits?.phaseLockable == true
-        )
+    val sameBeatBlend = (traits == null || incomingPlaybackRate >= 1.0 - MAX_ALIGN_STRETCH) &&
+        (traits?.phaseLockable == true ||
+            (tempoBlendable && confidentGrid && (!tempoNeedsStretch || beatMatchTrusted)))
     val outgoingArrangementOverlap =
         if (sameBeatBlend && mixOutType == "content_end") {
             min(ARRANGEMENT_OVERLAP_BEATS * 60 / currentBpm, MAX_DISCARDED_MUSIC_SECONDS)
