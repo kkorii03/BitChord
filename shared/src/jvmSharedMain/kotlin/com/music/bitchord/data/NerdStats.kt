@@ -456,6 +456,17 @@ object NerdStats {
      * reads straight after this call to decide whether it is Dolby Atmos.
      */
     fun onTrackTransition(mediaId: String? = null) {
+        // A quality swap replaces the current item without changing its media
+        // id, and Media3 reports that as an item transition too. Clearing here
+        // threw away the snapshot the new decoder had just published, so a
+        // paused mid-song upgrade showed no badge at all until the next format
+        // event. The generation must stay put as well, or a format event that
+        // started before this transition is dropped and nothing republishes it.
+        val held = current.value
+        if (mediaId != null && held?.mediaId == mediaId) {
+            activeMediaId = mediaId
+            return
+        }
         generation.incrementAndGet()
         activeMediaId = mediaId
         current.value = null
