@@ -1,0 +1,4 @@
+# Real-use run: the official-MV playlist, played the way a listener plays it.
+# The mode line opens the playlist page, taps its 재생 button and then advances
+# with KEYCODE_MEDIA_NEXT; run.sh's per-track summary says what actually played.
+#mode=playlist https://music.youtube.com/playlist?list=RDCLAK5uy_m0wlRoNn5iCTTgBedfoOQ19Jq9P3XTLIA 8

@@ -1,0 +1,4 @@
+# Real-use run: the 오화요 cover playlist, played from the playlist page.
+# Covers must keep playing as themselves; this list catches a real-use regression
+# that the per-song watch?v= path (which never opens a playlist) cannot see.
+#mode=playlist https://music.youtube.com/playlist?list=PL-ODED49YdZByxxHBLaIIOOePlhj8nWcc 8

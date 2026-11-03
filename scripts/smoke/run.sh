@@ -52,6 +52,53 @@ HQ_CONFIGURED=0
   exit 2
 }
 
+# A `#mode=` line turns this into a real-use run: open a page the way a
+# listener does, instead of asking the app for one known video id at a time.
+REALUSE_MODE=0
+REALUSE_KIND=""
+REALUSE_URL=""
+REALUSE_STATION_QUERY=""
+REALUSE_TRACKS=8
+MODE_LINE=$(grep -m1 '^#mode=' "$SONGS_FILE" 2>/dev/null || true)
+MODE_LINE=${MODE_LINE%$'\r'}
+if [ -n "$MODE_LINE" ]; then
+  MODE_SPEC=${MODE_LINE#\#mode=}
+  REALUSE_KIND=${MODE_SPEC%%[[:space:]]*}
+  REALUSE_TARGET=${MODE_SPEC#"$REALUSE_KIND"}
+  REALUSE_TARGET=${REALUSE_TARGET# }
+  case "$REALUSE_KIND" in
+    playlist|station) REALUSE_MODE=1 ;;
+    *)
+      echo "smoke: unknown real-use mode '$REALUSE_KIND' in $SONGS_FILE" >&2
+      exit 2
+      ;;
+  esac
+fi
+if [ "$REALUSE_MODE" = 1 ]; then
+  case "$REALUSE_KIND" in
+    playlist)
+      REALUSE_URL=${REALUSE_TARGET%% *}
+      REALUSE_COUNT=${REALUSE_TARGET##* }
+      [[ "$REALUSE_COUNT" =~ ^[0-9]+$ ]] && REALUSE_TRACKS=$REALUSE_COUNT
+      if [ -z "$REALUSE_URL" ]; then
+        echo "smoke: $REALUSE_KIND mode needs a playlist URL in $SONGS_FILE" >&2
+        exit 2
+      fi
+      ;;
+    station)
+      # No mood-only deep link exists in MusicLink; a URL target is a
+      # station/radio page, a plain mood falls back to a search start.
+      if [[ "$REALUSE_TARGET" == http* ]]; then
+        REALUSE_URL=${REALUSE_TARGET%% *}
+        REALUSE_COUNT=${REALUSE_TARGET##* }
+        [[ "$REALUSE_COUNT" =~ ^[0-9]+$ ]] && REALUSE_TRACKS=$REALUSE_COUNT
+      else
+        REALUSE_STATION_QUERY=$REALUSE_TARGET
+      fi
+      ;;
+  esac
+fi
+
 APK=$(ls app/build/outputs/apk/dev/debug/*x86_64*.apk 2>/dev/null | head -1)
 [ -z "$APK" ] && APK=$(ls app/build/outputs/apk/dev/debug/*universal*.apk 2>/dev/null | head -1)
 [ -z "$APK" ] && APK=$(ls app/build/outputs/apk/dev/debug/*.apk 2>/dev/null | head -1)
@@ -187,6 +234,61 @@ wait_seconds_for() {
 start_search() {
   local query=$1
   adb shell "am start -a android.media.action.MEDIA_PLAY_FROM_SEARCH -p '$PKG' --es query '$query'" >/dev/null 2>&1 || true
+}
+
+# Taps the playlist page's own 재생/Play button. uiautomator is asked again
+# while the page loads; the largest matching node is the header button, not a
+# row's overflow item.
+realuse_tap_play() {
+  local i coords
+  for ((i = 0; i < 30; i++)); do
+    adb shell uiautomator dump /sdcard/bitchord-window.xml >/dev/null 2>&1 || true
+    adb shell cat /sdcard/bitchord-window.xml > "$OUT/window.xml" 2>/dev/null || true
+    coords=$(python3 scripts/smoke/realuse.py play-button "$OUT/window.xml" 2>/dev/null || true)
+    if [ -n "$coords" ]; then
+      # shellcheck disable=SC2086
+      adb shell input tap $coords >/dev/null 2>&1 || true
+      adb shell rm -f /sdcard/bitchord-window.xml >/dev/null 2>&1 || true
+      return 0
+    fi
+    sleep 2
+  done
+  adb shell rm -f /sdcard/bitchord-window.xml >/dev/null 2>&1 || true
+  return 1
+}
+
+# Real use: one page, its own play button, then NEXT between tracks. Each row
+# gets the same listening window the old per-song mode gives a song, so a late
+# song-version swap or gate release is not scored too early.
+run_realuse() {
+  local tracks=${REALUSE_TRACKS:-8} track_wait=${SMOKE_REALUSE_WAIT_S:-60} index before
+  echo "smoke: real-use mode $REALUSE_KIND target=${REALUSE_URL:-$REALUSE_STATION_QUERY} tracks=$tracks" >> "$OUT/smoke-playback.txt"
+  before=$(play_count)
+  if [ -n "${REALUSE_STATION_QUERY:-}" ]; then
+    start_search "$REALUSE_STATION_QUERY"
+  else
+    adb shell am start -a android.intent.action.VIEW -d "$REALUSE_URL" -p "$PKG" \
+      </dev/null >/dev/null 2>&1 || true
+    realuse_tap_play || echo "smoke: real-use: no 재생/Play button on $REALUSE_URL" >&2
+  fi
+  if wait_for_new_play "$before" "$START_TIMEOUT"; then
+    echo "real-use playback started" >> "$OUT/smoke-playback.txt"
+  else
+    echo "smoke: real-use: playback did not start" >&2
+  fi
+  for ((index = 1; index <= tracks; index++)); do
+    sleep "$track_wait"
+    before=$(play_count)
+    adb shell input keyevent 87 >/dev/null 2>&1 || true
+    # The last NEXT is what writes the final track's summary, so it gets the
+    # same short wait the old mode's force_final_summary uses.
+    if [ "$index" -lt "$tracks" ]; then
+      wait_for_new_play "$before" "$START_TIMEOUT" || true
+    else
+      wait_for_new_play "$before" 10 || true
+    fi
+  done
+  sleep 2
 }
 
 play_song() {
@@ -514,6 +616,9 @@ progress_report() {
 
 # fd 3, not stdin: adb shell inside the loop reads stdin and swallowed the
 # rest of the song list after the first song on the first run.
+if [ "$REALUSE_MODE" = 1 ]; then
+  run_realuse
+else
 while IFS=$'\t' read -r -u 3 key kind _rest || [ -n "$key" ]; do
   key=${key%$'\r'}
   kind=${kind%$'\r'}
@@ -571,6 +676,7 @@ force_final_summary() {
   sleep 2
 }
 force_final_summary
+fi
 
 # Heap report (11-02 leak hunt): the retained heap grows ~7 MB a minute until
 # playback fails with OutOfMemoryError. The raw dump holds the app's strings
@@ -620,6 +726,12 @@ if adb shell test -d "$APP_DIR/synctest" >/dev/null 2>&1; then
   done
 fi
 adb shell rm -f "$APP_DIR/sync-test.flag" >/dev/null 2>&1 || true
+
+if [ "$REALUSE_MODE" = 1 ]; then
+  python3 scripts/smoke/realuse.py summary "$OUT/smoke-logcat.txt" \
+    --report "$OUT/smoke-report.md" --expected "$REALUSE_TRACKS"
+  exit $?
+fi
 
 CHECK_ARGS=("$OUT/smoke-logcat.txt" --report "$OUT/smoke-report.md" --songs "$SONGS_FILE")
 if [ "$HQ_CONFIGURED" = 1 ]; then
