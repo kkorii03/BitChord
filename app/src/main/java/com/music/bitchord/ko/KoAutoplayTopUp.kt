@@ -676,7 +676,7 @@ private suspend fun rankedExtensions(
     seedRadio: List<Song>,
     limit: Int,
     sessionIds: Set<String>,
-): List<Song> {
+): List<Song> = tasteWorkOffMain {
     val sessionRadio = autoplayRowsAfterCoverFilter(
         sessionRadioFor(seedSong, sessionSong),
         seedSong,
@@ -733,7 +733,7 @@ private suspend fun rankedExtensions(
         excludedIds = sessionIds,
         limit = limit,
     )
-    if (ordered.isEmpty()) return emptyList()
+    if (ordered.isEmpty()) return@tasteWorkOffMain emptyList()
 
     val byId = eligible.associateBy { it.videoId }
     val songs = ordered.mapNotNull { byId[it.videoId] }
@@ -755,8 +755,18 @@ private suspend fun rankedExtensions(
         "autoplay: +radio $radio +similar $similarCount +fav $favouriteCount ($titles)",
         about = seedSong.videoId,
     )
-    return songs
+    songs
 }
+
+/**
+ * Runs the taste ranking off the caller's dispatcher.
+ *
+ * Every caller of [rankedExtensions] is a Main-scoped playback coroutine, and
+ * building the pool, ranking it and writing the similar-cache file there made
+ * one main-thread message last hundreds of milliseconds.
+ */
+internal suspend fun <T> tasteWorkOffMain(block: suspend () -> T): T =
+    withContext(Dispatchers.Default) { block() }
 
 /** The seed's artists and ids, as the ordering pass compares them. */
 private fun seedProfileOf(song: Song): AutoplayOrder.SeedProfile =
