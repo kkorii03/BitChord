@@ -50,3 +50,5 @@ AGENTS.md
 
 # Claude Code session files (launch configs, worktrees)
 .claude/
+__pycache__/
+*.pyc
