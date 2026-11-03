@@ -1,0 +1,35 @@
+BITCHORD 1.9 (Kotlin Android, branch task/u19-tg, worktree C:\Users\jang\Desktop\BitChord\BitChord-u19tg).
+Goal: lyric sync accuracy. Worst measured case = Korean COVER songs (a cover artist's audio with the original song's lyrics).
+
+## Evidence
+Emulator sync scores (strict = median |error| <= 0.12 s on lines both Whisper models heard):
+- cover playlist "오화요" (26 tracks), 10 songs played cold: **0/12 strict** (before a gate fix), **0/5 strict** (after). Non-cover sets score 2/7 to 7/17.
+- Real phone (vc140, 2026-11-04 01:29-01:30 KST), the same cover playlist, app logcat I-level:
+```
+play: -> Tempest (요란 搖亂) - Lucia · 오화요 커버 (s4PaBWBFK4g) idx=0/26 reason=PLAYLIST_CHANGED meta=ok
+[s4PaBWBFK4g] sync perline: anchors=11 applied=11 maxAbsMs=300
+lyrics-sync: s4PaBWBFK4g source=file:lrc.red@s4PaBWBFK4g base=measured shift=-4459ms match=98% bias=0ms manual=0ms stored=y recheck=none
+[50cpFE2r1d4] sync perline: anchors=5 applied=11 maxAbsMs=4000
+```
+So on a cover the app applies a whole-song shift of -4459 ms and per-line moves up to 4000 ms, yet the measured error on emulators is still large. A cover's audio is NOT the recording the lyrics were timed against, so a "measured" base can be plausible but wrong.
+
+## Tasks
+1. Trace where `base=measured` comes from for a cover: which measurement produced -4459 ms, what it compares against (which rendition/clock), and whether the app knows the playing audio is a cover of the lyric's song. Give file:line for each step.
+2. Name the single most likely reason a cover ends up with a wrong-but-confident base (or a wrong per-line layer). Prove it with a JVM test that FAILS on the current code, then make the smallest fix (e.g. refuse to apply a measured base when the audio key does not match the clock the measurement was taken on, or bound/verify it). No new settings, no new abstraction, no redesign.
+3. If the root cause is upstream of the shared code (network/lyrics matching), say so with file:line and do NOT invent a fix; instead add the missing diagnostic log line (one line) that names the mismatch, plus the test for the guard you did change.
+
+## Files of interest
+- app/src/main/java/com/music/bitchord/playback/smart/LyricsTiming.kt (base/shift/recheck, `base-choice:`, `lyrics-sync:`, `lyrics-refine:`)
+- shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/lyrics/ (LyricsPerLine.kt, LyricsWordAlign.kt, RefinePolicy, EstimatedSweep, HeardWords)
+- app/.../playback/smart/VideoAudio.kt, AudioDecoder.kt (song check audio)
+- ko/ packages: cover handling ("오화요 커버" byline)
+
+## Rules
+- Keep upstream code intact (ko/ + `// [KO]` hooks). Unknown Android/Media3 API: context7.
+- Do NOT touch .github/workflows, signing files, or the songSyncGate/driveDirectWindow code (recent fixes aca2017b4, 0ffc79724).
+- New test class names must be in the summary (you may not edit workflows). Every new test must FAIL on current code.
+- Battery first: no polling, no extra decodes, event-based only. grep/Select-String, not rg.
+- Follow AGENTS.md (ponytail): smallest complete change.
+
+## Summary (max 10 lines)
+files changed / root cause with file:line / key change / tests and result on base vs after / REMOVED-LINES AUDIT / what you did not do and why.
