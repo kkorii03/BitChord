@@ -764,6 +764,24 @@ object LyricsTiming {
 
     private val loggedClocks = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
+    private val loggedMeasuredRendition = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * A measured base for a cover is taken against a different rendition (the
+     * record the lyrics are timed for), so the pair of ids explains a
+     * wrong-but-confident shift when the arrangement, not the clock, differs.
+     */
+    private fun logMeasuredRendition(videoId: String, reference: String, measured: Adjustment) {
+        if (!loggedMeasuredRendition.add("$videoId|$reference")) return
+        if (loggedMeasuredRendition.size > 3_000) loggedMeasuredRendition.clear()
+        val match = (measured as? Adjustment.Mapped)?.matchPercent
+        TrackLog.d(
+            TAG,
+            "measured base on another rendition: ref=$reference playing=$videoId match=$match",
+            videoId,
+        )
+    }
+
     private fun logClocks(
         videoId: String,
         playing: Clock,
@@ -831,6 +849,11 @@ object LyricsTiming {
         // change, then the AI answer. Kept when the heard words cannot tell
         // the candidates apart or there are too few of them.
         val measured = measuredAdjustment ?: noChange
+        if (videoId != null && measured != null && entry.autoOriginal != null &&
+            entry.autoOriginal != videoId
+        ) {
+            logMeasuredRendition(videoId, entry.autoOriginal, measured)
+        }
         val defaultName = when {
             measured != null -> BaseChoicePolicy.MEASURED
             ai != null -> BaseChoicePolicy.AI
