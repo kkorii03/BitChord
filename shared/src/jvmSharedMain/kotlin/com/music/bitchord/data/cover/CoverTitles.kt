@@ -136,10 +136,12 @@ object CoverTitles {
 
     /**
      * Uploader tags that ride on a channel name: "오화요 가사포함", "오화요 MV".
-     * Only a trailing tag goes; "MV" inside a real name stays.
+     * A Latin tag needs a space or a bracket before it, so a real name ending
+     * in those letters ("DMV", "MyLyrics") stays whole; a Hangul tag may touch
+     * the name. "MV" inside a real name stays.
      */
     private val SINGER_TAGS = Regex(
-        """(?i)(?:\s*[(\[（【]?\s*(?:가사\s*포함|가사|lyrics?|mv|m/v|풀\s*버전|full\s*(?:ver(?:sion)?)?)\s*[)\]）】]?\s*)+$""",
+        """(?i)(?:\s+[(\[（【]?\s*(?:가사\s*포함|가사|lyrics?|mv|m/v|풀\s*버전|full\s*(?:ver(?:sion)?)?)\s*[)\]）】]?|[(\[（【]\s*(?:가사\s*포함|가사|lyrics?|mv|m/v|풀\s*버전|full\s*(?:ver(?:sion)?)?)\s*[)\]）】]?|\s*(?:가사\s*포함|가사|풀\s*버전))+$""",
     )
 
     private val ANY_GROUP = Regex("""\s*[(\[（【][^()\[\]（）【】]*[)\]）】]""")
@@ -763,17 +765,18 @@ object CoverTitles {
         (splitTopLevelSlash(head) ?: splitTopLevelPipe(head))?.let { (song, name) ->
             // "ㅣ(Akane Lize) Cover": a name wholly in brackets is still the name.
             val bare = name.trim().removeSurrounding("(", ")").removeSurrounding("（", "）")
-            val singer = cleanName(bare)?.takeUnless { isVersionWord(it) || isDescriptor(it) }
+            val singer = cleanSingerName(bare)?.takeUnless { isVersionWord(it) || isDescriptor(it) }
             if (singer != null) {
-                // On a cover uploader's channel, "Song / 윤미래 cover" names the
-                // original being covered, not the uploader — the phone showed
-                // the original's artist as the singer this way.
+                // On a cover uploader's channel, a slash name that is not the
+                // uploader is not a person we can credit: "Song / 콩밥특별시
+                // 경찰 야유회 cover" put a playlist name in the byline. Drop
+                // it and keep the uploader rather than show it as the original.
                 val channelName = cleanSingerName(channel) ?: channel.trim()
                 if (compactName(singer) != compactName(channelName) &&
                     compactName(channelName) in knownSingerKeys()
                 ) {
                     cleanTitle(song)?.let {
-                        return Cover(title = it, originalArtist = singer, singer = channelName)
+                        return Cover(title = it, originalArtist = null, singer = channelName)
                     }
                 }
                 songFirst(song, singer)?.let { return it }

@@ -97,8 +97,28 @@ class CoverCredit1103Test {
         val shown = StoredSongDisplay.clean(song("Song / 콩밥특별시 경찰 야유회 cover", "오화요"))
 
         assertEquals("Song", shown.title)
+        assertEquals("오화요 커버", shown.artist)
         assertEquals("오화요", shown.coverSinger)
+        assertEquals(null, shown.coverOriginalArtist)
         assertNotEquals("콩밥특별시 경찰 야유회", shown.coverSinger)
+    }
+
+    @Test
+    fun `a slash name carrying an upload tag is still the cover uploader`() {
+        CoverTitles.knownSingers = { setOf("오화요") }
+        val read = assertNotNull(CoverTitles.read("Song / 오화요 가사포함 cover", "오화요", null))
+
+        assertEquals("Song", read.title)
+        assertEquals("오화요", read.singer)
+        assertEquals(null, read.originalArtist)
+    }
+
+    @Test
+    fun `a real name ending in an upload tag word is not truncated`() {
+        assertEquals("DMV", CoverTitles.cleanSingerName("DMV"))
+        assertEquals("MyLyrics", CoverTitles.cleanSingerName("MyLyrics"))
+        assertEquals("MyFull", CoverTitles.cleanSingerName("MyFull"))
+        assertEquals("오화요", CoverTitles.cleanSingerName("오화요가사"))
     }
 
     @Test

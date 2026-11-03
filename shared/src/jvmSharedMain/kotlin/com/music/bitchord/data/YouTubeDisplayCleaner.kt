@@ -140,7 +140,7 @@ internal object YouTubeDisplayCleaner {
         // also mends titles saved by that bug. No "(cover)" is added back: the
         // title is the song's own name, as the old fork showed it.
         val title = song.title.trim()
-            .replace(COVER_MARKER, " ")
+            .replace(COVER_TITLE, " ")
             .replace(EMPTY_BRACKETS, " ")
             .replace(WHITESPACE, " ")
             .trim()
@@ -383,17 +383,12 @@ internal object YouTubeDisplayCleaner {
         RegexOption.IGNORE_CASE,
     )
 
-    /** "cover by", a bare cover tag, and the Korean word. */
-    private val COVER_MARKER = Regex(
-        """(?i)(?<![a-z])cover(?:ed)?\s*by|커버|(?<![a-z])cover(?![a-z])""",
-    )
-
     /** A title that says it is a cover without swallowing a song named "Take Cover". */
     private val COVER_TITLE = Regex(
         """(?i)(?<![a-z])cover(?:ed)?\s*by|[(\[（【]\s*(?:cover(?:ed)?|커버)\s*[)\]）】]|(?<![가-힣])커버""",
     )
 
-    /** A bracket pair with nothing but spaces inside, left by [COVER_MARKER]. */
+    /** A bracket pair with nothing but spaces inside, left by [COVER_TITLE]. */
     private val EMPTY_BRACKETS = Regex("""[(\[（【]\s*[)\]）】]""")
 
     private val LABEL_MARKERS = listOf(

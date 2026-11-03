@@ -466,6 +466,7 @@ object MusicVideoEngine {
             }
             if (loadedId != videoId) return@launch
             attempts.remove(videoId)
+            _missing.value = VideoPictureRetry.recovered(_missing.value, noPicture, videoId)
             // A catalogue track's "video" is its cover held still; nothing to show.
             if (stream == null || stream.aspect < MIN_VIDEO_ASPECT) {
                 // [KO] video-fallback: said, so a phone log shows why there is no picture.

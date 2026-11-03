@@ -98,6 +98,12 @@ class YouTubeDisplayCleanerTest {
     }
 
     @Test
+    fun `a song named Take Cover keeps its words when only the cover tag goes`() {
+        val cleaned = YouTubeDisplayCleaner.clean(song("Take Cover (cover)", "channel"))
+        assertEquals("Take Cover", cleaned.title)
+    }
+
+    @Test
     fun `a title saved with empty brackets is mended`() {
         val cleaned = YouTubeDisplayCleaner.clean(song("Night We Shine ( ) ( ) (cover)", "오화요"))
         assertEquals("Night We Shine", cleaned.title)
