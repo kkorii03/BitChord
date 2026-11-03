@@ -1704,6 +1704,22 @@ private fun planTransitionInner(
         )
     }
 
+    // Stored per track, not per source: after a mid-song rendition swap the
+    // outgoing timing still belongs to the old cut, and using it puts the mix
+    // inside the new file. A content end outside the tail window is the same
+    // evidence in a different shape (a regional timeline, or a short pass read
+    // as the whole track). Fall back to the plain end crossfade until an
+    // analysis of this rendition exists.
+    if (!AutomixWorkPolicy.analysisFitsPlayback(analysis, length)) {
+        return standardTransition(
+            length,
+            playbackTime,
+            standardFade,
+            minFadeSeconds,
+            "smart-stale-rendition",
+        )
+    }
+
     val preferredMixAnchor = min(length, mixOutAnchor.time)
     val mixAnchor =
         if (playbackTime >= preferredMixAnchor - 0.05 && preferredMixAnchor < finalMixAnchor - 1) {
