@@ -47,6 +47,42 @@ class PlayerConnectionCoverMetadataTest {
     }
 
     @Test
+    fun `a cover saved in the old cleaned shape shows the byline again`() {
+        val stored = Song(
+            videoId = "cover-meta-old",
+            title = "Marigold (cover)",
+            artist = "오화요",
+            thumbnailUrl = null,
+            isVideo = true,
+            originalTitle = "아이묭 - Marigold / cover by 오화요",
+            originalArtist = "Ohwayo",
+            coverSinger = "오화요",
+            coverOriginalArtist = "아이묭",
+        )
+
+        val metadata = stored.toMediaItem().mediaMetadata
+
+        assertEquals("Marigold", metadata.title?.toString())
+        assertEquals("아이묭 · 오화요 커버", metadata.artist?.toString())
+    }
+
+    @Test
+    fun `a cover of a song named Cover Me keeps its song name`() {
+        val upload = Song(
+            videoId = "cover-meta-word",
+            title = "Original Artist - Cover Me / cover by Singer",
+            artist = "Channel",
+            thumbnailUrl = null,
+            isVideo = true,
+        )
+
+        val metadata = upload.toMediaItem().mediaMetadata
+
+        assertEquals("Cover Me", metadata.title?.toString())
+        assertEquals("Original Artist · Singer 커버", metadata.artist?.toString())
+    }
+
+    @Test
     fun `an ordinary soundtrack row is still cleaned`() {
         val upload = Song(
             videoId = "ost-meta-1",

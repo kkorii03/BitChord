@@ -689,21 +689,43 @@ private fun Song.pickedMixQuery(configId: String): String {
 }
 
 /**
+ * The row as the lock screen, notification and Android Auto should read it:
+ * a cover as its song and the byline "원곡자 · 가수 커버", anything else as
+ * [StoredSongDisplay] cleans it.
+ *
+ * A saved row keeps its upload title in [Song.originalTitle] but an older
+ * build had already shown it as "Song (cover)" with only the singer. Clearing
+ * the cover fields on the rebuilt upload makes [CoverTitles.applyTo] read it
+ * again, so those rows get the byline too instead of staying in the old shape.
+ *
+ * A cover must not go back through the display cleaner: its shown title is
+ * the song itself, and a song called "Cover Me" would lose its name to the
+ * cleaner's cover-tag removal.
+ */
+private fun Song.sessionDisplay(): Song {
+    val storedUpload = originalTitle?.let { uploadTitle ->
+        copy(
+            title = uploadTitle,
+            artist = originalArtist ?: artist,
+            originalTitle = null,
+            originalArtist = null,
+        )
+    }
+    val shown = storedUpload?.let { CoverTitles.applyTo(it) }
+        ?.takeIf { CoverTitles.isCover(it) }
+        ?: CoverTitles.applyTo(this)
+    return if (CoverTitles.isCover(shown)) shown else StoredSongDisplay.clean(shown)
+}
+
+/**
  * @param useDownloadedFile false builds an item that streams this recording even
  *   when a file is recorded for it. Used when the file is known to be another
  *   upload's sound (see [com.music.bitchord.data.net.SongVersionPolicy]).
  */
 fun Song.toMediaItem(useDownloadedFile: Boolean = true): MediaItem {
     // A cover upload is shown as its song — see [CoverTitles]. Only what the
-    // item *shows* changes; the URI below is still built from the upload. A
-    // row restored from an older build is cleaned here as well, so the lock
-    // screen, notification and Android Auto never draw its stale upload title.
-    //
-    // Cover first, then the display cleaner: the cleaner has its own cover
-    // path, and it sets [Song.originalTitle], which makes [CoverTitles.applyTo]
-    // return the row untouched — leaving the lock screen with the upload's
-    // "(cover)" title and the singer alone instead of "원곡자 · 가수 커버".
-    val shown = StoredSongDisplay.clean(CoverTitles.applyTo(this))
+    // item *shows* changes; the URI below is still built from the upload.
+    val shown = sessionDisplay()
     val sourceTrack = SourceRegistry.parseTrackKey(videoId)
     // A row from search or a playlist carries no file of its own, but the track
     // may still be on disk from a download — see [Downloads.saved].
