@@ -8197,21 +8197,8 @@ class PlaybackService : MediaLibraryService() {
         }
         val direct = try {
             runCatching {
-                when {
-                    addonWork == null -> null
-                    // Already answered: take it, however close YouTube is.
-                    addonWork.isCompleted -> addonWork.await()
-                    !current -> DirectSourceGate.awaitLookup(videoId, addonWork)
-                    else -> {
-                        val first = DirectSourceGate.firstAnswer(addonAnswer!!, fallback)
-                        if (first is DirectSourceGate.FirstAnswer.YouTube) addonAnswer.cancel()
-                        when (first) {
-                            is DirectSourceGate.FirstAnswer.Addon -> first.stream
-                            is DirectSourceGate.FirstAnswer.YouTube ->
-                                if (first.result.isSuccess) null
-                                else DirectSourceGate.awaitLookup(videoId, addonWork)
-                        }
-                    }
+                DirectSourceGate.directAnswer(addonWork, current, addonAnswer, fallback) { work ->
+                    DirectSourceGate.awaitLookup(videoId, work)
                 }
             }
                 .onFailure { if (it is CancellationException) throw it }

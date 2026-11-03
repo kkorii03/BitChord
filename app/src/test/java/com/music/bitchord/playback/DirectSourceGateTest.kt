@@ -1,10 +1,15 @@
 package com.music.bitchord.playback
 
+import com.music.bitchord.data.sources.SourceStream
+import com.music.bitchord.data.sources.StreamFormat
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -130,5 +135,106 @@ class DirectSourceGateTest {
             "the cached current row must start its lookup without awaiting it",
             "DirectSourceGate.startLookupNow(" in settle,
         )
+    }
+
+    /**
+     * A cache-only row has no YouTube walk, so it must measure its own floor
+     * from the bytes on disk. With a null floor the second look accepts only
+     * lossless and a 320kbps addon over the cached Opus is refused.
+     */
+    @Test
+    fun aCachedCurrentRowSuppliesItsOwnFloor() {
+        val look = AudioCache.cachedLookToStart(
+            pending = false,
+            answered = false,
+            refused = false,
+            contentLength = 5_000_000L,
+            durationSec = 250,
+        )
+        assertNotNull("a fresh cached row must start its lookup", look)
+        assertEquals(160, look!!.floor!!.kbps)
+    }
+
+    /**
+     * The second look runs once per play. A seek or reopen of the same cached
+     * row must not start it again and re-light pending.
+     */
+    @Test
+    fun aSettledCachedRowDoesNotLookAgain() {
+        assertNull(AudioCache.cachedLookToStart(true, false, false, 5_000_000L, 250))
+        assertNull(AudioCache.cachedLookToStart(false, true, false, 5_000_000L, 250))
+        assertNull(AudioCache.cachedLookToStart(false, false, true, 5_000_000L, 250))
+    }
+
+    @Test
+    fun aCachedRowWithNoMeasurementStartsWithNoFloor() {
+        assertNull(AudioCache.cachedLookToStart(false, false, false, 0L, 250)?.floor)
+        assertNull(AudioCache.cachedLookToStart(false, false, false, 5_000_000L, null)?.floor)
+    }
+
+    /** The audible row takes an addon that answers before YouTube's walk. */
+    @Test
+    fun theAudibleRowTakesAnAddonThatAnswersFirst() = runBlocking {
+        val addon = CompletableDeferred<SourceStream?>()
+        val addonWork = CompletableDeferred<SourceStream?>()
+        val youtube = CompletableDeferred<Result<String>>()
+        addon.complete(SourceStream("addon-url"))
+        var awaited = false
+        val direct = DirectSourceGate.directAnswer(addonWork, current = true, addonAnswer = addon, youtube = youtube) {
+            awaited = true
+            it.await()
+        }
+        assertEquals("addon-url", direct?.url)
+        assertFalse(awaited)
+    }
+
+    /** YouTube answering first plays at once; the addon lookup is not cancelled. */
+    @Test
+    fun theAudibleRowTakesYouTubeWhenItAnswersFirst() = runBlocking {
+        val addon = CompletableDeferred<SourceStream?>()
+        val addonWork = CompletableDeferred<SourceStream?>()
+        val youtube = CompletableDeferred<Result<String>>()
+        youtube.complete(Result.success("youtube-url"))
+        var awaited = false
+        val direct = DirectSourceGate.directAnswer(addonWork, current = true, addonAnswer = addon, youtube = youtube) {
+            awaited = true
+            it.await()
+        }
+        assertNull(direct)
+        assertTrue("the deadline wrapper is cancelled, the lookup itself stays", addon.isCancelled)
+        assertFalse("a YouTube win must not wait for the addon", awaited)
+    }
+
+    /** A YouTube failure leaves the addon as the only thing that can play. */
+    @Test
+    fun theAudibleRowFallsBackToTheAddonWhenYouTubeFails() = runBlocking {
+        val addon = CompletableDeferred<SourceStream?>()
+        val addonWork = CompletableDeferred<SourceStream?>()
+        val youtube = CompletableDeferred<Result<String>>()
+        youtube.complete(Result.failure(IllegalStateException("age-gated")))
+        val direct = DirectSourceGate.directAnswer(addonWork, current = true, addonAnswer = addon, youtube = youtube) {
+            SourceStream("addon-url")
+        }
+        assertEquals("addon-url", direct?.url)
+    }
+
+    /**
+     * A row being prepared ahead waits for its addon even when YouTube is
+     * already ready. Racing it would start the next track on the fallback that
+     * Direct Source Stream exists to avoid.
+     */
+    @Test
+    fun aNextRowWaitsForTheAddonEvenWhenYouTubeIsReady() = runBlocking {
+        val addonWork = CompletableDeferred<SourceStream?>()
+        val youtube = CompletableDeferred<Result<String>>()
+        youtube.complete(Result.success("youtube-url"))
+        var awaited = false
+        val direct = DirectSourceGate.directAnswer(addonWork, current = false, addonAnswer = null, youtube = youtube) {
+            awaited = true
+            addonWork.complete(SourceStream("addon-url"))
+            addonWork.await()
+        }
+        assertTrue("the next row must take the addon path", awaited)
+        assertEquals("addon-url", direct?.url)
     }
 }

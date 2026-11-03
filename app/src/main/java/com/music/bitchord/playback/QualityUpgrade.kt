@@ -712,10 +712,12 @@ object QualityUpgrade {
     }
 
     /**
-     * Test seam. [couldStillUpgrade] cannot answer this on its own — it also
-     * consults [SourceResolver.canSubstituteForYouTube], which needs a
-     * populated registry — so the verdict is read directly to keep the scoping
-     * of [asked] testable without standing a source list up around it.
+     * Whether [mediaId]'s second look has already answered for this play.
+     *
+     * [couldStillUpgrade] cannot answer this on its own — it also consults
+     * [SourceResolver.canSubstituteForYouTube], which needs a populated
+     * registry — so the verdict is read directly by the cached-entry settle
+     * path and by tests.
      */
     internal fun hasAnsweredFor(mediaId: String): Boolean = mediaId in asked
 

@@ -281,6 +281,39 @@ object DirectSourceGate {
     }
 
     /**
+     * Which stream the direct resolve takes, from the addon lookup and
+     * YouTube's walk. Null means "play YouTube".
+     *
+     * The audible row races [addonAnswer] — the lookup under its own deadline —
+     * against [youtube]; a YouTube win leaves the lookup running for the second
+     * look. A YouTube failure falls back to the addon because there is nothing
+     * to play otherwise. A row being prepared ahead does not race at all: it
+     * waits for the addon, and only then falls back.
+     *
+     * Kept here rather than in the service so the ordering is testable with
+     * fake deferreds.
+     */
+    internal suspend fun <Y> directAnswer(
+        addonWork: Deferred<SourceStream?>?,
+        current: Boolean,
+        addonAnswer: Deferred<SourceStream?>?,
+        youtube: Deferred<Result<Y>>,
+        awaitAddon: suspend (Deferred<SourceStream?>) -> SourceStream?,
+    ): SourceStream? {
+        if (addonWork == null) return null
+        if (addonWork.isCompleted) return addonWork.await()
+        if (!current) return awaitAddon(addonWork)
+        val answer = addonAnswer ?: return awaitAddon(addonWork)
+        return when (val first = firstAnswer(answer, youtube)) {
+            is FirstAnswer.Addon -> first.stream
+            is FirstAnswer.YouTube -> {
+                answer.cancel()
+                if (first.result.isSuccess) null else awaitAddon(addonWork)
+            }
+        }
+    }
+
+    /**
      * Whether waiting for the addons could still produce an answer. Each flag
      * is one addon resting after repeated failures; when all are, the search
      * would spend the window only to return null, so playback goes straight to
@@ -299,15 +332,22 @@ object DirectSourceGate {
      * when it lands; one that came back empty leaves the second look to search
      * for itself.
      *
-     * Called only once the YouTube URL is in hand, because that walk is what
-     * sets the bitrate a candidate has to beat.
+     * [playing] is what the listener is hearing: normally the YouTube walk's
+     * own bitrate, which is why the caller waits for the URL. A row playing
+     * entirely from the cache supplies the measured bytes on disk instead,
+     * because no walk happened for it. Null is an unknown floor, and nothing
+     * lossy clears it.
      */
-    fun startedOnYouTube(videoId: String, target: TrackMatcher.Target) {
+    fun startedOnYouTube(
+        videoId: String,
+        target: TrackMatcher.Target,
+        playing: StreamFormat? = NerdStats.pickedBitrateKbps(videoId)?.let { StreamFormat(kbps = it) },
+    ) {
         val pending = QualityUpgrade.settledForLess(
             mediaId = videoId,
             target = target,
             inFlight = stillLooking(videoId),
-            playing = NerdStats.pickedBitrateKbps(videoId)?.let { StreamFormat(kbps = it) },
+            playing = playing,
         )
         if (!pending) NerdStats.onLosslessRaceEnd(videoId)
     }

@@ -45,6 +45,7 @@ import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
+import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.startup.StartupWork
@@ -1409,10 +1410,20 @@ object AudioCache {
         // [KO] first-audio: the cached bytes are ready to read now. Starting
         // the addon lookup beside playback lets the ordinary second look
         // replace them, instead of holding the first note for its window.
+        // Once that look has answered for this play there is nothing left to
+        // do here, so a seek does not re-light it — see [cachedLookToStart].
         if (DirectSourceGate.isCurrent(videoId)) {
-            if (!QualityUpgrade.isPending(videoId)) {
-                val work = DirectSourceGate.startLookupNow(videoId, SourceResolver.targetIn(uri))
-                if (work != null) DirectSourceGate.startedOnYouTube(videoId, SourceResolver.targetIn(uri))
+            val target = SourceResolver.targetIn(uri)
+            val look = cachedLookToStart(
+                pending = QualityUpgrade.isPending(videoId),
+                answered = QualityUpgrade.hasAnsweredFor(videoId),
+                refused = QualityUpgrade.hasRefusedFor(videoId),
+                contentLength = contentLengthOf(uri),
+                durationSec = target.durationSec,
+            )
+            if (look != null) {
+                val work = DirectSourceGate.startLookupNow(videoId, target)
+                if (work != null) DirectSourceGate.startedOnYouTube(videoId, target, playing = look.floor)
             }
             return
         }
@@ -1452,6 +1463,41 @@ object AudioCache {
             // A released media period interrupts its loader; that is a skip.
             throw java.io.InterruptedIOException("direct lookup for $videoId interrupted")
         }
+    }
+
+    /**
+     * Whether the audible cached row should start its addon lookup, and the
+     * floor that look measures candidates against.
+     *
+     * A cache-only row never went through a YouTube resolve, so
+     * [DirectSourceGate.startedOnYouTube] has no bitrate for it; without a
+     * floor of its own the second look is lossless-only and a lossy addon above
+     * the cached Opus is refused, leaving the row on YouTube for good. The
+     * bytes on disk and the catalogue runtime give the same estimate the
+     * cached-track path uses.
+     *
+     * Null also means "do not look again": the question is already pending for
+     * this play, has answered, or was refused after a substitution broke the
+     * track.
+     */
+    internal data class CachedLook(val floor: StreamFormat?)
+
+    internal fun cachedLookToStart(
+        pending: Boolean,
+        answered: Boolean,
+        refused: Boolean,
+        contentLength: Long,
+        durationSec: Int?,
+    ): CachedLook? = when {
+        pending || answered || refused -> null
+        else -> CachedLook(cachedBitrateFloor(contentLength, durationSec))
+    }
+
+    /** Bytes over runtime as a bitrate; the same conservative estimate as the cached-track path. */
+    internal fun cachedBitrateFloor(contentLength: Long, durationSec: Int?): StreamFormat? {
+        val seconds = durationSec?.takeIf { it > 0 } ?: return null
+        val bytes = contentLength.takeIf { it > 0 } ?: return null
+        return StreamFormat(kbps = (bytes * 8 / seconds / 1000).toInt())
     }
 
     /** Clears [key]'s YouTube bytes so an addon's file can fill it from the top. */
