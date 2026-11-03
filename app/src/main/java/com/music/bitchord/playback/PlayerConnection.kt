@@ -695,10 +695,13 @@ private fun Song.pickedMixQuery(configId: String): String {
  */
 fun Song.toMediaItem(useDownloadedFile: Boolean = true): MediaItem {
     // A cover upload is shown as its song — see [CoverTitles]. Only what the
-    // item *shows* changes; the URI below is still built from the upload. A
-    // row restored from an older build is cleaned here as well, so the lock
-    // screen, notification and Android Auto never draw its stale upload title.
-    val shown = CoverTitles.applyTo(StoredSongDisplay.clean(this))
+    // item *shows* changes; the URI below is still built from the upload. Read
+    // the cover before cleaning: the cleaner rewrites the upload to
+    // "Song (cover)" and keeps only the singer, losing the original artist the
+    // byline needs. A row that is not a cover is still cleaned, so the lock
+    // screen, notification and Android Auto never draw a stale upload title.
+    val applied = CoverTitles.applyTo(this)
+    val shown = if (applied.originalTitle != null) applied else StoredSongDisplay.clean(this)
     val sourceTrack = SourceRegistry.parseTrackKey(videoId)
     // A row from search or a playlist carries no file of its own, but the track
     // may still be on disk from a download — see [Downloads.saved].
