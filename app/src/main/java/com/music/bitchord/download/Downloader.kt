@@ -611,7 +611,17 @@ object Downloader {
     /** Enough to see past an XML prolog to an `<MPD`, and far more than any magic number needs. */
     private const val PROBE_BYTES = 512
 
-    private fun open(url: String, position: Long, length: Long) = Http.client
+    /**
+     * The client a range fetch for [url] leaves through.
+     *
+     * A stream URL minted through the proxy is bound to the proxy's address, so
+     * its bytes must go the same way even while health memory says to bypass —
+     * see [ProxyPlayback.mediaClientFor]. Everything else keeps the shared
+     * client.
+     */
+    internal fun clientFor(url: String) = ProxyPlayback.mediaClientFor(url)
+
+    private fun open(url: String, position: Long, length: Long) = clientFor(url)
         .newCall(
             Request.Builder()
                 .url(url)
