@@ -1,5 +1,4 @@
-# Default smoke list: fixed 10-song set (11-02 user: 10 songs, 1.9 only).
-# 3 MV (song-version swap), 2 HQ (upgrade), 5 covers from the sync set.
+# smoke10: fixed 10-song comparison set (tools\smoke10.ps1)
 -RJSbO8UZVY	mv
 QYh6mYIJG2Y	mv
 ekzHIouo8Q4	mv
