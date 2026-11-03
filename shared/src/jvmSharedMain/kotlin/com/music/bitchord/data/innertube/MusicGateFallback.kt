@@ -175,6 +175,17 @@ object MusicGateFallback {
     }
 
     /**
+     * Whether a history-tracking block needs a player-JS signature timestamp.
+     *
+     * Only `music.youtube.com`'s WEB_REMIX player asks for one. A gated
+     * session's tracking block comes from youtube.com's IOS/WEB player, which
+     * answers without it (measured: video dQw4w9WgXcQ, no `signatureTimestamp`,
+     * `playbackTracking.videostatsPlaybackUrl` still returned). Fetching one
+     * there can only fail and be retried once per track.
+     */
+    fun trackingNeedsSignatureTimestamp(gateActive: Boolean = isActive()): Boolean = !gateActive
+
+    /**
      * Whether a failed Music request may be answered from the youtube.com
      * fallback.
      *

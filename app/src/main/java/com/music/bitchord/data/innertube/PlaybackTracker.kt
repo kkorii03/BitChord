@@ -339,11 +339,14 @@ object PlaybackTracker {
      */
     private suspend fun open(videoId: String): Boolean = lock.withLock {
         if (!trackingAllowed()) return@withLock true
-        // The one thing the tracking request cannot be answered without. Fetched
-        // through [StreamResolver] so it is shared with — and usually already
-        // warmed by — the resolve that is starting this very track.
-        val signatureTimestamp = StreamResolver.signatureTimestamp(videoId)
-        if (signatureTimestamp == null) {
+        // The one thing the Music client's tracking request cannot be answered
+        // without. The gated youtube.com fallback does not ask for it, so
+        // fetching it there is a player-JS download that can only fail and be
+        // retried per track (see [MusicGateFallback.trackingNeedsSignatureTimestamp]).
+        val needsSignatureTimestamp = MusicGateFallback.trackingNeedsSignatureTimestamp()
+        val signatureTimestamp =
+            if (needsSignatureTimestamp) StreamResolver.signatureTimestamp(videoId) else null
+        if (needsSignatureTimestamp && signatureTimestamp == null) {
             TrackLog.w(TAG, "no signature timestamp yet; retrying history for $videoId")
             return@withLock false
         }
