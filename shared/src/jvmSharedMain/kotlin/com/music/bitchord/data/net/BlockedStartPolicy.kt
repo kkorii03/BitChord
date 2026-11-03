@@ -198,6 +198,44 @@ object BlockedStartPolicy {
     ): Boolean = directRefused && innerTubeXStillRunning && elapsedMs >= DIRECT_HOLD_MS
 
     /**
+     * Whether a gated start should hand the track to the proxy after the same
+     * short hold even though no direct client has refused yet.
+     *
+     * The direct path is benched after five refusals in six tracks, so the
+     * first ask on the next blocked row is InnerTubeX alone — the 8-10 s walk
+     * in the 11-03 report. Waiting for that walk to refuse left the proxy no
+     * time at all (its race window had already expired), which is why the
+     * proxy never won. In a gated region the proxy is the known workaround, so
+     * it starts beside the first ask once the hold has passed:
+     *
+     *  - not gated                     -> false (no proxy was asked for)
+     *  - InnerTubeX already answered   -> false (its answer is in hand)
+     *  - still running, under the hold -> false (let the direct/learned ask lead)
+     *  - still running, at/over hold   -> true
+     */
+    fun shouldStartProxyWhileWaiting(
+        gated: Boolean,
+        innerTubeXStillRunning: Boolean,
+        elapsedMs: Long,
+    ): Boolean = gated && innerTubeXStillRunning && elapsedMs >= DIRECT_HOLD_MS
+
+    /**
+     * The ceiling for the proxy leg of an early race.
+     *
+     * A gated start is bounded even before the first refusal arrives: that
+     * refusal is what used to earn the short window, and waiting for it was
+     * the bug. Outside the gate the old unbounded race is kept untouched.
+     */
+    fun proxyTimeoutMs(
+        gated: Boolean,
+        blockedSignal: Boolean,
+        elapsedMs: Long,
+        remainingMs: Long,
+    ): Long =
+        if (!gated && !blockedSignal) Long.MAX_VALUE
+        else minOf(timeoutFor(BlockedStartStep.PROXY, elapsedMs), remainingMs)
+
+    /**
      * Whether the high-quality source is the next step after the alternate
      * lookup. This is the same condition the playback rescue used before the
      * policy existed, kept as one truth table so a later change cannot let a

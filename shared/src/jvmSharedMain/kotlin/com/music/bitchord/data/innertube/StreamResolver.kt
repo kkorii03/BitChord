@@ -822,7 +822,11 @@ object StreamResolver {
         }
 
         suspend fun tryInnerTubeXWatchingDirect(preferredManifest: String?): Stream? {
-            val precheck = directPrecheck ?: return tryInnerTubeX(preferredManifest)
+            // A benched direct path has no probe to watch, but the track must
+            // still get its proxy after the same hold. Returning straight to
+            // InnerTubeX here is what let its 8-10 s walk spend the whole
+            // rescue before the proxy was even asked (11-03 report).
+            val precheck = directPrecheck
             val itx = resolverScope.async(TrackLog.about(videoId)) {
                 tryInnerTubeX(preferredManifest)?.let { DirectRun(it, client = null) }
             }
@@ -834,7 +838,14 @@ object StreamResolver {
             // a stream or an ordinary slow probe still lets InnerTubeX lead.
             val raced = try {
                 withTimeoutOrNull(BlockedStartPolicy.DIRECT_HOLD_MS) {
-                    raceDirectDefinitive(precheck, itx)
+                    if (precheck != null) {
+                        raceDirectDefinitive(precheck, itx)
+                    } else {
+                        // No direct probe: let InnerTubeX use the head start,
+                        // then the proxy joins it. Awaiting the deferred does
+                        // not cancel the walk when the hold expires.
+                        itx.await()?.let { DirectVerdictRace.ViaInnerTubeX(it) }
+                    }
                 }
             } catch (cancelled: CancellationException) {
                 itx.cancel()
@@ -856,7 +867,11 @@ object StreamResolver {
                     DirectVerdictRace.None -> null
                 }
             }
-            val directRun = if (precheck.isCompleted) runCatching { precheck.getCompleted() }.getOrNull() else null
+            val directRun = if (precheck?.isCompleted == true) {
+                runCatching { precheck.getCompleted() }.getOrNull()
+            } else {
+                null
+            }
             if (directRun is DirectProbe.Gone) {
                 itx.cancel()
                 directUnplayable = true
@@ -874,33 +889,44 @@ object StreamResolver {
                     UnplayableReason.keepTrackSpecific(directUnplayableReason, directRun.reason)
             }
             val elapsed = MonotonicClock.nowMs() - resolveStart
-            if (BlockedStartPolicy.shouldStartProxyEarly(
+            // A direct probe that already has a playable stream is not a
+            // blocked start: InnerTubeX still leads it, and racing the proxy
+            // would only add a Tokyo request to a track that can play.
+            val directStreamReady = directRun is DirectProbe.Stream
+            if ((BlockedStartPolicy.shouldStartProxyEarly(
                     directRefused = directRefused,
                     innerTubeXStillRunning = !itx.isCompleted,
                     elapsedMs = elapsed,
-                ) && ProxyPlayback.canResolveViaProxy() && !proxyAttempted
+                ) || (!directStreamReady && BlockedStartPolicy.shouldStartProxyWhileWaiting(
+                    gated = gated,
+                    innerTubeXStillRunning = !itx.isCompleted,
+                    elapsedMs = elapsed,
+                ))) && ProxyPlayback.canResolveViaProxy() && !proxyAttempted
             ) {
                 proxyAttempted = true
                 TrackLog.d(
                     TAG,
-                    BlockedStartPolicy.logLine(videoId, BlockedStartStep.DIRECT, "refused", elapsed),
+                    BlockedStartPolicy.logLine(
+                        videoId,
+                        BlockedStartStep.DIRECT,
+                        if (directRefused) "refused" else "waiting",
+                        elapsed,
+                    ),
                 )
                 TrackLog.i(
                     TAG,
                     BlockedStartPolicy.logLine(videoId, BlockedStartStep.PROXY, "start", elapsed),
                 )
-                // Only a real blocked-start signal earns the short proxy
-                // ceiling. An ordinary refusal outside a gated region keeps the
-                // old unbounded race: cutting it at the 2.5 s policy window
-                // would change a path that was not the one being fixed.
-                val proxyTimeout = if (blockedSignal) {
-                    minOf(
-                        BlockedStartPolicy.timeoutFor(BlockedStartStep.PROXY, elapsed),
-                        blockedBudget.remainingMs(),
-                    )
-                } else {
-                    Long.MAX_VALUE
-                }
+                // A gated start is bounded even before the first refusal
+                // arrives: waiting for that refusal was what left the proxy
+                // no window at all. An ordinary refusal outside the gate keeps
+                // the old unbounded race.
+                val proxyTimeout = BlockedStartPolicy.proxyTimeoutMs(
+                    gated = gated,
+                    blockedSignal = blockedSignal,
+                    elapsedMs = elapsed,
+                    remainingMs = blockedBudget.remainingMs(),
+                )
                 val itxStream = resolverScope.async(TrackLog.about(videoId)) { itx.await()?.stream }
                 // The whole race is bounded, not just the proxy leg. A proxy
                 // failure that landed first used to leave the race waiting on
@@ -938,9 +964,15 @@ object StreamResolver {
                 }
                 val winner = racedPair?.first
                 val won = racedPair?.second
-                if (winner == "proxy" || racedPair == null) {
+                if (winner == "proxy") {
                     itxStream.cancel()
                     itx.cancel()
+                } else if (racedPair == null) {
+                    // The proxy window closed without an answer. Leave the
+                    // InnerTubeX walk running for the final race below instead
+                    // of cancelling it: awaiting a cancelled deferred would
+                    // throw CancellationException and abort the whole resolve.
+                    itxStream.cancel()
                 }
                 TrackLog.i(
                     TAG,
@@ -965,7 +997,7 @@ object StreamResolver {
                     throw deadProxy
                 }
                 if (BlockedStartPolicy.shouldSkipExtraction(
-                        directRefused = true,
+                        directRefused = directRefused,
                         proxyFailed = true,
                     )
                 ) {
@@ -986,7 +1018,13 @@ object StreamResolver {
             // exactly. The direct result is already complete, so this costs no
             // second request.
             val outcome = try {
-                raceDirectDefinitive(precheck, itx)
+                if (precheck != null) {
+                    raceDirectDefinitive(precheck, itx)
+                } else {
+                    // No direct probe to watch: InnerTubeX is the only ask.
+                    itx.await()?.let { DirectVerdictRace.ViaInnerTubeX(it) }
+                        ?: DirectVerdictRace.None
+                }
             } catch (cancelled: CancellationException) {
                 itx.cancel()
                 throw cancelled
@@ -1052,14 +1090,12 @@ object StreamResolver {
                 // own fourteen seconds, and the track waited for both even
                 // though the first refusal was already in hand. The same
                 // budget the rest of the rescue obeys applies here.
-                val proxyTimeout = if (blockedSignal) {
-                    minOf(
-                        BlockedStartPolicy.timeoutFor(BlockedStartStep.PROXY, elapsedNow),
-                        blockedBudget.remainingMs(),
-                    )
-                } else {
-                    Long.MAX_VALUE
-                }
+                val proxyTimeout = BlockedStartPolicy.proxyTimeoutMs(
+                    gated = gated,
+                    blockedSignal = blockedSignal,
+                    elapsedMs = elapsedNow,
+                    remainingMs = blockedBudget.remainingMs(),
+                )
                 val raced = if (proxyTimeout <= 0L) {
                     null
                 } else {
@@ -1095,26 +1131,27 @@ object StreamResolver {
                 // IOS/ANDROID player first (~0.3 s). When it answers UNPLAYABLE
                 // that is the first refusal: Blue Valentine then spent 10 s on
                 // InnerTubeX before the proxy was tried (14.3 s to first
-                // sound), so the proxy starts beside InnerTubeX from here.
+                // sound), so the proxy starts beside InnerTubeX from here. A
+                // benched direct path is the same silence, so the proxy starts
+                // there too rather than waiting for a refusal that will never
+                // be asked for.
                 tryDirect() ?: if (goneRefusal()) {
                     null
-                } else if (directUnplayable &&
-                    ProxyPlayback.canResolveViaProxy() && !proxyAttempted
-                ) {
+                } else if (ProxyPlayback.canResolveViaProxy() && !proxyAttempted) {
                     proxyAttempted = true
                     val elapsedNow = MonotonicClock.nowMs() - resolveStart
                     TrackLog.i(
                         TAG,
-                        "proxy-playback: $videoId early race (direct refused at ${elapsedNow}ms)",
+                        "proxy-playback: $videoId early race " +
+                            "(${if (directUnplayable) "direct refused" else "direct benched or slow"} " +
+                            "at ${elapsedNow}ms)",
                     )
-                    val proxyTimeout = if (blockedSignal) {
-                        minOf(
-                            BlockedStartPolicy.timeoutFor(BlockedStartStep.PROXY, elapsedNow),
-                            blockedBudget.remainingMs(),
-                        )
-                    } else {
-                        Long.MAX_VALUE
-                    }
+                    val proxyTimeout = BlockedStartPolicy.proxyTimeoutMs(
+                        gated = gated,
+                        blockedSignal = blockedSignal,
+                        elapsedMs = elapsedNow,
+                        remainingMs = blockedBudget.remainingMs(),
+                    )
                     val raced = if (proxyTimeout <= 0L) {
                         null
                     } else {

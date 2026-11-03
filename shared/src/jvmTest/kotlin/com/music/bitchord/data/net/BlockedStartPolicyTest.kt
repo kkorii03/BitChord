@@ -167,6 +167,76 @@ class BlockedStartPolicyTest {
     }
 
     @Test
+    fun `a gated start asks the proxy after the hold even without a direct refusal`() {
+        assertTrue(
+            BlockedStartPolicy.shouldStartProxyWhileWaiting(
+                gated = true,
+                innerTubeXStillRunning = true,
+                elapsedMs = BlockedStartPolicy.DIRECT_HOLD_MS,
+            ),
+            "a benched direct path must not leave the proxy waiting for InnerTubeX's 8-10 s walk",
+        )
+        assertFalse(
+            BlockedStartPolicy.shouldStartProxyWhileWaiting(
+                gated = true,
+                innerTubeXStillRunning = true,
+                elapsedMs = BlockedStartPolicy.DIRECT_HOLD_MS - 1,
+            ),
+            "InnerTubeX keeps its short head start",
+        )
+        assertFalse(
+            BlockedStartPolicy.shouldStartProxyWhileWaiting(
+                gated = true,
+                innerTubeXStillRunning = false,
+                elapsedMs = 5_000L,
+            ),
+            "InnerTubeX already answered",
+        )
+        assertFalse(
+            BlockedStartPolicy.shouldStartProxyWhileWaiting(
+                gated = false,
+                innerTubeXStillRunning = true,
+                elapsedMs = 5_000L,
+            ),
+            "no proxy was asked for outside the gate",
+        )
+    }
+
+    @Test
+    fun `the proxy window is bounded in a gated region before any refusal arrives`() {
+        assertEquals(
+            BlockedStartPolicy.PROXY_TIMEOUT_MS,
+            BlockedStartPolicy.proxyTimeoutMs(
+                gated = true,
+                blockedSignal = false,
+                elapsedMs = BlockedStartPolicy.DIRECT_HOLD_MS,
+                remainingMs = BlockedStartPolicy.RESOLVER_BUDGET_MS,
+            ),
+            "the proxy must not be left unbounded just because no refusal has landed yet",
+        )
+        assertEquals(
+            Long.MAX_VALUE,
+            BlockedStartPolicy.proxyTimeoutMs(
+                gated = false,
+                blockedSignal = false,
+                elapsedMs = BlockedStartPolicy.DIRECT_HOLD_MS,
+                remainingMs = BlockedStartPolicy.RESOLVER_BUDGET_MS,
+            ),
+            "an ordinary start outside the gate keeps the old unbounded race",
+        )
+        assertEquals(
+            0L,
+            BlockedStartPolicy.proxyTimeoutMs(
+                gated = true,
+                blockedSignal = true,
+                elapsedMs = BlockedStartPolicy.RESOLVER_BUDGET_MS,
+                remainingMs = 0L,
+            ),
+            "a spent budget does not start work that can only outlive the listener",
+        )
+    }
+
+    @Test
     fun `the plan is the same walk nextStep describes`() {
         val walked = buildList {
             var step: BlockedStartStep? = BlockedStartStep.DIRECT
