@@ -1,0 +1,15 @@
+Kotlin Android app (task/u19-tg). User 11-03 13:23 (phone): manual upgrade on 'Watermelon Sugar' (KPM_BYl-EaQ) switched to FLAC and then SILENTLY WENT BACK to YouTube 14 s later; the user had to press upgrade again. Log (nothing at all is logged for the revert):
+13:23:32.889 queue: replace n=1 at=0 size=11 by=upgrade
+13:23:32.913 upgraded to FLAC · 24-bit · 44.1 kHz at 39586ms (텔레그램)
+13:23:33.087 DECODE KPM_BYl-EaQ <- audio/flac 44.1kHz 24-bit 2ch
+13:23:37.290 hq-cache: Watermelon Sugar fully cached 35.1 MB
+13:23:39.550 nav: Player close source=motion / 13:23:39.589 nav: Detail artist / 13:23:40.156 nav: Player open source=tap
+13:23:44.315 menu:KPM_BYl-EaQ ok 1127ms
+13:23:47.193 power: decoders active=0 []
+13:23:47.247 DECODE KPM_BYl-EaQ <- audio/opus 48.0kHz   (back on YouTube, no log line says why)
+13:23:47.286 holding 6740Z634MX4 until it is within 25s of playing
+13:23:50.853 upgrade asked for by hand ... 'Watermelon Sugar' is playing 130 kbps from cache and was never resolved
+(The second upgrade at 13:24:04 stayed.) Earlier the same session the track had been re-started after a 'wrong-recording' download check (13:22:45 'KPM_BYl-EaQ is a wrong recording; streaming the song version instead').
+Task: find every path that can re-prepare the current item on the YouTube source after an upgrade (download-check repair / wrong-recording handler, resolve cache, queue replace, menu loading, direct-source gate, player reopen) and which one fired at 13:23:47. Fix it so an accepted upgrade is never undone silently; any legitimate fall-back must log one line with its reason.
+Battery first (no polling timers, event-based). Re-read every caller and type of what you change. Keep upstream code intact (Korean code in ko/ + one-line // [KO] hooks). Unknown Android/Media3/Compose APIs: context7. Use grep/Select-String (no rg). First write a JVM test that FAILS on the current code, then fix; name new test classes in the summary (you may not edit .github/workflows).
+Summary of at most 10 lines: files / root cause with file:line / key change / tests and results / REMOVED-LINES AUDIT / not done. Follow AGENTS.md (ponytail) rules.
