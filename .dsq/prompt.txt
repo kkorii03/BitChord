@@ -1,0 +1,33 @@
+﻿Kotlin Android app (task/u19-tg). User 11-03 13:24 (phone): pressed 음질 업그레이드 on 'Watermelon Sugar' (KPM_BYl-EaQ, was YouTube 323 kbps AAC). The app answered '고음질로 전환합니다' and really switched, but NO quality label (고음질 / 무손실 / 24-bit) appeared under the seek bar on the Now Playing screen. Log:
+13:24:04.319 queue: replace n=1 at=0 size=11 by=upgrade
+13:24:04.341 upgraded to FLAC · 24-bit · 44.1 kHz at 69177ms (텔레그램)
+13:24:04.356 manual upgrade answer for KPM_BYl-EaQ: 고음질로 전환합니다
+13:24:04.403 AUDIO_OUT decoder=c2.android.flac.decoder initialized in 67ms
+(screenshot at 1:19 = 13:24:14: under the seek bar nothing, only times 1:19 / -1:34)
+Task: find what the seek-bar quality label reads (format/tier source, MediaItem metadata, a StateFlow) and why a mid-play upgrade (queue replace by=upgrade + swap leg) does not update it; also check the label appears for a track that STARTS on an HQ/lossless source. Fix so the label always shows the format actually playing, updated on upgrade and on fall-back.
+Battery first (no polling timers, event-based). Re-read every caller and type of what you change. Keep upstream code intact (Korean code in ko/ + one-line // [KO] hooks). Unknown Android/Media3/Compose APIs: context7. Use grep/Select-String (no rg). First write a JVM test that FAILS on the current code, then fix; name new test classes in the summary (you may not edit .github/workflows).
+Summary of at most 10 lines: files / root cause with file:line / key change / tests and results / REMOVED-LINES AUDIT / not done. Follow AGENTS.md (ponytail) rules.
+
+== 2 차 작업 (현재 브랜치 = 이전 차수 결과) ==
+엄격 기준: 아래 독립 검토자 지적의 HIGH·MEDIUM 은 전부 고칠 것(드문 경우라는 이유로 보류 금지). 그리고 이전 차수가 docs/review-1031/ 문서에 '문서에만 남김/미해결'로 둔 HIGH·MEDIUM 도 이번에 고칠 것 — 재생 핵심 경로(곡 해석·싱크·크로스페이드)라도 고치되 문서 해당 줄에 '폰 검증 필요' 표시. 지적이 틀렸으면 코드 줄 근거로 반박을 요약에. 새로 고친 곳마다 수정 전 실패하는 테스트. 이전 차수에서 고친 것을 되돌리지 말 것.
+검토 지적:
+Error: This request would exceed your available credits given your current in-flight requests. Retry after in-flight requests settle, or add credits.
+> build · deepseek/deepseek-v4.1-flash-1017
+$ cat /home/runner/work/_temp/ds/prompt.txt; echo "=====DIFF====="; cat /home/runner/work/_temp/ds/change.diff
+Kotlin Android app (task/u19-tg). User 11-03 13:24 (phone): pressed 음질 업그레이드 on 'Watermelon Sugar' (KPM_BYl-EaQ, was YouTube 323 kbps AAC). The app answered '고음질로 전환합니다' and really switched, but NO quality label (고음질 / 무손실 / 24-bit) appeared under the seek bar on the Now Playing screen. Log:
+13:24:04.319 queue: replace n=1 at=0 size=11 by=upgrade
+13:24:04.341 upgraded to FLAC · 24-bit · 44.1 kHz at 69177ms (텔레그램)
+13:24:04.356 manual upgrade answer for KPM_BYl-EaQ: 고음질로 전환합니다
+13:24:04.403 AUDIO_OUT decoder=c2.android.flac.decoder initialized in 67ms
+(screenshot at 1:19 = 13:24:14: under the seek bar nothing, only times 1:19 / -1:34)
+Task: find what the seek-bar quality label reads (format/tier source, MediaItem metadata, a StateFlow) and why a mid-play upgrade (queue replace by=upgrade + swap leg) does not update it; also check the label appears for a track that STARTS on an HQ/lossless source. Fix so the label always shows the format actually playing, updated on upgrade and on fall-back.
+Summary of at most 10 lines: files / root cause with file:line / key change / tests and results / REMOVED-LINES AUDIT / not done. Follow AGENTS.md (ponytail) rules.=====DIFF=====
+diff --git a/app/src/main/java/com/music/bitchord/playback/PlaybackService.kt b/app/src/main/java/com/music/bitchord/playback/PlaybackService.kt
+index 64a0a44f..dc303bdb 100644
+--- a/app/src/main/java/com/music/bitchord/playback/PlaybackService.kt
++++ b/app/src/main/java/com/music/bitchord/playback/PlaybackService.kt
+@@ -1845,8 +1845,12 @@ class PlaybackService : MediaLibraryService() {
+             )
+             activeTrackIsDolbyAtmos = NerdStats.isDolbyAtmosMime(format.sampleMimeType)
+             applySpatialAudioEnabled()
+마지막 요약에 지적 번호별 처리(고침/반박+근거) 한 줄씩.
