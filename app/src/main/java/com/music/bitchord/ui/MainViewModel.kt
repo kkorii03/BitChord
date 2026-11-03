@@ -1946,7 +1946,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _homePendingShelves.value = 0
         _homeRecentlyPlayedLoading.value = false
         val previous = (_home.value as? UiState.Success)?.data.orEmpty()
-        val recent = if (_signedIn.value) async { YtMusicRepository.homeRecentlyPlayed() } else null
+        // Recents is local-first: its device half needs no account, so a guest
+        // refresh asks for it exactly as [loadHome] does.
+        val recent = async { YtMusicRepository.homeRecentlyPlayed() }
         // Top Picks keeps to its hour; a pull refreshes the feed, not the
         // picks, unless the hour has already turned over.
         if (topPicksJob?.isActive != true) loadTopPicks(identity, rebuild = false)
@@ -1981,7 +1983,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
         }
-        recent?.await()?.onSuccess { shelf ->
+        recent.await().onSuccess { shelf ->
             if (isCurrentHomeLoad(identity, generation)) {
                 shelf?.let {
                     publishHomeShelves(listOf(it), prepend = true)
