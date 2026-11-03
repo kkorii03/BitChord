@@ -40,9 +40,9 @@ fi
 # the home proxy at about playback speed), so at 45-75 s per song every song
 # was scored on the lyrics as they were before any correction, and the
 # corrections that did arrive were dropped as stale. 10 songs x 150 s = 25 min.
-WAIT_PER_SONG=${SMOKE_WAIT_S:-150}
-HQ_WAIT_PER_SONG=${SMOKE_WAIT_S:-150}
-SYNC_WAIT_PER_SONG=${SMOKE_WAIT_S:-150}
+WAIT_PER_SONG=${SMOKE_WAIT_S:-300}
+HQ_WAIT_PER_SONG=${SMOKE_WAIT_S:-300}
+SYNC_WAIT_PER_SONG=${SMOKE_WAIT_S:-300}
 START_TIMEOUT=20
 FALLBACK_TIMEOUT=15
 HQ_CONFIGURED=0
