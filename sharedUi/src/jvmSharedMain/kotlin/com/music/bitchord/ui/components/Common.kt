@@ -542,6 +542,18 @@ private fun QueueSwipeLabel(playNext: Boolean) {
     }
 }
 
+/**
+ * Whether a row draws the trailing now-playing glyph. Rows that mark the
+ * current track on their artwork with [SearchPlayingBars] leave it off while
+ * playing, but a paused row has no moving bars, so it keeps the glyph.
+ */
+internal fun showNowPlayingGlyph(
+    isCurrent: Boolean,
+    trackNumber: Int?,
+    searchPlayingStyle: Boolean,
+    isPlaying: Boolean,
+): Boolean = isCurrent && trackNumber == null && !(searchPlayingStyle && isPlaying)
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SongRowContent(
@@ -689,7 +701,7 @@ private fun SongRowContent(
                 modifier = Modifier.size(20.dp),
             )
         }
-        if (isCurrent && trackNumber == null && !searchPlayingStyle) {
+        if (showNowPlayingGlyph(isCurrent, trackNumber, searchPlayingStyle, isPlaying)) {
             Spacer(Modifier.width(8.dp))
             Icon(
                 imageVector = if (isPlaying) Icons.Rounded.GraphicEq else Icons.Rounded.PlayArrow,
