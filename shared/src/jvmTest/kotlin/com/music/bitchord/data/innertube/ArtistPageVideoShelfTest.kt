@@ -4,6 +4,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -219,5 +220,98 @@ class ArtistPageVideoShelfTest {
 
         assertEquals(1, page.sections.size)
         assertTrue(page.sections.single().items.single().isArtist)
+    }
+
+    @Test
+    fun `top songs trust musicVideoType over thumbnail shape`() {
+        fun row(videoId: String, title: String, width: Int, height: Int, videoType: String) = """
+            {
+              "musicResponsiveListItemRenderer": {
+                "playlistItemData": { "videoId": "$videoId" },
+                "flexColumns": [
+                  {
+                    "musicResponsiveListItemFlexColumnRenderer": {
+                      "text": { "runs": [ { "text": "$title" } ] }
+                    }
+                  },
+                  {
+                    "musicResponsiveListItemFlexColumnRenderer": {
+                      "text": { "runs": [ { "text": "Artist" } ] }
+                    }
+                  }
+                ],
+                "thumbnail": {
+                  "musicThumbnailRenderer": {
+                    "thumbnail": {
+                      "thumbnails": [
+                        {
+                          "url": "https://i.ytimg.com/vi/$videoId/hqdefault.jpg",
+                          "width": $width,
+                          "height": $height
+                        }
+                      ]
+                    }
+                  }
+                },
+                "overlay": {
+                  "musicItemThumbnailOverlayRenderer": {
+                    "content": {
+                      "musicPlayButtonRenderer": {
+                        "playNavigationEndpoint": {
+                          "watchEndpoint": {
+                            "videoId": "$videoId",
+                            "watchEndpointMusicConfig": { "musicVideoType": "$videoType" }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+        """
+
+        val page = InnertubeParser.parseArtistPage(
+            json(
+                """
+                {
+                  "contents": {
+                    "singleColumnBrowseResultsRenderer": {
+                      "tabs": [
+                        {
+                          "tabRenderer": {
+                            "content": {
+                              "sectionListRenderer": {
+                                "contents": [
+                                  {
+                                    "musicShelfRenderer": {
+                                      "title": { "runs": [ { "text": "Top songs" } ] },
+                                      "contents": [
+                                        ${row("omvSquare", "Official Video", 120, 120, "MUSIC_VIDEO_TYPE_OMV")},
+                                        ${row("atvWide", "Catalogue Song", 480, 270, "MUSIC_VIDEO_TYPE_ATV")}
+                                      ]
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "header": {
+                    "musicImmersiveHeaderRenderer": {
+                      "title": { "runs": [ { "text": "Artist" } ] }
+                    }
+                  }
+                }
+                """
+            ),
+        )
+
+        val songs = page.songs.associateBy { it.videoId }
+        assertTrue(songs.getValue("omvSquare").isVideo, "an OMV row stays a video even with square art")
+        assertFalse(songs.getValue("atvWide").isVideo, "an ATV row stays the song even with wide art")
     }
 }
