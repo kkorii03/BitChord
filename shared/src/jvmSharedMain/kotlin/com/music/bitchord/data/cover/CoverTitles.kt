@@ -186,16 +186,28 @@ object CoverTitles {
      * without its tag tries both ways round.
      */
     fun lyricsQueries(song: Song): List<Pair<String, String>> {
-        read(song)?.let { cover ->
-            val artist = cover.originalArtist
-            return listOfNotNull(
-                cover.title to (artist ?: cover.singer),
-                // "Song - Artist" read the other way round, in case it was "Artist - Song".
-                (artist?.let { it to cover.title })?.takeIf { cover.orderUnsure },
-                (cover.title to cover.singer).takeIf { artist != null },
-            )
-        }
+        read(song)?.let { cover -> return coverQueries(cover) }
         if (!song.isVideo) return listOf(song.title to song.artist)
+        val queries = videoLyricsQueries(song)
+        // A title the cover reader left as written may still name the original
+        // in a shape an ordinary upload shares — "Tomboy((G)I-DLE)".
+        if (queries.size == 1 && queries[0] == song.title to song.artist) {
+            lyricsFallback(song.title.trim(), song.artist)?.let { return coverQueries(it) }
+        }
+        return queries
+    }
+
+    private fun coverQueries(cover: Cover): List<Pair<String, String>> {
+        val artist = cover.originalArtist
+        return listOfNotNull(
+            cover.title to (artist ?: cover.singer),
+            // "Song - Artist" read the other way round, in case it was "Artist - Song".
+            (artist?.let { it to cover.title })?.takeIf { cover.orderUnsure },
+            (cover.title to cover.singer).takeIf { artist != null },
+        )
+    }
+
+    private fun videoLyricsQueries(song: Song): List<Pair<String, String>> {
         val raw = song.title.trim()
         val channel = song.artist
         // "곡[영어 부제] - 부가어 | 가수(영문 가수)": the bar says which side is
@@ -240,6 +252,88 @@ object CoverTitles {
         // called Y. The second is the usual one, so it is tried first.
         return listOf(name to left, name to credit)
     }
+
+    /**
+     * The cover a lyrics search should read from an upload title, including
+     * the shapes [read] leaves as written because an ordinary title shares
+     * them. Display keeps [read]; only the search asks for the original.
+     */
+    internal fun lyricsRead(title: String, channel: String): Cover? =
+        read(title, channel, null) ?: lyricsFallback(title.trim(), channel)
+
+    private fun lyricsFallback(raw: String, channel: String): Cover? {
+        if (raw.isEmpty()) return null
+        val singer = lyricName(channel).orEmpty()
+        // "Title(Artist)": the original's credit after the song. The artist may
+        // carry its own brackets — "Tomboy((G)I-DLE)".
+        if (splitTopLevelDash(raw) == null) {
+            trailingBracket(raw)?.let { (titleText, creditText) ->
+                val credit = lyricName(creditText) ?: return@let
+                if (isChannelName(credit, channel) || isVersionWord(credit) || isDescriptor(credit) ||
+                    isGenericCredit(credit) || OST.containsMatchIn(credit) ||
+                    CREDIT_BRACKET_PREFIX.containsMatchIn(credit)
+                ) {
+                    return@let
+                }
+                val title = cleanTitle(titleText) ?: return@let
+                if (isTranslation(title, credit)) return@let
+                return Cover(title = title, originalArtist = credit, singer = singer)
+            }
+        }
+        // "Artist - Title": the original's artist first, on an upload whose
+        // channel is not that artist (otherwise the same words are the row's
+        // own "Artist - Song").
+        val (left, right) = splitTopLevelDash(raw) ?: return null
+        if (isChannelName(left, channel)) return null
+        val artist = lyricName(left) ?: return null
+        if (isVersionWord(artist) || isDescriptor(artist) || isGenericCredit(artist) ||
+            OST.containsMatchIn(artist)
+        ) {
+            return null
+        }
+        val title = cleanTitle(right) ?: return null
+        if (CREDIT_BRACKET_PREFIX.containsMatchIn(title)) return null
+        if (isTranslation(artist, title)) return null
+        return Cover(title = title, originalArtist = artist, singer = singer)
+    }
+
+    /** The last bracket group, its own brackets kept: "(G)I-DLE". */
+    private fun trailingBracket(text: String): Pair<String, String>? {
+        if (text.isEmpty() || text.last() !in CLOSE_BRACKETS) return null
+        var depth = 0
+        var open = -1
+        for (i in text.indices.reversed()) {
+            val c = text[i]
+            if (c in CLOSE_BRACKETS) depth++
+            else if (c in OPEN_BRACKETS) {
+                depth--
+                if (depth == 0) {
+                    open = i
+                    break
+                }
+            }
+        }
+        if (open <= 0) return null
+        val title = text.substring(0, open).trim()
+        val credit = text.substring(open + 1, text.length - 1).trim()
+        return if (title.isEmpty() || credit.isEmpty()) null else title to credit
+    }
+
+    /** A name as the title writes it, its own brackets left on. */
+    private fun lyricName(text: String): String? {
+        val name = text.trim()
+            .split('|', '｜', '#').first()
+            .trim(' ', '-', '–', '—', '·', ',', '"', '“', '”', '「', '」', '『', '』')
+        return name.takeIf { it.isNotEmpty() && it.length <= 60 }
+    }
+
+    private const val OPEN_BRACKETS = "([（【{「『"
+    private const val CLOSE_BRACKETS = ")]）】}」』"
+
+    /** A bracket that says how or where, never whose song it is. */
+    private val CREDIT_BRACKET_PREFIX = Regex(
+        """(?i)^(?:feat|ft|featuring|with|from|prod|dir|starring|original)\b""",
+    )
 
     /** Whether [name] is a singer/artist rather than a word from the title. */
     private fun isArtistSide(name: String, channel: String): Boolean {

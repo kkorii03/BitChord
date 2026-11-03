@@ -117,6 +117,30 @@ class CoverTitleFormatsTest {
     }
 
     @Test
+    fun aCoverTitleNamesTheOriginalForTheLyricsSearch() {
+        val bracketed = CoverTitles.lyricsQuery(song("Tomboy((G)I-DLE)", "오화요"))
+        assertEquals("Tomboy", bracketed.title)
+        assertEquals("(G)I-DLE", bracketed.artist)
+        assertTrue(bracketed.artistKnown)
+        assertTrue(bracketed.alternatives.contains("Tomboy" to "오화요"))
+
+        val dash = CoverTitles.lyricsQuery(song("(G)I-DLE - Tomboy", "오화요"))
+        assertEquals("Tomboy", dash.title)
+        assertEquals("(G)I-DLE", dash.artist)
+        assertTrue(dash.artistKnown)
+
+        val coverBy = CoverTitles.lyricsQuery(song("Tomboy / cover by 오화요", "오화요"))
+        assertEquals("Tomboy", coverBy.title)
+        assertEquals("오화요", coverBy.artist)
+        assertFalse(coverBy.artistKnown)
+
+        val coverTag = CoverTitles.lyricsQuery(song("Tomboy (cover)", "오화요"))
+        assertEquals("Tomboy", coverTag.title)
+        assertEquals("오화요", coverTag.artist)
+        assertFalse(coverTag.artistKnown)
+    }
+
+    @Test
     fun fanClipOfTheSingersOwnSongWithAnEnglishSubtitleIsNotACover() {
         CoverTitles.knownSingers = { setOf("아카네 리제") }
         val fan = song("아카네 리제 - 청록(Blue Rock)", "피엔나야 클립따줘")

@@ -151,6 +151,17 @@ class LyricsQueryVariantsTest {
     }
 
     @Test
+    fun aCoverTitleNamesTheOriginalForEveryProviderQuery() {
+        val bracketed = LyricsQueryVariants.names("Tomboy((G)I-DLE)", "오화요")
+        assertEquals("tomboy", bracketed.first().title)
+        assertEquals("(G)I-DLE", bracketed.first().artist)
+
+        val dash = LyricsQueryVariants.names("(G)I-DLE - Tomboy", "오화요")
+        assertEquals("tomboy", dash.first().title)
+        assertEquals("(G)I-DLE", dash.first().artist)
+    }
+
+    @Test
     fun aCoverTitleSearchesTheSymbolicTitleUnderTheOriginalArtist() {
         val names = LyricsQueryVariants.names("정승환 '0+0' Cover (원곡 : 한로로)", "정승환")
         assertEquals("0+0", names.first().title)
