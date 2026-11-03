@@ -24,9 +24,10 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 
-# `play: -> <title> - <artist> (<id>) idx=<n>/<total> ...`
+# `play: -> <title> - <artist> (<id>) idx=<n>/<total> ...`. The title may
+# itself contain " - ", so split on the last separator before the id.
 PLAY_RE = re.compile(
-    r"play:\s*->\s+(?P<title>.*?)\s+-\s+(?P<artist>.*?)\s+"
+    r"play:\s*->\s+(?P<title>.*)\s+-\s+(?P<artist>.*?)\s+"
     r"\((?P<id>[^()]*)\)\s+idx=(?P<idx>\d+)/"
 )
 # `track-summary: <id> '<title>' video=y ... firstAudio=123|- ... ended=natural`
@@ -34,9 +35,11 @@ SUMMARY_RE = re.compile(
     r"track-summary:\s+(?P<id>\S+)\s+'(?P<title>.*?)'\s+video=(?P<video>[yn])"
     r".*?\bfirstAudio=(?P<first>-|\d+).*?\bended=(?P<ended>\S+)"
 )
-# `song version: <from> -> <to> via <how>`
+# `song version: <from> -> <to> via <how> (reason)`; the reason tells a
+# cover apart from a row with no title/artist.
 VERSION_RE = re.compile(
     r"song version:\s+(?P<src>\S+)\s+->\s+(?P<dst>\S+)\s+via\s+(?P<via>\S+)"
+    r"(?:\s+\((?P<reason>[^)]*)\))?"
 )
 # `song version: <id> kept (timeout)` and the `kept (local file, none)` shape.
 KEPT_RE = re.compile(r"song version:\s+(?P<id>\S+)\s+kept(?:\s*\((?P<why>[^)]*)\))?")
@@ -55,6 +58,7 @@ class Play:
     idx: int
     title: str
     artist: str
+    line: int = 0
 
 
 @dataclass
@@ -64,18 +68,21 @@ class Summary:
     video: bool
     first_audio: int | None
     ended: str
+    line: int = 0
 
 
 def _parse_log(text: str):
     plays: list[Play] = []
-    summaries: dict[str, Summary] = {}
-    versions: list[tuple[str, str, str]] = []
-    kept: dict[str, str] = {}
-    held: set[str] = set()
-    released: set[str] = set()
-    videos: dict[str, list[str]] = {}
+    # Events keep their log order and line number: a playlist may repeat a
+    # video id, so a row is identified by its occurrence, not by the id alone.
+    summaries: list[Summary] = []
+    versions: list[tuple[int, str, str, str, str]] = []
+    kept: list[tuple[int, str, str]] = []
+    held: list[tuple[int, str]] = []
+    released: list[tuple[int, str]] = []
+    videos: list[tuple[int, str, str]] = []
 
-    for raw in text.splitlines():
+    for line_no, raw in enumerate(text.splitlines()):
         line = raw.rstrip("\r")
         match = PLAY_RE.search(line)
         if match:
@@ -91,73 +98,92 @@ def _parse_log(text: str):
                         idx=idx,
                         title=match.group("title").strip(),
                         artist=match.group("artist").strip(),
+                        line=line_no,
                     )
                 )
             continue
         match = SUMMARY_RE.search(line)
         if match:
-            summaries[match.group("id")] = Summary(
-                id=match.group("id"),
-                title=match.group("title"),
-                video=match.group("video") == "y",
-                first_audio=None
-                if match.group("first") == "-"
-                else int(match.group("first")),
-                ended=match.group("ended"),
+            summaries.append(
+                Summary(
+                    id=match.group("id"),
+                    title=match.group("title"),
+                    video=match.group("video") == "y",
+                    first_audio=None
+                    if match.group("first") == "-"
+                    else int(match.group("first")),
+                    ended=match.group("ended"),
+                    line=line_no,
+                )
             )
             continue
         match = VERSION_RE.search(line)
         if match:
             versions.append(
-                (match.group("src"), match.group("dst"), match.group("via"))
+                (
+                    line_no,
+                    match.group("src"),
+                    match.group("dst"),
+                    match.group("via"),
+                    match.group("reason") or "",
+                )
             )
         match = KEPT_RE.search(line)
         if match:
-            kept[match.group("id")] = match.group("why") or ""
+            kept.append((line_no, match.group("id"), match.group("why") or ""))
         match = HOLD_RE.search(line)
         if match:
-            held.add(match.group("id"))
+            held.append((line_no, match.group("id")))
         match = RELEASE_RE.search(line)
         if match:
-            released.add(match.group("id"))
+            released.append((line_no, match.group("id")))
         if "video:" in line:
             bracket = BRACKET_RE.search(line)
             if bracket:
-                videos.setdefault(bracket.group("id"), []).append(line)
+                videos.append((line_no, bracket.group("id"), line))
     return plays, summaries, versions, kept, held, released, videos
 
 
-def _chain(start: str, versions: list[tuple[str, str, str]]) -> set[str]:
+def _owner(plays: list[Play], line_no: int) -> int:
+    """The play occurrence an event belongs to; before the first one, the first."""
+    owner = 0
+    for i, play in enumerate(plays):
+        if play.line <= line_no:
+            owner = i
+        else:
+            break
+    return owner
+
+
+def _chain(start: str, versions) -> set[str]:
     """The row's ids after any song-version swaps (both sides of each swap)."""
     ids = {start}
     changed = True
     while changed:
         changed = False
-        for src, dst, _via in versions:
+        for src, dst, _via, _reason in versions:
             if src in ids and dst not in ("none", "-") and dst not in ids:
                 ids.add(dst)
                 changed = True
     return ids
 
 
-def _version_result(ids: set[str], versions, kept, covers) -> str:
+def _version_result(ids: set[str], versions, kept) -> str:
     relevant = [event for event in versions if event[0] in ids]
     if relevant:
-        src, dst, _via = relevant[-1]
+        src, dst, via, reason = relevant[-1]
         if dst in ("none", "-"):
-            return "none(cover)" if src in covers or src in ids else "none"
+            why = f"{via} {reason}".lower()
+            return "none(cover)" if "cover" in why else "none"
         return f"{src}->{dst}"
-    if any(item in covers for item in ids):
-        return "cover"
-    for item in ids:
-        if item in kept:
-            why = kept[item]
+    for item, why in reversed(kept):
+        if item in ids:
             return f"kept({why})" if why else "kept"
     return "none"
 
 
 def _video_result(ids: set[str], videos, summary, version: str) -> str:
-    lines = [line for item in ids for line in videos.get(item, [])]
+    lines = [line for item, line in videos if item in ids]
     if any("no picture" in line for line in lines):
         return "no-picture"
     if any("playback failed" in line for line in lines):
@@ -169,12 +195,66 @@ def _video_result(ids: set[str], videos, summary, version: str) -> str:
     return "unknown"
 
 
+def _occurrences(plays, summaries, versions, kept, held, released, videos):
+    """Attach every event to the play occurrence it happened in."""
+    count = len(plays)
+    occ_versions: list[list] = [[] for _ in range(count)]
+    occ_kept: list[list] = [[] for _ in range(count)]
+    occ_held: list[list] = [[] for _ in range(count)]
+    occ_released: list[list] = [[] for _ in range(count)]
+    occ_videos: list[list] = [[] for _ in range(count)]
+    occ_summary: list[Summary | None] = [None] * count
+    if count == 0:
+        return occ_summary, occ_versions, occ_kept, occ_held, occ_released, occ_videos
+    for line_no, src, dst, via, reason in versions:
+        occ_versions[_owner(plays, line_no)].append((src, dst, via, reason))
+    for line_no, item, why in kept:
+        occ_kept[_owner(plays, line_no)].append((item, why))
+    for line_no, item in held:
+        occ_held[_owner(plays, line_no)].append(item)
+    for line_no, item in released:
+        occ_released[_owner(plays, line_no)].append(item)
+    for line_no, item, line in videos:
+        occ_videos[_owner(plays, line_no)].append((item, line))
+    chains = [_chain(play.id, occ_versions[i]) for i, play in enumerate(plays)]
+    for summary in summaries:
+        owner = _owner(plays, summary.line)
+        # The app writes the outgoing summary before the next `play:` line, so
+        # the latest unclaimed occurrence at or before it is the right one.
+        target = next(
+            (
+                i
+                for i in range(owner, -1, -1)
+                if occ_summary[i] is None
+                and (summary.id == plays[i].id or summary.id in chains[i])
+            ),
+            None,
+        )
+        if target is None:
+            target = next(
+                (
+                    i
+                    for i in range(owner + 1, count)
+                    if occ_summary[i] is None
+                    and (summary.id == plays[i].id or summary.id in chains[i])
+                ),
+                None,
+            )
+        if target is not None:
+            occ_summary[target] = summary
+    return occ_summary, occ_versions, occ_kept, occ_held, occ_released, occ_videos
+
+
 def _track_rows(text: str, expected: int):
     plays, summaries, versions, kept, held, released, videos = _parse_log(text)
-    covers: set[str] = set()
-    for src, dst, _via in versions:
-        if dst in ("none", "-"):
-            covers.add(src)
+    (
+        occ_summary,
+        occ_versions,
+        occ_kept,
+        occ_held,
+        occ_released,
+        occ_videos,
+    ) = _occurrences(plays, summaries, versions, kept, held, released, videos)
     total = expected if expected > 0 else len(plays)
     rows: list[str] = []
     audible = held_tracks = mv_kept = 0
@@ -186,12 +266,17 @@ def _track_rows(text: str, expected: int):
             )
             continue
         play = plays[offset]
-        ids = _chain(play.id, versions)
-        summary = next((summaries[item] for item in ids if item in summaries), None)
-        version = _version_result(ids, versions, kept, covers)
-        gate_ids = sorted(item for item in ids if item in held and item not in released)
+        row_versions = occ_versions[offset]
+        ids = _chain(play.id, row_versions)
+        summary = occ_summary[offset]
+        version = _version_result(ids, row_versions, occ_kept[offset])
+        gate_ids = sorted(
+            item
+            for item in occ_held[offset]
+            if item in ids and item not in occ_released[offset]
+        )
         gate = "HELD:" + ",".join(gate_ids) if gate_ids else "ok"
-        video = _video_result(ids, videos, summary, version)
+        video = _video_result(ids, occ_videos[offset], summary, version)
         title = summary.title if summary is not None else play.title
         if summary is not None and summary.first_audio is not None:
             first = f"{summary.first_audio}ms"
@@ -214,7 +299,7 @@ def _track_rows(text: str, expected: int):
         f"REALUSE played {audible}/{total}, no-audio {total - audible}, "
         f"held {held_tracks}, mv-kept {mv_kept}"
     )
-    return rows, summary_line
+    return rows, summary_line, total
 
 
 def play_button(xml_text: str) -> str | None:
@@ -274,7 +359,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"realuse: 로그를 읽을 수 없습니다: {error}", file=sys.stderr)
         return 2
 
-    rows, summary_line = _track_rows(text, args.expected)
+    rows, summary_line, total = _track_rows(text, args.expected)
+    ok = total > 0 and "no-audio 0" in summary_line
     print("\n".join(rows))
     print(summary_line)
     if args.report:
@@ -282,7 +368,7 @@ def main(argv: list[str] | None = None) -> int:
             "# BitChord real-use smoke",
             "",
             f"- 로그: `{args.logcat}`",
-            f"- 결과: **{'FAIL' if 'no-audio 0' not in summary_line else 'PASS'}**",
+            f"- 결과: **{'PASS' if ok else 'FAIL'}**",
             "",
             "```",
             *rows,
@@ -291,7 +377,7 @@ def main(argv: list[str] | None = None) -> int:
             "",
         ]
         Path(args.report).write_text("\n".join(lines), encoding="utf-8")
-    return 0 if "no-audio 0" in summary_line else 1
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

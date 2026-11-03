@@ -95,6 +95,64 @@ class SummaryTest(unittest.TestCase):
         self.assertIn("REALUSE 2/2 id=-", report)
         self.assertIn("REALUSE played 1/2, no-audio 1, held 0, mv-kept 0", report)
 
+    def test_a_repeated_video_id_keeps_each_occurrence_own_audio(self):
+        # The first play of this id got no audio; the second did. Keying the
+        # summary by id alone let the second occurrence's 900ms overwrite the
+        # first and turned a NO AUDIO into a pass.
+        text = "\n".join(
+            [
+                play("dup", "Song", "Artist", 0),
+                summary("dup", "Song", "-", ended="skipped"),
+                play("dup", "Song", "Artist", 1),
+                summary("dup", "Song", "900"),
+            ]
+        )
+        code, report = self.run_summary(text, 2)
+        self.assertEqual(1, code)
+        self.assertIn(
+            'REALUSE 1/2 id=dup title="Song" artist="Artist" firstAudio=NO AUDIO',
+            report,
+        )
+        self.assertIn(
+            'REALUSE 2/2 id=dup title="Song" artist="Artist" firstAudio=900ms',
+            report,
+        )
+        self.assertIn("REALUSE played 1/2, no-audio 1, held 0, mv-kept 0", report)
+
+    def test_the_logged_reason_distinguishes_a_cover_from_no_metadata(self):
+        text = "\n".join(
+            [
+                play("mv1", "Video Song", "Singer", 0),
+                log_line("song version: mv1 -> none via none (no title/artist)"),
+                summary("mv1", "Video Song", "50"),
+                play("cov1", "Cover Song", "오화요", 1),
+                log_line("song version: cov1 -> none via none (cover)"),
+                summary("cov1", "Cover Song", "60"),
+            ]
+        )
+        _code, report = self.run_summary(text, 2)
+        self.assertIn("id=mv1 title=\"Video Song\" artist=\"Singer\" firstAudio=50ms version=none ", report)
+        self.assertIn(
+            "id=cov1 title=\"Cover Song\" artist=\"오화요\" firstAudio=60ms version=none(cover) ",
+            report,
+        )
+
+    def test_zero_expected_tracks_fails_instead_of_passing_nothing(self):
+        code, report = self.run_summary("", 0)
+        self.assertEqual(1, code)
+        self.assertIn("REALUSE played 0/0, no-audio 0, held 0, mv-kept 0", report)
+        self.assertIn("**FAIL**", report)
+
+    def test_a_title_containing_the_separator_keeps_its_artist(self):
+        text = "\n".join(
+            [
+                play("sep1", "Song - Part", "Artist", 0),
+                summary("sep1", "Song - Part", "10"),
+            ]
+        )
+        _code, report = self.run_summary(text, 1)
+        self.assertIn('title="Song - Part" artist="Artist"', report)
+
 
 class PlayButtonTest(unittest.TestCase):
     def test_the_largest_재생_node_is_the_header_button(self):

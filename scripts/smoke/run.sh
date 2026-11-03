@@ -75,11 +75,11 @@ if [ -n "$MODE_LINE" ]; then
   esac
 fi
 if [ "$REALUSE_MODE" = 1 ]; then
+  REALUSE_COUNT=${REALUSE_TARGET##* }
+  [ "$REALUSE_COUNT" = "$REALUSE_TARGET" ] && REALUSE_COUNT=""
   case "$REALUSE_KIND" in
     playlist)
       REALUSE_URL=${REALUSE_TARGET%% *}
-      REALUSE_COUNT=${REALUSE_TARGET##* }
-      [[ "$REALUSE_COUNT" =~ ^[0-9]+$ ]] && REALUSE_TRACKS=$REALUSE_COUNT
       if [ -z "$REALUSE_URL" ]; then
         echo "smoke: $REALUSE_KIND mode needs a playlist URL in $SONGS_FILE" >&2
         exit 2
@@ -90,13 +90,22 @@ if [ "$REALUSE_MODE" = 1 ]; then
       # station/radio page, a plain mood falls back to a search start.
       if [[ "$REALUSE_TARGET" == http* ]]; then
         REALUSE_URL=${REALUSE_TARGET%% *}
-        REALUSE_COUNT=${REALUSE_TARGET##* }
-        [[ "$REALUSE_COUNT" =~ ^[0-9]+$ ]] && REALUSE_TRACKS=$REALUSE_COUNT
       else
         REALUSE_STATION_QUERY=$REALUSE_TARGET
+        REALUSE_COUNT=""
       fi
       ;;
   esac
+  if [ -n "$REALUSE_COUNT" ]; then
+    # A real-use run that asks for zero tracks would report "no-audio 0" and
+    # pass without playing anything, so the count must be at least one.
+    if [[ "$REALUSE_COUNT" =~ ^[0-9]+$ ]] && [ "$REALUSE_COUNT" -ge 1 ]; then
+      REALUSE_TRACKS=$REALUSE_COUNT
+    else
+      echo "smoke: real-use track count must be >= 1 in $SONGS_FILE" >&2
+      exit 2
+    fi
+  fi
 fi
 
 APK=$(ls app/build/outputs/apk/dev/debug/*x86_64*.apk 2>/dev/null | head -1)
@@ -278,15 +287,12 @@ run_realuse() {
   fi
   for ((index = 1; index <= tracks; index++)); do
     sleep "$track_wait"
+    # The last track is advanced by force_final_summary below, which also has
+    # the dummy-link fallback when NEXT cannot move the queue on.
+    [ "$index" -lt "$tracks" ] || break
     before=$(play_count)
     adb shell input keyevent 87 >/dev/null 2>&1 || true
-    # The last NEXT is what writes the final track's summary, so it gets the
-    # same short wait the old mode's force_final_summary uses.
-    if [ "$index" -lt "$tracks" ]; then
-      wait_for_new_play "$before" "$START_TIMEOUT" || true
-    else
-      wait_for_new_play "$before" 10 || true
-    fi
+    wait_for_new_play "$before" "$START_TIMEOUT" || true
   done
   sleep 2
 }
@@ -614,6 +620,22 @@ progress_report() {
   echo "smoke: progress status http=${code:-none} $desc" >&2
 }
 
+# `track-summary` is written for the outgoing track, so the last song only gets
+# its summary when another track becomes current. Move on once more (and fall
+# back to a dummy link if NEXT cannot advance) before the log is closed.
+force_final_summary() {
+  local before
+  before=$(play_count)
+  echo "smoke: forcing one final track change for the last track summary" >> "$OUT/smoke-playback.txt"
+  adb shell input keyevent 87 >/dev/null 2>&1 || true
+  if ! wait_for_new_play "$before" 10; then
+    adb shell am start -a android.intent.action.VIEW \
+      -d "https://music.youtube.com/watch?v=dQw4w9WgXcQ" -p "$PKG" >/dev/null 2>&1 || true
+    wait_for_new_play "$before" "$FALLBACK_TIMEOUT" || true
+  fi
+  sleep 2
+}
+
 # fd 3, not stdin: adb shell inside the loop reads stdin and swallowed the
 # rest of the song list after the first song on the first run.
 if [ "$REALUSE_MODE" = 1 ]; then
@@ -659,24 +681,8 @@ while IFS=$'\t' read -r -u 3 key kind _rest || [ -n "$key" ]; do
     exit 3
   fi
 done 3< "$SONGS_FILE"
-
-# `track-summary` is written for the outgoing track, so the last song only gets
-# its summary when another track becomes current. Move on once more (and fall
-# back to a dummy link if NEXT cannot advance) before the log is closed.
-force_final_summary() {
-  local before
-  before=$(play_count)
-  echo "smoke: forcing one final track change for the last track summary" >> "$OUT/smoke-playback.txt"
-  adb shell input keyevent 87 >/dev/null 2>&1 || true
-  if ! wait_for_new_play "$before" 10; then
-    adb shell am start -a android.intent.action.VIEW \
-      -d "https://music.youtube.com/watch?v=dQw4w9WgXcQ" -p "$PKG" >/dev/null 2>&1 || true
-    wait_for_new_play "$before" "$FALLBACK_TIMEOUT" || true
-  fi
-  sleep 2
-}
-force_final_summary
 fi
+force_final_summary
 
 # Heap report (11-02 leak hunt): the retained heap grows ~7 MB a minute until
 # playback fails with OutOfMemoryError. The raw dump holds the app's strings
