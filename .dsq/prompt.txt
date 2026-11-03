@@ -1,0 +1,21 @@
+Kotlin Android app (task/u19-tg = 2ebbe8a8b build on the user's phone). User 11-03 19:31: 'Read My Mind' (The Killers) from the Energy station never made a sound for 32 s; the player showed 0:00 and '품질 업그레이드 중' (quality upgrade in progress) under the seek bar, then the user skipped. Log (D/I lines from the app's own diagnostic export):
+19:31:27.662 play: -> Read My Mind - The Killers (zc8hbSM1zVo) idx=0/1 reason=PLAYLIST_CHANGED
+19:31:27.688 no addon served 'Read My Mind (Official Music Video)' directly; playing it from YouTube
+19:31:27.708 queue: add n=23 at=1 size=24 by=ui / 19:31:27.750 queue: add n=36 at=24 size=60 by=ui
+19:31:28.257 TIMING zc8hbSM1zVo direct: 571ms
+19:31:28.314 song version: zc8hbSM1zVo -> Mc_6rKOwhxg via search before-audio
+19:31:28.320 holding Mc_6rKOwhxg until it is within 25s of playing        <-- the CURRENT track is held as if it were a later one
+19:31:28.582 TIMING Mc_6rKOwhxg direct: 294ms
+19:31:28.684 blocked-start: zc8hbSM1zVo step=direct result=waiting ms=1001 / step=proxy result=start
+19:31:29.287 blocked-start: Mc_6rKOwhxg step=direct result=waiting ms=1000 / step=proxy result=start
+19:31:31.185 blocked-start: zc8hbSM1zVo step=proxy result=failed ms=3502
+19:31:31.433 blocked-start: Mc_6rKOwhxg step=proxy result=ok:direct ms=3146 ; TIMING Mc_6rKOwhxg total resolve: 3146 ms
+(no DECODE / AUDIO_OUT line, no 'released' line for Mc_6rKOwhxg)
+19:31:59.501 track-summary: zc8hbSM1zVo 'Read My Mind' video=y source=home:ENERGY resolve=direct firstAudio=- played=0 ended=skipped
+Earlier, 11-03 01:05, the same class of bug was fixed in 0c5702d9 (DirectSourceGate deadlock: the loader waited in awaitOpen because onPlaying(current) was only called after first audio; DirectSourceGateTest).
+Task:
+1. Find why the playing row, after a before-audio song-version swap (new id on the same row), is held by the direct-source gate ('holding … until it is within 25s of playing') and never released; also why the UI shows '품질 업그레이드 중' while nothing plays. Name the exact path with file:line.
+2. Fix so a swapped current row is treated as playing (released at once), and in general the playing item can never wait on a hold meant for a later row; a hold must always end (event-based release on the transition/swap, no timers). First audio for a video row with a song version should come within ~2-3 s of the resolve finishing.
+3. A JVM test that FAILS on the current code (DirectSourceGate / policy level), passes after. Name new test classes in the summary (you may not edit .github/workflows).
+Battery first, event-based. Re-read every caller of what you change; keep the 0c5702d9 fix and its test intact. Do not touch LyricsTiming.kt. Unknown Media3 APIs: context7. Use grep/Select-String (no rg).
+Summary of at most 10 lines: files / root cause with file:line / key change / tests and results / REMOVED-LINES AUDIT / not done. Follow AGENTS.md (ponytail) rules.
