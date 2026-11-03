@@ -321,7 +321,7 @@ class CoverTitlesEdgeTest {
         assertTrue(CoverTitles.isCover(song("Song", "Artist", originalTitle = "upload")))
         assertTrue(CoverTitles.isCover(song("Song", "Artist", coverSinger = "Singer")))
         assertTrue(CoverTitles.isCover(song("Song", "Singer 커버")))
-        assertFalse(CoverTitles.isCover(song("Song", "Singer 커버", isVideo = false)))
+        assertTrue(CoverTitles.isCover(song("Song", "Singer 커버", isVideo = false)))
     }
 
     @Test

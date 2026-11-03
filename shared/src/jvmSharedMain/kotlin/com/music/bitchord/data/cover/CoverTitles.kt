@@ -157,9 +157,12 @@ object CoverTitles {
                 originalArtist = known.second.ifBlank { cover.originalArtist.orEmpty() }.ifBlank { null },
                 orderUnsure = false,
             )
-        }
+        }?.let { withSingerFromChannel(it, song.artist) }
 
-    fun read(title: String, channel: String, channelId: String?, unambiguousOnly: Boolean = false): Cover? {
+    fun read(title: String, channel: String, channelId: String?, unambiguousOnly: Boolean = false): Cover? =
+        readRaw(title, channel, channelId, unambiguousOnly)?.let { withSingerFromChannel(it, channel) }
+
+    private fun readRaw(title: String, channel: String, channelId: String?, unambiguousOnly: Boolean): Cover? {
         val tidy = normalize(title.trim())
         val raw = tidy.text
         if (raw.isEmpty()) return null
@@ -169,8 +172,9 @@ object CoverTitles {
                 ?: (if (tidy.live) readLive(raw) else null) ?: readF(raw)
                 ?: readA(raw, channel, allowBareTag = false) ?: readCredit(raw, channel) ?: readSlashCredit(raw)
             )?.let {
-            runCatching { onSingerSeen(it.singer) }
-            return it
+            val cover = withSingerFromChannel(it, channel)
+            runCatching { onSingerSeen(cover.singer) }
+            return cover
         }
         if (unambiguousOnly) return null
         // A bare "(Cover)": the channel stands in for the singer, so it isn't one to learn.
@@ -306,7 +310,7 @@ object CoverTitles {
         val storedCover = isStoredCover(song)
         // Shown as a cover but with the upload's own title lost (a queue saved
         // before covers were kept whole): the byline still names both people.
-        if (song.originalTitle == null && song.isVideo && song.artist.endsWith(" $COVER_WORD")) {
+        if (song.originalTitle == null && song.artist.endsWith(" $COVER_WORD")) {
             val byline = song.artist.removeSuffix(" $COVER_WORD")
             val original = byline.substringBeforeLast(SEPARATOR, "").trim()
             val singer = byline.substringAfterLast(SEPARATOR).trim()
@@ -408,7 +412,8 @@ object CoverTitles {
      */
     private fun isStoredCover(song: Song): Boolean =
         song.originalTitle != null || song.coverSinger != null ||
-            song.title.trim().endsWith(STORED_COVER_SUFFIX, ignoreCase = true)
+            song.title.trim().endsWith(STORED_COVER_SUFFIX, ignoreCase = true) ||
+            song.artist.trim().endsWith(COVER_WORD)
 
     /**
      * Who to credit a play to: the singer of a cover, the artist of anything
@@ -671,7 +676,9 @@ object CoverTitles {
         // another word or a non-Latin script; a bracketed tag is unambiguous.
         val bracketed = tag.value.trimStart().startsWith("(") || tag.value.trimStart().startsWith("[")
         val words = head.split(Regex("\\s+")).filter { it.isNotBlank() }
-        if (!bracketed && words.size < 2 && words.all { word -> word.all { it.code < 0x2E80 } }) return null
+        if (!bracketed && words.size < 2 && !ANY_GROUP.containsMatchIn(head) &&
+            words.all { word -> word.all { it.code < 0x2E80 } }
+        ) return null
         return songCover(head, singer)
     }
 
@@ -694,7 +701,21 @@ object CoverTitles {
             // "ㅣ(Akane Lize) Cover": a name wholly in brackets is still the name.
             val bare = name.trim().removeSurrounding("(", ")").removeSurrounding("（", "）")
             val singer = cleanName(bare)?.takeUnless { isVersionWord(it) || isDescriptor(it) }
-            if (singer != null) songFirst(song, singer)?.let { return it }
+            if (singer != null) {
+                val channelName = cleanName(channel)
+                // On a singer's own upload the name before "Cover" is the
+                // original's artist, not a second singer: the uploader sings it.
+                if (channelName != null && isKnownChannelSinger(channel) && !sameName(singer, channelName)) {
+                    val (titleText, artist) = splitTopLevelDash(song) ?: (song to null)
+                    val title = cleanTitle(titleText) ?: return null
+                    return Cover(
+                        title = title,
+                        originalArtist = artist?.let { cleanName(it) } ?: singer,
+                        singer = channelName,
+                    )
+                }
+                songFirst(song, singer)?.let { return it }
+            }
         }
         // "Cover" at the end makes a dash without spaces a split too
         // ("아카네 리제-붉은 장미 Cover."), though a spaced one still wins.
@@ -800,17 +821,28 @@ object CoverTitles {
         fun songSide(side: String, heading: Boolean): String =
             if (heading) side.substringBefore(" | ").trim() else side
 
+        fun coverFromSong(song: String, singer: String): Cover? {
+            val channelName = cleanName(channel)
+            // The uploader is a singer already seen on covers, so a different
+            // known name in the title is the original's artist, not the singer.
+            if (channelName != null && isKnownChannelSinger(channel) && !sameName(singer, channelName)) {
+                val title = cleanTitle(song) ?: return null
+                return Cover(title = title, originalArtist = singer, singer = channelName)
+            }
+            return songCover(song, singer)
+        }
+
         singerIn(left, allowHeading = true)?.let { (singer, heading) ->
             val song = songSide(right, heading)
             // "아카네 리제 - 청록(Blue Rock)" on a fan clip channel is her own
             // song, with an English subtitle — not a cover of "Blue Rock".
             if (hasLatinSubtitle(song)) return null
-            return songCover(song, singer)
+            return coverFromSong(song, singer)
         }
         singerIn(right, allowHeading = false)?.let { (singer, heading) ->
             val song = songSide(left, heading)
             if (hasLatinSubtitle(song)) return null
-            return songCover(song, singer)
+            return coverFromSong(song, singer)
         }
         return null
     }
@@ -850,12 +882,56 @@ object CoverTitles {
     private fun knownSingerKeys(): Set<String> {
         val known = knownSingers()
         singerKeyCache?.let { (source, keys) -> if (source === known) return keys }
-        val keys = known.mapNotNullTo(HashSet()) { compactName(it).takeIf { key -> key.length >= 2 } }
+        val keys = known.mapNotNullTo(HashSet()) {
+            compactName(stripUploadSuffix(it)).takeIf { key -> key.length >= 2 }
+        }
         singerKeyCache = known to keys
         return keys
     }
 
     private fun compactName(text: String): String = text.lowercase().filter { it.isLetterOrDigit() }
+
+    /** Whether two display names name the same person, spelling and spacing aside. */
+    internal fun sameName(first: String?, second: String?): Boolean {
+        val a = first?.let(::compactName).orEmpty()
+        val b = second?.let(::compactName).orEmpty()
+        return a.isNotEmpty() && a == b
+    }
+
+    /** The uploader already reads as a singer on covers, and is not a clip channel. */
+    private fun isKnownChannelSinger(channel: String): Boolean {
+        if (isFanClipChannel(channel)) return false
+        val name = cleanName(channel) ?: return false
+        val key = compactName(name)
+        return key.length >= 2 && key in knownSingerKeys()
+    }
+
+    /** A cover's singer is never the original's artist when the uploader is someone else. */
+    private fun withSingerFromChannel(cover: Cover, channel: String): Cover {
+        val original = cover.originalArtist ?: return cover
+        if (!sameName(cover.singer, original)) return cover
+        val uploader = cleanName(channel) ?: return cover
+        if (sameName(uploader, original)) return cover
+        return cover.copy(singer = uploader)
+    }
+
+    /**
+     * "가사포함", "가사", "lyrics", "MV", "풀버전" describe the upload, not the
+     * singer. They leak in from channel names and clip titles, so a singer's
+     * name drops them from its end.
+     */
+    private val SINGER_SUFFIX = Regex(
+        """(?i)(?:\s+|[-–—|·]\s*)(?:가사\s*포함|가사|lyrics?|m\s*/?\s*v|풀\s*버전|full\s*(?:ver(?:sion)?)?)\s*$""",
+    )
+
+    internal fun stripUploadSuffix(name: String): String {
+        var text = name.trim()
+        while (true) {
+            val next = SINGER_SUFFIX.replace(text, "").trim()
+            if (next == text || next.isEmpty()) return text
+            text = next
+        }
+    }
 
     /**
      * "곡명 - 원곡자" when [head] has a dash — song first, the order unsure —
@@ -900,6 +976,19 @@ object CoverTitles {
             rest = rest.removeRange(match.range).trim()
         }
         if (artist == null) {
+            // "Tomboy((G)I-DLE)": the bracket around the artist is itself
+            // bracketed, which a single-level group cannot see.
+            nestedTrailingGroup(rest)?.let { (inner, credit) ->
+                if (credit.startsWith("(") && credit.contains(")") &&
+                    inner.isNotEmpty() && !isVersionWord(credit) && !isDescriptor(credit) &&
+                    !isGenericCredit(credit) && !OST.containsMatchIn(credit)
+                ) {
+                    artist = credit
+                    rest = inner
+                }
+            }
+        }
+        if (artist == null) {
             TRAILING_GROUP.find(rest)?.let { group ->
                 val credit = group.groupValues[1].trim()
                 val inner = rest.removeRange(group.range).trim()
@@ -926,6 +1015,26 @@ object CoverTitles {
         }
         val title = cleanTitle(rest) ?: return null
         return title to artist
+    }
+
+    /** The content of the last parenthesised group when that content is itself bracketed. */
+    private fun nestedTrailingGroup(text: String): Pair<String, String>? {
+        if (!text.endsWith(")")) return null
+        var depth = 0
+        for (i in text.indices.reversed()) {
+            when (text[i]) {
+                ')' -> depth++
+                '(' -> {
+                    depth--
+                    if (depth == 0) {
+                        val inner = text.substring(0, i).trim()
+                        val credit = text.substring(i + 1, text.length - 1).trim()
+                        return if (inner.isEmpty() || credit.isEmpty()) null else inner to credit
+                    }
+                }
+            }
+        }
+        return null
     }
 
     private fun hasHangul(text: String) = text.any { it in '가'..'힣' || it in 'ㄱ'..'ㆎ' }
@@ -1117,6 +1226,7 @@ object CoverTitles {
             name = stripped
         }
         name = unquote(name.trim(' ', '(', ')', '[', ']', '-', '–', '·', ',', '"', '“', '”'))
+        name = stripUploadSuffix(name)
         return name.takeIf { it.isNotEmpty() && it.length <= 60 }
     }
 

@@ -37,6 +37,7 @@ import com.music.bitchord.data.Http
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.innertube.InnerTubeXResolver
 import com.music.bitchord.data.innertube.StreamResolver
+import com.music.bitchord.data.innertube.VideoPictureRetry
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.playback.ChunkedDataSource
@@ -138,6 +139,24 @@ object MusicVideoEngine {
         _missing.value = _missing.value + videoId
     }
 
+    private fun markPresent(videoId: String) {
+        if (videoId in _missing.value) _missing.value = _missing.value - videoId
+    }
+
+    /** Consecutive failed resolves by video, so a picture YouTube has none for settles. */
+    private val resolveAttempts = HashMap<String, Int>()
+
+    private fun failedResolve(videoId: String, settled: Boolean) {
+        val attempt = (resolveAttempts[videoId] ?: 0) + 1
+        if (settled || !VideoPictureRetry.canTry(attempt)) {
+            resolveAttempts.remove(videoId)
+            markMissing(videoId, settled = true)
+        } else {
+            resolveAttempts[videoId] = attempt
+            markMissing(videoId, settled = false)
+        }
+    }
+
     /** Videos the age gate stopped, asked as age-restricted from the start. */
     private val ageGated = HashSet<String>()
 
@@ -154,6 +173,7 @@ object MusicVideoEngine {
             InnerTubeXResolver.sessionGeneration.drop(1).collect {
                 noPicture.clear()
                 _missing.value = emptySet()
+                resolveAttempts.clear()
                 streams.clear()
                 refused.clear()
                 refresh()
@@ -421,6 +441,8 @@ object MusicVideoEngine {
 
     private fun load(videoId: String) {
         unload()
+        // Only the picture being asked for keeps a failed-resolve count.
+        resolveAttempts.keys.retainAll { it == videoId }
         loadedId = videoId
         val cap = capFor(videoId)
         loadedCap = cap
@@ -436,15 +458,16 @@ object MusicVideoEngine {
                 loadedId = null
                 // Settled until something changes it: the age gate by a sign-in
                 // (which clears [noPicture]), the rest not at all. A network
-                // failure is asked again on the next surface or track change.
-                markMissing(videoId, settled = e.reason != StreamResolveException.Reason.NETWORK)
+                // failure is asked again a bounded number of times, then the
+                // still artwork is the answer.
+                failedResolve(videoId, settled = e.reason != StreamResolveException.Reason.NETWORK)
                 return@launch
             } catch (e: Exception) {
                 // Not remembered as pictureless: the next surface or track
-                // change asks again.
+                // change asks again, until the attempt budget is spent.
                 TrackLog.w(TAG, "video: couldn't resolve the picture: ${e.message}", about = videoId)
                 if (loadedId == videoId) loadedId = null
-                markMissing(videoId, settled = false)
+                failedResolve(videoId, settled = false)
                 return@launch
             }
             if (loadedId != videoId) return@launch
@@ -452,10 +475,13 @@ object MusicVideoEngine {
             if (stream == null || stream.aspect < MIN_VIDEO_ASPECT) {
                 // [KO] video-fallback: said, so a phone log shows why there is no picture.
                 TrackLog.w(TAG, "video: no picture (${if (stream == null) "no stream" else "still image"})", about = videoId)
+                resolveAttempts.remove(videoId)
                 markMissing(videoId, settled = true)
                 loadedId = null
                 return@launch
             }
+            resolveAttempts.remove(videoId)
+            markPresent(videoId)
             val exo = player ?: return@launch
             val upstream = OkHttpDataSource.Factory(Http.client)
                 .setDefaultRequestProperties(stream.headers)
