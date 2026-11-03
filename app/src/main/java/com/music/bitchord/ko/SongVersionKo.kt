@@ -58,11 +58,18 @@ internal suspend fun koSongBeforeAudio(song: Song): Song =
         song
     }
 
-/** The same pre-audio resolution for a queue's current and next rows. */
+/** The same pre-audio resolution for a queue's current row and the rows shown after it. */
 internal suspend fun koResolveQueueAhead(songs: List<Song>, index: Int): List<Song> =
     if (AppSettings.preferMusicOnly.value) {
         try {
-            YtMusicRepository.resolveQueueAhead(songs, index, ahead = 1)
+            // Current row plus the bounded forward window, so a station or
+            // playlist queue shows the song versions it is about to play
+            // instead of their music-video cards.
+            YtMusicRepository.resolveQueueAhead(
+                songs,
+                index,
+                ahead = SongVersionPolicy.QUEUE_VERSION_AHEAD + 1,
+            )
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Throwable) {

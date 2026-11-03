@@ -185,11 +185,11 @@ internal class SongVersionController(
 
     /**
      * With music-only on, the rows either side of the current one are replaced
-     * by their catalogue releases as the queue approaches them: the next three
-     * and the previous one, so a skip backwards is as prepared as a skip
-     * forwards. The current row was resolved when the queue was built (or held
-     * before its first sound); replacing it here would restart a track already
-     * playing, so this never touches it.
+     * by their catalogue releases as the queue approaches them: the next
+     * [SongVersionPolicy.QUEUE_VERSION_AHEAD] and the previous one, so a skip
+     * backwards is as prepared as a skip forwards. The current row was resolved
+     * when the queue was built (or held before its first sound); replacing it
+     * here would restart a track already playing, so this never touches it.
      */
     fun scheduleUpcomingSongVersions(exoPlayer: ExoPlayer) {
         if (!AppSettings.preferMusicOnly.value) return
@@ -215,9 +215,11 @@ internal class SongVersionController(
         songVersionJob = scope.launch {
             val current = exoPlayer.currentMediaItemIndex
             if (current !in 0 until exoPlayer.mediaItemCount) return@launch
-            val first = (current - 1).coerceAtLeast(0)
-            val last = (current + 3).coerceAtMost(exoPlayer.mediaItemCount - 1)
-            for (index in first..last) {
+            val indices = buildList {
+                if (current > 0) add(current - 1)
+                addAll(SongVersionPolicy.versionLookaheadIndices(current, exoPlayer.mediaItemCount))
+            }
+            for (index in indices) {
                 if (!isActive) return@launch
                 if (index == current) continue
                 if (index >= exoPlayer.mediaItemCount) return@launch

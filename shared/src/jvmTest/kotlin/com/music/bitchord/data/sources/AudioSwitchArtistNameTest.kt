@@ -66,7 +66,14 @@ class AudioSwitchArtistNameTest {
         val cover = song("CHOCOVER001", "Chocolate (Cover)", "The 1975", "2:51")
         val karaoke = song("CHOKARAOKE1", "Chocolate (Karaoke Version)", "The 1975", "2:51")
         val tribute = song("CHOTRIBUTE1", "Chocolate", "The 1975 Tribute Band", "2:51")
-        for (candidate in listOf(cover, karaoke, tribute)) {
+        // The rows the phone logged as rejected were other acts' uploads of
+        // the same title, not the official recording; they must stay refused.
+        val reported = listOf(
+            song("E6ZZbPB8WSQ", "Chocolate", "Midnite String Quartet - Topic", "2:51"),
+            song("x4kijUl0lrM", "Chocolate", "Release - Topic", "2:51"),
+            song("q_8rnM4d9HU", "Chocolate", "Logan Walls - Topic", "2:51"),
+        )
+        for (candidate in listOf(cover, karaoke, tribute) + reported) {
             assertNull(TrackMatcher.bestSameArtist(listOf(candidate), chocolate), candidate.videoId)
             assertNull(TrackMatcher.bestOfficialAudioForVideo(listOf(candidate), chocolate), candidate.videoId)
         }
@@ -105,6 +112,38 @@ class AudioSwitchArtistNameTest {
         for (candidate in listOf(cover, karaoke, other)) {
             assertNull(TrackMatcher.bestSameArtist(listOf(candidate), getLucky), candidate.videoId)
             assertNull(TrackMatcher.bestOfficialAudioForVideo(listOf(candidate), getLucky), candidate.videoId)
+        }
+    }
+
+    @Test
+    fun `get lucky credited only to its featured performer is accepted`() {
+        val row = song(
+            "imDKnNvqpq0",
+            "Get Lucky (feat. Pharrell Williams, Nile Rodgers)",
+            "Daft Punk",
+            "6:09",
+        )
+        val target = TrackMatcher.audioSwitchTargetOf(row)
+        val featured = song(
+            "GETFEATURED1",
+            "Get Lucky (feat. Pharrell Williams, Nile Rodgers)",
+            "Pharrell Williams",
+            "6:09",
+        )
+        assertEquals(featured.videoId, TrackMatcher.bestSameArtist(listOf(featured), target)?.videoId)
+        assertEquals(
+            featured.videoId,
+            TrackMatcher.bestOfficialAudioForVideo(listOf(featured), target)?.videoId,
+        )
+        assertNull(TrackMatcher.songVersionRejectReason(featured, target))
+        // The title's feature does not admit a cover or an unrelated act.
+        val cover = song("GETFEATCOVER", "Get Lucky", "The Cover Crew", "6:09")
+        val other = song("GETFEATOTHER", "Get Lucky", "Another Artist", "6:09")
+        // The row the phone logged as rejected was HELIA's cover, not the song.
+        val reportedCover = song("imDKnNvqpq0", "Get Lucky", "HELIA - Topic", "6:09")
+        for (candidate in listOf(cover, other, reportedCover)) {
+            assertNull(TrackMatcher.bestSameArtist(listOf(candidate), target), candidate.videoId)
+            assertNull(TrackMatcher.bestOfficialAudioForVideo(listOf(candidate), target), candidate.videoId)
         }
     }
 }

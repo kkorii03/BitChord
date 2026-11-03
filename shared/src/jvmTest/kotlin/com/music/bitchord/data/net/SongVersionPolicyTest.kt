@@ -913,4 +913,19 @@ class SongVersionPolicyTest {
             ),
         )
     }
+
+    @Test
+    fun `the queue version window is bounded and never includes the playing row`() {
+        assertEquals(1..5, SongVersionPolicy.versionLookaheadIndices(0, 20))
+        assertEquals(6..10, SongVersionPolicy.versionLookaheadIndices(5, 20))
+        assertEquals(6..8, SongVersionPolicy.versionLookaheadIndices(5, 9))
+        assertEquals(IntRange.EMPTY, SongVersionPolicy.versionLookaheadIndices(8, 9))
+    }
+
+    @Test
+    fun `an empty or out-of-range queue has no version window`() {
+        assertEquals(IntRange.EMPTY, SongVersionPolicy.versionLookaheadIndices(0, 0))
+        assertEquals(IntRange.EMPTY, SongVersionPolicy.versionLookaheadIndices(-1, 5))
+        assertEquals(IntRange.EMPTY, SongVersionPolicy.versionLookaheadIndices(5, 5))
+    }
 }

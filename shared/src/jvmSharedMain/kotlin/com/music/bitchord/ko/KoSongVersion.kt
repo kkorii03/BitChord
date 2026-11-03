@@ -537,10 +537,24 @@ internal object KoSongVersion {
                 }
             }.awaitAll()
         }
+        return applyQueueVersions(songs, resolved)
+    }
+
+    /**
+     * Puts each resolved song version into its queue row. A cover row keeps
+     * the video the listener chose; the version lookup is never allowed to
+     * replace it.
+     */
+    internal fun applyQueueVersions(
+        songs: List<Song>,
+        resolved: List<Pair<Int, Song?>>,
+    ): List<Song> {
         if (resolved.none { it.second != null }) return songs
         return songs.toMutableList().also { out ->
             resolved.forEach { (index, version) ->
-                if (version != null && !CatalogSongMapper.isCover(songs[index])) {
+                if (version != null && index in songs.indices &&
+                    !CatalogSongMapper.isCover(songs[index])
+                ) {
                     out[index] = version
                 }
             }
