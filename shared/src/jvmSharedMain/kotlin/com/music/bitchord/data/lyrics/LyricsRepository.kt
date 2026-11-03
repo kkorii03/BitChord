@@ -1134,11 +1134,11 @@ object LyricsRepository {
                 if (fallback != null && source == LyricsSource.GENIUS) continue
                 val found = runCatching { job.await() }.getOrNull() ?: continue
                 if (found.lines.any { it.isWordSynced }) {
-                    return@coroutineScope chooseCompleted(racing, wordSynced = true) ?: found
+                    return@coroutineScope found
                 }
                 val timed = found.lines.any { it.timeMs > 0 }
                 if (!prioritizeSyllableSync && timed) {
-                    return@coroutineScope chooseCompleted(racing, wordSynced = false) ?: found
+                    return@coroutineScope lineConsensus(racing, found)
                 }
                 if (fallback == null || (timed && fallback.lines.none { it.timeMs > 0 })) fallback = found
                 if (timed) {
@@ -1151,12 +1151,11 @@ object LyricsRepository {
                     // the wait; a line-only one finishing later changes nothing.
                     val rest = racing.drop(index + 1)
                         .filter { it.first != LyricsSource.GENIUS && it.first.wordSynced }
-                    return@coroutineScope wordSyncedWithin(rest, SYLLABLE_GRACE_MS) ?: fallback
+                    return@coroutineScope wordSyncedWithin(rest, SYLLABLE_GRACE_MS)
+                        ?: lineConsensus(racing, found)
                 }
             }
-            fallback?.takeIf { it.lines.any { line -> line.timeMs > 0 } }
-                ?.let { chooseCompleted(racing, wordSynced = false) ?: it }
-                ?: fallback
+            fallback
         } finally {
             // Whoever lost the race is no longer worth waiting on, and
             // coroutineScope will not return while they are still running.
@@ -1180,6 +1179,7 @@ object LyricsRepository {
         graceMs: Long,
     ): Result? {
         if (rest.isEmpty()) return null
+        var firstWord: Pair<LyricsSource, Result>? = null
         val better = withTimeoutOrNull(graceMs) {
             var pending = rest
             while (pending.isNotEmpty()) {
@@ -1202,18 +1202,38 @@ object LyricsRepository {
                     }
                     continue
                 }
-                val (_, job) = pending.first()
+                val (source, job) = pending.first()
                 val answer = if (job.isCancelled) null else runCatching { job.await() }.getOrNull()
                 if (answer != null && answer.lines.any { it.isWordSynced }) {
-                    return@withTimeoutOrNull chooseCompleted(pending, wordSynced = true) ?: answer
+                    firstWord = source to answer
+                    // The whole [rest] list is the fixed candidate set. Await
+                    // all of it so the agreement comparison cannot depend on
+                    // which response happened to land first.
+                    val resolved = rest.mapNotNull { (candidate, pendingJob) ->
+                        if (pendingJob.isCancelled) {
+                            null
+                        } else {
+                            runCatching { pendingJob.await() }.getOrNull()?.let { candidate to it }
+                        }
+                    }
+                    return@withTimeoutOrNull chooseCompleted(resolved, wordSynced = true) ?: answer
                 }
                 pending = pending.drop(1)
             }
             null
         }
         if (better != null) return better
-        // Time is up: take the answer that agrees with the others, in priority order.
-        return chooseCompleted(rest, wordSynced = true)
+        // Grace ran out before the comparison settled: the priority answer
+        // already in hand still wins, and else the best that finished.
+        firstWord?.let { return it.second }
+        val resolved = rest.mapNotNull { (source, job) ->
+            if (job.isCancelled || !job.isCompleted) {
+                null
+            } else {
+                runCatching { job.await() }.getOrNull()?.let { source to it }
+            }
+        }
+        return chooseCompleted(resolved, wordSynced = true)
     }
 
     /** The first timed, non-blank line of [result], compared between sources. */
@@ -1221,26 +1241,52 @@ object LyricsRepository {
         result.lines.firstOrNull { !it.isGap && it.text.isNotBlank() && it.timeMs > 0L }?.timeMs
 
     /**
-     * The answered sources in [racing], in priority order, whose sheet is in
-     * the requested tier. [ProviderChoice] keeps the one whose first timed
-     * line agrees with most of the others; priority only breaks ties.
+     * The line-synced sheet that agrees best with the others among [found] and
+     * the fixed line-only sources in [racing]. Each of those sources is awaited
+     * before the comparison, so the winner does not depend on which response
+     * happened to finish first. Genius is skipped: it is lazy and unstarted,
+     * so awaiting it would be a request it was never asked for.
      */
-    private suspend fun chooseCompleted(
+    private suspend fun lineConsensus(
         racing: List<Pair<LyricsSource, Deferred<Result?>>>,
+        found: Result,
+    ): Result {
+        val resolved = ArrayList<Pair<LyricsSource, Result>>()
+        for ((source, job) in racing) {
+            if (source == LyricsSource.GENIUS) continue
+            if (source == found.source) {
+                resolved += source to found
+                continue
+            }
+            if (source.wordSynced) continue
+            if (job.isCancelled) continue
+            val result = runCatching { job.await() }.getOrNull() ?: continue
+            resolved += source to result
+        }
+        return chooseCompleted(resolved, wordSynced = false) ?: found
+    }
+
+    /**
+     * The sheet of the requested tier among [candidates], in priority order.
+     * Every entry is already in hand, so the ranking cannot depend on which
+     * response happened to finish first. [ProviderChoice] keeps the one whose
+     * first timed line agrees with most of the others; priority only breaks
+     * ties.
+     */
+    private fun chooseCompleted(
+        candidates: List<Pair<LyricsSource, Result>>,
         wordSynced: Boolean,
     ): Result? {
-        val candidates = racing.mapNotNull { (source, job) ->
-            if (!job.isCompleted || job.isCancelled) return@mapNotNull null
-            val result = runCatching { job.await() }.getOrNull() ?: return@mapNotNull null
+        val tier = candidates.mapNotNull { (source, result) ->
             val hasWord = result.lines.any { it.isWordSynced }
             val timed = result.lines.any { it.timeMs > 0 }
             val matches = if (wordSynced) hasWord else timed && !hasWord
             if (!matches) return@mapNotNull null
             ProviderChoice.Candidate(source, firstStart(result)) to result
         }
-        if (candidates.isEmpty()) return null
-        val chosen = ProviderChoice.choose(candidates.map { it.first }) ?: return null
-        return candidates[chosen].second
+        if (tier.isEmpty()) return null
+        val chosen = ProviderChoice.choose(tier.map { it.first }) ?: return null
+        return tier[chosen].second
     }
 
     private suspend fun fetch(

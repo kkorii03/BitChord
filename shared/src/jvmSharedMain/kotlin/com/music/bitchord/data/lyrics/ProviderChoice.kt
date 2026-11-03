@@ -48,7 +48,9 @@ object ProviderChoice {
             }
         }
         val best = agreement.max()
-        if (best == 0) return 0
+        // Nobody agrees with anybody: keep the first source that actually has
+        // a timed line. The first candidate may be an untimed sheet.
+        if (best == 0) return timed.first().first
         val winner = timed.indices
             .filter { agreement[it] == best }
             .minOf { timed[it].first }

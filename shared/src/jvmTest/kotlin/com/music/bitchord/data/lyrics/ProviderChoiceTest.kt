@@ -36,6 +36,11 @@ class ProviderChoiceTest {
     }
 
     @Test
+    fun `when no timed sources agree an untimed leader still loses`() {
+        assertEquals(1, choose(null, 1_000L, 9_000L))
+    }
+
+    @Test
     fun `a single source is kept as-is`() {
         assertEquals(0, choose(9_000L))
     }

@@ -87,6 +87,24 @@ class WordSyncedWithinTest {
     }
 
     @Test
+    fun aLaterAgreeingAnswerIsStillComparedNotLostToTheFirstResponse() = runBlocking {
+        val high = CompletableDeferred<LyricsRepository.Result?>()
+        val low = CompletableDeferred<LyricsRepository.Result?>()
+        val lower = CompletableDeferred<LyricsRepository.Result?>()
+        high.complete(word(LyricsSource.LRCLIB, "high", at = 1_000L))
+        launch {
+            delay(30)
+            low.complete(word(LyricsSource.KUGOU, "low", at = 9_000L))
+            lower.complete(word(LyricsSource.MEGALOBIZ, "lower", at = 9_100L))
+        }
+        val found = LyricsRepository.wordSyncedWithin(
+            listOf(LyricsSource.LRCLIB to high, LyricsSource.KUGOU to low, LyricsSource.MEGALOBIZ to lower),
+            graceMs = 500,
+        )
+        assertEquals("low", found?.lines?.single()?.text)
+    }
+
+    @Test
     fun noWordTimedAnswerMeansNothing() = runBlocking {
         val high = CompletableDeferred<LyricsRepository.Result?>()
         val low = CompletableDeferred<LyricsRepository.Result?>()
