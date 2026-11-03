@@ -1,0 +1,39 @@
+﻿Kotlin Android app (task/u19-tg). User 11-03 13:23 (phone): manual upgrade on 'Watermelon Sugar' (KPM_BYl-EaQ) switched to FLAC and then SILENTLY WENT BACK to YouTube 14 s later; the user had to press upgrade again. Log (nothing at all is logged for the revert):
+13:23:32.889 queue: replace n=1 at=0 size=11 by=upgrade
+13:23:32.913 upgraded to FLAC · 24-bit · 44.1 kHz at 39586ms (텔레그램)
+13:23:33.087 DECODE KPM_BYl-EaQ <- audio/flac 44.1kHz 24-bit 2ch
+13:23:37.290 hq-cache: Watermelon Sugar fully cached 35.1 MB
+13:23:39.550 nav: Player close source=motion / 13:23:39.589 nav: Detail artist / 13:23:40.156 nav: Player open source=tap
+13:23:44.315 menu:KPM_BYl-EaQ ok 1127ms
+13:23:47.193 power: decoders active=0 []
+13:23:47.247 DECODE KPM_BYl-EaQ <- audio/opus 48.0kHz   (back on YouTube, no log line says why)
+13:23:47.286 holding 6740Z634MX4 until it is within 25s of playing
+13:23:50.853 upgrade asked for by hand ... 'Watermelon Sugar' is playing 130 kbps from cache and was never resolved
+(The second upgrade at 13:24:04 stayed.) Earlier the same session the track had been re-started after a 'wrong-recording' download check (13:22:45 'KPM_BYl-EaQ is a wrong recording; streaming the song version instead').
+Task: find every path that can re-prepare the current item on the YouTube source after an upgrade (download-check repair / wrong-recording handler, resolve cache, queue replace, menu loading, direct-source gate, player reopen) and which one fired at 13:23:47. Fix it so an accepted upgrade is never undone silently; any legitimate fall-back must log one line with its reason.
+Battery first (no polling timers, event-based). Re-read every caller and type of what you change. Keep upstream code intact (Korean code in ko/ + one-line // [KO] hooks). Unknown Android/Media3/Compose APIs: context7. Use grep/Select-String (no rg). First write a JVM test that FAILS on the current code, then fix; name new test classes in the summary (you may not edit .github/workflows).
+Summary of at most 10 lines: files / root cause with file:line / key change / tests and results / REMOVED-LINES AUDIT / not done. Follow AGENTS.md (ponytail) rules.
+
+== 2 차 작업 (현재 브랜치 = 이전 차수 결과) ==
+엄격 기준: 아래 독립 검토자 지적의 HIGH·MEDIUM 은 전부 고칠 것(드문 경우라는 이유로 보류 금지). 그리고 이전 차수가 docs/review-1031/ 문서에 '문서에만 남김/미해결'로 둔 HIGH·MEDIUM 도 이번에 고칠 것 — 재생 핵심 경로(곡 해석·싱크·크로스페이드)라도 고치되 문서 해당 줄에 '폰 검증 필요' 표시. 지적이 틀렸으면 코드 줄 근거로 반박을 요약에. 새로 고친 곳마다 수정 전 실패하는 테스트. 이전 차수에서 고친 것을 되돌리지 말 것.
+검토 지적:
+Error: This request would exceed your available credits given your current in-flight requests. Retry after in-flight requests settle, or add credits.
+> build · deepseek/deepseek-v4.1-flash-1017
+→ Read /home/runner/work/_temp/ds/change.diff
+→ Read /home/runner/work/_temp/ds/prompt.txt
+$ cd /home/runner/work/BitChord/BitChord && grep -n "MARKER\|UPGRADED\|upgradedUri\|fun cacheTag\|fun upgradeGeneration" app/src/main/java/com/music/bitchord/playback/QualityUpgrade.kt | head -60
+55:    const val MARKER = "q"
+56:    private const val UPGRADED = "hifi"
+302:        if (mediaId !in handAsked && uri.getQueryParameter(MARKER) != null) return false
+658:     * @param rendition the item's [MARKER], via [cacheTag] — null for an
+769:     * [upgradedUri] takes the `direct_youtube` out of the URI it builds so the
+907:     * The upgraded stream for a request carrying the [MARKER], or null.
+914:        if (uri.getQueryParameter(MARKER)?.startsWith(UPGRADED) != true) return null
+919:    fun upgradedUri(uri: String): String {
+923:        val markerStart = "&$MARKER="
+934:            ?.removePrefix("$UPGRADED-")
+937:        val tag = if (previous == null) UPGRADED else "$UPGRADED-${previousGeneration + 1}"
+958:    fun cacheTag(uri: Uri): String? = uri.getQueryParameter(MARKER)
+965:     * stub. The marker is appended by [upgradedUri] and is the only part that
+969:        markerOf(uri)?.startsWith(UPGRADED) == true
+마지막 요약에 지적 번호별 처리(고침/반박+근거) 한 줄씩.
