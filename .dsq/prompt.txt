@@ -1,0 +1,24 @@
+BITCHORD 1.9 (Kotlin Android, branch task/u19-tg, worktree C:\Users\jang\Desktop\BitChord\BitChord-u19tg).
+Goal: the app's own smoke check reports that the high-quality upgrade verification never succeeds, so hi-res upgrades may never actually be delivered.
+
+## Evidence (emulator smoke run 41675634514, app's own check table)
+```
+| 4 | 음질 업그레이드 | FAIL | accepted=0 rejected=0 decode-failed=0 no-reference=0 <br> hq-verify accepted 가 0 |
+```
+All four counters are zero, not "rejected": the verification appears never to run or never to reach a decision. The same run logged `upgrade found`, `hq-verify:` lines and `HqLibraryUpgradeWorker` running repeatedly (the worker succeeds each time), so the pipeline is active but nothing is accepted.
+
+## Tasks
+1. Answer with file:line: what makes an HQ upgrade "accepted", where the four counters (accepted / rejected / decode-failed / no-reference) are incremented, and which early return can leave all four at zero. Name the exact branch that a real run takes.
+2. Say whether a zero-accepted run means (a) no HQ candidate was ever offered, (b) the comparison could not run (no reference audio / decode failure), or (c) a policy switch is off. Support it with the code path and with what the emulator log shows, not a guess.
+3. If it is a real defect, make the smallest fix that lets a genuine upgrade verify, plus a JVM test that FAILS on the current code. If the zero is expected in that configuration (e.g. no reference copy exists for a cold stream), do NOT invent a fix: instead add the one diagnostic log line that names why it gave up, and a test for the decision function.
+4. State the risk: a verification that accepts too easily would let a wrong-recording copy be labelled hi-res, which the user hates more than a missing upgrade.
+
+## Rules
+- Keep upstream code intact (ko/ + `// [KO]` hooks). Unknown Android/Media3 API: context7.
+- Do NOT touch .github/workflows, signing, LyricsTiming.kt, LyricsPerLine.kt, RefineExtendPolicy.kt, VideoAudio.kt or NextTrackPreparation.kt (other work owns them today).
+- Battery first: no polling, no extra decodes beyond what already happens; keep every existing guard (pending flags, timeouts, low-power, cache keys).
+- New test class names in the summary (you may not edit workflows). grep/Select-String, not rg.
+- Follow AGENTS.md (ponytail): smallest complete change.
+
+## Summary (max 10 lines)
+files / why all four counters are zero with file:line / change or diagnostic / tests on base vs after / REMOVED-LINES AUDIT / risk of a false accept.
