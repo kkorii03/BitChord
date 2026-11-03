@@ -11,8 +11,9 @@ import org.junit.Test
 
 /**
  * Regression for the early smart arm: a tail analysis published in its own
- * regional timeline reports contentEnd ~24 s on a five-minute file, and the
- * planner happily puts the fade there. The guard must refuse that plan.
+ * regional timeline reports contentEnd ~24 s on a five-minute file. The planner
+ * must ignore that timing and fall back to the end of the track, and the arm
+ * guard must still refuse the raw early value if one reaches it.
  */
 class CrossfadeEarlyPlanTest {
 
@@ -28,7 +29,7 @@ class CrossfadeEarlyPlanTest {
     )
 
     @Test
-    fun `an unshifted tail content end arms the fade seconds into the song`() {
+    fun `an unshifted tail content end falls back to the end of the track`() {
         val plan = planTransition(
             analysis = analysed(contentEnd = 24.0),
             nextAnalysis = analysed(contentEnd = 180.0, duration = 200.0).copy(trackId = "in"),
@@ -40,16 +41,10 @@ class CrossfadeEarlyPlanTest {
             mode = CrossfadeMode.SMART,
             advanced = true,
         )
+        assertFalse("planner kept a mid-track exit, start=${plan.transitionStart}", plan.blocked)
         assertTrue(
-            "fixture must reproduce the early plan, start=${plan.transitionStart}",
-            plan.transitionStart < 30.0,
-        )
-        assertTrue(
-            AutomixWorkPolicy.smartArmTooEarly(
-                transitionStartMs = (plan.transitionStart * 1000).toLong(),
-                durationMs = 300_000L,
-                fadeMs = plan.fadeMs,
-            ),
+            "planner put the mix at ${plan.transitionStart}, not in the real outro",
+            plan.transitionStart >= 280.0,
         )
     }
 

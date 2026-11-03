@@ -1,5 +1,7 @@
 package com.music.bitchord.playback.smart
 
+import kotlin.math.abs
+
 /**
  * Which part of a track Automix needs measured.
  *
@@ -152,5 +154,42 @@ object AutomixWorkPolicy {
         if (durationMs <= 0L || durationMs < MIN_GUARD_DURATION_MS) return false
         val earliest = durationMs - fadeMs.coerceAtLeast(0L) - EARLY_MIX_GUARD_MS
         return transitionStartMs < earliest
+    }
+
+    /**
+     * How far an analysis's own duration may differ from the rendition now
+     * playing before its timing is treated as belonging to another cut.
+     */
+    const val ANALYSIS_DURATION_TOLERANCE_SECONDS = 1.0
+
+    /**
+     * Whether [analysis] describes the same rendition as [durationSeconds].
+     *
+     * An analysis is stored per track, not per source. When playback switches
+     * to a different rendition mid-song (a quality upgrade, or a substituted
+     * source) the old run's duration and content end are on the old cut's
+     * timeline. Arming a blend from those puts the mix minutes into the new
+     * file — the 11-03 marker at 1:50 on a 2:53 track.
+     */
+    fun analysisDurationFits(analysis: TrackAnalysis, durationSeconds: Double): Boolean {
+        if (!durationSeconds.isFinite() || durationSeconds <= 0.0) return true
+        val analysed = analysis.duration
+        if (!analysed.isFinite() || analysed <= 0.0) return true
+        return abs(analysed - durationSeconds) <= ANALYSIS_DURATION_TOLERANCE_SECONDS
+    }
+
+    /**
+     * [analysisDurationFits] plus the tail window's own invariant: a content
+     * end measured from the closing [TRANSITION_WINDOW_SECONDS] cannot sit
+     * earlier than that window on the same rendition. One that does came from
+     * another cut or a regional timeline, and is no evidence for this mix.
+     */
+    fun analysisFitsPlayback(analysis: TrackAnalysis, durationSeconds: Double): Boolean {
+        if (!analysisDurationFits(analysis, durationSeconds)) return false
+        if (!durationSeconds.isFinite() || durationSeconds <= 0.0) return true
+        val contentEnd = analysis.contentEndTime
+        if (!contentEnd.isFinite() || contentEnd <= 0.0) return true
+        val earliest = durationSeconds - TRANSITION_WINDOW_SECONDS - ANALYSIS_DURATION_TOLERANCE_SECONDS
+        return contentEnd >= earliest && contentEnd <= durationSeconds + ANALYSIS_DURATION_TOLERANCE_SECONDS
     }
 }

@@ -1198,13 +1198,22 @@ class CrossfadeController(
 
         // Resolved once and reused: [analysisFor] was being called five separate
         // times per tick below, and the answer cannot change mid-tick.
-        val currentAnalysis = analysisFor(currentItem)
+        //
+        // Stored per track, not per source. After a mid-song rendition swap the
+        // old run's timeline is no longer this file's, and planning from it put
+        // the marker at 1:50 on a 2:53 track. A measurement that disagrees with
+        // the duration now playing is no evidence, so the plan falls back to the
+        // plain end crossfade until the current rendition has one.
+        val analysedCurrent = analysisFor(currentItem)
+        val currentAnalysis = analysedCurrent.takeIf {
+            AutomixWorkPolicy.analysisFitsPlayback(it, duration / 1000.0)
+        } ?: TrackAnalysis(trackId = currentItem.mediaId)
         val nextAnalysis = analysisFor(nextItem)
         val analysisState = AppSettings.smartAnalysis.value
         // The DJ planner is Automix now; there is no separate mode switch.
         val advanced = true
 
-        val plan = planTransition(
+        val smartPlan = planTransition(
             analysis = currentAnalysis,
             nextAnalysis = nextAnalysis,
             currentTrack = currentItem.toTransitionInfo(duration),
@@ -1215,6 +1224,30 @@ class CrossfadeController(
             mode = CrossfadeMode.SMART,
             advanced = advanced,
         )
+        // A plan that starts too far from the end is one the arming guard below
+        // will refuse, so nothing would happen where the marker pointed. Replace
+        // it with the plain end crossfade this pair can actually play, and let
+        // the marker describe that instead.
+        val tooEarly = !smartPlan.blocked && smartPlan.fadeMs > 0L &&
+            AutomixWorkPolicy.smartArmTooEarly(
+                (smartPlan.transitionStart * 1000).roundToLong(),
+                duration,
+                smartPlan.fadeMs,
+            )
+        val plan = if (tooEarly) {
+            planTransition(
+                analysis = currentAnalysis,
+                nextAnalysis = nextAnalysis,
+                currentTrack = currentItem.toTransitionInfo(duration),
+                nextTrack = nextItem.toTransitionInfo(nextDuration),
+                currentTime = player.currentPosition / 1000.0,
+                duration = duration / 1000.0,
+                fadeSeconds = fallbackSeconds,
+                mode = CrossfadeMode.STANDARD,
+            )
+        } else {
+            smartPlan
+        }
         // One line per distinct verdict rather than one per 250ms tick, so the
         // log says what the planner decided for this pair without burying it.
         val verdict = "${currentItem.mediaId}->${nextItem.mediaId}|${plan.reason}|${plan.transitionStyle}|fade=${plan.fadeMs}" +
