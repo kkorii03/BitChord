@@ -7,6 +7,7 @@ import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.net.SongVersionPolicy
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.data.stats.ListeningStats
@@ -636,7 +637,11 @@ private suspend fun loadNormalAutoplayTracks(
     return Result.success(
         if (AppSettings.preferMusicOnly.value) {
             try {
-                YtMusicRepository.resolveQueueAhead(rows, 0, ahead = 4)
+                YtMusicRepository.resolveQueueAhead(
+                    rows,
+                    0,
+                    ahead = SongVersionPolicy.QUEUE_VERSION_AHEAD + 1,
+                )
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {

@@ -833,7 +833,11 @@ internal object KoTrackMatcher {
     internal fun audioSwitchTargetOf(song: Song): Target {
         val base = targetOf(song)
         val identity = audioSwitchIdentity(base.title, base.artist)
-        if (!identity.hasSoundtrackTail) return base
+        // A featured artist is a credited performer too. YouTube Music files
+        // "Get Lucky" under Daft Punk while a search can return the release
+        // credited to Pharrell Williams alone, so both credits have to count.
+        val withFeatured = base.copy(artist = withFeaturingArtists(base.artist, base.title))
+        if (!identity.hasSoundtrackTail) return withFeatured
         // A pipe/trailing OST label is the fan-upload shape, but a real
         // performer in the row's credit is still the performer. Blank only
         // when there is no credit or the credit is itself a channel.
@@ -842,12 +846,37 @@ internal object KoTrackMatcher {
             isUploaderCredit(base.artist) -> ""
             else -> base.artist
         }
-        return base.copy(
+        return withFeatured.copy(
             title = identity.title,
-            artist = artist,
+            artist = withFeaturingArtists(artist, identity.title),
             noPerformer = artist.isBlank(),
         )
     }
+
+    /**
+     * [artist] plus the performers a title credits after "feat."/"ft."/
+     * "featuring". A trailing dash label or bracket packaging is not a name.
+     */
+    private fun withFeaturingArtists(artist: String, title: String): String {
+        val featured = FEATURING_CREDITS.findAll(normalize(title))
+            .flatMap { match ->
+                val credit = DASH.find(match.groupValues[1])
+                    ?.let { match.groupValues[1].substring(0, it.range.first) }
+                    ?: match.groupValues[1]
+                splitTopLevel(credit, ARTIST_SEPARATORS)
+            }
+            .map { it.trim() }
+            .filter { it.isNotBlank() && !isPackagingOrTake(it) }
+            .distinct()
+            .toList()
+        if (featured.isEmpty()) return artist
+        return (listOf(artist).filter { it.isNotBlank() } + featured).joinToString(", ")
+    }
+
+    /** The performers after a featuring credit, up to a bracket or dash label. */
+    private val FEATURING_CREDITS = Regex(
+        """(?i)\b(?:featuring|feat|ft)\.?\s+([^()\[\]{}（）【】]+)""",
+    )
 
     /** The queries an audio switch runs, including its soundtrack work. */
     internal fun audioSwitchQueries(song: Song): List<String> = queries(targetOf(song))

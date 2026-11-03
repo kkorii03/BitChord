@@ -20,6 +20,32 @@ object SongVersionPolicy {
     const val BEFORE_AUDIO_TIMEOUT_MS = 1_500L
 
     /**
+     * How many rows after the playing one are version-resolved ahead of time.
+     * Bounded on purpose: the queue list shows a handful of rows, and every
+     * row costs at most one catalogue search. The pass runs when the queue is
+     * set and again whenever the playhead moves, never on a timer.
+     */
+    const val QUEUE_VERSION_AHEAD = 5
+
+    /**
+     * The forward queue rows whose song version is resolved ahead of playback:
+     * [ahead] rows after [currentIndex], clamped to the queue. The playing row
+     * is never included — replacing it would restart a track already audible.
+     */
+    fun versionLookaheadIndices(
+        currentIndex: Int,
+        itemCount: Int,
+        ahead: Int = QUEUE_VERSION_AHEAD,
+    ): IntRange {
+        if (itemCount <= 0 || currentIndex !in 0 until itemCount || ahead <= 0) {
+            return IntRange.EMPTY
+        }
+        val first = currentIndex + 1
+        val last = (currentIndex + ahead).coerceAtMost(itemCount - 1)
+        return if (first > last) IntRange.EMPTY else first..last
+    }
+
+    /**
      * Signed-out `next` responses carried no `playlistPanelVideoWrapperRenderer`
      * at all in the observed sessions (the pairing appears to be a premium
      * feature), so after this many empty answers in a row the counterpart
