@@ -1,0 +1,10 @@
+﻿
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 3
+- HIGH — app/src/main/java/com/music/bitchord/data/StoredVideoFlag.kt:15 (also shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/cover/CoverTitles.kt:394): the restore never checks `isVideoOrigin`, so a deliberately converted song-version row (`isVideo=false`, `isVideoOrigin=true`, as produced by SongVersionController and persisted by KoBackup/LocalPlaylistStore/OfflinePlaylists) is flipped back to `isVideo=true` when its stored title/artist still carry cover marks, undoing the user's audio-version choice. Fix: return the song unchanged when `isVideoOrigin && !isVideo` before the download-record and cover-mark branches, and add a test.
+- MEDIUM — app/src/main/java/com/music/bitchord/data/taste/TastePool.kt:207: `asSong()` drops `LocalTrack.coverSinger`, the only cover mark TasteSignals kept after cleaning the title/artist, so an old pre-flag cover row from the taste store can never be restored and AutoPlay/radio still treats it as a plain song. Fix: pass `coverSinger = coverSinger` into the `Song` so the helper can see the mark, and add the missing old-cover round-trip test.
+- MEDIUM — app/src/main/java/com/music/bitchord/playback/AudioCache.kt:1033 (also OfflinePlaylists.kt:279, HqLibraryUpgrade.kt:1762, LocalMediaRepository.kt:367, PlaybackService.kt:12743): the task requires a JVM round-trip test per fixed path, but these changed paths have none (the summary admits relying on helper tests), so a regression there would not be caught. Fix: add a minimal JVM round-trip test or a testable seam for each.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
