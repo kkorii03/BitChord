@@ -33,6 +33,7 @@ import com.music.bitchord.ko.KoAnalysisWaits
 import com.music.bitchord.ko.analysisWaitKeys
 import com.music.bitchord.ko.KoCacheHolder
 import com.music.bitchord.ko.KoNetworkPolicy
+import com.music.bitchord.ko.KoQualityUpgrade
 import com.music.bitchord.ko.KoCacheRetention
 import com.music.bitchord.ko.KoCachingDataSource
 import com.music.bitchord.ko.KoLosslessCache
@@ -1418,6 +1419,7 @@ object AudioCache {
                 pending = QualityUpgrade.isPending(videoId),
                 answered = QualityUpgrade.hasAnsweredFor(videoId),
                 refused = QualityUpgrade.hasRefusedFor(videoId),
+                retrySuppressed = KoQualityUpgrade.suppressesRetry(videoId),
                 contentLength = contentLengthOf(uri),
                 durationSec = target.durationSec,
             )
@@ -1478,7 +1480,8 @@ object AudioCache {
      *
      * Null also means "do not look again": the question is already pending for
      * this play, has answered, or was refused after a substitution broke the
-     * track.
+     * track, or an inconclusive answer is still inside its retry window — see
+     * [KoQualityUpgrade.suppressesRetry].
      */
     internal data class CachedLook(val floor: StreamFormat?)
 
@@ -1488,13 +1491,14 @@ object AudioCache {
         refused: Boolean,
         contentLength: Long,
         durationSec: Int?,
+        retrySuppressed: Boolean = false,
     ): CachedLook? = when {
-        pending || answered || refused -> null
-        else -> CachedLook(cachedBitrateFloor(contentLength, durationSec))
+        pending || answered || refused || retrySuppressed -> null
+        else -> CachedLook(bitrateFromBytes(contentLength, durationSec))
     }
 
     /** Bytes over runtime as a bitrate; the same conservative estimate as the cached-track path. */
-    internal fun cachedBitrateFloor(contentLength: Long, durationSec: Int?): StreamFormat? {
+    internal fun bitrateFromBytes(contentLength: Long, durationSec: Int?): StreamFormat? {
         val seconds = durationSec?.takeIf { it > 0 } ?: return null
         val bytes = contentLength.takeIf { it > 0 } ?: return null
         return StreamFormat(kbps = (bytes * 8 / seconds / 1000).toInt())

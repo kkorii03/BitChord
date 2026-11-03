@@ -166,6 +166,57 @@ class DirectSourceGateTest {
         assertNull(AudioCache.cachedLookToStart(false, false, true, 5_000_000L, 250))
     }
 
+    /**
+     * An inconclusive second look leaves [com.music.bitchord.playback.QualityUpgrade.asked]
+     * unset and only starts a retry window. A seek or reopen inside that window
+     * must not start a fresh lookup and re-arm pending; the retry window is the
+     * only thing standing between it and a lookup on every open.
+     */
+    @Test
+    fun anInconclusiveCachedLookHonoursTheRetryWindow() {
+        assertNull(
+            "a row inside its retry window must not look again",
+            AudioCache.cachedLookToStart(
+                pending = false,
+                answered = false,
+                refused = false,
+                contentLength = 5_000_000L,
+                durationSec = 250,
+                retrySuppressed = true,
+            ),
+        )
+        assertNotNull(
+            "once the retry window passes the look may run again",
+            AudioCache.cachedLookToStart(
+                pending = false,
+                answered = false,
+                refused = false,
+                contentLength = 5_000_000L,
+                durationSec = 250,
+                retrySuppressed = false,
+            ),
+        )
+
+        val root = File(".").canonicalFile
+        val cache = listOf("app/", "").map {
+            File(root, "${it}src/main/java/com/music/bitchord/playback/AudioCache.kt")
+        }.first { it.exists() }.readText()
+        val settle = cache.substringAfter("private fun settleDirectEntry(uri: Uri)")
+            .substringBefore("try {")
+        assertTrue(
+            "the cached settle path must feed the retry window into the gate",
+            "retrySuppressed = KoQualityUpgrade.suppressesRetry(videoId)" in settle,
+        )
+    }
+
+    /** Both the cache-only and cached-track floors use one bytes-over-seconds estimate. */
+    @Test
+    fun bothCachedFloorsShareOneBitrateEstimate() {
+        assertEquals(160, AudioCache.bitrateFromBytes(5_000_000L, 250)!!.kbps)
+        assertNull(AudioCache.bitrateFromBytes(0L, 250))
+        assertNull(AudioCache.bitrateFromBytes(5_000_000L, null))
+    }
+
     @Test
     fun aCachedRowWithNoMeasurementStartsWithNoFloor() {
         assertNull(AudioCache.cachedLookToStart(false, false, false, 0L, 250)?.floor)

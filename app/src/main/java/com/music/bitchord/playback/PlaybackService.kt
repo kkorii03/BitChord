@@ -7107,9 +7107,7 @@ class PlaybackService : MediaLibraryService() {
         format.bitrate.takeIf { it != Format.NO_VALUE && it > 0 }?.let {
             return StreamFormat(kbps = it / 1000)
         }
-        val seconds = durationSec?.takeIf { it > 0 } ?: return null
-        val bytes = AudioCache.contentLengthOf(uri).takeIf { it > 0 } ?: return null
-        return StreamFormat(kbps = (bytes * 8 / seconds / 1000).toInt())
+        return AudioCache.bitrateFromBytes(AudioCache.contentLengthOf(uri), durationSec)
     }
 
     /** Where the playing track stands, read off the player in one hop. */
