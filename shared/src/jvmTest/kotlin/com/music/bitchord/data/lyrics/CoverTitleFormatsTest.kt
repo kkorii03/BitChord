@@ -107,8 +107,21 @@ class CoverTitleFormatsTest {
     }
 
     @Test
+    fun aCoverWordBesideABalancedOriginalBracketStillReadsTheOriginal() {
+        val by = CoverTitles.lyricsQuery(song("Tomboy((G)I-DLE) / cover by 오화요", "오화요"))
+        assertEquals("Tomboy", by.title)
+        assertEquals("(G)I-DLE", by.artist)
+        assertTrue(by.artistKnown)
+
+        val bare = CoverTitles.lyricsQuery(song("Tomboy((G)I-DLE) (cover)", "오화요"))
+        assertEquals("Tomboy", bare.title)
+        assertEquals("(G)I-DLE", bare.artist)
+        assertTrue(bare.artistKnown)
+    }
+
+    @Test
     fun theProviderQueryBuilderUsesTheOriginalFromTheTitle() {
-        val names = LyricsQueryVariants.names("Tomboy((G)I-DLE)", "오화요")
+        val names = LyricsQueryVariants.names("Tomboy((G)I-DLE)", "오화요", isVideo = true)
         assertEquals("tomboy", names.first().title)
         assertEquals("(G)I-DLE", names.first().artist)
     }

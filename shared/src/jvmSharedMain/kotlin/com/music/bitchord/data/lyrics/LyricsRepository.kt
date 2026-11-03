@@ -747,7 +747,7 @@ object LyricsRepository {
             note(result)
             onSourceResult?.invoke(source, result, failure)
         }
-        val variants = LyricsQueryVariants.names(title, artist, album, artistAliases)
+        val variants = LyricsQueryVariants.names(title, artist, album, artistAliases, isVideo)
         // The normalised original title+artist is the first name, before any
         // variant or catalogue retry.
         val primary = variants.firstOrNull() ?: LyricsQueryVariants.Name(title, artist)

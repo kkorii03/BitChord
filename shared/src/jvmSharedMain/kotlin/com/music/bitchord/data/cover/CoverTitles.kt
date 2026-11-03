@@ -342,11 +342,28 @@ object CoverTitles {
      * display must not rewrite a label's ordinary title — but every lyrics
      * source is asked under the names the title states.
      */
-    fun lyricsCover(song: Song): Cover? =
-        read(song) ?: if (song.isVideo) readLyricsOnly(song.title, song.artist) else null
+    fun lyricsCover(song: Song): Cover? {
+        val cover = read(song)
+        if (cover == null) return if (song.isVideo) readLyricsOnly(song.title, song.artist) else null
+        if (cover.originalArtist != null) return cover
+        return readCoverTitleCredit(cover, song.artist) ?: cover
+    }
 
-    fun lyricsCover(title: String, artist: String): Cover? =
-        read(title, artist, null) ?: readLyricsOnly(title, artist)
+    fun lyricsCover(title: String, artist: String, isVideo: Boolean): Cover? {
+        val cover = read(title, artist, null)
+        if (cover == null) return if (isVideo) readLyricsOnly(title, artist) else null
+        if (cover.originalArtist != null) return cover
+        return readCoverTitleCredit(cover, artist) ?: cover
+    }
+
+    /**
+     * A cover read without an original artist whose song title still ends with
+     * a balanced original credit ("Tomboy((G)I-DLE)") is read again for that
+     * credit. Only the bracket path can add anything: the dash path would turn
+     * a title that already contains a dash into an artist and a song.
+     */
+    private fun readCoverTitleCredit(cover: Cover, channel: String): Cover? =
+        if (trailingGroup(cover.title) != null) readLyricsOnly(cover.title, channel) else null
 
     private fun readLyricsOnly(rawTitle: String, channel: String): Cover? {
         val raw = normalize(rawTitle.trim()).text

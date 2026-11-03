@@ -31,12 +31,15 @@ internal object LyricsQueryVariants {
         artist: String,
         album: String? = null,
         artistAliases: List<String> = emptyList(),
+        isVideo: Boolean = false,
     ): List<Name> {
         // A cover title can state the original's artist in the title itself
         // ("(원곡 : 한로로)", "(Original by X)"). Searching the song under that
         // name is much sharper than searching it with a blank artist, which
-        // lets any other song with the same title win.
-        val cover = runCatching { CoverTitles.lyricsCover(title, artist) }.getOrNull()
+        // lets any other song with the same title win. The lyrics-only shapes
+        // are read for uploads only: an ordinary catalogue title like
+        // "Bohemian Rhapsody (Remastered 2011)" is not a cover.
+        val cover = runCatching { CoverTitles.lyricsCover(title, artist, isVideo) }.getOrNull()
         val coveredTitle = cover?.title?.takeIf { it.isNotBlank() }
         val titleForParts = coveredTitle ?: title
         val parts = TrackMatcher.parseTitle(titleForParts, artist)

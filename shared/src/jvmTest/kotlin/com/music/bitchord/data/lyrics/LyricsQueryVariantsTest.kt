@@ -151,6 +151,19 @@ class LyricsQueryVariantsTest {
     }
 
     @Test
+    fun anOrdinaryTitleWithAVersionBracketIsNotReadAsACover() {
+        val names = LyricsQueryVariants.names("Bohemian Rhapsody (Remastered 2011)", "Queen")
+        assertEquals("queen", names.first().artist)
+        assertTrue(names.any { it.title.startsWith("bohemian rhapsody") })
+    }
+
+    @Test
+    fun anOrdinaryDashTitleIsNotReadAsACover() {
+        val names = LyricsQueryVariants.names("Love - Hate", "Artist")
+        assertEquals("artist", names.first().artist)
+    }
+
+    @Test
     fun aCoverTitleSearchesTheSymbolicTitleUnderTheOriginalArtist() {
         val names = LyricsQueryVariants.names("정승환 '0+0' Cover (원곡 : 한로로)", "정승환")
         assertEquals("0+0", names.first().title)
