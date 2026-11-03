@@ -18,14 +18,25 @@ class SongCheckFirstPassTest {
     }
 
     @Test
-    fun `the full opening follows every first result but a refusal`() {
-        assertTrue(SongCheckWindow.needsFullOpening("applied"))
-        assertTrue(SongCheckWindow.needsFullOpening("no-words"))
-        assertTrue(SongCheckWindow.needsFullOpening("few-words"))
-        assertTrue(SongCheckWindow.needsFullOpening("no-fit"))
-        assertTrue(SongCheckWindow.needsFullOpening("refused-match"))
-        assertTrue(SongCheckWindow.needsFullOpening("refused-shift"))
-        assertFalse(SongCheckWindow.needsFullOpening("no-answer"))
+    fun `an applied first pass does not wait for the longer opening`() {
+        assertFalse(SongCheckWindow.needsFullOpening("applied", placedLines = 9))
+        assertFalse(SongCheckWindow.needsFullOpening("applied", placedLines = 3))
+    }
+
+    @Test
+    fun `a first pass without an answer still gets the longer opening`() {
+        assertTrue(SongCheckWindow.needsFullOpening("no-words", placedLines = 0))
+        assertTrue(SongCheckWindow.needsFullOpening("few-words", placedLines = 1))
+        assertTrue(SongCheckWindow.needsFullOpening("no-fit", placedLines = 2))
+        assertTrue(SongCheckWindow.needsFullOpening("no-fit", placedLines = 5))
+        assertTrue(SongCheckWindow.needsFullOpening("refused-match", placedLines = 7))
+        assertTrue(SongCheckWindow.needsFullOpening("refused-shift", placedLines = 6))
+    }
+
+    @Test
+    fun `a refusal is never asked again`() {
+        assertFalse(SongCheckWindow.needsFullOpening("no-answer", placedLines = 0))
+        assertFalse(SongCheckWindow.needsFullOpening("no-answer", placedLines = 9))
     }
 
     @Test

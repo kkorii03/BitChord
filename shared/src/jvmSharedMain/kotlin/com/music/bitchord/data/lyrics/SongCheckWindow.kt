@@ -18,17 +18,33 @@ object SongCheckWindow {
      * answer three minutes after the song starts: most of that is waiting for
      * the longer opening to reach the disk and Whisper reading it. Forty
      * seconds is an intro and a verse, and it still has to clear the same
-     * agreement and shift floors; the full opening follows to refine it.
+     * agreement and shift floors; the full opening follows only when this
+     * pass had no answer to keep (see [needsFullOpening]).
      */
     const val FIRST_SECONDS = 40.0
 
     /**
-     * Whether the full opening follows a first pass that ended with [result].
-     * A `no-answer` either spent the engine on a refusal (a 429, no network)
-     * or never reached it, so it must not be asked again; every other result
-     * is worth the longer audio — applied to refine it, otherwise to try.
+     * Lines the first pass must have placed before the longer opening is
+     * still worth asking for. The same floor the fit itself needs: once this
+     * many lines are placed, the engine already has enough sheet to make its
+     * call, and waiting for the ninety-second opening only returns the same
+     * answer about a minute later (and may overwrite an earlier correction).
      */
-    fun needsFullOpening(result: String): Boolean = result != "no-answer"
+    const val ENOUGH_FIRST_LINES = LyricsAiGuard.MIN_AI_LINES
+
+    /**
+     * Whether the full opening follows a first pass that ended with [result]
+     * after placing [placedLines] lyric lines. A `no-answer` either spent the
+     * engine on a refusal (a 429, no network) or never reached it, so it must
+     * not be asked again. A pass that already placed enough lines and applied
+     * its correction is kept as it is: waiting for the ninety-second opening
+     * would only overwrite it a minute later, after the screen moved on. A
+     * pass that found no fit or was refused still gets the longer audio to
+     * try for the answer.
+     */
+    fun needsFullOpening(result: String, placedLines: Int): Boolean =
+        result != "no-answer" &&
+            !(result == "applied" && placedLines >= ENOUGH_FIRST_LINES)
 
     /**
      * Whether the full pass may be written over the first. An early correction

@@ -3028,7 +3028,7 @@ object LyricsTiming {
             ) ?: return@withLock null
             first to applySongCheck(context, song, key, engine, first)
         } ?: return false
-        if (!SongCheckWindow.needsFullOpening(first.result)) return firstOk
+        if (!SongCheckWindow.needsFullOpening(first.result, first.placed)) return firstOk
         VideoAudio.songWavCopy(context, song, VideoAudio.SONG_CHECK_SECONDS)
         return songSyncGate.withLock {
             val full = runSongCheck(
@@ -3176,10 +3176,11 @@ object LyricsTiming {
             return SongCheck("few-words", null, heard, null, null, seconds, answer.httpCode, heard.size, probe?.failure, listenClock)
         }
         val starts = LyricsWordAlign.placeLines(texts, heard)
+        val placed = starts.count { it != null }
         val fitted = fitAi(lines, indices, starts) ?: run {
             songLog(song.videoId, "no-fit", null, null, seconds, words = heard.size, http = answer.httpCode)
             recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe)
-            return SongCheck("no-fit", null, heard, null, null, seconds, answer.httpCode, heard.size, clock = listenClock)
+            return SongCheck("no-fit", null, heard, null, null, seconds, answer.httpCode, heard.size, clock = listenClock, placed = placed)
         }
         val match = fitted.matchPercent
         val shift = shownShiftMs(lines, fitted)
@@ -3187,16 +3188,16 @@ object LyricsTiming {
             !LyricsAiGuard.agreementAllows(match) -> {
                 songLog(song.videoId, "refused-match", match, shift, seconds, words = heard.size, http = answer.httpCode)
                 recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe)
-                return SongCheck("refused-match", null, heard, match, shift, seconds, answer.httpCode, heard.size, clock = listenClock)
+                return SongCheck("refused-match", null, heard, match, shift, seconds, answer.httpCode, heard.size, clock = listenClock, placed = placed)
             }
             !LyricsAiGuard.songShiftAllows(shift) -> {
                 songLog(song.videoId, "refused-shift", match, shift, seconds, words = heard.size, http = answer.httpCode)
                 recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe)
-                return SongCheck("refused-shift", null, heard, match, shift, seconds, answer.httpCode, heard.size, clock = listenClock)
+                return SongCheck("refused-shift", null, heard, match, shift, seconds, answer.httpCode, heard.size, clock = listenClock, placed = placed)
             }
         }
         recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe)
-        return SongCheck("applied", fitted, heard, match, shift, seconds, answer.httpCode, heard.size, clock = listenClock)
+        return SongCheck("applied", fitted, heard, match, shift, seconds, answer.httpCode, heard.size, clock = listenClock, placed = placed)
     }
 
     /**
@@ -3239,6 +3240,8 @@ object LyricsTiming {
         val failure: NextPrepPolicy.SyncFailure? = null,
         /** The clock of the copy this check actually listened to. */
         val clock: Clock = Clock.Unknown,
+        /** How many of the sheet's lines the transcript could be placed on. */
+        val placed: Int = 0,
     )
 
     /**
