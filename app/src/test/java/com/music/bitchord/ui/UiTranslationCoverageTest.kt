@@ -34,6 +34,33 @@ class UiTranslationCoverageTest {
         "spotify_import_language_hint",
     )
 
+    private val appIconLabels = listOf(
+        "app_icon_monochrome",
+        "app_icon_neon_silver",
+        "app_icon_neon_cyan",
+        "app_icon_neon_violet",
+        "app_icon_samsung_neon_silver",
+        "app_icon_samsung_neon_cyan",
+        "app_icon_samsung_neon_violet",
+        "app_icon_pixel_neon_silver",
+        "app_icon_pixel_neon_cyan",
+        "app_icon_pixel_neon_violet",
+    )
+
+    private val forkLabels = appIconLabels + "music_gate_fallback"
+
+    @Test
+    fun appIconLabelsAndTheRegionNoticeHaveKoreanTranslations() {
+        val english = strings("values")
+        val korean = strings("values-ko")
+
+        for (key in forkLabels) {
+            assertNotNull("values/strings.xml is missing $key", english[key])
+            assertNotNull("values-ko/strings.xml is missing $key", korean[key])
+            assertTrue("$key must be Korean in values-ko", korean.getValue(key).hasHangul())
+        }
+    }
+
     @Test
     fun pipelineAndSpotifyLabelsHaveKoreanTranslations() {
         val english = strings("values")
@@ -49,7 +76,7 @@ class UiTranslationCoverageTest {
     @Test
     fun userVisibleLabelsAreNotMarkedUntranslatable() {
         val raw = File(resDir, "values/strings.xml").readText()
-        for (key in required) {
+        for (key in required + forkLabels) {
             val tag = Regex("""<string name="${Regex.escape(key)}"[^>]*>""").find(raw)
             assertNotNull("$key is missing from values/strings.xml", tag)
             assertFalse("$key is user-visible and must not be translatable=\"false\"", tag!!.value.contains("translatable=\"false\""))

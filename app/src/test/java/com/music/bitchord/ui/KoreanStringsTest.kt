@@ -117,6 +117,53 @@ class KoreanStringsTest {
         assertEquals("1,237분", koreanValue)
     }
 
+    @Test
+    fun v19KeepsTheForkWordingAndTheNewEnglishMeaning() {
+        val problems = mutableListOf<String>()
+        fun expect(module: String, key: String, expected: String) {
+            val actual = value(module, key)
+            if (actual != expected) problems += "$module/$key: expected '$expected' but was '$actual'"
+        }
+        fun expectContains(module: String, key: String, needle: String) {
+            val actual = value(module, key).orEmpty()
+            if (!actual.contains(needle)) problems += "$module/$key must contain '$needle': $actual"
+        }
+
+        // 1.9 replaced the fork's 매칭 with the literal 일치, which Korean
+        // listeners do not use for songs paired across sources.
+        expect("app", "source_matching", "소스 매칭")
+        expect("app", "spotify_import_matching", "노래 매칭 중(%1\$d/%2\$d)")
+        expect("app", "spotify_import_loose", "%1\$d곡은 대략적으로 매칭되었습니다.")
+        expectContains("app", "jiosaavn_mismatch_warning", "매칭")
+        expectContains("app", "upgrade_length_slack_footer", "매칭")
+        expectContains("app", "upgrade_length_slack_footer", "5초")
+        // The English still names the FIR decimator and the offset; 1.9 dropped
+        // or mistranslated both.
+        expect("app", "pipeline_dsd_decoder", "DSD → PCM (네이티브 FIR 데시메이터)")
+        expect("app", "pipeline_fir_decimation", "FIR 데시메이션 ×%1\$d, %2\$d탭")
+        expect("app", "pipeline_source_verified", "출처: %1\$s · 검증됨(오프셋 %2\$s ms)")
+        expectContains("app", "sync_safety_hq_sync_subtitle", "오프셋")
+        // These sentences lost the part that told the listener what happens next.
+        expectContains("app", "dolby_atmos_unavailable", "일반 버전으로 재생")
+        expectContains("app", "proxy_gate_fallback", "한국 제한 우회")
+        expectContains("app", "spotify_canvas_auto_hide_subtitle", "하프 플레이어")
+        expectContains("app", "addon_url_description", "manifest.json")
+        expectContains("app", "source_addon_not_addon", "manifest.json")
+        expect("app", "show_all_again", "모두 다시 보기")
+        expect("app", "lyrics_share_story_revert", "카드로 돌아가기")
+        // 1.9 changed the English meaning of these two without changing the copy.
+        expectContains("sharedUi", "automix_not_supported_video", "미지원")
+        if (value("sharedUi", "automix_not_supported_video").orEmpty().contains("크로스페이드")) {
+            problems += "sharedUi/automix_not_supported_video still says 크로스페이드"
+        }
+        expectContains("sharedUi", "autoplay_empty_description", "계속 재생")
+
+        assertTrue(
+            "1.9 dropped or mistranslated the fork copy:\n" + problems.joinToString("\n"),
+            problems.isEmpty(),
+        )
+    }
+
     private fun defaultValue(key: String): String? =
         strings(File(root, "app/src/main/res/values/strings.xml"))[key]
 

@@ -1031,7 +1031,7 @@
     <string name="listen_as">Listen as</string>
     <string name="default_youtube_profile">YouTube Music default profile</string>
     <string name="account_profiles_help">A Google account can have Personal and Brand profiles. Each has its own library, likes and history.</string>
-    <string name="music_gate_fallback" translatable="false">YouTube Music is restricted in this region, so browsing and playback use YouTube.</string>
+    <string name="music_gate_fallback">YouTube Music is restricted in this region, so browsing and playback use YouTube.</string>
     <string name="choose_profile">Choose a profile</string>
     <string name="use_this_profile">Use this profile</string>
     <string name="switch_profile_hint">Switch using the avatar, then use this profile.</string>
@@ -1601,16 +1601,16 @@
     <string name="direct_source_stream_in_party">Off while you\'re in a Listen Together party</string>
     <string name="show_listen_together_button">Show Listen Together button</string>
     <string name="show_listen_together_button_subtitle">Off, the player shows only the audio output button between lyrics and the queue</string>
-    <string name="app_icon_monochrome" translatable="false">Monochrome</string>
-    <string name="app_icon_neon_silver" translatable="false">Neon Silver</string>
-    <string name="app_icon_neon_cyan" translatable="false">Neon Cyan</string>
-    <string name="app_icon_neon_violet" translatable="false">Neon Violet</string>
-    <string name="app_icon_samsung_neon_silver" translatable="false">Samsung Neon Silver</string>
-    <string name="app_icon_samsung_neon_cyan" translatable="false">Samsung Neon Cyan</string>
-    <string name="app_icon_samsung_neon_violet" translatable="false">Samsung Neon Violet</string>
-    <string name="app_icon_pixel_neon_silver" translatable="false">Pixel Neon Silver</string>
-    <string name="app_icon_pixel_neon_cyan" translatable="false">Pixel Neon Cyan</string>
-    <string name="app_icon_pixel_neon_violet" translatable="false">Pixel Neon Violet</string>
+    <string name="app_icon_monochrome">Monochrome</string>
+    <string name="app_icon_neon_silver">Neon Silver</string>
+    <string name="app_icon_neon_cyan">Neon Cyan</string>
+    <string name="app_icon_neon_violet">Neon Violet</string>
+    <string name="app_icon_samsung_neon_silver">Samsung Neon Silver</string>
+    <string name="app_icon_samsung_neon_cyan">Samsung Neon Cyan</string>
+    <string name="app_icon_samsung_neon_violet">Samsung Neon Violet</string>
+    <string name="app_icon_pixel_neon_silver">Pixel Neon Silver</string>
+    <string name="app_icon_pixel_neon_cyan">Pixel Neon Cyan</string>
+    <string name="app_icon_pixel_neon_violet">Pixel Neon Violet</string>
     <string name="font">Font</string>
     <string name="font_default">Default</string>
     <string name="font_legacy">Legacy</string>
