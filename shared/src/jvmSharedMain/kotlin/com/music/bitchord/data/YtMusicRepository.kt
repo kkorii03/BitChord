@@ -111,7 +111,10 @@ object YtMusicRepository {
     // A lookup in flight, so the queue prefetcher and the player's switch
     // share one search instead of sending the same request twice at once.
     private val audioLookups = ConcurrentHashMap<String, CompletableDeferred<Song>>()
-    private val videoVersionLookups = ConcurrentHashMap<String, CompletableDeferred<Song?>>()
+    // The producer runs here, not in the asking coroutine: a prefetch that is
+    // cancelled must not cancel the manual switch that joined its search.
+    private val videoLookupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val videoVersionLookups = SharedLookups<Song?>(videoLookupScope)
     /** Liked Music's continuation tokens, whose later pages need the same split. */
     private val likedContinuations = ConcurrentHashMap.newKeySet<String>()
 
@@ -763,30 +766,109 @@ object YtMusicRepository {
     suspend fun officialVideo(videoId: String): String? =
         KoSongVersion.officialVideo(videoId) // [KO] song-version
 
-    suspend fun resolveVideo(song: Song): Song? {
+    suspend fun resolveVideo(song: Song): Song? =
+        resolveVideo(
+            song,
+            search = { query -> search(query, SearchFilter.VIDEOS, SearchKind.VIDEO_SWITCH) },
+            pairing = { officialVersion(song, wantAudio = false) },
+        )
+
+    /** [resolveVideo] with its two network calls injectable, so a JVM test needs no network. */
+    internal suspend fun resolveVideo(
+        song: Song,
+        search: suspend (String) -> Result<List<SearchResult>>,
+        pairing: suspend () -> VersionPairing,
+    ): Song? {
         if (song.isVideo) return null
         videoVersionCache[song.videoId]?.let { return it }
-        officialVersion(song, wantAudio = false)?.let { video ->
-            videoVersionCache[song.videoId] = video
-            return video
-        }
-        val target = TrackMatcher.targetOf(song)
-        for (query in TrackMatcher.queries(target)) {
-            val candidates = search(query, SearchFilter.VIDEOS)
-                .getOrNull()
-                ?.filterIsInstance<SearchResult.Track>()
-                ?.map { it.song }
-                .orEmpty()
-            TrackMatcher.best(candidates, target)?.let { match ->
-                Log.d(TAG, "video switch: '${song.title}' -> '${match.title}' ($query)")
-                videoVersionCache[song.videoId] = match
-                return match
+        // A remembered miss was both the pairing and the search coming back
+        // empty, so asking either again would only repeat the same answer.
+        if (synchronized(videoVersionMissing) { song.videoId in videoVersionMissing }) return null
+        if (!videoVersionSearchWanted(song)) {
+            // A queue row that lost its header cannot be searched: the empty
+            // query can only match something unrelated. YouTube's pairing is
+            // keyed by the id, so it can still answer one.
+            val pair = pairing()
+            pair.song?.let { video ->
+                videoVersionCache[song.videoId] = video
+                return video
             }
+            Log.w(TAG, "video switch skipped: ${song.videoId} has empty title/artist")
+            if (videoVersionMissIsConclusive(searchable = false, pairingAnswered = pair.answered)) {
+                synchronized(videoVersionMissing) { videoVersionMissing[song.videoId] = true }
+            }
+            return null
         }
-        Log.w(TAG, "video switch: no video match for '${song.title}' by '${song.artist}'")
-        synchronized(videoVersionMissing) { videoVersionMissing[song.videoId] = true }
-        return null
+        return videoVersionLookups.lookup(song.videoId) {
+            // YouTube's own pairing first: an answer, not a search guess.
+            val pair = pairing()
+            pair.song?.let { video ->
+                videoVersionCache[song.videoId] = video
+                return@lookup video
+            }
+            var queriesRun = 0
+            var failedQueries = 0
+            val target = TrackMatcher.targetOf(song)
+            for (query in TrackMatcher.queries(target)) {
+                queriesRun++
+                val page = search(query)
+                if (page.isFailure) failedQueries++
+                val candidates = page.getOrNull()
+                    ?.filterIsInstance<SearchResult.Track>()
+                    ?.map { it.song }
+                    .orEmpty()
+                // [KO] bestForVideoSwitch: a fancam, stage or cover carrying
+                // the same title must not become the video version.
+                TrackMatcher.bestForVideoSwitch(candidates, target)?.let { match ->
+                    Log.d(
+                        TAG,
+                        "video switch: '${song.title}' -> '${match.title}' (queryLength=${query.length})",
+                    )
+                    videoVersionCache[song.videoId] = match
+                    return@lookup match
+                }
+            }
+            Log.w(TAG, "video switch: no video match for '${song.title}' by '${song.artist}'")
+            // A miss is only remembered when every search answered: a failed
+            // request may have hidden the video, and a signed-out pairing may
+            // exist after sign-in.
+            if (
+                videoVersionMissIsConclusive(
+                    searchable = true,
+                    pairingAnswered = pair.answered,
+                    queriesRun = queriesRun,
+                    failedQueries = failedQueries,
+                )
+            ) {
+                synchronized(videoVersionMissing) { videoVersionMissing[song.videoId] = true }
+            }
+            null
+        }.result.await()
     }
+
+    /**
+     * Whether "no video version" may be remembered for the run.
+     *
+     * A blank row can only be answered by YouTube's pairing, so its miss is
+     * conclusive once the pairing answered. A searched row additionally needs
+     * every query to have answered: a failed request may have hidden the
+     * video. A pairing that did not answer (signed out, or a failed `next`)
+     * leaves the miss retryable, so signing in can still find the pair.
+     */
+    internal fun videoVersionMissIsConclusive(
+        searchable: Boolean,
+        pairingAnswered: Boolean,
+        queriesRun: Int = 0,
+        failedQueries: Int = 0,
+    ): Boolean {
+        if (!pairingAnswered) return false
+        if (!searchable) return true
+        return SongVersionPolicy.audioSwitchSearchIsConclusive(queriesRun, failedQueries)
+    }
+
+    /** Whether a video version may be looked up by search at all. */
+    internal fun videoVersionSearchWanted(song: Song): Boolean =
+        song.title.isNotBlank() && song.artist.isNotBlank()
 
     fun cachedSongVersionFor(song: Song): Song? =
         KoSongVersion.cachedSongVersionFor(song) // [KO] song-version
@@ -822,20 +904,21 @@ object YtMusicRepository {
      * cannot. Its time map, when there is one, is kept for the service, so
      * the swap seeks straight to the matching moment instead of measuring it.
      *
-     * Signed out, YouTube pairs nothing, so the request is not made at all.
+     * Signed out, YouTube pairs nothing, so the request is not made at all;
+     * that is not an answer, and [VersionPairing.answered] says so.
      */
-    private suspend fun officialVersion(song: Song, wantAudio: Boolean): Song? {
-        if (Innertube.cookie == null) return null
+    private suspend fun officialVersion(song: Song, wantAudio: Boolean): VersionPairing {
+        if (Innertube.cookie == null) return VersionPairing(null, answered = false)
         val pair = try {
             InnertubeParser.parseVersionPair(Innertube.next(song.videoId), song.videoId, wantAudio)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             Log.w(TAG, "version pair lookup failed for '${song.title}': ${e.message}")
-            null
+            return VersionPairing(null, answered = false)
         } ?: run {
             Log.d(TAG, "version pair: YouTube pairs nothing with '${song.title}'")
-            return null
+            return VersionPairing(null, answered = true)
         }
         pair.timeMap?.let { map ->
             versionTimeMaps[song.videoId to pair.song.videoId] = map
@@ -846,8 +929,11 @@ object YtMusicRepository {
             "version pair: '${song.title}' -> '${pair.song.title}' (${pair.song.videoId}), " +
                 "segments=${pair.timeMap?.segments?.size ?: 0}",
         )
-        return pair.song
+        return VersionPairing(pair.song, answered = true)
     }
+
+    /** The paired other version, and whether the pairing request actually answered. */
+    internal class VersionPairing(val song: Song?, val answered: Boolean)
 
     /** Signed-in profile for the settings header. Null when signed out. */
     suspend fun account(): Result<Account> = call("account") {
