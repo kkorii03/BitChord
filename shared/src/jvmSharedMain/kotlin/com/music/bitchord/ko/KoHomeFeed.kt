@@ -4,6 +4,7 @@ import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.LocalPlayHistory
 import com.music.bitchord.data.RecentShelf
 import com.music.bitchord.data.StoredSongDisplay
+import com.music.bitchord.data.YouTubeDisplayCleaner
 import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.innertube.Innertube
 import com.music.bitchord.data.innertube.InnertubeParser
@@ -133,12 +134,17 @@ internal object KoHomeFeed {
     ): List<HomeShelf> = cleanVideoRows(withChart(shelves, chart))
 
     /**
-     * Video rows read the way the player shows them (phone 11-03: "커버 및
+     * Song rows read the way the player shows them (phone 11-03: "커버 및
      * 리믹스" showed raw uploads, "한결 - 마음짓기(心做し) Live Cover" credited
      * to the channel). Every Home page path goes through [withContentCountryChart].
+     *
+     * A row that still has its video flag, or whose title is a cover outright:
+     * the flag is the same fact Recents lost, and a cover read without it still
+     * keeps its "(cover)" title and singer. A plain song stays as it is. The
+     * youtube.com Home path already cleans every video row this way.
      */
     internal fun cleanVideoRows(shelves: List<HomeShelf>): List<HomeShelf> = shelves.map { shelf ->
-        if (shelf.items.none { it.isVideo && !it.videoId.isNullOrBlank() }) {
+        if (shelf.items.none { !it.videoId.isNullOrBlank() }) {
             shelf
         } else {
             shelf.copy(items = shelf.items.map(::cleanVideoRow))
@@ -146,19 +152,33 @@ internal object KoHomeFeed {
     }
 
     private fun cleanVideoRow(item: ShelfItem): ShelfItem {
-        val videoId = item.videoId?.takeIf { item.isVideo && it.isNotBlank() } ?: return item
-        val song = CoverTitles.applyTo(
-            StoredSongDisplay.clean(
-                Song(
-                    videoId = videoId,
-                    title = item.title,
-                    artist = item.subtitle,
-                    thumbnailUrl = item.thumbnailUrl,
-                    isVideo = true,
-                ),
-            ),
+        val videoId = item.videoId?.takeIf { it.isNotBlank() } ?: return item
+        val raw = Song(
+            videoId = videoId,
+            title = item.title,
+            artist = item.subtitle,
+            thumbnailUrl = item.thumbnailUrl,
+            isVideo = item.isVideo,
         )
-        return item.copy(title = song.title, subtitle = song.artist.ifBlank { item.subtitle })
+        // A row without the video flag is touched only when its title is a
+        // cover outright; a plain song called "Take Cover" is not one. It is
+        // still cleaned, so a row that lost the flag does not keep a label's
+        // "[MV] Artist - Song" packaging.
+        val cover = CoverTitles.read(raw)
+        if (!item.isVideo && cover == null) {
+            val cleaned = YouTubeDisplayCleaner.clean(raw.title, raw.artist)
+            return item.copy(
+                title = cleaned.title,
+                subtitle = cleaned.artist.ifBlank { item.subtitle },
+            )
+        }
+        val song = CoverTitles.applyTo(StoredSongDisplay.clean(raw))
+        return item.copy(
+            title = song.title,
+            subtitle = song.artist.ifBlank { item.subtitle },
+            // The flag the row lost is a cover's: it still plays as its upload.
+            isVideo = item.isVideo || cover != null,
+        )
     }
 
     private fun withChart(

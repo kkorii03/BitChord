@@ -44,6 +44,52 @@ class KoHomeFeedRecentsTest {
         assertEquals("Aimyon", song.subtitle)
     }
 
+    // The same flag loss that hit Recents: a cover row without isVideo was
+    // skipped and kept its upload title and channel on Home.
+    @Test
+    fun `a home cover row without its video flag still reads as its song and singer`() {
+        val shelf = HomeShelf(
+            title = "커버 및 리믹스",
+            items = listOf(
+                ShelfItem("아이묭 - Marigold / cover by 오화요", "Ohwayo", null, "v3", null),
+            ),
+        )
+        val item = KoHomeFeed.withContentCountryChart(listOf(shelf), null).single().items.single()
+        assertEquals("Marigold (cover)", item.title)
+        assertEquals("오화요", item.subtitle)
+        assertTrue(item.isVideo)
+    }
+
+    @Test
+    fun `a plain song named Take Cover is not cleaned into a cover`() {
+        val shelf = HomeShelf(
+            title = "커버 및 리믹스",
+            items = listOf(
+                ShelfItem("Take Cover", "A Band", null, "v4", null),
+            ),
+        )
+        val item = KoHomeFeed.withContentCountryChart(listOf(shelf), null).single().items.single()
+        assertEquals("Take Cover", item.title)
+        assertEquals("A Band", item.subtitle)
+        assertTrue(!item.isVideo)
+    }
+
+    // The same lost flag left a non-cover upload's label packaging on screen:
+    // the early return skipped the cleaner for every row without isVideo.
+    @Test
+    fun `a home row without its video flag still loses label packaging`() {
+        val shelf = HomeShelf(
+            title = "인기곡",
+            items = listOf(
+                ShelfItem("[MV] IU - Friday", "1theK (원더케이)", null, "v5", null),
+            ),
+        )
+        val item = KoHomeFeed.withContentCountryChart(listOf(shelf), null).single().items.single()
+        assertEquals("Friday", item.title)
+        assertEquals("IU", item.subtitle)
+        assertTrue(!item.isVideo)
+    }
+
     @Test
     fun `repainting the shelf does not change the title`() {
         val first = KoHomeFeed.recentsShelf(listOf(cover)).items.single()
