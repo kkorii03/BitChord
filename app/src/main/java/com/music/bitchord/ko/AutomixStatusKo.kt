@@ -149,7 +149,9 @@ object AutomixStatusKo {
                 "${"%.1f".format(Locale.ROOT, status.fadeSeconds)}초"
             }
             val why = status.reason?.let { " · ${reasonKorean(it)}" }.orEmpty()
-            val noLoop = status.noLoop?.let { " · 루프 없음: $it" }.orEmpty()
+            // The reason is an English diagnostic ('41 loops: 0 quiet, 41 sung…');
+            // the listener sees only that there is no loop (phone 11-03).
+            val noLoop = status.noLoop?.let { " · 루프 없음" }.orEmpty()
             when (status.style) {
                 Style.CROSSFADE ->
                     "자동 믹스 · 크로스페이드 $whenText · ${"%.0f".format(Locale.ROOT, status.fadeSeconds)}초$why$noLoop"

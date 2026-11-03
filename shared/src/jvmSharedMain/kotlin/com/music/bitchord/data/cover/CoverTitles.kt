@@ -78,7 +78,9 @@ object CoverTitles {
     ) {
         /** "원곡자 · 부른사람 커버", or "부른사람 커버" with no original credit. */
         val byline: String
-            get() = listOfNotNull(originalArtist, "$singer $COVER_WORD").joinToString(SEPARATOR)
+            // A singer read back from a row already shown as '… 커버' keeps one
+            // word (phone 11-03: '윤미래 커버 커버').
+            get() = listOfNotNull(originalArtist, "${singer.removeSuffix(" $COVER_WORD").trim()} $COVER_WORD").joinToString(SEPARATOR)
     }
 
     /** Channel ids the listener marked as cover channels. Set by the app. */

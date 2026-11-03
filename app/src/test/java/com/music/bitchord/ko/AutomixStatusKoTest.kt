@@ -138,7 +138,7 @@ class AutomixStatusKoTest {
     @Test
     fun `korean crossfade uses seconds and loop phrases`() {
         assertEquals(
-            "자동 믹스 · 크로스페이드 5초 후 · 8초 · 템포 차이 · 루프 없음: no grid on the incoming song",
+            "자동 믹스 · 크로스페이드 5초 후 · 8초 · 템포 차이 · 루프 없음",
             render(Language.KO, fade(Style.CROSSFADE, secondsFromNow = 5, noLoop = "no grid on the incoming song")),
         )
         assertEquals(
