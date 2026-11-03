@@ -1,0 +1,8 @@
+﻿
+
+== 3 차 작업 (현재 브랜치 = 이전 차수 결과) ==
+엄격 기준: 아래 독립 검토자 지적의 HIGH·MEDIUM 은 전부 고칠 것(드문 경우라는 이유로 보류 금지). 그리고 이전 차수가 docs/review-1031/ 문서에 '문서에만 남김/미해결'로 둔 HIGH·MEDIUM 도 이번에 고칠 것 — 재생 핵심 경로(곡 해석·싱크·크로스페이드)라도 고치되 문서 해당 줄에 '폰 검증 필요' 표시. 지적이 틀렸으면 코드 줄 근거로 반박을 요약에. 새로 고친 곳마다 수정 전 실패하는 테스트. 이전 차수에서 고친 것을 되돌리지 말 것.
+검토 지적:
+VERDICT: ISSUES 1
+- MEDIUM | shared/src/jvmTest/kotlin/com/music/bitchord/data/net/SongVersionVerdictStoreTest.kt:98 | The new “retry recovers” test only drives `SongVersionVerdictStore` and then writes the found song into the store itself; it never exercises the timed-out `songVersion`/`resolveQueueAhead` path or `SongVersionRetryGate`, so it passes on the pre-change code and does not back the summary’s claim that the post-audio retry is covered. | Add a test that actually times out a lookup and exercises `songVersion(retryTimedOut = true)`/the gate, asserting a second search runs and the found release is cached.
+마지막 요약에 지적 번호별 처리(고침/반박+근거) 한 줄씩.
