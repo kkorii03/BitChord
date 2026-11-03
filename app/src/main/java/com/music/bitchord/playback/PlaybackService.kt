@@ -1845,8 +1845,12 @@ class PlaybackService : MediaLibraryService() {
             )
             activeTrackIsDolbyAtmos = NerdStats.isDolbyAtmosMime(format.sampleMimeType)
             applySpatialAudioEnabled()
-            publishNerdStats()
+            // Before the publish: a mid-song swap replaces the source while the
+            // player is paused, and the renderer's own audioFormat can still
+            // name the stream that was replaced. This event's Format is the one
+            // the new decoder was just configured with.
             currentAudioInputFormat = format
+            publishNerdStats()
             applyOutputRoute(reason = "format")
         }
 
@@ -5126,12 +5130,14 @@ class PlaybackService : MediaLibraryService() {
             }
         }
 
-        // The renderer is still configured for the track that just ended at
-        // this point. Clear its measurements before Discord takes its snapshot
-        // too, otherwise a new lossy track briefly inherits the previous
-        // track's Lossless/Atmos line and that stale network push can win the
-        // race against the decoder's correction.
-        NerdStats.current.value = null
+        // The renderer can still be configured for the track that just ended
+        // at this point, and Discord's snapshot must not inherit its
+        // Lossless/Atmos line. A same-row quality swap is the exception: its
+        // new decoder may already have published the measurement this would
+        // otherwise wipe, leaving the paused badge blank.
+        if (NerdStats.current.value?.mediaId != mediaItem?.mediaId) {
+            NerdStats.current.value = null
+        }
 
         // Discord: the whole of "live updating" for a card whose bar Discord
         // draws itself. Only a track change needs a new presence; the countdown
@@ -8575,7 +8581,7 @@ class PlaybackService : MediaLibraryService() {
 
     internal fun publishNerdStats() {
         val player = player ?: return
-        val format = player.audioFormat
+        val format = statsFormat(currentAudioInputFormat, player.audioFormat)
         val mediaId = player.currentMediaItem?.mediaId
         // The sampler calls this every five seconds because the renderer can
         // settle on its format after the track change. Only a changed format
@@ -13502,6 +13508,19 @@ private fun withoutPlatformAlac(selector: MediaCodecSelector) =
             selector.getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunnelingDecoder)
         }
     }
+
+/**
+ * The format that describes what the decoder has in hand now.
+ *
+ * [Player.getAudioFormat] is a renderer field and can still name the stream a
+ * mid-song swap replaced until that renderer has read a sample of the new one.
+ * There is no progress sampler while playback is paused, so a swap made then
+ * left the badge describing the old stream. The format from the decoder's own
+ * event is authoritative for that moment; the renderer field is only a fallback
+ * for callers that run before any format event.
+ */
+internal fun statsFormat(decoderEvent: Format?, renderer: Format?): Format? =
+    decoderEvent ?: renderer
 
 /** Asked once per process, and only when an ALAC track is first looked at. */
 private val ffmpegDecodesAlac by lazy { FfmpegLibrary.supportsFormat(MimeTypes.AUDIO_ALAC) }
