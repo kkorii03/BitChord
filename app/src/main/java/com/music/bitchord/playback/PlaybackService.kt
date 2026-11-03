@@ -5293,13 +5293,17 @@ class PlaybackService : MediaLibraryService() {
      * after the app had given up. Nothing in the log named it, because nothing
      * in the app had asked for it.
      *
-     * Only [StreamResolver.PermanentlyUnplayableException] is refused, and it is
-     * refused rather than delayed because the resolver has already established
-     * the answer cannot change — it is the type it uses to say exactly that.
-     * Everything else keeps the default behaviour, which is right: a shaped
-     * response or a dropped connection is worth another go.
+     * A hard refusal of the URL itself is refused for the same reason: 403/404/
+     * 410 will answer the same way when reloaded, and only a re-resolve can
+     * change who serves the track. Without this, an HQ addon's refusal cost
+     * three more requests to the same dead URL before the fallback ran.
+     * [StreamResolver.PermanentlyUnplayableException] is refused rather than
+     * delayed because the resolver has already established the answer cannot
+     * change — it is the type it uses to say exactly that. Everything else
+     * keeps the default behaviour, which is right: a shaped response or a
+     * dropped connection is worth another go.
      */
-    private class PermanentAwareLoadErrorPolicy : DefaultLoadErrorHandlingPolicy() {
+    internal class PermanentAwareLoadErrorPolicy : DefaultLoadErrorHandlingPolicy() {
         override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo): Long {
             rateLimited(loadErrorInfo.exception)?.let { refusal ->
                 // [ChunkedDataSource] has already waited out Retry-After and
@@ -5336,6 +5340,15 @@ class PlaybackService : MediaLibraryService() {
             var depth = 0
             while (cause != null && depth++ < CAUSE_DEPTH) {
                 if (cause is StreamResolver.PermanentlyUnplayableException) return true
+                // A refused URL is dead, not slow: reloading the same bytes
+                // cannot change the answer. Mid-play refusals already had
+                // their re-resolve in [ChunkedDataSource]; a module or addon
+                // refusal gets one fresh resolve from the failure path.
+                if (cause is HttpDataSource.InvalidResponseCodeException &&
+                    StreamRefusalRecovery.isRefusal(cause.responseCode)
+                ) {
+                    return true
+                }
                 // A local file that is gone will not come back between two
                 // Media3 retries. Without this the player spent three tries
                 // (and a few seconds) on the same missing path before
