@@ -1,0 +1,50 @@
+﻿BITCHORD 1.9 (Kotlin Android, branch task/u19-tg, worktree C:\Users\jang\Desktop\BitChord\BitChord-u19tg).
+Goal: lyric sync accuracy. Worst measured case = Korean COVER songs (a cover artist's audio with the original song's lyrics).
+
+## Evidence
+Emulator sync scores (strict = median |error| <= 0.12 s on lines both Whisper models heard):
+- cover playlist "오화요" (26 tracks), 10 songs played cold: **0/12 strict** (before a gate fix), **0/5 strict** (after). Non-cover sets score 2/7 to 7/17.
+- Real phone (vc140, 2026-11-04 01:29-01:30 KST), the same cover playlist, app logcat I-level:
+```
+play: -> Tempest (요란 搖亂) - Lucia · 오화요 커버 (s4PaBWBFK4g) idx=0/26 reason=PLAYLIST_CHANGED meta=ok
+[s4PaBWBFK4g] sync perline: anchors=11 applied=11 maxAbsMs=300
+lyrics-sync: s4PaBWBFK4g source=file:lrc.red@s4PaBWBFK4g base=measured shift=-4459ms match=98% bias=0ms manual=0ms stored=y recheck=none
+[50cpFE2r1d4] sync perline: anchors=5 applied=11 maxAbsMs=4000
+```
+So on a cover the app applies a whole-song shift of -4459 ms and per-line moves up to 4000 ms, yet the measured error on emulators is still large. A cover's audio is NOT the recording the lyrics were timed against, so a "measured" base can be plausible but wrong.
+
+## Tasks
+1. Trace where `base=measured` comes from for a cover: which measurement produced -4459 ms, what it compares against (which rendition/clock), and whether the app knows the playing audio is a cover of the lyric's song. Give file:line for each step.
+2. Name the single most likely reason a cover ends up with a wrong-but-confident base (or a wrong per-line layer). Prove it with a JVM test that FAILS on the current code, then make the smallest fix (e.g. refuse to apply a measured base when the audio key does not match the clock the measurement was taken on, or bound/verify it). No new settings, no new abstraction, no redesign.
+3. If the root cause is upstream of the shared code (network/lyrics matching), say so with file:line and do NOT invent a fix; instead add the missing diagnostic log line (one line) that names the mismatch, plus the test for the guard you did change.
+
+## Files of interest
+- app/src/main/java/com/music/bitchord/playback/smart/LyricsTiming.kt (base/shift/recheck, `base-choice:`, `lyrics-sync:`, `lyrics-refine:`)
+- shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/lyrics/ (LyricsPerLine.kt, LyricsWordAlign.kt, RefinePolicy, EstimatedSweep, HeardWords)
+- app/.../playback/smart/VideoAudio.kt, AudioDecoder.kt (song check audio)
+- ko/ packages: cover handling ("오화요 커버" byline)
+
+## Rules
+- Keep upstream code intact (ko/ + `// [KO]` hooks). Unknown Android/Media3 API: context7.
+- Do NOT touch .github/workflows, signing files, or the songSyncGate/driveDirectWindow code (recent fixes aca2017b4, 0ffc79724).
+- New test class names must be in the summary (you may not edit workflows). Every new test must FAIL on current code.
+- Battery first: no polling, no extra decodes, event-based only. grep/Select-String, not rg.
+- Follow AGENTS.md (ponytail): smallest complete change.
+
+## Summary (max 10 lines)
+files changed / root cause with file:line / key change / tests and result on base vs after / REMOVED-LINES AUDIT / what you did not do and why.
+
+## NOTE for round 2 (reviewer findings, must all be resolved)
+HIGH (app/src/main/java/com/music/bitchord/playback/smart/LyricsTiming.kt:623): only local files carrying an hqSourceConfigId/hqTrackId get re-tagged. An ordinary downloaded cover (no HQ pair) still returns Clock.YouTube for both measurement and playback, so the wrong measured base is still applied. Fix the ordinary-download case too, or prove with code that its measurement is already on the right clock.
+MEDIUM (app/src/test/java/.../LyricsTimingMeasurementClockTest.kt:53): one of the two tests asserts the OLD behaviour and passes on the base code, and the test never exercises timing(), so the claimed double-application is not proven. Every new test must fail on the base code; drive timing() (or the smallest function that shows the double map) in the test.
+NEW EVIDENCE to consider: among 20 songs where the AI answer was applied in time, 16 are within +-0.12 s but 4 are grossly wrong: -8.68 s (source KuGou, base=ai), -0.53 s (LRCLIB), -0.42 s (lrc.red), +0.37 s (lrc.red). A wrong-but-confident base is exactly this shape. Keep your fix scoped to the clock/rendition mismatch; do not add settings or heuristics.
+Do not delete guards (inFlight, caches, timeouts, low-power). Summary as before, max 10 lines.
+
+
+== 2 차 작업 (현재 브랜치 = 이전 차수 결과) ==
+엄격 기준: 아래 독립 검토자 지적의 HIGH·MEDIUM 은 전부 고칠 것(드문 경우라는 이유로 보류 금지). 그리고 이전 차수가 docs/review-1031/ 문서에 '문서에만 남김/미해결'로 둔 HIGH·MEDIUM 도 이번에 고칠 것 — 재생 핵심 경로(곡 해석·싱크·크로스페이드)라도 고치되 문서 해당 줄에 '폰 검증 필요' 표시. 지적이 틀렸으면 코드 줄 근거로 반박을 요약에. 새로 고친 곳마다 수정 전 실패하는 테스트. 이전 차수에서 고친 것을 되돌리지 말 것.
+검토 지적:
+VERDICT: ISSUES 2
+- HIGH `app/src/main/java/com/music/bitchord/playback/smart/LyricsTiming.kt:623` — Only local files carrying an `hqSourceConfigId`/`hqTrackId` are re-tagged; an ordinary downloaded cover still returns `Clock.YouTube` for both measurement and playback, so its wrong measured base (the -4459 ms cover case) is still applied unchanged. Fix: reject or bound the measured base when the measured audio is not the lyric's rendition, instead of keying only on HQ provenance.
+- MEDIUM `app/src/test/java/com/music/bitchord/playback/smart/LyricsTimingMeasurementClockTest.kt:53` — This new test asserts the old behavior and passes on base code (the proof shows only 1/2 failed), violating “Every new test must FAIL on current code”; it also never exercises `timing()`, so the claimed double-application fix is not proven. Fix: make it a fail-before `timing()` regression test, or fold the negative guard into the existing clock tests.
+마지막 요약에 지적 번호별 처리(고침/반박+근거) 한 줄씩.
