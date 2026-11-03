@@ -133,6 +133,8 @@ internal object TranslationAhead {
          * file's own "already timed for it" rule must not reject that sync.
          */
         val recheckOverride: Boolean = false,
+        /** The file's header names its provider and the recording it was timed for. */
+        val providerKnown: Boolean = false,
     ) {
         /** The older spelling used by callers/tests before the rename. */
         val overrideRecheck: Boolean get() = recheckOverride
@@ -165,6 +167,7 @@ internal object TranslationAhead {
                     searchedAs = null,
                     fromFile = true,
                     recheckOverride = override.kind == LyricsOverrideFile.Kind.RECHECK,
+                    providerKnown = override.source != null,
                 )
             }
         }
@@ -176,6 +179,7 @@ internal object TranslationAhead {
                     source = embedded.source,
                     searchedAs = null,
                     fromFile = true,
+                    providerKnown = embedded.source != null && !embedded.videoId.isNullOrBlank(),
                 )
             }
         }

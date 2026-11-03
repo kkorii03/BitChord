@@ -312,9 +312,13 @@ internal class NextTrackPreparation(
 
         val wanted = SyncSafetyPolicy.nextPrepSteps(
             buildSet {
-                if (AppSettings.syncedLyrics.value) {
+                if (NextPrepPolicy.syncStepWanted(
+                        syncedLyrics = AppSettings.syncedLyrics.value,
+                        substituted = StreamChoice.isSubstitute(song.videoId),
+                    )
+                ) {
                     add(Step.LYRICS)
-                    if (syncWanted(song)) add(Step.SYNC)
+                    add(Step.SYNC)
                 }
                 if (hqWanted(song)) add(Step.HQ)
                 if (mixWanted(song)) add(Step.MIX)
@@ -368,8 +372,8 @@ internal class NextTrackPreparation(
                         }
                         Step.HQ -> hq = prepareHq(song) ?: hq
                         Step.SYNC -> {
-                            val found = lyrics
-                            val lines = found?.lines?.takeIf { list ->
+                            var found = lyrics
+                            var lines = found?.lines?.takeIf { list ->
                                 list.any { it.text.isNotBlank() }
                             }
                             // A substitute stream is a different recording under
@@ -377,49 +381,108 @@ internal class NextTrackPreparation(
                             // sync is measured or recorded for it.
                             val query = CoverTitles.lyricsQuery(song)
                             val substituted = StreamChoice.isSubstitute(song.videoId)
-                            if (lines != null && !substituted) {
-                                // Free measurement and timing first: they need
-                                // no upload and are what times most covers.
-                                val probe = LyricsTiming.NextSyncProbe()
-                                syncProbe = probe
-                                val prepared = LyricsTiming.prepareNextFree(
-                                    context = context,
-                                    song = song,
-                                    lines = lines,
-                                    fromFile = found.fromFile,
-                                    source = found.source,
-                                    searchedAs = found.searchedAs,
-                                )
-                                // Keep the free answer even if the paid gate or
-                                // the step's deadline cancels the rest below.
-                                syncTiming = prepared
-                                // Only the paid engines wait for the current
-                                // song to pass the early-skip window. The free
-                                // half has already run, so a short track still
-                                // keeps its measurement and does not push MIX
-                                // behind the 30 s gate.
-                                if (AppSettings.aiTimingAhead.value && Deepgram.usable) {
+                            val initial = found
+                            if (lines != null && initial != null && !substituted) {
+                                // A downloaded song's file was never checked with
+                                // today's rules; the lyrics screen runs this at
+                                // play, but by then the timing is late. Run the
+                                // same check on the file's local audio here, so
+                                // the row opens with its answer and the screen's
+                                // own call finds it already recorded.
+                                if (NextPrepPolicy.downloadRecheckStepWanted(
+                                        fromFile = initial.fromFile,
+                                        isVideo = query.isVideo,
+                                        substituted = substituted,
+                                        recheckAllowed = SyncSafetyPolicy.recheckAllowed(switches),
+                                    ) && song.localUri != null &&
+                                    AppSettings.heavyWorkAllowed &&
+                                    AppSettings.aiTimingAhead.value && Deepgram.usable
+                                ) {
                                     val leftNow = remainingMs(player)
                                     val gateOpen = NextPrepPolicy.aiGateOpen(player.currentPosition) ||
                                         (NextPrepPolicy.canStartStep(leftNow) &&
                                             awaitAiGate(player, leftNow))
                                     if (gateOpen) {
-                                        // The paid answer replaces the free one:
-                                        // it is the correction the next row must
-                                        // open with, and what the log reports.
-                                        syncTiming = LyricsTiming.prepareNextPaid(
+                                        val replaced = LyricsTiming.recheckDownloaded(
                                             context = context,
                                             song = song,
                                             lines = lines,
-                                            fromFile = found.fromFile,
-                                            source = found.source,
-                                            timing = prepared,
-                                            probe = probe,
-                                            cancelWithCaller = true,
+                                            providerUnknown = !initial.providerKnown,
+                                            title = query.title,
+                                            artist = query.artist,
+                                            durationMs = song.durationMillis(),
+                                            album = song.albumName,
+                                            alternatives = query.alternatives,
+                                            artistKnown = query.artistKnown,
+                                            artistAliases = query.artistAliases,
                                         )
+                                        val chosenLines = replaced?.lines ?: initial.lines
+                                        val chosenSource = replaced?.source ?: initial.source
+                                        val chosenSearchedAs = replaced?.searchedAs ?: initial.searchedAs
+                                        // The check has run for this file, so its
+                                        // stored answer is the file's sync even
+                                        // when the file's own lines won.
+                                        found = TranslationAhead.AheadLyrics(
+                                            lines = chosenLines,
+                                            source = chosenSource,
+                                            searchedAs = chosenSearchedAs,
+                                            fromFile = true,
+                                            recheckOverride = true,
+                                            providerKnown = initial.providerKnown,
+                                        )
+                                        lyrics = found
+                                        lines = found?.lines?.takeIf { list ->
+                                            list.any { it.text.isNotBlank() }
+                                        }
                                     }
                                 }
-                                syncFailure = probe.failure
+                                val current = found
+                                if (lines != null && current != null) {
+                                    // Free measurement and timing first: they need
+                                    // no upload and are what times most covers.
+                                    val probe = LyricsTiming.NextSyncProbe()
+                                    syncProbe = probe
+                                    val prepared = LyricsTiming.prepareNextFree(
+                                        context = context,
+                                        song = song,
+                                        lines = lines,
+                                        fromFile = current.fromFile,
+                                        source = current.source,
+                                        searchedAs = current.searchedAs,
+                                    )
+                                    // Keep the free answer even if the paid gate or
+                                    // the step's deadline cancels the rest below.
+                                    syncTiming = prepared
+                                    // Only the paid engines wait for the current
+                                    // song to pass the early-skip window. The free
+                                    // half has already run, so a short track still
+                                    // keeps its measurement and does not push MIX
+                                    // behind the 30 s gate.
+                                    if (AppSettings.heavyWorkAllowed &&
+                                        AppSettings.aiTimingAhead.value && Deepgram.usable
+                                    ) {
+                                        val leftNow = remainingMs(player)
+                                        val gateOpen = NextPrepPolicy.aiGateOpen(player.currentPosition) ||
+                                            (NextPrepPolicy.canStartStep(leftNow) &&
+                                                awaitAiGate(player, leftNow))
+                                        if (gateOpen) {
+                                            // The paid answer replaces the free one:
+                                            // it is the correction the next row must
+                                            // open with, and what the log reports.
+                                            syncTiming = LyricsTiming.prepareNextPaid(
+                                                context = context,
+                                                song = song,
+                                                lines = lines,
+                                                fromFile = current.fromFile,
+                                                source = current.source,
+                                                timing = prepared,
+                                                probe = probe,
+                                                cancelWithCaller = true,
+                                            )
+                                        }
+                                    }
+                                    syncFailure = probe.failure
+                                }
                             }
                         }
                         Step.MIX -> Unit
@@ -600,10 +663,16 @@ internal class NextTrackPreparation(
         val leftNow = playerNow?.let { remainingMs(it) } ?: Long.MAX_VALUE
         val query = CoverTitles.lyricsQuery(song)
         val fromFile = found?.fromFile == true
-        val timeable = !fromFile || query.isVideo
         val timedToVideo = LyricsTiming.timedToVideo(found?.source)
+        val timeable = LocalTimingPolicy.downloadedTimingTimeable(
+            timed = true,
+            fromFile = fromFile,
+            isVideo = query.isVideo,
+            recheckOverride = found?.recheckOverride == true,
+            sourceTimedToVideo = timedToVideo,
+        )
         val recordTimed = timeable && (!fromFile || found?.source != null) && !timedToVideo
-        val fileTimed = fromFile && !query.isVideo
+        val fileTimed = fromFile && !query.isVideo && found?.recheckOverride != true
         val syncFacts = NextPrepPolicy.SyncFacts(
             lyricsOff = !switches.nextPrepLyrics,
             syncedLyrics = AppSettings.syncedLyrics.value,
@@ -1008,20 +1077,6 @@ internal class NextTrackPreparation(
     }
 
     // ---- (d) song sync -------------------------------------------------------
-
-    private fun syncWanted(song: Song): Boolean {
-        // A substitute stream is a different recording under the same id; its
-        // clock is not the upload's, so it never runs a song sync.
-        if (StreamChoice.isSubstitute(song.videoId)) return false
-        if (!AppSettings.heavyWorkAllowed) return false
-        // A video's free chroma measurement needs no paid engine; the AI
-        // fallback inside prepareNextPaid still respects aiTimingAhead/Deepgram.
-        // The lyrics query can know a row is a video even when its flag is
-        // missing, so use the same source the rest of the bundle does.
-        if (LyricsTimingSource.isVideo(song)) return true
-        if (!AppSettings.aiTimingAhead.value) return false
-        return Deepgram.usable
-    }
 
     private suspend fun timed(
         lines: List<LyricLine>,

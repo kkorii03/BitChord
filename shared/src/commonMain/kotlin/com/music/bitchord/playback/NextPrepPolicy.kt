@@ -73,6 +73,32 @@ object NextPrepPolicy {
     ): Boolean = !retryHeld && engineAllowed
 
     /**
+     * Whether the SYNC step belongs in the next bundle's wanted set.
+     *
+     * Its free half — the stored timing and a video's own measurement — needs
+     * no upload, so a closed AI/low-power gate must not remove the step and
+     * leave the row logged as `sync=off`; the paid half checks those gates
+     * inside the step. Synced lyrics off means there is no clock to prepare,
+     * and a substitute stream is another recording under the same id.
+     */
+    fun syncStepWanted(syncedLyrics: Boolean, substituted: Boolean): Boolean =
+        syncedLyrics && !substituted
+
+    /**
+     * Whether the SYNC step should re-check a downloaded song's own file
+     * before timing it. Only a downloaded non-video has a file whose provider
+     * times are not this file's clock; a video's file is timed by the video
+     * path, and a substitute stream is another recording. The check switch is
+     * the safety gate that owns the override it writes.
+     */
+    fun downloadRecheckStepWanted(
+        fromFile: Boolean,
+        isVideo: Boolean,
+        substituted: Boolean,
+        recheckAllowed: Boolean,
+    ): Boolean = fromFile && !isVideo && !substituted && recheckAllowed
+
+    /**
      * The steps still worth running, in their fixed order: wanted, not already
      * stored, and not already tried for this row.
      */
