@@ -31,12 +31,13 @@ internal object LyricsQueryVariants {
         artist: String,
         album: String? = null,
         artistAliases: List<String> = emptyList(),
+        isVideo: Boolean = false,
     ): List<Name> {
         // A cover title can state the original's artist in the title itself
         // ("(원곡 : 한로로)", "(Original by X)"). Searching the song under that
         // name is much sharper than searching it with a blank artist, which
         // lets any other song with the same title win.
-        val cover = runCatching { CoverTitles.lyricsRead(title, artist) }.getOrNull()
+        val cover = runCatching { CoverTitles.lyricsRead(title, artist, isVideo) }.getOrNull()
         val coveredTitle = cover?.title?.takeIf { it.isNotBlank() }
         val titleForParts = coveredTitle ?: title
         val parts = TrackMatcher.parseTitle(titleForParts, artist)
@@ -64,6 +65,14 @@ internal object LyricsQueryVariants {
             if (t.isNotBlank()) out += Name(t.trim(), a.trim())
         }
         add(symbolic ?: primary, first)
+        // A dash title read artist-first may really run song-first
+        // ("Blueming - IU"); try the two names the other way round too.
+        if (cover?.orderUnsure == true && original != null && coveredTitle != null) {
+            val other = TrackMatcher.parseTitle(original, coveredTitle)
+            val otherTitle = (other.words + other.versions).joinToString(" ").trim()
+                .ifBlank { original.forLyricsSearch() }
+            add(otherTitle, coveredTitle.artistForLyricsSearch())
+        }
         if (symbolic != null && symbolic != primary) add(primary, first)
         if (all.isNotBlank() && all != first) add(primary, all)
         altTitles.forEach { add(it, first) }

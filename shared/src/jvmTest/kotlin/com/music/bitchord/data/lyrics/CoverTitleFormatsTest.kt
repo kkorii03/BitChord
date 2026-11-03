@@ -141,6 +141,20 @@ class CoverTitleFormatsTest {
     }
 
     @Test
+    fun aTrailingUploadTagIsNotMistakenForTheOriginalArtist() {
+        val query = CoverTitles.lyricsQuery(song("Tomboy((G)I-DLE) [4K]", "오화요"))
+        assertEquals("Tomboy", query.title)
+        assertEquals("(G)I-DLE", query.artist)
+        assertFalse(query.alternatives.any { it.second == "4K" })
+    }
+
+    @Test
+    fun aSongFirstDashTitleKeepsBothOrientations() {
+        val query = CoverTitles.lyricsQuery(song("Blueming - IU", "어떤 채널"))
+        assertTrue(query.alternatives.contains("Blueming" to "IU"), "${query.alternatives}")
+    }
+
+    @Test
     fun fanClipOfTheSingersOwnSongWithAnEnglishSubtitleIsNotACover() {
         CoverTitles.knownSingers = { setOf("아카네 리제") }
         val fan = song("아카네 리제 - 청록(Blue Rock)", "피엔나야 클립따줘")

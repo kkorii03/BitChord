@@ -192,7 +192,9 @@ object CoverTitles {
         // A title the cover reader left as written may still name the original
         // in a shape an ordinary upload shares — "Tomboy((G)I-DLE)".
         if (queries.size == 1 && queries[0] == song.title to song.artist) {
-            lyricsFallback(song.title.trim(), song.artist)?.let { return coverQueries(it) }
+            lyricsFallback(song.title.trim(), song.artist)?.let { cover ->
+                return (coverQueries(cover) + queries).distinct()
+            }
         }
         return queries
     }
@@ -258,16 +260,19 @@ object CoverTitles {
      * the shapes [read] leaves as written because an ordinary title shares
      * them. Display keeps [read]; only the search asks for the original.
      */
-    internal fun lyricsRead(title: String, channel: String): Cover? =
-        read(title, channel, null) ?: lyricsFallback(title.trim(), channel)
+    internal fun lyricsRead(title: String, channel: String, isVideo: Boolean = false): Cover? =
+        read(title, channel, null) ?: if (isVideo) lyricsFallback(title.trim(), channel) else null
 
     private fun lyricsFallback(raw: String, channel: String): Cover? {
-        if (raw.isEmpty()) return null
+        // The upload's own tags ("[4K]", "[노래]") are not part of the title,
+        // so the fallback reads the same tidied text [read] does.
+        val text = normalize(raw.trim()).text
+        if (text.isEmpty()) return null
         val singer = lyricName(channel).orEmpty()
         // "Title(Artist)": the original's credit after the song. The artist may
         // carry its own brackets — "Tomboy((G)I-DLE)".
-        if (splitTopLevelDash(raw) == null) {
-            trailingBracket(raw)?.let { (titleText, creditText) ->
+        if (splitTopLevelDash(text) == null) {
+            trailingBracket(text)?.let { (titleText, creditText) ->
                 val credit = lyricName(creditText) ?: return@let
                 if (isChannelName(credit, channel) || isVersionWord(credit) || isDescriptor(credit) ||
                     isGenericCredit(credit) || OST.containsMatchIn(credit) ||
@@ -282,8 +287,9 @@ object CoverTitles {
         }
         // "Artist - Title": the original's artist first, on an upload whose
         // channel is not that artist (otherwise the same words are the row's
-        // own "Artist - Song").
-        val (left, right) = splitTopLevelDash(raw) ?: return null
+        // own "Artist - Song"). A "Song - Artist" upload runs the other way,
+        // so both readings are searched ([orderUnsure]).
+        val (left, right) = splitTopLevelDash(text) ?: return null
         if (isChannelName(left, channel)) return null
         val artist = lyricName(left) ?: return null
         if (isVersionWord(artist) || isDescriptor(artist) || isGenericCredit(artist) ||
@@ -294,7 +300,7 @@ object CoverTitles {
         val title = cleanTitle(right) ?: return null
         if (CREDIT_BRACKET_PREFIX.containsMatchIn(title)) return null
         if (isTranslation(artist, title)) return null
-        return Cover(title = title, originalArtist = artist, singer = singer)
+        return Cover(title = title, originalArtist = artist, singer = singer, orderUnsure = true)
     }
 
     /** The last bracket group, its own brackets kept: "(G)I-DLE". */

@@ -152,13 +152,34 @@ class LyricsQueryVariantsTest {
 
     @Test
     fun aCoverTitleNamesTheOriginalForEveryProviderQuery() {
-        val bracketed = LyricsQueryVariants.names("Tomboy((G)I-DLE)", "오화요")
+        val bracketed = LyricsQueryVariants.names("Tomboy((G)I-DLE)", "오화요", isVideo = true)
         assertEquals("tomboy", bracketed.first().title)
         assertEquals("(G)I-DLE", bracketed.first().artist)
 
-        val dash = LyricsQueryVariants.names("(G)I-DLE - Tomboy", "오화요")
+        val dash = LyricsQueryVariants.names("(G)I-DLE - Tomboy", "오화요", isVideo = true)
         assertEquals("tomboy", dash.first().title)
         assertEquals("(G)I-DLE", dash.first().artist)
+    }
+
+    @Test
+    fun anOrdinaryParentheticalTitleIsNotReadAsAnArtist() {
+        val names = LyricsQueryVariants.names("Time (Clock of the Heart)", "Culture Club")
+        assertEquals("culture club", names.first().artist)
+        assertFalse(names.any { it.artist == "clock of the heart" }, "${names}")
+    }
+
+    @Test
+    fun aSongFirstDashTitleIsAlsoTriedTheOtherWayRound() {
+        val names = LyricsQueryVariants.names("Blueming - IU", "어떤 채널", isVideo = true)
+        assertTrue(names.any { it.title == "blueming" && it.artist == "IU" }, "${names}")
+    }
+
+    @Test
+    fun aTrailingUploadTagIsNotTheOriginalArtist() {
+        val names = LyricsQueryVariants.names("Tomboy((G)I-DLE) [4K]", "오화요", isVideo = true)
+        assertEquals("tomboy", names.first().title)
+        assertEquals("(G)I-DLE", names.first().artist)
+        assertFalse(names.any { it.artist == "4K" }, "${names}")
     }
 
     @Test
