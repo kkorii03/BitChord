@@ -604,6 +604,68 @@ object StreamResolver {
     /** A direct-built stream and the client that minted it; [client] is null for an InnerTubeX result. */
     private class DirectRun(val stream: Stream, val client: String?)
 
+    /** One early-proxy attempt's result; [timedOut] means only the proxy leg missed its budget. */
+    internal class EarlyProxyRace<out S>(
+        val route: String?,
+        val value: S?,
+        val proxyFailure: Throwable?,
+        val timedOut: Boolean,
+    )
+
+    /**
+     * Races InnerTubeX against the proxy without deciding the track's fate.
+     *
+     * A proxy timeout is not an InnerTubeX verdict: the caller may still fall
+     * through to the ordinary direct race and extraction. Cancelling [itx] here
+     * made that fall-through await a cancelled deferred and throw
+     * [CancellationException] instead of reaching extraction, so a timeout drops
+     * only the unused waiter. A proxy win still cancels the walk.
+     */
+    internal suspend fun <S> raceEarlyProxy(
+        scope: CoroutineScope,
+        videoId: String,
+        itx: Deferred<S?>,
+        proxyTimeoutMs: Long,
+        proxy: suspend () -> S?,
+    ): EarlyProxyRace<S> {
+        var proxyFailure: Throwable? = null
+        val itxStream = scope.async(TrackLog.about(videoId)) { itx.await() }
+        val racedPair = try {
+            withTimeoutOrNull(proxyTimeoutMs) {
+                raceForFirstSuccess(
+                    direct = { itxStream.await() },
+                    proxy = {
+                        try {
+                            withTimeoutOrNull(proxyTimeoutMs) { proxy() }
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (failure: Exception) {
+                            proxyFailure = failure
+                            null
+                        }
+                    },
+                )
+            }
+        } catch (cancelled: CancellationException) {
+            itxStream.cancel()
+            itx.cancel()
+            throw cancelled
+        }
+        val route = racedPair?.first
+        if (route == "proxy") {
+            itxStream.cancel()
+            itx.cancel()
+        } else if (racedPair == null) {
+            itxStream.cancel()
+        }
+        return EarlyProxyRace(
+            route = route,
+            value = racedPair?.second,
+            proxyFailure = proxyFailure,
+            timedOut = racedPair == null,
+        )
+    }
+
     /** Whether ALL_YOUTUBE is actually in force now — not merely selected. */
     private fun allScopeInForce(): Boolean = ProxyPlaybackPolicy.allScopeNow(
         configUsable = com.music.bitchord.data.net.YouTubeProxy.config.usable,
@@ -917,7 +979,6 @@ object StreamResolver {
                 } else {
                     Long.MAX_VALUE
                 }
-                val itxStream = resolverScope.async(TrackLog.about(videoId)) { itx.await()?.stream }
                 // The whole race is bounded, not just the proxy leg. A proxy
                 // failure that landed first used to leave the race waiting on
                 // the thirteen-second InnerTubeX walk, which is the same
@@ -930,45 +991,25 @@ object StreamResolver {
                 // handler remembers for ten minutes and which skipped
                 // extraction — the exact guard [ProxyFailure.isProxyDown]
                 // exists to keep transient (see the proxy retry below).
-                var proxyFailure: Throwable? = null
-                val racedPair = try {
-                    withTimeoutOrNull(proxyTimeout) {
-                        raceForFirstSuccess(
-                            direct = { itxStream.await() },
-                            proxy = {
-                                try {
-                                    withTimeoutOrNull(proxyTimeout) { resolveViaProxy(videoId) }
-                                } catch (cancelled: CancellationException) {
-                                    throw cancelled
-                                } catch (failure: Exception) {
-                                    proxyFailure = failure
-                                    null
-                                }
-                            },
-                        )
-                    }
-                } catch (cancelled: CancellationException) {
-                    itxStream.cancel()
-                    itx.cancel()
-                    throw cancelled
-                }
-                val winner = racedPair?.first
-                val won = racedPair?.second
-                if (winner == "proxy" || racedPair == null) {
-                    itxStream.cancel()
-                    itx.cancel()
-                }
+                val early = raceEarlyProxy<DirectRun>(
+                    scope = resolverScope,
+                    videoId = videoId,
+                    itx = itx,
+                    proxyTimeoutMs = proxyTimeout,
+                    proxy = { resolveViaProxy(videoId)?.let { DirectRun(it, client = null) } },
+                )
+                val won = early.value?.stream
                 TrackLog.i(
                     TAG,
                     BlockedStartPolicy.logLine(
                         videoId,
                         BlockedStartStep.PROXY,
-                        if (won != null) "ok:$winner" else "failed",
+                        if (won != null) "ok:${early.route}" else "failed",
                         MonotonicClock.nowMs() - resolveStart,
                     ),
                 )
                 if (won != null) return won
-                val deadProxy = proxyFailure
+                val deadProxy = early.proxyFailure
                 if (deadProxy != null && ProxyFailure.isProxyDown(deadProxy)) {
                     TrackLog.w(
                         TAG,
@@ -976,7 +1017,6 @@ object StreamResolver {
                             "${MonotonicClock.nowMs() - resolveStart}; " +
                             "proxy route failed, keeping the track transient",
                     )
-                    itxStream.cancel()
                     itx.cancel()
                     throw deadProxy
                 }
@@ -992,6 +1032,7 @@ object StreamResolver {
                         "blocked-start: $videoId direct and proxy both refused; " +
                             "not spending extraction",
                     )
+                    itx.cancel()
                     throw PermanentlyUnplayableException(
                         directUnplayableReason ?: itxUnplayableReason
                             ?: "이 국가에서는 이용할 수 없는 노래입니다",
