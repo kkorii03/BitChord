@@ -112,7 +112,7 @@ internal fun KoAlternateVersionEffect(
             if (SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown)) {
                 runCatching {
                     val resolved = YtMusicRepository.songVersion(song)
-                    resolved != null && resolved.videoId != song.videoId
+                    SongVersionPolicy.isSongVersionOf(song, resolved)
                 }.getOrDefault(false)
             } else {
                 runCatching {

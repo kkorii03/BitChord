@@ -155,24 +155,26 @@ internal object KoTrackMatcher {
         val want = artistNames(wanted)
         val have = artistNames(got)
         if (want.any { it in have }) return true
+        // Two printed names that YouTube has linked to one channel are the
+        // same act: a solo member and their group, or an act's former name.
+        // Only a channel both names have actually been seen under counts.
+        val wantedIds = artistVariants(wanted).mapNotNull { ArtistNameIndex.lookup(it) }.toSet()
+        val gotIds = artistVariants(got).mapNotNull { ArtistNameIndex.lookup(it) }.toSet()
+        if (wantedIds.isNotEmpty() && gotIds.isNotEmpty()) {
+            return wantedIds.any { it in gotIds }
+        }
         // A leading article is how listings print the same act ("The 1975" and
         // "1975" are one band); it is not part of the name for identity. The
         // rest of the name still has to match whole, so a tribute band that
-        // merely starts with it stays a different artist.
+        // merely starts with it stays a different artist. When both names have
+        // known but different channels, the ids above have already ruled the
+        // article match out.
         if (want.any { withoutArticle(it) in have } ||
             have.any { withoutArticle(it) in want }
         ) {
             return true
         }
-        // Two printed names that YouTube has linked to one channel are the
-        // same act: a solo member and their group, or an act's former name.
-        // Only a channel both names have actually been seen under counts.
-        val wantedIds = artistVariants(wanted).mapNotNull { ArtistNameIndex.lookup(it) }.toSet()
-        if (wantedIds.isEmpty()) return false
-        return artistVariants(got).any { name ->
-            val id = ArtistNameIndex.lookup(name)
-            id != null && id in wantedIds
-        }
+        return false
     }
 
     /** The name without a leading "the", when there is a name left. */

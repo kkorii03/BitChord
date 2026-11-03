@@ -1,9 +1,12 @@
 package com.music.bitchord.data.sources
 
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.net.SongVersionPolicy
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /** Official audio rows whose artist name is a number or a "The ..." act. */
 class AudioSwitchArtistNameTest {
@@ -33,20 +36,29 @@ class AudioSwitchArtistNameTest {
     @Test
     fun `the 1975 song is accepted with and without the leading the`() {
         val full = song("CHOCOLATE01", "Chocolate", "The 1975", "2:51")
-        val short = song("CHOCOLATE02", "Chocolate", "1975", "2:51")
+        val short = song("CHk5SWVO4p8", "Chocolate", "1975", "2:51")
         assertEquals("CHOCOLATE01", TrackMatcher.bestSameArtist(listOf(full), chocolate)?.videoId)
         assertEquals("CHOCOLATE01", TrackMatcher.bestOfficialAudioForVideo(listOf(full), chocolate)?.videoId)
-        assertEquals("CHOCOLATE02", TrackMatcher.bestSameArtist(listOf(short), chocolate)?.videoId)
-        assertEquals("CHOCOLATE02", TrackMatcher.bestOfficialAudioForVideo(listOf(short), chocolate)?.videoId)
+        assertEquals("CHk5SWVO4p8", TrackMatcher.bestSameArtist(listOf(short), chocolate)?.videoId)
+        assertEquals("CHk5SWVO4p8", TrackMatcher.bestOfficialAudioForVideo(listOf(short), chocolate)?.videoId)
         assertEquals(
             "CHOCOLATE01",
             TrackMatcher.bestSameArtist(listOf(full), chocolate.copy(artist = "1975"))?.videoId,
         )
         assertEquals(
-            "CHOCOLATE02",
+            "CHk5SWVO4p8",
             TrackMatcher.bestSameArtist(listOf(short), chocolate.copy(artist = "1975"))?.videoId,
         )
         assertNull(TrackMatcher.songVersionRejectReason(short, chocolate))
+    }
+
+    @Test
+    fun `the reported chocolate video accepts an audio-only row under its own id`() {
+        val video = song("CHk5SWVO4p8", "Chocolate", "The 1975", "2:51").copy(isVideo = true)
+        val audio = song("CHk5SWVO4p8", "Chocolate", "The 1975", "2:51")
+        assertTrue(SongVersionPolicy.isSongVersionOf(video, audio))
+        // A completed search that found nothing hands the video row back.
+        assertFalse(SongVersionPolicy.isSongVersionOf(video, video))
     }
 
     @Test

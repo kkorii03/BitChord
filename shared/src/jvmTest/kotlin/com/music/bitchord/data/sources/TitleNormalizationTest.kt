@@ -146,6 +146,23 @@ class TitleNormalizationTest {
     }
 
     @Test
+    fun `different channels keep the leading article as a different act`() {
+        ArtistNameIndex.record(listOf(ArtistRef("The 1975", "UC_the_1975")))
+        ArtistNameIndex.record(listOf(ArtistRef("1975", "UC_1975")))
+        assertFalse(TrackMatcher.namesTheSameArtist("The 1975", "1975"))
+        assertFalse(TrackMatcher.namesTheSameArtist("1975", "The 1975"))
+    }
+
+    @Test
+    fun `the article still matches when a channel is not known`() {
+        ArtistNameIndex.record(listOf(ArtistRef("The 1975", "UC_the_1975")))
+        assertTrue(TrackMatcher.namesTheSameArtist("The 1975", "1975"))
+        ArtistNameIndex.forget()
+        ArtistNameIndex.record(listOf(ArtistRef("1975", "UC_1975")))
+        assertTrue(TrackMatcher.namesTheSameArtist("The 1975", "1975"))
+    }
+
+    @Test
     fun `an album's own credits supply the group name`() {
         ArtistNameIndex.record(
             listOf(ArtistRef("장범준", "UC_solo")),

@@ -610,6 +610,40 @@ class SongVersionPolicyTest {
     }
 
     @Test
+    fun `an audio-only catalogue row under the video id is still a version`() {
+        val video = Song(
+            videoId = "CHk5SWVO4p8",
+            title = "Chocolate",
+            artist = "The 1975",
+            thumbnailUrl = null,
+            durationText = "2:51",
+            isVideo = true,
+        )
+        val audio = video.copy(isVideo = false)
+        assertTrue(SongVersionPolicy.isSongVersionOf(video, audio))
+        // A miss returns the source row itself, not a catalogue release.
+        assertFalse(SongVersionPolicy.isSongVersionOf(video, video))
+        // A preview row whose type has not landed is a miss too.
+        val preview = video.copy(isVideo = false, typeUnknown = true)
+        assertFalse(SongVersionPolicy.isSongVersionOf(preview, preview))
+    }
+
+    @Test
+    fun `the audio cache stores a miss only for the source row`() {
+        val video = Song(
+            videoId = "CHk5SWVO4p8",
+            title = "Chocolate",
+            artist = "The 1975",
+            thumbnailUrl = null,
+            isVideo = true,
+        )
+        val audio = video.copy(isVideo = false)
+        assertTrue(SongVersionPolicy.cachedSongVersionIsMiss(video, video))
+        assertFalse(SongVersionPolicy.cachedSongVersionIsMiss(video, audio))
+        assertFalse(SongVersionPolicy.cachedSongVersionIsMiss(video, null))
+    }
+
+    @Test
     fun `the post-audio retry runs once and only after a timeout`() {
         assertTrue(
             SongVersionPolicy.shouldRetrySongVersionAfterAudio(

@@ -85,7 +85,7 @@ internal object KoAudioSwitch {
         }
         val catalogue =
             (catalogueLookup as? CatalogSongMapper.MapResult.Found)?.song?.toSong(song)
-        if (catalogue != null && catalogue.videoId != song.videoId && !catalogue.isVideo) {
+        if (catalogue != null && SongVersionPolicy.isSongVersionOf(song, catalogue)) {
             Log.d(TAG, "audio switch: '${song.title}' -> '${catalogue.title}' (catalogue)")
             YtMusicRepository.audioVersionCache[song.videoId] = catalogue
             return catalogue

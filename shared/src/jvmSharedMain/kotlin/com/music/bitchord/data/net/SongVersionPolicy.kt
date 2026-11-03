@@ -75,6 +75,27 @@ object SongVersionPolicy {
         isVideo || typeUnknown
 
     /**
+     * Whether [resolved] is a song version of [source] rather than the source
+     * row a miss returns unchanged.
+     *
+     * A catalogue release usually has its own id. YouTube sometimes files the
+     * audio-only release under the music video's id; that row is still a found
+     * version because it is audio-only, unlike the source upload. A miss
+     * returns the source row itself (a video, or a preview whose type is still
+     * unknown), which must not count as a version even when its id is the
+     * same.
+     */
+    fun isSongVersionOf(source: Song, resolved: Song?): Boolean {
+        if (resolved == null || resolved.isVideo) return false
+        if (resolved.videoId != source.videoId) return true
+        return !resolved.typeUnknown
+    }
+
+    /** True when [cached] is the source row a miss stores, not a found version. */
+    fun cachedSongVersionIsMiss(source: Song, cached: Song?): Boolean =
+        cached != null && cached.videoId == source.videoId && !isSongVersionOf(source, cached)
+
+    /**
      * Whether a row with a file on the device is already the recording to play.
      *
      * A downloaded song, and a file from the listener's own library, are audio

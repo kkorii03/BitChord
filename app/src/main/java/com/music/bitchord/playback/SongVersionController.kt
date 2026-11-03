@@ -127,7 +127,7 @@ internal class SongVersionController(
                 )
                 return@launch
             } ?: return@launch
-            if (found.videoId == song.videoId) return@launch
+            if (!SongVersionPolicy.isSongVersionOf(song, found)) return@launch
             if (!SongVersionPolicy.mayInstallSongVersion(song)) return@launch
             TrackLog.i(
                 "BitChord",
@@ -169,7 +169,7 @@ internal class SongVersionController(
                 TrackLog.w("BitChord", "late song version failed: ${failure.message}", about = song.videoId)
                 null
             } ?: return@launch
-            if (late.videoId == song.videoId) return@launch
+            if (!SongVersionPolicy.isSongVersionOf(song, late)) return@launch
             if (currentPlayer() !== exoPlayer || exoPlayer.currentMediaItem?.mediaId != mediaId) return@launch
             // Nothing to move if the lyrics never arrived; the normal lyrics
             // path then measures against the answer already in the cache.
@@ -237,7 +237,7 @@ internal class SongVersionController(
                     TrackLog.w("BitChord", "song version failed: ${failure.message}", about = song.videoId)
                     null
                 } ?: continue
-                if (resolved.videoId == song.videoId) continue
+                if (!SongVersionPolicy.isSongVersionOf(song, resolved)) continue
                 if (!SongVersionPolicy.mayInstallSongVersion(song)) continue
                 if (index == exoPlayer.currentMediaItemIndex) continue
                 if (index >= exoPlayer.mediaItemCount) continue
@@ -921,7 +921,7 @@ internal class SongVersionController(
         if (currentPlayer() !== exoPlayer ||
             exoPlayer.currentMediaItem?.mediaId != mediaId ||
             SongVersionPolicy.hasMadeFirstSound(mediaId, currentAudibleMediaId()) ||
-            (resolved.videoId == song.videoId && !forceStream) ||
+            (!SongVersionPolicy.isSongVersionOf(song, resolved) && !forceStream) ||
             resolved.isVideo
         ) return
         val index = exoPlayer.currentMediaItemIndex

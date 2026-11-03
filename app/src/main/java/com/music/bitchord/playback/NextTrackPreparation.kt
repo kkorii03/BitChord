@@ -807,7 +807,7 @@ internal class NextTrackPreparation(
                 null
             }
         } ?: return null
-        if (resolved.videoId == song.videoId) return null
+        if (!SongVersionPolicy.isSongVersionOf(song, resolved)) return null
         val player = currentPlayer() ?: return null
         val index = player.nextMediaItemIndex
         if (index == C.INDEX_UNSET || index !in 0 until player.mediaItemCount) return null
