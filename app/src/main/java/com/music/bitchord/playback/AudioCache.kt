@@ -384,6 +384,12 @@ object AudioCache {
      *   continue a partial prefix can retry rather than assume it was cleared.
      */
     fun discard(uri: Uri, keepComplete: Boolean = false): Boolean {
+        // Local files and content rows are read straight from their source, not
+        // through this cache (see [playbackFactory]). Their path must never be
+        // handed to removeResource: that can only remove a cache file, so at
+        // best this logged a discard that never happened, next to the user's
+        // own download.
+        if (uri.scheme != "bitchord") return true
         val exact = keyFactory.buildCacheKey(DataSpec(uri))
         val about = mediaIdIn(uri)
         val family = uri.getQueryParameter("v")?.let { videoId ->
