@@ -28,6 +28,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -46,6 +47,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import com.music.bitchord.data.ExploreArtwork
 import com.music.bitchord.data.ExploreCategoryFilter
 import com.music.bitchord.data.ExploreCategoryNames
 import com.music.bitchord.data.model.HomeShelf
@@ -76,6 +78,12 @@ fun ExploreScreen(
      * exactly as it was: no hide affordance, no dialog.
      */
     onHideCategory: ((MoodGenre) -> Unit)? = null,
+    /**
+     * Asks for one tile's cover once that tile is on screen. The screen passes
+     * the grid's own rows, so a tile below the fold costs nothing until the
+     * listener scrolls to it.
+     */
+    onArtworkNeeded: ((MoodGenre) -> Unit)? = null,
     refreshing: Boolean,
     onRefresh: () -> Unit,
     pullState: PullToRefreshState,
@@ -153,6 +161,7 @@ fun ExploreScreen(
                                         if (!ExploreCategoryFilter.isProtected(item)) pendingHide = item
                                     }
                                 },
+                                onArtworkNeeded = onArtworkNeeded,
                             )
                         }
                     }
@@ -199,6 +208,7 @@ internal fun MoodGenreRow(
     columns: Int,
     onCategoryClick: (MoodGenre) -> Unit,
     onCategoryLongClick: ((MoodGenre) -> Unit)?,
+    onArtworkNeeded: ((MoodGenre) -> Unit)? = null,
 ) {
     Row(
         horizontalArrangement = Arrangement.spacedBy(MOOD_SPACING),
@@ -211,6 +221,7 @@ internal fun MoodGenreRow(
                 item = item,
                 onClick = { onCategoryClick(item) },
                 onLongClick = onCategoryLongClick?.let { longClick -> { longClick(item) } },
+                onArtworkNeeded = onArtworkNeeded,
                 modifier = Modifier.weight(1f),
             )
         }
@@ -220,9 +231,9 @@ internal fun MoodGenreRow(
 }
 
 /**
- * A category tile in its own solid colour with one Korean label. The phone
- * tiles never draw the server's cover: those artwork files have English titles
- * painted into them, so overlaying our label put two lines of text on one tile.
+ * A category tile with the first playlist's cover under its label. The server's
+ * own tile art is still skipped: those images have English titles painted into
+ * them. A tile without a cover yet stays the solid colour it always was.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -230,8 +241,16 @@ private fun MoodGenreCard(
     item: MoodGenre,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)?,
+    onArtworkNeeded: ((MoodGenre) -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
+    // LazyColumn only composes the rows near the viewport, so this fires when
+    // the tile is actually shown — not for the whole grid when Explore opens.
+    // The cover is part of the key because a pull-to-refresh replaces the grid
+    // with cover-less tiles: those visible ones must ask again.
+    LaunchedEffect(item.browseId, item.params, item.thumbnailUrl) {
+        if (!ExploreArtwork.hasCover(item)) onArtworkNeeded?.invoke(item)
+    }
     MoodGenreSleeve(
         item = item,
         modifier = modifier
@@ -241,15 +260,15 @@ private fun MoodGenreCard(
                 onClick = onClick,
                 onLongClick = onLongClick,
             ),
-        showArtwork = false,
+        showArtwork = ExploreArtwork.hasCover(item),
     )
 }
 
 /**
  * A category tile in its own colour with the title at the foot — Apple Music's
- * browse tile. Phone callers pass [showArtwork] = false and get the colour plus
- * a single Korean label; the TV app keeps the photographic sleeve by leaving
- * the default alone.
+ * browse tile. A caller without a cover passes [showArtwork] = false and gets
+ * the colour plus a single Korean label; with a cover the photograph shows
+ * under the label, and the TV app keeps its default.
  *
  * Only the artwork: the caller sizes, clips and makes it clickable, which is
  * how the TV app wraps the same sleeve in its own focus treatment.
