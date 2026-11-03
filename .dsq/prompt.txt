@@ -1,0 +1,15 @@
+﻿Kotlin Android app = upstream v1.9 + Korean fork (task/u19-tg; 1.8 fork = origin/task/telegram). Battery first, no polling, never block the main thread. Use grep/Select-String, not rg. Unknown Android/Media3 APIs: context7. Every fix gets a JVM test that fails on current code (no network). Do not touch .github/workflows.
+
+User: 'loading songs is too slow' on 1.9. Using the diagnostics lines (TIMING track selected / resolve / first audio, 'holding … until within 25s', analysis head rounds, read-ahead), find what sits between track selection and first audio in 1.9 that was not in 1.8 (gates, serial waits, extra resolves, the direct-source window, hq-verify) and remove waits that are not needed for the current track. Tests with fakes measuring the order of steps.
+
+Summary of at most 12 lines: cause (file:line), fix, REMOVED-LINES AUDIT, tests (class names for CI), what you did not do. Follow AGENTS.md (ponytail) rules.
+
+
+== 3 차 작업 (현재 브랜치 = 이전 차수 결과) ==
+엄격 기준: 아래 독립 검토자 지적의 HIGH·MEDIUM 은 전부 고칠 것(드문 경우라는 이유로 보류 금지). 그리고 이전 차수가 docs/review-1031/ 문서에 '문서에만 남김/미해결'로 둔 HIGH·MEDIUM 도 이번에 고칠 것 — 재생 핵심 경로(곡 해석·싱크·크로스페이드)라도 고치되 문서 해당 줄에 '폰 검증 필요' 표시. 지적이 틀렸으면 코드 줄 근거로 반박을 요약에. 새로 고친 곳마다 수정 전 실패하는 테스트. 이전 차수에서 고친 것을 되돌리지 말 것.
+검토 지적:
+VERDICT: ISSUES 2
+MEDIUM AudioCache.kt:1492 — An inconclusive second look (source timed out/failed) leaves `asked` unset (`KoQualityUpgrade.recordAnswer` only adds it when conclusive) while `lookAgain` still removes `pending`, so every seek/reopen passes the gate, starts a fresh lookup and re-arms pending, bypassing `KoQualityUpgrade.suppressesRetry`/`retryAfter`; this wastes data/battery and contradicts the “do not look again” comment. Fix: include the retry/backoff state (or a per-play “look started” flag) in `cachedLookToStart`.
+MEDIUM AudioCache.kt:1497 — `cachedBitrateFloor` re-implements the bytes*8/seconds/1000 estimate already in `PlaybackService.cachedFloor` (PlaybackService.kt:7108-7112) instead of sharing one helper, so the cache-only and cached-track floors can diverge on a later change. Fix: extract one shared bitrate-from-bytes helper and call it from both paths.
+Skipped: full Gradle run; the retry-path defect was traced statically through `lookAgain`/`recordAnswer`, so verify with the existing JVM test suite.
+마지막 요약에 지적 번호별 처리(고침/반박+근거) 한 줄씩.
