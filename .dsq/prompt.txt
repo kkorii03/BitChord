@@ -1,0 +1,26 @@
+BITCHORD 1.9 (Kotlin Android, branch task/u19-tg, worktree C:\Users\jang\Desktop\BitChord\BitChord-u19tg).
+Goal: the AI lyric-timing answer still arrives after the song ends on many songs. Emulator runs measure `answer +Ns, song left at +Ms`.
+
+## Evidence
+- Emulator (10 songs, 300 s each, app logcat): answers applied at +62s, +186s, +190s; late ones at +236s, +271s, +318s while songs left at +101s, +264s, +270s. Songs are 110-270 s long.
+- A previous lane mapped the path and confirmed: `LyricsTiming.kt:3006` prefetches the 40 s copy BEFORE taking songSyncGate (correct), `:3031` then decides whether the 90 s pass is needed, `VideoAudio.kt:267` waits `awaitAnalysisHead(HEAD_TIMEOUT_MS = 20 s)`, and `VideoAudio.kt:311` waits `awaitRenditionPrefix(song.videoId, need, OPENING_WAIT_MS = 120 s)` for the stream to deliver the bytes.
+- The wide-refine extension is now skipped when the audio is not on disk yet (merged tonight: RefineExtendPolicy.hasAudioFor + VideoAudio.secondsOnDisk), so the remaining wait is the FIRST answer, not the extended one.
+
+## Tasks
+1. Answer with file:line and seconds: for a cold stream, what exactly does the first answer wait for, in order? Include: the analysis-head wait (20 s cap), the opening-prefix wait (120 s cap) and how many seconds of audio it actually needs, the decode itself, and the engine turnaround. Say which of these dominates for a 150 s song.
+2. Name the one wait that can be shortened without more network, more battery, or a lower-quality answer. Candidate directions (choose only what the code supports):
+   - ask for the first answer from fewer seconds of audio when the transcript still covers enough lines to place a shift;
+   - stop waiting for the analysis head when the plain stream prefix already has the bytes (`awaitAnalysisHead` returns false after 20 s and the code then falls back to "decode as it comes" — check whether that fallback already avoids the wait, and if it does not, why);
+   - skip a re-measure that repeats a wait already done for the same audio key.
+3. Implement the smallest change, with a JVM test that FAILS on the current code.
+4. Report the expected seconds saved and what could regress (fewer placed lines → a coarser shift).
+
+## Rules
+- Keep upstream code intact (ko/ + `// [KO]` hooks). Unknown Android/Media3 API: context7.
+- Do NOT touch .github/workflows, signing, LyricsTiming's songSyncGate/driveDirectWindow, LyricsPerLine.kt, RefineExtendPolicy.kt, or NextTrackPreparation.kt (other work owns them today).
+- Keep every existing guard (timeouts, gates, caches, in-flight flags, low-power). Do not delete a guard to gain speed.
+- New test class names in the summary (you may not edit workflows). grep/Select-String, not rg.
+- Follow AGENTS.md (ponytail): smallest complete change.
+
+## Summary (max 10 lines)
+files / the wait that dominates with file:line and seconds / change / tests on base vs after / REMOVED-LINES AUDIT / expected saving / risk.
