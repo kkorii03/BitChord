@@ -3,6 +3,7 @@ package com.music.bitchord.data.cover
 import com.music.bitchord.data.model.Song
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 
 /**
@@ -55,5 +56,21 @@ class CoverCreditTest {
 
         assertEquals("BTS", CoverTitles.creditedArtist(song))
         assertNull(CoverTitles.creditedOriginalArtist(song))
+    }
+
+    @Test
+    fun `an artist name ending in the cover word is not a cover without the byline space`() {
+        listOf("디스커버", "리커버").forEach { name ->
+            val song = Song(
+                videoId = "track2",
+                title = "Dynamite",
+                artist = name,
+                thumbnailUrl = null,
+                isVideo = false,
+            )
+
+            assertFalse(CoverTitles.isCover(song), name)
+            assertEquals(name, CoverTitles.creditedArtist(song), name)
+        }
     }
 }

@@ -413,7 +413,7 @@ object CoverTitles {
     private fun isStoredCover(song: Song): Boolean =
         song.originalTitle != null || song.coverSinger != null ||
             song.title.trim().endsWith(STORED_COVER_SUFFIX, ignoreCase = true) ||
-            song.artist.trim().endsWith(COVER_WORD)
+            song.artist.trim().endsWith(" $COVER_WORD")
 
     /**
      * Who to credit a play to: the singer of a cover, the artist of anything

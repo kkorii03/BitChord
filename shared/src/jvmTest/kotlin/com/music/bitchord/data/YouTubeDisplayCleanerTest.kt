@@ -81,6 +81,14 @@ class YouTubeDisplayCleanerTest {
         assertEquals("Ed Sheeran · Jane 커버", cleaned.artist)
     }
 
+    @Test
+    fun `a soundtrack-only channel is never shown as the cover artist`() {
+        val cleaned = YouTubeDisplayCleaner.clean(song("Somebody (cover)", "Joker OST"))
+
+        assertEquals("Somebody", cleaned.title)
+        assertEquals("", cleaned.artist)
+    }
+
     // Phone 11-03: each pass turned "(cover)" into "( )" and added another
     // "(cover)", so the title grew "( ) ( ) ( )" and lyrics search failed.
     @Test

@@ -112,7 +112,9 @@ internal object YouTubeDisplayCleaner {
             .joinToString(" · ")
         return song.copy(
             title = title,
-            artist = byline.ifBlank { song.artist.trim() },
+            artist = byline.ifBlank {
+                song.artist.trim().takeUnless { TrackMatcher.isSoundtrackCredit(it) }.orEmpty()
+            },
             originalTitle = song.originalTitle ?: song.title,
             originalArtist = song.originalArtist ?: song.artist,
             coverSinger = song.coverSinger ?: singer.takeIf { it.isNotBlank() },

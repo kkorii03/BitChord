@@ -143,18 +143,8 @@ object MusicVideoEngine {
         if (videoId in _missing.value) _missing.value = _missing.value - videoId
     }
 
-    /** Consecutive failed resolves by video, so a picture YouTube has none for settles. */
-    private val resolveAttempts = HashMap<String, Int>()
-
     private fun failedResolve(videoId: String, settled: Boolean) {
-        val attempt = (resolveAttempts[videoId] ?: 0) + 1
-        if (settled || !VideoPictureRetry.canTry(attempt)) {
-            resolveAttempts.remove(videoId)
-            markMissing(videoId, settled = true)
-        } else {
-            resolveAttempts[videoId] = attempt
-            markMissing(videoId, settled = false)
-        }
+        markMissing(videoId, settled = VideoPictureRetry.failed(videoId, permanent = settled))
     }
 
     /** Videos the age gate stopped, asked as age-restricted from the start. */
@@ -173,7 +163,7 @@ object MusicVideoEngine {
             InnerTubeXResolver.sessionGeneration.drop(1).collect {
                 noPicture.clear()
                 _missing.value = emptySet()
-                resolveAttempts.clear()
+                VideoPictureRetry.clear()
                 streams.clear()
                 refused.clear()
                 refresh()
@@ -441,8 +431,6 @@ object MusicVideoEngine {
 
     private fun load(videoId: String) {
         unload()
-        // Only the picture being asked for keeps a failed-resolve count.
-        resolveAttempts.keys.retainAll { it == videoId }
         loadedId = videoId
         val cap = capFor(videoId)
         loadedCap = cap
@@ -475,12 +463,12 @@ object MusicVideoEngine {
             if (stream == null || stream.aspect < MIN_VIDEO_ASPECT) {
                 // [KO] video-fallback: said, so a phone log shows why there is no picture.
                 TrackLog.w(TAG, "video: no picture (${if (stream == null) "no stream" else "still image"})", about = videoId)
-                resolveAttempts.remove(videoId)
+                VideoPictureRetry.succeeded(videoId)
                 markMissing(videoId, settled = true)
                 loadedId = null
                 return@launch
             }
-            resolveAttempts.remove(videoId)
+            VideoPictureRetry.succeeded(videoId)
             markPresent(videoId)
             val exo = player ?: return@launch
             val upstream = OkHttpDataSource.Factory(Http.client)
