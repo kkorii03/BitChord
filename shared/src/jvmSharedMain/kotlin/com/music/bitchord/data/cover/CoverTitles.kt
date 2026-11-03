@@ -389,10 +389,12 @@ object CoverTitles {
 
     /**
      * A cover is an upload whatever a stored row says, so a row whose video
-     * flag was lost on the way through an old store is marked a video again.
+     * flag was lost on the way through an old store is marked a video again —
+     * unless it also says the listener converted it to audio on purpose.
      */
     fun restoreVideoFlag(song: Song): Song =
-        if (song.isVideo || !(isCover(song) || song.artist.endsWith(" $COVER_WORD"))) song
+        if (song.isVideoOrigin && !song.isVideo) song
+        else if (song.isVideo || !(isCover(song) || song.artist.endsWith(" $COVER_WORD"))) song
         else song.copy(isVideo = true, isVideoOrigin = true)
 
     /**

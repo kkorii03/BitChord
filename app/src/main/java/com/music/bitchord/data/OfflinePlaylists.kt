@@ -260,8 +260,8 @@ object OfflinePlaylists {
     private fun songFrom(obj: JSONObject): Song? {
         fun JSONObject.text(key: String): String? = if (isNull(key)) null else optString(key).takeIf { it.isNotEmpty() }
         val uri = obj.text("localUri") ?: return null
-        return Song(
-            videoId = obj.text("videoId") ?: uri,
+        return offlineSongFrom(
+            videoId = obj.text("videoId"),
             title = obj.optString("title"),
             artist = obj.optString("artist"),
             thumbnailUrl = obj.text("thumbnailUrl"),
@@ -273,11 +273,46 @@ object OfflinePlaylists {
             isVideoOrigin = obj.optBoolean("isVideoOrigin", false),
             localUri = uri,
             localPath = obj.text("localPath"),
-            localDateAddedSeconds = if (obj.has("added")) obj.getLong("added") else null,
-            localDateModifiedSeconds = if (obj.has("modified")) obj.getLong("modified") else null,
-            trackNumber = if (obj.has("track")) obj.getInt("track") else null,
-        ).withStoredVideoFlag()
+            added = if (obj.has("added")) obj.getLong("added") else null,
+            modified = if (obj.has("modified")) obj.getLong("modified") else null,
+            track = if (obj.has("track")) obj.getInt("track") else null,
+        )
     }
+
+    /** Readable without JSON so the stored-flag restore can be checked on the JVM. */
+    internal fun offlineSongFrom(
+        videoId: String?,
+        title: String,
+        artist: String,
+        thumbnailUrl: String?,
+        durationText: String?,
+        artistId: String?,
+        albumId: String?,
+        albumName: String?,
+        isVideo: Boolean,
+        isVideoOrigin: Boolean,
+        localUri: String,
+        localPath: String?,
+        added: Long?,
+        modified: Long?,
+        track: Int?,
+    ): Song = Song(
+        videoId = videoId ?: localUri,
+        title = title,
+        artist = artist,
+        thumbnailUrl = thumbnailUrl,
+        durationText = durationText,
+        artistId = artistId,
+        albumId = albumId,
+        albumName = albumName,
+        isVideo = isVideo,
+        isVideoOrigin = isVideoOrigin,
+        localUri = localUri,
+        localPath = localPath,
+        localDateAddedSeconds = added,
+        localDateModifiedSeconds = modified,
+        trackNumber = track,
+    ).withStoredVideoFlag()
 }
 
 /**

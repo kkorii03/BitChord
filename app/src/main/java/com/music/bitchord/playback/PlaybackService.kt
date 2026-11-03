@@ -12740,13 +12740,12 @@ class PlaybackService : MediaLibraryService() {
                                 resolved.add(cached.toMediaItem())
                             } else {
                                 resolved.add(
-                                    item.toSong().copy(
+                                    item.toSong().rebuiltFromMediaUri(
                                         videoId = videoId,
                                         title = item.mediaMetadata.title?.toString()
                                             ?: getString(R.string.unknown_track),
                                         artist = item.mediaMetadata.artist?.toString()
                                             ?: getString(R.string.unknown_artist),
-                                        thumbnailUrl = null,
                                     ).toMediaItem(),
                                 )
                             }

@@ -13,6 +13,9 @@ import com.music.bitchord.ko.downloads.wasVideoRow
  * the cover marks are the two places that still know, so they fill it back in.
  */
 internal fun Song.withStoredVideoFlag(recordedIsVideo: Boolean? = null): Song {
+    // A version the listener converted by hand stays converted: isVideoOrigin
+    // still says the upload is a video, while isVideo says its audio plays.
+    if (isVideoOrigin && !isVideo) return this
     val marked = if (recordedIsVideo == true && !isVideo) {
         copy(isVideo = true, isVideoOrigin = true)
     } else {

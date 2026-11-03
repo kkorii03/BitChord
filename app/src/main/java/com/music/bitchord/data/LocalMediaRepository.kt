@@ -319,6 +319,40 @@ object LocalMediaRepository {
     )
 
     /**
+     * One MediaStore row as a [Song], with the stored video flag restored.
+     * Takes the values already read so the restore can be checked on the JVM.
+     */
+    internal fun localSongFromRow(
+        rowId: Long,
+        name: String,
+        title: String?,
+        artist: String?,
+        album: String?,
+        albumArtUri: String?,
+        durationMs: Long,
+        contentUri: String,
+        localPath: String?,
+        dateAdded: Long,
+        dateModified: Long,
+        trackNumber: Int?,
+        videoId: String?,
+    ): Song = Song(
+        videoId = videoId ?: contentUri,
+        title = title.cleanTag()?.removeAudioExtension()
+            ?: name.substringBeforeLast('.').takeIf { it.isNotBlank() }
+            ?: "Track $rowId",
+        artist = artist.cleanTag() ?: "Unknown Artist",
+        thumbnailUrl = albumArtUri,
+        durationText = durationMs.takeIf { it > 0 }?.let { formatDuration(it) },
+        albumName = album.cleanTag(),
+        localUri = contentUri,
+        localPath = localPath,
+        localDateAddedSeconds = dateAdded,
+        localDateModifiedSeconds = dateModified,
+        trackNumber = trackNumber,
+    ).withStoredVideoFlag()
+
+    /**
      * Where [AUDIO_PROJECTION]'s columns landed in one cursor, looked up once
      * rather than per row — and the one reading of a row into a [Song], so a
      * file opened from a file manager comes out exactly as the same file does
@@ -344,27 +378,30 @@ object LocalMediaRepository {
             val artId = cursor.getLong(albumId)
             val durationMs = cursor.getLong(duration)
             val contentUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, rowId).toString()
-            val songTitle = cursor.getString(title).cleanTag()?.removeAudioExtension()
-                ?: name.substringBeforeLast('.').takeIf { it.isNotBlank() }
-                ?: "Track $rowId"
             val trackNumber = if (track >= 0 && !cursor.isNull(track)) {
                 trackNumberFromMediaStore(cursor.getInt(track))
             } else {
                 null
             }
-            return Song(
-                videoId = videoIdByUri[contentUri] ?: contentUri,
-                title = songTitle,
-                artist = cursor.getString(artist).cleanTag() ?: "Unknown Artist",
-                thumbnailUrl = if (artId > 0) ContentUris.withAppendedId(ALBUM_ART_URI, artId).toString() else null,
-                durationText = durationMs.takeIf { it > 0 }?.let { formatDuration(it) },
-                albumName = cursor.getString(album).cleanTag(),
-                localUri = contentUri,
+            return localSongFromRow(
+                rowId = rowId,
+                name = name,
+                title = cursor.getString(title),
+                artist = cursor.getString(artist),
+                album = cursor.getString(album),
+                albumArtUri = if (artId > 0) {
+                    ContentUris.withAppendedId(ALBUM_ART_URI, artId).toString()
+                } else {
+                    null
+                },
+                durationMs = durationMs,
+                contentUri = contentUri,
                 localPath = cursor.getString(data),
-                localDateAddedSeconds = cursor.getLong(dateAdded),
-                localDateModifiedSeconds = cursor.getLong(dateModified),
+                dateAdded = cursor.getLong(dateAdded),
+                dateModified = cursor.getLong(dateModified),
                 trackNumber = trackNumber,
-            ).withStoredVideoFlag()
+                videoId = videoIdByUri[contentUri],
+            )
         }
     }
 

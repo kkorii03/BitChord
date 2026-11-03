@@ -228,9 +228,10 @@ class TastePoolTest {
 
         assertEquals("plain", plain.videoId)
         assertFalse(plain.isVideo)
-        // QueueBuilder drops video rows when a batch has catalogue tracks, so
-        // a stored cover must not be marked as one.
-        assertFalse(cover.isVideo)
+        // A stored cover keeps the mark the store kept, so an old row whose
+        // title no longer says "cover" is still recognised as the video it is.
+        assertTrue(cover.isVideo)
+        assertTrue(cover.isVideoOrigin)
         assertEquals("Jane", local("cover", singer = "Jane").coverSinger)
     }
 }

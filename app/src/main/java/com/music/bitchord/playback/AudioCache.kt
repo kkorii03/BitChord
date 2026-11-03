@@ -983,6 +983,34 @@ object AudioCache {
      * the system's "Clear cache" deletes the files underneath a running
      * [SimpleCache], which goes on believing in them until it next reads one.
      */
+    /**
+     * One folder row, with the stored video flag restored. Split out so that
+     * restore can be checked without opening a [SimpleCache].
+     */
+    internal fun cachedSongRow(
+        mediaId: String,
+        title: String,
+        artist: String,
+        thumbnailUrl: String?,
+        durationText: String?,
+        albumName: String?,
+        isVideo: Boolean,
+        downloadFormat: String,
+        lastUsedMs: Long,
+    ): Song = StoredSongDisplay.clean(
+        Song(
+            videoId = mediaId,
+            title = title,
+            artist = artist,
+            thumbnailUrl = thumbnailUrl,
+            durationText = durationText,
+            albumName = albumName,
+            isVideo = isVideo,
+            downloadFormat = downloadFormat,
+            localDateAddedSeconds = lastUsedMs / 1000,
+        ).withStoredVideoFlag(isVideo),
+    )
+
     suspend fun cachedSongs(): List<CachedSong> = withContext(Dispatchers.IO) {
         // A page read, not a hot path: opening the cache here is exactly what
         // the caller is asking for, and it is off the main thread.
@@ -1022,25 +1050,23 @@ object AudioCache {
                 ?: mediaId.takeIf { SourceRegistry.parseTrackKey(it) == null }
                     ?.let { "https://i.ytimg.com/vi/$it/hqdefault.jpg" }
             CachedSong(
-                song = StoredSongDisplay.clean(
-                    Song(
-                        videoId = mediaId,
-                        title = field(META_TITLE) ?: noted?.title?.takeIf(String::isNotBlank) ?: mediaId,
-                        artist = field(META_ARTIST) ?: noted?.artist.orEmpty(),
-                        thumbnailUrl = art,
-                        durationText = field(META_DURATION) ?: noted?.durationText,
-                        albumName = field(META_ALBUM) ?: noted?.albumName,
-                        isVideo = noted?.isVideo == true,
-                        // The row's second line: where the copy came from, what
-                        // it costs on disk, and — when only part of it is there —
-                        // that it will need a connection to play to the end.
-                        downloadFormat = listOfNotNull(
-                            origin.label,
-                            formatBytes(bytes),
-                            appContext?.getString(R.string.cached_song_partial)?.takeUnless { complete },
-                        ).joinToString(" · "),
-                        localDateAddedSeconds = lastUsed / 1000,
-                    ).withStoredVideoFlag(noted?.isVideo),
+                song = cachedSongRow(
+                    mediaId = mediaId,
+                    title = field(META_TITLE) ?: noted?.title?.takeIf(String::isNotBlank) ?: mediaId,
+                    artist = field(META_ARTIST) ?: noted?.artist.orEmpty(),
+                    thumbnailUrl = art,
+                    durationText = field(META_DURATION) ?: noted?.durationText,
+                    albumName = field(META_ALBUM) ?: noted?.albumName,
+                    isVideo = noted?.isVideo == true,
+                    // The row's second line: where the copy came from, what
+                    // it costs on disk, and — when only part of it is there —
+                    // that it will need a connection to play to the end.
+                    downloadFormat = listOfNotNull(
+                        origin.label,
+                        formatBytes(bytes),
+                        appContext?.getString(R.string.cached_song_partial)?.takeUnless { complete },
+                    ).joinToString(" · "),
+                    lastUsedMs = lastUsed,
                 ),
                 origin = origin,
                 bytes = bytes,

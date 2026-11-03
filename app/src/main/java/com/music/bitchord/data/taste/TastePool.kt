@@ -212,5 +212,6 @@ fun LocalTrack.asSong(): Song = StoredSongDisplay.clean(
         thumbnailUrl = thumbnailUrl,
         durationText = durationText,
         isVideo = isVideo,
+        coverSinger = coverSinger,
     ).withStoredVideoFlag(isVideo),
 )

@@ -1,5 +1,6 @@
 package com.music.bitchord.data
 
+import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.download.SavedSongMetadata
@@ -51,5 +52,49 @@ class StoredVideoFlagTest {
             .withStoredVideoFlag()
 
         assertFalse(song.isVideo)
+    }
+
+    @Test
+    fun `a version converted by hand stays audio`() {
+        Downloads.setSavedMetadata(
+            mapOf(
+                "video-1" to SavedSongMetadata(
+                    videoId = "video-1",
+                    title = "MV",
+                    artist = "Artist",
+                    uri = "file:///downloads/video-1.webm",
+                    isVideo = true,
+                ),
+            ),
+        )
+        try {
+            val song = Song(
+                videoId = "video-1",
+                title = "아이묭 - Marigold / cover by 오화요",
+                artist = "Ohwayo",
+                thumbnailUrl = null,
+                isVideo = false,
+                isVideoOrigin = true,
+            ).withStoredVideoFlag(recordedIsVideo = true)
+
+            assertFalse(song.isVideo)
+            assertTrue(song.isVideoOrigin)
+        } finally {
+            Downloads.setSavedMetadata(emptyMap())
+        }
+    }
+
+    @Test
+    fun `the cover helper leaves a converted version alone`() {
+        val song = Song(
+            videoId = "cover-1",
+            title = "아이묭 - Marigold / cover by 오화요",
+            artist = "Ohwayo",
+            thumbnailUrl = null,
+            isVideo = false,
+            isVideoOrigin = true,
+        )
+
+        assertFalse(CoverTitles.restoreVideoFlag(song).isVideo)
     }
 }

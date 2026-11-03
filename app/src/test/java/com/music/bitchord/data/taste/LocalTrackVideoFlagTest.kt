@@ -29,4 +29,17 @@ class LocalTrackVideoFlagTest {
 
         assertFalse(song.isVideo)
     }
+
+    @Test
+    fun `an old cover row with only the singer field is marked a video again`() {
+        val song = LocalTrack(
+            videoId = "cover-1",
+            title = "Marigold",
+            artist = "Ohwayo",
+            coverSinger = "오화요",
+        ).asSong()
+
+        assertTrue(song.isVideo)
+        assertTrue(song.isVideoOrigin)
+    }
 }

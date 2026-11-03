@@ -499,6 +499,13 @@ fun MediaItem.toSong() = Song(
     videoRadio = mediaMetadata.extras?.getBoolean(EXTRA_VIDEO_RADIO) == true,
 )
 
+/**
+ * A row rebuilt from a bare media uri: only the id and the two names are
+ * replaced, so the stored flags ride along unchanged.
+ */
+internal fun Song.rebuiltFromMediaUri(videoId: String, title: String, artist: String): Song =
+    copy(videoId = videoId, title = title, artist = artist, thumbnailUrl = null)
+
 internal val mediaItemTiers = java.util.Collections.synchronizedMap(java.util.WeakHashMap<MediaItem, QueueTier>())
 internal val mediaItemEntryIds = java.util.Collections.synchronizedMap(java.util.WeakHashMap<MediaItem, String>())
 internal val mediaItemCanonicalIndices = java.util.Collections.synchronizedMap(java.util.WeakHashMap<MediaItem, Int>())
