@@ -1513,6 +1513,11 @@ class PlaybackService : MediaLibraryService() {
                 mediaItem.mediaId == swappingMediaId
             ) {
                 swappingMediaId = null
+                // A song-version swap puts another id on this row. AutoPlay's
+                // job seeded with the old id drops its answer once it sees the
+                // new one, and nothing else asks again, so a one-song queue
+                // (a song played from search) stopped at its end (11-03 Creep).
+                if (autoplaySeed != mediaItem.mediaId) loadAutoplayForCurrentTrack()
                 return
             }
 
@@ -4174,6 +4179,11 @@ class PlaybackService : MediaLibraryService() {
                     activePlayer.currentMediaItem?.mediaId != current.videoId ||
                     (activeParty.inParty && autoplaySupplierId(activeParty) != activeParty.you?.memberId)
                 ) {
+                    TrackLog.d(
+                        "BitChord",
+                        "autoplay: dropped seed=${current.videoId} now=${activePlayer.currentMediaItem?.mediaId}",
+                        about = current.videoId,
+                    )
                     return@launch
                 }
                 val queueSongs = (0 until activePlayer.mediaItemCount)
