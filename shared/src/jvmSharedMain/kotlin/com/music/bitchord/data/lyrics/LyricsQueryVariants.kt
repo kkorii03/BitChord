@@ -36,7 +36,7 @@ internal object LyricsQueryVariants {
         // ("(원곡 : 한로로)", "(Original by X)"). Searching the song under that
         // name is much sharper than searching it with a blank artist, which
         // lets any other song with the same title win.
-        val cover = runCatching { CoverTitles.read(title, artist, null) }.getOrNull()
+        val cover = runCatching { CoverTitles.lyricsCover(title, artist) }.getOrNull()
         val coveredTitle = cover?.title?.takeIf { it.isNotBlank() }
         val titleForParts = coveredTitle ?: title
         val parts = TrackMatcher.parseTitle(titleForParts, artist)

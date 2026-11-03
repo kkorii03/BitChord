@@ -182,11 +182,12 @@ object CoverTitles {
 
     /**
      * The (title, artist) pairs worth searching lyrics under, best first. A
-     * read cover searches as the original; a title that might be a B cover
-     * without its tag tries both ways round.
+     * cover — [read] or a lyrics-only shape ([lyricsCover]) — searches as the
+     * original; a title that might be a B cover without its tag tries both
+     * ways round.
      */
     fun lyricsQueries(song: Song): List<Pair<String, String>> {
-        read(song)?.let { cover ->
+        lyricsCover(song)?.let { cover ->
             val artist = cover.originalArtist
             return listOfNotNull(
                 cover.title to (artist ?: cover.singer),
@@ -320,7 +321,7 @@ object CoverTitles {
         }
         val queries = lyricsQueries(upload)
         val (title, artist) = queries.firstOrNull() ?: (song.title to song.artist)
-        val cover = read(upload)
+        val cover = lyricsCover(upload)
         return LyricsQuery(
             // A cover is an upload whatever the row says — a Recents row can
             // arrive without its video flag — so its captions are asked first
@@ -332,6 +333,97 @@ object CoverTitles {
             artistAliases = ArtistAliases.forSong(upload),
         )
     }
+
+    /**
+     * The cover a lyrics lookup should search under, including the two title
+     * shapes an ordinary upload shares and only a search may read as a cover:
+     * "Title(Artist)" (the original's name in the closing bracket) and
+     * "Artist - Title" (the original's credit first). [read] stays as it is —
+     * display must not rewrite a label's ordinary title — but every lyrics
+     * source is asked under the names the title states.
+     */
+    fun lyricsCover(song: Song): Cover? =
+        read(song) ?: if (song.isVideo) readLyricsOnly(song.title, song.artist) else null
+
+    fun lyricsCover(title: String, artist: String): Cover? =
+        read(title, artist, null) ?: readLyricsOnly(title, artist)
+
+    private fun readLyricsOnly(rawTitle: String, channel: String): Cover? {
+        val raw = normalize(rawTitle.trim()).text
+        if (raw.isEmpty()) return null
+        // "Title(Artist)": the bracket is balanced, because an act's name can
+        // hold one of its own ("Tomboy((G)I-DLE)").
+        trailingGroup(raw)?.let { (start, inner) ->
+            val title = cleanTitle(raw.substring(0, start))
+            val artist = lyricsArtist(inner)
+            if (title != null && artist != null && !isBracketTranslation(title, artist)) {
+                return Cover(title = title, originalArtist = artist, singer = cleanName(channel) ?: channel)
+            }
+        }
+        // "Artist - Title": the original's credit first. A translation pair
+        // ("여수밤바다 - Yeosu Night Sea") and a song's own credit
+        // ("Song - Artist (VOCALOID)") are left to [lyricsQueries].
+        val (left, right) = splitTopLevelDash(raw) ?: return null
+        if (TRAILING_GROUP.containsMatchIn(right)) return null
+        val artist = lyricsArtist(left) ?: return null
+        val title = cleanTitle(right) ?: return null
+        if (isChannelName(artist, channel) || isArtistSide(cleanName(right).orEmpty(), channel)) return null
+        if (isHangulFirstTranslation(left, right) || isTranslation(title, artist)) return null
+        return Cover(title = title, originalArtist = artist, singer = cleanName(channel) ?: channel)
+    }
+
+    /** The bracket at the very end of [text] and its inner text, matched through nesting. */
+    private fun trailingGroup(text: String): Pair<Int, String>? {
+        if (text.isEmpty() || text.last() !in ")]）】}") return null
+        var depth = 0
+        for (index in text.indices.reversed()) {
+            when (text[index]) {
+                ')', ']', '）', '】', '}' -> depth++
+                '(', '[', '（', '【', '{' -> {
+                    depth--
+                    if (depth == 0) return index to text.substring(index + 1, text.length - 1)
+                }
+            }
+        }
+        return null
+    }
+
+    /**
+     * A credit from a lyrics-only reading. Only trailing aliases come off, so
+     * a name that opens with a bracket ("(G)I-DLE") keeps it.
+     */
+    private fun lyricsArtist(text: String): String? {
+        var name = text.trim()
+        while (true) {
+            val group = trailingGroup(name) ?: break
+            val head = name.substring(0, group.first).trim()
+            if (head.isEmpty()) break
+            name = head
+        }
+        name = unquote(name.trim(' ', '-', '–', '—', '·', ',', '"', '“', '”', '\''))
+        if (name.length >= 2 && name.first() == '(' && name.last() == ')' &&
+            name.substring(1, name.length - 1).none { it == '(' || it == ')' }
+        ) {
+            name = name.substring(1, name.length - 1).trim()
+        }
+        if (name.isEmpty() || name.length > 60) return null
+        if (isVersionWord(name) || isDescriptor(name) || isGenericCredit(name) || OST.containsMatchIn(name)) return null
+        if (FEAT_CREDIT.containsMatchIn(name)) return null
+        return name
+    }
+
+    /** "Friday(금요일에 만나요)": a Latin title's Hangul phrase is its subtitle, not its artist. */
+    private fun isBracketTranslation(title: String, credit: String): Boolean =
+        isTranslation(title, credit) ||
+            (!hasHangul(title) && !hasKanaOrHan(title) &&
+                hasHangul(credit) && credit.none { it in 'a'..'z' || it in 'A'..'Z' } &&
+                credit.contains(' '))
+
+    /** "여수밤바다 - Yeosu Night Sea": Hangul title first, its Latin translation after. */
+    private fun isHangulFirstTranslation(left: String, right: String): Boolean =
+        hasHangul(left) && !hasHangul(right) && right.any { it in 'a'..'z' || it in 'A'..'Z' }
+
+    private val FEAT_CREDIT = Regex("""(?i)\b(?:feat\.?|ft\.?|featuring|with)\b""")
 
     /**
      * Lyrics-only readings for an upload on a known cover channel whose title

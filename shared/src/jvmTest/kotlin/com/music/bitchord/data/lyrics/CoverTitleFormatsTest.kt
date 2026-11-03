@@ -82,6 +82,38 @@ class CoverTitleFormatsTest {
     }
 
     @Test
+    fun aCoverTitleStatesTheOriginalInBracketsOrBeforeTheDash() {
+        val bracketed = CoverTitles.lyricsQuery(song("Tomboy((G)I-DLE)", "오화요"))
+        assertEquals("Tomboy", bracketed.title)
+        assertEquals("(G)I-DLE", bracketed.artist)
+        assertTrue(bracketed.artistKnown)
+        assertTrue(bracketed.alternatives.contains("Tomboy" to "오화요"))
+
+        val artistFirst = CoverTitles.lyricsQuery(song("(G)I-DLE - Tomboy", "오화요"))
+        assertEquals("Tomboy", artistFirst.title)
+        assertEquals("(G)I-DLE", artistFirst.artist)
+        assertTrue(artistFirst.artistKnown)
+    }
+
+    @Test
+    fun aCoverTitleWithCoverByOrABareTagSearchesTheSongTitle() {
+        val by = CoverTitles.lyricsQuery(song("Tomboy / cover by 오화요", "오화요"))
+        assertEquals("Tomboy", by.title)
+        assertEquals("오화요", by.artist)
+
+        val bare = CoverTitles.lyricsQuery(song("Tomboy (cover)", "오화요"))
+        assertEquals("Tomboy", bare.title)
+        assertEquals("오화요", bare.artist)
+    }
+
+    @Test
+    fun theProviderQueryBuilderUsesTheOriginalFromTheTitle() {
+        val names = LyricsQueryVariants.names("Tomboy((G)I-DLE)", "오화요")
+        assertEquals("tomboy", names.first().title)
+        assertEquals("(G)I-DLE", names.first().artist)
+    }
+
+    @Test
     fun trailingDatesAndTagsAreDropped() {
         val titles = listOf(
             "달콤레나 - 고추잠자리(조용필) [26.09.06]",
