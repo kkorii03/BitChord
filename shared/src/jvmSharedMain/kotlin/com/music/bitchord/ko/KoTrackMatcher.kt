@@ -152,8 +152,18 @@ internal object KoTrackMatcher {
 
     /** True when one credited artist of [wanted] is exactly one credited artist of [got]. */
     internal fun namesTheSameArtist(wanted: String, got: String): Boolean {
+        val want = artistNames(wanted)
         val have = artistNames(got)
-        if (artistNames(wanted).any { it in have }) return true
+        if (want.any { it in have }) return true
+        // A leading article is how listings print the same act ("The 1975" and
+        // "1975" are one band); it is not part of the name for identity. The
+        // rest of the name still has to match whole, so a tribute band that
+        // merely starts with it stays a different artist.
+        if (want.any { withoutArticle(it) in have } ||
+            have.any { withoutArticle(it) in want }
+        ) {
+            return true
+        }
         // Two printed names that YouTube has linked to one channel are the
         // same act: a solo member and their group, or an act's former name.
         // Only a channel both names have actually been seen under counts.
@@ -164,6 +174,10 @@ internal object KoTrackMatcher {
             id != null && id in wantedIds
         }
     }
+
+    /** The name without a leading "the", when there is a name left. */
+    private fun withoutArticle(name: List<String>): List<String> =
+        if (name.size > 1 && name.first() == "the") name.drop(1) else name
 
     /**
      * Whether the two rows point at the same artist even though the printed
