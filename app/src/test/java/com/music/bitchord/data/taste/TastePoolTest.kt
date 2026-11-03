@@ -222,6 +222,13 @@ class TastePoolTest {
     }
 
     @Test
+    fun `a stored video local row stays a video`() {
+        val video = LocalTrack(videoId = "mv", title = "Some MV", artist = "Channel", isVideo = true)
+
+        assertTrue(video.asSong().isVideo)
+    }
+
+    @Test
     fun `a local row is rebuilt as a playable song`() {
         val plain = local("plain").asSong()
         val cover = local("cover", singer = "Jane").asSong()

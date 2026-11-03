@@ -4,6 +4,8 @@ import com.music.bitchord.data.StoredSongDisplay
 import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.stats.TrackEntry
+import com.music.bitchord.download.Downloads
+import com.music.bitchord.ko.downloads.wasVideoRow
 
 /**
  * [KO] listening-display
@@ -34,11 +36,21 @@ internal object KoListeningStatsDisplay {
                 artistId = entry.artistId,
                 albumId = entry.albumId,
                 albumName = entry.album,
-                isVideo = entry.artist.endsWith(" 커버"),
+                isVideo = entry.isVideo == true || entry.artist.endsWith(" 커버"),
             ),
         )
-        // A downloaded cover's cleaned title still says " (cover)" even after
-        // its video flag was lost on the way into history.
-        return if (cleaned.isVideo) cleaned else cleaned.copy(isVideo = CoverTitles.isCover(cleaned))
+        // A row written before the flag was kept can still be a video: its
+        // cleaned title says " (cover)", or its download record names the
+        // upload it came from.
+        val stored = if (entry.isVideo == null) {
+            Downloads.savedMetadataValue()[entry.id]?.wasVideoRow() == true
+        } else {
+            false
+        }
+        return if (cleaned.isVideo || stored) {
+            cleaned.copy(isVideo = true)
+        } else {
+            cleaned.copy(isVideo = CoverTitles.isCover(cleaned))
+        }
     }
 }

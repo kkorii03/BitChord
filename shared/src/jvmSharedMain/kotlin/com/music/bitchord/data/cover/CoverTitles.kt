@@ -407,6 +407,12 @@ object CoverTitles {
             (song.isVideo && song.artist.endsWith(" $COVER_WORD")) || read(song) != null
 
     /**
+     * Whether a row rebuilt from stored fields is a video: the flag it kept,
+     * or the cover marks a row written before that flag was stored still has.
+     */
+    fun isVideoRow(song: Song): Boolean = song.isVideo || isCover(song)
+
+    /**
      * A cover row saved by this app: its cleaned title carries [STORED_COVER_SUFFIX]
      * even when the video flag was lost on the way through history or a queue.
      */

@@ -1193,6 +1193,7 @@ internal fun Song.toPartyTrack(playerDurationMs: Long): PartyTrack = PartyTrack(
     durationMs = playerDurationMs.takeIf { it > 0L }
         ?: TrackMatcher.secondsOf(durationText)?.let { it * 1000L },
     fromAutoplay = fromAutoplay,
+    isVideo = isVideo,
 )
 
 internal fun PartyTrack.toSong(): Song = Song(
@@ -1208,6 +1209,8 @@ internal fun PartyTrack.toSong(): Song = Song(
         "%d:%02d".format(total / 60, total % 60)
     },
     queueTier = if (fromAutoplay) QueueTier.AUTOPLAY else QueueTier.USER_QUEUE,
+    isVideo = isVideo,
+    isVideoOrigin = isVideo,
 )
 
 /**

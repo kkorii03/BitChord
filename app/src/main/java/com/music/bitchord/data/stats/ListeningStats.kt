@@ -217,6 +217,7 @@ object ListeningStats {
                     artistId = song.artistId,
                     art = song.thumbnailUrl,
                     durationText = song.durationText,
+                    isVideo = song.isVideo,
                 )
             }
             track.ms += playedMs
@@ -229,6 +230,7 @@ object ListeningStats {
             if (track.artistId == null) track.artistId = song.artistId
             if (track.art == null) track.art = song.thumbnailUrl
             if (track.durationText == null) track.durationText = song.durationText
+            if (track.isVideo == null) track.isVideo = song.isVideo
             if (countsAsPlay) track.plays++
 
             // Day-level sub-bucket for the track.
@@ -1038,6 +1040,12 @@ data class TrackEntry(
     var artistId: String? = null,
     var art: String? = null,
     var durationText: String? = null,
+    /**
+     * Whether this row played as a music-video upload. Null on rows written
+     * before the flag was kept, so a cover can still be recovered from its
+     * title and a download record.
+     */
+    var isVideo: Boolean? = null,
     var ms: Long = 0L,
     var plays: Int = 0,
     var last: Long = 0L,
@@ -1056,6 +1064,7 @@ data class TrackEntry(
         if (artistId == null) artistId = other.artistId
         if (art == null) art = other.art
         if (durationText == null) durationText = other.durationText
+        if (isVideo == null) isVideo = other.isVideo
         // Merge per-day sub-buckets.
         if (other.days.isNotEmpty()) {
             other.days.forEach { (dateKey, stats) ->
