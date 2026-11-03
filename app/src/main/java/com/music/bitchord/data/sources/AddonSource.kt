@@ -342,8 +342,7 @@ class AddonSource(
             if (answer == null) {
                 // A 404 is the addon saying it does not hold this recording,
                 // which is a miss and belongs in no log. Anything else is a
-                // fault worth a line, and both end the same way: whatever the
-                // search row had, else null so [SourceResolver] moves on.
+                // fault worth a line.
                 val failure = result.exceptionOrNull()
                 if (failure !is AddonNotFound) {
                     TrackLog.w(TAG, "${config.displayName}: stream failed for $trackId — ${failure?.message}")
@@ -362,6 +361,13 @@ class AddonSource(
                         network = failure.transport,
                         restUntilMs = failure.restUntilMs,
                     )
+                    // A server fault is not the row URL's feature. The row's
+                    // own `streamURL` exists for addons that treat `/stream`
+                    // as optional (404/empty). Returning it here made the
+                    // caller read a failed `/stream` as a successful match,
+                    // clear the source's failure streak, and ask the same
+                    // broken endpoint on every track.
+                    return@withContext null
                 }
                 return@withContext fromRow(trackId, tier, request, stereoOnly)
             }
