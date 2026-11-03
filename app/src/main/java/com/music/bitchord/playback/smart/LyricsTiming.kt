@@ -422,16 +422,15 @@ object LyricsTiming {
             refineUntilMs = refineClock.maxOfOrNull { it.endMs } ?: Long.MAX_VALUE,
         )
         // The per-line layer runs after refine and under the hand's correction.
-        // Its words are put on the same clock here, without extraMs, so [apply]
-        // can compare them with the lines it has after base, HQ and refine.
+        // Its words are already on the playing clock, so [apply] compares them
+        // as they are with the lines it has after base, HQ and refine. Adding
+        // the refine to the words too counted it twice: every anchored line
+        // moved by the refine again (hidden while English lines never anchored,
+        // 11-03).
         val perLineWords = if (baseAllowed && refineClock.isNotEmpty() &&
             SyncSafetyPolicy.perLineTimingAllowed(AppSettings.syncSafetySwitches)
         ) {
-            refineClock.map { word ->
-                val start = (word.startMs + refined.refineAt(word.startMs)).coerceAtLeast(0L)
-                val end = (word.endMs + refined.refineAt(word.endMs)).coerceAtLeast(start)
-                LyricsWordAlign.Heard(word.text, start, end)
-            }
+            refineClock.map { word -> LyricsWordAlign.Heard(word.text, word.startMs, word.endMs) }
         } else {
             emptyList()
         }
