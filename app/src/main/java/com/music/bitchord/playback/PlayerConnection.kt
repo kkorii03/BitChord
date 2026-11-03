@@ -698,7 +698,12 @@ fun Song.toMediaItem(useDownloadedFile: Boolean = true): MediaItem {
     // item *shows* changes; the URI below is still built from the upload. A
     // row restored from an older build is cleaned here as well, so the lock
     // screen, notification and Android Auto never draw its stale upload title.
-    val shown = CoverTitles.applyTo(StoredSongDisplay.clean(this))
+    //
+    // Cover first, then the display cleaner: the cleaner has its own cover
+    // path, and it sets [Song.originalTitle], which makes [CoverTitles.applyTo]
+    // return the row untouched — leaving the lock screen with the upload's
+    // "(cover)" title and the singer alone instead of "원곡자 · 가수 커버".
+    val shown = StoredSongDisplay.clean(CoverTitles.applyTo(this))
     val sourceTrack = SourceRegistry.parseTrackKey(videoId)
     // A row from search or a playlist carries no file of its own, but the track
     // may still be on disk from a download — see [Downloads.saved].
