@@ -1,0 +1,32 @@
+﻿Kotlin Android app (task/u19-tg). User report 11-03 13:01 (phone S24, build 5135c43, Bluetooth JBL): going from 'Natural' (Imagine Dragons, YouTube opus on player-b) to 'Grenade' (Bruno Mars, downloaded HQ file files/downloads/Bruno Mars - Grenade.flac on player-a) the mix kept REPEATING THE LAST PART OF 'Natural' for several seconds before Grenade played. Log (user diagnostic export):
+13:01:10.240 direct window open: h8slzEkObi8 with 20839ms to the transition
+13:01:21.905 power: decoders active=2 [player-b:c2.android.opus.decoder, player-a:c2.android.flac.decoder]
+(no 'crossfade: arm/start' line for this transition, unlike the earlier ones: 'crossfade: arm out=.. in=.. fade=6000ms cue=0ms smart=true')
+13:01:46.533 track-summary: pXu6JC6-d_o 'Natural' ... played=189 ended=natural   (Natural started 12:58:31, so its audio ended ~13:01:40)
+13:01:46.534 play: -> Grenade - Bruno Mars (h8slzEkObi8) idx=3/11 reason=AUTO
+13:01:46.534 TIMING first audio: 0ms, the crossfade covered it
+13:01:46.560 download-check: h8slzEkObi8 result=ok action=none tier=LOSSLESS_16
+13:01:48.120 VideoAudio song check: file 90s 2812KB
+13:01:51.527 error: ERROR_CODE_TIMEOUT (1003) on h8slzEkObi8
+13:01:51.528 playback failed for h8slzEkObi8 at 2269ms (ERROR_CODE_TIMEOUT), attempt 1 ... androidx.media3.common.util.StuckPlayerException: Player stuck playing with no progress for 10000 ms
+13:01:51.908 discarded cache entry file:///data/user/0/com.music.bitchord/files/downloads/Bruno%20Mars%20-%20Grenade.flac
+13:01:51.909 retrying h8slzEkObi8 from 2269ms
+13:01:51.963 DECODE h8slzEkObi8 <- audio/flac 44.1kHz 24-bit 2ch   (then it played normally)
+Earlier transitions also show 'crossfade: skipped A->B reason=arm-timeout' twice.
+
+Task, in order:
+1. Find the code path that, while the incoming player makes no progress, keeps sounding the outgoing track's tail (Automix / crossfade / 'loops' — Korean mix caption once said 'incoming: 41 loops'). Explain in the summary exactly which code produced the repeated tail and why it was not bounded.
+2. Fix it so the outgoing tail is never repeated more than one musical loop / never longer than a short bound when the incoming player is stuck or not yet producing audio: stop the outgoing audio (short fade) and let the incoming start (or the normal retry run) instead. Keep normal successful Automix transitions unchanged.
+3. Find why player-a stalled at 2269ms on a local downloaded FLAC (index says LOSSLESS_16, decoder saw 24-bit; another reader 'VideoAudio song check: file' opened the same file at 13:01:48). Fix if the cause is clear in code; otherwise list the evidence in the summary. Do NOT delete or move the user's downloaded file ('discarded cache entry' must not remove a file under files/downloads — check that and fix if it does).
+4. Tests: a JVM test that FAILS on the current code for the unbounded tail repeat (pure policy/state logic extracted if needed), passes after. Add new test classes to the CI test list in .github/workflows/ko-wip-check.yml is NOT allowed for you — instead name them in the summary so Opus adds them.
+Battery first: no polling timers; event-based. Re-read every caller of any function you change. Unknown Media3 APIs: check with context7. Use grep/Select-String (no rg).
+Summary of at most 10 lines: files / root cause (1) and (3) / key change / tests and results / REMOVED-LINES AUDIT / not done. Follow AGENTS.md (ponytail) rules.
+
+
+== 2 차 작업 (현재 브랜치 = 이전 차수 결과) ==
+엄격 기준: 아래 독립 검토자 지적의 HIGH·MEDIUM 은 전부 고칠 것(드문 경우라는 이유로 보류 금지). 그리고 이전 차수가 docs/review-1031/ 문서에 '문서에만 남김/미해결'로 둔 HIGH·MEDIUM 도 이번에 고칠 것 — 재생 핵심 경로(곡 해석·싱크·크로스페이드)라도 고치되 문서 해당 줄에 '폰 검증 필요' 표시. 지적이 틀렸으면 코드 줄 근거로 반박을 요약에. 새로 고친 곳마다 수정 전 실패하는 테스트. 이전 차수에서 고친 것을 되돌리지 말 것.
+검토 지적:
+VERDICT: ISSUES 2
+1. HIGH — app/src/main/java/com/music/bitchord/playback/smart/LyricsTiming.kt:428 — Unrelated rewrite drops the refine offset from `perLineWords`; the task never asked for lyric-timing changes and there is no REMOVED-LINES AUDIT or test covering refine+per-line interaction, so a sync regression would ship silently. Fix: revert this hunk, or add a refine+perLine JVM test and justify the removal in the summary.
+2. MEDIUM — app/src/main/java/com/music/bitchord/playback/CrossfadeController.kt:2733 — The new stall-fade branch (fade ramp → `handOff` → `finishLoop`, plus all the reset paths) is untested; the new JVM test only exercises `LoopMixStallPolicy` arithmetic, so a wrong handoff/fade condition here still passes CI. Fix: add a controller/state-level test for the stall→fade→handoff path, or move the fade state machine into the pure policy and test it.
+마지막 요약에 지적 번호별 처리(고침/반박+근거) 한 줄씩.
