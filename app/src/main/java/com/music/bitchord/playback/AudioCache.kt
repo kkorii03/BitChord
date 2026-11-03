@@ -1382,6 +1382,11 @@ object AudioCache {
      * finished by the stream that started it, and the addon's late answer swaps
      * in under it. Either pin ends this check for every later open of the track.
      *
+     * The row that is audible now is the exception: its cached bytes are ready,
+     * so the lookup starts beside playback and the ordinary second look
+     * replaces them, rather than holding the first note for the lookup window.
+     * Only a row being prepared ahead waits for the addon here.
+     *
      * Runs on the loader thread, which the resolver blocks in exactly the same
      * way on a direct-mode miss.
      */
@@ -1401,6 +1406,16 @@ object AudioCache {
         if (!DirectSourceGate.isActive() || StreamChoice.of(videoId) != null) return
         val key = keyFactory.buildCacheKey(DataSpec(uri))
         if (!heldByYouTube(key) || isOffline()) return
+        // [KO] first-audio: the cached bytes are ready to read now. Starting
+        // the addon lookup beside playback lets the ordinary second look
+        // replace them, instead of holding the first note for its window.
+        if (DirectSourceGate.isCurrent(videoId)) {
+            if (!QualityUpgrade.isPending(videoId)) {
+                val work = DirectSourceGate.startLookupNow(videoId, SourceResolver.targetIn(uri))
+                if (work != null) DirectSourceGate.startedOnYouTube(videoId, SourceResolver.targetIn(uri))
+            }
+            return
+        }
         try {
             runBlocking<Unit>(TrackLog.about(videoId)) {
                 // The same hold the resolver applies, so a track prepared early

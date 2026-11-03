@@ -17,6 +17,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.ConcurrentHashMap
 
@@ -35,10 +36,11 @@ import java.util.concurrent.ConcurrentHashMap
  * With it on, three things change:
  *
  *  1. **One resolve, one stream, when an addon answers.** [lookup] asks the
- *     addons and the caller waits for the answer, which then plays to the end.
- *     YouTube is only the fallback when no addon answered in time, and then
- *     the track is left to [QualityUpgrade] exactly as it is with this off —
- *     see [startedOnYouTube].
+ *     addons and a track that is already prepared waits for the answer, which
+ *     then plays to the end. The audible row itself does not wait: it starts
+ *     on whichever of the addon and YouTube answers first, and a late addon
+ *     is handed to [QualityUpgrade] exactly as it is with this off — see
+ *     [firstAnswer].
  *  2. **Nothing is fetched early.** A track that is neither playing nor next
  *     within [WINDOW_MS] of its transition is held at the resolver — see
  *     [awaitOpen]. That covers ExoPlayer's own gapless preparation of the next
@@ -109,6 +111,9 @@ object DirectSourceGate {
         open.value = now.copy(next = mediaId)
         return true
     }
+
+    /** Whether [mediaId] is the row that is audible now, not one being prepared ahead. */
+    fun isCurrent(mediaId: String): Boolean = mediaId in open.value.playing
 
     private fun Open.admits(mediaId: String) = mediaId in playing || mediaId == next
 
@@ -198,6 +203,37 @@ object DirectSourceGate {
      * and the caller falls back to YouTube and says so with [startedOnYouTube].
      */
     suspend fun lookup(videoId: String, target: TrackMatcher.Target): SourceStream? {
+        val lookup = startLookup(videoId, target) ?: return null
+        val waited = android.os.SystemClock.elapsedRealtime() - lookup.startedAtMs
+        return withTimeoutOrNull(LOOKUP_TIMEOUT_MS - waited) { lookup.work.await() }
+    }
+
+    /**
+     * The addon lookup for [videoId], started now if it was not already
+     * running, without waiting for it. The audible row races this against
+     * YouTube so a slow addon cannot hold the first note — see [firstAnswer].
+     * Null when every addon is resting and the search could only time out.
+     */
+    internal fun startLookupNow(videoId: String, target: TrackMatcher.Target): Deferred<SourceStream?>? =
+        startLookup(videoId, target)?.work
+
+    /** How much of [videoId]'s lookup window is left; zero when none is running. */
+    private fun lookupRemainingMs(videoId: String): Long {
+        val lookup = lookups[videoId] ?: return 0L
+        val waited = android.os.SystemClock.elapsedRealtime() - lookup.startedAtMs
+        return (LOOKUP_TIMEOUT_MS - waited).coerceAtLeast(0L)
+    }
+
+    /**
+     * Waits for [work] under the same window [lookup] applies, so a caller
+     * that started the lookup itself cannot wait past the deadline.
+     */
+    internal suspend fun awaitLookup(videoId: String, work: Deferred<SourceStream?>): SourceStream? {
+        if (work.isCompleted) return work.await()
+        return withTimeoutOrNull(lookupRemainingMs(videoId)) { work.await() }
+    }
+
+    private fun startLookup(videoId: String, target: TrackMatcher.Target): Lookup? {
         // [KO] first-audio: when every addon is resting, the search can only
         // time out. Skipping the wait lets YouTube start at once instead of
         // after the whole direct-source window.
@@ -217,13 +253,31 @@ object DirectSourceGate {
         val running = lookups.putIfAbsent(videoId, fresh)
         if (running != null) {
             fresh.work.cancel()
-        } else {
-            fresh.work.invokeOnCompletion { lookups.remove(videoId, fresh) }
-            fresh.work.start()
+            return running
         }
-        val lookup = running ?: fresh
-        val waited = android.os.SystemClock.elapsedRealtime() - lookup.startedAtMs
-        return withTimeoutOrNull(LOOKUP_TIMEOUT_MS - waited) { lookup.work.await() }
+        fresh.work.invokeOnCompletion { lookups.remove(videoId, fresh) }
+        fresh.work.start()
+        return fresh
+    }
+
+    /** Whichever route answered first; the other may still be running. */
+    internal sealed interface FirstAnswer<out A, out Y> {
+        data class Addon<A>(val stream: A?) : FirstAnswer<A, Nothing>
+        data class YouTube<Y>(val result: Result<Y>) : FirstAnswer<Nothing, Y>
+    }
+
+    /**
+     * The first answer from [addon] or [youtube], in completion order. Used for
+     * the audible row only: waiting for the addon there is silence the
+     * listener pays for a copy that may never come, while a late addon is
+     * still handed to the second look.
+     */
+    internal suspend fun <A, Y> firstAnswer(
+        addon: Deferred<A?>,
+        youtube: Deferred<Result<Y>>,
+    ): FirstAnswer<A, Y> = select {
+        addon.onAwait { FirstAnswer.Addon(it) }
+        youtube.onAwait { FirstAnswer.YouTube(it) }
     }
 
     /**

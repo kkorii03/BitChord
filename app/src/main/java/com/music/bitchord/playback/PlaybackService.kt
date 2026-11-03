@@ -8162,13 +8162,15 @@ class PlaybackService : MediaLibraryService() {
     }
 
     /**
-     * Direct Source Stream's resolve: the addons first and alone, YouTube only
-     * when none of them answers in time — see [DirectSourceGate].
+     * Direct Source Stream's resolve: the addons first and alone for a track
+     * being prepared ahead, YouTube only when none of them answers in time —
+     * see [DirectSourceGate].
      *
-     * Nothing races. An addon's answer plays to the end, which is the point:
-     * one search and one stream per track, not a YouTube start followed by a
-     * swap. A YouTube start is the one case handed to [QualityUpgrade], because
-     * that is the swap the addons' slowness has already made necessary.
+     * The audible row is the exception. Its addon lookup races YouTube and the
+     * first answer plays, because holding the first note for an addon that may
+     * never answer is the silence this path exists to avoid. An addon that
+     * loses is handed to [QualityUpgrade] and still swaps in under the music;
+     * one that wins plays to the end.
      *
      * A manifest answer goes out as it is. It fails its first read and
      * [replayAsManifest] re-prepares it with the type declared, which is a
@@ -8182,11 +8184,40 @@ class PlaybackService : MediaLibraryService() {
         val fallback = scope.async(Dispatchers.IO + TrackLog.about(videoId)) {
             runCatching { StreamResolver.resolve(videoId) }
         }
+        val addonWork = DirectSourceGate.startLookupNow(videoId, target)
+        val current = DirectSourceGate.isCurrent(videoId)
+        // The race needs the addon under its own deadline: a route that never
+        // answers must not keep the select waiting past the lookup window.
+        val addonAnswer = if (current && addonWork != null && !addonWork.isCompleted) {
+            scope.async(Dispatchers.IO + TrackLog.about(videoId)) {
+                DirectSourceGate.awaitLookup(videoId, addonWork)
+            }
+        } else {
+            null
+        }
         val direct = try {
-            runCatching { DirectSourceGate.lookup(videoId, target) }
+            runCatching {
+                when {
+                    addonWork == null -> null
+                    // Already answered: take it, however close YouTube is.
+                    addonWork.isCompleted -> addonWork.await()
+                    !current -> DirectSourceGate.awaitLookup(videoId, addonWork)
+                    else -> {
+                        val first = DirectSourceGate.firstAnswer(addonAnswer!!, fallback)
+                        if (first is DirectSourceGate.FirstAnswer.YouTube) addonAnswer.cancel()
+                        when (first) {
+                            is DirectSourceGate.FirstAnswer.Addon -> first.stream
+                            is DirectSourceGate.FirstAnswer.YouTube ->
+                                if (first.result.isSuccess) null
+                                else DirectSourceGate.awaitLookup(videoId, addonWork)
+                        }
+                    }
+                }
+            }
                 .onFailure { if (it is CancellationException) throw it }
                 .getOrNull()
         } catch (e: CancellationException) {
+            addonAnswer?.cancel()
             fallback.cancel()
             throw e
         }
@@ -8197,11 +8228,16 @@ class PlaybackService : MediaLibraryService() {
         val running = DirectSourceGate.stillLooking(videoId)
         TrackLog.d(
             "BitChord",
-            if (running != null) {
-                "no addon answered for '${target.title}' within " +
-                    "${DirectSourceGate.LOOKUP_TIMEOUT_MS / 1000}s; starting it on YouTube and still looking"
-            } else {
-                "no addon served '${target.title}' directly; playing it from YouTube"
+            when {
+                running == null ->
+                    "no addon served '${target.title}' directly; playing it from YouTube"
+                current ->
+                    "no addon answered for '${target.title}' before YouTube; " +
+                        "starting it on YouTube and still looking"
+                else ->
+                    "no addon answered for '${target.title}' within " +
+                        "${DirectSourceGate.LOOKUP_TIMEOUT_MS / 1000}s; " +
+                        "starting it on YouTube and still looking"
             },
             about = videoId,
         )
