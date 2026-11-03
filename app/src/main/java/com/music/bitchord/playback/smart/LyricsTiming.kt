@@ -145,6 +145,9 @@ object LyricsTiming {
     private const val CLOCK_YOUTUBE = "yt"
     private const val CLOCK_SUBSTITUTE = "alt"
 
+    /** The synthetic rendition key [awaitVideoOpening] gives a local file. */
+    private const val LOCAL_RENDITION_PREFIX = "local:"
+
     /** How the lines were moved before any correction by hand. */
     sealed interface Adjustment {
         val byAi: Boolean
@@ -609,13 +612,21 @@ object LyricsTiming {
         }
     }
 
-    /** The clock of the rendition a measurement read; any substitute key is the substitute's. */
-    private fun clockForRendition(videoId: String, key: String?): Clock =
-        if (key != null && AutomixAnalysisSource.isSubstituteRendition(videoId, key)) {
-            substituteClock(videoId)
-        } else {
-            Clock.YouTube
+    /**
+     * The clock of the rendition a measurement read; any substitute key is the
+     * substitute's. A local file is read directly (see [awaitVideoOpening]),
+     * and an HQ download's file is the substitute it was verified against —
+     * tagging it YouTube made [timing] apply that map a second time.
+     */
+    internal fun clockForRendition(videoId: String, key: String?): Clock = when {
+        key != null && key.startsWith(LOCAL_RENDITION_PREFIX) -> {
+            val meta = KoDownloadRecords.savedMetadataFor(videoId)
+            clockForLocalCopy(meta?.hqSourceConfigId, meta?.hqTrackId)
         }
+        key != null && AutomixAnalysisSource.isSubstituteRendition(videoId, key) ->
+            substituteClock(videoId)
+        else -> Clock.YouTube
+    }
 
     /**
      * The clock a remembered [StreamChoice] names, without asking the store.
