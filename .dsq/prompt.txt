@@ -1,0 +1,19 @@
+Kotlin Android app (task/u19-tg). User report 11-03 13:22 (phone): 'Watermelon Sugar' (KPM_BYl-EaQ) started with a STRANGE SOUND / ANOTHER SONG for ~9 s, then restarted as the right song. Log:
+00:36:19.081 download: 'Watermelon Sugar' from LastWave at FLAC · 16-bit · 44.1 kHz
+00:36:19.081 downloading KPM_BYl-EaQ as .flac (FLAC · 16-bit · 44.1 kHz, 무손실)
+00:36:21.258 embedding lrc.red lyrics for KPM_BYl-EaQ (word-synced)
+00:36:21.286 setting: downloaded_tracks = set        (no recording check logged for this download)
+13:22:36.355 play: -> Watermelon Sugar - Harry Styles (KPM_BYl-EaQ) idx=0/1 reason=PLAYLIST_CHANGED
+13:22:36.479 DECODE KPM_BYl-EaQ <- audio/mp4a-latm 44.1kHz bitrate n/a ?-bit 2ch   (so the '.flac' was not FLAC)
+13:22:45.032 VideoAudio song check: stream 90s 2812KB
+13:22:45.177 download-check: KPM_BYl-EaQ result=wrong-recording action=stream tier=LOSSLESS_16
+13:22:45.204 download failed for KPM_BYl-EaQ: 검증된 고음질 음원을 받을 수 없습니다 (KoDownloadPipeline.routeForVerified)
+13:22:45.209 KPM_BYl-EaQ is a wrong recording; streaming the song version instead
+13:22:45.219 track-summary: KPM_BYl-EaQ ... resolve=cache firstAudio=199 played=3 ended=skipped
+13:22:45.220 play: -> Watermelon Sugar (KPM_BYl-EaQ) idx=0/11 reason=PLAYLIST_CHANGED   (restarted from 0)
+Task:
+1. Find how a downloaded HQ file was saved and later played without ever passing the recording check (download path from an addon source such as LastWave -> Downloads/KoDownloadPipeline; and the play path that picks the downloaded file first and checks only ~9 s later). Explain the exact path in the summary.
+2. Fix: a downloaded file that has not passed the recording check (or whose real container/codec does not match what it was saved as) must never be the first audio. Prefer: verify at download time before marking the track downloaded; at play time, an unverified download starts on the stream and moves to the file only after the check passes. When the check says wrong-recording mid-play, continue the stream at the current position instead of restarting from 0. Keep verified downloads playing offline exactly as now.
+3. Tests that FAIL on current code and pass after (pure JVM policy tests; extract a small decision function if needed). Name new test classes in the summary (you may not edit .github/workflows).
+Battery first (no polling timers). Re-read every caller and type of what you change. Do not delete user files. Unknown Media3 APIs: context7. Use grep/Select-String (no rg).
+Summary of at most 10 lines: files / root cause / key change / tests and results / REMOVED-LINES AUDIT / not done. Follow AGENTS.md (ponytail) rules.
