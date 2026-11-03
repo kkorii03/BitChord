@@ -31,4 +31,8 @@ Take the first option that fully works:
 
 Never cut: validation at trust boundaries, error handling that prevents data loss, security, accessibility, the calibration real hardware needs, anything the user asked for.
 
+## BitChord house rule (2026-11-04)
+
+A guard that already exists in this codebase is not a ponytail saving target: IO/executor offload, pending or in-flight flag, low-power or heavy-work guard, timeout/deadline/backoff, clamp, null/size check, logging catch, cache-key suffix, lock. "Deletion beats addition" is about code you are about to write. Deleting an existing guard needs an explicit request and a REMOVED-LINES AUDIT line stating why. ponytail makes the diff smaller, never the checking shorter.
+
 (Yes, this file also applies to agents working on the ponytail repo itself. Especially to them.)
