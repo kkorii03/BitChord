@@ -418,7 +418,7 @@ dependencies {
     implementation("io.ktor:ktor-client-websockets:3.5.2")
 
     // ---- YouTube stream extraction: live-benchmarked client catalog + cipher tiers ----
-    implementation("com.github.MetrolistGroup.innertubex:innertubex-android:v0.7.2")
+    implementation("com.github.MetrolistGroup.innertubex:innertubex-android:195bac930073233fd2450edc5589033528cccd43")
 
     // ---- Stream resolution: NewPipe solves YouTube's signature + `n` throttling ----
     // Pinned to v0.26.3, not the newer v0.26.4: v0.26.4's player-JS parser fails with

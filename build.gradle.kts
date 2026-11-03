@@ -81,9 +81,9 @@ plugins {
 }
 
 val pinnedDependencies = listOf(
-    "com.github.MetrolistGroup.innertubex:innertubex:v0.7.2",
-    "com.github.MetrolistGroup.innertubex:innertubex-android:v0.7.2",
-    "com.github.MetrolistGroup.innertubex:innertubex-desktop:v0.7.2",
+    "com.github.MetrolistGroup.innertubex:innertubex:195bac930073233fd2450edc5589033528cccd43",
+    "com.github.MetrolistGroup.innertubex:innertubex-android:195bac930073233fd2450edc5589033528cccd43",
+    "com.github.MetrolistGroup.innertubex:innertubex-desktop:195bac930073233fd2450edc5589033528cccd43",
     "io.ktor:ktor-client-core:3.5.2",
     "io.ktor:ktor-client-core-jvm:3.5.2",
     "io.ktor:ktor-client-okhttp:3.5.2",

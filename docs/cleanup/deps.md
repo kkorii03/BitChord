@@ -6,15 +6,18 @@ Kotlin metadata 2.3/2.4 breakage).
 
 ## JitPack commit pin
 
-`v0.7.0` of `MetrolistGroup/innertubex` resolves to commit
-`cc74e737b6ae2875343fb2e31c7283e39e1cf72e` (`git ls-remote`). JitPack accepts
-the short commit as a version, so the build files now use `cc74e737b6`:
+`v0.7.2` of `MetrolistGroup/innertubex` (annotated tag object
+`1b82f5fc44c3ac7d9bf2ae304cbf1d3a55ed14e0`) resolves to commit
+`195bac930073233fd2450edc5589033528cccd43` (`git ls-remote refs/tags/v0.7.2^{}`).
+JitPack accepts a commit as a version, so the build files pin the full hash
+instead of the mutable tag:
 
 | Build file | Declaration |
 | --- | --- |
-| `shared/build.gradle.kts` | `com.github.MetrolistGroup.innertubex:innertubex:cc74e737b6` |
-| `app/build.gradle.kts` | `com.github.MetrolistGroup.innertubex:innertubex-android:cc74e737b6` |
-| `tv/build.gradle.kts` | `com.github.MetrolistGroup.innertubex:innertubex-android:cc74e737b6` |
+| `root build.gradle.kts` | `com.github.MetrolistGroup.innertubex:{innertubex,innertubex-android,innertubex-desktop}:195bac930073233fd2450edc5589033528cccd43` |
+| `shared/build.gradle.kts` | `com.github.MetrolistGroup.innertubex:innertubex:195bac930073233fd2450edc5589033528cccd43` |
+| `app/build.gradle.kts` | `com.github.MetrolistGroup.innertubex:innertubex-android:195bac930073233fd2450edc5589033528cccd43` |
+| `tv/build.gradle.kts` | `com.github.MetrolistGroup.innertubex:innertubex-android:195bac930073233fd2450edc5589033528cccd43` |
 
 Transitive versions are pinned centrally in the root `build.gradle.kts` with
 `resolutionStrategy.force` for every project configuration.
@@ -28,9 +31,9 @@ Commands:
 ./gradlew :shared:dependencies --configuration jvmRuntimeClasspath
 ```
 
-| Group / artifact | Before (`v0.7.0`) | After (pinned) | Same? |
+| Group / artifact | Before (`v0.7.2` tag) | After (pinned) | Same? |
 | --- | --- | --- | --- |
-| `innertubex`, `innertubex-android`, `innertubex-desktop` | `v0.7.0` | `cc74e737b6` | same commit |
+| `innertubex`, `innertubex-android`, `innertubex-desktop` | `v0.7.2` | `195bac9300` | same commit |
 | `io.ktor:*` | `3.5.2` | `3.5.2` | yes |
 | `kotlinx-serialization-*` | `1.11.0` | `1.11.0` | yes |
 | `kotlinx-coroutines-*` | `1.11.0` | `1.11.0` | yes |
