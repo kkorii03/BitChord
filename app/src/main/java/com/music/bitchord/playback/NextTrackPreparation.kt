@@ -12,6 +12,7 @@ import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.lyrics.Deepgram
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsSource
+import com.music.bitchord.data.lyrics.SongCheckWindow
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.net.SongVersionPolicy
@@ -27,6 +28,7 @@ import com.music.bitchord.playback.smart.AudioDecoder
 import com.music.bitchord.playback.smart.AutomixWorkPolicy
 import com.music.bitchord.playback.smart.HqVerificationStore
 import com.music.bitchord.playback.smart.LyricsTiming
+import com.music.bitchord.playback.smart.VideoAudio
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -384,7 +386,19 @@ internal class NextTrackPreparation(
                             // sync is measured or recorded for it.
                             val query = CoverTitles.lyricsQuery(song)
                             val substituted = StreamChoice.isSubstitute(song.videoId)
-                            if (lines != null && !substituted) {
+                            // The next row is not playing, so its sound only
+                            // arrives as fast as the stream fills: a song check
+                            // here waits for audio that does not exist yet and
+                            // eats the whole window, which is why every run
+                            // logged hq=none(deadline) and mix=none(deadline)
+                            // (11-04). Run it only when the opening is already on
+                            // disk (a downloaded file, or a stream the player has
+                            // cached); otherwise the foreground check does it once
+                            // the row is actually playing and its audio flows.
+                            val openingReady = VideoAudio.secondsOnDisk(song) >= SongCheckWindow.FIRST_SECONDS
+                            if (lines != null && !substituted && !openingReady) {
+                                syncFailure = NextPrepPolicy.SyncFailure.NO_AUDIO
+                            } else if (lines != null && !substituted) {
                                 // Free measurement and timing first: they need
                                 // no upload and are what times most covers.
                                 val probe = LyricsTiming.NextSyncProbe()
