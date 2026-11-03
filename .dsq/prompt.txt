@@ -1,0 +1,9 @@
+﻿
+
+== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
+?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
+寃??吏??
+VERDICT: ISSUES 2
+HIGH `shared/src/jvmTest/kotlin/com/music/bitchord/data/sources/AudioSwitchArtistNameTest.kt:36` — The test invents `CHOCOLATE02` instead of the reported `CHk5SWVO4p8`, whose catalogue row is the same video id and is still rejected by `KoSongVersion.kt:416`, so the actual Chocolate MV remains unfixed. Add a test using the real same-id row and handle a same-id audio-only catalogue result (or state why it cannot be done).
+MEDIUM `shared/src/jvmSharedMain/kotlin/com/music/bitchord/ko/KoTrackMatcher.kt:162` — The article-stripped match returns before the `ArtistNameIndex` check at line 170, so distinct acts named “The X” and “X” with different known channel ids are treated as the same artist and a wrong same-titled song can pass. Check known channel ids before accepting the article-stripped match, or move that fallback after the channel check, and add a negative test.
+留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
