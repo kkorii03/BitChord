@@ -630,6 +630,13 @@ object YtMusicRepository {
     }
 
     /**
+     * Test seam: lets a JVM test drive the retry without the network. Null in
+     * production, where every search goes through [searchPage].
+     */
+    @Volatile
+    internal var searchOverride: (suspend (String, SearchFilter, SearchKind) -> Result<List<SearchResult>>)? = null
+
+    /**
      * Compatibility helper for callers that need candidates but not a scrolling
      * result screen. Those callers need the first, most relevant page only.
      */
@@ -638,7 +645,8 @@ object YtMusicRepository {
         filter: SearchFilter,
         kind: SearchKind = SearchKind.TYPED,
     ): Result<List<SearchResult>> =
-        searchPage(query, filter, kind = kind).map { it.rows }
+        searchOverride?.invoke(query, filter, kind)
+            ?: searchPage(query, filter, kind = kind).map { it.rows }
 
     private fun SearchResult.identityKey(): String = when (this) {
         is SearchResult.TopTrack -> "v:${song.videoId}"

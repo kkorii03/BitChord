@@ -242,6 +242,10 @@ internal object KoSongVersion {
     fun cachedSongVersionFor(song: Song): Song? =
         songVersionVerdicts.cached(song.videoId)?.withQueueFieldsOf(song)
 
+    /** Test seam: whether the shared lookup for [videoId] is still running. */
+    internal fun isSongVersionLookupRunning(videoId: String): Boolean =
+        songVersionLookups.isRunning(videoId)
+
     /** True when this run has already established that [videoId] has no song version. */
     fun isSongVersionMissing(videoId: String): Boolean =
         songVersionVerdicts.isMissing(videoId)
