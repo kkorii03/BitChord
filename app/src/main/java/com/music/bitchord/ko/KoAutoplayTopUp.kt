@@ -600,20 +600,20 @@ private suspend fun loadNormalAutoplayTracks(
         return Result.success(emptyList())
     }
 
-    // Whatever a source offered, a queue row with no name is unplayable to the
+    // Whatever a source offered, a queue row with no title is unplayable to the
     // listener and indistinguishable from a broken player. Drop it here as the
-    // final gate as well as at the source, and say which id it was. The cover
-    // filter is repeated for the sources that did not pass through the radio
-    // list above (similar rows and favourites), so every path is held to it.
+    // final gate as well as at the source, and say which id it was. A row with
+    // a title but no artist still plays and shows its name, so the artist is
+    // not a reason to lose the song. The cover filter is repeated for the
+    // sources that did not pass through the radio list above (similar rows and
+    // favourites), so every path is held to it.
     val relatedExtra = autoplayRowsAfterCoverFilter(extra, seedSong)
-    val playable = relatedExtra.filter {
-        it.title.isNotBlank() && it.artist.isNotBlank()
-    }
-    extra.filterNot { it.title.isNotBlank() && it.artist.isNotBlank() }.forEach {
+    val playable = relatedExtra.filter { it.title.isNotBlank() }
+    extra.filterNot { it.title.isNotBlank() }.forEach {
         TrackLog.d("BitChord", "autoplay: dropped ${it.videoId} (no metadata)", about = seedSong.videoId)
     }
     extra.filter {
-        it.title.isNotBlank() && it.artist.isNotBlank() && it !in relatedExtra
+        it.title.isNotBlank() && it !in relatedExtra
     }.forEach {
         TrackLog.d("BitChord", "autoplay: dropped ${it.videoId} (cover/karaoke)", about = seedSong.videoId)
     }
