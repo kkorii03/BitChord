@@ -152,8 +152,8 @@ internal object KoTrackMatcher {
 
     /** True when one credited artist of [wanted] is exactly one credited artist of [got]. */
     internal fun namesTheSameArtist(wanted: String, got: String): Boolean {
-        val have = artistNames(got)
-        if (artistNames(wanted).any { it in have }) return true
+        val have = artistNames(got).map(::withoutLeadingArticle).toSet()
+        if (artistNames(wanted).map(::withoutLeadingArticle).any { it in have }) return true
         // Two printed names that YouTube has linked to one channel are the
         // same act: a solo member and their group, or an act's former name.
         // Only a channel both names have actually been seen under counts.
@@ -164,6 +164,10 @@ internal object KoTrackMatcher {
             id != null && id in wantedIds
         }
     }
+
+    /** The same act whether or not the credit leads with the article ("The 1975"/"1975"). */
+    private fun withoutLeadingArticle(name: List<String>): List<String> =
+        if (name.size > 1 && name.first() == "the") name.drop(1) else name
 
     /**
      * Whether the two rows point at the same artist even though the printed
@@ -1376,7 +1380,13 @@ internal object KoTrackMatcher {
             .map { it.replace(NON_ALNUM, "") }
             .filter { it.isNotEmpty() }
         if (words.isEmpty()) return
-        if (words.joinToString("") in NEUTRAL_SEGMENTS) return
+        // A feat. credit belongs to the artist, not the take: "Radio Edit -
+        // feat. X" is still the ordinary release, and leaving the credit in
+        // stopped the neutral phrase from being recognised.
+        val identityWords = segment.replace(FEATURING, " ").split(WORD_SPLIT)
+            .map { it.replace(NON_ALNUM, "") }
+            .filter { it.isNotEmpty() }
+        if (identityWords.joinToString("") in NEUTRAL_SEGMENTS) return
         // Text before a named soundtrack label is the work name, not the
         // song's take: "Korean OST Drama" names a Korean-drama soundtrack,
         // while the language of the take can only follow the label
