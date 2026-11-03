@@ -1,0 +1,48 @@
+﻿BITCHORD 1.9 (Kotlin Android, branch task/u19-tg, worktree C:\Users\jang\Desktop\BitChord\BitChord-u19tg).
+Goal: lyric sync. Tonight's measurement shows the SAME song passing or failing depending on which lyric provider's timings the app ended up using, and the choice is not stable between runs.
+
+## Evidence (emulator runs, same song, forced-alignment scorer; median = displayed minus sung)
+| song | run | provider used | median error | verdict |
+|---|---|---|---|---|
+| v59g4HRNIkc | yA | KuGou | -8.68 s | FAIL |
+| v59g4HRNIkc | yA300 | Gemini | -0.02 s | PASS |
+| ekzHIouo8Q4 | yA | 벅스 | -11.85 s | FAIL |
+| ekzHIouo8Q4 | yA300 | PaxSenix | -0.046 s | PASS |
+| 7PgA6kyqVTc | yA | lrc.red | +0.37 s | FAIL |
+| 7PgA6kyqVTc | yA300 | LyricsPlus | +4.29 s | FAIL |
+Providers seen across runs for the same 10 songs: lrc.red, 벅스, KuGou, LyricsPlus, PaxSenix, BiniLyrics, Gemini, VIBE, LRCLIB, BetterLyrics.
+A big correction is not itself wrong: -RJSbO8UZVY got a +18619 ms shift and scored +0.063 s. The bad cases are timings that are 4-12 s off and that no correction layer could fix.
+
+## Tasks
+1. Answer with file:line: how the app chooses which provider's lyrics/timings to use (shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/lyrics/LyricsRepository.kt, ProviderLyrics.kt, KoreanLyrics.kt, BaseChoicePolicy.kt, and the per-provider files). Is it a race (first response wins), a fixed priority, a quality score, or the user's setting? Show the code path and say why the same song can land on different providers on two runs.
+2. Say which of the observed bad sources would have been avoidable by a deterministic choice, and what evidence the app already has at that moment to prefer one source over another (e.g. a timing sanity check against the other providers' first-line positions, line count vs song length, whether the source is a synced format at all).
+3. Implement the smallest deterministic improvement the code supports, for example: when more than one provider answers, prefer the source whose first-line timings agree with the others (or with the video's own captions) instead of whichever arrived first. No new setting, no extra network request beyond what is already fetched, no polling.
+4. JVM test that FAILS on the current code and passes after (pure selection logic — keep it testable without Android).
+5. State the cost (requests per song, latency) and what could regress (a provider that is right but unique would now be distrusted).
+
+## Rules
+- Keep upstream code intact (ko/ + `// [KO]` hooks). Unknown Android/Media3 API: context7.
+- Do NOT touch .github/workflows, signing, LyricsTiming.kt, LyricsPerLine.kt, or RefineExtendPolicy.kt — other lanes own them today.
+- Keep every existing guard (timeouts, caches, in-flight flags, low-power checks). Do not delete a guard.
+- New test class names in the summary (you may not edit workflows). grep/Select-String, not rg.
+- Follow AGENTS.md (ponytail): smallest complete change.
+
+## Summary (max 10 lines)
+files / how the provider is chosen today with file:line / the change / tests on base vs after / REMOVED-LINES AUDIT / cost / what could regress.
+
+## NOTE for round 2 (reviewer MEDIUMs, all must be resolved or disproved with code)
+1. LyricsRepository.kt:1157-1159 - the new line-consensus fallback is unreachable: every timed result already returns at 1154, so with prioritizeSyllableSync on and no word-synced answer the first line-synced source still wins. Apply chooseCompleted(racing, wordSynced = false) inside the timed branch.
+2. ProviderChoice.kt:51 - when timed candidates disagree, 'return 0' can select candidates[0] even when its firstStartMs is null, so an untimed sheet beats timed ones. Return timed.first().first instead, and add a three-candidate regression test.
+3. LyricsRepository.kt:1230-1239 - chooseCompleted ranks only jobs that are isCompleted at that instant, so the winner still depends on response timing and can flip between runs - the very problem this task exists to fix. Make the comparison deterministic against the known candidate set (the same-tier providers that will answer for this text), or if the code cannot know that set before they answer, say so with file:line and stop rather than shipping a timing-dependent ranking.
+Keep the 2 s first-line rule as the only heuristic, keep every guard and the no-extra-request property. Summary as before, max 10 lines.
+
+
+== 2 차 작업 (현재 브랜치 = 이전 차수 결과) ==
+엄격 기준: 아래 독립 검토자 지적의 HIGH·MEDIUM 은 전부 고칠 것(드문 경우라는 이유로 보류 금지). 그리고 이전 차수가 docs/review-1031/ 문서에 '문서에만 남김/미해결'로 둔 HIGH·MEDIUM 도 이번에 고칠 것 — 재생 핵심 경로(곡 해석·싱크·크로스페이드)라도 고치되 문서 해당 줄에 '폰 검증 필요' 표시. 지적이 틀렸으면 코드 줄 근거로 반박을 요약에. 새로 고친 곳마다 수정 전 실패하는 테스트. 이전 차수에서 고친 것을 되돌리지 말 것.
+검토 지적:
+VERDICT: ISSUES 3
+- MEDIUM — `LyricsRepository.kt:1157-1159`: the new line-consensus fallback is unreachable because every timed result already returns at line 1154, so with `prioritizeSyllableSync` on and no word-synced answer the first line-synced source still wins; apply `chooseCompleted(racing, wordSynced = false)` inside the timed branch and delete the dead block.
+- MEDIUM — `ProviderChoice.kt:51`: when timed candidates disagree, `return 0` can select `candidates[0]` even when its `firstStartMs` is null, so an untimed sheet beats timed ones; return `timed.first().first` here and add a three-candidate regression test.
+- MEDIUM — `LyricsRepository.kt:1230-1239`: `chooseCompleted` ranks only jobs that happen to be `isCompleted` at that instant, so the winner still depends on response timing and can flip between runs; compare against a deterministic candidate set instead of the instantaneous completed snapshot.
+Skipped live provider latency/availability; risk: the 2 s first-line rule can distrust a correct but unique arrangement, as the summary notes.
+마지막 요약에 지적 번호별 처리(고침/반박+근거) 한 줄씩.
