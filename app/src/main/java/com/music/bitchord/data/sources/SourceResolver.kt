@@ -705,7 +705,10 @@ object SourceResolver {
             collectGate = worth,
         ) { candidate, stream ->
             worth(candidate, stream) && (verify?.invoke(candidate, stream) ?: true)
-        } ?: return null
+        } ?: run {
+            TrackLog.d(TAG, "upgrade none: '${target.title}' no candidate reached verification")
+            return null
+        }
         TrackLog.d(TAG, "upgrade found: '${target.title}' at ${chosen.format.summary} from ${source.displayName}")
         return chosen
     }

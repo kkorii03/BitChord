@@ -1,5 +1,6 @@
 package com.music.bitchord
 
+import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.MusicSource
 import com.music.bitchord.data.sources.SourceHealth
@@ -16,6 +17,7 @@ import com.music.bitchord.playback.QualityUpgrade
 import com.music.bitchord.playback.smart.HqAudioVerify
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.After
 import org.junit.Before
@@ -212,6 +214,23 @@ class UpgradeSpeedTest {
         assertEquals("moving to the next candidate must not search again", 1, qobuz.asked)
         assertEquals(1, deezer.asked)
         QualityUpgrade.forget(mediaId)
+    }
+
+    @Test
+    fun `a search with no candidate says why verification never ran`() = runBlocking {
+        install(listOf(FakeSource("YouTube", kind = SourceKind.YOUTUBE)))
+        val lines = mutableListOf<String>()
+        val previous = TrackLog.echo
+        TrackLog.echo = { _, _, message, _ -> lines += message }
+        try {
+            assertNull(SourceResolver.upgradeFor(target()))
+        } finally {
+            TrackLog.echo = previous
+        }
+        assertTrue(
+            "the zero-accepted run must name its cause: $lines",
+            lines.any { it == "upgrade none: 'Golden Boy' no candidate reached verification" },
+        )
     }
 
     @Test
