@@ -1,0 +1,31 @@
+﻿Kotlin Android app (task/u19-tg). User report 11-03 13:22 (phone): 'Watermelon Sugar' (KPM_BYl-EaQ) started with a STRANGE SOUND / ANOTHER SONG for ~9 s, then restarted as the right song. Log:
+00:36:19.081 download: 'Watermelon Sugar' from LastWave at FLAC · 16-bit · 44.1 kHz
+00:36:19.081 downloading KPM_BYl-EaQ as .flac (FLAC · 16-bit · 44.1 kHz, 무손실)
+00:36:21.258 embedding lrc.red lyrics for KPM_BYl-EaQ (word-synced)
+00:36:21.286 setting: downloaded_tracks = set        (no recording check logged for this download)
+13:22:36.355 play: -> Watermelon Sugar - Harry Styles (KPM_BYl-EaQ) idx=0/1 reason=PLAYLIST_CHANGED
+13:22:36.479 DECODE KPM_BYl-EaQ <- audio/mp4a-latm 44.1kHz bitrate n/a ?-bit 2ch   (so the '.flac' was not FLAC)
+13:22:45.032 VideoAudio song check: stream 90s 2812KB
+13:22:45.177 download-check: KPM_BYl-EaQ result=wrong-recording action=stream tier=LOSSLESS_16
+13:22:45.204 download failed for KPM_BYl-EaQ: 검증된 고음질 음원을 받을 수 없습니다 (KoDownloadPipeline.routeForVerified)
+13:22:45.209 KPM_BYl-EaQ is a wrong recording; streaming the song version instead
+13:22:45.219 track-summary: KPM_BYl-EaQ ... resolve=cache firstAudio=199 played=3 ended=skipped
+13:22:45.220 play: -> Watermelon Sugar (KPM_BYl-EaQ) idx=0/11 reason=PLAYLIST_CHANGED   (restarted from 0)
+Task:
+1. Find how a downloaded HQ file was saved and later played without ever passing the recording check (download path from an addon source such as LastWave -> Downloads/KoDownloadPipeline; and the play path that picks the downloaded file first and checks only ~9 s later). Explain the exact path in the summary.
+2. Fix: a downloaded file that has not passed the recording check (or whose real container/codec does not match what it was saved as) must never be the first audio. Prefer: verify at download time before marking the track downloaded; at play time, an unverified download starts on the stream and moves to the file only after the check passes. When the check says wrong-recording mid-play, continue the stream at the current position instead of restarting from 0. Keep verified downloads playing offline exactly as now.
+3. Tests that FAIL on current code and pass after (pure JVM policy tests; extract a small decision function if needed). Name new test classes in the summary (you may not edit .github/workflows).
+Battery first (no polling timers). Re-read every caller and type of what you change. Do not delete user files. Unknown Media3 APIs: context7. Use grep/Select-String (no rg).
+Summary of at most 10 lines: files / root cause / key change / tests and results / REMOVED-LINES AUDIT / not done. Follow AGENTS.md (ponytail) rules.
+NOTE (Opus, 11-03): LyricsTiming.kt per-line words no longer add refine — that is Opus's intended fix d625c3245 on task/u19-tg (the refine was counted twice; LyricsTimingClockTest proves it). Do not touch LyricsTiming.kt; reviewer findings about it are out of scope.
+
+
+== 3 차 작업 (현재 브랜치 = 이전 차수 결과) ==
+엄격 기준: 아래 독립 검토자 지적의 HIGH·MEDIUM 은 전부 고칠 것(드문 경우라는 이유로 보류 금지). 그리고 이전 차수가 docs/review-1031/ 문서에 '문서에만 남김/미해결'로 둔 HIGH·MEDIUM 도 이번에 고칠 것 — 재생 핵심 경로(곡 해석·싱크·크로스페이드)라도 고치되 문서 해당 줄에 '폰 검증 필요' 표시. 지적이 틀렸으면 코드 줄 근거로 반박을 요약에. 새로 고친 곳마다 수정 전 실패하는 테스트. 이전 차수에서 고친 것을 되돌리지 말 것.
+검토 지적:
+VERDICT: ISSUES 4
+1. HIGH `app/src/main/java/com/music/bitchord/download/DownloadHealth.kt:271` — `allowCached = meta.recordingVerified` trusts the verified flag that the old buggy promotion wrote for files whose bytes were never compared, and the `CHECK_VERSION` bump only clears the checked/fresh maps, so those files return the cached pair verdict without decoding and stay first audio. Fix: version the verification itself and re-hear when it predates `CHECK_VERSION`, or allow the cache only with a current-version fresh-acceptance marker.
+2. MEDIUM `app/src/main/java/com/music/bitchord/download/Downloads.kt:2093` / `app/src/main/java/com/music/bitchord/ko/downloads/KoDownloadPipeline.kt:126` — the same container-mismatch log-and-reject block is copied into both files instead of one shared helper; the second copy is untested and can drift (AGENTS.md no-copied-blocks). Fix: move the reject decision into one helper and call it from both.
+3. MEDIUM `app/src/main/java/com/music/bitchord/playback/PlayerConnection.kt:744` — computing `downloadedMayPlay` eagerly calls `AudioCache.isOffline()` (ConnectivityManager binder) and three download lookups for every item, including non-downloads and videos; the old condition short-circuited on `isDownloaded`, so large queue/list builds now issue hundreds of unnecessary main-thread system calls. Fix: call `fileFirst` only after the cheap `isVideo`/`isDownloaded` guards, or pass offline lazily.
+4. MEDIUM `app/src/main/java/com/music/bitchord/playback/smart/HqAudioVerify.kt:851` — the new `allowCached` branch and the fresh-acceptance persistence in `DownloadHealth` have no test; only the pure `promotesCheckedFile` predicate is covered, so a wiring regression silently re-admits cached verification. Fix: extract the allow-cache decision into a tested JVM policy and cover it.
+마지막 요약에 지적 번호별 처리(고침/반박+근거) 한 줄씩.
