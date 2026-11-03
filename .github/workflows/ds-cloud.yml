@@ -66,7 +66,7 @@ jobs:
             "permission": { "edit": "allow", "bash": "allow", "webfetch": "allow", "external_directory": "allow" },
             "mcp": { "context7": { "type": "remote", "url": "https://mcp.context7.com/mcp", "enabled": true } },
             "provider": { "openrouter": { "models": { "deepseek/deepseek-v4.1-flash-1017": {
-              "options": { "provider": { "order": ["particle-ai/us", "deepinfra/fp8", "streamlake/fp8"], "allow_fallbacks": false, "max_price": { "prompt": 0.1505, "completion": 0.6005 } } } } } } }
+              "options": { "provider": { "order": ["particle-ai/us", "deepinfra/fp8", "cloudflare"], "allow_fallbacks": false, "max_price": { "prompt": 0.1005, "completion": 0.6005 } } } } } } }
           }
           EOF
           cat > "$RUNNER_TEMP/ds/env.txt" <<'EOF'
