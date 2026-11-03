@@ -35,7 +35,9 @@ internal object YouTubeDisplayCleaner {
      * [clean] has to rewrite.
      */
     fun cleanUpload(song: Song, knownArtists: Set<String> = emptySet()): Song {
-        if (song.albumId != null) return song
+        // A catalogue match can land on a cover video too — its album id is the
+        // original's. The cover still reads as the uploader's performance.
+        if (song.albumId != null && !CoverTitles.isCover(song)) return song
         val credit = song.artist.trim()
         return clean(song, if (credit.isEmpty()) knownArtists else knownArtists + credit)
     }
@@ -88,9 +90,13 @@ internal object YouTubeDisplayCleaner {
 
     private fun cleanCover(song: Song, cover: CoverTitles.Cover): Song {
         val title = cover.title.trim().ifBlank { song.title.trim() }
+        val uploader = cleanChannel(song.artist).ifBlank { song.artist.trim() }
+        // The original's artist is never the cover's artist: when the title
+        // named it as the singer, the uploader is who actually sings.
         val performer = cover.singer.trim()
-            .ifBlank { cleanChannel(song.artist).ifBlank { song.artist.trim() } }
-            .takeUnless { TrackMatcher.isSoundtrackCredit(it) }
+            .takeUnless { CoverTitles.sameName(it, cover.originalArtist) }
+            ?.ifBlank { uploader }
+            ?.takeUnless { TrackMatcher.isSoundtrackCredit(it) }
             .orEmpty()
         return song.copy(
             title = if (title.endsWith(COVER_SUFFIX, ignoreCase = true)) title else "$title$COVER_SUFFIX",
@@ -268,7 +274,7 @@ internal object YouTubeDisplayCleaner {
      * trailing bracketed group is dropped, so a leading `(여자)아이들` stays.
      */
     private fun collapseAliases(name: String): String {
-        var text = name.trim()
+        var text = CoverTitles.stripUploadSuffix(name.trim())
         while (true) {
             val at = trailingGroupStart(text) ?: break
             text = text.substring(0, at).trim()
@@ -436,7 +442,13 @@ object StoredSongDisplay {
 
     fun clean(song: Song): Song {
         if (song.videoId.isBlank()) return song.withVideoThumbnailFallback()
-        if (song.albumId != null && !TrackMatcher.isSoundtrackCredit(song.artist)) {
+        // Catalogue metadata normally means the row is already display-ready,
+        // but a cover video can be matched to the original's release. Its
+        // singer is still the uploader, not the catalogue artist.
+        if (song.albumId != null &&
+            !TrackMatcher.isSoundtrackCredit(song.artist) &&
+            !CoverTitles.isCover(song)
+        ) {
             return song.withVideoThumbnailFallback()
         }
         val key = keyOf(song)

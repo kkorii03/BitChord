@@ -436,11 +436,22 @@ object InnerTubeXResolver {
         ageRestricted: Boolean = false,
         preferredClientId: String? = null,
     ): VideoStream? {
-        val excluded = excludedFor(videoId) + skipClients
+        val excluded = pictureExcludedClients(excludedFor(videoId), skipClients)
         return extractVideoWithFallback(preferredClientId, excluded) { clientId ->
             askVideo(videoId, maxHeight, excluded, ageRestricted, clientId)
         }
     }
+
+    /**
+     * The clients a picture walk skips. Audio refusals are deliberately not
+     * part of it: a client that has no audio format for this track can still
+     * carry its video-only one, and inheriting them left the video walk asking
+     * only the clients that cannot answer it.
+     */
+    internal fun pictureExcludedClients(
+        @Suppress("UNUSED_PARAMETER") audioRefused: Set<String>,
+        pictureRefused: Set<String>,
+    ): Set<String> = pictureRefused
 
     /**
      * The video ranking demotes the web clients that can actually answer a

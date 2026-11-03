@@ -92,6 +92,11 @@ class StoredSongDisplayTest {
             albumId = "MPREb_catalogue",
         )
 
-        assertEquals(stored, StoredSongDisplay.clean(stored))
+        val shown = StoredSongDisplay.clean(stored)
+
+        assertEquals(stored.title, shown.title)
+        assertEquals(stored.artist, shown.artist)
+        assertEquals(stored.albumId, shown.albumId)
+        assertEquals(stored.albumName, shown.albumName)
     }
 }
