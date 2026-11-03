@@ -1,0 +1,32 @@
+BITCHORD 1.9 (Kotlin Android, branch task/u19-tg, worktree C:\Users\jang\Desktop\BitChord\BitChord-u19tg).
+Goal: lyric sync accuracy. The user (does not code) reports lyrics that are off by up to several seconds on some songs.
+
+## Evidence (real phone, vc140, 2026-11-04 01:29-01:30 KST, app logcat I-level)
+```
+[SiRJw4f_ufc] sync perline: anchors=26 applied=25 maxAbsMs=487
+[50cpFE2r1d4] sync perline: anchors=5 applied=11 maxAbsMs=4000
+[s4PaBWBFK4g] sync perline: anchors=11 applied=11 maxAbsMs=300
+lyrics-sync: s4PaBWBFK4g source=file:lrc.red@s4PaBWBFK4g base=measured shift=-4459ms match=98% bias=0ms manual=0ms stored=y
+```
+So the per-line layer moves ONE line by 4000 ms (the cap) while other lines of the same song move little.
+
+## Files
+- shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/lyrics/LyricsPerLine.kt (the layer; pure, no Android)
+- app/src/main/java/com/music/bitchord/playback/smart/LyricsTiming.kt (calls it, logs "sync perline")
+- existing test: shared/src/jvmSharedTest/.../LyricsPerLineTest.kt
+
+## Tasks
+1. LyricsPerLine.compute() builds `residuals`, tests the anchor with `median`/`mad` around the median, but then applies `residuals.first()` (line ~122) as the line's move. Build a JVM test where the FIRST matched word is a mishearing (an outlier) and the other words agree: show the applied move is wrong (e.g. hundreds of ms off, or the MAD test passing while the move is off by >200 ms). If the test proves it, apply the median instead of the first residual (one line).
+2. A line with >=3 matched words may move up to MAX_SHIFT_MANY_WORDS_MS = 4000 while its neighbouring lines (interpolated / held) stay put. Write a test that reproduces one bad anchor moving a single line 4000 ms away from both neighbours. Then add the smallest guard that stops a lone anchor from jumping far when the adjacent anchors disagree with it (reuse MAX_INTERPOLATE_DIFF_MS / HOLD_RANGE_MS; a line with no neighbouring anchor at all must keep today's behaviour). Do not redesign the layer, do not add options or settings.
+3. Re-read every caller and type you change (LyricsTiming.perLineLayer, perLineWords, the memo). Keep O(n log n) or better; no timers, no polling, no extra allocations per frame.
+
+## Rules
+- Keep upstream code intact (ko/ packages + `// [KO]` hooks). Unknown Android/Media3 API: context7.
+- Do NOT touch .github/workflows, LyricsTiming's songSyncGate/driveDirectWindow code (recent fixes aca2017b4, 0ffc79724), or signing files.
+- New test class names must be in the summary (you may not edit workflows).
+- Every new test must FAIL on the current code and pass after your fix; say so in the summary.
+- Battery first (no periodic work). Use grep/Select-String, not rg.
+- Follow AGENTS.md (ponytail): smallest complete change, no new abstraction.
+
+## Summary (max 10 lines)
+files changed / root cause per task / key change / tests added and their result on base vs after / REMOVED-LINES AUDIT (any guard-looking line you removed and why) / what you did not do.
