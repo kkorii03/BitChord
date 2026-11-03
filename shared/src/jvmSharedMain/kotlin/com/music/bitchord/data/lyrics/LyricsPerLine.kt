@@ -48,6 +48,27 @@ object LyricsPerLine {
     /** Lines never start less than this after the one before them. */
     const val MIN_LINE_GAP_MS = 50L
 
+    /** A line's sung pace against the nominal 180 ms a letter: 45 ms to 360 ms a letter. */
+    const val MIN_PACE = 0.25
+    const val MAX_PACE = 2.0
+
+    /**
+     * How fast [words] were sung against their nominal offsets: the median slope
+     * over every pair (Theil–Sen), so one misheard word cannot set the pace.
+     * 1.0 when no two words sit at different offsets.
+     */
+    private fun pace(words: List<LyricsWordAlign.MatchedWord>): Double {
+        val slopes = ArrayList<Double>()
+        for (a in words.indices) for (b in a + 1 until words.size) {
+            val dOffset = words[b].offsetMs - words[a].offsetMs
+            if (dOffset != 0L) slopes += (words[b].word.startMs - words[a].word.startMs).toDouble() / dOffset
+        }
+        if (slopes.isEmpty()) return 1.0
+        slopes.sort()
+        val mid = slopes.size / 2
+        return if (slopes.size % 2 == 1) slopes[mid] else (slopes[mid - 1] + slopes[mid]) / 2
+    }
+
     /** What [compute] decided for one song: each line's move and the figures for the log. */
     data class Layer(
         val shiftsMs: List<Long>,
@@ -83,8 +104,16 @@ object LyricsPerLine {
         for (index in lines.indices) {
             val words = matched[index]
             if (words.size < MIN_ANCHOR_WORDS) continue
+            // The offsets assume 180 ms a letter; English is often sung at half
+            // that, which scattered every English line by seconds (11-03 Grenade:
+            // 'perline anchors=0'). The line's own pace, read from its words,
+            // scales them instead. Two words always fit their own pace, so an
+            // implausible one means a mishearing rather than a fast singer.
+            val rawPace = pace(words)
+            if (words.size < 3 && rawPace !in MIN_PACE..MAX_PACE) continue
+            val pace = rawPace.coerceIn(MIN_PACE, MAX_PACE)
             val residuals = words.map { word ->
-                word.word.startMs - word.offsetMs - lines[index].timeMs
+                word.word.startMs - (word.offsetMs * pace).roundToLong() - lines[index].timeMs
             }
             val median = median(residuals)
             val mad = median(residuals.map { abs(it - median) })

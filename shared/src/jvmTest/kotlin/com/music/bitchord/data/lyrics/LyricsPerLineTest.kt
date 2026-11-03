@@ -121,6 +121,36 @@ class LyricsPerLineTest {
         assertEquals(LyricsPerLine.Layer.identity(1), result)
     }
 
+    /**
+     * 11-03 user video, Grenade (Bruno Mars): Deepgram's words from the screen
+     * recording (+10 s) against the line stamps the panel showed. English is sung
+     * at about half the 180 ms a letter the offsets assume, so every line's words
+     * scattered by seconds, no line was an anchor ('perline anchors=0'), and
+     * "Take a bullet…" stayed ~1 s late, then rushed through its words.
+     */
+    @Test
+    fun `english lines sung faster than the nominal letter pace still anchor`() {
+        val lines = listOf(
+            line(8_700, "I would go through all this pain"),
+            line(14_300, "Take a bullet straight through my brain"),
+            line(17_150, "Yes, I would die for you, baby"),
+            line(20_700, "But you won't do the same"),
+        )
+        val heard = listOf(
+            "through" to 10_160L, "all" to 10_640L, "this" to 11_120L, "pain" to 11_520L,
+            "take" to 13_360L, "a" to 13_680L, "bullet" to 13_920L, "straight" to 14_400L,
+            "through" to 14_880L, "my" to 15_440L, "brain" to 15_840L,
+            "yes" to 17_200L, "i" to 17_520L, "went" to 17_680L, "down" to 18_000L,
+            "for" to 18_480L, "your" to 18_800L, "baby" to 19_120L,
+            "but" to 20_720L, "you" to 20_960L, "won't" to 21_200L, "do" to 21_600L,
+            "the" to 21_840L, "same" to 22_080L,
+        ).map { (text, start) -> LyricsWordAlign.Heard(text, start, start + 240L) }
+        val result = layer(lines, heard)
+
+        assertTrue(result.anchors >= 3, "anchors=${result.anchors}")
+        assertEquals(-940L, result.shiftsMs[1])
+    }
+
     @Test
     fun `no heard words means no change`() {
         val lines = listOf(line(10_000, "alpha bravo"))
