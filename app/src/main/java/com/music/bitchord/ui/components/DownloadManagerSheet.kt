@@ -266,6 +266,23 @@ fun DownloadManagerPage(
                     }
                 }
 
+                if (hqProgress.visible) {
+                    Text(
+                        text = if (hqProgress.waiting) {
+                            stringResource(R.string.hq_library_waiting)
+                        } else {
+                            stringResource(
+                                R.string.hq_library_progress,
+                                hqProgress.done,
+                                hqProgress.total,
+                            )
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(horizontal = 20.dp),
+                    )
+                }
+
                 // The batch's own bar, under the heading it belongs to. The
                 // per-row bars below are about one track each; this is the one
                 // that answers "how much longer", which is what someone opening
@@ -294,7 +311,7 @@ fun DownloadManagerPage(
             DownloadManagerRow(
                 item = item,
                 onCancel = { Downloads.cancel(item.videoId) },
-                onRetry = { Downloads.enqueue(context, item.song, item.from) },
+                onRetry = { Downloads.retry(context, item) },
             )
         }
     }

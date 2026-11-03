@@ -5501,7 +5501,9 @@ private fun BitChordApp(
                     }
                 },
                 onCreate = { title, privacy ->
-                    viewModel.createPlaylist(title, privacy, target)
+                    viewModel.createPlaylist(title, privacy, target) {
+                        showQueueNotice(context.getString(R.string.playlist_action_failed))
+                    }
                 },
             )
         }
