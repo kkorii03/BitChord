@@ -11,11 +11,11 @@ B) Video songs: picture never loads; log repeats 'ITX InnerTubeExtractor: no pla
 Summary of at most 14 lines: causes (file:line), fixes, REMOVED-LINES AUDIT, tests (class names for CI), what you did not do. Follow AGENTS.md (ponytail) rules.
 
 
-== 2 李??묒뾽 (?꾩옱 釉뚮옖移?= ?댁쟾 李⑥닔 寃곌낵) ==
-?꾧꺽 湲곗?: ?꾨옒 ?낅┰ 寃?좎옄 吏?곸쓽 HIGH쨌MEDIUM ? ?꾨? 怨좎튌 寃??쒕Ц 寃쎌슦?쇰뒗 ?댁쑀濡?蹂대쪟 湲덉?). 洹몃━怨??댁쟾 李⑥닔媛 docs/review-1031/ 臾몄꽌??'臾몄꽌?먮쭔 ?④?/誘명빐寃?濡???HIGH쨌MEDIUM ???대쾲??怨좎튌 寃????ъ깮 ?듭떖 寃쎈줈(怨??댁꽍쨌?깊겕쨌?щ줈?ㅽ럹?대뱶)?쇰룄 怨좎튂??臾몄꽌 ?대떦 以꾩뿉 '??寃利??꾩슂' ?쒖떆. 吏?곸씠 ??몄쑝硫?肄붾뱶 以?洹쇨굅濡?諛섎컯???붿빟?? ?덈줈 怨좎튇 怨노쭏???섏젙 ???ㅽ뙣?섎뒗 ?뚯뒪?? ?댁쟾 李⑥닔?먯꽌 怨좎튇 寃껋쓣 ?섎룎由ъ? 留?寃?
-寃??吏??
+== 3 차 작업 (현재 브랜치 = 이전 차수 결과) ==
+엄격 기준: 아래 독립 검토자 지적의 HIGH·MEDIUM 은 전부 고칠 것(드문 경우라는 이유로 보류 금지). 그리고 이전 차수가 docs/review-1031/ 문서에 '문서에만 남김/미해결'로 둔 HIGH·MEDIUM 도 이번에 고칠 것 — 재생 핵심 경로(곡 해석·싱크·크로스페이드)라도 고치되 문서 해당 줄에 '폰 검증 필요' 표시. 지적이 틀렸으면 코드 줄 근거로 반박을 요약에. 새로 고친 곳마다 수정 전 실패하는 테스트. 이전 차수에서 고친 것을 되돌리지 말 것.
+검토 지적:
 VERDICT: ISSUES 2
-MEDIUM shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/cover/CoverTitles.kt:682-689 — The new channel-singer branch reimplements `songFirst` but omits its `isVersionWord`/`isGenericCredit` filtering and `orderUnsure`, so a title like `Song - Live / 윤미래 cover` on a known singer's channel records “Live” as the original artist and loses the reversed lyrics query. Fix: reuse `songFirst`'s filtered credit parsing and `orderUnsure` after choosing the uploader as singer.
-MEDIUM shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YouTubeDisplayCleaner.kt:96-100 — When `cover.singer` equals `cover.originalArtist`, `takeUnless` returns null and the safe-call chain skips the `uploader` fallback, so the artist can become empty even though the comment/audit says the uploader is used. Fix: handle the same-name case explicitly and fall back to `uploader` (or another non-blank name) before the soundtrack filter.
-Skipped: real-device/network verification of the video retry loop; risk: the cap only counts `load()` failures, so a once-per-second log emitted inside one extractor pass would remain.
-留덉?留??붿빟??吏??踰덊샇蹂?泥섎━(怨좎묠/諛섎컯+洹쇨굅) ??以꾩뵫.
+MEDIUM shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/cover/CoverTitles.kt:183 — The new bracket-credit branch runs before `readB`, with no check that the title has no top-level dash, so a normal B title such as `달콤레나 - 고추잠자리(조용필)` on a designated channel becomes title `달콤레나 - 고추잠자리` with singer `레나의 노래 일기`, and an own-channel song like `아카네 리제 - しわあわせ(주름 행복)` becomes a bogus cover with original artist `주름 행복`. Fix: only try `readBracketCredit` when `splitTopLevelDash(undated)` is null, or run `readB` first and keep the bracket reading as the no-dash fallback.
+MEDIUM shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YouTubeDisplayCleaner.kt:115 — The new `byline` helper re-implements `CoverTitles.Cover.byline` instead of reusing it, creating a second copy of the `원곡자 · 부른사람 커버` formatting rule that can drift. Fix: construct a `CoverTitles.Cover` with the filtered original/performer and use its existing `byline`.
+Skipped: real-device video verification; risk: the exact `Tomboy((G)I-DLE)` example still only reads when the channel is already learned as a cover singer or designated, so a fresh channel leaves it unparsed.
+마지막 요약에 지적 번호별 처리(고침/반박+근거) 한 줄씩.
