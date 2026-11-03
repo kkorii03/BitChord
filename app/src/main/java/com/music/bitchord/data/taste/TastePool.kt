@@ -1,7 +1,6 @@
 package com.music.bitchord.data.taste
 
 import com.music.bitchord.data.StoredSongDisplay
-import com.music.bitchord.data.withStoredVideoFlag
 import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.playback.QueueBuilder
@@ -201,8 +200,10 @@ object TastePool {
 /**
  * A locally stored row as something the player can queue.
  *
- * The video flag comes from the store, never guessed: a real video row keeps
- * its song version and video radio, while an ordinary track stays a track.
+ * The video flag comes from the store, never guessed from a cover credit: a
+ * real video row keeps its song version and video radio, while an ordinary
+ * track stays a track. Guessing it here would let QueueBuilder drop the
+ * listener's own cover favourites from any mix that has catalogue tracks.
  */
 fun LocalTrack.asSong(): Song = StoredSongDisplay.clean(
     Song(
@@ -213,5 +214,5 @@ fun LocalTrack.asSong(): Song = StoredSongDisplay.clean(
         durationText = durationText,
         isVideo = isVideo,
         coverSinger = coverSinger,
-    ).withStoredVideoFlag(isVideo),
+    ),
 )

@@ -228,10 +228,11 @@ class TastePoolTest {
 
         assertEquals("plain", plain.videoId)
         assertFalse(plain.isVideo)
-        // A stored cover keeps the mark the store kept, so an old row whose
-        // title no longer says "cover" is still recognised as the video it is.
-        assertTrue(cover.isVideo)
-        assertTrue(cover.isVideoOrigin)
-        assertEquals("Jane", local("cover", singer = "Jane").coverSinger)
+        // A cover singer is not a video flag: QueueBuilder drops video rows
+        // from a mix that has catalogue tracks, so marking a local cover a
+        // video would keep the listener's own favourite out of Autoplay.
+        assertFalse(cover.isVideo)
+        assertFalse(cover.isVideoOrigin)
+        assertEquals("Jane", cover.coverSinger)
     }
 }
