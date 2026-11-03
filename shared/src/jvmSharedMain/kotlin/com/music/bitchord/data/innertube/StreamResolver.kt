@@ -1188,12 +1188,16 @@ object StreamResolver {
                 throw PermanentlyUnplayableException(
                     goneReason() ?: "이 노래는 재생할 수 없습니다",
                 )
-            } else if (blockedSignal) {
-                // The first region/refusal signal already said what extraction
-                // will say: it reads the same watch page. Spending its three
-                // attempts is the remaining silence in the report, so stop here
-                // and let playback spend the reserved budget on a catalogue
-                // copy or the next row.
+            } else if (BlockedStartPolicy.shouldSkipExtractionAfterLadder(
+                    blockedSignal = blockedSignal,
+                    directRefused = directUnplayable,
+                    proxyFailed = proxyAttempted,
+                )
+            ) {
+                // Both the direct path and the proxy refused this track. A
+                // refusal from InnerTubeX alone is not enough: the direct path
+                // may have been benched, and extraction asks a different
+                // client, so it still gets its turn.
                 TrackLog.w(
                     TAG,
                     "blocked-start: $videoId extraction skipped after the first refusal at " +

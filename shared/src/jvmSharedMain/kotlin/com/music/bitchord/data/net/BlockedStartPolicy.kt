@@ -263,6 +263,21 @@ object BlockedStartPolicy {
     fun shouldSkipExtraction(directRefused: Boolean, proxyFailed: Boolean): Boolean =
         directRefused && proxyFailed
 
+    /**
+     * Whether the outer ladder may skip extraction after the first refusal.
+     *
+     * A refusal from one InnerTubeX client is not a verdict about the
+     * recording: the direct path may have been benched rather than asked for
+     * this track, and extraction uses a different client. Only the same
+     * [shouldSkipExtraction] truth table — a direct refusal and a failed proxy
+     * attempt — may drop the failsafe.
+     */
+    fun shouldSkipExtractionAfterLadder(
+        blockedSignal: Boolean,
+        directRefused: Boolean,
+        proxyFailed: Boolean,
+    ): Boolean = blockedSignal && shouldSkipExtraction(directRefused, proxyFailed)
+
     /** The one line every stage writes, in the format the device logs are read by. */
     fun logLine(mediaId: String, step: BlockedStartStep, result: String, ms: Long): String =
         "blocked-start: $mediaId step=${step.name.lowercase()} result=$result ms=${ms.coerceAtLeast(0L)}"
