@@ -230,12 +230,25 @@ internal object KoHomeFeed {
             ?.take(CHART_SONGS)
             ?.takeIf { it.size >= 5 }
             ?: return null
-        return HomeShelf(
-            title = pick.title,
-            items = songs.map { ShelfItem(title = it.title, subtitle = it.artist, thumbnailUrl = it.thumbnailUrl, videoId = it.videoId, browseId = null) },
-            moreBrowseId = browseId,
-        )
+        return chartShelf(pick.title, songs, browseId)
     }
+
+    /** A chart playlist's rows, keeping the upload type each parsed song carries. */
+    internal fun chartShelf(title: String, songs: List<Song>, moreBrowseId: String?): HomeShelf =
+        HomeShelf(
+            title = title,
+            items = songs.map {
+                ShelfItem(
+                    title = it.title,
+                    subtitle = it.artist,
+                    thumbnailUrl = it.thumbnailUrl,
+                    videoId = it.videoId,
+                    browseId = null,
+                    isVideo = it.isVideo,
+                )
+            },
+            moreBrowseId = moreBrowseId,
+        )
 
     /**
      * Explore's song shelf ("인기곡") follows the account's own country, not

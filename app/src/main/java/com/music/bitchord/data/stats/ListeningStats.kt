@@ -786,17 +786,11 @@ object ListeningStats {
                     .map { (entry, msPlays) ->
                         val (ms, plays) = msPlays
                         RankedSong(
-                            song = com.music.bitchord.ko.KoListeningStatsDisplay.clean(
-                                Song(
-                                    videoId = entry.id,
-                                    title = entry.title,
-                                    artist = entry.artist,
-                                    thumbnailUrl = entry.art,
-                                    artistId = entry.artistId,
-                                    albumId = entry.albumId,
-                                    albumName = entry.album,
-                                ),
-                            ), // [KO] listening-display
+                            // Rebuilt through the entry so its video flag
+                            // survives: a cover tapped from Replay must still
+                            // take the video path (song version, picture,
+                            // radio) instead of playing as a plain song.
+                            song = entry.asSong(), // [KO] listening-display
                             ms = ms,
                             plays = plays,
                         )
@@ -806,17 +800,7 @@ object ListeningStats {
                     .sortedWith(compareByDescending<TrackEntry> { it.ms }.thenByDescending { it.plays })
                     .map {
                         RankedSong(
-                            song = com.music.bitchord.ko.KoListeningStatsDisplay.clean(
-                                Song(
-                                    videoId = it.id,
-                                    title = it.title,
-                                    artist = it.artist,
-                                    thumbnailUrl = it.art,
-                                    artistId = it.artistId,
-                                    albumId = it.albumId,
-                                    albumName = it.album,
-                                ),
-                            ), // [KO] listening-display
+                            song = it.asSong(), // [KO] listening-display
                             ms = it.ms,
                             plays = it.plays,
                         )

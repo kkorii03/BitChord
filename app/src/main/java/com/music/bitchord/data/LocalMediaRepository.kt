@@ -234,12 +234,7 @@ object LocalMediaRepository {
         // for — a content URI fails its id check on purpose, since most rows
         // here really are just local files with nothing to sync.
         Downloads.ensureOpen()
-        val videoIdByUri = Downloads.saved.value.entries.associate { (id, uri) -> uri to id }
-        // The scan only has a content URI; the download record is what says
-        // the file behind it is a music-video upload.
-        val isVideoByUri = Downloads.saved.value.entries.associate { (id, uri) ->
-            uri to (Downloads.savedSongFor(id)?.isVideo == true)
-        }
+        val (videoIdByUri, isVideoByUri) = savedDownloadMaps()
 
         val filterNonMusic = AppSettings.filterNonMusicAudio.value
         val folderUri = AppSettings.localMusicFolderUri.value
@@ -307,6 +302,22 @@ object LocalMediaRepository {
         }.onFailure { Log.w(TAG, "Failed scanning device local music: ${it.message}") }
 
         extraLocalMusic?.invoke(context, songs) ?: songs
+    }
+
+    /**
+     * Reverse maps from a saved download's content URI back to its YouTube id
+     * and its upload type. The scan and the "Open with" path both only see a
+     * content URI, so the download record is the one thing that says the file
+     * behind it is a music-video upload.
+     */
+    internal fun savedDownloadMaps(): Pair<Map<String, String>, Map<String, Boolean>> {
+        Downloads.ensureOpen()
+        val saved = Downloads.saved.value
+        val videoIdByUri = saved.entries.associate { (id, uri) -> uri to id }
+        val isVideoByUri = saved.entries.associate { (id, uri) ->
+            uri to (Downloads.savedSongFor(id)?.isVideo == true)
+        }
+        return videoIdByUri to isVideoByUri
     }
 
     private val AUDIO_PROJECTION = arrayOf(
@@ -469,8 +480,8 @@ object LocalMediaRepository {
         }
         resolver.query(target, AUDIO_PROJECTION, selection, args, null)?.use { cursor ->
             if (!cursor.moveToFirst()) return@use null
-            val videoIdByUri = Downloads.saved.value.entries.associate { (id, saved) -> saved to id }
-            AudioColumns(cursor).song(cursor, videoIdByUri)
+            val (videoIdByUri, isVideoByUri) = savedDownloadMaps()
+            AudioColumns(cursor).song(cursor, videoIdByUri, isVideoByUri)
         }
     }.getOrNull()
 

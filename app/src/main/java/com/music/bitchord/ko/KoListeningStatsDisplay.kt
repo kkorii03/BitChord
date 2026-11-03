@@ -48,7 +48,7 @@ internal object KoListeningStatsDisplay {
             false
         }
         return if (cleaned.isVideo || stored) {
-            cleaned.copy(isVideo = true)
+            cleaned.copy(isVideo = true, isVideoOrigin = true)
         } else {
             cleaned.copy(isVideo = CoverTitles.isCover(cleaned))
         }
