@@ -1320,14 +1320,16 @@ private fun BitChordApp(
     // Lyrics follow whatever is playing; duration lands a beat after the track.
     // Keyed on the lyric settings too, so turning a source on or off, reordering
     // them or changing the syllable preference applies to the track already
-    // playing rather than only the next one.
+    // playing rather than only the next one. The file is a key as well: a track
+    // that finishes downloading keeps its video id, and its own lyrics and sync
+    // belong to that file rather than the stream already looked up.
     val syncedLyricsEnabled by AppSettings.syncedLyrics.collectAsStateWithLifecycle()
     val lyricsSources by AppSettings.lyricsSources.collectAsStateWithLifecycle()
     val lyricsSourceOrder by AppSettings.lyricsSourceOrder.collectAsStateWithLifecycle()
     val prioritizeSyllableSync by AppSettings.prioritizeSyllableSync.collectAsStateWithLifecycle()
     LaunchedEffect(
-        player.song?.videoId, player.durationMs, syncedLyricsEnabled, lyricsSources,
-        lyricsSourceOrder, prioritizeSyllableSync,
+        player.song?.videoId, player.song?.localUri, player.durationMs, syncedLyricsEnabled,
+        lyricsSources, lyricsSourceOrder, prioritizeSyllableSync,
     ) {
         player.song?.let {
             // The player's own length, and the catalogue's where it has none

@@ -125,6 +125,18 @@ class LyricsControllerCoverAiTest {
     }
 
     @Test
+    fun `the player screen reloads lyrics when a track switches to its downloaded file`() {
+        // A track that finishes downloading keeps its video id, so without the
+        // file in the effect key the stream's lookup stayed on screen and the
+        // file's own lyrics and sync were never read (1.8 keyed on it).
+        val main = File("src/main/java/com/music/bitchord/MainActivity.kt").readText()
+        assertTrue(
+            "MainActivity's lyrics LaunchedEffect must key on player.song?.localUri",
+            main.contains("player.song?.localUri"),
+        )
+    }
+
+    @Test
     fun `the player screen asks for lyrics with the whole row, so MVs and covers keep their video flag`() {
         // The 11-02 bug was at this call site: it passed title/artist only and
         // the controller's isVideo defaulted to false for every MV and cover.
