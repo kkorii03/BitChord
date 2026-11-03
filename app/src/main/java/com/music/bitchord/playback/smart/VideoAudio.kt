@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.MediaDataSource
 import android.net.Uri
 import com.music.bitchord.data.TrackLog
+import com.music.bitchord.data.lyrics.RefineExtendPolicy
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.ko.downloads.KoDownloadRecords
@@ -342,9 +343,12 @@ object VideoAudio {
         if (local != null && LocalAudioSource.isLocal(local)) return wholeSongSeconds(song)
         val copy = VersionAudioAligner.renditionToMeasure(song.videoId) ?: return 0.0
         if (copy.isComplete) return wholeSongSeconds(song)
-        val total = song.durationMillis() / 1000.0
-        if (copy.contentLength <= 0L || total <= 0.0) return 0.0
-        return copy.cachedPrefix.toDouble() * total / copy.contentLength
+        val cached = RefineExtendPolicy.cachedSeconds(
+            copy.cachedPrefix,
+            copy.contentLength,
+            song.durationMillis() / 1000.0,
+        )
+        return if (cached < 0.0) 0.0 else cached
     }
 
     private fun wholeSongSeconds(song: Song): Double =

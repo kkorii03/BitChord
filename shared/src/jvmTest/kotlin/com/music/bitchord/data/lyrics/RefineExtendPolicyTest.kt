@@ -1,6 +1,7 @@
 package com.music.bitchord.data.lyrics
 
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -58,5 +59,32 @@ class RefineExtendPolicyTest {
                 availableSeconds = Double.POSITIVE_INFINITY,
             ),
         )
+    }
+
+    @Test
+    fun aHalfCachedStreamReportsHalfItsLength() {
+        assertEquals(
+            75.0,
+            RefineExtendPolicy.cachedSeconds(cachedPrefix = 500L, contentLength = 1_000L, durationSeconds = 150.0),
+        )
+    }
+
+    @Test
+    fun anUnknownLengthReportsMinusOne() {
+        assertEquals(-1.0, RefineExtendPolicy.cachedSeconds(cachedPrefix = 500L, contentLength = 0L, durationSeconds = 150.0))
+        assertEquals(
+            -1.0,
+            RefineExtendPolicy.cachedSeconds(
+                cachedPrefix = 500L,
+                contentLength = 1_000L,
+                durationSeconds = Double.NaN,
+            ),
+        )
+    }
+
+    @Test
+    fun aHalfCachedStreamDoesNotExtend() {
+        val available = RefineExtendPolicy.cachedSeconds(500L, 1_000L, 150.0)
+        assertFalse(RefineExtendPolicy.hasAudioFor(targetSeconds = 150.0, availableSeconds = available))
     }
 }

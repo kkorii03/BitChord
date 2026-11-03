@@ -34,6 +34,7 @@ import android.util.Log
 import androidx.media3.common.util.UnstableApi
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.listentogether.ListenTogether
+import com.music.bitchord.data.lyrics.RefineExtendPolicy
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.settings.AppSettings
@@ -875,12 +876,10 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      * It only has to be the right order of magnitude: this decides which copy to
      * read first, not whether the result is trusted.
      */
-    private fun headSecondsOf(rendition: AudioCache.Rendition, durationSeconds: Double): Double =
-        if (rendition.contentLength > 0 && durationSeconds.isFinite() && durationSeconds > 0) {
-            rendition.cachedPrefix * durationSeconds / rendition.contentLength
-        } else {
-            rendition.cachedPrefix / ASSUMED_BYTES_PER_SECOND
-        }
+    private fun headSecondsOf(rendition: AudioCache.Rendition, durationSeconds: Double): Double {
+        val known = RefineExtendPolicy.cachedSeconds(rendition.cachedPrefix, rendition.contentLength, durationSeconds)
+        return if (known >= 0.0) known else rendition.cachedPrefix / ASSUMED_BYTES_PER_SECOND
+    }
 
     /**
      * The opening window only: a beat grid, and nothing that would need the rest

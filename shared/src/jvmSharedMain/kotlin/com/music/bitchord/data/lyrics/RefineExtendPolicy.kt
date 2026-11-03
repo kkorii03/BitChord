@@ -42,4 +42,16 @@ object RefineExtendPolicy {
      */
     fun hasAudioFor(targetSeconds: Double, availableSeconds: Double): Boolean =
         targetSeconds.isFinite() && availableSeconds >= targetSeconds
+
+    /**
+     * Seconds of a partly cached copy: the byte fraction of the stated length.
+     * Negative when the length or the duration is unknown, so each caller keeps
+     * its own answer for that case instead of guessing.
+     */
+    fun cachedSeconds(cachedPrefix: Long, contentLength: Long, durationSeconds: Double): Double =
+        if (contentLength > 0L && durationSeconds.isFinite() && durationSeconds > 0.0) {
+            cachedPrefix.toDouble() * durationSeconds / contentLength
+        } else {
+            -1.0
+        }
 }
