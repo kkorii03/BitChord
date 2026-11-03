@@ -794,7 +794,10 @@ class LyricsController(
         return LyricsAiGuard.manualTimingAvailable(
             geminiUsable = gemini,
             deepgramUsable = deepgram,
-            audioAvailable = VideoAudio.audioReadyForTiming(request.videoId),
+            audioAvailable = VideoAudio.audioReadyForTiming(
+                request.videoId,
+                localUri = if (request.isVideo) null else request.localUri,
+            ),
             durationMs = request.durationMs,
             title = request.title,
             artist = request.artist,
@@ -1454,6 +1457,7 @@ class LyricsController(
                 artist = request?.artist.orEmpty(),
                 isVideo = request?.isVideo == true,
                 audioSource = audioSource,
+                localUri = request?.takeIf { !it.isVideo }?.localUri,
             )
         }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
     }
@@ -1501,6 +1505,7 @@ class LyricsController(
                     } else {
                         LyricsTiming.audioSourceKey(request.videoId, request.localUri != null)
                     },
+                    localUri = if (request.isVideo) null else request.localUri,
                 )
             } finally {
                 if (generation == lyricsGeneration && timingLines === lines) {

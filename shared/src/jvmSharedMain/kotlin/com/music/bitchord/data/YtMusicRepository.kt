@@ -126,6 +126,20 @@ object YtMusicRepository {
     fun cachedVideoVersion(videoId: String): Song? = videoVersionCache[videoId]
 
     /**
+     * [StreamResolver.onSessionChanged] plus every version verdict cached for
+     * the old identity. A search refused while anonymous, or made against the
+     * old proxy, must not keep telling the new session that this video has no
+     * catalogue release.
+     */
+    fun onSessionChanged() {
+        StreamResolver.onSessionChanged()
+        KoSongVersion.clearSessionVerdicts()
+        audioVersionCache.clear()
+        videoVersionCache.clear()
+        synchronized(videoVersionMissing) { videoVersionMissing.clear() }
+    }
+
+    /**
      * How a position in [fromId] maps into [toId], when YouTube Music paired
      * the two itself and said how they line up. Null for a pair found by
      * search, which still has to be measured.

@@ -246,6 +246,11 @@ internal object KoSongVersion {
     fun isSongVersionMissing(videoId: String): Boolean =
         songVersionVerdicts.isMissing(videoId)
 
+    /** Session change: a verdict reached under the old identity says nothing about the new one. */
+    fun clearSessionVerdicts() {
+        songVersionVerdicts.clear()
+    }
+
     /**
      * True when a before-audio lookup on [videoId] timed out or was cancelled
      * and the one post-audio retry has not been spent yet. See

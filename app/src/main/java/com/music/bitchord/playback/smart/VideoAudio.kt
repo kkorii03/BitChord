@@ -93,16 +93,38 @@ object VideoAudio {
     private fun videoKey(videoId: String) = "video\u0000$videoId"
     private fun songKey(key: String) = "song\u0000$key"
 
-    suspend fun wav(context: Context, videoId: String): ByteArray? =
-        wavCopy(context, videoId)?.bytes
+    suspend fun wav(
+        context: Context,
+        videoId: String,
+        /** A downloaded copy to read instead of the stream, when the song plays from one. */
+        localUri: String? = null,
+    ): ByteArray? = wavCopy(context, videoId, localUri)?.bytes
 
     /** [wav] with the rendition it was read from, so its clock is not guessed afterwards. */
-    suspend fun wavCopy(context: Context, videoId: String): SongAudio? = withContext(Dispatchers.IO) {
+    suspend fun wavCopy(
+        context: Context,
+        videoId: String,
+        localUri: String? = null,
+    ): SongAudio? = withContext(Dispatchers.IO) {
         val job = coroutineContext[Job]
-        recent.get(videoKey(videoId))?.let { return@withContext it }
+        val local = localTimingUri(localUri)
+        val key = local?.let { "${videoKey(videoId)}\u0000$it" } ?: videoKey(videoId)
+        recent.get(key)?.let { return@withContext it }
         if (!PowerState.screenOn) {
             TrackLog.d(TAG, "AI timing: the screen is off", videoId)
             return@withContext null
+        }
+        if (local != null) {
+            // A downloaded song's own file is complete on disk and already
+            // verified: listening to it does not need the streaming cache.
+            return@withContext locks.getOrPut(key) { Mutex() }.withLock {
+                recent.get(key)?.let { return@withLock it }
+                val audio = AudioDecoder.interruptibleDecode {
+                    decodeLocal(context, videoId, local) { job?.isActive != false }
+                } ?: return@withLock null
+                recent.put(key, audio)
+                audio
+            }
         }
         val opus = Uri.parse(AutomixAnalysisSource.opusUri(videoId))
         AudioCache.keepForTiming(videoId)
@@ -124,13 +146,13 @@ object VideoAudio {
             return@withContext null
         }
         locks.getOrPut(videoId) { Mutex() }.withLock {
-            recent.get(videoKey(videoId))?.let { return@withLock it }
+            recent.get(key)?.let { return@withLock it }
             // A cancelled caller must stop waiting at AudioDecoder's gate at
             // once; runInterruptible turns the cancellation into an interrupt
             // of the blocking decode instead of leaving it queued for minutes.
             val audio = AudioDecoder.interruptibleDecode { decode(videoId, copy) { job?.isActive != false } }
                 ?: return@withLock null
-            recent.put(videoKey(videoId), audio)
+            recent.put(key, audio)
             audio
         }
     }
@@ -149,8 +171,10 @@ object VideoAudio {
      * returned null. Readiness is therefore the same *chosen* copy
      * ([VersionAudioAligner.chooseMeasurementCopy]) being complete.
      */
-    fun audioReadyForTiming(videoId: String): Boolean {
-        val cached = recent.get(videoKey(videoId)) != null
+    fun audioReadyForTiming(videoId: String, localUri: String? = null): Boolean {
+        val local = localTimingUri(localUri)
+        val key = local?.let { "${videoKey(videoId)}\u0000$it" } ?: videoKey(videoId)
+        val cached = recent.get(key) != null
         if (cached) return true
         val screenOn = PowerState.screenOn
         if (!screenOn) return false
@@ -159,8 +183,14 @@ object VideoAudio {
             recentCached = false,
             screenOn = screenOn,
             onDisk = AudioCache.renditionsOf(watch),
+            localFileAvailable = local != null,
         )
     }
+
+    /** A local file the caller supplied, when it is one this app can open directly. */
+    private fun localTimingUri(localUri: String?): Uri? =
+        localUri?.takeIf { it.isNotBlank() }?.let(Uri::parse)
+            ?.takeIf { LocalAudioSource.isLocal(it) }
 
     /**
      * [audioReadyForTiming]'s rule with the cache already read, so the
@@ -177,9 +207,12 @@ object VideoAudio {
         recentCached: Boolean,
         screenOn: Boolean,
         onDisk: List<AudioCache.Rendition>,
+        /** A downloaded file is complete by definition; `wav` reads it without the cache. */
+        localFileAvailable: Boolean = false,
     ): Boolean {
         if (recentCached) return true
         if (!screenOn) return false
+        if (localFileAvailable) return true
         val copy = VersionAudioAligner.chooseMeasurementCopy(onDisk) ?: return false
         return copy.isComplete
     }
@@ -342,6 +375,28 @@ object VideoAudio {
             Uri.parse("bitchord://watch?v=$videoId"),
             copy,
         ) ?: return null
+        val data = decodeSource(source, videoId, wanted) ?: return null
+        return SongAudio(data, copy.key, fromFile = false)
+    }
+
+    /** A downloaded song's file, read directly rather than through the streaming cache. */
+    private fun decodeLocal(
+        context: Context,
+        videoId: String,
+        uri: Uri,
+        wanted: () -> Boolean,
+    ): SongAudio? {
+        if (!PowerState.screenOn) return null
+        val source = LocalAudioSource.open(context.contentResolver, uri) ?: return null
+        val data = decodeSource(source, videoId, wanted) ?: return null
+        return SongAudio(data, renditionKey = null, fromFile = true)
+    }
+
+    private fun decodeSource(
+        source: MediaDataSource,
+        videoId: String,
+        wanted: () -> Boolean,
+    ): ByteArray? {
         val resampler = Resampler(RATE * 2 * 240)
         try {
             AudioDecoder.decodeMonoStream(
@@ -360,12 +415,15 @@ object VideoAudio {
             runCatching { source.close() }
         }
         val data = resampler.bytes()
-        if (data.size < RATE * 2 * 10) return null
+        if (data.size < RATE * 2 * 10) {
+            TrackLog.d(TAG, "AI timing: under ten seconds of audio", videoId)
+            return null
+        }
         if (data.size > RATE * 2 * MAX_SECONDS) {
             TrackLog.d(TAG, "too long to send inline", videoId)
             return null
         }
-        return SongAudio(header(data.size) + data, copy.key, fromFile = false)
+        return header(data.size) + data
     }
 
     /**

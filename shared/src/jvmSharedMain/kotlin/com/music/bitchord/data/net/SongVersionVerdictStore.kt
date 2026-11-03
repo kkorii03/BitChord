@@ -34,6 +34,20 @@ internal class SongVersionVerdictStore {
     private val retrySuggested: MutableSet<String> = ConcurrentHashMap.newKeySet()
     private val lock = Any()
 
+    /**
+     * Forgets every verdict: signing in, signing out or switching proxy can
+     * turn a refusal into an answer, so a miss or a found copy from the old
+     * identity must not stand for this session's.
+     */
+    fun clear() {
+        synchronized(lock) {
+            cache.clear()
+            missing.clear()
+            waived.clear()
+            retrySuggested.clear()
+        }
+    }
+
     fun cached(videoId: String): Song? = cache[videoId]
 
     /** True when this run has a settled "no song version" verdict. */

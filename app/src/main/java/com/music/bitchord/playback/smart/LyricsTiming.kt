@@ -2288,6 +2288,8 @@ object LyricsTiming {
         artist: String = "",
         isVideo: Boolean = false,
         audioSource: String? = null,
+        /** The downloaded file this catalogue track plays from, so the engine hears it. */
+        localUri: String? = null,
         probe: NextSyncProbe? = null,
         /** The next-prep bundle stops its own request when its row is replaced. */
         cancelWithCaller: Boolean = false,
@@ -2329,7 +2331,7 @@ object LyricsTiming {
         // manual tap is kept apart so it can still force a fresh answer.
         val flight = if (automatic) "$videoId:$key" else "$videoId:$key:manual"
         val fresh = aiScope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
-            askAi(context, videoId, lines, sung, key, engines, title, artist, isVideo, probe)
+            askAi(context, videoId, lines, sung, key, engines, title, artist, isVideo, localUri, probe)
         }
         val running = aiInFlight.putIfAbsent(flight, fresh) ?: fresh
         running.cancelledWithCaller(currentCoroutineContext()[Job], cancelWithCaller)
@@ -2412,6 +2414,7 @@ object LyricsTiming {
         title: String,
         artist: String,
         isVideo: Boolean,
+        localUri: String? = null,
         probe: NextSyncProbe? = null,
     ): Adjustment.Mapped? {
         val started = System.currentTimeMillis()
@@ -2439,14 +2442,19 @@ object LyricsTiming {
         }
         // The sound the phone already has, when it has all of it; the YouTube
         // address (Gemini fetching and watching the video) otherwise.
-        val audioCopy = runCatching { VideoAudio.wavCopy(context, videoId) }.getOrNull()
+        val audioCopy = runCatching { VideoAudio.wavCopy(context, videoId, localUri) }.getOrNull()
         val audio = audioCopy?.bytes
         // The rendition the WAV was actually read from; Gemini watching the
         // video URL when there was no local audio is on YouTube's clock.
-        val listenedClock = if (audioCopy == null) {
-            Clock.YouTube
-        } else {
-            clockForRendition(videoId, audioCopy.renditionKey)
+        val listenedClock = when {
+            audioCopy == null -> Clock.YouTube
+            // A downloaded file carries the source pair it was proved against;
+            // its clock is not the YouTube upload's just because it has no key.
+            audioCopy.fromFile -> clockForLocalCopy(
+                audioCopy.localSourceConfigId,
+                audioCopy.localTrackId,
+            )
+            else -> clockForRendition(videoId, audioCopy.renditionKey)
         }
         val texts = sung.map { it.value.text }
         // Deepgram's Whisper first: every word it hears comes with its time to

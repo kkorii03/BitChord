@@ -3713,7 +3713,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
             // Every resolver verdict and personalised page belongs to the
             // identity that was active before validation succeeded.
-            StreamResolver.onSessionChanged()
+            YtMusicRepository.onSessionChanged()
             invalidateSearchCaches()
             if (wasSignedIn) clearListenerState()
             reloadForAccount()
@@ -3756,7 +3756,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         Innertube.selectChannel(profile.pageId, profile.dataSyncId, profile.authUser)
         _selectedChannelKey.value = profile.profileId
         _selectedChannelName.value = profile.name
-        StreamResolver.onSessionChanged()
+        YtMusicRepository.onSessionChanged()
         clearListenerState(restoreCached = true)
         reloadForAccount()
     }
@@ -3901,7 +3901,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // The mirror image: verdicts reached with a session in hand say nothing
         // about what an anonymous walk will be told, and the clients stood down
         // for refusing the session deserve a fresh hearing without it.
-        StreamResolver.onSessionChanged()
+        YtMusicRepository.onSessionChanged()
         _signedIn.value = false
         _account.value = null
         Innertube.selectChannel(null, null)

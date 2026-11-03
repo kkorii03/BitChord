@@ -111,6 +111,32 @@ class VideoAudioTimingReadyTest {
     }
 
     @Test
+    fun aDownloadedLocalFileIsReadyWithoutAnyCache() {
+        // A downloaded song never fills the streaming cache; the button used to
+        // stay hidden even though `wav` can read the file on disk.
+        assertTrue(
+            VideoAudio.timingAudioReady(
+                recentCached = false,
+                screenOn = true,
+                onDisk = emptyList(),
+                localFileAvailable = true,
+            ),
+        )
+    }
+
+    @Test
+    fun aDownloadedLocalFileStillWaitsForTheScreen() {
+        assertFalse(
+            VideoAudio.timingAudioReady(
+                recentCached = false,
+                screenOn = false,
+                onDisk = emptyList(),
+                localFileAvailable = true,
+            ),
+        )
+    }
+
+    @Test
     fun screenOffHidesTheAction() {
         assertFalse(
             VideoAudio.timingAudioReady(

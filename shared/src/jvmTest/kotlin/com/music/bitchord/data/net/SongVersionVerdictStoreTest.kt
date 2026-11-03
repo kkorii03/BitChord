@@ -95,6 +95,21 @@ class SongVersionVerdictStoreTest {
     }
 
     @Test
+    fun `a session change forgets missing and found verdicts`() {
+        val store = SongVersionVerdictStore()
+        store.markMissing("missing")
+        store.store("found", song("catalogue"), definitive = true)
+        assertTrue(store.isMissing("missing"))
+        assertNotNull(store.cached("found"))
+
+        store.clear()
+
+        assertFalse(store.isMissing("missing"), "a miss from the old identity must not stand")
+        assertEquals(SongVersionVerdictStore.Miss.NONE, store.settleMiss("missing"))
+        assertNull(store.cached("found"), "a found copy from the old identity must not stand")
+    }
+
+    @Test
     fun `an answer landing at the deadline reopens its stored miss`() {
         val store = SongVersionVerdictStore()
         store.store("video", null, definitive = true)
