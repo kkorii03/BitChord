@@ -331,6 +331,25 @@ object VideoAudio {
     private fun songCacheKey(song: Song, untilSeconds: Double): String =
         "${song.videoId}\u0000${song.localUri.orEmpty()}\u0000$untilSeconds"
 
+    /**
+     * How many seconds of [song]'s sound are on disk right now: a downloaded
+     * file is all there, a stream only as far as the copy the player has
+     * cached. Infinite when the whole file is on disk but its length is not
+     * stated.
+     */
+    internal fun secondsOnDisk(song: Song): Double {
+        val local = song.localUri?.takeIf { it.isNotBlank() }?.let { Uri.parse(it) }
+        if (local != null && LocalAudioSource.isLocal(local)) return wholeSongSeconds(song)
+        val copy = VersionAudioAligner.renditionToMeasure(song.videoId) ?: return 0.0
+        if (copy.isComplete) return wholeSongSeconds(song)
+        val total = song.durationMillis() / 1000.0
+        if (copy.contentLength <= 0L || total <= 0.0) return 0.0
+        return copy.cachedPrefix.toDouble() * total / copy.contentLength
+    }
+
+    private fun wholeSongSeconds(song: Song): Double =
+        (song.durationMillis() / 1000.0).takeIf { it > 0.0 } ?: Double.POSITIVE_INFINITY
+
     private fun decode(
         videoId: String,
         copy: AudioCache.Rendition,
