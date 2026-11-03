@@ -262,6 +262,12 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
     private val tailResults = ConcurrentHashMap<String, TrackAnalysis>()
     /** Windows already measured, so a cached side is never decoded twice. */
     private val measuredWindows = ConcurrentHashMap<String, MutableSet<AnalysisWindow>>()
+    /**
+     * The duration of the rendition each window was measured on, keyed
+     * `trackId@WINDOW`. A source swap mid-song changes the playing duration,
+     * and a window measured on the old copy must not be reused for the new one.
+     */
+    private val measuredDurations = ConcurrentHashMap<String, Double>()
     /** Callers waiting on one window; completed when its result or failure lands. */
     private val windowWaiters = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
     /** Failed attempts per window, bounding a track that cannot be decoded. */
@@ -383,7 +389,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      * against the seconds a real analysis takes — and against the alternative,
      * which is not having it at all.
      */
-    private fun restoreOnce(trackId: String) {
+    private fun restoreOnce(trackId: String, durationSeconds: Double) {
         if (results.containsKey(trackId)) return
         // The set doubles as the once-guard: add() is true only for the first
         // caller, so a track with nothing stored is looked for once per session
@@ -391,6 +397,18 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         if (!restoreAttempted.add(trackId)) return
         executor.execute {
             val stored = store.load(trackId) ?: return@execute
+            // A stored result is keyed by track, so it may describe the copy
+            // this track used to play. Reusing it after a source swap would pin
+            // the old cut's timeline on the new file for the whole session.
+            if (!AutomixWorkPolicy.windowFitsPlayback(stored.duration, durationSeconds)) {
+                Log.d(
+                    TAG,
+                    "Stored analysis for $trackId is for another rendition " +
+                        "(${"%.1f".format(Locale.ROOT, stored.duration)}s vs " +
+                        "${"%.1f".format(Locale.ROOT, durationSeconds)}s); re-analysing",
+                )
+                return@execute
+            }
             Log.d(
                 TAG,
                 "Restored analysis for $trackId: bpm=${stored.bpm} conf=${stored.beatConfidence} " +
@@ -402,10 +420,57 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                 headResults[trackId] = stored
                 tailResults[trackId] = stored
                 windowsOf(trackId).addAll(listOf(AnalysisWindow.HEAD, AnalysisWindow.TAIL))
+                recordMeasuredDuration(trackId, AnalysisWindow.HEAD, stored.duration)
+                recordMeasuredDuration(trackId, AnalysisWindow.TAIL, stored.duration)
                 completeWindow(trackId, AnalysisWindow.HEAD)
                 completeWindow(trackId, AnalysisWindow.TAIL)
             }
         }
+    }
+
+    /** The duration a window was measured on; null means it was never recorded. */
+    private fun measuredDurationOf(trackId: String, window: AnalysisWindow): Double? =
+        measuredDurations["$trackId@${window.name}"]
+
+    private fun recordMeasuredDuration(trackId: String, window: AnalysisWindow, durationSeconds: Double) {
+        if (!durationSeconds.isFinite() || durationSeconds <= 0.0) return
+        measuredDurations["$trackId@${window.name}"] = durationSeconds
+    }
+
+    /**
+     * Throws away every window measured on a different rendition, so the tick
+     * that notices the swap requeues the current copy instead of early-returning
+     * on `hasWindow`. Only the maps are touched; the call is cheap enough for
+     * the playback thread.
+     */
+    private fun dropAnalysisForOtherRendition(trackId: String, durationSeconds: Double) {
+        val windows = measuredWindows[trackId] ?: return
+        val stale = windows.filter { window ->
+            val measured = measuredDurationOf(trackId, window) ?: return@filter false
+            !AutomixWorkPolicy.windowFitsPlayback(measured, durationSeconds)
+        }
+        if (stale.isEmpty()) return
+        for (window in stale) {
+            windows.remove(window)
+            measuredDurations.remove("$trackId@${window.name}")
+            regionFailures.remove("$trackId@${window.name}")
+            when (window) {
+                AnalysisWindow.HEAD -> headResults.remove(trackId)
+                AnalysisWindow.TAIL -> tailResults.remove(trackId)
+            }
+        }
+        provisional.remove(trackId)
+        shortDecodes.remove(trackId)
+        if (windows.isEmpty()) {
+            measuredWindows.remove(trackId)
+            results.remove(trackId)
+        } else {
+            results[trackId] = mergeWindows(trackId, durationSeconds)
+        }
+        Log.d(
+            TAG,
+            "Analysis for $trackId (${stale.joinToString(",")}) was measured on another rendition; re-requesting",
+        )
     }
 
     /** True once [trackId] has a result, including a failure. Nothing more will arrive. */
@@ -472,9 +537,11 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         if (ListenTogether.state.value.inParty) return
         if (trackId in running) return
         // Whatever an earlier session already measured comes back first: it is
-        // a disk read, not a decode.
-        restoreOnce(trackId)
-        if (hasWindow(trackId, window)) return
+        // a disk read, not a decode. The duration it was measured on decides
+        // whether it still describes the copy now playing.
+        restoreOnce(trackId, durationSeconds)
+        dropAnalysisForOtherRendition(trackId, durationSeconds)
+        if (hasWindow(trackId, window, durationSeconds)) return
         if (!AppSettings.heavyWorkAllowed) return
         // only the work below waits for the phone to cool.
         if (overheated) return
@@ -503,7 +570,8 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         window: AnalysisWindow,
     ) {
         if (analysisCancel.consume(trackId)) return
-        if (stopped || trackId in running || hasWindow(trackId, window)) return
+        dropAnalysisForOtherRendition(trackId, durationSeconds)
+        if (stopped || trackId in running || hasWindow(trackId, window, durationSeconds)) return
         val analysisUri = analysisUriFor(trackId, uri) ?: return
 
         // A track playing off the device is not a download in progress. Every
@@ -558,8 +626,12 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
     /** Milliseconds spent decoding and measuring [trackId] so far. */
     fun analysisTimeMs(trackId: String): Long = analysisMillis[trackId] ?: 0L
 
-    fun hasWindow(trackId: String, window: AnalysisWindow): Boolean =
-        measuredWindows[trackId]?.contains(window) == true
+    fun hasWindow(trackId: String, window: AnalysisWindow, durationSeconds: Double? = null): Boolean {
+        if (measuredWindows[trackId]?.contains(window) != true) return false
+        if (durationSeconds == null) return true
+        val measured = measuredDurationOf(trackId, window) ?: return true
+        return AutomixWorkPolicy.windowFitsPlayback(measured, durationSeconds)
+    }
 
     /**
      * Waits for one window's first answer, without polling.
@@ -615,7 +687,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                     Process.THREAD_PRIORITY_DEFAULT
                 },
             )
-            if (stopped || analysisCancel.isCancelled(trackId) || hasWindow(trackId, window)) return
+            if (stopped || analysisCancel.isCancelled(trackId) || hasWindow(trackId, window, durationSeconds)) return
             val analysis = if (headRendition != null) {
                 analyzeHead(trackId, uri, durationSeconds, headRendition)
             } else {
@@ -660,6 +732,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             AnalysisWindow.TAIL -> tailResults[trackId] = analysis
         }
         windowsOf(trackId).add(window)
+        recordMeasuredDuration(trackId, window, analysis.duration.takeIf { it > 0.0 } ?: durationSeconds)
         regionFailures.remove("$trackId@${window.name}")
         shortDecodes.remove(trackId)
         provisional.remove(trackId)
@@ -670,7 +743,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // Only a track measured at both ends is persisted. A head-only result
         // is missing the outgoing half, and a tail-only one the incoming half;
         // storing either would freeze a deliberately partial answer in place.
-        if (hasWindow(trackId, AnalysisWindow.HEAD) && hasWindow(trackId, AnalysisWindow.TAIL)) {
+        if (hasWindow(trackId, AnalysisWindow.HEAD, analysis.duration) &&
+            hasWindow(trackId, AnalysisWindow.TAIL, analysis.duration)
+        ) {
             store.save(trackId, merged)
             restoreAttempted.add(trackId)
         }
@@ -692,6 +767,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // on every tick for the rest of the session.
         Log.w(TAG, "Giving up on $trackId ($window) after $MAX_REGION_ATTEMPTS attempts")
         windowsOf(trackId).add(window)
+        recordMeasuredDuration(trackId, window, durationSeconds)
         if (results[trackId] == null) results[trackId] = empty(trackId, durationSeconds)
         completeWindow(trackId, window)
     }
@@ -710,6 +786,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             headResults.remove(victim)
             tailResults.remove(victim)
             measuredWindows.remove(victim)
+            measuredDurations.keys.removeAll { it.startsWith("$victim@") }
             regionFailures.keys.removeAll { it.startsWith("$victim@") }
         }
     }
@@ -1949,6 +2026,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         headResults.clear()
         tailResults.clear()
         measuredWindows.clear()
+        measuredDurations.clear()
         windowWaiters.values.forEach { it.complete(Unit) }
         windowWaiters.clear()
         regionFailures.clear()

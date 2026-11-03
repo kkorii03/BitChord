@@ -32,17 +32,18 @@ internal fun CrossfadeController.koRequestAnalysisAround(player: ExoPlayer, dura
         return true
     }
     val automix = AppSettings.smartFadeEnabled.value
+    val nextDurationMs = nextItemDurationMs(nextIndex, nextItem)
     val nextTarget = AutomixWorkPolicy.nextAnalysisTarget(
         nextId = nextItem.mediaId,
-        nextAnalysed = analysisWindowMeasured(nextItem, AnalysisWindow.HEAD),
+        nextAnalysed = analysisWindowMeasured(nextItem, nextDurationMs, AnalysisWindow.HEAD),
         automixEnabled = automix,
     )
     nextTarget?.let {
-        requestAnalysis(nextItem, nextItemDurationMs(nextIndex, nextItem), it.window)
+        requestAnalysis(nextItem, nextDurationMs, it.window)
     }
     val outgoingTarget = AutomixWorkPolicy.outgoingAnalysisTarget(
         currentId = currentItem.mediaId,
-        currentAnalysed = analysisWindowMeasured(currentItem, AnalysisWindow.TAIL),
+        currentAnalysed = analysisWindowMeasured(currentItem, duration, AnalysisWindow.TAIL),
         automixEnabled = automix,
     )
     outgoingTarget?.let { requestAnalysis(currentItem, duration, it.window) }

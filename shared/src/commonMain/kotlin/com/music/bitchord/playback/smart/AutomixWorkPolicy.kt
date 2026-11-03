@@ -171,12 +171,41 @@ object AutomixWorkPolicy {
      * timeline. Arming a blend from those puts the mix minutes into the new
      * file — the 11-03 marker at 1:50 on a 2:53 track.
      */
-    fun analysisDurationFits(analysis: TrackAnalysis, durationSeconds: Double): Boolean {
+    fun analysisDurationFits(analysis: TrackAnalysis, durationSeconds: Double): Boolean =
+        windowFitsPlayback(analysis.duration, durationSeconds)
+
+    /**
+     * Whether a measurement taken at [measuredDurationSeconds] still describes
+     * the rendition playing at [durationSeconds].
+     *
+     * Windows are keyed by track, so a mid-song source swap used to leave
+     * `hasWindow` true for the old copy and the new rendition was never
+     * re-analysed. An unknown duration on either side proves nothing and is
+     * treated as a fit; a real disagreement means the measurement belongs to a
+     * different cut and must be thrown away.
+     */
+    fun windowFitsPlayback(measuredDurationSeconds: Double, durationSeconds: Double): Boolean {
         if (!durationSeconds.isFinite() || durationSeconds <= 0.0) return true
-        val analysed = analysis.duration
-        if (!analysed.isFinite() || analysed <= 0.0) return true
-        return abs(analysed - durationSeconds) <= ANALYSIS_DURATION_TOLERANCE_SECONDS
+        if (!measuredDurationSeconds.isFinite() || measuredDurationSeconds <= 0.0) return true
+        return abs(measuredDurationSeconds - durationSeconds) <= ANALYSIS_DURATION_TOLERANCE_SECONDS
     }
+
+    /**
+     * Whether a smart plan must be replaced by the plain end crossfade before
+     * it is armed or drawn on the seek bar.
+     *
+     * The arming guard refuses a plan that starts implausibly early, so leaving
+     * the smart plan in place would put the marker somewhere nothing can
+     * happen. A blocked plan or a zero-length fade was never going to arm.
+     */
+    fun planNeedsPlainEndFallback(
+        blocked: Boolean,
+        fadeMs: Long,
+        transitionStartMs: Long,
+        durationMs: Long,
+    ): Boolean = !blocked && fadeMs > 0L &&
+        smartArmTooEarly(transitionStartMs, durationMs, fadeMs)
+
 
     /**
      * [analysisDurationFits] plus the tail window's own invariant: a content

@@ -182,6 +182,54 @@ class AutomixWorkPolicyTest {
     }
 
     @Test
+    fun `a window measured on another rendition is not reused`() {
+        assertFalse(AutomixWorkPolicy.windowFitsPlayback(110.0, 173.0))
+        assertTrue(AutomixWorkPolicy.windowFitsPlayback(173.0, 173.0))
+        assertTrue(AutomixWorkPolicy.windowFitsPlayback(173.0, 173.4))
+        // An unknown duration on either side is not evidence of a swap.
+        assertTrue(AutomixWorkPolicy.windowFitsPlayback(0.0, 173.0))
+        assertTrue(AutomixWorkPolicy.windowFitsPlayback(173.0, 0.0))
+        assertTrue(AutomixWorkPolicy.windowFitsPlayback(Double.NaN, 173.0))
+    }
+
+    @Test
+    fun `an implausibly early smart plan falls back but a real outro plan does not`() {
+        assertTrue(
+            AutomixWorkPolicy.planNeedsPlainEndFallback(
+                blocked = false,
+                fadeMs = 6_000L,
+                transitionStartMs = 110_000L,
+                durationMs = 173_000L,
+            ),
+        )
+        assertFalse(
+            AutomixWorkPolicy.planNeedsPlainEndFallback(
+                blocked = false,
+                fadeMs = 6_000L,
+                transitionStartMs = 167_000L,
+                durationMs = 173_000L,
+            ),
+        )
+        // A blocked or zero-length smart plan was already not going to arm.
+        assertFalse(
+            AutomixWorkPolicy.planNeedsPlainEndFallback(
+                blocked = true,
+                fadeMs = 6_000L,
+                transitionStartMs = 110_000L,
+                durationMs = 173_000L,
+            ),
+        )
+        assertFalse(
+            AutomixWorkPolicy.planNeedsPlainEndFallback(
+                blocked = false,
+                fadeMs = 0L,
+                transitionStartMs = 110_000L,
+                durationMs = 173_000L,
+            ),
+        )
+    }
+
+    @Test
     fun `the incoming stream's cache is not part of the marker rule`() {
         // Under Direct Source Stream nothing prefetches the next track until
         // this same plan opens the window, so gating the marker on its bytes

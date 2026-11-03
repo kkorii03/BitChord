@@ -192,7 +192,7 @@ class CrossfadeController(
     private val analysisRunningFor: (MediaItem) -> Boolean = { false },
     // [KO] crossfade-analysis — stats only; nothing waits on it
     private val analysisTimeMs: (MediaItem) -> Long = { 0L },
-    internal val analysisWindowMeasured: (MediaItem, AnalysisWindow) -> Boolean = { _, _ -> false }, // [KO] crossfade-analysis
+    internal val analysisWindowMeasured: (MediaItem, Long, AnalysisWindow) -> Boolean = { _, _, _ -> false }, // [KO] crossfade-analysis
     /**
      * The track about to be loaded onto the standby player, announced at the
      * moment [begin] arms rather than at the handoff.
@@ -1228,13 +1228,13 @@ class CrossfadeController(
         // will refuse, so nothing would happen where the marker pointed. Replace
         // it with the plain end crossfade this pair can actually play, and let
         // the marker describe that instead.
-        val tooEarly = !smartPlan.blocked && smartPlan.fadeMs > 0L &&
-            AutomixWorkPolicy.smartArmTooEarly(
-                (smartPlan.transitionStart * 1000).roundToLong(),
-                duration,
-                smartPlan.fadeMs,
+        val plan = if (AutomixWorkPolicy.planNeedsPlainEndFallback(
+                blocked = smartPlan.blocked,
+                fadeMs = smartPlan.fadeMs,
+                transitionStartMs = (smartPlan.transitionStart * 1000).roundToLong(),
+                durationMs = duration,
             )
-        val plan = if (tooEarly) {
+        ) {
             planTransition(
                 analysis = currentAnalysis,
                 nextAnalysis = nextAnalysis,
