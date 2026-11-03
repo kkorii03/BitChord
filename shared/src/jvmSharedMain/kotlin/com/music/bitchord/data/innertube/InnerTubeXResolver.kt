@@ -436,11 +436,31 @@ object InnerTubeXResolver {
         ageRestricted: Boolean = false,
         preferredClientId: String? = null,
     ): VideoStream? {
-        val excluded = excludedFor(videoId) + skipClients
+        val excluded = videoExcludedClients(excludedFor(videoId), skipClients)
         return extractVideoWithFallback(preferredClientId, excluded) { clientId ->
             askVideo(videoId, maxHeight, excluded, ageRestricted, clientId)
         }
     }
+
+    /**
+     * The clients to skip for a picture. Audio's refusals for the same video do
+     * not apply: a client that cannot mint the audio URL can still mint the
+     * video-only one, and inheriting them left the video walk with no client
+     * that could answer (phone 11-03: "no playable clients" every second while
+     * the audio played). Only picture-specific refusals count.
+     */
+    internal fun videoExcludedClients(audioExcluded: Set<String>, pictureSkips: Set<String>): Set<String> =
+        pictureSkips
+
+    /**
+     * Whether a failed picture is settled rather than retried. A network
+     * failure gets one more ask; anything else is final, so a player never
+     * re-walks every client on each surface or track change.
+     */
+    fun pictureFailureSettled(reason: StreamResolveException.Reason?, attempt: Int): Boolean =
+        attempt >= MAX_PICTURE_ATTEMPTS || reason != StreamResolveException.Reason.NETWORK
+
+    private const val MAX_PICTURE_ATTEMPTS = 2
 
     /**
      * The video ranking demotes the web clients that can actually answer a

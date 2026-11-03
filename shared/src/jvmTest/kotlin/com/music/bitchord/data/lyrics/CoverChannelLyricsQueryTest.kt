@@ -30,8 +30,11 @@ class CoverChannelLyricsQueryTest {
     fun aCoverChannelTitleNamesTheOriginalArtistForLyrics() {
         CoverTitles.designatedChannels = { setOf("cover-channel") }
         val query = CoverTitles.lyricsQuery(song("Some Song - Original Artist"))
-        assertTrue(query.alternatives.contains("Some Song" to "Original Artist"), "${query.alternatives}")
-        assertTrue(query.alternatives.contains("Original Artist" to "Some Song"), "${query.alternatives}")
+        // Which side is the song is not written down: the primary query and
+        // the alternatives together try both orientations.
+        val pairs = listOf(query.title to query.artist) + query.alternatives
+        assertTrue(pairs.contains("Some Song" to "Original Artist"), "$pairs")
+        assertTrue(pairs.contains("Original Artist" to "Some Song"), "$pairs")
     }
 
     @Test

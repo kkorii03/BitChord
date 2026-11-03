@@ -77,9 +77,15 @@ object CoverTitles {
         val orderUnsure: Boolean = false,
     ) {
         /** "원곡자 · 부른사람 커버", or "부른사람 커버" with no original credit. */
-        val byline: String
-            get() = listOfNotNull(originalArtist, "$singer $COVER_WORD").joinToString(SEPARATOR)
+        val byline: String get() = coverByline(originalArtist, singer)
     }
+
+    /** The artist line a cover shows: the original, then the singer and "커버". */
+    fun coverByline(originalArtist: String?, singer: String?): String =
+        listOfNotNull(
+            originalArtist?.trim()?.takeIf { it.isNotEmpty() },
+            singer?.trim()?.takeIf { it.isNotEmpty() }?.let { "$it $COVER_WORD" },
+        ).joinToString(SEPARATOR)
 
     /** Channel ids the listener marked as cover channels. Set by the app. */
     @Volatile
@@ -99,6 +105,7 @@ object CoverTitles {
 
     private const val COVER_WORD = "커버"
     private const val SEPARATOR = " · "
+    private const val COVER_SUFFIX = " (cover)"
 
     /** A "원곡" label left on the original artist's name — never part of the name. */
     private val ORIGINAL_LABEL = Regex("""^\s*원곡\s*[:：-]?\s*""")
@@ -155,29 +162,48 @@ object CoverTitles {
         val tidy = normalize(title.trim())
         val raw = tidy.text
         if (raw.isEmpty()) return null
+        val designated = channelId != null && channelId in designatedChannels()
+        // A channel the listener marked as a cover channel, or one whose own
+        // name is already known from covers, is the singer of what it uploads.
+        // Only a designated channel may turn a title with no cover word into a
+        // cover; a merely known singer's own songs are still their own.
+        val preferChannel = designated || channelIsKnownSinger(channel)
+        fun found(cover: Cover): Cover {
+            runCatching { onSingerSeen(cover.singer) }
+            return cover.normalized()
+        }
         // The shapes that name the singer for certain: worth remembering who.
         (
-            readE(raw) ?: readCoveredBy(raw) ?: readLeadingCoverTag(raw, channel) ?: readG(raw, channel) ?: readC(raw, channel)
+            readE(raw) ?: readCoveredBy(raw) ?: readLeadingCoverTag(raw, channel) ?: readG(raw, channel)
+                ?: readC(raw, channel, preferChannel)
                 ?: (if (tidy.live) readLive(raw) else null) ?: readF(raw)
-                ?: readA(raw, channel, allowBareTag = false) ?: readCredit(raw, channel) ?: readSlashCredit(raw)
-            )?.let {
-            runCatching { onSingerSeen(it.singer) }
-            return it
-        }
-        if (unambiguousOnly) return null
+                ?: readA(raw, channel, allowBareTag = false, preferChannel = preferChannel)
+                ?: readCredit(raw, channel) ?: readSlashCredit(raw)
+            )?.let { return found(it) }
+        // On the singer's own cover channel the uploader is the singer and a
+        // name in the title is the original's: "Tomboy((G)I-DLE)".
+        if (preferChannel) readChannelSource(raw, channel, allowDash = designated)?.let { return found(it) }
+        if (unambiguousOnly && !designated) return null
         // A bare "(Cover)": the channel stands in for the singer, so it isn't one to learn.
-        readA(raw, channel, allowBareTag = true)?.let { return it }
+        readA(raw, channel, allowBareTag = true, preferChannel = preferChannel)?.let { return it.normalized() }
         val dated = tidy.dated
         val undated = DATE_TAG.replace(raw, "").trim()
         // Before B: a known singer on the right of the dash would read the wrong way round as B.
-        readKnown(undated, channel)?.let { return it }
-        readDuet(undated, channel)?.let { return it }
-        val designated = channelId != null && channelId in designatedChannels()
-        if (dated || designated) readB(undated)?.let { return it }
+        readKnown(undated, channel)?.let { return it.normalized() }
+        readDuet(undated, channel)?.let { return it.normalized() }
+        if (dated || designated) readB(undated)?.let { return it.normalized() }
         // "A - 곡(원곡가수)" with no date and no designated channel: the bracket
         // has to be a plausible original artist, never a translation or a take.
-        if (splitTopLevelPipe(raw) == null) readB(undated, requireCredit = true)?.let { return it }
+        if (splitTopLevelPipe(raw) == null) readB(undated, requireCredit = true)?.let { return it.normalized() }
         return null
+    }
+
+    /** A read cover with the singer's upload tag removed and a duplicate credit dropped. */
+    private fun Cover.normalized(): Cover {
+        val cleanedSinger = stripSingerSuffix(singer)
+        val cleanedOriginal = originalArtist?.trim()?.takeIf { it.isNotEmpty() }
+            ?.takeUnless { sameName(it, cleanedSinger) }
+        return copy(singer = cleanedSinger, originalArtist = cleanedOriginal)
     }
 
     /**
@@ -366,7 +392,7 @@ object CoverTitles {
      * alongside, for the menu and for anything matching on them.
      */
     fun applyTo(song: Song): Song {
-        if (song.originalTitle != null) return song
+        if (song.originalTitle != null) return repairStoredCover(song)
         val cover = read(song) ?: return song
         return song.copy(
             title = cover.title,
@@ -375,6 +401,42 @@ object CoverTitles {
             originalArtist = song.artist,
             coverSinger = cover.singer,
             coverOriginalArtist = cover.originalArtist,
+        )
+    }
+
+    /**
+     * A row saved while covers still read "Song (cover)" keeps that title and
+     * a singer-only artist line forever. Re-read its upload title, or rebuild
+     * the byline from the fields it kept, so Recents and a restored queue read
+     * like a fresh row.
+     */
+    private fun repairStoredCover(song: Song): Song {
+        val oldDisplay = song.title.trim().endsWith(COVER_SUFFIX, ignoreCase = true) ||
+            (song.coverSinger != null && !song.artist.trim().endsWith(" $COVER_WORD"))
+        if (!oldDisplay) return song
+        val uploadTitle = song.originalTitle ?: return song
+        val uploadArtist = song.originalArtist ?: song.artist
+        val reread = read(uploadTitle, uploadArtist, song.artistId) ?: read(uploadTitle, uploadArtist, null)
+        if (reread != null) {
+            return song.copy(
+                title = reread.title,
+                artist = reread.byline,
+                coverSinger = reread.singer,
+                coverOriginalArtist = reread.originalArtist,
+            )
+        }
+        val title = song.title.removeSuffix(COVER_SUFFIX).removeSuffix("(cover)").trim()
+        val singer = stripSingerSuffix(
+            song.coverSinger
+                ?: song.artist.removeSuffix(" $COVER_WORD").substringAfterLast(SEPARATOR).trim(),
+        )
+        val original = song.coverOriginalArtist?.takeIf { it.isNotBlank() }
+        val byline = listOfNotNull(original, "$singer $COVER_WORD".takeIf { singer.isNotBlank() })
+            .joinToString(SEPARATOR)
+        return song.copy(
+            title = title.ifEmpty { song.title },
+            artist = byline.ifEmpty { song.artist },
+            coverSinger = singer.takeIf { it.isNotBlank() },
         )
     }
 
@@ -393,11 +455,11 @@ object CoverTitles {
      * the way through a saved queue.
      */
     fun creditedArtist(song: Song): String {
-        song.coverSinger?.takeIf { it.isNotBlank() }?.let { return it }
+        song.coverSinger?.takeIf { it.isNotBlank() }?.let { return stripSingerSuffix(it) }
         val byline = song.artist
         if (byline.endsWith(" $COVER_WORD")) {
             val withoutWord = byline.removeSuffix(" $COVER_WORD")
-            return withoutWord.substringAfterLast(SEPARATOR).trim().ifEmpty { byline }
+            return stripSingerSuffix(withoutWord.substringAfterLast(SEPARATOR).trim()).ifEmpty { byline }
         }
         return byline
     }
@@ -628,19 +690,36 @@ object CoverTitles {
 
     // ---- Shapes -------------------------------------------------------------
 
-    private fun readA(raw: String, channel: String, allowBareTag: Boolean = true): Cover? {
+    private fun readA(
+        raw: String,
+        channel: String,
+        allowBareTag: Boolean = true,
+        preferChannel: Boolean = false,
+    ): Cover? {
         val marker = COVER_BY.find(raw)
         if (marker != null) {
-            val singer = cleanName(raw.substring(marker.range.last + 1)) ?: return null
+            val named = cleanName(raw.substring(marker.range.last + 1)) ?: return null
             val head = raw.substring(0, marker.range.first).trimEnd(' ', '/', '|', '｜', '(', '[', '-', '–', '—', '·', ',')
-            return headCover(head, singer, looseDash = true)
+            if (preferChannel) {
+                val singer = channelSinger(channel) ?: return null
+                // On the singer's own cover channel the uploader sings it; a
+                // name after "cover by" is then the original's, not the singer.
+                if (!sameName(named, singer)) {
+                    val split = splitTopLevelDash(head)
+                    if (split != null) return headCover(head, singer, looseDash = true)
+                    cleanTitle(head)?.let {
+                        return Cover(title = it, originalArtist = cleanArtistName(named), singer = singer)
+                    }
+                }
+            }
+            return headCover(head, named, looseDash = true)
         }
         // "원곡자 - 곡명 (Cover)" with no name: the channel is the singer.
         if (!allowBareTag) return null
         val tag = COVER_TAG.findAll(raw).lastOrNull() ?: return null
         val head = raw.removeRange(tag.range).trimEnd(' ', '/', '|', '｜', '-', '–', '—', '·', ',')
         if (head.isBlank()) return null
-        val singer = cleanName(channel) ?: return null
+        val singer = channelSinger(channel) ?: return null
         val split = splitTopLevelDash(head)
         if (split != null) return headCover(head, singer)
         // "곡명 cover" / "곡명 커버" with no dash. A bare Latin word before the
@@ -661,7 +740,7 @@ object CoverTitles {
         """(?i)(?:(?<![a-z])cover(?:ed)?|(?<![가-힣])커버)\.?\s*(?:[(\[（【][^()\[\]（）【】]*[)\]）】]\s*)*$""",
     )
 
-    private fun readC(raw: String, channel: String): Cover? {
+    private fun readC(raw: String, channel: String, preferChannel: Boolean = false): Cover? {
         val tail = TRAILING_COVER_WORD.find(raw) ?: return null
         val head = raw.substring(0, tail.range.first).trimEnd()
         // "곡명(원곡자) / 오화요Cover": after a slash, the name is who sings —
@@ -670,6 +749,17 @@ object CoverTitles {
         (splitTopLevelSlash(head) ?: splitTopLevelPipe(head))?.let { (song, name) ->
             // "ㅣ(Akane Lize) Cover": a name wholly in brackets is still the name.
             val bare = name.trim().removeSurrounding("(", ")").removeSurrounding("（", "）")
+            if (preferChannel) {
+                val singer = channelSinger(channel)
+                val credit = cleanArtistName(bare)?.takeUnless {
+                    isVersionWord(it) || isDescriptor(it) || isGenericCredit(it) || OST.containsMatchIn(it)
+                }
+                if (singer != null && credit != null && !sameName(credit, singer)) {
+                    cleanTitle(song)?.let {
+                        return Cover(title = it, originalArtist = credit, singer = singer)
+                    }
+                }
+            }
             val singer = cleanName(bare)?.takeUnless { isVersionWord(it) || isDescriptor(it) }
             if (singer != null) songFirst(song, singer)?.let { return it }
         }
@@ -685,6 +775,149 @@ object CoverTitles {
         if (!isChannelName(singer, channel)) return null
         val title = cleanTitle(left) ?: return null
         return Cover(title = title, originalArtist = null, singer = singer)
+    }
+
+    /** The channel's own name as a singer, with an uploader's tag removed. */
+    private fun channelSinger(channel: String): String? =
+        cleanName(channel)?.let(::stripSingerSuffix)?.takeIf { it.isNotEmpty() }
+
+    /** Whether [channel]'s own name is already known from a cover it was credited on. */
+    private fun channelIsKnownSinger(channel: String): Boolean {
+        val keys = knownSingerKeys()
+        if (keys.isEmpty()) return false
+        val compact = compactName(stripSingerSuffix(channel))
+        return compact.length >= 2 && keys.any { it.length >= 2 && it in compact }
+    }
+
+    /**
+     * A channel name carries the uploader's own tag — "오화요 가사포함" — which
+     * is packaging, never part of the singer's name.
+     */
+    private fun stripSingerSuffix(name: String): String {
+        var text = name.trim()
+        while (true) {
+            val next = SINGER_SUFFIX.replace(text, "").trim()
+            if (next == text || next.isEmpty()) break
+            text = next
+        }
+        return text
+    }
+
+    private val SINGER_SUFFIX = Regex(
+        """(?i)(?:\s*[·|｜/\-–—]?\s*)(?:가사\s*포함|가사|lyrics?|mv|m\s*/\s*v|풀\s*버전|full\s*(?:ver(?:sion)?)?|official|공식)\s*$""",
+    )
+
+    private fun sameName(a: String?, b: String?): Boolean {
+        val left = a?.let(::compactName).orEmpty()
+        val right = b?.let(::compactName).orEmpty()
+        return left.isNotEmpty() && left == right
+    }
+
+    /**
+     * The last bracket group at the end of [text], outer pair included. Unlike
+     * [TRAILING_GROUP] this handles a group inside a group — "Tomboy((G)I-DLE)"
+     * is the song "Tomboy" credited to "(G)I-DLE".
+     */
+    private class Bracket(val start: Int, val content: String)
+
+    private fun trailingBalancedGroup(text: String): Bracket? {
+        val end = text.lastIndex
+        if (end < 0 || text[end] !in ")]）】}") return null
+        var depth = 0
+        var start = -1
+        for (i in end downTo 0) {
+            when (text[i]) {
+                ')', ']', '）', '】', '}' -> depth++
+                '(', '[', '（', '【', '{' -> {
+                    depth--
+                    if (depth == 0) {
+                        start = i
+                        break
+                    }
+                }
+            }
+        }
+        if (start < 0) return null
+        return Bracket(start, text.substring(start + 1, end).trim())
+    }
+
+    /** A credited artist's name, keeping a balanced group that is part of it — "(G)I-DLE". */
+    private fun cleanArtistName(text: String): String? {
+        var name = ORIGINAL_LABEL.replace(text.trim(), "").trim()
+        name = name.trim('"', '“', '”', '\'')
+        // An outer pair the title used for the credit itself is not the name.
+        if (name.length > 2 && name.first() == '(' && name.last() == ')' &&
+            name.count { it == '(' } == name.count { it == ')' }
+        ) {
+            name = name.substring(1, name.length - 1).trim()
+        }
+        return name.takeIf { it.isNotEmpty() && it.length <= 60 }
+    }
+
+    /** "… (cover)" / "… cover" at the end, gone; the song is what is left. */
+    private fun stripTrailingCover(text: String): String {
+        var out = text.trim()
+        while (true) {
+            val tag = COVER_TAG.findAll(out).lastOrNull()?.takeIf { it.range.last == out.lastIndex } ?: break
+            val next = out.removeRange(tag.range).trimEnd(' ', '/', '|', '｜', '-', '–', '—', '·', ',')
+            if (next == out) break
+            out = next
+        }
+        return out
+    }
+
+    /**
+     * The singer's own cover channel: the uploader sings, so a name in the
+     * title is the original's. A designated channel may read the dash too
+     * ("원곡자 - 곡명 / cover"); a merely known singer only the closing bracket
+     * ("Tomboy((G)I-DLE)"), so their own "가수 - 곡명" stays their own song.
+     */
+    private fun readChannelSource(raw: String, channel: String, allowDash: Boolean): Cover? {
+        val singer = channelSinger(channel) ?: return null
+        val base = stripTrailingCover(raw)
+        val head = TRAILING_COVER_WORD.find(base)
+            ?.let { base.substring(0, it.range.first).trimEnd(' ', '/', '|', '｜', '-', '–', '—', '·', ',') }
+            ?.ifEmpty { null }
+            ?: base
+        if (allowDash) {
+            splitTopLevelDash(head)?.let { (left, right) ->
+                when {
+                    sameName(cleanName(left), singer) -> {
+                        songAndCredit(right)?.let { (title, original) ->
+                            return Cover(title, original, singer)
+                        }
+                    }
+                    sameName(cleanName(right), singer) -> {
+                        cleanTitle(left)?.let { return Cover(it, null, singer) }
+                    }
+                    else -> {
+                        val credit = cleanArtistName(left)
+                        val title = cleanTitle(right)
+                        if (credit != null && title != null && !sameName(credit, singer)) {
+                            // Which side is the song is not written down; the
+                            // lyrics lookup tries both, as a B-shaped title does.
+                            return Cover(title, credit, singer, orderUnsure = true)
+                        }
+                    }
+                }
+            }
+        }
+        if (splitTopLevelDash(head) != null) return null
+        val group = trailingBalancedGroup(head) ?: return null
+        val titleText = head.substring(0, group.start).trimEnd(' ', '-', '–', '—', '/', '|', '·', ',')
+        if (titleText.isEmpty()) return null
+        val creditText = group.content
+        if (creditText.isEmpty()) return null
+        if (isVersionWord(creditText) || isDescriptor(creditText) || isGenericCredit(creditText) ||
+            OST.containsMatchIn(creditText) || ANY_COVER_WORD.containsMatchIn(creditText)
+        ) {
+            return null
+        }
+        val title = cleanTitle(titleText) ?: return null
+        if (isTranslation(title, creditText)) return null
+        val credit = cleanArtistName(creditText) ?: return null
+        if (sameName(credit, singer)) return null
+        return Cover(title = title, originalArtist = credit, singer = singer)
     }
 
     /** "[2023.06.18 아카네 리제] 유우리 - 베텔기우스": the date, the singer, the song. */

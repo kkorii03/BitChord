@@ -42,6 +42,10 @@ internal object YouTubeDisplayCleaner {
 
     /** A song with its display metadata cleaned; every other field is preserved. */
     fun clean(song: Song, knownArtists: Set<String> = emptySet()): Song {
+        // A row already read as a cover carries the upload title beside the
+        // shown one. Re-reading the shown title could mistake its own bracket
+        // for a credit; only an old "(cover)" row still needs repairing.
+        if (song.originalTitle != null) return CoverTitles.applyTo(song)
         // A cover is music and stays in the list, but its upload title is
         // packaging: "아이묭 - Marigold / cover by 오화요" reads as the song
         // and the singer, not as a video title. When the credit can be read
@@ -88,17 +92,21 @@ internal object YouTubeDisplayCleaner {
 
     private fun cleanCover(song: Song, cover: CoverTitles.Cover): Song {
         val title = cover.title.trim().ifBlank { song.title.trim() }
-        val performer = cover.singer.trim()
+        val singer = cover.singer.trim()
             .ifBlank { cleanChannel(song.artist).ifBlank { song.artist.trim() } }
             .takeUnless { TrackMatcher.isSoundtrackCredit(it) }
             .orEmpty()
+        val original = cover.originalArtist?.trim()?.takeIf { it.isNotBlank() }
+        // The 1.8 byline: the song as its own name, the original and the singer
+        // on the artist line, never a "(cover)" suffix on the title.
+        val byline = CoverTitles.coverByline(original, singer)
         return song.copy(
-            title = if (title.endsWith(COVER_SUFFIX, ignoreCase = true)) title else "$title$COVER_SUFFIX",
-            artist = performer,
+            title = title,
+            artist = byline,
             originalTitle = song.originalTitle ?: song.title,
             originalArtist = song.originalArtist ?: song.artist,
-            coverSinger = song.coverSinger ?: performer.takeIf { it.isNotBlank() },
-            coverOriginalArtist = song.coverOriginalArtist ?: cover.originalArtist,
+            coverSinger = song.coverSinger ?: singer.takeIf { it.isNotBlank() },
+            coverOriginalArtist = song.coverOriginalArtist ?: original,
         )
     }
 
@@ -108,7 +116,6 @@ internal object YouTubeDisplayCleaner {
      * credit, and mark the row so it never reads as the original.
      */
     private fun cleanCoverTitle(song: Song): Song {
-        val alreadyMarked = song.title.trim().endsWith(COVER_SUFFIX, ignoreCase = true)
         // Taking "cover" out of "Song (cover)" left "Song ( )", and every pass
         // added another pair (phone 11-03: "화조도 花鳥圖 ( ) ( ) ( ) (cover)",
         // which no lyrics search could find). Empty brackets go too, which
@@ -123,12 +130,12 @@ internal object YouTubeDisplayCleaner {
             .takeUnless { TrackMatcher.isSoundtrackCredit(it) }
             .orEmpty()
         return song.copy(
-            title = if (title.endsWith(COVER_SUFFIX, ignoreCase = true)) title else "$title$COVER_SUFFIX",
-            artist = performer,
+            title = title,
+            artist = CoverTitles.coverByline(null, performer),
             // A second pass sees the already-cleaned title; it must not replace
             // the upload's own title stored on the first pass.
-            originalTitle = song.originalTitle ?: song.title.takeUnless { alreadyMarked },
-            originalArtist = song.originalArtist ?: song.artist.takeUnless { alreadyMarked },
+            originalTitle = song.originalTitle ?: song.title,
+            originalArtist = song.originalArtist ?: song.artist,
             coverSinger = song.coverSinger ?: performer.takeIf { it.isNotBlank() },
         )
     }
@@ -348,8 +355,6 @@ internal object YouTubeDisplayCleaner {
         """^\s*[\[(（【][^)\]）】]*\bost\b[^)\]）】]*[)\]）】]\s*""",
         RegexOption.IGNORE_CASE,
     )
-
-    private const val COVER_SUFFIX = " (cover)"
 
     /** "cover by", a bare cover tag, and the Korean word. */
     private val COVER_MARKER = Regex(

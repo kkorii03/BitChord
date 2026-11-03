@@ -5,7 +5,9 @@ import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertSame
+import kotlin.test.assertTrue
 
 /**
  * The picture normally follows the video ranking. When that finds nothing, it
@@ -135,5 +137,45 @@ class InnerTubeXVideoFallbackTest {
 
         assertSame(rankedFailure, failure)
         assertEquals(listOf(null, "WEB_CREATOR"), asked)
+    }
+
+    // Phone 11-03: the picture logged "no playable clients" about once a
+    // second while the audio played. Audio refusals must not bench a client
+    // for the video-only stream, and a failure must stop asking after a bound.
+
+    @Test
+    fun `audio refusals do not bench a client for the picture`() {
+        val excluded = InnerTubeXResolver.videoExcludedClients(
+            audioExcluded = setOf("WEB_CREATOR", "WEB_REMIX"),
+            pictureSkips = setOf("PICTURE_ONLY"),
+        )
+
+        assertEquals(setOf("PICTURE_ONLY"), excluded)
+    }
+
+    @Test
+    fun `a no-playable failure settles at once`() {
+        assertTrue(
+            InnerTubeXResolver.pictureFailureSettled(
+                StreamResolveException.Reason.NO_PLAYABLE_STREAM,
+                attempt = 1,
+            ),
+        )
+    }
+
+    @Test
+    fun `a network failure gets one retry then settles`() {
+        assertFalse(InnerTubeXResolver.pictureFailureSettled(StreamResolveException.Reason.NETWORK, attempt = 1))
+        assertTrue(InnerTubeXResolver.pictureFailureSettled(StreamResolveException.Reason.NETWORK, attempt = 2))
+    }
+
+    @Test
+    fun `an age gate settles at once`() {
+        assertTrue(
+            InnerTubeXResolver.pictureFailureSettled(
+                StreamResolveException.Reason.AGE_RESTRICTED,
+                attempt = 1,
+            ),
+        )
     }
 }

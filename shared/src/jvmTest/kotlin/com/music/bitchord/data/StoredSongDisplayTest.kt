@@ -5,6 +5,7 @@ import com.music.bitchord.data.model.Song
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 
 /** Old rows on disk read the way a fresh upload row now does. */
 class StoredSongDisplayTest {
@@ -59,8 +60,8 @@ class StoredSongDisplayTest {
 
         val shown = StoredSongDisplay.clean(stored)
 
-        assertEquals("Marigold (cover)", shown.title)
-        assertEquals("오화요", shown.artist)
+        assertEquals("Marigold", shown.title)
+        assertEquals("아이묭 · 오화요 커버", shown.artist)
     }
 
     @Test
@@ -78,8 +79,8 @@ class StoredSongDisplayTest {
         CoverTitles.knownSingers = { setOf("아카네 리제") }
         val shown = StoredSongDisplay.clean(stored)
 
-        assertEquals("청록 (cover)", shown.title)
-        assertEquals("아카네 리제", shown.artist)
+        assertEquals("청록", shown.title)
+        assertEquals("아카네 리제 커버", shown.artist)
     }
 
     @Test
@@ -92,6 +93,10 @@ class StoredSongDisplayTest {
             albumId = "MPREb_catalogue",
         )
 
-        assertEquals(stored, StoredSongDisplay.clean(stored))
+        val shown = StoredSongDisplay.clean(stored)
+        assertEquals(stored.title, shown.title)
+        assertEquals(stored.artist, shown.artist)
+        assertEquals(stored.albumId, shown.albumId)
+        assertNull(shown.originalTitle)
     }
 }

@@ -127,6 +127,9 @@ object MusicVideoEngine {
 
     private val _missing = MutableStateFlow<Set<String>>(emptySet())
 
+    /** Picture resolution attempts per video, so a failure cannot retry forever. */
+    private val attempts = HashMap<String, Int>()
+
     /**
      * [KO] video-fallback: [noPicture] plus pictures that failed to load this
      * time, for the player to show their artwork instead of an endless spinner.
@@ -156,6 +159,7 @@ object MusicVideoEngine {
                 _missing.value = emptySet()
                 streams.clear()
                 refused.clear()
+                attempts.clear()
                 refresh()
             }
         }
@@ -366,6 +370,7 @@ object MusicVideoEngine {
         val id = loadedId ?: return
         streams.remove(id)
         stepDown.remove(id)
+        attempts.remove(id)
         load(id)
     }
 
@@ -422,6 +427,8 @@ object MusicVideoEngine {
     private fun load(videoId: String) {
         unload()
         loadedId = videoId
+        val attempt = (attempts[videoId] ?: 0) + 1
+        attempts[videoId] = attempt
         val cap = capFor(videoId)
         loadedCap = cap
         loadJob = scope.launch {
@@ -435,16 +442,17 @@ object MusicVideoEngine {
                 if (loadedId != videoId) return@launch
                 loadedId = null
                 // Settled until something changes it: the age gate by a sign-in
-                // (which clears [noPicture]), the rest not at all. A network
-                // failure is asked again on the next surface or track change.
-                markMissing(videoId, settled = e.reason != StreamResolveException.Reason.NETWORK)
+                // (which clears [noPicture]), a transient network failure after
+                // its one retry. Anything else is final at once.
+                markMissing(videoId, settled = InnerTubeXResolver.pictureFailureSettled(e.reason, attempt))
                 return@launch
             } catch (e: Exception) {
-                // Not remembered as pictureless: the next surface or track
-                // change asks again.
+                // Not remembered as pictureless until the bounded retry is
+                // spent; then the player keeps the artwork instead of asking
+                // every client again on the next tick.
                 TrackLog.w(TAG, "video: couldn't resolve the picture: ${e.message}", about = videoId)
                 if (loadedId == videoId) loadedId = null
-                markMissing(videoId, settled = false)
+                markMissing(videoId, settled = attempt >= MAX_PICTURE_ATTEMPTS)
                 return@launch
             }
             if (loadedId != videoId) return@launch
@@ -456,6 +464,7 @@ object MusicVideoEngine {
                 loadedId = null
                 return@launch
             }
+            attempts.remove(videoId)
             val exo = player ?: return@launch
             val upstream = OkHttpDataSource.Factory(Http.client)
                 .setDefaultRequestProperties(stream.headers)
@@ -551,6 +560,9 @@ object MusicVideoEngine {
 
     /** Narrower than this is a cover held still, not a picture worth showing. */
     private const val MIN_VIDEO_ASPECT = 1.2f
+
+    /** Generic resolve failures allowed before the picture is settled as missing. */
+    private const val MAX_PICTURE_ATTEMPTS = 2
 
     /** Where Auto opens, as on the web player: the top of YouTube's H.264 ladder. */
     private const val AUTO_HEIGHT = 1080
