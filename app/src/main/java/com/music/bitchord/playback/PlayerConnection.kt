@@ -700,7 +700,12 @@ fun Song.toMediaItem(useDownloadedFile: Boolean = true): MediaItem {
     // "Song (cover)" and keeps only the singer, losing the original artist the
     // byline needs. A row that is not a cover is still cleaned, so the lock
     // screen, notification and Android Auto never draw a stale upload title.
-    val applied = CoverTitles.applyTo(this)
+    //
+    // A row the cleaner already saved carries [originalTitle] but still shows
+    // its cleaned form, so [CoverTitles.applyTo] would leave it alone. Read
+    // the cover again from the upload fields it kept — that is where the
+    // original artist lives.
+    val applied = CoverTitles.applyTo(CoverTitles.uploadOf(this))
     val shown = if (applied.originalTitle != null) applied else StoredSongDisplay.clean(this)
     val sourceTrack = SourceRegistry.parseTrackKey(videoId)
     // A row from search or a playlist carries no file of its own, but the track

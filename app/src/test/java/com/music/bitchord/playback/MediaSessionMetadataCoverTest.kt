@@ -1,5 +1,6 @@
 package com.music.bitchord.playback
 
+import com.music.bitchord.data.StoredSongDisplay
 import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.model.Song
 import org.junit.After
@@ -35,6 +36,23 @@ class MediaSessionMetadataCoverTest {
             thumbnailUrl = null,
             isVideo = true,
         ).toMediaItem()
+
+        assertEquals("Marigold", item.mediaMetadata.title.toString())
+        assertEquals("아이묭 · 오화요 커버", item.mediaMetadata.artist.toString())
+    }
+
+    @Test
+    fun `a cover already cleaned for storage still reaches the session as its song`() {
+        val stored = StoredSongDisplay.clean(
+            Song(
+                videoId = "cover-stored-1",
+                title = "아이묭 - Marigold / cover by 오화요",
+                artist = "Ohwayo",
+                thumbnailUrl = null,
+                isVideo = true,
+            ),
+        )
+        val item = stored.toMediaItem()
 
         assertEquals("Marigold", item.mediaMetadata.title.toString())
         assertEquals("아이묭 · 오화요 커버", item.mediaMetadata.artist.toString())

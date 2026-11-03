@@ -308,16 +308,7 @@ object CoverTitles {
                 artistAliases = ArtistAliases.forSong(song),
             )
         }
-        val upload = if (song.originalTitle != null) {
-            song.copy(
-                title = song.originalTitle ?: song.title,
-                artist = song.originalArtist ?: song.artist,
-                originalTitle = null,
-                originalArtist = null,
-            )
-        } else {
-            song
-        }
+        val upload = uploadOf(song)
         val queries = lyricsQueries(upload)
         val (title, artist) = queries.firstOrNull() ?: (song.title to song.artist)
         val cover = read(upload)
@@ -358,6 +349,21 @@ object CoverTitles {
             person(right)?.let { leftTitle to it },
             person(left)?.let { rightTitle to it },
         )
+    }
+
+    /**
+     * The upload [song] was shown from, once a cover's stored fields are read
+     * back. A row that was never shown as a cover is returned unchanged.
+     */
+    fun uploadOf(song: Song): Song = if (song.originalTitle != null) {
+        song.copy(
+            title = song.originalTitle ?: song.title,
+            artist = song.originalArtist ?: song.artist,
+            originalTitle = null,
+            originalArtist = null,
+        )
+    } else {
+        song
     }
 
     /**
