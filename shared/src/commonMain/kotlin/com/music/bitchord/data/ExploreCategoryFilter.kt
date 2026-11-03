@@ -49,16 +49,33 @@ object ExploreCategoryFilter {
      * Lowercase, trimmed, single-spaced, with `&`, `and` and `및` all written
      * as `및`. That is the only equality the filter needs: it never tries to
      * guess that two different labels mean the same thing.
+     *
+     * The curated moods were relabelled for Apple's noun form in 1.9. The
+     * hidden set is stored by title, so an old label has to keep matching the
+     * same tile: the 1.8 names fold onto the current ones here.
      */
-    fun normalize(title: String): String = title
-        .trim()
-        .lowercase()
-        .replace("&", " and ")
-        .replace("및", " 및 ")
-        .split(Regex("\\s+"))
-        .filter { it.isNotEmpty() }
-        .map { if (it == "and" || it == "및") "및" else it }
-        .joinToString(" ")
+    fun normalize(title: String): String {
+        val key = title
+            .trim()
+            .lowercase()
+            .replace("&", " and ")
+            .replace("및", " 및 ")
+            .split(Regex("\\s+"))
+            .filter { it.isNotEmpty() }
+            .map { if (it == "and" || it == "및") "및" else it }
+            .joinToString(" ")
+        return MOOD_TITLE_ALIASES[key] ?: key
+    }
+
+    private val MOOD_TITLE_ALIASES = mapOf(
+        "에너지 충전" to "에너지",
+        "잠잘 때" to "수면",
+        "집중할 때" to "집중",
+        "출퇴근 및 등하교" to "출퇴근",
+        "편안한 분위기" to "휴식",
+        "행복한 기분" to "기분 좋음",
+        "슬플 때" to "슬픔",
+    )
 
     /** Whether a tile is a standing entry point that hiding must never remove. */
     fun isProtected(item: MoodGenre): Boolean =

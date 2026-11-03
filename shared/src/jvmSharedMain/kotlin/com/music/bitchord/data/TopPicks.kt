@@ -294,7 +294,7 @@ object TopPicks {
 
     // ---- Cards --------------------------------------------------------------
 
-    private class ArtistCard(val page: ArtistPage, val browseId: String) {
+    internal class ArtistCard(val page: ArtistPage, val browseId: String) {
         val name: String get() = page.name.orEmpty()
 
         /**
@@ -309,9 +309,15 @@ object TopPicks {
         val related: Map<String, String> by lazy {
             val own = normalizedArtistName(name)
             page.sections
-                .firstOrNull { shelf -> shelf.items.isNotEmpty() && shelf.items.all { it.browseId?.startsWith("UC") == true } }
+                // [ShelfItem.isArtist] is what the parser knows; a channel id is
+                // not always `UC…` (see ArtistPageVideoShelfTest), so the flag
+                // has to win over the prefix here too.
+                .firstOrNull { shelf ->
+                    shelf.items.isNotEmpty() &&
+                        shelf.items.all { it.isArtist || it.browseId?.startsWith("UC") == true }
+                }
                 ?.items.orEmpty()
-                .filter { it.browseId != browseId }
+                .filter { it.browseId != null && it.browseId != browseId }
                 .filter { normalizedArtistName(it.title).let { key -> key.isNotEmpty() && key != own } }
                 .distinctBy { normalizedArtistName(it.title) }
                 .take(RELATED_CANDIDATES)

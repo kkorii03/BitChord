@@ -81,6 +81,27 @@ class ExploreCategoryFilterTest {
     }
 
     @Test
+    fun `a mood hidden under its 1_8 label stays hidden after the 1_9 relabel`() {
+        val sections = listOf(section("분위기", "에너지", "수면", "집중", "출퇴근", "휴식", "기분 좋음", "슬픔"))
+
+        val visible = ExploreCategoryFilter.visible(
+            sections,
+            setOf("에너지 충전", "잠잘 때", "집중할 때", "출퇴근 & 등하교", "편안한 분위기", "행복한 기분", "슬플 때"),
+        )
+
+        assertTrue(visible.isEmpty())
+    }
+
+    @Test
+    fun `a mood hidden under its 1_9 label also hides the 1_8 label`() {
+        val sections = listOf(section("분위기", "잠잘 때", "편안한 분위기"))
+
+        val visible = ExploreCategoryFilter.visible(sections, setOf("수면", "휴식"))
+
+        assertTrue(visible.isEmpty())
+    }
+
+    @Test
     fun `an empty hidden set leaves every tile alone`() {
         val sections = listOf(section("분위기", "게임", "운동"))
         assertEquals(sections, ExploreCategoryFilter.visible(sections, emptySet()))
