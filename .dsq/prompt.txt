@@ -1,0 +1,5 @@
+Kotlin Android app = upstream v1.9 + Korean fork (task/u19-tg; 1.8 fork = origin/task/telegram). Battery first, no polling, never block the main thread. Use grep/Select-String, not rg. Unknown Android/Media3 APIs: context7. Every fix gets a JVM test that fails on current code (no network). Do not touch .github/workflows.
+
+Explore (둘러보기) mood/genre tiles show only a colour and a Korean label (ExploreScreen MoodGenreCard showArtwork=false), because YouTube's tile images have English titles painted in. The user wants pictures like Apple Music. Find a text-free image per category (e.g. the first playlist's thumbnail inside that category, fetched lazily and cached) and show it under the label; no extra requests while the screen is not visible.
+
+Summary of at most 12 lines: cause (file:line), fix, REMOVED-LINES AUDIT, tests (class names for CI), what you did not do. Follow AGENTS.md (ponytail) rules.
