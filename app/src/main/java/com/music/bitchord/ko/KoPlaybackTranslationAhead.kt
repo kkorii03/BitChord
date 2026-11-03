@@ -7,6 +7,7 @@ import com.music.bitchord.playback.PlaybackService
 import com.music.bitchord.playback.toSong
 import com.music.bitchord.playback.toMediaItem
 import com.music.bitchord.playback.StreamChoice
+import com.music.bitchord.playback.QualityUpgrade
 
 import com.music.bitchord.ko.koTryAutoplayRefillBeforeStopping
 import com.music.bitchord.ko.koSwitchToAlternateOrSkip
@@ -416,7 +417,24 @@ internal fun PlaybackService.koRestreamWrongRecording(
     item: MediaItem,
     position: Long,
 ): Boolean {
+    // The download check is about the file, not the recording now coming out
+    // of the speaker. An item already carrying an accepted upgrade is that
+    // recording; rebuilding it from the song would silently drop the swap and
+    // put the listener back on YouTube. The repair still runs from the
+    // download record — only this playback handoff is refused.
     val restreamed = item.toSong().copy(localUri = null, localPath = null).toMediaItem()
+    if (QualityUpgrade.replacementDropsUpgrade(
+            item.localConfiguration?.uri?.toString(),
+            restreamed.localConfiguration?.uri?.toString(),
+        )
+    ) {
+        TrackLog.w(
+            "BitChord",
+            "${item.mediaId} is playing an accepted upgrade; not restreaming the condemned download",
+            about = item.mediaId,
+        )
+        return false
+    }
     if (restreamed.localConfiguration?.uri == item.localConfiguration?.uri) return false
     TrackLog.w(
         "BitChord",

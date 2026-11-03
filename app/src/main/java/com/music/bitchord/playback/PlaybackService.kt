@@ -2251,6 +2251,17 @@ class PlaybackService : MediaLibraryService() {
                     .setHttpRequestHeaders(upgraded.headers)
                     .build()
             }
+            // The item still says it is an upgrade, but the parked stream is
+            // gone (a rate-limited host, a process that forgot it). Resolving
+            // the plain queue URI from here is how an accepted upgrade used to
+            // return to YouTube with nothing in the log saying why.
+            if (QualityUpgrade.isUpgradedRendition(dataSpec.uri.toString())) {
+                TrackLog.w(
+                    "BitChord",
+                    "upgraded $videoId has no parked stream; resolving its rendition again",
+                    about = videoId,
+                )
+            }
             // A downloaded copy is *not* substituted here, deliberately. This
             // point is inside the HTTP-only half of the chain — below
             // DefaultDataSource, which has already given up on dispatching by
@@ -3495,6 +3506,11 @@ class PlaybackService : MediaLibraryService() {
         }
 
         OriginalVersion.pin(song.videoId)
+        TrackLog.i(
+            "BitChord",
+            "reverting ${song.videoId} to the original YouTube upload at the listener's request",
+            about = song.videoId,
+        )
         val position = activePlayer.currentPosition
         val wasPlaying = activePlayer.isPlaying
         swappingMediaId = song.videoId
@@ -5924,9 +5940,22 @@ class PlaybackService : MediaLibraryService() {
         val scheme = uri?.scheme
         if (scheme != "file" && scheme != "content") return false
         val mediaId = item.mediaId
-
-        Downloads.forgetMissing(mediaId)
         val restreamed = item.toSong().copy(localUri = null, localPath = null).toMediaItem()
+        // An accepted upgrade may have been written over a file URI; its bytes
+        // are now the stream. Rebuilding it from the song would drop the swap.
+        if (QualityUpgrade.replacementDropsUpgrade(
+                uri?.toString(),
+                restreamed.localConfiguration?.uri?.toString(),
+            )
+        ) {
+            TrackLog.w(
+                "BitChord",
+                "$mediaId is playing an accepted upgrade; not restreaming its missing file",
+                about = mediaId,
+            )
+            return false
+        }
+        Downloads.forgetMissing(mediaId)
         if (restreamed.localConfiguration?.uri == uri) {
             TrackLog.w(
                 "BitChord",
@@ -7919,7 +7948,8 @@ class PlaybackService : MediaLibraryService() {
                 "BitChord",
                 "upgrade reverted: replacement reports ${player.duration}ms against " +
                     "${expectedDuration}ms (old=${previousDuration}ms, state=${player.playbackState}, " +
-                    "buffered=${player.bufferedPosition}ms)",
+                    "buffered=${player.bufferedPosition}ms, proven=$proven)",
+                about = mediaId,
             )
             // The FLAC/whatever claim recorded when the swap went out is no
             // longer what's playing — restore what was declared before it

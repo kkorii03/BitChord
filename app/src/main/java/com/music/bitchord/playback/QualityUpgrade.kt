@@ -957,6 +957,39 @@ object QualityUpgrade {
      */
     fun cacheTag(uri: Uri): String? = uri.getQueryParameter(MARKER)
 
+    /**
+     * Whether [uri] is the rendition an accepted upgrade installed.
+     *
+     * String-based on purpose: the guards below run from download-health and
+     * song-version paths that a JVM test exercises, where Android's `Uri` is a
+     * stub. The marker is appended by [upgradedUri] and is the only part that
+     * matters.
+     */
+    internal fun isUpgradedRendition(uri: String?): Boolean =
+        markerOf(uri)?.startsWith(UPGRADED) == true
+
+    /**
+     * Whether rebuilding the current item from [currentUri] as
+     * [replacementUri] would take away an upgrade the player already accepted.
+     *
+     * A same-generation replacement keeps the parked stream; anything else —
+     * the plain queue URI, a revert, or another generation — would silently put
+     * the listener back on the copy they had just improved.
+     */
+    internal fun replacementDropsUpgrade(currentUri: String?, replacementUri: String?): Boolean {
+        if (!isUpgradedRendition(currentUri)) return false
+        return markerOf(currentUri) != markerOf(replacementUri)
+    }
+
+    private fun markerOf(uri: String?): String? {
+        if (uri == null) return null
+        val query = uri.substringAfter('?', "").substringBefore('#')
+        return query.split('&')
+            .firstOrNull { it.substringBefore('=') == MARKER }
+            ?.substringAfter('=', missingDelimiterValue = "")
+            ?.takeIf { it.isNotEmpty() }
+    }
+
     fun upgradeGeneration(tag: String?): Int =
         KoQualityUpgrade.upgradeGeneration(tag) // [KO] quality-generation
 }
