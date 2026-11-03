@@ -2384,7 +2384,10 @@ object LyricsTiming {
         // measurement may still time the video, the quick engines answer ahead.
         val engines = if (automatic) {
             val gaveUp = measurementGaveUp(context, videoId)
-            val unsettled = !gaveUp && timingUnsettled(context, videoId, lines, audioSource)
+            // Independent of gaveUp: a measurement that gave up and then got an
+            // accepted AI answer that the heard words contradict is exactly the
+            // case this check exists for (Sol review, 11-04).
+            val unsettled = timingUnsettled(context, videoId, lines, audioSource)
             AiTimingPolicy.nextEngines(
                 knowledge(entry),
                 key,
@@ -4002,7 +4005,10 @@ object LyricsTiming {
         audioSource: String? = null,
     ): Boolean {
         val gaveUp = measurementGaveUp(context, videoId)
-        val unsettled = !gaveUp && timingUnsettled(context, videoId, lines, audioSource)
+        // Independent of gaveUp: a measurement that gave up and then got an
+        // accepted answer the heard words contradict is exactly the case this
+        // check exists for.
+        val unsettled = timingUnsettled(context, videoId, lines, audioSource)
         return AiTimingPolicy.shouldAskAgain(
             knowledge(store(context).get(videoId)),
             textKey(lines, audioSource),

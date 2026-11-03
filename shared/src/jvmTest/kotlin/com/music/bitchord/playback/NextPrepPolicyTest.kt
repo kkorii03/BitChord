@@ -439,4 +439,13 @@ class NextPrepPolicyTest {
     fun anUnknownWindowIsNotCut() {
         assertEquals(Long.MAX_VALUE, NextPrepPolicy.syncBudgetMs(Long.MAX_VALUE))
     }
+
+    @Test
+    fun aSyncCutByItsBudgetDoesNotEndTheRun() {
+        // 11-04: a cut SYNC used to set deadlineHit, so the MIX step after it
+        // never ran and every song logged mix=none(deadline).
+        assertFalse(NextPrepPolicy.deadlineAfterTimeout(Step.SYNC, 25_000L))
+        assertTrue(NextPrepPolicy.deadlineAfterTimeout(Step.SYNC, 0L))
+        assertTrue(NextPrepPolicy.deadlineAfterTimeout(Step.HQ, 25_000L))
+    }
 }

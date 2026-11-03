@@ -258,6 +258,10 @@ internal class NextTrackPreparation(
         var syncFailure: NextPrepPolicy.SyncFailure? = null
         var syncProbe: LyricsTiming.NextSyncProbe? = null
         var deadlineHit = false
+        // A SYNC step that ran out of its own budget while the track still has
+        // time. It is reported as skipped:deadline so the numbers stay
+        // comparable with earlier runs, but it does not stop the MIX step.
+        var syncCut = false
         // The mix answer specifically, as opposed to an earlier step using up
         // the track's remaining time before the mix could run.
         var mixTimedOut = false
@@ -446,6 +450,16 @@ internal class NextTrackPreparation(
                 false
             }
             if (completed == null) {
+                // A step cut by its own budget is not the track's deadline: the
+                // window may still hold time for the steps after it, and the
+                // MIX step is exactly the one that was never reached (11-04:
+                // every run logged mix=none(deadline)). Only a step that ran
+                // out with the window itself is a deadline.
+                val now = currentPlayer()?.let { remainingMs(it) } ?: 0L
+                if (!NextPrepPolicy.deadlineAfterTimeout(step, now)) {
+                    syncCut = true
+                    continue
+                }
                 deadlineHit = true
                 break
             }
@@ -619,7 +633,7 @@ internal class NextTrackPreparation(
             aiTimingAhead = AppSettings.aiTimingAhead.value,
             aiUsable = Deepgram.usable,
             currentPlayedMs = playedMs,
-            remainingMs = if (deadlineHit) 0L else leftNow,
+            remainingMs = if (deadlineHit || syncCut) 0L else leftNow,
             hasTiming = timing != null,
             failure = syncFailure,
         )
@@ -643,7 +657,10 @@ internal class NextTrackPreparation(
         val hqLabel = nextPrepHqLabel(
             prepared = hq,
             latest = existingHq(song),
-            deadlineHit = deadlineHit,
+            // Only a step that never got its turn is a deadline; a step that ran
+            // and found nothing must show its own reason, or every song reads
+            // `none(deadline)` and the real cause is invisible (11-04).
+            deadlineHit = Step.HQ in plan.steps && Step.HQ !in triedThisRun,
             skipReason = hqSkipReason(song),
         )
         val mixLabel = if (mix) {

@@ -1421,6 +1421,12 @@ class LyricsController(
             thumbnailUrl = null,
             isVideo = request.isVideo,
             localUri = request.localUri,
+            // VideoAudio.secondsOnDisk reads the length from this string; without
+            // it every streamed song reported 0 s on disk and the wider listen
+            // was deferred on the one path that asks for it (11-04).
+            durationText = request.durationMs.takeIf { it > 0L }?.let { ms ->
+                "${ms / 60_000}:${((ms / 1_000) % 60).toString().padStart(2, '0')}"
+            },
         )
         scope.launch {
             val heard = LyricsTiming.ensureRefineHeard(

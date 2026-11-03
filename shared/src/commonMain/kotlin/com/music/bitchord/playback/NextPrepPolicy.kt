@@ -119,6 +119,15 @@ object NextPrepPolicy {
         if (remainingMs == Long.MAX_VALUE) remainingMs else remainingMs - remainingMs / 4
 
     /**
+     * Whether a step that timed out ended the whole run. A SYNC cut by its own
+     * budget is not the track's deadline while the window still holds time: the
+     * steps after it, MIX above all, still get their turn. Anything else that
+     * times out means the window itself is gone.
+     */
+    fun deadlineAfterTimeout(step: Step, remainingNowMs: Long): Boolean =
+        step != Step.SYNC || !canStartStep(remainingNowMs)
+
+    /**
      * Whether the MIX step keeps its one-attempt mark after a run that ended
      * with [completed].
      *
