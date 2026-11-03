@@ -169,8 +169,9 @@ object CoverTitles {
         // cover; a merely known singer's own songs are still their own.
         val preferChannel = designated || channelIsKnownSinger(channel)
         fun found(cover: Cover): Cover {
-            runCatching { onSingerSeen(cover.singer) }
-            return cover.normalized()
+            val normalized = cover.normalized()
+            runCatching { onSingerSeen(normalized.singer) }
+            return normalized
         }
         // The shapes that name the singer for certain: worth remembering who.
         (
@@ -182,7 +183,9 @@ object CoverTitles {
             )?.let { return found(it) }
         // On the singer's own cover channel the uploader is the singer and a
         // name in the title is the original's: "Tomboy((G)I-DLE)".
-        if (preferChannel) readChannelSource(raw, channel, allowDash = designated)?.let { return found(it) }
+        if (preferChannel && (!unambiguousOnly || designated)) {
+            readChannelSource(raw, channel, allowDash = designated)?.let { return found(it) }
+        }
         if (unambiguousOnly && !designated) return null
         // A bare "(Cover)": the channel stands in for the singer, so it isn't one to learn.
         readA(raw, channel, allowBareTag = true, preferChannel = preferChannel)?.let { return it.normalized() }
@@ -418,11 +421,12 @@ object CoverTitles {
         val uploadArtist = song.originalArtist ?: song.artist
         val reread = read(uploadTitle, uploadArtist, song.artistId) ?: read(uploadTitle, uploadArtist, null)
         if (reread != null) {
+            val original = reread.originalArtist ?: song.coverOriginalArtist?.takeIf { it.isNotBlank() }
             return song.copy(
                 title = reread.title,
-                artist = reread.byline,
+                artist = coverByline(original, reread.singer),
                 coverSinger = reread.singer,
-                coverOriginalArtist = reread.originalArtist,
+                coverOriginalArtist = original,
             )
         }
         val title = song.title.removeSuffix(COVER_SUFFIX).removeSuffix("(cover)").trim()
@@ -785,9 +789,16 @@ object CoverTitles {
     private fun channelIsKnownSinger(channel: String): Boolean {
         val keys = knownSingerKeys()
         if (keys.isEmpty()) return false
-        val compact = compactName(stripSingerSuffix(channel))
-        return compact.length >= 2 && keys.any { it.length >= 2 && it in compact }
+        if (isFanClipChannel(channel)) return false
+        val name = stripSingerSuffix(channel)
+        if (compactName(name) in keys) return true
+        // Whole words only: a known "IU" must not make "Building" the singer.
+        return name.split(CHANNEL_WORD_SPLIT)
+            .map(::compactName)
+            .any { it.length >= 2 && it in keys }
     }
+
+    private val CHANNEL_WORD_SPLIT = Regex("""[\s\-–—·|｜/,._()\[\]（）【】]+""")
 
     /**
      * A channel name carries the uploader's own tag — "오화요 가사포함" — which

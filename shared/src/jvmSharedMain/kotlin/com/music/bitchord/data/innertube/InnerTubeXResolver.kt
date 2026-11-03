@@ -460,7 +460,8 @@ object InnerTubeXResolver {
     fun pictureFailureSettled(reason: StreamResolveException.Reason?, attempt: Int): Boolean =
         attempt >= MAX_PICTURE_ATTEMPTS || reason != StreamResolveException.Reason.NETWORK
 
-    private const val MAX_PICTURE_ATTEMPTS = 2
+    /** Generic picture-resolution failures allowed before a picture is settled as missing. */
+    const val MAX_PICTURE_ATTEMPTS = 2
 
     /**
      * The video ranking demotes the web clients that can actually answer a

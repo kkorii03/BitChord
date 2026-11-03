@@ -265,6 +265,29 @@ class CoverTitlesEdgeTest {
         assertTrue(told.isEmpty())
     }
 
+    @Test
+    fun aLearnedSingerLosesUploaderTagsBeforeItIsRecorded() {
+        val told = mutableListOf<String>()
+        CoverTitles.onSingerSeen = { told += it }
+        cover("Song / cover by 오화요 가사포함", "channel")
+        assertEquals(listOf("오화요"), told)
+    }
+
+    @Test
+    fun aRowWithoutItsVideoFlagDoesNotReadAnOrdinaryBracketAsACover() {
+        CoverTitles.designatedChannels = { emptySet() }
+        CoverTitles.knownSingers = { setOf("오화요") }
+        assertNull(CoverTitles.read(song("Some Song (Remastered)", "오화요", isVideo = false)))
+    }
+
+    @Test
+    fun aShortKnownSingerDoesNotMatchInsideAnUnrelatedChannelName() {
+        CoverTitles.designatedChannels = { emptySet() }
+        CoverTitles.knownSingers = { setOf("IU") }
+        assertNull(CoverTitles.read("밤편지 (Remastered)", "Building", null))
+        assertNull(CoverTitles.read("밤편지 (Remastered)", "IU 팬클립", null))
+    }
+
     // ---- The read row -----------------------------------------------------------------
 
     @Test

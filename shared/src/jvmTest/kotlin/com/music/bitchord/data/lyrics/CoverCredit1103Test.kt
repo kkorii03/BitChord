@@ -176,4 +176,23 @@ class CoverCredit1103Test {
         assertEquals("오화요", applied.coverSinger)
         assertEquals("(G)I-DLE", applied.coverOriginalArtist)
     }
+
+    @Test
+    fun `repairing a saved cover keeps the original artist it stored`() {
+        CoverTitles.designatedChannels = { emptySet() }
+        CoverTitles.knownSingers = { emptySet() }
+        val old = song("Song (cover)", "오화요", artistId = null).copy(
+            originalTitle = "Song (cover)",
+            originalArtist = "오화요",
+            coverSinger = "오화요",
+            coverOriginalArtist = "원곡자",
+        )
+
+        val applied = CoverTitles.applyTo(old)
+
+        assertEquals("Song", applied.title)
+        assertEquals("원곡자 · 오화요 커버", applied.artist)
+        assertEquals("오화요", applied.coverSinger)
+        assertEquals("원곡자", applied.coverOriginalArtist)
+    }
 }

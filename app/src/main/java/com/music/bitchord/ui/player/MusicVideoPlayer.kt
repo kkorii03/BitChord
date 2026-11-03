@@ -452,7 +452,7 @@ object MusicVideoEngine {
                 // every client again on the next tick.
                 TrackLog.w(TAG, "video: couldn't resolve the picture: ${e.message}", about = videoId)
                 if (loadedId == videoId) loadedId = null
-                markMissing(videoId, settled = attempt >= MAX_PICTURE_ATTEMPTS)
+                markMissing(videoId, settled = attempt >= InnerTubeXResolver.MAX_PICTURE_ATTEMPTS)
                 return@launch
             }
             if (loadedId != videoId) return@launch
@@ -465,6 +465,8 @@ object MusicVideoEngine {
                 return@launch
             }
             attempts.remove(videoId)
+            noPicture -= videoId
+            _missing.value = clearPictureFailure(_missing.value, videoId)
             val exo = player ?: return@launch
             val upstream = OkHttpDataSource.Factory(Http.client)
                 .setDefaultRequestProperties(stream.headers)
@@ -561,9 +563,6 @@ object MusicVideoEngine {
     /** Narrower than this is a cover held still, not a picture worth showing. */
     private const val MIN_VIDEO_ASPECT = 1.2f
 
-    /** Generic resolve failures allowed before the picture is settled as missing. */
-    private const val MAX_PICTURE_ATTEMPTS = 2
-
     /** Where Auto opens, as on the web player: the top of YouTube's H.264 ladder. */
     private const val AUTO_HEIGHT = 1080
     private const val METERED_HEIGHT = 480
@@ -585,6 +584,9 @@ object MusicVideoEngine {
         StreamResolveException.Reason.NO_PLAYABLE_STREAM,
     )
 }
+
+/** A picture that resolves drops its earlier failure, so the player can show it. */
+internal fun clearPictureFailure(missing: Set<String>, videoId: String): Set<String> = missing - videoId
 
 /**
  * Where the playing music video shows: [videoId]'s picture, fitted into or
