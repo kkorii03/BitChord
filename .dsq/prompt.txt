@@ -1,0 +1,5 @@
+Kotlin Android app = upstream v1.9 + Korean fork (task/u19-tg; 1.8 fork = origin/task/telegram). Battery first, no polling, never block the main thread. Use grep/Select-String, not rg. Unknown Android/Media3 APIs: context7. Every fix gets a JVM test that fails on current code (no network). Do not touch .github/workflows.
+
+Media notification / lock screen / Android Auto should show the same title and artist as the player (cover = original title, artist '<original artist> · <singer> 커버' as in the 1.8 fork). Check PlaybackService MediaMetadata building and MediaSession, compare with origin/task/telegram, fix and test.
+
+Summary of at most 12 lines: cause (file:line), fix, REMOVED-LINES AUDIT, tests (class names for CI), what you did not do. Follow AGENTS.md (ponytail) rules.
