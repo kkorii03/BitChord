@@ -1,0 +1,32 @@
+BITCHORD 1.9 (Kotlin Android, branch task/u19-tg, worktree C:\Users\jang\Desktop\BitChord\BitChord-u19tg).
+Goal: the AI lyric timing ("song check") answer arrives far too late in real use. Emulators measure it directly.
+
+## Evidence (emulator smoke runs, 10 songs per run, app logcat, scored by forced alignment)
+Before a gate fix (aca2017b4) the answer arrived AFTER the song left the screen on 9 of 10 cover songs:
+`answer +235s, song left at +167s`, `+282s/+154s`, `+301s/+161s`, `+346s/+145s`, `+358s/+156s`, `+366s/+110s`, `+417s/+152s`, `+480s/+150s`, `+41s/+28s`
+After the fix the count fell (LATE 9 -> 5) but answers still arrive at 174, 194, 240, 243, 261, 315, 354 s.
+With 300 s per song the sync now applies more often (strict 4/16 -> 9/15), so the remaining limit is WHEN the answer arrives, not whether it works.
+
+## Tasks
+1. Map the critical path from "playback starts" to "AI answer applied" with file:line and name the dominant waits, e.g.:
+   - how much audio the song check must have before it can start (VideoAudio.songWavCopy opening 40 s / 90 s; whole-track wavCopy for the second engine),
+   - the one-at-a-time DecodePriorityGate (AudioDecoder) and whether next-track/foreground work starves it,
+   - LyricsTiming.verifySongRequest / songSyncGate (audio is already fetched before taking the gate after aca2017b4 — verify that is actually true on the code path, do not assume),
+   - the engine's own turnaround (Deepgram vs Whisper), retries, and any fixed sleeps/backoff.
+   Print the numbers you can compute (seconds) per stage; where a stage's duration is only observable at runtime, say which log line would show it.
+2. Implement the smallest change that measurably shortens time-to-answer for a COLD first play, without more battery or more network requests per song. Candidate shapes (choose only what the code supports; do not implement all):
+   - start the check from the 40 s opening as soon as it exists instead of waiting for 90 s, when the transcript still covers enough lines;
+   - let foreground playback's decode work preempt next-track work deterministically instead of FIFO;
+   - remove a wait that is not needed for correctness (state which guarantee it protected).
+   Keep the existing guards (low-power/heavy-work, pending flags, gates, timeouts, clamps). Do not delete a guard to gain speed.
+3. Add a JVM test that FAILS on the current code and proves your change (e.g. the check is requested at 40 s of audio, or the gate is not taken before the audio is ready). If a change can only be proven on a device, do not make it; instead write the one log line that would prove it and say so.
+
+## Rules
+- Keep upstream code intact (ko/ + `// [KO]` hooks). Unknown Android/Media3 API: context7.
+- Do NOT touch .github/workflows, signing files, or the per-line layer (another lane owns LyricsPerLine.kt today).
+- Battery first: no polling, no extra downloads, no extra decodes. Event-based only.
+- New test class names must be in the summary (you may not edit workflows). grep/Select-String, not rg.
+- Follow AGENTS.md (ponytail): smallest complete change, no new abstraction or setting.
+
+## Summary (max 10 lines)
+critical path with file:line and the seconds of each stage / the one change made / tests and result on base vs after / REMOVED-LINES AUDIT / what you did not do and why.
