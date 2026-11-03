@@ -426,4 +426,17 @@ class NextPrepPolicyTest {
             ),
         )
     }
+
+    @Test
+    fun theSyncStepKeepsAQuarterOfTheWindowForTheMixStep() {
+        // 11-04: every emulator run logged mix=none(deadline) because the sync
+        // step waited for the next song's stream audio and used the whole window.
+        assertEquals(75_000L, NextPrepPolicy.syncBudgetMs(100_000L))
+        assertTrue(NextPrepPolicy.syncBudgetMs(100_000L) < 100_000L)
+    }
+
+    @Test
+    fun anUnknownWindowIsNotCut() {
+        assertEquals(Long.MAX_VALUE, NextPrepPolicy.syncBudgetMs(Long.MAX_VALUE))
+    }
 }

@@ -352,8 +352,11 @@ internal class NextTrackPreparation(
             // step runs under the same remaining allowance, so the handoff is
             // never entered with the bundle still working, and a timeout is
             // reported as `(deadline)` rather than as a failed step.
+            // SYNC is the one step that waits for audio off the stream, so it
+            // gets less than the whole window and the MIX step keeps a turn.
+            val budget = if (step == Step.SYNC) NextPrepPolicy.syncBudgetMs(left) else left
             val completed: Boolean? = try {
-                withRemaining(left) {
+                withRemaining(budget) {
                     when (step) {
                         Step.VERSION -> Unit
                         Step.LYRICS -> {

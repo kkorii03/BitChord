@@ -108,6 +108,17 @@ object NextPrepPolicy {
     fun canStartStep(remainingMs: Long): Boolean = remainingMs > 0L
 
     /**
+     * The window the SYNC step may use. It is the step that waits for the next
+     * song's audio to arrive off the stream, so given the whole window it takes
+     * the whole window and the MIX step after it never starts - every run
+     * logged `mix=none(deadline)` (11-04). A quarter of the window is left for
+     * that later step; a sync that needs longer is cut, which is the trade this
+     * makes on purpose.
+     */
+    fun syncBudgetMs(remainingMs: Long): Long =
+        if (remainingMs == Long.MAX_VALUE) remainingMs else remainingMs - remainingMs / 4
+
+    /**
      * Whether the MIX step keeps its one-attempt mark after a run that ended
      * with [completed].
      *
