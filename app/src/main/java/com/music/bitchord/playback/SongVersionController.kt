@@ -41,6 +41,10 @@ internal class SongVersionController(
     private val currentAudibleMediaId: () -> String?,
     private val setSwappingMediaId: (String?) -> Unit,
     private val onVersionInstalled: () -> Unit,
+    private val songOf: (MediaItem) -> Song = { it.toSong() },
+    private val resolveVersion: suspend (Song, Boolean) -> Song? = { song, beforeAudio ->
+        YtMusicRepository.songVersion(song, beforeAudio = beforeAudio)
+    },
 ) {
 
     /** Resolves the song versions of the next few queue rows before they play. */
@@ -223,7 +227,7 @@ internal class SongVersionController(
                 if (index == current) continue
                 if (index >= exoPlayer.mediaItemCount) return@launch
                 val item = exoPlayer.getMediaItemAt(index)
-                val song = item.toSong()
+                val song = songOf(item)
                 if (song.videoRadio) continue
                 if (!SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown)) continue
                 // A downloaded video is still a video and is resolved like any
@@ -231,7 +235,7 @@ internal class SongVersionController(
                 // the look-ahead does not spend a request that cannot finish.
                 if (song.localUri != null && AudioCache.isOffline()) continue
                 val resolved = try {
-                    YtMusicRepository.songVersion(song, beforeAudio = true)
+                    resolveVersion(song, true)
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (failure: Throwable) {

@@ -1365,6 +1365,31 @@ internal object KoTrackMatcher {
         wanted.any { w -> got.any { g -> w == g || romajiOf(w) == romajiOf(g) } }
 
     /**
+     * A dropped segment with any featuring credit taken out, keeping a take
+     * printed after it.
+     *
+     * The credit's own name is not the take, so only recognized take words
+     * survive: "(feat. X Remix)" is the remix, "(with X Live)" the live take
+     * and "(feat. X Korean Version)" the Korean one. Deleting everything from
+     * the credit word onwards threw those markers away and let the original
+     * stand in for the take.
+     */
+    private fun withoutFeaturingCredit(segment: String): String {
+        val credit = FEATURING.find(segment) ?: return segment
+        val before = segment.substring(0, credit.range.first)
+        val beforeWords = before.split(WORD_SPLIT)
+            .map { it.replace(NON_ALNUM, "") }
+            .filter { it.isNotEmpty() }
+        // "Radio Edit - feat. …" is the ordinary release, not an edit take.
+        if (beforeWords.joinToString("") in NEUTRAL_SEGMENTS) return ""
+        val creditEnd = credit.range.first + credit.groupValues[1].length
+        val takeWords = segment.substring(creditEnd).split(WORD_SPLIT)
+            .map { it.replace(NON_ALNUM, "") }
+            .filter { it in VERSION_WORDS || it in VERSION_LANGUAGES }
+        return (before + " " + takeWords.joinToString(" ")).trim()
+    }
+
+    /**
      * Files one dropped segment under [versions] or [context].
      *
      * A segment naming a take — `Remix`, `Live at Wembley`, `Slowed + Reverb` —
@@ -1385,7 +1410,8 @@ internal object KoTrackMatcher {
         // prints it. Take it off before reading a dropped segment as a take,
         // so "Radio Edit - feat. …" stays the ordinary release instead of
         // becoming an "edit" version the plain title never asked for.
-        val words = FEATURING.replace(segment, " ").split(WORD_SPLIT)
+        val text = withoutFeaturingCredit(segment)
+        val words = text.split(WORD_SPLIT)
             .map { it.replace(NON_ALNUM, "") }
             .filter { it.isNotEmpty() }
         if (words.isEmpty()) return
@@ -1414,7 +1440,7 @@ internal object KoTrackMatcher {
             }
         }
         val languages = words.mapNotNull { VERSION_LANGUAGES[it] }.distinct()
-        if (languages.isNotEmpty() && isLanguageVersion(segment)) {
+        if (languages.isNotEmpty() && isLanguageVersion(text)) {
             // A language version is a different recording. "Version"/"ver" is
             // its packaging, so the language is the marker that has to agree;
             // any other take word ("Korean Remix") still counts. A language

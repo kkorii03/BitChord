@@ -190,6 +190,23 @@ class TrackMatcherTitleEdgeTest {
         assertEquals("goodday", core("Good Day (feat. 팔로알토 (Paloalto))"))
     }
 
+    @Test
+    fun `a featuring credit does not hide a take printed after it`() {
+        assertEquals(
+            setOf("remix"),
+            TrackMatcher.parseTitle("Song (feat. Artist Remix)").versions,
+        )
+        assertEquals(
+            setOf("live"),
+            TrackMatcher.parseTitle("Song (with Artist Live)").versions,
+        )
+        assertEquals(
+            setOf("korean"),
+            TrackMatcher.parseTitle("Song (feat. Artist Korean Version)").versions,
+        )
+        assertEquals("song", core("Song (feat. Artist Remix)"))
+    }
+
     /**
      * BUG: the featuring regex treats the word "with" anywhere in a title as
      * the start of a credit, so real titles are truncated ("Stay With Me" to
