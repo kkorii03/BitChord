@@ -5325,13 +5325,14 @@ class PlaybackService : MediaLibraryService() {
      * after the app had given up. Nothing in the log named it, because nothing
      * in the app had asked for it.
      *
-     * Only [StreamResolver.PermanentlyUnplayableException] is refused, and it is
-     * refused rather than delayed because the resolver has already established
-     * the answer cannot change — it is the type it uses to say exactly that.
-     * Everything else keeps the default behaviour, which is right: a shaped
-     * response or a dropped connection is worth another go.
+     * A permanent verdict (unplayable, bot challenge), a missing local file,
+     * and an HTTP refusal (403/404/410) are refused: the resolver has already
+     * established the answer cannot change, or the same URL cannot answer
+     * differently, so another go is only a wasted request. Everything else
+     * keeps the default behaviour, which is right: a shaped response or a
+     * dropped connection is worth another go.
      */
-    private class PermanentAwareLoadErrorPolicy : DefaultLoadErrorHandlingPolicy() {
+    internal class PermanentAwareLoadErrorPolicy : DefaultLoadErrorHandlingPolicy() {
         override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo): Long {
             rateLimited(loadErrorInfo.exception)?.let { refusal ->
                 // [ChunkedDataSource] has already waited out Retry-After and
@@ -5344,17 +5345,36 @@ class PlaybackService : MediaLibraryService() {
                 )
                 return C.TIME_UNSET
             }
-            if (isPermanent(loadErrorInfo.exception)) return C.TIME_UNSET
+            if (isNonRetriable(loadErrorInfo.exception)) return C.TIME_UNSET
             return super.getRetryDelayMsFor(loadErrorInfo)
         }
 
-        private fun rateLimited(error: Throwable?): HttpDataSource.InvalidResponseCodeException? {
+        /**
+         * Whether retrying the same request cannot produce a different answer.
+         *
+         * A 403/404/410 refuses the URL itself, so the next open would be the
+         * same refused request — the app's own recovery re-resolves or falls
+         * back instead (see [recoverFrom]). Left to Media3's default these
+         * spent up to three requests on a dead addon URL before the fallback
+         * could run.
+         */
+        internal fun isNonRetriable(error: Throwable?): Boolean =
+            httpFailure(error, StreamRefusalRecovery::isRefusal) != null || isPermanent(error)
+
+        private fun rateLimited(error: Throwable?): HttpDataSource.InvalidResponseCodeException? =
+            httpFailure(error) { code ->
+                HqRetryPolicy.isRateLimited(code) || HqRetryPolicy.isSleepingGateway(code)
+            }
+
+        private fun httpFailure(
+            error: Throwable?,
+            matches: (Int) -> Boolean,
+        ): HttpDataSource.InvalidResponseCodeException? {
             var cause = error
             var depth = 0
             while (cause != null && depth++ < CAUSE_DEPTH) {
                 if (cause is HttpDataSource.InvalidResponseCodeException &&
-                    (HqRetryPolicy.isRateLimited(cause.responseCode) ||
-                        HqRetryPolicy.isSleepingGateway(cause.responseCode))
+                    matches(cause.responseCode)
                 ) {
                     return cause
                 }
