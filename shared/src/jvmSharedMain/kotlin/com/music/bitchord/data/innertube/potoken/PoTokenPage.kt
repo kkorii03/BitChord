@@ -212,10 +212,12 @@ const val PO_TOKEN_HTML = """<!DOCTYPE html>
         throw new Error('ODM:Invalid - result is not Uint8Array, got: ' + Object.prototype.toString.call(result));
       }
 
-      // Validate token size (expected 110-128 bytes per BgUtils documentation)
-      if ((result.length < 100 || result.length > 140) && result.length !== tokenSizeWarned) {
+      // Only a truncated token is suspicious. There is no useful upper bound:
+      // current BotGuard builds return tokens well past the old 110-128 byte
+      // range (556 bytes on an S24) and YouTube still accepts them.
+      if (result.length < 100 && result.length !== tokenSizeWarned) {
         tokenSizeWarned = result.length;
-        console.warn('[obtainPoToken] Token size ' + result.length + ' bytes may be outside expected range (110-128)');
+        console.warn('[obtainPoToken] Token size ' + result.length + ' bytes looks truncated (expected at least 100)');
       }
 
       return result;
