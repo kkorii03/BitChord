@@ -1,0 +1,26 @@
+﻿Kotlin Android app (task/u19-tg, BitChord Korean fork of a YouTube Music client). Real phone logs from the user's S24 on 11-03 (two diagnostic exports, ~90k lines) show this symptom 54 times:
+SYMPTOM: HQ library upgrades did not land; automatic retries exhausted
+Pattern: hq-library: .*did not land|D9-hq-library
+Sample lines (deduplicated, ids/numbers vary):
+   feature-health: D8-failed-start attempts=0
+   feature-health: D9-download failures=24
+feature-health: D9-hq-library failures=17
+   	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.run(r8-map-id-1b571db1c8492466b1827955613ba66dd81c25525325f08297b10829cf316b36:88)
+   
+2026-11-02 20:12:34.422 W/BitChord hq-library: Yb0Z7BOwx2w did not land; automatic retries exhausted, waiting for a manual pass
+2026-11-02 20:40:25.770 W/BitChord hq-library: 9RfVp-GhKfs did not land; it will be retried after the cooldown
+
+Task:
+1. Find the code that logs these lines and every path that leads to them. Decide: is this an APP DEFECT (wrong decision, wasted retries/network/battery, user-visible failure, wrong song/no audio, UI stall) or the app CORRECTLY handling an outside failure (server refusing, track blocked in Korea) with no better option?
+2. If it is an app defect: fix the root cause with the smallest change. First write a JVM test that FAILS on the current code, then make it pass. Name new test classes in the summary (you may not edit .github/workflows).
+3. If the app already behaves correctly: change NOTHING and say why in the summary (that is a valid, useful answer ??do not invent work).
+Rules: battery first (no polling timers, event-based); never fall back to a music video (MV) for a song; re-read every caller and type of anything you change; keep upstream code intact (Korean code in ko/ with one-line // [KO] hooks); unknown Android/Media3 APIs: context7; use grep/Select-String (no rg).
+Summary of at most 10 lines: verdict (defect / correct) / root cause with file:line / key change / tests and results / REMOVED-LINES AUDIT / not done. Follow AGENTS.md (ponytail) rules.
+
+== 2 차 작업 (현재 브랜치 = 이전 차수 결과) ==
+엄격 기준: 아래 독립 검토자 지적의 HIGH·MEDIUM 은 전부 고칠 것(드문 경우라는 이유로 보류 금지). 그리고 이전 차수가 docs/review-1031/ 문서에 '문서에만 남김/미해결'로 둔 HIGH·MEDIUM 도 이번에 고칠 것 — 재생 핵심 경로(곡 해석·싱크·크로스페이드)라도 고치되 문서 해당 줄에 '폰 검증 필요' 표시. 지적이 틀렸으면 코드 줄 근거로 반박을 요약에. 새로 고친 곳마다 수정 전 실패하는 테스트. 이전 차수에서 고친 것을 되돌리지 말 것.
+검토 지적:
+VERDICT: ISSUES 1
+MEDIUM `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/net/HqAutoDownloadPolicy.kt:87` — The new 502/504 transient rule only sees a status code that survives to `automaticFailure`; when a pinned automatic upgrade hits a sleeping addon while resolving the route, `AddonSource.streamInternal` swallows the 502/504 and `KoDownloadPipeline.routeForVerified` (`app/src/main/java/com/music/bitchord/ko/downloads/KoDownloadPipeline.kt:75`) throws the code-less Korean "검증된 고음질 음원을 받을 수 없습니다", which `isTransientFailure` still classifies as permanent, so that path still exhausts retries. Fix: propagate the 502/504/rest deadline from `AddonUnavailable` into the download failure, or classify an `AddonUnavailable` with a rest deadline as transient.
+Not checked: the actual 11-03 diagnostic exports, so whether 502/504 is the dominant `did not land` cause remains unverified.
+마지막 요약에 지적 번호별 처리(고침/반박+근거) 한 줄씩.
