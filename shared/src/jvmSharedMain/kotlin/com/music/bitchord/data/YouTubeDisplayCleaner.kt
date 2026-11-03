@@ -16,9 +16,9 @@ import com.music.bitchord.data.sources.TrackMatcher
  * [com.music.bitchord.data.cover.YouTubeCoverResolver]) is preferred when it
  * exists; this cleaner is the fallback for the rows it cannot confirm.
  *
- * A cover stays in the list because it is music, but reads as
- * `Song (cover)` with the singer (or the uploader when the title names none)
- * as its artist, so a fan upload cannot pass for the original recording.
+ * A cover stays in the list because it is music, but reads as the song it
+ * covers and `원곡자 · 가수 커버` as its byline, so a fan upload cannot pass
+ * for the original recording.
  */
 internal object YouTubeDisplayCleaner {
 
@@ -35,7 +35,9 @@ internal object YouTubeDisplayCleaner {
      * [clean] has to rewrite.
      */
     fun cleanUpload(song: Song, knownArtists: Set<String> = emptySet()): Song {
-        if (song.albumId != null) return song
+        // A catalogue match can land on a cover video too — its album id is the
+        // original's. The cover still reads as the uploader's performance.
+        if (song.albumId != null && !CoverTitles.isCover(song)) return song
         val credit = song.artist.trim()
         return clean(song, if (credit.isEmpty()) knownArtists else knownArtists + credit)
     }
@@ -87,18 +89,34 @@ internal object YouTubeDisplayCleaner {
     }
 
     private fun cleanCover(song: Song, cover: CoverTitles.Cover): Song {
-        val title = cover.title.trim().ifBlank { song.title.trim() }
-        val performer = cover.singer.trim()
-            .ifBlank { cleanChannel(song.artist).ifBlank { song.artist.trim() } }
-            .takeUnless { TrackMatcher.isSoundtrackCredit(it) }
+        val title = cover.title.trim()
+            .replace(EMPTY_BRACKETS, " ")
+            .replace(WHITESPACE, " ")
+            .trim()
+            .ifBlank { song.title.trim() }
+        val uploader = cleanChannel(song.artist).ifBlank { song.artist.trim() }
+        // The original's artist is never the cover's artist: when the title
+        // named it as the singer, the uploader is who actually sings.
+        val singer = CoverTitles.stripUploadSuffix(
+            cover.singer.trim().ifBlank { uploader },
+        )
+            .takeUnless { CoverTitles.sameName(it, cover.originalArtist) }
+            ?.ifBlank { uploader }
+            ?.takeUnless { TrackMatcher.isSoundtrackCredit(it) }
             .orEmpty()
+        val original = cover.originalArtist?.trim()
+            ?.takeUnless {
+                it.isBlank() || CoverTitles.sameName(it, singer) || TrackMatcher.isSoundtrackCredit(it)
+            }
+        val byline = listOfNotNull(original, singer.takeIf { it.isNotBlank() }?.let { "$it 커버" })
+            .joinToString(" · ")
         return song.copy(
-            title = if (title.endsWith(COVER_SUFFIX, ignoreCase = true)) title else "$title$COVER_SUFFIX",
-            artist = performer,
+            title = title,
+            artist = byline.ifBlank { song.artist.trim() },
             originalTitle = song.originalTitle ?: song.title,
             originalArtist = song.originalArtist ?: song.artist,
-            coverSinger = song.coverSinger ?: performer.takeIf { it.isNotBlank() },
-            coverOriginalArtist = song.coverOriginalArtist ?: cover.originalArtist,
+            coverSinger = song.coverSinger ?: singer.takeIf { it.isNotBlank() },
+            coverOriginalArtist = song.coverOriginalArtist ?: original,
         )
     }
 
@@ -119,12 +137,12 @@ internal object YouTubeDisplayCleaner {
             .replace(WHITESPACE, " ")
             .trim()
             .ifBlank { song.title.trim() }
-        val performer = cleanChannel(song.artist).ifBlank { song.artist.trim() }
-            .takeUnless { TrackMatcher.isSoundtrackCredit(it) }
-            .orEmpty()
+        val performer = CoverTitles.stripUploadSuffix(
+            cleanChannel(song.artist).ifBlank { song.artist.trim() },
+        ).takeUnless { TrackMatcher.isSoundtrackCredit(it) }.orEmpty()
         return song.copy(
-            title = if (title.endsWith(COVER_SUFFIX, ignoreCase = true)) title else "$title$COVER_SUFFIX",
-            artist = performer,
+            title = title,
+            artist = performer.takeIf { it.isNotBlank() }?.let { "$it 커버" }.orEmpty(),
             // A second pass sees the already-cleaned title; it must not replace
             // the upload's own title stored on the first pass.
             originalTitle = song.originalTitle ?: song.title.takeUnless { alreadyMarked },
@@ -436,7 +454,13 @@ object StoredSongDisplay {
 
     fun clean(song: Song): Song {
         if (song.videoId.isBlank()) return song.withVideoThumbnailFallback()
-        if (song.albumId != null && !TrackMatcher.isSoundtrackCredit(song.artist)) {
+        // Catalogue metadata normally means the row is already display-ready,
+        // but a cover video can be matched to the original's release. Its
+        // singer is still the uploader, not the catalogue artist.
+        if (song.albumId != null &&
+            !TrackMatcher.isSoundtrackCredit(song.artist) &&
+            !CoverTitles.isCover(song)
+        ) {
             return song.withVideoThumbnailFallback()
         }
         val key = keyOf(song)

@@ -77,8 +77,8 @@ class YouTubeDisplayCleanerTest {
 
         val cleaned = YouTubeDisplayCleaner.clean(cover)
 
-        assertEquals("Shape of You (cover)", cleaned.title)
-        assertEquals("Jane", cleaned.artist)
+        assertEquals("Shape of You", cleaned.title)
+        assertEquals("Ed Sheeran · Jane 커버", cleaned.artist)
     }
 
     // Phone 11-03: each pass turned "(cover)" into "( )" and added another
@@ -86,14 +86,15 @@ class YouTubeDisplayCleanerTest {
     @Test
     fun `a title ending in (cover) stays the same however often it is cleaned`() {
         val once = YouTubeDisplayCleaner.clean(song("화조도 花鳥圖 (cover)", "오화요"))
-        assertEquals("화조도 花鳥圖 (cover)", once.title)
+        assertEquals("화조도 花鳥圖", once.title)
+        assertEquals("오화요 커버", once.artist)
         assertEquals(once.title, YouTubeDisplayCleaner.clean(once).title)
     }
 
     @Test
     fun `a title saved with empty brackets is mended`() {
         val cleaned = YouTubeDisplayCleaner.clean(song("Night We Shine ( ) ( ) (cover)", "오화요"))
-        assertEquals("Night We Shine (cover)", cleaned.title)
+        assertEquals("Night We Shine", cleaned.title)
     }
 
     @Test
@@ -117,8 +118,8 @@ class YouTubeDisplayCleanerTest {
 
         val cleaned = YouTubeDisplayCleaner.clean(cover)
 
-        assertEquals("Marigold (cover)", cleaned.title)
-        assertEquals("\uC624\uD654\uC694", cleaned.artist)
+        assertEquals("Marigold", cleaned.title)
+        assertEquals("\uC544\uC774\uBBAD \u00B7 \uC624\uD654\uC694 \uCEE4\uBC84", cleaned.artist)
     }
 
     @Test
