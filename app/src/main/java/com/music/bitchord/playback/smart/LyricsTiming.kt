@@ -2994,48 +2994,62 @@ object LyricsTiming {
         key: Int,
         engine: String,
         probe: NextSyncProbe? = null,
-    ): Boolean = songSyncGate.withLock {
-        // Checked again under the gate: another song's 429 may have marked
-        // this one while its flight was waiting here.
-        val pending = store(context).get(song.videoId)
-        val retryAt = pending?.songRetryAtMs
-        if (pending?.songRetryKey == key && retryAt != null && retryAt > System.currentTimeMillis()) {
-            probe?.failure = NextPrepPolicy.SyncFailure.RATE_LIMIT
-            return@withLock false
-        }
+    ): Boolean {
+        // The gate exists for the request (a 429 is account-wide), but the
+        // audio used to be fetched under it too: [VideoAudio.songWavCopy] waits
+        // up to two minutes for an opening to download, and the next row's
+        // check held the gate that long while the playing song's queued behind
+        // it — on the 11-03 emulators its answer landed 3-5 minutes in, after
+        // the song had ended. Each window is fetched and decoded first, off the
+        // gate (VideoAudio keeps it, so [runSongCheck] reads it back at once);
+        // the gate is held only to send it and apply the answer.
+        VideoAudio.songWavCopy(context, song, SongCheckWindow.FIRST_SECONDS)
         // The first pass listens to the short opening that is already on disk,
         // so the screen is corrected while the song is still playing. The full
         // opening follows on the same cold playback: applied as a refinement,
         // or as the first answer when the short one could not fit.
-        val first = runSongCheck(
-            context,
-            song,
-            lines,
-            key,
-            engine,
-            probe,
-            untilSeconds = SongCheckWindow.FIRST_SECONDS,
-        ) ?: return@withLock false
-        val firstOk = applySongCheck(context, song, key, engine, first)
-        if (!SongCheckWindow.needsFullOpening(first.result)) return@withLock firstOk
-        val full = runSongCheck(
-            context,
-            song,
-            lines,
-            key,
-            engine,
-            probe,
-            untilSeconds = VideoAudio.SONG_CHECK_SECONDS,
-        ) ?: return@withLock firstOk
-        if (!SongCheckWindow.fullMayReplace(
-                firstFitted = first.fitted != null,
-                fullFitted = full.fitted != null,
-            )
-        ) {
-            return@withLock firstOk
+        val (first, firstOk) = songSyncGate.withLock {
+            // Checked again under the gate: another song's 429 may have marked
+            // this one while its flight was waiting here.
+            val pending = store(context).get(song.videoId)
+            val retryAt = pending?.songRetryAtMs
+            if (pending?.songRetryKey == key && retryAt != null && retryAt > System.currentTimeMillis()) {
+                probe?.failure = NextPrepPolicy.SyncFailure.RATE_LIMIT
+                return@withLock null
+            }
+            val first = runSongCheck(
+                context,
+                song,
+                lines,
+                key,
+                engine,
+                probe,
+                untilSeconds = SongCheckWindow.FIRST_SECONDS,
+            ) ?: return@withLock null
+            first to applySongCheck(context, song, key, engine, first)
+        } ?: return false
+        if (!SongCheckWindow.needsFullOpening(first.result)) return firstOk
+        VideoAudio.songWavCopy(context, song, VideoAudio.SONG_CHECK_SECONDS)
+        return songSyncGate.withLock {
+            val full = runSongCheck(
+                context,
+                song,
+                lines,
+                key,
+                engine,
+                probe,
+                untilSeconds = VideoAudio.SONG_CHECK_SECONDS,
+            ) ?: return@withLock firstOk
+            if (!SongCheckWindow.fullMayReplace(
+                    firstFitted = first.fitted != null,
+                    fullFitted = full.fitted != null,
+                )
+            ) {
+                return@withLock firstOk
+            }
+            val fullOk = applySongCheck(context, song, key, engine, full)
+            fullOk || firstOk
         }
-        val fullOk = applySongCheck(context, song, key, engine, full)
-        fullOk || firstOk
     }
 
     /**
