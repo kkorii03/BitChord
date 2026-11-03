@@ -33,6 +33,15 @@ class CoverDisplay1103Test {
         isVideo = isVideo,
     )
 
+    // The user's own example (11-03): title is the original title only, artist
+    // is '<original artist> · <singer> 커버', no '(cover)' anywhere.
+    @Test
+    fun `Tomboy by 오화요 reads as the user specified`() {
+        val shown = StoredSongDisplay.clean(song("Tomboy((G)I-DLE)", "오화요"))
+        assertEquals("Tomboy", shown.title)
+        assertEquals("(G)I-DLE · 오화요 커버", shown.artist)
+    }
+
     @Test
     fun `an upload suffix never becomes part of the singer`() {
         listOf("가사포함", "가사", "lyrics", "MV", "풀버전").forEach { suffix ->
