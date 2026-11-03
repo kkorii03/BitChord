@@ -165,6 +165,16 @@ class CoverTitlesEdgeTest {
     }
 
     @Test
+    fun aNestedArtistBracketOnTheArtistsOwnBrandedChannelIsNotACover() {
+        listOf("(G)I-DLE - Topic", "(G)I-DLE Official").forEach { channel ->
+            assertNull(CoverTitles.read("Tomboy((G)I-DLE)", channel, null), channel)
+        }
+        // Someone else's upload of the same title is still a cover.
+        val read = cover("Tomboy((G)I-DLE)", "오화요")
+        assertEquals("(G)I-DLE", read.originalArtist)
+    }
+
+    @Test
     fun aCoverTitleWithAnOriginalCreditAndNoDashReadsTheOriginal() {
         val read = cover("정승환 '0+0' Cover (원곡 : 한로로)", "정승환")
         assertEquals("0+0", read.title)

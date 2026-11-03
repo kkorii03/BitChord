@@ -989,14 +989,9 @@ object CoverTitles {
         if (artist == null) {
             // "Tomboy((G)I-DLE)": the bracket around the artist is itself
             // bracketed, which a single-level group cannot see.
-            nestedTrailingGroup(rest)?.let { (inner, credit) ->
-                if (credit.startsWith("(") && credit.contains(")") &&
-                    inner.isNotEmpty() && !isVersionWord(credit) && !isDescriptor(credit) &&
-                    !isGenericCredit(credit) && !OST.containsMatchIn(credit)
-                ) {
-                    artist = credit
-                    rest = inner
-                }
+            nestedArtistCredit(rest)?.let { (inner, credit) ->
+                artist = credit
+                rest = inner
             }
         }
         if (artist == null) {
@@ -1046,6 +1041,20 @@ object CoverTitles {
             }
         }
         return null
+    }
+
+    /**
+     * The original's artist in a nested trailing bracket and the title left
+     * when it is removed. Shared by [songAndCredit] and
+     * [readNestedArtistBracket] so their guards cannot drift apart.
+     */
+    private fun nestedArtistCredit(text: String): Pair<String, String>? {
+        val (inner, credit) = nestedTrailingGroup(text) ?: return null
+        if (!credit.startsWith("(") || !credit.contains(")") ||
+            isVersionWord(credit) || isDescriptor(credit) || isGenericCredit(credit) ||
+            OST.containsMatchIn(credit)
+        ) return null
+        return inner to credit
     }
 
     private fun hasHangul(text: String) = text.any { it in '가'..'힣' || it in 'ㄱ'..'ㆎ' }
@@ -1202,11 +1211,10 @@ object CoverTitles {
      * on the record's own channel the same title is the record.
      */
     private fun readNestedArtistBracket(raw: String, channel: String): Cover? {
-        val (titleText, credit) = nestedTrailingGroup(raw) ?: return null
-        if (!credit.startsWith("(") || !credit.contains(")") || credit.length < 3) return null
-        if (isVersionWord(credit) || isDescriptor(credit) || isGenericCredit(credit) || OST.containsMatchIn(credit)) return null
+        val (titleText, credit) = nestedArtistCredit(raw) ?: return null
+        if (credit.length < 3) return null
         val artist = credit.trim()
-        if (sameName(artist, channel)) return null
+        if (isChannelName(artist, channel)) return null
         val title = cleanTitle(titleText) ?: return null
         val singer = cleanName(channel)?.takeUnless { isVersionWord(it) || isDescriptor(it) } ?: return null
         return Cover(title = title, originalArtist = artist, singer = singer)
