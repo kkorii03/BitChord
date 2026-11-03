@@ -18,8 +18,59 @@ class LyricsPerLineTest {
         }
     }
 
+    /** The words of [line] placed at [residualMs], except [outlierWord]'s words shifted by [outlierMs]. */
+    private fun heardLineWithOutlier(
+        line: LyricLine,
+        residualMs: Long,
+        outlierWord: String,
+        outlierMs: Long,
+    ): List<LyricsWordAlign.Heard> =
+        heardLine(line, residualMs).map { word ->
+            if (word.text == outlierWord) {
+                word.copy(startMs = word.startMs + outlierMs, endMs = word.endMs + outlierMs)
+            } else {
+                word
+            }
+        }
+
     private fun layer(lines: List<LyricLine>, heard: List<LyricsWordAlign.Heard>) =
         LyricsPerLine.compute(lines, heard, heardAudioKey = 1, currentAudioKey = 1)
+
+    @Test
+    fun `a misheard first word does not set the line's move`() {
+        val lines = listOf(line(10_000, "alpha bravo charlie delta echo foxtrot"))
+        val heard = heardLineWithOutlier(lines[0], 0L, "alpha", 3_000L)
+        val result = layer(lines, heard)
+
+        assertEquals(1, result.anchors)
+        assertTrue(
+            kotlin.math.abs(result.shiftsMs[0]) <= 200L,
+            "first-word mishearing set the move: ${result.shiftsMs[0]}",
+        )
+    }
+
+    @Test
+    fun `a lone anchor between agreeing neighbours does not jump the line`() {
+        val lines = listOf(
+            line(10_000, "alpha bravo"),
+            line(14_000, "charlie delta echo"),
+            line(18_000, "foxtrot golf"),
+        )
+        val heard = buildList {
+            addAll(heardLine(lines[0], 0L))
+            addAll(heardLine(lines[1], LyricsPerLine.MAX_SHIFT_MANY_WORDS_MS))
+            addAll(heardLine(lines[2], 0L))
+        }
+        val result = layer(lines, heard)
+
+        assertEquals(3, result.anchors)
+        assertEquals(0L, result.shiftsMs[0])
+        assertTrue(
+            kotlin.math.abs(result.shiftsMs[1]) <= LyricsPerLine.MAX_INTERPOLATE_DIFF_MS,
+            "lone anchor jumped the line: ${result.shiftsMs[1]}",
+        )
+        assertEquals(0L, result.shiftsMs[2])
+    }
 
     @Test
     fun `a constant scatter is removed line by line`() {

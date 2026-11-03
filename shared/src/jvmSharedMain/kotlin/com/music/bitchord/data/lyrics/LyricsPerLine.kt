@@ -12,9 +12,9 @@ import kotlin.math.roundToLong
  * Pure, so the rule can be checked without Android, a transcript or the disk.
  * A line is an anchor only when at least [MIN_ANCHOR_WORDS] heard words matched
  * it in order and those words agree on its start to within
- * [MAX_ANCHOR_MAD_MS]. Its residual is the first matched word's time (stepped
- * back by its offset inside the line) less the line's time after the whole-song
- * map.
+ * [MAX_ANCHOR_MAD_MS]. Its residual is the median of its words' times (each
+ * stepped back by its offset inside the line) less the line's time after the
+ * whole-song map, so one misheard word cannot set the move.
  */
 object LyricsPerLine {
 
@@ -119,7 +119,7 @@ object LyricsPerLine {
             val mad = median(residuals.map { abs(it - median) })
             if (mad > MAX_ANCHOR_MAD_MS) continue
             val cap = if (words.size >= 3) MAX_SHIFT_MANY_WORDS_MS else MAX_SHIFT_TWO_WORDS_MS
-            val residual = residuals.first().coerceIn(-cap, cap)
+            val residual = median(residuals).coerceIn(-cap, cap)
             anchors += Anchor(index, lines[index].timeMs, residual)
         }
         if (anchors.isEmpty()) return Layer.identity(lines.size)
@@ -135,14 +135,18 @@ object LyricsPerLine {
             while (previousAnchor < anchors.size && anchors[previousAnchor].line < index) {
                 previousAnchor++
             }
-            val before = anchors.getOrNull(previousAnchor - 1)?.takeIf { it.line < index }
-            val after = anchors.getOrNull(previousAnchor)?.takeIf { it.line > index }
             val own = anchorAt[index]
+            val before = anchors.getOrNull(previousAnchor - 1)?.takeIf { it.line < index }
+            val after = if (own != null) {
+                anchors.getOrNull(previousAnchor + 1)?.takeIf { it.line > index }
+            } else {
+                anchors.getOrNull(previousAnchor)?.takeIf { it.line > index }
+            }
             val lineTime = lines[index].timeMs
             val target = when {
                 lineTime < heardFrom - OUTSIDE_HEARD_RANGE_MS ||
                     lineTime > heardTo + OUTSIDE_HEARD_RANGE_MS -> 0L
-                own != null -> own.residualMs
+                own != null && !loneAnchorDisagrees(own, before, after, lineTime) -> own.residualMs
                 before != null && after != null -> {
                     val span = after.timeMs - before.timeMs
                     if (span in 0..MAX_INTERPOLATE_SPAN_MS &&
@@ -180,6 +184,14 @@ object LyricsPerLine {
         val applied = shifts.count { it != 0L }
         val maxAbs = shifts.maxOfOrNull { abs(it) } ?: 0L
         return Layer(shifts.toList(), anchors.size, applied, maxAbs)
+    }
+
+    private fun loneAnchorDisagrees(own: Anchor, before: Anchor?, after: Anchor?, lineTime: Long): Boolean {
+        val nearBefore = before?.takeIf { abs(it.timeMs - lineTime) <= HOLD_RANGE_MS } ?: return false
+        val nearAfter = after?.takeIf { abs(it.timeMs - lineTime) <= HOLD_RANGE_MS } ?: return false
+        if (abs(nearAfter.residualMs - nearBefore.residualMs) >= MAX_INTERPOLATE_DIFF_MS) return false
+        return abs(nearBefore.residualMs - own.residualMs) > MAX_INTERPOLATE_DIFF_MS &&
+            abs(nearAfter.residualMs - own.residualMs) > MAX_INTERPOLATE_DIFF_MS
     }
 
     private fun nearest(before: Anchor, after: Anchor, atMs: Long): Long {
