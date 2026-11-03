@@ -319,7 +319,11 @@ internal object KoSongVersion {
             // waiver now would let that lookup cache its cut-short miss as a
             // verdict before the fresh search below even starts.
             songVersionVerdicts.beginRetry(song.videoId)
-            if (YtMusicRepository.audioVersionCache[song.videoId]?.videoId == song.videoId) {
+            if (SongVersionPolicy.cachedSongVersionIsMiss(
+                    song,
+                    YtMusicRepository.audioVersionCache[song.videoId],
+                )
+            ) {
                 YtMusicRepository.audioVersionCache.remove(song.videoId)
             }
         } else {
@@ -329,7 +333,11 @@ internal object KoSongVersion {
                     return null
                 }
                 SongVersionVerdictStore.Miss.RETRY -> {
-                    if (YtMusicRepository.audioVersionCache[song.videoId]?.videoId == song.videoId) {
+                    if (SongVersionPolicy.cachedSongVersionIsMiss(
+                            song,
+                            YtMusicRepository.audioVersionCache[song.videoId],
+                        )
+                    ) {
                         YtMusicRepository.audioVersionCache.remove(song.videoId)
                     }
                 }
@@ -347,7 +355,10 @@ internal object KoSongVersion {
             // was cached before the waiver was known. Reopen a miss; a found
             // recording is already useful.
             if (songVersionVerdicts.onWaiterCancelled(song.videoId, lookup.result.isCompleted) &&
-                YtMusicRepository.audioVersionCache[song.videoId]?.videoId == song.videoId
+                SongVersionPolicy.cachedSongVersionIsMiss(
+                    song,
+                    YtMusicRepository.audioVersionCache[song.videoId],
+                )
             ) {
                 YtMusicRepository.audioVersionCache.remove(song.videoId)
             }
@@ -360,7 +371,11 @@ internal object KoSongVersion {
             // stale verdict recorded before the waiver was known. Do not trust
             // it: spend the one retry on a fresh search after the join.
             songVersionVerdicts.beginFreshSearch(song.videoId)
-            if (YtMusicRepository.audioVersionCache[song.videoId]?.videoId == song.videoId) {
+            if (SongVersionPolicy.cachedSongVersionIsMiss(
+                    song,
+                    YtMusicRepository.audioVersionCache[song.videoId],
+                )
+            ) {
                 YtMusicRepository.audioVersionCache.remove(song.videoId)
             }
             answer = try {
@@ -413,7 +428,7 @@ internal object KoSongVersion {
         }
         // A song search can still surface a video upload; the whole point
         // here is to play the catalogue release, never another music video.
-        val found = search.getOrNull()?.takeIf { it.videoId != song.videoId && !it.isVideo }
+        val found = search.getOrNull()?.takeIf { SongVersionPolicy.isSongVersionOf(song, it) }
         val via = if (found != null) "search" else "none"
         // A completed search is the verdict, found or not. A failed request
         // is not "no version" and must be retried later. resolveAudio returns
@@ -431,7 +446,11 @@ internal object KoSongVersion {
         // through its own cache, drop it so the post-audio retry really
         // searches again.
         val provisional = songVersionVerdicts.store(song.videoId, found, definitive)
-        if (provisional && YtMusicRepository.audioVersionCache[song.videoId]?.videoId == song.videoId) {
+        if (provisional && SongVersionPolicy.cachedSongVersionIsMiss(
+                song,
+                YtMusicRepository.audioVersionCache[song.videoId],
+            )
+        ) {
             YtMusicRepository.audioVersionCache.remove(song.videoId)
         }
         // The store has the last word: a waiter that gave up after the check

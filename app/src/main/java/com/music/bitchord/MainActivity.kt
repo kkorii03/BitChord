@@ -1571,10 +1571,10 @@ private fun BitChordApp(
             }
             // The original MediaItem was never removed, so failure only needs
             // to release the loading state and resume it immediately.
-            if (audio == null || audio.videoId == song.videoId) {
+            if (audio == null || !SongVersionPolicy.isSongVersionOf(song, audio)) {
                 TrackLog.w(
                     "Player",
-                    "audio switch found no distinct official song " +
+                    "audio switch found no official song " +
                         "(${if (audio == null) "no answer" else "same id"}) " +
                         "(row video=${song.isVideo} typeUnknown=${song.typeUnknown})",
                     song.videoId,
@@ -4885,7 +4885,7 @@ private fun BitChordApp(
                             song.isVideo || song.typeUnknown -> {
                             val cached = YtMusicRepository.cachedAudioVersion(song.videoId)
                                 ?: YtMusicRepository.cachedAudioVersion(versionEffectiveSong.videoId)
-                            if (cached != null && cached.videoId != song.videoId &&
+                            if (cached != null && SongVersionPolicy.isSongVersionOf(song, cached) &&
                                 !versionAlignmentPending(cached.videoId)
                             ) {
                                 optimisticVersionSong = cached.copy(
