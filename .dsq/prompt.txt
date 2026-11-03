@@ -1,0 +1,43 @@
+﻿Kotlin Android app (task/u19-tg, BitChord Korean fork of a YouTube Music client). Real phone logs from the user's S24 on 11-03 (two diagnostic exports, ~90k lines) show this symptom 356 times:
+SYMPTOM: HQ addon calls fail (HTTP 402/500, connection closed) and are still called
+Pattern: addon (call|transport) failed
+Sample lines (deduplicated, ids/numbers vary):
+   2026-11-02 20:12:33.918 I/AUDIO_OUT AudioTrack 48000Hz encoding=4 reason=format
+   2026-11-02 20:12:33.970 I/BitChord recents: local read n=741 top=心臓を捧げよ！ - Shinzo wo Sasageyo ! (cover) | ダンスホール - Dance Hall (cover) | 끝났다는 것은 다시 시작된다는 것을 (cover)
+2026-11-02 20:12:34.323 W/BitChord   ✗ addon call failed https://bitchord-hires-addon.vercel.app/***: HTTP 402
+   2026-11-02 20:13:06.969 D/BitChord hq-search: 'Flowers' LastWave results=15 best=Flowers/Miley Cyrus/3:21 verdict=match
+   2026-11-02 20:13:07.062 D/BitChord hq-search: 'Flowers' Telegram Music results=9 best=Flowers/Harnoor/2:54 verdict=artist
+2026-11-02 20:13:07.068 W/BitChord   ✗ addon call failed https://eljohnzc-mono.de.deplexo.com/***: HTTP 500
+2026-11-03 01:25:03.622 W/BitChord   ✗ addon transport failed https://deezer.nom.deno.net/***: Failed to connect to deezer.nom.deno.net/[2602:f70f::1]:443
+2026-11-03 01:25:03.622 W/BitChord   ✗ addon call failed https://deezer.nom.deno.net/***: Failed to connect to deezer.nom.deno.net/[2602:f70f::1]:443
+2026-11-03 01:27:20.539 W/BitChord   ✗ addon transport failed https://bitchord-monochrome-addon.onrender.com/***: connection closed
+2026-11-03 01:27:20.540 W/BitChord   ✗ addon call failed https://bitchord-monochrome-addon.onrender.com/***: connection closed
+2026-11-03 08:17:18.546 W/BitChord   ✗ addon transport failed https://radha-50047163825.development.catalystappsail.in/***: connection closed
+2026-11-03 08:17:18.547 W/BitChord   ✗ addon call failed https://radha-50047163825.development.catalystappsail.in/***: connection closed
+2026-11-03 08:17:19.312 W/BitChord   ✗ addon transport failed https://gglos.geisselgottes.cfd/***: connection closed
+2026-11-03 08:17:19.313 W/BitChord   ✗ addon call failed https://gglos.geisselgottes.cfd/***: connection closed
+2026-11-03 08:20:34.646 W/BitChord   ✗ addon transport failed https://lastwaveaddons.clashprojects.qd.je/***: connection closed
+2026-11-03 08:20:35.289 W/BitChord   ✗ addon transport failed https://soundfean-musics.onrender.com/***: connection closed
+2026-11-03 08:22:32.662 W/BitChord   ✗ addon transport failed https://eljohnzc-mono.de.deplexo.com/***: timeout
+2026-11-03 08:22:32.662 W/BitChord   ✗ addon call failed https://eljohnzc-mono.de.deplexo.com/***: timeout
+2026-11-03 08:34:57.957 W/BitChord   ✗ addon transport failed https://music.vflix.shop/***: connection closed
+2026-11-03 08:34:57.957 W/BitChord   ✗ addon call failed https://music.vflix.shop/***: connection closed
+2026-11-03 08:35:23.747 W/BitChord   ✗ addon call failed https://lastwaveaddons.clashprojects.qd.je/***: connection closed
+2026-11-03 13:22:59.394 W/BitChord   ✗ addon transport failed https://eljohnzc-addon.de.deplexo.com/***: timeout
+2026-11-03 13:22:59.395 W/BitChord   ✗ addon call failed https://eljohnzc-addon.de.deplexo.com/***: timeout
+
+Task:
+1. Find the code that logs these lines and every path that leads to them. Decide: is this an APP DEFECT (wrong decision, wasted retries/network/battery, user-visible failure, wrong song/no audio, UI stall) or the app CORRECTLY handling an outside failure (server refusing, track blocked in Korea) with no better option?
+2. If it is an app defect: fix the root cause with the smallest change. First write a JVM test that FAILS on the current code, then make it pass. Name new test classes in the summary (you may not edit .github/workflows).
+3. If the app already behaves correctly: change NOTHING and say why in the summary (that is a valid, useful answer ??do not invent work).
+Rules: battery first (no polling timers, event-based); never fall back to a music video (MV) for a song; re-read every caller and type of anything you change; keep upstream code intact (Korean code in ko/ with one-line // [KO] hooks); unknown Android/Media3 APIs: context7; use grep/Select-String (no rg).
+Summary of at most 10 lines: verdict (defect / correct) / root cause with file:line / key change / tests and results / REMOVED-LINES AUDIT / not done. Follow AGENTS.md (ponytail) rules.
+
+== 2 차 작업 (현재 브랜치 = 이전 차수 결과) ==
+엄격 기준: 아래 독립 검토자 지적의 HIGH·MEDIUM 은 전부 고칠 것(드문 경우라는 이유로 보류 금지). 그리고 이전 차수가 docs/review-1031/ 문서에 '문서에만 남김/미해결'로 둔 HIGH·MEDIUM 도 이번에 고칠 것 — 재생 핵심 경로(곡 해석·싱크·크로스페이드)라도 고치되 문서 해당 줄에 '폰 검증 필요' 표시. 지적이 틀렸으면 코드 줄 근거로 반박을 요약에. 새로 고친 곳마다 수정 전 실패하는 테스트. 이전 차수에서 고친 것을 되돌리지 말 것.
+검토 지적:
+VERDICT: ISSUES 2
+HIGH — app/src/main/java/com/music/bitchord/data/sources/AddonSource.kt:370 — returning null for every `AddonUnavailable` removes the documented row-`streamURL` fallback on a transient 500/timeout, turning a track that previously played from the addon's permanent CDN link into no audio, and the REMOVED-LINES AUDIT ("no executable line removed") does not acknowledge this executable path loss. Fix: keep returning `fromRow()`, but prevent `bestAcross` from calling `SourceCooldown.succeeded()` when the failure mark changed during the answer.
+MEDIUM — app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt:1971-1973 — now that a fault returns null, `streamBest` keeps opening up to `STREAM_ATTEMPTS` (3) matching rows on the same broken endpoint per track, multiplying the failing `/stream` calls the task is about. Fix: break the loop on a changed `SourceCooldown.failureMark`, mirroring the existing `authMark` early exit.
+Skipped: full CI matrix. Risk: issue 1 only manifests when `/stream` faults while the row's own URL is still live.
+마지막 요약에 지적 번호별 처리(고침/반박+근거) 한 줄씩.
