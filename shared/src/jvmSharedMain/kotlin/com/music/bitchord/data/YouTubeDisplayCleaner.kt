@@ -92,20 +92,29 @@ internal object YouTubeDisplayCleaner {
         val title = cover.title.trim().ifBlank { song.title.trim() }
         val uploader = cleanChannel(song.artist).ifBlank { song.artist.trim() }
         // The original's artist is never the cover's artist: when the title
-        // named it as the singer, the uploader is who actually sings.
-        val singer = cover.singer.trim()
+        // named it as the singer, the uploader is who actually sings. The
+        // byline is the one rule from [CoverTitles.Cover.byline].
+        val singer = CoverTitles.stripUploadSuffix(cover.singer.trim())
             .takeUnless { CoverTitles.sameName(it, cover.originalArtist) }
             .orEmpty()
-        val performer = singer.ifBlank { uploader }
+            .ifBlank { uploader }
             .takeUnless { TrackMatcher.isSoundtrackCredit(it) }
             .orEmpty()
+        val original = (cover.originalArtist ?: song.coverOriginalArtist)?.trim()
+            ?.takeUnless { it.isBlank() || CoverTitles.sameName(it, singer) }
+            ?.takeUnless { TrackMatcher.isSoundtrackCredit(it) }
+        val artist = if (singer.isNotBlank()) {
+            CoverTitles.Cover(title, original, singer).byline
+        } else {
+            original.orEmpty()
+        }
         return song.copy(
-            title = if (title.endsWith(COVER_SUFFIX, ignoreCase = true)) title else "$title$COVER_SUFFIX",
-            artist = performer,
+            title = title,
+            artist = artist,
             originalTitle = song.originalTitle ?: song.title,
             originalArtist = song.originalArtist ?: song.artist,
-            coverSinger = song.coverSinger ?: performer.takeIf { it.isNotBlank() },
-            coverOriginalArtist = song.coverOriginalArtist ?: cover.originalArtist,
+            coverSinger = song.coverSinger ?: singer.takeIf { it.isNotBlank() },
+            coverOriginalArtist = song.coverOriginalArtist ?: original,
         )
     }
 
@@ -129,14 +138,23 @@ internal object YouTubeDisplayCleaner {
         val performer = cleanChannel(song.artist).ifBlank { song.artist.trim() }
             .takeUnless { TrackMatcher.isSoundtrackCredit(it) }
             .orEmpty()
+        val singer = performer.removeSuffix(" 커버").trim().ifBlank { performer }
+        val original = song.coverOriginalArtist?.trim()
+            ?.takeUnless { it.isBlank() || CoverTitles.sameName(it, singer) }
+            ?.takeUnless { TrackMatcher.isSoundtrackCredit(it) }
+        val artist = if (singer.isNotBlank()) {
+            CoverTitles.Cover(title, original, singer).byline
+        } else {
+            original.orEmpty()
+        }
         return song.copy(
-            title = if (title.endsWith(COVER_SUFFIX, ignoreCase = true)) title else "$title$COVER_SUFFIX",
-            artist = performer,
+            title = title,
+            artist = artist,
             // A second pass sees the already-cleaned title; it must not replace
             // the upload's own title stored on the first pass.
             originalTitle = song.originalTitle ?: song.title.takeUnless { alreadyMarked },
             originalArtist = song.originalArtist ?: song.artist.takeUnless { alreadyMarked },
-            coverSinger = song.coverSinger ?: performer.takeIf { it.isNotBlank() },
+            coverSinger = song.coverSinger ?: singer.takeIf { it.isNotBlank() },
         )
     }
 

@@ -178,6 +178,14 @@ object CoverTitles {
         readDuet(undated, channel)?.let { return it }
         val designated = channelId != null && channelId in designatedChannels()
         if (dated || designated) readB(undated)?.let { return it }
+        // A title with no dash but a trailing bracket — "Tomboy((G)I-DLE)" on a
+        // cover channel — names the original there. Only when the channel is
+        // known to be a cover singer: an ordinary "Song(Artist)" title is not a cover.
+        if (splitTopLevelDash(undated) == null &&
+            (designated || isKnownChannelSinger(channel))
+        ) {
+            readBracketCredit(undated, channel)?.let { return it }
+        }
         // "A - 곡(원곡가수)" with no date and no designated channel: the bracket
         // has to be a plausible original artist, never a translation or a take.
         if (splitTopLevelPipe(raw) == null) readB(undated, requireCredit = true)?.let { return it }
@@ -1106,6 +1114,49 @@ object CoverTitles {
         val (artist, song) = if (split != null) split else (null to head)
         val title = cleanTitle(song) ?: return null
         return Cover(title = title, originalArtist = artist?.let { cleanName(it) }, singer = singer)
+    }
+
+    /**
+     * "Tomboy((G)I-DLE)" with no dash on a cover channel: the bracket is the
+     * original. The bracket may nest — a group name is written "(G)I-DLE" —
+     * so its matching opener is found rather than [TRAILING_GROUP]'s inner rule.
+     */
+    private fun readBracketCredit(raw: String, channel: String): Cover? {
+        if (splitTopLevelDash(raw) != null) return null
+        val group = trailingCreditGroup(raw) ?: return null
+        val credit = raw.substring(group.first + 1, group.last).trim().takeIf {
+            it.isNotEmpty() && !isVersionWord(it) && !isDescriptor(it) && !isGenericCredit(it) &&
+                !isCreditMarkerOnly(it) && !OST.containsMatchIn(it) && !ANY_COVER_WORD.containsMatchIn(it)
+        } ?: return null
+        val title = cleanTitle(raw.substring(0, group.first)) ?: return null
+        // "봄날(Spring Day)" is the song's other spelling, not its artist.
+        if (isTranslation(title, credit)) return null
+        val singer = cleanName(channel)?.takeUnless { isVersionWord(it) || isDescriptor(it) } ?: return null
+        if (sameName(singer, credit)) return null
+        return Cover(title = title, originalArtist = credit, singer = singer)
+    }
+
+    /** The index range of the bracket closing [text], nesting included. */
+    private fun trailingCreditGroup(text: String): IntRange? {
+        val close = text.lastOrNull() ?: return null
+        val open = when (close) {
+            ')' -> '('
+            ']' -> '['
+            '）' -> '（'
+            '】' -> '【'
+            else -> return null
+        }
+        var depth = 0
+        for (i in text.indices.reversed()) {
+            when (text[i]) {
+                close -> depth++
+                open -> {
+                    depth--
+                    if (depth == 0) return i..text.lastIndex
+                }
+            }
+        }
+        return null
     }
 
     private fun readB(raw: String, requireCredit: Boolean = false): Cover? {

@@ -59,8 +59,8 @@ class StoredSongDisplayTest {
 
         val shown = StoredSongDisplay.clean(stored)
 
-        assertEquals("Marigold (cover)", shown.title)
-        assertEquals("오화요", shown.artist)
+        assertEquals("Marigold", shown.title)
+        assertEquals("아이묭 · 오화요 커버", shown.artist)
     }
 
     @Test
@@ -78,8 +78,8 @@ class StoredSongDisplayTest {
         CoverTitles.knownSingers = { setOf("아카네 리제") }
         val shown = StoredSongDisplay.clean(stored)
 
-        assertEquals("청록 (cover)", shown.title)
-        assertEquals("아카네 리제", shown.artist)
+        assertEquals("청록", shown.title)
+        assertEquals("아카네 리제 커버", shown.artist)
     }
 
     @Test
