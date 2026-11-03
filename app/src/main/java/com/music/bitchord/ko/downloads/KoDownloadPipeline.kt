@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.core.net.toUri
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.YtMusicRepository
+import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.net.DownloadedMvPolicy
 import com.music.bitchord.data.net.HqAutoDownloadPolicy
@@ -484,6 +485,10 @@ internal object KoDownloadPipeline {
         com.music.bitchord.download.HqLibraryUpgrade.onDownloadSettled(context, id, completed, failure, cancelled)
     }
 
+    /** A downloaded cover is still an upload even when its queue row lost the flag. */
+    fun recordedIsVideo(song: Song): Boolean =
+        song.isVideo || CoverTitles.lyricsQuery(song).isVideo
+
     /** One record row for an id filed against a newly written file. */
     fun metadataFor(
         song: Song,
@@ -507,7 +512,7 @@ internal object KoDownloadPipeline {
         downloadFormat = downloadFormat,
         dateAddedSeconds = dateAddedSeconds,
         soundSourceVideoId = soundSourceVideoId,
-        isVideo = song.isVideo,
+        isVideo = recordedIsVideo(song),
         typeUnknown = song.typeUnknown,
         hqSourceConfigId = hq?.sourceConfigId,
         hqTrackId = hq?.trackId,
@@ -522,7 +527,9 @@ internal object KoDownloadPipeline {
 
 /** Whether this record names a music-video row. */
 internal fun SavedSongMetadata.wasVideoRow(): Boolean =
-    isVideo == true || (soundSourceVideoId != null && soundSourceVideoId != videoId)
+    isVideo == true || (soundSourceVideoId != null && soundSourceVideoId != videoId) ||
+        // A cover saved before the flag was kept still reads as its upload.
+        isCoverRecording()
 
 /** Whether this record is a cover, live clip or other chosen performance. */
 internal fun SavedSongMetadata.isCoverRecording(): Boolean =

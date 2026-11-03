@@ -304,11 +304,22 @@ object LyricsTiming {
         // verified high-quality copy whose clock differs from YouTube's, and
         // that map applies even when no measurement or AI answer exists.
         val entry = store(context).get(videoId) ?: Entry()
-        val key = textKey(lines, audioSource)
-        val originalBase = if (baseAllowed) {
+        var key = textKey(lines, audioSource)
+        var originalBase = if (baseAllowed) {
             baseOf(entry, lines, measuredAllowed, isVideo, audioSource, key, videoId)
         } else {
             null
+        }
+        // A downloaded video's answer may have been kept under its file key
+        // by an older song check; the video key and the file key name the same
+        // recording for a video, so look there before saying there is none.
+        if (originalBase == null && baseAllowed && isVideo && audioSource == null) {
+            val fileSource = audioSourceKey(videoId, localFile = true)
+            val fileKey = textKey(lines, fileSource)
+            baseOf(entry, lines, measuredAllowed, isVideo, fileSource, fileKey, videoId)?.let {
+                key = fileKey
+                originalBase = it
+            }
         }
         val playing = playingClock(videoId)
         var converted = 0
@@ -3427,15 +3438,25 @@ object LyricsTiming {
     ): Pair<Boolean, String> {
         val entry = store(context).get(videoId)
         val key = textKey(lines, audioSource)
-        val match = entry?.let { e -> e.ai?.match?.takeIf { e.aiTextKey == key } }
+        // A downloaded video may still carry an answer under the file key an
+        // older song check wrote; both keys name the same recording.
+        val fileKey = if (audioSource == null) {
+            textKey(lines, audioSourceKey(videoId, localFile = true))
+        } else {
+            null
+        }
+        fun keyed(savedKey: Int?): Boolean = savedKey != null &&
+            (entry?.aiTextKey == savedKey) &&
+            (entry?.ai != null || entry?.aiShiftMs != null || entry?.aiStarts != null)
+        val match = entry?.let { e ->
+            e.ai?.match?.takeIf { e.aiTextKey == key || e.aiTextKey == fileKey }
+        }
         // A stored answer is either the AI/song-check one keyed to these
         // lyrics, or a chroma measurement. The measurement is not keyed to a
         // lyric sheet (it times the recording), so requiring aiTextKey here
         // made every measured video report stored=n even when its next-prep
         // measurement had just been saved.
-        val stored = (entry?.aiTextKey == key &&
-            (entry.ai != null || entry.aiShiftMs != null || entry.aiStarts != null)) ||
-            hasAutoAnswer(entry)
+        val stored = keyed(key) || keyed(fileKey) || hasAutoAnswer(entry)
         val recheck = if (!downloaded) {
             DownloadedSyncCheck.Recheck.NONE.token
         } else {
@@ -3447,6 +3468,24 @@ object LyricsTiming {
         }
         return stored to recheck
     }
+
+    /**
+     * The record-timed check a downloaded file always gets, whatever its row's
+     * video flag says: the file's own audio is what is being checked.
+     */
+    internal fun downloadRecheckSongCheckWanted(
+        sungLines: Int,
+        title: String,
+        artist: String,
+        texts: List<String>,
+    ): Boolean = LyricsAiGuard.songTimingWanted(
+        isVideo = false,
+        timed = true,
+        sungLines = sungLines,
+        title = title,
+        artist = artist,
+        texts = texts,
+    )
 
     /**
      * Re-checks a downloaded file's stored lyrics and sync once, when they
@@ -3496,9 +3535,11 @@ object LyricsTiming {
             return null
         }
         val sung = lines.withIndex().filter { it.value.text.isNotBlank() }
-        if (!LyricsAiGuard.songTimingWanted(
-                isVideo = isVideoRow(song),
-                timed = true,
+        // This check listens to the file's own audio, so it is the record-timed
+        // song check even when the row is a video/cover. Its answer is stored
+        // under the key the screen reads for that row.
+        val videoRow = isVideoRow(song)
+        if (!downloadRecheckSongCheckWanted(
                 sungLines = sung.size,
                 title = title,
                 artist = artist,
@@ -3507,13 +3548,17 @@ object LyricsTiming {
         ) {
             TrackLog.d(
                 TAG,
-                "lyrics-sync: download re-check skipped by guard video=${isVideoRow(song)} " +
+                "lyrics-sync: download re-check skipped by guard video=$videoRow " +
                     "sung=${sung.size}",
                 song.videoId,
             )
             return null
         }
-        val audioSource = audioSourceKey(song.videoId, localFile = true)
+        val audioSource = if (videoRow) {
+            null
+        } else {
+            audioSourceKey(song.videoId, localFile = true)
+        }
         val key = textKey(lines, audioSource)
         val before = store(context).get(song.videoId)
         val beforeMatch = before?.let { e -> e.ai?.match?.takeIf { e.aiTextKey == key } }
