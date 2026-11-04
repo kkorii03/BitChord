@@ -867,19 +867,50 @@ object CoverTitles {
     /**
      * "곡명 / 부른사람" with no "Cover" anywhere (phone 11-04: "Memories /
      * 오화요" kept the singer in the title, so the lyrics were searched for the
-     * wrong song). The same shape is an ordinary "Artist / Song" row, so the
-     * name after the slash has to be one already seen on a cover.
+     * wrong song). The same shape is an ordinary "Artist / Song" row, a
+     * medley ("Dynamite / Butter") and a translated title, so a name already
+     * seen on a cover is always read and a name seen for the first time only
+     * when [looksLikeNewSinger] says so. Either way the name is learned, so
+     * the next title it appears in needs no guessing.
      */
     private fun readSlashSinger(raw: String, channel: String): Cover? {
         if (splitTopLevelPipe(raw) != null) return null
         val (song, name) = splitTopLevelSlash(raw) ?: return null
-        val keys = knownSingerKeys()
-        if (keys.isEmpty()) return null
         val singer = cleanName(name)?.takeUnless { isVersionWord(it) || isDescriptor(it) } ?: return null
-        if (compactName(singer) !in keys) return null
         if (isChannelName(singer, channel)) return null
+        val known = compactName(singer) in knownSingerKeys()
+        if (!known && !looksLikeNewSinger(singer, song, channel)) return null
         val title = cleanTitle(song) ?: return null
+        if (!known) runCatching { onSingerSeen(singer) }
         return Cover(title = title, originalArtist = null, singer = singer)
+    }
+
+    /**
+     * A name after a slash that no cover has named before: short, with no
+     * title word in it, not the uploader, and not the song's own name, its
+     * translation or a medley partner. The song runs longer than a name
+     * ("Memories / 오화요") and is written in another script; a medley
+     * ("Dynamite / Butter") and an "Artist / Song" row are neither.
+     * shortcut: a medley whose halves are in different scripts ("봄날 / DNA")
+     * and a short song under a long name still read the wrong way,
+     * <narrow when the song titles are indexed>.
+     */
+    private fun looksLikeNewSinger(name: String, song: String, channel: String): Boolean {
+        val words = name.split(Regex("\\s+")).filter { it.isNotBlank() }
+        if (words.size !in 1..2 || name.length > 16) return false
+        if (name.any(Char::isDigit)) return false
+        if (isGenericCredit(name) || OST.containsMatchIn(name) || ANY_COVER_WORD.containsMatchIn(name)) return false
+        if (words.any { it.lowercase() in NOT_NAMES }) return false
+        // "Artist / Song" on the artist's own upload is the artist first.
+        if (isChannelName(song, channel)) return false
+        if (song.trim().length <= name.length) return false
+        val key = compactName(name)
+        val songKey = compactName(song)
+        if (key.length < 2 || songKey.isEmpty()) return false
+        if (songKey.contains(key) || key.contains(songKey)) return false
+        // "봄날 / Spring Day" names the song twice, not a singer.
+        if (isTranslation(song, name) || isTranslation(name, song)) return false
+        return hasHangul(name) != hasHangul(song) || hasKanaOrHan(name) != hasKanaOrHan(song)
     }
 
     /**
@@ -1173,7 +1204,7 @@ object CoverTitles {
     }
 
     /** Words a channel and a title can share without being the same person. */
-    private val NOT_NAMES = setOf("cover", "커버", "노래", "music", "official", "song", "songs", "channel", "채널")
+    private val NOT_NAMES = setOf("cover", "커버", "노래", "노래방", "music", "official", "song", "songs", "channel", "채널")
 
     /**
      * A channel that re-uploads clips rather than the artist's own: its name

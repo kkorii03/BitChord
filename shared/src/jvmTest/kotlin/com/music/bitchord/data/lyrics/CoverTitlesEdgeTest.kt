@@ -373,8 +373,53 @@ class CoverTitlesEdgeTest {
         assertEquals("Memories", read.title)
         assertEquals("오화요", read.singer)
         assertNull(read.originalArtist)
-        // A name the app has never seen singing is still part of the title.
-        assertNull(CoverTitles.read("Memories / 정체불명", "허니즈 HONEYZ", null))
+        // A medley is two songs, not a song and a singer.
+        assertNull(CoverTitles.read("Dynamite / Butter", "허니즈 HONEYZ", null))
+    }
+
+    /** A singer no cover has named yet leaves the title on the first sight of it. */
+    @Test
+    fun aNewSingerAfterTheSongSlashIsReadAndLearned() {
+        CoverTitles.knownSingers = { emptySet() }
+        val told = mutableListOf<String>()
+        CoverTitles.onSingerSeen = { told += it }
+
+        val read = cover("Something / 오화요", "허니즈 HONEYZ")
+        assertEquals("Something", read.title)
+        assertEquals("오화요", read.singer)
+        assertNull(read.originalArtist)
+        assertEquals(listOf("오화요"), told)
+
+        // Learned: the same name in a shape the first sight would refuse reads now.
+        CoverTitles.knownSingers = { setOf("오화요") }
+        val short = cover("사랑 / 오화요", "허니즈 HONEYZ")
+        assertEquals("사랑", short.title)
+        assertEquals("오화요", short.singer)
+    }
+
+    /** The slash shapes that are a title, a translation or an artist, not a singer. */
+    @Test
+    fun aSlashThatIsNotASingerLeavesTheTitleWhole() {
+        CoverTitles.knownSingers = { emptySet() }
+        val told = mutableListOf<String>()
+        CoverTitles.onSingerSeen = { told += it }
+        listOf(
+            // A medley: both halves are the song, in one script.
+            "Dynamite / Butter",
+            // A translated title names the song twice.
+            "봄날 / Spring Day",
+            "Spring Day / 봄날",
+            // "Artist / Song" on the artist's own upload is the artist first.
+            "IU / Blueming",
+            // A take, a tag or a clip word after the slash.
+            "Dynamite / Live",
+            "Dynamite / 노래방",
+            // The tail is already part of the song's name.
+            "Hype Boy / Boy",
+        ).forEach { title ->
+            assertNull(CoverTitles.read(title, "IU", null), title)
+        }
+        assertTrue(told.isEmpty(), told.toString())
     }
 
     /** Phone 11-04: a cleaned byline was cleaned again, one word at a time. */

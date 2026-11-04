@@ -380,6 +380,18 @@ class YouTubeDisplayCleanerTest {
         assertEquals("킹 누", cleaned.artist)
     }
 
+    // Phone 11-04: a venue before the dash was dropped as if it were the act.
+    @Test
+    fun `a venue before the dash keeps the whole title`() {
+        val dome = YouTubeDisplayCleaner.clean("Tokyo Dome - Song Title", "킹 누")
+        assertEquals("Tokyo Dome - Song Title", dome.title)
+        assertEquals("킹 누", dome.artist)
+
+        val korean = YouTubeDisplayCleaner.clean("올림픽공원 체조경기장 - 봄날", "BTS")
+        assertEquals("올림픽공원 체조경기장 - 봄날", korean.title)
+        assertEquals("BTS", korean.artist)
+    }
+
     // Phone 11-04: a cleaned byline was cleaned again, so the artist read
     // "오화요 커버 커버 커버 커버".
     @Test
@@ -414,5 +426,23 @@ class YouTubeDisplayCleanerTest {
         } finally {
             CoverTitles.knownSingers = singers
         }
+    }
+
+    // The same defect for a singer no cover had named before: the slash tail
+    // left the title only once the name was already known.
+    @Test
+    fun `a new singer after a slash leaves the title on the first sight`() {
+        val row = Song(
+            videoId = "v",
+            title = "Something / 오화요",
+            artist = "허니즈 HONEYZ",
+            thumbnailUrl = null,
+            isVideo = true,
+        )
+
+        val cleaned = YouTubeDisplayCleaner.clean(row)
+
+        assertEquals("Something", cleaned.title)
+        assertEquals("오화요 커버", cleaned.artist)
     }
 }
