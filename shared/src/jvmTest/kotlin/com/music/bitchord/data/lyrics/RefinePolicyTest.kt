@@ -243,10 +243,50 @@ class RefinePolicyTest {
         val result = RefinePolicy.compute(lines, heard)
 
         assertTrue(result.applied)
-        assertEquals(RefinePolicy.Model.LINEAR, result.model)
+        assertEquals(RefinePolicy.Model.DRIFT, result.model)
         assertEquals(12, result.lines)
         assertTrue(abs(result.slopePerMin - 2_000.0) <= 100.0, "slope ${result.slopePerMin} ms/min")
         assertTrue(abs(result.medianMs - 1_800L) <= 50L, "offset ${result.medianMs} ms")
+    }
+
+    @Test
+    fun twoMatchingLettersAreNotEnoughToMoveTheSheet() {
+        // Sol review 11-04: placeLines places a line on as little as two opening
+        // letters, so eight lines of "abcdef" against eight "abzzzz" gave a
+        // perfect fit — offset 9.7 s, 1000 ms/min — and moved the whole sheet on
+        // nonsense text. Only lines whose own letters the transcript mostly
+        // matched may feed the drift.
+        val lines = List(8) { index -> line(20_000L + index * 12_000L, "abcdef") }
+        val heard = List(8) { index -> heard("abzzzz", 30_000L + index * 12_200L) }
+        val result = RefinePolicy.compute(lines, heard)
+
+        assertFalse(result.applied)
+        assertEquals(0.0, result.slopePerMin)
+    }
+
+    @Test
+    fun aTightConstantPastTheWideWindowIsStillFound() {
+        // 11-04 OmEqDBr1GvE: the sheet sits 8.4 s off, flat. The wide window
+        // used to look only 8 s out, under the 10 s cap it allows, so the move
+        // was never seen; the whole-song alignment's flat fit finds it.
+        val lines = List(12) { index -> line(20_000L + index * 12_000L, "line$index") }
+        val heard = lines.map { heard(it.text, it.timeMs - 8_400L) }
+        val result = RefinePolicy.compute(lines, heard)
+
+        assertTrue(result.applied)
+        assertEquals(RefinePolicy.Model.WIDE, result.model)
+        assertEquals(-8_400L, result.medianMs)
+    }
+
+    @Test
+    fun anAiAnswerIsNotFittedAgainstItself() {
+        // Gemini's "words" are its own line times: placed against the lines they
+        // are a perfect straight line, which says nothing about the video.
+        val lines = List(12) { index -> line(20_000L + index * 12_000L, "line$index") }
+        val heard = lines.map { heard(it.text, it.timeMs + 1_800L + it.timeMs / 30) }
+        val result = RefinePolicy.compute(lines, heard, lineLevelWords = true)
+
+        assertFalse(result.applied)
     }
 
     @Test

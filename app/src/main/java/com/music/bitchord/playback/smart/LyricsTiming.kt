@@ -182,21 +182,23 @@ object LyricsTiming {
 
     /**
      * The refine's move at [atMs]: a constant or a drift up to [untilMs],
-     * capped at the narrow or wide limit it belongs to. Shared by the timing
-     * actually displayed and the "is this timing still unsettled?" check, so
-     * the two cannot disagree about how far the refine reached.
+     * capped at the narrow or wide limit it belongs to ([wide]: the whole-song
+     * drift and the wide window's one move, which grow with the song). Shared by
+     * the timing actually displayed and the "is this timing still unsettled?"
+     * check, so the two cannot disagree about how far the refine reached.
      */
-    private fun refineMove(atMs: Long, refineMs: Long, slopePerMin: Double, untilMs: Long): Long {
+    private fun refineMove(
+        atMs: Long,
+        refineMs: Long,
+        slopePerMin: Double,
+        untilMs: Long,
+        wide: Boolean = false,
+    ): Long {
         val move = refineMs + slopePerMin / 60_000.0 * minOf(atMs, untilMs)
-        // A constant past the narrow cap can only be the wide window's
-        // arrangement-sized move, and so is a measured drift, whose total grows
-        // with the song (11-04 WxYgXmZ9xh8: a 5 s drift, mostly cut by the narrow
-        // cap). A narrow constant keeps ±[RefinePolicy.MAX_SHIFT_MS].
-        val cap = if (slopePerMin != 0.0 || abs(refineMs) > RefinePolicy.MAX_SHIFT_MS) {
-            RefinePolicy.MAX_WIDE_SHIFT_MS
-        } else {
-            RefinePolicy.MAX_SHIFT_MS
-        }
+        // Only a move measured across the whole song may pass the narrow cap: a
+        // narrow constant or line is held to ±[RefinePolicy.MAX_SHIFT_MS]
+        // (11-04 Sol: a mis-aligned chorus must not move lines 10 s).
+        val cap = if (wide) RefinePolicy.MAX_WIDE_SHIFT_MS else RefinePolicy.MAX_SHIFT_MS
         return move.roundToLong().coerceIn(-cap, cap)
     }
 
@@ -244,6 +246,12 @@ object LyricsTiming {
          */
         val refineUntilMs: Long = Long.MAX_VALUE,
         /**
+         * The refine's move was measured across the whole song (a drift, or the
+         * wide window's one move), so it may reach the wide cap. A narrow
+         * constant or line is held to the narrow one.
+         */
+        val refineWide: Boolean = false,
+        /**
          * The words the per-line layer uses, on the base/HQ/refine clock (the
          * hand's correction is not in them), and the rendition keys they were
          * heard on. Null when no word-level transcript belongs to the sound
@@ -261,7 +269,8 @@ object LyricsTiming {
         val extraMs: Long get() = manualMs - if (base?.byAi == true) aiBiasMs else 0L
 
         /** The refine's move at [atMs], capped at the narrow or wide limit it belongs to. */
-        fun refineAt(atMs: Long): Long = refineMove(atMs, refineMs, refineSlopePerMin, refineUntilMs)
+        fun refineAt(atMs: Long): Long =
+            refineMove(atMs, refineMs, refineSlopePerMin, refineUntilMs, refineWide)
     }
 
     /**
@@ -421,6 +430,7 @@ object LyricsTiming {
                     ),
                 ),
                 refineClock,
+                lineLevelWords = refineSource.lineLevel,
             )
         } else {
             RefinePolicy.Result.NONE
@@ -429,6 +439,7 @@ object LyricsTiming {
             refineMs = if (refine.applied) refine.medianMs else 0L,
             refineSlopePerMin = if (refine.applied) refine.slopePerMin else 0.0,
             refineUntilMs = refineClock.maxOfOrNull { it.endMs } ?: Long.MAX_VALUE,
+            refineWide = refine.applied && refine.model.wide,
         )
         // The per-line layer runs after refine and under the hand's correction.
         // Its words are already on the playing clock, so [apply] compares them
@@ -521,7 +532,16 @@ object LyricsTiming {
      * song's first ninety seconds), falling back to any AI words already heard.
      * The clock is the one those words were heard on.
      */
-    private class WordSource(val words: List<LyricsWordAlign.Heard>, val clock: Clock)
+    private class WordSource(
+        val words: List<LyricsWordAlign.Heard>,
+        val clock: Clock,
+        /**
+         * [words] are an AI's own line times, not a transcript of what was sung.
+         * A drift read from those is the answer agreeing with itself, so
+         * [RefinePolicy] must not fit one.
+         */
+        val lineLevel: Boolean = false,
+    )
 
     private fun refineWords(
         entry: Entry,
@@ -540,7 +560,12 @@ object LyricsTiming {
                 entry.heardWords to clockOf(entry.heardClock)
             else -> emptyList<SavedWord>() to Clock.Unknown
         }
-        return WordSource(saved.map { LyricsWordAlign.Heard(it.t, it.s, it.e) }, clock)
+        // Only the AI answer's own words can be line-level: the refine's listen
+        // is a transcript, and Gemini's "words" are its line times.
+        val lineLevel = entry.aiEngine == ENGINE_GEMINI &&
+            saved.isNotEmpty() &&
+            (entry.refineHeardKey != key || entry.refineHeardWords.isEmpty())
+        return WordSource(saved.map { LyricsWordAlign.Heard(it.t, it.s, it.e) }, clock, lineLevel)
     }
 
     /** Heard words moved onto the HQ copy's clock, where [apply] puts the lines after [Timing.hq]. */
@@ -1121,8 +1146,10 @@ object LyricsTiming {
         }
         val appliedMs = if (result.applied) result.medianMs else null
         val appliedSlope = if (result.applied) result.slopePerMin else 0.0
+        val appliedWide = if (result.applied) result.model.wide else null
         if (entry.refineMs == appliedMs && entry.refineSlopePerMin == appliedSlope &&
-            entry.refineLines == result.lines && entry.refineMad == result.madMs
+            entry.refineLines == result.lines && entry.refineMad == result.madMs &&
+            entry.refineWide == appliedWide
         ) {
             return result
         }
@@ -1144,6 +1171,7 @@ object LyricsTiming {
                 refineSlopePerMin = appliedSlope,
                 refineLines = result.lines,
                 refineMad = result.madMs,
+                refineWide = appliedWide,
                 refineClock = playingClock(videoId).saved(),
             )
         }
@@ -1167,6 +1195,7 @@ object LyricsTiming {
                 "model=${when (result.model) {
                     RefinePolicy.Model.WIDE -> "wide"
                     RefinePolicy.Model.LINEAR -> "linear"
+                    RefinePolicy.Model.DRIFT -> "drift"
                     RefinePolicy.Model.CONST -> "const"
                 }} " +
                 "applied=${if (result.applied) "y" else "n"} base=$baseLabel",
@@ -1209,6 +1238,7 @@ object LyricsTiming {
                 ),
             ),
             words,
+            lineLevelWords = source.lineLevel,
         )
     }
 
@@ -1505,8 +1535,11 @@ object LyricsTiming {
         // The hold ends with the last word heard, as it does for Timing.
         val untilMs = heard.maxOfOrNull { it.endMs } ?: Long.MAX_VALUE
         val seen = entry.refineMs?.let { refineMs ->
+            // Entries saved before the model was kept: a constant past the
+            // narrow cap can only be the wide window's move.
+            val wide = entry.refineWide ?: (abs(refineMs) > RefinePolicy.MAX_SHIFT_MS)
             starts.map { start ->
-                start?.let { it + refineMove(it, refineMs, entry.refineSlopePerMin, untilMs) }
+                start?.let { it + refineMove(it, refineMs, entry.refineSlopePerMin, untilMs, wide) }
             }
         } ?: starts
         return@withContext BaseChoicePolicy.grosslyOff(
@@ -4257,6 +4290,12 @@ object LyricsTiming {
         val refineSlopePerMin: Double = 0.0,
         val refineLines: Int = 0,
         val refineMad: Long? = null,
+        /**
+         * The move was measured across the whole song ([RefinePolicy.Model.wide]),
+         * so it may reach the wide cap. Null on entries saved before the model
+         * was kept: a constant past the narrow cap was the wide window's move.
+         */
+        val refineWide: Boolean? = null,
         /** The audio clock the refine result was computed on; null on entries saved before clocks. */
         val refineClock: String? = null,
         /** The lyrics (text key) the refine transcript belongs to, and its words on the video's clock. */

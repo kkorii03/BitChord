@@ -41,8 +41,23 @@ import kotlin.math.roundToLong
  */
 object RefinePolicy {
 
-    /** Which of the three models produced a [Result]. */
-    enum class Model { CONST, LINEAR, WIDE }
+    /** Which of the models produced a [Result]. */
+    enum class Model {
+        CONST,
+        LINEAR,
+        WIDE,
+
+        /**
+         * A straight line fitted over the whole song's placements, from
+         * [drift]: a sheet timed to another edit. Its move grows with the song,
+         * so it is the only one that may reach [MAX_WIDE_SHIFT_MS].
+         */
+        DRIFT,
+        ;
+
+        /** Whether this model's move may reach the wide cap rather than the narrow one. */
+        val wide: Boolean get() = this == WIDE || this == DRIFT
+    }
 
     /** What one song's lines say about the timing, and whether it may be moved. */
     data class Result(
@@ -59,7 +74,7 @@ object RefinePolicy {
         val lines: Int,
         /** The drift in ms per minute when a straight line applied; 0 for a constant move. */
         val slopePerMin: Double = 0.0,
-        /** Whether this is the narrow constant/line fit or the wide common move. */
+        /** Which model this is: the narrow constant/line fit, the wide move, or a whole-song drift. */
         val model: Model = Model.CONST,
     ) {
         /**
@@ -92,8 +107,15 @@ object RefinePolicy {
     /** However far the median points, one refine moves no further than this. */
     const val MAX_SHIFT_MS = 1_500L
 
-    /** The second attempt looks this far either side of a line's shown time. */
-    private const val WIDE_WINDOW_MS = 8_000L
+    /** However far the wide median points, one refine moves no further than this. */
+    const val MAX_WIDE_SHIFT_MS = 10_000L
+
+    /**
+     * The second attempt looks this far either side of a line's shown time: as
+     * far as the wide cap allows a move to be, plus the bin tolerance, so a move
+     * the cap permits can actually be found (it was 8 s, under the 10 s cap).
+     */
+    private const val WIDE_WINDOW_MS = MAX_WIDE_SHIFT_MS + 400L
 
     /** Candidate residuals are voted into bins this wide. */
     private const val WIDE_BIN_MS = 200L
@@ -109,9 +131,6 @@ object RefinePolicy {
 
     /** A move smaller than this belongs to the narrow window, not the wide one. */
     const val MIN_WIDE_SHIFT_MS = 1_500L
-
-    /** However far the wide median points, one refine moves no further than this. */
-    const val MAX_WIDE_SHIFT_MS = 10_000L
 
     /** How many opening letters of a line are matched against the transcript. */
     private const val PREFIX_LETTERS = 4
@@ -132,14 +151,40 @@ object RefinePolicy {
     /** No refine claims a drift faster than this (600 ms/min). */
     const val MAX_SLOPE = 0.01
 
+    /**
+     * How much of a line's own letters the whole-song alignment must have
+     * matched before [drift] may use that line's start. A start is placed on as
+     * little as two opening letters, so without this a transcript that shares
+     * only "ab" with a line would place it — and a tight fit through such
+     * placements moved a whole sheet 10 s on nonsense text (Sol review, 11-04).
+     * The same bar [withHeardWords] holds a line's words to.
+     */
+    const val MIN_DRIFT_MATCH_RATIO = 0.6
+
+    /**
+     * A sheet timed to another edit drifts by seconds over minutes, not by a
+     * minute a minute: 4% is 2.4 s a minute. [TimingFit]'s general 0.75–1.35 is
+     * the pace of a cover, not of one lyric file against one video.
+     */
+    const val MAX_DRIFT_RATE = 0.04
+
+    /** At least this share of the placed lines must sit on the fitted line. */
+    const val MIN_DRIFT_AGREEMENT = 0.75
+
     /** A line whose residuals still spread this far is not a straight drift. */
     const val MAX_LINEAR_MAD_MS = 200L
 
     /**
      * [lines] as they are shown, against the [heard] words of the sound that
-     * is playing. Both are on the same clock.
+     * is playing. Both are on the same clock. [lineLevelWords] says [heard] is
+     * an AI's own line times rather than a transcript: a drift read from those
+     * would be the answer agreeing with itself, so no drift is fitted.
      */
-    fun compute(lines: List<LyricLine>, heard: List<LyricsWordAlign.Heard>): Result {
+    fun compute(
+        lines: List<LyricLine>,
+        heard: List<LyricsWordAlign.Heard>,
+        lineLevelWords: Boolean = false,
+    ): Result {
         if (lines.isEmpty() || heard.isEmpty()) return Result.NONE
         val stream = letterStream(heard)
         if (stream.chars.isEmpty()) return Result.NONE
@@ -180,7 +225,7 @@ object RefinePolicy {
         // edit does not sit one move away, it drifts, and by definition its later
         // lines are past the narrow window: read the slope from the whole-song
         // alignment before trying the wide window's single move.
-        drift(lines, heard)?.let { return it }
+        drift(lines, heard, lineLevelWords)?.let { return it }
         // Only then look for the one big move a provider from another arrangement leaves behind.
         wide(lines, stream)?.let { return it }
         if (residuals.isEmpty()) return Result.NONE
@@ -288,19 +333,33 @@ object RefinePolicy {
      * song at once, so the same fit is read here ([TimingFit]): one straight
      * line, kept only when it is tight and leaves no measured line further from
      * its own hearing than the constant move would.
+     *
+     * A tight fit is not proof the words matched, though: a placement needs two
+     * opening letters, so only lines whose own letters the transcript mostly
+     * matched ([MIN_DRIFT_MATCH_RATIO]) are used. A fit that is flat is one
+     * constant move, and is kept as [Model.WIDE] — the arrangement-sized move
+     * the wide window's ten-line vote can miss (11-04 OmEqDBr1GvE: −8.4 s).
      */
-    private fun drift(lines: List<LyricLine>, heard: List<LyricsWordAlign.Heard>): Result? {
-        val placed = LyricsWordAlign.placeLines(lines.map { it.text }, heard)
+    private fun drift(
+        lines: List<LyricLine>,
+        heard: List<LyricsWordAlign.Heard>,
+        lineLevelWords: Boolean,
+    ): Result? {
+        // An AI's own line times placed against themselves fit perfectly and say nothing.
+        if (lineLevelWords) return null
+        val placed = LyricsWordAlign.placeLinesDetailed(lines.map { it.text }, heard)
         val points = lines.indices.mapNotNull { index ->
-            placed[index]?.let { lines[index].timeMs to it }
+            val start = placed.starts[index] ?: return@mapNotNull null
+            if (placed.matchedShare.getOrElse(index) { 0.0 } < MIN_DRIFT_MATCH_RATIO) return@mapNotNull null
+            lines[index].timeMs to start
         }
         if (points.size < MIN_LINEAR_LINES) return null
         val span = points.maxOf { it.first } - points.minOf { it.first }
         if (span < MIN_LINEAR_SPAN_MS) return null
         val line = TimingFit.fit(points, minPoints = MIN_LINEAR_LINES) ?: return null
-        // A pace the evidence does not support is the record's own: not a drift.
-        if (line.rate == 1.0) return null
+        if (line.inliers < points.size * MIN_DRIFT_AGREEMENT) return null
         val slope = line.rate - 1.0
+        if (abs(slope) > MAX_DRIFT_RATE) return null
         val residuals = points.map { (shown, at) -> at - shown }
         val constant = median(residuals)
         val errors = points.indices.map { index ->
@@ -308,6 +367,17 @@ object RefinePolicy {
             abs(residuals[index] - moved) to abs(residuals[index] - constant)
         }
         val mad = median(errors.map { it.first })
+        if (slope == 0.0) {
+            if (mad > MAX_WIDE_MAD_MS) return null
+            if (abs(line.offsetMs) < MIN_WIDE_SHIFT_MS) return null
+            return Result(
+                applied = true,
+                medianMs = line.offsetMs.coerceIn(-MAX_WIDE_SHIFT_MS, MAX_WIDE_SHIFT_MS),
+                madMs = mad,
+                lines = points.size,
+                model = Model.WIDE,
+            )
+        }
         if (mad > MAX_LINEAR_MAD_MS) return null
         // No measured line may end up further from its own hearing than the
         // constant move left it, beyond the fit's own scatter.
@@ -318,7 +388,7 @@ object RefinePolicy {
             madMs = mad,
             lines = points.size,
             slopePerMin = slope * 60_000.0,
-            model = Model.LINEAR,
+            model = Model.DRIFT,
         )
     }
 
