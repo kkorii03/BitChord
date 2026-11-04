@@ -908,6 +908,16 @@ class LyricsController(
                 AudioCache.completedRenditions.collect { completed ->
                     if (request.videoId !in completed) return@collect
                     if (currentLyricsRequest?.videoId != request.videoId) return@collect
+                    // The wider refine listen waits for the rest of the file
+                    // (RefineExtendPolicy.hasAudioFor). This event says it
+                    // arrived: forget this playback's refusal and ask again
+                    // now, instead of waiting for the next playback. Only when
+                    // this playback already asked, so a copy that was whole
+                    // before the lyrics loaded is not timed twice.
+                    if (refineHeardStartedFor != null) {
+                        refineHeardStartedFor = null
+                        refreshTiming(generation, lines)
+                    }
                     if (_lyricsTiming.value.aiAvailable) return@collect
                     if (!aiTimingAvailable(request, lines)) return@collect
                     _lyricsTiming.update { it.copy(aiAvailable = true) }

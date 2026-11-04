@@ -5,15 +5,41 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-/** A refine that found too few lines is given a longer listen only when the lyrics outrun it. */
+/**
+ * A refine is given a longer listen when the lyrics outrun what was heard, or
+ * when the drift it applied is only known to the transcript's end.
+ */
 class RefineExtendPolicyTest {
 
-    private fun result(applied: Boolean = false, lines: Int = 5) =
-        RefinePolicy.Result(applied = applied, medianMs = 0L, madMs = 0L, lines = lines)
+    private fun result(
+        applied: Boolean = false,
+        lines: Int = 5,
+        slopePerMin: Double = 0.0,
+        model: RefinePolicy.Model = RefinePolicy.Model.CONST,
+    ) = RefinePolicy.Result(
+        applied = applied,
+        medianMs = 0L,
+        madMs = 0L,
+        lines = lines,
+        slopePerMin = slopePerMin,
+        model = model,
+    )
 
     @Test
-    fun anAppliedRefineIsNeverExtended() {
-        assertFalse(RefineExtendPolicy.shouldExtend(result(applied = true), 90.0, 200_000L))
+    fun anAppliedConstantMoveWithEveryLineInsideTheListenIsNotExtended() {
+        assertFalse(RefineExtendPolicy.shouldExtend(result(applied = true), 90.0, 100_000L))
+    }
+
+    @Test
+    fun aDriftingSongNeedsALongerListenButASettledOneDoesNot() {
+        val drifting = result(
+            applied = true,
+            lines = 20,
+            slopePerMin = 200.0,
+            model = RefinePolicy.Model.LINEAR,
+        )
+        assertTrue(RefineExtendPolicy.shouldExtend(drifting, 90.0, 80_000L))
+        assertFalse(RefineExtendPolicy.shouldExtend(result(applied = true, lines = 20), 90.0, 80_000L))
     }
 
     @Test
@@ -33,7 +59,13 @@ class RefineExtendPolicyTest {
 
     @Test
     fun anAlreadyExtendedListenIsNotRepeated() {
-        assertFalse(RefineExtendPolicy.shouldExtend(result(), 180.0, 400_000L))
+        assertFalse(
+            RefineExtendPolicy.shouldExtend(
+                result(applied = true, slopePerMin = 200.0, model = RefinePolicy.Model.LINEAR),
+                RefineExtendPolicy.MAX_EXTEND_SECONDS,
+                400_000L,
+            ),
+        )
     }
 
     @Test
