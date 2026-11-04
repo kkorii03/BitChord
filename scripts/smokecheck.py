@@ -205,6 +205,7 @@ def check_log(
     crashes: list[str] = []
     next_preps: list[tuple[str, str]] = []
     video_radio_ids: set[str] = set()
+    prep_video_by_design: set[tuple[str, str]] = set()
 
     for raw in text.splitlines():
         line = raw.rstrip("\r")
@@ -298,6 +299,10 @@ def check_log(
             match = NEXT_PREP_RE.search(line)
             if match:
                 next_preps.append((match.group("title"), match.group("version")))
+                # `hq=none(video)`: the HQ step called the row a video, so the
+                # video-radio settings are what keep it on its picture.
+                if "hq=none(video)" in line:
+                    prep_video_by_design.add((match.group("title"), match.group("version")))
 
         if "hold skipped (video radio)" in line:
             match = VIDEO_RADIO_RE.search(line)
@@ -489,6 +494,10 @@ def check_log(
             # `hold skipped (video radio)`: the settings ask to keep playing
             # video songs, so the row is meant to stay on its video (phone 11-04,
             # "Golden"). The row is a video on purpose, not a missed swap.
+            continue
+        if (title, version) in prep_video_by_design:
+            # `hq=none(video)`: the HQ step itself said this row is a video, so
+            # the same settings kept it (11-04, "And July").
             continue
         if version not in mv_ids and not is_mv_title(title):
             continue
