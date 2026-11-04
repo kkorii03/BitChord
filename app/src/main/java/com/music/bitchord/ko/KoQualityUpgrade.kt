@@ -297,12 +297,25 @@ internal object KoQualityUpgrade {
         retryAfter.remove(mediaId)
     }
 
-    /** The fork state [QualityUpgrade.forget] drops with the track. */
+    /**
+     * The fork state [QualityUpgrade.forget] drops with the track.
+     *
+     * [retryAfter] is deliberately not one of them. The automatic pass forgets
+     * the track as soon as it has decided what to do with what it found, which
+     * is one statement after [recordAnswer] has armed the bounded retry for an
+     * inconclusive answer — so forgetting it there deleted the window in the
+     * same millisecond it was set, and the "will retry" line it logged was
+     * never true. 11-04: a lossless request whose only find was a lossy copy,
+     * while the lossless sources were timing out in that very race; nothing
+     * asked them again. The three callers that must clear it — a fresh play
+     * ([QualityUpgrade.onPlaybackStarted]), a new player session
+     * ([forgetLastSession]) and a new hand-made request ([afterAskByHand]) —
+     * still clear it, by name.
+     */
     fun forget(mediaId: String) {
         lastPending.remove(mediaId)
         failedSources.remove(mediaId)
         failedHosts.remove(mediaId)
-        retryAfter.remove(mediaId)
         candidateQueue.remove(mediaId)
         manualSessions.remove(mediaId)?.let(SourceResolver::clearManualProbes)
     }
