@@ -4,6 +4,7 @@ import com.music.bitchord.data.sources.addon.AddonClient
 import com.music.bitchord.data.sources.addon.AddonUnavailable
 import com.music.bitchord.playback.HqHostTracker
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -107,5 +108,45 @@ class AddonClientHealthTest {
         assertNotNull(record)
         assertEquals(1, record!!.failures)
         assertEquals(1, record.responseSamples)
+    }
+
+    @Test
+    fun `a long host rest is refused instead of parked`() = runBlocking {
+        // The addon's own ten-minute rest, asked for by the server itself. A
+        // sleep of that length runs on the client's scope, which no caller can
+        // cancel, so every track during the rest parked a coroutine and they
+        // all woke on the same instant against a host that asked to be left
+        // alone.
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse =
+                MockResponse().setResponseCode(429).setHeader("Retry-After", "600")
+        }
+        val client = AddonClient(server.url("/").toString())
+
+        assertTrue(client.probeSearch().isFailure)
+
+        val second = withTimeout(5_000) { client.probeSearch() }
+        assertTrue(
+            "a rest past the wait budget must fail as a source fault, not hang",
+            second.exceptionOrNull() is AddonUnavailable,
+        )
+        assertEquals("the refused call must not reach the server", 1, server.requestCount)
+    }
+
+    @Test
+    fun `a missing manifest is remembered instead of asked again`() = runBlocking {
+        // An addon that never published one is still a working addon, and both
+        // search and stream read the manifest for their settings — so a 404
+        // that was forgotten was paid again on every call.
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse =
+                MockResponse().setResponseCode(404)
+        }
+        val client = AddonClient(server.url("/").toString())
+
+        assertTrue(client.manifest().isFailure)
+        assertTrue(client.manifest().isFailure)
+
+        assertEquals("a 404 manifest must be remembered for its TTL", 1, server.requestCount)
     }
 }

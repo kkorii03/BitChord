@@ -91,6 +91,16 @@ class YouTubeCoverResolverTest {
     }
 
     @Test
+    fun `one service answering is enough to remember a miss`() {
+        // One blocked service is this app's network, not evidence the cover
+        // does not exist; both failing is not an answer at all.
+        assertTrue(YouTubeCoverResolver.settlesMiss(itunesAnswered = true, deezerAnswered = false))
+        assertTrue(YouTubeCoverResolver.settlesMiss(itunesAnswered = false, deezerAnswered = true))
+        assertTrue(YouTubeCoverResolver.settlesMiss(itunesAnswered = true, deezerAnswered = true))
+        assertFalse(YouTubeCoverResolver.settlesMiss(itunesAnswered = false, deezerAnswered = false))
+    }
+
+    @Test
     fun `the cover cache drops the oldest entry at its cap`() {
         repeat(YouTubeCoverResolver.MAX_ENTRIES + 1) { index ->
             YouTubeCoverResolver.cachePutForTest("k$index", "https://art/$index.jpg", index.toLong())

@@ -203,12 +203,18 @@ internal object YouTubeCoverResolver {
             )
         }
 
-        // Both services answered and neither had the recording: settled, worth
-        // remembering. One failing is not an answer, so nothing is cached and a
-        // later look can still find it.
-        if (itunes != null && deezer != null) cache.put(key, NONE)
+        // At least one service answered and neither had the recording: settled
+        // enough to remember, because one service being unreachable is this
+        // app's network, not a statement that the cover does not exist. Two
+        // failures are not an answer, so nothing is cached and a later look can
+        // still find it.
+        if (settlesMiss(itunes != null, deezer != null)) cache.put(key, NONE)
         return null
     }
+
+    /** Whether a "no cover" answer may be remembered: at least one service answered. */
+    internal fun settlesMiss(itunesAnswered: Boolean, deezerAnswered: Boolean): Boolean =
+        itunesAnswered || deezerAnswered
 
     /**
      * Rewrites the thumbnail, title and artist of the first [limit] songs that

@@ -1,14 +1,23 @@
 package com.music.bitchord.data.innertube
 
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
  * A rate-limited URL must leave the resolver's cache so the playback retry
- * re-resolves instead of opening the same paused URL again.
+ * re-resolves instead of opening the same paused URL again. The two bounds
+ * below live here for the same reason: what the resolver keeps, and what it
+ * will wait for, must not grow with the length of a session.
  */
 class StreamResolverRateLimitTest {
+
+    private companion object {
+        /** StreamResolver.MAX_REMEMBERED, which is private to it. */
+        const val MAX_REMEMBERED = 32
+    }
 
     @Test
     fun `a rate-limited url is forgotten and the id re-resolves`() {
@@ -56,5 +65,33 @@ class StreamResolverRateLimitTest {
         }
 
         assertEquals(listOf(null to url), told)
+    }
+
+    @Test
+    fun `the loudness map is bounded like its siblings`() {
+        val ids = (0..(MAX_REMEMBERED + 8)).map { "loudness-${System.nanoTime()}-$it" }
+        ids.forEach { StreamResolver.rememberLoudness(it, -7.0) }
+
+        assertEquals(-7.0, StreamResolver.loudnessDbFor(ids.last()) ?: 0.0, 0.0)
+        assertNull(
+            "an entry past the ceiling must be dropped, not kept for the install's lifetime",
+            StreamResolver.loudnessDbFor(ids.first()),
+        )
+    }
+
+    @Test
+    fun `a busy extraction gate is refused by the cover loop, not waited on`() = runBlocking {
+        // The loop is a muted decoration for the cover; playback's extraction is
+        // a track a listener is waiting for. It used to poll the gate twenty
+        // times over twenty seconds instead of taking "busy" for an answer.
+        val gate = StreamResolver.extractionGateForTest
+        gate.lock()
+        try {
+            assertNull(
+                withTimeout(5_000) { StreamResolver.videoLoop("busy-gate-${System.nanoTime()}") },
+            )
+        } finally {
+            gate.unlock()
+        }
     }
 }
