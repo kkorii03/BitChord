@@ -21,19 +21,19 @@ class SyncDumpTest {
     fun `a line keeps the first sixty characters and stays on one line`() {
         val text = "a".repeat(80)
         assertEquals(
-            "sync-dump: line abc 3 1234 ${"a".repeat(60)}",
+            "sync-dump: line abc 3 1234 rep=1/1 words=0 ${"a".repeat(60)}",
             SyncDump.line("abc", 3, 1234L, text),
         )
         assertEquals(
-            "sync-dump: line abc 1 0 short",
+            "sync-dump: line abc 1 0 rep=1/1 words=0 short",
             SyncDump.line("abc", 1, 0L, "short"),
         )
         assertEquals(
-            "sync-dump: line abc 2 0 ${"b".repeat(60)}",
+            "sync-dump: line abc 2 0 rep=1/1 words=0 ${"b".repeat(60)}",
             SyncDump.line("abc", 2, 0L, "b".repeat(60)),
         )
         assertEquals(
-            "sync-dump: line abc 4 0 a b",
+            "sync-dump: line abc 4 0 rep=1/1 words=0 a b",
             SyncDump.line("abc", 4, 0L, "a\nb"),
         )
     }
@@ -48,12 +48,30 @@ class SyncDumpTest {
         assertEquals(
             listOf(
                 "sync-dump: begin abc playing=abc source=BiniLyrics base=ai shift=40 match=100 lines=3",
-                "sync-dump: line abc 1 1000 first",
-                "sync-dump: line abc 2 2500${' '}",
-                "sync-dump: line abc 3 3000 third",
+                "sync-dump: line abc 1 1000 rep=1/1 words=1 first",
+                "sync-dump: line abc 2 2500 rep=1/1 words=0 ",
+                "sync-dump: line abc 3 3000 rep=1/1 words=1 third",
                 "sync-dump: end abc",
             ),
             SyncDump.dump("abc", "abc", "BiniLyrics", "ai", 40L, 100, lines),
         )
+    }
+
+    /** The reported shape: a chorus line that comes round four times, and a one-word line. */
+    @Test
+    fun `a repeated line counts which time it comes round and a short line its words`() {
+        val lines = listOf(
+            LyricLine(timeMs = 1_000L, text = "Baby, I'm preying on you tonight"),
+            LyricLine(timeMs = 3_000L, text = "Animals"),
+            LyricLine(timeMs = 5_000L, text = "Baby I'm preying on you tonight"),
+            LyricLine(timeMs = 7_000L, text = "Animals"),
+        )
+
+        val dump = SyncDump.dump("abc", "abc", "lrc.red", "measured", 0L, 90, lines)
+
+        assertEquals("sync-dump: line abc 1 1000 rep=1/2 words=6 Baby, I'm preying on you tonight", dump[1])
+        assertEquals("sync-dump: line abc 2 3000 rep=1/2 words=1 Animals", dump[2])
+        assertEquals("sync-dump: line abc 3 5000 rep=2/2 words=6 Baby I'm preying on you tonight", dump[3])
+        assertEquals("sync-dump: line abc 4 7000 rep=2/2 words=1 Animals", dump[4])
     }
 }

@@ -165,7 +165,18 @@ def parse_blocks(text, vid):
             head = dict(p.split("=", 1) for p in raw[i:].split()[3:] if "=" in p)
             cur = (head, [])
         elif kind == "line" and cur is not None and len(parts) >= 4:
-            cur[1].append((int(parts[2]), int(parts[3]), parts[4] if len(parts) > 4 else ""))
+            rest = parts[4] if len(parts) > 4 else ""
+            # `rep=<k>/<n> words=<w>` ahead of the text (11-04). Written for a
+            # human reading the log — which time a chorus line came round, how
+            # many words it holds — and stripped here so the text handed to the
+            # aligner is the lyrics and nothing else. Older logs start straight
+            # at the text and are read the same way.
+            while True:
+                meta = re.match(r"(?:rep|words)=\S+\s+", rest)
+                if not meta:
+                    break
+                rest = rest[meta.end():]
+            cur[1].append((int(parts[2]), int(parts[3]), rest))
         elif kind == "end" and cur is not None:
             blocks.append(cur)
             cur = None
