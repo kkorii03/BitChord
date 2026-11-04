@@ -67,6 +67,9 @@ SONG_SYNC_RE = re.compile(
 )
 # `next-prep: <title> version=<id> lyrics=... hq=... sync=... mix=... in ..ms`
 NEXT_PREP_RE = re.compile(r"next-prep:\s+(?P<title>.*?)\s+version=(?P<version>\S+)")
+# `song version: <id> hold skipped (video radio)` — the listener asked to keep
+# playing video songs, so the row is meant to stay on its video.
+VIDEO_RADIO_RE = re.compile(r"song version:\s+(?P<id>\S+)\s+hold skipped \(video radio\)")
 # `play: -> <title> - <artist> (<media id>) idx=...`
 PLAY_RE = re.compile(r"play:\s*->\s+(?P<label>.*?)\s+\((?P<id>[^()]*)\)\s+idx=")
 ANR_RE = re.compile(r"\bANR in\b")
@@ -201,6 +204,7 @@ def check_log(
     video_flag_ids: set[str] = set()
     crashes: list[str] = []
     next_preps: list[tuple[str, str]] = []
+    video_radio_ids: set[str] = set()
 
     for raw in text.splitlines():
         line = raw.rstrip("\r")
@@ -294,6 +298,11 @@ def check_log(
             match = NEXT_PREP_RE.search(line)
             if match:
                 next_preps.append((match.group("title"), match.group("version")))
+
+        if "hold skipped (video radio)" in line:
+            match = VIDEO_RADIO_RE.search(line)
+            if match:
+                video_radio_ids.add(match.group("id"))
 
     replaced_sources = {src for src, dst in replacements if dst not in ("none", "-")}
     replaced_targets = {dst for _src, dst in replacements if dst not in ("none", "-")}
@@ -476,6 +485,11 @@ def check_log(
             continue  # a cover correctly keeps its own id
         if version in replaced_targets:
             continue  # it is the resolved song version
+        if version in video_radio_ids:
+            # `hold skipped (video radio)`: the settings ask to keep playing
+            # video songs, so the row is meant to stay on its video (phone 11-04,
+            # "Golden"). The row is a video on purpose, not a missed swap.
+            continue
         if version not in mv_ids and not is_mv_title(title):
             continue
         key = (title, version)
