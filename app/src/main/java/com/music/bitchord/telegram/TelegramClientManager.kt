@@ -830,7 +830,7 @@ object TelegramClientManager {
             // per-chat search already is, and read back in the ids' own order so
             // the list does not reshuffle. A chat that fails is still skipped,
             // not fatal.
-            for (chunk in ids.chunked(MAX_PARALLEL_CHAT_SEARCHES)) {
+            for (chunk in ids.asList().chunked(MAX_PARALLEL_CHAT_SEARCHES)) {
                 currentCoroutineContext().ensureActive()
                 if (found.size >= MAX_CHATS) break
                 val fetched = chunk.map { id ->
