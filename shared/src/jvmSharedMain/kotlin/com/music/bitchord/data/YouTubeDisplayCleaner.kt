@@ -204,6 +204,22 @@ internal object YouTubeDisplayCleaner {
                 return Cleaned(songTitle, artist)
             }
         }
+        // The credit and the channel are one act in two scripts: "King Gnu -
+        // 一途" uploaded by "킹 누" (phone 11-04). No name comparison sees
+        // that, and the byline already names the act, so the title stops
+        // repeating it. The channel stays the credit: nothing here proves the
+        // two names are one act, only that the title repeats a name the row
+        // already carries.
+        // shortcut: a two-word left side that is not an act ("Tokyo Dome -
+        // Song") loses its prefix too, <widen when a transliteration table
+        // exists>.
+        if (split != null && !labelChannel && dropsCrossScriptCredit(split.first, rawChannel)) {
+            val songTitle = split.second.trim().trim(' ', '-', '_', '|', '·', '/')
+            val byline = channelArtist.ifBlank { rawChannel }
+            if (songTitle.isNotBlank() && !TrackMatcher.isSoundtrackCredit(byline)) {
+                return Cleaned(songTitle, byline)
+            }
+        }
         val fallbackArtist = channelArtist.ifBlank { if (labelChannel) "" else rawChannel }
         return Cleaned(
             text.ifBlank { rawTitle },
@@ -235,6 +251,23 @@ internal object YouTubeDisplayCleaner {
         return knownArtists.any { known ->
             TrackMatcher.sharesArtist(name, known) || (key.isNotEmpty() && key == compact(known))
         }
+    }
+
+    /**
+     * A title credit that is the channel's own name written in another script,
+     * so no name comparison can confirm it. Both sides short, one written in
+     * Latin and the other not, and no packaging word on the left — "Live at
+     * Budokan - Song" is a place, "King Gnu - 一途" is a band.
+     */
+    private fun dropsCrossScriptCredit(left: String, channel: String): Boolean {
+        val name = collapseAliases(left)
+        val byline = cleanChannel(channel)
+        if (name.isBlank() || byline.isBlank()) return false
+        val nameWords = name.split(WHITESPACE)
+        if (nameWords.size !in 2..4) return false
+        if (byline.split(WHITESPACE).size > 4) return false
+        if (nameWords.any { it.lowercase().trim('.') in PACKAGING_CREDIT }) return false
+        return LATIN.containsMatchIn(name) != LATIN.containsMatchIn(byline)
     }
 
     /**
@@ -335,6 +368,14 @@ internal object YouTubeDisplayCleaner {
 
     private const val WHITESPACE_TEXT = """\s+"""
     private val WHITESPACE = Regex(WHITESPACE_TEXT)
+
+    /** A left-hand credit that names a place or an occasion rather than an act. */
+    private val PACKAGING_CREDIT = setOf(
+        "live", "concert", "tour", "official", "audio", "video", "mv",
+        "remix", "version", "ver", "cover", "instrumental", "karaoke",
+        "lyric", "lyrics", "edit", "full", "album", "teaser", "performance",
+        "feat", "ft",
+    )
 
     /** `[MV]`, `[M/V]`, `(Official Video)`, `(Lyric Video)`, `(Audio)`, … */
     private val VIDEO_TAG = Regex(

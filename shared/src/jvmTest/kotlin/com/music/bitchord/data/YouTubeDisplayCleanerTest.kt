@@ -353,4 +353,29 @@ class YouTubeDisplayCleanerTest {
         assertEquals(identity.artist, TrackMatcher.normalize(display.artist))
         assertEquals(identity.work, "joker")
     }
+
+    /** The reported row: "King Gnu - 一途" on the Korean channel "킹 누" (phone 11-04). */
+    @Test
+    fun `a credit in the other script is not repeated in the title`() {
+        val cleaned = YouTubeDisplayCleaner.clean("King Gnu - 一途", "킹 누")
+
+        assertEquals("一途", cleaned.title)
+        assertEquals("킹 누", cleaned.artist)
+    }
+
+    @Test
+    fun `a one-word left side is part of the title, not a credit`() {
+        val cleaned = YouTubeDisplayCleaner.clean("Dynamite - Remix", "아이유")
+
+        assertEquals("Dynamite - Remix", cleaned.title)
+        assertEquals("아이유", cleaned.artist)
+    }
+
+    @Test
+    fun `a packaging phrase on the left keeps the whole title`() {
+        val cleaned = YouTubeDisplayCleaner.clean("Live at Budokan - Song", "킹 누")
+
+        assertEquals("Live at Budokan - Song", cleaned.title)
+        assertEquals("킹 누", cleaned.artist)
+    }
 }
