@@ -260,4 +260,37 @@ class HqSwapPolicyTest {
             ),
         )
     }
+
+    /**
+     * The mid-song swap used to seek the replacement to the raw position, so a
+     * verified copy with a different intro started the song somewhere else and
+     * the listener heard it jump by the offset the match had accepted.
+     */
+    @Test
+    fun `a swap from the youtube copy lands on the replacement's own offset`() {
+        assertEquals(
+            61_200L,
+            HqSwapPolicy.swapStartMs(
+                positionMs = 60_000L,
+                currentOffsetMs = 0L,
+                currentRate = 1.0,
+                offsetMs = 1_200L,
+                rate = 1.0,
+            ),
+        )
+    }
+
+    @Test
+    fun `a swap from a verified substitute is mapped back through its own offset first`() {
+        assertEquals(
+            59_500L,
+            HqSwapPolicy.swapStartMs(
+                positionMs = 60_000L,
+                currentOffsetMs = 2_000L,
+                currentRate = 1.0,
+                offsetMs = 1_500L,
+                rate = 1.0,
+            ),
+        )
+    }
 }
