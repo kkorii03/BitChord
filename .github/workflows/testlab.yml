@@ -8,6 +8,8 @@
 # and the Cloud Testing API enabled on the project.
 name: Firebase Test Lab
 on:
+  push:
+    branches: ['testlab/**']
   workflow_dispatch:
     inputs:
       model:
