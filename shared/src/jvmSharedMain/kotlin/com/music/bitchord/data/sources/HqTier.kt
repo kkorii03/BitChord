@@ -104,6 +104,21 @@ object HqQuality {
         return tierOf(format).rank in HqTier.HI_RES_24_88.rank..HqTier.LOSSLESS_16.rank
     }
 
+    /**
+     * Whether a candidate the automatic second look found is worth the
+     * ninety-second sound comparison at all.
+     *
+     * Both things that path can do with a yes are lossless-only — the mid-song
+     * swap and the next-play prefetch — so a lossy candidate was decoded for an
+     * answer nothing read: `verify=34756ms` on 11-03, with the "upgrading
+     * quality" badge up for the whole of it, and nothing better ever arriving.
+     * A lossy copy is still proved where it is actually swapped in, which is a
+     * hand-made request; this is asked only by the automatic path. Dolby Atmos
+     * is refused here for the same reason: it is not a lossless rung, and
+     * nothing on that path swaps it in.
+     */
+    fun worthProving(format: StreamFormat?): Boolean = isLosslessTier(format)
+
     /** Whether [format] claims more than its own bitrate can support. */
     fun isFakeHighQuality(format: StreamFormat?): Boolean {
         if (format == null) return false

@@ -6539,7 +6539,20 @@ class PlaybackService : MediaLibraryService() {
                         var verified: HqVerificationStore.Verified? = null
                         uri?.let { SourceResolver.targetIn(it) }?.let { target ->
                             val currentTier = currentTierFor(mediaId)
-                            val answer = HqAudioVerify.verify(this@PlaybackService, mediaId, target, shelved)
+                            // Only a lossless answer is used here — see
+                            // [HqQuality.worthProving]. A lossy one used to be
+                            // proved for an answer nothing reads.
+                            val answer = if (HqQuality.worthProving(shelved.format)) {
+                                HqAudioVerify.verify(this@PlaybackService, mediaId, target, shelved)
+                            } else {
+                                TrackLog.d(
+                                    "BitChord",
+                                    "upgrade for $mediaId: ${shelved.format.summary} is not lossless; " +
+                                        "nothing on this path takes it, so it is not proved",
+                                    about = mediaId,
+                                )
+                                null
+                            }
                             if (answer != null) {
                                 logHqTier(mediaId, target.title, shelved, currentTier)
                                 SourceResolver.rememberOriginal(target, shelved)
@@ -6562,7 +6575,7 @@ class PlaybackService : MediaLibraryService() {
                         }
                         TrackLog.d(
                             "BitChord",
-                            "upgrade for $mediaId kept for next play; no mid-song swap",
+                            "upgrade for $mediaId: nothing kept for the next play; no mid-song swap",
                             about = mediaId,
                         )
                         return@launch
@@ -6681,7 +6694,22 @@ class PlaybackService : MediaLibraryService() {
                     var verified: HqVerificationStore.Verified? = null
                     uri?.let { SourceResolver.targetIn(it) }?.let { target ->
                         val currentTier = currentTierFor(mediaId)
-                        val answer = HqAudioVerify.verify(this@PlaybackService, mediaId, target, better)
+                        // Only a lossless answer is used here: [swapLosslessMidSong]
+                        // and [prefetchLosslessForNextPlay] both refuse anything
+                        // else, so proving a lossy candidate cost verify=34756ms
+                        // on 11-03 with the upgrade badge up for all of it, and was
+                        // then dropped. See [HqQuality.worthProving].
+                        val answer = if (HqQuality.worthProving(better.format)) {
+                            HqAudioVerify.verify(this@PlaybackService, mediaId, target, better)
+                        } else {
+                            TrackLog.d(
+                                "BitChord",
+                                "upgrade for $mediaId: ${better.format.summary} is not lossless; " +
+                                    "nothing on this path takes it, so it is not proved",
+                                about = mediaId,
+                            )
+                            null
+                        }
                         if (answer != null) {
                             logHqTier(mediaId, target.title, better, currentTier)
                             SourceResolver.rememberOriginal(target, better)
@@ -6704,7 +6732,7 @@ class PlaybackService : MediaLibraryService() {
                     }
                     TrackLog.d(
                         "BitChord",
-                        "upgrade found for $mediaId kept for next play; no mid-song swap",
+                        "upgrade found for $mediaId: nothing kept for the next play; no mid-song swap",
                         about = mediaId,
                     )
                     return@launch
