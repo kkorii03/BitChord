@@ -49,7 +49,7 @@ class LyricsTimingClockTest {
         storeField.set(LyricsTiming, null)
         hqCacheField.set(HqVerificationStore, null)
         KoAppSettings.syncSafetyHqSync.value = false
-        listOf("v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9").forEach(StreamChoice::forget)
+        listOf("v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9", "vA", "vB", "vC").forEach(StreamChoice::forget)
         Downloads.setSavedMetadata(emptyMap())
     }
 
@@ -58,7 +58,7 @@ class LyricsTimingClockTest {
         storeField.set(LyricsTiming, null)
         hqCacheField.set(HqVerificationStore, null)
         KoAppSettings.syncSafetyHqSync.value = false
-        listOf("v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9").forEach(StreamChoice::forget)
+        listOf("v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9", "vA", "vB", "vC").forEach(StreamChoice::forget)
         Downloads.setSavedMetadata(emptyMap())
         directory.deleteRecursively()
     }
@@ -238,13 +238,42 @@ class LyricsTimingClockTest {
     }
 
     @Test
-    fun `untagged legacy data keeps the old hq switch behaviour`() {
+    fun `a substitute playing the answer's own clock applies it`() {
+        // The copy is what the answer was measured on, so it is already on the
+        // playing clock — no verified map is needed to place it.
+        write("""{"vA":${entry(autoMs = 500L, autoClock = "alt\u0001src\u0001track")}}""")
+        playing("vA", "src", "track")
+
+        assertEquals(10_500L, shown("vA"))
+    }
+
+    @Test
+    fun `an untagged answer on a copy is refused rather than shown on the wrong clock`() {
+        // No clock tag and no verified map: the upload's answer cannot be put
+        // on the copy's clock, so it is dropped and the provider's times stand.
+        write("""{"vB":${entry(autoMs = 500L)}}""")
+        playing("vB", "src", "track")
+
+        assertEquals(10_000L, shown("vB"))
+    }
+
+    @Test
+    fun `an untagged answer on the upload is applied as before`() {
+        write("""{"vC":${entry(autoMs = 500L)}}""")
+
+        assertEquals(10_500L, shown("vC"))
+    }
+
+    @Test
+    fun `untagged legacy data is carried onto a copy only by the hq map`() {
         write("""{"v7":${entry(autoMs = 500L, manualMs = -250L)}}""")
         verified("v7", offsetMs = 1_000L)
         playing("v7", "src", "track")
 
+        // The switch off is no map at all, and an untagged answer cannot be
+        // placed without one: only the hand's correction stands.
         KoAppSettings.syncSafetyHqSync.value = false
-        assertEquals(10_250L, shown("v7"))
+        assertEquals(9_750L, shown("v7"))
 
         KoAppSettings.syncSafetyHqSync.value = true
         assertEquals(11_250L, shown("v7"))

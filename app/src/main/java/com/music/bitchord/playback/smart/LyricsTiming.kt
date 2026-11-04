@@ -351,26 +351,32 @@ object LyricsTiming {
             else -> clockOf(entry.autoClock)
         }
         var hq = hqAdjustment(context, videoId)
-        val base = if (originalBase != null &&
-            baseClock !is Clock.Unknown && playing !is Clock.Unknown
-        ) {
-            // The stored answer is already on its measured clock; once moved
-            // onto the playing one, the YouTube→copy map must not run again.
+        // A substitute is not refused here: its clock is a clock like any
+        // other. What is refused is an answer that cannot be placed on the
+        // playing one — dropped, never shown on the wrong clock.
+        val saved = originalBase
+        val base = if (saved == null) {
+            null
+        } else if (baseClock == playing && playing !is Clock.Unknown) {
+            // Already on the clock playing: nothing to carry across, and the
+            // YouTube→copy map must not run a second time.
             hq = null
-            if (baseClock == playing) {
-                originalBase
-            } else {
-                val conversion = conversion(context, videoId, baseClock, playing)
-                if (conversion == null) {
-                    dropped++
-                    null
-                } else {
-                    converted++
-                    convertAdjustment(originalBase, conversion)
-                }
-            }
+            saved
+        } else if (baseClock is Clock.Unknown && (playing is Clock.YouTube || hq != null)) {
+            // An untagged record was made on the upload. On the upload that is
+            // the playing clock; on a copy only the verified HQ map carries it,
+            // and it is applied on top of it below.
+            saved
         } else {
-            originalBase
+            val conversion = conversion(context, videoId, baseClock, playing)
+            if (conversion == null) {
+                dropped++
+                null
+            } else {
+                hq = null
+                converted++
+                convertAdjustment(saved, conversion)
+            }
         }
         val manualClock = clockOf(entry.manualClock)
         var manualMs = entry.manualMs ?: 0L
