@@ -8,6 +8,8 @@ import com.music.bitchord.data.lyrics.LyricsRepository
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.sources.SourceStream
+import com.music.bitchord.playback.StreamChoice
 import com.music.bitchord.playback.smart.LyricsTiming
 import com.music.bitchord.testutil.FakeContext
 import com.music.bitchord.testutil.FakePreferences
@@ -82,6 +84,7 @@ class LyricsControllerCoverAiTest {
         AppSettings.lyricsSources.value = savedSources
         AppSettings.lyricsSourceOrder.value = savedOrder
         AppSettings.syncedLyrics.value = savedSynced
+        StreamChoice.forget("vSubTiming")
         storeField.set(LyricsTiming, null)
         directory.deleteRecursively()
     }
@@ -96,10 +99,62 @@ class LyricsControllerCoverAiTest {
             }}}
             """.trimIndent(),
         )
+        openStore()
+    }
+
+    /** Points the timing store at this test's file, after it has been written. */
+    private fun openStore() {
         val storeClass = Class.forName("com.music.bitchord.playback.smart.LyricsTiming\$Store")
         val ctor = storeClass.declaredConstructors.first { it.parameterCount == 1 }
         ctor.isAccessible = true
         storeField.set(LyricsTiming, ctor.newInstance(File(directory, "lyrics_timing_v1.json")))
+    }
+
+    @Test
+    fun `a substitute stream still gets the answer measured on its own clock`() = runBlocking {
+        val videoId = "vSubTiming"
+        // A raw string does not process \u escapes: build the clock tag as a
+        // real string, as the store writes it.
+        val copyClock = "alt\u0001src\u0001track"
+        StreamChoice.remember(
+            videoId,
+            SourceStream(
+                url = "https://example.test/copy",
+                sourceConfigId = "src",
+                trackId = "track",
+            ),
+            substituted = true,
+        )
+        File(directory, "lyrics_timing_v1.json").writeText(
+            """
+            {"entries":{"$videoId":{
+              "autoVersion":4,
+              "auto":{"knots":[0,1000],"headRate":1.0,"tailRate":1.0,"rate":1.0,"match":90},
+              "autoClock":"$copyClock"
+            }}}
+            """.trimIndent(),
+        )
+        openStore()
+        controller.lyricsLookup = { _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ ->
+            LyricsRepository.Result(source = LyricsSource.KUGOU, lines = lines)
+        }
+
+        controller.loadLyricsFor(
+            Song(
+                videoId = videoId,
+                title = "Cover",
+                artist = "Someone",
+                thumbnailUrl = null,
+                isVideo = false,
+            ),
+            durationMs = 200_000L,
+        )
+
+        // The stored answer was measured on this very copy, so its +1 s belongs
+        // on screen. Refusing every substitute up front dropped it and showed
+        // every line 1 s early.
+        val timing = withTimeout(5_000L) { controller.lyricsTiming.first { it.shiftMs != null } }
+        assertEquals(1_000L, timing.shiftMs ?: 0L)
     }
 
     @Test

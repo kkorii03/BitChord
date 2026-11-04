@@ -835,13 +835,15 @@ class LyricsController(
         timingLines = lines
         val request = currentLyricsRequest
         // A substituted recording is a different file under the same video id:
-        // its clock is not the one any measurement or AI answer for the YouTube
-        // upload was made against. Neither apply it nor spend an engine
-        // checking it; the plain provider timing is what this play shows.
+        // its clock is not the one a measurement or AI answer for the YouTube
+        // upload was made against. The answer still applies when it can be put
+        // on the copy's clock — tagged with it, or carried across by a verified
+        // map — and [LyricsTiming.timing] drops the ones it cannot convert.
+        // Starting a measurement on the copy is the player's own gate.
         val substituted = request != null && !request.isVideo &&
             StreamChoice.isSubstitute(request.videoId)
-        timingBaseAllowed = adjustable && !substituted
-        timingMeasureAllowed = measure && !substituted
+        timingBaseAllowed = adjustable
+        timingMeasureAllowed = measure
         val timed = lines != null && lines.any { it.timeMs > 0 }
         // As the source timed them, until [refreshTiming] says otherwise.
         appliedTiming = null
@@ -1237,12 +1239,12 @@ class LyricsController(
     /** Puts what [LyricsTiming] knows for the current video onto [lines] and the line under them. */
     private suspend fun refreshTiming(generation: Long, lines: List<LyricLine>) {
         val request = currentLyricsRequest ?: return
-        // A substituted file has a different clock from the YouTube upload the
-        // saved measurement/AI answer was made against. Checked here as well as
-        // at [startTiming] because the stream may be chosen after the lyrics
-        // were first shown.
-        val substituted = !request.isVideo && StreamChoice.isSubstitute(request.videoId)
-        val baseAllowed = timingBaseAllowed && !substituted
+        // A substituted file has a different clock from the YouTube upload a
+        // saved measurement/AI answer was made against; timing() carries the
+        // answer over when it can and drops it when it cannot. Read here as
+        // well as at [startTiming] because the stream may be chosen after the
+        // lyrics were first shown.
+        val baseAllowed = timingBaseAllowed
         val audioSource = if (request.isVideo) {
             null
         } else {
