@@ -97,6 +97,7 @@ class ChunkedDataSource(
                     val who = dataSpec.uri.host ?: dataSpec.uri.toString().take(120)
                     TrackLog.w(TAG, "$who refused the stream: ${e.message}")
                     koHostCost.noteFailedOpen(e) // [KO] hq-host-cost
+                    restRefusedHost(dataSpec, e)
                     report(dataSpec, e)
                 }
                 throw e
@@ -148,6 +149,38 @@ class ChunkedDataSource(
         }
         chunkRemaining = length
         chunkOpen = true
+    }
+
+    /**
+     * Remembers a host that refused a whole module stream, not just this URL.
+     *
+     * A 403/404/410 is a verdict on the server rather than on the request: the
+     * catalogue lookup that minted the URL is deterministic, so the next track
+     * asks the same host and is handed the same kind of dead URL. Counting one
+     * failure was not enough to steer around it — [HqHostGate.penalty] needs
+     * three attempts before it moves a host down — so the listener sat out the
+     * same silence twice in one report, ten minutes apart:
+     *
+     * ```
+     *   08:49:43  direct: 'Feel Good Inc.' from Deezer at FLAC
+     *   08:49:45  deezer.nom.deno.net refused the stream: Response code: 403
+     *   08:49:52  falling back to YouTube audio
+     *   08:49:52  TIMING first audio: 11995ms since track selected
+     * ```
+     *
+     * The escalating rest that already exists for a rate-limited host does
+     * exactly what is wanted here: [SourceResolver.bestAcross] skips a resting
+     * host outright, read-ahead leaves it alone, and a host that keeps refusing
+     * escalates instead of being asked again on every track. Only the
+     * pass-through branch calls this, and only googlevideo carries `clen` — so
+     * a googlevideo refusal is untouched and keeps its own recovery.
+     */
+    private fun restRefusedHost(spec: DataSpec, e: Exception) {
+        val refusal = koHostCost.rateLimitedCause(e) ?: return
+        if (!StreamRefusalRecovery.isRefusal(refusal.responseCode)) return
+        val host = HqHostTracker.hostOf(spec.uri.toString()) ?: return
+        val restMs = HqHostTracker.noteRateLimited(host, header = null, code = refusal.responseCode)
+        TrackLog.w(TAG, "hq-stream: $host refused ${refusal.responseCode}; resting it ${restMs / 1000}s")
     }
 
     /**
