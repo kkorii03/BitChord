@@ -46,14 +46,21 @@ jobs:
           echo "CLOUDSDK_CORE_PROJECT=bitchord-c6c61" >> "$GITHUB_ENV"
       - uses: google-github-actions/setup-gcloud@v2
       - name: Robo test
+        # A push to testlab/** supplies no inputs at all, and `--timeout m` is a
+        # parse error, so the defaults live here rather than in the input block
+        # alone (11-04: two runs died on it before reaching a device).
+        env:
+          MODEL: ${{ inputs.model || 'MediumPhone.arm' }}
+          API: ${{ inputs.version || '34' }}
+          MINUTES: ${{ inputs.minutes || '5' }}
         run: |
           set -o pipefail
           mkdir -p testlab
           gcloud firebase test android run \
             --type robo \
             --app app/build/outputs/apk/prod/debug/*.apk \
-            --device "model=${{ inputs.model }},version=${{ inputs.version }},locale=ko,orientation=portrait" \
-            --timeout ${{ inputs.minutes }}m \
+            --device "model=$MODEL,version=$API,locale=ko,orientation=portrait" \
+            --timeout "${MINUTES}m" \
             --project bitchord-c6c61 \
             --results-dir testlab \
             --no-record-video 2>&1 | tee testlab/log.txt
