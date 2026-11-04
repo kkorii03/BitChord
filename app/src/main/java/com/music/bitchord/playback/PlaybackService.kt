@@ -10086,6 +10086,8 @@ class PlaybackService : MediaLibraryService() {
 
         val activeDevice = resolveActiveOutputDevice()
         val routeKind = resolveActiveRouteKind(activeDevice)
+        // A Bluetooth sink is stereo; an immersive 6-channel track stalls it.
+        SourceResolver.setImmersiveOutputAllowed(routeKind != AudioRouting.Kind.BLUETOOTH)
         val directUsbProbe = if (routeKind == AudioRouting.Kind.USB) UsbDirectManager.probe(this) else null
 
         val format = currentAudioInputFormat

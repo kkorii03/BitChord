@@ -4,13 +4,17 @@ import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.HttpDataSource
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.TrackLog
+import com.music.bitchord.data.sources.HqQuality
 import com.music.bitchord.data.sources.SourceStream
+import com.music.bitchord.data.sources.StreamContainerSniff
+import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.playback.HqHostTracker
 import com.music.bitchord.playback.StreamRefusalRecovery
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
@@ -87,9 +91,12 @@ internal object KoStreamProbe {
             .build()
         try {
             client.newCall(request).execute().use { response ->
-                if (!StreamRefusalRecovery.isRefusal(response.code)) return@withContext true
-                refused(url, response.code, response.headers.toMultimap())
-                false
+                if (StreamRefusalRecovery.isRefusal(response.code)) {
+                    refused(url, response.code, response.headers.toMultimap())
+                    return@withContext false
+                }
+                if (!honestRendition(stream, response, url)) return@withContext false
+                true
             }
         } catch (e: Exception) {
             // Not a refusal: a probe that could not run proves nothing, and the
@@ -101,6 +108,49 @@ internal object KoStreamProbe {
             true
         }
     }
+
+    /**
+     * False when [stream] claims lossless audio and the bytes are a lossy file —
+     * see [StreamContainerSniff]. A row's rendition is the catalogue's
+     * description of its own file, and the player only discovers a lie after the
+     * wrong audio is audible; this is the one place that can look at the bytes
+     * first. Anything unreadable keeps its chance, exactly as a probe that could
+     * not run does.
+     */
+    private fun honestRendition(stream: SourceStream, response: Response, url: String): Boolean {
+        if (!HqQuality.isLosslessTier(stream.format)) return true
+        val head = runCatching {
+            response.peekBody(StreamContainerSniff.HEAD_BYTES.toLong()).bytes()
+        }.getOrNull() ?: return true
+        if (StreamContainerSniff.looksLossy(head)) {
+            TrackLog.w(
+                TAG,
+                "hq-stream: ${HqHostTracker.hostOf(url) ?: "?"} claims ${stream.format.summary} " +
+                    "but served a lossy file; not starting this track on it",
+            )
+            return false
+        }
+        // The same lie with the container kept: a lossless file's size states its
+        // length, so a row that says 3:21 and a file that would run 7:40 is a
+        // different recording. This is the case the format check cannot see.
+        val total = totalBytes(response) ?: return true
+        val seconds = StreamContainerSniff.secondsOfLossless(total, stream.format) ?: return true
+        if (!TrackMatcher.isSevereMismatch(stream.durationSec, seconds)) return true
+        TrackLog.w(
+            TAG,
+            "hq-stream: ${HqHostTracker.hostOf(url) ?: "?"} claims ${stream.format.summary} of " +
+                "${stream.durationSec}s but the file runs ${seconds}s; not starting this track on it",
+        )
+        return false
+    }
+
+    /** The whole file's length from a ranged answer's `Content-Range`, when it states one. */
+    private fun totalBytes(response: Response): Long? =
+        response.header("Content-Range")
+            ?.substringAfterLast('/')
+            ?.trim()
+            ?.toLongOrNull()
+            ?.takeIf { it > 0 }
 
     /** Records the refusal so the URL is never opened again and a dead host is rested. */
     private fun refused(url: String, code: Int, headers: Map<String, List<String>>) {
