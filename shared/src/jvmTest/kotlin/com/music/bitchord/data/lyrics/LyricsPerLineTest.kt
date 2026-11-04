@@ -88,7 +88,7 @@ class LyricsPerLineTest {
     }
 
     @Test
-    fun `a single ten second outlier is moved when three words match`() {
+    fun `a ten second outlier with three words is dropped, not clamped`() {
         val lines = listOf(
             line(10_000, "alpha bravo"),
             line(20_000, "charlie delta echo"),
@@ -101,14 +101,16 @@ class LyricsPerLineTest {
         }
         val result = layer(lines, heard)
 
-        assertEquals(3, result.anchors)
+        // Three words agreeing 10 s out is the same words heard at a repeated
+        // chorus; moving the line by the 4 s cap would be a wrong move.
+        assertEquals(2, result.anchors)
         assertEquals(0L, result.shiftsMs[0])
-        assertEquals(LyricsPerLine.MAX_SHIFT_MANY_WORDS_MS, result.shiftsMs[1])
+        assertEquals(0L, result.shiftsMs[1])
         assertEquals(0L, result.shiftsMs[2])
     }
 
     @Test
-    fun `a two word outlier moves no further than its cap`() {
+    fun `a two word outlier beyond its cap is dropped`() {
         val lines = listOf(
             line(10_000, "alpha bravo"),
             line(20_000, "charlie delta"),
@@ -116,9 +118,9 @@ class LyricsPerLineTest {
         val heard = heardLine(lines[0], 0L) + heardLine(lines[1], 2_000L)
         val result = layer(lines, heard)
 
-        assertEquals(2, result.anchors)
+        assertEquals(1, result.anchors)
         assertEquals(0L, result.shiftsMs[0])
-        assertEquals(LyricsPerLine.MAX_SHIFT_TWO_WORDS_MS, result.shiftsMs[1])
+        assertEquals(0L, result.shiftsMs[1])
     }
 
     @Test

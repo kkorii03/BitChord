@@ -873,7 +873,16 @@ class LyricsController(
             // next-song preparation measuring it first — shows here too.
             launch {
                 LyricsTiming.changes.collect { videoId ->
-                    if (videoId == request.videoId) refreshTiming(generation, lines)
+                    if (videoId == request.videoId) {
+                        refreshTiming(generation, lines)
+                        // The words that decide "this accepted timing is wrong"
+                        // are stored by the refine listen, which finishes after
+                        // the one AI decision taken at load. Ask again when they
+                        // land, or a grossly wrong timing is never escalated
+                        // (Opus review, 11-04). wantsAi keeps this to one request
+                        // per unspent engine.
+                        autoAiIfNeeded(generation, lines)
+                    }
                 }
             }
             // A stream that is still arriving when the lyrics load becomes a
@@ -1227,22 +1236,31 @@ class LyricsController(
         } else {
             LyricsTiming.audioSourceKey(request.videoId, request.localUri != null)
         }
-        val timing = LyricsTiming.timing(
-            app,
-            request.videoId,
-            lines,
-            baseAllowed,
-            measuredAllowed = baseAllowed && timingMeasureAllowed,
-            isVideo = request.isVideo,
-            audioSource = audioSource,
-        )
+        // The word alignment inside timing()/apply() is millions of cells (about
+        // 15 MB per call) and this runs on the view's scope: keep it off the main
+        // thread (11-04 ANR: "Input dispatching timed out", 38 skipped frames).
+        val timing = withContext(Dispatchers.Default) {
+            LyricsTiming.timing(
+                app,
+                request.videoId,
+                lines,
+                baseAllowed,
+                measuredAllowed = baseAllowed && timingMeasureAllowed,
+                isVideo = request.isVideo,
+                audioSource = audioSource,
+            )
+        }
         if (generation != lyricsGeneration || timingLines !== lines) return
         // Every change to this video's timing lands here, its own included;
         // the lines are only rebuilt when what applies actually changed.
         var shown = _lyrics.value
         if (timing != appliedTiming || _lyrics.value == null) {
             appliedTiming = timing
-            shown = if (timing == null) lines else LyricsTiming.apply(lines, timing)
+            shown = if (timing == null) {
+                lines
+            } else {
+                withContext(Dispatchers.Default) { LyricsTiming.apply(lines, timing) }
+            }
             _lyrics.value = shown
         }
         val base = timing?.base

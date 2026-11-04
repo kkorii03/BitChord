@@ -32,9 +32,11 @@ import com.music.bitchord.playback.smart.VideoAudio
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asContextElement
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Locale
 
@@ -484,7 +486,9 @@ internal class NextTrackPreparation(
         val found = lyrics
         val lines = found?.lines?.takeIf { line -> line.any { it.text.isNotBlank() } }
         val timing = syncTiming ?: try {
-            lines?.let { timed(it, found, song) }
+            // timed() and apply() align words (millions of cells): keep them off
+            // the service's main scope, which is where this bundle runs.
+            lines?.let { withContext(Dispatchers.Default) { timed(it, found, song) } }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Throwable) {
@@ -496,7 +500,7 @@ internal class NextTrackPreparation(
             null
         }
         val shown = if (timing != null && lines != null) {
-            LyricsTiming.apply(lines, timing)
+            withContext(Dispatchers.Default) { LyricsTiming.apply(lines, timing) }
         } else {
             lines
         }

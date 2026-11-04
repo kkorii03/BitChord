@@ -119,7 +119,13 @@ object LyricsPerLine {
             val mad = median(residuals.map { abs(it - median) })
             if (mad > MAX_ANCHOR_MAD_MS) continue
             val cap = if (words.size >= 3) MAX_SHIFT_MANY_WORDS_MS else MAX_SHIFT_TWO_WORDS_MS
-            val residual = median(residuals).coerceIn(-cap, cap)
+            // Beyond the cap the residual is not a line that moved: three words
+            // agreeing that far out are almost always the same words heard at a
+            // repeated chorus, and moving the line by the cap would be a wrong
+            // move rather than a partial one (Opus review, 11-04). Drop the
+            // anchor and let its neighbours interpolate.
+            val residual = median(residuals)
+            if (abs(residual) > cap) continue
             anchors += Anchor(index, lines[index].timeMs, residual)
         }
         if (anchors.isEmpty()) return Layer.identity(lines.size)
