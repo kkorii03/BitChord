@@ -79,8 +79,11 @@ object CoverTitles {
         /** "원곡자 · 부른사람 커버", or "부른사람 커버" with no original credit. */
         val byline: String
             // A singer read back from a row already shown as '… 커버' keeps one
-            // word (phone 11-03: '윤미래 커버 커버').
-            get() = listOfNotNull(originalArtist, "${singer.removeSuffix(" $COVER_WORD").trim()} $COVER_WORD").joinToString(SEPARATOR)
+            // word (phone 11-03/11-04: '윤미래 커버 커버 커버 커버').
+            get() = listOfNotNull(
+                originalArtist?.let { CoverTitles.stripUploadSuffix(it) },
+                "${CoverTitles.stripUploadSuffix(singer)} $COVER_WORD",
+            ).joinToString(SEPARATOR)
     }
 
     /** Channel ids the listener marked as cover channels. Set by the app. */
@@ -189,6 +192,7 @@ object CoverTitles {
         readNestedArtistBracket(undated, channel)?.let { return it }
         // Before B: a known singer on the right of the dash would read the wrong way round as B.
         readKnown(undated, channel)?.let { return it }
+        readSlashSinger(undated, channel)?.let { return it }
         readDuet(undated, channel)?.let { return it }
         // "Artist - Title" on a cover channel: the uploader is the singer.
         readCoverChannelArtistFirst(undated, channel)?.let { return it }
@@ -861,6 +865,24 @@ object CoverTitles {
     }
 
     /**
+     * "곡명 / 부른사람" with no "Cover" anywhere (phone 11-04: "Memories /
+     * 오화요" kept the singer in the title, so the lyrics were searched for the
+     * wrong song). The same shape is an ordinary "Artist / Song" row, so the
+     * name after the slash has to be one already seen on a cover.
+     */
+    private fun readSlashSinger(raw: String, channel: String): Cover? {
+        if (splitTopLevelPipe(raw) != null) return null
+        val (song, name) = splitTopLevelSlash(raw) ?: return null
+        val keys = knownSingerKeys()
+        if (keys.isEmpty()) return null
+        val singer = cleanName(name)?.takeUnless { isVersionWord(it) || isDescriptor(it) } ?: return null
+        if (compactName(singer) !in keys) return null
+        if (isChannelName(singer, channel)) return null
+        val title = cleanTitle(song) ?: return null
+        return Cover(title = title, originalArtist = null, singer = singer)
+    }
+
+    /**
      * "piano.ver", "Version", "버전" — the word that makes a bracket an
      * arrangement tag rather than a featured artist or a credit.
      */
@@ -934,7 +956,7 @@ object CoverTitles {
      * name drops them from its end.
      */
     private val SINGER_SUFFIX = Regex(
-        """(?i)(?:\s+|[-–—|·]\s*)(?:가사\s*포함|가사|lyrics?|m\s*/?\s*v|풀\s*버전|full\s*(?:ver(?:sion)?)?)\s*$""",
+        """(?i)(?:\s+|[-–—|·]\s*)(?:가사\s*포함|가사|lyrics?|m\s*/?\s*v|풀\s*버전|full\s*(?:ver(?:sion)?)?|커버(?:곡)?|cover(?:ed)?)\s*$""",
     )
 
     internal fun stripUploadSuffix(name: String): String {

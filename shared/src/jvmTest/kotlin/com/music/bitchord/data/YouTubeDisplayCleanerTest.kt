@@ -1,5 +1,6 @@
 package com.music.bitchord.data
 
+import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.TrackMatcher
 import kotlin.test.Test
@@ -377,5 +378,41 @@ class YouTubeDisplayCleanerTest {
 
         assertEquals("Live at Budokan - Song", cleaned.title)
         assertEquals("킹 누", cleaned.artist)
+    }
+
+    // Phone 11-04: a cleaned byline was cleaned again, so the artist read
+    // "오화요 커버 커버 커버 커버".
+    @Test
+    fun `a byline keeps one cover word however often it is cleaned`() {
+        var row = YouTubeDisplayCleaner.clean(song("화조도 花鳥圖 (cover)", "오화요"))
+        assertEquals("오화요 커버", row.artist)
+        repeat(3) { row = YouTubeDisplayCleaner.clean(row) }
+        assertEquals("오화요 커버", row.artist)
+        // A row already saved with the repeated word is mended on the way out.
+        assertEquals("오화요 커버", YouTubeDisplayCleaner.clean(song("화조도 花鳥圖", "오화요 커버 커버 커버")).artist)
+    }
+
+    // Phone 11-04: "Memories / 오화요" kept the singer in the title, so the
+    // lyrics were searched for another song and the sync ran far off.
+    @Test
+    fun `a known singer after a slash leaves the title`() {
+        val singers = CoverTitles.knownSingers
+        try {
+            CoverTitles.knownSingers = { setOf("오화요") }
+            val row = Song(
+                videoId = "v",
+                title = "Memories / 오화요",
+                artist = "허니즈 HONEYZ",
+                thumbnailUrl = null,
+                isVideo = true,
+            )
+
+            val cleaned = YouTubeDisplayCleaner.clean(row)
+
+            assertEquals("Memories", cleaned.title)
+            assertEquals("오화요 커버", cleaned.artist)
+        } finally {
+            CoverTitles.knownSingers = singers
+        }
     }
 }

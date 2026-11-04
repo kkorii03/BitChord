@@ -44,18 +44,35 @@ internal object YouTubeDisplayCleaner {
 
     /** A song with its display metadata cleaned; every other field is preserved. */
     fun clean(song: Song, knownArtists: Set<String> = emptySet()): Song {
+        // A byline the cleaner grew one word at a time ("오화요 커버 커버 커버
+        // 커버", phone 11-04) reads as one word again. The growth itself is
+        // fixed where the word is appended; this mends rows already saved.
+        val fixed = song.copy(artist = singleCoverWord(song.artist))
         // A cover is music and stays in the list, but its upload title is
         // packaging: "아이묭 - Marigold / cover by 오화요" reads as the song
         // and the singer, not as a video title. When the credit can be read
         // the singer is the artist; otherwise the uploader is all we know.
-        CoverTitles.read(song)?.let { cover -> return cleanCover(song, cover) }
-        if (isCover(song.title)) return cleanCoverTitle(song)
-        val cleaned = clean(song.title, song.artist, knownArtists)
-        val album = cleaned.album?.takeIf { it.isNotBlank() } ?: song.albumName
-        if (cleaned.title == song.title && cleaned.artist == song.artist && album == song.albumName) {
-            return song
+        CoverTitles.read(fixed)?.let { cover -> return cleanCover(fixed, cover) }
+        if (isCover(fixed.title)) return cleanCoverTitle(fixed)
+        val cleaned = clean(fixed.title, fixed.artist, knownArtists)
+        val album = cleaned.album?.takeIf { it.isNotBlank() } ?: fixed.albumName
+        if (cleaned.title == fixed.title && cleaned.artist == fixed.artist && album == fixed.albumName) {
+            return fixed
         }
-        return song.copy(title = cleaned.title, artist = cleaned.artist, albumName = album)
+        return fixed.copy(title = cleaned.title, artist = cleaned.artist, albumName = album)
+    }
+
+    /** `오화요 커버 커버` → `오화요 커버`: the word is a tag, never a repeat. */
+    private fun singleCoverWord(name: String): String {
+        var text = name.trim()
+        var tagged = false
+        while (true) {
+            val next = COVER_WORD_TAIL.replace(text, "").trim()
+            if (next == text || next.isEmpty()) break
+            text = next
+            tagged = true
+        }
+        return if (tagged) "$text 커버" else name
     }
 
     /**
@@ -105,6 +122,7 @@ internal object YouTubeDisplayCleaner {
             ?.takeUnless { TrackMatcher.isSoundtrackCredit(it) }
             .orEmpty()
         val original = cover.originalArtist?.trim()
+            ?.let { CoverTitles.stripUploadSuffix(it) }
             ?.takeUnless {
                 it.isBlank() || CoverTitles.sameName(it, singer) || TrackMatcher.isSoundtrackCredit(it)
             }
@@ -417,6 +435,9 @@ internal object YouTubeDisplayCleaner {
 
     /** A bracket pair with nothing but spaces inside, left by [COVER_MARKER]. */
     private val EMPTY_BRACKETS = Regex("""[(\[（【]\s*[)\]）】]""")
+
+    /** The "커버"/"cover" tag a byline ends with, one repetition at a time. */
+    private val COVER_WORD_TAIL = Regex("""(?i)\s*[(\[]?\s*(?:커버|(?<![a-z])cover(?:ed)?)\s*[)\]）】]?\s*$""")
 
     private val LABEL_MARKERS = listOf(
         "1thek", "stone music", "smtown", "sm town", "starship",

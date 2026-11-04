@@ -364,4 +364,23 @@ class CoverTitlesEdgeTest {
         assertTrue(queries.contains("Artist" to "Song"))
         assertTrue(queries.contains("Artist" to "VOCALOID"))
     }
+
+    /** Phone 11-04: "Memories / 오화요" kept the singer in the title. */
+    @Test
+    fun aKnownSingerAfterTheSongSlashIsTheSinger() {
+        CoverTitles.knownSingers = { setOf("오화요") }
+        val read = cover("Memories / 오화요", "허니즈 HONEYZ")
+        assertEquals("Memories", read.title)
+        assertEquals("오화요", read.singer)
+        assertNull(read.originalArtist)
+        // A name the app has never seen singing is still part of the title.
+        assertNull(CoverTitles.read("Memories / 정체불명", "허니즈 HONEYZ", null))
+    }
+
+    /** Phone 11-04: a cleaned byline was cleaned again, one word at a time. */
+    @Test
+    fun aBylineKeepsOneCoverWord() {
+        assertEquals("오화요 커버", CoverTitles.Cover("Song", null, "오화요 커버 커버 커버").byline)
+        assertEquals("원곡자 · 오화요 커버", CoverTitles.Cover("Song", "원곡자 커버", "오화요 커버").byline)
+    }
 }
