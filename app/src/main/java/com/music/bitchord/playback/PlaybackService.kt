@@ -855,14 +855,16 @@ class PlaybackService : MediaLibraryService() {
      * Output-health state, advanced by the existing progress sampler rather
      * than a new timer. [silenceCheckFrames] is the sink's frame counter at
      * the previous tick; [silenceRecoveries] counts the recovery rungs one
-     * track has climbed, and [silenceStepAtMs] bounds how long each gets to
-     * prove itself.
+     * track has climbed, [silenceStepAtMs] bounds how long each gets to
+     * prove itself, and [silenceHealthySamples] is the run of healthy ticks
+     * that rung has to hold for before it is cleared.
      */
     private var silenceCheckFrames = -1L
     private var silenceRecoveries = 0
     private var silenceRecoveryFor: String? = null
     private var silenceStepAtMs = 0L
     private var silenceStepInFlight: AudioSilenceRecovery.Step? = null
+    private var silenceHealthySamples = 0
 
     /**
      * Why the next AudioTrack initialization is expected, for the log line
@@ -7561,14 +7563,15 @@ class PlaybackService : MediaLibraryService() {
                 ?: "Upgrade"
             NerdStats.onSourceStream(mediaId, stream.format, upgradedSourceName)
             NerdStats.recordSource(mediaId, upgradedSourceName)
-            player.seekTo(player.currentMediaItemIndex, now.position)
+            val startAt = swapStartMs(mediaId, stream, now.position)
+            player.seekTo(player.currentMediaItemIndex, startAt)
             player.prepare()
             // The continuation reads for this item must keep resolving to the
             // upgraded copy, and the lyric clock reads the same record to find
             // the verified offset. See [StreamChoice] and [LyricsTiming].
             StreamChoice.remember(mediaId, stream, substituted = stream.sourceConfigId != null)
             QualityUpgrade.unshelve(mediaId)
-            TrackLog.d("BitChord", "upgraded to ${stream.format.summary} at ${now.position}ms ($upgradedSourceName)")
+            TrackLog.d("BitChord", "upgraded to ${stream.format.summary} at ${startAt}ms ($upgradedSourceName)")
             watchUpgrade(mediaId, now.uri, upgradedUri, now.position, now.duration, previousFormat)
             if (QualityUpgrade.continueAfterLossySwap(mediaId)) {
                 // The immediate JioSaavn improvement stays audible while a
@@ -7654,6 +7657,34 @@ class PlaybackService : MediaLibraryService() {
             return null
         }
         return SwapPoint(item, uri, player.currentPosition, player.duration)
+    }
+
+    /**
+     * Where [stream]'s copy has to open so the song carries on from
+     * [positionMs], the position on the copy playing now.
+     *
+     * The verdict that allowed the swap is a clock — `candidate = offset + rate
+     * × youtube` — and until now only the lyrics read it: the replacement was
+     * seeked to the raw position, so every mid-song swap moved the song by its
+     * offset. The match tolerates ninety seconds of that. Same arithmetic as
+     * the lyric clock and the smooth swap; a copy with no verdict keeps the raw
+     * position.
+     *
+     * shortcut: the audition still warms the raw position, so a copy with a
+     * large offset lands ahead of the bytes already on disk; map
+     * [auditionUpgrade]'s seek too if the swap break comes back on such tracks.
+     */
+    private fun swapStartMs(mediaId: String, stream: SourceStream, positionMs: Long): Long {
+        val incoming = HqVerificationStore.get(this, mediaId, stream.sourceConfigId, stream.trackId)
+            ?: return positionMs
+        val playing = currentPlayingVerification(mediaId)
+        return HqSwapPolicy.swapStartMs(
+            positionMs = positionMs,
+            currentOffsetMs = playing?.offsetMs ?: 0L,
+            currentRate = playing?.rate ?: 1.0,
+            offsetMs = incoming.offsetMs,
+            rate = incoming.rate,
+        )
     }
 
     /**
@@ -9592,6 +9623,7 @@ class PlaybackService : MediaLibraryService() {
             silenceRecoveries = 0
             silenceStepAtMs = 0L
             silenceStepInFlight = null
+            silenceHealthySamples = 0
             silenceCheckFrames = -1L
             AudioOutputHealth.reset()
         }
@@ -9611,31 +9643,6 @@ class PlaybackService : MediaLibraryService() {
         val outputSilentFor = AudioOutputHealth.outputSilentForMs(now)
         val decoderSilentFor = AudioOutputHealth.decoderSilentForMs(now)
         val soundNow = outputSilentFor == 0L && AudioOutputHealth.lastNonSilentAtMs > 0L
-
-        // A step that has brought sound back reports it, and only then is the
-        // ladder reset. Leaving the clock running through a rebuild is what
-        // lets a still-silent path climb to the next rung; the old reset made
-        // lastNonSilentAtMs zero, so a sink that never came back could never be
-        // judged silent again.
-        silenceStepInFlight?.let { step ->
-            if (soundNow) {
-                TrackLog.i(
-                    "AUDIO_OUT",
-                    "silence recover: $id step=${step.wire} result=sound",
-                    about = id,
-                )
-                silenceStepInFlight = null
-                silenceRecoveries = 0
-                silenceStepAtMs = 0L
-            }
-        }
-        // Sound that came back after the ladder was spent (a seek, a later
-        // resolve) reopens it too; otherwise a second dropout in the same
-        // track could never be recovered.
-        if (soundNow && silenceStepInFlight == null && silenceRecoveries > 0) {
-            silenceRecoveries = 0
-            silenceStepAtMs = 0L
-        }
 
         // Between transitions the session player is never meant to be muted.
         if (player.volume <= 0.01f) {
@@ -9662,8 +9669,34 @@ class PlaybackService : MediaLibraryService() {
             now - AudioOutputHealth.lastBufferAtMs > AudioSilenceRecovery.OUTPUT_STALL_MS
         if (!stalled && outputSilentFor == 0L) {
             silenceCheckFrames = frames
+            // A rung is cleared only after a run of healthy progress samples,
+            // never on the first one. A stream that stalls the sink, is
+            // rebuilt, makes a moment of sound and stalls again used to clear
+            // the ladder on that one moment, so every cycle started over at a
+            // full rebuild (11-04). The run also reopens a spent ladder — a
+            // seek or a later resolve that really fixed it — which is why it is
+            // a count rather than no reset at all. The step's outcome is only
+            // known once the run has held, so it is reported here.
+            silenceHealthySamples = AudioSilenceRecovery.healthyRun(soundNow, silenceHealthySamples)
+            if (silenceHealthySamples >= AudioSilenceRecovery.HEALTHY_SAMPLES_TO_RESET) {
+                silenceStepInFlight?.let { step ->
+                    TrackLog.i(
+                        "AUDIO_OUT",
+                        "silence recover: $id step=${step.wire} result=sound",
+                        about = id,
+                    )
+                }
+                silenceStepInFlight = null
+                silenceRecoveries = 0
+                silenceStepAtMs = 0L
+                silenceHealthySamples = 0
+            }
             return
         }
+        // Not a healthy sample: the run is broken, so the next sound after this
+        // fault has to prove itself from the start rather than count on the
+        // samples that came before it.
+        silenceHealthySamples = 0
         val msSinceStep = if (silenceStepAtMs > 0L) {
             now - silenceStepAtMs
         } else {

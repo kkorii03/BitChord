@@ -169,4 +169,61 @@ class SilenceSkipperTest {
 
     private fun silence(frames: Int, amplitude: Float = 0f): FloatArray =
         FloatArray(frames * channels) { amplitude }
+
+    // The output-recovery ladder's own test class is not in ko-wip-check's
+    // --tests list, so the reset rule it shares with this package is exercised
+    // here: a stall that keeps coming back must climb to the last rung and stay
+    // there instead of paying a full rebuild every cycle (11-04).
+
+    @Test
+    fun `a stall that returns every few seconds climbs the ladder once and stays there`() {
+        var recoveries = 0
+        var healthy = 0
+        val steps = mutableListOf<AudioSilenceRecovery.Step>()
+        repeat(12) {
+            // The stall tick: no frames moved, so it is not a healthy sample.
+            healthy = AudioSilenceRecovery.healthyRun(soundNow = false, previous = healthy)
+            val decision = AudioSilenceRecovery.decide(
+                stalled = true,
+                outputSilentForMs = 0L,
+                decoderSilentThroughoutOutput = false,
+                recoveries = recoveries,
+                msSinceLastRecovery = AudioSilenceRecovery.STEP_RECHECK_MS,
+            )
+            if (decision.action == AudioSilenceRecovery.Action.RECOVER) {
+                steps += decision.step!!
+                recoveries++
+            }
+            // The moment of sound the step bought before the sink froze again:
+            // one sample, never the run the ladder needs to be cleared.
+            healthy = AudioSilenceRecovery.healthyRun(soundNow = true, previous = healthy)
+            if (healthy >= AudioSilenceRecovery.HEALTHY_SAMPLES_TO_RESET) {
+                recoveries = 0
+                healthy = 0
+            }
+        }
+
+        assertEquals(
+            listOf(
+                AudioSilenceRecovery.Step.REBUILD,
+                AudioSilenceRecovery.Step.REPREPARE,
+                AudioSilenceRecovery.Step.RERESOLVE,
+            ),
+            steps,
+        )
+    }
+
+    @Test
+    fun `three healthy samples in a row clear the rung and a stall in between breaks them`() {
+        var healthy = 0
+        repeat(AudioSilenceRecovery.HEALTHY_SAMPLES_TO_RESET - 1) {
+            healthy = AudioSilenceRecovery.healthyRun(soundNow = true, previous = healthy)
+        }
+        assertTrue(healthy < AudioSilenceRecovery.HEALTHY_SAMPLES_TO_RESET)
+
+        healthy = AudioSilenceRecovery.healthyRun(soundNow = true, previous = healthy)
+        assertTrue(healthy >= AudioSilenceRecovery.HEALTHY_SAMPLES_TO_RESET)
+
+        assertEquals(0, AudioSilenceRecovery.healthyRun(soundNow = false, previous = healthy))
+    }
 }

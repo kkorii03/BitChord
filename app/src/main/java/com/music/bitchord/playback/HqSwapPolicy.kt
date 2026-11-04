@@ -187,4 +187,21 @@ internal object HqSwapPolicy {
     /** The candidate's own position for [youtubeMs], using the verified offset and rate. */
     fun targetPositionMs(youtubeMs: Long, offsetMs: Long, rate: Double): Long =
         HqMatchPolicy.applyOffset(youtubeMs, offsetMs, rate)
+
+    /**
+     * Where a copy verified as [offsetMs]/[rate] has to open, given
+     * [positionMs] on the copy playing now.
+     *
+     * Back onto YouTube time through the outgoing verdict, then forward through
+     * the incoming one. A mid-song swap that seeked to the raw position skipped
+     * both and moved the song by the difference — up to the ninety seconds a
+     * match tolerates. See [PlaybackService.swapIn].
+     */
+    fun swapStartMs(
+        positionMs: Long,
+        currentOffsetMs: Long,
+        currentRate: Double,
+        offsetMs: Long,
+        rate: Double,
+    ): Long = targetPositionMs(toYoutubeMs(positionMs, currentOffsetMs, currentRate), offsetMs, rate)
 }

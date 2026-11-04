@@ -32,6 +32,24 @@ object AudioSilenceRecovery {
     /** rebuild -> reprepare -> reresolve. Three steps, then leave the track be. */
     const val MAX_STEPS = 3
 
+    /**
+     * Consecutive healthy progress samples that prove a rung worked.
+     *
+     * One is not proof. A stream that stalls the sink, is rebuilt, makes a
+     * moment of sound and stalls again produces exactly one healthy sample per
+     * cycle; clearing the ladder on it put every cycle back at the first rung,
+     * which is a full rebuild every five seconds for the length of the track
+     * (seen on the phone, 11-04). Three consecutive samples — one per progress
+     * tick — is a run a repeating stall cannot produce.
+     */
+    const val HEALTHY_SAMPLES_TO_RESET = 3
+
+    /**
+     * The run of healthy progress samples so far: extended by a tick that found
+     * the sink moving frames with audible output, broken by one that did not.
+     */
+    fun healthyRun(soundNow: Boolean, previous: Int): Int = if (soundNow) previous + 1 else 0
+
     /** The gain a player must carry once a transition has settled. */
     const val SETTLED_GAIN = 1f
 
