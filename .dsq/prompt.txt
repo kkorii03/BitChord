@@ -1,0 +1,32 @@
+BITCHORD 1.9 (Kotlin Android, branch task/u19-tg, worktree C:\Users\jang\Desktop\BitChord\BitChord-u19tg).
+Goal: the first sound of a cold song takes 13-33 s. A slow but SUCCESSFUL stream answer is thrown away and the app waits for a slower fallback instead.
+
+## Evidence (emulator logcat 11-04, `phone-out\emu-c1-base-raw\smoke-play\smoke-logcat.txt`)
+The worst case, "When I Was Your Man" (video row):
+```
+00:12:41.151  race won by timeout in 2533ms
+00:12:42.437  proxy-playback ... ok in 3837ms      <- a usable URL existed here
+00:12:49.966  NewPipe total resolve 11430ms        <- the app waited for THIS instead
+00:12:52.477  first audio: 13659ms
+```
+Youngblood: `direct: 2494ms` -> `race won by timeout in 5177ms` -> extractor HTTP 5s timeout -> `newPipeStream: 20407ms` -> `total resolve: 25806 ms` -> first audio 33339ms.
+7 rings: total resolve 12802 ms -> first audio 17776 ms.
+
+So the dominant wait is `StreamResolver.resolve`: a direct attempt, then a proxy/InnerTubeX race, then a NewPipe extraction fallback. When the race times out, both racing jobs are cancelled (`ResolutionRace.kt:53-58, 68-77`), so a late successful proxy answer never reaches the caller, even though it arrived before the extraction finished.
+
+## Tasks
+1. Confirm or refute with file:line: `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt` (direct at 753-790, race at 1138-1178, extraction fallback at 1184-1206, extraction mutex at 2743-2754) and `ResolutionRace.kt`. State exactly why the 3837 ms proxy answer is not used.
+2. Make the smallest change so a late successful answer is used instead of being discarded: when the race times out, do not cancel a job that can still answer; hand the first successful answer to the same return path the extraction fallback uses, within the existing deadline. Do NOT simply raise or delete timeouts, and do NOT remove the extraction mutex or any retry/backoff.
+3. Keep every guard: per-video in-flight de-duplication, the refused-stream memory (`StreamChoice.substitutesRefused`, `StreamRefusalRecovery`), the deadline, cancellation of the losers once a winner is chosen, and the cache of a good URL.
+4. JVM test that FAILS on the current code: a slow participant that answers after the race timeout but before the deadline must be returned (today the result is the fallback or a timeout).
+5. State which log lines would prove it on the next run (`proxy-playback ... ok` followed by a resolve that ends without waiting for `NewPipe total resolve`, and a smaller `TIMING first audio`).
+
+## Rules
+- Keep upstream code intact (ko/ + `// [KO]` hooks). Unknown Android/Media3 API: context7.
+- Do NOT touch .github/workflows, signing, LyricsTiming.kt, LyricsController.kt, LyricsPerLine.kt, NextTrackPreparation.kt or PlaybackService.kt (other work owns them today).
+- Battery first: no polling, no extra network request beyond what is already started; event-based.
+- New test class names in the summary (you may not edit workflows). grep/Select-String, not rg.
+- Follow AGENTS.md (ponytail): smallest complete change.
+
+## Summary (max 10 lines)
+files / why the late answer is lost with file:line / change / tests on base vs after / REMOVED-LINES AUDIT / expected firstAudio / not done.
