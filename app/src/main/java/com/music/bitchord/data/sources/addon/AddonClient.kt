@@ -74,6 +74,19 @@ class AddonClient(rawBaseUrl: String) {
     @Volatile
     private var quietUntilMs = 0L
 
+    /**
+     * Until when a manifest 404 is remembered.
+     *
+     * [SharedCalls] drops a failure by design — a server having a bad minute
+     * should be asked again on the next track — so a manifest that is simply
+     * absent was re-asked on every search and stream lookup, because both read
+     * the manifest for their settings. A 404 is not that kind of failure: it is
+     * a settled answer about this URL, and it is kept for the same window the
+     * manifest itself would have been.
+     */
+    @Volatile
+    private var manifestMissingUntilMs = 0L
+
     // ── Manifest ──────────────────────────────────────────────────────────
 
     /**
@@ -87,24 +100,32 @@ class AddonClient(rawBaseUrl: String) {
      * the user is still looking at the URL they pasted, rather than the addon
      * being accepted and then silently returning nothing on every track.
      */
-    suspend fun manifest(): Result<AddonManifest> = manifests.get(
-        key = baseUrl,
-        describe = { "▶ addon manifest(${redact(baseUrl)})" },
-    ) {
-        fetch<AddonManifest>(manifestUrl(baseUrl)).mapCatching { manifest ->
-            if (manifest.id.isBlank()) {
-                throw AddonException("URL이 응답했지만 애드온 매니페스트가 아닙니다")
+    suspend fun manifest(): Result<AddonManifest> {
+        if (System.currentTimeMillis() < manifestMissingUntilMs) {
+            return Result.failure(AddonException(NO_MANIFEST))
+        }
+        return manifests.get(
+            key = baseUrl,
+            describe = { "▶ addon manifest(${redact(baseUrl)})" },
+        ) {
+            fetch<AddonManifest>(manifestUrl(baseUrl)).mapCatching { manifest ->
+                if (manifest.id.isBlank()) {
+                    throw AddonException("URL이 응답했지만 애드온 매니페스트가 아닙니다")
+                }
+                if (!manifest.isPlayable) {
+                    val declared = manifest.resources.joinToString(", ")
+                    throw AddonException("This addon declares $declared — BitChord needs search")
+                }
+                manifest
+            }.recoverCatching { failure ->
+                // A manifest 404 is not "no such track", it is "no addon here" —
+                // the one place the miss/fault distinction below has to be undone.
+                if (failure is AddonNotFound) {
+                    manifestMissingUntilMs = System.currentTimeMillis() + MANIFEST_TTL_MS
+                    throw AddonException(NO_MANIFEST)
+                }
+                throw failure
             }
-            if (!manifest.isPlayable) {
-                val declared = manifest.resources.joinToString(", ")
-                throw AddonException("This addon declares $declared — BitChord needs search")
-            }
-            manifest
-        }.recoverCatching { failure ->
-            // A manifest 404 is not "no such track", it is "no addon here" —
-            // the one place the miss/fault distinction below has to be undone.
-            if (failure is AddonNotFound) throw AddonException("이 URL에 매니페스트가 없습니다")
-            throw failure
         }
     }
 
@@ -391,7 +412,17 @@ class AddonClient(rawBaseUrl: String) {
     private suspend fun body(url: String, rejectHtml: Boolean = false): String = withContext(Dispatchers.IO) {
         var attempt = 0
         while (true) {
-            (quietUntilMs - System.currentTimeMillis()).takeIf { it > 0 }?.let { delay(it) }
+            // This runs on the addon's own scope, which outlives every caller, so
+            // a sleep here is not the caller's to cancel: a rest of minutes would
+            // park one coroutine per track and wake them all on the same instant,
+            // against the very host that asked to be left alone. Past what a
+            // caller could wait it is refused instead, and the host's rest stands
+            // for the next attempt.
+            val quietMs = quietUntilMs - System.currentTimeMillis()
+            if (quietMs > HqRetryPolicy.MAX_WAIT_MS) {
+                throw AddonUnavailable(QUIET_MESSAGE, restUntilMs = quietUntilMs)
+            }
+            if (quietMs > 0) delay(quietMs)
 
             val host = HqHostTracker.hostOf(url)
             val request = Request.Builder().url(url)
@@ -486,7 +517,7 @@ class AddonClient(rawBaseUrl: String) {
                                 // the two without weakening the fallback used by
                                 // a real, unreachable addon.
                                 throw AddonUnavailable(
-                                    "애드온이 BitChord의 요청을 제한하고 있습니다",
+                                    QUIET_MESSAGE,
                                     restUntilMs = nowMs + restMs,
                                 )
                             }
@@ -558,6 +589,7 @@ class AddonClient(rawBaseUrl: String) {
         searches.clear()
         streams.clear()
         quietUntilMs = 0L
+        manifestMissingUntilMs = 0L
     }
 
     /**
@@ -598,6 +630,12 @@ class AddonClient(rawBaseUrl: String) {
         private val LOW_WORDS = listOf("low", "96", "128", "min")
 
         private const val MANIFEST_SUFFIX = "/manifest.json"
+
+        /** Said both when the 404 arrives and while it is remembered. */
+        private const val NO_MANIFEST = "이 URL에 매니페스트가 없습니다"
+
+        /** Said when this addon is still resting for longer than a call may wait. */
+        private const val QUIET_MESSAGE = "애드온이 BitChord의 요청을 제한하고 있습니다"
 
         /**
          * A base URL from whatever the user pasted.

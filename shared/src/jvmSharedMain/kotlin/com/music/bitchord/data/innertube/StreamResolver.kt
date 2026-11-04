@@ -327,13 +327,19 @@ object StreamResolver {
         // The container carries no bitrate field, so this is the only place the
         // real figure is ever known.
         NerdStats.onStreamPicked(videoId, stream.kbps)
-        stream.loudnessDb?.let { loudness[videoId] = it }
+        stream.loudnessDb?.let { rememberLoudness(videoId, it) }
         remember(videoId, stream.url, walked.generation, walked.onAllScope)
         return stream.url
     }
 
     /** Per-track loudness, read once and kept for as long as the process runs. */
     private val loudness = ConcurrentHashMap<String, Double>()
+
+    /** Bounded like every sibling map: the queue in hand, not a history of the install. */
+    internal fun rememberLoudness(videoId: String, db: Double) {
+        if (loudness.size >= MAX_REMEMBERED) loudness.clear()
+        loudness[videoId] = db
+    }
 
     /**
      * YouTube's own normalization figure for [videoId], or null when it has
@@ -2742,6 +2748,9 @@ object StreamResolver {
      */
     private val extractionGate = Mutex()
 
+    /** Lets a test hold the gate, to check what the cover's loop does while it is busy. */
+    internal val extractionGateForTest: Mutex get() = extractionGate
+
     private suspend fun extractStream(
         videoId: String,
         select: (List<Pair<Int, AudioStream>>) -> AudioStream?,
@@ -2823,16 +2832,10 @@ object StreamResolver {
         videoLoops[videoId]?.let { if (it.expiresAtMs - now > LOOP_MARGIN_MS) return it }
         // The gate is shared with playback's own extraction, which a listener
         // may be waiting on: a cover's loop only takes it when it is free,
-        // never queues in front of a track trying to start.
-        var held = false
-        for (attempt in 0 until LOOP_GATE_TRIES) {
-            if (extractionGate.tryLock()) {
-                held = true
-                break
-            }
-            delay(LOOP_GATE_WAIT_MS)
-        }
-        if (!held) return null
+        // never queues in front of a track trying to start. A busy gate is
+        // therefore the answer, not a reason to wait — the loop is a muted
+        // decoration and comes back on the next cover.
+        if (!extractionGate.tryLock()) return null
         val found = try {
             run {
                 withContext(Dispatchers.IO) {
@@ -2874,8 +2877,6 @@ object StreamResolver {
     /** 480p and 360p: H.264, then VP9, then AV1. */
     private val LOOP_ITAGS = listOf(135, 134, 244, 243, 397, 396)
     private const val LOOP_MARGIN_MS = 20L * 60 * 1000
-    private const val LOOP_GATE_TRIES = 20
-    private const val LOOP_GATE_WAIT_MS = 1_000L
     private const val DEFAULT_LOOP_LIFETIME_MS = 5L * 60 * 60 * 1000
 
     // ---- Cache --------------------------------------------------------------
