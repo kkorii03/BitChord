@@ -1462,16 +1462,27 @@ object ListenTogether {
     }
 
     /**
+     * Whether a position report is worth writing to the socket.
+     *
+     * The server reads one only while the party is playing — a paused report is
+     * decoded and dropped (`backend/main.go`, `FrameReport`) — so a paused party
+     * sends nothing. The membership is held by the socket and its ping, never
+     * by these, so nothing goes stale in the meantime.
+     */
+    internal fun shouldReportPosition(playing: Boolean): Boolean = playing
+
+    /**
      * Tells the server where this device actually is.
      *
      * Nothing is decided by it — the server's state is the truth, and a party
-     * averaged towards its slowest member would be a party that drags. It keeps
-     * the membership alive and makes real drift visible in the server log,
-     * which is the only place the two halves of this feature can be compared.
+     * averaged towards its slowest member would be a party that drags. It makes
+     * real drift visible in the server log, which is the only place the two
+     * halves of this feature can be compared.
      */
     private suspend fun DefaultClientWebSocketSession.reportLoop() {
         while (true) {
             delay(REPORT_INTERVAL_MS)
+            if (!shouldReportPosition(_state.value.playback.isPlaying)) continue
             val position = partyPositionMs() ?: continue
             val frame = buildJsonObject {
                 put("type", "report")
