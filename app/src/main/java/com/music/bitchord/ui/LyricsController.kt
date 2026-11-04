@@ -118,6 +118,7 @@ class LyricsController(
     private var lyricsRaceOrder: List<LyricsSource> = emptyList()
     private var lyricsTimingJob: Job? = null
     private var aiTimingJob: Job? = null
+    private var refineHeardJob: Job? = null
 
     /**
      * A failing measurement or automatic AI pass is a background detail, not a
@@ -830,6 +831,7 @@ class LyricsController(
     ) {
         lyricsTimingJob?.cancel()
         if (cancelAi) aiTimingJob?.cancel()
+        refineHeardJob?.cancel()
         timingLines = lines
         val request = currentLyricsRequest
         // A substituted recording is a different file under the same video id:
@@ -1456,7 +1458,7 @@ class LyricsController(
                 "${ms / 60_000}:${((ms / 1_000) % 60).toString().padStart(2, '0')}"
             },
         )
-        scope.launch {
+        refineHeardJob = scope.launch {
             val heard = LyricsTiming.ensureRefineHeard(
                 app,
                 request.videoId,

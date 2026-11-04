@@ -39,6 +39,13 @@ class RefineExtendPolicyTest {
             model = RefinePolicy.Model.LINEAR,
         )
         assertTrue(RefineExtendPolicy.shouldExtend(drifting, 90.0, 80_000L))
+        assertTrue(
+            RefineExtendPolicy.shouldExtend(
+                drifting.copy(model = RefinePolicy.Model.DRIFT),
+                90.0,
+                80_000L,
+            ),
+        )
         assertFalse(RefineExtendPolicy.shouldExtend(result(applied = true, lines = 20), 90.0, 80_000L))
     }
 
