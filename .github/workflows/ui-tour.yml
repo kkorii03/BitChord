@@ -15,6 +15,14 @@ on:
         description: 'Force the Korea-without-Premium home (debug switch)'
         type: boolean
         default: true
+      api-level:
+        description: 'Android API level for the emulator (default 34)'
+        type: string
+        default: '34'
+      profile:
+        description: 'AVD profile: pixel_7 (default), pixel_2, pixel_tablet'
+        type: string
+        default: 'pixel_7'
 
 jobs:
   tour:
@@ -64,10 +72,10 @@ jobs:
           TOUR_QUICK: ${{ (github.event_name != 'workflow_dispatch' || inputs.quick) && '1' || '0' }}
           TOUR_GATED: ${{ (github.event_name != 'workflow_dispatch' || inputs.gated) && '1' || '0' }}
         with:
-          api-level: 34
+          api-level: ${{ github.event_name == 'workflow_dispatch' && inputs.api-level || 34 }}
           arch: x86_64
           target: google_apis
-          profile: pixel_7
+          profile: ${{ github.event_name == 'workflow_dispatch' && inputs.profile || 'pixel_7' }}
           disable-animations: false
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           # Device-wide proxy through the runner's authfwd (see set_proxy_port.py).
