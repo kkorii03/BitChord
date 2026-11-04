@@ -123,6 +123,9 @@ class DirectSourceGateTest {
      * Tribute" off the album "Gnarls Barkley Cool Jazz Tribute" first and
      * served it, because nothing here asked whether the row was the original
      * recording — only whether its bytes opened.
+     *
+     * Each of these uses its own title and artist: the search memo is keyed by
+     * the target, and a shared one made these tests read each other's answers.
      */
     @Test
     fun aTributeIsNotServedInPlaceOfTheSong() = runBlocking {
@@ -133,11 +136,11 @@ class DirectSourceGateTest {
                     listOf(
                         Song(
                             videoId = "tribute-1",
-                            title = "Golden Boy",
-                            artist = "Eljohnzc Tribute",
+                            title = "Jazz Probe",
+                            artist = "Original Act Tribute",
                             thumbnailUrl = null,
                             durationText = "3:20",
-                            albumName = "Eljohnzc Cool Jazz Tribute",
+                            albumName = "Original Act Cool Jazz Tribute",
                         ),
                     ),
                 ),
@@ -147,7 +150,7 @@ class DirectSourceGateTest {
         try {
             assertNull(
                 "a tribute is not the recording that was queued",
-                SourceResolver.directStream(target()) { true },
+                SourceResolver.directStream(TrackMatcher.Target("Jazz Probe", "Original Act", durationSec = 200)) { true },
             )
         } finally {
             install(emptyList())
@@ -164,7 +167,7 @@ class DirectSourceGateTest {
                     listOf(
                         Song(
                             videoId = "other-1",
-                            title = "Golden Boy",
+                            title = "Cover Probe",
                             artist = "Someone Else",
                             thumbnailUrl = null,
                             durationText = "3:20",
@@ -175,7 +178,9 @@ class DirectSourceGateTest {
             ),
         )
         try {
-            assertNull(SourceResolver.directStream(target()) { true })
+            assertNull(
+                SourceResolver.directStream(TrackMatcher.Target("Cover Probe", "Original Act", durationSec = 200)) { true },
+            )
         } finally {
             install(emptyList())
         }

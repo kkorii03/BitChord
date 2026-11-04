@@ -310,16 +310,14 @@ object SourceResolver {
         val addons = directAddons()
         if (addons.isEmpty()) return null
         // This stream plays *instead of* YouTube's own copy, so it clears the
-        // same bar as every other replacement: the original recording, an
-        // artist it actually credits, and the same runtime. Ungated, a
+        // same bar as every other replacement: the original recording, its
+        // artist, its runtime and no cover/tribute arrangement. Ungated, a
         // tribute filed under the original title won on rank alone and a
         // "Crazy" request played a jazz/sax tribute (phone 11-04).
         val (source, stream) = bestAcross(
             addons,
             target,
             requestForNow(),
-            strictLength = target.durationSec != null,
-            requireSharedArtist = true,
             strictOriginal = true,
             accept = { _, candidate -> probe(candidate) },
         ) ?: return null
