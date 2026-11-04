@@ -1082,6 +1082,11 @@ object LyricsRepository {
         }
         val documents = SharedDocuments(this)
 
+        // Every answer that has arrived, for the consensus log alone: read
+        // after the winner is chosen, so it changes nothing and waits for
+        // nobody.
+        val answered = Collections.synchronizedList(mutableListOf<Pair<LyricsSource, Result>>()) // [KO] consensus
+
         // Genius is a plain text web scraper. To preserve bandwidth and avoid rate-limiting,
         // it starts lazily and is only contacted if all higher-priority synced sources miss.
         val racing: List<Pair<LyricsSource, Deferred<Result?>>> = sequence.map { source ->
@@ -1107,6 +1112,7 @@ object LyricsRepository {
                         work.cancel()
                     }
                     val found = lines?.let { result(source, it) }
+                    if (found != null) answered.add(source to found) // [KO] consensus
                     // A null body with a cancelled worker is the budget running
                     // out, not the provider saying it has nothing.
                     val failure = when {
@@ -1126,6 +1132,32 @@ object LyricsRepository {
             }
         }
 
+        // Says afterwards whether the answer being taken is the odd one out of
+        // the providers that answered, and is not allowed to say anything else:
+        // the winner is already chosen when this runs.
+        fun logConsensus(used: Result?) { // [KO] consensus
+            val winner = used?.source ?: return
+            val inHand = synchronized(answered) { answered.toList() }
+            TrackLog.i(
+                TAG,
+                ProviderConsensus.logLine(
+                    videoId,
+                    winner.name,
+                    ProviderConsensus.judge(
+                        inHand.map { (source, answer) ->
+                            ProviderConsensus.Candidate(
+                                provider = source.name,
+                                firstLineMs = answer.lines.firstOrNull { !it.isGap && it.timeMs > 0 }?.timeMs,
+                                lines = answer.lines,
+                            )
+                        },
+                        used = winner.name,
+                    ),
+                ),
+                about = videoId,
+            )
+        }
+
         try {
             var fallback: Result? = null
             for ((index, entry) in racing.withIndex()) {
@@ -1133,9 +1165,9 @@ object LyricsRepository {
                 // With something in hand already, Genius (plain text) is not worth asking.
                 if (fallback != null && source == LyricsSource.GENIUS) continue
                 val found = runCatching { job.await() }.getOrNull() ?: continue
-                if (found.lines.any { it.isWordSynced }) return@coroutineScope found
+                if (found.lines.any { it.isWordSynced }) return@coroutineScope found.also { logConsensus(it) } // [KO] consensus
                 val timed = found.lines.any { it.timeMs > 0 }
-                if (!prioritizeSyllableSync && timed) return@coroutineScope found
+                if (!prioritizeSyllableSync && timed) return@coroutineScope found.also { logConsensus(it) } // [KO] consensus
                 if (fallback == null || (timed && fallback.lines.none { it.timeMs > 0 })) fallback = found
                 if (timed) {
                     // A line-synced answer is in hand. The sources still running
@@ -1147,10 +1179,11 @@ object LyricsRepository {
                     // the wait; a line-only one finishing later changes nothing.
                     val rest = racing.drop(index + 1)
                         .filter { it.first != LyricsSource.GENIUS && it.first.wordSynced }
-                    return@coroutineScope wordSyncedWithin(rest, SYLLABLE_GRACE_MS) ?: fallback
+                    return@coroutineScope (wordSyncedWithin(rest, SYLLABLE_GRACE_MS) ?: fallback)
+                        .also { logConsensus(it) } // [KO] consensus
                 }
             }
-            fallback
+            fallback.also { logConsensus(it) } // [KO] consensus
         } finally {
             // Whoever lost the race is no longer worth waiting on, and
             // coroutineScope will not return while they are still running.
