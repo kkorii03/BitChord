@@ -61,4 +61,38 @@ class VideoAudioByteLruTest {
         assertEquals(20, cache.sizeBytes())
         assertEquals(1, cache.size())
     }
+
+    /**
+     * The playback caches bound their entry count by giving every value a size
+     * of one, so the same class keeps a long session from growing: the oldest
+     * entry goes, not the whole map.
+     */
+    @Test
+    fun anEntryCountBoundEvictsTheOldestAndKeepsTheRest() {
+        val cache = ByteLru<String, Int>(3) { 1 }
+        listOf("a", "b", "c").forEach { cache.put(it, 1) }
+        cache.get("a")
+        cache.put("d", 1)
+
+        assertNotNull(cache.get("a"))
+        assertNull(cache.get("b"))
+        assertNotNull(cache.get("c"))
+        assertNotNull(cache.get("d"))
+        assertEquals(3, cache.size())
+        assertEquals(3, cache.sizeBytes())
+    }
+
+    @Test
+    fun clearDropsEverythingAndTheTotal() {
+        val cache = cache(100)
+        cache.put("a", Clip(ByteArray(40)))
+        cache.clear()
+
+        assertNull(cache.get("a"))
+        assertEquals(0, cache.size())
+        assertEquals(0, cache.sizeBytes())
+        // A cleared cache still takes new entries.
+        cache.put("b", Clip(ByteArray(40)))
+        assertEquals(40, cache.sizeBytes())
+    }
 }

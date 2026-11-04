@@ -46,6 +46,7 @@ import com.music.bitchord.playback.loopmix.LoopMixSession
 import com.music.bitchord.playback.loopmix.LoopRegion
 import com.music.bitchord.playback.smart.AnalysisWindow
 import com.music.bitchord.playback.smart.AutomixWorkPolicy
+import com.music.bitchord.playback.smart.ByteLru
 import com.music.bitchord.playback.smart.CrossfadeMode
 import com.music.bitchord.playback.smart.LoopMix
 import com.music.bitchord.playback.smart.LoopMixStallPolicy
@@ -2496,25 +2497,39 @@ class CrossfadeController(
     /** Synced-lyric spans per media id, once asked: [LyricSpans.spans] null when the song has none. */
     private class LyricSpans(val spans: List<LoopMix.Span>?)
 
-    private val lyricSpans = java.util.concurrent.ConcurrentHashMap<String, LyricSpans>()
+    /**
+     * The answers, oldest song evicted first: a session plays far more songs
+     * than a loop mix ever looks at, and every one of them used to be kept for
+     * as long as the service lived. Only the pair being planned is read.
+     */
+    private val lyricSpans = ByteLru<String, LyricSpans>(LYRICS_REMEMBERED) { 1 }
+
+    /** Asks still in flight. An answer moves its id into [lyricSpans] and out of here. */
     private val lyricsAsked = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     /** Asks for [item]'s synced lyrics once; a loop they vouch for needs no vocal mask. */
     private fun askLyrics(item: MediaItem, durationMs: Long) {
         val id = item.mediaId
-        if (!lyricsAsked.add(id)) return
+        // Already answered and still remembered, or already on its way.
+        if (lyricSpans.get(id) != null || !lyricsAsked.add(id)) return
         scope.launch(Dispatchers.IO) {
-            val lines = runCatching { syncedLines(item, durationMs) }.getOrNull()
-            // Only line-synced lyrics say where a voice is; plain text says nothing about time.
-            val spans = lines?.takeIf { found -> found.count { it.timeMs > 0 } >= 4 }?.let { found ->
-                LoopMix.sungSpans(
-                    found.map { line ->
-                        val end = line.sungUntilMs ?: line.words.lastOrNull()?.endMs
-                        LoopMix.Line(line.timeMs, end, blank = line.isGap || line.text.isBlank())
-                    },
-                )
+            try {
+                val lines = runCatching { syncedLines(item, durationMs) }.getOrNull()
+                // Only line-synced lyrics say where a voice is; plain text says nothing about time.
+                val spans = lines?.takeIf { found -> found.count { it.timeMs > 0 } >= 4 }?.let { found ->
+                    LoopMix.sungSpans(
+                        found.map { line ->
+                            val end = line.sungUntilMs ?: line.words.lastOrNull()?.endMs
+                            LoopMix.Line(line.timeMs, end, blank = line.isGap || line.text.isBlank())
+                        },
+                    )
+                }
+                lyricSpans.put(id, LyricSpans(spans))
+            } finally {
+                // Released on a cancelled ask too, so the next tick asks again
+                // rather than waiting for an answer that is never coming.
+                lyricsAsked.remove(id)
             }
-            lyricSpans[id] = LyricSpans(spans)
         }
     }
 
@@ -2558,8 +2573,8 @@ class CrossfadeController(
         }
         askLyrics(current, durationMs)
         askLyrics(next, nextDurationMs)
-        val outLyrics = lyricSpans[current.mediaId]
-        val inLyrics = lyricSpans[next.mediaId]
+        val outLyrics = lyricSpans.get(current.mediaId)
+        val inLyrics = lyricSpans.get(next.mediaId)
         if (outLyrics == null || inLyrics == null) {
             noteLoopVerdict(pair, null, "waiting on lyrics")
             return null
@@ -4054,6 +4069,10 @@ class CrossfadeController(
 
         /** Points the mix popup's fader lines are sampled at. */
         const val MIX_VIEW_FADER_POINTS = 64
+
+        /** Songs whose synced-lyric spans stay remembered; older ones go first. */
+        const val LYRICS_REMEMBERED = 24
+
         const val TAG = "BitChordCrossfade"
 
         /**
