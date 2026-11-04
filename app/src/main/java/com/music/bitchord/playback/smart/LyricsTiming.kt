@@ -1471,14 +1471,18 @@ object LyricsTiming {
         videoId: String,
         lines: List<LyricLine>,
         audioSource: String?,
-    ): Boolean {
-        val entry = store(context).get(videoId) ?: return false
+    ): Boolean = withContext(Dispatchers.Default) {
+        // The word alignment below is a few million cells per call and this
+        // decision is reached from the player's main-thread path; run it off the
+        // main thread (11-04: the emulator tour hit an ANR with 38 skipped
+        // frames and 1 s Davey frames right after lyrics loaded).
+        val entry = store(context).get(videoId) ?: return@withContext false
         // A correction by hand is the listener's own answer; do not spend
         // another engine on top of it.
-        if (entry.manualMs != null) return false
+        if (entry.manualMs != null) return@withContext false
         val key = textKey(lines, audioSource)
         val heard = savedHeardWords(entry, key)
-        if (heard.isEmpty()) return false
+        if (heard.isEmpty()) return@withContext false
         val base = baseOf(entry, lines, audioSource = audioSource, key = key, videoId = videoId)
         val starts: List<Long?> = base?.let { choiceStarts(lines, it) } ?: lines.map { it.timeMs as Long? }
         // The kept refine already moved the lines toward these words; what is
@@ -1491,7 +1495,7 @@ object LyricsTiming {
                 start?.let { it + refineMove(it, refineMs, entry.refineSlopePerMin, untilMs) }
             }
         } ?: starts
-        return BaseChoicePolicy.grosslyOff(
+        return@withContext BaseChoicePolicy.grosslyOff(
             seen,
             BaseChoicePolicy.heardStarts(lines.map { it.text }, heard),
         )
