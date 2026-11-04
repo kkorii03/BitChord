@@ -512,8 +512,18 @@ class FeatureHealthObserver(
         }
     }
 
+    /**
+     * Whether [value] means "no answer was produced".
+     *
+     * `off` is the third no-answer state, not a fourth success: the next-prep
+     * line writes it for a step the safety switches or the settings kept from
+     * running (see `NextPrepLog`). Scoring it as an answer made a device with
+     * the lyrics switch off report every track as a lyrics success and every
+     * one of them as a sync attempt, which is the failure the log's own
+     * `off`/`none` split was introduced to end — in the other direction.
+     */
     private fun isNone(value: String): Boolean =
-        value == "none" || value.startsWith("none(")
+        value == "none" || value.startsWith("none(") || value == "off"
 
     private fun token(message: String, name: String): String? {
         val marker = "$name="

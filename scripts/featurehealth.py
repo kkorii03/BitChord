@@ -53,7 +53,10 @@ FEATURE_HEALTH_RE = re.compile(r"^(?i:feature[-_ ]?health)\b")
 NEXT_PREP_RE = re.compile(
     r"^next-prep:\s+(?P<title>.*?)\s+version=(?P<version>\S+)\s+"
     r"lyrics=(?P<lyrics>\S+)\s+hq=(?P<hq>\S+)\s+"
-    r"sync=(?P<sync>applied|skipped(?:\([^)]*\))?|failed:\S+)\s+"
+    # `off` is a step the switches kept from running (see NextPrepLog); it is
+    # a real value of this field and used to make the whole row unparseable,
+    # so those rows vanished from D1 instead of counting as no answer.
+    r"sync=(?P<sync>applied|off|skipped(?:\([^)]*\))?|failed:\S+)\s+"
     r"mix=(?P<mix>\S+)\s+in\s+(?P<ms>\d+)ms"
 )
 # The sync result as its own line, preferred over `sync=` on the row above:
@@ -396,6 +399,18 @@ def _sync_skip_reason(sync: str) -> str:
     if match is None:
         return sync
     return match.group("reason") or "skipped"
+
+
+def _is_no_answer(value: str) -> bool:
+    """Whether a next-prep token means "no answer was produced".
+
+    Three tokens say that, and only the first used to be recognised: `none`
+    (asked, nothing found), `none(<reason>)` (the same with the reason), and
+    `off` (the switches kept the step from running). Counting either of the
+    last two as a success made a log full of misses read as a perfect lyrics
+    rate -- and put every `off` row into the sync criterion's denominator.
+    """
+    return value == "none" or value.startswith("none(") or value == "off"
 
 
 def _is_flac(value: str) -> bool:
@@ -949,10 +964,10 @@ def analyze(log: Log) -> Report:
 
     # ---- D1: next track preparation -------------------------------------
     d1_total = len(next_preps)
-    d1_lyrics = sum(1 for row in next_preps if row["lyrics"] != "none")
-    d1_hq = sum(1 for row in next_preps if row["hq"] != "none")
+    d1_lyrics = sum(1 for row in next_preps if not _is_no_answer(row["lyrics"]))
+    d1_hq = sum(1 for row in next_preps if not _is_no_answer(row["hq"]))
     d1_mix = sum(1 for row in next_preps if row["mix"] == "ready")
-    d1_with_lyrics = [row for row in next_preps if row["lyrics"] != "none"]
+    d1_with_lyrics = [row for row in next_preps if not _is_no_answer(row["lyrics"])]
     # The dedicated sync line is the authority when present: it separates a
     # healthy `no-answer` from `failed:<reason>`. Older exports have only the
     # row's `sync=` field, which keeps its old meaning.

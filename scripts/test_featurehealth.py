@@ -128,6 +128,37 @@ class NextPrepTests(unittest.TestCase):
         self.assertEqual(169, report.stats["next_prep"]["avg_ms"])
         self.assertEqual(500, report.stats["next_prep"]["max_ms"])
 
+    def test_a_disabled_or_empty_step_is_not_a_success(self) -> None:
+        """`off` and `none(<reason>)` are no answer, not a lyrics hit.
+
+        Only the bare `none` used to be recognised, so a log where the switch
+        was off -- or where every lookup missed -- reported a perfect lyrics
+        rate and put those rows into the sync criterion's denominator.
+        """
+        rows = [
+            line(
+                "19:00:00.000",
+                "next-prep: Off Song version=v1 lyrics=off hq=none(off) "
+                "sync=off mix=none(off) in 10ms",
+            ),
+            line(
+                "19:01:00.000",
+                "next-prep: Miss Song version=v2 lyrics=none(no-answer) "
+                "hq=none(no-answer) sync=skipped(no-lyrics) mix=none(not-ready) in 20ms",
+            ),
+            line(
+                "19:02:00.000",
+                "next-prep: Hit Song version=v3 lyrics=lrc.red hq=qobuz "
+                "sync=applied mix=ready in 30ms",
+            ),
+        ]
+        report = analyze(log_text(*rows))
+        self.assertEqual(3, metric(report, "D1-lyrics").attempts)
+        self.assertEqual(1, metric(report, "D1-lyrics").successes)
+        self.assertEqual(1, metric(report, "D1-hq").successes)
+        self.assertEqual(1, metric(report, "D1-sync").attempts)
+        self.assertEqual(1, metric(report, "D1-sync").successes)
+
     def test_sync_criterion_passes_at_eighty_percent(self) -> None:
         rows = []
         for i in range(5):
