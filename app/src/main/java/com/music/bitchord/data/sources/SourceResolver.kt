@@ -295,6 +295,22 @@ object SourceResolver {
     suspend fun directStream(
         target: TrackMatcher.Target,
         /**
+         * The sound comparison, when the caller has one — the same proof the
+         * upgrade path demands before a candidate may replace what is playing
+         * (see [upgradeFor]'s own `verify`).
+         *
+         * Opening is not being the recording. A candidate can serve its first
+         * bytes flawlessly and still be a different song: a FLAC of something
+         * else, of a similar length, passes every check this path used to make
+         * and then plays *instead of* the track that was queued, from its first
+         * note. Null means the caller has no comparison to offer, and the probe
+         * is then the whole of the proof, as it was.
+         *
+         * Deliberately before [probe]: a trailing lambda belongs to the last
+         * parameter, and every existing caller passes the probe that way.
+         */
+        verify: (suspend (SourceStream) -> Boolean)? = null,
+        /**
          * Whether the candidate can actually serve its first bytes — see
          * [com.music.bitchord.ko.KoStreamProbe]. Injected so the choice can be
          * decided without a network, and so nothing else here has to know about
@@ -314,12 +330,20 @@ object SourceResolver {
         // artist, its runtime and no cover/tribute arrangement. Ungated, a
         // tribute filed under the original title won on rank alone and a
         // "Crazy" request played a jazz/sax tribute (phone 11-04).
+        //
+        // The probe goes first because it is the cheap refusal, and the sound
+        // comparison second because it is the only one that can tell a
+        // correctly-credited different recording from this one. A candidate
+        // that fails either is skipped and the next is tried, so the real
+        // recording from a slower source still gets its turn.
         val (source, stream) = bestAcross(
             addons,
             target,
             requestForNow(),
             strictOriginal = true,
-            accept = { _, candidate -> probe(candidate) },
+            accept = { _, candidate ->
+                probe(candidate) && (verify?.invoke(candidate) ?: true)
+            },
         ) ?: return null
         TrackLog.d(
             TAG,

@@ -186,7 +186,99 @@ class DirectSourceGateTest {
         }
     }
 
+    /**
+     * Opening is not being the recording. A FLAC of a *different* song, of a
+     * similar length, serves its bytes perfectly and passed every check this
+     * path used to make — so it played in place of the queued track from its
+     * first note. The direct stream now clears the same sound comparison an
+     * upgrade does, and a candidate the comparison refuses is not served: the
+     * track falls back to YouTube, where the second look upgrades it properly.
+     */
+    @Test
+    fun aCandidateTheComparisonRefusesIsNotServed() = runBlocking {
+        install(
+            listOf(
+                FakeSource("Deezer", listOf(song("other-song", "Unproved Probe"))),
+                FakeSource("YouTube", kind = SourceKind.YOUTUBE),
+            ),
+        )
+        try {
+            val compared = mutableListOf<String>()
+            val stream = SourceResolver.directStream(
+                TrackMatcher.Target("Unproved Probe", "Eljohnzc", durationSec = 200),
+                verify = { candidate ->
+                    compared += candidate.url
+                    false
+                },
+                probe = { true },
+            )
+
+            assertNull("an unproved stream must not play in place of the track", stream)
+            assertEquals("the candidate must be compared, not played: $compared", 1, compared.size)
+        } finally {
+            install(emptyList())
+        }
+    }
+
+    /** The same candidate plays once the comparison accepts it. */
+    @Test
+    fun aProvedCandidateIsServed() = runBlocking {
+        install(
+            listOf(
+                FakeSource("Deezer", listOf(song("proved-1", "Proved Probe"))),
+                FakeSource("YouTube", kind = SourceKind.YOUTUBE),
+            ),
+        )
+        try {
+            val stream = SourceResolver.directStream(
+                TrackMatcher.Target("Proved Probe", "Eljohnzc", durationSec = 200),
+                verify = { true },
+                probe = { true },
+            )
+
+            assertEquals("https://Deezer/proved-1", stream?.url)
+        } finally {
+            install(emptyList())
+        }
+    }
+
+    /** The cheap refusal comes first: a candidate that cannot serve its bytes is not decoded for comparison. */
+    @Test
+    fun aCandidateThatRefusesItsBytesIsNotCompared() = runBlocking {
+        install(
+            listOf(
+                FakeSource("Deezer", listOf(song("unopened-1", "Unopened Probe"))),
+                FakeSource("YouTube", kind = SourceKind.YOUTUBE),
+            ),
+        )
+        try {
+            var compared = false
+            val stream = SourceResolver.directStream(
+                TrackMatcher.Target("Unopened Probe", "Eljohnzc", durationSec = 200),
+                verify = {
+                    compared = true
+                    true
+                },
+                probe = { false },
+            )
+
+            assertNull(stream)
+            assertFalse("a stream that does not open is not worth decoding", compared)
+        } finally {
+            install(emptyList())
+        }
+    }
+
     private fun target() = TrackMatcher.Target("Golden Boy", "Eljohnzc", durationSec = 200)
+
+    /** A row for [title] that the matcher accepts as the original recording. */
+    private fun song(id: String, title: String) = Song(
+        videoId = id,
+        title = title,
+        artist = "Eljohnzc",
+        thumbnailUrl = null,
+        durationText = "3:20",
+    )
 
     private fun row(id: String) = Song(
         videoId = id,

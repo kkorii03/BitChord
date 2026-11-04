@@ -8,6 +8,7 @@ import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.TrackMatcher
+import com.music.bitchord.playback.smart.HqAudioVerify
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
@@ -228,7 +229,7 @@ object DirectSourceGate {
         }
         val fresh = Lookup(
             work = scope.async(TrackLog.about(videoId), start = CoroutineStart.LAZY) {
-                SourceResolver.directStream(target)
+                SourceResolver.directStream(target, verify = proofOf(videoId, target))
             },
             startedAtMs = android.os.SystemClock.elapsedRealtime(),
         )
@@ -252,6 +253,42 @@ object DirectSourceGate {
     internal sealed interface FirstAnswer {
         data class Addon(val stream: SourceStream) : FirstAnswer
         data class YouTube(val url: String) : FirstAnswer
+    }
+
+    /**
+     * The proof a direct stream has to clear before it plays: the same
+     * ninety-second sound comparison, against the same YouTube reference, that
+     * the upgrade path demands before it will swap a candidate in — see
+     * [HqAudioVerify].
+     *
+     * It is run *inside* the lookup rather than after it, so it spends the
+     * lookup's own budget and nothing else. [LOOKUP_TIMEOUT_MS] is not extended
+     * for it, and that cap is the whole of the promise kept here: a candidate
+     * that cannot be proved inside the window is not served, and the caller
+     * falls back to YouTube exactly as it does when no addon answers in time —
+     * [startedOnYouTube] then hands the track to [QualityUpgrade], which
+     * upgrades it on its own terms, proof and all. On the path where the
+     * listener is already hearing something, [firstAnswer] races YouTube's own
+     * walk beside this one, so nothing about that resolve waits for the
+     * comparison at all.
+     *
+     * The cost is named rather than hidden: a candidate that used to play two
+     * seconds in now waits for its proof, and one whose proof does not land
+     * before the cap leaves the track on YouTube for the second look to
+     * upgrade. Sound already playing is never interrupted either way, which is
+     * why this is affordable at all.
+     *
+     * Null when there is no application context to compare with — a unit test,
+     * or the gate reached before the app has one — and the probe is then the
+     * whole of the proof.
+     */
+    private fun proofOf(
+        videoId: String,
+        target: TrackMatcher.Target,
+    ): (suspend (SourceStream) -> Boolean)? {
+        if (!AppSettings.appContextReady()) return null
+        val context = AppSettings.appContext
+        return { stream -> HqAudioVerify.verify(context, videoId, target, stream) != null }
     }
 
     internal suspend fun firstAnswer(
