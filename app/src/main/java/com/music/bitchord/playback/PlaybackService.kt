@@ -10017,6 +10017,11 @@ class PlaybackService : MediaLibraryService() {
                     enableFloatOutput = enableFloatOutput,
                     preferredOutputEncodingProvider = { format -> resolvePreferredOutputEncoding(format) },
                     resampleRateProvider = { rate -> resampleTargetRate(rate) },
+                    // A Bluetooth route takes two channels, and a 6-channel
+                    // AudioTrack is never consumed over A2DP: the sink folds a
+                    // multichannel bed down to stereo there instead of opening
+                    // a track that would stall (phone 11-04).
+                    downmixProvider = { activeRouteKind == AudioRouting.Kind.BLUETOOTH },
                     // Which of the two sinks the listener can hear, told by the
                     // role its transition filter currently holds — [activeFilter]
                     // and [spareFilter] trade places at every handoff. Only the
@@ -10072,6 +10077,16 @@ class PlaybackService : MediaLibraryService() {
     }
 
     /**
+     * The route the last [applyOutputRoute] resolved.
+     *
+     * Read from the audio thread while a sink configures — [PrecisionAudioSink]
+     * asks whether a bed has to be folded down — so it stays a plain volatile
+     * field rather than a device query on that thread.
+     */
+    @Volatile
+    private var activeRouteKind: AudioRouting.Kind = AudioRouting.Kind.PHONE
+
+    /**
      * Applies the user's USB-DAC preference through the public Android routing
      * API. This does not bypass the system USB driver: it intentionally lets
      * Android negotiate only formats the connected DAC actually advertises.
@@ -10086,8 +10101,10 @@ class PlaybackService : MediaLibraryService() {
 
         val activeDevice = resolveActiveOutputDevice()
         val routeKind = resolveActiveRouteKind(activeDevice)
-        // A Bluetooth sink is stereo; an immersive 6-channel track stalls it.
-        SourceResolver.setImmersiveOutputAllowed(routeKind != AudioRouting.Kind.BLUETOOTH)
+        // A Bluetooth sink is stereo, so a 6-channel bed is folded down to it
+        // rather than being refused — see
+        // com.music.bitchord.playback.audio.Downmix and the sink's provider.
+        activeRouteKind = routeKind
         val directUsbProbe = if (routeKind == AudioRouting.Kind.USB) UsbDirectManager.probe(this) else null
 
         val format = currentAudioInputFormat

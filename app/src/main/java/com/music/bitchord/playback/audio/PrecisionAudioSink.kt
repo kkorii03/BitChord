@@ -32,6 +32,10 @@ import java.nio.ByteOrder
  *   Downstream, custom processors are excluded from [DefaultAudioSink]'s internal processor chain,
  *   guaranteeing ZERO duplicate processing, while SilenceSkipping and Sonic processors remain functional.
  *
+ * - A multichannel bed on a route that only takes stereo ([downmixProvider]) is folded to two
+ *   channels by [Downmix] before the chain, and the delegate is configured for a stereo track.
+ *   A 6-channel AudioTrack is never consumed over A2DP, so the fold is what lets an Atmos bed play.
+ *
  * - In Fallback/Legacy Mode (for non-linear PCM sources — a passthrough or offload
  *   bitstream): decoder buffers pass straight through to [DefaultAudioSink]. Nothing
  *   here can process a compressed stream, and nothing here pretends to.
@@ -74,6 +78,14 @@ class PrecisionAudioSink(
      */
     private val resampleRateProvider: ((Int) -> Int?)? = null,
     /**
+     * Whether the current route can only take stereo, so a multichannel bed
+     * has to be folded down before [dspChain] — see [Downmix]. Asked with the
+     * input channel count on every [configure], the same way
+     * [preferredOutputEncodingProvider] is: the route can change between
+     * tracks, and this sink must not read Android state itself.
+     */
+    private val downmixProvider: ((Int) -> Boolean)? = null,
+    /**
      * Whether this sink is the one the listener can currently hear.
      *
      * A crossfade keeps two players alive, each with its own sink, both writing
@@ -102,6 +114,10 @@ class PrecisionAudioSink(
     var activeFormat: Format? = null
         private set
 
+    /** Whether the current stream is a multichannel bed being folded to stereo. */
+    var isDownmixing: Boolean = false
+        private set
+
     private var processCounter: Long = 0L
 
     /** Sample rate of the configured format, for timestamping split sub-blocks. */
@@ -124,6 +140,14 @@ class PrecisionAudioSink(
         channelCount = AudioBlock.DEFAULT_CHANNELS,
         capacityFrames = DEFAULT_CAPACITY_FRAMES,
     )
+
+    /**
+     * The block the decoder writes into. The same instance as [audioBlock]
+     * unless the stream is being folded down, in which case [audioBlock] holds
+     * the two channels the delegate plays and this one keeps the six it
+     * arrived as.
+     */
+    private var inputBlock: AudioBlock = audioBlock
 
     private var outputByteBuffer: ByteBuffer = ByteBuffer.allocateDirect(0).order(ByteOrder.nativeOrder())
 
@@ -195,7 +219,13 @@ class PrecisionAudioSink(
             val encoding = mapToPcmEncoding(format.pcmEncoding)
             if (encoding != null) {
                 val sampleRate = format.sampleRate
-                val channelCount = format.channelCount
+                val inputChannels = format.channelCount
+                // A route that only takes stereo gets the bed folded down here,
+                // so the delegate opens a two-channel AudioTrack instead of a
+                // six-channel one it will never consume. Everything downstream —
+                // the DSP chain included — then runs on the stereo block.
+                val downmix = isDownmixFor(format)
+                val channelCount = if (downmix) 2 else inputChannels
 
                 // 1. Configure the Float32 DSP chain
                 dspChain.configure(sampleRate, channelCount)
@@ -205,15 +235,18 @@ class PrecisionAudioSink(
                 skippedFramesForStream = 0L
 
                 // 2. Ensure internal buffers are sized for max frames and channel count
-                ensureBuffers(channelCount)
+                ensureBuffers(inputChannels, channelCount)
+                isDownmixing = downmix
                 configuredSampleRate = sampleRate
 
                 // 3. Determine target output encoding
                 val floatFormat = format.buildUpon()
                     .setPcmEncoding(C.ENCODING_PCM_FLOAT)
+                    .setChannelCount(channelCount)
                     .build()
                 val pcm16Format = format.buildUpon()
                     .setPcmEncoding(C.ENCODING_PCM_16BIT)
+                    .setChannelCount(channelCount)
                     .build()
 
                 val targetEncoding = resolveTargetEncoding(
@@ -224,6 +257,7 @@ class PrecisionAudioSink(
                 // 4. Configure delegate DefaultAudioSink
                 val delegateFormat = format.buildUpon()
                     .setPcmEncoding(targetEncoding.toMedia3PcmEncoding())
+                    .setChannelCount(channelCount)
                     .build()
 
                 val delegateConfig = AudioSink.AudioSinkConfig.Builder(delegateFormat)
@@ -238,7 +272,10 @@ class PrecisionAudioSink(
                     inputPcmEncoding = encoding
                     targetOutputEncoding = targetEncoding
                     isPrecisionActive = true
-                    publishLoopFormat(sampleRate, channelCount, true)
+                    // The loop mix's own decks are stereo, so a folded bed is
+                    // published as the bed it arrived as: automix stays off it,
+                    // exactly as it did before the fold.
+                    publishLoopFormat(sampleRate, inputChannels, true)
                     publishTelemetry(encoding, targetEncoding)
                     logConfig(
                         precisionActive = true,
@@ -264,7 +301,7 @@ class PrecisionAudioSink(
                             inputPcmEncoding = encoding
                             targetOutputEncoding = PcmEncoding.PCM_16BIT
                             isPrecisionActive = true
-                            publishLoopFormat(sampleRate, channelCount, true)
+                            publishLoopFormat(sampleRate, inputChannels, true)
                             publishTelemetry(encoding, PcmEncoding.PCM_16BIT)
                             logConfig(
                                 precisionActive = true,
@@ -294,6 +331,8 @@ class PrecisionAudioSink(
         isPrecisionActive = false
         inputPcmEncoding = null
         targetOutputEncoding = null
+        isDownmixing = false
+        inputBlock = audioBlock
         configuredSampleRate = 0
         publishLoopFormat(0, 0, false)
         if (isAudible()) {
@@ -339,7 +378,7 @@ class PrecisionAudioSink(
             encodedAccessUnitCount,
         )
 
-        val channelCount = audioBlock.channelCount
+        val channelCount = inputBlock.channelCount
         val bytesPerFrame = inEncoding.bytesPerFrame(channelCount)
         if (bytesPerFrame <= 0) return true
         streaming = true
@@ -401,14 +440,19 @@ class PrecisionAudioSink(
             val availableFrames = inputBuffer.remaining() / bytesPerFrame
             if (availableFrames <= 0) break
 
-            val framesToRead = minOf(availableFrames, audioBlock.capacityFrames)
+            val framesToRead = minOf(availableFrames, inputBlock.capacityFrames)
             val decodedFrames = PcmBoundary.decode(
                 inputBuffer = inputBuffer,
                 encoding = inEncoding,
-                destinationBlock = audioBlock,
+                destinationBlock = inputBlock,
                 maxFrames = framesToRead,
             )
             if (decodedFrames <= 0) break
+
+            // A stereo route gets the bed folded down before the DSP chain, so
+            // every stage below — and the delegate — sees two channels. The
+            // frame count is the decoder's own: one output frame per input frame.
+            if (isDownmixing) Downmix.mix(inputBlock, audioBlock)
 
             if (BuildConfig.DEBUG) {
                 processCounter++
@@ -834,6 +878,8 @@ class PrecisionAudioSink(
         isPrecisionActive = false
         inputPcmEncoding = null
         targetOutputEncoding = null
+        isDownmixing = false
+        inputBlock = audioBlock
         activeFormat = null
         configuredSampleRate = 0
         if (isAudible()) {
@@ -907,11 +953,17 @@ class PrecisionAudioSink(
      */
     override fun getFormatSupport(format: Format): Int {
         if (shouldActivatePrecision(format)) {
+            // What the delegate would be asked to open — two channels when the
+            // bed is folded down, so the answer is about the track that will
+            // really exist rather than the one the decoder produces.
+            val channelCount = if (isDownmixFor(format)) 2 else format.channelCount
             val pcm16Format = format.buildUpon()
                 .setPcmEncoding(C.ENCODING_PCM_16BIT)
+                .setChannelCount(channelCount)
                 .build()
             val floatFormat = format.buildUpon()
                 .setPcmEncoding(C.ENCODING_PCM_FLOAT)
+                .setChannelCount(channelCount)
                 .build()
             val pcm16Playable =
                 delegate.getFormatSupport(pcm16Format) != AudioSink.SINK_FORMAT_UNSUPPORTED
@@ -977,6 +1029,13 @@ class PrecisionAudioSink(
         }
     }
 
+    /**
+     * Whether [format] is a bed this route wants folded to stereo: a layout
+     * [Downmix] knows, on a route that said it only takes stereo.
+     */
+    private fun isDownmixFor(format: Format): Boolean =
+        Downmix.needs(format.channelCount) && downmixProvider?.invoke(format.channelCount) == true
+
     private fun shouldActivatePrecision(format: Format): Boolean {
         val sampleMimeType = format.sampleMimeType
         if (sampleMimeType != null && sampleMimeType != MimeTypes.AUDIO_RAW) return false
@@ -993,14 +1052,25 @@ class PrecisionAudioSink(
         return true
     }
 
-    private fun ensureBuffers(channelCount: Int) {
-        if (audioBlock.channelCount != channelCount) {
-            audioBlock = AudioBlock(channelCount = channelCount, capacityFrames = DEFAULT_CAPACITY_FRAMES)
+    private fun ensureBuffers(inputChannelCount: Int, outputChannelCount: Int) {
+        if (audioBlock.channelCount != outputChannelCount) {
+            audioBlock = AudioBlock(channelCount = outputChannelCount, capacityFrames = DEFAULT_CAPACITY_FRAMES)
         } else {
             audioBlock.reset(0)
         }
+        // Same instance unless the two counts differ, so nothing on the
+        // two-channel paths copies a block that is not being folded.
+        inputBlock = if (inputChannelCount == outputChannelCount) {
+            audioBlock
+        } else if (inputBlock.channelCount == inputChannelCount) {
+            inputBlock.also { it.reset(0) }
+        } else {
+            AudioBlock(channelCount = inputChannelCount, capacityFrames = DEFAULT_CAPACITY_FRAMES)
+        }
 
-        val requiredCapacity = audioBlock.capacityFrames * channelCount * PcmEncoding.PCM_FLOAT.bytesPerSample
+        val requiredCapacity = audioBlock.capacityFrames *
+            maxOf(inputChannelCount, outputChannelCount) *
+            PcmEncoding.PCM_FLOAT.bytesPerSample
         if (outputByteBuffer.capacity() < requiredCapacity) {
             outputByteBuffer = ByteBuffer.allocateDirect(requiredCapacity).order(ByteOrder.nativeOrder())
         }
@@ -1033,6 +1103,15 @@ class PrecisionAudioSink(
      * that while [DefaultAudioSink] is doing the writing.
      */
     private fun publishOutputExactness(source: PcmEncoding, target: PcmEncoding) {
+        // A folded bed is a mix of six channels, not the decoder's samples:
+        // whatever the encoding, nothing downstream of it is bit-exact.
+        if (isDownmixing) {
+            AudioOutputStatus.publishOutputExactness(
+                exact = false,
+                detail = "5.1 folded to stereo for this route",
+            )
+            return
+        }
         val exact = when (source) {
             PcmEncoding.PCM_16BIT ->
                 target == PcmEncoding.PCM_16BIT || target == PcmEncoding.PCM_FLOAT

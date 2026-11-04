@@ -1057,23 +1057,6 @@ object SourceResolver {
         (candidate.kbps ?: 0) > YOUTUBE_BEST_AAC_KBPS
 
     /**
-     * Whether the current output can carry an immersive (multichannel) mix.
-     *
-     * A Bluetooth route takes stereo: the phone hands A2DP two channels, and a
-     * 6-channel float track opened for E-AC3 JOC stalls its sink rather than
-     * playing it. Measured on the S24 over a JBL Tour Pro 3: the AudioTrack's
-     * played-frame count froze every ~5 s and the silence guard rebuilt it, so a
-     * Dolby Atmos upgrade became a gap every few seconds (phone 11-04). The
-     * service sets this whenever the route changes.
-     */
-    @Volatile
-    private var immersiveOutputAllowed = true
-
-    fun setImmersiveOutputAllowed(allowed: Boolean) {
-        immersiveOutputAllowed = allowed
-    }
-
-    /**
      * Whether [candidate] is enough better than [playing] to be worth the
      * break in the audio that swapping to it costs.
      *
@@ -1085,19 +1068,16 @@ object SourceResolver {
      * and AAC at 256kbps are much the same thing to listen to — so a margin
      * narrow enough to be codec-sensitive would be a margin that buys a seam
      * in the audio for nothing. 160 to 320 clears it; 128 to 192 does not.
+     *
+     * An immersive mix is a candidate on every route. A stereo one — Bluetooth
+     * included — plays it by folding the 5.1 bed down
+     * ([com.music.bitchord.playback.audio.Downmix]), which is what an Atmos
+     * upgrade was refused for before that existed (phone 11-04).
      */
     internal fun worthSwapping(
         candidate: StreamFormat,
         playing: StreamFormat?,
-        /** Whether the current output can carry an immersive mix — see [setImmersiveOutputAllowed]. */
-        immersiveAllowed: Boolean = immersiveOutputAllowed,
     ): Boolean {
-        if (!immersiveAllowed) {
-            // A mix this output cannot carry is not an upgrade, and one already
-            // playing is worth leaving for anything that does play.
-            if (candidate.isDolbyAtmos) return false
-            if (playing?.isDolbyAtmos == true) return true
-        }
         // Never away from an immersive mix. A FLAC is a better *copy* and a
         // worse *mix* once Atmos is what the listener chose, and cutting one in
         // over the other mid-song is a downgrade dressed as an upgrade.
