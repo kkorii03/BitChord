@@ -836,7 +836,20 @@ object LyricsTiming {
         }
         val default = measured ?: ai ?: return null
         val heard = savedHeardWords(entry, key)
-        if (heard.isEmpty()) return default
+        if (heard.isEmpty()) {
+            // Nothing heard yet to confirm it: a move past the widest the free
+            // evidence can express is not taken on the AI's word alone, however
+            // sure the answer sounds. The provider's own times stand until the
+            // measurement proves the move (11-04 ekzHIouo8Q4: a stored AI answer
+            // moved the sheet 11.78 s with match=100%, and the measurement that
+            // landed twelve seconds later found −38 ms).
+            val shift = shownShiftMs(lines, default)
+            if (default.byAi && abs(shift) > RefinePolicy.MAX_WIDE_SHIFT_MS) {
+                TrackLog.d(TAG, "ai shift ${shift}ms held for the measurement", videoId)
+                return null
+            }
+            return default
+        }
         val heardStarts = BaseChoicePolicy.heardStarts(lines.map { it.text }, heard)
         val candidates = buildList {
             add(BaseChoicePolicy.Candidate(BaseChoicePolicy.NONE, lines.map { it.timeMs }))

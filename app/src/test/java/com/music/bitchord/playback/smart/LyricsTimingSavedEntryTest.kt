@@ -77,6 +77,25 @@ class LyricsTimingSavedEntryTest {
     }
 
     @Test
+    fun `an ai shift past what a sheet can be off by waits for the measurement`() {
+        // 11-04 ekzHIouo8Q4: a stored AI answer moved the sheet 11.78 s with
+        // match=100% and nothing heard to confirm it, while the measurement that
+        // landed twelve seconds later found -38 ms. Held, the provider's own
+        // times stand until the measurement proves the move.
+        val lines = listOf(
+            LyricLine(0L, "one"),
+            LyricLine(1_000L, "two"),
+            LyricLine(2_000L, "three"),
+        )
+        val textKey = lines.joinToString("\n") { it.text }.hashCode()
+        write("""{"entries":{"video":{"aiTextKey":$textKey,"aiShiftMs":11780}}}""")
+
+        runBlocking {
+            assertNull(LyricsTiming.timing(context, "video", lines, baseAllowed = true)?.base)
+        }
+    }
+
+    @Test
     fun `unknown fields are ignored rather than invalidating the entry`() {
         write(
             """
