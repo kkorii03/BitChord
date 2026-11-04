@@ -1,4 +1,4 @@
-package com.music.bitchord.playback
+﻿package com.music.bitchord.playback
 
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.MusicSource
@@ -18,6 +18,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
+import java.io.IOException
 
 /**
  * Direct Source Stream's first-audio rule: when every addon is resting after
@@ -112,6 +113,116 @@ class DirectSourceGateTest {
         )
         try {
             assertNull(SourceResolver.directStream(target()) { false })
+        } finally {
+            install(emptyList())
+        }
+    }
+
+    /**
+     * The 403 the phone reports is a host refusing a URL it minted for this
+     * very track. Asking it again is the same refused request, so the walk
+     * answers from the record the playback path left behind instead of spending
+     * another round trip on a host that has already said no.
+     */
+    @Test
+    fun aStreamThatAlreadyRefusedIsNotAskedAgainForTheSameTrack() = runBlocking {
+        install(
+            listOf(
+                FakeSource("Deezer", listOf(row("dead-2", "Already Refused"))),
+                FakeSource("YouTube", kind = SourceKind.YOUTUBE),
+            ),
+        )
+        try {
+            StreamRefusalRecovery.noteRefusedStream(
+                "https://Deezer/dead-2",
+                "Deezer",
+                IOException("HTTP 403"),
+            )
+            val probed = mutableListOf<String>()
+            val stream = SourceResolver.directStream(target("Already Refused")) { candidate ->
+                probed += candidate.url
+                true
+            }
+            assertNull(stream)
+            assertTrue("a refused URL must not be probed again: $probed", probed.isEmpty())
+        } finally {
+            StreamRefusalRecovery.resetForTest()
+            install(emptyList())
+        }
+    }
+
+    /**
+     * The other half: a refusal of one source's copy must not cost the listener
+     * the copy another source can still serve. The refused URL is skipped, not
+     * asked again, and the walk goes on to the one that serves.
+     */
+    @Test
+    fun aRefusedStreamIsSkippedAndAnotherSourceStillPlays() = runBlocking {
+        install(
+            listOf(
+                FakeSource("Deezer", listOf(row("dead-3", "Second Chance"))),
+                FakeSource("Qobuz", listOf(row("live-3", "Second Chance"))),
+                FakeSource("YouTube", kind = SourceKind.YOUTUBE),
+            ),
+        )
+        try {
+            StreamRefusalRecovery.noteRefusedStream(
+                "https://Deezer/dead-3",
+                "Deezer",
+                IOException("HTTP 403"),
+            )
+            val probed = mutableListOf<String>()
+            val stream = SourceResolver.directStream(target("Second Chance")) { candidate ->
+                probed += candidate.url
+                true
+            }
+            assertEquals("https://Qobuz/live-3", stream?.url)
+            assertTrue(
+                "the refused URL must not be probed again: $probed",
+                probed.none { it.contains("Deezer") },
+            )
+        } finally {
+            StreamRefusalRecovery.resetForTest()
+            install(emptyList())
+        }
+    }
+
+    /**
+     * A refusal also stops the *next* open of that track from walking the
+     * addons on the loader thread. Once a substitution has broken a track the
+     * resolver takes YouTube for it — see [StreamChoice.refuseSubstitutes] — so
+     * the settle in [AudioCache] must not spend a search in front of the first
+     * note whose answer is thrown away, nor pin the stream that was just
+     * refused.
+     */
+    @Test
+    fun theLoaderThreadSettleDoesNotWalkTheAddonsAfterARefusal() {
+        val root = File(".").canonicalFile
+        val cache = listOf("app/", "").map {
+            File(root, "${it}src/main/java/com/music/bitchord/playback/AudioCache.kt")
+        }.first { it.exists() }.readText()
+        val settle = cache.substringAfter("private fun settleDirectEntry(")
+            .substringBefore("dropYouTubeEntry(key, videoId)")
+        assertTrue(
+            "the settle must skip the addon walk once this track's substitutions are refused",
+            Regex("""val addon = if \(StreamChoice\.substitutesRefused\(videoId\)\)""")
+                .containsMatchIn(settle),
+        )
+    }
+
+    /** The ordinary path is untouched: a candidate that serves its bytes still wins. */
+    @Test
+    fun aServingCandidateStillWinsWithoutWaitingForTheSlowSource() = runBlocking {
+        install(
+            listOf(
+                FakeSource("Deezer", listOf(row("live-4", "Serving Copy"))),
+                FakeSource("Qobuz", listOf(row("live-4", "Serving Copy")), searchDelayMs = 3_000),
+                FakeSource("YouTube", kind = SourceKind.YOUTUBE),
+            ),
+        )
+        try {
+            val stream = SourceResolver.directStream(target("Serving Copy")) { true }
+            assertEquals("https://Deezer/live-4", stream?.url)
         } finally {
             install(emptyList())
         }
@@ -280,9 +391,12 @@ class DirectSourceGateTest {
         durationText = "3:20",
     )
 
-    private fun row(id: String) = Song(
+    private fun target(title: String = "Golden Boy") =
+        TrackMatcher.Target(title, "Eljohnzc", durationSec = 200)
+
+    private fun row(id: String, title: String = "Golden Boy") = Song(
         videoId = id,
-        title = "Golden Boy",
+        title = title,
         artist = "Eljohnzc",
         thumbnailUrl = null,
         durationText = "3:20",
@@ -310,6 +424,7 @@ class DirectSourceGateTest {
         private val rows: List<Song> = emptyList(),
         private val format: StreamFormat = StreamFormat("flac"),
         override val kind: SourceKind = SourceKind.ADDON,
+        private val searchDelayMs: Long = 0L,
     ) : MusicSource {
         override val displayName: String get() = configId
 
@@ -320,7 +435,10 @@ class DirectSourceGateTest {
             limit: Int,
             waitForAll: Boolean,
             request: StreamRequest?,
-        ): List<Song> = rows
+        ): List<Song> {
+            if (searchDelayMs > 0) kotlinx.coroutines.delay(searchDelayMs)
+            return rows
+        }
 
         override suspend fun stream(trackId: String, request: StreamRequest): SourceStream =
             SourceStream(

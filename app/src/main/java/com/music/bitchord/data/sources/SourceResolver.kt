@@ -18,6 +18,7 @@ import com.music.bitchord.ko.offerRank
 import com.music.bitchord.ko.runtimeDrift
 import com.music.bitchord.ko.sourceLookupTimeoutMsFor
 import com.music.bitchord.playback.HqHostTracker
+import com.music.bitchord.playback.StreamRefusalRecovery
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
@@ -1467,6 +1468,18 @@ object SourceResolver {
                         // failure; this is the narrower server-level rest.
                         if (host != null && HqHostTracker.isResting(host)) {
                             TrackLog.d(TAG, "${source.displayName}'s $host is resting; skipping for this track")
+                            continue
+                        }
+                        // A URL that already refused its bytes is not asked again
+                        // for this track: the lookup that minted it is
+                        // deterministic, so a probe would be the same refused
+                        // request. Answered from the record the playback path
+                        // left behind — see [StreamRefusalRecovery.refusedStream].
+                        if (StreamRefusalRecovery.refusedStream(stream.url) != null) {
+                            TrackLog.d(
+                                TAG,
+                                "${source.displayName}'s stream already refused this track; not asking it again",
+                            )
                             continue
                         }
                         val current = best

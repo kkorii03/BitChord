@@ -1412,9 +1412,20 @@ object AudioCache {
                 // The same hold the resolver applies, so a track prepared early
                 // for a gapless start is not searched for before its window.
                 DirectSourceGate.awaitOpen(videoId)
-                val addon = runCatching { DirectSourceGate.lookup(videoId, SourceResolver.targetIn(uri)) }
-                    .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
-                    .getOrNull()
+                // A substitution that already broke this track is refused for the
+                // rest of this play — [StreamChoice.refuseSubstitutes] — so the
+                // resolver will not take an addon's copy of it. Searching the
+                // addons here anyway is a walk in front of the first note whose
+                // answer is already thrown away, and pinning one would hand the
+                // resolver the very stream that was just refused. The YouTube
+                // half below is still worth doing.
+                val addon = if (StreamChoice.substitutesRefused(videoId)) {
+                    null
+                } else {
+                    runCatching { DirectSourceGate.lookup(videoId, SourceResolver.targetIn(uri)) }
+                        .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
+                        .getOrNull()
+                }
                 // Read-ahead may have settled it while this waited.
                 if (StreamChoice.of(videoId) != null) return@runBlocking
                 if (addon != null) {
