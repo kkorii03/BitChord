@@ -50,6 +50,12 @@ class ListenTogetherIdleHealthTest {
     }
 
     @Test
+    fun `a paused party sends no position report`() {
+        assertTrue(ListenTogether.shouldReportPosition(playing = true))
+        assertFalse(ListenTogether.shouldReportPosition(playing = false))
+    }
+
+    @Test
     fun `party name never falls back to the account email`() {
         assertEquals("Listener", partyDisplayName("", null, null, ""))
         assertEquals("Account", partyDisplayName("", null, null, "Account"))
