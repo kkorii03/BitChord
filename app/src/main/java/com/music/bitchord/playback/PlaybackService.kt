@@ -881,6 +881,9 @@ class PlaybackService : MediaLibraryService() {
      * the same row (a source/version swap) must not restart the first-audio
      * clock, or a track that finally sounds after a blocked-start rescue is
      * reported as 0 ms because its clock was reset a moment before the sound.
+     * That hold only lasts while the first start can still be running — see
+     * [BlockedStartPolicy.stillSameSelection]. Held past it, the clock reported
+     * an idle gap between songs as the next one's time to first audio.
      */
     private var selectedTrackMediaId: String? = null
 
@@ -5084,10 +5087,17 @@ class PlaybackService : MediaLibraryService() {
         // and an armed timer would sit there until some unrelated buffering
         // blip tripped it, reporting a wait of seconds for a track that started
         // instantly. Measured one at 16871ms.
+        //
+        // A same row arriving again keeps its clock only while that first
+        // start can still be running — see [BlockedStartPolicy.stillSameSelection].
+        // Kept across an idle gap, it reported the gap as the row's wait.
         val selectionId = mediaItem?.mediaId
-        val sameUnheardSelection = selectionId != null &&
-            selectionId == selectedTrackMediaId &&
-            trackSelectedAt != null
+        val sameUnheardSelection = BlockedStartPolicy.stillSameSelection(
+            sameRow = selectionId != null && selectionId == selectedTrackMediaId,
+            elapsedSinceSelectionMs = trackSelectedAt?.let {
+                SystemClock.elapsedRealtime() - it
+            },
+        )
         if (alreadySounding) {
             // A same-row source/version refresh can arrive with the audible
             // hint while the row has still never sounded. Keeping its clock is

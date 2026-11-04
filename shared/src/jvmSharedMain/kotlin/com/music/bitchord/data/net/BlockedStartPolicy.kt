@@ -138,6 +138,28 @@ object BlockedStartPolicy {
     }
 
     /**
+     * The longest one start can still be in flight: the rescue's whole budget
+     * plus the high-quality rung's own window, which sits outside it.
+     */
+    private const val SELECTION_CLOCK_MS = TOTAL_BUDGET_MS + HIGH_QUALITY_TIMEOUT_MS
+
+    /**
+     * Whether a row becoming current again is still the same wait, whose clock
+     * has to be kept, or a new selection that needs a new one.
+     *
+     * A source/version swap arrives seconds after the play tap and must not
+     * restart the clock, or a track rescued near the end of the budget is
+     * reported as 0 ms (10-31). The same row selected again after an idle gap
+     * is a different thing: keeping the old clock reported 74 s of silence as
+     * that row's first-audio figure, and handed the rescue a budget that was
+     * already spent. Past [SELECTION_CLOCK_MS] nothing of the first start is
+     * still running, so the clock belongs to the new selection.
+     */
+    fun stillSameSelection(sameRow: Boolean, elapsedSinceSelectionMs: Long?): Boolean =
+        sameRow && elapsedSinceSelectionMs != null &&
+            elapsedSinceSelectionMs in 0..SELECTION_CLOCK_MS
+
+    /**
      * The first-audio figure a summary keeps when the same row becomes current
      * again (a version or source refresh).
      *
