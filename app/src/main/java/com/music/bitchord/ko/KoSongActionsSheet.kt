@@ -114,6 +114,7 @@ import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.components.trackArtSize
 import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.ui.player.coverSingerChannelId
+import com.music.bitchord.ui.rememberIsForeground
 import com.music.bitchord.ui.theme.ArtworkPalette
 import com.music.bitchord.ui.theme.rememberArtworkPalette
 import kotlinx.coroutines.delay
@@ -1226,12 +1227,16 @@ private fun sleepTimerStatus(): String? {
 @Composable
 private fun sleepTimerCountdown(): String? {
     val deadline by SleepTimer.deadline.collectAsStateWithLifecycle()
-    val remaining by produceState<Long?>(initialValue = SleepTimer.remainingMs(), deadline) {
-        while (deadline != null) {
+    // Parked while the sheet is not on screen: a composition kept alive behind a
+    // locked screen would otherwise wake once a second to redraw a row nobody
+    // can see. See [SleepTimer.countdownTicking].
+    val foreground = rememberIsForeground()
+    val remaining by produceState<Long?>(initialValue = SleepTimer.remainingMs(), deadline, foreground) {
+        while (SleepTimer.countdownTicking(deadline, foreground)) {
             value = SleepTimer.remainingMs()
             delay(1_000)
         }
-        value = null
+        if (deadline == null) value = null
     }
     return remaining?.let {
         val seconds = it / 1000

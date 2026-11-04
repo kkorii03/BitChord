@@ -74,4 +74,17 @@ object SleepTimer {
     /** How long is left, or null when no timer is running. */
     fun remainingMs(): Long? =
         deadline.value?.let { (it - SystemClock.elapsedRealtime()).coerceAtLeast(0L) }
+
+    /**
+     * Whether a sheet's countdown should keep ticking.
+     *
+     * Only while there is a timer to draw *and* somebody can see it. A
+     * `produceState` loop belongs to the composition, not to the lifecycle, and
+     * the composition outlives the activity being stopped — so an unguarded
+     * one-second tick went on waking the phone for a row nobody could see for
+     * as long as the sheet was left open behind a locked screen. Nothing is
+     * lost by stopping: the number is recomputed on the way back.
+     */
+    fun countdownTicking(deadline: Long?, foreground: Boolean): Boolean =
+        deadline != null && foreground
 }
