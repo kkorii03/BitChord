@@ -1,0 +1,60 @@
+# Firebase Test Lab (11-04): run the app on Google's devices without the user's phone.
+# Robo test walks the UI on its own and captures screenshots, video and crash/ANR
+# reports. This is NOT a replacement for the emulator tour: the cloud device has no
+# logged-in session and no home proxy, so playback screens will be empty. It is for
+# layout on real devices, startup, frame timing and crashes.
+#
+# Setup (once): keys\gcp-testlab.json -> secret GCP_TESTLAB_SA (base64 of the file),
+# and the Cloud Testing API enabled on the project.
+name: Firebase Test Lab
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: 'Device model (virtual: MediumPhone.arm, physical: redfin, oriole, dm3q)'
+        type: string
+        default: 'MediumPhone.arm'
+      version:
+        description: 'Android API level'
+        type: string
+        default: '34'
+      minutes:
+        description: 'Robo test timeout in minutes'
+        type: string
+        default: '5'
+
+jobs:
+  testlab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: temurin
+      - name: Build debug APK
+        run: ./gradlew :app:assembleProdDebug -Pbitchord.arm64Only=true --console=plain
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_TESTLAB_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Robo test
+        run: |
+          set -o pipefail
+          mkdir -p testlab
+          gcloud firebase test android run \
+            --type robo \
+            --app app/build/outputs/apk/prod/debug/*.apk \
+            --device "model=${{ inputs.model }},version=${{ inputs.version }},locale=ko,orientation=portrait" \
+            --timeout ${{ inputs.minutes }}m \
+            --project bitchord-c6c61 \
+            --results-dir testlab \
+            --no-record-video 2>&1 | tee testlab/log.txt
+      - name: Upload screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: testlab
+          path: testlab/
+          if-no-files-found: warn
