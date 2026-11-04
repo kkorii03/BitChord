@@ -37,9 +37,13 @@ jobs:
           distribution: temurin
       - name: Build debug APK
         run: ./gradlew :app:assembleProdDebug -Pbitchord.arm64Only=true --console=plain
-      - uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.GCP_TESTLAB_SA }}
+      - name: Auth (service account, base64 secret)
+        env:
+          SA_B64: ${{ secrets.GCP_TESTLAB_SA }}
+        run: |
+          echo "$SA_B64" | base64 -d > "$RUNNER_TEMP/sa.json"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/sa.json" >> "$GITHUB_ENV"
+          echo "CLOUDSDK_CORE_PROJECT=bitchord-c6c61" >> "$GITHUB_ENV"
       - uses: google-github-actions/setup-gcloud@v2
       - name: Robo test
         run: |
