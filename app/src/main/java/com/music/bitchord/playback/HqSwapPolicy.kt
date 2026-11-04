@@ -140,6 +140,19 @@ internal object HqSwapPolicy {
     ): Boolean = !pinned && currentUri == expectedUri
 
     /**
+     * Whether a swap that is ending still owes its standby a release.
+     *
+     * Adoption is what makes the standby the session's player, and it is also
+     * what moves the outgoing player into `spare`. A swap that ends any other
+     * way — a bail-out, or a cancellation while the standby is preparing or
+     * mid-blend — leaves that player armed and running: it keeps decoding the
+     * outgoing song at zero volume, holding a decoder and the network open,
+     * and the outgoing player keeps the gain the blend left on it. Both swap
+     * jobs ask this from their `finally`.
+     */
+    fun standbyMustBeReleased(armed: Boolean, adopted: Boolean): Boolean = armed && !adopted
+
+    /**
      * Whether the replacement proved itself against the length the old copy
      * already knew.
      *
