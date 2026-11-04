@@ -1249,12 +1249,15 @@ object LyricsTiming {
      * replay pays nothing. Null audio or a refusal is not marked, and the next
      * playback may try again — there is no timer here.
      *
-     * When that first listen could not apply and the lyrics run past it, the
-     * same song is heard once more to [RefineExtendPolicy.EXTEND_SECONDS] (or
-     * its own end, when shorter), so a cover's wide window can see the lines
-     * the opening missed. The longer transcript replaces the short one and the
-     * length is kept; a failed extension is not recorded and may be retried on
-     * the next playback. At most one extension per song.
+     * When that first listen could not apply and the lyrics run past it, or it
+     * applied a drift it only measured to the transcript's end, the same song
+     * is heard once more to its own end (or
+     * [RefineExtendPolicy.MAX_EXTEND_SECONDS], when longer), so a cover's wide
+     * window can see the lines the opening missed and a drift is measured over
+     * more of the song. The longer transcript replaces the short one and the
+     * length is kept; a failed extension is not recorded and is retried when
+     * the rest of the file finishes caching (see [refineHeardKnown]'s caller)
+     * or on the next playback. At most one extension per song.
      */
     suspend fun ensureRefineHeard(
         context: Context,
@@ -1338,7 +1341,7 @@ object LyricsTiming {
                 if (!hadWords) _changes.tryEmit(videoId)
                 return@withLock !hadWords
             }
-            if (entry.refineHeardExtended || heardSeconds >= RefineExtendPolicy.EXTEND_SECONDS ||
+            if (entry.refineHeardExtended || heardSeconds >= RefineExtendPolicy.MAX_EXTEND_SECONDS ||
                 !RefineExtendPolicy.shouldExtend(result, heardSeconds, lastLineMs(lines))
             ) {
                 if (!hadWords) _changes.tryEmit(videoId)
@@ -1355,8 +1358,10 @@ object LyricsTiming {
             val beforeExtend = store(context).get(videoId) ?: Entry()
             val onDisk = VideoAudio.secondsOnDisk(song)
             if (!RefineExtendPolicy.hasAudioFor(target, onDisk)) {
-                // Not a failure: the marker stays unset so a later play, with
-                // the file cached, tries the longer listen again.
+                // Not a failure: the marker stays unset so the copy finishing
+                // caching (the rendition-completion event re-asks, see
+                // LyricsController) or a later play tries the longer listen
+                // again.
                 TrackLog.d(TAG, "extend deferred: ${onDisk}s on disk of ${target}s", videoId)
                 if (!hadWords) _changes.tryEmit(videoId)
                 return@withLock !hadWords
@@ -1410,10 +1415,10 @@ object LyricsTiming {
 
     private fun extendSeconds(song: Song): Double {
         val duration = TrackMatcher.secondsOf(song.durationText)?.toDouble()
-        return if (duration != null && duration < RefineExtendPolicy.EXTEND_SECONDS) {
+        return if (duration != null && duration < RefineExtendPolicy.MAX_EXTEND_SECONDS) {
             duration
         } else {
-            RefineExtendPolicy.EXTEND_SECONDS
+            RefineExtendPolicy.MAX_EXTEND_SECONDS
         }
     }
 
