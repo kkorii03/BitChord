@@ -509,65 +509,45 @@ internal suspend fun PlaybackService.koSmoothSwapToLossless(
     } else {
         previousDuration
     }
+    // The standby is the session's player only once this swap adopts it;
+    // every other ending owes it a release, cancellation included.
+    var adopted = false
+    try {
+        standbyPlayer.stop()
+        standbyPlayer.clearMediaItems()
+        standbyPlayer.skipSilenceEnabled = activePlayer.skipSilenceEnabled
+        standbyPlayer.repeatMode = activePlayer.repeatMode
+        standbyPlayer.shuffleModeEnabled = activePlayer.shuffleModeEnabled
+        standbyPlayer.applyPlaybackSpeed(AppSettings.playbackSpeed.value)
+        standbyPlayer.volume = 0f
+        standbyPlayer.setMediaItems(newItems, index, startAt)
+        spareLoudness().track(mediaId, nextMediaIdOf(standbyPlayer))
+        standbyPlayer.playWhenReady = false
+        standbyPlayer.prepare()
 
-    standbyPlayer.stop()
-    standbyPlayer.clearMediaItems()
-    standbyPlayer.skipSilenceEnabled = activePlayer.skipSilenceEnabled
-    standbyPlayer.repeatMode = activePlayer.repeatMode
-    standbyPlayer.shuffleModeEnabled = activePlayer.shuffleModeEnabled
-    standbyPlayer.applyPlaybackSpeed(AppSettings.playbackSpeed.value)
-    standbyPlayer.volume = 0f
-    standbyPlayer.setMediaItems(newItems, index, startAt)
-    spareLoudness().track(mediaId, nextMediaIdOf(standbyPlayer))
-    standbyPlayer.playWhenReady = false
-    standbyPlayer.prepare()
-
-    // Readiness is an event, not a clock: the standby tells the listener
-    // when it is ready, has started, or has failed. Polling these two
-    // properties every 10–20ms for seven seconds was pure battery cost.
-    val ready = koAwaitPlayerCondition(
-        HqSwapPolicy.PREPARE_TIMEOUT_MS,
-        activePlayer,
-        standbyPlayer,
-    ) {
-        player !== activePlayer ||
-            activePlayer.currentMediaItemIndex != index ||
-            activePlayer.currentMediaItem?.mediaId != mediaId ||
-            standbyPlayer.playbackState == Player.STATE_READY ||
-            (standbyPlayer.playbackState == Player.STATE_IDLE &&
-                standbyPlayer.playerError != null)
-    }
-    if (!ready || !koIsStillSwapping(activePlayer, index, mediaId) ||
-        standbyPlayer.playbackState != Player.STATE_READY
-    ) {
-        releaseStandby()
-        return@withContext false
-    }
-
-    if (wasPlaying) {
-        standbyPlayer.seekTo(
-            index,
-            HqSwapPolicy.targetPositionMs(
-                HqSwapPolicy.toYoutubeMs(activePlayer.currentPosition, currentOffsetMs, currentRate),
-                verified.offsetMs,
-                verified.rate,
-            ),
-        )
-        standbyPlayer.play()
-        val started = koAwaitPlayerCondition(
-            HqSwapPolicy.START_TIMEOUT_MS,
+        // Readiness is an event, not a clock: the standby tells the listener
+        // when it is ready, has started, or has failed. Polling these two
+        // properties every 10–20ms for seven seconds was pure battery cost.
+        val ready = koAwaitPlayerCondition(
+            HqSwapPolicy.PREPARE_TIMEOUT_MS,
             activePlayer,
             standbyPlayer,
         ) {
-            !koIsStillSwapping(activePlayer, index, mediaId) ||
-                standbyPlayer.isPlaying ||
-                standbyPlayer.playbackState == Player.STATE_ENDED ||
+            player !== activePlayer ||
+                activePlayer.currentMediaItemIndex != index ||
+                activePlayer.currentMediaItem?.mediaId != mediaId ||
+                standbyPlayer.playbackState == Player.STATE_READY ||
                 (standbyPlayer.playbackState == Player.STATE_IDLE &&
                     standbyPlayer.playerError != null)
         }
-        if (started && koIsStillSwapping(activePlayer, index, mediaId) &&
-            standbyPlayer.isPlaying
+        if (!ready || !koIsStillSwapping(activePlayer, index, mediaId) ||
+            standbyPlayer.playbackState != Player.STATE_READY
         ) {
+            releaseStandby()
+            return@withContext false
+        }
+
+        if (wasPlaying) {
             standbyPlayer.seekTo(
                 index,
                 HqSwapPolicy.targetPositionMs(
@@ -576,34 +556,56 @@ internal suspend fun PlaybackService.koSmoothSwapToLossless(
                     verified.rate,
                 ),
             )
+            standbyPlayer.play()
+            val started = koAwaitPlayerCondition(
+                HqSwapPolicy.START_TIMEOUT_MS,
+                activePlayer,
+                standbyPlayer,
+            ) {
+                !koIsStillSwapping(activePlayer, index, mediaId) ||
+                    standbyPlayer.isPlaying ||
+                    standbyPlayer.playbackState == Player.STATE_ENDED ||
+                    (standbyPlayer.playbackState == Player.STATE_IDLE &&
+                        standbyPlayer.playerError != null)
+            }
+            if (started && koIsStillSwapping(activePlayer, index, mediaId) &&
+                standbyPlayer.isPlaying
+            ) {
+                standbyPlayer.seekTo(
+                    index,
+                    HqSwapPolicy.targetPositionMs(
+                        HqSwapPolicy.toYoutubeMs(activePlayer.currentPosition, currentOffsetMs, currentRate),
+                        verified.offsetMs,
+                        verified.rate,
+                    ),
+                )
+            } else {
+                releaseStandby()
+                return@withContext false
+            }
         } else {
-            releaseStandby()
-            return@withContext false
+            val seeked = koAwaitPlayerCondition(
+                HqSwapPolicy.START_TIMEOUT_MS,
+                activePlayer,
+                standbyPlayer,
+            ) {
+                !koIsStillSwapping(activePlayer, index, mediaId) ||
+                    standbyPlayer.playbackState == Player.STATE_READY ||
+                    standbyPlayer.playbackState == Player.STATE_ENDED ||
+                    (standbyPlayer.playbackState == Player.STATE_IDLE &&
+                        standbyPlayer.playerError != null)
+            }
+            if (!seeked || !koIsStillSwapping(activePlayer, index, mediaId)) {
+                releaseStandby()
+                return@withContext false
+            }
         }
-    } else {
-        val seeked = koAwaitPlayerCondition(
-            HqSwapPolicy.START_TIMEOUT_MS,
-            activePlayer,
-            standbyPlayer,
-        ) {
-            !koIsStillSwapping(activePlayer, index, mediaId) ||
-                standbyPlayer.playbackState == Player.STATE_READY ||
-                standbyPlayer.playbackState == Player.STATE_ENDED ||
-                (standbyPlayer.playbackState == Player.STATE_IDLE &&
-                    standbyPlayer.playerError != null)
-        }
-        if (!seeked || !koIsStillSwapping(activePlayer, index, mediaId)) {
-            releaseStandby()
-            return@withContext false
-        }
-    }
 
-    swappingMediaId = mediaId
-    swapCutAt = SystemClock.elapsedRealtime()
+        swappingMediaId = mediaId
+        swapCutAt = SystemClock.elapsedRealtime()
 
-    val fadeStart = SystemClock.elapsedRealtime()
-    hqSwappingMediaId = mediaId
-    try {
+        val fadeStart = SystemClock.elapsedRealtime()
+        hqSwappingMediaId = mediaId
         while (isActive) {
             if (player !== activePlayer ||
                 activePlayer.currentMediaItemIndex != index ||
@@ -655,6 +657,7 @@ internal suspend fun PlaybackService.koSmoothSwapToLossless(
         QualityUpgrade.unshelve(mediaId)
         val revertPosition = activePlayer.currentPosition.coerceAtLeast(0L)
         adoptPlayerForVersionSwap(outgoing = activePlayer, incoming = standbyPlayer)
+        adopted = true
         // The standby's decoder reported its format before the listener
         // was attached, so [onTrackBecameCurrent] clearing the old
         // snapshot would otherwise leave the badge blank until the next
@@ -688,12 +691,17 @@ internal suspend fun PlaybackService.koSmoothSwapToLossless(
                 onProven = dropOldCopy,
             )
         }
+        true
     } finally {
         hqSwappingMediaId = null
         loudnessA.setBlendTrim(1f)
         loudnessB.setBlendTrim(1f)
+        // A swap that never reached the adoption still owns the standby it
+        // armed: left running it keeps the old song decoding on mute, and a
+        // cancellation mid-blend leaves the outgoing player at the gain the
+        // fade had already taken off it. [releaseStandby] undoes both.
+        if (!adopted) releaseStandby()
     }
-    true
 }
 
 /** Whether the session still belongs to the track and player a swap started on. */

@@ -155,6 +155,22 @@ class HqSwapPolicyEdgeTest {
     }
 
     @Test
+    fun `a swap that never adopted must release the standby it armed`() {
+        assertTrue(
+            "a cancelled swap would leave the spare playing the old song on mute",
+            HqSwapPolicy.standbyMustBeReleased(armed = true, adopted = false),
+        )
+        assertFalse(
+            "an adopted swap handed the session over; the spare is the old player",
+            HqSwapPolicy.standbyMustBeReleased(armed = true, adopted = true),
+        )
+        assertFalse(
+            "a swap that never armed a standby has nothing to release",
+            HqSwapPolicy.standbyMustBeReleased(armed = false, adopted = false),
+        )
+    }
+
+    @Test
     fun `a video radio row is never swapped to a catalogue master`() {
         val radio = HqSwapPolicy.decide(
             positionMs = 40_000L,

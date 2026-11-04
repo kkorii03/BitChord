@@ -3088,6 +3088,11 @@ class PlaybackService : MediaLibraryService() {
         markAudioTrackReason("version-swap")
         versionSwapJob = scope.launch(Dispatchers.Main) {
             val mediaId = targetMediaItem.mediaId
+            // The spare this job arms, and whether the swap adopted it. A job
+            // cancelled mid-prepare or mid-blend owns it still: left alone it
+            // keeps decoding the old song at zero volume.
+            var swapStandby: ExoPlayer? = null
+            var swapAdopted = false
             swappingMediaId = mediaId
             if (smartAlignEnabled) {
                 AppSettings.versionAlignmentInProgress.value = true
@@ -3148,6 +3153,7 @@ class PlaybackService : MediaLibraryService() {
                 val alignedStartPos = (activePlayer.currentPosition + alignmentOffsetMs).coerceAtLeast(0L)
 
             // Reset and configure standby player
+            swapStandby = standbyPlayer
             standbyPlayer.stop()
             standbyPlayer.clearMediaItems()
             standbyPlayer.skipSilenceEnabled = activePlayer.skipSilenceEnabled
@@ -3294,6 +3300,7 @@ class PlaybackService : MediaLibraryService() {
 
                 // Adopt incoming player cleanly
                 adoptPlayerForVersionSwap(outgoing = activePlayer, incoming = standbyPlayer)
+                swapAdopted = true
                 onSwapCommitted?.invoke()
             } finally {
                 loudnessA.setBlendTrim(1f)
@@ -3305,6 +3312,23 @@ class PlaybackService : MediaLibraryService() {
             } finally {
                 if (generation == versionSwapGeneration) {
                     AppSettings.versionAlignmentInProgress.value = false
+                }
+                // Cancelled by a newer switch or a skip: the standby was never
+                // adopted, so it is still the spare and still decoding the old
+                // song. A cancel mid-blend also leaves the outgoing player at
+                // the gain the fade had already taken off it.
+                if (HqSwapPolicy.standbyMustBeReleased(
+                        armed = swapStandby != null,
+                        adopted = swapAdopted,
+                    )
+                ) {
+                    swapStandby?.let { standby ->
+                        standby.stop()
+                        standby.clearMediaItems()
+                        standby.volume = 1f
+                        activePlayer.volume = 1f
+                        if (swappingMediaId == mediaId) swappingMediaId = null
+                    }
                 }
             }
         }

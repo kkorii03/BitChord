@@ -164,7 +164,6 @@ import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.download.DownloadHealth
 import com.music.bitchord.download.Downloads
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -654,9 +653,6 @@ internal fun PlaybackService.koSwitchToAlternateOrSkip(
         }
     }
 }
-
-/** Ids with an alternate lookup already running, so one failure starts one search. */
-private val alternateLookups = ConcurrentHashMap.newKeySet<String>()
 
 /**
  * Proves a high-quality stream that was allowed to make the first sound of
