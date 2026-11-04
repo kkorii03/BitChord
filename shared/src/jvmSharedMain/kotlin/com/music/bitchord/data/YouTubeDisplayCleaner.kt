@@ -228,9 +228,10 @@ internal object YouTubeDisplayCleaner {
         // repeating it. The channel stays the credit: nothing here proves the
         // two names are one act, only that the title repeats a name the row
         // already carries.
-        // shortcut: a two-word left side that is not an act ("Tokyo Dome -
-        // Song") loses its prefix too, <widen when a transliteration table
-        // exists>.
+        // shortcut: a place name is told from an act only by [VENUE_WORDS],
+        // so "Tokyo Dome - Song" keeps its whole title but a venue written
+        // some other way ("Shinjuku Pit Inn - Song") still loses its prefix,
+        // <widen when a transliteration table exists>.
         if (split != null && !labelChannel && dropsCrossScriptCredit(split.first, rawChannel)) {
             val songTitle = split.second.trim().trim(' ', '-', '_', '|', '·', '/')
             val byline = channelArtist.ifBlank { rawChannel }
@@ -274,8 +275,9 @@ internal object YouTubeDisplayCleaner {
     /**
      * A title credit that is the channel's own name written in another script,
      * so no name comparison can confirm it. Both sides short, one written in
-     * Latin and the other not, and no packaging word on the left — "Live at
-     * Budokan - Song" is a place, "King Gnu - 一途" is a band.
+     * Latin and the other not, and no packaging or venue word on the left —
+     * "Live at Budokan - Song" and "Tokyo Dome - Song" are places, "King Gnu
+     * - 一途" is a band.
      */
     private fun dropsCrossScriptCredit(left: String, channel: String): Boolean {
         val name = collapseAliases(left)
@@ -284,8 +286,20 @@ internal object YouTubeDisplayCleaner {
         val nameWords = name.split(WHITESPACE)
         if (nameWords.size !in 2..4) return false
         if (byline.split(WHITESPACE).size > 4) return false
-        if (nameWords.any { it.lowercase().trim('.') in PACKAGING_CREDIT }) return false
+        if (nameWords.any { it.lowercase().trim('.') in PACKAGING_CREDIT || isVenueWord(it) }) return false
         return LATIN.containsMatchIn(name) != LATIN.containsMatchIn(byline)
+    }
+
+    /**
+     * Whether a word of a left-hand credit names a venue. Hangul venue words
+     * run together with what they qualify ("도쿄돔", "올림픽공원"), so there the
+     * word only has to end with one.
+     */
+    private fun isVenueWord(word: String): Boolean {
+        val text = word.lowercase().trim('.', ',', '\'', '"')
+        return VENUE_WORDS.any { venue ->
+            text == venue || (venue[0] in '가'..'힣' && text.endsWith(venue))
+        }
     }
 
     /**
@@ -393,6 +407,16 @@ internal object YouTubeDisplayCleaner {
         "remix", "version", "ver", "cover", "instrumental", "karaoke",
         "lyric", "lyrics", "edit", "full", "album", "teaser", "performance",
         "feat", "ft",
+    )
+
+    /**
+     * Where a concert was played, in the words titles print it with. A venue
+     * is never an act, so a title that opens with one keeps the whole line.
+     */
+    private val VENUE_WORDS = setOf(
+        "dome", "arena", "stadium", "hall", "theater", "theatre", "auditorium",
+        "coliseum", "garden", "gardens", "forum", "amphitheater", "amphitheatre",
+        "돔", "아레나", "체육관", "경기장", "공연장", "극장", "공원", "홀",
     )
 
     /** `[MV]`, `[M/V]`, `(Official Video)`, `(Lyric Video)`, `(Audio)`, … */
