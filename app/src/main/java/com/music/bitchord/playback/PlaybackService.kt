@@ -226,6 +226,7 @@ import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.playback.smart.AnalysisWindow
 import com.music.bitchord.playback.smart.AutomixAnalysisSource
+import com.music.bitchord.playback.smart.ByteLru
 import com.music.bitchord.playback.smart.HqAudioVerify
 import com.music.bitchord.playback.smart.HqVerificationStore
 import com.music.bitchord.playback.smart.VersionAudioAligner
@@ -315,6 +316,14 @@ const val ACTION_COMMIT_RADIO_QUEUE = "com.music.bitchord.action.COMMIT_RADIO_QU
 
 /** Session command behind the player menu's "Upgrade quality". */
 const val ACTION_UPGRADE_QUALITY = "com.music.bitchord.action.UPGRADE_QUALITY"
+
+/**
+ * Entries the nerd-stats bitrate caches keep. A session outlives any one
+ * track, and these used to be kept for all of it: one entry per local song
+ * played, and one per stream URI measured.
+ */
+private const val LOCAL_BITRATE_CACHE_ENTRIES = 512
+private const val MEASURED_BITRATE_CACHE_ENTRIES = 64
 
 
 /**
@@ -1002,10 +1011,10 @@ class PlaybackService : MediaLibraryService() {
     /** Coalesced bounded edits waiting for CrossfadeController settlement. */
     private var boundedEditState = BoundedQueueEditState()
 
-    private val localBitrateCache = ConcurrentHashMap<String, Int>()
+    private val localBitrateCache = ByteLru<String, Int>(LOCAL_BITRATE_CACHE_ENTRIES) { 1 }
 
     /** [measuredStreamKbps]'s answers, keyed by rendition URI, and the ones still being read. */
-    private val measuredBitrateCache = ConcurrentHashMap<String, Int>()
+    private val measuredBitrateCache = ByteLru<String, Int>(MEASURED_BITRATE_CACHE_ENTRIES) { 1 }
     private val measuringBitrate: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     /**
@@ -8657,7 +8666,7 @@ class PlaybackService : MediaLibraryService() {
 
     private fun resolveLocalBitrate(mediaId: String, mediaItem: MediaItem?) {
         if (!isLocalPlayback(mediaId, mediaItem)) return
-        if (localBitrateCache.containsKey(mediaId)) return
+        if (localBitrateCache.get(mediaId) != null) return
 
         val uri = resolveLocalUri(mediaId, mediaItem) ?: return
         scope.launch(Dispatchers.IO) {
@@ -8688,7 +8697,7 @@ class PlaybackService : MediaLibraryService() {
             }.getOrNull()
 
             if (kbps != null && kbps > 0) {
-                localBitrateCache[mediaId] = kbps
+                localBitrateCache.put(mediaId, kbps)
                 withContext(Dispatchers.Main) {
                     if (player?.currentMediaItem?.mediaId == mediaId) {
                         publishNerdStats()
@@ -8720,7 +8729,7 @@ class PlaybackService : MediaLibraryService() {
             format?.sampleRate,
             format?.channelCount,
             format?.pcmEncoding,
-            mediaId?.let { localBitrateCache[it] },
+            mediaId?.let { localBitrateCache.get(it) },
         )
         if (formatKey == lastNerdStatsKey) return
         lastNerdStatsKey = formatKey
@@ -8742,8 +8751,8 @@ class PlaybackService : MediaLibraryService() {
                 Pair((format.averageBitrate + 500) / 1000, TelemetryProvenance.AUTHORITATIVE)
             format?.bitrate != null && format.bitrate > 0 ->
                 Pair((format.bitrate + 500) / 1000, TelemetryProvenance.AUTHORITATIVE)
-            mediaId != null && localBitrateCache.containsKey(mediaId) ->
-                Pair(localBitrateCache[mediaId], TelemetryProvenance.AUTHORITATIVE)
+            mediaId != null && localBitrateCache.get(mediaId) != null ->
+                Pair(localBitrateCache.get(mediaId), TelemetryProvenance.AUTHORITATIVE)
             dsd == null && isRawPcm && pcmDataRate != null ->
                 Pair(pcmDataRate, TelemetryProvenance.DERIVED)
             else ->
@@ -8787,7 +8796,7 @@ class PlaybackService : MediaLibraryService() {
     private fun measuredStreamKbps(player: Player): Int? {
         val uri = player.currentMediaItem?.localConfiguration?.uri ?: return null
         val key = uri.toString()
-        measuredBitrateCache[key]?.let { return it }
+        measuredBitrateCache.get(key)?.let { return it }
         val durationMs = player.duration.takeIf { it != C.TIME_UNSET && it > 0 } ?: return null
         if (measuringBitrate.add(key)) {
             scope.launch(Dispatchers.IO) {
@@ -8795,7 +8804,7 @@ class PlaybackService : MediaLibraryService() {
                     val bytes = AudioCache.contentLengthOf(uri)
                     if (bytes > 0) {
                         val kbps = (bytes * 8 / durationMs).toInt()
-                        if (kbps > 0) measuredBitrateCache[key] = kbps
+                        if (kbps > 0) measuredBitrateCache.put(key, kbps)
                     }
                 } finally {
                     measuringBitrate.remove(key)

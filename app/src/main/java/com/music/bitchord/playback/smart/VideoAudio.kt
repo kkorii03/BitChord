@@ -588,4 +588,11 @@ internal class ByteLru<K, V>(
 
     @Synchronized
     fun size(): Int = entries.size
+
+    /** Drops everything, for the caches whose whole session is invalidated at once. */
+    @Synchronized
+    fun clear() {
+        entries.clear()
+        bytes = 0
+    }
 }
