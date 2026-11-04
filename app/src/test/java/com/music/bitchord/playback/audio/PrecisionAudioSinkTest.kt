@@ -13,6 +13,7 @@ import com.music.bitchord.playback.AudioOutputStatus
 import com.music.bitchord.playback.EqualizerProcessor
 import com.music.bitchord.playback.SpatialAudioProcessor
 import com.music.bitchord.playback.TransitionFilterProcessor
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -149,11 +150,13 @@ class PrecisionAudioSinkTest {
         delegate: AudioSink,
         enableFloatOutput: Boolean = true,
         dspChain: DspChain = idleDspChain(),
+        downmixProvider: ((Int) -> Boolean)? = null,
     ): PrecisionAudioSink {
         return PrecisionAudioSink(
             delegate = delegate,
             dspChain = dspChain,
             enableFloatOutput = enableFloatOutput,
+            downmixProvider = downmixProvider,
         )
     }
 
@@ -1374,5 +1377,140 @@ class PrecisionAudioSinkTest {
         assertEquals(PcmEncoding.PCM_FLOAT, sink.inputPcmEncoding)
         assertEquals(PcmEncoding.PCM_16BIT, sink.targetOutputEncoding)
         assertEquals(C.ENCODING_PCM_16BIT, fakeDelegate.configuredConfig?.format?.pcmEncoding)
+    }
+
+    // ---- Folding a bed down for a stereo route ------------------------------
+    //
+    // A Bluetooth route takes two channels, and a 6-channel AudioTrack opened
+    // for an E-AC-3 JOC stream is never consumed there: the played-frame count
+    // froze every ~5 s and the silence guard rebuilt it (phone 11-04). These
+    // pin the fold that replaced refusing the stream.
+
+    /** The coefficients, and that the low frequency channel is left out of them. */
+    @Test
+    fun `downmix folds a 5 point 1 bed to stereo with the documented gains`() {
+        val bed = AudioBlock(channelCount = 6, capacityFrames = 4)
+        val stereo = AudioBlock(channelCount = 2, capacityFrames = 4)
+        // FL FR FC LFE BL BR — a different value on every channel, so a swapped
+        // or dropped tap cannot pass.
+        floatArrayOf(0.4f, -0.2f, 0.3f, 0.9f, 0.1f, -0.6f).copyInto(bed.samples, 0)
+        bed.reset(1)
+
+        Downmix.mix(bed, stereo)
+
+        assertEquals(1, stereo.frameCount)
+        // (0.4 + 0.7071*0.3 + 0.7071*0.1) * 0.41421
+        assertEquals(0.28284f, stereo.samples[0], 1e-4f)
+        // (-0.2 + 0.7071*0.3 + 0.7071*-0.6) * 0.41421
+        assertEquals(-0.17071f, stereo.samples[1], 1e-4f)
+    }
+
+    @Test
+    fun `downmix ignores the low frequency channel and keeps every frame`() {
+        val quiet = AudioBlock(channelCount = 6, capacityFrames = 8)
+        val loud = AudioBlock(channelCount = 6, capacityFrames = 8)
+        for (frame in 0 until 3) {
+            val base = frame * 6
+            // FL FR FC LFE BL BR
+            floatArrayOf(0.3f, -0.1f, 0.2f, 0f, 0.05f, -0.4f).copyInto(quiet.samples, base)
+            floatArrayOf(0.3f, -0.1f, 0.2f, 1f, 0.05f, -0.4f).copyInto(loud.samples, base)
+        }
+        quiet.reset(3)
+        loud.reset(3)
+        val quietStereo = AudioBlock(channelCount = 2, capacityFrames = 8)
+        val loudStereo = AudioBlock(channelCount = 2, capacityFrames = 8)
+
+        Downmix.mix(quiet, quietStereo)
+        Downmix.mix(loud, loudStereo)
+
+        assertEquals(3, quietStereo.frameCount)
+        for (i in 0 until 6) {
+            assertEquals("sample $i moved with the LFE", quietStereo.samples[i], loudStereo.samples[i], 0f)
+        }
+    }
+
+    @Test
+    fun `only a multichannel bed asks for a fold`() {
+        assertFalse(Downmix.needs(1))
+        assertFalse(Downmix.needs(2))
+        assertTrue(Downmix.needs(6))
+    }
+
+    /**
+     * On a route that said it takes stereo, the delegate is configured for a
+     * two-channel track and receives one folded frame per decoder frame.
+     */
+    @Test
+    fun `a 5 point 1 stream is folded to a stereo track on a stereo route`() {
+        val fakeDelegate = FakeAudioSink()
+        val sink = createSink(fakeDelegate, enableFloatOutput = true, downmixProvider = { true })
+        sink.configure(
+            AudioSink.AudioSinkConfig.Builder(rawFormat(C.ENCODING_PCM_FLOAT, channelCount = 6)).build(),
+        )
+
+        assertTrue(sink.isDownmixing)
+        val delegateFormat = fakeDelegate.configuredConfig!!.format
+        assertEquals(2, delegateFormat.channelCount)
+        assertEquals(C.ENCODING_PCM_FLOAT, delegateFormat.pcmEncoding)
+
+        val frames = 128
+        val input = ByteBuffer.allocateDirect(frames * 6 * 4).order(ByteOrder.LITTLE_ENDIAN)
+        repeat(frames) {
+            input.putFloat(0.4f)
+            input.putFloat(-0.2f)
+            input.putFloat(0.3f)
+            input.putFloat(0.9f)
+            input.putFloat(0.1f)
+            input.putFloat(-0.6f)
+        }
+        input.flip()
+
+        assertTrue(sink.handleBuffer(input, 0L, 1))
+        assertFalse(input.hasRemaining())
+
+        val handed = fakeDelegate.lastHandledBuffer!!.order(ByteOrder.LITTLE_ENDIAN)
+        // Two channels out, one frame per input frame.
+        assertEquals(frames * 2 * 4, handed.limit())
+        handed.position(0)
+        assertEquals(0.28284f, handed.getFloat(), 1e-4f)
+        assertEquals(-0.17071f, handed.getFloat(), 1e-4f)
+    }
+
+    /** A stereo stream is not touched by a route that asks for a fold. */
+    @Test
+    fun `a stereo stream stays byte for byte identical when the route asks for a fold`() {
+        val plain = FakeAudioSink()
+        val folded = FakeAudioSink()
+        val format = rawFormat(C.ENCODING_PCM_16BIT, channelCount = 2)
+        val plainSink = createSink(plain, enableFloatOutput = false)
+        val foldedSink = createSink(folded, enableFloatOutput = false, downmixProvider = { true })
+        plainSink.configure(AudioSink.AudioSinkConfig.Builder(format).build())
+        foldedSink.configure(AudioSink.AudioSinkConfig.Builder(format).build())
+
+        assertFalse(foldedSink.isDownmixing)
+        assertEquals(2, folded.configuredConfig!!.format.channelCount)
+
+        val samples = shortArrayOf(1234, -5678, 1000, -1000, 32767, -32768)
+        fun buffer(): ByteBuffer {
+            val input = ByteBuffer.allocate(samples.size * 2).order(ByteOrder.LITTLE_ENDIAN)
+            samples.forEach(input::putShort)
+            input.flip()
+            return input
+        }
+
+        plainSink.handleBuffer(buffer(), 0L, 1)
+        foldedSink.handleBuffer(buffer(), 0L, 1)
+
+        assertArrayEquals(
+            plain.lastHandledBuffer!!.contents(),
+            folded.lastHandledBuffer!!.contents(),
+        )
+    }
+
+    /** Every byte the delegate was handed, from the start of the buffer. */
+    private fun ByteBuffer.contents(): ByteArray {
+        val copy = duplicate()
+        copy.rewind()
+        return ByteArray(copy.remaining()).also { copy.get(it) }
     }
 }
