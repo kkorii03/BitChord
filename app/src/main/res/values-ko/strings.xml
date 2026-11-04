@@ -1208,6 +1208,7 @@
     <string name="automix_videos">비디오 노래도 자동 믹스</string>
     <string name="automix_videos_subtitle">비디오 노래 자동 믹스</string>
     <string name="video_canvas">움직이는 아트워크가 없으면 영상 일부를 반복 재생</string>
+    <string name="mv_video">뮤직비디오 영상 재생</string>
     <string name="ai_lyrics">가사를 못 찾으면 AI 받아쓰기</string>
     <string name="ai_lyrics_subtitle">가사를 못 찾으면 AI가 받아쓰기</string>
     <string name="ai_lyrics_missing_key_subtitle">AI 받아쓰기에는 Gemini 키가 필요합니다</string>

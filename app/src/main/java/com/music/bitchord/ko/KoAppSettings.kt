@@ -491,6 +491,9 @@ internal object KoAppSettings {
     val skipSponsorParts = MutableStateFlow(false)
     val videoCanvas = MutableStateFlow(true)
 
+    /** [KO] mv-video: whether a music-video row plays its picture at all. */
+    val mvVideo = MutableStateFlow(true)
+
     fun readSkipping() {
         val prefs = AppSettings.prefs
         skipNonMusicParts.value = prefs.getBoolean(KEY_SKIP_NON_MUSIC_PARTS, true)
@@ -514,6 +517,15 @@ internal object KoAppSettings {
     fun setVideoCanvas(value: Boolean) {
         videoCanvas.value = value
         AppSettings.prefs.edit().putBoolean(KEY_VIDEO_CANVAS, value).apply()
+    }
+
+    fun readMvVideo() {
+        mvVideo.value = AppSettings.prefs.getBoolean(KEY_MV_VIDEO, true)
+    }
+
+    fun setMvVideo(value: Boolean) {
+        mvVideo.value = value
+        AppSettings.prefs.edit().putBoolean(KEY_MV_VIDEO, value).apply()
     }
 
     // ── Lyrics, translation and AI ─────────────────────────────────────────

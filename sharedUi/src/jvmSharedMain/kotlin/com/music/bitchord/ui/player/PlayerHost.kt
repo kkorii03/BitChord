@@ -67,6 +67,9 @@ interface PlayerHost {
      */
     val musicVideoMissing: StateFlow<Set<String>> get() = NoMissingVideos
 
+    /** [KO] mv-video: whether a music-video row plays its picture; off shows its cover. */
+    val musicVideoEnabled: StateFlow<Boolean> get() = MusicVideoAlwaysOn
+
     /** The heights the playing music video offers, and which one is held. */
     val musicVideoQuality: StateFlow<MusicVideoQualityUi> get() = NoVideoQuality
 
@@ -222,6 +225,9 @@ internal fun MusicVideoSurface(
 private val NoWatch = MutableStateFlow(WatchOutputUi())
 
 private val NoMissingVideos = MutableStateFlow<Set<String>>(emptySet())
+
+/** [KO] mv-video: a platform that plays music videos plays them unless told not to. */
+private val MusicVideoAlwaysOn = MutableStateFlow(true)
 
 /** What the output drawer needs to draw the watch's row. */
 data class WatchOutputUi(

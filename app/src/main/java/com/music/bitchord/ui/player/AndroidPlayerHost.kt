@@ -24,6 +24,7 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.LastPlayerScreen
 import com.music.bitchord.download.Downloads
+import com.music.bitchord.ko.KoAppSettings
 import com.music.bitchord.playback.AudioOutputStatus
 import com.music.bitchord.playback.AudioRouting
 import com.music.bitchord.playback.audio.bitperfect.BitPerfectOutput
@@ -122,6 +123,8 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
     override val musicVideoAspect: StateFlow<Float> get() = MusicVideoEngine.aspect
 
     override val musicVideoMissing: StateFlow<Set<String>> get() = MusicVideoEngine.missing
+
+    override val musicVideoEnabled: StateFlow<Boolean> get() = KoAppSettings.mvVideo // [KO] mv-video
 
     override val musicVideoQuality: StateFlow<MusicVideoQualityUi> get() = MusicVideoEngine.quality
 

@@ -606,6 +606,9 @@ object AppSettings {
 
     val videoCanvas get() = KoAppSettings.videoCanvas // [KO] video canvas
 
+    /** Whether a music-video row plays its picture; off shows its cover instead. */
+    val mvVideo get() = KoAppSettings.mvVideo // [KO] mv-video
+
     /**
      * Secondary artist art: a user-hosted artist-signature API used only when
      * Apple Music has no title logo. Blank URL means unconfigured and the
@@ -1146,6 +1149,7 @@ object AppSettings {
         spotifyCanvasAutoHide.value = prefs.getBoolean(KEY_SPOTIFY_CANVAS_AUTO_HIDE, true)
         prioritizeSpotifyCanvas.value = prefs.getBoolean(KEY_PRIORITIZE_SPOTIFY_CANVAS, false)
         KoAppSettings.readVideoCanvas() // [KO] video canvas
+        KoAppSettings.readMvVideo() // [KO] mv-video
         signatureApiEnabled.value = prefs.getBoolean(KEY_SIGNATURE_API_ENABLED, false)
         signatureApiUrl.value = normalizeSignatureApiUrl(prefs.getString(KEY_SIGNATURE_API_URL, "").orEmpty())
         fullBleedArtwork.value = prefs.getBoolean(KEY_FULL_BLEED_ARTWORK, true)
@@ -1897,6 +1901,9 @@ object AppSettings {
 
     fun setVideoCanvas(value: Boolean) =
         KoAppSettings.setVideoCanvas(value) // [KO] video canvas
+
+    fun setMvVideo(value: Boolean) =
+        KoAppSettings.setMvVideo(value) // [KO] mv-video
 
     fun setPrioritizeSpotifyCanvas(value: Boolean) {
         prioritizeSpotifyCanvas.value = value

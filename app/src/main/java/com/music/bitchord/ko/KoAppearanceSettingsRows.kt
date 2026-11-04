@@ -59,3 +59,17 @@ internal fun SettingsGroupScope.KoVideoCanvasRow() {
         )
     }
 }
+
+/** [KO] mv-video: a music-video row plays its picture, or shows its cover instead. */
+@Composable
+internal fun SettingsGroupScope.KoMvVideoRow() {
+    val mvVideo by AppSettings.mvVideo.collectAsStateWithLifecycle()
+    val title = stringResource(R.string.mv_video)
+    row(title, "video", "music video", "mv", divided = false) {
+        SettingsSubRow(
+            title = title,
+            checked = mvVideo,
+            onCheckedChange = AppSettings::setMvVideo,
+        )
+    }
+}

@@ -979,7 +979,8 @@ fun NowPlayingScreen(
     // A music video plays its own picture where the sleeve is — see
     // [MusicVideoSurface] — and takes the place of any animated cover.
     val missingVideos by PlayerPlatform.host.musicVideoMissing.collectAsStateWithLifecycle()
-    val videoMode = showsMusicVideo(song) && song.videoId !in missingVideos // [KO] video-fallback
+    val mvVideoOn by PlayerPlatform.host.musicVideoEnabled.collectAsStateWithLifecycle() // [KO] mv-video
+    val videoMode = mvVideoOn && showsMusicVideo(song) && song.videoId !in missingVideos // [KO] video-fallback
     val lowPower by PlayerSettings.lowPower.collectAsStateWithLifecycle() // [KO] low power artwork
     val canvas = rememberCanvasArtwork(song, audible = isPlaying)?.takeUnless { videoMode }?.let {
         // Apple's 3:4 rendition runs under the whole phone screen, the way its

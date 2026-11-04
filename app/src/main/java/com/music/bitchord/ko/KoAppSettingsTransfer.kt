@@ -271,6 +271,7 @@ internal object KoAppSettingsTransfer {
             KEY_SPOTIFY_CANVAS_AUTO_HIDE,
             KEY_PRIORITIZE_SPOTIFY_CANVAS,
             KEY_VIDEO_CANVAS,
+            KEY_MV_VIDEO,
             KEY_SIGNATURE_API_ENABLED,
             KEY_FULL_BLEED_ARTWORK,
             KEY_LEGACY_MESH_GRADIENT,
@@ -654,6 +655,7 @@ internal object KoAppSettingsTransfer {
         put(KEY_ANIMATED_CANVAS, TransferCategory.DISPLAY, TransferType.BOOLEAN)
         put(KEY_CANVAS_OVER_CELLULAR, TransferCategory.DISPLAY, TransferType.BOOLEAN)
         put(KEY_VIDEO_CANVAS, TransferCategory.DISPLAY, TransferType.BOOLEAN)
+        put(KEY_MV_VIDEO, TransferCategory.DISPLAY, TransferType.BOOLEAN)
         put(KEY_SPOTIFY_CANVAS_AUTO_HIDE, TransferCategory.DISPLAY, TransferType.BOOLEAN)
         put(KEY_PRIORITIZE_SPOTIFY_CANVAS, TransferCategory.DISPLAY, TransferType.BOOLEAN)
         put(KEY_HIGH_PERFORMANCE_MODE, TransferCategory.DISPLAY, TransferType.BOOLEAN)
@@ -762,6 +764,7 @@ internal object KoAppSettingsTransfer {
         KEY_ANIMATED_CANVAS -> AppSettings.animatedCanvas.value
         KEY_CANVAS_OVER_CELLULAR -> AppSettings.canvasOverCellular.value
         KEY_VIDEO_CANVAS -> AppSettings.videoCanvas.value
+        KEY_MV_VIDEO -> AppSettings.mvVideo.value
         KEY_SPOTIFY_CANVAS_AUTO_HIDE -> AppSettings.spotifyCanvasAutoHide.value
         KEY_PRIORITIZE_SPOTIFY_CANVAS -> AppSettings.prioritizeSpotifyCanvas.value
         KEY_HIGH_PERFORMANCE_MODE -> AppSettings.highPerformanceMode.value
