@@ -1705,14 +1705,20 @@ private fun Modifier.lyricParticles(
  */
 @Composable
 internal fun LyricsSkeleton(modifier: Modifier = Modifier, topPadding: Dp = 40.dp) { // [KO] fork access
-    val sweep = rememberInfiniteTransition(label = "lyricsSkeleton").animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            tween(SKELETON_PERIOD_MS, easing = LinearEasing),
-        ),
-        label = "sweep",
-    )
+    val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
+    val lowPower by PlayerSettings.lowPower.collectAsStateWithLifecycle()
+    val sweep = if (!reduceAnimation && !lowPower) {
+        rememberInfiniteTransition(label = "lyricsSkeleton").animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                tween(SKELETON_PERIOD_MS, easing = LinearEasing),
+            ),
+            label = "sweep",
+        )
+    } else {
+        null
+    }
     BoxWithConstraints(
         // No gutter of its own: the list this stands in for bleeds out to the
         // panel's full width and puts the gutter back as content padding, so
@@ -1742,16 +1748,22 @@ internal fun LyricsSkeleton(modifier: Modifier = Modifier, topPadding: Dp = 40.d
                                 .drawWithCache {
                                     val full = column.toPx()
                                     val band = full * 0.45f
-                                    val startX = -band + sweep.value * (full + band * 2)
-                                    val brush = Brush.horizontalGradient(
-                                        colors = listOf(
-                                            Color.White.copy(alpha = 0.10f),
-                                            Color.White.copy(alpha = 0.26f),
-                                            Color.White.copy(alpha = 0.10f),
-                                        ),
-                                        startX = startX,
-                                        endX = startX + band,
-                                    )
+                                    val brush = if (sweep == null) {
+                                        Brush.horizontalGradient(
+                                            colors = listOf(Color.White.copy(alpha = 0.10f)),
+                                        )
+                                    } else {
+                                        val startX = -band + sweep.value * (full + band * 2)
+                                        Brush.horizontalGradient(
+                                            colors = listOf(
+                                                Color.White.copy(alpha = 0.10f),
+                                                Color.White.copy(alpha = 0.26f),
+                                                Color.White.copy(alpha = 0.10f),
+                                            ),
+                                            startX = startX,
+                                            endX = startX + band,
+                                        )
+                                    }
                                     onDrawBehind { drawRect(brush) }
                                 },
                         )
