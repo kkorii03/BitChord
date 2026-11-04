@@ -188,10 +188,11 @@ object LyricsTiming {
      */
     private fun refineMove(atMs: Long, refineMs: Long, slopePerMin: Double, untilMs: Long): Long {
         val move = refineMs + slopePerMin / 60_000.0 * minOf(atMs, untilMs)
-        // A constant move larger than the narrow cap can only be the wide
-        // window's arrangement-sized shift; a drift and every narrow move
-        // keep the ±[RefinePolicy.MAX_SHIFT_MS] guard.
-        val cap = if (slopePerMin == 0.0 && abs(refineMs) > RefinePolicy.MAX_SHIFT_MS) {
+        // A constant past the narrow cap can only be the wide window's
+        // arrangement-sized move, and so is a measured drift, whose total grows
+        // with the song (11-04 WxYgXmZ9xh8: a 5 s drift, mostly cut by the narrow
+        // cap). A narrow constant keeps ±[RefinePolicy.MAX_SHIFT_MS].
+        val cap = if (slopePerMin != 0.0 || abs(refineMs) > RefinePolicy.MAX_SHIFT_MS) {
             RefinePolicy.MAX_WIDE_SHIFT_MS
         } else {
             RefinePolicy.MAX_SHIFT_MS
