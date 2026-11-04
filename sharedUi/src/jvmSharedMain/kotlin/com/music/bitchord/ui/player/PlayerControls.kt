@@ -1222,6 +1222,8 @@ internal fun OutputCaption(
         watch.active ||
         (activeOutput != null && activeOutput.kind != AudioOutputKind.PHONE)
     val outputFormat by PlayerPlatform.host.outputFormat.collectAsStateWithLifecycle()
+    val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
+    val lowPower by PlayerSettings.lowPower.collectAsStateWithLifecycle()
     // The shine means one thing: the DAC has this track to itself, bit-perfect
     // or at the most the DAC can take. Anything weaker — a hi-res stream on a
     // float-capable route — still passes through Android's mixer, which may
@@ -1243,6 +1245,8 @@ internal fun OutputCaption(
                 textAlign = TextAlign.Center,
             ),
             modifier = captionModifier,
+            reduceAnimation = reduceAnimation,
+            lowPower = lowPower,
         )
     } else {
         Text(
@@ -1930,7 +1934,8 @@ private fun LosslessLabel(
     // Only while asked for, and not at all under "Reduce animation": the
     // label then just holds still, which says "waiting" well enough.
     val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
-    val pulse = if (pulsing && !reduceAnimation) {
+    val lowPower by PlayerSettings.lowPower.collectAsStateWithLifecycle()
+    val pulse = if (pulsing && !reduceAnimation && !lowPower) {
         rememberInfiniteTransition(label = "upgradingPulse").animateFloat(
             initialValue = 1f,
             targetValue = UPGRADING_PULSE_LOW,
@@ -1966,7 +1971,11 @@ private fun LosslessLabel(
         )
         Spacer(Modifier.width(4.dp))
         if (animated) {
-            ShimmerText(text = text)
+            ShimmerText(
+                text = text,
+                reduceAnimation = reduceAnimation,
+                lowPower = lowPower,
+            )
         } else {
             Text(
                 text = text,
@@ -2003,9 +2012,21 @@ private fun ShimmerText(
         fontSize = (MaterialTheme.typography.labelMedium.fontSize.value + BADGE_SIZE_BUMP).sp,
     ),
     baseAlpha: Float = 0.55f,
+    reduceAnimation: Boolean,
+    lowPower: Boolean,
 ) {
-    val transition = rememberInfiniteTransition(label = "lossless-shimmer")
-    val progress = transition.animateFloat(
+    if (reduceAnimation || lowPower) {
+        Text(
+            text = text,
+            style = style,
+            color = LocalPlayerTint.current.copy(alpha = baseAlpha),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = modifier,
+        )
+        return
+    }
+    val progress = rememberInfiniteTransition(label = "lossless-shimmer").animateFloat(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
