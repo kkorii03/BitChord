@@ -165,12 +165,8 @@ object DownloadedArtworkResolver {
         val name = MessageDigest.getInstance("SHA-1")
             .digest(key.toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it) } + ".$extension"
-        val file = File(dir, name)
-        val wrote = !file.isFile || file.length() == 0L
-        if (wrote) {
-            file.outputStream().use { it.write(bytes) }
-        }
-        Persisted(Uri.fromFile(file).toString(), wrote)
+        val wrote = writeCover(dir, name, bytes)
+        Persisted(Uri.fromFile(File(dir, name)).toString(), wrote)
     }.onFailure {
         Log.d(TAG, "could not save embedded cover: ${it.message}")
     }.getOrNull()
@@ -182,6 +178,30 @@ object DownloadedArtworkResolver {
             song.thumbnailUrl.orEmpty(),
             song.localDateModifiedSeconds?.toString().orEmpty(),
         ).joinToString("\u0001")
+}
+
+/**
+ * Write [bytes] into [dir] as [name], then trim [dir] to [ART_CACHE_MAX_BYTES].
+ *
+ * Written under a temporary name and renamed into place: a process killed
+ * mid-write leaves the temporary file behind, never a truncated cover under the
+ * final name, which every later read would take as the real picture. A copy
+ * already on disk is left alone.
+ *
+ * @return whether the file was written.
+ */
+internal fun writeCover(dir: File, name: String, bytes: ByteArray): Boolean {
+    val file = File(dir, name)
+    if (file.isFile && file.length() > 0L) return false
+    val pending = File(dir, "$name.pending")
+    try {
+        pending.outputStream().use { it.write(bytes) }
+        if (!pending.renameTo(file)) error("could not move $name into place")
+    } finally {
+        pending.delete()
+    }
+    evictOldestFiles(dir, ART_CACHE_MAX_BYTES)
+    return true
 }
 
 /**

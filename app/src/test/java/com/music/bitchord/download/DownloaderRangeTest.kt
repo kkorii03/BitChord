@@ -194,6 +194,45 @@ class DownloaderRangeTest {
     }
 
     @Test
+    fun `a byte range is opened with the client the url's route requires`() = runBlocking {
+        val body = ByteArray(64) { it.toByte() }
+        val seenHeader = java.util.concurrent.atomic.AtomicReference<String?>(null)
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                seenHeader.set(request.getHeader("X-Download-Client"))
+                return MockResponse().setResponseCode(200).setBody(Buffer().write(body))
+            }
+        }
+
+        val picker = Downloader.mediaClientPicker
+        Downloader.mediaClientPicker = { url ->
+            // The picker's client is the one that has to carry the bytes: a
+            // proxied URL fetched with the shared client is a 403 on every
+            // range, because googlevideo ties the URL to the proxy's address.
+            com.music.bitchord.data.Http.client.newBuilder()
+                .addInterceptor { chain ->
+                    chain.proceed(chain.request().newBuilder().header("X-Download-Client", url).build())
+                }
+                .build()
+        }
+        val url = server.url("/audio").toString()
+        try {
+            Downloader.fetch(
+                videoId = "video",
+                stream = stream(url),
+                maxKbps = 128,
+                requireM4a = false,
+                sink = ByteArrayOutputStream(),
+                onProgress = { _, _ -> },
+            )
+        } finally {
+            Downloader.mediaClientPicker = picker
+        }
+
+        assertEquals("the byte request goes through the route's client", url, seenHeader.get())
+    }
+
+    @Test
     fun `a partial 200 probe is measured again without a range`() = runBlocking {
         val fragment = ByteArray(64 * 1024) { index -> (index * 7).toByte() }
         val body = ByteArray(fragment.size + 5_000) { index -> (index * 11).toByte() }

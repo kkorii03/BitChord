@@ -14,6 +14,33 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
+ * How much of a cover cache directory is kept.
+ *
+ * Embedded covers run to about 8MB each and nothing else ever empties these
+ * directories, so a library that keeps growing would otherwise grow the cache
+ * with it. The same bound serves every directory holding one of them.
+ */
+internal const val ART_CACHE_MAX_BYTES = 100L * 1024 * 1024
+
+/**
+ * Delete the oldest files in [dir] until it holds no more than [maxBytes].
+ *
+ * Age is the last-modified stamp, which is when the picture was written. A
+ * file that cannot be deleted is still counted as gone, so a directory nothing
+ * may remove from does not make the loop spin.
+ */
+internal fun evictOldestFiles(dir: File, maxBytes: Long) {
+    val files = dir.listFiles()?.filter { it.isFile } ?: return
+    var total = files.sumOf { it.length() }
+    if (total <= maxBytes) return
+    files.sortedBy { it.lastModified() }.forEach {
+        if (total <= maxBytes) return
+        total -= it.length()
+        it.delete()
+    }
+}
+
+/**
  * Embedded covers for remote tracks, extracted lazily and cached.
  *
  * Listings never touch audio bytes, so a track whose art lives inside the
@@ -29,8 +56,6 @@ import kotlinx.coroutines.withContext
  * revalidating would cost a request per row per list.
  */
 object RemoteArtworkStore {
-
-    private const val MAX_DIR_BYTES = 100L * 1024 * 1024
 
     /**
      * A process-long answer per track. Bounded: a long session sees far more
@@ -117,14 +142,5 @@ object RemoteArtworkStore {
             .joinToString("") { "%02x".format(it) }
     }
 
-    private fun evict(dir: File) {
-        val files = dir.listFiles()?.filter { it.isFile } ?: return
-        var total = files.sumOf { it.length() }
-        if (total <= MAX_DIR_BYTES) return
-        files.sortedBy { it.lastModified() }.forEach {
-            if (total <= MAX_DIR_BYTES) return
-            total -= it.length()
-            it.delete()
-        }
-    }
+    private fun evict(dir: File) = evictOldestFiles(dir, ART_CACHE_MAX_BYTES)
 }
