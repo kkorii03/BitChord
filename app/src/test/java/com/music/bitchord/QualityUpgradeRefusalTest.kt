@@ -3,6 +3,7 @@ package com.music.bitchord
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.TrackMatcher
+import com.music.bitchord.ko.KoQualityUpgrade
 import com.music.bitchord.playback.QualityUpgrade
 import com.music.bitchord.playback.QualityUpgrade.Refusal
 import kotlinx.coroutines.runBlocking
@@ -82,5 +83,37 @@ class QualityUpgradeRefusalTest {
             QualityUpgrade.hasAnsweredFor(id),
         )
         QualityUpgrade.forget(id)
+    }
+
+    /**
+     * The retry window an inconclusive answer earns has to outlive the caller
+     * giving up on what it found.
+     *
+     * The automatic pass calls [QualityUpgrade.forget] once it has decided what
+     * to do with the copy the search returned, which is one statement after
+     * `recordAnswer` armed the window — and forget used to delete exactly that
+     * window, so the `will retry` line it had just logged was never true.
+     * 11-04, the only completed automatic search of the day: a lossless
+     * request found nothing but `MP4 · 320 kbps` while the lossless sources
+     * were timing out in the same race, and nothing asked them again.
+     */
+    @Test
+    fun `an inconclusive answer keeps its retry window through forget`() = runBlocking {
+        val id = "inconclusive-keeps-retry"
+        val target = TrackMatcher.Target(title = "Some Song", artist = "Some Artist", durationSec = 200)
+        QualityUpgrade.markPendingForTest(id, target)
+        val report = SourceResolver.SearchReport()
+        report.record(SourceResolver.SearchOutcome(verdict = "timeout", conclusive = false))
+
+        assertNull(QualityUpgrade.lookAgain(id, playingDurationSec = 200, report = report))
+        assertTrue("the inconclusive answer arms a bounded retry", KoQualityUpgrade.suppressesRetry(id))
+
+        QualityUpgrade.forget(id)
+
+        assertTrue(
+            "forgetting the found answer must not delete the retry the log promised",
+            KoQualityUpgrade.suppressesRetry(id),
+        )
+        QualityUpgrade.forgetLastSession()
     }
 }
