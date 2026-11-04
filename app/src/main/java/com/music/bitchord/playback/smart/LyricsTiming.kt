@@ -1216,18 +1216,18 @@ object LyricsTiming {
         RefineSnapshot(store(context).get(videoId) ?: Entry())
 
     /** The refine [result] for the words kept for these lyrics and sound, without writing anything. */
-    private fun refineResult(
+    private suspend fun refineResult(
         context: Context,
         entry: Entry,
         key: Int,
         base: Adjustment?,
         lines: List<LyricLine>,
         timing: Timing,
-    ): RefinePolicy.Result {
+    ): RefinePolicy.Result = withContext(Dispatchers.Default) {
         val source = refineWords(entry, key, base)
         val words = refineWordsOnClock(context, timing.videoId, source, timing)
-        if (words.isEmpty()) return RefinePolicy.Result.NONE
-        return RefinePolicy.compute(
+        if (words.isEmpty()) return@withContext RefinePolicy.Result.NONE
+        RefinePolicy.compute(
             apply(
                 lines,
                 timing.copy(
@@ -2466,14 +2466,22 @@ object LyricsTiming {
         // apart could ask for different sets and both decode the audio. A
         // manual tap is kept apart so it can still force a fresh answer.
         val flight = if (automatic) "$videoId:$key" else "$videoId:$key:manual"
-        val fresh = aiScope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
-            askAi(context, videoId, lines, sung, key, engines, title, artist, isVideo, probe)
-        }
-        val running = aiInFlight.putIfAbsent(flight, fresh) ?: fresh
+        var fresh: kotlinx.coroutines.Deferred<Adjustment.Mapped?>? = null
+        val running = synchronized(aiInFlight) {
+            aiInFlight[flight] ?: run {
+                if (aiInFlight.size >= 2) return@synchronized null
+                aiScope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+                    askAi(context, videoId, lines, sung, key, engines, title, artist, isVideo, probe)
+                }.also {
+                    fresh = it
+                    aiInFlight[flight] = it
+                }
+            }
+        } ?: return null
         running.cancelledWithCaller(currentCoroutineContext()[Job], cancelWithCaller)
-        if (running === fresh) {
-            fresh.invokeOnCompletion { aiInFlight.remove(flight, fresh) }
-            fresh.start()
+        fresh?.let { created ->
+            created.invokeOnCompletion { aiInFlight.remove(flight, created) }
+            created.start()
         }
         val adjustment = running.await() ?: return null
         if (!automatic) {

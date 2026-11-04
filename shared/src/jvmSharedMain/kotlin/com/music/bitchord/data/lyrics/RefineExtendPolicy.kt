@@ -42,7 +42,7 @@ object RefineExtendPolicy {
         // A measured drift carried past its own evidence was the defect this
         // rule exists for: 11-04, 7% of the lines past 90 s off by >1.5 s
         // against 2% before it, with no listen ever made further.
-        if (result.applied) return result.model == RefinePolicy.Model.LINEAR || unheard
+        if (result.applied) return result.slopePerMin != 0.0 || unheard
         return result.lines < RefinePolicy.MIN_WIDE_LINES && unheard
     }
 
