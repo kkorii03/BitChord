@@ -117,6 +117,70 @@ class DirectSourceGateTest {
         }
     }
 
+    /**
+     * Phone 11-04: asking for Gnarls Barkley's "Crazy" played a saxophone
+     * tribute. The lookup ranked a Qobuz row credited to "Gnarls Barkley
+     * Tribute" off the album "Gnarls Barkley Cool Jazz Tribute" first and
+     * served it, because nothing here asked whether the row was the original
+     * recording — only whether its bytes opened.
+     */
+    @Test
+    fun aTributeIsNotServedInPlaceOfTheSong() = runBlocking {
+        install(
+            listOf(
+                FakeSource(
+                    "Qobuz",
+                    listOf(
+                        Song(
+                            videoId = "tribute-1",
+                            title = "Golden Boy",
+                            artist = "Eljohnzc Tribute",
+                            thumbnailUrl = null,
+                            durationText = "3:20",
+                            albumName = "Eljohnzc Cool Jazz Tribute",
+                        ),
+                    ),
+                ),
+                FakeSource("YouTube", kind = SourceKind.YOUTUBE),
+            ),
+        )
+        try {
+            assertNull(
+                "a tribute is not the recording that was queued",
+                SourceResolver.directStream(target()) { true },
+            )
+        } finally {
+            install(emptyList())
+        }
+    }
+
+    /** A catalogue copy credited to someone else is not this song either. */
+    @Test
+    fun aRowCreditedToAnotherArtistIsNotServed() = runBlocking {
+        install(
+            listOf(
+                FakeSource(
+                    "Deezer",
+                    listOf(
+                        Song(
+                            videoId = "other-1",
+                            title = "Golden Boy",
+                            artist = "Someone Else",
+                            thumbnailUrl = null,
+                            durationText = "3:20",
+                        ),
+                    ),
+                ),
+                FakeSource("YouTube", kind = SourceKind.YOUTUBE),
+            ),
+        )
+        try {
+            assertNull(SourceResolver.directStream(target()) { true })
+        } finally {
+            install(emptyList())
+        }
+    }
+
     private fun target() = TrackMatcher.Target("Golden Boy", "Eljohnzc", durationSec = 200)
 
     private fun row(id: String) = Song(
