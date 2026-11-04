@@ -36,8 +36,17 @@ object LyricsWordAlign {
     /** A letter's typical length when sung, for stepping back from the first heard one to the line's start. */
     private const val LETTER_MS = 180L
 
-    /** Where [placeLinesDetailed] found lines, and whether it could look at all. */
-    data class Placement(val starts: List<Long?>, val attempted: Boolean)
+    /** Where [placeLinesDetailed] found lines, whether it could look at all, and how much of each line was matched. */
+    data class Placement(
+        val starts: List<Long?>,
+        val attempted: Boolean,
+        /**
+         * The share of each line's own letters the alignment actually matched,
+         * 0–1. A start is placed on as little as two opening letters, so this is
+         * what tells a line the transcript really sang from one it did not.
+         */
+        val matchedShare: List<Double> = emptyList(),
+    )
 
     /**
      * When each of [lines] starts, by [words]: the lyrics' letters and the
@@ -58,7 +67,7 @@ object LyricsWordAlign {
      */
     fun placeLinesDetailed(lines: List<String>, words: List<Heard>): Placement {
         val aligned = align(lines, words)
-            ?: return Placement(List(lines.size) { null }, attempted = false)
+            ?: return Placement(List(lines.size) { null }, attempted = false, List(lines.size) { 0.0 })
         val starts = arrayOfNulls<Long>(lines.size)
         var k = 0
         while (k < aligned.lyricChars.size) {
@@ -75,7 +84,18 @@ object LyricsWordAlign {
             }
             k = end
         }
-        return Placement(starts.toList(), attempted = true)
+        val letters = IntArray(lines.size)
+        val matched = IntArray(lines.size)
+        for (i in aligned.lyricChars.indices) {
+            val line = aligned.lyricLine[i]
+            letters[line]++
+            if (aligned.heardFor[i] >= 0) matched[line]++
+        }
+        return Placement(
+            starts = starts.toList(),
+            attempted = true,
+            matchedShare = lines.indices.map { if (letters[it] == 0) 0.0 else matched[it].toDouble() / letters[it] },
+        )
     }
 
     /** A heard word matched to a line, with how far into that line its first matched letter sits. */
