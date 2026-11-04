@@ -33,6 +33,10 @@ import kotlin.math.roundToLong
  * taken, rather than each line's nearest hearing. That is the one big move a
  * narrow window can never see.
  *
+ * A file timed to another *edit* of the song drifts instead of sitting one move
+ * away, and its later lines are past the narrow window by definition, so the
+ * slope is read from the whole-song alignment before the wide window is tried.
+ *
  * Pure, so the rule can be checked without Android, a transcript or the disk.
  */
 object RefinePolicy {
@@ -172,8 +176,12 @@ object RefinePolicy {
                 )
             }
         }
-        // The narrow window found nothing worth moving. Only then look for the
-        // one big move a provider from another arrangement leaves behind.
+        // The narrow window found nothing worth moving. A sheet timed to another
+        // edit does not sit one move away, it drifts, and by definition its later
+        // lines are past the narrow window: read the slope from the whole-song
+        // alignment before trying the wide window's single move.
+        drift(lines, heard)?.let { return it }
+        // Only then look for the one big move a provider from another arrangement leaves behind.
         wide(lines, stream)?.let { return it }
         if (residuals.isEmpty()) return Result.NONE
         val median = median(residuals)
@@ -266,6 +274,52 @@ object RefinePolicy {
             previous = current
         }
         return previous[length]
+    }
+
+    /**
+     * The drift a sheet timed to another edit leaves behind: every line a little
+     * further out than the one before.
+     *
+     * [compute]'s narrow window only measures a line heard within [WINDOW_MS] of
+     * where it is shown, so once a drift passes 1.5 s its later lines are dropped
+     * and the slope can never be seen — 11-04 WxYgXmZ9xh8: `lyrics-refine
+     * lines=4 slope=0 model=const` while the real error grew from +1.8 s to
+     * +6.8 s. The monotone alignment an AI answer is placed with sees the whole
+     * song at once, so the same fit is read here ([TimingFit]): one straight
+     * line, kept only when it is tight and leaves no measured line further from
+     * its own hearing than the constant move would.
+     */
+    private fun drift(lines: List<LyricLine>, heard: List<LyricsWordAlign.Heard>): Result? {
+        val placed = LyricsWordAlign.placeLines(lines.map { it.text }, heard)
+        val points = lines.indices.mapNotNull { index ->
+            placed[index]?.let { lines[index].timeMs to it }
+        }
+        if (points.size < MIN_LINEAR_LINES) return null
+        val span = points.maxOf { it.first } - points.minOf { it.first }
+        if (span < MIN_LINEAR_SPAN_MS) return null
+        val line = TimingFit.fit(points, minPoints = MIN_LINEAR_LINES) ?: return null
+        // A pace the evidence does not support is the record's own: not a drift.
+        if (line.rate == 1.0) return null
+        val slope = line.rate - 1.0
+        val residuals = points.map { (shown, at) -> at - shown }
+        val constant = median(residuals)
+        val errors = points.indices.map { index ->
+            val moved = line.offsetMs + (slope * points[index].first).roundToLong()
+            abs(residuals[index] - moved) to abs(residuals[index] - constant)
+        }
+        val mad = median(errors.map { it.first })
+        if (mad > MAX_LINEAR_MAD_MS) return null
+        // No measured line may end up further from its own hearing than the
+        // constant move left it, beyond the fit's own scatter.
+        if (errors.any { (onLine, onConstant) -> onLine > onConstant + mad }) return null
+        return Result(
+            applied = true,
+            medianMs = line.offsetMs,
+            madMs = mad,
+            lines = points.size,
+            slopePerMin = slope * 60_000.0,
+            model = Model.LINEAR,
+        )
     }
 
     /**

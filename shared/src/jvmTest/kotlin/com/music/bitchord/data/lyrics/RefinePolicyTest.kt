@@ -225,4 +225,41 @@ class RefinePolicyTest {
 
         assertFalse(result.applied)
     }
+
+    @Test
+    fun aSheetThatDriftsPastTheNarrowWindowIsFittedAsALine() {
+        // 11-04 WxYgXmZ9xh8: the provider's file was timed to another edit, so
+        // the error grew from +1.8 s to +6.8 s across the song. Every line is
+        // more than the narrow window's 1.5 s out, so the narrow pass measures
+        // none of them and the slope can never be seen; the whole-song alignment
+        // sees it, and one straight line is applied instead of nothing.
+        val startMs = 20_000L
+        val stepMs = 12_000L
+        val slopePerMs = 2_000.0 / 60_000.0
+        val lines = List(12) { index -> line(startMs + index * stepMs, "line$index") }
+        val heard = lines.map { line ->
+            heard(line.text, line.timeMs + 1_800L + (slopePerMs * line.timeMs).toLong())
+        }
+        val result = RefinePolicy.compute(lines, heard)
+
+        assertTrue(result.applied)
+        assertEquals(RefinePolicy.Model.LINEAR, result.model)
+        assertEquals(12, result.lines)
+        assertTrue(abs(result.slopePerMin - 2_000.0) <= 100.0, "slope ${result.slopePerMin} ms/min")
+        assertTrue(abs(result.medianMs - 1_800L) <= 50L, "offset ${result.medianMs} ms")
+    }
+
+    @Test
+    fun anEvenlyLateSheetIsOneMoveAndNotADrift() {
+        // The same song one constant 3 s late: no slope in the points, so the
+        // wide window's single move stays what applies.
+        val lines = List(12) { index -> line(20_000L + index * 12_000L, "line$index") }
+        val heard = lines.map { heard(it.text, it.timeMs + 3_000L) }
+        val result = RefinePolicy.compute(lines, heard)
+
+        assertTrue(result.applied)
+        assertEquals(RefinePolicy.Model.WIDE, result.model)
+        assertEquals(0.0, result.slopePerMin)
+        assertEquals(3_000L, result.medianMs)
+    }
 }
