@@ -17,6 +17,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import java.io.IOException
@@ -611,7 +612,18 @@ object Downloader {
     /** Enough to see past an XML prolog to an `<MPD`, and far more than any magic number needs. */
     private const val PROBE_BYTES = 512
 
-    private fun open(url: String, position: Long, length: Long) = Http.client
+    /**
+     * Test seam: the client a byte range is opened with.
+     *
+     * Production answers with [ProxyPlayback.mediaClientFor]: a URL minted
+     * through the proxy is bound to the proxy's address, so asking for its
+     * bytes with the shared [Http.client] sends googlevideo direct and gets a
+     * 403 on every range.
+     */
+    @Volatile
+    internal var mediaClientPicker: (String) -> OkHttpClient = ProxyPlayback::mediaClientFor
+
+    private fun open(url: String, position: Long, length: Long) = mediaClientPicker(url)
         .newCall(
             Request.Builder()
                 .url(url)

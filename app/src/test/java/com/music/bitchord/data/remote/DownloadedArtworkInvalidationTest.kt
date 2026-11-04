@@ -7,8 +7,14 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
+import java.io.File
 
 /**
  * A cover save must reach both a row that is still drawing and one that is not.
@@ -83,5 +89,42 @@ class DownloadedArtworkInvalidationTest {
         DownloadedArtworkEvents.coverSaved(videoId)
 
         assertEquals(videoId, received.await())
+    }
+
+    // ---- the downloaded-art directory these covers are written to --------
+
+    @get:Rule
+    val temp = TemporaryFolder()
+
+    @Test
+    fun `the art cache is trimmed to its bound, oldest cover first`() {
+        val dir = temp.newFolder("downloaded-art")
+        val old = File(dir, "old.jpg").apply { writeBytes(ByteArray(600)); setLastModified(1_000_000) }
+        val middle = File(dir, "middle.jpg").apply { writeBytes(ByteArray(600)); setLastModified(2_000_000) }
+        val fresh = File(dir, "fresh.jpg").apply { writeBytes(ByteArray(600)); setLastModified(3_000_000) }
+
+        evictOldestFiles(dir, 1_500)
+
+        assertFalse("the oldest cover makes room first", old.exists())
+        assertTrue(middle.exists())
+        assertTrue(fresh.exists())
+    }
+
+    @Test
+    fun `a cover is published by rename, so no half written file is ever visible`() {
+        val dir = temp.newFolder("downloaded-art")
+        val bytes = ByteArray(4_096) { 7 }
+
+        assertTrue(writeCover(dir, "cover.jpg", bytes))
+
+        val file = File(dir, "cover.jpg")
+        assertEquals(bytes.size.toLong(), file.length())
+        assertArrayEquals(bytes, file.readBytes())
+        assertTrue(
+            "the temp file is gone once the cover is in place",
+            dir.listFiles().orEmpty().none { it.name.endsWith(".pending") },
+        )
+        assertFalse("a complete cover is not written again", writeCover(dir, "cover.jpg", ByteArray(1)))
+        assertEquals(bytes.size.toLong(), file.length())
     }
 }
