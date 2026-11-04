@@ -809,7 +809,7 @@ object TelegramClientManager {
     }
 
     /** Runs on IO, with the client held by the settings screen. */
-    private fun loadChats(): List<TelegramChat> {
+    private suspend fun loadChats(): List<TelegramChat> = coroutineScope {
         val found = LinkedHashMap<Long, TelegramChat>()
         for (list in listOf<TdApi.ChatList>(TdApi.ChatListMain(), TdApi.ChatListArchive())) {
             for (page in 0 until MAX_CHAT_PAGES) {
@@ -824,21 +824,36 @@ object TelegramClientManager {
             val ids = runCatching { request(TdApi.GetChats(list, MAX_CHATS), 15_000).chatIds }
                 .getOrNull()
                 ?: continue
-            for (id in ids) {
+            // One GetChat per chat is a blocking round trip, and asking for them
+            // one at a time left this screen on its spinner for the sum of every
+            // chat's latency — up to MAX_CHATS of them. Bounded the way a
+            // per-chat search already is, and read back in the ids' own order so
+            // the list does not reshuffle. A chat that fails is still skipped,
+            // not fatal.
+            for (chunk in ids.chunked(MAX_PARALLEL_CHAT_SEARCHES)) {
+                currentCoroutineContext().ensureActive()
                 if (found.size >= MAX_CHATS) break
-                val chat = runCatching { request(TdApi.GetChat(id), 15_000) }.getOrNull() ?: continue
-                if (!TelegramMessageMapper.chatAllowed(chat)) continue
-                found.putIfAbsent(
-                    chat.id,
-                    TelegramChat(
-                        id = chat.id,
-                        title = chat.title.orEmpty().ifBlank { chat.id.toString() },
-                        kind = chatKind(chat),
-                    ),
-                )
+                val fetched = chunk.map { id ->
+                    async(Dispatchers.IO) {
+                        runCatching { request(TdApi.GetChat(id), 15_000) }.getOrNull()
+                    }
+                }.awaitAll()
+                for (chat in fetched) {
+                    if (chat == null) continue
+                    if (found.size >= MAX_CHATS) break
+                    if (!TelegramMessageMapper.chatAllowed(chat)) continue
+                    found.putIfAbsent(
+                        chat.id,
+                        TelegramChat(
+                            id = chat.id,
+                            title = chat.title.orEmpty().ifBlank { chat.id.toString() },
+                            kind = chatKind(chat),
+                        ),
+                    )
+                }
             }
         }
-        return found.values.toList()
+        found.values.toList()
     }
 
     private fun chatKind(chat: TdApi.Chat): String = when (chat.type) {
