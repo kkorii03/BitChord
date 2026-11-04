@@ -161,4 +161,29 @@ class BaseChoicePolicyTest {
             BaseChoicePolicy.heardStarts(lines, words),
         )
     }
+
+    @Test
+    fun aBaseThatPutsMostOfTheSheetBeforeTheSongStartsIsNotThisSheetSTiming() {
+        // AMILJn51YBk (11-02): KuGou's 19 lines shown after a measured base.
+        // The map was for another arrangement, and the screen had 7 of 19 lines
+        // stacked at 0:00 for the whole song.
+        val buried = listOf(
+            0L, 0L, 0L, 0L, 0L, 0L, 0L, 6_685L, 15_696L, 26_537L, 33_759L, 38_541L, 49_765L,
+            57_866L, 66_203L, 74_883L, 82_092L, 111_691L, 119_370L,
+        )
+        assertTrue(BaseChoicePolicy.buriesSheet(buried))
+        // The same sheet with a −400 ms correction: only its own first line
+        // lands at zero, which every provider sheet does anyway.
+        val nudged = listOf(
+            0L, 34_210L, 40_300L, 45_840L, 56_630L, 62_560L, 68_250L, 78_340L, 89_250L, 100_490L,
+            111_910L, 118_260L, 129_120L, 139_770L, 150_950L, 162_080L, 173_070L, 204_740L, 216_110L,
+        )
+        assertFalse(BaseChoicePolicy.buriesSheet(nudged))
+        // A cover whose own intro the measurement pushed later: nothing buried.
+        assertFalse(BaseChoicePolicy.buriesSheet(buried.map { it + 38_000L }))
+        // Too few lines to call anything "most of the sheet".
+        assertFalse(BaseChoicePolicy.buriesSheet(listOf(0L, 0L, 0L)))
+        // Untimed lines are not evidence either way.
+        assertFalse(BaseChoicePolicy.buriesSheet(listOf(null, null, null, null, null)))
+    }
 }

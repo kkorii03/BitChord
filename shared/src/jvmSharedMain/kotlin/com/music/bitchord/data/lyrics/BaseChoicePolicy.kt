@@ -107,6 +107,29 @@ object BaseChoicePolicy {
     const val GROSS_MIN_MATCHED_LINES = RefinePolicy.MIN_WIDE_LINES
 
     /**
+     * How much of a sheet a base may put at or before zero before it is not
+     * this sheet's timing at all.
+     *
+     * A provider's sheet starts at or after zero by construction, so a map that
+     * puts a quarter of it before the song starts is the record of another
+     * arrangement: 11-02 AMILJn51YBk, where a measured −59.5 s pinned 7 of 19
+     * lines at 0:00 for the whole song. The failure is one-sided — refusing the
+     * base leaves the provider's own times showing, which is the state before
+     * any measurement — so the rule can be strict without costing a good answer.
+     */
+    const val MAX_BURIED_PERCENT = 25
+
+    /** Fewer timed lines than this and "most of the sheet is before zero" is not a verdict. */
+    const val MIN_BURIED_LINES = 4
+
+    /** Whether [starts] (a base's line times) puts too much of the sheet before the song starts. */
+    fun buriesSheet(starts: List<Long?>): Boolean {
+        val timed = starts.filterNotNull()
+        if (timed.size < MIN_BURIED_LINES) return false
+        return timed.count { it <= 0L } * 100 > timed.size * MAX_BURIED_PERCENT
+    }
+
+    /**
      * True when enough lines were heard and the median line sits further from
      * the transcript than a narrow refine can move. That is an
      * arrangement-sized disagreement, so the timing has not settled.

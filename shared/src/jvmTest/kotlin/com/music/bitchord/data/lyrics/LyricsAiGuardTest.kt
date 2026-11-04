@@ -1,6 +1,8 @@
 package com.music.bitchord.data.lyrics
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -290,6 +292,27 @@ class LyricsAiGuardTest {
                 lyricsTexts = english,
             ),
         )
+    }
+
+    @Test
+    fun theOnlyReasonDeepgramIsSkippedIsAnInstrumental() {
+        // The skip line printed "Korean" for every song that was not an
+        // instrumental, because a Korean refusal used to sit beside the
+        // instrumental one. The refusal went (11-02, whisper-large hears Korean
+        // singing) and the label stayed: the 11-02 lyrics-missing diagnostics
+        // read "Deepgram skipped (Korean)" for songs that were in fact being
+        // checked, and the sync investigation chased a guard that was gone.
+        assertEquals("instrumental", LyricsAiGuard.deepgramSkipReason("River Flows in You (Inst.)"))
+        assertNull(LyricsAiGuard.deepgramSkipReason("사랑해"))
+        assertNull(LyricsAiGuard.deepgramSkipReason("Loved"))
+        // The reason the log names is the same decision wantsDeepgram makes.
+        listOf("River Flows in You (Inst.)", "River Flows in You MR", "사랑해", "Loved", "").forEach { title ->
+            assertTrue(
+                "$title: the log's reason must be the guard's own decision",
+                LyricsAiGuard.wantsDeepgram(title, "IU", listOf("사랑해 너를")) ==
+                    (LyricsAiGuard.deepgramSkipReason(title) == null),
+            )
+        }
     }
 
     @Test

@@ -879,7 +879,7 @@ object LyricsTiming {
                 TrackLog.d(TAG, "ai shift ${shift}ms held for the measurement", videoId)
                 return null
             }
-            return default
+            return holdIfBuried(lines, default, videoId)
         }
         val heardStarts = BaseChoicePolicy.heardStarts(lines.map { it.text }, heard)
         val candidates = buildList {
@@ -901,12 +901,39 @@ object LyricsTiming {
             }
             TrackLog.d(TAG, "base-choice: $detail -> ${choice.name}", videoId)
         }
-        return when (choice.name) {
-            BaseChoicePolicy.MEASURED -> measured
-            BaseChoicePolicy.AI -> ai
-            BaseChoicePolicy.NONE -> null
-            else -> default
-        }
+        return holdIfBuried(
+            lines,
+            when (choice.name) {
+                BaseChoicePolicy.MEASURED -> measured
+                BaseChoicePolicy.AI -> ai
+                BaseChoicePolicy.NONE -> null
+                else -> default
+            },
+            videoId,
+        )
+    }
+
+    /**
+     * [adjustment] unless it is a measurement that puts most of the sheet
+     * before the song starts — a map to another arrangement, not this sheet's
+     * timing (see [BaseChoicePolicy.buriesSheet]). Null leaves the provider's
+     * own times showing, which is what "no base" already means.
+     */
+    private fun holdIfBuried(
+        lines: List<LyricLine>,
+        adjustment: Adjustment?,
+        videoId: String?,
+    ): Adjustment? {
+        if (adjustment == null || adjustment.byAi) return adjustment
+        val starts = choiceStarts(lines, adjustment)
+        if (!BaseChoicePolicy.buriesSheet(starts)) return adjustment
+        TrackLog.d(
+            TAG,
+            "measured base buries ${starts.count { it != null && it <= 0L }} of " +
+                "${starts.count { it != null }} lines; provider times kept",
+            videoId,
+        )
+        return null
     }
 
     /** [lines]' starts as [adjustment] puts them, for the base-choice comparison. */
@@ -2401,15 +2428,6 @@ object LyricsTiming {
             AiTimingPolicy.isAccepted(knowledge(it), textKey(lines, audioSource))
         } == true
 
-    /** Whether the automatic AI fallback already tried these [lines] for [videoId] and got nothing. */
-    suspend fun aiAlreadyFailed(
-        context: Context,
-        videoId: String,
-        lines: List<LyricLine>,
-        audioSource: String? = null,
-    ): Boolean =
-        store(context).get(videoId)?.aiFailedKey == textKey(lines, audioSource)
-
     /**
      * Asks Gemini where each of [lines] falls in the YouTube video [videoId]
      * and keeps the answer. Null when Gemini had nothing usable — and, for an
@@ -2655,9 +2673,13 @@ object LyricsTiming {
                 )
             }
         }
-        val deepgramWanted = LyricsAiGuard.wantsDeepgram(title, artist, texts)
-        if (!deepgramWanted && audio != null) {
-            TrackLog.d(TAG, "Deepgram skipped (${if (LyricsAiGuard.isInstrumentalTitle(title)) "instrumental" else "Korean"})", videoId)
+        // Only an instrumental upload is refused now; the log names whichever
+        // reason actually applies rather than the old Korean label, which no
+        // guard has produced since whisper-large was shown to hear Korean.
+        val deepgramSkip = LyricsAiGuard.deepgramSkipReason(title)
+        val deepgramWanted = deepgramSkip == null
+        if (deepgramSkip != null && audio != null) {
+            TrackLog.d(TAG, "Deepgram skipped ($deepgramSkip)", videoId)
         }
         if (audio != null && deepgramWanted && com.music.bitchord.data.lyrics.Deepgram.usable) {
             val language = com.music.bitchord.data.lyrics.Deepgram.languageFor(texts)
@@ -4063,10 +4085,11 @@ object LyricsTiming {
     /**
      * Whether an automatic request still has an engine worth spending on
      * these lyrics — the one question every automatic caller should ask.
-     * Callers used to combine [hasAi], [aiAlreadyFailed] and "wants Whisper"
-     * themselves; those answers disagreed with each other and with what the
-     * cache actually holds, so an accepted 100% answer could still be sent to
-     * Whisper a minute later.
+     * Callers used to combine [hasAi], the kept "already failed" key and
+     * "wants Whisper" themselves; those answers disagreed with each other and
+     * with what the cache actually holds, so an accepted 100% answer could
+     * still be sent to Whisper a minute later. [AiTimingPolicy] now reads that
+     * key through [knowledge], which is why there is no separate accessor.
      */
     suspend fun wantsAi(
         context: Context,
