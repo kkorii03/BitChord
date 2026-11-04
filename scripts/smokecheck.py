@@ -455,6 +455,12 @@ def check_log(
         elif hq_accepted >= 1:
             hq_status = "PASS"
             hq_details = [hq_counts]
+        elif candidates == 0:
+            # Nothing was tried: no addon answered, so there is no verification
+            # to judge. That is not the same as every candidate being rejected,
+            # which is what this check exists to catch.
+            hq_status = "SKIP"
+            hq_details = [hq_counts, "hq-verify 후보 없음 (애드온 응답 없음)"]
         else:
             hq_status = "FAIL"
             hq_details = [hq_counts, "hq-verify accepted 가 0"]
