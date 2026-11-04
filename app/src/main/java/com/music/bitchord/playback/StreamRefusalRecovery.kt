@@ -103,5 +103,90 @@ internal object StreamRefusalRecovery {
         rounds.remove(key)
     }
 
+    // ── A module stream that refused its bytes ──────────────────────────────
+
+    /**
+     * How long a refused stream URL is kept.
+     *
+     * Long enough to cover every open one play makes — the player's own, a
+     * read-ahead, a re-prepare after a skip back — and far shorter than the
+     * life of the signed URLs this holds.
+     */
+    private const val DEAD_STREAM_TTL_MS = 10 * 60 * 1000L
+
+    /**
+     * How many *different* streams a host has to refuse before it counts as
+     * down rather than as one bad row.
+     */
+    const val HOST_DOWN_AFTER_STREAMS = 2
+
+    private class DeadStream(val at: Long, val error: Exception)
+
+    private val deadStreams = ConcurrentHashMap<String, DeadStream>()
+
+    /** Distinct refused stream URLs per host, and when the count started. */
+    private class HostRefusals(val at: Long, val urls: MutableSet<String>)
+
+    private val refusedByHost = ConcurrentHashMap<String, HostRefusals>()
+
+    /**
+     * The refusal [url] already answered with, or null when it has not been
+     * refused.
+     *
+     * A module stream that answered 403/404/410 is dead: the lookup that minted
+     * the URL is deterministic, so every re-open is the same refused request.
+     * Handing the recorded exception straight back is what stops a dead URL
+     * being opened again — six refusals over seven seconds on the report that
+     * prompted this, all of them before the player was allowed to fall back.
+     */
+    fun refusedStream(url: String, now: Long = System.currentTimeMillis()): Exception? {
+        val entry = deadStreams[url] ?: return null
+        if (now - entry.at > DEAD_STREAM_TTL_MS) {
+            deadStreams.remove(url, entry)
+            return null
+        }
+        return entry.error
+    }
+
+    /**
+     * Records that [url] on [host] refused its bytes, and whether that is now
+     * evidence about the *host*.
+     *
+     * A 403 is usually a signature that expired between minting and use, and a
+     * 404/410 a file that is not there. Neither says the server is down, so
+     * resting the whole host on one of them takes every other track on a shared
+     * CDN host with it. Only [HOST_DOWN_AFTER_STREAMS] different streams refused
+     * the same way is a verdict about the server.
+     *
+     * @return true when the host has refused enough different streams to rest.
+     */
+    fun noteRefusedStream(
+        url: String,
+        host: String?,
+        error: Exception,
+        now: Long = System.currentTimeMillis(),
+    ): Boolean {
+        if (deadStreams.size >= MAX_REMEMBERED) deadStreams.clear()
+        deadStreams[url] = DeadStream(now, error)
+        val key = host?.trim()?.lowercase()?.takeIf { it.isNotEmpty() } ?: return false
+        val count = synchronized(refusedByHost) {
+            val fresh = refusedByHost[key]?.takeIf { now - it.at <= DEAD_STREAM_TTL_MS }
+                ?: HostRefusals(now, mutableSetOf<String>()).also {
+                    if (refusedByHost.size >= MAX_REMEMBERED) refusedByHost.clear()
+                    refusedByHost[key] = it
+                }
+            fresh.urls += url
+            fresh.urls.size
+        }
+        return count >= HOST_DOWN_AFTER_STREAMS
+    }
+
+    internal fun resetForTest() {
+        states.clear()
+        rounds.clear()
+        deadStreams.clear()
+        refusedByHost.clear()
+    }
+
     private const val MAX_REMEMBERED = 32
 }

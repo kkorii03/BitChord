@@ -292,11 +292,29 @@ object SourceResolver {
         return rankedAbove(youtube.configId, active).filter { it.kind == SourceKind.ADDON }
     }
 
-    suspend fun directStream(target: TrackMatcher.Target): SourceStream? {
+    suspend fun directStream(
+        target: TrackMatcher.Target,
+        /**
+         * Whether the candidate can actually serve its first bytes — see
+         * [com.music.bitchord.ko.KoStreamProbe]. Injected so the choice can be
+         * decided without a network, and so nothing else here has to know about
+         * HTTP.
+         *
+         * A candidate this refuses is skipped and the next one is tried, so a
+         * dead URL is discovered inside the lookup rather than by the player
+         * after it has already started on it.
+         */
+        probe: suspend (SourceStream) -> Boolean = { com.music.bitchord.ko.KoStreamProbe.servesBytes(it) },
+    ): SourceStream? {
         if (target.title.isBlank() || target.isVideo) return null
         val addons = directAddons()
         if (addons.isEmpty()) return null
-        val (source, stream) = bestAcross(addons, target, requestForNow()) ?: return null
+        val (source, stream) = bestAcross(
+            addons,
+            target,
+            requestForNow(),
+            accept = { _, candidate -> probe(candidate) },
+        ) ?: return null
         TrackLog.d(
             TAG,
             "direct: '${target.title}' from ${source.displayName} at ${stream.format.summary}" +

@@ -73,6 +73,13 @@ class ChunkedDataSource(
      * `clen`, which costs nothing to read; anything else is forwarded as-is.
      */
     override fun open(dataSpec: DataSpec): Long {
+        // A module stream that already refused its bytes is not opened a second
+        // time: the same URL cannot answer differently, and the recorded
+        // refusal is what sends the player's own recovery to YouTube at once
+        // instead of paying the same 403 on every open — see
+        // [StreamRefusalRecovery.refusedStream]. Checked before [koHostCost]
+        // begins, so a refusal already counted is not counted again.
+        StreamRefusalRecovery.refusedStream(dataSpec.uri.toString())?.let { throw it }
         baseSpec = dataSpec
         position = dataSpec.position
         koHostCost.beginOpen(dataSpec.uri.toString()) // [KO] hq-host-cost
@@ -152,14 +159,15 @@ class ChunkedDataSource(
     }
 
     /**
-     * Remembers a host that refused a whole module stream, not just this URL.
+     * Remembers a module stream that refused its bytes, and rests the host only
+     * once it has refused more than one.
      *
-     * A 403/404/410 is a verdict on the server rather than on the request: the
-     * catalogue lookup that minted the URL is deterministic, so the next track
-     * asks the same host and is handed the same kind of dead URL. Counting one
-     * failure was not enough to steer around it — [HqHostGate.penalty] needs
-     * three attempts before it moves a host down — so the listener sat out the
-     * same silence twice in one report, ten minutes apart:
+     * The URL itself is dead the moment it answers 403/404/410: the catalogue
+     * lookup that minted it is deterministic, so the same request is refused
+     * again. It is recorded here and never opened twice — [open] hands the same
+     * refusal straight back — which is what lets the player's recovery fall back
+     * to YouTube at once instead of the six refusals over seven seconds in this
+     * report:
      *
      * ```
      *   08:49:43  direct: 'Feel Good Inc.' from Deezer at FLAC
@@ -168,19 +176,28 @@ class ChunkedDataSource(
      *   08:49:52  TIMING first audio: 11995ms since track selected
      * ```
      *
-     * The escalating rest that already exists for a rate-limited host does
-     * exactly what is wanted here: [SourceResolver.bestAcross] skips a resting
-     * host outright, read-ahead leaves it alone, and a host that keeps refusing
-     * escalates instead of being asked again on every track. Only the
-     * pass-through branch calls this, and only googlevideo carries `clen` — so
-     * a googlevideo refusal is untouched and keeps its own recovery.
+     * The *host* is a different question. A 403 is usually a signed URL that
+     * expired between minting and use, and a 404/410 a file that is not there:
+     * neither says the server is down, and resting it on one of those took every
+     * other track on a shared CDN host with it. So the escalating rest that
+     * [SourceResolver.bestAcross] and read-ahead honour is kept for a host that
+     * has refused [StreamRefusalRecovery.HOST_DOWN_AFTER_STREAMS] different
+     * streams, and a genuinely dead server still ends up skipped.
+     *
+     * Only the pass-through branch calls this, and only googlevideo carries
+     * `clen` — so a googlevideo refusal is untouched and keeps its own recovery.
      */
     private fun restRefusedHost(spec: DataSpec, e: Exception) {
         val refusal = koHostCost.rateLimitedCause(e) ?: return
         if (!StreamRefusalRecovery.isRefusal(refusal.responseCode)) return
-        val host = HqHostTracker.hostOf(spec.uri.toString()) ?: return
-        val restMs = HqHostTracker.noteRateLimited(host, header = null, code = refusal.responseCode)
-        TrackLog.w(TAG, "hq-stream: $host refused ${refusal.responseCode}; resting it ${restMs / 1000}s")
+        val url = spec.uri.toString()
+        val host = HqHostTracker.hostOf(url)
+        if (StreamRefusalRecovery.noteRefusedStream(url, host, refusal)) {
+            val restMs = HqHostTracker.noteRateLimited(host, header = null, code = refusal.responseCode)
+            TrackLog.w(TAG, "hq-stream: $host refused ${refusal.responseCode} again; resting it ${restMs / 1000}s")
+        } else {
+            TrackLog.w(TAG, "hq-stream: ${host ?: "?"} refused ${refusal.responseCode}; that stream is not opened again")
+        }
     }
 
     /**
