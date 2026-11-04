@@ -289,6 +289,41 @@ class BlockedStartPolicyTest {
     }
 
     @Test
+    fun `a same row selected again after an idle gap starts a new clock`() {
+        // The phone logged "TIMING first audio: 74xxxms since track selected"
+        // for a row that had been silent for those 74 s: the row was selected,
+        // never sounded, and was selected again, and the old clock was kept.
+        assertFalse(
+            BlockedStartPolicy.stillSameSelection(
+                sameRow = true,
+                elapsedSinceSelectionMs = 74_000L,
+            ),
+            "a wait that long was over; that figure described the previous selection",
+        )
+        assertTrue(
+            BlockedStartPolicy.stillSameSelection(
+                sameRow = true,
+                elapsedSinceSelectionMs = 8_400L,
+            ),
+            "a source/version swap inside the rescue keeps the wait measured from the tap",
+        )
+        assertFalse(
+            BlockedStartPolicy.stillSameSelection(
+                sameRow = false,
+                elapsedSinceSelectionMs = 300L,
+            ),
+            "a different row always gets its own clock",
+        )
+        assertFalse(
+            BlockedStartPolicy.stillSameSelection(
+                sameRow = true,
+                elapsedSinceSelectionMs = null,
+            ),
+            "nothing is being waited on, so there is no clock to keep",
+        )
+    }
+
+    @Test
     fun `the step log line names the id, step, result and elapsed time`() {
         assertEquals(
             "blocked-start: abc step=proxy result=failed ms=3700",
