@@ -19,6 +19,10 @@ import java.io.IOException
  * A free-tier addon stream that answers 502/503/504 is asleep. Playback must
  * send the one wake request, rest the host, and leave recovery to the caller
  * instead of retrying the cold container three times on the loader thread.
+ *
+ * A module stream that answers 403/404/410 is the same evidence about the same
+ * server, and the same rest has to follow: the lookup that produced the URL is
+ * deterministic, so without it the next track asks that host again.
  */
 @OptIn(UnstableApi::class)
 class ChunkedDataSourceSleepingGatewayTest {
@@ -52,6 +56,30 @@ class ChunkedDataSourceSleepingGatewayTest {
             assertEquals("HTTP $code must be asked exactly once", 1, upstream.opens)
             assertTrue(
                 "HTTP $code must rest the host after the single wake request",
+                HqHostTracker.isResting("tracks.example"),
+            )
+        }
+    }
+
+    @Test
+    fun `a refused module stream rests its host for the next track`() {
+        for (code in listOf(403, 404, 410)) {
+            HqHostTracker.resetForTest()
+            val upstream = RefusingDataSource(code)
+            val dataSource = ChunkedDataSource(upstream, chunkBytes = 1_024L)
+            // No `clen`, so this takes the pass-through branch every module
+            // stream comes through — the only one that sees a whole-URL refusal.
+            val spec = DataSpec.Builder()
+                .setUri(FakeUri("https://tracks.example/audio"))
+                .build()
+
+            assertThrows(HttpDataSource.InvalidResponseCodeException::class.java) {
+                dataSource.open(spec)
+            }
+
+            assertEquals("HTTP $code must be asked exactly once", 1, upstream.opens)
+            assertTrue(
+                "HTTP $code must rest the host so the next lookup skips it",
                 HqHostTracker.isResting("tracks.example"),
             )
         }
