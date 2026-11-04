@@ -3,9 +3,11 @@ package com.music.bitchord.data.net
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * The two-route race kept out of the resolver: when a proxy is usable, the
@@ -79,4 +81,49 @@ internal suspend fun <T> raceForFirstSuccess(
         first
     }
     return if (other.second != null) other else first
+}
+
+/**
+ * Gives a route that outlived the early race another chance.
+ *
+ * The early race closes at its own window, but the proxy often answers a
+ * second later while extraction is still fetching the watch page. Running
+ * [fallback] beside the still-running [late] race and returning the first
+ * stream uses that answer instead of discarding it.
+ *
+ * The late route is accepted only while [deadlineRemainingMs] has time left,
+ * the same rescue deadline every other rung obeys. At the deadline it is
+ * stopped, but [fallback] is not: extraction keeps its existing retries.
+ */
+internal suspend fun <T> raceLateAnswerOrFallback(
+    late: Deferred<Pair<String, T?>>,
+    deadlineRemainingMs: () -> Long,
+    fallback: suspend () -> T?,
+): Pair<String, T?>? {
+    var fallbackFailure: Throwable? = null
+    val result = raceForFirstSuccess<T>(
+        direct = {
+            withTimeoutOrNull(deadlineRemainingMs().coerceAtLeast(0L)) { late.await().second }
+                .also { if (it == null) late.cancel() }
+        },
+        proxy = {
+            try {
+                fallback()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (t: Throwable) {
+                fallbackFailure = t
+                null
+            }
+        },
+    )
+    if (result.first == "proxy") {
+        late.cancel()
+        if (result.second == null && fallbackFailure != null) throw fallbackFailure!!
+        return "fallback" to result.second
+    }
+    // The late route won: keep the route stamp it carried.
+    val lateAnswer = if (late.isCompleted && !late.isCancelled) late.getCompleted() else result
+    if (lateAnswer.second == null && fallbackFailure != null) throw fallbackFailure!!
+    return lateAnswer
 }

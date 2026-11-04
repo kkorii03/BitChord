@@ -15,6 +15,7 @@ import com.music.bitchord.data.net.ProxyPlaybackPolicy
 import com.music.bitchord.data.net.ResolutionFacts
 import com.music.bitchord.data.net.YouTubeProxy
 import com.music.bitchord.data.net.raceForFirstSuccess
+import com.music.bitchord.data.net.raceLateAnswerOrFallback
 import com.music.bitchord.ko.KoDirectBench
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -662,6 +663,9 @@ object StreamResolver {
         // eleven seconds this memory exists to save. A proxy miss falls
         // through to the ordinary ladder rather than failing the track.
         var proxyAttempted = false
+        // A race that closed its own window can still answer before the shared
+        // rescue deadline; it stays here for the extraction fallback to race.
+        var lateRace: Deferred<Pair<String, Stream?>>? = null
         if (ProxyPlayback.canResolveViaProxy() && ProxyPlayback.isRemembered(videoId)) {
             proxyAttempted = true
             TrackLog.d(TAG, "proxy-playback: $videoId remembered")
@@ -1099,7 +1103,10 @@ object StreamResolver {
                 val raced = if (proxyTimeout <= 0L) {
                     null
                 } else {
-                    withTimeoutOrNull(proxyTimeout) {
+                    // Launched on the resolver scope so the caller's window
+                    // closing does not cancel a route that can still answer;
+                    // the fallback below races it until the shared deadline.
+                    val race = resolverScope.async(TrackLog.about(videoId)) {
                         raceForFirstSuccess(
                             direct = {
                                 if (gated) {
@@ -1119,6 +1126,8 @@ object StreamResolver {
                             },
                         )
                     }
+                    lateRace = race
+                    withTimeoutOrNull(proxyTimeout) { race.await() }
                 }
                 TrackLog.i(
                     TAG,
@@ -1155,7 +1164,7 @@ object StreamResolver {
                     val raced = if (proxyTimeout <= 0L) {
                         null
                     } else {
-                        withTimeoutOrNull(proxyTimeout) {
+                        val race = resolverScope.async(TrackLog.about(videoId)) {
                             raceForFirstSuccess(
                                 direct = { tryInnerTubeX(null) },
                                 proxy = {
@@ -1169,6 +1178,8 @@ object StreamResolver {
                                 },
                             )
                         }
+                        lateRace = race
+                        withTimeoutOrNull(proxyTimeout) { race.await() }
                     }
                     TrackLog.i(
                         TAG,
@@ -1201,9 +1212,24 @@ object StreamResolver {
                 )
                 throw PermanentlyUnplayableException(blockedReason())
             } else run {
-                TrackLog.w(TAG, "InnerTubeX found no usable stream for $videoId; falling back to extraction")
-                timed("$videoId newPipeStream") { newPipeStream(videoId, ::pickForQuality) }
-                    .also { served(ResolutionOrder.NEW_PIPE, "NewPipe") }
+                val extract: suspend () -> Stream = {
+                    TrackLog.w(
+                        TAG,
+                        "InnerTubeX found no usable stream for $videoId; falling back to extraction",
+                    )
+                    timed("$videoId newPipeStream") { newPipeStream(videoId, ::pickForQuality) }
+                        .also { served(ResolutionOrder.NEW_PIPE, "NewPipe") }
+                }
+                val late = lateRace
+                if (late == null) {
+                    extract()
+                } else {
+                    raceLateAnswerOrFallback(
+                        late = late,
+                        deadlineRemainingMs = { blockedBudget.remainingMs() },
+                        fallback = extract,
+                    )?.second ?: throw IOException("stream resolution found no stream for $videoId")
+                }
             }
         } catch (e: CancellationException) {
             throw e
@@ -1323,6 +1349,9 @@ object StreamResolver {
             // cancellation — leaves it unconsumed, stop its HTTP/probe work
             // rather than letting it finish out on resolverScope.
             directPrecheck?.cancel()
+            // Same for a race whose window closed but whose answer was never
+            // claimed by the extraction fallback.
+            lateRace?.cancel()
         }
     }
 
