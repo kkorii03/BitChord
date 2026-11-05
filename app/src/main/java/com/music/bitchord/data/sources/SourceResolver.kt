@@ -8,6 +8,7 @@ import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.settings.DownloadQuality
 import com.music.bitchord.ko.DOWNLOAD_SOURCE_TIMEOUT_MS
+import com.music.bitchord.ko.KoRefusedRows
 import com.music.bitchord.ko.MANUAL_RESTING_PROBE_TIMEOUT_MS
 import com.music.bitchord.ko.SOURCE_LOOKUP_TIMEOUT_MS
 import com.music.bitchord.ko.hqSearchLine
@@ -319,7 +320,10 @@ object SourceResolver {
          *
          * A candidate this refuses is skipped and the next one is tried, so a
          * dead URL is discovered inside the lookup rather than by the player
-         * after it has already started on it.
+         * after it has already started on it. The refused *row* is remembered
+         * (see [KoRefusedRows]) and the same source is asked again for another
+         * row: the refusal is evidence about that file, not about the
+         * catalogue that also holds a good copy of the same song.
          */
         probe: suspend (SourceStream) -> Boolean = { com.music.bitchord.ko.KoStreamProbe.servesBytes(it) },
     ): SourceStream? {
@@ -337,15 +341,32 @@ object SourceResolver {
         // correctly-credited different recording from this one. A candidate
         // that fails either is skipped and the next is tried, so the real
         // recording from a slower source still gets its turn.
-        val (source, stream) = bestAcross(
-            addons,
-            target,
-            requestForNow(),
-            strictOriginal = true,
-            accept = { _, candidate ->
-                probe(candidate) && (verify?.invoke(candidate) ?: true)
-            },
-        ) ?: return null
+        // A row the probe refuses is the wrong file, not the source being down
+        // — and a catalogue serves one recording as several rows, so the source
+        // is asked once more for another copy of the same song rather than
+        // being written off for the whole walk. Only the row is remembered (see
+        // [KoRefusedRows]); a genuine 403 or timeout is still the source's own
+        // failure and rests it through the ordinary rules. YouTube answers only
+        // after every addon has had its next row, which is the difference
+        // between "no addon has this" and "one addon's first row was broken".
+        val refusedRows = LinkedHashSet<MusicSource>()
+        val accept: suspend (MusicSource, SourceStream) -> Boolean = { candidateSource, candidate ->
+            if (!probe(candidate)) {
+                KoRefusedRows.note(candidateSource.configId, candidate.trackId)
+                refusedRows += candidateSource
+                false
+            } else {
+                verify?.invoke(candidate) ?: true
+            }
+        }
+        var found = bestAcross(addons, target, requestForNow(), strictOriginal = true, accept = accept)
+        var retries = 0
+        while (found == null && refusedRows.isNotEmpty() && retries++ < REFUSED_ROW_RETRIES) {
+            val again = refusedRows.toList()
+            refusedRows.clear()
+            found = bestAcross(again, target, requestForNow(), strictOriginal = true, accept = accept)
+        }
+        val (source, stream) = found ?: return null
         TrackLog.d(
             TAG,
             "direct: '${target.title}' from ${source.displayName} at ${stream.format.summary}" +
@@ -662,7 +683,8 @@ object SourceResolver {
         allowSameRendition: Boolean = false,
         /**
          * A search the listener asked for. It ignores the memoised answer for
-         * this track and asks resting sources once more; see [bestAcross].
+         * this track. A resting source is probed once on this walk either way —
+         * see `probeResting` in [bestAcross].
          */
         manual: Boolean = false,
         /** Filled with each source's verdict, so a caller can tell none from not-now. */
@@ -749,6 +771,10 @@ object SourceResolver {
             excludeHosts = excludeHosts,
             manual = manual,
             manualSession = manualSession,
+            // The one walk that is specifically looking for quality, so a
+            // source resting after two failures still gets its one short
+            // probe — a parked source may be the one holding the FLAC.
+            probeResting = true,
             report = report,
             collect = collect,
             collectGate = worth,
@@ -1276,6 +1302,19 @@ object SourceResolver {
          */
         manualSession: Any? = null,
         /**
+         * Ask a resting source once even when this walk is not the listener's
+         * own request.
+         *
+         * The rest rule exists so a dead addon cannot cost every track its
+         * timeout, and it is right for a walk that only needs *an* answer. An
+         * upgrade re-search is not that walk: it is specifically looking for
+         * the better copy, and a source parked after two failures may be the
+         * one holding it. It gets the same one short probe a hand-made request
+         * already gets — that mechanism, not a second one — and a conclusive
+         * answer from it clears the rest, exactly as it does there.
+         */
+        probeResting: Boolean = false,
+        /**
          * Every offer that passes [accept], including ones that did not beat
          * the current best. The upgrade path needs the fallbacks behind a
          * candidate that later fails its audition, and cannot afford to search
@@ -1297,12 +1336,16 @@ object SourceResolver {
     ): Pair<MusicSource, SourceStream>? = coroutineScope {
         val until = timeoutMs?.let { System.nanoTime() + it * 1_000_000 }
         val lookupTimeoutMs = sourceLookupTimeoutMs(manual, sourceTimeoutMs)
+        // A hand-made request already gets one short probe of a resting source;
+        // an upgrade re-search asks for the same thing by name (see
+        // [probeResting]) rather than through a second mechanism.
+        val probesResting = manual || probeResting
         val usable = sources.filterNot { source ->
             val resting = SourceCooldown.isResting(source.configId)
             // A source parked for unmeasurable candidates is not probed even by
             // hand: its search works, its download is what keeps being refused.
             val unmeasurable = resting && SourceCooldown.isUnmeasurable(source.configId)
-            val alreadyProbed = resting && manual && (
+            val alreadyProbed = resting && probesResting && (
                 unmeasurable || (manualSession != null &&
                     !manualRestingProbes.add(manualProbeKey(manualSession, source.configId, target)))
                 )
@@ -1311,7 +1354,7 @@ object SourceResolver {
                 report?.record(skipped, source.displayName)
                 TrackLog.d(TAG, hqSearchLine(target, source, skipped))
                 true
-            } else if (resting && !manual) {
+            } else if (resting && !probesResting) {
                 TrackLog.d(
                     TAG,
                     "${source.displayName} is resting after repeated failures; skipping for this track",
@@ -1322,9 +1365,14 @@ object SourceResolver {
                 true
             } else {
                 if (resting) {
+                    val why = if (manual) {
+                        "this upgrade was requested by hand"
+                    } else {
+                        "this walk is looking for a better copy"
+                    }
                     TrackLog.d(
                         TAG,
-                        "${source.displayName} is resting; asking it once because this upgrade was requested by hand",
+                        "${source.displayName} is resting; asking it once because $why",
                     )
                 }
                 false
@@ -1344,7 +1392,7 @@ object SourceResolver {
                     // everyone else. It was parked for failing; waiting the
                     // full manual window for it is what made one hand-made
                     // upgrade spend twelve seconds before its first candidate.
-                    val sourceTimeout = if (manual && SourceCooldown.isResting(source.configId)) {
+                    val sourceTimeout = if (probesResting && SourceCooldown.isResting(source.configId)) {
                         minOf(lookupTimeoutMs, MANUAL_RESTING_PROBE_TIMEOUT_MS)
                     } else {
                         sourceLookupTimeoutMsFor(source, lookupTimeoutMs)
@@ -1386,10 +1434,11 @@ object SourceResolver {
                         // A stream is proof the source is healthy. A miss is
                         // neither proof of health nor a failure: it answered.
                         if (answer.stream != null) SourceCooldown.succeeded(source.configId)
-                        // A hand-made request is also the one chance a resting
-                        // source gets to prove it is back. A complete answer is
-                        // enough evidence, even when the catalogue held nothing.
-                        if (manual && answer.conclusive) SourceCooldown.succeeded(source.configId)
+                        // A hand-made request, or an upgrade re-search, is also
+                        // the one chance a resting source gets to prove it is
+                        // back. A complete answer is enough evidence, even when
+                        // the catalogue held nothing.
+                        if (probesResting && answer.conclusive) SourceCooldown.succeeded(source.configId)
                         val refined = if (answer.stream != null) {
                             answer.copy(stream = refine(source, answer.stream))
                         } else {
@@ -2037,6 +2086,11 @@ object SourceResolver {
                 if (best.second.format.isDolbyAtmos || match.sourceQuality != ModuleSource.LOSSLESS) break
             }
             val trackId = SourceRegistry.parseTrackKey(match.videoId)?.second ?: match.videoId
+            // A row already refused for being the wrong file is not a source
+            // that cannot serve: skip it and let the next row answer. Without
+            // this the walk's re-ask of that source would open the same
+            // refused row again — see [directStream].
+            if (KoRefusedRows.refused(source.configId, trackId)) continue
             val opened = attempt(source, countFailure) { source.stream(trackId, request) }
             if (SourceCooldown.authMark(source.configId) != authMark) return best ?: settleFor
             if (opened == null) continue
@@ -2179,6 +2233,16 @@ object SourceResolver {
      * patience walking a whole result list.
      */
     private const val STREAM_ATTEMPTS = 3
+
+    /**
+     * How many further rows one source gets after the probe refused the one it
+     * opened — see [directStream].
+     *
+     * Two, not the whole result list: enough to step over a catalogue that
+     * files a broken copy first, without turning a source with five bad rows
+     * into five walks. Each pass asks only the sources that were refused.
+     */
+    private const val REFUSED_ROW_RETRIES = 2
 
     /**
      * How far a replacement's runtime may sit from the playing track's before
