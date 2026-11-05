@@ -49,7 +49,15 @@ fun LyricLine.withEstimatedWords(nextLineMs: Long?): LyricLine {
     } else {
         val cap = (totalWeight * MAX_MS_PER_UNIT).toLong()
         val room = nextLineMs?.let { it - timeMs - BREATH_MS }
-        var duration = if (room == null) cap else minOf(room, cap)
+        var duration = when {
+            room == null -> cap
+            // Fill the line's own slot. Stopping at the natural pace left the
+            // line fully lit and frozen for the rest of the slot, which reads
+            // as the singer pausing at every line end and then rushing in.
+            room <= MAX_FILLED_SLOT_MS -> room
+            // Past that the slot is a break, not a long line: keep the pace.
+            else -> minOf(room, cap)
+        }
         if (duration < MIN_SWEEP_MS) {
             duration = minOf(MIN_SWEEP_MS, nextLineMs?.let { it - timeMs } ?: MIN_SWEEP_MS)
         }
@@ -165,6 +173,13 @@ private const val GAP_WEIGHT = SWEEP_GAP_WEIGHT
 
 /** Slowest plausible singing per unit, so a line before an instrumental does not crawl through the break. */
 private const val MAX_MS_PER_UNIT = 550.0
+
+/**
+ * Longest slot a sweep is stretched to fill. A sung line is a few seconds; a
+ * slot longer than this is a break, and one line dragged across it would light
+ * up for the whole instrumental.
+ */
+private const val MAX_FILLED_SLOT_MS = 8_000L
 
 /** How long before the next line the sweep is made to finish: a breath between the two. */
 private const val BREATH_MS = 300L
