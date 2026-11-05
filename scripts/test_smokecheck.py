@@ -258,6 +258,76 @@ class QualityUpgradeTest(unittest.TestCase):
         self.assertEqual("PASS", statuses("")[4].status)
 
 
+class QualityUpgradeNoWavTest(unittest.TestCase):
+    """11-05: r12b failed check 4 only because the reference WAV never arrived
+    (`no reference reason=no-wav`, emulator network). An unmeasured row is not a
+    regression, but a measured row that failed still is."""
+
+    def test_every_row_without_a_reference_is_skipped(self):
+        log = "\n".join(
+            [
+                log_line("hq-verify: 'Looks Can Kill' no reference reason=no-wav"),
+                log_line("hq-verify: 'Lemon Tang' no reference reason=no-wav"),
+            ]
+        )
+        result = statuses(log)[4]
+        self.assertEqual("SKIP", result.status)
+        self.assertIn("no-wav=2", result.details[0])
+
+    def test_no_wav_rows_are_skipped_with_a_song_list(self):
+        songs = specs("hq1\thq")
+        log = log_line("hq-verify: 'Lemon Tang' no reference reason=no-wav")
+        self.assertEqual("SKIP", statuses_with_songs(log, songs)[4].status)
+
+    def test_one_accepted_row_passes_even_when_others_were_not_measured(self):
+        log = "\n".join(
+            [
+                log_line("hq-verify: 'Looks Can Kill' no reference reason=no-wav"),
+                log_line(
+                    "hq-verify: Song Qobuz match=95% offset=0 -> accepted reference=wav"
+                ),
+            ]
+        )
+        result = statuses_with_songs(log, specs("hq1\thq"))[4]
+        self.assertEqual("PASS", result.status)
+        self.assertIn("no-wav=1", result.details[0])
+
+    def test_a_rejected_row_still_fails_next_to_no_wav_rows(self):
+        log = "\n".join(
+            [
+                log_line("hq-verify: 'Looks Can Kill' no reference reason=no-wav"),
+                log_line(
+                    "hq-verify: Song Qobuz match=80% offset=0 -> rejected reference=wav"
+                ),
+            ]
+        )
+        result = statuses_with_songs(log, specs("hq1\thq"))[4]
+        self.assertEqual("FAIL", result.status)
+        self.assertIn("no-wav=1", result.details[0])
+
+    def test_a_decode_failure_still_fails_next_to_no_wav_rows(self):
+        log = "\n".join(
+            [
+                log_line("hq-verify: 'Looks Can Kill' no reference reason=no-wav"),
+                log_line("hq-verify: 'Lemon Tang' no reference reason=decode-failed"),
+            ]
+        )
+        result = statuses_with_songs(log, specs("hq1\thq"))[4]
+        self.assertEqual("FAIL", result.status)
+        self.assertIn("decode-failed=1", result.details[0])
+
+    def test_a_403_rejection_is_not_treated_as_unmeasured(self):
+        log = log_line(
+            "hq-verify: Song Qobuz match=0% offset=0 -> rejected reference=wav "
+            "reason=403"
+        )
+        self.assertEqual("FAIL", statuses_with_songs(log, specs("hq1\thq"))[4].status)
+
+    def test_no_reference_without_a_reason_still_fails(self):
+        log = log_line("hq-verify: 'Song' no reference")
+        self.assertEqual("FAIL", statuses_with_songs(log, specs("hq1\thq"))[4].status)
+
+
 class CrashTest(unittest.TestCase):
     def test_fatal_exception_fails(self):
         log = "10-26 12:00:00.000  1234  5678 E AndroidRuntime: FATAL EXCEPTION: main"

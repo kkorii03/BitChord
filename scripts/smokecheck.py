@@ -54,7 +54,14 @@ AUDIO_SWITCH_NO_MATCH_RE = re.compile(
 )
 # `hq-verify: <title> <source> match=..% offset=.. -> accepted|rejected`
 HQ_VERDICT_RE = re.compile(r"hq-verify:.*?->\s*(?P<verdict>accepted|rejected)\b")
+# `hq-verify: '<title>' no reference reason=no-wav`
 HQ_NO_REFERENCE_RE = re.compile(r"hq-verify:\s+.*?\bno reference\b")
+HQ_NO_REFERENCE_REASON_RE = re.compile(
+    r"hq-verify:.*?\bno reference\b.*?\breason=(?P<reason>[\w-]+)"
+)
+# The reference WAV never arrived, so nothing was compared. `no-wav` says the
+# opening is not on disk yet: the run could not measure the row at all.
+HQ_UNMEASURED_REASON = "no-wav"
 # `decode: hq-verify failed at=... ...`
 DECODE_HQ_FAIL_RE = re.compile(r"decode:\s+hq-verify\s+failed\b")
 # `lyrics-sync: <id> source=.. shift=1234ms ...`
@@ -200,7 +207,7 @@ def check_log(
     hq_accepted = 0
     hq_rejected = 0
     hq_decode_failed = 0
-    hq_no_reference = 0
+    hq_no_reference_reasons: Counter[str] = Counter()
     sync_warnings: list[tuple[str, str, str]] = []
     seen_sync: set[tuple[str, str, str]] = set()
     video_flag_ids: set[str] = set()
@@ -257,7 +264,10 @@ def check_log(
 
         if "hq-verify:" in line:
             if HQ_NO_REFERENCE_RE.search(line):
-                hq_no_reference += 1
+                reason = HQ_NO_REFERENCE_REASON_RE.search(line)
+                hq_no_reference_reasons[
+                    reason.group("reason") if reason else "unknown"
+                ] += 1
             else:
                 match = HQ_VERDICT_RE.search(line)
                 if match:
@@ -440,10 +450,23 @@ def check_log(
 
     # 4. HQ songs need at least one accepted verification. Without HQ settings
     #    there is nothing to verify, so the check is skipped rather than failed.
-    candidates = hq_accepted + hq_rejected + hq_decode_failed + hq_no_reference
+    #    A row whose reference WAV never arrived (`no reference reason=no-wav`)
+    #    was not measured at all: it is left out of the verdict instead of
+    #    failing the run. Measured rows still decide, so an HQ step that stopped
+    #    running cannot hide behind no-wav (it produces no row either way).
+    hq_no_reference = sum(hq_no_reference_reasons.values())
+    hq_unmeasured = hq_no_reference_reasons.get(HQ_UNMEASURED_REASON, 0)
+    hq_measured = (
+        hq_accepted + hq_rejected + hq_decode_failed + hq_no_reference - hq_unmeasured
+    )
+    candidates = hq_measured + hq_unmeasured
+    reasons_text = " ".join(
+        f"{reason}={count}" for reason, count in sorted(hq_no_reference_reasons.items())
+    )
     hq_counts = (
         f"accepted={hq_accepted} rejected={hq_rejected} "
         f"decode-failed={hq_decode_failed} no-reference={hq_no_reference}"
+        + (f" ({reasons_text})" if reasons_text else "")
     )
     if songs is not None:
         hq_specs = [spec for spec in songs if spec.kind == "hq"]
@@ -457,21 +480,30 @@ def check_log(
         elif hq_accepted >= 1:
             hq_status = "PASS"
             hq_details = [hq_counts]
-        elif candidates == 0:
+        elif hq_measured >= 1:
+            hq_status = "FAIL"
+            hq_details = [hq_counts, "측정된 행 중 accepted 가 0"]
+        elif hq_unmeasured >= 1:
+            hq_status = "SKIP"
+            hq_details = [hq_counts, "reference 를 못 받아 측정 불가 (no-wav)"]
+        else:
             # Nothing was tried: no addon answered, so there is no verification
             # to judge. That is not the same as every candidate being rejected,
             # which is what this check exists to catch.
             hq_status = "SKIP"
             hq_details = [hq_counts, "hq-verify 후보 없음 (애드온 응답 없음)"]
-        else:
-            hq_status = "FAIL"
-            hq_details = [hq_counts, "hq-verify accepted 가 0"]
+    elif hq_accepted >= 1:
+        hq_status = "PASS"
+        hq_details = [hq_counts]
+    elif hq_measured >= 1:
+        hq_status = "FAIL"
+        hq_details = [hq_counts, "측정된 행 중 accepted 가 0"]
+    elif hq_unmeasured >= 1:
+        hq_status = "SKIP"
+        hq_details = [hq_counts, "reference 를 못 받아 측정 불가 (no-wav)"]
     else:
-        hq_failed = hq_accepted == 0 and candidates >= 1
-        hq_status = "FAIL" if hq_failed else "PASS"
-        hq_details = [hq_counts] + (
-            ["후보가 있었지만 accepted 가 0"] if hq_failed else []
-        )
+        hq_status = "PASS"
+        hq_details = [hq_counts]
     checks.append(Check(4, "품질 업그레이드", hq_status, hq_details))
 
     # 5. A crash or an ANR fails the whole run.
