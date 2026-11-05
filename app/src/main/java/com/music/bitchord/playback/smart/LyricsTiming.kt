@@ -335,10 +335,32 @@ object LyricsTiming {
         // that map applies even when no measurement or AI answer exists.
         val entry = store(context).get(videoId) ?: Entry()
         var key = textKey(lines, audioSource)
+        var rule = if (baseAllowed) RULE_NOTHING else "not-allowed"
         var originalBase = if (baseAllowed) {
-            baseOf(entry, lines, measuredAllowed, isVideo, audioSource, key, videoId)
+            baseOf(entry, lines, measuredAllowed, isVideo, audioSource, key, videoId) { rule = it }
         } else {
             null
+        }
+        val playing = playingClock(videoId)
+        // A song check started on the stream can finish after playback moved to
+        // the verified file and leave its answer under the stream key (one AI
+        // slot, newest wins), so the file-keyed screen found none (11-06
+        // cCfPDrRQp9k: base-choice → ai, applied none). The other source's
+        // answer is the same recording only when a substitute clock proves it;
+        // [conversion] below then carries it or drops it. Only when this key
+        // had no candidate at all: a NONE chosen here stays none.
+        val sibling = siblingSource(videoId, audioSource)
+        if (originalBase == null && rule == RULE_NOTHING && baseAllowed && !isVideo && sibling != null) {
+            val aiClock = clockOf(entry.aiClock)
+            if (aiClock !is Clock.Unknown && (aiClock is Clock.Substitute || playing is Clock.Substitute)) {
+                var siblingRule = RULE_NOTHING
+                baseOf(entry, lines, false, false, sibling, textKey(lines, sibling), videoId) {
+                    siblingRule = it
+                }?.takeIf { it.byAi }?.let {
+                    originalBase = it
+                    rule = "sibling $siblingRule"
+                }
+            }
         }
         // A downloaded video's answer may have been kept under its file key
         // by an older song check; the video key and the file key name the same
@@ -346,12 +368,13 @@ object LyricsTiming {
         if (originalBase == null && baseAllowed && isVideo && audioSource == null) {
             val fileSource = audioSourceKey(videoId, localFile = true)
             val fileKey = textKey(lines, fileSource)
-            baseOf(entry, lines, measuredAllowed, isVideo, fileSource, fileKey, videoId)?.let {
+            var fileRule = RULE_NOTHING
+            baseOf(entry, lines, measuredAllowed, isVideo, fileSource, fileKey, videoId) { fileRule = it }?.let {
                 key = fileKey
                 originalBase = it
+                rule = "video-file $fileRule"
             }
         }
-        val playing = playingClock(videoId)
         var converted = 0
         var dropped = 0
         // A correction tagged with the clock it was measured on is put on the
@@ -390,6 +413,13 @@ object LyricsTiming {
                 convertAdjustment(saved, conversion)
             }
         }
+        logBaseApply(
+            videoId = videoId,
+            base = base,
+            shiftMs = base?.let { shownShiftMs(lines, it) } ?: 0L,
+            rule = if (saved != null && base == null) "$rule, clock dropped" else rule,
+            source = audioSource?.substringAfterLast('|') ?: if (isVideo) "video" else "none",
+        )
         val manualClock = clockOf(entry.manualClock)
         var manualMs = entry.manualMs ?: 0L
         if (manualMs != 0L && manualClock !is Clock.Unknown && playing !is Clock.Unknown &&
@@ -826,6 +856,31 @@ object LyricsTiming {
         )
     }
 
+    private const val RULE_MANUAL = "manual"
+    private const val RULE_NOTHING = "nothing"
+
+    /** The other audio source of the same row (stream ↔ file), or null for any other key. */
+    private fun siblingSource(videoId: String, audioSource: String?): String? = when (audioSource) {
+        audioSourceKey(videoId, localFile = true) -> audioSourceKey(videoId, localFile = false)
+        audioSourceKey(videoId, localFile = false) -> audioSourceKey(videoId, localFile = true)
+        else -> null
+    }
+
+    /** Last base-apply line per (song, source): logged again only when it changes. */
+    private val loggedBaseApply = ConcurrentHashMap<String, String>()
+
+    private fun logBaseApply(videoId: String, base: Adjustment?, shiftMs: Long, rule: String, source: String) {
+        val name = when {
+            base == null -> "none"
+            base.byAi -> "ai"
+            else -> "measured"
+        }
+        val line = "base-apply: $videoId base=$name shift=${shiftMs}ms (chosen by $rule) src=$source"
+        if (loggedBaseApply.put("$videoId|$source", line) == line) return
+        if (loggedBaseApply.size > 3_000) loggedBaseApply.clear()
+        TrackLog.i("BitChord", line, videoId)
+    }
+
     /**
      * Video or cover upload, by the one test the lyrics screen, the next-song
      * bundle and the cache all use (11-02: the screen read every MV and cover
@@ -854,6 +909,7 @@ object LyricsTiming {
         audioSource: String? = null,
         key: Int = textKey(lines, audioSource),
         videoId: String? = null,
+        onRule: (String) -> Unit = {},
     ): Adjustment? {
         logAiForOtherLyrics(videoId, entry, key)
         val measuredAdjustment = entry.auto
@@ -867,7 +923,10 @@ object LyricsTiming {
         val ai = aiOf(entry, lines, isVideo, audioSource)
         // Asked for by hand, over a measurement the listener saw was off: Gemini's.
         val manualAi = ai.takeIf { entry.aiPreferred }
-        if (manualAi != null) return manualAi
+        if (manualAi != null) {
+            onRule(RULE_MANUAL)
+            return manualAi
+        }
         // The fixed order: measurement, then a measurement that found no
         // change, then the AI answer. Kept when the heard words cannot tell
         // the candidates apart or there are too few of them.
@@ -875,7 +934,10 @@ object LyricsTiming {
         val defaultName = when {
             measured != null -> BaseChoicePolicy.MEASURED
             ai != null -> BaseChoicePolicy.AI
-            else -> return null
+            else -> {
+                onRule(RULE_NOTHING)
+                return null
+            }
         }
         val default = measured ?: ai ?: return null
         val heard = savedHeardWords(entry, key)
@@ -889,9 +951,12 @@ object LyricsTiming {
             val shift = shownShiftMs(lines, default)
             if (default.byAi && abs(shift) > RefinePolicy.MAX_WIDE_SHIFT_MS) {
                 TrackLog.d(TAG, "ai shift ${shift}ms held for the measurement", videoId)
+                onRule("held")
                 return null
             }
-            return holdIfBuried(lines, default, videoId)
+            return holdIfBuried(lines, default, videoId).also {
+                onRule(if (it == null) "buried" else "fixed-order")
+            }
         }
         val heardStarts = BaseChoicePolicy.heardStarts(lines.map { it.text }, heard)
         val candidates = buildList {
@@ -917,16 +982,15 @@ object LyricsTiming {
                 videoId,
             )
         }
-        return holdIfBuried(
-            lines,
-            when (choice.name) {
-                BaseChoicePolicy.MEASURED -> measured
-                BaseChoicePolicy.AI -> ai
-                BaseChoicePolicy.NONE -> null
-                else -> default
-            },
-            videoId,
-        )
+        val chosen = when (choice.name) {
+            BaseChoicePolicy.MEASURED -> measured
+            BaseChoicePolicy.AI -> ai
+            BaseChoicePolicy.NONE -> null
+            else -> default
+        }
+        return holdIfBuried(lines, chosen, videoId).also {
+            onRule(if (it == null && chosen != null) "buried" else "base-choice")
+        }
     }
 
     /**

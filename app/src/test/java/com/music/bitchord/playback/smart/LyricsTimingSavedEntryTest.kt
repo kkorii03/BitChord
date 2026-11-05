@@ -2,6 +2,8 @@ package com.music.bitchord.playback.smart
 
 import android.content.Context
 import com.music.bitchord.data.lyrics.LyricLine
+import com.music.bitchord.data.sources.SourceStream
+import com.music.bitchord.playback.StreamChoice
 import com.music.bitchord.testutil.FakeContext
 import com.music.bitchord.testutil.FakePreferences
 import kotlinx.coroutines.runBlocking
@@ -180,6 +182,105 @@ class LyricsTimingSavedEntryTest {
 
         runBlocking {
             assertEquals(LyricsTiming.MAX_MANUAL_MS, LyricsTiming.manual(context, "new-video"))
+        }
+    }
+
+    // 11-06 cCfPDrRQp9k: a song check begun on the stream finished after the
+    // switch to the verified file and kept its answer under the stream key;
+    // the file-keyed screen chose ai in base-choice but applied none.
+    private val songLines = listOf(
+        LyricLine(1_000L, "alpha"),
+        LyricLine(2_000L, "bravo"),
+        LyricLine(3_000L, "charlie"),
+        LyricLine(4_000L, "delta"),
+        LyricLine(5_000L, "echoes"),
+        LyricLine(6_000L, "foxtrot"),
+        LyricLine(7_000L, "golfing"),
+        LyricLine(8_000L, "hotels"),
+    )
+    private val fileSource = LyricsTiming.audioSourceKey("song", localFile = true)
+    private val streamSource = LyricsTiming.audioSourceKey("song", localFile = false)
+    private fun keyOf(source: String) =
+        31 * source.hashCode() + songLines.joinToString("\n") { it.text }.hashCode()
+    private val altClock = "alt\\u0001cfg\\u0001trk"
+
+    private fun playSubstitute() {
+        StreamChoice.remember(
+            "song",
+            SourceStream("https://alt/flac", sourceConfigId = "cfg", trackId = "trk"),
+            substituted = true,
+        )
+    }
+
+    @After
+    fun forgetChoice() {
+        StreamChoice.forget("song")
+    }
+
+    @Test
+    fun `an ai answer kept under the stream key applies on the verified file`() {
+        playSubstitute()
+        write("""{"entries":{"song":{"aiTextKey":${keyOf(streamSource)},"aiShiftMs":800,"aiClock":"$altClock"}}}""")
+
+        runBlocking {
+            val timing = LyricsTiming.timing(context, "song", songLines, baseAllowed = true, audioSource = fileSource)
+            assertEquals(LyricsTiming.Adjustment.Shift(800L, byAi = true), timing?.base)
+        }
+    }
+
+    @Test
+    fun `an untagged answer from the other source is not applied`() {
+        playSubstitute()
+        write("""{"entries":{"song":{"aiTextKey":${keyOf(streamSource)},"aiShiftMs":800}}}""")
+
+        runBlocking {
+            assertNull(
+                LyricsTiming.timing(context, "song", songLines, baseAllowed = true, audioSource = fileSource)?.base,
+            )
+        }
+    }
+
+    @Test
+    fun `an other-source answer past the hold threshold stays none`() {
+        playSubstitute()
+        write("""{"entries":{"song":{"aiTextKey":${keyOf(streamSource)},"aiShiftMs":11780,"aiClock":"$altClock"}}}""")
+
+        runBlocking {
+            assertNull(
+                LyricsTiming.timing(context, "song", songLines, baseAllowed = true, audioSource = fileSource)?.base,
+            )
+        }
+    }
+
+    @Test
+    fun `an other-source answer does not replace this source's measurement`() {
+        playSubstitute()
+        write(
+            """{"entries":{"song":{"autoVersion":${LyricsTiming.AUTO_VERSION},"autoNoChange":true,""" +
+                """"autoClock":"$altClock","aiTextKey":${keyOf(streamSource)},"aiShiftMs":800,"aiClock":"$altClock"}}}""",
+        )
+
+        runBlocking {
+            val timing = LyricsTiming.timing(context, "song", songLines, baseAllowed = true, audioSource = fileSource)
+            assertEquals(LyricsTiming.Adjustment.Shift(0L, byAi = false), timing?.base)
+        }
+    }
+
+    @Test
+    fun `a song with no base still gets its refine`() {
+        val words = songLines.joinToString(",") { line ->
+            """{"t":"${line.text}","s":${line.timeMs + 300},"e":${line.timeMs + 450}}"""
+        }
+        write(
+            """{"entries":{"song":{"refineHeardKey":${keyOf(fileSource)},"refineHeardWords":[$words],""" +
+                """"refineHeardSeconds":90.0,"refineHeardExtended":true,""" +
+                """"aiTextKey":${keyOf(streamSource)},"aiShiftMs":800}}}""",
+        )
+
+        runBlocking {
+            val timing = LyricsTiming.timing(context, "song", songLines, baseAllowed = true, audioSource = fileSource)
+            assertNull(timing?.base)
+            assertEquals(300L, timing?.refineMs)
         }
     }
 
