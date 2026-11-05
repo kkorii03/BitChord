@@ -3,7 +3,6 @@ package com.music.bitchord.data.sources
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
-import org.junit.Ignore
 import org.junit.Test
 
 /**
@@ -254,12 +253,10 @@ class TrackMatcherTitleEdgeTest {
     }
 
     /**
-     * BUG: for CJK/Hangul titles the core is built from the raw text instead
-     * of the cleaned word list, so an unbracketed trailing label or take word
-     * stays in the identity ("紅蓮華 Official Video" to
-     * "紅蓮華officialvideo"). This is recorded, not fixed.
+     * A CJK core is built from the cleaned text, so the trailing packaging
+     * that came off [words] has to come off that text too. Otherwise
+     * "紅蓮華 Official Video" kept "officialvideo" in its identity.
      */
-    @Ignore("BUG: CJK core is built from raw text, so trailing packaging leaks in")
     @Test
     fun `CJK trailing packaging does not leak into the identity`() {
         assertEquals("紅蓮華", core("紅蓮華 Official Video"))
