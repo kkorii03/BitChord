@@ -1693,7 +1693,7 @@ object LyricsTiming {
                     return@withLock
                 }
                 val outcome = try {
-                    measureFresh(context, video, names, videoMs, preferred, awaitCacheSignal, wanted) { early ->
+                    measureFresh(context, video, names, videoMs, preferred, awaitCacheSignal, wanted, lateOriginalId != null) { early ->
                         // A quick answer only where there is none yet: a second pass
                         // (more of the video has arrived) must not trade an answer from
                         // the whole record for one from its opening, even for a minute.
@@ -1887,6 +1887,8 @@ object LyricsTiming {
         preferredOriginal: Song?,
         awaitCacheSignal: Boolean,
         wanted: () -> Boolean,
+        /** The row's song version arrived after its first sound; see [awaitVideoOpening]. */
+        lateVersion: Boolean = false,
         early: suspend (Measured.Done) -> Unit,
     ): Measured {
         val began = System.currentTimeMillis()
@@ -1943,8 +1945,14 @@ object LyricsTiming {
         val copy = if (awaitCacheSignal) {
             awaitNextVideoOpening(video)
         } else {
-            awaitVideoOpening(video)
-        } ?: return Measured.Retry
+            awaitVideoOpening(video, lateVersion)
+        } ?: run {
+            // Saying nothing here is what made the 11-05 MV rows unreadable:
+            // the late answer was measured once, its opening was not on disk
+            // yet, and the pass ended without a line to show for it.
+            TrackLog.i(TAG, "lyrics-sync: no video audio yet; measurement dropped", video.videoId)
+            return Measured.Retry
+        }
         mark = lap("비디오 대기", mark)
         // Read from the rendition actually opened, not from what is playing now:
         // after a mid-song swap the YouTube copy may already be gone.
@@ -2107,10 +2115,14 @@ object LyricsTiming {
     /**
      * Waits (a while) for enough of [video]'s audio to be on disk to say
      * something — about forty seconds of it, or all of it — and returns the
-     * copy to read. Asks for nothing itself: the video is normally the one
-     * playing, and the player is already fetching it.
+     * copy to read. Asks for the opening itself: an audio row's arrives from
+     * the player's own stream, but a video row's is written only because
+     * something asked for it.
+     *
+     * [lateVersion] gives a row whose song version arrived after its first
+     * sound the longer budget in [VideoAudio.measurementOpeningWaitMs].
      */
-    private suspend fun awaitVideoOpening(video: Song): AudioCache.Rendition? {
+    private suspend fun awaitVideoOpening(video: Song, lateVersion: Boolean = false): AudioCache.Rendition? {
         // A downloaded file is already the whole recording: there is no cache
         // rendition to wait for and [VersionAudioAligner.openDataSource] reads
         // it directly.
@@ -2121,6 +2133,15 @@ object LyricsTiming {
             VersionAudioAligner.renditionToMeasure(video.videoId)
                 ?.takeIf { it.isComplete || it.cachedPrefix >= MIN_VIDEO_BYTES }
         readyCopy()?.let { return it }
+        // A video row plays the video stream, so nothing is fetching its audio
+        // and waiting on the cache alone waits for bytes nobody asked for. Ask
+        // for the opening first, as the reference recording below and the song
+        // check already do; the event wait under it stays as the fallback.
+        AudioCache.keepForTiming(video.videoId)
+        val opus = Uri.parse(AutomixAnalysisSource.opusUri(video.videoId))
+        if (AudioCache.awaitAnalysisHead(opus, VideoAudio.measurementOpeningWaitMs(lateVersion))) {
+            readyCopy()?.let { return it }
+        }
         // Event-driven: wake when the player opens the next stream for this
         // video, or when playback has read another chunk of it (more bytes are
         // on disk to measure), never on a timer. The deadline is the same bound
