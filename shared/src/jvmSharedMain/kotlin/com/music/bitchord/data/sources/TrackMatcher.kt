@@ -1026,8 +1026,11 @@ object TrackMatcher {
     internal val CJK_CLOSE = Regex("[」』】〉》〕］｝]") // [KO] track-matcher
     // Not the katakana middle dot `・`: it sits *inside* a transliterated
     // name (ジョン・レノン), and splitting there makes two Johns one artist.
+    // The dotted abbreviations end at the space: `\bvs\.?\b` matched the
+    // letters and stopped before the period, which glued it to the next name
+    // ("A vs. B" became ["a", ". b"]) so that name was never found.
     internal val ARTIST_SEPARATORS = // [KO] track-matcher
-        Regex("""\s*(?:[,&/;·|、，×]|\band\b|\bx\b|\bvs\.?\b|\bfeat\.?\b|\bft\.?\b|\bfeaturing\b|\bwith\b|및)\s*""")
+        Regex("""\s*(?:[,&/;·|、，×]|\band\b|\bx\b|\bvs\.?(?!\S)|\bfeat\.?(?!\S)|\bft\.?(?!\S)|\bfeaturing\b|\bwith\b|및)\s*""")
 
     /**
      * What makes a listing a different recording rather than a different

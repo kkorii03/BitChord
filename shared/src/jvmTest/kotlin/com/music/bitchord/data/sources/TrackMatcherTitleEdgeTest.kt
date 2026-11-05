@@ -372,14 +372,17 @@ class TrackMatcherTitleEdgeTest {
     }
 
     /**
-     * BUG: the dotted abbreviations (`vs.`, `feat.`, `ft.`) match only the
-     * letters, leaving the period glued to the next name ("A vs. B" to
-     * ["a", ". b"]), so that name is never found. This is recorded, not fixed.
+     * The dotted abbreviations (`vs.`, `feat.`, `ft.`) take their period with
+     * them. Leaving it behind glued it to the next name ("A vs. B" to
+     * ["a", ". b"]), so that name was never found.
      */
-    @Ignore("BUG: ARTIST_SEPARATORS leaves the period after 'vs.'/'feat.'/'ft.' on the next name")
     @Test
     fun `a dotted separator leaves the next name intact`() {
-        listOf("A vs. B", "A feat. B", "A ft. B").forEach { raw ->
+        listOf("A vs. B", "A feat. B", "A ft. B", "A VS. B").forEach { raw ->
+            assertEquals(raw, listOf("a", "b"), TrackMatcher.artistVariants(raw))
+        }
+        // The undotted spellings keep working.
+        listOf("A vs B", "A feat B", "A ft B").forEach { raw ->
             assertEquals(raw, listOf("a", "b"), TrackMatcher.artistVariants(raw))
         }
     }
