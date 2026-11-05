@@ -75,10 +75,23 @@ internal class SongVersionController(
     /**
      * The songs already skipped for having no audio release. A queue that
      * cycles back to one must not skip it a second time — see
-     * [SongVersionPolicy.skipsOfficialMvWithoutAudio].
+     * [SongVersionPolicy.skipsOfficialMvWithoutAudio]. Forgotten when the queue
+     * or the music-only setting changes; see [resetSkippedOfficialMv].
      */
-    private val skippedOfficialMv: MutableSet<String> =
-        java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap())
+    private val skippedOfficialMv = SkippedOfficialMv()
+
+    /** The last id whose "user asked, playing its own audio" line was written. */
+    private var userAskedPlayedLoggedFor: String? = null
+
+    /**
+     * Forgets which songs music-only refused. A new queue and a music-only
+     * change make the old verdicts meaningless: the same video may be the row
+     * that has to play now, and the set would otherwise only ever grow.
+     */
+    fun resetSkippedOfficialMv() {
+        skippedOfficialMv.clear()
+        userAskedPlayedLoggedFor = null
+    }
 
     /**
      * Whether the row that just became current is being held silent for its
@@ -509,11 +522,16 @@ internal class SongVersionController(
      * play. [SongVersionPolicy.keepsLocalFile] is what leaves a downloaded
      * song, and the listener's own music, alone. Offline the downloaded video
      * file stays instead of being replaced by a stream that cannot open.
+     *
+     * @param userAsked the listener moved to this row themselves (a tap, a
+     *   skip) rather than the queue running on. Music-only never refuses such a
+     *   row: it plays its own sound instead of going silent.
      */
     fun resolveSongVersionBeforeAudio(
         exoPlayer: ExoPlayer,
         mediaItem: MediaItem?,
         alreadyAudible: Boolean,
+        userAsked: Boolean = false,
     ) {
         lateVersionMeasureJob?.cancel()
         val item = mediaItem
@@ -590,6 +608,20 @@ internal class SongVersionController(
             return
         }
         val lookupSong = versionSong ?: song
+        // A downloaded copy of an official MV is the same video as the streamed
+        // one, so the music-only verdict is taken before the "this row has a
+        // local file" reason below can keep it playing. The file is never
+        // refused: offline it is the only sound there is, and a row whose
+        // release is not known to be missing falls through and plays it. The
+        // party and the first-sound gate below are unchanged, so this says the
+        // same thing earlier rather than more.
+        if (!alreadyAudible && !ListenTogether.state.value.inParty &&
+            !(localFile && offline) &&
+            YtMusicRepository.isSongVersionMissing(lookupSong.videoId) &&
+            skipOfficialMv(exoPlayer, lookupSong, audioReleaseMissing = true, userAsked = userAsked)
+        ) {
+            return
+        }
         val skipReason = when {
             alreadyAudible -> "already audible"
             !AppSettings.preferMusicOnly.value -> "music only off"
@@ -697,7 +729,9 @@ internal class SongVersionController(
         }
         if (YtMusicRepository.isSongVersionMissing(lookupSong.videoId)) {
             // The queue build already established this row has no song version.
-            if (skipOfficialMv(exoPlayer, lookupSong, audioReleaseMissing = true)) return
+            // The skip verdict itself was taken above, before the local-file
+            // reason; this is the log for a row that stays.
+            if (skipOfficialMv(exoPlayer, lookupSong, audioReleaseMissing = true, userAsked = userAsked)) return
             TrackLog.i(
                 "BitChord",
                 if (localFile) {
@@ -825,6 +859,7 @@ internal class SongVersionController(
                         lookupSong,
                         audioReleaseMissing =
                             YtMusicRepository.isSongVersionMissing(lookupSong.videoId),
+                        userAsked = userAsked,
                     )
                     if (!skipped && localFile) {
                         TrackLog.i(
@@ -850,10 +885,11 @@ internal class SongVersionController(
     }
 
     /**
-     * Skips a row that must not play at all: an official music video whose
-     * catalogue release this service could not find. See
-     * [SongVersionPolicy.skipsOfficialMvWithoutAudio] for why, and for the
-     * covers, video stations and video-mode listeners that still play.
+     * Applies music-only's verdict to a row that has no catalogue release: an
+     * official music video the lookup could not find a release for is skipped,
+     * and one the listener moved to themselves plays its own sound instead. See
+     * [SongVersionPolicy.mvWithoutAudioVerdict] for why, and for the covers,
+     * video stations and video-mode listeners that still play.
      *
      * The move is the player's own timeline, so the skip lands as an ordinary
      * track change and the next row gets its own before-audio lookup. Nothing
@@ -864,26 +900,43 @@ internal class SongVersionController(
      * being moved to, which is the same way a skip the listener makes during
      * the wait keeps their play intent (see [beginVersionHold]).
      *
+     * @param userAsked the listener moved to this row themselves. It is never
+     *   refused: the row plays its own audio, which is the one thing a
+     *   deliberate tap must never answer with silence.
      * @return true when the row was skipped, so its caller leaves it unplayed.
      */
     private fun skipOfficialMv(
         exoPlayer: ExoPlayer,
         song: Song,
         audioReleaseMissing: Boolean,
+        userAsked: Boolean,
     ): Boolean {
-        if (!SongVersionPolicy.skipsOfficialMvWithoutAudio(
-                song = song,
-                musicOnly = AppSettings.preferMusicOnly.value,
-                audioReleaseMissing = audioReleaseMissing,
-                alreadySkipped = song.videoId in skippedOfficialMv,
-            )
-        ) {
-            return false
-        }
+        val verdict = SongVersionPolicy.mvWithoutAudioVerdict(
+            song = song,
+            musicOnly = AppSettings.preferMusicOnly.value,
+            audioReleaseMissing = audioReleaseMissing,
+            alreadySkipped = skippedOfficialMv.contains(song.videoId),
+            userAsked = userAsked,
+        )
+        if (verdict == SongVersionPolicy.MvWithoutAudio.PLAY) return false
         // Never yank a row the listener is already hearing, even one that
         // reached its first sound through a hold that was released early.
         if (SongVersionPolicy.hasMadeFirstSound(song.videoId, currentAudibleMediaId())) return false
-        skippedOfficialMv.add(song.videoId)
+        if (verdict == SongVersionPolicy.MvWithoutAudio.PLAY_OWN_AUDIO) {
+            // The listener asked for this row, so the video's own sound is what
+            // plays. Said once per song, because nothing else would explain why
+            // music-only let this one through.
+            if (userAskedPlayedLoggedFor != song.videoId) {
+                userAskedPlayedLoggedFor = song.videoId
+                TrackLog.i(
+                    "BitChord",
+                    "music-only: user asked for ${song.videoId}, playing its own audio (no release)",
+                    about = song.videoId,
+                )
+            }
+            return false
+        }
+        skippedOfficialMv.mark(song.videoId)
         TrackLog.i(
             "BitChord",
             "music-only: official MV has no audio release, skipped ${song.videoId} ${song.title}",

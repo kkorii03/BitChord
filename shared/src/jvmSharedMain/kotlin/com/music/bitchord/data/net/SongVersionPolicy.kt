@@ -221,6 +221,48 @@ object SongVersionPolicy {
         // "no release" without searching. It is played, never skipped.
         !CatalogSongMapper.isCover(song)
 
+    /** What music-only does with an official video that has no catalogue release. */
+    enum class MvWithoutAudio {
+        /** Nothing to refuse: music-only is off, the row is not an official MV, it
+         *  is a cover or a station, its release was found, or it was already
+         *  skipped once. */
+        PLAY,
+
+        /**
+         * The listener moved to this row themselves, so it is not refused: its
+         * own audio plays. Silence is never the answer to a deliberate tap, and
+         * refusing it made the same tap behave differently the second time.
+         */
+        PLAY_OWN_AUDIO,
+
+        /** The row must not play; the queue moves on. */
+        SKIP,
+    }
+
+    /**
+     * The whole music-only verdict for [song], in one place.
+     *
+     * Only a row the queue moved to on its own is refused. A row the listener
+     * moved to is a request for that row: it plays its own sound, and the log
+     * says why. Everything [skipsOfficialMvWithoutAudio] respects — covers,
+     * video stations, music-only off, the once-per-song guard — still applies.
+     *
+     * [userAsked] is the listener's own move as the player reports it (a tap on
+     * a row, a skip), never an automatic advance.
+     */
+    fun mvWithoutAudioVerdict(
+        song: Song,
+        musicOnly: Boolean,
+        audioReleaseMissing: Boolean,
+        alreadySkipped: Boolean,
+        userAsked: Boolean,
+    ): MvWithoutAudio = when {
+        !skipsOfficialMvWithoutAudio(song, musicOnly, audioReleaseMissing, alreadySkipped) ->
+            MvWithoutAudio.PLAY
+        userAsked -> MvWithoutAudio.PLAY_OWN_AUDIO
+        else -> MvWithoutAudio.SKIP
+    }
+
     /**
      * Whether an automatic song version may replace [row].
      *

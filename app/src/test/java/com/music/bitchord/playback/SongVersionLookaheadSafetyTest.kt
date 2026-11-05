@@ -12,6 +12,9 @@ import org.junit.Test
  *
  * Both reads suspend (the saved URI and the container metadata), so a queue
  * edit can land between resolving the version and applying it.
+ *
+ * The music-only memory lives here too: it is the same question of a verdict
+ * that outlived the queue it was taken in.
  */
 class SongVersionLookaheadSafetyTest {
 
@@ -119,5 +122,24 @@ class SongVersionLookaheadSafetyTest {
                 playingIndex = 1,
             ),
         )
+    }
+
+    // --- music-only's once-per-song memory ----------------------------------
+
+    @Test
+    fun `a song music-only refused is not refused again`() {
+        val skipped = SkippedOfficialMv()
+        assertFalse(skipped.contains("omv"))
+        skipped.mark("omv")
+        assertTrue(skipped.contains("omv"))
+        assertFalse(skipped.contains("other"))
+    }
+
+    @Test
+    fun `a new queue or a music-only change forgets the refusals`() {
+        val skipped = SkippedOfficialMv()
+        skipped.mark("omv")
+        skipped.clear()
+        assertFalse(skipped.contains("omv"))
     }
 }
