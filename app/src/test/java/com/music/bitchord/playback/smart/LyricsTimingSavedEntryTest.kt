@@ -1,6 +1,7 @@
 package com.music.bitchord.playback.smart
 
 import android.content.Context
+import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.playback.StreamChoice
@@ -11,6 +12,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.io.File
@@ -282,6 +284,69 @@ class LyricsTimingSavedEntryTest {
             assertNull(timing?.base)
             assertEquals(300L, timing?.refineMs)
         }
+    }
+
+    /** The base-apply lines [block] logs, with the once-per-change memory cleared first. */
+    private fun baseApplyLines(block: () -> Unit): List<String> {
+        (LyricsTiming::class.java.getDeclaredField("loggedBaseApply").apply { isAccessible = true }
+            .get(LyricsTiming) as MutableMap<*, *>).clear()
+        val logged = mutableListOf<String>()
+        val previous = TrackLog.echo
+        TrackLog.echo = { _, _, message, _ ->
+            if ("base-apply:" in message) synchronized(logged) { logged += message }
+        }
+        try {
+            block()
+        } finally {
+            TrackLog.echo = previous
+        }
+        return synchronized(logged) { logged.toList() }
+    }
+
+    @Test
+    fun `this source's own ai answer is applied without consulting the other source`() {
+        playSubstitute()
+        write("""{"entries":{"song":{"aiTextKey":${keyOf(fileSource)},"aiShiftMs":300,"aiClock":"$altClock"}}}""")
+
+        val logged = baseApplyLines {
+            runBlocking {
+                val timing = LyricsTiming.timing(context, "song", songLines, baseAllowed = true, audioSource = fileSource)
+                assertEquals(LyricsTiming.Adjustment.Shift(300L, byAi = true), timing?.base)
+            }
+        }
+        assertTrue(logged.toString(), logged.any { "base=ai" in it })
+        assertFalse(logged.toString(), logged.any { "sibling" in it })
+    }
+
+    @Test
+    fun `a refused base names the caller's gate`() {
+        write("""{"entries":{"song":{"aiTextKey":${keyOf(fileSource)},"aiShiftMs":300}}}""")
+
+        val logged = baseApplyLines {
+            runBlocking {
+                LyricsTiming.timing(
+                    context, "song", songLines, baseAllowed = false,
+                    audioSource = fileSource, deniedBy = "file-own-timing@test",
+                )
+            }
+        }
+        assertTrue(logged.toString(), logged.any { "(chosen by not-allowed(reason=file-own-timing@test))" in it })
+    }
+
+    @Test
+    fun `nothing says where the song check stands`() {
+        // 11-06 rlYOsUfpi3M: both song-check replies spent and refused.
+        write(
+            """{"entries":{"song":{"aiAttemptedKey":${keyOf(streamSource)},""" +
+                """"aiAttemptedEngines":["Deepgram Whisper","Deepgram Whisper retry"]}}}""",
+        )
+
+        val logged = baseApplyLines {
+            runBlocking {
+                LyricsTiming.timing(context, "song", songLines, baseAllowed = true, audioSource = streamSource)
+            }
+        }
+        assertTrue(logged.toString(), logged.any { "(chosen by nothing, song-check=spent 2/2, sibling=no-ai)" in it })
     }
 
     @Test

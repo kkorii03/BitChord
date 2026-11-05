@@ -11452,29 +11452,20 @@ class PlaybackService : MediaLibraryService() {
             val sourceTimedToVideo = com.music.bitchord.playback.smart.LyricsTiming
                 .timedToVideo(foundSource)
             // A substituted stream is a different recording under the same
-            // video id, so an upload's measurement/AI answer must not move its
-            // lyrics or be recorded against it. Same guard as the lyrics screen.
-            val substituted = !coverQuery.isVideo &&
-                StreamChoice.isSubstitute(currentSong.videoId)
-            val timeable = com.music.bitchord.playback.LocalTimingPolicy
-                .streamTimingAllowed(
-                    com.music.bitchord.playback.LocalTimingPolicy.downloadedTimingTimeable(
-                        timed = timed,
-                        fromFile = fromFile,
-                        isVideo = coverQuery.isVideo,
-                        recheckOverride = recheckOverride,
-                        sourceTimedToVideo = sourceTimedToVideo,
-                    ),
-                    isVideo = coverQuery.isVideo,
-                    substituted = substituted,
-                )
-            val recordTimed = com.music.bitchord.playback.LocalTimingPolicy
-                .streamTimingAllowed(
-                    timeable && (!fromFile || foundSource != null) &&
-                        !sourceTimedToVideo,
-                    isVideo = coverQuery.isVideo,
-                    substituted = substituted,
-                )
+            // video id. Same rule as the lyrics screen since ko-112: the answer
+            // is not refused up front; LyricsTiming.timing places it on the
+            // copy's clock or drops it (11-06 cCfPDrRQp9k: the lock screen said
+            // not-allowed while the screen applied what it could). This path
+            // only reads the store; measuring a substitute stays refused by
+            // syncWanted and the next-prep gate.
+            val timeable = com.music.bitchord.playback.LocalTimingPolicy.downloadedTimingTimeable(
+                timed = timed,
+                fromFile = fromFile,
+                isVideo = coverQuery.isVideo,
+                recheckOverride = recheckOverride,
+                sourceTimedToVideo = sourceTimedToVideo,
+            )
+            val recordTimed = timeable && (!fromFile || foundSource != null) && !sourceTimedToVideo
             suspend fun publish() {
                 val shown = if (timed && raw != null) {
                     com.music.bitchord.playback.smart.LyricsTiming
@@ -11484,6 +11475,7 @@ class PlaybackService : MediaLibraryService() {
                             raw,
                             baseAllowed = timeable,
                             measuredAllowed = recordTimed,
+                            deniedBy = "file-own-timing@player",
                             isVideo = coverQuery.isVideo,
                             audioSource = if (coverQuery.isVideo) {
                                 null
