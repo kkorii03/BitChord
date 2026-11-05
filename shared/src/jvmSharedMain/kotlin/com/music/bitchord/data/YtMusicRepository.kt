@@ -1061,9 +1061,14 @@ object YtMusicRepository {
      * either way. A track's own watch queue entry always names both.
      */
     suspend fun trackLinks(videoId: String): Result<Song> = call("links:$videoId") {
-        InnertubeParser.parseWatchQueue(Innertube.next(videoId))
+        val row = InnertubeParser.parseWatchQueue(Innertube.next(videoId))
             .firstOrNull { it.videoId == videoId }
             ?: error("no watch entry for $videoId")
+        // A shared link or a deep link starts here, with no search row behind
+        // it: the watch queue's byline is the uploader, so a label channel
+        // became the artist (phone 11-06). The same display rule every other
+        // row goes through reads the credit the title states.
+        YouTubeDisplayCleaner.cleanUpload(row)
     }
 
     /**
