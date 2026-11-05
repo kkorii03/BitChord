@@ -750,8 +750,8 @@ internal object KoTrackMatcher {
 
     /**
      * Why [candidate] is not the catalogue song for [target], in the shape the
-     * audio-switch log reads: `title`, `artist`, `duration Δ초`, `type` or
-     * `cover`. Null when either [bestSameArtist] or
+     * audio-switch log reads: `title`, `artist`, `duration Δ초`, `type(video)`
+     * or `cover`. Null when either [bestSameArtist] or
      * [bestOfficialAudioForVideo] would take it.
      *
      * Only a diagnostic: the decision itself stays in those two functions, so
