@@ -89,6 +89,30 @@ class LyricsMismatchTest {
     }
 
     @Test
+    fun aMixedSheetRetriesInItsOtherScript() {
+        // 5 of 17 lines open in Hangul (29%): the first check stays English, the one retry listens in Korean.
+        assertEquals(29, Deepgram.mixedPercent(neonOpening, "en"))
+        assertEquals("ko", Deepgram.retryLanguageFor(neonOpening, "en"))
+    }
+
+    @Test
+    fun singleLanguageSheetsRetryTheSameWay() {
+        val english = neonOpening.filter { Deepgram.spellableLines(listOf(it), "en") == 1 }
+        assertEquals("en", Deepgram.languageFor(english))
+        assertEquals(0, Deepgram.mixedPercent(english, "en"))
+        assertEquals(null, Deepgram.retryLanguageFor(english, "en"))
+        val korean = listOf("사랑해 너를 영원히", "감각을 마비 충격 그 자체", "Feel the energy")
+        assertEquals("ko", Deepgram.languageFor(korean))
+        assertEquals(0, Deepgram.mixedPercent(korean, "ko"))
+        assertEquals(null, Deepgram.retryLanguageFor(korean, "ko"))
+        // One Hangul line in ten is under the mixed bar: no switch.
+        val oneInTen = english.take(9) + "분석 중"
+        assertEquals(10, Deepgram.mixedPercent(oneInTen, "en"))
+        assertEquals(null, Deepgram.retryLanguageFor(oneInTen, "en"))
+        assertEquals("ja", Deepgram.retryLanguageFor(english.take(4) + "夜に駆ける", "en"))
+    }
+
+    @Test
     fun spellingNoiseFoldsAway() {
         // Curly apostrophes, quotes, case, punctuation and full-width letters are not a mismatch.
         assertEquals(LyricsWordAlign.fold("they aint"), LyricsWordAlign.fold("They ain’t"))

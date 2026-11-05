@@ -240,6 +240,27 @@ object Deepgram {
         }
     }
 
+    /** Share (%) of [lines] a transcript in [language] can never place (see [spellableLines]); 0 for CJK. */
+    fun mixedPercent(lines: List<String>, language: String): Int =
+        if (lines.isEmpty()) 0 else (lines.size - spellableLines(lines, language)) * 100 / lines.size
+
+    /** At least this share of lines in another script makes a Latin-read sheet "mixed". */
+    const val MIXED_PERCENT = 20
+
+    /**
+     * The language the song check's one retry listens in instead of [language],
+     * or null to listen the same way again. Only a mixed sheet switches: read
+     * as Latin, yet [MIXED_PERCENT]+ of its lines open in Hangul/kana/Han, it
+     * retries in that script's language. Not "multi": Whisper treats it as
+     * detect-one-language, which hears the Latin majority again (NEON
+     * rlYOsUfpi3M: 5 of 17 Hangul lines, 47%/44% both times in English).
+     */
+    fun retryLanguageFor(lines: List<String>, language: String): String? {
+        if (mixedPercent(lines, language) < MIXED_PERCENT) return null
+        val other = languageFor(lines.filter { spellableLines(listOf(it), language) == 0 })
+        return other.takeIf { it == "ko" || it == "ja" || it == "zh" }
+    }
+
     /** Latin lyrics that read as English: its commonest little words make up a good share of them. */
     private fun english(lines: List<String>): Boolean {
         val words = lines.flatMap { it.lowercase().split(Regex("[^a-z']+")) }.filter { it.isNotEmpty() }
