@@ -3,6 +3,7 @@ package com.music.bitchord.data.lyrics
 import com.music.bitchord.data.innertube.Innertube
 import com.music.bitchord.data.innertube.InnertubeParser
 import com.music.bitchord.data.innertube.SearchKind
+import com.music.bitchord.data.innertube.YouTubeWebSearch
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
@@ -75,17 +76,17 @@ object RecordingPick {
                         val title = if (!ask.main) name.first else {
                             BRACKETS.replace(name.first, " ").split(" - ", " / ").first().trim().ifBlank { name.first }
                         }
+                        val query = "$title ${name.second}".trim()
                         val response = Innertube.searchAnonymous(
-                            query = "$title ${name.second}".trim(),
+                            query = query,
                             params = SearchFilter.SONGS.params,
                             hl = hl,
                             gl = gl,
                             kind = SearchKind.COVER,
                         )
-                        InnertubeParser.parseSearchPage(response, includeVideos = false).rows
-                            .filterIsInstance<SearchResult.Track>()
-                            .map { it.song }
-                            .take(5)
+                        pageRows(InnertubeParser.parseSearchPage(response, includeVideos = false).rows) {
+                            YouTubeWebSearch.songs(query, SearchKind.COVER).getOrThrow()
+                        }
                     }.getOrElse {
                         if (it is kotlinx.coroutines.CancellationException) throw it
                         failed.incrementAndGet()
@@ -103,6 +104,26 @@ object RecordingPick {
         }
         rank(names.map { it.first } + clean.map { it.first }, names.map { it.second } + clean.map { it.second }, merged, videoMs, max)
     }
+
+    /**
+     * The songs one search answered with, or [fallback] when it answered none.
+     *
+     * A Music page with no rows is not "this song has no record": from a Korean
+     * IP without Premium its Songs filter comes back empty while youtube.com
+     * returns the same tracks (see [YouTubeWebSearch]). Taking that page at its
+     * word is why every cover in the 11-05 run read "no original recording
+     * found" and kept the cover sheet's times. A search that failed instead
+     * throws, which is a failed ask and not an empty answer.
+     */
+    internal fun pageRows(results: List<SearchResult>, fallback: () -> List<Song>): List<Song> =
+        results
+            .filterIsInstance<SearchResult.Track>()
+            .map { it.song }
+            .take(ROWS_ASKED)
+            .ifEmpty(fallback)
+
+    /** How many rows of each search are ranked. */
+    private const val ROWS_ASKED = 5
 
     /** The best [max] rows worth measuring against, best first. */
     fun rank(

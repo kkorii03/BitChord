@@ -1,5 +1,6 @@
 package com.music.bitchord.data.lyrics
 
+import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -111,5 +112,35 @@ class RecordingPickTest {
             row("s", "Completely Different", "Somebody Else", "9:59"),
         )
         assertEquals(emptyList(), pick("Flashlight", "Jessie J", rows))
+    }
+
+    /**
+     * 2026-11-05 smoke: from a Korean IP without Premium Music's Songs filter
+     * answered no rows at all, the page was taken at its word, and all eight
+     * covers in the run read "no original recording found" — so the cover
+     * sheet's times stayed and the whole song drifted (+4.31 s on 7PgA6kyqVTc).
+     * youtube.com answers the same tracks, which is what this falls back to.
+     */
+    @Test
+    fun anEmptySongsPageFallsBackToTheYouTubeRows() {
+        val record = row("orig", "Youngblood", "5 Seconds of Summer - Topic", "3:23")
+        assertEquals(listOf(record), RecordingPick.pageRows(emptyList<SearchResult>()) { listOf(record) })
+    }
+
+    @Test
+    fun aPageWithRowsIsNotSearchedAgain() {
+        val mine = row("a", "Youngblood", "5 Seconds of Summer")
+        val rows = RecordingPick.pageRows(listOf(SearchResult.Track(mine))) { error("a second search") }
+        assertEquals(listOf(mine), rows)
+    }
+
+    /** The fallback's rows are youtube.com's: a "- Topic" credit and a "m:ss" badge. */
+    @Test
+    fun theYouTubeRowShapeOfTheRecordIsPicked() {
+        val rows = listOf(
+            row("v", "Youngblood (Official Video)", "5 Seconds of Summer", "3:44", video = true),
+            row("o", "Youngblood", "5 Seconds of Summer - Topic", "3:23"),
+        )
+        assertEquals(listOf("o"), pick("Youngblood", "5 Seconds of Summer", rows, videoMs = 203_000L))
     }
 }
