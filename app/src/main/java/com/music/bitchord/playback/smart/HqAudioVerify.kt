@@ -1143,9 +1143,17 @@ object HqAudioVerify {
             return Reference.Missing(NoReferenceReason.CANCELLED)
         }
         if (wav == null) {
-            noteNoReference(youtubeId, NoReferenceReason.DECODE_FAILED)
-            logNoReference(title, youtubeId, NoReferenceReason.DECODE_FAILED)
-            return Reference.Missing(NoReferenceReason.DECODE_FAILED)
+            // A read the play abandoned is not a recording that failed to
+            // decode: naming it the same hid that the reference was never asked
+            // to finish, and sent every later attempt looking for a missing
+            // source. Only a real failure is remembered for this play.
+            val reason = if (!currentCoroutineContext().isActive) {
+                NoReferenceReason.CANCELLED
+            } else {
+                NoReferenceReason.DECODE_FAILED.also { noteNoReference(youtubeId, it) }
+            }
+            logNoReference(title, youtubeId, reason)
+            return Reference.Missing(reason)
         }
         val features = featuresOfWav(wav)
         if (features == null) {

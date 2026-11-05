@@ -104,4 +104,36 @@ class VideoAudioOpeningWaitTest {
     fun `an ordinary measurement keeps the wait it always had`() {
         assertEquals(30_000L, VideoAudio.measurementOpeningWaitMs(lateVersion = false))
     }
+
+    /**
+     * 11-05 smoke r2-b: `What It Sounds Like` decoded 35 s of its opening,
+     * the read was abandoned with the play, and the whole opening was thrown
+     * away. The quality comparison then decoded the same ninety seconds again,
+     * waited 59 s at the one-at-a-time gate behind it, and was cancelled as
+     * "no reference". What was heard is real audio and the next check can use
+     * it.
+     */
+    @Test
+    fun `an abandoned read keeps the opening it already heard`() {
+        assertTrue(VideoAudio.keepAbandonedOpening(bytes = 35 * 32_000, minimumBytes = 10 * 32_000, failedStage = null))
+    }
+
+    @Test
+    fun `a read that failed at a named stage keeps nothing`() {
+        assertFalse(
+            VideoAudio.keepAbandonedOpening(
+                bytes = 35 * 32_000,
+                minimumBytes = 10 * 32_000,
+                failedStage = AudioDecoder.FAILURE_NO_FIRST_SAMPLE,
+            ),
+        )
+        assertFalse(
+            VideoAudio.keepAbandonedOpening(bytes = 35 * 32_000, minimumBytes = 10 * 32_000, failedStage = "gate"),
+        )
+    }
+
+    @Test
+    fun `an abandoned read under the ten second floor keeps nothing`() {
+        assertFalse(VideoAudio.keepAbandonedOpening(bytes = 4 * 32_000, minimumBytes = 10 * 32_000, failedStage = null))
+    }
 }
