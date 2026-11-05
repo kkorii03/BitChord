@@ -518,6 +518,82 @@ class KindCheckTest(unittest.TestCase):
         self.assertEqual("SKIP", checks[7].status)
 
 
+class NoAudioRunTest(unittest.TestCase):
+    """11-05 rounds 34-36: the proxy got YouTube's bot check, every track ended
+    `firstAudio=- played=0`, run.sh stopped with NO AUDIO after three songs and
+    the last track never got its summary. The judge blamed the cover row for it.
+    A row nobody could measure is unmeasured; a row that did not play while the
+    rest of the run had audio still fails."""
+
+    NO_AUDIO_LOG = "\n".join(
+        [
+            log_line("song version: -RJSbO8UZVY kept (timeout)"),
+            log_line(
+                "track-summary: -RJSbO8UZVY 'Youngblood' video=y "
+                "source=shared_link:-RJSbO8UZVY resolve=direct firstAudio=- played=0 "
+                "lyrics=lrc.red sync=none shift=- match=- manualOffset=0 ended=skipped"
+            ),
+            play("7PgA6kyqVTc", "instagram", "DEAN · 오화요 커버"),
+            log_line("song version: 7PgA6kyqVTc kept (none)"),
+        ]
+    )
+
+    def test_a_run_without_audio_is_not_judged_as_a_cover_failure(self):
+        songs = specs("7PgA6kyqVTc\tcover")
+        result = statuses_with_songs(self.NO_AUDIO_LOG, songs)[7]
+        self.assertEqual("SKIP", result.status)
+        self.assertIn("오디오 없음", result.details[0])
+
+    def test_a_run_without_audio_keeps_a_played_row_failing(self):
+        songs = specs("7PgA6kyqVTc\tcover")
+        log = "\n".join(
+            [
+                summary("other1", "Some Song", False),
+                play("7PgA6kyqVTc", "instagram", "DEAN · 오화요 커버"),
+                log_line("song version: 7PgA6kyqVTc kept (none)"),
+            ]
+        )
+        result = statuses_with_songs(log, songs)[7]
+        self.assertEqual("FAIL", result.status)
+        self.assertIn("summary 없음", result.details[0])
+
+    def test_an_mv_row_without_a_summary_is_unmeasured_without_audio(self):
+        songs = specs("mv1\tmv")
+        self.assertEqual(
+            "SKIP", statuses_with_songs(self.NO_AUDIO_LOG, songs)[1].status
+        )
+
+    def test_an_mv_row_without_a_summary_still_fails_with_audio(self):
+        songs = specs("mv1\tmv")
+        log = "\n".join([summary("other1", "Some Song", False), play("mv1", "S", "A")])
+        self.assertEqual("FAIL", statuses_with_songs(log, songs)[1].status)
+
+    def test_summaries_without_audio_detects_the_shape(self):
+        self.assertTrue(smokecheck.summaries_without_audio(self.NO_AUDIO_LOG))
+        self.assertFalse(smokecheck.summaries_without_audio(summary("v1", "S", False)))
+        self.assertFalse(smokecheck.summaries_without_audio(log_line("no summary")))
+
+    def test_main_fails_with_the_no_audio_reason(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "logcat.txt"
+            songs = Path(directory) / "songs.txt"
+            report = Path(directory) / "report.md"
+            log.write_text(self.NO_AUDIO_LOG + "\n", encoding="utf-8")
+            songs.write_text("7PgA6kyqVTc\tcover\n", encoding="utf-8")
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                code = smokecheck.main(
+                    [str(log), "--songs", str(songs), "--report", str(report)]
+                )
+            self.assertEqual(1, code)
+            self.assertIn("INVALID: no audio in the whole run", stderr.getvalue())
+            self.assertIn(
+                "INVALID: no audio in the whole run",
+                report.read_text(encoding="utf-8"),
+            )
+
+
 class NothingJudgedTest(unittest.TestCase):
     """11-05: set-c/set-d had a swapped song list, every kind check skipped and
     the run still reported success."""

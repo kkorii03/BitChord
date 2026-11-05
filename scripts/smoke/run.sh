@@ -589,17 +589,41 @@ done 3< "$SONGS_FILE"
 # `track-summary` is written for the outgoing track, so the last song only gets
 # its summary when another track becomes current. Move on once more (and fall
 # back to a dummy link if NEXT cannot advance) before the log is closed.
+# The wait is on the summary line itself: `play: ->` only says the change was
+# accepted, and a fixed 2 s sleep closed the log before a summary that needed
+# the track to resolve first.
+summary_count() {
+  grep -c 'track-summary:' "$OUT/smoke-logcat.txt" 2>/dev/null || true
+}
+
+wait_for_new_summary() {
+  local before=${1:-0} timeout=${2:-20} i now
+  for ((i = 0; i < timeout; i++)); do
+    now=$(summary_count)
+    if [ "${now:-0}" -gt "${before:-0}" ]; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
 force_final_summary() {
   local before
-  before=$(play_count)
+  before=$(summary_count)
   echo "smoke: forcing one final track change for the last track summary" >> "$OUT/smoke-playback.txt"
   adb shell input keyevent 87 >/dev/null 2>&1 || true
-  if ! wait_for_new_play "$before" 10; then
-    adb shell am start -a android.intent.action.VIEW \
-      -d "https://music.youtube.com/watch?v=dQw4w9WgXcQ" -p "$PKG" >/dev/null 2>&1 || true
-    wait_for_new_play "$before" "$FALLBACK_TIMEOUT" || true
+  if wait_for_new_summary "$before" 20; then
+    echo "smoke: final track summary written after NEXT" >> "$OUT/smoke-playback.txt"
+    return 0
   fi
-  sleep 2
+  adb shell am start -a android.intent.action.VIEW \
+    -d "https://music.youtube.com/watch?v=dQw4w9WgXcQ" -p "$PKG" >/dev/null 2>&1 || true
+  if wait_for_new_summary "$before" 25; then
+    echo "smoke: final track summary written after the dummy link" >> "$OUT/smoke-playback.txt"
+  else
+    echo "smoke: final track summary MISSING (no track change reached the app)" >> "$OUT/smoke-playback.txt"
+  fi
 }
 force_final_summary
 

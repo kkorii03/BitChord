@@ -14,7 +14,8 @@ Usage:
 Exit code is 1 when any check fails, 0 when every check passes or is skipped,
 and 2 when the log or the song list cannot be read (or the log is empty). A run
 where no song-list row could be judged at all (every mv/hq/cover check skipped)
-is also 1: it proves nothing.
+is also 1: it proves nothing, and so is a run whose every track summary says
+`firstAudio=-` (no audio reached the app, so nothing was measured).
 """
 
 from __future__ import annotations
@@ -32,6 +33,13 @@ SHIFT_LIMIT_MS = 3000
 # `track-summary: <id> '<title>' video=y source=... resolve=...`
 TRACK_SUMMARY_RE = re.compile(
     r"track-summary:\s+(?P<id>\S+)\s+'(?P<title>.*?)'\s+video=(?P<video>[yn])\b"
+)
+# A numeric `firstAudio=` is the only proof that a track actually played sound;
+# scripts/smoke/run.sh uses the same expression for its NO AUDIO stop.
+TRACK_AUDIO_RE = re.compile(r"track-summary:.*\bfirstAudio=\d")
+INVALID_NOTHING = "INVALID: nothing could be judged (판정한 곡 없음)"
+INVALID_NO_AUDIO = (
+    "INVALID: no audio in the whole run (전체 무음: 유튜브 봇 체크/프록시)"
 )
 # `song version: <from> -> <to> via <how>` (both with and without `before-audio`).
 SONG_VERSION_RE = re.compile(
@@ -160,6 +168,25 @@ def is_mv_title(title: str) -> bool:
         return True
     # A standalone MV, as in `[MV]`, `(MV)` or `MV`, but not inside a word.
     return re.search(r"(?<![a-z0-9])mv(?![a-z0-9])", text) is not None
+
+
+def summaries_without_audio(text: str) -> bool:
+    """True when the log has track summaries but not one of them played audio.
+
+    11-05 rounds 34-36: every track ended with `firstAudio=- played=0` (YouTube's
+    bot check through the proxy) and the run stopped with NO AUDIO after three
+    songs, so the last track never got its summary. Judged row by row that reads
+    as "커버 재생 FAIL: summary 없음", a cover bug that never existed.
+    """
+
+    seen = False
+    audio = False
+    for line in text.splitlines():
+        if "track-summary:" in line:
+            seen = True
+            if TRACK_AUDIO_RE.search(line):
+                audio = True
+    return seen and not audio
 
 
 def _display_width(text: str) -> int:
@@ -331,6 +358,9 @@ def check_log(
     mv_ids.update(version_subjects)
     mv_ids.update(video_flag_ids)
     title_by_id = {summary.video_id: summary.title for summary in summaries}
+    # Nothing was measured in a run that never played audio, so a row without a
+    # summary there is unmeasured, not a regression (see summaries_without_audio).
+    no_audio_run = summaries_without_audio(text)
 
     checks: list[Check] = []
 
@@ -355,6 +385,7 @@ def check_log(
         else {spec.video_id for spec in songs if spec.kind == "cover" and spec.video_id}
     )
     mv_failures: list[str] = []
+    mv_unmeasured: list[str] = []
     seen_mv: set[str] = set()
     if songs is not None:
         mv_specs = [spec for spec in songs if spec.kind == "mv" and spec.video_id]
@@ -368,16 +399,22 @@ def check_log(
                 continue
             seen_mv.add(video_id)
             title = title_by_id.get(video_id)
+            if title is None and no_audio_run:
+                mv_unmeasured.append(video_id)
+                continue
             mv_failures.append(
                 f"{title} ({video_id})" if title else f"{video_id} (summary 없음)"
             )
-        mv_status = "SKIP" if not mv_specs else ("FAIL" if mv_failures else "PASS")
-        mv_details = (
-            ["mv 곡 없음"]
-            if not mv_specs
-            else mv_failures
-            or ["mv 곡이 모두 song version 으로 교체됨"]
-        )
+        if mv_failures:
+            mv_status, mv_details = "FAIL", mv_failures
+        elif mv_unmeasured:
+            mv_status = "SKIP"
+            mv_details = [f"{' '.join(mv_unmeasured)} 오디오 없음 (재생이 없어 측정 불가)"]
+        elif not mv_specs:
+            mv_status, mv_details = "SKIP", ["mv 곡 없음"]
+        else:
+            mv_status = "PASS"
+            mv_details = ["mv 곡이 모두 song version 으로 교체됨"]
     else:
         for summary in summaries:
             has_marker = is_mv_title(summary.title)
@@ -562,6 +599,7 @@ def check_log(
             spec for spec in songs if spec.kind == "cover" and spec.video_id
         ]
         cover_failures: list[str] = []
+        cover_unmeasured: list[str] = []
         seen_cover: set[str] = set()
         for spec in cover_specs:
             video_id = spec.video_id
@@ -578,13 +616,22 @@ def check_log(
             if replaced:
                 cover_failures.append(f"{label} -> {replaced[0]} 교체됨")
             elif video_id not in title_by_id:
-                cover_failures.append(f"{label} (summary 없음)")
-        if not cover_specs:
+                if no_audio_run:
+                    cover_unmeasured.append(video_id)
+                else:
+                    cover_failures.append(f"{label} (summary 없음)")
+        if cover_failures:
+            cover_status, cover_details = "FAIL", cover_failures
+        elif cover_unmeasured:
             cover_status = "SKIP"
-            cover_details = ["cover 곡 없음"]
+            cover_details = [
+                f"{' '.join(cover_unmeasured)} 오디오 없음 (재생이 없어 측정 불가)"
+            ]
+        elif not cover_specs:
+            cover_status, cover_details = "SKIP", ["cover 곡 없음"]
         else:
-            cover_status = "FAIL" if cover_failures else "PASS"
-            cover_details = cover_failures or ["cover 곡이 그대로 재생됨"]
+            cover_status = "PASS"
+            cover_details = ["cover 곡이 그대로 재생됨"]
         checks.append(Check(7, "커버 재생", cover_status, cover_details))
 
     return checks
@@ -603,7 +650,12 @@ def nothing_judged(checks: list[Check], songs: list[SongSpec] | None) -> bool:
     return bool(kind_checks) and all(check.status == "SKIP" for check in kind_checks)
 
 
-def render_table(checks: list[Check], log_path: str, invalid: bool = False) -> str:
+def render_table(
+    checks: list[Check],
+    log_path: str,
+    invalid: bool = False,
+    reason: str = INVALID_NOTHING,
+) -> str:
     headers = ["#", "항목", "판정", "상세"]
     rows = [
         [
@@ -628,7 +680,7 @@ def render_table(checks: list[Check], log_path: str, invalid: bool = False) -> s
     lines.append(separator)
     failed = [check for check in checks if not check.passed]
     if invalid:
-        lines.append("결과: INVALID: nothing could be judged (판정한 곡 없음)")
+        lines.append(f"결과: {reason}")
     else:
         lines.append(
             f"결과: {'FAIL' if failed else 'PASS'} "
@@ -645,10 +697,15 @@ def _markdown(text: str) -> str:
     return text.replace("|", "\\|").replace("\n", " ").replace("\r", " ")
 
 
-def render_markdown(checks: list[Check], log_path: str, invalid: bool = False) -> str:
+def render_markdown(
+    checks: list[Check],
+    log_path: str,
+    invalid: bool = False,
+    reason: str = INVALID_NOTHING,
+) -> str:
     failed = [check for check in checks if not check.passed]
     result = (
-        "INVALID: nothing could be judged (판정한 곡 없음)"
+        reason
         if invalid
         else f"{'FAIL' if failed else 'PASS'} ({len(failed)}/{len(checks)} 실패)"
     )
@@ -715,14 +772,31 @@ def main(argv: list[str] | None = None) -> int:
             return 2
 
     checks = check_log(text, songs=songs, hq_configured=args.hq_configured)
-    invalid = nothing_judged(checks, songs)
-    print(render_table(checks, args.logcat, invalid=invalid))
+    if summaries_without_audio(text):
+        # Same verdict as run.sh's NO AUDIO stop: the network gave no audio, so
+        # no row was measured and a "summary 없음" here is not the row's fault.
+        reason = INVALID_NO_AUDIO
+    elif nothing_judged(checks, songs):
+        reason = INVALID_NOTHING
+    else:
+        reason = ""
+    invalid = bool(reason)
+    print(
+        render_table(
+            checks, args.logcat, invalid=invalid, reason=reason or INVALID_NOTHING
+        )
+    )
 
     if args.report:
         report = Path(args.report)
         try:
             report.write_text(
-                render_markdown(checks, args.logcat, invalid=invalid),
+                render_markdown(
+                    checks,
+                    args.logcat,
+                    invalid=invalid,
+                    reason=reason or INVALID_NOTHING,
+                ),
                 encoding="utf-8",
             )
         except OSError as error:
@@ -730,12 +804,8 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         print(f"보고서: {report}")
 
-    if invalid:
-        print(
-            "smokecheck: INVALID: nothing could be judged "
-            "(곡 목록의 어느 행도 판정되지 않음)",
-            file=sys.stderr,
-        )
+    if reason:
+        print(f"smokecheck: {reason}", file=sys.stderr)
     return 1 if invalid or any(not check.passed for check in checks) else 0
 
 
