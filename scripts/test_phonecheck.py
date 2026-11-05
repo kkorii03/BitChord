@@ -40,10 +40,18 @@ LINES = [
     (3, 18000, "because a vision softly creeping"),
     (4, 22000, "left its seeds while i was sleeping"),
     (5, 26000, "and the vision that was planted"),
+    # synctest.STRICT needs 8 timed lines before a row can pass at all, so the
+    # fixture is longer than the five lines the block used to hold.
+    (6, 30000, "in my brain still remains"),
+    (7, 34000, "within the sound of silence"),
+    (8, 38000, "and in the naked light i saw"),
+    (9, 42000, "ten thousand people maybe more"),
 ]
 
 
-def heard_words(offset: float = 0.1) -> list[tuple[str, float, float]]:
+def heard_words(offset: float = 0.05) -> list[tuple[str, float, float]]:
+    # 0.05 s, under synctest.STRICT's 0.08 s whole-song bias: a fixture row that
+    # is meant to pass must not read as "everything is late".
     words: list[tuple[str, float, float]] = []
     for _number, start_ms, text in LINES:
         when = start_ms / 1000.0 - offset
@@ -140,16 +148,16 @@ class SyncTest(unittest.TestCase):
             self.assertEqual(1, len(rows))
             row = rows[0]
             self.assertEqual("PASS", row["verdict"])
-            self.assertEqual(5, row["matched"])
-            self.assertAlmostEqual(0.1, row["median"], places=2)
+            self.assertEqual(9, row["matched"])
+            self.assertAlmostEqual(0.05, row["median"], places=2)
             self.assertEqual(1.0, row["in03"])
-            self.assertEqual(5, len(row["errors"]))
+            self.assertEqual(9, len(row["errors"]))
 
             summary = phonecheck.sync_summary(rows)
             self.assertIsNotNone(summary)
-            self.assertEqual(5, summary["lines"])
+            self.assertEqual(9, summary["lines"])
             self.assertEqual(1, summary["songs"])
-            self.assertAlmostEqual(0.1, summary["median"], places=2)
+            self.assertAlmostEqual(0.05, summary["median"], places=2)
             self.assertEqual(1.0, summary["in03"])
 
     def test_missing_wav_is_reported_not_scored(self):
@@ -203,6 +211,86 @@ class SyncTest(unittest.TestCase):
         )
         self.assertEqual(1, len(scored))
         self.assertIn("id 없음", scored[0]["error"])
+
+    def test_mv_row_is_scored_through_the_song_version_it_played(self):
+        # A `before-audio` swap replaces the queue row before it is heard, so the
+        # dump and the recording belong to the found id. The request's own sheet
+        # (2 lines here, from an earlier play) must not be the one scored.
+        text = "\n".join(
+            [log_line("song version: mv1 -> aud1 via search shared before-audio")]
+            + dump_block("mv1", LINES[:2])
+            + dump_block("aud1", LINES)
+        )
+        self.assertEqual(
+            [("mv1", "mv", "mv1")], phonecheck.sync_candidates(songs("mv1\tmv"), text)
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            wav_dir = Path(directory)
+            (wav_dir / "aud1.wav").write_bytes(b"RIFF" + b"\0" * 2000)
+            rows = phonecheck.score_sync(
+                text,
+                songs("mv1\tmv"),
+                wav_dir,
+                transcribe=lambda _path, _language, _model: heard_words(),
+            )
+        self.assertEqual(1, len(rows))
+        self.assertEqual("mv1", rows[0]["video"])
+        self.assertEqual(9, rows[0]["lines"])
+        self.assertEqual("PASS", rows[0]["verdict"])
+        self.assertEqual("app wav", rows[0]["audio"])
+
+    def test_mv_row_with_two_song_versions_is_not_scored(self):
+        # Which recording was heard is unknowable, and a guessed id would score
+        # the wrong audio: the row keeps a reason instead of a number.
+        text = "\n".join(
+            [
+                log_line("song version: mv1 -> aud1 via search shared before-audio"),
+                log_line("song version: mv1 -> aud2 via search shared before-audio"),
+            ]
+            + dump_block("aud1", LINES)
+        )
+        rows = phonecheck.score_sync(
+            text,
+            songs("mv1\tmv"),
+            Path("/nonexistent"),
+            transcribe=lambda _path, _language, _model: heard_words(),
+        )
+        self.assertEqual(1, len(rows))
+        self.assertNotIn("verdict", rows[0])
+        self.assertIn("불확실", rows[0]["error"])
+
+    def test_mv_row_whose_song_version_left_no_dump_is_not_scored(self):
+        text = log_line("song version: mv1 -> aud1 via search shared before-audio")
+        rows = phonecheck.score_sync(
+            text,
+            songs("mv1\tmv"),
+            Path("/nonexistent"),
+            transcribe=lambda _path, _language, _model: heard_words(),
+        )
+        self.assertEqual(1, len(rows))
+        self.assertNotIn("verdict", rows[0])
+        self.assertIn("aud1 덤프 없음", rows[0]["error"])
+
+    def test_mid_song_swap_keeps_the_rows_own_recording(self):
+        # Without `before-audio` the swap only moves the lyrics reference; the
+        # row's own recording is what played, so its own dump is the sheet.
+        text = "\n".join(
+            dump_block("plain1", LINES)
+            + [log_line("song version: plain1 -> aud1 via search shared")]
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            wav_dir = Path(directory)
+            (wav_dir / "plain1.wav").write_bytes(b"RIFF" + b"\0" * 2000)
+            rows = phonecheck.score_sync(
+                text,
+                songs("plain1\tplain"),
+                wav_dir,
+                transcribe=lambda _path, _language, _model: heard_words(),
+            )
+        self.assertEqual(1, len(rows))
+        self.assertEqual("plain1", rows[0]["video"])
+        self.assertEqual(9, rows[0]["lines"])
+        self.assertEqual("PASS", rows[0]["verdict"])
 
 
 class DeepgramTest(unittest.TestCase):
@@ -280,6 +368,7 @@ class ReportTest(unittest.TestCase):
         self.assertIn("MV 5/5 통과", report)
         self.assertIn("HQ accepted 2", report)
         self.assertIn("싱크 채점 곡 없음", report)
+        self.assertIn("채점 표본 0/9줄 (0%)", report)
         self.assertIn("## 싱크 곡별", report)
         self.assertIn("cover1", report)
         self.assertIn("## 스모크 판정", report)
@@ -305,10 +394,12 @@ class ReportTest(unittest.TestCase):
             checks,
             datetime.datetime(2026, 10, 26, 22, 0),
         )
-        self.assertIn("싱크 중앙값 +0.10초", report)
+        self.assertIn("싱크 중앙값 +0.05초", report)
         self.assertIn("0.3초 이내 100%", report)
         self.assertIn("| 곡 | 종류 | 판정 |", report)
         self.assertIn("| cover1 | cover | PASS |", report)
+        # The sample the log offered is stated, so a small one is visible.
+        self.assertIn("채점 표본 9/9줄 (100%)", report)
 
     def test_report_lists_a_song_that_could_not_be_scored(self):
         text = base_log()
