@@ -302,6 +302,27 @@ object BlockedStartPolicy {
         blockedSignal -> NoStreamPath.BLOCKED
         else -> NoStreamPath.EXTRACTION
     }
+
+    /**
+     * Whether the slow extraction should run *beside* the InnerTubeX walk
+     * rather than after cancelling it.
+     *
+     * The walk starts with the first ask, so a gated start that spends its
+     * direct probe and then its proxy window reaches the fallback with the walk
+     * still in flight. The 11-05 log is exactly that: the window closed at
+     * 5004 ms, the walk was cancelled there, and extraction answered at
+     * 16725 ms. Cancelling it threw away an answer that was one request away
+     * and paid the whole extraction for it.
+     *
+     * A walk still running is therefore raced against extraction: the first
+     * real answer is played and the other is stopped, so a late walk can
+     * shorten the fallback but can never replace a stream that has already
+     * been returned to the player. [NoStreamPath.GONE] and
+     * [NoStreamPath.BLOCKED] stay out of it — those are verdicts, and there is
+     * nothing left worth racing for.
+     */
+    fun extractionBesideWalk(path: NoStreamPath, walkStillRunning: Boolean): Boolean =
+        path == NoStreamPath.EXTRACTION && walkStillRunning
 }
 
 /** The path a resolve takes when nothing in the ladder produced a stream. */

@@ -1205,42 +1205,101 @@ object StreamResolver {
                         "proxy-playback: $videoId race won by ${raced?.first ?: "timeout"} in " +
                             "${MonotonicClock.nowMs() - resolveStart}ms",
                     )
-                    // The window closed without the walk's answer: stop it, or
-                    // it keeps extracting beside the fallback the timeout used
-                    // to end implicitly.
-                    if (raced?.first != "direct") itxEarly?.cancel()
+                    // A proxy win ends the walk: a stream is in hand and
+                    // nothing else is wanted. A window that merely *closed*
+                    // leaves it running — the walk was one request from
+                    // answering, and cancelling it here is what sent every
+                    // gated start into the 11.7 s extraction (11-05 log:
+                    // window closed at 5004 ms, walk cancelled, extraction
+                    // answered at 16725 ms). It is raced against extraction
+                    // below and stopped by the finally either way.
+                    if (raced != null && raced.first != "direct") itxEarly?.cancel()
                     raced?.second
                 } else {
                     innerTubeXLeg()
                 }
             } else {
                 tryInnerTubeXWatchingDirect(null) ?: tryDirect()
-            }) ?: when (BlockedStartPolicy.afterNoStream(goneRefusal(), blockedSignal)) {
-                NoStreamPath.GONE -> {
-                    // The direct ladder may have been the one to name the claim
-                    // or the deletion. Extraction reads the same watch page and
-                    // would spend its attempts repeating that answer.
-                    throw PermanentlyUnplayableException(
-                        goneReason() ?: "이 노래는 재생할 수 없습니다",
-                    )
-                }
-                NoStreamPath.BLOCKED -> {
-                    // The first region/refusal signal already said what
-                    // extraction will say: it reads the same watch page.
-                    // Spending its three attempts is the remaining silence in
-                    // the report, so stop here and let playback spend the
-                    // reserved budget on a catalogue copy or the next row.
-                    TrackLog.w(
-                        TAG,
-                        "blocked-start: $videoId extraction skipped after the first refusal at " +
-                            "${MonotonicClock.nowMs() - resolveStart}ms",
-                    )
-                    throw PermanentlyUnplayableException(blockedReason())
-                }
-                NoStreamPath.EXTRACTION -> run {
-                    TrackLog.w(TAG, "InnerTubeX found no usable stream for $videoId; falling back to extraction")
-                    timed("$videoId newPipeStream") { newPipeStream(videoId, ::pickForQuality) }
-                        .also { served(ResolutionOrder.NEW_PIPE, "NewPipe") }
+            }) ?: run {
+                val noStreamPath = BlockedStartPolicy.afterNoStream(goneRefusal(), blockedSignal)
+                // The walk that outlived the proxy window above, if it is
+                // still asking. It is the only thing here that can answer
+                // sooner than extraction — see [extractionBesideWalk].
+                val lateWalk = itxEarly?.takeIf { it.isActive }
+                when (noStreamPath) {
+                    NoStreamPath.GONE -> {
+                        // The direct ladder may have been the one to name the claim
+                        // or the deletion. Extraction reads the same watch page and
+                        // would spend its attempts repeating that answer.
+                        throw PermanentlyUnplayableException(
+                            goneReason() ?: "이 노래는 재생할 수 없습니다",
+                        )
+                    }
+                    NoStreamPath.BLOCKED -> {
+                        // The first region/refusal signal already said what
+                        // extraction will say: it reads the same watch page.
+                        // Spending its three attempts is the remaining silence in
+                        // the report, so stop here and let playback spend the
+                        // reserved budget on a catalogue copy or the next row.
+                        TrackLog.w(
+                            TAG,
+                            "blocked-start: $videoId extraction skipped after the first refusal at " +
+                                "${MonotonicClock.nowMs() - resolveStart}ms",
+                        )
+                        throw PermanentlyUnplayableException(blockedReason())
+                    }
+                    NoStreamPath.EXTRACTION -> {
+                        if (BlockedStartPolicy.extractionBesideWalk(noStreamPath, lateWalk != null)) {
+                            // The window that just closed used to cancel this
+                            // walk and pay the 11.7 s extraction for it.
+                            // Whichever answers first is played; the other is
+                            // stopped, so a late walk can only shorten this
+                            // fallback — it is never adopted after a stream has
+                            // been returned (the `finally` stops the loser and
+                            // nothing above re-resolves this row).
+                            //
+                            // `direct`/`proxy` are [raceForFirstSuccess]'s
+                            // labels: here they are the walk and extraction.
+                            var extractionFailure: Throwable? = null
+                            val raced = raceForFirstSuccess(
+                                direct = { lateWalk!!.await() },
+                                proxy = {
+                                    try {
+                                        timed("$videoId newPipeStream") {
+                                            newPipeStream(videoId, ::pickForQuality)
+                                        }
+                                    } catch (cancelled: CancellationException) {
+                                        throw cancelled
+                                    } catch (e: Exception) {
+                                        // Kept so a failed extraction still
+                                        // reports its own reason (a bot check
+                                        // is not a generic failure).
+                                        extractionFailure = e
+                                        throw e
+                                    }
+                                },
+                            )
+                            val walkWon = raced.first == "direct" && raced.second != null
+                            TrackLog.d(
+                                TAG,
+                                "TIMING $videoId late walk: ${if (walkWon) "adopted" else "dropped"} " +
+                                    "${MonotonicClock.nowMs() - resolveStart}ms",
+                            )
+                            val picked = raced.second
+                            if (picked == null) {
+                                throw extractionFailure
+                                    ?: IOException("stream resolution found no stream for $videoId")
+                            }
+                            // A walk winner has already named its own path
+                            // through [served] in its onServed callback.
+                            if (!walkWon) served(ResolutionOrder.NEW_PIPE, "NewPipe")
+                            picked
+                        } else {
+                            TrackLog.w(TAG, "InnerTubeX found no usable stream for $videoId; falling back to extraction")
+                            timed("$videoId newPipeStream") { newPipeStream(videoId, ::pickForQuality) }
+                                .also { served(ResolutionOrder.NEW_PIPE, "NewPipe") }
+                        }
+                    }
                 }
             }
         } catch (e: CancellationException) {

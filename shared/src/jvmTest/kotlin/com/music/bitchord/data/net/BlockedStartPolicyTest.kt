@@ -324,6 +324,41 @@ class BlockedStartPolicyTest {
     }
 
     @Test
+    fun `a walk that outlived the proxy window is raced with extraction, not cancelled first`() {
+        // The 11-05 smoke: the window closed at 5004 ms and the walk was
+        // cancelled there, so the resolver spent another 11716 ms extracting
+        // for an answer that was one request away. A walk still running is
+        // raced against extraction instead.
+        assertTrue(
+            BlockedStartPolicy.extractionBesideWalk(
+                path = NoStreamPath.EXTRACTION,
+                walkStillRunning = true,
+            ),
+        )
+        assertFalse(
+            BlockedStartPolicy.extractionBesideWalk(
+                path = NoStreamPath.EXTRACTION,
+                walkStillRunning = false,
+            ),
+            "with no walk in flight extraction is the plain failsafe, as before",
+        )
+        assertFalse(
+            BlockedStartPolicy.extractionBesideWalk(
+                path = NoStreamPath.BLOCKED,
+                walkStillRunning = true,
+            ),
+            "a gate refusal is a verdict: extraction is skipped, never raced",
+        )
+        assertFalse(
+            BlockedStartPolicy.extractionBesideWalk(
+                path = NoStreamPath.GONE,
+                walkStillRunning = true,
+            ),
+            "a gone recording leaves nothing worth racing for",
+        )
+    }
+
+    @Test
     fun `the step log line names the id, step, result and elapsed time`() {
         assertEquals(
             "blocked-start: abc step=proxy result=failed ms=3700",
