@@ -81,9 +81,14 @@ class CachedRenditionBarTest {
 
     @Test
     fun `what cannot be read or measured is not evidence`() {
-        assertNull(
+        // An unreadable head says nothing about the container, so that half is
+        // left unanswered — the runtime is still the row's or it is not.
+        assertEquals(
+            CachedRenditionBar.Refusal.DURATION,
             CachedRenditionBar.refusal(true, head = null, rowSeconds = 234, renditionSeconds = 162),
         )
+        // A row with no runtime, or bytes no decoder has measured, leaves the
+        // runtime half unanswered. Unanswered is not "fine".
         assertNull(
             CachedRenditionBar.refusal(true, head = flacHead, rowSeconds = null, renditionSeconds = 162),
         )
