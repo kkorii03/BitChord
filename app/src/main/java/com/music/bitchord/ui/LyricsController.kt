@@ -144,6 +144,13 @@ class LyricsController(
     private var mismatchReloadedFor: String? = null
 
     /**
+     * The video whose sheet was already re-asked for, once, after its song
+     * version answered late. One extra request per playback: asking again
+     * would buy the same answer.
+     */
+    private var lateSheetAskedFor: String? = null
+
+    /**
      * The lyrics whose first ninety seconds were already heard for a measured
      * song's refine in this playback. Keeps a refusal (no audio, a 429) from
      * being asked again on every timing refresh; a different track or sound
@@ -308,6 +315,7 @@ class LyricsController(
             songCheckStartedFor = null
             refineHeardStartedFor = null
             mismatchReloadedFor = null
+            lateSheetAskedFor = null
         }
         lyricsGeneration += 1
         val generation = lyricsGeneration
@@ -889,6 +897,15 @@ class LyricsController(
                     }
                 }
             }
+            // The row's song version answered after its first sound: the video
+            // keeps playing, so its own captions are the only sheet timed to
+            // the recording being heard. One ask per playback — see
+            // [askForVideoSheet].
+            launch {
+                LyricsTiming.lateSheetWanted.collect { videoId ->
+                    askForVideoSheet(generation, videoId)
+                }
+            }
             // A stream that is still arriving when the lyrics load becomes a
             // complete analysis copy later. The cache says so as it commits
             // the last span; re-read the audio term once, then, so the action
@@ -1374,6 +1391,52 @@ class LyricsController(
             startRefineHeardIfNeeded(request, lines, refineFrom, audioSource, generation)
         }
         rejectWrongLyricsIfHeard(generation, request, lines)
+    }
+
+    /**
+     * The row's song version answered after its first sound, so this video
+     * keeps playing its own audio: every provider's sheet is timed to the
+     * release, and with AI timing off nothing moves it onto the video's clock.
+     * The one sheet that belongs to the recording being heard is the video's
+     * own captions, so that source is asked once per playback. A hit replaces
+     * the sheet — [publishLyrics] then shows it as the video's own, with no
+     * measurement on top of it — and a miss leaves what is on screen alone.
+     */
+    private fun askForVideoSheet(generation: Long, videoId: String) {
+        val request = currentLyricsRequest ?: return
+        if (generation != lyricsGeneration || request.videoId != videoId || !request.isVideo) return
+        // Nothing on screen yet: the lookup already asks this source first.
+        if (_lyrics.value == null) return
+        // Already the video's own sheet, or a base (a measurement, an AI
+        // answer) that has put the release's sheet on this video's clock.
+        if (LyricsTiming.timedToVideo(_lyricsSource.value)) return
+        if (appliedTiming?.base != null) return
+        // A file's own lyrics belong to the file that is playing.
+        if (fileLyricsLabel != null) return
+        val source = LyricsSource.YOUTUBE_TRANSCRIPT
+        if (source.hidden || source !in AppSettings.lyricsSources.value) return
+        if (lateSheetAskedFor == videoId) return
+        lateSheetAskedFor = videoId
+        val shown = _lyricsSource.value?.label ?: fileLyricsLabel ?: "file"
+        val state = _lyricsProviderStates.value[source]
+        if (state != null && state != LyricsProviderState.FETCHING &&
+            state != LyricsProviderState.FOUND && state != LyricsProviderState.NOT_FETCHED
+        ) {
+            // The lookup already asked, and this video has no captions. The
+            // sheet stays the release's; say so once, for the sync line.
+            TrackLog.i(
+                "BitChord",
+                "lyrics-sync: $videoId sheet $shown kept (late version, ai=off, no video sheet)",
+                videoId,
+            )
+            return
+        }
+        TrackLog.i(
+            "BitChord",
+            "lyrics-sync: $videoId sheet $shown -> YouTube 자막 (late version, ai=off)",
+            videoId,
+        )
+        selectLyricsProvider(source)
     }
 
     /**
