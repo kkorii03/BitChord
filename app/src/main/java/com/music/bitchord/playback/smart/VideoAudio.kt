@@ -205,6 +205,25 @@ object VideoAudio {
         return copy.cachedPrefix >= need
     }
 
+    /**
+     * How long a measurement waits for the row's own opening before giving up.
+     *
+     * A video row plays the video stream, so its audio is written only because
+     * something asked for it; the ordinary budget is the 30 s the pass has
+     * always had. A late song-version answer is the authoritative pairing and
+     * gets [LATE_MEASUREMENT_OPENING_WAIT_MS]: the 11-05 smoke (41957291428)
+     * had the MV's own opening land 62 s after that answer, 32 s past the old
+     * wait, and all three MV rows then measured nothing.
+     */
+    internal fun measurementOpeningWaitMs(lateVersion: Boolean): Long =
+        if (lateVersion) LATE_MEASUREMENT_OPENING_WAIT_MS else MEASUREMENT_OPENING_WAIT_MS
+
+    /** The wait a measurement gives a row's own opening. */
+    internal const val MEASUREMENT_OPENING_WAIT_MS = 30_000L
+
+    /** The same wait when the row's song version arrived after its first sound. */
+    internal const val LATE_MEASUREMENT_OPENING_WAIT_MS = 90_000L
+
     /** Bytes of [copy] to the end of the [untilSeconds] window, or null when its size or the song's is unknown. */
     private fun openingBytes(
         copy: AudioCache.Rendition,
