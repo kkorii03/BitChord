@@ -3461,7 +3461,13 @@ object LyricsTiming {
             return SongCheck("no-words", null, emptyList(), null, null, seconds, null, 0, probe?.failure, listenClock)
         }
         val texts = indices.map { lines[it].text }
-        val language = com.music.bitchord.data.lyrics.Deepgram.languageFor(texts)
+        val sheetLanguage = com.music.bitchord.data.lyrics.Deepgram.languageFor(texts)
+        // A mixed sheet's one retry listens in its other script; still one request, still 2 per lyrics text.
+        val retryLanguage = if (retry) com.music.bitchord.data.lyrics.Deepgram.retryLanguageFor(texts, sheetLanguage) else null
+        val language = retryLanguage ?: sheetLanguage
+        val mixed = com.music.bitchord.data.lyrics.Deepgram.mixedPercent(texts, sheetLanguage)
+        if (mixed > 0) TrackLog.d(TAG, "song-sync: lang=$sheetLanguage sheet-mixed ratio=$mixed%", song.videoId)
+        if (retryLanguage != null) TrackLog.d(TAG, "song-sync: lang retry ($sheetLanguage -> $retryLanguage)", song.videoId)
         val answer = listenForSong(context, song.videoId, key, audio, language, probe) ?: return null
         val heard = answer.words ?: run {
             songLog(song.videoId, "no-answer", null, null, seconds, words = 0, http = answer.httpCode)
