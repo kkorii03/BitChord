@@ -652,7 +652,10 @@ if adb shell test -d "$APP_DIR/synctest" >/dev/null 2>&1; then
 fi
 adb shell rm -f "$APP_DIR/sync-test.flag" >/dev/null 2>&1 || true
 
-CHECK_ARGS=("$OUT/smoke-logcat.txt" --report "$OUT/smoke-report.md" --songs "$SONGS_FILE")
+CHECK_ARGS=("$OUT/smoke-logcat.txt" --report "$OUT/smoke-report.md")
+# A scenario run plays no songs, so no row can be judged: handing the list over
+# would trip the "nothing could be judged" rule on a run that never tried.
+[ "$SCENARIO_MODE" = 1 ] || CHECK_ARGS+=(--songs "$SONGS_FILE")
 if [ "$HQ_CONFIGURED" = 1 ]; then
   CHECK_ARGS+=(--hq-configured)
 fi
