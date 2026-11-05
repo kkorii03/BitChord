@@ -899,6 +899,45 @@ object TrackMatcher {
         return abs(actualSec - expectedSec) > DURATION_LIMIT_SEC
     }
 
+    /**
+     * Under this, a file is a preview clip rather than a song.
+     *
+     * The catalogue services hand out thirty-second excerpts of the real
+     * recording, and an addon that answers with one is not lying about its
+     * container or its bitrate — only about being the track. Measured (phone
+     * 11-05): NEON (rlYOsUfpi3M) played 30s of `audio/mpeg` 128kbps against a
+     * three-minute row, from a copy an earlier play had cached, and the lyrics
+     * sheet then refused to sync against it (`refused-match match=47%`).
+     */
+    const val PREVIEW_SEC = 60
+
+    /**
+     * Whether a stream that runs [actualSec] may play as the recording
+     * [expectedSec] long.
+     *
+     * Three ways to be the wrong file, in order of certainty:
+     *
+     *  - **A preview.** Anything under [PREVIEW_SEC] against a row that is
+     *    longer than that is an excerpt, whatever else it claims.
+     *  - **Half the row.** A stream that would run out before the row is half
+     *    over is not a shorter edit of it; it is a different recording or a
+     *    truncated one.
+     *  - [isSevereMismatch]. The long-standing window, which still catches
+     *    the moderate differences the two rules above are too blunt for.
+     *
+     * Unknown on either side passes. An unmeasured length is not evidence — a
+     * container that states none is common — and refusing on it would block
+     * good tracks, which is worse than the wrong file this exists to stop.
+     */
+    fun isWrongLength(expectedSec: Int?, actualSec: Int?): Boolean {
+        if (expectedSec == null || actualSec == null || actualSec <= 0) return false
+        // A row that is itself a clip has no longer recording to be short of.
+        if (expectedSec < PREVIEW_SEC) return isSevereMismatch(expectedSec, actualSec)
+        if (actualSec < PREVIEW_SEC) return true
+        if (actualSec * 2 < expectedSec) return true
+        return isSevereMismatch(expectedSec, actualSec)
+    }
+
     /** Visual intros/outros can make the video substantially longer than its audio master. */
     const val VIDEO_DURATION_LIMIT_SEC = 90 // [KO] track-matcher
 

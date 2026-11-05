@@ -1,7 +1,9 @@
 package com.music.bitchord.data.sources
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -55,5 +57,58 @@ class TrackMatcherDurationGapTest {
     fun `a huge minute count does not overflow into a plausible runtime`() {
         assertNull(TrackMatcher.secondsOf("100000000:00"))
         assertNull(TrackMatcher.secondsOf("2147483647:59"))
+    }
+
+    /**
+     * The preview clip that played instead of the song.
+     *
+     * Phone 11-05: NEON (rlYOsUfpi3M) is a three-minute row and 30 seconds of
+     * `audio/mpeg` 128kbps played — the shape of a catalogue service's preview
+     * excerpt, which is the right container at the right bitrate and only the
+     * length gives it away. The lyrics sheet then refused to sync against it
+     * (`refused-match match=47%`).
+     */
+    @Test
+    fun `a preview clip is the wrong length for a song`() {
+        assertTrue(TrackMatcher.isWrongLength(expectedSec = 180, actualSec = 30))
+    }
+
+    @Test
+    fun `a stream that runs out before the row is half over is the wrong length`() {
+        assertTrue(TrackMatcher.isWrongLength(expectedSec = 180, actualSec = 80))
+        assertTrue(TrackMatcher.isWrongLength(expectedSec = 240, actualSec = 119))
+    }
+
+    /** The long-standing window still catches what the two rules above are too blunt for. */
+    @Test
+    fun `a moderate difference beyond the severe window is the wrong length`() {
+        assertTrue(TrackMatcher.isWrongLength(expectedSec = 180, actualSec = 145))
+    }
+
+    @Test
+    fun `the same recording is not the wrong length`() {
+        assertFalse(TrackMatcher.isWrongLength(expectedSec = 180, actualSec = 180))
+        assertFalse(TrackMatcher.isWrongLength(expectedSec = 180, actualSec = 178))
+        assertFalse(TrackMatcher.isWrongLength(expectedSec = 180, actualSec = 205))
+    }
+
+    /**
+     * An unmeasured length is not evidence. A container that states none is
+     * common, and refusing on it would block good tracks — worse than the wrong
+     * file this exists to stop.
+     */
+    @Test
+    fun `an unknown length passes`() {
+        assertFalse(TrackMatcher.isWrongLength(expectedSec = null, actualSec = 30))
+        assertFalse(TrackMatcher.isWrongLength(expectedSec = 180, actualSec = null))
+        assertFalse(TrackMatcher.isWrongLength(expectedSec = 180, actualSec = 0))
+    }
+
+    /** A row that is itself a clip has no longer recording to be short of. */
+    @Test
+    fun `a short row is judged only against its own window`() {
+        assertFalse(TrackMatcher.isWrongLength(expectedSec = 30, actualSec = 30))
+        assertFalse(TrackMatcher.isWrongLength(expectedSec = 45, actualSec = 30))
+        assertTrue(TrackMatcher.isWrongLength(expectedSec = 45, actualSec = 5))
     }
 }

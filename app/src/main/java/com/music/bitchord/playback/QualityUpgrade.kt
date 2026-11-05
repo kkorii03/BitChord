@@ -4,6 +4,7 @@ import android.net.Uri
 import android.util.Log
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.NerdStats
+import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
@@ -680,8 +681,12 @@ object QualityUpgrade {
      * for a track already playing YouTube's Opus. The row did nothing, and the
      * one row that would have helped was the one it was standing in front of.
      *
-     * Both halves are required, and each rules out a different wrong answer:
+     * Three answers are weighed, in order, and each rules out a different wrong
+     * one:
      *
+     *  - **The decoder's own source, when it names a configured one.** See
+     *    [decodedKind]. The only record of what is really being read, and it
+     *    answers from the source's identity rather than from a label.
      *  - **No upgrade marker on the item.** [StreamChoice] records the copy the
      *    *first* resolve settled on and is not cleared when an upgrade swaps a
      *    better one in, so on a successfully upgraded track it still names
@@ -699,14 +704,22 @@ object QualityUpgrade {
      *   after a restart read as unknown, which is every such track: the menu
      *   offered "Revert to original" over YouTube's own Opus and hid "Upgrade
      *   quality", the one row that could have helped.
+     * @param decodedKind the kind of configured source behind the stream the
+     *   decoder is actually reading — see [KoQualityUpgrade.decodedKindOf].
+     *   Asked first because it is the only record of what is really playing,
+     *   and it answers *only* from the source's own identity: the display name
+     *   it used to answer from is a label, and for a cached substitute it reads
+     *   "YouTube" whatever is on disk (phone 11-05, NEON: a 30s `audio/mpeg`
+     *   preview out of the cache, offered "Upgrade quality" and no revert row).
      */
     fun isKnownToBePlayingYouTubesOwn(
         mediaId: String,
         rendition: String?,
         cachedOrigin: AudioCache.Origin? = null,
+        decodedKind: SourceKind? = null,
     ): Boolean {
         if (rendition != null) return false
-        KoQualityUpgrade.youtubeOwnVerdict(mediaId)?.let { return it } // [KO] source-identity
+        decodedKind?.let { return it == SourceKind.YOUTUBE }
         StreamChoice.of(mediaId)?.let { return !StreamChoice.isSubstitute(mediaId) }
         return cachedOrigin == AudioCache.Origin.YOUTUBE
     }

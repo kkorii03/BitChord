@@ -150,6 +150,7 @@ import com.music.bitchord.ko.KoFirstHomeContentEffect
 import com.music.bitchord.ko.KoFirstPlayNotificationPermission
 import com.music.bitchord.ko.KoForkAlerts
 import com.music.bitchord.ko.KoProxyHealthNotice
+import com.music.bitchord.ko.KoQualityUpgrade
 import com.music.bitchord.ko.koSongMenuStates
 import com.music.bitchord.ko.koBrowsePlaylist
 import com.music.bitchord.ko.koPlayDetailSongs
@@ -6687,6 +6688,7 @@ private fun playingYouTubesOwn(videoId: String, controller: MediaController?): B
         videoId,
         uri?.let(QualityUpgrade::cacheTag),
         uri?.let(AudioCache::originOf),
+        KoQualityUpgrade.decodedKindOf(videoId),
     )
 }
 
