@@ -272,7 +272,12 @@ class CrashTest(unittest.TestCase):
 
 
 class NextPrepTest(unittest.TestCase):
-    def test_mv_id_left_in_version_fails(self):
+    def test_a_kept_version_is_not_an_mv(self):
+        # fa49493c7: the lookup also runs for rows of unknown type and keeps a
+        # song version that already is one, so a "kept" line alone is no
+        # evidence of an MV (10-26: Burn the House Down, AJR - Topic, was
+        # failed by it). A real MV still fails through its title or the
+        # "no official song match" line, below.
         log = "\n".join(
             [
                 log_line("song version: mv1 kept (none)"),
@@ -282,9 +287,7 @@ class NextPrepTest(unittest.TestCase):
                 ),
             ]
         )
-        result = statuses(log)[6]
-        self.assertEqual("FAIL", result.status)
-        self.assertIn("version=mv1", result.details[0])
+        self.assertEqual("PASS", statuses(log)[6].status)
 
     def test_resolved_version_passes(self):
         log = "\n".join(
