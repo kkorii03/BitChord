@@ -340,8 +340,8 @@ class AudioSwitchArtistNameTest {
         )
         LyricsMismatch.rememberRejected(swapped.videoId, LyricsSource.LRCLIB, emptyList(), verdict)
         assertNull(
-            "one provider's wrong sheet is a wrong sheet",
             LyricsMismatch.wrongSoundNote(swapped.videoId),
+            "one provider's wrong sheet is a wrong sheet",
         )
         LyricsMismatch.rememberRejected(swapped.videoId, LyricsSource.KUGOU, emptyList(), verdict)
         assertEquals(
