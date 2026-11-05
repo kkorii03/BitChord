@@ -15,8 +15,8 @@
 #
 # Usage: scripts/smoke/run.sh
 # Result: shots/smoke-logcat.txt, shots/smoke-report.md, shots/synctest/*.wav,
-# and the checker's exit code (0 = all checks pass or skip, 1 = a check failed,
-# 2 = the APK/log/report was unreadable).
+# and the checker's exit code (0 = all checks pass or skip, 1 = a check failed
+# or nothing could be judged, 2 = the APK/log/report was unreadable).
 set -u
 set -x
 
@@ -51,6 +51,37 @@ HQ_CONFIGURED=0
   echo "smoke: song list not found: $SONGS_FILE" >&2
   exit 2
 }
+
+# A list whose columns are swapped (kind<TAB>id instead of id<TAB>kind) once
+# sent `am start ... watch?v=mv`, the app failed to resolve "mv" and the run
+# spent its 25 minutes on a song nobody asked for. Check the whole list before
+# the first play; the skip rule is the one SONGS_TOTAL uses below.
+validate_songs() {
+  local line key rest kind n=0 bad=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    n=$((n + 1))
+    line=${line%$'\r'}
+    case "$line" in
+      ''|'#'*|[[:space:]]*'#'*|[[:space:]]*) continue ;;
+    esac
+    key=${line%%$'\t'*}
+    rest=${line#*$'\t'}
+    kind=${rest%%$'\t'*}
+    case "$key" in
+      search:*) ;;
+      *) [[ $key =~ ^[A-Za-z0-9_-]{11}$ ]] || bad=1 ;;
+    esac
+    case "$kind" in
+      mv|hq|cover|plain) ;;
+      *) bad=1 ;;
+    esac
+    if [ "$bad" = 1 ]; then
+      echo "smoke: bad song list line $n: $line" >&2
+      return 2
+    fi
+  done < "$1"
+}
+[ "$SCENARIO_MODE" = 1 ] || validate_songs "$SONGS_FILE" || exit 2
 
 APK=$(ls app/build/outputs/apk/dev/debug/*x86_64*.apk 2>/dev/null | head -1)
 [ -z "$APK" ] && APK=$(ls app/build/outputs/apk/dev/debug/*universal*.apk 2>/dev/null | head -1)

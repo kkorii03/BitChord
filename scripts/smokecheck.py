@@ -12,7 +12,9 @@ Usage:
     python3 scripts/smokecheck.py logcat.txt --songs scripts/smoke/songs.txt
 
 Exit code is 1 when any check fails, 0 when every check passes or is skipped,
-and 2 when the log or the song list cannot be read (or the log is empty).
+and 2 when the log or the song list cannot be read (or the log is empty). A run
+where no song-list row could be judged at all (every mv/hq/cover check skipped)
+is also 1: it proves nothing.
 """
 
 from __future__ import annotations
@@ -556,7 +558,20 @@ def check_log(
     return checks
 
 
-def render_table(checks: list[Check], log_path: str) -> str:
+def nothing_judged(checks: list[Check], songs: list[SongSpec] | None) -> bool:
+    """True when not one row of the song list could be judged.
+
+    A list whose columns are swapped (kind<TAB>id) has no row of a known kind,
+    so every kind check skips and the run used to report success (set-c/set-d,
+    11-05) although nothing was ever looked at.
+    """
+    if songs is None:
+        return False
+    kind_checks = [check for check in checks if check.number in (1, 4, 7)]
+    return bool(kind_checks) and all(check.status == "SKIP" for check in kind_checks)
+
+
+def render_table(checks: list[Check], log_path: str, invalid: bool = False) -> str:
     headers = ["#", "항목", "판정", "상세"]
     rows = [
         [
@@ -580,10 +595,13 @@ def render_table(checks: list[Check], log_path: str) -> str:
     lines.extend(render(row) for row in rows)
     lines.append(separator)
     failed = [check for check in checks if not check.passed]
-    lines.append(
-        f"결과: {'FAIL' if failed else 'PASS'} "
-        f"({len(failed)}/{len(checks)} 실패)"
-    )
+    if invalid:
+        lines.append("결과: INVALID: nothing could be judged (판정한 곡 없음)")
+    else:
+        lines.append(
+            f"결과: {'FAIL' if failed else 'PASS'} "
+            f"({len(failed)}/{len(checks)} 실패)"
+        )
     if failed:
         lines.append(
             "실패: " + ", ".join(f"{check.number}. {check.name}" for check in failed)
@@ -595,14 +613,18 @@ def _markdown(text: str) -> str:
     return text.replace("|", "\\|").replace("\n", " ").replace("\r", " ")
 
 
-def render_markdown(checks: list[Check], log_path: str) -> str:
+def render_markdown(checks: list[Check], log_path: str, invalid: bool = False) -> str:
     failed = [check for check in checks if not check.passed]
+    result = (
+        "INVALID: nothing could be judged (판정한 곡 없음)"
+        if invalid
+        else f"{'FAIL' if failed else 'PASS'} ({len(failed)}/{len(checks)} 실패)"
+    )
     lines = [
         "# BitChord smoke check",
         "",
         f"- 로그: `{log_path}`",
-        f"- 결과: **{'FAIL' if failed else 'PASS'}** "
-        f"({len(failed)}/{len(checks)} 실패)",
+        f"- 결과: **{result}**",
         "",
         "| # | 항목 | 판정 | 상세 |",
         "|---|---|---|---|",
@@ -661,20 +683,28 @@ def main(argv: list[str] | None = None) -> int:
             return 2
 
     checks = check_log(text, songs=songs, hq_configured=args.hq_configured)
-    print(render_table(checks, args.logcat))
+    invalid = nothing_judged(checks, songs)
+    print(render_table(checks, args.logcat, invalid=invalid))
 
     if args.report:
         report = Path(args.report)
         try:
             report.write_text(
-                render_markdown(checks, args.logcat), encoding="utf-8"
+                render_markdown(checks, args.logcat, invalid=invalid),
+                encoding="utf-8",
             )
         except OSError as error:
             print(f"smokecheck: 보고서를 쓸 수 없습니다: {error}", file=sys.stderr)
             return 2
         print(f"보고서: {report}")
 
-    return 1 if any(not check.passed for check in checks) else 0
+    if invalid:
+        print(
+            "smokecheck: INVALID: nothing could be judged "
+            "(곡 목록의 어느 행도 판정되지 않음)",
+            file=sys.stderr,
+        )
+    return 1 if invalid or any(not check.passed for check in checks) else 0
 
 
 if __name__ == "__main__":
