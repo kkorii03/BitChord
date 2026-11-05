@@ -4,6 +4,7 @@ import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.firstArtworkOrStill
+import com.music.bitchord.data.videoradio.isTopicChannel
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -271,7 +272,7 @@ internal object YouTubeWebParser {
             thumbnailUrl = item.thumbnailUrl,
             durationText = duration,
             channelId = lockup.bylineChannelId(),
-            isVideo = lockupIsVideo(lockup),
+            isVideo = lockupIsVideo(lockup, item.subtitle),
         )
     }
 
@@ -286,7 +287,7 @@ internal object YouTubeWebParser {
             durationText = video.findObject("lengthText")?.text()
                 ?.takeIf { DURATION.matches(it) },
             channelId = video.bylineChannelId(),
-            isVideo = video.isVideoRow(),
+            isVideo = video.isVideoRow(item.subtitle),
         )
     }
 
@@ -302,7 +303,7 @@ internal object YouTubeWebParser {
                 ?.takeIf { DURATION.matches(it) },
             channelId = video.bylineChannelId(),
             setVideoId = video.string("setVideoId"),
-            isVideo = video.isVideoRow(),
+            isVideo = video.isVideoRow(item.subtitle),
         )
     }
 
@@ -310,20 +311,29 @@ internal object YouTubeWebParser {
      * Whether a youtube.com row is a music-video upload rather than the
      * catalogue recording.
      *
-     * The web renderers carry no `musicVideoType`, so this applies the same
-     * fallback [InnertubeParser.parseResponsiveListItem] uses when that field
-     * is absent: a widescreen thumbnail is an upload, square art is the
+     * A `- Topic` owner is YouTube's auto-generated audio channel, so its row is
+     * the catalogue recording however the picture is framed: measured on
+     * 2026-11-05, a youtube.com video search answers 720x404 for every row —
+     * the label's own audio uploads included — so the frame alone cannot tell
+     * them apart there. Reading the shape first made every fallback row a video
+     * and left the song-version search with no audio candidate at all.
+     *
+     * Otherwise the web renderers carry no `musicVideoType`, so this applies the
+     * same fallback [InnertubeParser.parseResponsiveListItem] uses when that
+     * field is absent: a widescreen thumbnail is an upload, square art is the
      * catalogue release. A "Music Video" badge is the second signal; a row
      * without either stays a song, which only costs the version lookup rather
      * than risking a swap of a track that is already the right one.
      */
-    private fun JsonObject.isVideoRow(): Boolean =
-        findObject("thumbnail").isWideThumbnail() ||
-            collectObjects(this, "metadataBadgeRenderer")
-                .mapNotNull { it.string("label") }
-                .any { MUSIC_BADGE.containsMatchIn(it) }
+    private fun JsonObject.isVideoRow(owner: String?): Boolean =
+        !isTopicChannel(owner.orEmpty()) &&
+            (findObject("thumbnail").isWideThumbnail() ||
+                collectObjects(this, "metadataBadgeRenderer")
+                    .mapNotNull { it.string("label") }
+                    .any { MUSIC_BADGE.containsMatchIn(it) })
 
-    private fun lockupIsVideo(lockup: JsonObject): Boolean {
+    private fun lockupIsVideo(lockup: JsonObject, owner: String?): Boolean {
+        if (isTopicChannel(owner.orEmpty())) return false
         val image = lockup.findObject("contentImage")
             ?.findObject("thumbnailViewModel")
             ?.findObject("image")
@@ -580,7 +590,7 @@ internal object YouTubeWebParser {
                 ?.takeIf { DURATION.matches(it) },
             channelId = panel.bylineChannelId(),
             setVideoId = panel.string("playlistSetVideoId") ?: panel.string("setVideoId"),
-            isVideo = panel.isVideoRow(),
+            isVideo = panel.isVideoRow(artist),
         )
     }
 

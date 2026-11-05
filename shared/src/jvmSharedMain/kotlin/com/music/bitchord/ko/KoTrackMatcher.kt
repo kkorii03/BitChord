@@ -760,8 +760,10 @@ internal object KoTrackMatcher {
      * and a genuinely absent one indistinguishable on a device.
      */
     fun songVersionRejectReason(candidate: Song, target: Target): String? {
-        // resolveAudio only offers non-video rows to the two matchers.
-        if (candidate.isVideo) return "type"
+        // resolveAudio only offers non-video rows to the two matchers. A
+        // youtube.com fallback answers every row with a 16:9 still, so this is
+        // the line that says whether the page had an audio row at all.
+        if (candidate.isVideo) return "type(video)"
         // Ask the real gates first, so a candidate they accept can never be
         // logged as rejected because this diagnostic forgot one of their
         // terms. Only the failing check below is reproduced.

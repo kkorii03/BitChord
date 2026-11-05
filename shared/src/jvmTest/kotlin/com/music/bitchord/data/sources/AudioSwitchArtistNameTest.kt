@@ -53,6 +53,16 @@ class AudioSwitchArtistNameTest {
     }
 
     @Test
+    fun `a rejected video row names the type it was dropped for`() {
+        // The youtube.com fallback answers every row with a 16:9 still, so a
+        // device log has to separate "the page held a video" from the other
+        // refusals; 2026-11-05 the line said only `reason=type`.
+        val video = song("CHk5SWVO4p8", "Chocolate", "The 1975", "2:51").copy(isVideo = true)
+
+        assertEquals("type(video)", TrackMatcher.songVersionRejectReason(video, chocolate))
+    }
+
+    @Test
     fun `the reported chocolate video accepts an audio-only row under its own id`() {
         val video = song("CHk5SWVO4p8", "Chocolate", "The 1975", "2:51").copy(isVideo = true)
         val audio = song("CHk5SWVO4p8", "Chocolate", "The 1975", "2:51")
