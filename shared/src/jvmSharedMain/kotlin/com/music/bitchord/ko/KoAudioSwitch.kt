@@ -3,6 +3,8 @@ package com.music.bitchord.ko
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.CatalogSongMapper
 import com.music.bitchord.data.DebugLog as Log
+import com.music.bitchord.data.YouTubeDisplayCleaner
+import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.innertube.SearchKind
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
@@ -17,16 +19,23 @@ internal object KoAudioSwitch {
     private const val TAG = "BitChord"
 
     suspend fun resolveAudioUncached(song: Song): Song {
+        // A shared link or a row saved before the display rule existed can
+        // still carry the uploader as its artist. Both the query and the
+        // match are built from the credit the title states, or the search is
+        // spent on a channel name no catalogue row carries (phone 11-06).
+        // A cover is left exactly as it is: its own title is what the switch
+        // must refuse, not the song it covers.
+        val row = if (CoverTitles.isCover(song)) song else YouTubeDisplayCleaner.cleanUpload(song)
         // A row whose type is still unknown is treated as a video for timing:
         // its runtime may already include a visual intro/outro, and refusing
         // that drift is how the song version was written off.
-        val target = TrackMatcher.audioSwitchTargetOf(song)
+        val target = TrackMatcher.audioSwitchTargetOf(row)
             .copy(isVideo = song.isVideo || song.typeUnknown)
         var queriesRun = 0
         var failedQueries = 0
         var videoRowsOnly = false
         val loggedRejects = HashSet<String>()
-        for (query in TrackMatcher.audioSwitchQueries(song)) {
+        for (query in TrackMatcher.audioSwitchQueries(row)) {
             queriesRun++
             Log.d(TAG, "audio switch: query=$query")
             val page = YtMusicRepository.search(query, SearchFilter.SONGS, SearchKind.AUDIO_SWITCH)

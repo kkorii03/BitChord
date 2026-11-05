@@ -1,5 +1,6 @@
 package com.music.bitchord.data.innertube
 
+import com.music.bitchord.data.YouTubeDisplayCleaner
 import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -48,5 +49,25 @@ class WatchQueueVideoTypeTest {
 
         assertEquals("xz868t23pb4", song.videoId)
         assertFalse(song.isVideo)
+    }
+
+    /**
+     * Phone 11-06: a shared link starts at this watch queue, with no search row
+     * behind it, so the uploader's byline read as the artist and the song
+     * version search asked for the channel. The same display rule every other
+     * row goes through reads the credit the title states.
+     */
+    @Test
+    fun `a shared link's watch row takes the artist its title states`() {
+        val json = watchQueue("NPZtKA6343o", "MUSIC_VIDEO_TYPE_OMV")
+            .replace("A Song", "ILLIT (아일릿) 'You're Under Arrest' Official MV")
+            .replace("An Artist", "HYPE UNIVERSE")
+
+        val row = YouTubeDisplayCleaner.cleanUpload(
+            InnertubeParser.parseWatchQueue(Json.parseToJsonElement(json)).single(),
+        )
+
+        assertEquals("You're Under Arrest", row.title)
+        assertEquals("ILLIT", row.artist)
     }
 }

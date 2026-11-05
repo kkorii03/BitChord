@@ -1,5 +1,6 @@
 package com.music.bitchord.data.sources
 
+import com.music.bitchord.data.YouTubeDisplayCleaner
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.net.SongVersionPolicy
 import kotlin.test.Test
@@ -234,6 +235,39 @@ class AudioSwitchArtistNameTest {
         // A bridge of another act proves nothing about this song.
         val foreign = arrestBridge().copy(artist = "Another Singer")
         assertNull(TrackMatcher.bestTitleBridged(listOf(foreign, audio), listOf(audio), target))
+    }
+
+    /**
+     * Phone 11-06: the shared link's row reached the song version search with
+     * the uploader as its artist, so every query asked for the channel and no
+     * catalogue row could answer. The query is the title and the credit the
+     * title states.
+     */
+    @Test
+    fun `the song version query names the artist, never the channel`() {
+        val row = YouTubeDisplayCleaner.clean(arrestVideo)
+        assertEquals("ILLIT", row.artist)
+
+        val queries = TrackMatcher.audioSwitchQueries(row)
+        assertTrue(queries.any { it.contains("ILLIT") }, queries.toString())
+        assertTrue(queries.none { it.contains("HYPE UNIVERSE", ignoreCase = true) }, queries.toString())
+        assertTrue(queries.none { it.contains("Official MV", ignoreCase = true) }, queries.toString())
+    }
+
+    @Test
+    fun `an upload on the artist's own channel keeps its artist in the query`() {
+        val row = YouTubeDisplayCleaner.clean(
+            Song(
+                videoId = "UPTOWN00001",
+                title = "Uptown Funk (Official Video)",
+                artist = "Mark Ronson",
+                thumbnailUrl = null,
+            ),
+        )
+
+        assertEquals("Mark Ronson", row.artist)
+        val queries = TrackMatcher.audioSwitchQueries(row)
+        assertTrue(queries.any { it.contains("Mark Ronson") }, queries.toString())
     }
 
     @Test
