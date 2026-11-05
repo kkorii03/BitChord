@@ -889,7 +889,9 @@ internal class SongVersionController(
             "music-only: official MV has no audio release, skipped ${song.videoId} ${song.title}",
             about = song.videoId,
         )
-        if (!exoPlayer.seekToNextMediaItem()) {
+        if (exoPlayer.hasNextMediaItem()) {
+            exoPlayer.seekToNextMediaItem()
+        } else {
             // Nothing left in the queue. Stop here; the refill paths are not
             // asked to find something else to play.
             versionHoldWantsPlay = false
