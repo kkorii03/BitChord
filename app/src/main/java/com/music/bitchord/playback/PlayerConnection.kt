@@ -498,6 +498,7 @@ fun MediaItem.toSong() = Song(
     coverSinger = mediaMetadata.extras?.getString(EXTRA_COVER_SINGER),
     coverOriginalArtist = mediaMetadata.extras?.getString(EXTRA_COVER_ORIGINAL_ARTIST),
     videoRadio = mediaMetadata.extras?.getBoolean(EXTRA_VIDEO_RADIO) == true,
+    musicVideoType = mediaMetadata.extras?.getString(EXTRA_MUSIC_VIDEO_TYPE),
 )
 
 internal val mediaItemTiers = java.util.Collections.synchronizedMap(java.util.WeakHashMap<MediaItem, QueueTier>())
@@ -614,6 +615,14 @@ private const val EXTRA_ORIGINAL_ARTIST = "bitchord.originalArtist"
 private const val EXTRA_COVER_SINGER = "bitchord.coverSinger"
 private const val EXTRA_COVER_ORIGINAL_ARTIST = "bitchord.coverOriginalArtist"
 private const val EXTRA_VIDEO_RADIO = "bitchord.videoRadio"
+
+/**
+ * @see Song.musicVideoType — carried so the pre-audio lookup can still tell an
+ * official music video from an upload that exists only as a video once the row
+ * has become a queue item; the version policy skips the first and plays the
+ * second.
+ */
+private const val EXTRA_MUSIC_VIDEO_TYPE = "bitchord.musicVideoType"
 
 /** Set only on the replacement item produced by [QualityUpgrade]. */
 const val EXTRA_QUALITY_UPGRADED = "bitchord.qualityUpgraded"
@@ -871,6 +880,7 @@ fun Song.toMediaItem(useDownloadedFile: Boolean = true): MediaItem {
                             EXTRA_COVER_SINGER to shown.coverSinger,
                             EXTRA_COVER_ORIGINAL_ARTIST to shown.coverOriginalArtist,
                             EXTRA_VIDEO_RADIO to shown.videoRadio,
+                            EXTRA_MUSIC_VIDEO_TYPE to musicVideoType,
                         ),
                     )
                 }

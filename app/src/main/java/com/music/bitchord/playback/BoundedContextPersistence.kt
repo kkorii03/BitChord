@@ -478,6 +478,8 @@ object BoundedContextPersistence {
         val playbackSourceType: String? = null,
         val playbackSourceId: String? = null,
         val videoRadio: Boolean = false,
+        /** @see Song.musicVideoType — what music-only acts on after a restore. */
+        val musicVideoType: String? = null,
     ) {
         fun toSong(): Song? {
             if (videoId.isBlank()) return null
@@ -515,6 +517,7 @@ object BoundedContextPersistence {
                     playbackSourceType = sourceType,
                     playbackSourceId = playbackSourceId,
                     videoRadio = videoRadio,
+                    musicVideoType = musicVideoType,
                 ),
             ).withVideoThumbnailFallback()
         }
@@ -548,6 +551,7 @@ object BoundedContextPersistence {
                 playbackSourceType = song.playbackSourceType?.name,
                 playbackSourceId = song.playbackSourceId,
                 videoRadio = song.videoRadio,
+                musicVideoType = song.musicVideoType,
             )
         }
     }

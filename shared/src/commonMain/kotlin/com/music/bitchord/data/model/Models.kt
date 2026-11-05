@@ -194,6 +194,19 @@ data class Song(
      * mapped row is not a cover.
      */
     val uploadTitle: String? = null,
+    /**
+     * YouTube's own upload kind for a video row: `MUSIC_VIDEO_TYPE_OMV` for an
+     * official music video, `..._UGC` for a fan upload, `..._ATV` for the
+     * catalogue track. Null where the response did not say.
+     *
+     * Kept beside [isVideo] rather than folded into it because "official music
+     * video" is a different fact from "video": an official video is the release
+     * *of* a song that also exists as a catalogue track, so a listener who
+     * asked for music only is owed the song and never the video's own sound.
+     * An upload that exists only as a video — a cover, a live take, a lyric
+     * video — is still played as one.
+     */
+    val musicVideoType: String? = null,
 ) {
     /** Legacy derived property: true if and only if [queueTier] is [QueueTier.AUTOPLAY]. */
     val fromAutoplay: Boolean get() = queueTier == QueueTier.AUTOPLAY

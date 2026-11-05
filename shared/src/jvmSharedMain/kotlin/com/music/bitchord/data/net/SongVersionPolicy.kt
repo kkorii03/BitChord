@@ -190,6 +190,38 @@ object SongVersionPolicy {
     ): Boolean = wantsSongVersion(isVideo, typeUnknown) && !knownMissing
 
     /**
+     * Whether this row must be skipped instead of played: an official music
+     * video whose catalogue release the lookup could not find.
+     *
+     * BitChord is a front end for the music service, not for the video site, so
+     * an official music video is only ever how its song is *found*: the
+     * catalogue release plays, and when there is none the video's own sound is
+     * not something this service offers, so the queue moves on. What the
+     * listener did ask for still plays — an upload that exists only as a video
+     * (a cover, a live take, a lyric video), a video station, and everything at
+     * all when they turned music-only off.
+     *
+     * [alreadySkipped] is the once-per-song guard. A queue that cycles back to
+     * the same video must not skip it again, or a short queue would spin
+     * through it forever; the second time round it plays, which is also what a
+     * deliberate second tap on the row means.
+     */
+    fun skipsOfficialMvWithoutAudio(
+        song: Song,
+        musicOnly: Boolean,
+        audioReleaseMissing: Boolean,
+        alreadySkipped: Boolean,
+    ): Boolean = musicOnly &&
+        audioReleaseMissing &&
+        !alreadySkipped &&
+        !song.videoRadio &&
+        song.isVideo &&
+        song.musicVideoType?.contains("OMV", ignoreCase = true) == true &&
+        // A cover is a performance of its own, and the lookup files it as
+        // "no release" without searching. It is played, never skipped.
+        !CatalogSongMapper.isCover(song)
+
+    /**
      * Whether an automatic song version may replace [row].
      *
      * A cover stays the performance the listener chose: its arrangement
