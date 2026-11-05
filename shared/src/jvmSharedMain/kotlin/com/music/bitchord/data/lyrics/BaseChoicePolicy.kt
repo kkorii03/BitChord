@@ -45,7 +45,20 @@ object BaseChoicePolicy {
     data class Score(val matched: Int, val medianAbsMs: Long, val withinRatio: Double)
 
     /** The chosen name and every candidate's score, for the one-line log. */
-    data class Choice(val name: String, val scores: List<Pair<String, Score>>)
+    data class Choice(
+        val name: String,
+        val scores: List<Pair<String, Score>>,
+        /** Set when the pick was refused for the heard words, for the log. */
+        val reason: String? = null,
+    )
+
+    /**
+     * Whether the heard words, with enough lines to be evidence, put this
+     * candidate further off than a refine can move — not this sheet's timing
+     * (11-06 sVwYpHqdt3o: `none:86560/0% measured:87359/0% -> measured`).
+     */
+    fun belowThreshold(score: Score): Boolean =
+        score.matched >= MIN_MATCHED_LINES && score.medianAbsMs > RefinePolicy.MAX_SHIFT_MS
 
     /** Line starts heard in [words], as [LyricsWordAlign] places them. */
     fun heardStarts(lines: List<String>, words: List<LyricsWordAlign.Heard>): List<Long?> =
@@ -55,8 +68,9 @@ object BaseChoicePolicy {
      * [defaultName] is the candidate the fixed order picked. A different
      * candidate replaces it only when it has at least [MIN_MATCHED_LINES]
      * matched lines, its within-[WITHIN_MS] share is [MIN_RATIO_GAIN] higher,
-     * and its median error is [MIN_MEDIAN_GAIN_MS] smaller. [manual] keeps the
-     * listener's choice whatever the scores say.
+     * and its median error is [MIN_MEDIAN_GAIN_MS] smaller. A pick that is
+     * [belowThreshold] becomes [NONE]. [manual] keeps the listener's choice
+     * whatever the scores say.
      */
     fun choose(
         defaultName: String,
@@ -79,7 +93,12 @@ object BaseChoicePolicy {
                     .thenBy { it.second.medianAbsMs },
             )
             .firstOrNull()
-        return Choice(better?.first ?: defaultName, scores)
+        val pick = better ?: (defaultName to defaultScore)
+        // No correction beats a wrong one: a pick the words refuse leaves the provider's times.
+        if (pick.first != NONE && belowThreshold(pick.second)) {
+            return Choice(NONE, scores, reason = "below threshold")
+        }
+        return Choice(pick.first, scores)
     }
 
     /** Matched lines, median absolute error and the within-[WITHIN_MS] share of one candidate. */

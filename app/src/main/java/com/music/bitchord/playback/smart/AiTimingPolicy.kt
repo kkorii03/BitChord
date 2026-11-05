@@ -30,6 +30,8 @@ internal data class AiTimingKnowledge(
     val attemptedEngines: Set<String> = emptySet(),
     /** Older entries kept only this: Whisper was asked about these lyrics, answered or not. */
     val whisperKey: Int? = null,
+    /** The lyrics a song check answered with words whose fit was refused (kept as heard-check words). */
+    val rejectedKey: Int? = null,
 )
 
 internal object AiTimingPolicy {
@@ -125,6 +127,7 @@ internal object AiTimingPolicy {
                 WHISPER !in spent
             return if (upgrade) listOf(WHISPER) else emptyList()
         }
+        if (songOnly && songRetry(knowledge, lyricsKey)) return SONG_ENGINES
         val pool = when {
             songOnly -> SONG_ENGINES
             measurementGaveUp -> ALL_ENGINES
@@ -155,10 +158,35 @@ internal object AiTimingPolicy {
             }
         }
 
+    /** Marks the second (last) song check on one lyrics text; see [songRetry]. */
+    const val SONG_RETRY = "Deepgram Whisper retry"
+
+    /**
+     * Whether the song check may ask Whisper once more for these lyrics: its
+     * first reply was spent but refused (words heard, fit below the bar), and
+     * the one retry has not been spent yet. Two replies per lyrics text, total;
+     * a refusal used to leave the song uncorrectable for good (vc147 NEON).
+     */
+    fun songRetry(knowledge: AiTimingKnowledge, lyricsKey: Int): Boolean {
+        if (knowledge.rejectedKey != lyricsKey || isAccepted(knowledge, lyricsKey)) return false
+        val spent = spentOn(knowledge, lyricsKey)
+        return DEEPGRAM_WHISPER in spent && SONG_RETRY !in spent
+    }
+
+    /**
+     * What one spent song reply adds to [previous] (the entry's attempted
+     * engines for these lyrics): the engine, plus [SONG_RETRY] when the reply
+     * belongs to the [retry] check — so a third check is never asked. Marked
+     * per reply, not at the start, so a retry that heard nothing (no audio, a
+     * server error) is not used up.
+     */
+    fun songSpent(previous: List<String>, engine: String, retry: Boolean): List<String> =
+        (previous + engine + listOfNotNull(SONG_RETRY.takeIf { retry })).distinct()
+
     /**
      * Why the song check did not start, for its one log line: `deepgram-off`,
-     * `accepted` (the kept answer stands), `spent` (Whisper already answered
-     * these lyrics and its answer was not good enough to show — the provider's
+     * `accepted` (the kept answer stands), `spent` (Whisper's replies for these
+     * lyrics are used up and none was good enough to show — the provider's
      * times stay, nothing else is tried), or `none`.
      */
     fun songSkipReason(knowledge: AiTimingKnowledge, lyricsKey: Int, deepgramUsable: Boolean): String = when {
