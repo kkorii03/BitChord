@@ -84,6 +84,18 @@ class YouTubeWebParserTest {
     }
 
     @Test
+    fun `a wide row from a topic channel is the catalogue song`() {
+        val songs = YouTubeWebParser.parsePlaylist(json(WIDE_TOPIC_AND_UPLOAD)).songs
+
+        assertEquals(listOf("topicAudio1", "stageUploa1"), songs.map { it.videoId })
+        // Both stills are 16:9 — what a youtube.com video search answered for
+        // all 20 rows of a measured query (2026-11-05) — so only the
+        // auto-generated channel tells the label's audio from a stage upload.
+        assertFalse(songs[0].isVideo)
+        assertTrue(songs[1].isVideo)
+    }
+
+    @Test
     fun `home shelves keep only music rows when asked`() {
         val all = YouTubeWebParser.parseHome(json(CHANNEL), musicOnly = false)
         assertEquals(1, all.shelves.size)
@@ -471,6 +483,29 @@ class YouTubeWebParserTest {
                 }}
               ]}}
             ]}}}}]}}}
+        """
+
+        const val WIDE_TOPIC_AND_UPLOAD = """
+            {"contents":{"contents":[
+              {"videoRenderer":{
+                "videoId":"topicAudio1",
+                "title":{"runs":[{"text":"A Song"}]},
+                "ownerText":{"runs":[{"text":"An Artist - Topic"}]},
+                "lengthText":{"simpleText":"3:10"},
+                "thumbnail":{"thumbnails":[
+                  {"url":"https://i.ytimg.com/vi/topicAudio1/hq.jpg","width":720,"height":404}
+                ]}
+              }},
+              {"videoRenderer":{
+                "videoId":"stageUploa1",
+                "title":{"runs":[{"text":"A Song (Live)"}]},
+                "ownerText":{"runs":[{"text":"Music Show"}]},
+                "lengthText":{"simpleText":"3:20"},
+                "thumbnail":{"thumbnails":[
+                  {"url":"https://i.ytimg.com/vi/stageUploa1/hq.jpg","width":720,"height":404}
+                ]}
+              }}
+            ]}}
         """
 
         const val CHANNEL = """

@@ -90,10 +90,13 @@ internal object KoAudioSwitch {
             YtMusicRepository.audioVersionCache[song.videoId] = catalogue
             return catalogue
         }
+        // A row whose type never landed is looked up as a video, so the log has
+        // to say so: it is not the same miss as a page that held no audio row.
+        val shape = (if (videoRowsOnly) " (video rows only)" else "") +
+            (if (song.typeUnknown) " (type unknown)" else "")
         Log.w(
             TAG,
-            "audio switch: no official song match for '${song.title}' by '${song.artist}'" +
-                if (videoRowsOnly) " (video rows only)" else "",
+            "audio switch: no official song match for '${song.title}' by '${song.artist}'" + shape,
         )
         // A search that failed outright is no verdict: leave it retryable
         // instead of remembering the video as having no catalogue release.
