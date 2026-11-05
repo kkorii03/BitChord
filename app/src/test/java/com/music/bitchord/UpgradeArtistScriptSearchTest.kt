@@ -61,12 +61,30 @@ class UpgradeArtistScriptSearchTest {
         durationText = duration,
     )
 
+    /** The 11-05 case: Deezer files ILLIT's "체포하겠어" as "You're Under Arrest". */
+    private fun arrestTarget() = TrackMatcher.Target("체포하겠어", "ILLIT", durationSec = 181)
+
+    private fun row(id: String, title: String, artist: String, duration: String) = Song(
+        videoId = id,
+        title = title,
+        artist = artist,
+        thumbnailUrl = null,
+        durationText = duration,
+    )
+
     private fun walk(source: MusicSource, allowArtistUnverified: Boolean): Pair<SourceStream?, SourceResolver.SearchOutcome?> =
+        walk(source, target(), allowArtistUnverified)
+
+    private fun walk(
+        source: MusicSource,
+        target: TrackMatcher.Target,
+        allowArtistUnverified: Boolean,
+    ): Pair<SourceStream?, SourceResolver.SearchOutcome?> =
         runBlocking {
             val report = SourceResolver.SearchReport()
             val found = SourceResolver.bestAcross(
                 listOf(source),
-                target(),
+                target,
                 StreamRequest.Best,
                 waitForAll = true,
                 strictLength = true,
@@ -116,5 +134,63 @@ class UpgradeArtistScriptSearchTest {
         val (stream, outcome) = walk(source, allowArtistUnverified = true)
         assertNull(stream)
         assertEquals("artist", outcome!!.verdict)
+    }
+
+    // ── A title filed under another script's name (11-05 '체포하겠어') ────────
+    //
+    // The FLAC was in the search results and the search said "no better copy"
+    // because the exact-title gate dropped the row before hq-verify was asked.
+
+    @Test
+    fun `an other-script title row reaches the sound comparison as title-unverified`() {
+        val source = FakeSource(
+            "Deezer",
+            listOf(row("deezer-1", "You're Under Arrest", "ILLIT", "3:01")),
+        )
+        val (stream, outcome) = walk(source, arrestTarget(), allowArtistUnverified = true)
+        assertNotNull(stream)
+        assertTrue(stream!!.url.endsWith("/deezer-1"))
+        assertEquals("title-unverified", outcome!!.verdict)
+    }
+
+    @Test
+    fun `without the upgrade flag an other-script title row is not offered`() {
+        val source = FakeSource(
+            "Deezer",
+            listOf(row("deezer-1", "You're Under Arrest", "ILLIT", "3:01")),
+        )
+        val (stream, outcome) = walk(source, arrestTarget(), allowArtistUnverified = false)
+        assertNull(stream)
+        assertEquals("title", outcome!!.verdict)
+    }
+
+    @Test
+    fun `a different song from the same search never becomes the HQ copy`() {
+        // LastWave answered '체포하겠어' with 'Takedown' by HUNTR/X at 3:02.
+        // Another script and the right length, so only the credit rules it out.
+        val source = FakeSource(
+            "LastWave",
+            listOf(
+                row("takedown", "Takedown", "HUNTR/X, EJAE, AUDREY NUNA, REI AMI", "3:02"),
+            ),
+        )
+        val (stream, outcome) = walk(source, arrestTarget(), allowArtistUnverified = true)
+        assertNull(stream)
+        assertEquals("title", outcome!!.verdict)
+    }
+
+    @Test
+    fun `a normally credited row is chosen before an other-script title row`() {
+        val source = FakeSource(
+            "Deezer",
+            listOf(
+                row("localised", "You're Under Arrest", "ILLIT", "3:01"),
+                row("credited", "체포하겠어", "ILLIT", "3:02"),
+            ),
+        )
+        val (stream, outcome) = walk(source, arrestTarget(), allowArtistUnverified = true)
+        assertNotNull(stream)
+        assertTrue(stream!!.url.endsWith("/credited"))
+        assertEquals("match", outcome!!.verdict)
     }
 }

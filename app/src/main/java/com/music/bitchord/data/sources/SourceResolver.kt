@@ -18,6 +18,7 @@ import com.music.bitchord.ko.isTimeoutFailure
 import com.music.bitchord.ko.offerRank
 import com.music.bitchord.ko.runtimeDrift
 import com.music.bitchord.ko.sourceLookupTimeoutMsFor
+import com.music.bitchord.ko.unverifiedVerdict
 import com.music.bitchord.playback.HqHostTracker
 import com.music.bitchord.playback.StreamRefusalRecovery
 import kotlinx.coroutines.CancellationException
@@ -102,15 +103,15 @@ object SourceResolver {
      * The per-source detail of one search, for the `hq-search` line.
      *
      * [verdict] is why a result was or was not usable:
-     * `match`, `artist-unverified`, `duration`, `title`, `artist`, `version`,
-     * `auth`, `error`, `timeout` or `resting`. [conclusive] is false when the source
-     * could not give a complete answer — a failed backend, a timeout, or being
-     * skipped while resting — which is what stops that "none" from being
-     * remembered as final.
+     * `match`, `artist-unverified`, `title-unverified`, `duration`, `title`,
+     * `artist`, `version`, `auth`, `error`, `timeout` or `resting`. [conclusive]
+     * is false when the source could not give a complete answer — a failed
+     * backend, a timeout, or being skipped while resting — which is what stops
+     * that "none" from being remembered as final.
      *
      * [alternate] is the second-best row found for the same track, kept so a
      * caller whose first choice fails its own accept gate can still consider
-     * an `artist-unverified` copy. It is never adopted without that gate, and
+     * an unverified copy. It is never adopted without that gate, and
      * [alternateVerdict] says which kind of row it is.
      */
     data class SearchOutcome(
@@ -582,6 +583,8 @@ object SourceResolver {
          * candidate is offered to it before it can win, so a cover from a fast
          * source is skipped and the real recording from a slower one is still
          * found — rather than the fastest answer becoming the only answer.
+         * Also admits a row whose artist or title is filed under another
+         * script's name — see `allowArtistUnverified` in `bestAcross`.
          */
         allowArtistUnverified: Boolean = false,
         accept: suspend (MusicSource, SourceStream) -> Boolean = { _, _ -> true },
@@ -1278,8 +1281,10 @@ object SourceResolver {
         requireSharedArtist: Boolean = false,
         strictOriginal: Boolean = false,
         /**
-         * Keep a row whose artist is localised into another script as an
-         * `artist-unverified` candidate. Only the upgrade path sets this: the
+         * Keep a row that differs from the request only in a signal that cannot
+         * be compared — an artist localised into another script
+         * (`artist-unverified`) or a title filed under the catalogue's own
+         * language (`title-unverified`). Only the upgrade path sets this: the
          * caller then has `hq-verify` accept it before it may play.
          */
         allowArtistUnverified: Boolean = false,
@@ -1718,7 +1723,7 @@ object SourceResolver {
             // script are kept apart so the ordinary match order still wins.
             // Judged over every result, not just the top row: the localised
             // copy is often not what the search backend puts first.
-            val artistUnverified = mutableSetOf<Song>()
+            val unverified = mutableSetOf<Song>()
             var matches: List<Song> = if (strictOriginal) {
                 val verified = ranked.filter { TrackMatcher.isOriginalRecording(it, target) }
                 if (allowArtistUnverified) {
@@ -1730,6 +1735,10 @@ object SourceResolver {
                                 it,
                                 target,
                                 TrackMatcher.ARTIST_UNVERIFIED_DRIFT_SEC,
+                            ) || TrackMatcher.isTitleUnverifiedOriginal(
+                                it,
+                                target,
+                                TrackMatcher.ARTIST_UNVERIFIED_DRIFT_SEC,
                             )
                         }
                         .sortedBy { candidate ->
@@ -1737,7 +1746,7 @@ object SourceResolver {
                                 ?: Int.MAX_VALUE
                             kotlin.math.abs((target.durationSec ?: 0) - got)
                         }
-                    artistUnverified += localised
+                    unverified += localised
                     verified + localised
                 } else {
                     verified
@@ -1747,7 +1756,7 @@ object SourceResolver {
             }
             if (requireSharedArtist) {
                 matches = matches.filter {
-                    it in artistUnverified ||
+                    it in unverified ||
                         TrackMatcher.sharesArtist(target.artist, it.artist)
                 }
             }
@@ -1761,7 +1770,7 @@ object SourceResolver {
             // collision rule. A localised-artist row is already waiting for
             // the sound comparison, and letting its album veto a verified copy
             // would reinstate the failure this fallback exists to remove.
-            val verifiedForConflict = matches.filterNot { it in artistUnverified }
+            val verifiedForConflict = matches.filterNot { it in unverified }
             if (source.kind == SourceKind.JIOSAAVN &&
                 TrackMatcher.hasConflictingAlbums(verifiedForConflict, target)
             ) {
@@ -1794,7 +1803,7 @@ object SourceResolver {
             // on their device under the name of the track they asked for.
             if (strictLength) {
                 matches = matches.filter {
-                    val drift = if (it in artistUnverified) {
+                    val drift = if (it in unverified) {
                         TrackMatcher.ARTIST_UNVERIFIED_DRIFT_SEC
                     } else {
                         driftSec
@@ -1844,8 +1853,8 @@ object SourceResolver {
             // be the lossless copy the request wanted, and hq-verify decides
             // whether it is the same recording. See [offerRank] for the order
             // the source race applies afterwards.
-            val verifiedMatches = matches.filterNot { it in artistUnverified }
-            val unverifiedMatches = matches.filter { it in artistUnverified }
+            val verifiedMatches = matches.filterNot { it in unverified }
+            val unverifiedMatches = matches.filter { it in unverified }
             val sameLengthSec =
                 if (strictLength) maxOf(SAME_RECORDING_SEC, driftSec) else SAME_RECORDING_SEC
             val verifiedOpened = if (verifiedMatches.isEmpty()) {
@@ -1897,7 +1906,7 @@ object SourceResolver {
                     opened = verifiedOpened
                     if (localisedOpened != null) {
                         alternate = localisedOpened
-                        alternateVerdict = "artist-unverified"
+                        alternateVerdict = unverifiedVerdict(localisedOpened.first, target)
                     }
                 }
                 localisedOpened != null &&
@@ -1936,8 +1945,10 @@ object SourceResolver {
                 best = chosen,
                 verdict = when {
                     stream == null -> if (authRejected) "auth" else "error"
-                    chosen in artistUnverified -> "artist-unverified"
-                    else -> "match"
+                    // Which signal is missing decides the word; both are the
+                    // same tier and both still need the sound comparison.
+                    chosen == null || chosen !in unverified -> "match"
+                    else -> unverifiedVerdict(chosen, target)
                 },
                 conclusive = conclusive,
                 alternate = alternate?.second,

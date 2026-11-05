@@ -125,4 +125,79 @@ class TrackMatcherArtistScriptTest {
             ),
         )
     }
+
+    // ── A title filed under another script's name (11-05 '체포하겠어') ────────
+    //
+    // Deezer listed ILLIT's "체포하겠어" as "You're Under Arrest" — same artist,
+    // 3:01 against 3:01 — and the exact-title gate dropped the FLAC before the
+    // sound comparison was ever asked about it. The listener was told there was
+    // no better copy.
+
+    private val arrest = TrackMatcher.Target("체포하겠어", "ILLIT", durationSec = 181)
+
+    @Test
+    fun `a title in another script is title-unverified when artist and length agree`() {
+        val english = candidate(artist = "ILLIT", title = "You're Under Arrest", duration = "3:01")
+        assertTrue(TrackMatcher.isTitleUnverifiedOriginal(english, arrest))
+        assertEquals(
+            "title-unverified",
+            TrackMatcher.rejectionReason(
+                english,
+                arrest,
+                strictOriginal = true,
+                strictLength = true,
+                requireSharedArtist = true,
+                driftSec = 2,
+                allowArtistUnverified = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `without the upgrade flag an other-script title is still a plain title miss`() {
+        val english = candidate(artist = "ILLIT", title = "You're Under Arrest", duration = "3:01")
+        assertEquals(
+            "title",
+            TrackMatcher.rejectionReason(english, arrest, strictOriginal = true),
+        )
+        assertFalse(
+            "only the sound comparison may admit this row",
+            TrackMatcher.isOriginalRecording(english, arrest, maxDriftSec = 3),
+        )
+    }
+
+    @Test
+    fun `a different song from the same search is never title-unverified`() {
+        // LastWave answered the same search with 'Takedown' by HUNTR/X at 3:02.
+        // The title is in another script and the length agrees to the second,
+        // so the artist is the only thing keeping it out — and it must.
+        val takedown = candidate(
+            artist = "HUNTR/X, EJAE, AUDREY NUNA, REI AMI, KPop Demon Hunters Cast",
+            title = "Takedown",
+            duration = "3:02",
+        )
+        assertFalse(TrackMatcher.isTitleUnverifiedOriginal(takedown, arrest))
+        assertEquals(
+            "title",
+            TrackMatcher.rejectionReason(
+                takedown,
+                arrest,
+                strictOriginal = true,
+                requireSharedArtist = true,
+                allowArtistUnverified = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `a same-script different title is never title-unverified`() {
+        val other = candidate(artist = "ILLIT", title = "Tick-Tack", duration = "3:01")
+        assertFalse(TrackMatcher.isTitleUnverifiedOriginal(other, arrest))
+    }
+
+    @Test
+    fun `an other-script title outside the three-second window is not unverified`() {
+        val long = candidate(artist = "ILLIT", title = "You're Under Arrest", duration = "3:12")
+        assertFalse(TrackMatcher.isTitleUnverifiedOriginal(long, arrest))
+    }
 }

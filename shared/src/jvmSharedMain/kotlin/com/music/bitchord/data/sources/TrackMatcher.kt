@@ -213,6 +213,12 @@ object TrackMatcher {
         target: Target,
         maxDriftSec: Int = ARTIST_UNVERIFIED_DRIFT_SEC,
     ) = KoTrackMatcher.isArtistUnverifiedOriginal(candidate, target, maxDriftSec) // [KO] isArtistUnverifiedOriginal
+    /** A row whose title is the same recording under another script's name — see `isTitleUnverifiedOriginal`. */
+    fun isTitleUnverifiedOriginal(
+        candidate: Song,
+        target: Target,
+        maxDriftSec: Int = ARTIST_UNVERIFIED_DRIFT_SEC,
+    ) = KoTrackMatcher.isTitleUnverifiedOriginal(candidate, target, maxDriftSec) // [KO] title-unverified
     fun artistScriptsDiffer(wanted: String, got: String) = KoTrackMatcher.artistScriptsDiffer(wanted, got) // [KO] artistScriptsDiffer
     fun rejectionReason(
         candidate: Song,

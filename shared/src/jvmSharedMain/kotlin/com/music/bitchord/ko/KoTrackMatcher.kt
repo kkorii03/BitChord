@@ -404,13 +404,72 @@ internal object KoTrackMatcher {
      * all (Latin vs kana/Hangul/Han/Cyrillic, ...). When they do share a script
      * a different name is a different artist and must stay a rejection.
      */
-    fun artistScriptsDiffer(wanted: String, got: String): Boolean {
-        val want = artistScripts(wanted)
-        val have = artistScripts(got)
-        return want.isNotEmpty() && have.isNotEmpty() && want.intersect(have).isEmpty()
+    fun artistScriptsDiffer(wanted: String, got: String): Boolean =
+        scriptsDiffer(scriptsOf(wanted), scriptsOf(got))
+
+    /**
+     * Whether [candidate] is the requested recording apart from a title filed
+     * under another script's name.
+     *
+     * A catalogue names a release in its own language: Deezer lists ILLIT's
+     * "체포하겠어" as "You're Under Arrest". The title then shares no letters
+     * with the queue row, so the exact-title gate could only ever answer
+     * "different" — the FLAC was dropped before the sound comparison was asked
+     * about it, and the listener was told there was no better copy while one
+     * sat in the search results. This keeps the row only when every signal that
+     * *is* comparable agrees: the same act by name, channel or release, the
+     * same take markers, a runtime within [ARTIST_UNVERIFIED_DRIFT_SEC], and no
+     * cover/karaoke/tribute arrangement. The verified credit is what keeps this
+     * from becoming a general title bypass — a same-artist row in the other
+     * script at the same length is the only thing it admits.
+     *
+     * This is a search grade, not a replacement verdict: the sound comparison
+     * still has to accept the row before it may play.
+     */
+    fun isTitleUnverifiedOriginal(
+        candidate: Song,
+        target: Target,
+        maxDriftSec: Int = ARTIST_UNVERIFIED_DRIFT_SEC,
+    ): Boolean {
+        if (target.title.isBlank() || candidate.title.isBlank()) return false
+        if (target.artist.isBlank() || candidate.artist.isBlank()) return false
+        // The act has to be the one asked for, by a signal that survives a
+        // display-name difference. Without this the other-script title would
+        // admit any row of the right length — the Takedown row a search for
+        // '체포하겠어' also returned.
+        val sameAct = namesTheSameArtist(target.artist, candidate.artist) ||
+            sharesArtistChannel(target, candidate) ||
+            sharesRelease(target, candidate)
+        if (!sameAct) return false
+        if (!titleScriptsDiffer(target.title, candidate.title)) return false
+        if (isCoverOf(candidate, target)) return false
+        val wanted = parseTitle(target.title, target.artist)
+        val got = parseTitle(candidate.title, candidate.artist)
+        if (wanted.core.isBlank() || got.core.isBlank()) return false
+        val albumMarks = albumVersionMarkers(candidate.albumName)
+        val effectiveVersions = got.versions + (albumMarks intersect NOVOCAL_TAKES) +
+            (albumMarks intersect wanted.versions)
+        if (wanted.versions != effectiveVersions) return false
+        val wantedSec = target.durationSec ?: return false
+        val gotSec = secondsOf(candidate.durationText) ?: return false
+        return abs(wantedSec - gotSec) <= maxDriftSec
     }
 
-    private fun artistScripts(text: String): Set<Character.UnicodeScript> {
+    /**
+     * The same test for titles. A catalogue files a release under its own
+     * language's name — Deezer lists ILLIT's "체포하겠어" as "You're Under
+     * Arrest" — and the two share no letters at all. A title that shares a
+     * script and still differs is a different song and must stay a rejection.
+     */
+    fun titleScriptsDiffer(wanted: String, got: String): Boolean =
+        scriptsDiffer(scriptsOf(wanted), scriptsOf(got))
+
+    private fun scriptsDiffer(
+        want: Set<Character.UnicodeScript>,
+        have: Set<Character.UnicodeScript>,
+    ): Boolean = want.isNotEmpty() && have.isNotEmpty() && want.intersect(have).isEmpty()
+
+    private fun scriptsOf(text: String): Set<Character.UnicodeScript> {
         val out = mutableSetOf<Character.UnicodeScript>()
         for (ch in normalize(text)) {
             if (!ch.isLetter()) continue
@@ -432,7 +491,8 @@ internal object KoTrackMatcher {
      * candidate; a caller with several passes the best-ranked one.
      *
      * The vocabulary is deliberately small and stable:
-     * `match`, `title`, `version`, `artist`, `duration`.
+     * `match`, `title`, `title-unverified`, `version`, `artist`,
+     * `artist-unverified`, `duration`.
      */
     fun rejectionReason(
         candidate: Song,
@@ -467,7 +527,17 @@ internal object KoTrackMatcher {
             val wanted = parseTitle(target.title, target.artist)
             val got = parseTitle(candidate.title, candidate.artist)
             if (wanted.core.isBlank() || got.core.isBlank()) return "title"
-            if (!coresEqual(wanted.cores(), got.cores())) return "title"
+            if (!coresEqual(wanted.cores(), got.cores())) {
+                // A title filed under another script's name is offered to the
+                // sound comparison rather than reported as a plain title miss
+                // — see [isTitleUnverifiedOriginal].
+                if (allowArtistUnverified &&
+                    isTitleUnverifiedOriginal(candidate, target, artistUnverifiedDriftSec)
+                ) {
+                    return "title-unverified"
+                }
+                return "title"
+            }
             val albumMarks = albumVersionMarkers(candidate.albumName)
             val effectiveVersions = got.versions + (albumMarks intersect NOVOCAL_TAKES) +
                 (albumMarks intersect wanted.versions)
