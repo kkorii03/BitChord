@@ -1,11 +1,14 @@
 package com.music.bitchord
 
+import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.ko.KoQualityUpgrade
+import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.QualityUpgrade
 import com.music.bitchord.playback.QualityUpgrade.Refusal
+import com.music.bitchord.playback.StreamChoice
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -115,5 +118,96 @@ class QualityUpgradeRefusalTest {
             KoQualityUpgrade.suppressesRetry(id),
         )
         QualityUpgrade.forgetLastSession()
+    }
+
+    /**
+     * Which quality row the player menu leads with, from the evidence each kind
+     * of play actually leaves behind.
+     *
+     * Phone 11-05: NEON (rlYOsUfpi3M) played 30 seconds of `audio/mpeg`
+     * 128kbps out of the cache — a substitute, and the wrong recording at that
+     * — and the menu offered "Upgrade quality", which answered "no better copy
+     * found", instead of the "Revert to original" row. The verdict was read off
+     * `NerdStats`' display name, and `currentSourceName` ends with "an
+     * eleven-character id is YouTube": a cached stream is never resolved, so it
+     * has no config id and no [StreamChoice], and the guessed label said YouTube
+     * over whatever bytes were on disk.
+     */
+    @Test
+    fun `a substitute stream out of the cache is offered the revert row`() {
+        val id = "rlYOsUfpi3M"
+        StreamChoice.forget(id)
+
+        assertFalse(
+            "an addon's or a module's file is not YouTube's own copy",
+            QualityUpgrade.isKnownToBePlayingYouTubesOwn(
+                id,
+                rendition = null,
+                cachedOrigin = AudioCache.Origin.OTHER,
+                decodedKind = SourceKind.ADDON,
+            ),
+        )
+    }
+
+    /** The same track in the same process, read off the cache tag alone. */
+    @Test
+    fun `an addon-filled cache entry is offered the revert row without a decoded kind`() {
+        val id = "addon-cache-entry"
+        StreamChoice.forget(id)
+
+        assertFalse(
+            QualityUpgrade.isKnownToBePlayingYouTubesOwn(
+                id,
+                rendition = null,
+                cachedOrigin = AudioCache.Origin.OTHER,
+            ),
+        )
+    }
+
+    /** A genuine YouTube stream keeps the upgrade row, decoded or from the cache. */
+    @Test
+    fun `YouTube's own stream is offered the upgrade row`() {
+        val id = "youtube-own-stream"
+        StreamChoice.forget(id)
+
+        assertTrue(
+            QualityUpgrade.isKnownToBePlayingYouTubesOwn(
+                id,
+                rendition = null,
+                cachedOrigin = AudioCache.Origin.YOUTUBE,
+                decodedKind = SourceKind.YOUTUBE,
+            ),
+        )
+    }
+
+    /**
+     * An entry nothing tagged is genuinely unknown, and the revert stays on
+     * offer there — it is the escape hatch for a substitution nothing
+     * announced. Not a lean either way: it is what the menu already did.
+     */
+    @Test
+    fun `an untagged cache entry keeps the revert row`() {
+        val id = "untagged-cache-entry"
+        StreamChoice.forget(id)
+
+        assertFalse(
+            QualityUpgrade.isKnownToBePlayingYouTubesOwn(id, rendition = null, cachedOrigin = null),
+        )
+    }
+
+    /** A rendition of its own is never YouTube's copy, whatever filled it. */
+    @Test
+    fun `an upgraded rendition is offered the revert row`() {
+        val id = "upgraded-rendition"
+        StreamChoice.forget(id)
+
+        assertFalse(
+            QualityUpgrade.isKnownToBePlayingYouTubesOwn(
+                id,
+                rendition = "hifi",
+                cachedOrigin = AudioCache.Origin.YOUTUBE,
+                decodedKind = SourceKind.YOUTUBE,
+            ),
+        )
     }
 }

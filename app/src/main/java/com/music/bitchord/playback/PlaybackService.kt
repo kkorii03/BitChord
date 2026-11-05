@@ -7202,10 +7202,14 @@ class PlaybackService : MediaLibraryService() {
         if (downloaded) return false
         val target = SourceResolver.targetIn(uri)
         val expectedSec = target.durationSec
-        if (TrackMatcher.isSevereMismatch(expectedSec, durationSec)) {
+        // [isWrongLength], not just [TrackMatcher.isSevereMismatch]: a cached
+        // preview clip is inside the 30s window of a short row and outside it
+        // by far from a real one, and the preview is the case that measured
+        // wrong on the phone (11-05, NEON).
+        if (TrackMatcher.isWrongLength(expectedSec, durationSec)) {
             TrackLog.w(
                 "BitChord",
-                "cached rendition duration mismatch: playing ${durationSec}s vs catalogue ${expectedSec}s for $videoId; discarding cache rendition",
+                "cached rendition refused: playing ${durationSec}s for a ${expectedSec}s track ($videoId); discarding cache rendition",
                 about = mediaId,
             )
             withContext(Dispatchers.IO) { AudioCache.discardRendition(uri) }

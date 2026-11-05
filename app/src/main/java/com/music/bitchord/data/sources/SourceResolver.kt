@@ -351,7 +351,21 @@ object SourceResolver {
         // between "no addon has this" and "one addon's first row was broken".
         val refusedRows = LinkedHashSet<MusicSource>()
         val accept: suspend (MusicSource, SourceStream) -> Boolean = { candidateSource, candidate ->
-            if (!probe(candidate)) {
+            // Before the probe: a preview is refused without a network call,
+            // and it is the one refusal that would otherwise reach the player
+            // sounding perfect for its first thirty seconds. The row is refused
+            // rather than the source — see [KoRefusedRows] — because the same
+            // catalogue usually holds the full recording too.
+            if (TrackMatcher.isWrongLength(target.durationSec, candidate.durationSec)) {
+                TrackLog.w(
+                    TAG,
+                    "stream refused: ${candidate.durationSec}s for a ${target.durationSec}s track " +
+                        "from ${candidateSource.displayName}",
+                )
+                KoRefusedRows.note(candidateSource.configId, candidate.trackId)
+                refusedRows += candidateSource
+                false
+            } else if (!probe(candidate)) {
                 KoRefusedRows.note(candidateSource.configId, candidate.trackId)
                 refusedRows += candidateSource
                 false

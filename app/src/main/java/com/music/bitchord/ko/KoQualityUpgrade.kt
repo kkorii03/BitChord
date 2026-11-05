@@ -411,25 +411,30 @@ internal object KoQualityUpgrade {
     }
 
     /**
-     * The decoder's own source identity, when it has spoken.
+     * The kind of source behind the stream the decoder is reading, when that is
+     * known at all.
      *
-     * It is the only record of what is actually being read, and the menu used
-     * to disagree with the badge when a stored verdict or a stale
-     * [StreamChoice] still named YouTube over a module stream. Null keeps the
-     * caller's existing [StreamChoice] answer.
+     * The configured source is the identity: [NerdStats.Snapshot.sourceConfigId]
+     * names the catalogue the bytes came from, and its kind says whether that
+     * catalogue is YouTube. Nothing else here is an identity.
+     *
+     * This used to fall back to [NerdStats.Snapshot.sourceName], and that was
+     * wrong in the direction the menu shows: `currentSourceName` ends with "an
+     * eleven-character id is YouTube", so a *cached* stream — never resolved in
+     * this process, so no config id and no [StreamChoice] — reported the
+     * display name "YouTube" for whatever bytes happened to be on disk.
+     * Measured (phone 11-05): NEON (rlYOsUfpi3M) played a 30s `audio/mpeg`
+     * 128kbps substitute out of the cache, and the player menu offered "Upgrade
+     * quality" — which then answered "no better copy found" — instead of the
+     * "Revert to original" row that would have gone back to YouTube. A label is
+     * a guess; only the source behind the stream is evidence.
+     *
+     * Null keeps the caller's existing [StreamChoice] and cache-origin answers.
      */
-    fun youtubeOwnVerdict(mediaId: String): Boolean? {
-        val snapshot = NerdStats.current.value?.takeIf { it.mediaId == mediaId } ?: return null
-        val kind = snapshot.sourceConfigId
+    fun decodedKindOf(mediaId: String): SourceKind? =
+        NerdStats.current.value?.takeIf { it.mediaId == mediaId }
+            ?.sourceConfigId
             ?.let { SourceRegistry.config(it)?.kind }
-        return when {
-            kind == SourceKind.YOUTUBE -> true
-            kind != null -> false
-            snapshot.sourceName == "YouTube" -> true
-            snapshot.sourceName != null -> false
-            else -> null
-        }
-    }
 
     /** The fork's lossless-tier test, kept beside the follow-up rule it feeds. */
     fun isLosslessTier(format: StreamFormat?): Boolean = HqQuality.isLosslessTier(format)
