@@ -16,6 +16,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import java.io.File
 import java.io.IOException
@@ -30,6 +31,17 @@ import java.io.IOException
  * dead one was discovered by the player after playback had started on it.
  */
 class DirectSourceGateTest {
+
+    /**
+     * A row refused for being the wrong file is remembered by source and row id
+     * ([com.music.bitchord.ko.KoRefusedRows]), so one test's refused row would
+     * be skipped by the next one that reuses the same id. Every test here starts
+     * with that memory empty.
+     */
+    @Before
+    fun resetRefusedRows() {
+        com.music.bitchord.ko.KoRefusedRows.resetForTest()
+    }
 
     @Test
     fun allAddonsRestingSkipsTheWindow() {
