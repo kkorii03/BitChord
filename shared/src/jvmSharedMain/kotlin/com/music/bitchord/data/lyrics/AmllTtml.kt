@@ -55,7 +55,9 @@ object AmllTtml {
     ): List<LyricLine>? = withContext(Dispatchers.IO) {
         val lookup = appleId(title, artist, durationMs, songKey, get)
         val id = lookup.id ?: run {
-            if (lookup.fresh) TrackLog.i(TAG, "lyrics source ttml: miss id=unknown lines=0")
+            if (lookup.fresh) {
+                TrackLog.i(TAG, "lyrics source ttml: miss id=unknown lines=0 reason=${lookup.reason ?: "unknown"}")
+            }
             return@withContext null
         }
         val lines = get(documentUrl(id))?.let(TtmlLyrics::parse)?.takeIf { it.isNotEmpty() }
@@ -114,7 +116,14 @@ object AmllTtml {
         return try {
             val results = search(title, artist, get)
             val found = results?.let { best(it, title, artist, durationMs)?.trackId }
-            val answer = AppleLookup(found, true, hitKey, missKey)
+            // Why the search came back empty, for the caller's miss line: an
+            // unanswered request and a refused one are both a null here.
+            val reason = when {
+                results == null -> "http"
+                found == null -> missReason(results, title, artist, durationMs)
+                else -> null
+            }
+            val answer = AppleLookup(found, true, hitKey, missKey, reason = reason)
             if (results != null) {
                 // Only a search that got an answer is worth remembering:
                 // offline is no verdict on the song, and must be retried by a
@@ -162,20 +171,22 @@ object AmllTtml {
 
     /** The hit that is this recording, or null; see [RecordingMatch]. */
     internal fun best(hits: List<Hit>, title: String, artist: String, durationMs: Long): Hit? =
-        RecordingMatch.best(
-            hits.map { hit ->
-                RecordingMatch.Candidate(
-                    value = hit,
-                    title = hit.trackName,
-                    artist = hit.artistName,
-                    seconds = hit.trackTimeMillis?.div(1000.0),
-                    usable = hit.trackId != null,
-                )
-            },
-            title,
-            artist,
-            durationMs,
-        )
+        RecordingMatch.best(candidates(hits), title, artist, durationMs)
+
+    /** Why [best] found nothing, for the miss log line; see [RecordingMatch.missReason]. */
+    internal fun missReason(hits: List<Hit>, title: String, artist: String, durationMs: Long): String =
+        RecordingMatch.missReason(candidates(hits), title, artist, durationMs)
+
+    private fun candidates(hits: List<Hit>): List<RecordingMatch.Candidate<Hit>> =
+        hits.map { hit ->
+            RecordingMatch.Candidate(
+                value = hit,
+                title = hit.trackName,
+                artist = hit.artistName,
+                seconds = hit.trackTimeMillis?.div(1000.0),
+                usable = hit.trackId != null,
+            )
+        }
 
     private class AppleId(val id: Long?)
 
@@ -185,6 +196,8 @@ object AmllTtml {
         val hitKey: String,
         val missKey: String,
         val ownerCancelled: Boolean = false,
+        /** Why [id] is null, for the miss line: "http", or what the rows failed. */
+        val reason: String? = null,
     )
 
     private fun forgetDeadId(lookup: AppleLookup) {
