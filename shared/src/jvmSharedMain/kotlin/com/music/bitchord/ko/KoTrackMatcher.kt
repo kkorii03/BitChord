@@ -1482,7 +1482,7 @@ internal object KoTrackMatcher {
 
         // A feat. credit belongs to the artist field wherever a catalogue
         // chooses to print it.
-        text = text.replace(FEATURING, " ")
+        text = dropFeaturing(text)
 
         // CJK languages do not use spaces between
         // words. Standard word splitting and non-alphanumeric filtering fragment
@@ -1562,12 +1562,30 @@ internal object KoTrackMatcher {
     }
 
     /**
+     * Cuts a featuring credit off [text], keeping a `with` that belongs to the
+     * title.
+     *
+     * `feat`/`ft`/`featuring` are never title words, so they always cut. `with`
+     * cuts only when a name follows it — see [WITH_TAIL_TITLE_WORDS]. The first
+     * `with` that is a credit wins, so "Stay With Me with Ed Sheeran" keeps its
+     * title and loses the credit.
+     */
+    private fun dropFeaturing(text: String): String {
+        val feat = text.replace(FEATURING, " ")
+        val credit = WITH_CREDIT.findAll(feat).firstOrNull { match ->
+            val word = normalize(match.groupValues[1]).replace(NON_ALNUM, "")
+            word.isNotEmpty() && word !in WITH_TAIL_TITLE_WORDS
+        } ?: return feat
+        return feat.substring(0, credit.range.first)
+    }
+
+    /**
      * One alternate spelling folded into the shape [TitleParts.core] uses: its
      * words, and the letters-and-digits core they join to. Null when nothing
      * but punctuation is left.
      */
     private fun foldAside(raw: String): Pair<List<String>, String>? {
-        val clean = raw.replace(FEATURING, " ").trim()
+        val clean = dropFeaturing(raw).trim()
         if (clean.isBlank()) return null
         val cjk = clean.any {
             Character.UnicodeBlock.of(it) in setOf(
@@ -1898,6 +1916,8 @@ internal object KoTrackMatcher {
     private val BRACKETED: Regex get() = TrackMatcher.BRACKETED
     private val DASH: Regex get() = TrackMatcher.DASH
     private val FEATURING: Regex get() = TrackMatcher.FEATURING
+    private val WITH_CREDIT: Regex get() = TrackMatcher.WITH_CREDIT
+    private val WITH_TAIL_TITLE_WORDS: Set<String> get() = TrackMatcher.WITH_TAIL_TITLE_WORDS
     private val WORD_SPLIT: Regex get() = TrackMatcher.WORD_SPLIT
     private val NON_ALNUM: Regex get() = TrackMatcher.NON_ALNUM
     private val LATIN: Regex get() = TrackMatcher.LATIN
