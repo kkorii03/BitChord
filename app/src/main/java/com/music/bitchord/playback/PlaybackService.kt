@@ -1623,6 +1623,13 @@ class PlaybackService : MediaLibraryService() {
             // session is currently pointed at.
             val exoPlayer = player ?: return
             PlaybackActivity.onBufferingChanged(state == Player.STATE_BUFFERING)
+            // [KO] first-audio: the load leg of the wait, on the same clock as
+            // `TIMING first audio` — track selected → the media period is ready
+            // to render. Whatever is left in that figure is the decoder and the
+            // AudioTrack, which are the device's and not ours.
+            if (state == Player.STATE_READY) {
+                logFirstAudioLoadLeg(exoPlayer.currentMediaItem?.mediaId)
+            }
             if (state != Player.STATE_BUFFERING && !exoPlayer.isPlaying) {
                 com.music.bitchord.download.HqLibraryUpgrade.onPlaybackStopped(this@PlaybackService)
             }
@@ -1997,6 +2004,26 @@ class PlaybackService : MediaLibraryService() {
         ?.getWindow(windowIndex, Timeline.Window())
         ?.mediaItem
         ?.mediaId
+
+    /**
+     * [KO] first-audio — the load leg, in the same units as `TIMING first audio`.
+     *
+     * That one figure says a listener waited N seconds; it never says which leg
+     * spent them. Measured on the 11-05 emulator smoke, the 8.1s after a resolve
+     * came back split into ~5s of fetching the first bytes and ~2.5s of standing
+     * a decoder up, and only the first is anything this app can shorten. Logged
+     * at most once per start: [trackSelectedAt] is cleared when the sound
+     * arrives, so a rebuffer later in the same track says nothing here.
+     */
+    private fun logFirstAudioLoadLeg(mediaId: String?) {
+        val selectedAt = trackSelectedAt ?: return
+        if (mediaId == null || mediaId != selectedTrackMediaId) return
+        TrackLog.d(
+            "BitChord",
+            "TIMING loaded: ${SystemClock.elapsedRealtime() - selectedAt}ms since track selected",
+            about = mediaId,
+        )
+    }
 
     override fun onCreate() {
         super.onCreate()
