@@ -909,9 +909,13 @@ object LyricsTiming {
         )
         if (videoId != null) {
             val detail = choice.scores.joinToString(" ") { (name, score) ->
-                "$name:${score.medianAbsMs}/${(score.withinRatio * 100).roundToInt()}%"
+                "$name:${score.medianAbsMs}/${(score.withinRatio * 100).roundToInt()}%/${score.matched}"
             }
-            TrackLog.d(TAG, "base-choice: $detail -> ${choice.name}", videoId)
+            TrackLog.d(
+                TAG,
+                "base-choice: $detail -> ${choice.name}" + (choice.reason?.let { " ($it)" } ?: ""),
+                videoId,
+            )
         }
         return holdIfBuried(
             lines,
@@ -2990,13 +2994,15 @@ object LyricsTiming {
             )
             return false
         }
+        val retry = AiTimingPolicy.songRetry(knowledge(entry), key)
+        if (retry) TrackLog.d(TAG, "song-check retry (previous answer rejected)", song.videoId)
         // Whisper takes a minute or two, and a screen job is cancelled the
         // moment the track changes: run the request on the app-lifetime scope
         // so it finishes and keeps its answer. One request per video and
         // lyrics text, whoever asks. A cancelled caller stops waiting only.
         val flight = "song:${song.videoId}:$key"
         val fresh = aiScope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
-            verifySongRequest(context.applicationContext, song, lines, key, engine, probe)
+            verifySongRequest(context.applicationContext, song, lines, key, engine, probe, retry)
         }
         val running = songInFlight.putIfAbsent(flight, fresh) ?: fresh
         running.cancelledWithCaller(currentCoroutineContext()[Job], cancelWithCaller)
@@ -3198,6 +3204,7 @@ object LyricsTiming {
         key: Int,
         engine: String,
         probe: NextSyncProbe? = null,
+        retry: Boolean = false,
     ): Boolean {
         // The gate exists for the request (a 429 is account-wide), but the
         // audio used to be fetched under it too: [VideoAudio.songWavCopy] waits
@@ -3229,6 +3236,7 @@ object LyricsTiming {
                 engine,
                 probe,
                 untilSeconds = SongCheckWindow.FIRST_SECONDS,
+                retry = retry,
             ) ?: return@withLock null
             first to applySongCheck(context, song, key, engine, first)
         } ?: return false
@@ -3243,6 +3251,7 @@ object LyricsTiming {
                 engine,
                 probe,
                 untilSeconds = VideoAudio.SONG_CHECK_SECONDS,
+                retry = retry,
             ) ?: return@withLock firstOk
             if (!SongCheckWindow.fullMayReplace(
                     firstFitted = first.fitted != null,
@@ -3336,6 +3345,8 @@ object LyricsTiming {
         engine: String,
         probe: NextSyncProbe? = null,
         untilSeconds: Double = VideoAudio.SONG_CHECK_SECONDS,
+        /** This is the one [AiTimingPolicy.songRetry] check; its spent replies say so. */
+        retry: Boolean = false,
     ): SongCheck? {
         probe?.beginPass()
         // Straight off the file, or the streaming copy's opening; null when
@@ -3370,19 +3381,19 @@ object LyricsTiming {
                 answer.httpCode !in 200..299 -> NextPrepPolicy.SyncFailure.ERROR
                 else -> NextPrepPolicy.SyncFailure.TOO_FEW_LINES
             }
-            recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe)
+            recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe, retry)
             return SongCheck("no-answer", null, emptyList(), null, null, seconds, answer.httpCode, 0, probe?.failure, listenClock)
         }
         if (heard.size < MIN_AI_LINES) {
             songLog(song.videoId, "few-words", null, null, seconds, words = heard.size, http = answer.httpCode)
             probe?.failure = NextPrepPolicy.SyncFailure.TOO_FEW_LINES
-            recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe)
+            recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe, retry)
             return SongCheck("few-words", null, heard, null, null, seconds, answer.httpCode, heard.size, probe?.failure, listenClock)
         }
         val starts = LyricsWordAlign.placeLines(texts, heard)
         val fitted = fitAi(lines, indices, starts) ?: run {
             songLog(song.videoId, "no-fit", null, null, seconds, words = heard.size, http = answer.httpCode)
-            recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe)
+            recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe, retry)
             return SongCheck("no-fit", null, heard, null, null, seconds, answer.httpCode, heard.size, clock = listenClock)
         }
         val match = fitted.matchPercent
@@ -3390,16 +3401,16 @@ object LyricsTiming {
         when {
             !LyricsAiGuard.agreementAllows(match) -> {
                 songLog(song.videoId, "refused-match", match, shift, seconds, words = heard.size, http = answer.httpCode)
-                recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe)
+                recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe, retry)
                 return SongCheck("refused-match", null, heard, match, shift, seconds, answer.httpCode, heard.size, clock = listenClock)
             }
             !LyricsAiGuard.songShiftAllows(shift) -> {
                 songLog(song.videoId, "refused-shift", match, shift, seconds, words = heard.size, http = answer.httpCode)
-                recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe)
+                recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe, retry)
                 return SongCheck("refused-shift", null, heard, match, shift, seconds, answer.httpCode, heard.size, clock = listenClock)
             }
         }
-        recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe)
+        recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe, retry)
         return SongCheck("applied", fitted, heard, match, shift, seconds, answer.httpCode, heard.size, clock = listenClock)
     }
 
@@ -3416,12 +3427,13 @@ object LyricsTiming {
         engine: String,
         httpCode: Int?,
         probe: NextSyncProbe?,
+        retry: Boolean,
     ) {
         if (!AiTimingPolicy.songReplySpends(httpCode)) return
         // The probe is only read here: a failure has already been set above
         // when the answer carried no words or too few of them.
         if (!NextPrepPolicy.shouldStoreSyncResult(probe?.failure)) return
-        noteAttempt(context, videoId, key, engine)
+        noteAttempt(context, videoId, key, engine, retry)
     }
 
     /** What [runSongCheck] made of one lyric sheet; [result] is the song-sync log token. */
@@ -3525,12 +3537,16 @@ object LyricsTiming {
     }
 
     /** Records that [engine] was spent on these lyrics for [videoId]; once per text. */
-    private suspend fun noteAttempt(context: Context, videoId: String, key: Int, engine: String) {
+    private suspend fun noteAttempt(context: Context, videoId: String, key: Int, engine: String, retry: Boolean) {
         store(context).update(videoId) { entry ->
             val sameLyrics = entry.aiAttemptedKey == key
             entry.copy(
                 aiAttemptedKey = key,
-                aiAttemptedEngines = ((if (sameLyrics) entry.aiAttemptedEngines else emptyList()) + engine).distinct(),
+                aiAttemptedEngines = AiTimingPolicy.songSpent(
+                    if (sameLyrics) entry.aiAttemptedEngines else emptyList(),
+                    engine,
+                    retry,
+                ),
                 songRetryKey = null,
                 songRetryAtMs = null,
             )
@@ -4256,6 +4272,7 @@ object LyricsTiming {
             attemptedKey = it.aiAttemptedKey,
             attemptedEngines = it.aiAttemptedEngines.toSet(),
             whisperKey = it.whisperKey,
+            rejectedKey = it.heardCheckKey?.takeIf { _ -> it.heardCheckWords.isNotEmpty() },
         )
     } ?: AiTimingKnowledge()
 

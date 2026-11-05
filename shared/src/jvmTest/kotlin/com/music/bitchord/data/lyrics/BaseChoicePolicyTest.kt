@@ -133,6 +133,44 @@ class BaseChoicePolicyTest {
     }
 
     @Test
+    fun aPickTheWordsRefuseFallsBackToNone() {
+        // 11-06 sVwYpHqdt3o: `none:86560/0% measured:87359/0% -> measured`.
+        val candidates = listOf(
+            BaseChoicePolicy.Candidate(BaseChoicePolicy.NONE, startsAt(86_560L)),
+            BaseChoicePolicy.Candidate(BaseChoicePolicy.MEASURED, startsAt(87_359L)),
+        )
+        val pick = BaseChoicePolicy.choose(BaseChoicePolicy.MEASURED, truth, candidates)
+        assertEquals(BaseChoicePolicy.NONE, pick.name)
+        assertEquals("below threshold", pick.reason)
+        // A refused AI pick too.
+        assertEquals(BaseChoicePolicy.NONE, choice(default = BaseChoicePolicy.AI, none = 5_000L, ai = 4_000L))
+        // Within what a refine can move, the measurement stays.
+        val near = BaseChoicePolicy.choose(
+            BaseChoicePolicy.MEASURED,
+            truth,
+            listOf(
+                BaseChoicePolicy.Candidate(BaseChoicePolicy.NONE, startsAt(3_000L)),
+                BaseChoicePolicy.Candidate(BaseChoicePolicy.MEASURED, startsAt(1_500L)),
+            ),
+        )
+        assertEquals(BaseChoicePolicy.MEASURED, near.name)
+        assertEquals(null, near.reason)
+    }
+
+    @Test
+    fun tooFewHeardLinesCannotRefuseAPick() {
+        val few = List(5) { 10_000L + it * 5_000L }
+        val candidates = listOf(
+            BaseChoicePolicy.Candidate(BaseChoicePolicy.NONE, few.map { it + 86_560L }),
+            BaseChoicePolicy.Candidate(BaseChoicePolicy.MEASURED, few.map { it + 87_359L }),
+        )
+        assertEquals(
+            BaseChoicePolicy.MEASURED,
+            BaseChoicePolicy.choose(BaseChoicePolicy.MEASURED, few, candidates).name,
+        )
+    }
+
+    @Test
     fun latenessSampleNeedsSixLinesAndSeventyPercentWithin() {
         assertTrue(
             BaseChoicePolicy.latenessSampleAllowed(BaseChoicePolicy.Score(6, 100L, 0.70)),

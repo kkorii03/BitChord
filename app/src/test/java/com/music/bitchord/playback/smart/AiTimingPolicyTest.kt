@@ -242,4 +242,37 @@ class AiTimingPolicyTest {
             assertEquals(r, "kept", AiTimingPolicy.songSheetEffect(r))
         }
     }
+
+    @Test
+    fun aRefusedSongReplyGetsExactlyOneRetry() {
+        val w = AiTimingPolicy.DEEPGRAM_WHISPER
+        // vc147 NEON: Whisper answered, the fit was refused; the song used to stay uncorrectable.
+        val refused = AiTimingKnowledge(attemptedKey = key, attemptedEngines = setOf(w), rejectedKey = key)
+        assertTrue(AiTimingPolicy.songRetry(refused, key))
+        assertEquals(listOf(w), AiTimingPolicy.nextEngines(refused, key, manual = false, measurementGaveUp = false, songOnly = true))
+        // The retry's own reply is marked; no third check.
+        val retried = refused.copy(attemptedEngines = AiTimingPolicy.songSpent(listOf(w), w, retry = true).toSet())
+        assertFalse(AiTimingPolicy.songRetry(retried, key))
+        assertEquals(emptyList<String>(), AiTimingPolicy.nextEngines(retried, key, manual = false, measurementGaveUp = false, songOnly = true))
+        assertEquals("spent", AiTimingPolicy.songSkipReason(retried, key, deepgramUsable = true))
+        // Spent but not refused (no heard words kept), other lyrics, or accepted: no retry.
+        val plainSpent = AiTimingKnowledge(attemptedKey = key, attemptedEngines = setOf(w))
+        assertFalse(AiTimingPolicy.songRetry(plainSpent, key))
+        assertEquals(emptyList<String>(), AiTimingPolicy.nextEngines(plainSpent, key, manual = false, measurementGaveUp = false, songOnly = true))
+        assertFalse(AiTimingPolicy.songRetry(refused.copy(rejectedKey = key + 1), key))
+        val accepted = refused.copy(answerKey = key, answerEngine = w, answerMatch = 90)
+        assertFalse(AiTimingPolicy.songRetry(accepted, key))
+        // Not spent yet: the first check is the ordinary one, not the retry.
+        assertFalse(AiTimingPolicy.songRetry(AiTimingKnowledge(rejectedKey = key), key))
+    }
+
+    @Test
+    fun onlyTheRetryReplyIsMarked() {
+        val w = AiTimingPolicy.DEEPGRAM_WHISPER
+        assertEquals(listOf(w), AiTimingPolicy.songSpent(emptyList(), w, retry = false))
+        // The first check's full pass spends the same engine again without using up the retry.
+        assertEquals(listOf(w), AiTimingPolicy.songSpent(listOf(w), w, retry = false))
+        assertEquals(listOf(w, AiTimingPolicy.SONG_RETRY), AiTimingPolicy.songSpent(listOf(w), w, retry = true))
+        assertEquals(listOf(w, AiTimingPolicy.SONG_RETRY), AiTimingPolicy.songSpent(listOf(w, AiTimingPolicy.SONG_RETRY), w, retry = true))
+    }
 }
