@@ -330,4 +330,31 @@ class BlockedStartPolicyTest {
             BlockedStartPolicy.logLine("abc", BlockedStartStep.PROXY, "failed", 3_700L),
         )
     }
+
+    @Test
+    fun `no stream left means extraction only when nothing already answered`() {
+        // The 11-05 smoke: no ladder produced a stream, the proxy window
+        // closed at 5.0 s and the resolver spent another 12.7 s extracting.
+        // Which path that falls to is the one decision worth pinning: a gone
+        // recording and a gate refusal are answered by extraction's own watch
+        // page read, so only a track with no verdict may spend it.
+        assertEquals(
+            NoStreamPath.EXTRACTION,
+            BlockedStartPolicy.afterNoStream(gone = false, blockedSignal = false),
+        )
+        assertEquals(
+            NoStreamPath.BLOCKED,
+            BlockedStartPolicy.afterNoStream(gone = false, blockedSignal = true),
+            "the gate already refused; extraction reads the same watch page",
+        )
+        assertEquals(
+            NoStreamPath.GONE,
+            BlockedStartPolicy.afterNoStream(gone = true, blockedSignal = false),
+        )
+        assertEquals(
+            NoStreamPath.GONE,
+            BlockedStartPolicy.afterNoStream(gone = true, blockedSignal = true),
+            "a claim or takedown outranks the gate: the recording itself is gone",
+        )
+    }
 }

@@ -288,4 +288,30 @@ object BlockedStartPolicy {
     /** The one line every stage writes, in the format the device logs are read by. */
     fun logLine(mediaId: String, step: BlockedStartStep, result: String, ms: Long): String =
         "blocked-start: $mediaId step=${step.name.lowercase()} result=$result ms=${ms.coerceAtLeast(0L)}"
+
+    /**
+     * What a resolve has left once no ladder answered.
+     *
+     * [GONE] and [BLOCKED] are verdicts about the recording or the region, so
+     * extraction — which reads the same watch page — can only repeat them.
+     * [EXTRACTION] is the only case where the slow failsafe is worth its
+     * thirteen seconds.
+     */
+    fun afterNoStream(gone: Boolean, blockedSignal: Boolean): NoStreamPath = when {
+        gone -> NoStreamPath.GONE
+        blockedSignal -> NoStreamPath.BLOCKED
+        else -> NoStreamPath.EXTRACTION
+    }
+}
+
+/** The path a resolve takes when nothing in the ladder produced a stream. */
+enum class NoStreamPath {
+    /** The recording is gone; asking any other source answers the same. */
+    GONE,
+
+    /** The gate already refused; extraction reads the same watch page. */
+    BLOCKED,
+
+    /** No verdict yet: the slow extraction failsafe is the only path left. */
+    EXTRACTION,
 }

@@ -8,6 +8,7 @@ import com.music.bitchord.data.net.BlockedStartPolicy
 import com.music.bitchord.data.net.BlockedStartRescue
 import com.music.bitchord.data.net.BlockedStartStep
 import com.music.bitchord.data.net.LogUrl
+import com.music.bitchord.data.net.NoStreamPath
 import com.music.bitchord.data.net.ProxyFailure
 import com.music.bitchord.data.net.ProxyHealthMonitor
 import com.music.bitchord.data.net.ProxyPlayback
@@ -734,6 +735,9 @@ object StreamResolver {
         // therefore starts beside it; only a definitive recording verdict may
         // cancel the walk. See [raceDirectDefinitive].
         val itxLeads = preferredItx != null || (!preferDirect && !gated)
+        // The InnerTubeX walk started beside the direct ask on a gated start,
+        // so the proxy window measures a walk that is already warm.
+        var itxEarly: Deferred<Stream?>? = null
         var directPrecheck: Deferred<DirectProbe<DirectRun>>? =
             if (itxLeads && order.directAllowed()) {
                 resolverScope.async(TrackLog.about(videoId)) {
@@ -1141,6 +1145,25 @@ object StreamResolver {
                 // benched direct path is the same silence, so the proxy starts
                 // there too rather than waiting for a refusal that will never
                 // be asked for.
+                //
+                // InnerTubeX now starts beside that direct ask instead of
+                // inside the proxy window. Its walk needs ~1 s of client
+                // selection before the player request leaves and ~1.8 s for
+                // the answer (`player responses received [elapsedMs=1805]`,
+                // `direct stream selected [elapsedMs=3291]`), while the window
+                // is 2.5 s measured from the race start — so the walk was cut
+                // off ~0.5 s short on every gated start, reported as "found no
+                // usable stream", and the track paid the 12.7 s extraction on
+                // top of the 5 s window (11-05 log: 25.9 s to first sound).
+                // The direct ask still leads; a direct stream cancels the walk
+                // before it can ask for a byte on the ~0.3 s happy path.
+                itxEarly = if (itxWalked) {
+                    null
+                } else {
+                    resolverScope.async(TrackLog.about(videoId)) { tryInnerTubeX(null) }
+                }
+                suspend fun innerTubeXLeg(): Stream? =
+                    itxEarly?.await() ?: tryInnerTubeX(null)
                 tryDirect() ?: if (goneRefusal()) {
                     null
                 } else if (ProxyPlayback.canResolveViaProxy() && !proxyAttempted) {
@@ -1152,6 +1175,7 @@ object StreamResolver {
                             "(${if (directUnplayable) "direct refused" else "direct benched or slow"} " +
                             "at ${elapsedNow}ms)",
                     )
+                    TrackLog.d(TAG, "TIMING $videoId itx head start: ${elapsedNow}ms")
                     val proxyTimeout = BlockedStartPolicy.proxyTimeoutMs(
                         gated = gated,
                         blockedSignal = blockedSignal,
@@ -1163,7 +1187,7 @@ object StreamResolver {
                     } else {
                         withTimeoutOrNull(proxyTimeout) {
                             raceForFirstSuccess(
-                                direct = { tryInnerTubeX(null) },
+                                direct = { innerTubeXLeg() },
                                 proxy = {
                                     try {
                                         resolveViaProxy(videoId)
@@ -1181,35 +1205,43 @@ object StreamResolver {
                         "proxy-playback: $videoId race won by ${raced?.first ?: "timeout"} in " +
                             "${MonotonicClock.nowMs() - resolveStart}ms",
                     )
+                    // The window closed without the walk's answer: stop it, or
+                    // it keeps extracting beside the fallback the timeout used
+                    // to end implicitly.
+                    if (raced?.first != "direct") itxEarly?.cancel()
                     raced?.second
                 } else {
-                    tryInnerTubeX(null)
+                    innerTubeXLeg()
                 }
             } else {
                 tryInnerTubeXWatchingDirect(null) ?: tryDirect()
-            }) ?: if (goneRefusal()) {
-                // The direct ladder may have been the one to name the claim or
-                // the deletion. Extraction reads the same watch page and would
-                // spend its attempts repeating that answer.
-                throw PermanentlyUnplayableException(
-                    goneReason() ?: "이 노래는 재생할 수 없습니다",
-                )
-            } else if (blockedSignal) {
-                // The first region/refusal signal already said what extraction
-                // will say: it reads the same watch page. Spending its three
-                // attempts is the remaining silence in the report, so stop here
-                // and let playback spend the reserved budget on a catalogue
-                // copy or the next row.
-                TrackLog.w(
-                    TAG,
-                    "blocked-start: $videoId extraction skipped after the first refusal at " +
-                        "${MonotonicClock.nowMs() - resolveStart}ms",
-                )
-                throw PermanentlyUnplayableException(blockedReason())
-            } else run {
-                TrackLog.w(TAG, "InnerTubeX found no usable stream for $videoId; falling back to extraction")
-                timed("$videoId newPipeStream") { newPipeStream(videoId, ::pickForQuality) }
-                    .also { served(ResolutionOrder.NEW_PIPE, "NewPipe") }
+            }) ?: when (BlockedStartPolicy.afterNoStream(goneRefusal(), blockedSignal)) {
+                NoStreamPath.GONE -> {
+                    // The direct ladder may have been the one to name the claim
+                    // or the deletion. Extraction reads the same watch page and
+                    // would spend its attempts repeating that answer.
+                    throw PermanentlyUnplayableException(
+                        goneReason() ?: "이 노래는 재생할 수 없습니다",
+                    )
+                }
+                NoStreamPath.BLOCKED -> {
+                    // The first region/refusal signal already said what
+                    // extraction will say: it reads the same watch page.
+                    // Spending its three attempts is the remaining silence in
+                    // the report, so stop here and let playback spend the
+                    // reserved budget on a catalogue copy or the next row.
+                    TrackLog.w(
+                        TAG,
+                        "blocked-start: $videoId extraction skipped after the first refusal at " +
+                            "${MonotonicClock.nowMs() - resolveStart}ms",
+                    )
+                    throw PermanentlyUnplayableException(blockedReason())
+                }
+                NoStreamPath.EXTRACTION -> run {
+                    TrackLog.w(TAG, "InnerTubeX found no usable stream for $videoId; falling back to extraction")
+                    timed("$videoId newPipeStream") { newPipeStream(videoId, ::pickForQuality) }
+                        .also { served(ResolutionOrder.NEW_PIPE, "NewPipe") }
+                }
             }
         } catch (e: CancellationException) {
             throw e
@@ -1329,6 +1361,7 @@ object StreamResolver {
             // cancellation — leaves it unconsumed, stop its HTTP/probe work
             // rather than letting it finish out on resolverScope.
             directPrecheck?.cancel()
+            itxEarly?.cancel()
         }
     }
 
