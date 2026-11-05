@@ -417,11 +417,13 @@ internal object KoTrackMatcher {
      * "different" — the FLAC was dropped before the sound comparison was asked
      * about it, and the listener was told there was no better copy while one
      * sat in the search results. This keeps the row only when every signal that
-     * *is* comparable agrees: the same act by name, channel or release, the
-     * same take markers, a runtime within [ARTIST_UNVERIFIED_DRIFT_SEC], and no
+     * *is* comparable agrees: the same act by name, channel or release, a title
+     * in the other writing system ([latinAgainstOtherScript]), the same take
+     * markers, a runtime within [ARTIST_UNVERIFIED_DRIFT_SEC], and no
      * cover/karaoke/tribute arrangement. The verified credit is what keeps this
-     * from becoming a general title bypass — a same-artist row in the other
-     * script at the same length is the only thing it admits.
+     * from becoming a general title bypass — a same-act row filed in Latin
+     * while the request is not, at the same length, is the only thing it
+     * admits.
      *
      * This is a search grade, not a replacement verdict: the sound comparison
      * still has to accept the row before it may play.
@@ -441,7 +443,7 @@ internal object KoTrackMatcher {
             sharesArtistChannel(target, candidate) ||
             sharesRelease(target, candidate)
         if (!sameAct) return false
-        if (!titleScriptsDiffer(target.title, candidate.title)) return false
+        if (!latinAgainstOtherScript(target.title, candidate.title)) return false
         if (isCoverOf(candidate, target)) return false
         val wanted = parseTitle(target.title, target.artist)
         val got = parseTitle(candidate.title, candidate.artist)
@@ -456,13 +458,17 @@ internal object KoTrackMatcher {
     }
 
     /**
-     * The same test for titles. A catalogue files a release under its own
-     * language's name — Deezer lists ILLIT's "체포하겠어" as "You're Under
-     * Arrest" — and the two share no letters at all. A title that shares a
-     * script and still differs is a different song and must stay a rejection.
+     * Whether one title is written in Latin and the other in a script that
+     * carries none — the shape a catalogue's own-language filing takes
+     * ("You're Under Arrest" for ILLIT's "체포하겠어").
+     *
+     * Deliberately not "any two scripts": Hangul against kana is a release's
+     * Japanese version far more often than a localised title, and a chroma
+     * comparison cannot tell two vocal languages of one melody apart — the
+     * version would then be swapped in under the Korean title.
      */
-    fun titleScriptsDiffer(wanted: String, got: String): Boolean =
-        scriptsDiffer(scriptsOf(wanted), scriptsOf(got))
+    internal fun latinAgainstOtherScript(wanted: String, got: String): Boolean =
+        hasFilingLatin(wanted) != hasFilingLatin(got)
 
     private fun scriptsDiffer(
         want: Set<Character.UnicodeScript>,

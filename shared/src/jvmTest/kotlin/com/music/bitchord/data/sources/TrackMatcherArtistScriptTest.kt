@@ -191,8 +191,32 @@ class TrackMatcherArtistScriptTest {
 
     @Test
     fun `a same-script different title is never title-unverified`() {
-        val other = candidate(artist = "ILLIT", title = "Tick-Tack", duration = "3:01")
+        // Same act, same length, but the title is written in the same script
+        // and says something else: that is a different song, not a translation.
+        val other = candidate(artist = "ILLIT", title = "자유롭게", duration = "3:01")
         assertFalse(TrackMatcher.isTitleUnverifiedOriginal(other, arrest))
+    }
+
+    @Test
+    fun `a kana title of the same length is not admitted as a localised title`() {
+        // Hangul against kana is a release's Japanese version far more often
+        // than a localised title, and the chroma comparison cannot tell two
+        // vocal languages of one melody apart. Only Latin against a non-Latin
+        // request is admitted.
+        val japanese = candidate(artist = "ILLIT", title = "タイトル", duration = "3:01")
+        assertFalse(TrackMatcher.isTitleUnverifiedOriginal(japanese, arrest))
+    }
+
+    @Test
+    fun `a same-act other-script title of the same length is left to the sound comparison`() {
+        // The script test can only prove the *request* is not written in the
+        // row's script; it cannot tell "You're Under Arrest" from another Latin
+        // title by the same act. Such a row is therefore offered to hq-verify
+        // as well. This is the accepted cost of the grade: an extra download
+        // for a wrong row, never a wrong recording playing — the comparison
+        // still has to accept it.
+        val sameLength = candidate(artist = "ILLIT", title = "Tick-Tack", duration = "3:01")
+        assertTrue(TrackMatcher.isTitleUnverifiedOriginal(sameLength, arrest))
     }
 
     @Test
