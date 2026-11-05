@@ -4,6 +4,7 @@ import android.app.SearchManager
 import android.content.Intent
 import android.net.Uri
 import android.provider.MediaStore
+import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -62,6 +63,8 @@ object MusicLink {
      * hour later would replay the shared song over whatever is playing.
      */
     private const val EXTRA_CONSUMED = "bitchord.linkConsumed"
+
+    private const val TAG = "BitChord"
 
     private val _pending = MutableStateFlow<LinkRequest?>(null)
 
@@ -148,8 +151,11 @@ object MusicLink {
         }
     }
 
-    private fun track(videoId: String): LinkRequest.Track? =
-        videoId.trim().takeIf { it.isNotEmpty() }?.let(LinkRequest::Track)
+    private fun track(videoId: String): LinkRequest.Track? {
+        val id = videoIdOrNull(videoId)
+        if (id == null) Log.w(TAG, "links:$videoId rejected: not a video id")
+        return id?.let(LinkRequest::Track)
+    }
 
     /**
      * A playlist id as the browse id its page is fetched under.
@@ -174,3 +180,14 @@ object MusicLink {
 
     private val URL_IN_TEXT = Regex("""https?://\S+""")
 }
+
+/**
+ * The video id in [raw], or null when it isn't one.
+ *
+ * A link from outside the app can carry anything in `v=` — a share sheet's
+ * leftover word, a truncated id. Sent on, a bad id costs a failed round trip
+ * and the fallback search that follows it can play the wrong song, so it is
+ * refused here instead. Every id shape — `watch?v=`, `youtu.be`, a Short, an
+ * embed — comes through [MusicLink.parse]'s one `track` gate.
+ */
+internal fun videoIdOrNull(raw: String): String? = raw.trim().takeIf(::isYouTubeVideoId)
