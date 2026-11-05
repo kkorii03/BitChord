@@ -128,7 +128,7 @@ class SongVersionYoungbloodTest {
             reason(song("KARAOKE", "Youngblood (Karaoke Version)", "5 Seconds of Summer", "3:23")),
         )
         assertEquals(
-            "type",
+            "type(video)",
             reason(
                 song(
                     "VIDEO",
