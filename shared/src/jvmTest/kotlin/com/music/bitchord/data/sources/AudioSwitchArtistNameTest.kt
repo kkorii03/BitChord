@@ -249,7 +249,8 @@ class AudioSwitchArtistNameTest {
         assertEquals("ILLIT", row.artist)
 
         val queries = TrackMatcher.audioSwitchQueries(row)
-        assertTrue(queries.any { it.contains("ILLIT") }, queries.toString())
+        // Queries are normalised to lower case before they are sent.
+        assertTrue(queries.any { it.contains("ILLIT", ignoreCase = true) }, queries.toString())
         assertTrue(queries.none { it.contains("HYPE UNIVERSE", ignoreCase = true) }, queries.toString())
         assertTrue(queries.none { it.contains("Official MV", ignoreCase = true) }, queries.toString())
     }
@@ -267,7 +268,7 @@ class AudioSwitchArtistNameTest {
 
         assertEquals("Mark Ronson", row.artist)
         val queries = TrackMatcher.audioSwitchQueries(row)
-        assertTrue(queries.any { it.contains("Mark Ronson") }, queries.toString())
+        assertTrue(queries.any { it.contains("Mark Ronson", ignoreCase = true) }, queries.toString())
     }
 
     @Test
