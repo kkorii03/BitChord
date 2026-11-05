@@ -1,6 +1,7 @@
 package com.music.bitchord.playback
 
 import android.net.Uri
+import android.os.SystemClock
 import android.util.Log
 import com.music.bitchord.data.TrackLog
 import androidx.media3.common.C
@@ -129,6 +130,7 @@ class ChunkedDataSource(
             .setPosition(position)
             .setLength(length)
             .build()
+        val startedAt = SystemClock.elapsedRealtime()
         try {
             koHostCost.openWithRateLimitRetry(spec) // [KO] hq-host-cost
         } catch (e: Exception) {
@@ -156,6 +158,18 @@ class ChunkedDataSource(
         }
         chunkRemaining = length
         chunkOpen = true
+        if (position == 0L) {
+            // [KO] first-audio: the wait between a resolved URL and the first
+            // note is one open of this source. Nothing else in the log splits
+            // the connect (TLS + response headers) from the download, and a
+            // second line for the same track is a retry — which is what a
+            // dropped handshake costs, since Media3 re-opens silently.
+            TrackLog.d(
+                TAG,
+                "TIMING stream open: ${SystemClock.elapsedRealtime() - startedAt}ms " +
+                    "(c=${spec.uri.getQueryParameter("c")} range=$position-${position + length - 1})",
+            )
+        }
     }
 
     /**
