@@ -206,6 +206,61 @@ object VideoAudio {
     }
 
     /**
+     * Why a read of a song's opening answered null, for the caller's log.
+     *
+     * The quality comparison reports a missing reference; naming the cause
+     * apart is what tells a busy decoder ([GATE_TIMEOUT]) from a recording too
+     * short to compare ([TOO_SHORT]) from one that would not decode ([DECODE]).
+     */
+    enum class SongWavRefusal(val wire: String) {
+        /** No copy or file to open: the opening is not on disk yet. */
+        NO_WAV("no-wav"),
+
+        /** The read never got the decoder: it waited at the one-at-a-time gate. */
+        GATE_TIMEOUT("gate-timeout"),
+
+        /** The read stopped at a named stage before it had ten seconds. */
+        DECODE("decode"),
+
+        /** Less than ten seconds of audio came back. */
+        TOO_SHORT("too-short"),
+    }
+
+    /**
+     * Whether [song]'s opening up to [untilSeconds] is in hand right now, with
+     * no wait and no decode: the opening already read for this window, a file
+     * that is on the device, or a playing copy that already holds those bytes.
+     *
+     * The quality comparison starts its read only when this is true. A read
+     * started without it spends the analysis head's whole timeout waiting for
+     * bytes that are not coming, then queues at the one-at-a-time gate, and the
+     * play change kills it with nothing heard — 11-05 auto8b: 24 s waited, zero
+     * audio decoded, reported as "no reference reason=cancelled". Waiting for
+     * the opening is the song check's job; the comparison only uses what it
+     * left behind.
+     */
+    internal fun referenceReady(song: Song, untilSeconds: Double): Boolean {
+        val local = song.localUri?.takeIf { it.isNotBlank() }?.let { Uri.parse(it) }
+        return referenceReady(
+            cachedOpening = recent.get(songKey(songCacheKey(song, untilSeconds))) != null,
+            copy = VersionAudioAligner.renditionToMeasure(song.videoId),
+            isLocalFile = local != null && LocalAudioSource.isLocal(local),
+            untilSeconds = untilSeconds,
+            durationMs = song.durationMillis(),
+        )
+    }
+
+    /** [referenceReady]'s rule with its inputs already read, so it can be tested without a cache. */
+    internal fun referenceReady(
+        cachedOpening: Boolean,
+        copy: AudioCache.Rendition?,
+        isLocalFile: Boolean,
+        untilSeconds: Double,
+        durationMs: Long,
+    ): Boolean =
+        cachedOpening || isLocalFile || hasOpeningOnDisk(copy, untilSeconds, durationMs)
+
+    /**
      * Whether a read that stopped before its window may still be kept.
      *
      * A read the caller walked away from ([failedStage] null: the decode loop
@@ -266,13 +321,15 @@ object VideoAudio {
         context: Context,
         song: Song,
         untilSeconds: Double = SONG_CHECK_SECONDS,
-    ): ByteArray? = songWavCopy(context, song, untilSeconds)?.bytes
+        onRefusal: ((SongWavRefusal) -> Unit)? = null,
+    ): ByteArray? = songWavCopy(context, song, untilSeconds, onRefusal)?.bytes
 
     /** [songWav] with the copy it actually opened, so the transcript is tagged with that clock. */
     suspend fun songWavCopy(
         context: Context,
         song: Song,
         untilSeconds: Double = SONG_CHECK_SECONDS,
+        onRefusal: ((SongWavRefusal) -> Unit)? = null,
     ): SongAudio? = withContext(Dispatchers.IO) {
         if (!untilSeconds.isFinite() || untilSeconds <= 0.0) return@withContext null
         val until = untilSeconds.coerceAtMost(MAX_SECONDS)
@@ -284,7 +341,7 @@ object VideoAudio {
         // Skipping it in a pocket let a wrong song play unchecked, and the
         // listener then spent more battery on the screen fixing it by hand.
         // It is one bounded opening per track, not the whole video.
-        val opened = openSongSource(context, song, until) ?: return@withContext null
+        val opened = openSongSource(context, song, until, onRefusal) ?: return@withContext null
         try {
             songLocks.getOrPut(key) { Mutex() }.withLock {
                 recent.get(songKey(key))?.let {
@@ -292,7 +349,7 @@ object VideoAudio {
                     return@withLock it
                 }
                 val bytes = AudioDecoder.interruptibleDecode {
-                    decodeSong(song, opened, until) { job?.isActive != false }
+                    decodeSong(song, opened, until, { job?.isActive != false }, onRefusal)
                 } ?: return@withLock null
                 val audio = SongAudio(
                     bytes,
@@ -321,7 +378,12 @@ object VideoAudio {
         val localTrackId: String? = null,
     )
 
-    private suspend fun openSongSource(context: Context, song: Song, untilSeconds: Double): SongSource? {
+    private suspend fun openSongSource(
+        context: Context,
+        song: Song,
+        untilSeconds: Double,
+        onRefusal: ((SongWavRefusal) -> Unit)? = null,
+    ): SongSource? {
         val local = song.localUri?.takeIf { it.isNotBlank() }?.let { Uri.parse(it) }
         val fromFile = local != null && LocalAudioSource.isLocal(local)
         if (!fromFile) {
@@ -347,6 +409,7 @@ object VideoAudio {
                     substitute.cachedPrefix < AudioCache.MIN_ALIGNMENT_PREFIX_BYTES
                 ) {
                     TrackLog.d(TAG, "song check: the opening is not on disk yet", song.videoId)
+                    onRefusal?.invoke(SongWavRefusal.NO_WAV)
                     return null
                 }
                 TrackLog.d(TAG, "song check: no YouTube opening; listening to ${substitute.key}", song.videoId)
@@ -360,6 +423,7 @@ object VideoAudio {
             val data = VersionAudioAligner.openDataSource(context, song)
             if (data == null) {
                 TrackLog.d(TAG, "song check: no audio to listen to", song.videoId)
+                onRefusal?.invoke(SongWavRefusal.NO_WAV)
                 return null
             }
             return SongSource(
@@ -387,13 +451,17 @@ object VideoAudio {
         }
         // Pick once and open that exact copy: asking again after the listen
         // could name a different rendition than the one whose words were heard.
-        val copy = VersionAudioAligner.renditionToMeasure(song.videoId) ?: return null
+        val copy = VersionAudioAligner.renditionToMeasure(song.videoId) ?: run {
+            onRefusal?.invoke(SongWavRefusal.NO_WAV)
+            return null
+        }
         val data = AudioCache.renditionDataSource(
             Uri.parse("bitchord://watch?v=${song.videoId}"),
             copy,
         )
         if (data == null) {
             TrackLog.d(TAG, "song check: no audio to listen to", song.videoId)
+            onRefusal?.invoke(SongWavRefusal.NO_WAV)
             return null
         }
         return SongSource(data, false, copy.key)
@@ -489,6 +557,7 @@ object VideoAudio {
         untilSeconds: Double,
         /** False once the caller has gone; see [decode]. */
         wanted: () -> Boolean,
+        onRefusal: ((SongWavRefusal) -> Unit)? = null,
     ): ByteArray? {
         // One second past the window, then cut at the sample: a decoded chunk
         // that starts inside the window may run past its end. Not stopped by
@@ -506,6 +575,7 @@ object VideoAudio {
             } == null
         } catch (e: Exception) {
             TrackLog.w(TAG, "song check: could not read the audio: ${e.message}", song.videoId)
+            onRefusal?.invoke(SongWavRefusal.DECODE)
             return null
         } finally {
             runCatching { opened.data.close() }
@@ -515,10 +585,21 @@ object VideoAudio {
         val stoppedAt = if (stoppedEarly) AudioDecoder.takeLastFailure() else null
         if (pcm.size < minimum) {
             TrackLog.d(TAG, "song check: under ten seconds of audio", song.videoId)
+            // Nothing heard because the read never got the decoder is not a
+            // recording too short to compare (11-05 auto8b: 24 s waited at the
+            // gate, zero audio, reported as a cancelled reference).
+            onRefusal?.invoke(
+                if (stoppedAt == AudioDecoder.FAILURE_GATE) {
+                    SongWavRefusal.GATE_TIMEOUT
+                } else {
+                    SongWavRefusal.TOO_SHORT
+                },
+            )
             return null
         }
         if (!keepAbandonedOpening(pcm.size, minimum, stoppedAt)) {
             TrackLog.d(TAG, "song check: the read failed; the opening is not kept", song.videoId)
+            onRefusal?.invoke(SongWavRefusal.DECODE)
             return null
         }
         val limit = (RATE * 2 * untilSeconds).toInt().let { it - it % 2 }

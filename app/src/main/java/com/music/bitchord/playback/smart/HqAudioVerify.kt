@@ -178,7 +178,16 @@ object HqAudioVerify {
         HEAD_TIMEOUT("head-timeout"),
         NO_SOURCE("no-source"),
         DECODE_FAILED("decode-failed"),
-        CANCELLED("cancelled");
+        CANCELLED("cancelled"),
+
+        /** The opening is not on disk yet, so the comparison did not start. */
+        NO_WAV("no-wav"),
+
+        /** The read never got the decoder: it waited at the one-at-a-time gate. */
+        GATE_TIMEOUT("gate-timeout"),
+
+        /** Less than ten seconds of the opening came back. */
+        TOO_SHORT("too-short");
 
         /**
          * Whether this is a failure of the moment rather than of the recording.
@@ -361,7 +370,9 @@ object HqAudioVerify {
         youtubeId: String,
         target: TrackMatcher.Target,
         stream: SourceStream,
-    ): HqVerificationStore.Verified? = verifyOutcome(context, youtubeId, target, stream).verifiedOrNull()
+        waitForOpening: Boolean = true,
+    ): HqVerificationStore.Verified? =
+        verifyOutcome(context, youtubeId, target, stream, waitForOpening = waitForOpening).verifiedOrNull()
 
     /**
      * As [verify], with the reason when the candidate cannot be used.
@@ -376,12 +387,21 @@ object HqAudioVerify {
         target: TrackMatcher.Target,
         stream: SourceStream,
         manual: Boolean = false,
+        waitForOpening: Boolean = true,
     ): Outcome {
         // A verification request is another event that may find a host's rest
         // over. The song being asked about here is handled below, so leave it
         // out to avoid two attempts for one pair.
         retryPendingRateLimits(exceptYoutubeId = youtubeId)
-        return verifyOutcome(context, youtubeId, target, stream, manual, recordRateLimit = true)
+        return verifyOutcome(
+            context,
+            youtubeId,
+            target,
+            stream,
+            manual,
+            recordRateLimit = true,
+            waitForOpening = waitForOpening,
+        )
     }
 
     private suspend fun verifyOutcome(
@@ -391,6 +411,7 @@ object HqAudioVerify {
         stream: SourceStream,
         manual: Boolean,
         recordRateLimit: Boolean,
+        waitForOpening: Boolean = true,
     ): Outcome = withContext(Dispatchers.IO) {
         val epoch = playbackEpoch.get()
         if (youtubeId.isBlank() || stream.url.isBlank()) return@withContext Outcome.Unavailable()
@@ -505,6 +526,7 @@ object HqAudioVerify {
                         youtubeId,
                         target.title,
                         manual,
+                        waitForOpening,
                     )
                     if (reference is Reference.Missing) {
                         candidateDeferred.cancel()
@@ -1028,6 +1050,14 @@ object HqAudioVerify {
         )
     }
 
+    /** The read's own refusal, as the reason this comparison reports. */
+    private fun VideoAudio.SongWavRefusal.toNoReference(): NoReferenceReason = when (this) {
+        VideoAudio.SongWavRefusal.NO_WAV -> NoReferenceReason.NO_WAV
+        VideoAudio.SongWavRefusal.GATE_TIMEOUT -> NoReferenceReason.GATE_TIMEOUT
+        VideoAudio.SongWavRefusal.DECODE -> NoReferenceReason.DECODE_FAILED
+        VideoAudio.SongWavRefusal.TOO_SHORT -> NoReferenceReason.TOO_SHORT
+    }
+
     /** A stored reference profile for [youtubeId], or null when there is none usable. */
     private fun diskReference(context: Context, youtubeId: String): ChromaAlignment.Features? {
         val file = referenceFile(context, youtubeId)
@@ -1092,6 +1122,7 @@ object HqAudioVerify {
         youtubeId: String,
         title: String,
         manual: Boolean,
+        waitForOpening: Boolean = true,
     ): Reference {
         referenceCache.get(youtubeId)?.let { return Reference.Ready(it) }
         val lock = referenceLocks.getOrPut(youtubeId) { Mutex() }
@@ -1103,7 +1134,7 @@ object HqAudioVerify {
                     noReference.remove(youtubeId)
                     return@withLock Reference.Ready(cached)
                 }
-                referenceFeaturesUncached(context, youtubeId, title, manual)
+                referenceFeaturesUncached(context, youtubeId, title, manual, waitForOpening)
             }
         } finally {
             referenceLocks.remove(youtubeId, lock)
@@ -1115,6 +1146,7 @@ object HqAudioVerify {
         youtubeId: String,
         title: String,
         manual: Boolean,
+        waitForOpening: Boolean = true,
     ): Reference {
         if (HqVerifyPolicy.shouldRetryMissingReference(manual)) {
             noReference.remove(youtubeId)
@@ -1136,8 +1168,21 @@ object HqAudioVerify {
             thumbnailUrl = null,
             isVideo = false,
         )
+        // A comparison that runs ahead of the play must not wait for its
+        // opening: the wait spends the analysis head's whole timeout on bytes
+        // that are not coming, then queues at the one-at-a-time gate, and the
+        // play change kills it with nothing heard — 11-05 auto8b waited 24 s,
+        // decoded zero audio, and reported "no reference reason=cancelled".
+        // Waiting for the opening is the song check's job; a caller that can be
+        // asked again (the read-ahead prefetch) only uses what is in hand.
+        // Nothing is remembered here, so the next event asks again.
+        if (!waitForOpening && !VideoAudio.referenceReady(song, COMPARE_SECONDS)) {
+            logNoReference(title, youtubeId, NoReferenceReason.NO_WAV)
+            return Reference.Missing(NoReferenceReason.NO_WAV)
+        }
+        var refusal: VideoAudio.SongWavRefusal? = null
         val wav = try {
-            VideoAudio.songWav(context, song, COMPARE_SECONDS)
+            VideoAudio.songWav(context, song, COMPARE_SECONDS) { refusal = it }
         } catch (cancelled: CancellationException) {
             logNoReference(title, youtubeId, NoReferenceReason.CANCELLED)
             return Reference.Missing(NoReferenceReason.CANCELLED)
@@ -1146,12 +1191,14 @@ object HqAudioVerify {
             // A read the play abandoned is not a recording that failed to
             // decode: naming it the same hid that the reference was never asked
             // to finish, and sent every later attempt looking for a missing
-            // source. Only a real failure is remembered for this play.
-            val reason = if (!currentCoroutineContext().isActive) {
+            // source. Only a real failure is remembered for this play, and the
+            // read's own refusal names the cause when it has one.
+            val reason = refusal?.toNoReference() ?: if (!currentCoroutineContext().isActive) {
                 NoReferenceReason.CANCELLED
             } else {
-                NoReferenceReason.DECODE_FAILED.also { noteNoReference(youtubeId, it) }
+                NoReferenceReason.DECODE_FAILED
             }
+            if (reason == NoReferenceReason.DECODE_FAILED) noteNoReference(youtubeId, reason)
             logNoReference(title, youtubeId, reason)
             return Reference.Missing(reason)
         }

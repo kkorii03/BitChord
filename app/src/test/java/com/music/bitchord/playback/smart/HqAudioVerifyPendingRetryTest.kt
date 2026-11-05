@@ -3,6 +3,7 @@ package com.music.bitchord.playback.smart
 import com.music.bitchord.data.sources.HqTier
 import com.music.bitchord.playback.smart.HqAudioVerify.NoReferenceReason
 import com.music.bitchord.playback.smart.HqAudioVerify.Outcome
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -37,12 +38,26 @@ class HqAudioVerifyPendingRetryTest {
             NoReferenceReason.HEAD_TIMEOUT,
             NoReferenceReason.DECODE_FAILED,
             NoReferenceReason.CANCELLED,
+            // 11-05 auto8b: an opening that was not on disk and a read that
+            // never got the decoder are the moment, not the recording.
+            NoReferenceReason.NO_WAV,
+            NoReferenceReason.GATE_TIMEOUT,
+            NoReferenceReason.TOO_SHORT,
         )) {
             assertFalse(
                 "reason=$reason must not consume the retry",
                 with(HqAudioVerify) { Outcome.NoReference(reason).settlesPendingRetry() },
             )
         }
+    }
+
+    @Test
+    fun `the reference refusals name the cause apart in the log`() {
+        assertEquals("no-wav", NoReferenceReason.NO_WAV.wire)
+        assertEquals("gate-timeout", NoReferenceReason.GATE_TIMEOUT.wire)
+        assertEquals("too-short", NoReferenceReason.TOO_SHORT.wire)
+        assertEquals("decode-failed", NoReferenceReason.DECODE_FAILED.wire)
+        assertEquals("cancelled", NoReferenceReason.CANCELLED.wire)
     }
 
     @Test
