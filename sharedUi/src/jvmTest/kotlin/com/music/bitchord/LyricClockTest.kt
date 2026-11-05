@@ -1,5 +1,9 @@
 package com.music.bitchord
 
+import com.music.bitchord.data.lyrics.LyricLine
+import com.music.bitchord.data.lyrics.LyricLineIndex
+import com.music.bitchord.data.lyrics.withEstimatedWords
+import com.music.bitchord.ko.ui.player.koShouldDrawLyricFrame
 import com.music.bitchord.ui.player.LyricClock
 import kotlin.math.abs
 import kotlin.random.Random
@@ -244,5 +248,119 @@ class LyricClockTest {
             readingAt = { taken -> 10_000 + taken.toLong() - if (taken >= 3_000) 1_500 else 0 },
         )
         assertTrue(abs(last - (15_000 - 1_500)) < 40)
+    }
+
+    /** One line of a line-synced sheet, as the panel draws it: words guessed over the line's own slot. */
+    private fun sheetLine(at: Long, next: Long?): LyricLine =
+        LyricLine(timeMs = at, text = "사랑해 너를 정말 오늘도").withEstimatedWords(next)
+
+    private class Sweep(
+        val maxLagMs: Double,
+        val maxIndexLateMs: Double,
+        val handoverChars: Float,
+        val maxStepChars: Float,
+        val freezeMs: Long,
+    )
+
+    /**
+     * Drives the whole drawn picture — the real clock, the real line index and
+     * the real guessed sweep — over a song that runs at a steady 1x, with a
+     * line every four seconds and readings dated when they were taken.
+     *
+     * Reports how far behind the song the words ever get, how late the line
+     * changes, how much of a line is already lit on the frame it takes over,
+     * the largest jump the sweep makes between two frames of one line, and how
+     * long each line sits frozen at its end.
+     */
+    private fun sweep(seconds: Double, hz: Double, maxDelayMs: Double = 60.0, seed: Int = 3): Sweep {
+        val stamps = (0 until 40).map { 2_000L + it * 4_000L }
+        val lines = stamps.mapIndexed { i, at -> sheetLine(at, stamps.getOrNull(i + 1)) }
+        val index = LyricLineIndex(lines)
+        val clock = LyricClock(stamps.first())
+        val random = Random(seed)
+        val frameMs = 1_000.0 / hz
+        var now = 0.0
+        var lastDrawnNanos = 0L
+        var nextPollMs = 0.0
+        val inFlight = ArrayDeque<Pair<Double, Pair<Long, Double>>>()
+        var report = stamps.first()
+        var sampledAt = 0.0
+        var maxLag = 0.0
+        var maxIndexLate = 0.0
+        var handoverChars = 0f
+        var maxStep = 0f
+        var lastLine = Int.MIN_VALUE
+        var lastRevealed = 0f
+        while (now <= seconds * 1_000) {
+            while (nextPollMs <= now) {
+                inFlight.addLast(
+                    (nextPollMs + random.nextDouble() * maxDelayMs) to
+                        ((2_000.0 + nextPollMs).toLong() to nextPollMs),
+                )
+                nextPollMs += 500.0
+            }
+            while (inFlight.isNotEmpty() && inFlight.first().first <= now) {
+                val (reading, at) = inFlight.removeFirst().second
+                report = reading
+                sampledAt = at
+            }
+            val nowNanos = (now * 1_000_000.0).toLong()
+            if (!koShouldDrawLyricFrame(nowNanos, lastDrawnNanos)) {
+                lastDrawnNanos = nowNanos
+                val shown = clock.frame(now, report, sampledAt, discontinuity = 0)
+                val truth = 2_000.0 + now
+                val lag = abs(truth - shown)
+                if (now > 3_000 && lag > maxLag) maxLag = lag
+                val want = index.lineAt(truth.toLong())
+                val got = index.lineAt(shown)
+                if (got < want) {
+                    val late = truth - lines[want].timeMs
+                    if (late > maxIndexLate) maxIndexLate = late
+                }
+                val revealed = lines.getOrNull(got)?.revealedChars(shown) ?: 0f
+                if (got != lastLine) {
+                    if (lastLine != Int.MIN_VALUE && got == lastLine + 1 && revealed > handoverChars) {
+                        handoverChars = revealed
+                    }
+                    lastRevealed = revealed
+                    lastLine = got
+                } else {
+                    val step = revealed - lastRevealed
+                    if (step > maxStep) maxStep = step
+                    lastRevealed = revealed
+                }
+            }
+            now += frameMs
+        }
+        val freeze = lines.zipWithNext { line, next -> next.timeMs - line.words.last().endMs }.maxOrNull() ?: 0L
+        return Sweep(maxLag, maxIndexLate, handoverChars, maxStep, freeze)
+    }
+
+    /**
+     * The report from the phone: the sweep stops at the end of a line and then
+     * races through the first words of the next one. If the clock is what
+     * stalls, a song that runs steadily has to show it.
+     *
+     * Nothing here is allowed to lag: at 60 Hz and at 120 Hz (where the frame
+     * gate halves the frames the clock is given), the words stay within a few
+     * tens of milliseconds of the song, the line changes when its stamp passes,
+     * the new line opens unsung, and no frame lights more than a character.
+     */
+    @Test fun steadySongIsNeverLeftBehindAtALineBoundary() {
+        for (hz in doubleArrayOf(60.0, 120.0)) {
+            val run = sweep(seconds = 120.0, hz = hz)
+            println(
+                "sweep ${hz.toInt()}Hz: maxLag=${run.maxLagMs}ms indexLate=${run.maxIndexLateMs}ms " +
+                    "handover=${run.handoverChars}chars maxStep=${run.maxStepChars}chars " +
+                    "freezeAtLineEnd=${run.freezeMs}ms",
+            )
+            assertTrue("$hz Hz: the words sat ${run.maxLagMs} ms behind the song", run.maxLagMs < 60.0)
+            assertTrue("$hz Hz: the line changed ${run.maxIndexLateMs} ms late", run.maxIndexLateMs < 60.0)
+            assertTrue(
+                "$hz Hz: the new line opened with ${run.handoverChars} characters already lit",
+                run.handoverChars < 1.5f,
+            )
+            assertTrue("$hz Hz: the sweep jumped ${run.maxStepChars} characters in one frame", run.maxStepChars < 1.5f)
+        }
     }
 }
