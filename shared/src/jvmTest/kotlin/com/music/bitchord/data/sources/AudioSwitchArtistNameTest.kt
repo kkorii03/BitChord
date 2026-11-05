@@ -1,5 +1,8 @@
 package com.music.bitchord.data.sources
 
+import com.music.bitchord.data.YouTubeDisplayCleaner
+import com.music.bitchord.data.lyrics.LyricsMismatch
+import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.net.SongVersionPolicy
 import kotlin.test.Test
@@ -254,5 +257,98 @@ class AudioSwitchArtistNameTest {
                 candidate.videoId,
             )
         }
+    }
+
+    // ---- The other-script grade the switch adopts (phone 11-06) -------------
+
+    private fun arrestTarget() =
+        TrackMatcher.audioSwitchTargetOf(YouTubeDisplayCleaner.cleanUpload(arrestVideo))
+
+    /**
+     * The 11-06 log: `reject qsqvJpOgrWw 체포하겠어 reason=title` and then no
+     * match at all, because that page held no row printing both names. The
+     * credit and the runtime are what is left, and the quality upgrade already
+     * trusts exactly those two for this song.
+     */
+    @Test
+    fun `a korean album row of the same act and length is adopted without a bridging row`() {
+        val target = arrestTarget()
+        val audio = arrestAudio().copy(durationText = "3:02")
+        // The exact-title gates still cannot compare the two names...
+        assertNull(TrackMatcher.bestSameArtist(listOf(audio), target))
+        assertNull(TrackMatcher.bestOfficialAudioForVideo(listOf(audio), target))
+        // ...the page holds no row that prints both, so the bridge is out too...
+        assertNull(TrackMatcher.bestTitleBridged(listOf(audio), listOf(audio), target))
+        // ...and the credit plus the runtime still carry it.
+        assertTrue(TrackMatcher.isAudioSwitchTitleUnverified(audio, target))
+        assertNull(TrackMatcher.songVersionRejectReason(audio, target))
+        // The three-second window of the upgrade grade is the one thing that
+        // does not carry over: a video's runtime is visual timing.
+        assertFalse(TrackMatcher.isTitleUnverifiedOriginal(audio, target))
+    }
+
+    @Test
+    fun `the same korean title filed by another act is never adopted`() {
+        val target = arrestTarget()
+        val other = arrestAudio().copy(videoId = "OTHERACT001", artist = "Another Singer")
+        assertFalse(TrackMatcher.isAudioSwitchTitleUnverified(other, target))
+        assertEquals("title", TrackMatcher.songVersionRejectReason(other, target))
+    }
+
+    @Test
+    fun `a korean row outside the video runtime window is not adopted`() {
+        val target = arrestTarget()
+        // Longer than the video by more than the video switch's own limit.
+        val long = arrestAudio().copy(videoId = "LONG0000001", durationText = "6:40")
+        assertFalse(TrackMatcher.isAudioSwitchTitleUnverified(long, target))
+        assertEquals("title", TrackMatcher.songVersionRejectReason(long, target))
+        // No runtime at all is no evidence either.
+        val unknown = arrestAudio().copy(videoId = "NORUNTIME01", durationText = null)
+        assertFalse(TrackMatcher.isAudioSwitchTitleUnverified(unknown, target))
+    }
+
+    @Test
+    fun `a cover karaoke remix or instrumental of the korean title is still refused`() {
+        val target = arrestTarget()
+        for (candidate in listOf(
+            arrestAudio().copy(videoId = "COVER000001", title = "체포하겠어 (Cover)"),
+            arrestAudio().copy(videoId = "KARAOKE0001", title = "체포하겠어 (Karaoke Version)"),
+            arrestAudio().copy(videoId = "REMIX000001", title = "체포하겠어 (Remix)"),
+            arrestAudio().copy(
+                videoId = "INSTR000001",
+                albumName = "체포하겠어 (Instrumental Edition)",
+            ),
+        )) {
+            assertFalse(TrackMatcher.isAudioSwitchTitleUnverified(candidate, target), candidate.videoId)
+        }
+    }
+
+    /**
+     * The post-check of the swap: the lyrics lookup has already judged what the
+     * adopted row sings, and two providers' sheets failing the same sound is
+     * the sound. That verdict undoes the swap; no request or decode is made to
+     * find out.
+     */
+    @Test
+    fun `a swap whose sound two sheets failed to describe is undone`() {
+        val swapped = arrestAudio().copy(videoId = "WRONGAUDIO1")
+        val verdict = LyricsMismatch.Verdict(
+            heardWords = 132,
+            matchedLines = 1,
+            totalLines = 24,
+            rejected = true,
+        )
+        LyricsMismatch.rememberRejected(swapped.videoId, LyricsSource.LRCLIB, emptyList(), verdict)
+        assertNull(
+            "one provider's wrong sheet is a wrong sheet",
+            LyricsMismatch.wrongSoundNote(swapped.videoId),
+        )
+        LyricsMismatch.rememberRejected(swapped.videoId, LyricsSource.KUGOU, emptyList(), verdict)
+        assertEquals(
+            "audio switch: revert WRONGAUDIO1 (lyrics mismatch 1/24)",
+            LyricsMismatch.wrongSoundNote(swapped.videoId),
+        )
+        // A sound that was never judged is left alone.
+        assertNull(LyricsMismatch.wrongSoundNote("NEVERJUDGED"))
     }
 }

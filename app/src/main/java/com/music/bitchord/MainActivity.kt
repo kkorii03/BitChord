@@ -143,6 +143,7 @@ import com.music.bitchord.data.DiagnosticsState
 import com.music.bitchord.data.innertube.InnertubeParser
 import com.music.bitchord.ko.KoAlternateVersionEffect
 import com.music.bitchord.ko.KoAutoMusicOnlyEffect
+import com.music.bitchord.ko.KoWrongAudioRevertEffect
 import com.music.bitchord.ko.KoDetailCoversEffect
 import com.music.bitchord.ko.KoDismissEmptyPlayerEffect
 import com.music.bitchord.ko.KoLyricsSettingsRoute
@@ -1823,6 +1824,19 @@ private fun BitChordApp(
 
     KoAutoMusicOnlyEffect(player, controller, preferMusicOnly, videoRadio, partyState.inParty, keepVideoId) { song, pause, align, before -> switchToMusicOnly(song, pause, align, before) } // [KO] auto-music-only-before-audio
     KoAlternateVersionEffect(player, songActions, menuFromPlayer, showNowPlaying, convertedAudioId, convertedVideoId, convertedFromVideo, convertedFromAudio, partyState.inParty, alternateVersionCache) { hasAlternateVersion = it } // [KO] alternate-version-lookup
+    KoWrongAudioRevertEffect(player.song?.videoId, convertedFromVideo, convertedAudioId) { original -> // [KO] wrong-audio-revert
+        // The row the menu's own revert puts back, with the same guard against
+        // the automatic music-only pass swapping it straight in again.
+        val c = controller
+        if (c != null) {
+            keepVideoId = original.videoId
+            convertedFromVideo = null
+            convertedAudioId = null
+            musicOnlyTried.add(original.videoId)
+            optimisticVersionSong = original
+            c.swapToVersion(original, alignVersion = false)
+        }
+    }
 
 
     /**

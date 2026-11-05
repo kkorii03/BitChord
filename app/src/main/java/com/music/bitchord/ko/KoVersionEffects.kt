@@ -2,9 +2,12 @@ package com.music.bitchord.ko
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.media3.session.MediaController
 import com.music.bitchord.autoMusicOnlyEffectKey
+import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.YtMusicRepository
+import com.music.bitchord.data.lyrics.LyricsMismatch
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.SongOrigins
 import com.music.bitchord.data.net.SongVersionPolicy
@@ -123,6 +126,43 @@ internal fun KoAlternateVersionEffect(
         alternateVersionCache[song.videoId] = exists
         if (player.song?.videoId == song.videoId && songActions?.videoId == song.videoId) {
             onHasAlternateVersion(exists)
+        }
+    }
+}
+
+/**
+ * Undoes a version swap the lyrics check has proved wrong.
+ *
+ * The audio switch may adopt a row on its credit and runtime alone when the
+ * title is filed under another script, and the sound is what settles whether
+ * that was right. That verdict already exists: the lyrics lookup throws a
+ * sheet away when what is being sung is not in it, and two providers failing
+ * the same sound is the sound — see `LyricsMismatch.wrongSound`. This reads it
+ * and nothing else: no request, no decode, no listening of its own.
+ *
+ * Only a swap made from the player is undone, because [original] — the row the
+ * listener swapped away from — is the only copy of it. shortcut: a version the
+ * queue resolved before playback has no such row and is left to the next ask,
+ * which the recorded verdict then refuses.
+ */
+@Composable
+internal fun KoWrongAudioRevertEffect(
+    playingVideoId: String?,
+    convertedFromVideo: Song?,
+    convertedAudioId: String?,
+    onRevert: (Song) -> Unit,
+) {
+    val playing = rememberUpdatedState(playingVideoId)
+    val original = rememberUpdatedState(convertedFromVideo)
+    val swapped = rememberUpdatedState(convertedAudioId)
+    val revert = rememberUpdatedState(onRevert)
+    LaunchedEffect(Unit) {
+        LyricsMismatch.wrongSounds.collect { videoId ->
+            val source = original.value ?: return@collect
+            if (swapped.value != videoId || playing.value != videoId) return@collect
+            val note = LyricsMismatch.wrongSoundNote(videoId) ?: return@collect
+            TrackLog.i("BitChord", note, videoId)
+            revert.value(source)
         }
     }
 }

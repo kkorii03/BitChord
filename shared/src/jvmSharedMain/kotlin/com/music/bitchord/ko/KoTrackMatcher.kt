@@ -470,6 +470,22 @@ internal object KoTrackMatcher {
     internal fun latinAgainstOtherScript(wanted: String, got: String): Boolean =
         hasFilingLatin(wanted) != hasFilingLatin(got)
 
+    /**
+     * Whether [candidate] may be adopted as the audio of music video [target]
+     * on the other-script-title grade alone — the same grade the quality
+     * upgrade uses, see [isTitleUnverifiedOriginal].
+     *
+     * Its three-second window is the one thing that does not carry over: a
+     * video's runtime is visual timing, so the 3:12 upload is the 3:05 album
+     * cut. The window is the video switch's own ([videoRuntimeAllows] with
+     * [VIDEO_DURATION_LIMIT_SEC]) and nothing wider. The same act, the same
+     * take markers and "not a cover" still come from that grade, and a cover,
+     * karaoke or remix row is refused there.
+     */
+    internal fun isAudioSwitchTitleUnverified(candidate: Song, target: Target): Boolean =
+        videoRuntimeAllows(target, candidate) &&
+            isTitleUnverifiedOriginal(candidate, target, VIDEO_DURATION_LIMIT_SEC) // [KO] title-unverified
+
     private fun scriptsDiffer(
         want: Set<Character.UnicodeScript>,
         have: Set<Character.UnicodeScript>,
@@ -769,6 +785,10 @@ internal object KoTrackMatcher {
         // terms. Only the failing check below is reproduced.
         if (bestSameArtist(listOf(candidate), target) != null) return null
         if (bestOfficialAudioForVideo(listOf(candidate), target) != null) return null
+        // The other-script grade the audio switch adopts (see
+        // [isAudioSwitchTitleUnverified]) is a real gate too, so a row it takes
+        // is never logged as a title miss.
+        if (isAudioSwitchTitleUnverified(candidate, target)) return null
         if (isCoverOf(candidate, target)) return "cover"
         val wanted = parseTitle(target.title, target.artist)
         val got = parseTitle(candidate.title, candidate.artist)
