@@ -296,6 +296,18 @@ object LyricsTiming {
         _changes.tryEmit(videoId)
     }
 
+    /**
+     * Rows whose sheet has to be re-chosen for the recording that plays: a
+     * song version found only after the first sound means this video keeps
+     * playing its own audio, and every provider's sheet is timed to the
+     * release instead. With AI timing off nothing will move it onto the
+     * video's clock, so the one sheet that can belong to the recording
+     * playing is the video's own — see [timedToVideo]. The lyrics screen
+     * asks that one source, once, on this event. No timer and no poll.
+     */
+    val lateSheetWanted: SharedFlow<String> get() = _lateSheetWanted
+    private val _lateSheetWanted = MutableSharedFlow<String>(extraBufferCapacity = 4)
+
     /** A measured shift smaller than this, at the record's pace, is the two being the same. */
     private const val MIN_SHIFT_MS = 150L
 
@@ -1749,6 +1761,12 @@ object LyricsTiming {
                 "lyrics-sync: ${video.videoId} late version ${original.videoId} -> measuring",
                 video.videoId,
             )
+            // With AI timing off, the measurement is the only thing that could
+            // put the release's sheet on this video's clock, and it has no
+            // words to work from. The video's own captions are timed to the
+            // recording that is playing, so the screen is asked to re-choose
+            // its sheet from them once.
+            if (!AppSettings.autoLyricsTiming.value) _lateSheetWanted.tryEmit(video.videoId)
             measure(
                 context,
                 video,

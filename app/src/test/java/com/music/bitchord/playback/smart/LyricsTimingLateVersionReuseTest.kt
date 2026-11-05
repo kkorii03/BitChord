@@ -3,13 +3,21 @@ package com.music.bitchord.playback.smart
 import android.content.Context
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.testutil.FakeContext
 import com.music.bitchord.testutil.FakePreferences
 import java.io.File
 import java.nio.file.Files
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -86,5 +94,45 @@ class LyricsTimingLateVersionReuseTest {
         LyricsTiming.measureLateVersion(context, video(), original("authoritative"), 200_000L)
         val lines = TrackLog.everything().drop(before)
         assertFalse(lines.any { it.contains("-> measuring") })
+    }
+
+    /**
+     * The row keeps playing its own video, and with AI timing off nothing will
+     * put the release's sheet on that video's clock: the screen is asked to
+     * re-choose its sheet from the video's own captions, once.
+     */
+    @Test
+    fun `an ai-off late version asks for the video's own sheet`() = runBlocking {
+        val was = AppSettings.autoLyricsTiming.value
+        AppSettings.autoLyricsTiming.value = false
+        try {
+            val got = CompletableDeferred<String>()
+            val job = launch(Dispatchers.Unconfined) { got.complete(LyricsTiming.lateSheetWanted.first()) }
+            assertTrue(LyricsTiming.lateSheetWanted.subscriptionCount.value > 0)
+            LyricsTiming.measureLateVersion(context, video(), original("authoritative"), 200_000L)
+            assertEquals("video", withTimeout(1_000) { got.await() })
+            job.cancel()
+        } finally {
+            AppSettings.autoLyricsTiming.value = was
+        }
+    }
+
+    /** With AI timing on, the measurement is what re-anchors the sheet. */
+    @Test
+    fun `an ai-on late version leaves the sheet to the measurement`() = runBlocking {
+        val was = AppSettings.autoLyricsTiming.value
+        AppSettings.autoLyricsTiming.value = true
+        try {
+            val got = CompletableDeferred<String>()
+            val job = launch(Dispatchers.Unconfined) {
+                got.complete(LyricsTiming.lateSheetWanted.first())
+            }
+            assertTrue(LyricsTiming.lateSheetWanted.subscriptionCount.value > 0)
+            LyricsTiming.measureLateVersion(context, video(), original("authoritative"), 200_000L)
+            assertNull(withTimeoutOrNull(300) { got.await() })
+            job.cancel()
+        } finally {
+            AppSettings.autoLyricsTiming.value = was
+        }
     }
 }
