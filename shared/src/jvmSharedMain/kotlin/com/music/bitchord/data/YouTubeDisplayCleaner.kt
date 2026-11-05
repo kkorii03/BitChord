@@ -226,6 +226,14 @@ internal object YouTubeDisplayCleaner {
                 return Cleaned(song, name)
             }
         }
+        // A cover channel re-sings other people's songs, so a title that names
+        // the artist itself — "아무것도 아니야 / RADWIMPS" on "너의 이름은。 커버"
+        // (phone 11-06) — is credited to that artist, and the channel, which
+        // says only that it covers, is dropped.
+        splitCoverChannelCredit(text, rawChannel)?.let { (songTitle, artist) ->
+            DebugLog.d(TAG, "artist: channel dropped (cover channel) -> $artist")
+            return Cleaned(songTitle, artist)
+        }
         val split = CoverTitles.splitTopLevelDash(text)
         if (split != null && shouldSplit(split.first, rawChannel, knownArtists)) {
             val artist = collapseAliases(split.first).ifBlank { channelArtist }
@@ -274,6 +282,24 @@ internal object YouTubeDisplayCleaner {
         if (tail.isBlank() || cut <= 0) return title
         if (compact(title.substring(cut + 3)) != compact(tail)) return title
         return title.substring(0, cut).trim().ifBlank { title }
+    }
+
+    /**
+     * `Song / Artist` on a cover channel: the title carries the artist, the
+     * channel only says it covers. The channel is a cover channel when its own
+     * name ends with the cover word ("너의 이름은。 커버", "오화요 커버"); an
+     * artist's own channel ("오화요", "RADWIMPS - Topic") does not, and there
+     * the channel stays the credit — an indie act's upload is its own song.
+     */
+    private fun splitCoverChannelCredit(text: String, channel: String): Pair<String, String>? {
+        if (!COVER_WORD_TAIL.containsMatchIn(channel)) return null
+        val (song, credit) = CoverTitles.splitTopLevelSlash(text) ?: return null
+        val artist = collapseAliases(credit)
+        if (artist.isBlank() || !isStatedCredit(artist)) return null
+        if (CoverTitles.sameName(artist, channel)) return null
+        val songTitle = song.trim().trim(' ', '-', '_', '|', '·', '/')
+        if (songTitle.isBlank()) return null
+        return songTitle to artist
     }
 
     /**

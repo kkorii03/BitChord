@@ -490,4 +490,33 @@ class YouTubeDisplayCleanerTest {
         assertEquals("Something", cleaned.title)
         assertEquals("오화요 커버", cleaned.artist)
     }
+
+    // Phone 11-06: a cover channel's upload named the artist in its title, and
+    // the channel ("너의 이름은。 커버") was shown as the artist instead.
+    @Test
+    fun `a cover channels title credit is the artist, not the channel`() {
+        val cleaned = YouTubeDisplayCleaner.clean("아무것도 아니야 / RADWIMPS", "너의 이름은。 커버")
+
+        assertEquals("아무것도 아니야", cleaned.title)
+        assertEquals("RADWIMPS", cleaned.artist)
+    }
+
+    // The other way round: an act's own channel carries no cover word, so the
+    // channel is the credit whatever the title's slash names.
+    @Test
+    fun `an artists own channel stays the credit`() {
+        val cleaned = YouTubeDisplayCleaner.clean("Memories / 윤미래", "오화요")
+
+        assertEquals("Memories / 윤미래", cleaned.title)
+        assertEquals("오화요", cleaned.artist)
+    }
+
+    // A `- Topic` channel is the artist's own upload, never a cover channel.
+    @Test
+    fun `a topic channel is not read as a cover channel`() {
+        val cleaned = YouTubeDisplayCleaner.clean("아무것도 아니야 / RADWIMPS", "RADWIMPS - Topic")
+
+        assertEquals("아무것도 아니야 / RADWIMPS", cleaned.title)
+        assertEquals("RADWIMPS", cleaned.artist)
+    }
 }

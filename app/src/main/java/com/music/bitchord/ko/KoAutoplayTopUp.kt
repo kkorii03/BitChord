@@ -6,6 +6,7 @@ import com.music.bitchord.download.Downloads
 import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.model.QueueTier
+import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.net.SongVersionPolicy
 import com.music.bitchord.data.settings.AppSettings
@@ -474,15 +475,26 @@ private fun videoRadioRows(
 ): List<Song> {
     val byId = sourceSongs.associateBy { it.videoId }
     return pick.ordered.take(limit.coerceAtLeast(0)).mapNotNull { byId[it.videoId] }.map {
-        it.copy(
-            videoRadio = true,
-            radioName = seedSong.radioName,
-            playbackSource = seedSong.playbackSource,
-            playbackSourceType = seedSong.playbackSourceType,
-            playbackSourceId = seedSong.playbackSourceId,
-        ).asQueueEntry(QueueTier.AUTOPLAY)
+        it.copy(videoRadio = true).carrySourceOf(seedSong).asQueueEntry(QueueTier.AUTOPLAY)
     }
 }
+
+/**
+ * A row added to the seed's AutoPlay, carrying the seed's origin so Now Playing
+ * can still name it after skips.
+ *
+ * A shared link's id is the seed track's own (`watch?v=<id>`), not a page:
+ * copied onto another row it sent that row's origin to someone else's song —
+ * `njVRZZLVwmU` marked as `source=shared_link:NPZtKA6343o` (phone 11-06). Only
+ * the kind travels; the id stays with the track it names.
+ */
+internal fun Song.carrySourceOf(seed: Song): Song = copy(
+    radioName = seed.radioName,
+    playbackSource = seed.playbackSource,
+    playbackSourceType = seed.playbackSourceType,
+    playbackSourceId = seed.playbackSourceId
+        .takeUnless { seed.playbackSourceType == PlaybackSourceType.SHARED_LINK },
+)
 
 /**
  * The station rows that may fill AutoPlay after the cover/karaoke filter.
@@ -623,12 +635,7 @@ private suspend fun loadNormalAutoplayTracks(
     }
 
     val rows = playable.map {
-        it.copy(
-            radioName = seedSong.radioName,
-            playbackSource = seedSong.playbackSource,
-            playbackSourceType = seedSong.playbackSourceType,
-            playbackSourceId = seedSong.playbackSourceId,
-        ).asQueueEntry(QueueTier.AUTOPLAY)
+        it.carrySourceOf(seedSong).asQueueEntry(QueueTier.AUTOPLAY)
     }
     onFilled(rows.size)
     // Music-only works on the rows before they are appended, like every other

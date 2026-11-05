@@ -1,8 +1,11 @@
 package com.music.bitchord
 
+import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.ko.carrySourceOf
 import com.music.bitchord.playback.autoplayRowsAfterCoverFilter
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -124,5 +127,33 @@ class AutoplayCoverSeedTest {
             listOf("다른 이름"),
             autoplayRowsAfterCoverFilter(rows, seed).map { it.artist },
         )
+    }
+
+    // Phone 11-06: the row added to a shared link's station was logged (and its
+    // origin opened) as the link's own track: `njVRZZLVwmU` marked as
+    // `source=shared_link:NPZtKA6343o`.
+    @Test
+    fun `a shared links own id is not carried onto the rows its station adds`() {
+        val seed = song("아무것도 아니야", "RADWIMPS").copy(
+            playbackSource = "공유 링크",
+            playbackSourceType = PlaybackSourceType.SHARED_LINK,
+            playbackSourceId = "NPZtKA6343o",
+        )
+
+        val row = song("다른 곡", "다른 가수").carrySourceOf(seed)
+
+        assertEquals(PlaybackSourceType.SHARED_LINK, row.playbackSourceType)
+        assertNull(row.playbackSourceId)
+    }
+
+    @Test
+    fun `a page source keeps its id on the rows its station adds`() {
+        val seed = song("Song", "Singer").copy(
+            playbackSource = "Album A",
+            playbackSourceType = PlaybackSourceType.BROWSE,
+            playbackSourceId = "MPREb_album",
+        )
+
+        assertEquals("MPREb_album", song("다른 곡", "다른 가수").carrySourceOf(seed).playbackSourceId)
     }
 }
