@@ -258,4 +258,36 @@ class CatalogSongMapperTest {
         assertTrue(CatalogSongMapper.alternateTitles("Friday (Official Video)").isEmpty())
         assertTrue(CatalogSongMapper.alternateTitles("Friday (Remix)").isEmpty())
     }
+
+    @Test
+    fun `a mapped row keeps the upload title it was mapped from`() {
+        val catalog = CatalogSongMapper.CatalogSong(
+            videoId = "qsqvJpOgrWw",
+            title = "체포하겠어",
+            artist = "ILLIT",
+            albumTitle = "BREAK EVEN",
+            albumId = "MPREb_album",
+            artworkUrl = null,
+            durationText = "3:05",
+        )
+        // The fanchant upload is the only row that prints both names of the
+        // song; replacing its title with the release's lost the other one.
+        val upload = Song(
+            videoId = "V2V9-9VhYJo",
+            title = "ILLIT (아일릿) '체포하겠어 (You're Under Arrest)'",
+            artist = "ILLIT",
+            thumbnailUrl = null,
+            isVideo = true,
+        )
+
+        val mapped = catalog.toSong(upload)
+        assertEquals("체포하겠어", mapped.title)
+        assertEquals(upload.title, mapped.uploadTitle)
+        // Kept for matching only: the row is not a cover, so nothing that
+        // reads a cover out of a row may see it.
+        assertNull(mapped.originalTitle)
+        assertFalse(CatalogSongMapper.isCover(mapped))
+        // A source that already names the release adds no second name.
+        assertNull(catalog.toSong(upload.copy(title = "체포하겠어")).uploadTitle)
+    }
 }

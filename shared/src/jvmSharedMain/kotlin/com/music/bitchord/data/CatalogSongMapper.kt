@@ -71,6 +71,13 @@ internal object CatalogSongMapper {
                 isVideoOrigin = false,
                 localUri = if (localVideo) null else source.localUri,
                 localPath = if (localVideo) null else source.localPath,
+                // The release title above is what a listener reads, but the
+                // upload's own title is the only row that prints both names of
+                // the song ("체포하겠어 (You're Under Arrest)"). Dropping it is
+                // what left a Korean release and its English music video with
+                // nothing to meet on; see TrackMatcher.bestTitleBridged.
+                uploadTitle = source.uploadTitle
+                    ?: source.title.trim().takeIf { it.isNotBlank() && it != title },
             )
         }
     }

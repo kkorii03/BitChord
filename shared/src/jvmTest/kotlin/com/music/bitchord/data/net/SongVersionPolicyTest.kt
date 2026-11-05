@@ -629,6 +629,31 @@ class SongVersionPolicyTest {
     }
 
     @Test
+    fun `a title-bridged row is installed as the video's song version`() {
+        // The bridge accepts the row that the ordinary gates refuse on title;
+        // what it hands back still has to clear the install policy, or the
+        // wider title would be measured and then dropped.
+        val video = Song(
+            videoId = "NPZtKA6343o",
+            title = "ILLIT (아일릿) \"You're Under Arrest\" Official MV",
+            artist = "HYPE UNIVERSE",
+            thumbnailUrl = null,
+            durationText = "3:12",
+            isVideo = true,
+        )
+        val audio = Song(
+            videoId = "qsqvJpOgrWw",
+            title = "체포하겠어",
+            artist = "ILLIT",
+            thumbnailUrl = null,
+            durationText = "3:05",
+        )
+        assertTrue(SongVersionPolicy.isSongVersionOf(video, audio))
+        // A video row is never the version that gets installed.
+        assertFalse(SongVersionPolicy.isSongVersionOf(video, audio.copy(isVideo = true)))
+    }
+
+    @Test
     fun `the audio cache stores a miss only for the source row`() {
         val video = Song(
             videoId = "CHk5SWVO4p8",

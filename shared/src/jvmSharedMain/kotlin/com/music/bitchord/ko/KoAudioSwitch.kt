@@ -57,6 +57,21 @@ internal object KoAudioSwitch {
                 YtMusicRepository.audioVersionCache[song.videoId] = match
                 return match
             }
+            // A Korean release files the song under its own name while the
+            // video is titled in English ("체포하겠어" / "You're Under
+            // Arrest"), so the title cannot be compared at all. A fanchant or
+            // stage upload on this same page prints both names, and that row is
+            // what ties them together; see TrackMatcher.bestTitleBridged for
+            // the artist and runtime checks that keep it from playing a
+            // different song.
+            TrackMatcher.bestTitleBridged(rows, candidates, target)?.let { (match, reading) ->
+                Log.d(
+                    TAG,
+                    "audio switch: accept ${match.videoId} via title-bridge ($reading)",
+                )
+                YtMusicRepository.audioVersionCache[song.videoId] = match
+                return match
+            }
             // One line per candidate that did not become the answer, so a
             // device log names the failing check instead of only the outcome.
             for (candidate in rows) {
