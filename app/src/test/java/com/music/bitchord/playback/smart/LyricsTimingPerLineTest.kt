@@ -42,4 +42,19 @@ class LyricsTimingPerLineTest {
 
         assertEquals(10_120L, LyricsTiming.apply(lines, timing)[0].timeMs)
     }
+
+    @Test
+    fun `the song check agreement is out of the lines the transcript could spell`() {
+        // NEON 11-06: 17 lines in the window, 8 on the fit, 5 of them opening in Hangul.
+        val lines = (0 until 17).map { line(it * 2_500L, "line $it") }
+        val indices = lines.indices.toList()
+        val starts = indices.map { if (it < 8) lines[it].timeMs + 80L else null }
+
+        assertEquals(47, LyricsTiming.fitAi(lines, indices, starts)?.matchPercent)
+        assertEquals(67, LyricsTiming.fitAi(lines, indices, starts, spellable = 12)?.matchPercent)
+        // Still under the 70% bar: a sheet this far off stays unapplied.
+        assertEquals(false, com.music.bitchord.data.lyrics.LyricsAiGuard.agreementAllows(67))
+        // Too few spellable lines is no base: back to all of them.
+        assertEquals(47, LyricsTiming.fitAi(lines, indices, starts, spellable = 2)?.matchPercent)
+    }
 }

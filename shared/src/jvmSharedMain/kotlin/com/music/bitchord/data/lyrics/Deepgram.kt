@@ -219,6 +219,27 @@ object Deepgram {
         }
     }
 
+    /**
+     * How many of [lines] a transcript in [language] could place at all.
+     *
+     * [LyricsWordAlign] places a line by its opening letters, and a Latin
+     * transcript ("en"/"multi") never writes Hangul, kana or Han, so a line
+     * that opens in one of those can never count as heard. Measured (phone
+     * 11-06, NEON rlYOsUfpi3M): a Korean/English sheet listened to in English
+     * had 5 of its 17 opening lines start in Hangul, which capped the song
+     * check's agreement at ~70% however well the rest lined up (`match=47%`).
+     * The CJK languages keep every line: Whisper may write an English phrase
+     * in either script there.
+     */
+    fun spellableLines(lines: List<String>, language: String): Int {
+        if (language == "ko" || language == "ja" || language == "zh") return lines.size
+        return lines.count { line ->
+            val first = LyricsWordAlign.fold(line).firstOrNull() ?: return@count true
+            !(first in '\uAC00'..'\uD7A3' || first in '\u1100'..'\u11FF' || first in '\u3130'..'\u318F' ||
+                first in '\u3040'..'\u30FF' || first in '\u4E00'..'\u9FFF')
+        }
+    }
+
     /** Latin lyrics that read as English: its commonest little words make up a good share of them. */
     private fun english(lines: List<String>): Boolean {
         val words = lines.flatMap { it.lowercase().split(Regex("[^a-z']+")) }.filter { it.isNotEmpty() }

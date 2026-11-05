@@ -3327,6 +3327,7 @@ object LyricsTiming {
             check.seconds,
             words = check.words,
             http = check.http,
+            detail = check.detail,
         )
         return true
     }
@@ -3391,8 +3392,11 @@ object LyricsTiming {
             return SongCheck("few-words", null, heard, null, null, seconds, answer.httpCode, heard.size, probe?.failure, listenClock)
         }
         val starts = LyricsWordAlign.placeLines(texts, heard)
-        val fitted = fitAi(lines, indices, starts) ?: run {
-            songLog(song.videoId, "no-fit", null, null, seconds, words = heard.size, http = answer.httpCode)
+        val spellable = com.music.bitchord.data.lyrics.Deepgram.spellableLines(texts, language)
+        // Why a match is what it is: lines in the window, lines placed, lines the language could spell.
+        val detail = " lines=${texts.size} placed=${starts.count { it != null }} spellable=$spellable lang=$language"
+        val fitted = fitAi(lines, indices, starts, spellable) ?: run {
+            songLog(song.videoId, "no-fit", null, null, seconds, words = heard.size, http = answer.httpCode, detail = detail)
             recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe, retry)
             return SongCheck("no-fit", null, heard, null, null, seconds, answer.httpCode, heard.size, clock = listenClock)
         }
@@ -3400,18 +3404,18 @@ object LyricsTiming {
         val shift = shownShiftMs(lines, fitted)
         when {
             !LyricsAiGuard.agreementAllows(match) -> {
-                songLog(song.videoId, "refused-match", match, shift, seconds, words = heard.size, http = answer.httpCode)
+                songLog(song.videoId, "refused-match", match, shift, seconds, words = heard.size, http = answer.httpCode, detail = detail)
                 recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe, retry)
                 return SongCheck("refused-match", null, heard, match, shift, seconds, answer.httpCode, heard.size, clock = listenClock)
             }
             !LyricsAiGuard.songShiftAllows(shift) -> {
-                songLog(song.videoId, "refused-shift", match, shift, seconds, words = heard.size, http = answer.httpCode)
+                songLog(song.videoId, "refused-shift", match, shift, seconds, words = heard.size, http = answer.httpCode, detail = detail)
                 recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe, retry)
                 return SongCheck("refused-shift", null, heard, match, shift, seconds, answer.httpCode, heard.size, clock = listenClock)
             }
         }
         recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe, retry)
-        return SongCheck("applied", fitted, heard, match, shift, seconds, answer.httpCode, heard.size, clock = listenClock)
+        return SongCheck("applied", fitted, heard, match, shift, seconds, answer.httpCode, heard.size, clock = listenClock, detail = detail)
     }
 
     /**
@@ -3455,6 +3459,8 @@ object LyricsTiming {
         val failure: NextPrepPolicy.SyncFailure? = null,
         /** The clock of the copy this check actually listened to. */
         val clock: Clock = Clock.Unknown,
+        /** The line counts behind [match], for the `applied` log line. */
+        val detail: String = "",
     )
 
     /**
@@ -3526,12 +3532,13 @@ object LyricsTiming {
         seconds: Int,
         words: Int? = null,
         http: Int? = null,
+        detail: String = "",
     ) {
         TrackLog.d(
             TAG,
             "song-sync: $videoId result=$result match=${match ?: 0}% shift=${shift ?: 0} secs=$seconds" +
                 " words=${words ?: 0}" + (http?.let { " http=$it" } ?: "") +
-                " sheet=${AiTimingPolicy.songSheetEffect(result)}",
+                " sheet=${AiTimingPolicy.songSheetEffect(result)}" + detail,
             videoId,
         )
     }
@@ -4186,11 +4193,19 @@ object LyricsTiming {
      * at least a quarter of the lines, and more of its answers on the line
      * than off it.
      */
-    internal fun fitAi(lines: List<LyricLine>, indices: List<Int>, starts: List<Long?>): Adjustment.Mapped? {
+    internal fun fitAi(
+        lines: List<LyricLine>,
+        indices: List<Int>,
+        starts: List<Long?>,
+        /** Lines the transcript could spell at all (`Deepgram.spellableLines`); the agreement's base. */
+        spellable: Int = indices.size,
+    ): Adjustment.Mapped? {
         val points = indices.zip(starts).mapNotNull { (index, start) -> start?.let { lines[index].timeMs to it } }
         if (points.size < MIN_AI_LINES || points.size * 4 < indices.size) return null
         val line = TimingFit.fit(points, minPoints = MIN_AI_LINES) ?: return null
-        val match = (line.inliers * 100.0 / indices.size).roundToInt().coerceIn(0, 100)
+        // Too few spellable lines is no base to judge on: fall back to all of them.
+        val base = spellable.takeIf { it >= MIN_AI_LINES }?.coerceAtMost(indices.size) ?: indices.size
+        val match = (line.inliers * 100.0 / base).roundToInt().coerceIn(0, 100)
         return Adjustment.Mapped(line.map, byAi = true, rate = line.rate, matchPercent = match)
     }
 
