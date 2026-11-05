@@ -63,15 +63,19 @@ internal object KoSongVersion {
      */
     suspend fun findAlternateRecording(song: Song, excluding: Set<String> = emptySet()): Song? {
         if (song.title.isBlank() || song.artist.isBlank()) return null
-        val target = TrackMatcher.targetOf(song)
+        // The same reading the audio switch searches by: an upload's channel is
+        // not the artist, and asking for it here found no other recording at
+        // all (phone 11-06).
+        val row = KoAudioSwitch.audioSwitchRow(song)
+        val target = TrackMatcher.targetOf(row)
         val excluded = excluding + song.videoId
         fun acceptable(candidate: Song): Boolean =
             candidate.videoId.isNotBlank() &&
                 candidate.videoId !in excluded &&
                 !candidate.isVideo &&
                 !StreamResolver.isUnplayable(candidate.videoId) &&
-                TrackMatcher.sharesArtist(song.artist, candidate.artist) &&
-                TrackMatcher.sameTitle(song, candidate) &&
+                TrackMatcher.sharesArtist(row.artist, candidate.artist) &&
+                TrackMatcher.sameTitle(row, candidate) &&
                 TrackMatcher.withinSeconds(candidate, target, ALTERNATE_DURATION_TOLERANCE_SEC)
 
         val catalogue = try {

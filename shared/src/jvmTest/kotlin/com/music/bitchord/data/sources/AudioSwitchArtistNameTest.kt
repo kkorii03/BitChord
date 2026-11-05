@@ -5,6 +5,7 @@ import com.music.bitchord.data.lyrics.LyricsMismatch
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.net.SongVersionPolicy
+import com.music.bitchord.ko.KoAudioSwitch
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -271,6 +272,69 @@ class AudioSwitchArtistNameTest {
         assertEquals("Mark Ronson", row.artist)
         val queries = TrackMatcher.audioSwitchQueries(row)
         assertTrue(queries.any { it.contains("Mark Ronson", ignoreCase = true) }, queries.toString())
+    }
+
+    /**
+     * Phone 11-06, vc148: the deep-linked row knew its release, and
+     * [YouTubeDisplayCleaner.cleanUpload] reads an album id as "already
+     * display-ready" and skips — so the search still asked for the channel
+     * while the player showed the artist.
+     */
+    @Test
+    fun `a deep-linked row that knows its release is still searched by its artist`() {
+        val deepLink = arrestVideo.copy(albumId = "MPREb_breakEven", albumName = "BREAK EVEN")
+
+        val row = KoAudioSwitch.audioSwitchRow(deepLink)
+
+        assertEquals("ILLIT", row.artist)
+        assertEquals("You're Under Arrest", row.title)
+        // The release is what the match compares, so it stays on the row.
+        assertEquals("MPREb_breakEven", row.albumId)
+        val queries = TrackMatcher.audioSwitchQueries(row)
+        assertTrue(queries.any { it.contains("ILLIT", ignoreCase = true) }, queries.toString())
+        assertTrue(queries.none { it.contains("HYPE UNIVERSE", ignoreCase = true) }, queries.toString())
+    }
+
+    /**
+     * `audio switch: no official song match for '…' by '…'` is written from
+     * this row, and it printed the uploader while the search used the artist.
+     */
+    @Test
+    fun `the miss line names the artist the search used`() {
+        val row = KoAudioSwitch.audioSwitchRow(arrestVideo.copy(albumId = "MPREb_breakEven"))
+
+        assertEquals("You're Under Arrest", row.title)
+        assertEquals("ILLIT", row.artist)
+    }
+
+    @Test
+    fun `a cover and an artists own channel are left as they are`() {
+        val cover = Song(
+            videoId = "COVER000001",
+            title = "Shape of You - Ed Sheeran (cover by Jane)",
+            artist = "Jane",
+            thumbnailUrl = null,
+            isVideo = true,
+        )
+        // A cover's own title is what the switch must refuse, not the song it covers.
+        assertEquals(cover, KoAudioSwitch.audioSwitchRow(cover))
+
+        val own = Song(
+            videoId = "UPTOWN00002",
+            title = "Uptown Funk (Official Video)",
+            artist = "Mark Ronson",
+            thumbnailUrl = null,
+            isVideo = true,
+        )
+        assertEquals("Mark Ronson", KoAudioSwitch.audioSwitchRow(own).artist)
+
+        val topic = Song(
+            videoId = "TOPIC000001",
+            title = "체포하겠어",
+            artist = "ILLIT - Topic",
+            thumbnailUrl = null,
+        )
+        assertEquals("ILLIT", KoAudioSwitch.audioSwitchRow(topic).artist)
     }
 
     @Test
