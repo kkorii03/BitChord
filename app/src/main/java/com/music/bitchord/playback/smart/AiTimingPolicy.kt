@@ -155,6 +155,29 @@ internal object AiTimingPolicy {
             }
         }
 
+    /**
+     * Why the song check did not start, for its one log line: `deepgram-off`,
+     * `accepted` (the kept answer stands), `spent` (Whisper already answered
+     * these lyrics and its answer was not good enough to show — the provider's
+     * times stay, nothing else is tried), or `none`.
+     */
+    fun songSkipReason(knowledge: AiTimingKnowledge, lyricsKey: Int, deepgramUsable: Boolean): String = when {
+        !deepgramUsable -> "deepgram-off"
+        isAccepted(knowledge, lyricsKey) -> "accepted"
+        DEEPGRAM_WHISPER in spentOn(knowledge, lyricsKey) -> "spent"
+        else -> "none"
+    }
+
+    /**
+     * Whether a song check's reply spends Whisper on these lyrics. Only a
+     * reply the engine actually gave (2xx) does; a server error is not an
+     * answer, and spending on it left the song unchecked for good.
+     */
+    fun songReplySpends(httpCode: Int?): Boolean = httpCode != null && httpCode in 200..299
+
+    /** What a song check result does to the sheet on screen, for its log line. */
+    fun songSheetEffect(result: String): String = if (result == "applied") "moved" else "kept"
+
     /** Whether any automatic request may still run for these lyrics. */
     fun shouldAskAgain(
         knowledge: AiTimingKnowledge,

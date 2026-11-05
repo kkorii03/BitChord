@@ -209,4 +209,37 @@ class AiTimingPolicyTest {
             AiTimingPolicy.nextEngines(AiTimingKnowledge(), key, manual = true, measurementGaveUp = false, songOnly = true),
         )
     }
+
+    /** vc147 NEON (rlYOsUfpi3M): `allowed=false` with base=none must say the Whisper reply was spent, not accepted. */
+    @Test
+    fun songSkipReasonTellsSpentFromAccepted() {
+        val w = AiTimingPolicy.DEEPGRAM_WHISPER
+        val spent = AiTimingKnowledge(attemptedKey = key, attemptedEngines = setOf(w))
+        assertEquals("spent", AiTimingPolicy.songSkipReason(spent, key, deepgramUsable = true))
+        val refused = AiTimingKnowledge(answerKey = key, answerEngine = w, answerMatch = 50)
+        assertEquals("spent", AiTimingPolicy.songSkipReason(refused, key, deepgramUsable = true))
+        val accepted = AiTimingKnowledge(answerKey = key, answerEngine = w, answerMatch = 90)
+        assertEquals("accepted", AiTimingPolicy.songSkipReason(accepted, key, deepgramUsable = true))
+        assertEquals("deepgram-off", AiTimingPolicy.songSkipReason(accepted, key, deepgramUsable = false))
+        assertEquals("none", AiTimingPolicy.songSkipReason(AiTimingKnowledge(), key, deepgramUsable = true))
+        // Other lyrics: the spent engine was for another text.
+        assertEquals("none", AiTimingPolicy.songSkipReason(spent, key + 1, deepgramUsable = true))
+    }
+
+    @Test
+    fun onlyARealReplySpendsTheSongCheck() {
+        assertTrue(AiTimingPolicy.songReplySpends(200))
+        assertFalse(AiTimingPolicy.songReplySpends(null))
+        assertFalse(AiTimingPolicy.songReplySpends(500))
+        assertFalse(AiTimingPolicy.songReplySpends(401))
+        assertFalse(AiTimingPolicy.songReplySpends(429))
+    }
+
+    @Test
+    fun onlyAnAppliedSongCheckMovesTheSheet() {
+        assertEquals("moved", AiTimingPolicy.songSheetEffect("applied"))
+        for (r in listOf("no-audio", "no-words", "no-answer", "few-words", "no-fit", "refused-match", "refused-shift")) {
+            assertEquals(r, "kept", AiTimingPolicy.songSheetEffect(r))
+        }
+    }
 }

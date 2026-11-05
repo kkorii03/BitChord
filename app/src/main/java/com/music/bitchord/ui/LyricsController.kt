@@ -1353,6 +1353,7 @@ class LyricsController(
             video = request.isVideo,
             stored = storedSync,
             recheck = recheck,
+            refineMs = refineShift,
         )
         // Sync-test mode only: the lines as they are now on screen, so a phone
         // scoring run can compare every displayed start with the audio.

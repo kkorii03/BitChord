@@ -48,6 +48,8 @@ object TrackDiagnostics {
         stored: Boolean = false,
         /** Why a downloaded file's sync is (or was) re-checked: none/unverified/unknown-provider/low-match/done. */
         recheck: String = "none",
+        /** The heard-words refine on top of base (also on a base=none song row, where `shift` stays empty). */
+        refineMs: Long = 0L,
     ) {
         if (videoId.isBlank()) return
         synchronized(this) {
@@ -68,6 +70,7 @@ object TrackDiagnostics {
             append(" recheck=").append(recheck)
             append(" silenceSkipMs=").append(SilenceSkipStats.skippedMs)
             append(" video=").append(if (video) "y" else "n")
+            append(" refine=").append(refineMs).append("ms")
         }
         val changed = synchronized(this) {
             if (lastSyncLine[videoId] == line) {

@@ -2984,7 +2984,8 @@ object LyricsTiming {
             TrackLog.d(
                 TAG,
                 "lyrics-sync: song-check skipped engine=$engine allowed=${engine in engines} " +
-                    "deepgram=${com.music.bitchord.data.lyrics.Deepgram.usable}",
+                    "deepgram=${com.music.bitchord.data.lyrics.Deepgram.usable} " +
+                    "why=${AiTimingPolicy.songSkipReason(knowledge(entry), key, com.music.bitchord.data.lyrics.Deepgram.usable)}",
                 song.videoId,
             )
             return false
@@ -3416,7 +3417,7 @@ object LyricsTiming {
         httpCode: Int?,
         probe: NextSyncProbe?,
     ) {
-        if (httpCode == null) return
+        if (!AiTimingPolicy.songReplySpends(httpCode)) return
         // The probe is only read here: a failure has already been set above
         // when the answer carried no words or too few of them.
         if (!NextPrepPolicy.shouldStoreSyncResult(probe?.failure)) return
@@ -3517,7 +3518,8 @@ object LyricsTiming {
         TrackLog.d(
             TAG,
             "song-sync: $videoId result=$result match=${match ?: 0}% shift=${shift ?: 0} secs=$seconds" +
-                " words=${words ?: 0}" + (http?.let { " http=$it" } ?: ""),
+                " words=${words ?: 0}" + (http?.let { " http=$it" } ?: "") +
+                " sheet=${AiTimingPolicy.songSheetEffect(result)}",
             videoId,
         )
     }
