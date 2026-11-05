@@ -56,6 +56,65 @@ class LyricsMismatchTest {
         assertFalse(verdict.rejected)
     }
 
+    /** NEON (A2O LITE, rlYOsUfpi3M), lrc.red: the 17 lines of the 40 s song check (phone 11-06, match=47%). */
+    private val neonOpening = listOf(
+        "Neon and beyond, that's what we on and beyond, yup",
+        "Neon and beyond, that's what we on and beyond, yup",
+        "Neon and beyond, that's what we on and beyond, yup",
+        "Neon and beyond, that's what we on and",
+        "Grab a hold on to something tight, A2O THE LITE",
+        "감각을 마비 충격 그 자체",
+        "Feel the energy and follow the ‘LITE’",
+        "I know you like that, right",
+        "시선 고정 Li-li-like that",
+        "이미 가진 포스",
+        "Here we come, come, here we come, come",
+        "Here the drum rump, uh, pum, pum",
+        "분석 중",
+        "Hit the ground, run, do the math, hun",
+        "They ain’t never seen another one",
+        "Oh, what? What you gone do, waa",
+        "지켜봐 봐 Zalpha 올라가 New Gen",
+    )
+
+    @Test
+    fun aMixedSheetListenedToInEnglishCountsOnlyTheLinesEnglishCanSpell() {
+        assertEquals("en", Deepgram.languageFor(neonOpening))
+        // Five lines open in Hangul; an English transcript can never place them.
+        assertEquals(12, Deepgram.spellableLines(neonOpening, "en"))
+        assertEquals(12, Deepgram.spellableLines(neonOpening, "multi"))
+        // Listening in Korean, every line may be written either way: nothing dropped.
+        assertEquals(17, Deepgram.spellableLines(neonOpening, "ko"))
+        assertEquals(1, Deepgram.spellableLines(listOf("...", "시선"), "en"))
+    }
+
+    @Test
+    fun spellingNoiseFoldsAway() {
+        // Curly apostrophes, quotes, case, punctuation and full-width letters are not a mismatch.
+        assertEquals(LyricsWordAlign.fold("they aint"), LyricsWordAlign.fold("They ain’t"))
+        assertEquals(LyricsWordAlign.fold("follow the lite"), LyricsWordAlign.fold("Follow the ‘LITE’!"))
+        assertEquals("neon", LyricsWordAlign.fold("ＮＥＯＮ"))
+    }
+
+    @Test
+    fun aMixedSheetHeardOnlyInItsEnglishIsKeptNotSwapped() {
+        // The transcript skips one chorus repeat and every Hangul line, as Whisper in English did.
+        val sung = neonOpening.withIndex()
+            .filter { (i, text) -> i != 1 && Deepgram.spellableLines(listOf(text), "en") == 1 }
+        val words = mutableListOf<LyricsWordAlign.Heard>()
+        var at = 0L
+        for ((_, text) in sung) {
+            text.split(' ', ',').filter { it.isNotBlank() }.forEach { word ->
+                words += heard(word, at)
+                at += 300L
+            }
+        }
+        val verdict = LyricsMismatch.judge(neonOpening, words)
+        assertTrue(verdict.heardWords >= LyricsMismatch.MIN_HEARD_WORDS)
+        assertTrue(verdict.matchedLines >= 8, "matched ${verdict.matchedLines}")
+        assertFalse(verdict.rejected)
+    }
+
     @Test
     fun tooLittleSoundIsNoVerdict() {
         val words = lines[0].split(' ').mapIndexed { index, word -> heard(word, 1_000L + index * 400L) }
