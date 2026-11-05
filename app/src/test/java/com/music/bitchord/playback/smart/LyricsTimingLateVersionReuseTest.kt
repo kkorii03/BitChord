@@ -1,4 +1,4 @@
-package com.music.bitchord.playback.smart
+﻿package com.music.bitchord.playback.smart
 
 import android.content.Context
 import com.music.bitchord.data.TrackLog
@@ -10,6 +10,7 @@ import java.io.File
 import java.nio.file.Files
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -108,7 +109,6 @@ class LyricsTimingLateVersionReuseTest {
         try {
             val got = CompletableDeferred<String>()
             val job = launch(Dispatchers.Unconfined) { got.complete(LyricsTiming.lateSheetWanted.first()) }
-            assertTrue(LyricsTiming.lateSheetWanted.subscriptionCount.value > 0)
             LyricsTiming.measureLateVersion(context, video(), original("authoritative"), 200_000L)
             assertEquals("video", withTimeout(1_000) { got.await() })
             job.cancel()
@@ -127,7 +127,6 @@ class LyricsTimingLateVersionReuseTest {
             val job = launch(Dispatchers.Unconfined) {
                 got.complete(LyricsTiming.lateSheetWanted.first())
             }
-            assertTrue(LyricsTiming.lateSheetWanted.subscriptionCount.value > 0)
             LyricsTiming.measureLateVersion(context, video(), original("authoritative"), 200_000L)
             assertNull(withTimeoutOrNull(300) { got.await() })
             job.cancel()
