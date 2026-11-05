@@ -995,6 +995,7 @@ object InnertubeParser {
         }
         val thumbnails = renderer.o("thumbnail").o("musicThumbnailRenderer")
             .o("thumbnail").a("thumbnails")
+        val videoType = renderer.findString("musicVideoType")
 
         return Song(
             videoId = videoId,
@@ -1010,12 +1011,16 @@ object InnertubeParser {
             artists = completeArtistCredits(artist.orEmpty(), credits.artists),
             albumId = credits.albumId,
             albumName = credits.albumName,
-            isVideo = when (val videoType = renderer.findString("musicVideoType")) {
+            isVideo = when (videoType) {
                 null -> rowType == "video" || thumbnails.isNotSquare()
                 else -> !videoType.contains("ATV", ignoreCase = true)
             },
+            // The kind is kept as YouTube stated it: a music video and an
+            // official music video are both videos, but only the second one is
+            // a release of a catalogue song — see [Song.musicVideoType].
+            musicVideoType = videoType,
             isEpisode = rowType == "episode" ||
-                renderer.findString("musicVideoType") == "MUSIC_VIDEO_TYPE_PODCAST_EPISODE",
+                videoType == "MUSIC_VIDEO_TYPE_PODCAST_EPISODE",
             isExplicit = renderer["subtitleBadges"].hasExplicitBadge(),
         )
     }
@@ -1521,6 +1526,9 @@ object InnertubeParser {
                     it.contains("views", ignoreCase = true) || it.contains("조회수")
                 }
             },
+            // Kept as stated: an OMV row is the release of a catalogue song, a
+            // UGC row is an upload that exists only as a video.
+            musicVideoType = videoType,
             isExplicit = renderer.hasExplicitBadge(),
         )
     }

@@ -73,6 +73,14 @@ internal class SongVersionController(
     private var versionHoldHeld = false
 
     /**
+     * The songs already skipped for having no audio release. A queue that
+     * cycles back to one must not skip it a second time — see
+     * [SongVersionPolicy.skipsOfficialMvWithoutAudio].
+     */
+    private val skippedOfficialMv: MutableSet<String> =
+        java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap())
+
+    /**
      * Whether the row that just became current is being held silent for its
      * song version. A gapless auto advance looks audible to the player even
      * though [beginVersionHold] has paused it, so the caller has to ask this
@@ -689,6 +697,7 @@ internal class SongVersionController(
         }
         if (YtMusicRepository.isSongVersionMissing(lookupSong.videoId)) {
             // The queue build already established this row has no song version.
+            if (skipOfficialMv(exoPlayer, lookupSong, audioReleaseMissing = true)) return
             TrackLog.i(
                 "BitChord",
                 if (localFile) {
@@ -757,6 +766,7 @@ internal class SongVersionController(
                 }
                 null
             }
+            var skipped = false
             try {
                 if (resolved != null &&
                     SongVersionPolicy.mayInstallSongVersion(lookupSong)
@@ -800,32 +810,93 @@ internal class SongVersionController(
                     if (SongVersionPolicy.hasMadeFirstSound(mediaId, currentAudibleMediaId())) {
                         retryTimedOutVersion(exoPlayer)
                     }
-                } else if (resolved == null && localFile && !lookupFailed) {
+                } else if (resolved == null && !lookupFailed) {
                     // The lookup answered "there is no version" rather than
-                    // failing; keep the downloaded video with a reason that
-                    // says why it stayed. Nothing is recorded about the file
-                    // here: [YtMusicRepository.songVersion] also answers null
-                    // when its search failed, and a legacy MV must not be filed
-                    // as a verified song on a network error. Only a lookup that
+                    // failing, so this row's own sound is all there is. An
+                    // official music video is skipped rather than played; every
+                    // other video keeps it, with a reason in the log that says
+                    // why it stayed. Nothing is recorded about the file here:
+                    // [YtMusicRepository.songVersion] also answers null when its
+                    // search failed, and a legacy MV must not be filed as a
+                    // verified song on a network error. Only a lookup that
                     // positively named this very id (above) records that.
-                    TrackLog.i(
-                        "BitChord",
-                        "song version: ${song.videoId} kept (local file, none)",
-                        about = song.videoId,
+                    skipped = skipOfficialMv(
+                        exoPlayer,
+                        lookupSong,
+                        audioReleaseMissing =
+                            YtMusicRepository.isSongVersionMissing(lookupSong.videoId),
                     )
+                    if (!skipped && localFile) {
+                        TrackLog.i(
+                            "BitChord",
+                            "song version: ${song.videoId} kept (local file, none)",
+                            about = song.videoId,
+                        )
+                    }
                 }
             } finally {
                 // The replacement itself changes the media id, so the hold is
                 // still ours when the current item is either the original
-                // video or the song version just installed.
+                // video or the song version just installed. A skip moves the
+                // hold to the next row instead, and must not resume this one.
                 val currentId = exoPlayer.currentMediaItem?.mediaId
-                if (currentPlayer() === exoPlayer &&
+                if (!skipped && currentPlayer() === exoPlayer &&
                     (currentId == mediaId || (resolved != null && currentId == resolved.videoId))
                 ) {
                     resumeVersionHold(exoPlayer)
                 }
             }
         }
+    }
+
+    /**
+     * Skips a row that must not play at all: an official music video whose
+     * catalogue release this service could not find. See
+     * [SongVersionPolicy.skipsOfficialMvWithoutAudio] for why, and for the
+     * covers, video stations and video-mode listeners that still play.
+     *
+     * The move is the player's own timeline, so the skip lands as an ordinary
+     * track change and the next row gets its own before-audio lookup. Nothing
+     * is searched here: at the end of the queue the playback stops instead of
+     * looking for another song to play in its place.
+     *
+     * The first-sound hold is deliberately left alone. It belongs to the row
+     * being moved to, which is the same way a skip the listener makes during
+     * the wait keeps their play intent (see [beginVersionHold]).
+     *
+     * @return true when the row was skipped, so its caller leaves it unplayed.
+     */
+    private fun skipOfficialMv(
+        exoPlayer: ExoPlayer,
+        song: Song,
+        audioReleaseMissing: Boolean,
+    ): Boolean {
+        if (!SongVersionPolicy.skipsOfficialMvWithoutAudio(
+                song = song,
+                musicOnly = AppSettings.preferMusicOnly.value,
+                audioReleaseMissing = audioReleaseMissing,
+                alreadySkipped = song.videoId in skippedOfficialMv,
+            )
+        ) {
+            return false
+        }
+        // Never yank a row the listener is already hearing, even one that
+        // reached its first sound through a hold that was released early.
+        if (SongVersionPolicy.hasMadeFirstSound(song.videoId, currentAudibleMediaId())) return false
+        skippedOfficialMv.add(song.videoId)
+        TrackLog.i(
+            "BitChord",
+            "music-only: official MV has no audio release, skipped ${song.videoId} ${song.title}",
+            about = song.videoId,
+        )
+        if (!exoPlayer.seekToNextMediaItem()) {
+            // Nothing left in the queue. Stop here; the refill paths are not
+            // asked to find something else to play.
+            versionHoldWantsPlay = false
+            versionHoldHeld = false
+            exoPlayer.pause()
+        }
+        return true
     }
 
     /**

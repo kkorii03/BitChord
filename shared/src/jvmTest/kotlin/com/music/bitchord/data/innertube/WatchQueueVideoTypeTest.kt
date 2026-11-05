@@ -38,6 +38,19 @@ class WatchQueueVideoTypeTest {
 
         assertEquals("qyh6mYIJG2Y", song.videoId)
         assertTrue(song.isVideo)
+        // The kind is kept, not just the video flag: an official video is the
+        // release of a catalogue song, which is what music-only acts on.
+        assertEquals("MUSIC_VIDEO_TYPE_OMV", song.musicVideoType)
+    }
+
+    @Test
+    fun `a UGC watch row is a video that exists only as one`() {
+        val song = InnertubeParser.parseWatchQueue(
+            Json.parseToJsonElement(watchQueue("ugc00000001", "MUSIC_VIDEO_TYPE_UGC")),
+        ).single()
+
+        assertTrue(song.isVideo)
+        assertEquals("MUSIC_VIDEO_TYPE_UGC", song.musicVideoType)
     }
 
     @Test
@@ -48,5 +61,6 @@ class WatchQueueVideoTypeTest {
 
         assertEquals("xz868t23pb4", song.videoId)
         assertFalse(song.isVideo)
+        assertEquals("MUSIC_VIDEO_TYPE_ATV", song.musicVideoType)
     }
 }

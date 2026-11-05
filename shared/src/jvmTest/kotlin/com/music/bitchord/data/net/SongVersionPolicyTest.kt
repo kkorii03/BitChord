@@ -953,4 +953,70 @@ class SongVersionPolicyTest {
         assertEquals(IntRange.EMPTY, SongVersionPolicy.versionLookaheadIndices(-1, 5))
         assertEquals(IntRange.EMPTY, SongVersionPolicy.versionLookaheadIndices(5, 5))
     }
+
+    // --- music-only skips an official video with no catalogue release --------
+
+    private fun video(
+        id: String,
+        type: String,
+        videoRadio: Boolean = false,
+        originalTitle: String? = null,
+    ) = Song(
+        videoId = id,
+        title = "A Song",
+        artist = "An Artist",
+        isVideo = true,
+        musicVideoType = type,
+        videoRadio = videoRadio,
+        originalTitle = originalTitle,
+    )
+
+    private fun skips(
+        song: Song,
+        musicOnly: Boolean = true,
+        missing: Boolean = true,
+        alreadySkipped: Boolean = false,
+    ) = SongVersionPolicy.skipsOfficialMvWithoutAudio(
+        song = song,
+        musicOnly = musicOnly,
+        audioReleaseMissing = missing,
+        alreadySkipped = alreadySkipped,
+    )
+
+    @Test
+    fun `an official video with no release is skipped when music only is on`() {
+        assertTrue(skips(video("omv", "MUSIC_VIDEO_TYPE_OMV")))
+    }
+
+    @Test
+    fun `an upload that exists only as a video is played`() {
+        assertFalse(skips(video("ugc", "MUSIC_VIDEO_TYPE_UGC")))
+        assertFalse(skips(video("unknown", "MUSIC_VIDEO_TYPE_UNKNOWN")))
+    }
+
+    @Test
+    fun `an official video whose release was found is played`() {
+        assertFalse(skips(video("omv", "MUSIC_VIDEO_TYPE_OMV"), missing = false))
+    }
+
+    @Test
+    fun `music only off plays the official video`() {
+        assertFalse(skips(video("omv", "MUSIC_VIDEO_TYPE_OMV"), musicOnly = false))
+    }
+
+    @Test
+    fun `a video station keeps its video`() {
+        assertFalse(skips(video("omv", "MUSIC_VIDEO_TYPE_OMV", videoRadio = true)))
+    }
+
+    @Test
+    fun `a song is skipped at most once, so a short queue cannot spin`() {
+        assertTrue(skips(video("omv", "MUSIC_VIDEO_TYPE_OMV")))
+        assertFalse(skips(video("omv", "MUSIC_VIDEO_TYPE_OMV"), alreadySkipped = true))
+    }
+
+    @Test
+    fun `a cover is played even under an official video type`() {
+        assertFalse(skips(video("cover", "MUSIC_VIDEO_TYPE_OMV", originalTitle = "Original")))
+    }
 }
