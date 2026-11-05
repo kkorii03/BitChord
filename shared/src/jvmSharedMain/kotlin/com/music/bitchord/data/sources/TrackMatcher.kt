@@ -255,6 +255,17 @@ object TrackMatcher {
     fun bestForVideoSwitch(candidates: List<Song>, target: Target) = KoTrackMatcher.bestForVideoSwitch(candidates, target) // [KO] bestForVideoSwitch
     fun songVersionRejectReason(candidate: Song, target: Target) = KoTrackMatcher.songVersionRejectReason(candidate, target) // [KO] songVersionRejectReason
     /**
+     * The row on the same search page that is [target]'s song under another
+     * name, proven by a page row that prints both names
+     * ("체포하겠어 (You're Under Arrest)"). Null when nothing on the page
+     * states both — see `KoTrackMatcher.bestTitleBridged`.
+     */
+    fun bestTitleBridged(page: List<Song>, candidates: List<Song>, target: Target) =
+        KoTrackMatcher.bestTitleBridged(page, candidates, target) // [KO] title-bridge
+    /** The bracketed spellings of [raw] that are the title itself in the other script. */
+    internal fun bracketReadings(raw: String, artist: String = "") =
+        KoTrackMatcher.bracketReadings(raw, artist) // [KO] title-bridge
+    /**
      * The catalogue counterpart for a music-video upload selected explicitly
      * by the listener.
      *

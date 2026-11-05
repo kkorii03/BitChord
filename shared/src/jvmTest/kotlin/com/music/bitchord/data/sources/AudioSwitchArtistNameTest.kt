@@ -156,4 +156,103 @@ class AudioSwitchArtistNameTest {
             assertNull(TrackMatcher.bestOfficialAudioForVideo(listOf(candidate), target), candidate.videoId)
         }
     }
+
+    // ---- Title bridge (ILLIT "You're Under Arrest" / 체포하겠어) --------------
+
+    private val arrestVideo = Song(
+        videoId = "NPZtKA6343o",
+        title = "ILLIT (아일릿) \"You're Under Arrest\" Official MV",
+        artist = "HYPE UNIVERSE",
+        thumbnailUrl = null,
+        durationText = "3:12",
+        isVideo = true,
+    )
+
+    /** The fanchant upload: the one row that prints both names of the song. */
+    private fun arrestBridge() = Song(
+        videoId = "V2V9-9VhYJo",
+        title = "ILLIT (아일릿) '체포하겠어 (You're Under Arrest)'",
+        artist = "ILLIT",
+        thumbnailUrl = null,
+        durationText = "3:12",
+        isVideo = true,
+    )
+
+    /** The album row on BREAK EVEN, filed under the Korean title only. */
+    private fun arrestAudio() = Song(
+        videoId = "qsqvJpOgrWw",
+        title = "체포하겠어",
+        artist = "ILLIT",
+        thumbnailUrl = null,
+        durationText = "3:05",
+    )
+
+    @Test
+    fun `a bracketed translation is a second reading of the title`() {
+        assertEquals(
+            listOf("youreunderarrest"),
+            TrackMatcher.bracketReadings("체포하겠어 (You're Under Arrest)"),
+        )
+        // A take and packaging never become a second reading of the name.
+        for (title in listOf(
+            "체포하겠어 (Live)",
+            "체포하겠어 (Remix)",
+            "체포하겠어 (Official Video)",
+            "체포하겠어 (Feat. X)",
+        )) {
+            assertTrue(TrackMatcher.bracketReadings(title).isEmpty(), title)
+        }
+        // The reading is scoped to the bridge: the title parser and the search
+        // queries keep treating a bracketed aside as packaging
+        // (see TitleNormalizationTest for the query list).
+        assertEquals(
+            listOf("체포하겠어"),
+            TrackMatcher.parseTitle("체포하겠어 (You're Under Arrest)").cores(),
+        )
+    }
+
+    @Test
+    fun `a page row that prints both names bridges the korean release title`() {
+        val target = TrackMatcher.audioSwitchTargetOf(arrestVideo)
+        val audio = arrestAudio()
+        // The ordinary gates still cannot compare the two titles.
+        assertNull(TrackMatcher.bestSameArtist(listOf(audio), target))
+        assertNull(TrackMatcher.bestOfficialAudioForVideo(listOf(audio), target))
+        assertEquals("title", TrackMatcher.songVersionRejectReason(audio, target))
+
+        assertEquals(
+            audio to "youreunderarrest",
+            TrackMatcher.bestTitleBridged(listOf(arrestBridge(), audio), listOf(audio), target),
+        )
+    }
+
+    @Test
+    fun `without the bridging row the other name is never guessed at`() {
+        val target = TrackMatcher.audioSwitchTargetOf(arrestVideo)
+        val audio = arrestAudio()
+        assertNull(TrackMatcher.bestTitleBridged(listOf(audio), listOf(audio), target))
+        // A bridge of another act proves nothing about this song.
+        val foreign = arrestBridge().copy(artist = "Another Singer")
+        assertNull(TrackMatcher.bestTitleBridged(listOf(foreign, audio), listOf(audio), target))
+    }
+
+    @Test
+    fun `a title bridge still refuses another act a cover a take and another runtime`() {
+        val target = TrackMatcher.audioSwitchTargetOf(arrestVideo)
+        val bridge = arrestBridge()
+        val wrong = listOf(
+            arrestAudio().copy(videoId = "OTHERACT001", artist = "Another Singer"),
+            arrestAudio().copy(videoId = "COVER000001", title = "체포하겠어 (Cover)"),
+            arrestAudio().copy(videoId = "LIVE0000001", title = "체포하겠어 (Live)"),
+            arrestAudio().copy(videoId = "REMIX000001", title = "체포하겠어 (Remix)"),
+            arrestAudio().copy(videoId = "LONG0000001", durationText = "6:40"),
+            arrestAudio().copy(videoId = "VIDEO000001", isVideo = true),
+        )
+        for (candidate in wrong) {
+            assertNull(
+                TrackMatcher.bestTitleBridged(listOf(bridge, candidate), listOf(candidate), target),
+                candidate.videoId,
+            )
+        }
+    }
 }

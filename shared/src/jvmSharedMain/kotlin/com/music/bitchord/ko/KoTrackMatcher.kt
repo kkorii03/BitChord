@@ -803,6 +803,131 @@ internal object KoTrackMatcher {
     }
 
     /**
+     * The row among [candidates] that is [target]'s song under another name,
+     * proven by a row on the same [page] that prints both names.
+     *
+     * A Korean release files its track as "체포하겠어" while the music video is
+     * titled "You're Under Arrest", and those two strings share nothing any
+     * matcher can compare: the official audio row is refused as a title miss
+     * and the video keeps playing. The two names do meet somewhere — a fanchant
+     * or stage upload is titled "체포하겠어 (You're Under Arrest)" — so the page
+     * itself is the evidence and nothing is guessed; see [bracketReadings] for
+     * how that aside is read as a second name.
+     *
+     * Only [candidates] may be accepted: an audio row, never a video. The
+     * bridging row may be anything, including a video, because it is evidence
+     * rather than something that will play.
+     *
+     * Three checks keep the wider title from playing a wrong song. The take
+     * markers must agree, as they must for the ordinary video switch. The
+     * accepted row must be the same act as the row that printed both names (by
+     * name, channel or release). And its runtime must be within
+     * [videoRuntimeAllows] of the target's. Nothing after the swap re-measures
+     * the recording, so these are all that stand between a wider title and a
+     * wrong track.
+     *
+     * Returns the accepted row and the bridge reading that matched the target,
+     * or null when no row on the page states both names.
+     */
+    fun bestTitleBridged(
+        page: List<Song>,
+        candidates: List<Song>,
+        target: Target,
+    ): Pair<Song, String>? {
+        val wanted = parseTitle(target.title, target.artist)
+        if (wanted.core.isBlank()) return null
+        val wantedCores = wanted.cores()
+        for (bridge in page) {
+            val readings = readingCores(bridge)
+            // One reading is just a title; a bridge states the song twice.
+            if (readings.size < 2) continue
+            val onTarget = readings.firstOrNull {
+                coresMatch(wantedCores, listOf(it), containment = true)
+            } ?: continue
+            val bridgeTarget = targetOf(bridge)
+            for (candidate in candidates) {
+                if (candidate.videoId == bridge.videoId || candidate.isVideo) continue
+                if (isCoverOf(candidate, target)) continue
+                // The take markers are identity, exactly as they are for the
+                // ordinary video switch: a live or remix row is a different
+                // recording, and an "… (Instrumental Edition)" album row is
+                // that take even when its title says nothing.
+                val got = parseTitle(candidate.title, candidate.artist)
+                if (wanted.versions != got.versions) continue
+                if ((albumVersionMarkers(candidate.albumName) intersect NOVOCAL_TAKES)
+                        .any { it !in wanted.versions }
+                ) {
+                    continue
+                }
+                if (!videoRuntimeAllows(target, candidate)) continue
+                val sameAct = (candidate.artist.isNotBlank() &&
+                    namesTheSameArtist(bridge.artist, candidate.artist)) ||
+                    sharesArtistChannel(bridgeTarget, candidate) ||
+                    sharesRelease(bridgeTarget, candidate)
+                if (!sameAct) continue
+                val gotCores = readingCores(candidate)
+                val onCandidate = readings.any {
+                    it != onTarget && coresMatch(listOf(it), gotCores, containment = true)
+                }
+                if (!onCandidate) continue
+                return candidate to onTarget
+            }
+        }
+        return null
+    }
+
+    /**
+     * Every reading a row files its title under: the one it displays, and for a
+     * row whose display title was replaced by the catalogue release's, the
+     * upload's own title too (see `Song.uploadTitle`).
+     */
+    private fun readingCores(song: Song): List<String> {
+        val upload = song.uploadTitle?.takeIf { it.isNotBlank() }
+        return (readingsOf(song.title, song.artist) +
+            upload?.let { readingsOf(it, song.artist) }.orEmpty())
+            .filter { it.isNotBlank() }
+            .distinct()
+    }
+
+    /** A title's own readings plus the names its brackets state — see [bracketReadings]. */
+    private fun readingsOf(title: String, artist: String): List<String> =
+        parseTitle(title, artist).cores() + bracketReadings(title, artist)
+
+    /**
+     * The bracketed spellings of [raw] that are the title itself in the other
+     * script, folded the way [TitleParts.cores] folds a title.
+     *
+     * [parseTitle] reads a bracketed aside as packaging, which is what it is on
+     * most uploads ("(Official Video)", "(Live at Wembley)"). A fanchant or
+     * stage upload is the exception: it prints both names of the song
+     * ("체포하겠어 (You're Under Arrest)"), and that is the only place a Korean
+     * release title and its English music-video title meet. This stays out of
+     * [parseTitle] on purpose — the search queries and every source and
+     * replacement gate read its readings, and none of them may start comparing
+     * an aside. Only [bestTitleBridged] asks for these.
+     */
+    internal fun bracketReadings(raw: String, artist: String = ""): List<String> {
+        val text = normalize(stripSoundtrackTail(raw).text)
+        if (!BRACKETED.containsMatchIn(text)) return emptyList()
+        return BRACKETED.findAll(text)
+            .mapNotNull { match ->
+                val aside = match.groupValues[1]
+                val translated = isTranslationPair(
+                    text.substring(0, match.range.first),
+                    aside,
+                    artist,
+                )
+                if (!translated || !isNamedAside(aside)) return@mapNotNull null
+                // A bracket holding the act's own name ("ILLIT (아일릿)") is a
+                // credit, not a second name for the song.
+                if (isArtistName(aside, artist)) return@mapNotNull null
+                foldAside(aside)?.second
+            }
+            .distinct()
+            .toList()
+    }
+
+    /**
      * Whether both rows carry the same recording title, with packaging and
      * artist credits set aside.
      *
@@ -1399,26 +1524,8 @@ internal object KoTrackMatcher {
         val altWords = mutableListOf<List<String>>()
         val altCores = mutableListOf<String>()
         altTexts.forEach { alt ->
-            val clean = alt.replace(FEATURING, " ").trim()
-            if (clean.isBlank()) return@forEach
-            val altCjk = clean.any {
-                Character.UnicodeBlock.of(it) in setOf(
-                    Character.UnicodeBlock.HIRAGANA,
-                    Character.UnicodeBlock.KATAKANA,
-                    Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS,
-                    Character.UnicodeBlock.HANGUL_SYLLABLES
-                )
-            }
-            val altWordList = clean.split(WORD_SPLIT)
-                .map { it.replace(NON_ALNUM, "") }
-                .filter { it.isNotEmpty() && it !in JOINING_WORDS }
-            if (altWordList.isEmpty()) return@forEach
-            val altCore = if (altCjk) {
-                clean.replace(Regex("""[\s\p{Punct}・～〜ー-]+"""), "")
-            } else {
-                altWordList.joinToString("")
-            }
-            if (altCore.isNotBlank() && altCore != coreString) {
+            val (altWordList, altCore) = foldAside(alt) ?: return@forEach
+            if (altCore != coreString) {
                 altWords += altWordList
                 altCores += altCore
             }
@@ -1432,6 +1539,34 @@ internal object KoTrackMatcher {
             altWords = altWords,
             altCores = altCores,
         )
+    }
+
+    /**
+     * One alternate spelling folded into the shape [TitleParts.core] uses: its
+     * words, and the letters-and-digits core they join to. Null when nothing
+     * but punctuation is left.
+     */
+    private fun foldAside(raw: String): Pair<List<String>, String>? {
+        val clean = raw.replace(FEATURING, " ").trim()
+        if (clean.isBlank()) return null
+        val cjk = clean.any {
+            Character.UnicodeBlock.of(it) in setOf(
+                Character.UnicodeBlock.HIRAGANA,
+                Character.UnicodeBlock.KATAKANA,
+                Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS,
+                Character.UnicodeBlock.HANGUL_SYLLABLES,
+            )
+        }
+        val words = clean.split(WORD_SPLIT)
+            .map { it.replace(NON_ALNUM, "") }
+            .filter { it.isNotEmpty() && it !in JOINING_WORDS }
+        if (words.isEmpty()) return null
+        val core = if (cjk) {
+            clean.replace(Regex("""[\s\p{Punct}・～〜ー-]+"""), "")
+        } else {
+            words.joinToString("")
+        }
+        return if (core.isBlank()) null else words to core
     }
 
     /**
@@ -1453,6 +1588,23 @@ internal object KoTrackMatcher {
     /** Whether [text] carries Hangul. */
     internal fun hasHangul(text: String): Boolean = text.any {
         Character.UnicodeScript.of(it.code) == Character.UnicodeScript.HANGUL
+    }
+
+    /**
+     * Whether a bracketed aside reads as a name for the song rather than as a
+     * take or as packaging.
+     *
+     * The other half of the bracket translation pair: a take marker
+     * ("(Live)", "(Instrumental)") is a different recording and must never
+     * become a second reading of the title, and an aside made only of
+     * packaging words ("(Feat. X)", "(Official Video)") names nothing.
+     */
+    private fun isNamedAside(aside: String): Boolean {
+        val words = normalize(aside).split(WORD_SPLIT)
+            .map { it.replace(NON_ALNUM, "") }
+            .filter { it.isNotEmpty() }
+        if (words.isEmpty() || words.any { it in VERSION_WORDS }) return false
+        return words.any { it.length > 1 && it !in NOISE_WORDS && it !in TRAILING_NOISE }
     }
 
     /**

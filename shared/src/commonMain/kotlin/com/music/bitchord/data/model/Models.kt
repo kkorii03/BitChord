@@ -180,6 +180,20 @@ data class Song(
     val coverOriginalArtist: String? = null,
     /** A video-radio row rather than a normal track; see NextPrepPolicy. */
     val videoRadio: Boolean = false,
+    /**
+     * The upload's own title, kept when [title] was replaced by the catalogue
+     * release's (see `CatalogSongMapper`).
+     *
+     * A fanchant or stage upload prints both names of a song
+     * ("체포하겠어 (You're Under Arrest)") while the release row prints only
+     * one, and that upload is the only place a Korean release title and its
+     * English music-video title meet. Kept for matching only — every screen
+     * shows [title].
+     *
+     * Deliberately not [originalTitle]: that field marks a cover row, and a
+     * mapped row is not a cover.
+     */
+    val uploadTitle: String? = null,
 ) {
     /** Legacy derived property: true if and only if [queueTier] is [QueueTier.AUTOPLAY]. */
     val fromAutoplay: Boolean get() = queueTier == QueueTier.AUTOPLAY
