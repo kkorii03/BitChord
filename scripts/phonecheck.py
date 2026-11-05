@@ -46,6 +46,11 @@ WAIT_SECONDS = {"mv": 45, "hq": 90, "cover": 75, "plain": 75}
 DEFAULT_WAIT = 75
 MODEL = "whisper-large"
 SYNC_DUMP_BEGIN_RE = re.compile(r"sync-dump:\s+begin\s+(\S+)")
+# `song version: <queued id> -> <found id> via <how> before-audio`: the queue row
+# was replaced before it was heard, so the found id is the recording that plays.
+SONG_VERSION_BEFORE_AUDIO_RE = re.compile(
+    r"song version:\s+(\S+)\s+->\s+(\S+)\s+via\s+.*?\sbefore-audio"
+)
 
 
 def log(msg: str) -> None:
@@ -201,7 +206,11 @@ def sync_dump_ids(text: str) -> list[str]:
 def sync_candidates(
     songs: list[smokecheck.SongSpec], text: str
 ) -> list[tuple[str, str, str]]:
-    """(label, kind, video id) for every cover/plain row that has an id.
+    """(label, kind, video id) for every row that is scored and has an id.
+
+    Cover, plain and MV rows: all three play a YouTube upload, so the log's own
+    copy of the recording is the reference (see [sync_row]). The MV row of a
+    song-version swap is scored against the id it was replaced by ([played_id]).
 
     A `search:` row has no id until it plays. Its sync-dump ids are taken in
     log order from the ids that no explicit row already claims.
@@ -209,7 +218,7 @@ def sync_candidates(
     rows: list[tuple[str, str, str]] = []
     seen: set[str] = set()
     for spec in songs:
-        if spec.kind not in ("cover", "plain") or not spec.video_id:
+        if spec.kind not in ("cover", "plain", "mv") or not spec.video_id:
             continue
         if spec.video_id in seen:
             continue
@@ -217,7 +226,7 @@ def sync_candidates(
         rows.append((spec.key, spec.kind, spec.video_id))
 
     search_specs = [
-        spec for spec in songs if spec.kind in ("cover", "plain") and spec.search
+        spec for spec in songs if spec.kind in ("cover", "plain", "mv") and spec.search
     ]
     if search_specs:
         # The id each search actually played, read from the log right after it
@@ -227,6 +236,36 @@ def sync_candidates(
             vid = SEARCH_IDS.get(spec.key, "") or played_id_for_search(spec.key, text)
             rows.append((spec.key, spec.kind, vid))
     return rows
+
+
+def played_id(text: str, request_id: str) -> str | None:
+    """The id whose recording a row played: the row's own, or its song version.
+
+    A `before-audio` swap replaces the queue row before it is heard, so that
+    found id is the recording to fetch and its sync-dump is the sheet that was
+    displayed. A mid-song swap (`... via search shared`, no `before-audio`) only
+    moves the lyrics reference; the request's own recording keeps playing.
+
+    None when the log names two different before-audio targets: which one was
+    heard is then unknown, and a guessed id would score the wrong recording.
+    """
+    targets = {
+        target
+        for source, target in SONG_VERSION_BEFORE_AUDIO_RE.findall(text)
+        if source == request_id and target != "none"
+    }
+    if len(targets) > 1:
+        return None
+    return targets.pop() if targets else request_id
+
+
+def dump_line_total(text: str) -> int:
+    """Timed lines in every complete sync-dump block: the whole sample the log offers."""
+    return sum(
+        len(lines)
+        for vid in sync_dump_ids(text)
+        for _head, lines in synctest.parse_blocks(text, vid)
+    )
 
 
 def played_id_for_search(key: str, text: str) -> str:
@@ -332,9 +371,17 @@ def sync_row(
     if not video_id:
         row["error"] = "검색 곡 id 없음 (sync-dump 없음)"
         return row
-    dump = synctest.parse_dump(text, video_id)
+    audio_id = played_id(text, video_id)
+    if audio_id is None:
+        row["error"] = "곡버전 교체 id 불확실 (before-audio 교체 대상이 둘 이상)"
+        return row
+    dump = synctest.parse_dump(text, audio_id)
     if not dump:
-        row["error"] = "no sync-dump (가사가 표시되지 않음?)"
+        row["error"] = (
+            "no sync-dump (가사가 표시되지 않음?)"
+            if audio_id == video_id
+            else f"곡버전 {audio_id} 덤프 없음"
+        )
         return row
     _head, lines = dump
     row["lines"] = len(lines)
@@ -342,14 +389,16 @@ def sync_row(
         row["error"] = "no timed lines"
         return row
 
-    wav = wav_dir / f"{video_id}.wav"
-    if (not wav.exists() or wav.stat().st_size <= 1000) and kind in ("cover", "plain"):
+    wav = wav_dir / f"{audio_id}.wav"
+    app_wav = wav.exists() and wav.stat().st_size > 1000
+    if not app_wav and kind in ("cover", "plain", "mv"):
         # The app kept no WAV (no song check ran - an emulator without audio or
         # Deepgram, or a song version, which never needs one). A cover plays as
-        # itself and a plain row plays its song version (an HQ copy is verified
-        # to within a few ms of it), so YouTube's own copy of the played id is
-        # the same recording: judge the timing the app displayed against it.
-        fetch_reference_wav(video_id, wav)
+        # itself, a plain row plays its song version (an HQ copy is verified
+        # to within a few ms of it) and an MV row plays a YouTube upload, so
+        # YouTube's own copy of the played id is the same recording: judge the
+        # timing the app displayed against it.
+        fetch_reference_wav(audio_id, wav)
     if not wav.exists() or wav.stat().st_size <= 1000:
         row["error"] = "no wav (song check skipped)"
         return row
@@ -370,7 +419,7 @@ def sync_row(
         return row
     row.update(score)
     row["errors"] = [shown - sung for _, shown, sung, _ in matched]
-    row["audio"] = "app wav"
+    row["audio"] = "app wav" if app_wav else f"youtube {audio_id}"
     return row
 
 
@@ -457,6 +506,11 @@ def build_report(
     mv_passed, mv_total = mv_progress(text, songs)
     hq = hq_counts(text)
     summary = sync_summary(sync_rows)
+    total = dump_line_total(text)
+    scored = summary["lines"] if summary else 0
+    sample = f"채점 표본 {scored}/{total}줄" + (
+        f" ({scored / total:.0%})" if total else ""
+    )
 
     lines = [
         "# 폰 검증 한 번에 — BitChord",
@@ -474,7 +528,8 @@ def build_report(
             f"(줄 {summary['lines']}개, 곡 {summary['songs']}개)"
         )
     else:
-        lines.append("- **싱크 채점 곡 없음** (cover/plain WAV 없음)")
+        lines.append("- **싱크 채점 곡 없음** (재생 곡 WAV 없음)")
+    lines.append(f"- **{sample}**")
     lines += [
         f"- 시작: {started:%Y-%m-%d %H:%M} · 모델: {MODEL}",
         f"- 로그: `{log_path}` · WAV: `{OUT / 'synctest'}`",
