@@ -1,6 +1,7 @@
 package com.music.bitchord.ko
 
 import com.music.bitchord.data.BoundedMemo
+import com.music.bitchord.data.YouTubeDisplayCleaner
 import com.music.bitchord.data.model.ArtistNameIndex
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.TrackMatcher
@@ -775,7 +776,11 @@ internal object KoTrackMatcher {
      * say only "no official song match", which left a rejected official row
      * and a genuinely absent one indistinguishable on a device.
      */
-    fun songVersionRejectReason(candidate: Song, target: Target): String? {
+    fun songVersionRejectReason(
+        candidate: Song,
+        target: Target,
+        page: List<Song> = emptyList(),
+    ): String? {
         // resolveAudio only offers non-video rows to the two matchers. A
         // youtube.com fallback answers every row with a 16:9 still, so this is
         // the line that says whether the page had an audio row at all.
@@ -789,23 +794,15 @@ internal object KoTrackMatcher {
         // [isAudioSwitchTitleUnverified]) is a real gate too, so a row it takes
         // is never logged as a title miss.
         if (isAudioSwitchTitleUnverified(candidate, target)) return null
+        // The title bridge is a gate too: a row it accepts is not a title miss.
+        if (page.isNotEmpty() && bestTitleBridged(page, listOf(candidate), target) != null) return null
         if (isCoverOf(candidate, target)) return "cover"
         val wanted = parseTitle(target.title, target.artist)
         val got = parseTitle(candidate.title, candidate.artist)
         if (wanted.core.isBlank() || got.core.isBlank()) return "title"
         if (!coresMatch(wanted.cores(), got.cores(), containment = true)) return "title"
-        if (wanted.versions != got.versions) return "title"
-        // A row filed under an instrumental/karaoke album is that take even
-        // when its title says nothing.
-        if ((albumVersionMarkers(candidate.albumName) intersect NOVOCAL_TAKES)
-                .any { it !in wanted.versions }
-        ) {
-            return "cover"
-        }
-        val sameArtist = (candidate.artist.isNotBlank() &&
-            namesTheSameArtist(target.artist, candidate.artist)) ||
-            sameArtistIdentity(target, candidate)
-        if (!sameArtist) return "artist"
+        takeRejectReason(candidate, wanted, got)?.let { return it }
+        if (!sameActAs(target, candidate)) return "artist"
         val wantedSec = target.durationSec
         val gotSec = secondsOf(candidate.durationText)
         if (wantedSec != null && gotSec != null) {
@@ -821,6 +818,27 @@ internal object KoTrackMatcher {
         }
         return null
     }
+
+    /**
+     * The take markers are identity: a live or remix row is a different
+     * recording, and an "… (Instrumental Edition)" album row is that take even
+     * when its title says nothing. Shared by [songVersionRejectReason] and
+     * [bestTitleBridged].
+     */
+    private fun takeRejectReason(candidate: Song, wanted: TitleParts, got: TitleParts): String? {
+        if (wanted.versions != got.versions) return "title"
+        if ((albumVersionMarkers(candidate.albumName) intersect NOVOCAL_TAKES)
+                .any { it !in wanted.versions }
+        ) {
+            return "cover"
+        }
+        return null
+    }
+
+    /** [candidate] is credited to [target]'s act by name, channel or release. */
+    private fun sameActAs(target: Target, candidate: Song): Boolean =
+        (candidate.artist.isNotBlank() && namesTheSameArtist(target.artist, candidate.artist)) ||
+            sameArtistIdentity(target, candidate)
 
     /**
      * The row among [candidates] that is [target]'s song under another name,
@@ -857,6 +875,11 @@ internal object KoTrackMatcher {
         val wanted = parseTitle(target.title, target.artist)
         if (wanted.core.isBlank()) return null
         val wantedCores = wanted.cores()
+        // A publisher channel ("HYPE UNIVERSE") is not the act; the credit the
+        // video's own title states is, so the act check reads that too.
+        val credit = YouTubeDisplayCleaner.clean(target.title, target.artist).artist
+        val wantedSec = target.durationSec
+        val accepted = mutableListOf<Pair<Song, String>>()
         for (bridge in page) {
             val readings = readingCores(bridge)
             // One reading is just a title; a bridge states the song twice.
@@ -868,18 +891,21 @@ internal object KoTrackMatcher {
             for (candidate in candidates) {
                 if (candidate.videoId == bridge.videoId || candidate.isVideo) continue
                 if (isCoverOf(candidate, target)) continue
-                // The take markers are identity, exactly as they are for the
-                // ordinary video switch: a live or remix row is a different
-                // recording, and an "… (Instrumental Edition)" album row is
-                // that take even when its title says nothing.
+                // The same take and act checks songVersionRejectReason reads.
                 val got = parseTitle(candidate.title, candidate.artist)
-                if (wanted.versions != got.versions) continue
-                if ((albumVersionMarkers(candidate.albumName) intersect NOVOCAL_TAKES)
-                        .any { it !in wanted.versions }
+                if (takeRejectReason(candidate, wanted, got) != null) continue
+                if (!sameActAs(target, candidate) &&
+                    !(credit.isNotBlank() && candidate.artist.isNotBlank() &&
+                        namesTheSameArtist(credit, candidate.artist))
                 ) {
                     continue
                 }
                 if (!videoRuntimeAllows(target, candidate)) continue
+                // videoRuntimeAllows lets the shorter side run free for an MV
+                // intro; a title-bridged row has no title to vouch for it, so a
+                // teaser or clip that much shorter is refused here.
+                val gotSec = secondsOf(candidate.durationText)
+                if (wantedSec != null && gotSec != null && wantedSec - gotSec > VIDEO_DURATION_LIMIT_SEC) continue
                 val sameAct = (candidate.artist.isNotBlank() &&
                     namesTheSameArtist(bridge.artist, candidate.artist)) ||
                     sharesArtistChannel(bridgeTarget, candidate) ||
@@ -890,10 +916,18 @@ internal object KoTrackMatcher {
                     it != onTarget && coresMatch(listOf(it), gotCores, containment = true)
                 }
                 if (!onCandidate) continue
-                return candidate to onTarget
+                accepted += candidate to onTarget
             }
         }
-        return null
+        // The best survivor, not the first: the artist's own row, then the
+        // runtime closest to the video's.
+        return accepted.maxWithOrNull(
+            compareBy<Pair<Song, String>> { officialRank(it.first, target) }
+                .thenBy { pair ->
+                    val sec = secondsOf(pair.first.durationText)
+                    if (wantedSec == null || sec == null) Int.MIN_VALUE else -abs(wantedSec - sec)
+                },
+        )
     }
 
     /**

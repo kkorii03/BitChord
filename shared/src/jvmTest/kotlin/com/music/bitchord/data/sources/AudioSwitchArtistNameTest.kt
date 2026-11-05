@@ -351,4 +351,33 @@ class AudioSwitchArtistNameTest {
         // A sound that was never judged is left alone.
         assertNull(LyricsMismatch.wrongSoundNote("NEVERJUDGED"))
     }
+
+    @Test
+    fun `a title bridge refuses a row far shorter than the video`() {
+        val target = TrackMatcher.audioSwitchTargetOf(arrestVideo)
+        // 3:12 video, 0:35 row: a teaser or clip, not the song.
+        val teaser = arrestAudio().copy(videoId = "TEASER00001", durationText = "0:35")
+        assertNull(TrackMatcher.bestTitleBridged(listOf(arrestBridge(), teaser), listOf(teaser), target))
+    }
+
+    @Test
+    fun `a title bridge picks the best row not the first`() {
+        val target = TrackMatcher.audioSwitchTargetOf(arrestVideo)
+        val far = arrestAudio().copy(videoId = "FAR00000001", durationText = "2:10")
+        val close = arrestAudio()
+        assertEquals(
+            close to "youreunderarrest",
+            TrackMatcher.bestTitleBridged(listOf(arrestBridge(), far, close), listOf(far, close), target),
+        )
+    }
+
+    @Test
+    fun `a row the title bridge accepts is not logged as a title miss`() {
+        val target = TrackMatcher.audioSwitchTargetOf(arrestVideo)
+        val audio = arrestAudio()
+        val page = listOf(arrestBridge(), audio)
+        assertNull(TrackMatcher.songVersionRejectReason(audio, target, page))
+        // Without the bridge on the page it is still the honest title miss.
+        assertEquals("title", TrackMatcher.songVersionRejectReason(audio, target, listOf(audio)))
+    }
 }

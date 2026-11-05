@@ -256,7 +256,7 @@ object TrackMatcher {
     fun isCoverArrangement(candidate: Song, seed: Song? = null) = KoTrackMatcher.isCoverArrangement(candidate, seed) // [KO] isCoverArrangement
     fun isKaraokeOrTributeArrangement(candidate: Song, seed: Song? = null) = KoTrackMatcher.isKaraokeOrTributeArrangement(candidate, seed) // [KO] isKaraokeOrTributeArrangement
     fun bestForVideoSwitch(candidates: List<Song>, target: Target) = KoTrackMatcher.bestForVideoSwitch(candidates, target) // [KO] bestForVideoSwitch
-    fun songVersionRejectReason(candidate: Song, target: Target) = KoTrackMatcher.songVersionRejectReason(candidate, target) // [KO] songVersionRejectReason
+    fun songVersionRejectReason(candidate: Song, target: Target, page: List<Song> = emptyList()) = KoTrackMatcher.songVersionRejectReason(candidate, target, page) // [KO] songVersionRejectReason
     /**
      * The row on the same search page that is [target]'s song under another
      * name, proven by a page row that prints both names
