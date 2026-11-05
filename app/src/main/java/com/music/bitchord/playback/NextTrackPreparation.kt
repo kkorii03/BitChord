@@ -1069,7 +1069,8 @@ internal class NextTrackPreparation(
         // A file's own timing stands unless it is a video; a re-check override
         // carries a fresh sync for this file and is applied too, exactly as the
         // player and the lyrics screen do. A substitute stream is a different
-        // recording under the same id, so its clock is never written.
+        // recording under the same id: as on the screen (ko-112), timing()
+        // places a kept answer on its clock or drops it; nothing is written here.
         val query = CoverTitles.lyricsQuery(song)
         val sourceTimedToVideo = LyricsTiming.timedToVideo(found.source)
         val timeable = LocalTimingPolicy.downloadedTimingTimeable(
@@ -1079,14 +1080,14 @@ internal class NextTrackPreparation(
             recheckOverride = found.recheckOverride,
             sourceTimedToVideo = sourceTimedToVideo,
         )
-        val substituted = StreamChoice.isSubstitute(song.videoId)
         val recordTimed = timeable && (!found.fromFile || found.source != null) && !sourceTimedToVideo
         return LyricsTiming.timing(
             context = context,
             videoId = song.videoId,
             lines = lines,
-            baseAllowed = timeable && !substituted,
-            measuredAllowed = recordTimed && !substituted,
+            baseAllowed = timeable,
+            measuredAllowed = recordTimed,
+            deniedBy = "file-own-timing@next-prep",
             isVideo = query.isVideo,
             audioSource = if (query.isVideo) {
                 null

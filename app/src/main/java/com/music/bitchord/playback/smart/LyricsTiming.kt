@@ -329,13 +329,15 @@ object LyricsTiming {
         measuredAllowed: Boolean = baseAllowed,
         isVideo: Boolean = false,
         audioSource: String? = null,
+        /** Which caller's gate set [baseAllowed] false, for the base-apply line. */
+        deniedBy: String? = null,
     ): Timing? {
         // A missing entry is not "nothing to do": the stream may still be a
         // verified high-quality copy whose clock differs from YouTube's, and
         // that map applies even when no measurement or AI answer exists.
         val entry = store(context).get(videoId) ?: Entry()
         var key = textKey(lines, audioSource)
-        var rule = if (baseAllowed) RULE_NOTHING else "not-allowed"
+        var rule = if (baseAllowed) RULE_NOTHING else "not-allowed(reason=${deniedBy ?: "caller"})"
         var originalBase = if (baseAllowed) {
             baseOf(entry, lines, measuredAllowed, isVideo, audioSource, key, videoId) { rule = it }
         } else {
@@ -350,6 +352,8 @@ object LyricsTiming {
         // [conversion] below then carries it or drops it. Only when this key
         // had no candidate at all: a NONE chosen here stays none.
         val sibling = siblingSource(videoId, audioSource)
+        // Why the other source's answer was not taken, for the base-apply line.
+        var siblingWhy: String? = null
         if (originalBase == null && rule == RULE_NOTHING && baseAllowed && !isVideo && sibling != null) {
             val aiClock = clockOf(entry.aiClock)
             if (aiClock !is Clock.Unknown && (aiClock is Clock.Substitute || playing is Clock.Substitute)) {
@@ -359,6 +363,13 @@ object LyricsTiming {
                 }?.takeIf { it.byAi }?.let {
                     originalBase = it
                     rule = "sibling $siblingRule"
+                }
+                if (originalBase == null) siblingWhy = siblingRule
+            } else {
+                siblingWhy = when {
+                    entry.aiTextKey == null -> "no-ai"
+                    aiClock is Clock.Unknown -> "untagged"
+                    else -> "no-substitute-clock"
                 }
             }
         }
@@ -417,7 +428,20 @@ object LyricsTiming {
             videoId = videoId,
             base = base,
             shiftMs = base?.let { shownShiftMs(lines, it) } ?: 0L,
-            rule = if (saved != null && base == null) "$rule, clock dropped" else rule,
+            rule = when {
+                saved != null && base == null -> "$rule, clock dropped"
+                rule == RULE_NOTHING -> buildString {
+                    // No candidate at all: say whether the song check ran, was
+                    // held or spent its two replies, so "nothing" can be told apart.
+                    val retryHeld = entry.songRetryKey == key &&
+                        (entry.songRetryAtMs ?: 0L) > System.currentTimeMillis()
+                    append(rule).append(", song-check=")
+                    append(if (isVideo) "video" else AiTimingPolicy.songCheckState(knowledge(entry), key, retryHeld))
+                    if (entry.aiTextKey != null && entry.aiTextKey != key) append(", ai=other-lyrics")
+                    siblingWhy?.let { append(", sibling=").append(it) }
+                }
+                else -> rule
+            },
             source = audioSource?.substringAfterLast('|') ?: if (isVideo) "video" else "none",
         )
         val manualClock = clockOf(entry.manualClock)
@@ -3130,6 +3154,7 @@ object LyricsTiming {
             lines = lines,
             baseAllowed = timeable,
             measuredAllowed = recordTimed,
+            deniedBy = "file-own-timing@next-free",
             // Same test as audioSource above: a video key read with the song
             // version's shift rule would refuse a video's honest offset.
             isVideo = query.isVideo,

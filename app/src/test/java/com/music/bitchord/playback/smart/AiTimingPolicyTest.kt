@@ -267,6 +267,28 @@ class AiTimingPolicyTest {
     }
 
     @Test
+    fun songCheckStateNamesEachStandingForTheBaseApplyLine() {
+        val w = AiTimingPolicy.DEEPGRAM_WHISPER
+        val refused = AiTimingKnowledge(attemptedKey = key, attemptedEngines = setOf(w), rejectedKey = key)
+        assertEquals("not-run", AiTimingPolicy.songCheckState(AiTimingKnowledge(), key, retryHeld = false))
+        assertEquals("held-429", AiTimingPolicy.songCheckState(AiTimingKnowledge(), key, retryHeld = true))
+        assertEquals("spent 1/2 retry-next", AiTimingPolicy.songCheckState(refused, key, retryHeld = false))
+        assertEquals(
+            "spent 1/2 no-retry",
+            AiTimingPolicy.songCheckState(refused.copy(rejectedKey = null), key, retryHeld = false),
+        )
+        // 11-06 rlYOsUfpi3M (NEON): both replies refused (47%, 44%).
+        val both = refused.copy(attemptedEngines = setOf(w, AiTimingPolicy.SONG_RETRY))
+        assertEquals("spent 2/2", AiTimingPolicy.songCheckState(both, key, retryHeld = false))
+        assertEquals(
+            "accepted",
+            AiTimingPolicy.songCheckState(refused.copy(answerKey = key, answerEngine = w, answerMatch = 90), key, retryHeld = false),
+        )
+        // Another lyrics text's attempts say nothing about this one.
+        assertEquals("not-run", AiTimingPolicy.songCheckState(both, key + 1, retryHeld = false))
+    }
+
+    @Test
     fun onlyTheRetryReplyIsMarked() {
         val w = AiTimingPolicy.DEEPGRAM_WHISPER
         assertEquals(listOf(w), AiTimingPolicy.songSpent(emptyList(), w, retry = false))

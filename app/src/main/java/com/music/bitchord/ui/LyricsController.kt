@@ -1279,6 +1279,7 @@ class LyricsController(
                 measuredAllowed = baseAllowed && timingMeasureAllowed,
                 isVideo = request.isVideo,
                 audioSource = audioSource,
+                deniedBy = "not-adjustable@screen",
             )
         }
         if (generation != lyricsGeneration || timingLines !== lines) return

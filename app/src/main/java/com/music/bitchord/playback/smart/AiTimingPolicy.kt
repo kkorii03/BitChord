@@ -197,6 +197,24 @@ internal object AiTimingPolicy {
     }
 
     /**
+     * Where the song check stands on [lyricsKey], for the base-apply line when
+     * no base exists: `held-429`, `accepted`, `not-run`, `spent 1/2 retry-next`
+     * (the one retry is still owed), `spent 1/2 no-retry` (the reply kept no
+     * heard words to retry on) or `spent 2/2`.
+     */
+    fun songCheckState(knowledge: AiTimingKnowledge, lyricsKey: Int, retryHeld: Boolean): String {
+        val spent = spentOn(knowledge, lyricsKey)
+        return when {
+            retryHeld -> "held-429"
+            isAccepted(knowledge, lyricsKey) -> "accepted"
+            SONG_RETRY in spent -> "spent 2/2"
+            DEEPGRAM_WHISPER !in spent -> "not-run"
+            songRetry(knowledge, lyricsKey) -> "spent 1/2 retry-next"
+            else -> "spent 1/2 no-retry"
+        }
+    }
+
+    /**
      * Whether a song check's reply spends Whisper on these lyrics. Only a
      * reply the engine actually gave (2xx) does; a server error is not an
      * answer, and spending on it left the song unchecked for good.
