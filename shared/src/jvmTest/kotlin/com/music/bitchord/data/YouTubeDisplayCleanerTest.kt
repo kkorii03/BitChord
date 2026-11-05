@@ -207,6 +207,51 @@ class YouTubeDisplayCleanerTest {
     }
 
     @Test
+    fun `a publisher channel that is not in the table is dropped for the title's own credit`() {
+        // Phone 11-06: ILLIT's MV on the HYPE UNIVERSE channel read
+        // artist="HYPE UNIVERSE" and kept the upload's channel in the title.
+        val cleaned = YouTubeDisplayCleaner.clean(
+            "ILLIT (아일릿) 'You're Under Arrest' - HYPE UNIVERSE",
+            "HYPE UNIVERSE",
+        )
+
+        assertEquals("You're Under Arrest", cleaned.title)
+        assertEquals("ILLIT", cleaned.artist)
+    }
+
+    @Test
+    fun `a topic channel reads the quoted credit out of the title`() {
+        val cleaned = YouTubeDisplayCleaner.clean(
+            "ILLIT (아일릿) 'You're Under Arrest' Official MV",
+            "ILLIT - Topic",
+        )
+
+        assertEquals("You're Under Arrest", cleaned.title)
+        assertEquals("ILLIT", cleaned.artist)
+    }
+
+    @Test
+    fun `an upload on the artist's own channel keeps that channel as the artist`() {
+        val cleaned = YouTubeDisplayCleaner.clean("Jane 'Shape of You'", "Jane")
+
+        assertEquals("Shape of You", cleaned.title)
+        assertEquals("Jane", cleaned.artist)
+    }
+
+    @Test
+    fun `a publisher channel is never the artist when the title states no credit`() {
+        val cleaned = YouTubeDisplayCleaner.clean("Almond Chocolate", "HYBE LABELS")
+
+        assertEquals("Almond Chocolate", cleaned.title)
+        assertEquals("", cleaned.artist)
+
+        val universe = YouTubeDisplayCleaner.clean("ILLIT Teaser", "HYPE UNIVERSE")
+
+        assertEquals("ILLIT Teaser", universe.title)
+        assertEquals("", universe.artist)
+    }
+
+    @Test
     fun `a normal artist channel and a bare song title are untouched`() {
         val cleaned = YouTubeDisplayCleaner.clean("Dynamite", "BTS")
 
