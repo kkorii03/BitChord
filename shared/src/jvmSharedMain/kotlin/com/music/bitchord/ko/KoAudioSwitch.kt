@@ -66,13 +66,12 @@ internal object KoAudioSwitch {
             // what ties them together; see TrackMatcher.bestTitleBridged for
             // the artist and runtime checks that keep it from playing a
             // different song.
+            // Priority: the bridge goes first because a row printing both names
+            // is direct evidence, while title-unverified below rests on credit
+            // and runtime alone. Both pass through adoptAudio, so a swap the
+            // lyrics already proved wrong is refused on either path.
             TrackMatcher.bestTitleBridged(rows, candidates, target)?.let { (match, reading) ->
-                Log.d(
-                    TAG,
-                    "audio switch: accept ${match.videoId} via title-bridge ($reading)",
-                )
-                YtMusicRepository.audioVersionCache[song.videoId] = match
-                return match
+                adoptAudio(song, match, "title-bridge ($reading)")?.let { return it }
             }
             // The page that would print both names is not always returned (the
             // phone's 11-06 page held only the MV and the Korean album row), so
@@ -91,7 +90,7 @@ internal object KoAudioSwitch {
             // device log names the failing check instead of only the outcome.
             for (candidate in rows) {
                 if (!loggedRejects.add(candidate.videoId)) continue
-                val reason = TrackMatcher.songVersionRejectReason(candidate, target) ?: continue
+                val reason = TrackMatcher.songVersionRejectReason(candidate, target, rows) ?: continue
                 Log.d(
                     TAG,
                     "audio switch: reject ${candidate.videoId} ${candidate.title} " +

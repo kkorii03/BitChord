@@ -216,9 +216,13 @@ internal object YouTubeDisplayCleaner {
             val name = collapseAliases(artist)
             if (name.isNotBlank() &&
                 song.isNotBlank() &&
+                // A track number or chapter ("01 'Song'", "Chapter 2 'Song'")
+                // is no credit on any channel; the channel rule below decides.
+                !NUMBERING_CREDIT.containsMatchIn(name) &&
                 (labelChannel || isStatedCredit(name)) &&
-                // A quoted packaging phrase ("Feat. X", "Remix") names no song.
-                song.split(WHITESPACE).first().lowercase().trim('.') !in PACKAGING_CREDIT
+                // A quoted feature credit ("Feat. X") names no song. Only that:
+                // a song may well start with a packaging word ("Part of Me").
+                song.split(WHITESPACE).first().lowercase().trim('.') !in FEATURE_WORDS
             ) {
                 if (compact(name) != compact(rawChannel)) {
                     DebugLog.d(TAG, "artist: channel dropped (publisher) -> $name")
@@ -473,6 +477,12 @@ internal object YouTubeDisplayCleaner {
         "feat", "ft", "ep", "episode", "vol", "part", "preview", "trailer",
         "making", "behind",
     )
+
+    /** A quoted song that opens with these is a feature credit, not a song. */
+    private val FEATURE_WORDS = setOf("feat", "ft")
+
+    /** A credit that opens with a track number or a chapter, never an act. */
+    private val NUMBERING_CREDIT = Regex("""(?i)^(?:#?\d+[.):]?|chapter|ch\.|track|no\.)(?:\s|$)""")
 
     /**
      * Where a concert was played, in the words titles print it with. A venue

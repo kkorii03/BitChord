@@ -239,6 +239,28 @@ class YouTubeDisplayCleanerTest {
     }
 
     @Test
+    fun `a track number or chapter before the quoted song is no credit`() {
+        for (title in listOf("01 'Song'", "Chapter 2 'Song'", "Track 3 'Song'")) {
+            val cleaned = YouTubeDisplayCleaner.clean(title, "Indie Singer")
+            assertEquals("Indie Singer", cleaned.artist, title)
+            assertEquals(title, cleaned.title)
+        }
+        // A name that merely starts with a digit is still an act.
+        assertEquals("2NE1", YouTubeDisplayCleaner.clean("2NE1 'Lonely'", "Some Fan").artist)
+    }
+
+    @Test
+    fun `a quoted song that opens with a packaging word is still split`() {
+        val label = YouTubeDisplayCleaner.clean("Katy Perry 'Part of Me'", "1theK")
+        assertEquals("Part of Me", label.title)
+        assertEquals("Katy Perry", label.artist)
+
+        val own = YouTubeDisplayCleaner.clean("Jane 'Behind the Door'", "Jane")
+        assertEquals("Behind the Door", own.title)
+        assertEquals("Jane", own.artist)
+    }
+
+    @Test
     fun `a publisher channel is never the artist when the title states no credit`() {
         val cleaned = YouTubeDisplayCleaner.clean("Almond Chocolate", "HYBE LABELS")
 
