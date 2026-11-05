@@ -1,5 +1,7 @@
 package com.music.bitchord.data.lyrics
 
+import kotlin.math.abs
+
 /**
  * Enhanced ("A2") LRC — a normal LRC line with a stamp in front of each word:
  *
@@ -16,8 +18,32 @@ object EnhancedLrc {
     private val LINE = Regex("""^\[(\d{1,3}):(\d{2})[.:](\d{2,3})](.*)$""")
     private val WORD = Regex("""<(\d{1,3}):(\d{2})[.:](\d{2,3})>([^<]*)""")
 
+    /**
+     * The sheet's own `[offset:±N]` tag, in milliseconds, or 0.
+     *
+     * LRC says the tag moves every stamp in the file by N — plus later, minus
+     * earlier — and that is the whole of it: the file's times are written
+     * without it and every player adds it once. Reading the stamps and
+     * dropping the tag therefore showed the whole sheet N off the audio, which
+     * is what 11-05 measured: one track's 50 lines, uniformly 3.3 s late, with
+     * no base applied (`base=none shift=0`).
+     *
+     * Read once ([find], never a running total), so a file that carries the
+     * tag twice — providers do write a header and then a real one — moves
+     * once, not twice. A tag past [RefinePolicy.MAX_WIDE_SHIFT_MS] is not a
+     * sync tweak this sheet's author made but another recording's shift
+     * written into this file, and is refused rather than shown on this one.
+     */
+    internal fun sheetOffsetMs(lrc: String): Long {
+        val ms = OFFSET_TAG.find(lrc)?.groupValues?.get(1)?.toLongOrNull() ?: return 0L
+        return ms.takeIf { abs(it) <= RefinePolicy.MAX_WIDE_SHIFT_MS } ?: 0L
+    }
+
+    private val OFFSET_TAG = Regex("""(?i)\[\s*offset\s*:\s*([+-]?\d{1,7})\s*]""")
+
     /** Empty when [lrc] carries no word stamps — the caller can then fall back. */
     fun parse(lrc: String): List<LyricLine> {
+        val offset = sheetOffsetMs(lrc)
         val rows = lrc.lineSequence()
             .mapNotNull { line -> LINE.matchEntire(line.trim()) }
             .map { match ->
@@ -58,7 +84,7 @@ object EnhancedLrc {
                 text = words.joinToString(" ") { it.text },
                 words = words,
             )
-        }.withInstrumentalGaps()
+        }.withInstrumentalGaps().let { if (offset == 0L) it else it.timedBy(null, offset) }
     }
 
     private class Row(val timeMs: Long, val words: List<MatchResult>, val plain: String)

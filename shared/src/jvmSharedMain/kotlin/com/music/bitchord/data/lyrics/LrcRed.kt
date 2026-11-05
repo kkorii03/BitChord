@@ -24,6 +24,12 @@ import java.util.Locale
  * already reads, so one parser covers both. The document's own
  * `<audio lyricOffset>` is ignored, as it is for every Apple TTML here — the
  * stamps are written against the release audio, which is what is playing.
+ * That is a deliberate refusal, not an oversight: unlike an LRC file's
+ * `[offset:±N]` (honoured once in [EnhancedLrc.sheetOffsetMs]), this attribute
+ * would have to be applied to a sheet that is the *record's*, on a video that
+ * may not be — and 11-05 found lrc.red's own documents carry no such element,
+ * so honouring it would move nothing and guessing its sign would move a whole
+ * sheet the wrong way.
  */
 object LrcRed {
 
