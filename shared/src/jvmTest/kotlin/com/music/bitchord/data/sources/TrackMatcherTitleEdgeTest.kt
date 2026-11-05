@@ -191,18 +191,20 @@ class TrackMatcherTitleEdgeTest {
     }
 
     /**
-     * BUG: the featuring regex treats the word "with" anywhere in a title as
-     * the start of a credit, so real titles are truncated ("Stay With Me" to
-     * "stay", "With or Without You" to nothing). This is recorded, not fixed,
-     * by this test-only change.
+     * `with` is a credit separator only when a name follows it. Cutting at
+     * every `with` truncated real titles to a word no catalogue carries
+     * ("Stay With Me" to "stay", "With or Without You" to nothing).
      */
-    @Ignore("BUG: FEATURING regex truncates real titles containing 'with'")
     @Test
     fun `with in a real title is not a featuring credit`() {
         assertEquals("staywithme", core("Stay With Me"))
         assertEquals("dancewithme", core("Dance With Me"))
         assertEquals("withorwithoutyou", core("With or Without You"))
         assertEquals("withyou", core("With You"))
+        // The credit reading still holds where a name follows.
+        assertEquals("song", core("Song with Artist"))
+        assertEquals("staywithme", core("Stay With Me with Ed Sheeran"))
+        assertEquals("song", core("Song With Ed Sheeran"))
     }
 
     @Test

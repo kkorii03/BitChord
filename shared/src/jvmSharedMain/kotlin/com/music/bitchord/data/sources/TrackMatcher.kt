@@ -966,7 +966,24 @@ object TrackMatcher {
 
     internal val BRACKETED = Regex("""[(\[]([^()\[\]]*)[)\]]""") // [KO] track-matcher
     internal val DASH = Regex("""\s+[-–—|]+\s+""") // [KO] track-matcher
-    internal val FEATURING = Regex("""\b(feat|ft|featuring|with)\b.*""") // [KO] track-matcher
+    internal val FEATURING = Regex("""\b(feat|ft|featuring)\b.*""") // [KO] track-matcher
+    /**
+     * ` with <word>` as the start of a credit, decided by the word after it.
+     *
+     * `with` is a credit separator only sometimes. "Stay With Me", "Dance With
+     * Me", "With You" and "Rock With You" are titles, and cutting at `with`
+     * left "stay", "dance", `""` and "rock" as their identities — no catalogue
+     * row answers to those. A following pronoun or article is a title word, so
+     * the credit is only read when the word after `with` is a name.
+     */
+    internal val WITH_CREDIT = Regex("""\s+with\s+(\S+)""") // [KO] track-matcher
+    internal val WITH_TAIL_TITLE_WORDS = setOf( // [KO] track-matcher
+        "me", "you", "u", "ya", "us", "him", "her", "them", "it", "this", "that",
+        "myself", "yourself", "himself", "herself", "itself",
+        "ourselves", "yourselves", "themselves", "one", "each",
+        "my", "your", "our", "his", "their", "its", "no", "nothing",
+        "a", "an", "the", "and", "or", "but", "of", "to", "in", "on", "for",
+    )
     /** `~` and the wave dash `〜` join words in Japanese titles ("真夜中のドア〜stay"). */
     internal val WORD_SPLIT = Regex("""[\s.·~〜]+""") // [KO] track-matcher
     /**
