@@ -1020,4 +1020,81 @@ class SongVersionPolicyTest {
     fun `a cover is played even under an official video type`() {
         assertFalse(skips(video("cover", "MUSIC_VIDEO_TYPE_OMV", originalTitle = "Original")))
     }
+
+    // --- a row the listener asked for is never refused ----------------------
+
+    private fun verdict(
+        song: Song,
+        musicOnly: Boolean = true,
+        missing: Boolean = true,
+        alreadySkipped: Boolean = false,
+        userAsked: Boolean = false,
+    ) = SongVersionPolicy.mvWithoutAudioVerdict(
+        song = song,
+        musicOnly = musicOnly,
+        audioReleaseMissing = missing,
+        alreadySkipped = alreadySkipped,
+        userAsked = userAsked,
+    )
+
+    @Test
+    fun `a tap on an official video with no release plays its own audio`() {
+        // Silence is never the answer to a deliberate tap, and refusing it made
+        // the same tap play the video's sound the second time.
+        assertEquals(
+            SongVersionPolicy.MvWithoutAudio.PLAY_OWN_AUDIO,
+            verdict(video("omv", "MUSIC_VIDEO_TYPE_OMV"), userAsked = true),
+        )
+    }
+
+    @Test
+    fun `an automatic advance into that video skips it`() {
+        assertEquals(
+            SongVersionPolicy.MvWithoutAudio.SKIP,
+            verdict(video("omv", "MUSIC_VIDEO_TYPE_OMV")),
+        )
+    }
+
+    @Test
+    fun `a downloaded official video is skipped like the streamed one`() {
+        // The file does not exempt the row: music-only answers the same for a
+        // downloaded OMV as for the stream that named it.
+        assertEquals(
+            SongVersionPolicy.MvWithoutAudio.SKIP,
+            verdict(
+                video("omv", "MUSIC_VIDEO_TYPE_OMV")
+                    .copy(localUri = "content://downloads/omv"),
+            ),
+        )
+    }
+
+    @Test
+    fun `a cover and a video station are played whether or not they were asked for`() {
+        val cover = video("cover", "MUSIC_VIDEO_TYPE_OMV", originalTitle = "Original")
+        val station = video("station", "MUSIC_VIDEO_TYPE_OMV", videoRadio = true)
+        assertEquals(SongVersionPolicy.MvWithoutAudio.PLAY, verdict(cover))
+        assertEquals(SongVersionPolicy.MvWithoutAudio.PLAY, verdict(cover, userAsked = true))
+        assertEquals(SongVersionPolicy.MvWithoutAudio.PLAY, verdict(station))
+        assertEquals(SongVersionPolicy.MvWithoutAudio.PLAY, verdict(station, userAsked = true))
+    }
+
+    @Test
+    fun `music only off plays the video whether or not it was asked for`() {
+        assertEquals(
+            SongVersionPolicy.MvWithoutAudio.PLAY,
+            verdict(video("omv", "MUSIC_VIDEO_TYPE_OMV"), musicOnly = false),
+        )
+        assertEquals(
+            SongVersionPolicy.MvWithoutAudio.PLAY,
+            verdict(video("omv", "MUSIC_VIDEO_TYPE_OMV"), musicOnly = false, userAsked = true),
+        )
+    }
+
+    @Test
+    fun `a song already skipped once plays its own audio on a repeat`() {
+        assertEquals(
+            SongVersionPolicy.MvWithoutAudio.PLAY,
+            verdict(video("omv", "MUSIC_VIDEO_TYPE_OMV"), alreadySkipped = true),
+        )
+    }
 }

@@ -2692,6 +2692,7 @@ class PlaybackService : MediaLibraryService() {
         crossfade,
         applicationContext,
         onUserIntent = { partySync?.onLocalIntent() },
+        onQueueReplaced = { songVersionController.resetSkippedOfficialMv() },
         deferPlayToParty = { partySync?.shouldDeferPlay() == true },
         lockedTransport = { playing -> partySync?.onLockedTransport(playing) == true },
         cast = speakers,
@@ -4066,7 +4067,13 @@ class PlaybackService : MediaLibraryService() {
         exoPlayer: ExoPlayer,
         mediaItem: MediaItem?,
         alreadyAudible: Boolean,
-    ) = songVersionController.resolveSongVersionBeforeAudio(exoPlayer, mediaItem, alreadyAudible)
+        userAsked: Boolean,
+    ) = songVersionController.resolveSongVersionBeforeAudio(
+        exoPlayer,
+        mediaItem,
+        alreadyAudible,
+        userAsked,
+    )
 
     private fun streamLongDownloadedSong(
         exoPlayer: ExoPlayer,
@@ -5040,7 +5047,12 @@ class PlaybackService : MediaLibraryService() {
             }
         }
         scheduleBoundedContextTopUp()
-        resolveSongVersionBeforeAudio(exoPlayer, mediaItem, alreadyAudible)
+        resolveSongVersionBeforeAudio(
+            exoPlayer,
+            mediaItem,
+            alreadyAudible,
+            userAsked = listenerChoseRow(reason),
+        )
         // A song-version hold pauses a row that a gapless advance otherwise
         // looks and sounds like it has already started. The hold is decided
         // above, so the audibility hint has to be settled afterwards: a held
@@ -10569,6 +10581,9 @@ class PlaybackService : MediaLibraryService() {
             // Re-evaluate the already queued next track immediately when this
             // preference changes, instead of waiting for another timeline event.
             AppSettings.preferMusicOnly.drop(1).collect {
+                // Which songs music-only refused was that setting's answer;
+                // turning it over asks the question again for every row.
+                songVersionController.resetSkippedOfficialMv()
                 cancelPrefetch()
                 player?.takeIf { it.isPlaying }?.let(::prefetchAround)
             }
@@ -11658,6 +11673,12 @@ class PlaybackService : MediaLibraryService() {
          * a listener's action from its own corrections. See [PartySync].
          */
         private val onUserIntent: () -> Unit,
+        /**
+         * The listener replaced the queue through this surface. Music-only's
+         * memory of which songs it already refused belongs to the old queue —
+         * see [com.music.bitchord.playback.SongVersionController.resetSkippedOfficialMv].
+         */
+        private val onQueueReplaced: () -> Unit,
         /** @see PartySync.shouldDeferPlay */
         private val deferPlayToParty: () -> Boolean,
         /** @see PartySync.onLockedTransport */
@@ -12115,6 +12136,7 @@ class PlaybackService : MediaLibraryService() {
                     "musicOnly=${if (AppSettings.preferMusicOnly.value) "on" else "off"} by=ui",
             )
             onUserIntent()
+            onQueueReplaced()
             super.setMediaItems(mediaItems, resetPosition)
         }
 
@@ -12131,6 +12153,7 @@ class PlaybackService : MediaLibraryService() {
                     "musicOnly=${if (AppSettings.preferMusicOnly.value) "on" else "off"} by=ui",
             )
             onUserIntent()
+            onQueueReplaced()
             super.setMediaItems(mediaItems, startIndex, startPositionMs)
         }
 
@@ -13621,6 +13644,19 @@ private fun transitionReason(reason: Int): String = when (reason) {
     Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED -> "PLAYLIST_CHANGED"
     else -> "OTHER($reason)"
 }
+
+/**
+ * Whether the row became current because the listener moved to it, rather than
+ * because the queue ran on. Media3 says so in the transition reason: an
+ * automatic advance and a repeat of the same row are the queue's own doing,
+ * while a seek (a tap on a row, a skip) and a new queue are the listener's.
+ *
+ * This is what keeps music-only from answering a deliberate tap with silence —
+ * see [com.music.bitchord.data.net.SongVersionPolicy.mvWithoutAudioVerdict].
+ */
+private fun listenerChoseRow(reason: Int): Boolean =
+    reason != Player.MEDIA_ITEM_TRANSITION_REASON_AUTO &&
+        reason != Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT
 
 private fun playReason(reason: Int): String = when (reason) {
     Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST -> "ui"
