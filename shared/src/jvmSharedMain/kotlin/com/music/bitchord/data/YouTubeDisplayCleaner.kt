@@ -191,6 +191,10 @@ internal object YouTubeDisplayCleaner {
             if (next == text) break
             text = next
         }
+        // An upload title sometimes repeats its own channel after a dash
+        // ("ILLIT (아일릿) 'X' - HYPE UNIVERSE", phone 11-06). The channel is
+        // never part of the song's name, so that tail goes.
+        text = withoutChannelTail(text, rawChannel)
         // A fan upload of a soundtrack prints the work and its "OST" label
         // after the song. Read it with the same parser the version lookup
         // uses, so a playlist row and the audio switch agree on the song and
@@ -204,11 +208,22 @@ internal object YouTubeDisplayCleaner {
         }
         // A label upload often puts the credit in the title and its own name on
         // the channel: `Artist 한글명 'Song' MV`. The quoted song names where the
-        // artist ends, which no dash split can see.
-        if (labelChannel) {
-            splitQuotedSong(text)?.let { (artist, song) ->
-                val name = collapseAliases(artist)
-                if (name.isNotBlank() && song.isNotBlank()) return Cleaned(song, name)
+        // artist ends, which no dash split can see. A publisher channel that
+        // [LABEL_CHANNELS] does not list ("HYPE UNIVERSE", phone 11-06) prints
+        // the same shape, so a title whose own credit reads as a name is
+        // believed there too, and the channel is dropped.
+        splitQuotedSong(text)?.let { (artist, song) ->
+            val name = collapseAliases(artist)
+            if (name.isNotBlank() &&
+                song.isNotBlank() &&
+                (labelChannel || isStatedCredit(name)) &&
+                // A quoted packaging phrase ("Feat. X", "Remix") names no song.
+                song.split(WHITESPACE).first().lowercase().trim('.') !in PACKAGING_CREDIT
+            ) {
+                if (compact(name) != compact(rawChannel)) {
+                    DebugLog.d(TAG, "artist: channel dropped (publisher) -> $name")
+                }
+                return Cleaned(song, name)
             }
         }
         val split = CoverTitles.splitTopLevelDash(text)
@@ -247,6 +262,29 @@ internal object YouTubeDisplayCleaner {
             // is a release name, never a performer.
             if (TrackMatcher.isSoundtrackCredit(fallbackArtist)) "" else fallbackArtist,
         )
+    }
+
+    /**
+     * `Song - Uploader`, where the tail is the row's own channel name: the
+     * channel is never part of the song's name.
+     */
+    private fun withoutChannelTail(title: String, channel: String): String {
+        val tail = collapseAliases(channel)
+        val cut = title.lastIndexOf(" - ")
+        if (tail.isBlank() || cut <= 0) return title
+        if (compact(title.substring(cut + 3)) != compact(tail)) return title
+        return title.substring(0, cut).trim().ifBlank { title }
+    }
+
+    /**
+     * Whether the credit a title prints before its quoted song reads as an act
+     * rather than packaging, so a publisher channel's row is split as well.
+     */
+    private fun isStatedCredit(name: String): Boolean {
+        val words = name.split(WHITESPACE)
+        if (words.isEmpty() || words.size > 4) return false
+        if (words.any { it.lowercase().trim('.') in PACKAGING_CREDIT || isVenueWord(it) }) return false
+        return !isAgencyChannel(name) && !TrackMatcher.isSoundtrackCredit(name)
     }
 
     /** `['\"“”‘’]Song['\"“”‘’]` at the end, with the credit before it. */
@@ -406,7 +444,8 @@ internal object YouTubeDisplayCleaner {
         "live", "concert", "tour", "official", "audio", "video", "mv",
         "remix", "version", "ver", "cover", "instrumental", "karaoke",
         "lyric", "lyrics", "edit", "full", "album", "teaser", "performance",
-        "feat", "ft",
+        "feat", "ft", "ep", "episode", "vol", "part", "preview", "trailer",
+        "making", "behind",
     )
 
     /**
@@ -436,7 +475,7 @@ internal object YouTubeDisplayCleaner {
 
     /** `Artist 'Song'`, the quoted song closing a label upload's title. */
     private val QUOTED_TAIL = Regex(
-        """(?:^|\s)['"“”‘’]{1,2}([^'"“”‘’]{1,120}?)['"“”‘’]{1,2}\s*$""",
+        """(?:^|\s)['"“”‘’]{1,2}((?:[^'"“”‘’]|['’](?=\p{L})){1,120}?)['"“”‘’]{1,2}\s*$""",
     )
 
     private val HANGUL = Regex("""[가-힣]""")
@@ -451,6 +490,8 @@ internal object YouTubeDisplayCleaner {
     )
 
     private const val COVER_SUFFIX = " (cover)"
+
+    private const val TAG = "BitChord"
 
     /** "cover by", a bare cover tag, and the Korean word. */
     private val COVER_MARKER = Regex(
@@ -474,7 +515,7 @@ internal object YouTubeDisplayCleaner {
 
     /** Agency channels whose name is never the artist of the song they upload. */
     private val LABEL_CHANNELS = setOf(
-        "smtown", "sm town", "hybe labels", "1thek", "1thek (원더케이)",
+        "smtown", "sm town", "hybe labels", "hype universe", "1thek", "1thek (원더케이)",
         "jyp entertainment", "stone music entertainment", "genie music",
         "mnet k-pop", "m2", "kbs kpop", "studio choom", "theblacklabel",
         "yg entertainment", "starshiptv", "kakao entertainment",
