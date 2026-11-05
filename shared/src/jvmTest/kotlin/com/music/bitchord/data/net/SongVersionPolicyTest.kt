@@ -965,6 +965,7 @@ class SongVersionPolicyTest {
         videoId = id,
         title = "A Song",
         artist = "An Artist",
+        thumbnailUrl = null,
         isVideo = true,
         musicVideoType = type,
         videoRadio = videoRadio,
