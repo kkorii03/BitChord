@@ -445,6 +445,71 @@ class KindCheckTest(unittest.TestCase):
         self.assertEqual("SKIP", checks[7].status)
 
 
+class NothingJudgedTest(unittest.TestCase):
+    """11-05: set-c/set-d had a swapped song list, every kind check skipped and
+    the run still reported success."""
+
+    def test_all_kind_checks_skipped_is_invalid(self):
+        songs = smokecheck.parse_songs(
+            "mv\t-RJSbO8UZVY\nhq\tTuzfXgUpboA\ncover\tvRjfYdwM5L4\tPL123\n"
+        )
+        checks = smokecheck.check_log(log_line("nothing to judge"), songs=songs)
+        self.assertTrue(smokecheck.nothing_judged(checks, songs))
+
+    def test_one_judged_kind_check_is_not_invalid(self):
+        songs = specs("mv1\tmv")
+        checks = smokecheck.check_log("", songs=songs)
+        self.assertFalse(smokecheck.nothing_judged(checks, songs))
+
+    def test_no_song_list_is_not_invalid(self):
+        checks = smokecheck.check_log("")
+        self.assertFalse(smokecheck.nothing_judged(checks, None))
+
+    def test_main_fails_and_says_invalid_when_nothing_could_be_judged(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "logcat.txt"
+            songs = Path(directory) / "songs.txt"
+            report = Path(directory) / "report.md"
+            log.write_text(log_line("nothing to judge") + "\n", encoding="utf-8")
+            songs.write_text("mv\t-RJSbO8UZVY\n", encoding="utf-8")
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                code = smokecheck.main(
+                    [str(log), "--songs", str(songs), "--report", str(report)]
+                )
+            self.assertEqual(1, code)
+            self.assertIn("INVALID: nothing could be judged", stderr.getvalue())
+            self.assertIn(
+                "INVALID: nothing could be judged", report.read_text(encoding="utf-8")
+            )
+
+    def test_main_keeps_judging_a_partly_skipped_list(self):
+        # An HQ row without settings skips on purpose; the mv row still decides.
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "logcat.txt"
+            songs = Path(directory) / "songs.txt"
+            report = Path(directory) / "report.md"
+            log.write_text(
+                "\n".join(
+                    [
+                        log_line("song version: mv1 -> aud1 via search before-audio"),
+                        summary("mv1", "Song", True),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            songs.write_text("mv1\tmv\nhq1\thq\n", encoding="utf-8")
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                code = smokecheck.main(
+                    [str(log), "--songs", str(songs), "--report", str(report)]
+                )
+            self.assertEqual(0, code)
+            self.assertIn("결과: **PASS", report.read_text(encoding="utf-8"))
+
+
 class OutputTest(unittest.TestCase):
     def test_table_and_markdown_show_every_check(self):
         checks = smokecheck.check_log("")
