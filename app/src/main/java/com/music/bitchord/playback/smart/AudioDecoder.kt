@@ -316,7 +316,7 @@ object AudioDecoder {
             false
         }
         if (!acquired) {
-            fail(label, "gate", "interrupted")
+            fail(label, FAILURE_GATE, "interrupted")
             return null
         }
         try {
@@ -492,6 +492,9 @@ object AudioDecoder {
     internal fun takeLastFailure(): String? = lastFailure.get().also { lastFailure.remove() }
 
     internal const val FAILURE_NO_FIRST_SAMPLE = "no-first-sample"
+
+    /** The stage a read failed at when its wait for the one-at-a-time gate was interrupted. */
+    internal const val FAILURE_GATE = "gate"
 
     private val lastFailure = ThreadLocal<String?>()
 

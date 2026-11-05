@@ -136,4 +136,63 @@ class VideoAudioOpeningWaitTest {
     fun `an abandoned read under the ten second floor keeps nothing`() {
         assertFalse(VideoAudio.keepAbandonedOpening(bytes = 4 * 32_000, minimumBytes = 10 * 32_000, failedStage = null))
     }
+
+    /**
+     * 11-05 auto8b: the quality comparison's reference read waited 24 s, never
+     * got the decoder and decoded zero audio, and the play change reported it
+     * as "no reference reason=cancelled". The comparison now starts only when
+     * its reference is in hand.
+     */
+    @Test
+    fun `an opening already read for this window is ready`() {
+        assertTrue(
+            VideoAudio.referenceReady(
+                cachedOpening = true,
+                copy = null,
+                isLocalFile = false,
+                untilSeconds = 90.0,
+                durationMs = 0L,
+            ),
+        )
+    }
+
+    @Test
+    fun `a downloaded file is ready without any copy`() {
+        assertTrue(
+            VideoAudio.referenceReady(
+                cachedOpening = false,
+                copy = null,
+                isLocalFile = true,
+                untilSeconds = 90.0,
+                durationMs = 0L,
+            ),
+        )
+    }
+
+    @Test
+    fun `a stream whose opening is still filling is not ready`() {
+        // 10 MB * 91 s / 215 s = 4.2 MB of the 90 s window; 3 MB is short of it.
+        assertFalse(
+            VideoAudio.referenceReady(
+                cachedOpening = false,
+                copy = rendition("stream", contentLength = 10_000_000L, cachedPrefix = 3_000_000L),
+                isLocalFile = false,
+                untilSeconds = 90.0,
+                durationMs = 215_000L,
+            ),
+        )
+    }
+
+    @Test
+    fun `a copy that holds the whole window is ready`() {
+        assertTrue(
+            VideoAudio.referenceReady(
+                cachedOpening = false,
+                copy = rendition("stream", contentLength = 10_000_000L, cachedPrefix = 5_000_000L),
+                isLocalFile = false,
+                untilSeconds = 90.0,
+                durationMs = 215_000L,
+            ),
+        )
+    }
 }

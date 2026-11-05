@@ -200,7 +200,17 @@ class KoPrefetchQueue(
                         ?: HqTier.NORMAL
                     val found = try {
                         SourceResolver.prefetchSubstitute(target, remember = false) { _, candidate ->
-                            HqAudioVerify.verify(context, next, target, candidate) != null
+                            // Read-ahead for a track that is not playing yet: its
+                            // opening is not on disk, so this comparison uses
+                            // only what is already decoded instead of waiting
+                            // out the head timeout and the decode gate for it.
+                            HqAudioVerify.verify(
+                                context,
+                                next,
+                                target,
+                                candidate,
+                                waitForOpening = false,
+                            ) != null
                         }
                     } catch (cancelled: CancellationException) {
                         // A cancelled read-ahead is not a failed lookup: let
