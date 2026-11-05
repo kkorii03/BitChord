@@ -1,5 +1,6 @@
 package com.music.bitchord.ko
 
+import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.MusicSource
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceResolver
@@ -21,9 +22,10 @@ internal fun hqSearchLine(
 
 /**
  * How the source race ranks the kinds of row it can be offered, lowest
- * first: a normally credited match, then a localised `artist-unverified`
- * row, then a verified copy that only opened below the request, and last a
- * localised row that also only opened below it.
+ * first: a normally credited match, then a row still waiting for the sound
+ * comparison (a localised credit or a localised title), then a verified copy
+ * that only opened below the request, and last an unverified row that also
+ * only opened below it.
  *
  * Request satisfaction outranks artist verification: a copy that actually
  * serves what was asked for must not lose to a settle-for merely because
@@ -31,12 +33,27 @@ internal fun hqSearchLine(
  * fallback could discard the verified copy hq-verify would have accepted.
  */
 internal fun offerRank(verdict: String, stream: SourceStream): Int = when {
-    verdict == "artist-unverified" && stream.belowRequest ->
+    verdict in UNVERIFIED_VERDICTS && stream.belowRequest ->
         ARTIST_UNVERIFIED_BELOW_REQUEST_RANK
-    verdict == "artist-unverified" -> ARTIST_UNVERIFIED_RANK
+    verdict in UNVERIFIED_VERDICTS -> ARTIST_UNVERIFIED_RANK
     stream.belowRequest -> BELOW_REQUEST_RANK
     else -> MATCH_RANK
 }
+
+/**
+ * The word for a row that is only waiting for the sound comparison, named by
+ * the signal that is missing: a localised credit or a localised title. Both
+ * are ranked and gated the same way; the log has to say which one it was.
+ */
+internal fun unverifiedVerdict(row: Song, target: TrackMatcher.Target): String =
+    if (TrackMatcher.isArtistUnverifiedOriginal(row, target, TrackMatcher.ARTIST_UNVERIFIED_DRIFT_SEC)) {
+        "artist-unverified"
+    } else {
+        "title-unverified"
+    }
+
+/** The verdicts that mean "offer this to the sound comparison". */
+private val UNVERIFIED_VERDICTS = setOf("artist-unverified", "title-unverified")
 
 /** Whether [rank] is one of the localised-row tiers; see [offerRank]. */
 internal fun isArtistUnverifiedRank(rank: Int): Boolean =

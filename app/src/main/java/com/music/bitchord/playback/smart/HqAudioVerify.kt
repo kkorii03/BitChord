@@ -1428,10 +1428,14 @@ object HqAudioVerify {
             is DownloadFetch.RateLimited -> "rate-limited"
             DownloadFetch.Abandoned -> "abandoned"
         }
-        TrackLog.w(
+        // Named "retried", not "failed": this line is reached only when the
+        // second attempt answered something (bytes, a rate limit, an abandon).
+        // Calling it a failure made a working fresh-URL retry read in the log
+        // exactly like a dead row, which is how a 403 report was chased twice.
+        TrackLog.d(
             TAG,
-            "decode: hq-verify failed at=download HTTP ${refused.code} " +
-                "(retried with ${if (sameUrl) "the same url, re-asked" else "fresh url"}: $outcome)",
+            "decode: hq-verify retried after HTTP ${refused.code} " +
+                "(${if (sameUrl) "the same url, re-asked" else "fresh url"}: $outcome)",
         )
         return retried
     }
