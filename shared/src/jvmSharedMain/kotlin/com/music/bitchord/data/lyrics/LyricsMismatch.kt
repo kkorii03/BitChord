@@ -137,6 +137,54 @@ object LyricsMismatch {
         override fun removeEldestEntry(eldest: Map.Entry<String, Boolean>) = size > REMEMBERED
     }
 
+    /**
+     * How many of a video's sheets must be thrown away before the *sound* is
+     * the one at fault. One provider's wrong sheet is a wrong sheet; two
+     * catalogues independently failing to describe what is being sung is the
+     * recording. The device log that prompted this (11-06) had three.
+     */
+    const val MIN_REJECTED_SHEETS = 2
+
+    private val rejectedSheets = object : LinkedHashMap<String, Int>(REMEMBERED, 0.75f, true) {
+        override fun removeEldestEntry(eldest: Map.Entry<String, Int>) = size > REMEMBERED
+    }
+    private val lastVerdict = object : LinkedHashMap<String, Verdict>(REMEMBERED, 0.75f, true) {
+        override fun removeEldestEntry(eldest: Map.Entry<String, Verdict>) = size > REMEMBERED
+    }
+
+    private val _wrongSounds = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 4)
+
+    /**
+     * Video ids that have just become [wrongSound], so a player that swapped
+     * to one of them can undo it. One emission per video: the second rejected
+     * sheet is what makes the sound the culprit.
+     */
+    val wrongSounds: kotlinx.coroutines.flow.SharedFlow<String> = _wrongSounds
+
+    /**
+     * The verdict that judged [videoId]'s sound as singing something else than
+     * the sheets offered for it, or null. Read, never measured: a caller acts
+     * on what the lyrics lookup has already heard, and asks for no decode of
+     * its own.
+     */
+    fun wrongSound(videoId: String): Verdict? {
+        synchronized(rejectedSheets) {
+            if ((rejectedSheets[videoId] ?: 0) >= MIN_REJECTED_SHEETS) {
+                return lastVerdict[videoId]
+            }
+        }
+        return null
+    }
+
+    /**
+     * The audio switch's own line for undoing a swap to a sound the sheets
+     * proved is another song, or null while it may play — see
+     * `KoAudioSwitch.resolveAudioUncached` and the player's revert effect.
+     */
+    fun wrongSoundNote(videoId: String): String? = wrongSound(videoId)?.let {
+        "audio switch: revert $videoId (lyrics mismatch ${it.matchedLines}/${it.totalLines})"
+    }
+
     private fun key(videoId: String, source: LyricsSource, lines: List<LyricLine>): String =
         buildString {
             append(videoId).append('\u0000').append(source.name).append('\u0000')
@@ -146,7 +194,16 @@ object LyricsMismatch {
     fun isRejected(videoId: String, source: LyricsSource, lines: List<LyricLine>): Boolean =
         synchronized(rejected) { rejected.containsKey(key(videoId, source, lines)) }
 
-    fun rememberRejected(videoId: String, source: LyricsSource, lines: List<LyricLine>) {
+    fun rememberRejected(videoId: String, source: LyricsSource, lines: List<LyricLine>, verdict: Verdict) {
         synchronized(rejected) { rejected[key(videoId, source, lines)] = true }
+        val sheets = synchronized(rejectedSheets) {
+            val count = (rejectedSheets[videoId] ?: 0) + 1
+            rejectedSheets[videoId] = count
+            lastVerdict[videoId] = verdict
+            count
+        }
+        // Only the sheet that makes the count say the *sound* is wrong is an
+        // event; the first one is still just a wrong sheet.
+        if (sheets == MIN_REJECTED_SHEETS) _wrongSounds.tryEmit(videoId)
     }
 }

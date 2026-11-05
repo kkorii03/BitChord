@@ -941,7 +941,7 @@ object LyricsRepository {
             LyricsMismatch.judgeSheet(result.lines, heard)
         }
         if (!verdict.rejected) return false
-        LyricsMismatch.rememberRejected(videoId, result.source, result.lines)
+        LyricsMismatch.rememberRejected(videoId, result.source, result.lines, verdict)
         TrackLog.i(TAG, LyricsMismatch.logLine(result.source, verdict), about = videoId)
         return true
     }

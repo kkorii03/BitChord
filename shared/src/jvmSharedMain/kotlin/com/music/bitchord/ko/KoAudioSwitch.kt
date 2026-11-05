@@ -6,12 +6,14 @@ import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.YouTubeDisplayCleaner
 import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.innertube.SearchKind
+import com.music.bitchord.data.lyrics.LyricsMismatch
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.net.SongVersionPolicy
 import com.music.bitchord.data.sources.TrackMatcher
 import kotlinx.coroutines.CancellationException
+import kotlin.math.abs
 
 /** The audio-version search kept out of the upstream file. */
 internal object KoAudioSwitch {
@@ -81,6 +83,19 @@ internal object KoAudioSwitch {
                 YtMusicRepository.audioVersionCache[song.videoId] = match
                 return match
             }
+            // The page that would print both names is not always returned (the
+            // phone's 11-06 page held only the MV and the Korean album row), so
+            // the bridge above cannot fire. The credit and the runtime still
+            // agree, and that is the grade the quality upgrade already trusts
+            // for exactly this song — see
+            // TrackMatcher.isAudioSwitchTitleUnverified. The nearest runtime
+            // wins, and a cover, karaoke or remix row is refused inside it.
+            val unverified = candidates
+                .filter { TrackMatcher.isAudioSwitchTitleUnverified(it, target) }
+                .minByOrNull { distanceFromTarget(it, target) }
+            if (unverified != null) {
+                adoptAudio(song, unverified, "title-unverified (artist+length)")?.let { return it }
+            }
             // One line per candidate that did not become the answer, so a
             // device log names the failing check instead of only the outcome.
             for (candidate in rows) {
@@ -136,6 +151,31 @@ internal object KoAudioSwitch {
             YtMusicRepository.audioVersionCache[song.videoId] = song
         }
         return song
+    }
+
+    /**
+     * Writes the swap, unless the sound it would play is already known to be
+     * another song. The lyrics lookup throws a sheet away when what is being
+     * sung is not in it, and two providers' sheets failing the same sound is
+     * the sound — see `LyricsMismatch.wrongSound`. Reading that verdict costs
+     * no request and no decode, which is the whole point: the check must not
+     * listen to anything of its own. The original row is kept and the log says
+     * why, in the same shape as the accept line.
+     */
+    private fun adoptAudio(song: Song, match: Song, via: String): Song? {
+        LyricsMismatch.wrongSoundNote(match.videoId)?.let { note ->
+            Log.w(TAG, note)
+            return null
+        }
+        Log.d(TAG, "audio switch: accept ${match.videoId} via $via")
+        YtMusicRepository.audioVersionCache[song.videoId] = match
+        return match
+    }
+
+    /** How far a row's stated runtime sits from the video's, for picking between equals. */
+    private fun distanceFromTarget(candidate: Song, target: TrackMatcher.Target): Int {
+        val got = TrackMatcher.secondsOf(candidate.durationText) ?: return Int.MAX_VALUE
+        return abs((target.durationSec ?: 0) - got)
     }
 
 }
