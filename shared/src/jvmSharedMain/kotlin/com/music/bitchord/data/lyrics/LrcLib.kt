@@ -112,6 +112,7 @@ object LrcLib {
      * with nothing after it closes the final line, so it always survives.
      */
     fun parseLrc(lrc: String): List<LyricLine> {
+        val offset = EnhancedLrc.sheetOffsetMs(lrc)
         val all = lrc.lineSequence().mapNotNull { line ->
             val match = STAMP.find(line) ?: return@mapNotNull null
             val (minutes, seconds, fraction) = match.destructured
@@ -134,7 +135,7 @@ object LrcLib {
                 words = parseWordRuns(text),
                 alignment = alignment,
             )
-        }.sortedBy { it.timeMs }.toList()
+        }.sortedBy { it.timeMs }.toList().let { rows -> if (offset == 0L) rows else rows.timedBy(null, offset) }
 
         val kept = all.filterIndexed { index, line ->
             if (!line.isGap) return@filterIndexed true
