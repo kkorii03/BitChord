@@ -206,6 +206,20 @@ object VideoAudio {
     }
 
     /**
+     * Whether a read that stopped before its window may still be kept.
+     *
+     * A read the caller walked away from ([failedStage] null: the decode loop
+     * answered the abort, or its wait at the decoder gate was interrupted) has
+     * heard real audio, and the next check of the same song — the quality
+     * comparison asks for the same opening — can use it instead of decoding the
+     * same seconds again and queueing for the whole track behind the
+     * one-at-a-time gate. A read that failed at a named stage is not audio the
+     * song was proved to have.
+     */
+    internal fun keepAbandonedOpening(bytes: Int, minimumBytes: Int, failedStage: String?): Boolean =
+        failedStage == null && bytes >= minimumBytes
+
+    /**
      * How long a measurement waits for the row's own opening before giving up.
      *
      * A video row plays the video stream, so its audio is written only because
@@ -278,7 +292,7 @@ object VideoAudio {
                     return@withLock it
                 }
                 val bytes = AudioDecoder.interruptibleDecode {
-                    decodeSong(song, opened.data, opened.fromFile, until) { job?.isActive != false }
+                    decodeSong(song, opened, until) { job?.isActive != false }
                 } ?: return@withLock null
                 val audio = SongAudio(
                     bytes,
@@ -471,8 +485,7 @@ object VideoAudio {
 
     private fun decodeSong(
         song: Song,
-        source: MediaDataSource,
-        fromFile: Boolean,
+        opened: SongSource,
         untilSeconds: Double,
         /** False once the caller has gone; see [decode]. */
         wanted: () -> Boolean,
@@ -481,36 +494,62 @@ object VideoAudio {
         // that starts inside the window may run past its end. Not stopped by
         // the screen going off; see [songWav].
         val resampler = Resampler(minOf(RATE * 2 * untilSeconds.toInt(), RATE * 2 * 120))
-        try {
+        val stoppedEarly = try {
             AudioDecoder.decodeMonoStream(
-                source,
+                opened.data,
                 0.0,
                 untilSeconds + 1,
                 abort = { !wanted() },
                 label = "video-wav",
             ) { samples, sampleRate, _ ->
                 if (!resampler.push(samples, sampleRate)) return@decodeMonoStream
-            } ?: return null
+            } == null
         } catch (e: Exception) {
             TrackLog.w(TAG, "song check: could not read the audio: ${e.message}", song.videoId)
             return null
         } finally {
-            runCatching { source.close() }
+            runCatching { opened.data.close() }
         }
         val pcm = resampler.bytes()
-        if (pcm.size < RATE * 2 * 10) {
+        val minimum = RATE * 2 * 10
+        val stoppedAt = if (stoppedEarly) AudioDecoder.takeLastFailure() else null
+        if (pcm.size < minimum) {
             TrackLog.d(TAG, "song check: under ten seconds of audio", song.videoId)
+            return null
+        }
+        if (!keepAbandonedOpening(pcm.size, minimum, stoppedAt)) {
+            TrackLog.d(TAG, "song check: the read failed; the opening is not kept", song.videoId)
             return null
         }
         val limit = (RATE * 2 * untilSeconds).toInt().let { it - it % 2 }
         val data = if (pcm.size > limit) pcm.copyOf(limit) else pcm
+        val wav = header(data.size) + data
+        // The opening a read already heard is kept for the next check of this
+        // song instead of being thrown away with the abandoned call. Throwing
+        // it away made the quality comparison decode the same ninety seconds
+        // again, queue at the one-at-a-time gate behind the check it had just
+        // duplicated, and be cancelled with the play as "no reference" (11-05
+        // smoke r2-b: 35 s decoded, 59 s at the gate, cancelled).
+        if (stoppedEarly) {
+            recent.put(
+                songKey(songCacheKey(song, untilSeconds)),
+                SongAudio(
+                    wav,
+                    opened.renditionKey,
+                    opened.fromFile,
+                    opened.localSourceConfigId,
+                    opened.localTrackId,
+                ),
+            )
+        }
         TrackLog.d(
             TAG,
-            "song check: ${if (fromFile) "file" else "stream"} " +
-                "${data.size / (RATE * 2)}s ${data.size / 1024}KB",
+            "song check: ${if (opened.fromFile) "file" else "stream"} " +
+                "${data.size / (RATE * 2)}s ${data.size / 1024}KB" +
+                if (stoppedEarly) " (read abandoned)" else "",
             song.videoId,
         )
-        return header(data.size) + data
+        return wav
     }
 
     /**
