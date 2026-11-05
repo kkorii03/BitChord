@@ -8,6 +8,7 @@ import com.music.bitchord.data.sources.HqQuality
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamContainerSniff
 import com.music.bitchord.data.sources.TrackMatcher
+import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.HqHostTracker
 import com.music.bitchord.playback.StreamRefusalRecovery
 import kotlinx.coroutines.Dispatchers
@@ -81,8 +82,15 @@ internal object KoStreamProbe {
      * player never opens that URL again and the host is rested only once it has
      * refused a second, different stream — see
      * [StreamRefusalRecovery.noteRefusedStream].
+     *
+     * @param mediaId the track this candidate was looked up for, when the
+     *   caller knows it. A candidate refused for lying about its own bytes has
+     *   almost always been served before and cached: the copy it filled then
+     *   outlives this refusal and is played straight off disk, never resolving
+     *   and so never probed. Named here so that copy goes with the refusal —
+     *   see [AudioCache.invalidateAddonRendition].
      */
-    suspend fun servesBytes(stream: SourceStream): Boolean = withContext(Dispatchers.IO) {
+    suspend fun servesBytes(stream: SourceStream, mediaId: String? = null): Boolean = withContext(Dispatchers.IO) {
         val url = stream.url
         val request = Request.Builder()
             .url(url)
@@ -95,7 +103,7 @@ internal object KoStreamProbe {
                     refused(url, response.code, response.headers.toMultimap())
                     return@withContext false
                 }
-                if (!honestRendition(stream, response, url)) return@withContext false
+                if (!honestRendition(stream, response, url, mediaId)) return@withContext false
                 true
             }
         } catch (e: Exception) {
@@ -117,7 +125,12 @@ internal object KoStreamProbe {
      * first. Anything unreadable keeps its chance, exactly as a probe that could
      * not run does.
      */
-    private fun honestRendition(stream: SourceStream, response: Response, url: String): Boolean {
+    private fun honestRendition(
+        stream: SourceStream,
+        response: Response,
+        url: String,
+        mediaId: String?,
+    ): Boolean {
         if (!HqQuality.isLosslessTier(stream.format)) return true
         val head = runCatching {
             response.peekBody(StreamContainerSniff.HEAD_BYTES.toLong()).bytes()
@@ -128,6 +141,7 @@ internal object KoStreamProbe {
                 "hq-stream: ${HqHostTracker.hostOf(url) ?: "?"} claims ${stream.format.summary} " +
                     "but served a lossy file; not starting this track on it",
             )
+            mediaId?.let { AudioCache.invalidateAddonRendition(it) }
             return false
         }
         // The same lie with the container kept: a lossless file's size states its
@@ -141,6 +155,7 @@ internal object KoStreamProbe {
             "hq-stream: ${HqHostTracker.hostOf(url) ?: "?"} claims ${stream.format.summary} of " +
                 "${stream.durationSec}s but the file runs ${seconds}s; not starting this track on it",
         )
+        mediaId?.let { AudioCache.invalidateAddonRendition(it) }
         return false
     }
 
