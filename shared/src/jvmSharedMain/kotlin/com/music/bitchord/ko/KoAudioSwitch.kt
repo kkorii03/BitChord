@@ -21,13 +21,7 @@ internal object KoAudioSwitch {
     private const val TAG = "BitChord"
 
     suspend fun resolveAudioUncached(song: Song): Song {
-        // A shared link or a row saved before the display rule existed can
-        // still carry the uploader as its artist. Both the query and the
-        // match are built from the credit the title states, or the search is
-        // spent on a channel name no catalogue row carries (phone 11-06).
-        // A cover is left exactly as it is: its own title is what the switch
-        // must refuse, not the song it covers.
-        val row = if (CoverTitles.isCover(song)) song else YouTubeDisplayCleaner.cleanUpload(song)
+        val row = audioSwitchRow(song)
         // A row whose type is still unknown is treated as a video for timing:
         // its runtime may already include a visual intro/outro, and refusing
         // that drift is how the song version was written off.
@@ -134,7 +128,7 @@ internal object KoAudioSwitch {
             (if (song.typeUnknown) " (type unknown)" else "")
         Log.w(
             TAG,
-            "audio switch: no official song match for '${song.title}' by '${song.artist}'" + shape,
+            "audio switch: no official song match for '${row.title}' by '${row.artist}'" + shape,
         )
         // A search that failed outright is no verdict: leave it retryable
         // instead of remembering the video as having no catalogue release.
@@ -150,6 +144,32 @@ internal object KoAudioSwitch {
             YtMusicRepository.audioVersionCache[song.videoId] = song
         }
         return song
+    }
+
+    /**
+     * The row a song-version search is built from: the upload's title and
+     * channel read as the song and the artist a listener sees (see
+     * [YouTubeDisplayCleaner]).
+     *
+     * A shared link or a row saved before the display rule existed can still
+     * carry the uploader as its artist, and a deep-linked watch row can carry
+     * its release's album id — which `cleanUpload` reads as "already
+     * display-ready" and skips. The search then asked for 'HYPE UNIVERSE'
+     * while the player showed 'ILLIT' (phone 11-06, vc148). The display rule
+     * is asked directly here instead; the row's other fields (album id, queue
+     * identity, runtime) are kept, because the match still compares them.
+     *
+     * Every check below — the query, the bridge, the title-unverified adoption
+     * and the miss line — is made against this row, so they all agree on who
+     * the artist is.
+     *
+     * A cover is left exactly as it is: its own title is what the switch must
+     * refuse, not the song it covers.
+     */
+    internal fun audioSwitchRow(song: Song): Song {
+        if (CoverTitles.isCover(song)) return song
+        val credit = song.artist.trim()
+        return YouTubeDisplayCleaner.clean(song, if (credit.isEmpty()) emptySet() else setOf(credit))
     }
 
     /**
