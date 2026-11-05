@@ -124,4 +124,48 @@ class ResolutionRaceEdgeTest {
             "the still-running route must be cancelled, not left on the shared scope",
         )
     }
+
+    @Test
+    fun `a walk that answers inside the fallback is played without waiting for extraction`() =
+        runBlocking {
+            // The 11-05 gated start: the walk outlived its window but was one
+            // request from answering. Raced with extraction, its answer is the
+            // one that plays.
+            val result = raceForFirstSuccess<String>(
+                direct = {
+                    delay(20)
+                    "walk-url"
+                },
+                proxy = {
+                    delay(5_000)
+                    "extraction-url"
+                },
+            )
+            assertEquals("direct" to "walk-url", result)
+        }
+
+    @Test
+    fun `the first answer is kept and a late walk never replaces it`() = runBlocking {
+        // Extraction answered first, so the walk's later answer must not be
+        // adopted over a stream that has already been handed on: the loser is
+        // stopped, and nothing re-resolves the row after this returns.
+        val lateWalkAnswered = AtomicBoolean(false)
+        val result = raceForFirstSuccess<String>(
+            direct = {
+                delay(200)
+                lateWalkAnswered.set(true)
+                "late-walk-url"
+            },
+            proxy = {
+                delay(20)
+                "extraction-url"
+            },
+        )
+        assertEquals("proxy" to "extraction-url", result)
+        delay(400)
+        assertFalse(
+            lateWalkAnswered.get(),
+            "the late walk is dropped, not adopted over the stream already returned",
+        )
+    }
 }
