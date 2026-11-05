@@ -82,6 +82,27 @@ class EstimatedSweepTest {
     }
 
     @Test
+    fun aLongSlotIsFilledInsteadOfFrozenAtTheEnd() {
+        // Five one-beat words are ~6 units, so the natural pace gives 3.3 s
+        // while the line owns 8 s. Ending at the cap left the line lit and
+        // frozen for the remaining 4.4 s, and the next line then jumped in.
+        val swept = line("Oh oh oh oh oh", at = 10_000, next = 18_000)
+        val last = swept.words.last()
+        assertEquals(17_700L, last.endMs, "last word should reach the slot end")
+        val frozen = 18_000L - last.endMs
+        assertTrue(frozen <= 300, "frozen for $frozen ms before the next line")
+        assertEquals(swept.text.length.toFloat(), swept.revealedChars(17_700), "line not fully drawn by the slot end")
+    }
+
+    @Test
+    fun anInstrumentalSlotIsNotDraggedToTheEnd() {
+        // Twenty seconds is a break, not a long line: the sweep keeps its own
+        // pace rather than holding the line up for the whole break.
+        val swept = line("Oh oh oh oh oh", at = 0, next = 20_000)
+        assertTrue(swept.words.last().endMs <= 3_300L, "end ${swept.words.last().endMs}")
+    }
+
+    @Test
     fun statedEndWinsOverTheGap() {
         val swept = LyricLine(timeMs = 1_000, text = "사랑해", sungUntilMs = 5_000)
             .withEstimatedWords(20_000)
