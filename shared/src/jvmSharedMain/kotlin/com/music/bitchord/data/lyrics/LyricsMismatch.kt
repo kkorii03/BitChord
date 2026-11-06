@@ -68,8 +68,12 @@ object LyricsMismatch {
         if (heard.size < MIN_HEARD_WORDS || texts.isEmpty()) {
             return Verdict(heard.size, 0, texts.size, rejected = false)
         }
-        val placement = LyricsWordAlign.placeLinesDetailed(texts, heard)
-        if (placement.attempted) return verdict(texts, placement, heard)
+        val cells = texts.sumOf { LyricsWordAlign.fold(it).length.toLong() } *
+            heard.sumOf { LyricsWordAlign.fold(it.text).length.toLong() }
+        if (cells <= OPENING_CELLS) {
+            val placement = LyricsWordAlign.placeLinesDetailed(texts, heard)
+            if (placement.attempted) return verdict(texts, placement, heard)
+        }
         // A sheet and a transcript too long to align together are judged on
         // the opening lines that do fit, rather than not at all: skipping the
         // verdict would let a wrong sheet through whenever Whisper heard the
