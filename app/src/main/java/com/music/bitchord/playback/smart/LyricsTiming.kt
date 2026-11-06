@@ -1565,6 +1565,71 @@ object LyricsTiming {
     }
 
     /**
+     * The sheet judged again on the longest words kept: no request. An engine is spent
+     * once per sheet, so a fit made on an opening or by older code would otherwise stand
+     * for good, on any row, answered or refused (the whole song's words only reach
+     * [RefinePolicy], which makes one move). True when what shows changed.
+     */
+    suspend fun refit(
+        context: Context,
+        song: Song,
+        lines: List<LyricLine>,
+        audioSource: String?,
+    ): Boolean = withContext(Dispatchers.Default) {
+        val videoId = song.videoId
+        if (hearingBusy(videoId)) return@withContext false
+        val key = textKey(lines, audioSource)
+        val texts = lines.filter { it.text.isNotBlank() }.map { it.text }
+        val language = com.music.bitchord.data.lyrics.Deepgram.languageFor(texts)
+        songSyncGate.withLock {
+            val entry = store(context).get(videoId) ?: Entry()
+            // The listener's own ask stands.
+            if (entry.aiPreferred && entry.aiTextKey == key) return@withLock false
+            val heard = SongHearing.longestKept(context, song, language) ?: wordsInEntry(entry, key)
+                ?: return@withLock false
+            if (!SongCheckWindow.refitDue(entry.refitVersion, entry.refitKey == key, entry.refitMs, heard.audioMs)) {
+                return@withLock false
+            }
+            if (replacedSheet(videoId, key)) return@withLock false
+            val check = fitSongCheck(
+                context, song, lines, key, ENGINE_DEEPGRAM_WHISPER, null,
+                SongAsk(heard, language, heard.audioMs / 1000.0), retry = false,
+            )
+            applySongCheck(context, song, key, ENGINE_DEEPGRAM_WHISPER, check)
+            // Stretches an older fit made and this one no longer stands behind.
+            val dropStale = check.fitted == null && entry.aiTextKey == key &&
+                entry.refitVersion < SongCheckWindow.FIT_VERSION && (entry.ai?.knots?.size ?: 0) > 2
+            store(context).update(videoId) {
+                it.copy(
+                    refitVersion = SongCheckWindow.FIT_VERSION,
+                    refitKey = key,
+                    refitMs = heard.audioMs,
+                    ai = if (dropStale) null else it.ai,
+                )
+            }
+            TrackLog.d(TAG, "song-sync: refit ${check.result} on ${heard.audioMs / 1000}s kept", videoId)
+            if (dropStale) _changes.tryEmit(videoId)
+            check.fitted != null || dropStale
+        }
+    }
+
+    /** Words from before [SongHearing] kept them, which only the entry still holds. */
+    private fun wordsInEntry(entry: Entry, key: Int): SongHearing.Heard? {
+        val (words, clock) = when {
+            entry.refineHeardKey == key && entry.refineHeardWords.isNotEmpty() -> entry.refineHeardWords to entry.refineHeardClock
+            entry.heardCheckKey == key && entry.heardCheckWords.isNotEmpty() -> entry.heardCheckWords to entry.heardCheckClock
+            else -> return null
+        }
+        return SongHearing.Heard(
+            words = words.map { LyricsWordAlign.Heard(it.t, it.s, it.e) },
+            audioMs = words.last().e,
+            clock = clockOf(clock),
+            httpCode = 200,
+            fromStore = true,
+        )
+    }
+
+    /**
      * Saves what a refine listen heard and returns the anchor its refine
      * compares the store against: [before] with this same save folded in.
      */
@@ -4770,6 +4835,10 @@ private const val FIRM_FIT_LINES = 15
         val refineHeardSeconds: Double = 0.0,
         /** The once-only longer listen has been made (or the song ends before it could help); see [RefineExtendPolicy]. */
         val refineHeardExtended: Boolean = false,
+        /** What [refit] last judged: the fit's version, the sheet, how far the words reached. */
+        val refitVersion: Int = 0,
+        val refitKey: Int? = null,
+        val refitMs: Long = 0L,
         /**
          * The lyrics the last automatic request was for, and the engines it
          * has spent on them; see [AiTimingPolicy]. A song check's key also
