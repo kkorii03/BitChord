@@ -26,6 +26,19 @@ class CoverOriginalLyricsQueryTest {
         isVideo = true,
     )
 
+    /**
+     * 11-06 V6WWJNpIJN4: a lyrics channel's "가수(SINGER) - 곡 [가사/Lyrics]" was searched with the
+     * singer as the song, and LRCLIB answered with another song of that name: the sheet shown
+     * had 0 of 61 lines in common with what was sung.
+     */
+    @Test
+    fun `a Hangul name with its Latin spelling before the dash is the singer`() {
+        val query = CoverTitles.lyricsQuery(song("가수이름(SINGER) - 노래 제목 [가사/Lyrics]", channel = "가사채널"))
+        assertEquals("노래 제목", query.title)
+        assertEquals("가수이름(SINGER)", query.artist)
+        assertEquals("노래 제목", LyricsQueryVariants.names(query.title, query.artist).first().title)
+    }
+
     @Test
     fun `Title(Artist) searches the original title and artist`() {
         val query = CoverTitles.lyricsQuery(song("Tomboy((G)I-DLE)"))
