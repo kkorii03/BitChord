@@ -118,9 +118,16 @@ internal object KoStreamProbe {
      */
     private fun honestRendition(stream: SourceStream, response: Response, url: String): Boolean {
         if (!HqQuality.isLosslessTier(stream.format)) return true
-        val head = runCatching {
+        val opening = runCatching {
             response.peekBody(StreamContainerSniff.HEAD_BYTES.toLong()).bytes()
         }.getOrNull() ?: return true
+        // A tag past the first look hides what is behind it, and a FLAC with one
+        // was refused for the tag. Worth reading on only as far as this request
+        // already asked for: past that the tag stays the answer, since cover art
+        // in front of an MP3 is the far commoner file.
+        val head = StreamContainerSniff.bytesPastId3(opening)?.takeIf { it <= PROBE_BYTES }?.let { wanted ->
+            runCatching { response.peekBody(wanted.toLong()).bytes() }.getOrNull()
+        } ?: opening
         StreamContainerSniff.lossyContainer(head)?.let { container ->
             TrackLog.w(
                 TAG,
