@@ -9809,7 +9809,15 @@ class PlaybackService : MediaLibraryService() {
             "AUDIO_OUT",
             "silence detected id=$id stalled=$stalled silent=${outputSilentFor > 0L} " +
                 "frames=$frames sinceBuffer=${now - AudioOutputHealth.lastBufferAtMs}ms " +
-                "decoderSilent=${decoderSilentFor}ms; step=${step.wire}",
+                "decoderSilent=${decoderSilentFor}ms " +
+                // [KO] 11-06 08:27: nine silent seconds at a track's end that this
+                // line could not explain. Where the player stood says whether it
+                // was waiting on the next item or stalled mid-file.
+                "pos=${player.currentPosition} dur=${player.duration} " +
+                "buffered=${player.bufferedPosition} loading=${player.isLoading} " +
+                "pauseAtEnd=${player.pauseAtEndOfMediaItems} " +
+                "index=${player.currentMediaItemIndex}/${player.mediaItemCount} " +
+                "next=${player.nextMediaItemIndex}; step=${step.wire}",
             about = id,
         )
         silenceRecoveries++
