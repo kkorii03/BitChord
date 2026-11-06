@@ -306,14 +306,6 @@ internal suspend fun PlaybackService.koSwapLosslessMidSong(
         )
         return false
     }
-    // The candidate's offset is measured against the YouTube clock. When a
-    // substitute is already playing, its own verified offset is what maps
-    // the playhead back; without that answer a seek would land on the wrong
-    // audio, so the copy waits for the next play instead.
-    if (koCurrentIsSubstitute(mediaId) && koCurrentPlayingVerification(mediaId) == null) {
-        TrackLog.d("BitChord", "hq-swap: $mediaId skipped current-clock-unknown", about = mediaId)
-        return false
-    }
     val upgradedUri = Uri.parse(QualityUpgrade.upgradedUri(uri.toString()))
     val downloaded = AudioCache.downloadVerifiedRendition(upgradedUri, title, stream)
     if (!downloaded) {
@@ -380,6 +372,7 @@ internal fun PlaybackService.koHqSwapDecision(
         isVideo = item?.toSong()?.isVideo == true,
         suppressed = exoPlayer != null &&
             exoPlayer.playbackSuppressionReason != Player.PLAYBACK_SUPPRESSION_REASON_NONE,
+        currentClockKnown = current != null || !koCurrentIsSubstitute(mediaId),
     )
 }
 
