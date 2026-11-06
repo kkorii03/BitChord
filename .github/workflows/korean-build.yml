@@ -68,7 +68,9 @@ jobs:
           name: BitChord-ko-arm64
           path: out/BitChord-ko-arm64.apk
 
+      # A dispatched build is for one phone: it stays a private artifact.
       - name: Publish release
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
