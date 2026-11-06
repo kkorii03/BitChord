@@ -1613,7 +1613,7 @@ object LyricsTiming {
         val language = com.music.bitchord.data.lyrics.Deepgram.languageFor(
             lines.filter { it.text.isNotBlank() }.map { it.text },
         )
-        val heard = SongHearing.hear(context, song, untilSeconds, language) ?: return null
+        val heard = hearThrough429(context, song, untilSeconds, untilSeconds, language) ?: return null
         val words = heard.words?.take(MAX_HEARD_WORDS)
             ?.map { word -> SavedWord(t = word.text, s = word.startMs, e = word.endMs) }
             ?.takeIf { it.isNotEmpty() }
@@ -2859,17 +2859,19 @@ object LyricsTiming {
                 // Whatever of the video's sound has landed, up to all of it: a
                 // cover's offset shows in its opening, and no decode or whole
                 // file is waited for any more. Nothing to hear spends no engine.
-                val hearing = SongHearing.hear(
+                val hearing = hearThrough429(
                     context,
                     song,
                     AI_HEAR_SECONDS,
+                    AI_HEAR_LEAST_SECONDS,
                     language,
-                    minSeconds = AI_HEAR_LEAST_SECONDS,
                 ) ?: break
                 audioPresent = true
                 listenedClock = hearing.clock
-                noteAttempt(name)
-                if (name == ENGINE_WHISPER) {
+                // Turned away, nothing was listened to or paid for. Spent anyway,
+                // this video's Whisper never came back for these lyrics.
+                if (AiTimingPolicy.aiAskSpends(hearing.httpCode)) noteAttempt(name)
+                if (name == ENGINE_WHISPER && AiTimingPolicy.aiAskSpends(hearing.httpCode)) {
                     if (probe == null) {
                         store(context).update(videoId) { it.copy(whisperKey = key) }
                     } else {
@@ -2903,10 +2905,9 @@ object LyricsTiming {
                     videoId,
                 )
                 if (heardAnswer.httpCode == 429) {
-                    val wait = SongSyncRetry.retryDelayMs(heardAnswer.retryAfterMs, 0)
+                    // The retries ran out; the hold they left is the wait.
+                    val wait = (songQuietUntilMs - System.currentTimeMillis()).coerceAtLeast(0L)
                     rateLimitedWaitMs = maxOf(rateLimitedWaitMs ?: 0L, wait)
-                    songQuietUntilMs = System.currentTimeMillis() + wait
-                    rateLimitedLog(videoId, wait)
                     // The same key is refused for Whisper too; Gemini is a
                     // separate provider and may still answer below.
                     break
@@ -3045,8 +3046,8 @@ object LyricsTiming {
      * No timer or poll: the caller runs this when the lyrics arrive, once per
      * playback. Missing audio is not written to the store — the next playback
      * may have it — and the caller keeps it to one try per session. A 429 is
-     * not spent as an answer: it is retried at most twice, then held until its
-     * `Retry-After` has passed so the next playback tries again. Returns true
+     * not spent as an answer: it is retried per [SongSyncRetry], then held until
+     * its wait has passed so the next playback tries again. Returns true
      * when an engine answered and its answer was recorded; false when there
      * was nothing to ask, or the song was held for a 429.
      */
@@ -3716,9 +3717,43 @@ object LyricsTiming {
     )
 
     /**
-     * Whisper with the 429 rules applied: at most two retries, `Retry-After`
-     * believed (exponential otherwise), and a long wait deferred rather than
-     * held. Null means the song was rate-limited and marked for later.
+     * [SongHearing.hear] with the 429 rules of [SongSyncRetry], for every path
+     * that listens. Null means there was no sound to send. A 429 still comes back
+     * when the retries ran out or the server asked for too long a wait, with
+     * [songQuietUntilMs] holding that wait; nothing here polls, and every wait
+     * belongs to one asking song.
+     */
+    private suspend fun hearThrough429(
+        context: Context,
+        song: Song,
+        untilSeconds: Double,
+        minSeconds: Double,
+        language: String,
+    ): SongHearing.Heard? {
+        var attempt = 0
+        while (true) {
+            // Straight off the file, or the streaming copy as it stands.
+            val answer = SongHearing.hear(context, song, untilSeconds, language, minSeconds) ?: return null
+            if (answer.httpCode != 429) {
+                songQuietUntilMs = 0L
+                return answer
+            }
+            val wait = SongSyncRetry.retryDelayMs(answer.retryAfterMs, attempt)
+            songQuietUntilMs = System.currentTimeMillis() + wait
+            rateLimitedLog(song.videoId, wait)
+            if (!SongSyncRetry.shouldRetry(answer.httpCode, attempt) ||
+                !SongSyncRetry.canWaitInline(wait)
+            ) {
+                return answer
+            }
+            delay(wait)
+            attempt++
+        }
+    }
+
+    /**
+     * Whisper for a song check, with the 429 rules applied. Null means there was
+     * no sound, or the song was rate-limited and marked for later.
      */
     private suspend fun listenForSong(
         context: Context,
@@ -3739,38 +3774,23 @@ object LyricsTiming {
             }
             delay(quiet)
         }
-        var attempt = 0
-        while (true) {
-            // Straight off the file, or the streaming copy as it stands; null
-            // when there is nothing to listen to yet.
-            val answer = SongHearing.hear(
-                context,
-                song,
-                untilSeconds,
-                language,
-                minSeconds = if (untilSeconds < VideoAudio.SONG_CHECK_SECONDS) SONG_FIRST_LEAST_SECONDS else untilSeconds,
-            ) ?: run {
-                songLog(videoId, "no-audio", null, null, 0)
-                probe?.failure = NextPrepPolicy.SyncFailure.NO_AUDIO
-                return null
-            }
-            if (answer.httpCode != 429) {
-                songQuietUntilMs = 0L
-                return answer
-            }
-            val wait = SongSyncRetry.retryDelayMs(answer.retryAfterMs, attempt)
-            songQuietUntilMs = System.currentTimeMillis() + wait
-            rateLimitedLog(videoId, wait)
-            if (!SongSyncRetry.shouldRetry(answer.httpCode, attempt) ||
-                !SongSyncRetry.canWaitInline(wait)
-            ) {
-                markRateLimited(context, videoId, key, wait)
-                probe?.failure = NextPrepPolicy.SyncFailure.RATE_LIMIT
-                return null
-            }
-            delay(wait)
-            attempt++
+        val answer = hearThrough429(
+            context,
+            song,
+            untilSeconds,
+            minSeconds = if (untilSeconds < VideoAudio.SONG_CHECK_SECONDS) SONG_FIRST_LEAST_SECONDS else untilSeconds,
+            language,
+        ) ?: run {
+            songLog(videoId, "no-audio", null, null, 0)
+            probe?.failure = NextPrepPolicy.SyncFailure.NO_AUDIO
+            return null
         }
+        if (answer.httpCode == 429) {
+            markRateLimited(context, videoId, key, songQuietUntilMs - System.currentTimeMillis())
+            probe?.failure = NextPrepPolicy.SyncFailure.RATE_LIMIT
+            return null
+        }
+        return answer
     }
 
     /** Keeps a rate-limited song until its server-stated wait has passed; next playback retries. */
