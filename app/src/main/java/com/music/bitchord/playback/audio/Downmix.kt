@@ -54,6 +54,17 @@ object Downmix {
     fun needs(channelCount: Int): Boolean = channelCount == BED_CHANNELS
 
     /**
+     * Whether a route change has to rebuild the output for the stream playing.
+     *
+     * The fold is decided when the sink configures, so a stream already playing
+     * keeps the answer of the route it started on: earphones connected mid-song
+     * would be handed the six-channel track that stalls them, and taking them off
+     * would leave a mix folded on the speaker for no reason.
+     */
+    fun routeChangeRebuilds(channelCount: Int?, wasBluetooth: Boolean, isBluetooth: Boolean): Boolean =
+        channelCount != null && needs(channelCount) && wasBluetooth != isBluetooth
+
+    /**
      * Folds [source]'s 5.1 frames into [destination], one output frame per
      * input frame, in place in [destination]'s own buffer.
      */

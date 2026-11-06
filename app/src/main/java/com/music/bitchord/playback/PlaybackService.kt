@@ -889,6 +889,13 @@ class PlaybackService : MediaLibraryService() {
      */
     private var selectedTrackMediaId: String? = null
 
+    /**
+     * Keeps music-only from answering a deliberate tap with silence, and from
+     * reading its own skips as one — see
+     * [com.music.bitchord.data.net.SongVersionPolicy.mvWithoutAudioVerdict].
+     */
+    private val listenerMoves = ListenerMoves()
+
     /** The track the one-line summary will be about when it stops being current. */
     private var summarySong: Song? = null
 
@@ -2692,6 +2699,7 @@ class PlaybackService : MediaLibraryService() {
         crossfade,
         applicationContext,
         onUserIntent = { partySync?.onLocalIntent() },
+        onListenerMove = { listenerMoves.note(SystemClock.elapsedRealtime()) },
         onQueueReplaced = { songVersionController.resetSkippedOfficialMv() },
         deferPlayToParty = { partySync?.shouldDeferPlay() == true },
         lockedTransport = { playing -> partySync?.onLockedTransport(playing) == true },
@@ -5051,7 +5059,11 @@ class PlaybackService : MediaLibraryService() {
             exoPlayer,
             mediaItem,
             alreadyAudible,
-            userAsked = listenerChoseRow(reason),
+            userAsked = listenerMoves.consume(
+                automatic = reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO ||
+                    reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT,
+                nowMs = SystemClock.elapsedRealtime(),
+            ),
         )
         // A song-version hold pauses a row that a gapless advance otherwise
         // looks and sounds like it has already started. The hold is decided
@@ -10180,7 +10192,17 @@ class PlaybackService : MediaLibraryService() {
         // A Bluetooth sink is stereo, so a 6-channel bed is folded down to it
         // rather than being refused — see
         // com.music.bitchord.playback.audio.Downmix and the sink's provider.
+        val wasBluetooth = activeRouteKind == AudioRouting.Kind.BLUETOOTH
         activeRouteKind = routeKind
+        if (com.music.bitchord.playback.audio.Downmix.routeChangeRebuilds(
+                channelCount = currentAudioInputFormat?.channelCount,
+                wasBluetooth = wasBluetooth,
+                isBluetooth = routeKind == AudioRouting.Kind.BLUETOOTH,
+            )
+        ) {
+            TrackLog.i("AUDIO_OUT", "route changed under a 5.1 bed; rebuilding the output", player?.currentMediaItem?.mediaId)
+            requestOutputReconfiguration(rebuild = true)
+        }
         val directUsbProbe = if (routeKind == AudioRouting.Kind.USB) UsbDirectManager.probe(this) else null
 
         val format = currentAudioInputFormat
@@ -11665,6 +11687,8 @@ class PlaybackService : MediaLibraryService() {
          * a listener's action from its own corrections. See [PartySync].
          */
         private val onUserIntent: () -> Unit,
+        /** The listener moved to another row through this surface — see [ListenerMoves]. */
+        private val onListenerMove: () -> Unit,
         /**
          * The listener replaced the queue through this surface. Music-only's
          * memory of which songs it already refused belongs to the old queue —
@@ -12090,6 +12114,7 @@ class PlaybackService : MediaLibraryService() {
                 about = wrappedPlayer.currentMediaItem?.mediaId,
             )
             onUserIntent()
+            if (!restart) onListenerMove()
             if (cast.active) {
                 castPrevious()
                 return
@@ -12116,6 +12141,7 @@ class PlaybackService : MediaLibraryService() {
                 about = wrappedPlayer.currentMediaItem?.mediaId,
             )
             onUserIntent()
+            if (mediaItemIndex != wrappedPlayer.currentMediaItemIndex) onListenerMove()
             super.seekToDefaultPosition(mediaItemIndex)
         }
 
@@ -12128,6 +12154,7 @@ class PlaybackService : MediaLibraryService() {
                     "musicOnly=${if (AppSettings.preferMusicOnly.value) "on" else "off"} by=ui",
             )
             onUserIntent()
+            onListenerMove()
             onQueueReplaced()
             super.setMediaItems(mediaItems, resetPosition)
         }
@@ -12145,6 +12172,7 @@ class PlaybackService : MediaLibraryService() {
                     "musicOnly=${if (AppSettings.preferMusicOnly.value) "on" else "off"} by=ui",
             )
             onUserIntent()
+            onListenerMove()
             onQueueReplaced()
             super.setMediaItems(mediaItems, startIndex, startPositionMs)
         }
@@ -12316,6 +12344,7 @@ class PlaybackService : MediaLibraryService() {
                 return
             }
             if (mediaItemIndex != currentMediaItemIndex) onUserAdvance(this)
+            if (mediaItemIndex != wrappedPlayer.currentMediaItemIndex) onListenerMove()
             if (mediaItemIndex <= wrappedPlayer.currentMediaItemIndex) {
                 wrappedPlayer.seekTo(mediaItemIndex, positionMs)
                 return
@@ -12355,6 +12384,7 @@ class PlaybackService : MediaLibraryService() {
             // does not leave the track — so it is not a skip.
             if (hasPreviousMediaItem() && currentPosition <= maxSeekToPreviousPosition) {
                 onUserAdvance(this)
+                onListenerMove()
             }
             wrappedPlayer.seekToPrevious()
         }
@@ -12365,6 +12395,7 @@ class PlaybackService : MediaLibraryService() {
             onUserIntent()
             crossfade.onSkipRequested()
             onUserAdvance(this)
+            onListenerMove()
             wrappedPlayer.seekToNextMediaItem()
         }
 
@@ -12374,6 +12405,7 @@ class PlaybackService : MediaLibraryService() {
             onUserIntent()
             crossfade.onSkipRequested()
             onUserAdvance(this)
+            onListenerMove()
             wrappedPlayer.seekToNext()
         }
     }
@@ -13636,19 +13668,6 @@ private fun transitionReason(reason: Int): String = when (reason) {
     Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED -> "PLAYLIST_CHANGED"
     else -> "OTHER($reason)"
 }
-
-/**
- * Whether the row became current because the listener moved to it, rather than
- * because the queue ran on. Media3 says so in the transition reason: an
- * automatic advance and a repeat of the same row are the queue's own doing,
- * while a seek (a tap on a row, a skip) and a new queue are the listener's.
- *
- * This is what keeps music-only from answering a deliberate tap with silence —
- * see [com.music.bitchord.data.net.SongVersionPolicy.mvWithoutAudioVerdict].
- */
-private fun listenerChoseRow(reason: Int): Boolean =
-    reason != Player.MEDIA_ITEM_TRANSITION_REASON_AUTO &&
-        reason != Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT
 
 private fun playReason(reason: Int): String = when (reason) {
     Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST -> "ui"
