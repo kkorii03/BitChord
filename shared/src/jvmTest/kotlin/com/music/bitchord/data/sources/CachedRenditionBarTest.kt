@@ -37,6 +37,22 @@ class CachedRenditionBarTest {
     }
 
     @Test
+    fun `a cached preview clip against a longer row is refused`() {
+        // [isWrongLength], not only the severe window: phone 11-05 (NEON) cached
+        // a thirty-second preview against a three-minute row. A row only a little
+        // longer is inside the severe window, so the preview rule has to carry it.
+        assertEquals(
+            CachedRenditionBar.Refusal.DURATION,
+            CachedRenditionBar.refusal(
+                claimsLossless = true,
+                head = flacHead,
+                rowSeconds = 70,
+                renditionSeconds = 40,
+            ),
+        )
+    }
+
+    @Test
     fun `a cached copy of the recording is kept`() {
         // Whole seconds from a decoder, so a second either way is the same file.
         assertNull(
