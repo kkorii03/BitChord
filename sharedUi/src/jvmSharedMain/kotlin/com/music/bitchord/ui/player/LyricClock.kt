@@ -166,9 +166,15 @@ internal class LyricClock(startMs: Long) {
             return
         }
         val elapsed = takenAt - anchorAtMs
-        if (abs(reportedMs - (anchorMs + elapsed * rate)) <= tolerance(elapsed)) {
+        val expected = anchorMs + elapsed * rate
+        if (abs(reportedMs - expected) <= tolerance(elapsed)) {
             clearSuspect()
             anchor(takenAt, reportedMs, continues = true)
+            // 11-07 phone: a reading strays by 150 ms either way, and the words running
+            // after each one ran 25 % fast or slow for a moment. Only a share of what a
+            // reading says moves the song's place; a real drift still closes in seconds.
+            // At another speed the place is what is being learned, so it follows every reading.
+            if (rate == 1.0) anchorMs = expected + (reportedMs - expected) * READING_WEIGHT
             return
         }
         // Off with nothing announced. One reading like that is a bad reading;
@@ -242,7 +248,16 @@ internal class LyricClock(startMs: Long) {
         while (oldest < newest && historyAt[newest] - historyAt[oldest] > RATE_WINDOW_MS) oldest++
         val span = historyAt[newest] - historyAt[oldest]
         if (span >= MIN_RATE_SPAN_MS) {
-            rate = ((historyMs[newest] - historyMs[oldest]) / span).coerceIn(MIN_RATE, MAX_RATE)
+            val measured = fittedRate(oldest, newest).coerceIn(MIN_RATE, MAX_RATE)
+            // 11-07 phone on Bluetooth: readings stray 150 ms, so the second or two
+            // after opening the panel measured 0.92-1.12 and the words visibly slowed
+            // and rushed. Over a short stretch only a real change of speed shows
+            // through that; from a few seconds on, the fit is good to under a percent.
+            if (span >= SURE_RATE_SPAN_MS || abs(measured - rate) >= CLEAR_RATE_CHANGE) {
+                // shortcut: a real speed within this of normal is left to the readings to steer,
+                // about 125 ms behind at 1.05x; ask the player for its speed if that ever shows.
+                rate = if (abs(measured - 1.0) < NORMAL_SPEED_SLACK) 1.0 else measured
+            }
             rateSettled = true
             return
         }
@@ -252,8 +267,29 @@ internal class LyricClock(startMs: Long) {
         if (!rateSettled && pairSpan >= MIN_PAIR_SPAN_MS) {
             val measured = ((historyMs[newest] - historyMs[newest - 1]) / pairSpan)
                 .coerceIn(MIN_RATE, MAX_RATE)
-            rate += (measured - rate) * PAIR_LEARNING
+            if (abs(measured - rate) >= CLEAR_PAIR_CHANGE) rate += (measured - rate) * PAIR_LEARNING
         }
+    }
+
+    /** The least-squares slope through the readings: every one counts, so one stray barely moves it. */
+    private fun fittedRate(oldest: Int, newest: Int): Double {
+        var meanAt = 0.0
+        var meanMs = 0.0
+        for (i in oldest..newest) {
+            meanAt += historyAt[i]
+            meanMs += historyMs[i]
+        }
+        val n = newest - oldest + 1
+        meanAt /= n
+        meanMs /= n
+        var across = 0.0
+        var along = 0.0
+        for (i in oldest..newest) {
+            val dx = historyAt[i] - meanAt
+            across += dx * dx
+            along += dx * (historyMs[i] - meanMs)
+        }
+        return along / across
     }
 
     private fun clearSuspect() {
@@ -348,6 +384,19 @@ private const val MAX_REJECTIONS = 2
 private const val MIN_RATE_SPAN_MS = 900.0
 private const val RATE_WINDOW_MS = 4_000.0
 private const val HISTORY = 16
+
+/** From this long a stretch the fit is trusted as it stands; shorter, it must differ by [CLEAR_RATE_CHANGE]. */
+private const val SURE_RATE_SPAN_MS = 3_000.0
+
+/** Smaller than the gap between playback speeds on offer, larger than jitter over a second or so. */
+private const val CLEAR_RATE_CHANGE = 0.2
+private const val CLEAR_PAIR_CHANGE = 0.35
+
+/** Readings over four seconds on the phone still fit 0.93-1.07 at normal speed. */
+private const val NORMAL_SPEED_SLACK = 0.1
+
+/** How much of a believed reading moves the song's place: five readings, 2.5 s, to close a real gap. */
+private const val READING_WEIGHT = 0.2
 
 /** Before then, a rough step from each pair at least this far apart. */
 private const val MIN_PAIR_SPAN_MS = 300.0

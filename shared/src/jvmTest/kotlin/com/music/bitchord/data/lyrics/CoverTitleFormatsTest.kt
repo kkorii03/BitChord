@@ -82,6 +82,23 @@ class CoverTitleFormatsTest {
     }
 
     @Test
+    fun aSlashCreditWithABareCoverWordNamesTheSinger() {
+        val read = cover("윤미래 - Memories(Smiling Test) / cover 오화요(허니즈)", "젤리의 노래저장소")
+        assertEquals("Memories(Smiling Test)", read.title)
+        assertEquals("윤미래", read.originalArtist)
+        assertEquals("오화요", read.singer)
+        assertEquals("윤미래 · 오화요 커버", read.byline)
+    }
+
+    @Test
+    fun aStoredRowWithTheBareCoverSlashHealsItsSinger() {
+        val read = cover("Memories(Smiling Test) / cover 오화요 (cover)", "윤미래 커버")
+        assertEquals("Memories(Smiling Test)", read.title)
+        assertNull(read.originalArtist)
+        assertEquals("오화요", read.singer)
+    }
+
+    @Test
     fun trailingDatesAndTagsAreDropped() {
         val titles = listOf(
             "달콤레나 - 고추잠자리(조용필) [26.09.06]",

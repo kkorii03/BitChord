@@ -9,14 +9,14 @@
 #   ..\tools\python\python.exe -I scripts\synctest.py --playlist PL... --limit 5
 #   ..\tools\python\python.exe -I scripts\synctest.py --dry-run      (re-score saved logs, no phone)
 #   ..\tools\python\python.exe -I scripts\synctest.py --selftest     (checks the alignment maths)
-import argparse, csv, datetime, difflib, json, random, re, statistics, subprocess, sys, time, unicodedata, urllib.request
+import argparse, csv, os, datetime, difflib, json, random, re, statistics, subprocess, sys, time, unicodedata, urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]  # Desktop\BitChord
 ADB = str(ROOT / "tools" / "android-sdk" / "platform-tools" / "adb.exe")
 YTDLP = str(ROOT / "tools" / "bin" / "yt-dlp.exe")
 PHONE_AUTO = ROOT / "tools" / "phone_auto.py"
-KEY_FILE = ROOT / "keys" / "deepgram_key.txt"
+KEY_FILE = Path(os.environ.get("SYNCTEST_KEY_FILE") or ROOT / "keys" / "deepgram_key.txt")
 OUT = ROOT / "phone-out" / "synctest"
 PKG = "com.music.bitchord"
 APP_DIR = f"/sdcard/Android/data/{PKG}/files"

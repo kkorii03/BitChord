@@ -98,7 +98,10 @@ internal object SongHearing {
         val httpCode: Int?,
         val retryAfterMs: Long? = null,
         val fromStore: Boolean = false,
-    )
+    ) {
+        /** These words with no reply code: no engine is spent, and a waiting retry or song check stands. */
+        fun askedNothing() = Heard(words, audioMs, clock, httpCode = null, fromStore = true)
+    }
 
     @Serializable
     internal data class Saved(
@@ -142,8 +145,10 @@ internal object SongHearing {
     /**
      * The first answer that heard something. A second request goes out if the
      * first has said nothing after [hedgeAfterMs]; the loser is cancelled. A plain
-     * failure from one waits for the other, never hides it. With no slot free in
-     * [requests] the second is not sent: it would turn away another song's request.
+     * failure from one waits for the other, never hides it. The second waits for
+     * a free slot in [requests] rather than giving up: a slot opens when another
+     * request ends, and the first may still be the slow one. If the first answers
+     * while the second waits, the second is cancelled before it is sent.
      */
     internal suspend fun <T : Any> hedged(
         hedgeAfterMs: Long,
@@ -153,9 +158,15 @@ internal object SongHearing {
         val first = async { ask() }
         val quick = withTimeoutOrNull(hedgeAfterMs) { first.await() }
         if (quick != null) return@coroutineScope quick
-        if (!requests.tryAcquire()) return@coroutineScope first.await()
-        val second = async { ask() }
-        second.invokeOnCompletion { requests.release() }
+        // A slot opens when another request ends; the first may still be the slow one.
+        val second = async {
+            requests.acquire()
+            try {
+                ask()
+            } finally {
+                requests.release()
+            }
+        }
         val (done, other) = select<Pair<T, Deferred<T>>> {
             first.onAwait { it to second }
             second.onAwait { it to first }
@@ -182,6 +193,7 @@ internal object SongHearing {
         reuseFrom: Double = untilSeconds,
     ): Heard? {
         val app = context.applicationContext
+        keepFromFarm(app, song, language)
         while (true) {
             val recording = recordingKey(song)
             if (recording != null) {
@@ -223,9 +235,18 @@ internal object SongHearing {
         }
     }
 
+    internal fun streamRecording(clock: String) = STREAM_PREFIX + clock
+
+    /** Words a runner already worked out replace a shorter transcript and spare the request. */
+    private suspend fun keepFromFarm(app: Context, song: Song, language: String) {
+        val saved = AlignFarm.fetch(app, song.videoId, language) ?: return
+        withContext(Dispatchers.IO) { save(app, song.videoId, saved) }
+    }
+
     /** The longest words kept for what [song] plays now; never a request. */
     suspend fun longestKept(context: Context, song: Song, language: String): Heard? {
         val app = context.applicationContext
+        keepFromFarm(app, song, language)
         val recording = recordingKey(song) ?: return null
         val kept = withContext(Dispatchers.IO) { load(app, song.videoId) }
         val saved = covering(kept, recording, language, 0.0)

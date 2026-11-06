@@ -150,7 +150,8 @@ fun LyricLine.withHeardWords(
         ?: nextLineMs?.takeIf { it - timeMs - BREATH_MS <= MAX_FILLED_SLOT_MS }?.let { it - BREATH_MS }
     if (filledTo != null) {
         val last = words.last()
-        words[words.lastIndex] = last.copy(endMs = maxOf(last.endMs, filledTo))
+        // Marked as filled so the extension is not read as a held note.
+        words[words.lastIndex] = last.copy(endMs = maxOf(last.endMs, filledTo), filledMs = maxOf(0L, filledTo - last.endMs))
     }
     return copy(words = words, wordsEstimated = false)
 }

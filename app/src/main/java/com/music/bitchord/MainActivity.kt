@@ -458,6 +458,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // [KO] Phones stay upright whatever the system's rotation lock says (user 11-07).
+        if (resources.configuration.smallestScreenWidthDp < 600) {
+            requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        }
         enableEdgeToEdge()
         // Before the composition, so a cold launch from a widget's artwork has
         // the request already standing by the time BitChordApp first reads it.
@@ -2302,6 +2306,8 @@ private fun BitChordApp(
         val session = controller ?: return@LaunchedEffect
         when (request) {
             is LinkRequest.Track -> {
+                // A song picked while the link is looked up wins over the link.
+                val before = session.currentMediaItem?.mediaId
                 val song = YtMusicRepository.trackForLink(request.videoId).getOrNull()
                 if (song == null) {
                     Toast.makeText(
@@ -2309,7 +2315,7 @@ private fun BitChordApp(
                         context.getString(R.string.couldnt_open_link),
                         Toast.LENGTH_SHORT,
                     ).show()
-                } else {
+                } else if (MusicLink.linkStillWanted(before, session.currentMediaItem?.mediaId)) {
                     // A link is one song named on purpose, which is exactly the
                     // case [playRadio] exists for: play it and let AutoPlay
                     // carry on, rather than queueing something around it.

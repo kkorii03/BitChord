@@ -658,10 +658,29 @@ object CoverTitles {
             .takeIf { it.isNotEmpty() }
     }
 
+    /** "원곡자 - 곡명 / cover 부른사람(소속)": the bare "cover" before the name says who sings. */
+    private val SLASH_COVER_SINGER = Regex(
+        """(?i)^\s*(?:cover(?:ed)?|커버)(?!\s*by(?![a-z]))\s*[:：]?\s*(.+)$""",
+    )
+
     /** "A - 곡 / 원곡가수": the slash credits the original when it isn't a tag. */
     private fun readSlashCredit(raw: String): Cover? {
         if (splitTopLevelPipe(raw) != null) return null
         val (head, creditText) = splitTopLevelSlash(raw) ?: return null
+        // "원곡자 - 곡명 / cover 부른사람": the word before the name says the
+        // right side is the singer, not the original's artist.
+        SLASH_COVER_SINGER.find(creditText)?.let { match ->
+            val singer = cleanName(match.groupValues[1])?.takeUnless { isVersionWord(it) || isDescriptor(it) }
+            if (singer != null) {
+                val (original, song) = splitTopLevelDash(head) ?: (null to head)
+                val title = cleanTitle(song)
+                if (title != null) {
+                    val artist = original?.let { cleanName(it) }
+                        ?.takeUnless { isVersionWord(it) || isDescriptor(it) || isGenericCredit(it) }
+                    return Cover(title = title, originalArtist = artist, singer = singer)
+                }
+            }
+        }
         val credit = cleanName(creditText)?.takeUnless {
             isVersionWord(it) || isDescriptor(it) || isGenericCredit(it) || OST.containsMatchIn(it) ||
                 ANY_COVER_WORD.containsMatchIn(it)
