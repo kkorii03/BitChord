@@ -7609,6 +7609,7 @@ class PlaybackService : MediaLibraryService() {
             // NerdStats cleanup for why the pre-upgrade claim has to be
             // captured here rather than looked up again on revert.
             val previousFormat = NerdStats.declaredFormat(mediaId)
+            val previousSource = NerdStats.sourceFor(mediaId)
             swappingMediaId = mediaId
             swapCutAt = SystemClock.elapsedRealtime()
             TrackLog.d(
@@ -7643,7 +7644,7 @@ class PlaybackService : MediaLibraryService() {
             StreamChoice.remember(mediaId, stream, substituted = stream.sourceConfigId != null)
             QualityUpgrade.unshelve(mediaId)
             TrackLog.d("BitChord", "upgraded to ${stream.format.summary} at ${startAt}ms ($upgradedSourceName)")
-            watchUpgrade(mediaId, now.uri, upgradedUri, now.position, now.duration, previousFormat)
+            watchUpgrade(mediaId, now.uri, upgradedUri, now.position, now.duration, previousFormat, previousSource)
             if (QualityUpgrade.continueAfterLossySwap(mediaId)) {
                 // The immediate JioSaavn improvement stays audible while a
                 // slower lossless source is checked against its higher-quality
@@ -8090,6 +8091,7 @@ class PlaybackService : MediaLibraryService() {
         position: Long,
         previousDuration: Long,
         previousFormat: StreamFormat?,
+        previousSource: String?,
         expectedDuration: Long = previousDuration,
         onProven: (() -> Unit)? = null,
     ) {
@@ -8165,14 +8167,15 @@ class PlaybackService : MediaLibraryService() {
             // longer what's playing — restore what was declared before it
             // (or clear it, if nothing was), so "stats for nerds" doesn't
             // keep calling the fallback lossless after the upgrade it
-            // borrowed that claim from got reverted. Read before the choice is
-            // released below, because it names the source that was playing.
+            // borrowed that claim from got reverted. The source comes from the
+            // swap's own capture: both swap paths remember the replacement in
+            // [StreamChoice] before this runs, so the choice would name the copy
+            // being thrown away.
+            NerdStats.clearDeclared(mediaId)
             if (previousFormat != null) {
-                val prevSource = StreamChoice.of(mediaId)?.sourceConfigId?.let { SourceRegistry.config(it)?.displayName }
-                    ?: if (StreamChoice.isSubstitute(mediaId)) "Module" else "YouTube"
-                NerdStats.onSourceStream(mediaId, previousFormat, prevSource)
+                NerdStats.onSourceStream(mediaId, previousFormat, previousSource)
             } else {
-                NerdStats.clearDeclared(mediaId)
+                NerdStats.recordSource(mediaId, previousSource)
             }
             // The choice still names the replacement, and the old URI is about
             // to be reopened. Releasing it first makes that reopen resolve the
