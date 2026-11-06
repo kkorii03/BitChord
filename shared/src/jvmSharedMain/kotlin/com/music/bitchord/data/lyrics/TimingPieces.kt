@@ -124,7 +124,7 @@ object TimingPieces {
         val used = pieces.sumOf { it.size }
         val base = spellable.takeIf { it >= MIN_LINES }?.coerceAtMost(lettered) ?: lettered
         refusal(pieces, offsets, rate, used, base)?.let { return Outcome(null, it) }
-        val map = chain(pieces, offsets, rate) ?: return Outcome(null, "no-map")
+        val map = chain(pieces, offsets, rate, lines) ?: return Outcome(null, "no-map")
         val jumps = (0 until offsets.size - 1).map { (offsets[it + 1] - offsets[it]).roundToLong() }
         val largest = lines.filter { it.letters > 0 }.map { map.map(it.timeMs) - it.timeMs }.maxBy { abs(it) }
         val biggest = maxOf(abs(largest), jumps.maxOfOrNull { abs(it) } ?: 0L)
@@ -266,7 +266,7 @@ object TimingPieces {
      * steps once at the middle of the gap. Where the sheet has more, a flat stretch
      * there skips what is not sung: those lines start together and show for no time.
      */
-    private fun chain(pieces: List<List<Point>>, offsets: List<Double>, rate: Double): LyricsTimeMap? {
+    private fun chain(pieces: List<List<Point>>, offsets: List<Double>, rate: Double, lines: List<Placed>): LyricsTimeMap? {
         val src = ArrayList<Long>()
         val dst = ArrayList<Long>()
         fun push(x: Double, y: Double) {
@@ -286,8 +286,10 @@ object TimingPieces {
             val to = pieces[k + 1].first().x.toDouble()
             val cut = (from + to) / 2
             if (a <= b) {
-                push(cut, rate * cut + a)
-                push(cut + 1, rate * (cut + 1) + b)
+                // Just before the next line starts: a step inside a line tears its last words away.
+                val step = (lines.firstOrNull { it.timeMs >= cut }?.timeMs ?: pieces[k + 1].first().x) - 1.0
+                push(step, rate * step + a)
+                push(step + 1, rate * (step + 1) + b)
             } else {
                 val width = (a - b) / rate
                 var low = maxOf(from + 1, cut - width / 2)

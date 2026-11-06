@@ -393,6 +393,14 @@ class TimingPiecesTest {
     }
 
     @Test
+    fun `the clock steps between lines, so a line's last words stay with it`() {
+        val found = assertNotNull(TimingPieces.fit(placed(0, 15, 2_000L) + placed(15, 30, 30_000L)).result)
+        // Lines start at 66 s and 70 s: a word at 68.5 s still belongs to the 66 s line.
+        assertEquals(70_500L, found.map.map(68_500L))
+        assertEquals(100_000L, found.map.map(70_000L))
+    }
+
+    @Test
     fun `the sheet is fitted again when it is worth it, and only then`() {
         val now = SongCheckWindow.FIT_VERSION
         assertTrue(SongCheckWindow.refitDue(now - 1, sameSheet = true, seenMs = 200_000L, keptMs = 200_000L), "older code")
