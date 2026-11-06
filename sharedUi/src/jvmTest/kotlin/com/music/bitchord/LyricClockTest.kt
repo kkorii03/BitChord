@@ -240,6 +240,35 @@ class LyricClockTest {
         assertEquals(40_000L, clock.frame(30_000.0, 10_000, 0.0, 0))
     }
 
+    /**
+     * A panel not on show follows the readings while the song plays on, and opens between two of
+     * them. The last reading is up to half a second old on its first frame: taken for the moment
+     * playback stood still, it started the words that far behind the song, and they stayed there
+     * until a later reading made them rush (11-06, "stops, then rushes to catch up").
+     */
+    @Test fun openingThePanelMidSongStartsOnTheSong() {
+        val clock = LyricClock(10_000)
+        var taken = 0.0
+        while (taken <= 4_000.0) {
+            clock.hold(10_000 + taken.toLong(), taken + 5.0)
+            taken += 500.0
+        }
+        val lastTaken = taken - 500.0
+        val lastReading = 10_000 + lastTaken.toLong()
+        clock.restart()
+        var previous = Long.MIN_VALUE
+        var now = lastTaken + 480.0
+        while (now <= lastTaken + 3_000.0) {
+            val newest = (now / 500).toLong() * 500.0
+            val reading = if (newest <= lastTaken) lastReading else 10_000 + newest.toLong()
+            val shown = clock.frame(now, reading, minOf(newest, now).coerceAtLeast(lastTaken), 0)
+            assertTrue("went back at $now", shown >= previous)
+            assertTrue("${10_000 + now - shown} ms behind the song at $now", abs(10_000 + now - shown) < 40.0)
+            previous = shown
+            now += frameMs
+        }
+    }
+
     /** Moving the lyrics offset shifts every reading at once; announced, it is a jump and not a fault. */
     @Test fun movingTheOffsetIsFollowed() {
         val last = steady(
