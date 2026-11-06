@@ -287,7 +287,7 @@ object TimingPieces {
             val cut = (from + to) / 2
             if (a <= b) {
                 // Just before the next line starts: a step inside a line tears its last words away.
-                val step = (lines.firstOrNull { it.timeMs >= cut }?.timeMs ?: pieces[k + 1].first().x) - 1.0
+                val step = (lines.firstOrNull { it.timeMs > cut }?.timeMs ?: pieces[k + 1].first().x) - 1.0
                 push(step, rate * step + a)
                 push(step + 1, rate * (step + 1) + b)
             } else {
