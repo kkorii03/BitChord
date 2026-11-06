@@ -49,7 +49,7 @@ class LyricsTimingClockTest {
         storeField.set(LyricsTiming, null)
         hqCacheField.set(HqVerificationStore, null)
         KoAppSettings.syncSafetyHqSync.value = false
-        listOf("v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9", "vA", "vB", "vC").forEach(StreamChoice::forget)
+        listOf("v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9", "vA", "vB", "vC", "vD", "vE", "vF").forEach(StreamChoice::forget)
         Downloads.setSavedMetadata(emptyMap())
     }
 
@@ -58,7 +58,7 @@ class LyricsTimingClockTest {
         storeField.set(LyricsTiming, null)
         hqCacheField.set(HqVerificationStore, null)
         KoAppSettings.syncSafetyHqSync.value = false
-        listOf("v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9", "vA", "vB", "vC").forEach(StreamChoice::forget)
+        listOf("v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9", "vA", "vB", "vC", "vD", "vE", "vF").forEach(StreamChoice::forget)
         Downloads.setSavedMetadata(emptyMap())
         directory.deleteRecursively()
     }
@@ -235,6 +235,62 @@ class LyricsTimingClockTest {
         )
 
         assertEquals(11_500L, shown("v9"))
+    }
+
+    /** The stream's YouTube choice still remembered, and the verified download playing in its place. */
+    private fun fileTookOver(videoId: String) {
+        StreamChoice.remember(videoId, SourceStream(url = "https://example.test/yt"), substituted = false)
+        KoDownloadRecords.ensureOpen()
+        Downloads.setSavedMetadata(
+            mapOf(
+                videoId to SavedSongMetadata(
+                    videoId = videoId,
+                    title = "t",
+                    artist = "a",
+                    uri = "file:///$videoId.flac",
+                    hqSourceConfigId = "src",
+                    hqTrackId = "track",
+                ),
+            ),
+        )
+    }
+
+    private fun shownFrom(videoId: String, localFile: Boolean): Long = runBlocking {
+        val timing = LyricsTiming.timing(
+            context,
+            videoId,
+            listOf(line),
+            baseAllowed = true,
+            audioSource = LyricsTiming.audioSourceKey(videoId, localFile),
+        ) ?: return@runBlocking 10_000L
+        LyricsTiming.apply(listOf(line), timing).single().timeMs
+    }
+
+    /** 11-06 MUny_GDYIDM: `playing=youtube base=alt dropped=1` for an answer heard off the file playing. */
+    @Test
+    fun `an answer heard off the file stands after the file took over from its stream`() {
+        write("""{"vD":${entry(autoMs = 500L, autoClock = "alt\u0001src\u0001track")}}""")
+        fileTookOver("vD")
+
+        assertEquals(10_500L, shownFrom("vD", localFile = true))
+    }
+
+    @Test
+    fun `a stream's answer is carried onto the file that took over`() {
+        write("""{"vE":${entry(autoMs = 500L, autoClock = "yt")}}""")
+        verified("vE", offsetMs = 1_000L)
+        fileTookOver("vE")
+
+        assertEquals(11_500L, shownFrom("vE", localFile = true))
+    }
+
+    @Test
+    fun `the stream still playing keeps its own clock whatever is saved`() {
+        write("""{"vF":${entry(autoMs = 500L, autoClock = "yt")}}""")
+        verified("vF", offsetMs = 1_000L)
+        fileTookOver("vF")
+
+        assertEquals(10_500L, shownFrom("vF", localFile = false))
     }
 
     @Test
