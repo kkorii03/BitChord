@@ -437,6 +437,13 @@ object RefinePolicy {
         }
         if (bestVotes < MIN_WIDE_LINES) return null
         if (bestVotes * 2 < perLine.size) return null
+        // Lyrics heard where they are shown have nothing to move for. A repeated
+        // line always supports the distance to its own repeat, while its true
+        // hearings can split across the bins either side of zero, so the vote
+        // alone can pick the repeat (11-06 n_cB5Yb-4Ro: -10 s, then 5 ms once
+        // the whole song was heard).
+        val onTime = perLine.count { residuals -> residuals.any { abs(it) <= MAX_MAD_MS } }
+        if (onTime * 2 >= bestVotes) return null
         val center = bestBin * WIDE_BIN_MS + WIDE_BIN_MS / 2
         val supporting = ArrayList<Long>()
         for (residuals in perLine) {
