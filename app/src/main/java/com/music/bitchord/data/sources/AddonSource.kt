@@ -501,27 +501,39 @@ class AddonSource(
      *
      * Ordered by how much each claim is worth. A stated `codec` is the addon
      * answering the question directly and is taken as given. A container names
-     * the envelope, which for `flac`, `wav` and `mp3` settles the codec too. A
-     * mime type is next, then a quality label naming a lossless tier, and last
-     * the URL's own extension — a guess, but the one that catches a server that
-     * has quietly walked down its fallback chain and handed back `.128.mp3`.
+     * the envelope, which for `flac`, `wav` and `mp3` settles the codec too.
+     * Then whatever else names a codec outright: the `format` field, the mime
+     * type, the URL's own extension. Only then a quality label naming a lossless
+     * tier, because a label describes what was asked for and the extension is
+     * what catches a server that has quietly walked down its fallback chain and
+     * handed back `.128.mp3`.
+     *
+     * An envelope that holds any of several things ([OPEN_CONTAINERS]) comes
+     * after the label. `audio/mp4` with `HI_RES_LOSSLESS` is the same claim a
+     * DASH row makes, and the decoder is asked before anyone hears it, so saying
+     * "mp4" there would call a lossless stream lossy on no evidence. With no
+     * lossless label it is recorded as the container it is.
      *
      * Null when none of them knows, which is left null rather than guessed at:
      * [StreamFormat.isLossless] answering "unknown" is information, and
      * answering "no" when it does not know is not.
      */
     private fun formatOf(answer: AddonStream, url: String, tier: String): StreamFormat {
+        val named = answer.format.trim().lowercase(Locale.ROOT)
+        val mime = answer.mimeType?.substringAfterLast('/')?.substringBefore(';')?.trim()
+            ?.lowercase(Locale.ROOT)
+        val extension = url.substringBefore('?').substringAfterLast('.').lowercase(Locale.ROOT)
         val codec = answer.statedCodec?.takeIf { it in AUDIO_CODECS }
             ?: answer.statedContainer?.takeIf { it in SELF_DESCRIBING_CONTAINERS }
-            ?: answer.mimeType?.substringAfterLast('/')?.substringBefore(';')?.trim()
-                ?.lowercase(Locale.ROOT)?.takeIf { it in AUDIO_CODECS }
             ?: if (answer.isDolbyAtmos) {
                 "eac3-joc"
-            } else if (ModuleSource.qualityTier(answer.qualityText) == ModuleSource.LOSSLESS) {
-                "flac"
             } else {
-                url.substringBefore('?').substringAfterLast('.')
-                    .lowercase(Locale.ROOT).takeIf { it in AUDIO_CODECS }
+                listOf(named, mime, extension).firstOrNull { it in AUDIO_CODECS && it !in OPEN_CONTAINERS }
+                    ?: if (ModuleSource.qualityTier(answer.qualityText) == ModuleSource.LOSSLESS) {
+                        "flac"
+                    } else {
+                        listOf(mime, named, extension).firstOrNull { it in AUDIO_CODECS }
+                    }
             }
 
         // The tier's own published meaning is the last resort and only for
@@ -623,5 +635,8 @@ class AddonSource(
             "flac", "alac", "wav", "aiff", "mp3", "aac", "he-aac", "m4a", "mp4",
             "ogg", "opus", "vorbis", "webm", "eac3-joc", "ec3-joc",
         )
+
+        /** In [AUDIO_CODECS], but naming an envelope that could hold a lossless stream or a lossy one. */
+        val OPEN_CONTAINERS = setOf("m4a", "mp4", "ogg", "webm")
     }
 }
