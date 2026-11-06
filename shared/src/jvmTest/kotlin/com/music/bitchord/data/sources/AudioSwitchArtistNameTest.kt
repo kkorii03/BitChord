@@ -6,6 +6,7 @@ import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.net.SongVersionPolicy
 import com.music.bitchord.ko.KoAudioSwitch
+import com.music.bitchord.ko.KoTrackMatcher
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse

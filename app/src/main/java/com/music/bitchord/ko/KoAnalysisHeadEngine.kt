@@ -273,7 +273,7 @@ class KoAnalysisHeadEngine(
                     .getOrNull() ?: 0L
                 val want = analysisHeadSize(total)
                 wantMap[videoId] = want
-                TrackLog.w(
+                TrackLog.d(
                     tag,
                     "analysis head round for $videoId: total=$total want=$want " +
                         "held=${alignmentPrefixBytes(videoId)}",

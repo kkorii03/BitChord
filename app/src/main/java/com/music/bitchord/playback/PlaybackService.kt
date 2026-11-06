@@ -325,6 +325,9 @@ const val ACTION_UPGRADE_QUALITY = "com.music.bitchord.action.UPGRADE_QUALITY"
 private const val LOCAL_BITRATE_CACHE_ENTRIES = 512
 private const val MEASURED_BITRATE_CACHE_ENTRIES = 64
 
+/** Past this a quality swap's cut has been forgotten rather than measured. */
+private const val SWAP_CUT_RELEVANT_MS = 30_000L
+
 
 /**
  * Session command marking the span of a queue drag in the UI — see
@@ -1907,11 +1910,11 @@ class PlaybackService : MediaLibraryService() {
             eventTime: AnalyticsListener.EventTime,
             playoutStartSystemTimeMs: Long,
         ) {
-            val cutAt = swapCutAt ?: return
+            val sinceCut = swapCutAgeMs() ?: return
             swapCutAt = null
             TrackLog.d(
                 "BitChord",
-                "swap seam: ${SystemClock.elapsedRealtime() - cutAt}ms of silence",
+                "swap seam: ${sinceCut}ms of silence",
                 about = eventTime.mediaId(),
             )
         }
@@ -1923,11 +1926,11 @@ class PlaybackService : MediaLibraryService() {
          * and opening an audio track. Only the first is ours to shorten.
          */
         override fun onPlaybackStateChanged(eventTime: AnalyticsListener.EventTime, state: Int) {
-            val cutAt = swapCutAt ?: return
+            val sinceCut = swapCutAgeMs() ?: return
             if (state == Player.STATE_READY) {
                 TrackLog.d(
                     "BitChord",
-                    "swap leg: ready ${SystemClock.elapsedRealtime() - cutAt}ms after the cut",
+                    "swap leg: ready ${sinceCut}ms after the cut",
                     about = eventTime.mediaId(),
                 )
             }
@@ -1945,11 +1948,11 @@ class PlaybackService : MediaLibraryService() {
                 "decoder=$decoderName initialized in ${initializationDurationMs}ms",
                 about = eventTime.mediaId(),
             )
-            val cutAt = swapCutAt ?: return
+            val sinceCut = swapCutAgeMs() ?: return
             TrackLog.d(
                 "BitChord",
                 "swap leg: $decoderName stood up in ${initializationDurationMs}ms, " +
-                    "${SystemClock.elapsedRealtime() - cutAt}ms after the cut",
+                    "${sinceCut}ms after the cut",
                 about = eventTime.mediaId(),
             )
         }
@@ -6415,6 +6418,19 @@ class PlaybackService : MediaLibraryService() {
     internal var swapCutAt: Long? = null
 
     /**
+     * How long ago the audio was cut, while that is still the swap in hand. A
+     * smooth swap adopts a player that has already started, so nothing clears the
+     * mark, and the next unrelated decoder used to report it: `swap seam: 147204ms
+     * of silence` on a track that never stopped (phone 11-06).
+     */
+    private fun swapCutAgeMs(): Long? {
+        val age = SystemClock.elapsedRealtime() - (swapCutAt ?: return null)
+        if (age <= SWAP_CUT_RELEVANT_MS) return age
+        swapCutAt = null
+        return null
+    }
+
+    /**
      * The track [ExoPlayer.getAudioFormat] is currently describing.
      *
      * `audioFormat` is a property of the *renderer*, not of the queue item, and
@@ -8449,8 +8465,12 @@ class PlaybackService : MediaLibraryService() {
         TrackLog.d(
             "BitChord",
             if (running != null) {
-                "no addon answered for '${target.title}' within " +
-                    "${DirectSourceGate.LOOKUP_TIMEOUT_MS / 1000}s; starting it on YouTube and still looking"
+                if (currentTrack) {
+                    "YouTube answered first for '${target.title}'; starting it there and still looking"
+                } else {
+                    "no addon answered for '${target.title}' within " +
+                        "${DirectSourceGate.LOOKUP_TIMEOUT_MS / 1000}s; starting it on YouTube and still looking"
+                }
             } else {
                 "no addon served '${target.title}' directly; playing it from YouTube"
             },
