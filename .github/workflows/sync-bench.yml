@@ -1,0 +1,116 @@
+name: Sync bench
+
+# Lyrics sync methods vs JamendoLyrics ground truth. Bench only: no app code is changed.
+# Audio, lyric text and transcripts stay on the runner; artifacts hold ms errors and counts.
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "songs to run"
+        default: "10"
+  push:
+    branches: [task/sync-bench]
+    paths: ["bench/sync/**", ".github/workflows/sync-bench.yml"]
+
+permissions:
+  contents: read
+
+env:
+  LIMIT: ${{ github.event.inputs.limit || '10' }}
+  KOTLIN_VERSION: "2.1.0"
+
+jobs:
+  kotlin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "17" }
+      - name: Compile the app's LyricsWordAlign + RefinePolicy with the bench runner
+        run: |
+          curl -fsSL -o kc.zip "https://github.com/JetBrains/kotlin/releases/download/v${KOTLIN_VERSION}/kotlin-compiler-${KOTLIN_VERSION}.zip"
+          unzip -q kc.zip -d "$HOME/kotlin"
+          L=shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/lyrics
+          "$HOME/kotlin/kotlinc/bin/kotlinc" "$L/LyricLine.kt" "$L/LyricsWordAlign.kt" "$L/RefinePolicy.kt" bench/sync/Bench.kt -include-runtime -d bench.jar
+          ls -l bench.jar
+      - uses: actions/upload-artifact@v4
+        with: { name: bench-jar, path: bench.jar, retention-days: 3 }
+
+  asr:
+    name: A B C (Deepgram, app align)
+    needs: kotlin
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "17" }
+      - uses: actions/download-artifact@v4
+        with: { name: bench-jar }
+      - name: Run
+        env:
+          DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
+        run: python3 bench/sync/bench.py --cands A,B,C --limit "$LIMIT" --jar bench.jar --out results-asr.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: results-asr, path: results-asr.json, retention-days: 14 }
+
+  sep:
+    name: D F (Demucs vocals)
+    needs: kotlin
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "17" }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - uses: actions/download-artifact@v4
+        with: { name: bench-jar }
+      - name: Install torch cpu, demucs, ctc-forced-aligner
+        run: |
+          pip install "numpy<2" torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
+          pip install --no-deps demucs==4.0.1
+          pip install dora-search einops julius lameenc openunmix pyyaml tqdm soundfile
+          pip install "git+https://github.com/MahmoudAshraf97/ctc-forced-aligner.git"
+          pip list 2>/dev/null | grep -i -E "^(torch|torchaudio|demucs|transformers|ctc|numpy) "
+      - name: Run
+        env:
+          DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
+        run: python bench/sync/bench.py --cands D,F --limit "$LIMIT" --jar bench.jar --out results-sep.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: results-sep, path: results-sep.json, retention-days: 14 }
+
+  ctc:
+    name: E (CTC forced aligner on mix)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: Install
+        run: |
+          pip install "numpy<2" torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
+          pip install "git+https://github.com/MahmoudAshraf97/ctc-forced-aligner.git"
+      - name: Run
+        run: python bench/sync/bench.py --cands E --limit "$LIMIT" --out results-ctc.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: results-ctc, path: results-ctc.json, retention-days: 14 }
+
+  summary:
+    needs: [asr, sep, ctc]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: res, pattern: "results-*" }
+      - run: python3 bench/sync/summarize.py res
+      - run: cat summary.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with: { name: summary, path: "summary.*", retention-days: 30 }
