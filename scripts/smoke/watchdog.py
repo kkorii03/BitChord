@@ -26,10 +26,10 @@ SETUP_S = 420  # start -> logcat: 75-91 s seen; two runs hung here for good on `
 STALL_S = 180  # no logcat line at all: longest gap in 145 logs is 57 s
 APP_SILENT_S = 300  # no line from the app while the device logs: longest 136 s
 SONG_MARGIN_S = 180  # past a song's wait: run.sh moves on every wait + ~5 s
-QUIET_SONGS = 2  # songs in a row without sound; one alone is normal (first sound took up to 285 s)
+QUIET_SONGS = 3  # songs in a row without sound; two happen in runs that then play fine (first sound took up to 285 s)
 KEY_REJECTS = 2  # one refused answer may be a blip; the bench never saw one
-NET_FLOOD = 12  # network failures before any sound; see the replay table
-NET_INFRA = 3  # fewer than this and a silent run is the app's own failure
+BOT_CHECKS = 12  # before any sound: 59-70 in runs the proxy refused, 0-2 in every healthy run
+NET_INFRA = 3  # network failures since the last sound; fewer and a silent run is the app's own failure
 POST_S = 600  # last song -> report: 60-90 s seen
 SCENARIO_HARD_S = 80 * 60  # review scenarios: only the hard limit, they force-stop and cut the net on purpose
 
@@ -54,7 +54,7 @@ class Judge:
         self.stage = "setup"
         self.stop = self.stop_at = None
         self.log_at = self.app_at = self.script_at = None
-        self.begun = self.quiet = self.unstarted = self.net = self.rejects = 0
+        self.begun = self.quiet = self.unstarted = self.net = self.bot_checks = self.rejects = 0
         self.song, self.listening, self.window_sound, self.any_sound = "-", False, False, False
         self.sound = self.heard = self.base = self.crash_next = None
 
@@ -91,8 +91,10 @@ class Judge:
                 self._stop(t, "tool", "key_rejected", line)
         if NET.search(line):
             self.net += 1
-            if self.net >= NET_FLOOD and not self.any_sound:
-                self._stop(t, "infra", "net_flood", line)
+        if "hit YouTube's bot check" in line:  # the app's own words: the network, not the track
+            self.bot_checks += 1
+            if self.bot_checks >= BOT_CHECKS and not self.any_sound:
+                self._stop(t, "infra", "bot_check", line)
         m = SOUND.search(line)
         if m:
             self.window_sound = self.any_sound = True
@@ -226,12 +228,10 @@ def wrap_up():
     """, songs_file()], check=False)
 
 
-def report_stop(stop, elapsed):
+def report_stop(stop, elapsed, ps):
     category, code, song, line = stop
     line = clean(line)
     desc = f"STOP {category} {code} song={song}" + (f" | {line}" if line else "")
-    ps = subprocess.run("ps -eo pid,etimes,stat,cmd --forest | grep -E 'adb|sleep|run.sh|bash' | grep -v grep",
-                        shell=True, capture_output=True, text=True).stdout
     with open("shots/smoke-abort.txt", "w", encoding="utf-8") as f:
         f.write(f"category={category}\ncode={code}\nsong={song}\nelapsed_s={int(elapsed)}\nline={line}\n\nwaiting on:\n{ps}")
     print(f"::error title=smoke-abort::{desc}", flush=True)
@@ -262,9 +262,11 @@ def main():
             post(said)
         time.sleep(5)
 
-    stop = judge.stop
+    stop, waiting = judge.stop, ""
     if stop:
         print(f"smoke: watchdog stop {stop[:3]}", flush=True)
+        waiting = subprocess.run("ps -eo pid,etimes,stat,cmd --forest | grep -E 'adb|sleep|run.sh' | grep -v grep",
+                                 shell=True, capture_output=True, text=True).stdout
         for sig in (signal.SIGTERM, signal.SIGKILL):
             try:
                 os.killpg(run.pid, sig)
@@ -275,7 +277,7 @@ def main():
     if not stop and rc in RUN_SH_STOPS:
         stop = RUN_SH_STOPS[rc] + (judge.song, "")
     if stop:
-        report_stop(stop, time.time() - t0)
+        report_stop(stop, time.time() - t0, waiting)
         wrap_up()
     # 42144470462 passed, then qemu ignored `emu kill` and the step sat 63 min on its open pipe.
     subprocess.Popen(["sh", "-c", "sleep 120; pkill -9 -f 'qemu-system|netsimd|crashpad_handler'"], start_new_session=True,
