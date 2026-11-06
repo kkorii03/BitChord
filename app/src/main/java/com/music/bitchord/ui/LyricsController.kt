@@ -409,7 +409,9 @@ class LyricsController(
                 ),
                 audioSource = preparedAudioSource,
                 substituted = preparedSubstituted,
-            )?.let { prepared ->
+            ).also {
+                TrackLog.d("BitChord", "next-prep used: $videoId where=screen hit=${it != null}", videoId)
+            }?.let { prepared ->
                 if (prepared.source != null) {
                     publishLyrics(
                         LyricsRepository.Result(

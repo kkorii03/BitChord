@@ -11470,6 +11470,7 @@ class PlaybackService : MediaLibraryService() {
         } else {
             null
         }
+        TrackLog.d("BitChord", "next-prep used: ${currentSong.videoId} where=service hit=${prepared != null}", about = currentSong.videoId)
         if (prepared != null) {
             serviceLyrics = prepared.shown
             com.music.bitchord.lockscreen.NowPlayingLyrics.publish(
