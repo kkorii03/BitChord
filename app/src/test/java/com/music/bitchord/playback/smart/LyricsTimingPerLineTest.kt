@@ -77,4 +77,63 @@ class LyricsTimingPerLineTest {
         val scattered = LyricsTiming.fitAi(lines, indices, split, spellable = 38)?.matchPercent
         assertEquals(false, scattered != null && com.music.bitchord.data.lyrics.LyricsAiGuard.agreementAllows(scattered))
     }
+
+    // ---- A transcript's stretches against the straight line ----------------------------------
+
+    private val sheet = (0 until 40).map { line(10_000L + it * 4_000L, "line number $it") }
+    private val all = sheet.indices.toList()
+
+    private fun placement(starts: List<Long?>) = LyricsWordAlign.Placement(
+        starts = starts,
+        attempted = true,
+        matchedShare = starts.map { if (it != null) 1.0 else 0.0 },
+    )
+
+    @Test
+    fun `a song the straight line fits comes back on the straight line`() {
+        val starts = sheet.map { it.timeMs + 5_000L }
+        val line = LyricsTiming.fitAi(sheet, all, starts)
+        val fitted = LyricsTiming.fitHeard("v", sheet, all, placement(starts)) { true }
+        assertEquals(line, fitted)
+    }
+
+    @Test
+    fun `a refused line gives way to the stretches and each line keeps its own clock`() {
+        // 20 lines on +40 s and 20 on +7 s, too far apart for one line: half on it at best.
+        val starts = sheet.mapIndexed { i, it -> it.timeMs + if (i < 20) 7_000L else 40_000L }
+        val fitted = LyricsTiming.fitHeard("v", sheet, all, placement(starts)) { fit ->
+            com.music.bitchord.data.lyrics.LyricsAiGuard.agreementAllows(fit.matchPercent)
+        }
+        assertEquals(100, fitted?.matchPercent)
+        assertEquals(sheet[3].timeMs + 7_000L, fitted?.map?.map(sheet[3].timeMs))
+        assertEquals(sheet[33].timeMs + 40_000L, fitted?.map?.map(sheet[33].timeMs))
+    }
+
+    @Test
+    fun `when nothing may apply the straight line goes back for the caller to refuse`() {
+        val starts = sheet.mapIndexed { i, it -> it.timeMs + if (i < 20) 7_000L else 40_000L }
+        val line = LyricsTiming.fitAi(sheet, all, starts)
+        assertEquals(line, LyricsTiming.fitHeard("v", sheet, all, placement(starts)) { false })
+    }
+
+    @Test
+    fun `stretches carry across a clock change in the order they were measured`() {
+        val starts = sheet.mapIndexed { i, it -> it.timeMs + if (i < 20) 7_000L else 40_000L }
+        val fitted = LyricsTiming.fitHeard("v", sheet, all, placement(starts)) { true }!!
+        // On a verified copy two seconds behind the upload, after base and before refine.
+        val timing = LyricsTiming.Timing(
+            base = fitted,
+            manualMs = 0L,
+            hq = LyricsTiming.Adjustment.Mapped(
+                com.music.bitchord.data.lyrics.LyricsTimeMap.linear(1.0, 2_000L),
+                byAi = false,
+                rate = 1.0,
+                matchPercent = 90,
+            ),
+        )
+        val shown = LyricsTiming.apply(sheet, timing).map { it.timeMs }
+        assertEquals(sheet[3].timeMs + 9_000L, shown[3])
+        assertEquals(sheet[33].timeMs + 42_000L, shown[33])
+        assertEquals(shown.sorted(), shown)
+    }
 }
