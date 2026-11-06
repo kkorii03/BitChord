@@ -7,7 +7,6 @@ import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.sources.HqQuality
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamContainerSniff
-import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.playback.HqHostTracker
 import com.music.bitchord.playback.StreamRefusalRecovery
 import kotlinx.coroutines.Dispatchers
@@ -122,20 +121,23 @@ internal object KoStreamProbe {
         val head = runCatching {
             response.peekBody(StreamContainerSniff.HEAD_BYTES.toLong()).bytes()
         }.getOrNull() ?: return true
-        if (StreamContainerSniff.looksLossy(head)) {
+        StreamContainerSniff.lossyContainer(head)?.let { container ->
             TrackLog.w(
                 TAG,
                 "hq-stream: ${HqHostTracker.hostOf(url) ?: "?"} claims ${stream.format.summary} " +
-                    "but served a lossy file; not starting this track on it",
+                    "but served a lossy file ($container); not starting this track on it",
             )
             return false
         }
-        // The same lie with the container kept: a lossless file's size states its
-        // length, so a row that says 3:21 and a file that would run 7:40 is a
-        // different recording. This is the case the format check cannot see.
-        val total = totalBytes(response) ?: return true
-        val seconds = StreamContainerSniff.secondsOfLossless(total, stream.format) ?: return true
-        if (!TrackMatcher.isSevereMismatch(stream.durationSec, seconds)) return true
+        // The same lie with the container kept: a row that says 3:21 and a file
+        // that runs 7:40 is a different recording. This is the case the format
+        // check cannot see.
+        val seconds = StreamContainerSniff.runtimeContradiction(
+            stream.durationSec,
+            head,
+            totalBytes(response),
+            stream.format,
+        ) ?: return true
         TrackLog.w(
             TAG,
             "hq-stream: ${HqHostTracker.hostOf(url) ?: "?"} claims ${stream.format.summary} of " +

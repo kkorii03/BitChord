@@ -53,14 +53,72 @@ class StreamContainerSniffTest {
         assertFalse(StreamContainerSniff.looksLossy(ascii("OggS")))
     }
 
+    private val flac16 = StreamFormat(codec = "flac", bitDepth = 16, sampleRateHz = 44_100)
+
+    /** A real FLAC opening: the marker, a STREAMINFO block, and the stated samples. */
+    private fun flacHead(rate: Int, seconds: Int): ByteArray {
+        val samples = rate.toLong() * seconds
+        val info = ByteArray(34)
+        info[10] = (rate shr 12).toByte()
+        info[11] = (rate shr 4).toByte()
+        // Low nibble of rate, then stereo (1) and the top bit of depth-1 (15).
+        info[12] = (((rate and 0x0F) shl 4) or (1 shl 1)).toByte()
+        info[13] = ((15 shl 4) or ((samples shr 32).toInt() and 0x0F)).toByte()
+        info[14] = (samples shr 24).toByte()
+        info[15] = (samples shr 16).toByte()
+        info[16] = (samples shr 8).toByte()
+        info[17] = samples.toByte()
+        return ascii("fLaC") + bytes(0x00, 0x00, 0x00, 0x22) + info
+    }
+
     @Test
-    fun `a lossless file states its own length`() {
-        val flac = StreamFormat(codec = "flac", bitDepth = 16, sampleRateHz = 44_100)
+    fun `the size alone is only the shortest a lossless file can run`() {
         // 44,100 Hz * 2 bytes * 2 channels = 176,400 bytes a second.
-        assertEquals(201, StreamContainerSniff.secondsOfLossless(35_456_400, flac))
-        // A row that says 3:21 against a file that would run over an hour.
-        assertTrue(TrackMatcher.isSevereMismatch(201, StreamContainerSniff.secondsOfLossless(700_000_000, flac)))
+        assertEquals(201, StreamContainerSniff.secondsOfLossless(35_456_400, flac16))
         // An unstated rate cannot be weighed.
         assertNull(StreamContainerSniff.secondsOfLossless(35_456_400, StreamFormat(codec = "flac")))
+    }
+
+    /**
+     * Phone 11-06: 95 genuine Qobuz rows refused with `of 166s but the file runs
+     * 117s`. FLAC compresses, so its size read as PCM always looks short: 117 s
+     * of 166 s is 70%, an ordinary ratio.
+     */
+    @Test
+    fun `a compressed flac is not refused for being smaller than its pcm`() {
+        val bytes = 117L * 176_400
+        assertNull(StreamContainerSniff.runtimeContradiction(166, flacHead(44_100, 166), bytes, flac16))
+        assertNull(StreamContainerSniff.runtimeContradiction(166, ByteArray(0), bytes, flac16))
+    }
+
+    @Test
+    fun `a flac states its own length and is believed over its size`() {
+        assertEquals(166, StreamContainerSniff.flacSeconds(flacHead(44_100, 166)))
+        assertEquals(197, StreamContainerSniff.flacSeconds(flacHead(96_000, 197)))
+        // The row says 3:21 and the file says 7:40: another recording.
+        assertEquals(460, StreamContainerSniff.runtimeContradiction(201, flacHead(44_100, 460), 1L, flac16))
+        assertNull(StreamContainerSniff.flacSeconds(ascii("OggS")))
+    }
+
+    @Test
+    fun `with no stream header the size still catches what it can prove`() {
+        // Larger than the row could be even uncompressed: over an hour against 3:21.
+        assertTrue(StreamContainerSniff.runtimeContradiction(201, ByteArray(0), 700_000_000, flac16) != null)
+        // Too small to be the row at any real compression.
+        assertTrue(StreamContainerSniff.runtimeContradiction(300, ByteArray(0), 176_400L * 10, flac16) != null)
+        // No stated runtime, no contradiction.
+        assertNull(StreamContainerSniff.runtimeContradiction(null, ByteArray(0), 700_000_000, flac16))
+    }
+
+    @Test
+    fun `flac inside another wrapper is still lossless`() {
+        // An ID3 tag of 16 bytes in front of the marker.
+        val tagged = ascii("ID3") + bytes(4, 0, 0, 0, 0, 0, 16) + ByteArray(16) + flacHead(44_100, 180)
+        assertFalse(StreamContainerSniff.looksLossy(tagged))
+        assertEquals(180, StreamContainerSniff.flacSeconds(tagged))
+        // FLAC carried in MP4 names itself in its sample entry.
+        val inMp4 = bytes(0, 0, 0, 0x20) + ascii("ftypiso8") + ByteArray(40) + ascii("fLaC")
+        assertFalse(StreamContainerSniff.looksLossy(inMp4))
+        assertEquals("mp4", StreamContainerSniff.lossyContainer(bytes(0, 0, 0, 0x20) + ascii("ftypM4A ")))
     }
 }

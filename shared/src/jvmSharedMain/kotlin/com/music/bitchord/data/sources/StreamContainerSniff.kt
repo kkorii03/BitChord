@@ -18,48 +18,77 @@ package com.music.bitchord.data.sources
  */
 object StreamContainerSniff {
 
-    /** Enough to tell these containers apart. */
-    const val HEAD_BYTES = 12
+    /**
+     * Enough to tell these containers apart, read a FLAC's own stream header,
+     * and step over a modest ID3 tag in front of it.
+     */
+    const val HEAD_BYTES = 4096
 
     private const val FTYP_OFFSET = 4
+
+    /** ID3v2's fixed header: "ID3", version, flags, four synchsafe size bytes. */
+    private const val ID3_HEADER_BYTES = 10
+
+    /** The FLAC marker, a metadata block header, then STREAMINFO's first 18 bytes. */
+    private const val FLAC_STREAMINFO_BYTES = 4 + 4 + 18
 
     /**
      * True when [head] opens a container that cannot be the lossless file a row
      * claimed: ISO base media ("ftyp", which for these sources is AAC), an MPEG
      * audio frame or ID3 tag, or an ADTS AAC frame.
      */
-    fun looksLossy(head: ByteArray): Boolean {
-        if (head.size < 2) return false
-        // ISO base media. A FLAC-in-MP4 exists, but no catalogue serves one and
-        // a row that says "FLAC · 16-bit" about an MP4 is wrong either way.
-        if (head.size >= FTYP_OFFSET + 4 &&
-            head[FTYP_OFFSET] == 'f'.code.toByte() &&
-            head[FTYP_OFFSET + 1] == 't'.code.toByte() &&
-            head[FTYP_OFFSET + 2] == 'y'.code.toByte() &&
-            head[FTYP_OFFSET + 3] == 'p'.code.toByte()
-        ) {
-            return true
+    fun looksLossy(head: ByteArray): Boolean = lossyContainer(head) != null
+
+    /** Which lossy container [head] opens, for the refusal's log line; null when none. */
+    fun lossyContainer(head: ByteArray): String? {
+        if (head.size < 2) return null
+        // ISO base media. FLAC can be carried in MP4, and then its sample entry
+        // says so in the opening; without that it is AAC under a FLAC claim.
+        if (head.size >= FTYP_OFFSET + 4 && matches(head, FTYP_OFFSET, FTYP)) {
+            return if (indexOf(head, FLAC_MARKER) >= 0) null else "mp4"
         }
-        // MPEG audio: an ID3 tag in front of the frames, or a frame sync.
-        if (head.size >= 3 &&
-            head[0] == 'I'.code.toByte() &&
-            head[1] == 'D'.code.toByte() &&
-            head[2] == '3'.code.toByte()
-        ) {
-            return true
+        // MPEG audio: an ID3 tag in front of the frames, or a frame sync. FLAC
+        // files sometimes carry an ID3 tag too, and the marker follows it.
+        if (matches(head, 0, ID3)) {
+            val start = afterId3(head)
+            return if (start != null && matches(head, start, FLAC_MARKER)) null else "id3"
         }
         // ADTS AAC and MPEG layer III both open with eleven set bits.
         val first = head[0].toInt() and 0xFF
         val second = head[1].toInt() and 0xFF
-        return first == 0xFF && (second and 0xE0) == 0xE0
+        return if (first == 0xFF && (second and 0xE0) == 0xE0) "mpeg-frame" else null
     }
 
     /**
-     * How many seconds a lossless file of [totalBytes] would run, from the
-     * rendition its row claims. A lossless stream has a fixed bytes-per-second,
-     * so its own size states its length — which is the second half of the same
-     * check: a row that says 3:21 whose file would run 7:40 is not this song,
-     * whatever container it is in.
+     * How long a FLAC file runs, from its own STREAMINFO: the sample rate and
+     * the total samples, which the encoder wrote and nothing here has to guess.
+     * Null for anything else, and for a stream that left the count at zero
+     * (the format allows "unknown").
+     */
+    fun flacSeconds(head: ByteArray): Int? {
+        val start = if (matches(head, 0, ID3)) afterId3(head) ?: return null else 0
+        if (!matches(head, start, FLAC_MARKER)) return null
+        if (head.size < start + FLAC_STREAMINFO_BYTES) return null
+        // The low seven bits of the block header name the block; 0 is STREAMINFO.
+        if (head[start + 4].toInt() and 0x7F != 0) return null
+        val info = start + 8
+        fun at(offset: Int) = (head[info + offset].toLong() and 0xFF)
+        // Bytes 10..17: 20 bits of rate, 3 of channels, 5 of depth, 36 of samples.
+        val rate = (at(10) shl 12) or (at(11) shl 4) or (at(12) shr 4)
+        val samples = ((at(13) and 0x0F) shl 32) or (at(14) shl 24) or (at(15) shl 16) or
+            (at(16) shl 8) or at(17)
+        if (rate <= 0 || samples <= 0) return null
+        return (samples / rate).toInt()
+    }
+
+    /**
+     * The shortest a lossless file of [totalBytes] can run, from the rendition
+     * its row claims: what it would run uncompressed.
+     *
+     * Only a floor. FLAC compresses to about 40-80% of that, and treating this
+     * figure as the length refused every genuine file — phone 11-06: 95 Qobuz
+     * rows refused with `of 166s but the file runs 117s`, all of them within
+     * that ratio. [runtimeContradiction] is what decides.
      *
      * Null when the row does not state the format well enough to answer.
      */
@@ -72,6 +101,57 @@ object StreamContainerSniff {
         return (totalBytes / bytesPerSecond).toInt()
     }
 
+    /**
+     * How long the file really runs, when that disagrees with the [statedSec]
+     * its row claims: a row that says 3:21 and a file that runs 7:40 is not this
+     * song, whatever container it is in. Null when nothing contradicts the row.
+     *
+     * A FLAC states its own length. Without that only the size is left, which
+     * bounds the length rather than measuring it, so the answer is then the
+     * bound the row fell outside.
+     */
+    fun runtimeContradiction(
+        statedSec: Int?,
+        head: ByteArray,
+        totalBytes: Long?,
+        format: StreamFormat,
+    ): Int? {
+        if (statedSec == null) return null
+        flacSeconds(head)?.let { seconds ->
+            return seconds.takeIf { TrackMatcher.isSevereMismatch(statedSec, it) }
+        }
+        val least = totalBytes?.let { secondsOfLossless(it, format) } ?: return null
+        val most = least * MAX_COMPRESSION
+        return when {
+            least - statedSec > TrackMatcher.DURATION_LIMIT_SEC -> least
+            statedSec - most > TrackMatcher.DURATION_LIMIT_SEC -> most
+            else -> null
+        }
+    }
+
+    /** Where the audio starts behind [head]'s ID3v2 tag, when the tag ends inside [head]. */
+    private fun afterId3(head: ByteArray): Int? {
+        if (head.size < ID3_HEADER_BYTES) return null
+        var size = 0
+        for (index in 6..9) size = (size shl 7) or (head[index].toInt() and 0x7F)
+        return (ID3_HEADER_BYTES + size).takeIf { it < head.size }
+    }
+
+    private fun matches(head: ByteArray, at: Int, wanted: ByteArray): Boolean {
+        if (at < 0 || head.size < at + wanted.size) return false
+        return wanted.indices.all { head[at + it] == wanted[it] }
+    }
+
+    private fun indexOf(head: ByteArray, wanted: ByteArray): Int =
+        (0..head.size - wanted.size).firstOrNull { matches(head, it, wanted) } ?: -1
+
+    private val FLAC_MARKER = "fLaC".toByteArray(Charsets.US_ASCII)
+    private val FTYP = "ftyp".toByteArray(Charsets.US_ASCII)
+    private val ID3 = "ID3".toByteArray(Charsets.US_ASCII)
+
     /** Lossless catalogues serve stereo. */
     private const val CHANNELS = 2L
+
+    /** No real recording compresses past a fifth of its PCM; silence aside. */
+    private const val MAX_COMPRESSION = 5
 }
