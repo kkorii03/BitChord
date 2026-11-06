@@ -110,7 +110,7 @@ dump_ui() {
 find_center() {
   dump_ui
   python3 - "$1" "${2:-first}" <<'PY'
-import re, sys, xml.etree.ElementTree as ET
+import os, re, sys, xml.etree.ElementTree as ET
 want, pick = sys.argv[1], sys.argv[2]
 try:
     nodes = list(ET.parse('/tmp/ui.xml').iter('node'))
@@ -130,7 +130,8 @@ def box(n): return list(map(int, re.findall(r'\d+', n.get('bounds') or '0,0,0,0'
 # (the tap lands on the bar): skip matches in the bottom strip or barely
 # visible, so tap_scrolled scrolls once more and finds the row higher up.
 screen_h = max([box(n)[3] for n in nodes] or [0])
-if screen_h:
+# The player's own bottom row has no tab bar over it: TAP_BOTTOM=1 keeps it.
+if screen_h and not os.environ.get('TAP_BOTTOM'):
     hits = [n for n in hits if box(n)[3] - box(n)[1] >= 12 and (box(n)[1] + box(n)[3]) // 2 < screen_h * 0.86]
 if not hits:
     sys.exit(0)
@@ -619,7 +620,7 @@ section_now_playing() {
   adb shell input swipe 540 1200 540 400 400; sleep 3
   shot now-playing-scrolled "Now playing scrolled"
 
-  if tap "가사" first 10 || tap "Lyrics" first 6; then
+  if TAP_BOTTOM=1 tap "=가사" first 10 || TAP_BOTTOM=1 tap "=Lyrics" first 6; then
     shot lyrics "Lyrics"
     # Leave the app and come back with the lyrics open, twice: the first frames
     # back log `lyric-clock:` (how old the reading was, how far the words were off).

@@ -806,7 +806,8 @@ private fun rememberLyricClock(
                     com.music.bitchord.data.TrackLog.d(
                         "BitChord",
                         "lyric-clock: drawn=${clock.longValue} reading=$reading age=${age}ms " +
-                            "gap=${clock.longValue - (reading + age.coerceAtLeast(0L))}ms",
+                            "gap=${clock.longValue - (reading + age.coerceAtLeast(0L))}ms " +
+                            "rate=${(engine.rate * 1000).toInt()}",
                     )
                 }
             }
