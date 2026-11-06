@@ -32,7 +32,7 @@ jobs:
           curl -fsSL -o kc.zip "https://github.com/JetBrains/kotlin/releases/download/v${KOTLIN_VERSION}/kotlin-compiler-${KOTLIN_VERSION}.zip"
           unzip -q kc.zip -d "$HOME/kotlin"
           L=shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/lyrics
-          "$HOME/kotlin/kotlinc/bin/kotlinc" "$L/LyricLine.kt" "$L/LyricsWordAlign.kt" "$L/RefinePolicy.kt" bench/sync/Bench.kt -include-runtime -d bench.jar
+          "$HOME/kotlin/kotlinc/bin/kotlinc" "$L/LyricLine.kt" "$L/LyricsWordAlign.kt" "$L/RefinePolicy.kt" "$L/LyricsTimeMap.kt" bench/sync/Bench.kt -include-runtime -d bench.jar
           ls -l bench.jar
       - uses: actions/upload-artifact@v4
         with: { name: bench-jar, path: bench.jar, retention-days: 3 }
@@ -48,6 +48,8 @@ jobs:
         with: { distribution: temurin, java-version: "17" }
       - uses: actions/download-artifact@v4
         with: { name: bench-jar }
+      - name: ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
       - name: Run
         env:
           DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
@@ -69,6 +71,8 @@ jobs:
         with: { python-version: "3.11" }
       - uses: actions/download-artifact@v4
         with: { name: bench-jar }
+      - name: ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
       - name: Install torch cpu, demucs, ctc-forced-aligner
         run: |
           pip install "numpy<2" torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
@@ -92,6 +96,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }
+      - name: ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
       - name: Install
         run: |
           pip install "numpy<2" torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
