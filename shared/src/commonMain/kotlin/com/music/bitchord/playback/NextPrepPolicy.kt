@@ -259,7 +259,9 @@ object NextPrepPolicy {
         facts.remainingMs <= 0L -> "deadline"
         !facts.aiTimingAhead -> "ai-ahead-off"
         !facts.aiUsable -> "ai-unavailable"
-        !aiGateOpen(facts.currentPlayedMs) -> "ai-too-early"
+        // Read when the line is written, often just after the next song started:
+        // a step that actually ran and failed says how it failed, not this.
+        facts.failure == null && !aiGateOpen(facts.currentPlayedMs) -> "ai-too-early"
         else -> "no-answer"
     }
 

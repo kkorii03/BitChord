@@ -398,15 +398,22 @@ internal class NextTrackPreparation(
                             // is one bounded wait: what landed is checked now, and
                             // anything short of it is left to the foreground check
                             // once the row is playing and its audio flows.
+                            // Not before the current song passes the early-skip
+                            // window: a row skipped past pays for nothing.
                             var openingReady = VideoAudio.secondsOnDisk(song) >= SongCheckWindow.FIRST_SECONDS
-                            if (lines != null && !substituted && !openingReady && !query.isVideo &&
+                            if (lines != null && !substituted && !openingReady &&
                                 AppSettings.aiTimingAhead.value && Deepgram.usable
                             ) {
-                                AudioCache.awaitAnalysisHead(
-                                    android.net.Uri.parse(AutomixAnalysisSource.opusUri(song.videoId)),
-                                    NEXT_OPENING_WAIT_MS,
-                                )
-                                openingReady = VideoAudio.secondsOnDisk(song) >= SongCheckWindow.FIRST_SECONDS
+                                val leftBefore = remainingMs(player)
+                                if (NextPrepPolicy.aiGateOpen(player.currentPosition) ||
+                                    (NextPrepPolicy.canStartStep(leftBefore) && awaitAiGate(player, leftBefore))
+                                ) {
+                                    AudioCache.awaitAnalysisHead(
+                                        android.net.Uri.parse(AutomixAnalysisSource.opusUri(song.videoId)),
+                                        NEXT_OPENING_WAIT_MS,
+                                    )
+                                    openingReady = VideoAudio.secondsOnDisk(song) >= SongCheckWindow.FIRST_SECONDS
+                                }
                             }
                             if (lines != null && !substituted && !openingReady) {
                                 syncFailure = NextPrepPolicy.SyncFailure.NO_AUDIO
@@ -1133,7 +1140,7 @@ internal class NextTrackPreparation(
         const val NEXT_PREP_HQ_WAIT_MS = 15_000L
 
         /** How long the sync step waits for the next row's opening to be pulled. */
-        const val NEXT_OPENING_WAIT_MS = 20_000L
+        const val NEXT_OPENING_WAIT_MS = 45_000L
 
         /** A player message at 30 s is the gate; this only covers a seek/pause race. */
         const val AI_GATE_GRACE_MS = 5_000L

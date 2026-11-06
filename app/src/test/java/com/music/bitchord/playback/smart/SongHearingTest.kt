@@ -106,6 +106,17 @@ class SongHearingTest {
     }
 
     @Test
+    fun aRequestWithNoReplyGoesAgainButAServersAnswerDoesNot() {
+        com.music.bitchord.data.lyrics.Deepgram.apiKey = "test-key"
+        assertEquals(true, SongHearing.shouldResend(null, 0))
+        assertEquals(true, SongHearing.shouldResend(null, 1))
+        assertEquals(false, SongHearing.shouldResend(null, 2))
+        assertEquals(false, SongHearing.shouldResend(200, 0))
+        assertEquals(false, SongHearing.shouldResend(429, 0))
+        assertEquals(false, SongHearing.shouldResend(400, 0))
+    }
+
+    @Test
     fun containersAreToldByTheirMagicBytes() {
         fun head(vararg bytes: Int) = ByteArray(16).also { b -> bytes.forEachIndexed { i, v -> b[i] = v.toByte() } }
         assertEquals("audio/webm", VideoAudio.containerMime(head(0x1A, 0x45, 0xDF, 0xA3)))

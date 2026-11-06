@@ -17,6 +17,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Semaphore
@@ -61,6 +62,10 @@ internal object SongHearing {
     /** The same for a transcript past the opening, which nobody on screen is waiting for yet. */
     private const val HEDGE_AFTER_LONG_MS = 120_000L
     private const val OPENING_SECONDS = 120.0
+
+    /** A request with no reply goes again this many times, this far apart and further. */
+    private const val MAX_RESENDS = 2
+    private const val RESEND_AFTER_MS = 2_000L
 
     /** Less new sound than this past a kept transcript buys no request. */
     private const val NOTHING_NEW_SECONDS = 8.0
@@ -209,7 +214,7 @@ internal object SongHearing {
                 return heardFrom(already)
             }
             val waitedMs = System.currentTimeMillis() - started
-            val answer = send(raw.bytes, language, raw.mime, untilSeconds, videoId, waitedMs)
+            val answer = send(raw.bytes, language, raw.mime, untilSeconds, videoId, waitedMs, raw.renditionKey)
             // A server that read it (or a limit or a dead network, which the
             // decoded path would only meet again) ends here. Only bytes it could
             // not read go round through the decoder.
@@ -224,7 +229,7 @@ internal object SongHearing {
         val started2 = System.currentTimeMillis()
         val wav = VideoAudio.songWavCopy(app, song, untilSeconds) ?: return null
         SyncTestMode.saveWav(app, videoId, wav.bytes)
-        val answer = send(wav.bytes, language, wav.mime, untilSeconds, videoId, System.currentTimeMillis() - started2)
+        val answer = send(wav.bytes, language, wav.mime, untilSeconds, videoId, System.currentTimeMillis() - started2, wav.renditionKey)
         return kept(app, song, wav, answer, untilSeconds, language)
     }
 
@@ -235,26 +240,41 @@ internal object SongHearing {
         untilSeconds: Double,
         videoId: String,
         waitedMs: Long,
+        copyKey: String?,
     ): Deepgram.Answer = requests.withPermit {
         val asked = System.currentTimeMillis()
         var hedgedTo = 0
-        val answer = hedged(
-            if (untilSeconds <= OPENING_SECONDS) HEDGE_AFTER_MS else HEDGE_AFTER_LONG_MS,
-            ask = {
-                hedgedTo++
-                Deepgram.listen(bytes, language, Deepgram.MODEL_WHISPER, mime)
-            },
-            heardSomething = { it.words != null },
-        )
+        // No reply at all means the connection failed, usually in under a second
+        // (11-06: 7 of 18 requests, none billed). Such a song used to go without
+        // a check for the rest of its playback.
+        var answer: Deepgram.Answer
+        var dropped = 0
+        while (true) {
+            answer = hedged(
+                if (untilSeconds <= OPENING_SECONDS) HEDGE_AFTER_MS else HEDGE_AFTER_LONG_MS,
+                ask = {
+                    hedgedTo++
+                    Deepgram.listen(bytes, language, Deepgram.MODEL_WHISPER, mime)
+                },
+                heardSomething = { it.words != null },
+            )
+            if (!shouldResend(answer.httpCode, dropped)) break
+            dropped++
+            delay(RESEND_AFTER_MS * dropped)
+        }
         TrackLog.d(
             TAG,
             "song-hear: sent lang=$language until=${untilSeconds.toInt()} mime=$mime kb=${bytes.size / 1024} " +
                 "wait=${waitedMs}ms send=${System.currentTimeMillis() - asked}ms requests=$hedgedTo " +
-                "http=${answer.httpCode} words=${answer.words?.size} audio=${answer.audioMs}",
+                "http=${answer.httpCode} words=${answer.words?.size} audio=${answer.audioMs} copy=$copyKey",
             videoId,
         )
         answer
     }
+
+    /** Whether a request that got no reply goes again: a server's own answer never does. */
+    internal fun shouldResend(httpCode: Int?, dropped: Int): Boolean =
+        httpCode == null && Deepgram.usable && dropped < MAX_RESENDS
 
     private fun kept(
         app: Context,

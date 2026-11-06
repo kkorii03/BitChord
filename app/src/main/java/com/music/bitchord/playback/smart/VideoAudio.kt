@@ -9,6 +9,7 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.ko.downloads.KoDownloadRecords
 import com.music.bitchord.playback.AudioCache
+import com.music.bitchord.playback.StreamChoice
 import com.music.bitchord.playback.PowerState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -422,16 +423,28 @@ object VideoAudio {
         AudioCache.keepForTiming(videoId)
         fun bytesFor(seconds: Double, copy: AudioCache.Rendition): Long =
             openingBytes(copy, seconds, durationMs) ?: (seconds * RAW_BYTES_PER_SECOND).toLong()
-        if ((VersionAudioAligner.renditionToMeasure(videoId)?.cachedPrefix ?: 0L) < AudioCache.MIN_ALIGNMENT_PREFIX_BYTES) {
+        // Only the recording that plays: early on, a quality candidate's head can
+        // hold more bytes than the row's own stream, and its words would be for
+        // another file (11-06 rlYOsUfpi3M: a first answer on an unknown clock).
+        fun ownCopy(): AudioCache.Rendition? = VersionAudioAligner.renditionToMeasure(videoId)?.takeUnless {
+            AutomixAnalysisSource.isSubstituteRendition(videoId, it.key) && !StreamChoice.isSubstitute(videoId)
+        }
+        if ((ownCopy()?.cachedPrefix ?: 0L) < AudioCache.MIN_ALIGNMENT_PREFIX_BYTES) {
             // A row that has not started the stream yet: this is what asks for it.
             AudioCache.awaitAnalysisHead(Uri.parse(AutomixAnalysisSource.opusUri(videoId)), HEAD_TIMEOUT_MS)
+            // A slow start is not "no audio": giving up here left the song with
+            // no check for its whole playback once the sound did come (11-06
+            // qsqvJpOgrWw, first sound at 76 s). Ended by the wait or by the sound.
+            if ((ownCopy()?.cachedPrefix ?: 0L) < MIN_RAW_BYTES) {
+                AudioCache.awaitRenditionPrefix(videoId, MIN_RAW_BYTES, NO_SOUND_WAIT_MS)
+            }
         }
-        var copy = VersionAudioAligner.renditionToMeasure(videoId) ?: return@withContext null
+        var copy = ownCopy() ?: return@withContext null
         val want = bytesFor(untilSeconds, copy)
         if (!copy.isComplete && copy.cachedPrefix < want &&
             !AudioCache.awaitRenditionPrefix(videoId, want, QUICK_WAIT_MS)
         ) {
-            copy = VersionAudioAligner.renditionToMeasure(videoId) ?: return@withContext null
+            copy = ownCopy() ?: return@withContext null
             val least = bytesFor(minSeconds, copy)
             if (!copy.isComplete && copy.cachedPrefix < least &&
                 !AudioCache.awaitRenditionPrefix(videoId, least, (minSeconds * 1000).toLong() + QUICK_WAIT_MS)
@@ -439,7 +452,7 @@ object VideoAudio {
                 TrackLog.d(TAG, "song check: ${copy.cachedPrefix} bytes on disk, $least wanted", videoId)
             }
         }
-        copy = VersionAudioAligner.renditionToMeasure(videoId) ?: return@withContext null
+        copy = ownCopy() ?: return@withContext null
         // Never past what has landed: reading on would wait for the stream.
         val take = minOf(copy.cachedPrefix, bytesFor(untilSeconds, copy))
         if (take < MIN_RAW_BYTES || take > MAX_RAW_BYTES) return@withContext null
@@ -495,6 +508,9 @@ object VideoAudio {
 
     /** How long a check waits for its whole window before settling for what has landed. */
     private const val QUICK_WAIT_MS = 10_000L
+
+    /** How long a check waits for a stream that has not begun at all. */
+    private const val NO_SOUND_WAIT_MS = 120_000L
 
     /** Bytes per second when a stream's length or duration is unknown: 160 kbps, over any audio stream YouTube serves. */
     private const val RAW_BYTES_PER_SECOND = 20_000.0
@@ -621,7 +637,8 @@ object VideoAudio {
             copy.contentLength,
             song.durationMillis() / 1000.0,
         )
-        return if (cached < 0.0) 0.0 else cached
+        // A row with no stated length still has the bytes it has.
+        return if (cached < 0.0) copy.cachedPrefix / RAW_BYTES_PER_SECOND else cached
     }
 
     private fun wholeSongSeconds(song: Song): Double =

@@ -1490,7 +1490,11 @@ object LyricsTiming {
             val hadWords = before?.refineHeardKey == key && before.refineHeardWords.isNotEmpty()
             var heardAnchor: RefineSnapshot? = null
             if (!hadWords) {
-                val heard = hearForRefine(context, song, lines, VideoAudio.SONG_CHECK_SECONDS)
+                // The whole song at once when it is all on disk: the ninety seconds
+                // first would pay for the same sound twice.
+                val whole = extendSeconds(song)
+                val firstUntil = if (VideoAudio.secondsOnDisk(song) >= whole) whole else VideoAudio.SONG_CHECK_SECONDS
+                val heard = hearForRefine(context, song, lines, firstUntil)
                     ?: return@withLock false
                 heardAnchor = saveRefineHeard(
                     context,
@@ -3152,6 +3156,7 @@ object LyricsTiming {
         // so it finishes and keeps its answer. One request per video and
         // lyrics text, whoever asks. A cancelled caller stops waiting only.
         val flight = "song:${song.videoId}:$key"
+        newestSongKey[song.videoId] = key
         val fresh = aiScope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             verifySongRequest(context.applicationContext, song, lines, key, engine, probe, retry)
         }
@@ -3279,6 +3284,26 @@ object LyricsTiming {
                 result = timing(
                     context, song.videoId, lines, timeable, recordTimed, true, audioSource,
                 )
+            } else if (wantsAi(context, song.videoId, lines, audioSource)) {
+                // The words alongside the free measurement, as on the screen: a
+                // cover or video starts with its offset known. Nothing to hear is
+                // no failure here; the row asks again when it plays.
+                placeWithAi(
+                    context = context,
+                    videoId = song.videoId,
+                    lines = lines,
+                    automatic = true,
+                    title = query.title,
+                    artist = query.artist,
+                    isVideo = true,
+                    audioSource = audioSource,
+                    probe = probe,
+                    cancelWithCaller = cancelWithCaller,
+                    wordsOnly = true,
+                )
+                result = timing(
+                    context, song.videoId, lines, timeable, recordTimed, true, audioSource,
+                )
             }
         } else if (!songVerified(context, song, lines)) {
             // The record-timed song check: same Deepgram/Whisper request and
@@ -3320,6 +3345,30 @@ object LyricsTiming {
     }.distinct()
 
     private val songInFlight = ConcurrentHashMap<String, kotlinx.coroutines.Deferred<Boolean>>()
+
+    /**
+     * The sheet each video's song check was last asked about: the one on screen.
+     * There is one AI slot per video and newest wins, so the answer to a sheet
+     * that was replaced, landing late, took the slot from the sheet showing and
+     * left the screen with none (11-06 rlYOsUfpi3M: applied at 88%, overwritten
+     * a second later, ended sync=none).
+     */
+    private val newestSongKey = ConcurrentHashMap<String, Int>()
+
+    private fun replacedSheet(videoId: String, key: Int): Boolean {
+        val replaced = newestSongKey[videoId].let { it != null && it != key }
+        if (replaced) TrackLog.d(TAG, "song-sync: answer for a replaced sheet dropped", videoId)
+        return replaced
+    }
+
+    /**
+     * Whether words are being fetched for [videoId] right now. A refine started
+     * then would buy the same sound beside them; it runs when they land (the
+     * screen refreshes its timing then), and reads them for free.
+     */
+    fun hearingBusy(videoId: String): Boolean =
+        songInFlight.keys.any { it.startsWith("song:$videoId:") } ||
+            aiInFlight.keys.any { it.startsWith("$videoId:") }
 
     /**
      * The one song-sync request allowed at a time. A 429 is an account-wide
@@ -3380,6 +3429,7 @@ object LyricsTiming {
         val firstAsk = hearSongCheck(context, song, lines, key, probe, firstUntil, retry) ?: return false
         val (first, firstOk) = songSyncGate.withLock {
             if (songSyncGenerationOf(song.videoId) != startedGeneration) return@withLock null
+            if (replacedSheet(song.videoId, key)) return@withLock null
             // Checked again under the gate: another song's 429 may have marked
             // this one while its flight was waiting here.
             val pending = store(context).get(song.videoId)
@@ -3396,6 +3446,11 @@ object LyricsTiming {
         ) {
             return firstOk
         }
+        // An opening that fitted waits for the whole song's words, not a longer
+        // opening: the same fit from 45 s and 88 s differed by 39 ms (11-06
+        // rlYOsUfpi3M), and each listen is paid for. Only a first pass that could
+        // not fit is worth more of the opening.
+        if (first.fitted != null) return firstOk
         // A row not playing yet has only its head: the rest would hold up the
         // preparation for sound that will not come until it plays.
         if (probe != null && VideoAudio.secondsOnDisk(song) < VideoAudio.SONG_CHECK_SECONDS) return firstOk
@@ -3403,6 +3458,7 @@ object LyricsTiming {
             ?: return firstOk
         return songSyncGate.withLock {
             if (songSyncGenerationOf(song.videoId) != startedGeneration) return@withLock firstOk
+            if (replacedSheet(song.videoId, key)) return@withLock firstOk
             val full = fitSongCheck(context, song, lines, key, engine, probe, fullAsk, retry)
             if (!SongCheckWindow.fullMayReplace(
                     firstFitted = first.fitted != null,

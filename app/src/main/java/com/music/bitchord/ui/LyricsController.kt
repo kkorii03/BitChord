@@ -1052,7 +1052,14 @@ class LyricsController(
                     com.music.bitchord.data.lyrics.Deepgram.usable &&
                     LyricsTiming.wantsAi(context, request.videoId, lines)
                 if (calibration) launch { aiAhead(context, request.videoId, lines) }
-                if (hearNow) launch { aiAhead(context, request.videoId, lines, wordsOnly = true) }
+                if (hearNow) {
+                    launch {
+                        aiAhead(context, request.videoId, lines, wordsOnly = true)
+                        // Its words are in now, fitted or not: the refine held back
+                        // for them may read them.
+                        refreshTiming(generation, lines)
+                    }
+                }
                 // The record is searched for under every name the lyrics know:
                 // what they were found as first, then the video's own readings.
                 val names = buildList {
@@ -1526,6 +1533,8 @@ class LyricsController(
         if (!AppSettings.heavyWorkAllowed || !AppSettings.aiTimingAhead.value) return
         if (!com.music.bitchord.data.lyrics.Deepgram.usable) return
         if (LyricsTiming.refineHeardKnown(app, request.videoId, lines, timing, audioSource)) return
+        // Words on their way: this runs again when they land, and reads them.
+        if (LyricsTiming.hearingBusy(request.videoId)) return
         val key = "${request.videoId}|${request.localUri != null}|${lines.hashCode()}"
         if (refineHeardStartedFor == key) return
         refineHeardStartedFor = key
