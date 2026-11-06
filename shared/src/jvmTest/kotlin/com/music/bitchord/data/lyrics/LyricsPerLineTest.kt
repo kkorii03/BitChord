@@ -77,6 +77,34 @@ class LyricsPerLineTest {
         assertEquals(listOf(200L, 200L), shifts)
     }
 
+    /** A backing vocal opens the line at its stamp; the lead's words come 884 ms later, heard exactly there. */
+    @Test
+    fun `a lead heard on its own words does not move a line whose stamp leads it`() {
+        val text = "alpha bravo charlie delta echo foxtrot"
+        val sheetWords = line(10_884, text).let { lead ->
+            heardLine(lead, 0L).map { LyricWord(it.startMs, it.endMs, it.text) }
+        }
+        val lines = listOf(LyricLine(timeMs = 10_000, text = text, words = sheetWords))
+        val heard = sheetWords.map { LyricsWordAlign.Heard(it.text, it.startMs, it.endMs) }
+
+        val result = layer(lines, heard)
+
+        assertEquals(1, result.anchors)
+        assertEquals(0L, result.shiftsMs[0], "the lead was heard where the sheet has it")
+    }
+
+    @Test
+    fun `a lead heard late still moves a line whose stamp leads it, by the lead's error only`() {
+        val text = "alpha bravo charlie delta echo foxtrot"
+        val sheetWords = line(10_884, text).let { lead ->
+            heardLine(lead, 0L).map { LyricWord(it.startMs, it.endMs, it.text) }
+        }
+        val lines = listOf(LyricLine(timeMs = 10_000, text = text, words = sheetWords))
+        val heard = sheetWords.map { LyricsWordAlign.Heard(it.text, it.startMs + 300, it.endMs + 300) }
+
+        assertEquals(300L, layer(lines, heard).shiftsMs[0])
+    }
+
     @Test
     fun `a misheard first word does not set the line's move`() {
         val lines = listOf(line(10_000, "alpha bravo charlie delta echo foxtrot"))

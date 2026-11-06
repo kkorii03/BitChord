@@ -30,7 +30,7 @@ class HeardWordsTest {
         assertEquals(10_000L, result.words[0].startMs)
         assertEquals(10_600L, result.words[0].endMs)
         assertEquals(10_800L, result.words[1].startMs)
-        assertEquals(11_200L, result.words[1].endMs)
+        assertEquals(13_700L, result.words[1].endMs, "the last word fills its slot")
         assertTrue(!result.wordsEstimated, "transcript times are not an estimate")
     }
 
@@ -46,7 +46,7 @@ class HeardWordsTest {
         assertEquals(500L, result.words[0].startMs)
         assertEquals(800L, result.words[0].endMs)
         assertEquals(900L, result.words[1].startMs)
-        assertEquals(1_200L, result.words[1].endMs)
+        assertEquals(3_700L, result.words[1].endMs, "the last word fills its slot")
     }
 
     @Test
@@ -140,6 +140,6 @@ class HeardWordsTest {
                 .withHeardWords(listOf(heard("사랑해", 9_700, 10_500)), 14_000),
         )
         assertEquals(10_000L, result.words.first().startMs)
-        assertEquals(10_500L, result.words.first().endMs)
+        assertEquals(13_700L, result.words.first().endMs, "the last word fills its slot")
     }
 }
