@@ -417,6 +417,24 @@ class RefinePolicyTest {
     }
 
     @Test
+    fun aDriftWithAWholeArrangementOffsetIsAppliedWhole() {
+        // 11-07 8gyLR4NfMiI: the sheet was 24 s early with a small drift. The
+        // drift's offset was clipped to the 10 s wide cap, leaving it 13.8 s
+        // early. A drift whose offset is past the wide cap is a whole-
+        // arrangement move: apply it as the flat fit does, up to 30 s, whole
+        // or not at all.
+        val lines = List(12) { index -> line(20_000L + index * 12_000L, "line$index") }
+        val heard = lines.map { line ->
+            heard(line.text, line.timeMs + 24_000L - line.timeMs / 200)
+        }
+        val result = RefinePolicy.compute(lines, heard)
+
+        assertTrue(result.applied)
+        assertEquals(RefinePolicy.Model.WIDE, result.model)
+        assertTrue(abs(result.medianMs - 24_000L) <= 100L, "offset ${result.medianMs} ms")
+    }
+
+    @Test
     fun aFlatMovePastTheFlatCapIsNotAppliedInPart() {
         // Moving part of the way is wrong and says it is corrected; leave it alone.
         val lines = List(12) { index -> line(1_300L + index * 12_000L, "line$index") }

@@ -406,6 +406,21 @@ object RefinePolicy {
         // three of it covers ordinary jitter and stays under 600 ms, since
         // [MAX_LINEAR_MAD_MS] caps it above.
         if (errors.any { (onLine, onConstant) -> onLine > onConstant + 3 * mad }) return null
+        // A drift whose offset is past the wide cap is a whole-arrangement
+        // move with a slope on top: apply the offset as the flat fit does,
+        // whole or not at all, rather than clipping it to the wide cap
+        // (11-07 8gyLR4NfMiI: a 24 s offset clipped to 10 s left the sheet
+        // 13.8 s early). The slope is dropped; the offset is what the sheet
+        // needs.
+        if (abs(line.offsetMs) > MAX_WIDE_SHIFT_MS) {
+            return Result(
+                applied = abs(line.offsetMs) <= MAX_FLAT_SHIFT_MS,
+                medianMs = line.offsetMs,
+                madMs = mad,
+                lines = points.size,
+                model = Model.WIDE,
+            )
+        }
         return Result(
             applied = true,
             medianMs = line.offsetMs,
