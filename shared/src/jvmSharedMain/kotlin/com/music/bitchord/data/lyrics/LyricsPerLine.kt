@@ -33,6 +33,11 @@ object LyricsPerLine {
     /** With only two words, a large move is more likely a mishearing than a real one. */
     const val MAX_SHIFT_TWO_WORDS_MS = 600L
 
+    /** A block of anchors this short that disagrees with both neighbours is a mishearing, not a move. */
+    const val MAX_LONE_BLOCK = 3
+    const val MIN_LONE_BLOCK_MS = 1_200L
+    const val MAX_LONE_BLOCK_MS = 4_000L
+
     /** Two anchors further apart than this do not interpolate between themselves. */
     const val MAX_INTERPOLATE_SPAN_MS = 30_000L
 
@@ -133,7 +138,7 @@ object LyricsPerLine {
             found += Anchor(index, lines[index].timeMs, residual)
         }
         val letters = lines.map { LyricsWordAlign.fold(it.text).length }
-        val anchors = sungInOrder(found, letters)
+        val anchors = withoutLoneBlocks(sungInOrder(found, letters))
         if (anchors.isEmpty()) return Layer.identity(lines.size)
 
         val heardFrom = heard.minOf { it.startMs }
@@ -196,6 +201,39 @@ object LyricsPerLine {
         val applied = shifts.count { it != 0L }
         val maxAbs = shifts.maxOfOrNull { abs(it) } ?: 0L
         return Layer(shifts.toList(), anchors.size, applied, maxAbs)
+    }
+
+    /**
+     * [anchors] without a short block whose move disagrees with the blocks on both
+     * sides (11-07: two or three lines heard at a repeated chorus moved 1.2-3.5 s
+     * while the rest of the song stayed put). A block of four or more lines is a
+     * real stretch, and a move past [MAX_LONE_BLOCK_MS] is already dropped by the cap.
+     */
+    private fun withoutLoneBlocks(anchors: List<Anchor>): List<Anchor> {
+        if (anchors.size < 3) return anchors
+        val blocks = ArrayList<MutableList<Anchor>>()
+        for (anchor in anchors) {
+            val last = blocks.lastOrNull()
+            if (last != null && abs(anchor.residualMs - median(last.map { it.residualMs })) <= MAX_INTERPOLATE_DIFF_MS) {
+                last += anchor
+            } else {
+                blocks += mutableListOf(anchor)
+            }
+        }
+        val kept = ArrayList<Anchor>(anchors.size)
+        for (k in blocks.indices) {
+            val block = blocks[k]
+            val move = median(block.map { it.residualMs })
+            val before = blocks.getOrNull(k - 1)?.let { median(it.map { a -> a.residualMs }) }
+            val after = blocks.getOrNull(k + 1)?.let { median(it.map { a -> a.residualMs }) }
+            val lone = block.size <= MAX_LONE_BLOCK &&
+                abs(move) in MIN_LONE_BLOCK_MS..MAX_LONE_BLOCK_MS &&
+                before != null && after != null &&
+                abs(move - before) > MAX_INTERPOLATE_DIFF_MS &&
+                abs(move - after) > MAX_INTERPOLATE_DIFF_MS
+            if (!lone) kept += block
+        }
+        return kept
     }
 
     /**
