@@ -60,6 +60,11 @@ internal object HqSwapPolicy {
      * @param suppressed whether the session player wants to play but is being
      *   held back, as a call does. `playWhenReady` stays true through that and
      *   the standby holds no audio focus, so it would play over the call.
+     * @param currentClockKnown false when a substitute is playing with no
+     *   verified offset. The candidate's offset is measured against the YouTube
+     *   clock, so the playhead cannot be mapped across and a seek would land on
+     *   the wrong audio; the copy waits for the next play instead. Asked again
+     *   after the download, which can outlast the verdict that was read before.
      */
     fun decide(
         positionMs: Long,
@@ -93,6 +98,7 @@ internal object HqSwapPolicy {
         if (!currentRate.isFinite() || currentRate <= 0.0) {
             return Decision(false, "bad-current-rate", 0L)
         }
+        if (!currentClockKnown) return Decision(false, "current-clock-unknown", 0L)
         val remaining = durationMs.takeIf { it > 0L }?.minus(positionMs)
         if (remaining != null && remaining < MIN_REMAINING_MS) {
             return Decision(false, "too-late", 0L)
