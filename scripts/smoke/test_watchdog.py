@@ -100,25 +100,32 @@ class Rules(unittest.TestCase):
         j.log(7, line.replace("http=401", "http=403"))
         self.assertEqual(j.stop[:2], ("tool", "key_rejected"))
 
-    def test_one_quiet_song_is_normal_two_are_not(self):
-        j = judge(songs=4)
+    def test_two_quiet_songs_are_normal_three_are_not(self):
+        j = judge(songs=5)
         j.script(1, "a VIEW started")
-        j.script(150, "b VIEW started")  # a was silent
-        j.log(160, "D BitChord: [b] TIMING first audio: 9000ms since track selected")
+        j.script(150, "b VIEW started")
+        j.script(300, "c VIEW started")  # a and b silent, like runs that then played fine
+        j.log(310, "D BitChord: [c] TIMING first audio: 9000ms since track selected")
+        j.script(450, "d VIEW started")
+        j.script(600, "e VIEW started")
+        j.script(750, "smoke: forcing one final track change for the last track summary")
+        self.assertIsNone(j.stop)  # d and e silent: two again, the third song in a row never came
+
+        j = judge()
+        j.script(1, "a VIEW started")
+        j.script(150, "b VIEW started")
         j.script(300, "c VIEW started")
-        j.script(450, "d VIEW started")  # c silent, the quiet run restarted after b
         self.assertIsNone(j.stop)
-        j.script(600, "smoke: forcing one final track change for the last track summary")
+        j.script(450, "smoke: forcing one final track change for the last track summary")
         self.assertEqual(j.stop[:2], ("app", "no_audio"))
-        self.assertEqual(j.stop[2], "d")
 
     def test_songs_that_never_start(self):
         j = judge()
         j.script(40, "a VIEW did not start; trying MEDIA_PLAY_FROM_SEARCH")
-        self.assertIsNone(j.stop)
         j.script(55, "a fallback did not start")
+        j.script(90, "b fallback did not start")
         self.assertIsNone(j.stop)
-        j.script(110, "b fallback did not start")
+        j.script(125, "c fallback did not start")
         self.assertEqual(j.stop[:2], ("app", "no_start"))
 
     def test_quiet_songs_with_net_failures_are_infra(self):
@@ -128,19 +135,27 @@ class Rules(unittest.TestCase):
         j.script(10, "a VIEW started")
         j.script(160, "b VIEW started")
         j.script(310, "c VIEW started")
+        j.script(460, "smoke: forcing one final track change for the last track summary")
         self.assertEqual(j.stop[:2], ("infra", "no_audio"))
 
-    def test_net_flood_only_before_any_sound(self):
+    def test_bot_check_flood_only_before_any_sound(self):
+        bot = "W BitChord: x hit YouTube's bot check; this is the network, not the track"
         j = judge()
-        for t in range(2, 1 + w.NET_FLOOD):
-            j.log(t, "W BitChord: x hit YouTube's bot check; this is the network, not the track")
+        for t in range(2, 1 + w.BOT_CHECKS):
+            j.log(t, bot)
         self.assertIsNone(j.stop)
-        j.log(90, "W BitChord: x hit YouTube's bot check; this is the network, not the track")
-        self.assertEqual(j.stop[:2], ("infra", "net_flood"))
+        j.log(90, bot)
+        self.assertEqual(j.stop[:2], ("infra", "bot_check"))
         j = judge()
         j.log(2, "D BitChord: [a] TIMING first audio: 100ms since track selected")
-        for t in range(3, 3 + 2 * w.NET_FLOOD):
-            j.log(t, "W BitChord: x hit YouTube's bot check; this is the network, not the track")
+        for t in range(3, 3 + 2 * w.BOT_CHECKS):
+            j.log(t, bot)
+        self.assertIsNone(j.stop)
+
+    def test_slow_proxy_alone_never_stops_a_run(self):
+        j = judge()
+        for t in range(2, 60):
+            j.log(t, "W BitChord: retrying: Socket timeout has expired")
         self.assertIsNone(j.stop)
 
     def test_lyric_lines_are_never_read(self):

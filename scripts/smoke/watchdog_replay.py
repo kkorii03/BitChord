@@ -45,15 +45,18 @@ def script_events(lines, playback):
     events, i, last = [], 0, lines[0][0]
     for line in playback:
         line = line.strip()
+        if "; trying" in line:
+            continue
+        ran = bool(events) and events[-1][1].endswith(" started")  # the previous song played its whole wait
         if line.endswith(" started"):
-            if i >= len(starts):
-                break
-            last = starts[i]
+            last = starts[i] if i < len(starts) else last + wait  # "started" can be an auto-advance
             i += 1
+        elif watchdog.SCRIPT.match(line):  # run.sh gives a song 20 + 15 s to start
+            last += (wait if ran else 0) + 35
         else:
-            last += wait + 35 if not events or events[-1][1].endswith(" started") else 35
+            last += wait if ran else 1
         events.append((last, line))
-    return [e for e in events if "; trying" not in e[1]], wait
+    return events, wait
 
 
 def replay(folder):
@@ -64,16 +67,12 @@ def replay(folder):
     playback = open(path, encoding="utf-8", errors="replace").read().splitlines() if os.path.exists(path) else []
     events, wait = script_events(lines, playback)
     songs = sum(1 for _, s in events if watchdog.SCRIPT.match(s)) or 1
-    judge = watchdog.Judge(lines[0][0], songs, wait)
+    judge = watchdog.Judge(lines[0][0], songs, wait, any("smoke-scenario:" in s for _, s in lines))
+    if not playback:  # the song count is unknown, so its hard limit is too
+        judge.hard = float("inf")
     judge.log(lines[0][0], lines[0][1])
     e = 0
-    sound = gap = 0
-    prev = lines[0][0]
     for t, line in lines:
-        gap = max(gap, t - prev)
-        prev = t
-        if "TIMING first audio" in line:
-            sound += 1
         while e < len(events) and events[e][0] <= t:
             judge.script(events[e][0], events[e][1])
             e += 1
