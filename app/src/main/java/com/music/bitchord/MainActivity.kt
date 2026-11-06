@@ -2258,9 +2258,7 @@ private fun BitChordApp(
         val session = controller ?: return@LaunchedEffect
         when (request) {
             is LinkRequest.Track -> {
-                val song = com.music.bitchord.playback.LinkRetry.resolve {
-                    YtMusicRepository.trackLinks(request.videoId)
-                }.getOrNull()
+                val song = YtMusicRepository.trackForLink(request.videoId).getOrNull()
                 if (song == null) {
                     Toast.makeText(
                         context,

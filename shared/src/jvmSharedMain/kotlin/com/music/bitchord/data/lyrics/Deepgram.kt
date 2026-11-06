@@ -155,8 +155,7 @@ object Deepgram {
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (e: Exception) {
-            // 11-06: http=null within half a second, with nothing to say why. The
-            // message names the host at most, never the key, which is only a header.
+            // The message names the host at most; the key is only ever a header.
             Log.w(TAG, "listen: no reply: ${e::class.simpleName}: ${e.message?.take(120)}")
             Answer(null)
         }
