@@ -6,111 +6,59 @@ import kotlin.math.roundToLong
 
 /**
  * A sheet placed on a recording in stretches, for a song whose structure is not
- * the sheet's: a verse left out, a break put in, a long intro, a cover.
+ * the sheet's: a verse left out, a break put in, a long intro, a cover. [TimingFit]'s
+ * one line through every placed line refused or misplaced 29 of 192 real songs
+ * (11-06) whose lines mostly sat exactly on their own stretch's clock.
  *
- * [TimingFit] draws one straight line through every line [LyricsWordAlign]
- * placed, weak ones included, and gives up when less than half lie on it. With a
- * whole song's words that throws away what is known: most lines sit exactly on
- * their own stretch's clock (11-06 corpus of 192 songs: 29 refused or misplaced
- * by the one line, such as a verse 7.5 s off, or a sheet a minute early. Scored
- * by scripts/synctest.py the 29 went from 19 FAIL to none, and none got worse).
+ * Only lines the alignment really matched count. One pace fits all stretches, since
+ * a cut does not change a recording's pace, and each stretch keeps its own offset.
+ * The clock changes once, in the middle of a gap, so a line nobody heard takes its
+ * nearer stretch's clock and never a time blended from two verses.
  *
- * Here only lines the alignment really matched are believed ([MIN_SHARE],
- * [MIN_LETTERS]). The pace is read off neighbouring lines first. Walking the
- * lines in sheet order on that pace, a line that disagrees with the stretch so
- * far either starts a new stretch, when [MIN_LINES] of the next [LOOK_AHEAD]
- * agree with it, or is left out. One pace is fitted across all stretches, since
- * pace belongs to the recording and a cut does not change it, and each stretch
- * keeps its own offset. Between stretches the clock changes once, in the middle
- * of the gap, so a line nobody heard takes the clock of the stretch it sits
- * nearer and never a time blended from two verses.
- *
- * The guards and what they rest on. 2,115 wrong pairs of real sheets and real
- * transcripts, same language and other (735 whole songs, 651 of 40 s and 729 of
- * 90 s), gave no accepted answer:
- *  - [MIN_LINES] lines in every stretch; a shorter one is dropped, not guessed.
- *    All but 6 of the whole-song wrong pairs stop here or before.
- *  - [MIN_COVER] of the sheet in stretches. The best wrong pair held 0.11, and
- *    0.25 applied one real song 50 s wrong.
- *  - The rest never decided a real or a wrong sheet in that corpus and stay as
- *    limits on what a recording can do. [MAX_PIECES]: a cut or two (real at most
- *    4). [TimingFit.MIN_RATE]..[TimingFit.MAX_RATE] for the pace overall and in
- *    each stretch of [PIECE_PACE_SPAN_MS] or more (real 0.83 to 1.19).
- *    [MAX_JUMP_MS] at a boundary: a verse and a chorus, or a video's interlude
- *    (real at most 35 s applied).
- *  - [MAX_MAD_MS] inside a stretch: lines on one clock agree closely (real 350
- *    at most, 76 typically).
- *  - The order must hold: a stretch may not begin more than [TOLERANCE_MS] before
- *    the last one ended. A stretch that leaves and returns to the same clock is a
- *    repeated chorus read as the other one, and is dropped (a recording does not
- *    cut away and come back to the same offset).
- *
- * Whoever applies a [Result] still holds it to the AI answer's own guards, and
- * [overrules] keeps a straight line that already explains its lines: most songs
- * do not move at all.
+ * Guards, measured on 2,115 wrong pairs of real sheets and transcripts (none got a
+ * map): [MIN_LINES] and [MIN_COVER] decide them (the best wrong pair held 0.11 of its
+ * sheet; 0.25 moved one real song 50 s wrong). Pieces, pace, jump, scatter and order
+ * decided nothing there and stay as limits on what a recording can do.
  */
 object TimingPieces {
 
-    /** A line counts as heard when this much of its letters were matched. */
     const val MIN_SHARE = 0.6
-
-    /** Fewer letters than this can be matched by chance. */
     const val MIN_LETTERS = 4
-
-    /** Lines further than this from their stretch's clock are not on it. */
-    const val TOLERANCE_MS = 1_000L
-
-    /** How many lines, this one included, are read when one disagrees. */
-    const val LOOK_AHEAD = 6
-
-    /** The fewest lines a stretch may rest on. */
-    const val MIN_LINES = 4
-
-    /** The share of the sheet that must lie in stretches. */
-    const val MIN_COVER = 1.0 / 3.0
-
-    const val MAX_PIECES = 4
     const val MAX_JUMP_MS = 120_000L
-    const val MAX_MAD_MS = 400L
-    const val PIECE_PACE_SPAN_MS = 20_000L
 
-    /** Overruling a line that passed: each stretch at least this long... */
-    const val OVERRULE_LINES = 6
+    private const val TOLERANCE_MS = 1_000L
+    private const val LOOK_AHEAD = 6
+    private const val MIN_LINES = 4
+    private const val MIN_COVER = 1.0 / 3.0
+    private const val MAX_PIECES = 4
+    private const val MAX_MAD_MS = 400L
+    private const val PIECE_PACE_SPAN_MS = 20_000L
+    private const val OVERRULE_LINES = 6
+    private const val OVERRULE_MISSED = 6
+    private const val OVERRULE_FAR_MS = 700L
+    private const val MIN_PAIR_SPAN_MS = 4_000L
 
-    /** ...the line missing this many of the heard lines... */
-    const val OVERRULE_MISSED = 6
-
-    /** ...by more than this... */
-    const val OVERRULE_FAR_MS = 700L
-
-    /** A line whose opening is matched and how much of it, as [LyricsWordAlign.Placement] says. */
+    /** A line as [LyricsWordAlign.Placement] says it was placed. */
     data class Placed(val timeMs: Long, val startMs: Long?, val share: Double, val letters: Int)
 
-    /** The stretches found: record ms → recording ms. */
+    internal class Point(val x: Long, val y: Long)
+
     class Result internal constructor(
         val map: LyricsTimeMap,
-        /** Recording seconds per sheet second, one for all stretches. */
+        /** Recording seconds per sheet second. */
         val rate: Double,
         /** Lines in each stretch. */
         val sizes: List<Int>,
-        /** How far the clock moves at each boundary, ms. */
+        /** How far the clock moves at each boundary. */
         val jumpsMs: List<Long>,
-        /** Lines in stretches. */
-        val used: Int,
-        /** Lines the alignment really matched. */
-        val heard: Int,
-        internal val heardPoints: List<Point>,
-    ) {
         /** Of the lines really heard, how many follow the stretches. */
-        val agreePercent: Int get() = (used * 100.0 / heard).roundToInt().coerceIn(0, 100)
-    }
+        val agreePercent: Int,
+        internal val heardPoints: List<Point>,
+    )
 
     /** [result], or why there is none, for the log. */
     class Outcome(val result: Result?, val refused: String?)
 
-    internal class Point(val x: Long, val y: Long)
-
-    /** [fit] for lines placed by [LyricsWordAlign.placeLinesDetailed]. */
     fun fit(
         timesMs: List<Long>,
         texts: List<String>,
@@ -156,8 +104,7 @@ object TimingPieces {
                 rate = rate,
                 sizes = pieces.map { it.size },
                 jumpsMs = (0 until offsets.size - 1).map { (offsets[it + 1] - offsets[it]).roundToLong() },
-                used = used,
-                heard = heard.size,
+                agreePercent = (used * 100.0 / heard.size).roundToInt().coerceIn(0, 100),
                 heardPoints = heard,
             ),
             null,
@@ -165,9 +112,9 @@ object TimingPieces {
     }
 
     /**
-     * Whether [result] should replace a straight line that passed its own
-     * guards. Only for a real structure, every stretch long enough, when the line
-     * leaves heard lines far from where they were sung and the stretches do not.
+     * Whether [result] should replace a straight line that passed its own guards:
+     * real structure, every stretch long enough, and the line leaves heard lines far
+     * from where they were sung while the stretches do not.
      */
     fun overrules(straight: LyricsTimeMap, result: Result): Boolean {
         if (result.sizes.size < 2 || result.sizes.min() < OVERRULE_LINES) return false
@@ -191,7 +138,7 @@ object TimingPieces {
         if (pieces.size == 1 && abs(offsets[0]) < RefinePolicy.MAX_SHIFT_MS && spreads[0] > RefinePolicy.MAX_MAD_MS) {
             return "scatter-small"
         }
-        if (base <= 0 || used.toDouble() / base < MIN_COVER) return "cover"
+        if (used.toDouble() / base < MIN_COVER) return "cover"
         if (pieces.size > MAX_PIECES) return "too-many"
         if (rate < TimingFit.MIN_RATE || rate > TimingFit.MAX_RATE) return "pace"
         for (k in 0 until offsets.size - 1) {
@@ -213,44 +160,37 @@ object TimingPieces {
 
     private fun offsetOf(piece: List<Point>, rate: Double): Double = TimingFit.median(piece.map { it.y - rate * it.x })
 
-    /**
-     * The pace read off neighbouring heard lines, which is the same on both sides
-     * of a cut. A sped-up cover moves 0.7 s a line against the sheet (11-06
-     * A4HLeFXyFEY, 0.87), which would otherwise read as a cut at every line.
-     */
-    private fun firstPace(heard: List<Point>): Double {
-        val slopes = ArrayList<Double>()
-        for (k in 1 until heard.size) {
-            for (j in maxOf(0, k - 3) until k) {
-                val dx = heard[k].x - heard[j].x
-                if (dx >= MIN_PAIR_SPAN_MS) slopes += (heard[k].y - heard[j].y).toDouble() / dx
+    /** Slopes between each line and the next [reach] lines, far enough apart to have one. */
+    private fun slopes(points: List<Point>, reach: Int): List<Double> {
+        val found = ArrayList<Double>()
+        for (i in points.indices) {
+            for (j in i + 1..minOf(i + reach, points.size - 1)) {
+                val dx = points[j].x - points[i].x
+                if (dx >= MIN_PAIR_SPAN_MS) found += (points[j].y - points[i].y).toDouble() / dx
             }
         }
-        if (slopes.size < MIN_LINES) return 1.0
-        return TimingFit.rateForSpan(TimingFit.median(slopes), heard.last().x - heard.first().x)
+        return found
     }
 
     private fun segment(heard: List<Point>): List<List<Point>> {
-        val pace = firstPace(heard)
+        // Neighbouring lines' pace is the same on both sides of a cut; a sped-up cover
+        // (A4HLeFXyFEY, 0.87) would otherwise read as a cut at every line.
+        val near = slopes(heard, 3)
+        val pace = if (near.size < MIN_LINES) 1.0 else TimingFit.rateForSpan(TimingFit.median(near), heard.last().x - heard.first().x)
         fun off(point: Point): Double = (point.y - (pace * point.x).roundToLong()).toDouble()
-        fun lastOffset(piece: List<Point>): Double = TimingFit.median(piece.takeLast(5).map { off(it) })
-        fun firstOffset(piece: List<Point>): Double = TimingFit.median(piece.take(5).map { off(it) })
-        fun wholeOffset(piece: List<Point>): Double = TimingFit.median(piece.map { off(it) })
+        fun offset(points: List<Point>): Double = TimingFit.median(points.map { off(it) })
         val found = ArrayList<List<Point>>()
-        var current = ArrayList<Point>()
-        heard.forEachIndexed { k, point ->
-            if (current.isEmpty()) {
+        var current = arrayListOf(heard[0])
+        for (k in 1 until heard.size) {
+            val point = heard[k]
+            val here = off(point)
+            val recent = offset(current.takeLast(5))
+            if (abs(here - recent) <= TOLERANCE_MS) {
                 current.add(point)
-                return@forEachIndexed
-            }
-            val offset = off(point)
-            val recent = lastOffset(current)
-            if (abs(offset - recent) <= TOLERANCE_MS) {
-                current.add(point)
-                return@forEachIndexed
+                continue
             }
             val ahead = heard.subList(k, minOf(heard.size, k + LOOK_AHEAD))
-            val withThis = ahead.count { abs(off(it) - offset) <= TOLERANCE_MS }
+            val withThis = ahead.count { abs(off(it) - here) <= TOLERANCE_MS }
             val withStretch = ahead.count { abs(off(it) - recent) <= TOLERANCE_MS }
             if (withThis >= MIN_LINES && withThis > withStretch) {
                 found.add(current)
@@ -258,55 +198,39 @@ object TimingPieces {
             }
             // Otherwise one line the alignment put wrong: left out.
         }
-        if (current.isNotEmpty()) found.add(current)
+        found.add(current)
         val kept = found.filter { it.size >= MIN_LINES }.toMutableList()
-        var changed = true
-        while (changed) {
-            changed = false
+        while (true) {
             // Neighbours on one clock are one stretch with a bad patch in it.
-            for (k in 0 until kept.size - 1) {
-                if (abs(lastOffset(kept[k]) - firstOffset(kept[k + 1])) <= TOLERANCE_MS) {
-                    kept[k] = kept[k] + kept[k + 1]
-                    kept.removeAt(k + 1)
-                    changed = true
-                    break
-                }
+            val join = (0 until kept.size - 1).firstOrNull {
+                abs(offset(kept[it].takeLast(5)) - offset(kept[it + 1].take(5))) <= TOLERANCE_MS
             }
-            if (changed) continue
-            // There and back: a repeated chorus read as the other one.
-            for (k in 1 until kept.size - 1) {
-                if (abs(wholeOffset(kept[k - 1]) - wholeOffset(kept[k + 1])) <= TOLERANCE_MS &&
-                    kept[k].size < minOf(kept[k - 1].size, kept[k + 1].size)
-                ) {
-                    kept.removeAt(k)
-                    changed = true
-                    break
-                }
+            if (join != null) {
+                kept[join] = kept[join] + kept[join + 1]
+                kept.removeAt(join + 1)
+                continue
             }
+            // There and back to one clock: a repeated chorus read as the other one, not a cut.
+            val excursion = (1 until kept.size - 1).firstOrNull {
+                abs(offset(kept[it - 1]) - offset(kept[it + 1])) <= TOLERANCE_MS &&
+                    kept[it].size < minOf(kept[it - 1].size, kept[it + 1].size)
+            } ?: break
+            kept.removeAt(excursion)
         }
         return kept
     }
 
-    /** The median slope of every pair of lines inside a stretch, a pair across a cut says nothing. */
     private fun pooledRate(pieces: List<List<Point>>): Double {
-        val slopes = ArrayList<Double>()
-        for (piece in pieces) {
-            for (i in piece.indices) {
-                for (j in i + 1 until piece.size) {
-                    val dx = piece[j].x - piece[i].x
-                    if (dx >= MIN_PAIR_SPAN_MS) slopes += (piece[j].y - piece[i].y).toDouble() / dx
-                }
-            }
-        }
-        if (slopes.isEmpty()) return 1.0
-        return TimingFit.rateForSpan(TimingFit.median(slopes), pieces.sumOf { it.last().x - it.first().x })
+        // Pairs inside a stretch only: a pair across a cut says nothing about pace.
+        val inside = pieces.flatMap { slopes(it, it.size) }
+        if (inside.isEmpty()) return 1.0
+        return TimingFit.rateForSpan(TimingFit.median(inside), pieces.sumOf { it.last().x - it.first().x })
     }
 
     /**
      * Knots for the chain. Where the recording has more than the sheet, the clock
-     * steps once at the middle of the gap. Where the sheet has more than the
-     * recording, a flat stretch there skips what is not sung: those lines start
-     * together and show for no time, and a monotone map has no better answer.
+     * steps once at the middle of the gap. Where the sheet has more, a flat stretch
+     * there skips what is not sung: those lines start together and show for no time.
      */
     private fun chain(pieces: List<List<Point>>, offsets: List<Double>, rate: Double): LyricsTimeMap? {
         val src = ArrayList<Long>()
@@ -327,12 +251,11 @@ object TimingPieces {
             val from = pieces[k].last().x.toDouble()
             val to = pieces[k + 1].first().x.toDouble()
             val cut = (from + to) / 2
-            val over = (rate * cut + a) - (rate * cut + b)
-            if (over <= 0) {
+            if (a <= b) {
                 push(cut, rate * cut + a)
                 push(cut + 1, rate * (cut + 1) + b)
             } else {
-                val width = over / rate
+                val width = (a - b) / rate
                 var low = maxOf(from + 1, cut - width / 2)
                 val high = minOf(to - 1, low + width)
                 low = maxOf(from + 1, high - width)
@@ -342,6 +265,4 @@ object TimingPieces {
         }
         return LyricsTimeMap.through(src, dst, rate, rate)
     }
-
-    private const val MIN_PAIR_SPAN_MS = 4_000L
 }

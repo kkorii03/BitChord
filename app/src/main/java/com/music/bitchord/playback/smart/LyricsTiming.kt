@@ -4507,11 +4507,10 @@ private const val FIRM_FIT_LINES = 15
     }
 
     /**
-     * What a word-stamped transcript says about these lines: the straight line
-     * when it passes [mayApply] and no real structure overrules it, otherwise the
-     * stretches of [TimingPieces] when those pass. When neither passes, the
-     * straight line goes back so the caller refuses it exactly as it always has.
-     * Gemini's answers stay on [fitAi]: they are not matched letters.
+     * A word-stamped transcript's answer: the straight line when it passes [mayApply]
+     * and no real structure overrules it, else [TimingPieces] when those pass, else
+     * the straight line for the caller to refuse as before. Gemini's answers stay on
+     * [fitAi]: they are not matched letters.
      */
     internal fun fitHeard(
         videoId: String?,

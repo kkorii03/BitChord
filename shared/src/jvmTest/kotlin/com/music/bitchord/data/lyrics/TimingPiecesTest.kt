@@ -96,22 +96,9 @@ class TimingPiecesTest {
         assertEquals(2, found.sizes.size)
         assertTrue(abs(found.jumpsMs.single() + 8 * 3_600L) <= 300L, "jump ${found.jumpsMs}")
         assertOnClock(rap, found, clock = clock)
-    }
-
-    @Test
-    fun `lines a recording leaves out never run the clock backwards`() {
-        val rap = sheet(7L, 40, 22, 3_600L)
-        val clock = { i: Int, t: Long ->
-            when {
-                i < 16 -> t + 5_000L
-                i < 24 -> null
-                else -> t + 5_000L - 8 * 3_600L
-            }
-        }
-        val found = assertNotNull(fit(rap, hear(rap, 160L, clock = clock)).result)
         val shown = rap.times.map { found.map.map(it) }
         assertEquals(shown.sorted(), shown)
-        // They fall between the line before the cut and the line after it.
+        // The lines left out fall between the line before the cut and the line after it.
         val before = found.map.map(rap.times[15])
         val after = found.map.map(rap.times[24])
         for (i in 16 until 24) assertTrue(found.map.map(rap.times[i]) in before..after, "line $i")
