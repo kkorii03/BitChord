@@ -672,18 +672,30 @@ class AddonClient(rawBaseUrl: String) {
          * someone serves as `addon.json` should give the same base rather than
          * a base with a document on the end of it, which would send `/search`
          * to `…/addon.json/search`.
+         *
+         * A query is kept and read as nothing but a query, since an addon may
+         * take its token there instead: every later call carries it the same
+         * way, and a `/` or a `.json` inside it says nothing about the path.
          */
         fun normalizeBase(raw: String): String {
-            val trimmed = raw.trim().trimEnd('/')
-            val lastSegment = trimmed.substringAfterLast('/', "")
-            return if (lastSegment.endsWith(".json", ignoreCase = true) && trimmed.contains("://")) {
-                trimmed.dropLast(lastSegment.length).trimEnd('/')
+            val trimmed = raw.trim()
+            val address = trimmed.substringBefore('?').trimEnd('/')
+            val query = trimmed.drop(trimmed.substringBefore('?').length)
+            val lastSegment = address.substringAfterLast('/', "")
+            val base = if (lastSegment.endsWith(".json", ignoreCase = true) && address.contains("://")) {
+                address.dropLast(lastSegment.length).trimEnd('/')
             } else {
-                trimmed
+                address
             }
+            return base + query
         }
 
-        fun manifestUrl(base: String): String = "$base$MANIFEST_SUFFIX"
+        /** The path goes in front of the query, or it would be read as part of the query. */
+        fun manifestUrl(base: String): String {
+            val address = base.substringBefore('?')
+            val query = base.drop(address.length)
+            return if (query.isEmpty()) "$base$MANIFEST_SUFFIX" else "${address.trimEnd('/')}$MANIFEST_SUFFIX$query"
+        }
 
         /**
          * An addon URL with its path hidden, for logging.
