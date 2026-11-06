@@ -133,10 +133,16 @@ data class AddonSettingOption(
  * addon returns "only what you have" — and only [tracks] is read, because a
  * [MusicSource][com.music.bitchord.data.sources.MusicSource] is asked for
  * tracks and nothing else.
+ *
+ * [error] is the one thing that is not an answer. The live addon that answers a
+ * stream it cannot serve with `HTTP 200` and `{"error": …}` (see
+ * [AddonStream.error]) is entitled to do the same here, and with [tracks]
+ * optional that read as "this catalogue holds nothing".
  */
 @Serializable
 data class AddonSearchResponse(
     @SerialName("tracks") val tracks: List<AddonTrack> = emptyList(),
+    @SerialName("error") val error: String? = null,
 )
 
 @Serializable
