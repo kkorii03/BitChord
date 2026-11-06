@@ -41,6 +41,99 @@ class DirectSourceGateTest {
     @Before
     fun resetRefusedRows() {
         com.music.bitchord.ko.KoRefusedRows.resetForTest()
+        SourceResolver.SourceCooldown.resetForTest()
+        SourceResolver.clearSearchAnswers()
+    }
+
+    /**
+     * Phone 11-06: LastWave matched 99 times and 90 of those were wrong files,
+     * across 59 of 73 songs. Only the row was remembered, so every song paid for
+     * the lookup again, up to three times, and FEARLESS spent 7.4 seconds on it
+     * and missed its crossfade by 0.7.
+     */
+    @Test
+    fun aSourceServingOnlyWrongFilesRestsAfterThreeSongs() = runBlocking {
+        val songs = listOf("Almond", "Magnetic", "Cherish", "Supernova")
+        val lying = FakeSource("LastWave", songs.map { row("$it-1", it) })
+        install(listOf(lying, FakeSource("YouTube", kind = SourceKind.YOUTUBE)))
+        try {
+            songs.take(3).forEach { assertNull(SourceResolver.directStream(target(it)) { false }) }
+            val before = lying.opens
+            assertTrue("the first three songs were asked: $before", before >= 3)
+
+            assertNull(SourceResolver.directStream(target(songs[3])) { false })
+
+            assertEquals("the fourth song must not open anything", before, lying.opens)
+        } finally {
+            install(emptyList())
+        }
+    }
+
+    /** The same catalogue holding one bad file is why a refusal is kept by row at all. */
+    @Test
+    fun aBadFileBetweenGoodOnesDoesNotRestTheSource() = runBlocking {
+        val songs = listOf("Almond", "Magnetic", "Cherish", "Supernova", "Hype Boy", "Attention")
+        val mixed = FakeSource(
+            "LastWave",
+            songs.mapIndexed { at, title -> row(if (at % 2 == 0) "bad-$at" else "good-$at", title) },
+        )
+        install(listOf(mixed, FakeSource("YouTube", kind = SourceKind.YOUTUBE)))
+        try {
+            songs.forEach { SourceResolver.directStream(target(it)) { c -> "bad-" !in c.url } }
+            assertFalse(SourceResolver.SourceCooldown.isResting(mixed.configId))
+        } finally {
+            install(emptyList())
+        }
+    }
+
+    /** Two in a row and then one that serves: the count is of songs in a row. */
+    @Test
+    fun aGoodFileStartsTheCountAgain() = runBlocking {
+        val songs = listOf("Almond", "Magnetic", "Cherish", "Supernova", "Hype Boy")
+        val mixed = FakeSource(
+            "LastWave",
+            songs.mapIndexed { at, title -> row(if (at == 2) "good-$at" else "bad-$at", title) },
+        )
+        install(listOf(mixed, FakeSource("YouTube", kind = SourceKind.YOUTUBE)))
+        try {
+            songs.forEach { SourceResolver.directStream(target(it)) { c -> "bad-" !in c.url } }
+            assertFalse(SourceResolver.SourceCooldown.isResting(mixed.configId))
+        } finally {
+            install(emptyList())
+        }
+    }
+
+    /** One song asked over and over, a track replayed or re-resolved, is one song. */
+    @Test
+    fun theSameSongAskedAgainCountsOnce() = runBlocking {
+        val lying = FakeSource("LastWave", (1..6).map { row("copy-$it", "Almond") })
+        install(listOf(lying, FakeSource("YouTube", kind = SourceKind.YOUTUBE)))
+        try {
+            repeat(4) { assertNull(SourceResolver.directStream(target("Almond")) { false }) }
+            assertFalse(SourceResolver.SourceCooldown.isResting(lying.configId))
+        } finally {
+            install(emptyList())
+        }
+    }
+
+    /** A 403 is the host's, and has its own rules; it is no evidence about the files. */
+    @Test
+    fun aHostRefusalIsNotCountedAsAWrongFile() = runBlocking {
+        val songs = listOf("Almond", "Magnetic", "Cherish", "Supernova")
+        val refusing = FakeSource("LastWave", songs.map { row("$it-1", it) })
+        install(listOf(refusing, FakeSource("YouTube", kind = SourceKind.YOUTUBE)))
+        try {
+            songs.forEach {
+                SourceResolver.directStream(target(it)) { candidate ->
+                    StreamRefusalRecovery.noteRefusedStream(candidate.url, "LastWave", IOException("HTTP 403"))
+                    false
+                }
+            }
+            assertFalse(SourceResolver.SourceCooldown.isUnmeasurable(refusing.configId))
+        } finally {
+            StreamRefusalRecovery.resetForTest()
+            install(emptyList())
+        }
     }
 
     @Test

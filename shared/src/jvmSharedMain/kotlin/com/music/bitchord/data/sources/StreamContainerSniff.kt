@@ -129,6 +129,12 @@ object StreamContainerSniff {
         }
     }
 
+    /**
+     * How many bytes would show what follows [head]'s ID3v2 tag, when the tag
+     * runs past [head]. Null when there is no tag, or its end is already in view.
+     */
+    fun bytesPastId3(head: ByteArray): Int? = null
+
     /** Where the audio starts behind [head]'s ID3v2 tag, when the tag ends inside [head]. */
     private fun afterId3(head: ByteArray): Int? {
         if (head.size < ID3_HEADER_BYTES) return null

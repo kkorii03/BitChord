@@ -121,4 +121,40 @@ class StreamContainerSniffTest {
         assertFalse(StreamContainerSniff.looksLossy(inMp4))
         assertEquals("mp4", StreamContainerSniff.lossyContainer(bytes(0, 0, 0, 0x20) + ascii("ftypM4A ")))
     }
+
+    /** ALAC in MP4 names itself the same way, and is every bit as lossless. */
+    @Test
+    fun `alac in an mp4 is lossless`() {
+        val inMp4 = bytes(0, 0, 0, 0x20) + ascii("ftypM4A ") + ByteArray(40) + ascii("alac")
+        assertFalse(StreamContainerSniff.looksLossy(inMp4))
+    }
+
+    /** Synchsafe: seven bits a byte, so a tag of [size] bytes in the ID3v2 header. */
+    private fun id3Header(size: Int) = ascii("ID3") + bytes(
+        4, 0, 0,
+        (size shr 21) and 0x7F, (size shr 14) and 0x7F, (size shr 7) and 0x7F, size and 0x7F,
+    )
+
+    @Test
+    fun `a tag ending past the head says how much more would show what is behind it`() {
+        val head = id3Header(10_000) + ByteArray(4_000)
+        // Ten bytes of header, the tag, and the FLAC opening behind it, length included.
+        assertEquals(10_036, StreamContainerSniff.bytesPastId3(head))
+    }
+
+    @Test
+    fun `no more is wanted when the head already shows it or there is no tag`() {
+        assertNull(StreamContainerSniff.bytesPastId3(id3Header(16) + ByteArray(16) + flacHead(44_100, 180)))
+        assertNull(StreamContainerSniff.bytesPastId3(flacHead(44_100, 180)))
+        assertNull(StreamContainerSniff.bytesPastId3(ascii("ID3\u0004\u0000\u0000")))
+    }
+
+    /**
+     * Not knowing is not good enough here: an MP3 with cover art opens exactly
+     * like this, and it is far more common than a FLAC with an ID3 tag.
+     */
+    @Test
+    fun `a tag whose end cannot be seen is still refused`() {
+        assertEquals("id3", StreamContainerSniff.lossyContainer(id3Header(10_000) + ByteArray(4_000)))
+    }
 }
