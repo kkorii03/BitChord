@@ -222,14 +222,28 @@ class LyricClockTest {
         assertEquals(10_380.0, clock.displayedMs, 0.0)
     }
 
-    /** A reading taken before a pause is where the song still is when it resumes, however long ago. */
+    /** A reading taken during a pause is where the song still is when it resumes, however long ago. */
     @Test fun resumingAfterAPauseStartsWhereItStopped() {
         val clock = LyricClock(10_000)
         clock.frame(0.0, 10_000, 0.0, 0)
         clock.hold(10_000, 5.0)
         clock.restart()
-        assertEquals(10_000L, clock.frame(60_000.0, 10_000, 0.0, 0))
-        assertEquals(10_016L, clock.frame(60_016.0, 10_000, 0.0, 0))
+        assertEquals(10_000L, clock.frame(60_000.0, 10_000, 5.0, 0))
+        assertEquals(10_016L, clock.frame(60_016.0, 10_000, 5.0, 0))
+    }
+
+    /**
+     * Back from the background after a pause, the first frame may see a reading
+     * taken *before* the pause. It is not where the song still is: the song
+     * played on, so the words must be carried forward, not frozen at the
+     * pre-pause position (11-06, "stops, then rushes to catch up").
+     */
+    @Test fun returningAfterAPauseDoesNotFreezeAtAPrePauseReading() {
+        val clock = LyricClock(10_000)
+        clock.frame(0.0, 10_000, 0.0, 0)
+        clock.hold(10_000, 5_000.0)
+        clock.restart()
+        assertEquals(30_000L, clock.frame(20_000.0, 14_000, 4_000.0, 0))
     }
 
     /** Coming back to the app while it played on: the last reading has moved on by its age. */

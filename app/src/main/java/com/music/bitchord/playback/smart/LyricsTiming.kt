@@ -729,17 +729,12 @@ object LyricsTiming {
         return Clock.Substitute(source, track)
     }
 
-    /**
-     * The copy actually serving [videoId] — not the copy it may swap to later.
-     * [audioSource] is the caller's [audioSourceKey], when it knows what is playing.
-     */
+    /** The copy actually serving [videoId] — not the copy it may swap to later. */
     internal fun playingClock(videoId: String, audioSource: String? = null): Clock = when {
         StreamChoice.isSubstitute(videoId) -> substituteClock(videoId)
         // An explicit YouTube choice is the stream; a saved file only answers
-        // when nothing has been chosen yet — or when the file is what is playing.
-        // A verified download taking over mid-song leaves the choice behind, and
-        // read as the stream it threw away an answer heard off this very file
-        // (11-06 MUny_GDYIDM: playing=youtube base=alt dropped=1).
+        // when nothing has been chosen yet, or when a caller's [audioSource] says the
+        // file took over and left the choice behind (11-06 MUny_GDYIDM: answer dropped).
         StreamChoice.isYouTube(videoId) && audioSource != audioSourceKey(videoId, localFile = true) -> Clock.YouTube
         else -> {
             val meta = KoDownloadRecords.savedMetadataFor(videoId)

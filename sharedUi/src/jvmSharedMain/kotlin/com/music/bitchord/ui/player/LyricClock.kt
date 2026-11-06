@@ -92,16 +92,22 @@ internal class LyricClock(startMs: Long) {
     }
 
     /**
-     * Not running: settle on [positionMs] outright, as of [nowMs]. Called again
-     * for every reading that arrives, which is how a seek made while paused still
-     * moves the words. [songStopped] false is a panel not on show while the song
-     * plays on: its readings are not standing still, and the first frame carries
-     * the last one forward like any other.
+     * Not running: settle on [positionMs] outright, as of [sampledAtMs] — when
+     * the reading was taken, not when it was handed over. Called again for every
+     * reading that arrives, which is how a seek made while paused still moves the
+     * words. [songStopped] false is a panel not on show while the song plays on:
+     * its readings are not standing still, and the first frame carries the last
+     * one forward like any other.
+     *
+     * The stamp is the reading's own, so a reading taken *before* the pause is
+     * not mistaken for one taken during it: on the way back from the background
+     * the first frame then carries it forward instead of freezing the words at
+     * the pre-pause position (11-06, "stops, then rushes").
      */
-    fun hold(positionMs: Long, nowMs: Double, songStopped: Boolean = true) {
+    fun hold(positionMs: Long, sampledAtMs: Double, songStopped: Boolean = true) {
         restart()
         displayedMs = positionMs.toDouble()
-        if (songStopped) heldAtMs = nowMs
+        if (songStopped) heldAtMs = sampledAtMs
     }
 
     /**
@@ -126,12 +132,13 @@ internal class LyricClock(startMs: Long) {
 
         if (firstOfRun) {
             lastNowMs = nowMs
-            // Taken while playback stood still — the last reading before a
-            // pause, or one made during it — it is where the song still is now,
-            // however long ago it was taken. Taken while playing, the song has
-            // moved on since by exactly how long ago that was.
+            // Taken while playback stood still — a reading made during the pause,
+            // stamped at or after the hold — it is where the song still is now,
+            // however long ago it was taken. Taken while playing, or before the
+            // pause, the song has moved on since by exactly how long ago that was.
             val takenAt = when {
-                sampledAtMs.isNaN() || sampledAtMs <= heldAtMs -> nowMs
+                sampledAtMs.isNaN() -> nowMs
+                heldAtMs.isFinite() && sampledAtMs >= heldAtMs -> nowMs
                 else -> minOf(sampledAtMs, nowMs)
             }
             anchor(takenAt, reportedMs)
