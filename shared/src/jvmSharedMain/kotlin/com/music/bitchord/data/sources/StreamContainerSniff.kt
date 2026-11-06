@@ -42,10 +42,10 @@ object StreamContainerSniff {
     /** Which lossy container [head] opens, for the refusal's log line; null when none. */
     fun lossyContainer(head: ByteArray): String? {
         if (head.size < 2) return null
-        // ISO base media. FLAC can be carried in MP4, and then its sample entry
-        // says so in the opening; without that it is AAC under a FLAC claim.
+        // ISO base media. FLAC or ALAC can be carried in MP4, and then its sample
+        // entry says so in the opening; without that it is AAC under a FLAC claim.
         if (head.size >= FTYP_OFFSET + 4 && matches(head, FTYP_OFFSET, FTYP)) {
-            return if (indexOf(head, FLAC_MARKER) >= 0) null else "mp4"
+            return if (indexOf(head, FLAC_MARKER) >= 0 || indexOf(head, ALAC_MARKER) >= 0) null else "mp4"
         }
         // MPEG audio: an ID3 tag in front of the frames, or a frame sync. FLAC
         // files sometimes carry an ID3 tag too, and the marker follows it.
@@ -133,14 +133,21 @@ object StreamContainerSniff {
      * How many bytes would show what follows [head]'s ID3v2 tag, when the tag
      * runs past [head]. Null when there is no tag, or its end is already in view.
      */
-    fun bytesPastId3(head: ByteArray): Int? = null
+    fun bytesPastId3(head: ByteArray): Int? {
+        if (!matches(head, 0, ID3) || head.size < ID3_HEADER_BYTES || afterId3(head) != null) return null
+        return id3End(head) + FLAC_STREAMINFO_BYTES
+    }
 
     /** Where the audio starts behind [head]'s ID3v2 tag, when the tag ends inside [head]. */
     private fun afterId3(head: ByteArray): Int? {
         if (head.size < ID3_HEADER_BYTES) return null
+        return id3End(head).takeIf { it < head.size }
+    }
+
+    private fun id3End(head: ByteArray): Int {
         var size = 0
         for (index in 6..9) size = (size shl 7) or (head[index].toInt() and 0x7F)
-        return (ID3_HEADER_BYTES + size).takeIf { it < head.size }
+        return ID3_HEADER_BYTES + size
     }
 
     private fun matches(head: ByteArray, at: Int, wanted: ByteArray): Boolean {
@@ -152,6 +159,7 @@ object StreamContainerSniff {
         (0..head.size - wanted.size).firstOrNull { matches(head, it, wanted) } ?: -1
 
     private val FLAC_MARKER = "fLaC".toByteArray(Charsets.US_ASCII)
+    private val ALAC_MARKER = "alac".toByteArray(Charsets.US_ASCII)
     private val FTYP = "ftyp".toByteArray(Charsets.US_ASCII)
     private val ID3 = "ID3".toByteArray(Charsets.US_ASCII)
 
