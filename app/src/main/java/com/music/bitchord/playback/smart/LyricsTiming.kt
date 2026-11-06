@@ -429,10 +429,13 @@ object LyricsTiming {
             // YouTube→copy map must not run a second time.
             hq = null
             saved
-        } else if (baseClock is Clock.Unknown && (playing is Clock.YouTube || hq != null)) {
+        } else if (baseClock is Clock.Unknown &&
+            (playing is Clock.YouTube || hq != null || audioSource == audioSourceKey(videoId, localFile = true))
+        ) {
             // An untagged record was made on the upload. On the upload that is
             // the playing clock; on a copy only the verified HQ map carries it,
-            // and it is applied on top of it below.
+            // and it is applied on top of it below. Under the file's key it was
+            // made for the file.
             saved
         } else {
             val conversion = conversion(context, videoId, baseClock, playing)
@@ -855,6 +858,13 @@ object LyricsTiming {
             }
             else -> null
         }
+    }
+
+    /** Whether an answer from words heard on the stream would survive [timing] on [videoId]'s file. */
+    internal fun streamWordsReachFile(context: Context, videoId: String): Boolean {
+        val meta = KoDownloadRecords.savedMetadataFor(videoId)
+        val file = clockForLocalCopy(meta?.hqSourceConfigId, meta?.hqTrackId)
+        return conversion(context, videoId, Clock.YouTube, file) != null
     }
 
     /** [adjustment] composed after [conversion]: its map is measured clock → playing clock. */

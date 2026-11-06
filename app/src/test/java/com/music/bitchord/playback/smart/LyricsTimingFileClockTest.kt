@@ -133,6 +133,19 @@ class LyricsTimingFileClockTest {
     }
 
     @Test
+    fun `stream words are for a file only when a map reaches it`() {
+        savedFile()
+        assertEquals(false, LyricsTiming.streamWordsReachFile(context, id))
+
+        verdict(offsetMs = 15L)
+        assertEquals(true, LyricsTiming.streamWordsReachFile(context, id))
+
+        HqVerificationStore.clear(context)
+        savedFile(pair = false)
+        assertEquals(true, LyricsTiming.streamWordsReachFile(context, id))
+    }
+
+    @Test
     fun `a file of YouTube's own bytes stays on YouTube's clock`() {
         fileTookOver(pair = false)
         answer(fileSource, "yt")
