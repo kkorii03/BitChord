@@ -142,7 +142,7 @@ internal class NextTrackPreparation(
             job?.cancel()
             cancelPreparedDownloads()
             cancelPreparedMix()
-            NextPrepCache.clear()
+            NextPrepCache.clearUnlessFor(player.currentMediaItem?.mediaId)
         }
         rowId = snapshot.rowId
         queueKey = snapshot.queueKey
@@ -194,7 +194,7 @@ internal class NextTrackPreparation(
         queueKey = null
         completedRowId = null
         completedQueueKey = null
-        NextPrepCache.clear()
+        NextPrepCache.clearUnlessFor(currentPlayer()?.currentMediaItem?.mediaId)
     }
 
     /** Stops the lossless fetch this bundle started for a row that is no longer next. */
@@ -1253,6 +1253,11 @@ internal object NextPrepCache {
 
     fun clear() {
         ready = null
+    }
+
+    /** [clear], unless the entry is for the row that has just started playing. */
+    fun clearUnlessFor(playingVideoId: String?) {
+        if (ready?.videoId != playingVideoId) ready = null
     }
 }
 
