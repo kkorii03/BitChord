@@ -418,20 +418,22 @@ class RefinePolicyTest {
 
     @Test
     fun aDriftWithAWholeArrangementOffsetIsAppliedWhole() {
-        // 11-07 8gyLR4NfMiI: the sheet was 24 s early with a small drift. The
-        // drift's offset was clipped to the 10 s wide cap, leaving it 13.8 s
-        // early. A drift whose offset is past the wide cap is a whole-
-        // arrangement move: apply it as the flat fit does, up to 30 s, whole
-        // or not at all.
-        val lines = List(12) { index -> line(20_000L + index * 12_000L, "line$index") }
+        // 11-07 8gyLR4NfMiI: the sheet was 24.3 s early with a -446 ms/min
+        // drift (lyrics-refine lines=20 median=24339ms mad=128ms slope=-446
+        // model=drift). The drift's offset was clipped to the 10 s wide cap,
+        // leaving it 13.8 s early. A drift whose offset is past the wide cap is
+        // a whole-arrangement move: apply it as the flat fit does, up to 30 s,
+        // whole or not at all. The openings are unique so the narrow window
+        // cannot match a neighbouring line's word and hide the drift.
+        val lines = List(20) { index -> line(20_000L + index * 12_000L, uniqueText(index)) }
         val heard = lines.map { line ->
-            heard(line.text, line.timeMs + 24_000L - line.timeMs / 200)
+            heard(line.text, line.timeMs + 24_339L - 446L * line.timeMs / 60_000L)
         }
         val result = RefinePolicy.compute(lines, heard)
 
         assertTrue(result.applied)
         assertEquals(RefinePolicy.Model.WIDE, result.model)
-        assertTrue(abs(result.medianMs - 24_000L) <= 100L, "offset ${result.medianMs} ms")
+        assertTrue(abs(result.medianMs - 24_339L) <= 100L, "offset ${result.medianMs} ms")
     }
 
     @Test
