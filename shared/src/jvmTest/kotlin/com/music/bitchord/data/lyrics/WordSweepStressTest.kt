@@ -131,4 +131,30 @@ class WordSweepStressTest {
         assertEquals(0f, line.revealedChars(10_500L))
         assertTrue(line.revealedChars(11_000L) > 0f)
     }
+
+    @Test
+    fun `a filled last word is not a held note`() {
+        val line = assertNotNull(
+            LyricLine(timeMs = 10_000L, text = "hold on").withHeardWords(
+                listOf(LyricsWordAlign.Heard("hold", 10_000L, 10_300L), LyricsWordAlign.Heard("on", 10_400L, 10_600L)),
+                nextLineMs = 16_300L,
+            ),
+        )
+
+        assertEquals(16_000L, line.words.last().endMs, "the sweep still fills the slot")
+        assertTrue(line.growingWords.isEmpty(), "a word heard for 200 ms is not a held note")
+        assertTrue(line.wordLift(1, 11_000L) <= 0.3f, "and it does not rise like one")
+    }
+
+    @Test
+    fun `a word heard held still grows after the fill`() {
+        val line = assertNotNull(
+            LyricLine(timeMs = 10_000L, text = "hold on").withHeardWords(
+                listOf(LyricsWordAlign.Heard("hold", 10_000L, 10_300L), LyricsWordAlign.Heard("on", 10_400L, 12_000L)),
+                nextLineMs = 16_300L,
+            ),
+        )
+
+        assertEquals(1, line.growingWords.size)
+    }
 }

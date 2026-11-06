@@ -18,6 +18,8 @@ data class LyricWord(
     val endMs: Long,
     val text: String,
     val syllables: List<LyricSyllable> = emptyList(),
+    /** How much of [endMs] was filled in for display by [withHeardWords], not heard. The sweep uses the full span; a held-note animation must not. */
+    val filledMs: Long = 0,
 ) {
     /**
      * How many of [text]'s characters have been sung at [positionMs], as a
@@ -520,7 +522,7 @@ private const val RISE_MIN_MS = 250f
  * falling into "up" and "not up".
  */
 private fun liftHeight(word: LyricWord): Float {
-    val held = (word.endMs - word.startMs).toFloat()
+    val held = (word.endMs - word.startMs - word.filledMs).toFloat()
     val through = ((held - LIFT_QUICK_MS) / (LIFT_HELD_MS - LIFT_QUICK_MS)).coerceIn(0f, 1f)
     return LIFT_FLOOR + (1f - LIFT_FLOOR) * smooth(through)
 }
@@ -550,7 +552,7 @@ private fun LyricWord.canGrow(): Boolean {
     val length = text.length
     if (length == 0 || length > GROW_MAX_CHARS) return false
     if ('-' in text || text.any { it.isBlockScript() || it.isJoinedScript() }) return false
-    val held = endMs - startMs
+    val held = endMs - startMs - filledMs
     return when {
         length == 1 -> held >= GROW_MIN_SOLO_MS
         length <= 3 -> held >= GROW_MIN_SHORT_MS + (length - 2) * GROW_SHORT_STEP_MS

@@ -1604,7 +1604,7 @@ object LyricsTiming {
             if (replacedSheet(videoId, key)) return@withLock false
             val check = fitSongCheck(
                 context, song, lines, key, ENGINE_DEEPGRAM_WHISPER, null,
-                SongAsk(heard, language, heard.audioMs / 1000.0), retry = false,
+                SongAsk(heard.askedNothing(), language, heard.audioMs / 1000.0), retry = false,
             )
             applySongCheck(context, song, key, ENGINE_DEEPGRAM_WHISPER, check)
             // Stretches an older fit made and this one no longer stands behind.
