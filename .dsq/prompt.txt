@@ -1,0 +1,12 @@
+이 브랜치(cloud/cache-rendition-wire)의 마지막 커밋을 위험 심사역이 '병합 불가'로 판정했다. 심사 결과대로 고쳐라. 목표: 캐시에 남은 잘못된 음원(같은 videoId의 다른 녹음, 30초 미리듣기)이 다음 재생에서 그대로 나오는 결함을 막는다. 저장 데이터 삭제 경로이므로 보수적으로.
+
+고칠 것 (모두 필수):
+1. app/src/main/java/com/music/bitchord/playback/AudioCache.kt의 discardDishonestRendition, judgedOnOpen, 그리고 open 경로에서 그것을 부르는 줄을 없앤다. 이유: bc_hq_lossless 마커는 완성된 #hifi에만 붙으므로(ko/KoLosslessCache.kt, ko/KoRenditionCandidate.kt 주석 참고) #alt에 대해 항상 통과하는 죽은 가드이고, 살아나면 seek 재open 중 재생 entry를 지워 혼합 파일이 생긴다.
+2. PlaybackService.adoptCachedTrack: decoder format 확인 앞에서 refusalForCachedRendition을 묻는 순서는 유지한다. 그러나 AudioCache.discardRendition은 Unit이고 재생 중 reader가 락을 잡으면 removeResource가 throw 한다(AudioCache.kt 주석 참고). discardRendition이 실제 삭제 여부를 Boolean으로 돌려주게 바꾸고(호출부 전부 확인), 삭제가 성공했을 때만 adoptUnresolved(playingMime=null, playing=null)로 넘긴다. 실패하면 기존처럼 실제 mime과 cachedFloor를 넘겨 320kbps 교체 경로를 잃지 않게 한다. 호출 순서상 mime을 아직 못 얻었으면 format을 먼저 읽되 format이 없을 때의 조기 return이 거부 판정을 막지 않게 한다.
+3. AudioCache.invalidateAddonRendition: #alt 가족을 통째로 지우지 말 것. 거부된 파일과 다른 addon이 채운 정상 복사본, 오프라인용으로 남긴 완성 복사본(keepsAddonCopy), 정상 Atmos 복사본이 사라진다. entry의 META_ORIGIN/서빙 태그 등 코드에 이미 있는 정보로 거부된 스트림이 쓴 복사본임이 확인될 때만 지운다. 확인할 정보가 없으면 지우지 말고 로그만 남긴다. 반환값은 실제 삭제 결과로.
+4. headOf: 12바이트로는 ID3 앞머리가 붙은 FLAC을 lossy로 오판한다. StreamContainerSniff.HEAD_BYTES를 읽고 KoStreamProbe가 쓰는 bytesPastId3 처리를 재사용한다.
+5. 시험: 재현 시험을 먼저 쓰고 수정 전에 실패하는 것을 확인한다. 최소한 (a) ID3 FLAC 헤드는 lossy로 거부되지 않는다 (b) 삭제 실패 시 floor를 유지하는 판단(순수 함수로 뽑을 것) (c) 다른 출처의 #alt는 지우지 않는 판단(순수 함수로 뽑을 것). 테스트 클래스 이름을 요약에 적어라(워크플로 목록은 내가 추가한다).
+
+건드리지 말 것: 가사 싱크 코드(LyricsTiming, SongHearing, VideoAudio, LyricsController), .github/workflows, keys, 서명 설정.
+규칙: 배터리 우선(주기 폴링·타이머 금지). 바꾼 함수의 모든 호출부와 타입을 다시 읽고 확인. 기존 코드의 의도(주석·설계)를 지울 때는 요약에 이유를 적을 것. 모르는 Android/Media3 API는 context7로 확인. AGENTS.md(ponytail) 규칙을 따를 것.
+마지막에 10줄 이내로 요약: 수정 파일 / 핵심 변경 / 테스트 결과 / 미해결 문제.
