@@ -27,6 +27,7 @@ import com.music.bitchord.data.lyrics.RefinePolicy
 import com.music.bitchord.data.lyrics.SongCheckWindow
 import com.music.bitchord.data.lyrics.SongSyncRetry
 import com.music.bitchord.data.lyrics.TimingFit
+import com.music.bitchord.data.lyrics.TimingPieces
 import com.music.bitchord.data.lyrics.retimedBy
 import com.music.bitchord.data.lyrics.retimedByLine
 import com.music.bitchord.data.lyrics.timedBy
@@ -91,8 +92,9 @@ import kotlinx.serialization.json.Json
  *     measured again as more does.
  *  2. **AI (Gemini)** — [placeWithAi]: Gemini watches the YouTube video and says
  *     when each line starts. Its answers are fitted to one straight line —
- *     a start and a pace ([TimingFit]) — rather than taken one by one, and
- *     refused when they agree on none. On the AI button, or automatically when
+ *     a start and a pace ([TimingFit]), or for a transcript, several stretches
+ *     of such a line where the structure differs ([TimingPieces]) — rather than
+ *     taken one by one, and refused when they agree on none. On the AI button, or automatically when
  *     the free measurement has nothing (the "가사 타이밍 자동 보정" setting).
  *  3. **By hand** — [setManual]: the listener's own correction for this one
  *     video, on top of whichever of the two is in place.
@@ -1613,7 +1615,7 @@ object LyricsTiming {
         val language = com.music.bitchord.data.lyrics.Deepgram.languageFor(
             lines.filter { it.text.isNotBlank() }.map { it.text },
         )
-        val heard = SongHearing.hear(context, song, untilSeconds, language) ?: return null
+        val heard = hearThrough429(context, song, untilSeconds, untilSeconds, language) ?: return null
         val words = heard.words?.take(MAX_HEARD_WORDS)
             ?.map { word -> SavedWord(t = word.text, s = word.startMs, e = word.endMs) }
             ?.takeIf { it.isNotEmpty() }
@@ -2859,17 +2861,19 @@ object LyricsTiming {
                 // Whatever of the video's sound has landed, up to all of it: a
                 // cover's offset shows in its opening, and no decode or whole
                 // file is waited for any more. Nothing to hear spends no engine.
-                val hearing = SongHearing.hear(
+                val hearing = hearThrough429(
                     context,
                     song,
                     AI_HEAR_SECONDS,
+                    AI_HEAR_LEAST_SECONDS,
                     language,
-                    minSeconds = AI_HEAR_LEAST_SECONDS,
                 ) ?: break
                 audioPresent = true
                 listenedClock = hearing.clock
-                noteAttempt(name)
-                if (name == ENGINE_WHISPER) {
+                // A 429 heard nothing. Spent anyway, this video's Whisper never came back for these lyrics.
+                val spent = hearing.httpCode != 429
+                if (spent) noteAttempt(name)
+                if (spent && name == ENGINE_WHISPER) {
                     if (probe == null) {
                         store(context).update(videoId) { it.copy(whisperKey = key) }
                     } else {
@@ -2883,10 +2887,13 @@ object LyricsTiming {
                 // not disagreement. The whole song leaves every line in.
                 val inReach = sung.filter { it.value.timeMs <= hearing.audioMs }
                     .takeIf { it.size >= MIN_AI_LINES } ?: sung
-                val starts = heard?.let {
-                    com.music.bitchord.data.lyrics.LyricsWordAlign.placeLines(inReach.map { s -> s.value.text }, it)
+                val placement = heard?.let {
+                    com.music.bitchord.data.lyrics.LyricsWordAlign.placeLinesDetailed(inReach.map { s -> s.value.text }, it)
                 }
-                val raw = starts?.let { fitAi(lines, inReach.map { s -> s.index }, it) }
+                val starts = placement?.starts
+                val raw = placement?.let {
+                    fitHeard(videoId, lines, inReach.map { s -> s.index }, it) { fit -> aiMayApply(lines, fit, isVideo) }
+                }
                 val fitted = raw?.takeIf { aiMayApply(lines, it, isVideo) }
                 TrackLog.d(
                     TAG,
@@ -2903,10 +2910,9 @@ object LyricsTiming {
                     videoId,
                 )
                 if (heardAnswer.httpCode == 429) {
-                    val wait = SongSyncRetry.retryDelayMs(heardAnswer.retryAfterMs, 0)
+                    // The retries ran out; the hold they left is the wait.
+                    val wait = (songQuietUntilMs - System.currentTimeMillis()).coerceAtLeast(0L)
                     rateLimitedWaitMs = maxOf(rateLimitedWaitMs ?: 0L, wait)
-                    songQuietUntilMs = System.currentTimeMillis() + wait
-                    rateLimitedLog(videoId, wait)
                     // The same key is refused for Whisper too; Gemini is a
                     // separate provider and may still answer below.
                     break
@@ -3045,8 +3051,8 @@ object LyricsTiming {
      * No timer or poll: the caller runs this when the lyrics arrive, once per
      * playback. Missing audio is not written to the store — the next playback
      * may have it — and the caller keeps it to one try per session. A 429 is
-     * not spent as an answer: it is retried at most twice, then held until its
-     * `Retry-After` has passed so the next playback tries again. Returns true
+     * not spent as an answer: it is retried per [SongSyncRetry], then held until
+     * its wait has passed so the next playback tries again. Returns true
      * when an engine answered and its answer was recorded; false when there
      * was nothing to ask, or the song was held for a 429.
      */
@@ -3643,11 +3649,15 @@ object LyricsTiming {
             recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe, retry)
             return SongCheck("few-words", null, heard, null, null, seconds, answer.httpCode, heard.size, probe?.failure, listenClock)
         }
-        val starts = LyricsWordAlign.placeLines(texts, heard)
+        val placement = LyricsWordAlign.placeLinesDetailed(texts, heard)
+        val starts = placement.starts
         val spellable = com.music.bitchord.data.lyrics.Deepgram.spellableLines(texts, language)
         // Why a match is what it is: lines in the window, lines placed, lines the language could spell.
         val detail = " lines=${texts.size} placed=${starts.count { it != null }} spellable=$spellable lang=$language"
-        val fitted = fitAi(lines, indices, starts, spellable) ?: run {
+        val fitted = fitHeard(song.videoId, lines, indices, placement, spellable) { fit ->
+            LyricsAiGuard.agreementAllows(fit.matchPercent) &&
+                LyricsAiGuard.songShiftAllows(shownShiftMs(lines, fit), fit.matchPercent)
+        } ?: run {
             songLog(song.videoId, "no-fit", null, null, seconds, words = heard.size, http = answer.httpCode, detail = detail)
             recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe, retry)
             return SongCheck("no-fit", null, heard, null, null, seconds, answer.httpCode, heard.size, clock = listenClock)
@@ -3716,9 +3726,8 @@ object LyricsTiming {
     )
 
     /**
-     * Whisper with the 429 rules applied: at most two retries, `Retry-After`
-     * believed (exponential otherwise), and a long wait deferred rather than
-     * held. Null means the song was rate-limited and marked for later.
+     * Whisper for a song check, with the 429 rules applied. Null means there was
+     * no sound, or the song was rate-limited and marked for later.
      */
     private suspend fun listenForSong(
         context: Context,
@@ -3739,34 +3748,48 @@ object LyricsTiming {
             }
             delay(quiet)
         }
+        val answer = hearThrough429(
+            context,
+            song,
+            untilSeconds,
+            minSeconds = if (untilSeconds < VideoAudio.SONG_CHECK_SECONDS) SONG_FIRST_LEAST_SECONDS else untilSeconds,
+            language,
+        ) ?: run {
+            songLog(videoId, "no-audio", null, null, 0)
+            probe?.failure = NextPrepPolicy.SyncFailure.NO_AUDIO
+            return null
+        }
+        if (answer.httpCode == 429) {
+            markRateLimited(context, videoId, key, songQuietUntilMs - System.currentTimeMillis())
+            probe?.failure = NextPrepPolicy.SyncFailure.RATE_LIMIT
+            return null
+        }
+        return answer
+    }
+
+    /** [SongHearing.hear] under [SongSyncRetry]. A 429 back means the retries ran out, [songQuietUntilMs] holding the wait. */
+    private suspend fun hearThrough429(
+        context: Context,
+        song: Song,
+        untilSeconds: Double,
+        minSeconds: Double,
+        language: String,
+    ): SongHearing.Heard? {
         var attempt = 0
         while (true) {
-            // Straight off the file, or the streaming copy as it stands; null
-            // when there is nothing to listen to yet.
-            val answer = SongHearing.hear(
-                context,
-                song,
-                untilSeconds,
-                language,
-                minSeconds = if (untilSeconds < VideoAudio.SONG_CHECK_SECONDS) SONG_FIRST_LEAST_SECONDS else untilSeconds,
-            ) ?: run {
-                songLog(videoId, "no-audio", null, null, 0)
-                probe?.failure = NextPrepPolicy.SyncFailure.NO_AUDIO
-                return null
-            }
+            // Straight off the file, or the streaming copy as it stands.
+            val answer = SongHearing.hear(context, song, untilSeconds, language, minSeconds) ?: return null
             if (answer.httpCode != 429) {
                 songQuietUntilMs = 0L
                 return answer
             }
             val wait = SongSyncRetry.retryDelayMs(answer.retryAfterMs, attempt)
             songQuietUntilMs = System.currentTimeMillis() + wait
-            rateLimitedLog(videoId, wait)
+            rateLimitedLog(song.videoId, wait)
             if (!SongSyncRetry.shouldRetry(answer.httpCode, attempt) ||
                 !SongSyncRetry.canWaitInline(wait)
             ) {
-                markRateLimited(context, videoId, key, wait)
-                probe?.failure = NextPrepPolicy.SyncFailure.RATE_LIMIT
-                return null
+                return answer
             }
             delay(wait)
             attempt++
@@ -4495,6 +4518,47 @@ private const val FIRM_FIT_LINES = 15
         }
         val match = (line.inliers * 100.0 / base).roundToInt().coerceIn(0, 100)
         return Adjustment.Mapped(line.map, byAi = true, rate = line.rate, matchPercent = match)
+    }
+
+    /**
+     * A word-stamped transcript's answer: the straight line when it passes [mayApply]
+     * and no real structure overrules it, else [TimingPieces] when those pass, else
+     * the straight line for the caller to refuse as before. Gemini's answers stay on
+     * [fitAi]: they are not matched letters.
+     */
+    internal fun fitHeard(
+        videoId: String?,
+        lines: List<LyricLine>,
+        indices: List<Int>,
+        placement: LyricsWordAlign.Placement,
+        spellable: Int = indices.size,
+        mayApply: (Adjustment.Mapped) -> Boolean,
+    ): Adjustment.Mapped? {
+        val straight = fitAi(lines, indices, placement.starts, spellable)
+        val outcome = TimingPieces.fit(
+            indices.map { lines[it].timeMs },
+            indices.map { lines[it].text },
+            placement,
+            spellable,
+        )
+        val found = outcome.result
+        val pieces = found?.let { Adjustment.Mapped(it.map, byAi = true, rate = it.rate, matchPercent = it.agreePercent) }
+        val straightHolds = straight != null && mayApply(straight)
+        val chosen = when {
+            found == null || pieces == null -> straight
+            straightHolds && !TimingPieces.overrules(straight!!.map, found) -> straight
+            mayApply(pieces) -> pieces
+            else -> straight
+        }
+        TrackLog.d(
+            TAG,
+            "sync pieces: " + (
+                found?.let { "sizes=${it.sizes} jumps=${it.jumpsMs} rate=${"%.3f".format(java.util.Locale.ROOT, it.rate)} agree=${it.agreePercent}" }
+                    ?: "refused=${outcome.refused}"
+                ) + " line=${straight?.matchPercent} used=${if (chosen === pieces && pieces != null) "pieces" else "line"}",
+            videoId,
+        )
+        return chosen
     }
 
     // ---- By hand ----------------------------------------------------------------------

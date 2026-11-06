@@ -1,5 +1,6 @@
 package com.music.bitchord.data.lyrics
 
+import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.Http
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
@@ -31,6 +32,7 @@ import java.util.concurrent.TimeUnit
  */
 object Deepgram {
 
+    private const val TAG = "Deepgram"
     private const val ENDPOINT = "https://api.deepgram.com/v1/listen"
 
     /** Fast (a second or two) but deaf to most singing over a band: 9–66 words in a whole pop song. */
@@ -152,7 +154,9 @@ object Deepgram {
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            // The message names the host at most; the key is only ever a header.
+            Log.w(TAG, "listen: no reply: ${e::class.simpleName}: ${e.message?.take(120)}")
             Answer(null)
         }
     }

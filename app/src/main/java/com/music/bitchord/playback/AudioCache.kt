@@ -39,12 +39,14 @@ import com.music.bitchord.ko.KoLosslessCache
 import com.music.bitchord.ko.KoPlaybackReadTracker
 import com.music.bitchord.ko.KoPrefetchQueue
 import com.music.bitchord.ko.KoRenditionEvents
+import com.music.bitchord.data.sources.CachedRenditionBar
 import com.music.bitchord.data.sources.HqQuality
 import com.music.bitchord.data.sources.HqTier
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
+import com.music.bitchord.data.sources.StreamContainerSniff
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.startup.StartupWork
@@ -430,15 +432,20 @@ object AudioCache {
      * definitely fine.
      *
      * Runs on the caller's thread; call it off the main one.
+     *
+     * @return true when the bytes are actually gone. A key still held by a
+     *   live reader is a false, and a caller that must not continue a partial
+     *   prefix can retry rather than assume it was cleared.
      */
-    fun discardRendition(uri: Uri) {
+    fun discardRendition(uri: Uri): Boolean {
         val key = keyFactory.buildCacheKey(DataSpec(uri))
-        runCatching { cache.removeResource(key) }
+        return runCatching { cache.removeResource(key) }
             .onSuccess {
                 forgetPurgeCandidate(key)
                 TrackLog.d(TAG, "discarded unused rendition $key", about = mediaIdIn(uri))
             }
             .onFailure { TrackLog.d(TAG, "rendition $key still in use: ${it.message}", about = mediaIdIn(uri)) }
+            .isSuccess
     }
 
     /**
@@ -893,6 +900,7 @@ object AudioCache {
         koEvents.noteServed(mediaId) // [KO] served-progress
         val key = spec.key ?: keyFactory.buildCacheKey(spec)
         val origin = originOf(spec.uri, mediaId, servedUrl)
+        val servedSource = servedSourceOf(spec.uri, mediaId).identity
         val song = notedSongs[mediaId]
         // Automix's analysis-only read: its own YouTube Opus download, made
         // whatever the track is actually playing from. Never playback.
@@ -906,6 +914,7 @@ object AudioCache {
             val played = has(META_PLAYED) || (!analysis && mediaId in playedIds)
             val tagged = meta.get(META_ORIGIN, null as String?) == origin.name &&
                 meta.get(META_MEDIA_ID, null as String?) == mediaId &&
+                (servedSource == null || meta.get(META_SERVED_SOURCE, null as String?) == servedSource) &&
                 has(META_PLAYBACK) == usedByPlayback &&
                 (usedByPlayback || has(META_ANALYSIS)) &&
                 has(META_PLAYED) == played
@@ -920,6 +929,7 @@ object AudioCache {
                 ContentMetadataMutations().also { mutations ->
                     mutations.set(META_ORIGIN, origin.name)
                     mutations.set(META_MEDIA_ID, mediaId)
+                    if (servedSource != null) mutations.set(META_SERVED_SOURCE, servedSource)
                     if (usedByPlayback) mutations.set(META_PLAYBACK, "1") else mutations.set(META_ANALYSIS, "1")
                     if (played) mutations.set(META_PLAYED, "1")
                     describe(mutations, song, spec.uri)
@@ -954,15 +964,50 @@ object AudioCache {
         val host = runCatching { Uri.parse(servedUrl).host }.getOrNull()?.lowercase(Locale.ROOT).orEmpty()
         if (host.endsWith("googlevideo.com") || host.endsWith("youtube.com")) return Origin.YOUTUBE
         if (host.endsWith("saavncdn.com") || host.endsWith("jiosaavn.com")) return Origin.JIOSAAVN
+        val kind = servedSourceOf(uri, mediaId).configId?.let { SourceRegistry.config(it)?.kind }
+        return if (kind == SourceKind.JIOSAAVN) Origin.JIOSAAVN else Origin.OTHER
+    }
+
+    /**
+     * The source that filled the entry [uri] names, as far as the resolver
+     * knows it: an upgrade's stream, a source-backed track's own source, or
+     * the choice already serving the track.
+     */
+    private fun servedSourceOf(uri: Uri, mediaId: String): ServedSource {
         val upgrade = QualityUpgrade.forcedStream(uri)
+        val choice = if (upgrade == null && uri.getQueryParameter("s") == null) {
+            StreamChoice.of(mediaId)
+        } else {
+            null
+        }
         val configId = when {
             upgrade != null -> upgrade.sourceConfigId
             uri.getQueryParameter("s") != null -> uri.getQueryParameter("s")
-            else -> StreamChoice.of(mediaId)?.sourceConfigId
+            else -> choice?.sourceConfigId
         }
-        val kind = configId?.let { SourceRegistry.config(it)?.kind }
-        return if (kind == SourceKind.JIOSAAVN) Origin.JIOSAAVN else Origin.OTHER
+        val stream = upgrade ?: choice
+        return ServedSource(
+            configId = configId,
+            trackId = stream?.trackId ?: uri.getQueryParameter("t"),
+            codec = stream?.format?.codec,
+        )
     }
+
+    private data class ServedSource(
+        val configId: String?,
+        val trackId: String?,
+        val codec: String?,
+    ) {
+        val identity: String? get() = sourceIdentity(configId, trackId, codec)
+    }
+
+    /**
+     * A stable name for one source's rendition of one track. The codec is part
+     * of it so a stereo copy and an Atmos copy of the same row are not the
+     * same file.
+     */
+    private fun sourceIdentity(configId: String?, trackId: String?, codec: String?): String? =
+        configId?.let { listOfNotNull(it, trackId, codec).joinToString("|") }
 
     /** Writes what the folder shows about a track into [mutations]. */
     private fun describe(mutations: ContentMetadataMutations, song: Song?, uri: Uri?) {
@@ -1172,16 +1217,144 @@ object AudioCache {
     fun hasCompleteLosslessCopy(mediaId: String): Boolean = koLossless.hasCompleteLosslessCopy(mediaId) // [KO] hq-lossless
 
     /** The container of the entry [key], from the magic at its very start. */
-    private fun containerOf(key: String): Pair<String, String>? {
-        val head = cache.getCachedSpans(key)
+    private fun containerOf(key: String): Pair<String, String>? =
+        headOf(key)?.let(::cachedContainerOf)
+
+    /**
+     * The opening of the entry [key], read from the span that starts the file —
+     * null when nothing is cached from position 0, or when the read failed.
+     * Null is not evidence of anything.
+     *
+     * [StreamContainerSniff.HEAD_BYTES] is read rather than the twelve bytes
+     * [cachedContainerOf] needs, because a FLAC can carry an ID3 tag in front
+     * of its marker. Twelve bytes saw only the tag and called the file lossy;
+     * [StreamContainerSniff.headForRefusal] reads on past it when the tag says
+     * there is more, exactly as the stream probe does.
+     */
+    private fun headOf(key: String): ByteArray? {
+        val file = cache.getCachedSpans(key)
             .firstOrNull { it.position == 0L && it.isCached }
             ?.file
             ?.takeIf { it.exists() }
             ?: return null
-        val magic = ByteArray(CONTAINER_MAGIC_BYTES)
-        val read = runCatching { head.inputStream().use { it.read(magic) } }.getOrDefault(-1)
-        if (read < magic.size) return null
-        return cachedContainerOf(magic)
+        val opening = ByteArray(StreamContainerSniff.HEAD_BYTES)
+        val read = runCatching { file.inputStream().use { it.read(opening) } }.getOrDefault(-1)
+        if (read <= 0) return null
+        val first = opening.copyOf(read)
+        return StreamContainerSniff.headForRefusal(first) { wanted ->
+            if (wanted > MAX_HEAD_BYTES) return@headForRefusal null
+            val extended = ByteArray(wanted)
+            val readMore = runCatching { file.inputStream().use { it.read(extended) } }.getOrDefault(-1)
+            extended.takeIf { readMore >= wanted }
+        }
+    }
+
+    /**
+     * Why the rendition [uri] names may not be played as it is, or null when it
+     * may — the cache's half of the bar a fresh stream clears before the player
+     * starts on it (see [com.music.bitchord.ko.KoStreamProbe]).
+     *
+     * Nothing else asks this. A cached rendition is served by
+     * [CacheDataSource] without ever reaching the resolver, so no check that
+     * inspects a *stream* ever sees these bytes, and one written by an earlier
+     * play of a lying row plays its wrong audio to the end of the track.
+     *
+     * Call it off the main thread: it reads the cache index and the file's head.
+     *
+     * Only half of that bar reaches a `#alt` copy. The LOSSY_BYTES half needs
+     * [isLosslessRendition], a tag an upgrade's whole-file fetch writes and an
+     * addon's `#alt` fill does not carry, so what is checked there is the
+     * runtime alone; a copy that claimed lossless, is really lossy and has the
+     * right length is not caught. Likewise [invalidateAddonRendition] never
+     * touches a copy written before [META_SERVED_SOURCE] existed. Both are
+     * deliberate: a deletion decided on a guess is worse than a lossy copy of
+     * the right song. YouTube's own bytes under `#alt` (see
+     * `VersionAudioAligner.isYouTubeUnderAltKey`) are tagged with a YouTube
+     * origin, so the invalidation never takes them.
+     *
+     * @param rowSeconds the runtime the catalogue row states.
+     * @param renditionSeconds the runtime measured off these bytes, when the
+     *   decoder has said what it is — null leaves that half of the question
+     *   unanswered rather than answered "fine".
+     */
+    fun refusalForCachedRendition(
+        uri: Uri,
+        rowSeconds: Int?,
+        renditionSeconds: Int?,
+    ): CachedRenditionBar.Refusal? {
+        if (openedCache == null || uri.scheme != "bitchord") return null
+        val key = keyFactory.buildCacheKey(DataSpec(uri))
+        return CachedRenditionBar.refusal(
+            // Only the tag written when a whole rendition was fetched from a
+            // stream the ladder called lossless. The key's `#hifi` suffix is not
+            // read as a claim: a rendition can also be filled by a swap, and a
+            // deletion decided on a suffix is one decided on a name.
+            claimsLossless = isLosslessRendition(key),
+            head = headOf(key),
+            rowSeconds = rowSeconds,
+            renditionSeconds = renditionSeconds,
+        )
+    }
+
+    /**
+     * Throws away the copy an addon filled for [mediaId] because the file that
+     * addon serves for this track was just refused for not being what its own
+     * row claimed — see [com.music.bitchord.ko.KoStreamProbe].
+     *
+     * Without this the refusal bought one play: the same bad bytes sat under
+     * `#alt`, [CacheDataSource] served them on the next play without a resolve,
+     * and nothing that checks a stream ever looked at them again.
+     *
+     * Only the copy the refused stream itself wrote goes. The substitute
+     * bucket can also hold a normal copy from another addon, a complete copy
+     * kept for offline use, or a normal Atmos copy; none of those is the file
+     * that was just refused. The entry's own [META_ORIGIN] and
+     * [META_SERVED_SOURCE] tags are the only evidence, and an entry without
+     * them is left alone rather than guessed at.
+     *
+     * Runs on the caller's thread; call it off the main one.
+     *
+     * @return true when the refused copy was actually removed.
+     */
+    fun invalidateAddonRendition(mediaId: String, refused: SourceStream): Boolean {
+        if (openedCache == null || mediaId.isBlank()) return false
+        val refusedSource = sourceIdentity(refused.sourceConfigId, refused.trackId, refused.format.codec)
+        if (refusedSource == null) {
+            TrackLog.d(
+                TAG,
+                "kept cached renditions for $mediaId: the refused stream names no source",
+                about = mediaId,
+            )
+            return false
+        }
+        var removed = false
+        CachedRenditionBar.candidateKeys(mediaId).forEach { key ->
+            if (cache.getCachedSpans(key).isEmpty()) return@forEach
+            val meta = runCatching { cache.getContentMetadata(key) }.getOrNull() ?: return@forEach
+            val entrySource = meta.get(META_SERVED_SOURCE, null as String?)
+            val isAddon = meta.get(META_ORIGIN, null as String?) == Origin.OTHER.name
+            if (!CachedRenditionBar.wroteRefusedCopy(isAddon, entrySource, refusedSource)) {
+                TrackLog.d(
+                    TAG,
+                    "kept cached rendition $key: not the refused stream's copy",
+                    about = mediaId,
+                )
+                return@forEach
+            }
+            runCatching { cache.removeResource(key) }
+                .onSuccess {
+                    removed = true
+                    forgetPurgeCandidate(key)
+                    renditionKeys.remove(mediaId)
+                    TrackLog.w(
+                        TAG,
+                        "dropped cached rendition $key: the addon's file for this track does not match its own claim",
+                        about = mediaId,
+                    )
+                }
+                .onFailure { TrackLog.d(TAG, "rendition $key still in use: ${it.message}", about = mediaId) }
+        }
+        return removed
     }
 
     /**
@@ -1311,6 +1484,9 @@ object AudioCache {
 
     private const val META_ORIGIN = "bc_origin"
     private const val META_MEDIA_ID = "bc_media_id"
+
+    /** The source and rendition that filled the entry, for [invalidateAddonRendition]. */
+    private const val META_SERVED_SOURCE = "bc_served_source"
     private const val META_TITLE = "bc_title"
     private const val META_ARTIST = "bc_artist"
     private const val META_ALBUM = "bc_album"
@@ -1336,6 +1512,9 @@ object AudioCache {
     private const val MAX_NOTED_SONGS = 256
     private const val COPY_BUFFER_BYTES = 64 * 1024
 
+    /** The most of an ID3 tag [headOf] will read past its first look. */
+    private const val MAX_HEAD_BYTES = 64 * 1024
+
     private const val CACHE_DIR_NAME = "audio_cache"
     private const val LEGACY_CACHE_DIR_NAME = "audio"
     private const val CACHE_STATE_PREFS = "audio_cache_state"
@@ -1349,7 +1528,7 @@ object AudioCache {
     private const val CACHE_FORMAT = 1
     private const val KEY_MATCHING_SCHEMA = "matching_schema"
     private const val MATCHING_SCHEMA = 2
-    private const val ALT_SUFFIX = "#alt"
+    private const val ALT_SUFFIX = CachedRenditionBar.SUBSTITUTE_SUFFIX
 
     /**
      * Wraps [upstream] so everything played is written to disk on the way
@@ -1531,7 +1710,7 @@ object AudioCache {
         isKeptOrigin = ::isKeptOrigin,
         containerOf = ::containerOf,
         forgetPurgeCandidate = ::forgetPurgeCandidate,
-        discardRendition = ::discardRendition,
+        discardRendition = { discardRendition(it) },
         tracker = koTracker, // [KO] reader-lock
     )
 

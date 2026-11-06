@@ -298,6 +298,13 @@ object SourceResolver {
     suspend fun directStream(
         target: TrackMatcher.Target,
         /**
+         * The track this lookup is for, when the caller knows it — passed on to
+         * the probe so a candidate refused for lying about its own bytes takes
+         * the copy it filled on an earlier play with it. See
+         * [com.music.bitchord.ko.KoStreamProbe.servesBytes].
+         */
+        mediaId: String? = null,
+        /**
          * The sound comparison, when the caller has one — the same proof the
          * upgrade path demands before a candidate may replace what is playing
          * (see [upgradeFor]'s own `verify`).
@@ -326,7 +333,9 @@ object SourceResolver {
          * row: the refusal is evidence about that file, not about the
          * catalogue that also holds a good copy of the same song.
          */
-        probe: suspend (SourceStream) -> Boolean = { com.music.bitchord.ko.KoStreamProbe.servesBytes(it) },
+        probe: suspend (SourceStream) -> Boolean = {
+            com.music.bitchord.ko.KoStreamProbe.servesBytes(it, mediaId)
+        },
     ): SourceStream? {
         if (target.title.isBlank() || target.isVideo) return null
         val addons = directAddons()

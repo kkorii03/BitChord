@@ -2,6 +2,7 @@ package com.music.bitchord.playback.smart
 
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -136,6 +137,46 @@ class SongHearingTest {
             }
         }, heardSomething = { it == "heard" })
         assertEquals("heard", answer)
+    }
+
+    @Test
+    fun aSecondRequestWaitsForNoSlotAndIsNotSentWithoutOne() = runTest {
+        repeat(3) { SongHearing.requests.acquire() }
+        try {
+            var asked = 0
+            val slow = CompletableDeferred<String>()
+            launch {
+                delay(40_000L)
+                slow.complete("first")
+            }
+            val answer = SongHearing.hedged(15_000L, ask = {
+                asked++
+                slow.await()
+            }, heardSomething = { true })
+            assertEquals("first", answer)
+            assertEquals(1, asked)
+        } finally {
+            repeat(3) { SongHearing.requests.release() }
+        }
+    }
+
+    @Test
+    fun aSecondRequestHoldsAFreeSlotAndGivesItBack() = runTest {
+        var held = -1
+        var asked = 0
+        val stuck = CompletableDeferred<String>()
+        val answer = SongHearing.hedged(15_000L, ask = {
+            asked++
+            if (asked == 1) {
+                stuck.await()
+            } else {
+                held = SongHearing.requests.availablePermits
+                "second"
+            }
+        }, heardSomething = { true })
+        assertEquals("second", answer)
+        assertEquals(2, held)
+        assertEquals(3, SongHearing.requests.availablePermits)
     }
 
     @Test

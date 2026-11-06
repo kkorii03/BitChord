@@ -229,7 +229,7 @@ object DirectSourceGate {
         }
         val fresh = Lookup(
             work = scope.async(TrackLog.about(videoId), start = CoroutineStart.LAZY) {
-                SourceResolver.directStream(target, verify = proofOf(videoId, target))
+                SourceResolver.directStream(target, mediaId = videoId, verify = proofOf(videoId, target))
             },
             startedAtMs = android.os.SystemClock.elapsedRealtime(),
         )

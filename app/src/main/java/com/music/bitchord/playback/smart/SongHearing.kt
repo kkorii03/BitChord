@@ -76,8 +76,11 @@ internal object SongHearing {
     /** Less new sound than this past a kept transcript buys no request. */
     private const val NOTHING_NEW_SECONDS = 8.0
 
-    /** Requests at once. The playing song must not queue behind the next row's, nor the one before. */
-    private val requests = Semaphore(3)
+    /**
+     * Requests at once, hedges included: Whisper takes 3 per project, the rest get 429
+     * (measured 11-06). The playing song must not queue behind the next row's, nor the one before.
+     */
+    internal val requests = Semaphore(3)
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private class Flight(val untilSeconds: Double, val answer: Deferred<Heard?>)
@@ -139,7 +142,8 @@ internal object SongHearing {
     /**
      * The first answer that heard something. A second request goes out if the
      * first has said nothing after [hedgeAfterMs]; the loser is cancelled. A plain
-     * failure from one waits for the other, never hides it.
+     * failure from one waits for the other, never hides it. With no slot free in
+     * [requests] the second is not sent: it would turn away another song's request.
      */
     internal suspend fun <T : Any> hedged(
         hedgeAfterMs: Long,
@@ -149,7 +153,9 @@ internal object SongHearing {
         val first = async { ask() }
         val quick = withTimeoutOrNull(hedgeAfterMs) { first.await() }
         if (quick != null) return@coroutineScope quick
+        if (!requests.tryAcquire()) return@coroutineScope first.await()
         val second = async { ask() }
+        second.invokeOnCompletion { requests.release() }
         val (done, other) = select<Pair<T, Deferred<T>>> {
             first.onAwait { it to second }
             second.onAwait { it to first }
