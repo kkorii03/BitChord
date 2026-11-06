@@ -59,7 +59,8 @@ internal class LyricClock(startMs: Long) {
     private var anchorMs = 0.0
 
     /** The playback rate, learned from how far the song moves between readings. */
-    private var rate = 1.0
+    var rate = 1.0
+        private set
 
     // Readings believed since the playhead last jumped, oldest first: what the
     // rate is measured across. See [learnRate].
