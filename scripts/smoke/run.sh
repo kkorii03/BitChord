@@ -43,7 +43,7 @@ fi
 WAIT_PER_SONG=${SMOKE_WAIT_S:-150}
 HQ_WAIT_PER_SONG=${SMOKE_WAIT_S:-150}
 SYNC_WAIT_PER_SONG=${SMOKE_WAIT_S:-150}
-START_TIMEOUT=45  # the app's own link retry (LinkRetry.DEADLINE_MS) must get to finish
+START_TIMEOUT=45  # the app's own link retry (trackForLink) must get to finish
 FALLBACK_TIMEOUT=15
 HQ_CONFIGURED=0
 

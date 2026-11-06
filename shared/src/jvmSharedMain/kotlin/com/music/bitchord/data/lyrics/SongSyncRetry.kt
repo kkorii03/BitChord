@@ -15,12 +15,7 @@ package com.music.bitchord.data.lyrics
  */
 object SongSyncRetry {
 
-    /**
-     * Five retries after the first 429, about a minute in all. Being turned away
-     * costs an upload, not an answer. Two retries gave up after 6 s, inside one
-     * ordinary request, and the song had no check for the rest of its playback
-     * (phone 11-06 10:43 and 10:53).
-     */
+    /** About a minute in all: two retries gave up after 6 s, inside one ordinary request (phone 11-06). */
     const val MAX_RETRIES = 5
 
     /** First wait when the server sent no `Retry-After`: 2s, then 4s. */

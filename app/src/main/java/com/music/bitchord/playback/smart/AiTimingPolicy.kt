@@ -232,13 +232,6 @@ internal object AiTimingPolicy {
      */
     fun songReplySpends(httpCode: Int?): Boolean = httpCode != null && httpCode in 200..299
 
-    /**
-     * Whether asking an engine in the AI placement used it up for these lyrics.
-     * A failure or a timeout may still have been paid for; a 429 was turned away
-     * before anything was listened to.
-     */
-    fun aiAskSpends(httpCode: Int?): Boolean = httpCode != 429
-
     /** What a song check result does to the sheet on screen, for its log line. */
     fun songSheetEffect(result: String): String = if (result == "applied") "moved" else "kept"
 

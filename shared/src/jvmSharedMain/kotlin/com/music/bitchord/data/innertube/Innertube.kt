@@ -575,8 +575,8 @@ object Innertube {
      * user has typed past stops here instead of retrying on behalf of a query
      * nobody is waiting for.
      */
-    internal suspend fun <T> withRetry(attempts: Int = 3, block: suspend () -> T): T { // [KO] proxy-failover
-        var backoff = 500L
+    internal suspend fun <T> withRetry(attempts: Int = 3, firstWaitMs: Long = 500L, block: suspend () -> T): T { // [KO] proxy-failover
+        var backoff = firstWaitMs
         repeat(attempts - 1) {
             try {
                 return block()

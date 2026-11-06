@@ -64,6 +64,7 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonObject
@@ -1072,6 +1073,17 @@ object YtMusicRepository {
         // became the artist (phone 11-06). The same display rule every other
         // row goes through reads the credit the title states.
         YouTubeDisplayCleaner.cleanUpload(row)
+    }
+
+    /**
+     * [trackLinks] for a tapped link, which has only this one chance to start its
+     * song: a dropped route was usually back seconds later (11-06 smoke: 5 of 134
+     * songs lost after one try). Waits 3/6/12 s, connection failures only.
+     */
+    suspend fun trackForLink(videoId: String): Result<Song> = call("link:$videoId") {
+        withTimeoutOrNull(45_000L) {
+            Innertube.withRetry(attempts = 4, firstWaitMs = 3_000L) { trackLinks(videoId).getOrThrow() }
+        } ?: throw java.io.IOException("no answer in time")
     }
 
     /**
