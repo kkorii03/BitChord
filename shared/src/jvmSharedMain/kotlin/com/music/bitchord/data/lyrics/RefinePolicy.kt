@@ -225,7 +225,8 @@ object RefinePolicy {
         // edit does not sit one move away, it drifts, and by definition its later
         // lines are past the narrow window: read the slope from the whole-song
         // alignment before trying the wide window's single move.
-        drift(lines, heard, lineLevelWords)?.let { return it }
+        val onTimeLines = residuals.count { abs(it) <= MAX_MAD_MS }
+        drift(lines, heard, lineLevelWords, onTimeLines)?.let { return it }
         // Only then look for the one big move a provider from another arrangement leaves behind.
         wide(lines, stream)?.let { return it }
         if (residuals.isEmpty()) return Result.NONE
@@ -344,6 +345,8 @@ object RefinePolicy {
         lines: List<LyricLine>,
         heard: List<LyricsWordAlign.Heard>,
         lineLevelWords: Boolean,
+        /** How many lines the narrow window heard where they are shown. */
+        onTimeLines: Int,
     ): Result? {
         // An AI's own line times placed against themselves fit perfectly and say nothing.
         if (lineLevelWords) return null
@@ -370,6 +373,10 @@ object RefinePolicy {
         if (slope == 0.0) {
             if (mad > MAX_WIDE_MAD_MS) return null
             if (abs(line.offsetMs) < MIN_WIDE_SHIFT_MS) return null
+            // The alignment's ends are free, so a repeated line's hearings fit
+            // its later repeats as well as its own lines: one flat move of a
+            // whole repeat, read off lyrics that were heard on time.
+            if (onTimeLines * 2 >= points.size) return null
             return Result(
                 applied = true,
                 medianMs = line.offsetMs.coerceIn(-MAX_WIDE_SHIFT_MS, MAX_WIDE_SHIFT_MS),
