@@ -302,4 +302,116 @@ class RefinePolicyTest {
         assertEquals(0.0, result.slopePerMin)
         assertEquals(3_000L, result.medianMs)
     }
+
+    /** Six letters no other line shares, so a line can only ever match its own hearing. */
+    private fun uniqueText(index: Int): String =
+        String(CharArray(6) { offset -> Char(0xAC00 + index * 6 + offset) })
+
+    @Test
+    fun anEditDriftWithOrdinaryScatterIsStillADrift() {
+        // Review 11-06: ±130 ms of ordinary scatter on a 1.2 s/min drift. The
+        // line nearest the median has no constant-move error at all, so one
+        // median of scatter was less than its own jitter and the whole drift
+        // was refused.
+        val jitter = listOf(60L, -80L, 40L, -120L, 90L, -30L, -130L, 70L, -50L, 110L, -90L, 30L, -60L)
+        val lines = List(13) { index -> line(20_000L + index * 12_000L, "line$index") }
+        val heard = lines.mapIndexed { index, line ->
+            heard(line.text, line.timeMs + 1_800L + line.timeMs / 50 + jitter[index])
+        }
+        val result = RefinePolicy.compute(lines, heard)
+
+        assertTrue(result.applied)
+        assertEquals(RefinePolicy.Model.DRIFT, result.model)
+        assertTrue(abs(result.slopePerMin - 1_200.0) <= 100.0, "slope ${result.slopePerMin} ms/min")
+        assertTrue(abs(result.medianMs - 1_800L) <= 100L, "offset ${result.medianMs} ms")
+    }
+
+    @Test
+    fun linesSittingOnTheConstantMoveStillRefuseTheDrift() {
+        // What the guard is for: a fifth of the lines are right on one constant
+        // move and the drift would throw them more than a second off.
+        val jitter = listOf(60L, -80L, 40L, -120L, 90L, -30L, -130L, 70L, -50L, 110L, -90L, 30L, -60L, 50L, -70L)
+        val lines = List(15) { index -> line(20_000L + index * 12_000L, "line$index") }
+        val heard = lines.mapIndexed { index, line ->
+            val moved = if (index < 3) 4_000L else 1_800L + line.timeMs / 50 + jitter[index]
+            heard(line.text, line.timeMs + moved)
+        }
+        val result = RefinePolicy.compute(lines, heard)
+
+        assertFalse(result.applied)
+    }
+
+    @Test
+    fun aDriftPastTheSlopeCapIsNotClippedToTheCap() {
+        // Review 11-06: the lines still inside the narrow window said 1.2 s/min,
+        // and it was clipped to 600 ms/min and applied, half the real drift.
+        // Refused here, the whole-song alignment measures the real one.
+        val lines = List(59) { index -> line(10_000L + index * 5_000L, uniqueText(index)) }
+        val heard = lines.map { heard(it.text, it.timeMs + it.timeMs / 50) }
+        val result = RefinePolicy.compute(lines, heard)
+
+        assertTrue(result.applied)
+        assertEquals(RefinePolicy.Model.DRIFT, result.model)
+        assertTrue(abs(result.slopePerMin - 1_200.0) <= 50.0, "slope ${result.slopePerMin} ms/min")
+    }
+
+    @Test
+    fun aRepeatedChorusHeardOnTimeIsVerifiedAndNotMovedOntoItsRepeat() {
+        // Review 11-06: the same words every 8.1 s, heard on time ±30 ms. The
+        // true hearings split across the bins either side of zero, the repeats
+        // do not, and the sheet moved -8 s onto the previous chorus.
+        val lines = List(12) { index -> line(10_000L + index * 8_100L, "chorus") }
+        val heard = lines.mapIndexed { index, line ->
+            heard("chorus", line.timeMs + if (index % 2 == 0) 30L else -30L)
+        }
+        val result = RefinePolicy.compute(lines, heard)
+
+        assertFalse(result.applied)
+        assertTrue(result.verified)
+    }
+
+    @Test
+    fun aPartialTranscriptOfARepeatedLineDoesNotMoveTheSheetTenSeconds() {
+        // 11-06 n_cB5Yb-4Ro: lines=11 median=-10000ms model=wide applied=y from
+        // a part of the song, then lines=30 median=5ms model=const once the
+        // whole of it was heard: ten seconds wrong in between. Only the repeated
+        // line was transcribed, on time, and the rest of the sheet not at all.
+        val chorus = List(11) { index -> line(20_000L + index * 10_100L, "chorus") }
+        val rest = List(19) { index -> line(131_100L + index * 5_000L, uniqueText(index)) }
+        val heard = chorus.mapIndexed { index, line ->
+            heard("chorus", line.timeMs + if (index % 2 == 0) 30L else -30L)
+        }
+        val result = RefinePolicy.compute(chorus + rest, heard)
+
+        assertFalse(result.applied, "moved ${result.medianMs} ms by ${result.model}")
+        assertTrue(abs(result.medianMs) < RefinePolicy.MIN_SHIFT_MS, "median ${result.medianMs} ms")
+    }
+
+    private fun misheardOpenings(lateMs: Long): Pair<List<LyricLine>, List<LyricsWordAlign.Heard>> {
+        val lines = List(12) { index -> line(20_000L + index * 12_000L, uniqueText(index)) }
+        val heard = lines.mapIndexed { index, line ->
+            heard(uniqueText(index + 100).take(2) + line.text.drop(2), line.timeMs + lateMs)
+        }
+        return lines to heard
+    }
+
+    @Test
+    fun aLateSheetWhoseOpeningsAreMisheardIsMoved() {
+        // R4 reproduction: the narrow window sees nothing and the flat fit is under 1.5 s.
+        val (lines, heard) = misheardOpenings(1_200L)
+        val result = RefinePolicy.compute(lines, heard)
+
+        assertTrue(result.applied)
+    }
+
+    @Test
+    fun anOnTimeSheetWhoseOpeningsAreMisheardIsNotMoved() {
+        // A start placed on a line's third letter is stepped back further than
+        // that letter was sung, here 260 ms early on every line. Taking that for
+        // a flat move would put an on-time sheet 260 ms out.
+        val (lines, heard) = misheardOpenings(0L)
+        val result = RefinePolicy.compute(lines, heard)
+
+        assertFalse(result.applied, "moved ${result.medianMs} ms by ${result.model}")
+    }
 }

@@ -147,6 +147,71 @@ class LyricsRefineSnapshotTest {
         assertEquals(-420L, LyricsTiming.manual(context, "video"))
     }
 
+    private val heardWords = lines.map { line ->
+        LyricsTiming.SavedWord(line.text, line.timeMs + shiftMs, line.timeMs + shiftMs + 150)
+    }
+
+    private suspend fun saveHeard(
+        before: LyricsTiming.Entry?,
+        seconds: Double = 90.0,
+        extended: Boolean = false,
+    ) = LyricsTiming.saveRefineHeard(
+        context,
+        "video",
+        before,
+        lyricsKey,
+        heardWords,
+        LyricsTiming.Clock.Unknown,
+        seconds,
+        extended,
+    )
+
+    private suspend fun refineFrom(snapshot: LyricsTiming.RefineSnapshot) = LyricsTiming.refineWithSnapshot(
+        context,
+        "video",
+        lines,
+        LyricsTiming.Timing(base = null, manualMs = 0L),
+        snapshot = snapshot,
+    )
+
+    @Test
+    fun `a first listen's own save does not make its refine stale`() = runBlocking {
+        // 11-06 log: 116 "stale result dropped" lines, one for every song with no
+        // entry yet. The store write stamped the clock version and the anchor did
+        // not, so the two never compared equal and the first listen's refine was
+        // thrown away, and the longer listen behind it skipped.
+        val result = refineFrom(saveHeard(before = null))
+
+        assertTrue(result.applied)
+        val text = awaitFile { it.contains("\"refineMs\":$shiftMs") }
+        assertTrue(text.contains("\"refineMs\":$shiftMs"))
+    }
+
+    @Test
+    fun `a longer listen on an entry from before clocks does not make its refine stale`() = runBlocking {
+        writeHeardWords("video")
+        val before = LyricsTiming.refineSnapshot(context, "video").entry
+
+        val result = refineFrom(saveHeard(before, seconds = 200.0, extended = true))
+
+        assertTrue(result.applied)
+        val text = awaitFile { it.contains("\"refineMs\":$shiftMs") }
+        assertTrue(text.contains("\"refineMs\":$shiftMs"))
+    }
+
+    @Test
+    fun `a correction saved after a listen's own save still drops its refine`() = runBlocking {
+        val snapshot = saveHeard(before = null)
+        LyricsTiming.setManual(context, "video", 1_234L)
+
+        val result = refineFrom(snapshot)
+
+        assertTrue(result.applied)
+        val text = awaitFile { it.contains("\"manualMs\":1234") }
+        assertTrue(text.contains("\"manualMs\":1234"))
+        assertFalse(text.contains("\"refineMs\""))
+    }
+
     @Test
     fun `a just written refine survives eviction from an oversized store`() = runBlocking {
         // More entries than the cap, with "video" as the oldest insertion.
