@@ -148,7 +148,7 @@ def hear_one(vid, tmp, key_text):
         if not r.returncode and got:
             break
     if not got:
-        print("no audio", flush=True)
+        print("no audio:", re.sub(r"[A-Za-z0-9_-]{11}", "<id>", r.stderr.strip()[-200:]), flush=True)
         return None
     audio = got[0].read_bytes()
     got[0].unlink()
@@ -185,6 +185,7 @@ def hear(a):
     tmp = Path(a.tmp)
     tmp.mkdir(parents=True, exist_ok=True)
     ids = stream(Path(a.ids).read_bytes(), key_text).decode().split()
+    misses = 0
     for i, vid in enumerate(ids):
         name = f"{data_name(vid, key_text)}.enc"
         if i % a.of != a.index or (data / name).exists():
@@ -198,7 +199,13 @@ def hear(a):
             for p in tmp.glob(f"{vid}.*"):
                 p.unlink(missing_ok=True)
         if body is None:
+            # Many in a row means YouTube is refusing the home address: stop asking, it only makes it worse.
+            misses += 1
+            if misses >= 8:
+                print("stopping: 8 songs in a row without an answer", flush=True)
+                return
             continue
+        misses = 0
         (data / name).write_bytes(stream(json.dumps(body, ensure_ascii=False).encode("utf-8"), key_text + vid))
         git = ["git", "-C", str(data)]
         subprocess.run(git + ["add", name], check=True)
