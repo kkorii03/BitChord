@@ -8,7 +8,8 @@ smoke-play workflow on that account's fork. A branch name must not hold "mv" or
 Usage: matrix_launch.py <batch.json> [--dry]
   batch.json: [{"name": "base", "account": "kkorii123", "songs": ["XbGs_qK2PQA", ...],
                 "env": {"MATRIX_ACTION": "home", "MATRIX_LYRICS": "1"}}, ...]
-Appends one line per set to ship/lanes/emu-matrix-runs.tsv: set, account, run id, commit.
+Appends one line per set to ship/lanes/emu-matrix-runs.tsv: set, account, run id, commit,
+songs, env.
 """
 import json
 import os
