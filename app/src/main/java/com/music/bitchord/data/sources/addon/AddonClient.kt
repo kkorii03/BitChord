@@ -75,6 +75,14 @@ class AddonClient(rawBaseUrl: String) {
     private var quietUntilMs = 0L
 
     /**
+     * Only ever later: sibling requests answer in any order, and a one-second
+     * retry from one of them must not cancel the ten minutes another was told.
+     */
+    private fun holdOffUntil(untilMs: Long) = synchronized(this) {
+        quietUntilMs = maxOf(quietUntilMs, untilMs)
+    }
+
+    /**
      * Until when a manifest 404 is remembered.
      *
      * [SharedCalls] drops a failure by design — a server having a bad minute
@@ -517,7 +525,7 @@ class AddonClient(rawBaseUrl: String) {
                                 // instead of turning one refusal into a stream of
                                 // them.
                                 val nowMs = System.currentTimeMillis()
-                                quietUntilMs = nowMs + restMs
+                                holdOffUntil(nowMs + restMs)
                                 // A sleeping free-tier host wakes in about a
                                 // minute; the source-level 30-minute rest would
                                 // keep its candidates out for the rest of that
@@ -576,7 +584,7 @@ class AddonClient(rawBaseUrl: String) {
                     transport = true,
                 )
             }
-            quietUntilMs = System.currentTimeMillis() + wait
+            holdOffUntil(System.currentTimeMillis() + wait)
             attempt++
         }
         // Unreachable: every path out of the loop returns or throws.
