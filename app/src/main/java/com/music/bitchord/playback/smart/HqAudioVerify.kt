@@ -1182,7 +1182,9 @@ object HqAudioVerify {
         }
         var refusal: VideoAudio.SongWavRefusal? = null
         val wav = try {
-            VideoAudio.songWav(context, song, COMPARE_SECONDS) { refusal = it }
+            // A shorter opening an abandoned read left will do here: it is not
+            // kept as the reference (see below), only used for this comparison.
+            VideoAudio.songWav(context, song, COMPARE_SECONDS, acceptPartial = true) { refusal = it }
         } catch (cancelled: CancellationException) {
             logNoReference(title, youtubeId, NoReferenceReason.CANCELLED)
             return Reference.Missing(NoReferenceReason.CANCELLED)

@@ -118,6 +118,19 @@ class VideoAudioOpeningWaitTest {
         assertTrue(VideoAudio.keepAbandonedOpening(bytes = 35 * 32_000, minimumBytes = 10 * 32_000, failedStage = null))
     }
 
+    /**
+     * What it heard is not the whole window: a read that stopped at 12 s used to
+     * answer every later ask for ninety seconds, so the song check's full pass
+     * paid for a transcript of the same 12 s.
+     */
+    @Test
+    fun `only a caller that says so gets the abandoned opening`() {
+        assertEquals(null, VideoAudio.pickOpening<String>(null, "partial", acceptPartial = false))
+        assertEquals("partial", VideoAudio.pickOpening<String>(null, "partial", acceptPartial = true))
+        assertEquals("full", VideoAudio.pickOpening("full", "partial", acceptPartial = true))
+        assertEquals("full", VideoAudio.pickOpening("full", null, acceptPartial = false))
+    }
+
     @Test
     fun `a read that failed at a named stage keeps nothing`() {
         assertFalse(

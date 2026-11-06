@@ -93,6 +93,7 @@ object VideoAudio {
 
     private fun videoKey(videoId: String) = "video\u0000$videoId"
     private fun songKey(key: String) = "song\u0000$key"
+    private fun partialKey(key: String) = "partial\u0000$key"
 
     suspend fun wav(context: Context, videoId: String): ByteArray? =
         wavCopy(context, videoId)?.bytes
@@ -241,8 +242,9 @@ object VideoAudio {
      */
     internal fun referenceReady(song: Song, untilSeconds: Double): Boolean {
         val local = song.localUri?.takeIf { it.isNotBlank() }?.let { Uri.parse(it) }
+        val key = songCacheKey(song, untilSeconds)
         return referenceReady(
-            cachedOpening = recent.get(songKey(songCacheKey(song, untilSeconds))) != null,
+            cachedOpening = pickOpening(recent.get(songKey(key)), recent.get(partialKey(key)), true) != null,
             copy = VersionAudioAligner.renditionToMeasure(song.videoId),
             isLocalFile = local != null && LocalAudioSource.isLocal(local),
             untilSeconds = untilSeconds,
@@ -273,6 +275,18 @@ object VideoAudio {
      */
     internal fun keepAbandonedOpening(bytes: Int, minimumBytes: Int, failedStage: String?): Boolean =
         failedStage == null && bytes >= minimumBytes
+
+    /**
+     * The opening a caller may be handed: the whole window, or what an abandoned
+     * read left when the caller said that will do.
+     *
+     * Kept apart because a window that stopped at 12 s is not ninety seconds. The
+     * quality comparison can work from what is there, and says so; the song
+     * check's full pass and the refine's listen must decode the rest, or they
+     * would pay for a transcript of the same 12 s and call it the whole opening.
+     */
+    internal fun <T : Any> pickOpening(full: T?, partial: T?, acceptPartial: Boolean): T? =
+        full ?: partial?.takeIf { acceptPartial }
 
     /**
      * How long a measurement waits for the row's own opening before giving up.
@@ -321,21 +335,25 @@ object VideoAudio {
         context: Context,
         song: Song,
         untilSeconds: Double = SONG_CHECK_SECONDS,
+        /** An abandoned read's shorter opening will do — see [pickOpening]. */
+        acceptPartial: Boolean = false,
         onRefusal: ((SongWavRefusal) -> Unit)? = null,
-    ): ByteArray? = songWavCopy(context, song, untilSeconds, onRefusal)?.bytes
+    ): ByteArray? = songWavCopy(context, song, untilSeconds, acceptPartial, onRefusal)?.bytes
 
     /** [songWav] with the copy it actually opened, so the transcript is tagged with that clock. */
     suspend fun songWavCopy(
         context: Context,
         song: Song,
         untilSeconds: Double = SONG_CHECK_SECONDS,
+        acceptPartial: Boolean = false,
         onRefusal: ((SongWavRefusal) -> Unit)? = null,
     ): SongAudio? = withContext(Dispatchers.IO) {
         if (!untilSeconds.isFinite() || untilSeconds <= 0.0) return@withContext null
         val until = untilSeconds.coerceAtMost(MAX_SECONDS)
         val job = coroutineContext[Job]
         val key = songCacheKey(song, until)
-        recent.get(songKey(key))?.let { return@withContext it }
+        fun inHand(): SongAudio? = pickOpening(recent.get(songKey(key)), recent.get(partialKey(key)), acceptPartial)
+        inHand()?.let { return@withContext it }
         // Runs with the screen off too (11-01 user decision): this opening is
         // what the song check and the quality-upgrade comparison listen to.
         // Skipping it in a pocket let a wrong song play unchecked, and the
@@ -344,7 +362,7 @@ object VideoAudio {
         val opened = openSongSource(context, song, until, onRefusal) ?: return@withContext null
         try {
             songLocks.getOrPut(key) { Mutex() }.withLock {
-                recent.get(songKey(key))?.let {
+                inHand()?.let {
                     runCatching { opened.data.close() }
                     return@withLock it
                 }
@@ -610,10 +628,19 @@ object VideoAudio {
         // it away made the quality comparison decode the same ninety seconds
         // again, queue at the one-at-a-time gate behind the check it had just
         // duplicated, and be cancelled with the play as "no reference" (11-05
-        // smoke r2-b: 35 s decoded, 59 s at the gate, cancelled).
+        // smoke r2-b: 35 s decoded, 59 s at the gate, cancelled). Filed apart
+        // from the whole window — see [pickOpening] — and not returned: the
+        // caller has gone, and the caller's own put would file it as whole.
+        TrackLog.d(
+            TAG,
+            "song check: ${if (opened.fromFile) "file" else "stream"} " +
+                "${data.size / (RATE * 2)}s ${data.size / 1024}KB" +
+                if (stoppedEarly) " (read abandoned)" else "",
+            song.videoId,
+        )
         if (stoppedEarly) {
             recent.put(
-                songKey(songCacheKey(song, untilSeconds)),
+                partialKey(songCacheKey(song, untilSeconds)),
                 SongAudio(
                     wav,
                     opened.renditionKey,
@@ -622,14 +649,8 @@ object VideoAudio {
                     opened.localTrackId,
                 ),
             )
+            return null
         }
-        TrackLog.d(
-            TAG,
-            "song check: ${if (opened.fromFile) "file" else "stream"} " +
-                "${data.size / (RATE * 2)}s ${data.size / 1024}KB" +
-                if (stoppedEarly) " (read abandoned)" else "",
-            song.videoId,
-        )
         return wav
     }
 
