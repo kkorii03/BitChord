@@ -2,6 +2,7 @@ package com.music.bitchord.data.sources.module
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -82,7 +83,9 @@ internal class SharedCalls<T>(
 
     suspend fun get(key: String, describe: () -> String, produce: suspend () -> Result<T>): Result<T> {
         val entry = lock.withLock {
-            val live = entries[key]?.takeIf { it.work.isActive || now() - it.startedAtMs < ttlMs }
+            val live = entries[key]?.takeIf {
+                it.work.isActive || (now() - it.startedAtMs < ttlMs && it.work.answered())
+            }
             if (live != null) {
                 log(describe() + if (live.work.isActive) " — ALREADY RUNNING" else " — CACHE HIT")
                 live
@@ -97,6 +100,18 @@ internal class SharedCalls<T>(
             if (result.isFailure) entries.remove(key, entry)
         }
     }
+
+    /**
+     * Whether this finished with an answer worth keeping.
+     *
+     * The removal in [get] only runs for a caller still waiting. One that gave
+     * up first leaves its failure in the table, so "not kept" has to be decided
+     * here too. A cancelled or thrown Deferred has no answer to read:
+     * [Deferred.getCompleted] would throw, and [Deferred.isCancelled] covers both.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun Deferred<Result<T>>.answered(): Boolean =
+        isCompleted && !isCancelled && getCompleted().isSuccess
 
     /** Everything held, dropped — the configuration it was all about is gone. */
     fun clear() = entries.clear()
