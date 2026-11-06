@@ -40,12 +40,32 @@ class SongSyncRetryTest {
     }
 
     @Test
-    fun only429IsRetriedAndOnlyTwice() {
-        assertTrue(SongSyncRetry.shouldRetry(429, attempt = 0))
-        assertTrue(SongSyncRetry.shouldRetry(429, attempt = 1))
-        assertFalse(SongSyncRetry.shouldRetry(429, attempt = 2))
+    fun only429IsRetriedAndOnlyFiveTimes() {
+        for (attempt in 0 until 5) assertTrue(SongSyncRetry.shouldRetry(429, attempt))
+        assertFalse(SongSyncRetry.shouldRetry(429, attempt = 5))
         assertFalse(SongSyncRetry.shouldRetry(500, attempt = 0))
         assertFalse(SongSyncRetry.shouldRetry(null, attempt = 0))
+    }
+
+    /**
+     * The limit is 3 requests at once with no `Retry-After`, so a slot opens when
+     * someone else's request ends: 5-15 s usually, up to 93 s (11-06, 50 answers).
+     * The old 2 s + 4 s gave up inside one such request and left the song without
+     * a check for the rest of its playback (phone 10:43, 10:53: no result at all).
+     */
+    @Test
+    fun theRetriesOutlastAnOrdinaryRequestAndEveryWaitIsHeldInline() {
+        var total = 0L
+        var attempt = 0
+        while (SongSyncRetry.shouldRetry(429, attempt)) {
+            val wait = SongSyncRetry.retryDelayMs(null, attempt)
+            assertTrue(SongSyncRetry.canWaitInline(wait))
+            total += wait
+            attempt++
+        }
+        assertEquals(62_000L, total)
+        // The hold left by the last 429 is still one another song may wait out, not give up on.
+        assertTrue(SongSyncRetry.canWaitInline(SongSyncRetry.retryDelayMs(null, attempt)))
     }
 
     @Test

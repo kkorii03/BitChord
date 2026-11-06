@@ -19,6 +19,16 @@ class AiTimingPolicyTest {
         assertTrue(AiTimingPolicy.mayStartRequest(automatic = false, running = 2))
     }
 
+    @Test
+    fun `a 429 does not use the engine up for these lyrics but a real ask does`() {
+        // Nothing was listened to. Recorded as spent, the video's Whisper never came back.
+        assertFalse(AiTimingPolicy.aiAskSpends(429))
+        assertTrue(AiTimingPolicy.aiAskSpends(200))
+        // No reply may still have been paid for: the existing rule stands.
+        assertTrue(AiTimingPolicy.aiAskSpends(null))
+        assertTrue(AiTimingPolicy.aiAskSpends(500))
+    }
+
     private val key = 7
 
     @Test

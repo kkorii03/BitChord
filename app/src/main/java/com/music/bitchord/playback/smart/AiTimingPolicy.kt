@@ -232,6 +232,9 @@ internal object AiTimingPolicy {
      */
     fun songReplySpends(httpCode: Int?): Boolean = httpCode != null && httpCode in 200..299
 
+    /** Whether asking an engine in the AI placement used it up for these lyrics. */
+    fun aiAskSpends(httpCode: Int?): Boolean = true
+
     /** What a song check result does to the sheet on screen, for its log line. */
     fun songSheetEffect(result: String): String = if (result == "applied") "moved" else "kept"
 

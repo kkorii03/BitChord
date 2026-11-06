@@ -145,6 +145,7 @@ internal object SongHearing {
         hedgeAfterMs: Long,
         ask: suspend () -> T,
         heardSomething: (T) -> Boolean,
+        slots: Semaphore = Semaphore(1),
     ): T = coroutineScope {
         val first = async { ask() }
         val quick = withTimeoutOrNull(hedgeAfterMs) { first.await() }

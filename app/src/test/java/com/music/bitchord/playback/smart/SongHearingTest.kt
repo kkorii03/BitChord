@@ -2,6 +2,8 @@ package com.music.bitchord.playback.smart
 
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -136,6 +138,47 @@ class SongHearingTest {
             }
         }, heardSomething = { it == "heard" })
         assertEquals("heard", answer)
+    }
+
+    @Test
+    fun aSecondRequestWaitsForNoSlotAndIsNotSentWithoutOne() = runTest {
+        // Whisper takes 3 at once per project (measured 11-06: of 6 at once, 3 got 429).
+        val slots = Semaphore(1)
+        slots.acquire()
+        var asked = 0
+        val slow = CompletableDeferred<String>()
+        launch {
+            delay(40_000L)
+            slow.complete("first")
+        }
+        val answer = SongHearing.hedged(15_000L, ask = {
+            asked++
+            slow.await()
+        }, heardSomething = { true }, slots = slots)
+        assertEquals("first", answer)
+        assertEquals(1, asked)
+        assertEquals(0, slots.availablePermits)
+    }
+
+    @Test
+    fun aSecondRequestHoldsAFreeSlotAndGivesItBack() = runTest {
+        val slots = Semaphore(1)
+        var held = -1
+        var asked = 0
+        val stuck = CompletableDeferred<String>()
+        val answer = SongHearing.hedged(15_000L, ask = {
+            asked++
+            if (asked == 1) {
+                stuck.await()
+            } else {
+                held = slots.availablePermits
+                "second"
+            }
+        }, heardSomething = { true }, slots = slots)
+        assertEquals("second", answer)
+        assertEquals(0, held)
+        testScheduler.advanceUntilIdle()
+        assertEquals(1, slots.availablePermits)
     }
 
     @Test
