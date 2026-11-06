@@ -1423,7 +1423,9 @@ class LyricsController(
             refineMs = refineShift,
         )
         // Sync-test mode only: the lines as they are now on screen, so a phone
-        // scoring run can compare every displayed start with the audio.
+        // scoring run can compare every displayed start with the audio. Read now, not
+        // [shown]: a refresh overlapping one still applying this timing took the sheet
+        // before it moved and logged it last, so 33 of 370 corrected songs were scored raw.
         SyncTestMode.report(
             context = app,
             videoId = request.videoId,
@@ -1431,7 +1433,7 @@ class LyricsController(
             base = baseLabel,
             shiftMs = shiftMs ?: 0L,
             matchPercent = matchPercent,
-            lines = shown ?: lines,
+            lines = _lyrics.value ?: lines,
             heardWords = timing?.heardWords.orEmpty(),
         )
         // Sync-test mode only: a downloaded file's own opening. With the

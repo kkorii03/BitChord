@@ -143,9 +143,19 @@ def fresh_pool(playlists, seed):
 # ---------- app log ----------
 
 def parse_dump(text, vid):
-    """The last complete sync-dump block for vid: (header dict, [(n, start_ms, text)])."""
+    """The last complete sync-dump block for vid: (header dict, [(n, start_ms, text)]).
+
+    Up to vc161 a refresh overlapping another could log the sheet before it moved, with the
+    moved sheet's header, last of all (11-07: 33 of 370 corrected songs). Such a block never
+    reached the screen, so it is skipped."""
     blocks = parse_blocks(text, vid)
-    return blocks[-1] if blocks else None
+    if not blocks:
+        return None
+    starts = lambda b: [row[1] for row in b[1]]
+    while len(blocks) > 2 and blocks[-1][0].get("base") != "none" and starts(blocks[-1]) == starts(blocks[0]) \
+            and any(starts(b) != starts(blocks[0]) for b in blocks[1:-1]) and blocks[-1][0].get("shift") not in ("0", None):
+        blocks = blocks[:-1]
+    return blocks[-1]
 
 
 def parse_blocks(text, vid):
