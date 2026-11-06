@@ -152,6 +152,8 @@ object HqVerificationStore {
             data.rejected.remove(key)
             save(context, data)
         }
+        // An answer dropped for want of this map waits for it (11-06 khq6T9aHcI8: 189 s uncorrected).
+        LyricsTiming.notifyStreamChoice(youtubeId)
     }
 
     fun isRejected(
