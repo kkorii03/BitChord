@@ -1430,6 +1430,7 @@ class LyricsController(
             shiftMs = shiftMs ?: 0L,
             matchPercent = matchPercent,
             lines = shown ?: lines,
+            heardWords = timing?.heardWords.orEmpty(),
         )
         // Sync-test mode only: a downloaded file's own opening. With the
         // download re-check off no song check runs for it, so nothing else

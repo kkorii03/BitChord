@@ -32,7 +32,7 @@ object SyncDump {
         "shift=$shiftMs match=${matchPercent ?: 0} lines=$lines"
 
     /**
-     * `sync-dump: line <videoId> <number> <start ms> rep=<k>/<n> words=<w> <first 60 chars>`;
+     * `sync-dump: line <videoId> <number> <start ms> rep=<k>/<n> words=<w> lit=<ms> <first 60 chars>`;
      * [number] is 1-based.
      *
      * [repeatIndex] is which time this exact text is sung ([repeatCount] in
@@ -42,6 +42,9 @@ object SyncDump {
      * the lines a forced aligner cannot place, and the app's own timing for
      * them is what a listener complains about (phone 11-04: the only lines
      * scored >1.5 s off were of these two shapes).
+     *
+     * [litMs] is when the panel's sweep first lights a letter of this line,
+     * which is not [startMs] where the first word starts after the stamp.
      */
     fun line(
         videoId: String,
@@ -51,11 +54,12 @@ object SyncDump {
         repeatIndex: Int = 1,
         repeatCount: Int = 1,
         words: Int = 0,
+        litMs: Long = startMs,
     ): String {
         // One record per line: a break inside the text would split the block.
         val shown = text.take(TEXT_CHARS).replace('\n', ' ').replace('\r', ' ')
         return "$PREFIX line $videoId $number $startMs " +
-            "rep=$repeatIndex/$repeatCount words=$words $shown"
+            "rep=$repeatIndex/$repeatCount words=$words lit=$litMs $shown"
     }
 
     fun end(videoId: String): String = "$PREFIX end $videoId"
@@ -69,6 +73,8 @@ object SyncDump {
         shiftMs: Long,
         matchPercent: Int?,
         lines: List<LyricLine>,
+        /** The transcript the panel draws line-synced sweeps from; see [litAt]. */
+        heardWords: List<LyricsWordAlign.Heard> = emptyList(),
     ): List<String> = buildList {
         add(begin(videoId, playing, source, base, shiftMs, matchPercent, lines.size))
         // How often each line's own words come round, so a scored error on a
@@ -90,10 +96,21 @@ object SyncDump {
                     repeatIndex = round,
                     repeatCount = totals[key] ?: 1,
                     words = wordCount(lyric.text),
+                    litMs = litAt(lyric, lines.getOrNull(index + 1)?.timeMs, heardWords),
                 ),
             )
         }
         add(end(videoId))
+    }
+
+    /**
+     * When the sweep first lights a letter, from the same words the panel draws
+     * (`koShownLine`): a guessed sweep starts on the stamp, so only a transcript
+     * or the sheet's own words can start later.
+     */
+    private fun litAt(line: LyricLine, nextStamp: Long?, heardWords: List<LyricsWordAlign.Heard>): Long {
+        val first = (line.withHeardWords(heardWords, nextStamp) ?: line).words.firstOrNull()?.startMs
+        return maxOf(line.timeMs, first ?: line.timeMs)
     }
 
     /** The words a repeat is counted on: case, spacing and punctuation are not part of it. */
