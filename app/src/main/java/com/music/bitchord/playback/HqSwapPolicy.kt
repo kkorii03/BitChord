@@ -232,11 +232,21 @@ internal object HqSwapPolicy {
 
     data class QueueEdits(val head: Boolean, val tail: Boolean)
 
+    /**
+     * Which side of the current row the listener changed while the standby was
+     * being prepared from a copy of the queue. Up to eight seconds pass between
+     * that copy and the handover, and adopting the copy as it stands would drop
+     * a song added in that time or bring back one removed. The current row is
+     * skipped: it differs on purpose, being the upgraded item.
+     */
     fun queueEdits(
         activeKeys: List<String>,
         standbyKeys: List<String>,
         currentIndex: Int,
-    ): QueueEdits = QueueEdits(head = false, tail = false)
+    ): QueueEdits = QueueEdits(
+        head = activeKeys.take(currentIndex) != standbyKeys.take(currentIndex),
+        tail = activeKeys.drop(currentIndex + 1) != standbyKeys.drop(currentIndex + 1),
+    )
 
     /** The candidate's own position for [youtubeMs], using the verified offset and rate. */
     fun targetPositionMs(youtubeMs: Long, offsetMs: Long, rate: Double): Long =
