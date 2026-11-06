@@ -1590,17 +1590,34 @@ object LyricsTiming {
         song: Song,
         lines: List<LyricLine>,
         audioSource: String?,
+        /** Whether these lines are still the sheet on screen; a stale refit must not claim the newest slot. */
+        current: () -> Boolean = { true },
     ): Boolean = withContext(Dispatchers.Default) {
         val videoId = song.videoId
-        if (hearingBusy(videoId)) return@withContext false
         val key = textKey(lines, audioSource)
+        // The sheet on screen is the newest one, even if the last song check was
+        // asked about the sheet it replaced. Marked before the hearingBusy guard:
+        // a refit that waits for the words still tells the in-flight check that
+        // its sheet is gone, so its completion asks for this sheet to be fitted.
+        if (current()) newestSongKey[videoId] = key
+        if (hearingBusy(videoId)) return@withContext false
         val texts = lines.filter { it.text.isNotBlank() }.map { it.text }
         val language = com.music.bitchord.data.lyrics.Deepgram.languageFor(texts)
         songSyncGate.withLock {
             val entry = store(context).get(videoId) ?: Entry()
             // The listener's own ask stands.
             if (entry.aiPreferred && entry.aiTextKey == key) return@withLock false
-            val heard = SongHearing.longestKept(context, song, language) ?: wordsInEntry(entry, key)
+            // Whole-song words already kept for this sheet are the longest there
+            // are; asking SongHearing again would only repeat the farm request.
+            // A listen capped at MAX_EXTEND_SECONDS may not be the whole song.
+            val inEntry = wordsInEntry(entry, key)
+            val wholeInEntry = inEntry?.takeIf {
+                entry.refineHeardKey == key && entry.refineHeardExtended &&
+                    entry.refineHeardSeconds < RefineExtendPolicy.MAX_EXTEND_SECONDS
+            }
+            val heard = wholeInEntry
+                ?: SongHearing.longestKept(context, song, language)
+                ?: inEntry
                 ?: return@withLock false
             if (!SongCheckWindow.refitDue(entry.refitVersion, entry.refitKey == key, entry.refitMs, heard.audioMs)) {
                 return@withLock false
@@ -3262,7 +3279,16 @@ object LyricsTiming {
             fresh.invokeOnCompletion { songInFlight.remove(flight, fresh) }
             fresh.start()
         }
-        return running.await()
+        val result = running.await()
+        if (newestSongKey[song.videoId] != key) {
+            // The sheet was replaced while this check ran, so its answer was
+            // dropped. The new sheet may have no answer yet: ask the screen to
+            // fit it from the words already kept, now that this check is no
+            // longer in flight (11-06 7PgA6kyqVTc).
+            songInFlight.remove(flight, running)
+            _changes.tryEmit(song.videoId)
+        }
+        return result
     }
 
     /**

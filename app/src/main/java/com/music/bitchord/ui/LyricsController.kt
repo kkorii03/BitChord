@@ -1619,7 +1619,10 @@ class LyricsController(
             },
         )
         scope.launch {
-            if (LyricsTiming.refit(app, song, lines, audioSource) && generation == lyricsGeneration && timingLines === lines) {
+            if (LyricsTiming.refit(app, song, lines, audioSource) {
+                    generation == lyricsGeneration && timingLines === lines
+                } && generation == lyricsGeneration && timingLines === lines
+            ) {
                 refreshTiming(generation, lines)
             }
         }
