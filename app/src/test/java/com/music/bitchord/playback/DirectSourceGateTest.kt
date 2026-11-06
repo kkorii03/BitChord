@@ -164,12 +164,19 @@ class DirectSourceGateTest {
     }
 
     /**
-     * A 403 is the host's failure, not a wrong file. The walk used to search the
-     * same source twice more for it, on the listener's first note.
+     * A 403 is the host's failure, not a wrong file. The walk used to ask the
+     * same source again for it, on the listener's first note.
+     *
+     * Counted in stream opens, not searches: the resolver memoises each
+     * source's search answer, so the re-ask costs the next row's `/stream`
+     * call. Each source holds two copies so a re-ask has a row to open.
      */
     @Test
     fun aHostRefusalCostsFewerSearchesThanAWrongFile() = runBlocking {
-        val refusing = FakeSource("Deezer", listOf(row("dead-4", "Host Refused")))
+        val refusing = FakeSource(
+            "Deezer",
+            listOf(row("dead-4", "Host Refused"), row("dead-4b", "Host Refused")),
+        )
         install(listOf(refusing, FakeSource("YouTube", kind = SourceKind.YOUTUBE)))
         try {
             val stream = SourceResolver.directStream(target("Host Refused")) { candidate ->
@@ -182,7 +189,10 @@ class DirectSourceGateTest {
             install(emptyList())
         }
         // A wrong file is the row's: the same source is asked for another one.
-        val wrongFile = FakeSource("Deezer", listOf(row("wrong-4", "Wrong File")))
+        val wrongFile = FakeSource(
+            "Deezer",
+            listOf(row("wrong-4", "Wrong File"), row("wrong-4b", "Wrong File")),
+        )
         install(listOf(wrongFile, FakeSource("YouTube", kind = SourceKind.YOUTUBE)))
         try {
             assertNull(SourceResolver.directStream(target("Wrong File")) { false })
@@ -190,8 +200,8 @@ class DirectSourceGateTest {
             install(emptyList())
         }
         assertTrue(
-            "refused=${refusing.searches} wrong file=${wrongFile.searches}",
-            refusing.searches < wrongFile.searches,
+            "refused=${refusing.opens} wrong file=${wrongFile.opens}",
+            refusing.opens < wrongFile.opens,
         )
     }
 
@@ -473,7 +483,7 @@ class DirectSourceGateTest {
         override val displayName: String get() = configId
 
         @Volatile
-        var searches = 0
+        var opens = 0
 
         override suspend fun health() = SourceHealth.Ok()
 
@@ -483,17 +493,18 @@ class DirectSourceGateTest {
             waitForAll: Boolean,
             request: StreamRequest?,
         ): List<Song> {
-            searches++
             if (searchDelayMs > 0) kotlinx.coroutines.delay(searchDelayMs)
             return rows
         }
 
-        override suspend fun stream(trackId: String, request: StreamRequest): SourceStream =
-            SourceStream(
+        override suspend fun stream(trackId: String, request: StreamRequest): SourceStream {
+            opens++
+            return SourceStream(
                 url = "https://$configId/$trackId",
                 format = format,
                 sourceConfigId = configId,
                 trackId = trackId,
             )
+        }
     }
 }
