@@ -11,9 +11,9 @@ import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.net.SongVersionPolicy
+import com.music.bitchord.data.net.UnprovenVersions
 import com.music.bitchord.data.sources.TrackMatcher
 import kotlinx.coroutines.CancellationException
-import kotlin.math.abs
 
 /** The audio-version search kept out of the upstream file. */
 internal object KoAudioSwitch {
@@ -81,13 +81,16 @@ internal object KoAudioSwitch {
             // the bridge above cannot fire. The credit and the runtime still
             // agree, and that is the grade the quality upgrade already trusts
             // for exactly this song — see
-            // TrackMatcher.isAudioSwitchTitleUnverified. The nearest runtime
-            // wins, and a cover, karaoke or remix row is refused inside it.
-            val unverified = candidates
-                .filter { TrackMatcher.isAudioSwitchTitleUnverified(it, target) }
-                .minByOrNull { distanceFromTarget(it, target) }
+            // TrackMatcher.isAudioSwitchTitleUnverified. Only when the page can
+            // name one song by them, and a cover, karaoke or remix row is
+            // refused inside it. Nothing compared the sound yet, so the row is
+            // noted for the check its first sound starts — see UnprovenVersions.
+            val unverified = TrackMatcher.titleUnverifiedAdoption(candidates, target)
             if (unverified != null) {
-                adoptAudio(song, unverified, "title-unverified (artist+length)")?.let { return it }
+                adoptAudio(song, unverified, "title-unverified (artist+length)")?.let { adopted ->
+                    UnprovenVersions.note(song, adopted.videoId)
+                    return adopted
+                }
             }
             // One line per candidate that did not become the answer, so a
             // device log names the failing check instead of only the outcome.
@@ -190,11 +193,4 @@ internal object KoAudioSwitch {
         YtMusicRepository.audioVersionCache[song.videoId] = match
         return match
     }
-
-    /** How far a row's stated runtime sits from the video's, for picking between equals. */
-    private fun distanceFromTarget(candidate: Song, target: TrackMatcher.Target): Int {
-        val got = TrackMatcher.secondsOf(candidate.durationText) ?: return Int.MAX_VALUE
-        return abs((target.durationSec ?: 0) - got)
-    }
-
 }

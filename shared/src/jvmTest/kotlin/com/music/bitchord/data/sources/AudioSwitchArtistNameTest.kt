@@ -385,6 +385,41 @@ class AudioSwitchArtistNameTest {
         assertFalse(TrackMatcher.isTitleUnverifiedOriginal(audio, target))
     }
 
+    /**
+     * The credit and the runtime are all this grade has, so a different song by
+     * the same act must not pass on a runtime that is merely in the same
+     * ballpark. Ninety seconds let any of its songs through (review 11-06).
+     */
+    @Test
+    fun `another song of the same act outside a video's overhang is not adopted`() {
+        val target = arrestTarget() // 3:12
+        val tooShort = arrestAudio().copy(videoId = "SHORTER0001", title = "다른 노래", durationText = "2:30")
+        val tooLong = arrestAudio().copy(videoId = "LONGER00001", title = "다른 노래", durationText = "3:20")
+        assertFalse(TrackMatcher.isAudioSwitchTitleUnverified(tooShort, target))
+        assertFalse(TrackMatcher.isAudioSwitchTitleUnverified(tooLong, target))
+    }
+
+    @Test
+    fun `two differently titled rows of the act cannot name the video's song`() {
+        val target = arrestTarget()
+        val one = arrestAudio()
+        val other = arrestAudio().copy(videoId = "OTHERSONG01", title = "빌려온 고양이", durationText = "3:06")
+        assertNull(TrackMatcher.titleUnverifiedAdoption(listOf(one, other), target))
+    }
+
+    @Test
+    fun `copies of one title are still one song and the nearest runtime wins`() {
+        val target = arrestTarget()
+        val album = arrestAudio().copy(videoId = "ALBUMCOPY01", durationText = "3:00")
+        val single = arrestAudio().copy(videoId = "SINGLECOPY1", durationText = "3:05")
+        assertEquals("SINGLECOPY1", TrackMatcher.titleUnverifiedAdoption(listOf(album, single), target)?.videoId)
+    }
+
+    @Test
+    fun `the phone's page with the one korean row still adopts it`() {
+        assertEquals("qsqvJpOgrWw", TrackMatcher.titleUnverifiedAdoption(listOf(arrestAudio()), arrestTarget())?.videoId)
+    }
+
     @Test
     fun `the same korean title filed by another act is never adopted`() {
         val target = arrestTarget()

@@ -250,6 +250,13 @@ internal object KoSongVersion {
     fun isSongVersionMissing(videoId: String): Boolean =
         songVersionVerdicts.isMissing(videoId)
 
+    /** [song]'s adopted version sounded like another song; it has none, for this run. */
+    fun refuseSongVersion(song: Song) {
+        songVersionVerdicts.refuse(song.videoId)
+        // Same marker a completed miss leaves: asking again answers the row itself.
+        YtMusicRepository.audioVersionCache[song.videoId] = song
+    }
+
     /**
      * True when a before-audio lookup on [videoId] timed out or was cancelled
      * and the one post-audio retry has not been spent yet. See

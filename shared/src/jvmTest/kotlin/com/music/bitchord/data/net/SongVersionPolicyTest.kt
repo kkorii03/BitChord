@@ -1038,6 +1038,25 @@ class SongVersionPolicyTest {
     )
 
     @Test
+    fun `an unproven version is remembered with its row until the sound agrees`() {
+        val row = video("unproven-row", "MUSIC_VIDEO_TYPE_OMV")
+        UnprovenVersions.note(row, "unproven-adopted")
+        assertEquals(row, UnprovenVersions.sourceOf("unproven-adopted"))
+        UnprovenVersions.settle("unproven-adopted")
+        assertNull(UnprovenVersions.sourceOf("unproven-adopted"))
+    }
+
+    @Test
+    fun `a refused version is gone and no retry reopens it`() {
+        val store = SongVersionVerdictStore()
+        store.store("mv", video("found", "MUSIC_VIDEO_TYPE_ATV"), definitive = true)
+        store.refuse("mv")
+        assertNull(store.cached("mv"))
+        assertTrue(store.isMissing("mv"))
+        assertFalse(store.isRetrySuggested("mv"))
+    }
+
+    @Test
     fun `a tap on an official video with no release plays its own audio`() {
         // Silence is never the answer to a deliberate tap, and refusing it made
         // the same tap play the video's sound the second time.
