@@ -621,6 +621,16 @@ section_now_playing() {
 
   if tap "가사" first 10 || tap "Lyrics" first 6; then
     shot lyrics "Lyrics"
+    # Leave the app and come back with the lyrics open, twice: the first frames
+    # back log `lyric-clock:` (how old the reading was, how far the words were off).
+    for away in 30 75; do
+      adb shell log -t BitChord "tour-return: leaving for ${away}s"
+      adb shell input keyevent 3; sleep "$away"
+      adb shell log -t BitChord "tour-return: back"
+      adb shell am start -n "$PKG/com.music.bitchord.MainActivity" >/dev/null 2>&1 || true
+      sleep 12
+      shot "lyrics-back-$away" "Lyrics after ${away}s away"
+    done
     swipe_up; shot lyrics-scrolled "Lyrics scrolled"
     # Provider chooser, from the "가사 제공: ..." status line.
     if tap "가사 제공" first 5; then
