@@ -1,0 +1,478 @@
+BitChord: a cached file can play the wrong song. Wire the existing check into the app.
+
+Real failure (phone, 11-04, build vc144): a song played the wrong audio while every addon candidate was correctly refused (`claims FLAC 24-bit 44.1 kHz of 234s but the file runs 162s`). The track came from a rendition cached by an earlier play. It is served off disk without ever being resolved, so no check that inspects a stream ever saw those bytes. Playing the right song is this app's first priority.
+
+State of task/u19-tg: `shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/CachedRenditionBar.kt` and its test exist, but no app code calls CachedRenditionBar (verified by grep). The wiring was lost when the fix was carried onto this branch. The original commit is at the end of this prompt for reference. Its context is older, so read the current code and do not paste it blindly.
+
+Do:
+1. Read the current AudioCache (cache open, invalidateAddonRendition if it exists), PlaybackService.adoptCachedTrack, KoStreamProbe.servesBytes/honestRendition, SourceResolver.directStream and every caller you change.
+2. First write a test that fails on the current code and shows the missing wiring at the smallest seam you can reach without Android, for example a pure function the cache open and adoptCachedTrack both call. Follow the existing tests. New test classes must already match a pattern in ko-wip-check.yml; do not edit .github/workflows. If one would not, add to CachedRenditionBarTest or another existing class that CI runs.
+3. Wire: (a) on cache open, before a byte is played, at most once per key per session, off the main thread; (b) in adoptCachedTrack once the decoder reports a runtime; (c) a candidate refused for lying about its own bytes takes the copy it filled on an earlier play with it (the #alt bucket only).
+
+Must keep:
+- PlaybackService.adoptCachedTrack today uses TrackMatcher.isWrongLength, because a cached preview clip inside the 30s window of a short row measured wrong on the phone (11-05). The original commit used isSevereMismatch. Keep isWrongLength and make CachedRenditionBar use it too, updating its test only if it contradicts this, with the reason in your summary.
+- Never delete a user's download. Never drop a copy when the row length or the runtime is unknown: what cannot be measured is not evidence (the test already says so for head and rendition seconds; check the row length too). A wrong refusal means one extra network fetch; a wrong deletion of good bytes must stay rare, so spell out in your summary which inputs delete bytes.
+- No new polling or timers. No file IO on the main thread. Keep every existing guard, lock, null check and log. Log one line per refusal with the reason and the two lengths.
+
+Report the battery and network cost of the new check in your summary. Follow AGENTS.md (ponytail). Unknown Android or Media3 APIs: check with context7.
+
+Finish with a summary of at most 10 lines: files changed / key change / test results / unresolved problems, plus the REMOVED-LINES AUDIT.
+
+---- original commit 68fa9cf36, reference only ----
+68fa9cf36 ko-113: a cached rendition clears the same bar as a fresh one
+
+Phone 11-04 (build vc144): ILLIT "IYKYK" played the wrong audio while every
+addon candidate was correctly refused (`claims FLAC 24-bit 44.1 kHz of 234s
+but the file runs 162s`). The track came from a rendition cached by an earlier
+play, which is served off disk without ever being resolved, so no check that
+inspects a stream ever saw those bytes.
+
+- CachedRenditionBar: one rule for the bytes on disk — the container must match
+  the lossless claim, and the runtime must be the row's
+  (TrackMatcher.isSevereMismatch, reused). A refusal means the bytes go and the
+  track resolves normally.
+- AudioCache: refusalForCachedRendition asks it, from the cache open (before a
+  byte is played, once per key per session) and from adoptCachedTrack (once the
+  decoder reports a runtime, so the check no longer sits behind the
+  audioFormatFor guard that a queue advance fails).
+- KoStreamProbe: a candidate refused for lying about its own bytes now takes
+  the copy it filled on an earlier play with it (invalidateAddonRendition, the
+  #alt bucket only) — otherwise the refusal bought one play.
+
+REMOVED-LINES AUDIT
+- adoptCachedTrack: the old duration-mismatch block is replaced by the shared
+  bar, and the decoder-format fetch moved below it. Both are kept, not dropped:
+  the duration check is the same isSevereMismatch call, now reached when no
+  format is reported yet, and the format/mime still gate the adoptUnresolved
+  below.
+- AudioCache.containerOf: body moved into headOf (same span, same null
+  behaviour) so the sniff and the container share one read.
+- No guard, clamp, timeout, lock or null check was deleted.
+
+
+diff --git a/app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt b/app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt
+index 805d2f1f3..ce9facb90 100644
+--- a/app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt
++++ b/app/src/main/java/com/music/bitchord/data/sources/SourceResolver.kt
+@@ -295,6 +295,13 @@ object SourceResolver {
+ 
+     suspend fun directStream(
+         target: TrackMatcher.Target,
++        /**
++         * The track this lookup is for, when the caller knows it — passed on to
++         * the probe so a candidate refused for lying about its own bytes takes
++         * the copy it filled on an earlier play with it. See
++         * [com.music.bitchord.ko.KoStreamProbe.servesBytes].
++         */
++        mediaId: String? = null,
+         /**
+          * The sound comparison, when the caller has one — the same proof the
+          * upgrade path demands before a candidate may replace what is playing
+@@ -321,7 +328,9 @@ object SourceResolver {
+          * dead URL is discovered inside the lookup rather than by the player
+          * after it has already started on it.
+          */
+-        probe: suspend (SourceStream) -> Boolean = { com.music.bitchord.ko.KoStreamProbe.servesBytes(it) },
++        probe: suspend (SourceStream) -> Boolean = {
++            com.music.bitchord.ko.KoStreamProbe.servesBytes(it, mediaId)
++        },
+     ): SourceStream? {
+         if (target.title.isBlank() || target.isVideo) return null
+         val addons = directAddons()
+diff --git a/app/src/main/java/com/music/bitchord/ko/KoStreamProbe.kt b/app/src/main/java/com/music/bitchord/ko/KoStreamProbe.kt
+index 76c926773..d0b91c5b4 100644
+--- a/app/src/main/java/com/music/bitchord/ko/KoStreamProbe.kt
++++ b/app/src/main/java/com/music/bitchord/ko/KoStreamProbe.kt
+@@ -8,6 +8,7 @@ import com.music.bitchord.data.sources.HqQuality
+ import com.music.bitchord.data.sources.SourceStream
+ import com.music.bitchord.data.sources.StreamContainerSniff
+ import com.music.bitchord.data.sources.TrackMatcher
++import com.music.bitchord.playback.AudioCache
+ import com.music.bitchord.playback.HqHostTracker
+ import com.music.bitchord.playback.StreamRefusalRecovery
+ import kotlinx.coroutines.Dispatchers
+@@ -81,8 +82,15 @@ internal object KoStreamProbe {
+      * player never opens that URL again and the host is rested only once it has
+      * refused a second, different stream — see
+      * [StreamRefusalRecovery.noteRefusedStream].
++     *
++     * @param mediaId the track this candidate was looked up for, when the
++     *   caller knows it. A candidate refused for lying about its own bytes has
++     *   almost always been served before and cached: the copy it filled then
++     *   outlives this refusal and is played straight off disk, never resolving
++     *   and so never probed. Named here so that copy goes with the refusal —
++     *   see [AudioCache.invalidateAddonRendition].
+      */
+-    suspend fun servesBytes(stream: SourceStream): Boolean = withContext(Dispatchers.IO) {
++    suspend fun servesBytes(stream: SourceStream, mediaId: String? = null): Boolean = withContext(Dispatchers.IO) {
+         val url = stream.url
+         val request = Request.Builder()
+             .url(url)
+@@ -95,7 +103,7 @@ internal object KoStreamProbe {
+                     refused(url, response.code, response.headers.toMultimap())
+                     return@withContext false
+                 }
+-                if (!honestRendition(stream, response, url)) return@withContext false
++                if (!honestRendition(stream, response, url, mediaId)) return@withContext false
+                 true
+             }
+         } catch (e: Exception) {
+@@ -117,7 +125,12 @@ internal object KoStreamProbe {
+      * first. Anything unreadable keeps its chance, exactly as a probe that could
+      * not run does.
+      */
+-    private fun honestRendition(stream: SourceStream, response: Response, url: String): Boolean {
++    private fun honestRendition(
++        stream: SourceStream,
++        response: Response,
++        url: String,
++        mediaId: String?,
++    ): Boolean {
+         if (!HqQuality.isLosslessTier(stream.format)) return true
+         val head = runCatching {
+             response.peekBody(StreamContainerSniff.HEAD_BYTES.toLong()).bytes()
+@@ -128,6 +141,7 @@ internal object KoStreamProbe {
+                 "hq-stream: ${HqHostTracker.hostOf(url) ?: "?"} claims ${stream.format.summary} " +
+                     "but served a lossy file; not starting this track on it",
+             )
++            mediaId?.let { AudioCache.invalidateAddonRendition(it) }
+             return false
+         }
+         // The same lie with the container kept: a lossless file's size states its
+@@ -141,6 +155,7 @@ internal object KoStreamProbe {
+             "hq-stream: ${HqHostTracker.hostOf(url) ?: "?"} claims ${stream.format.summary} of " +
+                 "${stream.durationSec}s but the file runs ${seconds}s; not starting this track on it",
+         )
++        mediaId?.let { AudioCache.invalidateAddonRendition(it) }
+         return false
+     }
+ 
+diff --git a/app/src/main/java/com/music/bitchord/playback/AudioCache.kt b/app/src/main/java/com/music/bitchord/playback/AudioCache.kt
+index 8cba5c6f9..7f94db6ab 100644
+--- a/app/src/main/java/com/music/bitchord/playback/AudioCache.kt
++++ b/app/src/main/java/com/music/bitchord/playback/AudioCache.kt
+@@ -39,6 +39,7 @@ import com.music.bitchord.ko.KoLosslessCache
+ import com.music.bitchord.ko.KoPlaybackReadTracker
+ import com.music.bitchord.ko.KoPrefetchQueue
+ import com.music.bitchord.ko.KoRenditionEvents
++import com.music.bitchord.data.sources.CachedRenditionBar
+ import com.music.bitchord.data.sources.HqQuality
+ import com.music.bitchord.data.sources.HqTier
+ import com.music.bitchord.data.sources.SourceKind
+@@ -346,6 +347,7 @@ object AudioCache {
+         analysisHeadWant.clear()
+         stalledAnalysisHeads.clear()
+         renditionKeys.clear()
++        judgedOnOpen.clear()
+         koRetention.resetIndex() // [KO] purge-index
+         scope.launch {
+             cache.keys.toList().forEach { runCatching { cache.removeResource(it) } }
+@@ -1171,8 +1173,54 @@ object AudioCache {
+     /** [KO] hq-lossless */
+     fun hasCompleteLosslessCopy(mediaId: String): Boolean = koLossless.hasCompleteLosslessCopy(mediaId) // [KO] hq-lossless
+ 
++    /**
++     * Takes the rendition [uri] is about to read off disk with it when its
++     * bytes contradict what it says it is — before a byte of it is played.
++     *
++     * The one moment where that can still change what the listener hears. The
++     * bytes are gone, so [CacheDataSource] misses and resolves the track
++     * normally, from the top: the same refusal a fresh stream gets, applied
++     * where it is still worth something. Asking it later, once the decoder has
++     * said what is playing, costs a track's worth of wrong audio.
++     *
++     * Only the half that needs no decoder is asked here — the container against
++     * the claim. The runtime half needs a duration measured off the bytes, and
++     * `PlaybackService.adoptCachedTrack` asks that once the player reports one.
++     *
++     * Asked once per key per session, so a rendition this refuses and the cache
++     * then refills cannot be refused and refilled in a loop.
++     */
++    private fun discardDishonestRendition(uri: Uri) {
++        if (openedCache == null) return
++        val key = keyFactory.buildCacheKey(DataSpec(uri))
++        if (!judgedOnOpen.add(key)) return
++        val refusal = refusalForCachedRendition(
++            uri,
++            rowSeconds = uri.getQueryParameter("d")?.toIntOrNull(),
++            renditionSeconds = null,
++        ) ?: return
++        TrackLog.w(
++            TAG,
++            "cached rendition contradicts its own claim (${refusal.name.lowercase()}); " +
++                "dropping $key and resolving the track again",
++            about = mediaIdIn(uri),
++        )
++        discardRendition(uri)
++    }
++
++    /** Cache keys [discardDishonestRendition] has already judged this session. */
++    private val judgedOnOpen = ConcurrentHashMap.newKeySet<String>()
++
+     /** The container of the entry [key], from the magic at its very start. */
+-    private fun containerOf(key: String): Pair<String, String>? {
++    private fun containerOf(key: String): Pair<String, String>? =
++        headOf(key)?.let(::cachedContainerOf)
++
++    /**
++     * The first [CONTAINER_MAGIC_BYTES] of the entry [key], read from the span
++     * that starts the file — null when nothing is cached from position 0, or
++     * when the read failed. Null is not evidence of anything.
++     */
++    private fun headOf(key: String): ByteArray? {
+         val head = cache.getCachedSpans(key)
+             .firstOrNull { it.position == 0L && it.isCached }
+             ?.file
+@@ -1180,8 +1228,81 @@ object AudioCache {
+             ?: return null
+         val magic = ByteArray(CONTAINER_MAGIC_BYTES)
+         val read = runCatching { head.inputStream().use { it.read(magic) } }.getOrDefault(-1)
+-        if (read < magic.size) return null
+-        return cachedContainerOf(magic)
++        return magic.takeIf { read >= it.size }
++    }
++
++    /**
++     * Why the rendition [uri] names may not be played as it is, or null when it
++     * may — the cache's half of the bar a fresh stream clears before the player
++     * starts on it (see [com.music.bitchord.ko.KoStreamProbe]).
++     *
++     * Nothing else asks this. A cached rendition is served by
++     * [CacheDataSource] without ever reaching the resolver, so no check that
++     * inspects a *stream* ever sees these bytes, and one written by an earlier
++     * play of a lying row plays its wrong audio to the end of the track.
++     *
++     * Call it off the main thread: it reads the cache index and the file's head.
++     *
++     * @param rowSeconds the runtime the catalogue row states.
++     * @param renditionSeconds the runtime measured off these bytes, when the
++     *   decoder has said what it is — null leaves that half of the question
++     *   unanswered rather than answered "fine".
++     */
++    fun refusalForCachedRendition(
++        uri: Uri,
++        rowSeconds: Int?,
++        renditionSeconds: Int?,
++    ): CachedRenditionBar.Refusal? {
++        if (openedCache == null || uri.scheme != "bitchord") return null
++        val key = keyFactory.buildCacheKey(DataSpec(uri))
++        return CachedRenditionBar.refusal(
++            // Only the tag written when a whole rendition was fetched from a
++            // stream the ladder called lossless. The key's `#hifi` suffix is not
++            // read as a claim: a rendition can also be filled by a swap, and a
++            // deletion decided on a suffix is one decided on a name.
++            claimsLossless = isLosslessRendition(key),
++            head = headOf(key),
++            rowSeconds = rowSeconds,
++            renditionSeconds = renditionSeconds,
++        )
++    }
++
++    /**
++     * Throws away the copy an addon filled for [mediaId] because the file that
++     * addon serves for this track was just refused for not being what its own
++     * row claimed — see [com.music.bitchord.ko.KoStreamProbe].
++     *
++     * Without this the refusal bought one play: the same bad bytes sat under
++     * `#alt`, [CacheDataSource] served them on the next play without a resolve,
++     * and nothing that checks a stream ever looked at them again.
++     *
++     * Only the substitute bucket goes. The YouTube entry is a different file
++     * nobody refused, and an upgraded rendition was proved against the
++     * reference before it was written.
++     *
++     * Runs on the caller's thread; call it off the main one.
++     *
++     * @return true when something was there to remove.
++     */
++    fun invalidateAddonRendition(mediaId: String): Boolean {
++        if (openedCache == null || mediaId.isBlank()) return false
++        var removed = false
++        CachedRenditionBar.invalidatedKeys(mediaId).forEach { key ->
++            if (cache.getCachedSpans(key).isEmpty()) return@forEach
++            removed = true
++            runCatching { cache.removeResource(key) }
++                .onSuccess {
++                    forgetPurgeCandidate(key)
++                    renditionKeys.remove(mediaId)
++                    TrackLog.w(
++                        TAG,
++                        "dropped cached rendition $key: the addon's file for this track does not match its own claim",
++                        about = mediaId,
++                    )
++                }
++                .onFailure { TrackLog.d(TAG, "rendition $key still in use: ${it.message}", about = mediaId) }
++        }
++        return removed
+     }
+ 
+     /**
+@@ -1349,7 +1470,7 @@ object AudioCache {
+     private const val CACHE_FORMAT = 1
+     private const val KEY_MATCHING_SCHEMA = "matching_schema"
+     private const val MATCHING_SCHEMA = 2
+-    private const val ALT_SUFFIX = "#alt"
++    private const val ALT_SUFFIX = CachedRenditionBar.SUBSTITUTE_SUFFIX
+ 
+     /**
+      * Wraps [upstream] so everything played is written to disk on the way
+@@ -1479,6 +1600,7 @@ object AudioCache {
+ 
+             override fun open(dataSpec: DataSpec): Long {
+                 settleDirectEntry(dataSpec.uri)
++                discardDishonestRendition(dataSpec.uri)
+                 yieldAnalysisHeadToPlayback(cacheKeyOf(dataSpec.uri), dataSpec.uri.getQueryParameter("v"))
+                 return inner.open(dataSpec)
+             }
+diff --git a/app/src/main/java/com/music/bitchord/playback/DirectSourceGate.kt b/app/src/main/java/com/music/bitchord/playback/DirectSourceGate.kt
+index 70f41d346..ffd24e8c1 100644
+--- a/app/src/main/java/com/music/bitchord/playback/DirectSourceGate.kt
++++ b/app/src/main/java/com/music/bitchord/playback/DirectSourceGate.kt
+@@ -229,7 +229,7 @@ object DirectSourceGate {
+         }
+         val fresh = Lookup(
+             work = scope.async(TrackLog.about(videoId), start = CoroutineStart.LAZY) {
+-                SourceResolver.directStream(target, verify = proofOf(videoId, target))
++                SourceResolver.directStream(target, mediaId = videoId, verify = proofOf(videoId, target))
+             },
+             startedAtMs = android.os.SystemClock.elapsedRealtime(),
+         )
+diff --git a/app/src/main/java/com/music/bitchord/playback/PlaybackService.kt b/app/src/main/java/com/music/bitchord/playback/PlaybackService.kt
+index ec83f24ec..6cf637785 100644
+--- a/app/src/main/java/com/music/bitchord/playback/PlaybackService.kt
++++ b/app/src/main/java/com/music/bitchord/playback/PlaybackService.kt
+@@ -7191,25 +7191,49 @@ class PlaybackService : MediaLibraryService() {
+     }
+ 
+     private suspend fun adoptCachedTrack(mediaId: String, uri: Uri, durationSec: Int?): Boolean {
+-        val format = withContext(Dispatchers.Main) {
+-            player
+-                ?.takeIf { it.currentMediaItem?.mediaId == mediaId && audioFormatFor == mediaId }
+-                ?.audioFormat
+-        } ?: return false
+-        val mime = format.sampleMimeType ?: return false
+         val videoId = uri.getQueryParameter("v") ?: return false
+         val downloaded = com.music.bitchord.download.Downloads.savedUri(this, videoId) != null
+         if (downloaded) return false
+         val target = SourceResolver.targetIn(uri)
+-        val expectedSec = target.durationSec
+-        if (TrackMatcher.isSevereMismatch(expectedSec, durationSec)) {
++        // The bar a fresh stream clears before the player starts on it, asked of
++        // the bytes on disk — and asked *before* the decoder's format, which is
++        // the whole point of moving it up here. `audioFormatFor` is only this
++        // track's once the renderer has read a sample of it, and a queue advance
++        // reaches this within milliseconds of the transition, so the guard below
++        // used to answer "not this track's format yet" and return before the
++        // bytes were weighed at all. That is how a cached rendition of a
++        // different recording played to the end of the track while every
++        // candidate for the same song was being refused for its own runtime.
++        val refusal = withContext(Dispatchers.IO) {
++            AudioCache.refusalForCachedRendition(uri, target.durationSec, durationSec)
++        }
++        if (refusal != null) {
+             TrackLog.w(
+                 "BitChord",
+-                "cached rendition duration mismatch: playing ${durationSec}s vs catalogue ${expectedSec}s for $videoId; discarding cache rendition",
++                "cached rendition refused (${refusal.name.lowercase()}): playing ${durationSec}s vs " +
++                    "catalogue ${target.durationSec}s for $videoId; discarding it and resolving the track again",
+                 about = mediaId,
+             )
+             withContext(Dispatchers.IO) { AudioCache.discardRendition(uri) }
++            // Handed to the search rather than adopted. The bytes are gone, and
++            // the mime the decoder reported describes a file that is no longer
++            // there — reading it as "already lossless" is what would leave the
++            // wrong audio playing for the rest of the session. A null floor is
++            // the same statement: there is nothing on disk left to beat.
++            return QualityUpgrade.adoptUnresolved(
++                mediaId = mediaId,
++                uri = uri,
++                target = target,
++                playingMime = null,
++                playing = null,
++            )
+         }
++        val format = withContext(Dispatchers.Main) {
++            player
++                ?.takeIf { it.currentMediaItem?.mediaId == mediaId && audioFormatFor == mediaId }
++                ?.audioFormat
++        } ?: return false
++        val mime = format.sampleMimeType ?: return false
+         return QualityUpgrade.adoptUnresolved(
+             mediaId = mediaId,
+             uri = uri,
+diff --git a/shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/CachedRenditionBar.kt b/shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/CachedRenditionBar.kt
+new file mode 100644
+index 000000000..a38203785
+--- /dev/null
++++ b/shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/sources/CachedRenditionBar.kt
+@@ -0,0 +1,70 @@
++package com.music.bitchord.data.sources
++
++/**
++ * Whether a rendition already on disk may be played as it is.
++ *
++ * A stream from a source is refused before the player starts on it when its
++ * bytes contradict what its own row claimed — see [StreamContainerSniff] and
++ * `KoStreamProbe`. A rendition *cached* from such a stream was written before
++ * that check existed, and it is read straight off disk without ever being
++ * resolved, so nothing that inspects a stream ever sees it. Measured (phone
++ * 11-04, ILLIT "IYKYK"): every candidate for the track was correctly refused
++ * with `claims FLAC 24-bit 44.1 kHz of 234s but the file runs 162s`, and the
++ * track played wrong audio anyway, from a copy cached by an earlier play.
++ *
++ * So the same two questions are asked of the bytes on disk:
++ *
++ *  - **Does the container match the claim.** An entry tagged as a lossless
++ *    rendition opens with a lossless container, or it is not one whatever it
++ *    was written from.
++ *  - **Is it the recording the row names.** A copy whose runtime is a
++ *    [TrackMatcher.isSevereMismatch] away from the catalogue's is a different
++ *    edit, not this song.
++ *
++ * A refusal means the bytes go — see [invalidatedKeys] for the one an addon
++ * filled — and the track resolves normally, exactly as if nothing had been
++ * cached for it.
++ */
++object CachedRenditionBar {
++
++    /** The bucket a substitute's file is cached under; see `AudioCache`'s key factory. */
++    const val SUBSTITUTE_SUFFIX = "#alt"
++
++    /** Why a cached rendition may not be played as it is. */
++    enum class Refusal {
++        /** It says lossless and opens with a lossy container. */
++        LOSSY_BYTES,
++
++        /** Its runtime is not the row's. */
++        DURATION,
++    }
++
++    /**
++     * @param claimsLossless the entry is tagged as a lossless rendition, or
++     *   carries an upgrade's rendition tag.
++     * @param head the first bytes of the cached file, or null when they could
++     *   not be read — an unreadable head is not evidence, exactly as it is not
++     *   for a fresh stream.
++     * @param rowSeconds the runtime the catalogue row states, when it states one.
++     * @param renditionSeconds the runtime measured off the cached bytes.
++     */
++    fun refusal(
++        claimsLossless: Boolean,
++        head: ByteArray?,
++        rowSeconds: Int?,
++        renditionSeconds: Int?,
++    ): Refusal? = when {
++        claimsLossless && head != null && StreamContainerSniff.looksLossy(head) -> Refusal.LOSSY_BYTES
++        TrackMatcher.isSevereMismatch(rowSeconds, renditionSeconds) -> Refusal.DURATION
++        else -> null
++    }
++
++    /**
++     * The cache keys a refusal for [mediaId] takes with it: the copy an addon
++     * filled, so the same bad file cannot come back on the next play. The
++     * YouTube entry and any upgraded rendition are left where they are — a
++     * candidate refused now says nothing about bytes that were already proved.
++     */
++    fun invalidatedKeys(mediaId: String): List<String> =
++        listOf("$mediaId$SUBSTITUTE_SUFFIX", "$mediaId$SUBSTITUTE_SUFFIX-noatmos")
++}
