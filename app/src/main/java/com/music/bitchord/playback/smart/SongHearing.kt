@@ -63,6 +63,12 @@ internal object SongHearing {
     private const val HEDGE_AFTER_LONG_MS = 120_000L
     private const val OPENING_SECONDS = 120.0
 
+    private const val FILE_PREFIX = "file|"
+    private const val STREAM_PREFIX = "stream|"
+
+    /** How much of the stream's words a file may start from: a verse or two to fit an offset to. */
+    private const val FILE_READS_STREAM_SECONDS = 30.0
+
     /** A request with no reply goes again this many times, this far apart and further. */
     private const val MAX_RESENDS = 2
     private const val RESEND_AFTER_MS = 2_000L
@@ -112,6 +118,13 @@ internal object SongHearing {
     ): Saved? = saved
         .filter { it.recording == recording && it.language == language }
         .filter { it.whole || it.seconds + 1.0 >= untilSeconds }
+        .maxByOrNull { it.seconds }
+
+    /** The longest transcript of the YouTube stream in [language], if it is enough to fit an offset to. */
+    internal fun streamWords(kept: List<Saved>, language: String): Saved? = kept
+        .filter { it.recording.startsWith(STREAM_PREFIX) && it.language == language }
+        .filter { LyricsTiming.clockFromKey(it.clock) == LyricsTiming.Clock.YouTube }
+        .filter { it.whole || it.seconds >= FILE_READS_STREAM_SECONDS }
         .maxByOrNull { it.seconds }
 
     /** [kept] with [new] taken in: one per recording and language, the longer stays. */
@@ -164,6 +177,17 @@ internal object SongHearing {
             covering(kept, recording, language, untilSeconds)?.let { saved ->
                 TrackLog.d(TAG, "song-hear: kept lang=$language until=${untilSeconds.toInt()} secs=${saved.seconds.toInt()} words=${saved.words.size}", song.videoId)
                 return heardFrom(saved)
+            }
+            // A download taking over from its own stream mid-song. The words heard
+            // on the stream hold on the stream's clock; timing() carries them onto
+            // the file through its verified map, or drops them when it has none.
+            // Decoding the file instead left the song uncorrected for 71 s (11-06
+            // w58uXpyHWes, its new sheet 1.0-1.2 s late on the listener's own log).
+            if (recording.startsWith(FILE_PREFIX)) {
+                streamWords(kept, language)?.let { saved ->
+                    TrackLog.d(TAG, "song-hear: file reads the stream's ${saved.seconds.toInt()}s lang=$language", song.videoId)
+                    return heardFrom(saved)
+                }
             }
         }
         // One request per recording, language and window, whoever asks: a sheet
@@ -329,7 +353,7 @@ internal object SongHearing {
     }
 
     private fun recordingKey(fromFile: Boolean, clock: LyricsTiming.Clock): String? =
-        LyricsTiming.clockToKey(clock)?.let { (if (fromFile) "file|" else "stream|") + it }
+        LyricsTiming.clockToKey(clock)?.let { (if (fromFile) FILE_PREFIX else STREAM_PREFIX) + it }
 
     /** The file was replaced, so what was heard off it is no longer what plays. */
     fun forgetFile(context: Context, videoId: String) {
@@ -337,7 +361,7 @@ internal object SongHearing {
         scope.launch {
             synchronized(lockOf(videoId)) {
                 val kept = readFile(app, videoId)
-                val left = kept.filterNot { it.recording.startsWith("file|") }
+                val left = kept.filterNot { it.recording.startsWith(FILE_PREFIX) }
                 if (left.size != kept.size) writeFile(app, videoId, left)
             }
         }

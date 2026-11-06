@@ -106,6 +106,17 @@ class SongHearingTest {
     }
 
     @Test
+    fun aFileMayStartFromTheStreamsWordsOnlyOnTheStreamsOwnClock() {
+        val youtube = SongHearing.Saved("stream|yt", "en", 90.0, clock = "yt")
+        val short = SongHearing.Saved("stream|yt", "en", 20.0, clock = "yt")
+        val other = SongHearing.Saved("stream|alt", "en", 200.0, clock = null)
+        assertEquals(youtube, SongHearing.streamWords(listOf(short, youtube, other), "en"))
+        assertNull(SongHearing.streamWords(listOf(short), "en"))
+        assertNull(SongHearing.streamWords(listOf(other), "en"))
+        assertNull(SongHearing.streamWords(listOf(youtube), "ko"))
+    }
+
+    @Test
     fun aRequestWithNoReplyGoesAgainButAServersAnswerDoesNot() {
         assertEquals(true, SongHearing.shouldResend(null, 0))
         assertEquals(true, SongHearing.shouldResend(null, 1))

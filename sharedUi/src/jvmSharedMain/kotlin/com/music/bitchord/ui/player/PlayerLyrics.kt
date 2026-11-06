@@ -773,6 +773,10 @@ private fun rememberLyricClock(
         if (!isPlaying || !foreground) return@LaunchedEffect
         engine.restart()
         var lastDrawnNanos = 0L
+        // How the first frames back compare with the readings, for the log: this
+        // is where a stopped and rushing lyric would show.
+        var probesLeft = LYRIC_PROBES
+        var nextProbeNanos = 0L
         while (true) {
             withFrameNanos { frameNanos ->
                 // Readings are stamped on the System.nanoTime clock. The frame
@@ -792,11 +796,26 @@ private fun rememberLyricClock(
                     sampledAtMs = if (sampledAt > 0L) nanosToMs(sampledAt) else Double.NaN,
                     discontinuity = playhead.discontinuity,
                 )
+                if (probesLeft > 0 && now >= nextProbeNanos) {
+                    probesLeft--
+                    nextProbeNanos = now + LYRIC_PROBE_EVERY_NANOS
+                    val reading = playhead.positionMs
+                    val age = if (sampledAt > 0L) (now - sampledAt) / 1_000_000L else -1L
+                    com.music.bitchord.data.TrackLog.d(
+                        "BitChord",
+                        "lyric-clock: drawn=${clock.longValue} reading=$reading age=${age}ms " +
+                            "gap=${clock.longValue - (reading + age.coerceAtLeast(0L))}ms",
+                    )
+                }
             }
         }
     }
     return clock
 }
+
+/** Lines the log gets each time the lyric clock starts a run, and how far apart. */
+private const val LYRIC_PROBES = 3
+private const val LYRIC_PROBE_EVERY_NANOS = 1_500_000_000L
 
 /** A frame time this close to [System.nanoTime] is on the same clock. */
 private const val SAME_CLOCK_NANOS = 250_000_000L
@@ -2020,6 +2039,13 @@ internal fun LyricsPanel(
     // every line while the reader's place in the song is unchanged, and a reset
     // here would snap the panel back to the top mid-read.
     var placed by remember(trackKey) { mutableStateOf(false) }
+    // Coming back from another app, the song has moved on without the list. Placed
+    // at once, not rolled through every line it passed: that chase read as the
+    // lyrics stopping and then rushing to catch up (user, 11-06).
+    val listOnScreen = rememberIsForeground()
+    LaunchedEffect(listOnScreen) {
+        if (!listOnScreen) placed = false
+    }
     // Unsynced text has no line to hold anywhere, and centred it would only
     // open with half a screen of nothing above the first verse.
     val centered = centerFocus && isSynced

@@ -4073,6 +4073,10 @@ object LyricsTiming {
             return null
         }
         recheckTokens[song.videoId] = reason.token
+        // Heard before the gate, so a decode or a request here holds up no other
+        // song's answer; the check under the gate reads it back. A failure is left
+        // for that check to meet and report.
+        hearSongCheck(context, song, lines, key, null, VideoAudio.SONG_CHECK_SECONDS, retry = false)
         return songSyncGate.withLock {
             // A reset may have replaced this file while the check waited here.
             // The version it cleared made it look unverified, but the captured
