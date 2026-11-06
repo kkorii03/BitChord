@@ -31,6 +31,30 @@ class RecoveryTest(unittest.TestCase):
         self.assertEqual(matrix_report.recovery([("hq", at(9))], [(at(2), 0, 0)]), "")
 
 
+class CrashCountTest(unittest.TestCase):
+    def test_uiautomator_dump_crash_is_not_counted(self):
+        # The matrix lyrics step dumps the screen; uiautomator crashes on the
+        # software GPU and logs FATAL EXCEPTION under its own process.
+        text = "\n".join(
+            [
+                line("FATAL EXCEPTION: main"),
+                "10-26 12:00:00.001  1234  5678 E AndroidRuntime: Process: com.android.commands.uiautomator, PID: 1234",
+                line("play: -> Song (XbGs_qK2PQA) idx=0/10 reason=auto"),
+            ]
+        )
+        self.assertEqual(matrix_report.crash_count(text), 0)
+
+    def test_the_app_crash_is_counted(self):
+        text = "\n".join(
+            [
+                line("FATAL EXCEPTION: main"),
+                "10-26 12:00:00.001  1234  5678 E AndroidRuntime: Process: com.dev.bitchord, PID: 1234",
+                line("ANR in com.dev.bitchord"),
+            ]
+        )
+        self.assertEqual(matrix_report.crash_count(text), 2)
+
+
 class PlaysTest(unittest.TestCase):
     def test_lyrics_open_and_hq_swap_are_marks_with_times(self):
         log = "\n".join(

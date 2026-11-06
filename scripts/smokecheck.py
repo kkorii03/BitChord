@@ -263,7 +263,8 @@ def check_log(
         else None
     )
 
-    for raw in text.splitlines():
+    lines = text.splitlines()
+    for i, raw in enumerate(lines):
         line = raw.rstrip("\r")
 
         if "play: ->" in line:
@@ -361,7 +362,10 @@ def check_log(
                         sync_warnings.append(key)
 
         if "FATAL EXCEPTION" in line or ANR_RE.search(line):
-            crashes.append(line.strip())
+            # The matrix lyrics step dumps the screen; uiautomator crashes on
+            # the software GPU and logs FATAL under its own Process line.
+            if not any("uiautomator" in n for n in lines[i + 1:i + 4]):
+                crashes.append(line.strip())
 
         if "next-prep:" in line:
             match = NEXT_PREP_RE.search(line)

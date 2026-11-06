@@ -176,7 +176,23 @@ def count_songs():
 
 
 def new_judge(t0):
-    return Judge(t0, count_songs(), int(os.environ.get("SMOKE_WAIT_S", "150")), is_scenario())
+    return Judge(t0, count_songs(), matrix_wait(int(os.environ.get("SMOKE_WAIT_S", "150"))), is_scenario())
+
+
+def matrix_wait(default, path="scripts/smoke/matrix.env"):
+    """run.sh's matrix path waits MATRIX_WAIT s per song (scripts/smoke/matrix.sh)."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return default
+    m = re.search(r'^MATRIX_WAIT="?(\d+|full)"?[ \t]*$', text, re.M)
+    if not m:
+        return 240  # matrix.sh's ${MATRIX_WAIT:-240}
+    if m.group(1) == "full":
+        after = re.search(r'^MATRIX_AFTER="?(\d+)"?[ \t]*$', text, re.M)
+        return 520 + (int(after.group(1)) if after else 0)
+    return int(m.group(1))
 
 
 class Tail:

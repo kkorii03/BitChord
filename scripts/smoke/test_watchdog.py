@@ -2,6 +2,7 @@
 """Each stop rule fires when it should and stays quiet just under its limit."""
 import os
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -164,6 +165,37 @@ class Rules(unittest.TestCase):
 
     def test_clean_drops_key_shaped_text(self):
         self.assertEqual(w.clean("11-06 11:08:15.133  6439  6439 W BitChord: key=" + "a" * 40), "BitChord: key=***")
+
+
+class MatrixBudget(unittest.TestCase):
+    """A matrix run waits MATRIX_WAIT s per song (matrix.sh), not SMOKE_WAIT_S."""
+
+    def env(self, text):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = os.path.join(tmp.name, "matrix.env")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+        return path
+
+    def test_matrix_wait_replaces_the_150s_default(self):
+        # 240-320 s per song: a judge still on SMOKE_WAIT_S=150 stopped every
+        # such run as song_stuck long before the song's wait was over.
+        path = self.env('MATRIX_SET=x\nMATRIX_WAIT="320"\n')
+        self.assertEqual(w.matrix_wait(150, path), 320)
+        j = w.Judge(0, 10, w.matrix_wait(150, path))
+        j.log(1, CHATTER)
+        j.script(2, "a VIEW started")
+        alive(j, 2 + 320 + w.SONG_MARGIN_S - 30)
+        self.assertIsNone(j.stop)
+        self.assertEqual(j.hard, w.SETUP_S + 10 * (320 + 60) + w.POST_S)
+
+    def test_matrix_defaults_and_the_full_set(self):
+        self.assertEqual(w.matrix_wait(150, self.env("MATRIX_SET=x\n")), 240)
+        self.assertEqual(w.matrix_wait(150, self.env('MATRIX_WAIT="full"\nMATRIX_AFTER="30"\n')), 550)
+
+    def test_no_matrix_env_keeps_the_smoke_wait(self):
+        self.assertEqual(w.matrix_wait(150, "scripts/smoke/no-such-matrix.env"), 150)
 
 
 if __name__ == "__main__":

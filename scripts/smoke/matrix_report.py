@@ -180,6 +180,13 @@ def recovery(events, gaps):
     return " ".join(out)
 
 
+def crash_count(text):
+    """FATAL/ANR lines, without the uiautomator dump's own crash (matrix lyrics)."""
+    lines = text.splitlines()
+    return sum(1 for i, l in enumerate(lines)
+               if ("FATAL EXCEPTION" in l or "ANR in com" in l) and not any("uiautomator" in n for n in lines[i + 1:i + 4]))
+
+
 def table(root, names):
     meta = {s["set"]: s for s in runs()}
     print("| 세트 | 다른 점 | 곡 | 재생(초) | 첫 소리→요청답(초) | 첫 소리→화면 보정(초) | 곡 안에 도착 | 최종 base/shift | base 변화 | 답 | 요청 | 독립 판정 | 중앙값(초) | 0.3초 이내 | 최대(초) | lyric-clock gap 최대(ms) | 복귀 뒤 gap(ms) | 이벤트→다음 lyric-clock(초) |")
@@ -191,7 +198,7 @@ def table(root, names):
             print(f"| {name} | 결과 없음 |" + " |" * 16)
             continue
         text = log.read_text(encoding="utf-8", errors="replace")
-        crashes[name] = len(re.findall(r"FATAL EXCEPTION|ANR in com", text))
+        crashes[name] = crash_count(text)
         scored = {}
         report = root / name / "score" / "report.csv"
         if report.exists():

@@ -452,6 +452,18 @@ class CrashTest(unittest.TestCase):
     def test_clean_log_passes(self):
         self.assertEqual("PASS", statuses("")[5].status)
 
+    def test_uiautomator_dump_crash_is_not_ours(self):
+        # The matrix lyrics step dumps the screen; uiautomator crashes on the
+        # software GPU and logs FATAL EXCEPTION under its own process.
+        log = "\n".join(
+            [
+                "10-26 12:00:00.000  1234  5678 E AndroidRuntime: FATAL EXCEPTION: main",
+                "10-26 12:00:00.001  1234  5678 E AndroidRuntime: Process: com.android.commands.uiautomator, PID: 1234",
+                "10-26 12:00:00.002  1234  5678 E AndroidRuntime: java.lang.RuntimeException: dump failed",
+            ]
+        )
+        self.assertEqual("PASS", statuses(log)[5].status)
+
 
 class NextPrepTest(unittest.TestCase):
     def test_a_kept_version_is_not_an_mv(self):
