@@ -91,14 +91,16 @@ internal class LyricClock(startMs: Long) {
     }
 
     /**
-     * Playback is not moving: settle on [positionMs] outright, as of [nowMs].
-     * Called again for every reading that arrives while stopped, which is how a
-     * seek made while paused still moves the words.
+     * Not running: settle on [positionMs] outright, as of [nowMs]. Called again
+     * for every reading that arrives, which is how a seek made while paused still
+     * moves the words. [songStopped] false is a panel not on show while the song
+     * plays on: its readings are not standing still, and the first frame carries
+     * the last one forward like any other.
      */
-    fun hold(positionMs: Long, nowMs: Double) {
+    fun hold(positionMs: Long, nowMs: Double, songStopped: Boolean = true) {
         restart()
         displayedMs = positionMs.toDouble()
-        heldAtMs = nowMs
+        if (songStopped) heldAtMs = nowMs
     }
 
     /**
