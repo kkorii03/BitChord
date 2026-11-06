@@ -166,9 +166,14 @@ internal class LyricClock(startMs: Long) {
             return
         }
         val elapsed = takenAt - anchorAtMs
-        if (abs(reportedMs - (anchorMs + elapsed * rate)) <= tolerance(elapsed)) {
+        val expected = anchorMs + elapsed * rate
+        if (abs(reportedMs - expected) <= tolerance(elapsed)) {
             clearSuspect()
             anchor(takenAt, reportedMs, continues = true)
+            // 11-07 phone: a reading strays by 150 ms either way, and the words running
+            // after each one ran 25 % fast or slow for a moment. Only a share of what a
+            // reading says moves the song's place; a real drift still closes in seconds.
+            anchorMs = expected + (reportedMs - expected) * READING_WEIGHT
             return
         }
         // Off with nothing announced. One reading like that is a bad reading;
@@ -247,7 +252,11 @@ internal class LyricClock(startMs: Long) {
             // after opening the panel measured 0.92-1.12 and the words visibly slowed
             // and rushed. Over a short stretch only a real change of speed shows
             // through that; from a few seconds on, the fit is good to under a percent.
-            if (span >= SURE_RATE_SPAN_MS || abs(measured - rate) >= CLEAR_RATE_CHANGE) rate = measured
+            if (span >= SURE_RATE_SPAN_MS || abs(measured - rate) >= CLEAR_RATE_CHANGE) {
+                // shortcut: a real speed within this of normal is left to the readings to steer,
+                // about 125 ms behind at 1.05x; ask the player for its speed if that ever shows.
+                rate = if (abs(measured - 1.0) < NORMAL_SPEED_SLACK) 1.0 else measured
+            }
             rateSettled = true
             return
         }
@@ -381,6 +390,12 @@ private const val SURE_RATE_SPAN_MS = 3_000.0
 /** Smaller than the gap between playback speeds on offer, larger than jitter over a second or so. */
 private const val CLEAR_RATE_CHANGE = 0.2
 private const val CLEAR_PAIR_CHANGE = 0.35
+
+/** Readings over four seconds on the phone still fit 0.93-1.07 at normal speed. */
+private const val NORMAL_SPEED_SLACK = 0.1
+
+/** How much of a believed reading moves the song's place: five readings, 2.5 s, to close a real gap. */
+private const val READING_WEIGHT = 0.2
 
 /** Before then, a rough step from each pair at least this far apart. */
 private const val MIN_PAIR_SPAN_MS = 300.0
