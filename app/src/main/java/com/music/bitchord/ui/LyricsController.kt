@@ -1043,7 +1043,16 @@ class LyricsController(
                 if (calibration && !LyricsTiming.claimCalibrationSample(context, request.videoId)) {
                     calibration = false
                 }
+                // The words alongside the free measurement, for every video: the
+                // measurement takes a search and a second recording, and answers
+                // nothing for most covers for a minute or more. Hearing the opening
+                // costs a few seconds, and the base choice lets the heard words
+                // pick between the two. Spent once per sheet.
+                val hearNow = !calibration && AppSettings.aiTimingAhead.value &&
+                    com.music.bitchord.data.lyrics.Deepgram.usable &&
+                    LyricsTiming.wantsAi(context, request.videoId, lines)
                 if (calibration) launch { aiAhead(context, request.videoId, lines) }
+                if (hearNow) launch { aiAhead(context, request.videoId, lines, wordsOnly = true) }
                 // The record is searched for under every name the lyrics know:
                 // what they were found as first, then the video's own readings.
                 val names = buildList {
@@ -1189,11 +1198,16 @@ class LyricsController(
             // it), so this session keeps it to one try per audio source rather
             // than one per lyrics delivery. A file-to-stream swap is a new
             // source and is checked again.
+            // Per sheet too: a sheet that replaces the first a moment later was
+            // left with no check at all, and the answer to the old one thrown
+            // away as "for other lyrics" (11-06: 5 of 7 applied answers never
+            // reached the screen). The words are kept per recording, so this
+            // costs the new sheet no request.
             val checkKey = if (request.isVideo) {
                 request.videoId
             } else {
                 LyricsTiming.audioSourceKey(request.videoId, request.localUri != null)
-            }
+            } + "|" + lines.hashCode()
             if (songCheckStartedFor == checkKey) return@launch
             songCheckStartedFor = checkKey
             LyricsTiming.verifySong(
@@ -1205,6 +1219,10 @@ class LyricsController(
                     thumbnailUrl = null,
                     isVideo = false,
                     localUri = request.localUri,
+                    // VideoAudio turns seconds into bytes with this.
+                    durationText = request.durationMs.takeIf { it > 0L }?.let { ms ->
+                        "${ms / 60_000}:${((ms / 1_000) % 60).toString().padStart(2, '0')}"
+                    },
                 ),
                 lines,
             )
@@ -1540,7 +1558,12 @@ class LyricsController(
         }
     }
 
-    private suspend fun aiAhead(context: Application, videoId: String, lines: List<LyricLine>) {
+    private suspend fun aiAhead(
+        context: Application,
+        videoId: String,
+        lines: List<LyricLine>,
+        wordsOnly: Boolean = false,
+    ) {
         // Automatic only — the manual button calls [runAiTiming] directly and
         // still works while the phone saves power.
         if (!AppSettings.heavyWorkAllowed) return
@@ -1565,6 +1588,7 @@ class LyricsController(
                 artist = request?.artist.orEmpty(),
                 isVideo = request?.isVideo == true,
                 audioSource = audioSource,
+                wordsOnly = wordsOnly,
             )
         }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
     }

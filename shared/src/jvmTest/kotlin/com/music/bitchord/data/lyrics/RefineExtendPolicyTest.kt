@@ -50,8 +50,8 @@ class RefineExtendPolicyTest {
     }
 
     @Test
-    fun twelveMatchedLinesNeedNoWiderWindow() {
-        assertFalse(RefineExtendPolicy.shouldExtend(result(lines = 12), 90.0, 200_000L))
+    fun linesTheWordsNeverReachedAreHeardHoweverWellTheOpeningMatched() {
+        assertTrue(RefineExtendPolicy.shouldExtend(result(lines = 12), 90.0, 200_000L))
     }
 
     @Test

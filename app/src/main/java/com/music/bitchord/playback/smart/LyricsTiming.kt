@@ -695,6 +695,11 @@ object LyricsTiming {
         is Clock.Substitute -> "$CLOCK_SUBSTITUTE\u0001$sourceConfigId\u0001$trackId"
     }
 
+    /** A clock as [SongHearing] files it; null when it is not known. */
+    internal fun clockToKey(clock: Clock): String? = clock.saved()
+
+    internal fun clockFromKey(key: String?): Clock = clockOf(key)
+
     private fun Clock.label(): String = when (this) {
         Clock.Unknown -> "unknown"
         Clock.YouTube -> "youtube"
@@ -722,7 +727,7 @@ object LyricsTiming {
     }
 
     /** The clock of the rendition a measurement read; any substitute key is the substitute's. */
-    private fun clockForRendition(videoId: String, key: String?): Clock =
+    internal fun clockForRendition(videoId: String, key: String?): Clock =
         if (key != null && AutomixAnalysisSource.isSubstituteRendition(videoId, key)) {
             substituteClock(videoId)
         } else {
@@ -1411,7 +1416,10 @@ object LyricsTiming {
         }
         // Only word-level transcripts serve a refine; Gemini's are line-level.
         val wordLevel = entry.aiEngine != null && entry.aiEngine != ENGINE_GEMINI
-        return wordLevel && entry.aiTextKey == key && entry.heardWords.isNotEmpty()
+        if (!wordLevel || entry.aiTextKey != key || entry.heardWords.isEmpty()) return false
+        // An answer's opening knows nothing of the lines past it: 137 of 139
+        // listens stopped at 40 or 90 s, because this said "known" after them.
+        return lastLineMs(lines) < entry.heardWords.maxOf { it.e } + RefineExtendPolicy.MARGIN_MS
     }
 
     /**
@@ -1467,18 +1475,16 @@ object LyricsTiming {
             val hadWords = before?.refineHeardKey == key && before.refineHeardWords.isNotEmpty()
             var heardAnchor: RefineSnapshot? = null
             if (!hadWords) {
-                val copy = VideoAudio.songWavCopy(context, song, VideoAudio.SONG_CHECK_SECONDS)
+                val heard = hearForRefine(context, song, lines, VideoAudio.SONG_CHECK_SECONDS)
                     ?: return@withLock false
-                val listenClock = clockForSongAudio(song, copy)
-                val words = listenForRefine(copy.bytes, lines) ?: return@withLock false
                 heardAnchor = saveRefineHeard(
                     context,
                     videoId,
                     before,
                     key,
-                    words,
-                    listenClock,
-                    VideoAudio.SONG_CHECK_SECONDS,
+                    heard.words,
+                    heard.clock,
+                    heard.seconds,
                     extended = false,
                 )
             }
@@ -1527,9 +1533,7 @@ object LyricsTiming {
                 if (!hadWords) _changes.tryEmit(videoId)
                 return@withLock !hadWords
             }
-            val copy = VideoAudio.songWavCopy(context, song, target) ?: return@withLock !hadWords
-            val extendClock = clockForSongAudio(song, copy)
-            val words = listenForRefine(copy.bytes, lines) ?: return@withLock !hadWords
+            val heard = hearForRefine(context, song, lines, target) ?: return@withLock !hadWords
             // Same anchor, now taken before this second listen; the first
             // refine's own write is already part of [beforeExtend].
             val extendAnchor = saveRefineHeard(
@@ -1537,9 +1541,9 @@ object LyricsTiming {
                 videoId,
                 beforeExtend,
                 key,
-                words,
-                extendClock,
-                target,
+                heard.words,
+                heard.clock,
+                maxOf(target, heard.seconds),
                 extended = true,
             )
             refineWithSnapshot(context, videoId, lines, timing, audioSource, snapshot = extendAnchor)
@@ -1576,21 +1580,24 @@ object LyricsTiming {
         return RefineSnapshot(withHeard(before ?: Entry()))
     }
 
-    private suspend fun listenForRefine(
-        audio: ByteArray,
+    private class RefineHeard(val words: List<SavedWord>, val clock: Clock, val seconds: Double)
+
+    /** What a refine compares with: [SongHearing]'s kept words when they reach far enough, else a request. */
+    private suspend fun hearForRefine(
+        context: Context,
+        song: Song,
         lines: List<LyricLine>,
-    ): List<SavedWord>? {
+        untilSeconds: Double,
+    ): RefineHeard? {
         val language = com.music.bitchord.data.lyrics.Deepgram.languageFor(
             lines.filter { it.text.isNotBlank() }.map { it.text },
         )
-        val answer = com.music.bitchord.data.lyrics.Deepgram.listen(
-            audio,
-            language,
-            com.music.bitchord.data.lyrics.Deepgram.MODEL_WHISPER,
-        )
-        return answer.words?.take(MAX_HEARD_WORDS)
+        val heard = SongHearing.hear(context, song, untilSeconds, language) ?: return null
+        val words = heard.words?.take(MAX_HEARD_WORDS)
             ?.map { word -> SavedWord(t = word.text, s = word.startMs, e = word.endMs) }
             ?.takeIf { it.isNotEmpty() }
+            ?: return null
+        return RefineHeard(words, heard.clock, heard.audioMs / 1000.0)
     }
 
     private fun extendSeconds(song: Song): Double {
@@ -2591,6 +2598,8 @@ object LyricsTiming {
         probe: NextSyncProbe? = null,
         /** The next-prep bundle stops its own request when its row is replaced. */
         cancelWithCaller: Boolean = false,
+        /** Word-stamped engines only: asked alongside the measurement, which may yet answer for free. */
+        wordsOnly: Boolean = false,
     ): Adjustment? {
         val sung = lines.withIndex().filter { it.value.text.isNotBlank() }
         if (sung.size < MIN_AI_LINES) {
@@ -2621,7 +2630,7 @@ object LyricsTiming {
             )
         } else {
             AiTimingPolicy.ALL_ENGINES
-        }
+        }.let { pool -> if (wordsOnly) pool - ENGINE_GEMINI else pool }
         // Paid for and agreed, or already spent on these lyrics: reuse it
         // without decoding the audio again or paying an engine twice.
         if (engines.isEmpty()) {
@@ -2754,17 +2763,10 @@ object LyricsTiming {
                 return null
             }
         }
-        // The sound the phone already has, when it has all of it; the YouTube
-        // address (Gemini fetching and watching the video) otherwise.
-        val audioCopy = runCatching { VideoAudio.wavCopy(context, videoId) }.getOrNull()
-        val audio = audioCopy?.bytes
-        // The rendition the WAV was actually read from; Gemini watching the
-        // video URL when there was no local audio is on YouTube's clock.
-        val listenedClock = if (audioCopy == null) {
-            Clock.YouTube
-        } else {
-            clockForRendition(videoId, audioCopy.renditionKey)
-        }
+        // Whether any sound was there to hear, and the clock of what was: Gemini
+        // watching the video URL with no local audio is on YouTube's clock.
+        var audioPresent = false
+        var listenedClock: Clock = Clock.YouTube
         val texts = sung.map { it.value.text }
         // Deepgram's Whisper first: every word it hears comes with its time to
         // the hundredth of a second, and it hears the singing nova-3 mostly
@@ -2825,15 +2827,26 @@ object LyricsTiming {
         // guard has produced since whisper-large was shown to hear Korean.
         val deepgramSkip = LyricsAiGuard.deepgramSkipReason(title)
         val deepgramWanted = deepgramSkip == null
-        if (deepgramSkip != null && audio != null) {
+        if (deepgramSkip != null) {
             TrackLog.d(TAG, "Deepgram skipped ($deepgramSkip)", videoId)
         }
-        if (audio != null && deepgramWanted && com.music.bitchord.data.lyrics.Deepgram.usable) {
+        if (deepgramWanted && com.music.bitchord.data.lyrics.Deepgram.usable) {
             val language = com.music.bitchord.data.lyrics.Deepgram.languageFor(texts)
-            for ((model, name) in listOf(
-                com.music.bitchord.data.lyrics.Deepgram.MODEL_WHISPER to ENGINE_DEEPGRAM_WHISPER,
-                com.music.bitchord.data.lyrics.Deepgram.MODEL_WHISPER to ENGINE_WHISPER,
-            ).filter { it.second in engines }) {
+            val song = Song(videoId = videoId, title = title, artist = artist, thumbnailUrl = null, isVideo = isVideo)
+            for (name in listOf(ENGINE_DEEPGRAM_WHISPER, ENGINE_WHISPER).filter { it in engines }) {
+                val asked = System.currentTimeMillis()
+                // Whatever of the video's sound has landed, up to all of it: a
+                // cover's offset shows in its opening, and no decode or whole
+                // file is waited for any more. Nothing to hear spends no engine.
+                val hearing = SongHearing.hear(
+                    context,
+                    song,
+                    AI_HEAR_SECONDS,
+                    language,
+                    minSeconds = AI_HEAR_LEAST_SECONDS,
+                ) ?: break
+                audioPresent = true
+                listenedClock = hearing.clock
                 noteAttempt(name)
                 if (name == ENGINE_WHISPER) {
                     if (probe == null) {
@@ -2842,18 +2855,23 @@ object LyricsTiming {
                         pendingWhisper = true
                     }
                 }
-                val asked = System.currentTimeMillis()
-                val heardAnswer = com.music.bitchord.data.lyrics.Deepgram.listen(audio, language, model)
+                val heardAnswer = hearing
                 val heard = heardAnswer.words
                 if (heard != null) anyEngineAnswered = true
-                val starts = heard?.let { com.music.bitchord.data.lyrics.LyricsWordAlign.placeLines(texts, it) }
-                val raw = starts?.let { fitAi(lines, sung.map { s -> s.index }, it) }
+                // Lines past what was heard cannot have been placed; they are
+                // not disagreement. The whole song leaves every line in.
+                val inReach = sung.filter { it.value.timeMs <= hearing.audioMs }
+                    .takeIf { it.size >= MIN_AI_LINES } ?: sung
+                val starts = heard?.let {
+                    com.music.bitchord.data.lyrics.LyricsWordAlign.placeLines(inReach.map { s -> s.value.text }, it)
+                }
+                val raw = starts?.let { fitAi(lines, inReach.map { s -> s.index }, it) }
                 val fitted = raw?.takeIf { aiMayApply(lines, it, isVideo) }
                 TrackLog.d(
                     TAG,
                     "$name timing ($language, ${(System.currentTimeMillis() - asked) / 1000}s): " + when {
                         heard == null -> "no answer"
-                        raw == null -> "${heard.size} words, ${starts?.count { it != null } ?: 0} of ${sung.size} lines placed: not enough"
+                        raw == null -> "${heard.size} words, ${starts?.count { it != null } ?: 0} of ${inReach.size} lines placed: not enough"
                         !LyricsAiGuard.agreementAllows(raw.matchPercent) ->
                             "${heard.size} words, ${raw.matchPercent}% agree: below ${LyricsAiGuard.MIN_MATCH_PERCENT}%"
                         !LyricsAiGuard.shiftAllows(isVideo, shownShiftMs(lines, raw)) ->
@@ -2888,6 +2906,16 @@ object LyricsTiming {
         if (adjustment == null && ENGINE_GEMINI in engines) {
             noteAttempt(ENGINE_GEMINI)
             engine = ENGINE_GEMINI
+            // The sound the phone already has, when it has all of it; the
+            // YouTube address (Gemini fetching and watching the video) otherwise.
+            val audioCopy = runCatching { VideoAudio.wavCopy(context, videoId) }.getOrNull()
+            val audio = audioCopy?.bytes
+            if (audioCopy != null) {
+                audioPresent = true
+                listenedClock = clockForRendition(videoId, audioCopy.renditionKey)
+            } else {
+                listenedClock = Clock.YouTube
+            }
             answer = LyricsTranslation.placeLinesInVideo(
                 videoId,
                 sung.map { LyricsTranslation.LineToPlace(it.value.text, it.value.timeMs) },
@@ -2921,7 +2949,7 @@ object LyricsTiming {
                 probe.failure = NextPrepPolicy.engineFailure(
                     anyEngineAnswered = anyEngineAnswered,
                     rateLimited = rateLimitedWaitMs != null,
-                    audioPresent = audio != null,
+                    audioPresent = audioPresent,
                 )
             }
             if (rateLimitedWaitMs != null) {
@@ -2929,7 +2957,11 @@ object LyricsTiming {
             }
             if (NextPrepPolicy.shouldStoreSyncResult(probe?.failure)) {
                 persistAttempts()
-                if (anyEngineAnswered) store(context).update(videoId) { it.copy(aiFailedKey = key) }
+                // This key is what tells Gemini it was asked; a pass that left it
+                // out must not use up its turn.
+                if (anyEngineAnswered && ENGINE_GEMINI in engines) {
+                    store(context).update(videoId) { it.copy(aiFailedKey = key) }
+                }
             }
             rejectedHeard?.let { heard ->
                 store(context).update(videoId) {
@@ -3311,20 +3343,26 @@ object LyricsTiming {
         probe: NextSyncProbe? = null,
         retry: Boolean = false,
     ): Boolean {
-        // The gate exists for the request (a 429 is account-wide), but the
-        // audio used to be fetched under it too: [VideoAudio.songWavCopy] waits
-        // up to two minutes for an opening to download, and the next row's
-        // check held the gate that long while the playing song's queued behind
-        // it — on the 11-03 emulators its answer landed 3-5 minutes in, after
-        // the song had ended. Each window is fetched and decoded first, off the
-        // gate (VideoAudio keeps it, so [runSongCheck] reads it back at once);
-        // the gate is held only to send it and apply the answer.
-        VideoAudio.songWavCopy(context, song, SongCheckWindow.FIRST_SECONDS)
+        // The gate is for applying an answer. Listening used to happen under it,
+        // and fetching the audio before that: the next row's check held the
+        // playing song's for minutes (11-03: answers landed 3-5 minutes in).
+        // Each window is now heard first, off the gate, so a song waits for
+        // nobody's request; [SongHearing] caps how many run at once and shares
+        // one between callers. A reset during that wait voids the answer.
+        val startedGeneration = songSyncGenerationOf(song.videoId)
         // The first pass listens to the short opening that is already on disk,
         // so the screen is corrected while the song is still playing. The full
         // opening follows on the same cold playback: applied as a refinement,
-        // or as the first answer when the short one could not fit.
+        // or as the first answer when the short one could not fit. Already on
+        // disk in full (a replay, a row read ahead), one pass does for both.
+        val firstUntil = if (VideoAudio.secondsOnDisk(song) >= VideoAudio.SONG_CHECK_SECONDS) {
+            VideoAudio.SONG_CHECK_SECONDS
+        } else {
+            SongCheckWindow.FIRST_SECONDS
+        }
+        val firstAsk = hearSongCheck(context, song, lines, key, probe, firstUntil, retry) ?: return false
         val (first, firstOk) = songSyncGate.withLock {
+            if (songSyncGenerationOf(song.videoId) != startedGeneration) return@withLock null
             // Checked again under the gate: another song's 429 may have marked
             // this one while its flight was waiting here.
             val pending = store(context).get(song.videoId)
@@ -3333,31 +3371,19 @@ object LyricsTiming {
                 probe?.failure = NextPrepPolicy.SyncFailure.RATE_LIMIT
                 return@withLock null
             }
-            val first = runSongCheck(
-                context,
-                song,
-                lines,
-                key,
-                engine,
-                probe,
-                untilSeconds = SongCheckWindow.FIRST_SECONDS,
-                retry = retry,
-            ) ?: return@withLock null
+            val first = fitSongCheck(context, song, lines, key, engine, probe, firstAsk, retry)
             first to applySongCheck(context, song, key, engine, first)
         } ?: return false
-        if (!SongCheckWindow.needsFullOpening(first.result)) return firstOk
-        VideoAudio.songWavCopy(context, song, VideoAudio.SONG_CHECK_SECONDS)
+        if (!SongCheckWindow.needsFullOpening(first.result) ||
+            first.seconds >= VideoAudio.SONG_CHECK_SECONDS - 1
+        ) {
+            return firstOk
+        }
+        val fullAsk = hearSongCheck(context, song, lines, key, probe, VideoAudio.SONG_CHECK_SECONDS, retry)
+            ?: return firstOk
         return songSyncGate.withLock {
-            val full = runSongCheck(
-                context,
-                song,
-                lines,
-                key,
-                engine,
-                probe,
-                untilSeconds = VideoAudio.SONG_CHECK_SECONDS,
-                retry = retry,
-            ) ?: return@withLock firstOk
+            if (songSyncGenerationOf(song.videoId) != startedGeneration) return@withLock firstOk
+            val full = fitSongCheck(context, song, lines, key, engine, probe, fullAsk, retry)
             if (!SongCheckWindow.fullMayReplace(
                     firstFitted = first.fitted != null,
                     fullFitted = full.fitted != null,
@@ -3454,28 +3480,36 @@ object LyricsTiming {
         /** This is the one [AiTimingPolicy.songRetry] check; its spent replies say so. */
         retry: Boolean = false,
     ): SongCheck? {
+        val ask = hearSongCheck(context, song, lines, key, probe, untilSeconds, retry) ?: return null
+        return fitSongCheck(context, song, lines, key, engine, probe, ask, retry)
+    }
+
+    /** One window as heard, or why nothing needed hearing; [fitSongCheck] judges it, under the gate. */
+    private class SongAsk(
+        val answer: SongHearing.Heard?,
+        val language: String,
+        val untilSeconds: Double,
+    )
+
+    /**
+     * Listens to one window for a song check, off the gate. Null means nothing
+     * could be listened to (no audio, or a 429 held for later), so the caller
+     * must not record the attempt as spent. A window with too few lines to fit
+     * asks nobody and comes back without an answer.
+     */
+    private suspend fun hearSongCheck(
+        context: Context,
+        song: Song,
+        lines: List<LyricLine>,
+        key: Int,
+        probe: NextSyncProbe?,
+        untilSeconds: Double,
+        retry: Boolean,
+    ): SongAsk? {
         probe?.beginPass()
-        // Straight off the file, or the streaming copy's opening; null when
-        // there is nothing to listen to yet.
-        val copy = VideoAudio.songWavCopy(context, song, untilSeconds) ?: run {
-            songLog(song.videoId, "no-audio", null, null, 0)
-            probe?.failure = NextPrepPolicy.SyncFailure.NO_AUDIO
-            return null
-        }
-        val audio = copy.bytes
-        val listenClock = clockForSongAudio(song, copy)
-        // Sync-test mode only: the ninety seconds the check already decoded,
-        // kept for the phone's scoring run. Off, this is a no-op.
-        SyncTestMode.saveWav(context, song.videoId, audio)
-        val windowMs = SongCheckWindow.wavMs(audio.size)
-        val indices = SongCheckWindow.indices(lines.map { it.timeMs }, windowMs)
+        val indices = SongCheckWindow.indices(lines.map { it.timeMs }, (untilSeconds * 1000).toLong())
             .filter { lines[it].text.isNotBlank() }
-        val seconds = (windowMs / 1000.0).roundToInt()
-        if (indices.size < MIN_AI_LINES) {
-            songLog(song.videoId, "no-words", null, null, seconds)
-            probe?.failure = NextPrepPolicy.SyncFailure.TOO_FEW_LINES
-            return SongCheck("no-words", null, emptyList(), null, null, seconds, null, 0, probe?.failure, listenClock)
-        }
+        if (indices.size < MIN_AI_LINES) return SongAsk(null, "", untilSeconds)
         val texts = indices.map { lines[it].text }
         val sheetLanguage = com.music.bitchord.data.lyrics.Deepgram.languageFor(texts)
         // A mixed sheet's one retry listens in its other script; still one request, still 2 per lyrics text.
@@ -3484,7 +3518,36 @@ object LyricsTiming {
         val mixed = com.music.bitchord.data.lyrics.Deepgram.mixedPercent(texts, sheetLanguage)
         if (mixed > 0) TrackLog.d(TAG, "song-sync: lang=$sheetLanguage sheet-mixed ratio=$mixed%", song.videoId)
         if (retryLanguage != null) TrackLog.d(TAG, "song-sync: lang retry ($sheetLanguage -> $retryLanguage)", song.videoId)
-        val answer = listenForSong(context, song.videoId, key, audio, language, probe) ?: return null
+        val answer = listenForSong(context, song, key, untilSeconds, language, probe) ?: return null
+        return SongAsk(answer, language, untilSeconds)
+    }
+
+    /** Fits the lines to what [ask] heard. Runs under the gate: this and the apply are what it is for. */
+    private suspend fun fitSongCheck(
+        context: Context,
+        song: Song,
+        lines: List<LyricLine>,
+        key: Int,
+        engine: String,
+        probe: NextSyncProbe?,
+        ask: SongAsk,
+        retry: Boolean,
+    ): SongCheck {
+        val answer = ask.answer
+        // How far the words reach, by what the server read: a cut stream may
+        // stop short of the window, and a kept transcript may run past it.
+        val windowMs = answer?.audioMs ?: (ask.untilSeconds * 1000).toLong()
+        val listenClock = answer?.clock ?: Clock.Unknown
+        val language = ask.language
+        val indices = SongCheckWindow.indices(lines.map { it.timeMs }, windowMs)
+            .filter { lines[it].text.isNotBlank() }
+        val seconds = (windowMs / 1000.0).roundToInt()
+        if (answer == null || indices.size < MIN_AI_LINES) {
+            songLog(song.videoId, "no-words", null, null, seconds)
+            probe?.failure = NextPrepPolicy.SyncFailure.TOO_FEW_LINES
+            return SongCheck("no-words", null, emptyList(), null, null, seconds, null, 0, probe?.failure, listenClock)
+        }
+        val texts = indices.map { lines[it].text }
         val heard = answer.words ?: run {
             songLog(song.videoId, "no-answer", null, null, seconds, words = 0, http = answer.httpCode)
             probe?.failure = when {
@@ -3581,12 +3644,13 @@ object LyricsTiming {
      */
     private suspend fun listenForSong(
         context: Context,
-        videoId: String,
+        song: Song,
         key: Int,
-        audio: ByteArray,
+        untilSeconds: Double,
         language: String,
         probe: NextSyncProbe? = null,
-    ): com.music.bitchord.data.lyrics.Deepgram.Answer? {
+    ): SongHearing.Heard? {
+        val videoId = song.videoId
         val quiet = songQuietUntilMs - System.currentTimeMillis()
         if (quiet > 0) {
             if (!SongSyncRetry.canWaitInline(quiet)) {
@@ -3599,11 +3663,19 @@ object LyricsTiming {
         }
         var attempt = 0
         while (true) {
-            val answer = com.music.bitchord.data.lyrics.Deepgram.listen(
-                audio,
+            // Straight off the file, or the streaming copy as it stands; null
+            // when there is nothing to listen to yet.
+            val answer = SongHearing.hear(
+                context,
+                song,
+                untilSeconds,
                 language,
-                com.music.bitchord.data.lyrics.Deepgram.MODEL_WHISPER,
-            )
+                minSeconds = if (untilSeconds < VideoAudio.SONG_CHECK_SECONDS) SONG_FIRST_LEAST_SECONDS else untilSeconds,
+            ) ?: run {
+                songLog(videoId, "no-audio", null, null, 0)
+                probe?.failure = NextPrepPolicy.SyncFailure.NO_AUDIO
+                return null
+            }
             if (answer.httpCode != 429) {
                 songQuietUntilMs = 0L
                 return answer
@@ -3709,6 +3781,7 @@ object LyricsTiming {
         // automatic override still holds its old sheet and sync, so it has to
         // go with the answer; a listener's own override is left alone.
         bumpSongSyncGeneration(videoId)
+        SongHearing.forgetFile(context, videoId)
         LyricsOverrideStore.removeRecheck(context, videoId)
         store(context).update(videoId) {
             it.copy(
@@ -4115,6 +4188,15 @@ object LyricsTiming {
     }
 
     private const val MIN_AI_LINES = 3
+
+    /** A video is heard as far as its sound has landed, up to this. */
+    private const val AI_HEAR_SECONDS = 420.0
+
+    /** ...and not before this much has: a first verse to fit an offset to. */
+    private const val AI_HEAR_LEAST_SECONDS = 40.0
+
+    /** A song's first pass goes with this much when the window is slow to land. */
+    private const val SONG_FIRST_LEAST_SECONDS = 24.0
 
     /** A transcript longer than this is cut: enough for any song, bounded on disk. */
     private const val MAX_HEARD_WORDS = 4_000

@@ -104,6 +104,8 @@ object Deepgram {
         val httpCode: Int? = null,
         /** `Retry-After` in ms when the answer carried one; null otherwise. */
         val retryAfterMs: Long? = null,
+        /** How much sound the server read (`metadata.duration`); a cut stream may be under what was asked. */
+        val audioMs: Long? = null,
     )
 
     /**
@@ -115,7 +117,13 @@ object Deepgram {
         listen(audioWav, language, model).words
 
     /** As [words], but saying whether Deepgram actually answered, and with which HTTP code. */
-    suspend fun listen(audioWav: ByteArray, language: String, model: String = MODEL_NOVA): Answer {
+    suspend fun listen(
+        audioWav: ByteArray,
+        language: String,
+        model: String = MODEL_NOVA,
+        /** The bytes' container: a cached stream's opening is sent as it is, see `SongHearing`. */
+        mime: String = "audio/wav",
+    ): Answer {
         val key = apiKey.trim()
         if (key.isEmpty() || key == rejectedKey) return Answer(null)
         val spoken = if (model == MODEL_WHISPER && language == "multi") "detect_language=true" else "language=$language"
@@ -123,7 +131,7 @@ object Deepgram {
         val request = Request.Builder()
             .url(url)
             .header("Authorization", "Token $key")
-            .post(audioWav.toRequestBody("audio/wav".toMediaType()))
+            .post(audioWav.toRequestBody(mime.toMediaType()))
             .build()
         return try {
             client.newCall(request).runCancellable { response ->
@@ -140,7 +148,7 @@ object Deepgram {
                     )
                 }
                 val body = response.body?.string() ?: return@runCancellable Answer(null, response.code)
-                Answer(parse(body), response.code)
+                Answer(parse(body), response.code, audioMs = parseAudioMs(body))
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -191,6 +199,13 @@ object Deepgram {
             val end = word["end"]?.jsonPrimitive?.doubleOrNull ?: start
             LyricsWordAlign.Heard(text, (start * 1000).toLong(), (end * 1000).toLong())
         }
+    }.getOrNull()
+
+    /** `metadata.duration` in ms: how much of the sent bytes the server could read. */
+    internal fun parseAudioMs(body: String): Long? = runCatching {
+        json.parseToJsonElement(body).jsonObject["metadata"]?.jsonObject
+            ?.get("duration")?.jsonPrimitive?.doubleOrNull
+            ?.takeIf { it > 0.0 }?.let { (it * 1000).toLong() }
     }.getOrNull()
 
     /**

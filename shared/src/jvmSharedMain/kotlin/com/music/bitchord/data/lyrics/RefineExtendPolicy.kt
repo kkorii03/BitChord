@@ -22,7 +22,7 @@ object RefineExtendPolicy {
      * paid for by the minute, and one 16 kHz clip of this length is already
      * 9.6 MB of the 16 MB decoded-audio cache.
      */
-    const val MAX_EXTEND_SECONDS = 300.0
+    const val MAX_EXTEND_SECONDS = 420.0
 
     /** A line this far past the kept transcript's end is one it never heard. */
     const val MARGIN_MS = 30_000L
@@ -43,7 +43,11 @@ object RefineExtendPolicy {
         // rule exists for: 11-04, 7% of the lines past 90 s off by >1.5 s
         // against 2% before it, with no listen ever made further.
         if (result.applied) return result.slopePerMin != 0.0 || unheard
-        return result.lines < RefinePolicy.MIN_WIDE_LINES && unheard
+        // Not only for a refine that failed: the bench of 11-06 scored the first
+        // ninety seconds' words at 0.36 of the song's lines within 0.3 s and the
+        // whole song's at 0.61. Lines the words never reached have nothing to
+        // be placed by, whatever the opening agreed on.
+        return unheard
     }
 
     /**

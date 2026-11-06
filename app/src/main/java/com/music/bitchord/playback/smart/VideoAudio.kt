@@ -79,6 +79,10 @@ object VideoAudio {
         /** The verified source pair recorded for a local file, captured when it was opened. */
         val localSourceConfigId: String? = null,
         val localTrackId: String? = null,
+        /** What [bytes] are: the decoded WAV, or a cached stream's own container. */
+        val mime: String = "audio/wav",
+        /** These bytes run to the end of the recording. */
+        val whole: Boolean = false,
     )
 
     /**
@@ -387,6 +391,115 @@ object VideoAudio {
             throw cancelled
         }
     }
+
+    /**
+     * The opening of a streaming [song] exactly as the cache holds it: the
+     * container's own bytes, cut at whatever has arrived, with no decode at all.
+     *
+     * A speech server reads a cut WebM or fragmented MP4 to its last whole frame
+     * (11-06, 4 songs: the same word times as the decoded WAV, median 0 ms, p90
+     * 40-80 ms, at 40 % of the upload). So a check no longer waits at
+     * [AudioDecoder]'s one-at-a-time gate behind automix, the quality check or
+     * the song before: 11-06's emulators asked a median of 98 s after the first
+     * sound, and the request itself took 8 s.
+     *
+     * Waits on cache events for up to [untilSeconds], or settles for [minSeconds]
+     * after [QUICK_WAIT_MS]. Null means nothing fit to send, not an error: the
+     * caller decodes instead. A file on the device is left to the decoded path.
+     */
+    internal suspend fun songStreamOpening(
+        song: Song,
+        untilSeconds: Double,
+        minSeconds: Double = untilSeconds,
+    ): SongAudio? = withContext(Dispatchers.IO) {
+        if (!untilSeconds.isFinite() || untilSeconds <= 0.0) return@withContext null
+        val local = song.localUri?.takeIf { it.isNotBlank() }?.let { Uri.parse(it) }
+        if (local != null && LocalAudioSource.isLocal(local)) return@withContext null
+        val videoId = song.videoId
+        val durationMs = song.durationMillis()
+        AudioCache.keepForTiming(videoId)
+        fun bytesFor(seconds: Double, copy: AudioCache.Rendition): Long =
+            openingBytes(copy, seconds, durationMs) ?: (seconds * RAW_BYTES_PER_SECOND).toLong()
+        if ((VersionAudioAligner.renditionToMeasure(videoId)?.cachedPrefix ?: 0L) < AudioCache.MIN_ALIGNMENT_PREFIX_BYTES) {
+            // A row that has not started the stream yet: this is what asks for it.
+            AudioCache.awaitAnalysisHead(Uri.parse(AutomixAnalysisSource.opusUri(videoId)), HEAD_TIMEOUT_MS)
+        }
+        var copy = VersionAudioAligner.renditionToMeasure(videoId) ?: return@withContext null
+        val want = bytesFor(untilSeconds, copy)
+        if (!copy.isComplete && copy.cachedPrefix < want &&
+            !AudioCache.awaitRenditionPrefix(videoId, want, QUICK_WAIT_MS)
+        ) {
+            copy = VersionAudioAligner.renditionToMeasure(videoId) ?: return@withContext null
+            val least = bytesFor(minSeconds, copy)
+            if (!copy.isComplete && copy.cachedPrefix < least &&
+                !AudioCache.awaitRenditionPrefix(videoId, least, (minSeconds * 1000).toLong() + QUICK_WAIT_MS)
+            ) {
+                TrackLog.d(TAG, "song check: ${copy.cachedPrefix} bytes on disk, $least wanted", videoId)
+            }
+        }
+        copy = VersionAudioAligner.renditionToMeasure(videoId) ?: return@withContext null
+        // Never past what has landed: reading on would wait for the stream.
+        val take = minOf(copy.cachedPrefix, bytesFor(untilSeconds, copy))
+        if (take < MIN_RAW_BYTES || take > MAX_RAW_BYTES) return@withContext null
+        val source = AudioCache.renditionDataSource(Uri.parse("bitchord://watch?v=$videoId"), copy)
+        val bytes = try {
+            readBytes(source, take.toInt())
+        } catch (e: Exception) {
+            TrackLog.w(TAG, "song check: could not read the cached stream: ${e.message}", videoId)
+            return@withContext null
+        } finally {
+            runCatching { source.close() }
+        }
+        val mime = containerMime(bytes) ?: run {
+            TrackLog.d(TAG, "song check: cached stream is no container to send as it is", videoId)
+            return@withContext null
+        }
+        SongAudio(
+            bytes,
+            copy.key,
+            fromFile = false,
+            mime = mime,
+            whole = copy.isComplete && bytes.size.toLong() >= copy.contentLength,
+        )
+    }
+
+    private fun readBytes(source: MediaDataSource, size: Int): ByteArray {
+        val bytes = ByteArray(size)
+        var at = 0
+        while (at < size) {
+            val read = source.readAt(at.toLong(), bytes, at, size - at)
+            if (read <= 0) break
+            at += read
+        }
+        return if (at == size) bytes else bytes.copyOf(at)
+    }
+
+    /** The media type a speech server should read [head] as, by its magic bytes; null when it is none of them. */
+    internal fun containerMime(head: ByteArray): String? {
+        fun at(index: Int, vararg expected: Int): Boolean =
+            head.size >= index + expected.size &&
+                expected.indices.all { head[index + it].toInt() and 0xFF == expected[it] }
+        return when {
+            at(0, 0x1A, 0x45, 0xDF, 0xA3) -> "audio/webm"
+            at(4, 0x66, 0x74, 0x79, 0x70) -> "audio/mp4"
+            at(0, 0x66, 0x4C, 0x61, 0x43) -> "audio/flac"
+            at(0, 0x4F, 0x67, 0x67, 0x53) -> "audio/ogg"
+            at(0, 0x49, 0x44, 0x33) -> "audio/mpeg"
+            else -> null
+        }
+    }
+
+    /** How long a check waits for its whole window before settling for what has landed. */
+    private const val QUICK_WAIT_MS = 10_000L
+
+    /** Bytes per second when a stream's length or duration is unknown: 160 kbps, over any audio stream YouTube serves. */
+    private const val RAW_BYTES_PER_SECOND = 20_000.0
+
+    /** Under about ten seconds of audio there is nothing to fit. */
+    private const val MIN_RAW_BYTES = 150L * 1024
+
+    /** A substitute's lossless file is decoded down rather than uploaded whole. */
+    private const val MAX_RAW_BYTES = 16L * 1024 * 1024
 
     private class SongSource(
         val data: MediaDataSource,
