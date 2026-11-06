@@ -402,6 +402,44 @@ class RefinePolicyTest {
         assertFalse(result.applied, "moved ${result.medianMs} ms by ${result.model}")
     }
 
+    @Test
+    fun aWholeSheetFarBehindItsVideoIsMovedTheWholeWay() {
+        // 11-06 iKraCjaTBVk: a cover with a quiet 20 s intro, the sheet 19.4 s
+        // early from first line to last and no drift. Clipped to the 10 s cap it
+        // was still 9.4 s wrong and reported as corrected.
+        val lines = List(12) { index -> line(1_300L + index * 12_000L, "line$index") }
+        val heard = lines.map { heard(it.text, it.timeMs + 19_400L) }
+        val result = RefinePolicy.compute(lines, heard)
+
+        assertTrue(result.applied)
+        assertEquals(RefinePolicy.Model.WIDE, result.model)
+        assertEquals(19_400L, result.medianMs)
+    }
+
+    @Test
+    fun aFlatMovePastTheFlatCapIsNotAppliedInPart() {
+        // Moving part of the way is wrong and says it is corrected; leave it alone.
+        val lines = List(12) { index -> line(1_300L + index * 12_000L, "line$index") }
+        val heard = lines.map { heard(it.text, it.timeMs + 31_000L) }
+        val result = RefinePolicy.compute(lines, heard)
+
+        assertFalse(result.applied, "moved ${result.medianMs} ms by ${result.model}")
+    }
+
+    @Test
+    fun aChorusHeavySheetIsNotMovedByItsOwnRepeatsOnAFlatFit() {
+        // Thirteen identical lines, eleven hearings, the sheet truly 3 s late.
+        // The alignment lays the hearings on the last eleven lines, which reads
+        // as a flat -17.2 s. Nothing in repeats alone can say which they are;
+        // the wide window's vote finds the true 3 s.
+        val lines = List(13) { index -> line(20_000L + index * 10_100L, "chorus") }
+        val heard = lines.take(11).map { heard("chorus", it.timeMs + 3_000L) }
+        val result = RefinePolicy.compute(lines, heard)
+
+        assertTrue(result.applied)
+        assertTrue(abs(result.medianMs - 3_000L) <= 100L, "median ${result.medianMs} ms")
+    }
+
     private fun misheardOpenings(lateMs: Long): Pair<List<LyricLine>, List<LyricsWordAlign.Heard>> {
         val lines = List(12) { index -> line(20_000L + index * 12_000L, uniqueText(index)) }
         val heard = lines.mapIndexed { index, line ->
