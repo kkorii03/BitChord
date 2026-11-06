@@ -590,14 +590,25 @@ object LyricsTiming {
         } else {
             null
         }
-        val heard = heardOnClock.map { word ->
-            fun heardAt(ms: Long): Long = ((hqMap?.map(ms) ?: ms) + refined.extraMs).coerceAtLeast(0L)
-            val start = heardAt(word.s)
-            LyricsWordAlign.Heard(
-                text = word.t,
-                startMs = start,
-                endMs = maxOf(start, heardAt(word.e)),
-            )
+        val heard = if (savedHeard.isNotEmpty()) {
+            heardOnClock.map { word ->
+                fun heardAt(ms: Long): Long = ((hqMap?.map(ms) ?: ms) + refined.extraMs).coerceAtLeast(0L)
+                val start = heardAt(word.s)
+                LyricsWordAlign.Heard(
+                    text = word.t,
+                    startMs = start,
+                    endMs = maxOf(start, heardAt(word.e)),
+                )
+            }
+        } else if (baseAllowed && !refineSource.lineLevel) {
+            // No AI answer on show, but the refine heard the song: a line-synced sheet's
+            // stamps ran 0.4 s early (median, 11-06), and the sweep can wait for the voice.
+            refineClock.map { word ->
+                val start = (word.startMs + refined.extraMs).coerceAtLeast(0L)
+                LyricsWordAlign.Heard(word.text, start, maxOf(start, word.endMs + refined.extraMs))
+            }
+        } else {
+            emptyList()
         }
         logClocks(videoId, playing, baseClock, refineSource.clock, manualClock, converted, dropped)
         return refinedWithPerLine.copy(heardWords = heard).takeUnless { it.isEmpty }
