@@ -497,4 +497,51 @@ class TrackMatcherTitleEdgeTest {
             TrackMatcher.queries(TrackMatcher.Target("3.여수밤바다 - Yeosu Night Sea", "장범준")),
         )
     }
+
+    @Test
+    fun `a featuring credit before the dash is the artist not the title`() {
+        val parts = TrackMatcher.parseTitle("David Guetta ft. Sia - Titanium", "David Guetta")
+        assertEquals("titanium", parts.core)
+        assertEquals(emptySet<String>(), parts.versions)
+    }
+
+    @Test
+    fun `a numeric title followed by its artist is not a track number`() {
+        assertEquals("22", core("22 - Taylor Swift", "Taylor Swift"))
+        assertEquals("505", core("505 - Arctic Monkeys", "Arctic Monkeys"))
+        // A real listing number is still stripped.
+        assertEquals("ditto", core("3. Ditto", "aespa"))
+        assertEquals("ditto", core("3 - Ditto", "aespa"))
+    }
+
+    @Test
+    fun `a trailing song word that is part of the title is kept`() {
+        assertEquals("lovesong", core("Love song"))
+        assertEquals("oursong", core("Our Song"))
+        // An upload label after "Full"/"Official" is still packaging.
+        assertEquals("paniyonsa", core("Paniyon Sa Full Song"))
+        assertEquals("song", core("Song Full Audio"))
+        // "Limited Edition" is release packaging.
+        assertEquals("song", core("Song Limited Edition"))
+        assertEquals("song", core("Song (Limited Edition)"))
+        assertEquals(emptySet<String>(), TrackMatcher.parseTitle("Song Limited Edition").versions)
+    }
+
+    @Test
+    fun `a remaster year after the artist is packaging not the title`() {
+        val parts = TrackMatcher.parseTitle("Black Sabbath - 2009 Remaster", "Black Sabbath")
+        assertEquals("blacksabbath", parts.core)
+        assertEquals(emptySet<String>(), parts.versions)
+        assertEquals(
+            "blacksabbath",
+            TrackMatcher.parseTitle("Black Sabbath - 2009 Remastered Version", "Black Sabbath").core,
+        )
+    }
+
+    @Test
+    fun `a symbol after a CJK title does not change its core`() {
+        assertEquals("첫사랑", core("첫사랑♡"))
+        assertEquals(core("첫사랑"), core("첫사랑♡"))
+        assertEquals("첫사랑", core("첫사랑 ♡"))
+    }
 }

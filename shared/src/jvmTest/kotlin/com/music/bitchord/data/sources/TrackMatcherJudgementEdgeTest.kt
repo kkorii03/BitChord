@@ -316,6 +316,22 @@ class TrackMatcherJudgementEdgeTest {
         assertNull(TrackMatcher.bestSameArtist(listOf(cover), base))
     }
 
+    @Test
+    fun `an exact core beats a containment when both are credited`() {
+        val target = TrackMatcher.Target("Song", "Artist", durationSec = 200)
+        val contained = song("contained", "Song Acoustic", "Artist", "3:20")
+        val exact = song("exact", "Song", "Artist", "3:30")
+        assertEquals(exact, TrackMatcher.bestSameArtist(listOf(contained, exact), target))
+    }
+
+    @Test
+    fun `a stated translation counts as an exact title for ranking`() {
+        val target = TrackMatcher.Target("3.여수밤바다 - Yeosu Night Sea", "장범준", durationSec = 270)
+        val contained = song("contained", "여수밤바다 Live", "장범준", "4:30")
+        val alt = song("alt", "Yeosu Night Sea", "장범준", "4:30")
+        assertEquals(alt, TrackMatcher.bestSameArtist(listOf(contained, alt), target))
+    }
+
     // ── Runtime ─────────────────────────────────────────────────────────────
 
     @Test
@@ -759,6 +775,31 @@ class TrackMatcherJudgementEdgeTest {
         )
         // Without a seed the marker is still a cover.
         assertTrue(TrackMatcher.isCoverArrangement(song("a", "Cover Me", "Artist")))
+    }
+
+    @Test
+    fun `the autoplay arrangement filter knows the shorthand takes`() {
+        val seed = song("seed", "Song", "Artist")
+        listOf("Song (Inst)", "Song (MR)", "Song (Band)", "Song (Piano)", "Song (한국어)", "Song (Eng)")
+            .forEach { title ->
+                assertTrue(
+                    title,
+                    TrackMatcher.isKaraokeOrTributeArrangement(song("x", title, "Artist"), seed),
+                )
+            }
+    }
+
+    @Test
+    fun `band and eng are arrangements only when they are the aside`() {
+        val seed = song("seed", "Song", "Artist")
+        assertFalse(
+            TrackMatcher.isCoverArrangement(song("a", "The Funeral", "Band of Horses"), seed),
+        )
+        assertFalse(
+            TrackMatcher.isCoverArrangement(song("a", "Song", "Engelbert Humperdinck"), seed),
+        )
+        assertTrue(TrackMatcher.isCoverArrangement(song("a", "Song (Band)", "Artist"), seed))
+        assertTrue(TrackMatcher.isCoverArrangement(song("a", "Song (Eng)", "Artist"), seed))
     }
 
     @Test
