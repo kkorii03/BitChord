@@ -11,6 +11,7 @@
 #   MATRIX_WAIT     seconds to stay on a song after its first sound, or "full"
 #   MATRIX_AFTER    with full: seconds to stay on the song the queue moved on to
 #   MATRIX_LYRICS   1 = open the lyrics on screen (slow on a software GPU, so not always)
+#   MATRIX_LYRICS_DELAY  seconds after the first sound before opening them (default: at once)
 
 # What every set starts from, so an older export on a fork cannot pass for a setting.
 # The first link after boot took up to 180 s (m1), and the search fallback then played
@@ -230,7 +231,10 @@ matrix_play() {
     return 0
   fi
   MATRIX_T0=$SECONDS
-  [ "${MATRIX_LYRICS:-0}" = 1 ] && mx_open_lyrics
+  if [ "${MATRIX_LYRICS:-0}" = 1 ]; then
+    [ -n "${MATRIX_LYRICS_DELAY:-}" ] && mx_until "$MATRIX_LYRICS_DELAY"
+    mx_open_lyrics
+  fi
   before=$(play_count)
   mx_action "$key"
   if [ "$wait" = full ]; then

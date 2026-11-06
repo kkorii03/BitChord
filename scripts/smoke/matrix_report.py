@@ -124,7 +124,7 @@ def plays(path):
         if m:
             if cur:
                 cur["left"] = t
-            cur = dict(id=m.group(1), start=t, reason=m.group(3), base=[], sync=[], hear=[], gaps=[], marks=[], swaps=0, src=None)
+            cur = dict(id=m.group(1), start=t, reason=m.group(3), base=[], sync=[], hear=[], gaps=[], marks=[], swaps=0, hq=[], src=None)
             latest[cur["id"]] = cur
             out.append(cur)
             continue
@@ -162,18 +162,33 @@ def plays(path):
             continue
         if "hq-swap:" in line and " start " in line and cur:
             cur["swaps"] += 1
+            cur["hq"].append(t)
     return out, events
+
+
+def recovery(events, gaps):
+    """Seconds from each event to the next lyric-clock line, as label:seconds.
+
+    The lyric clock only logs while the lyrics draw, so the first line after an
+    event is when they came back. Timestamps and gap numbers only, never text.
+    """
+    out = []
+    for label, t in events:
+        nxt = [g[0] for g in gaps if g[0] >= t]
+        if nxt:
+            out.append(f"{label}:{(min(nxt) - t).total_seconds():.1f}")
+    return " ".join(out)
 
 
 def table(root, names):
     meta = {s["set"]: s for s in runs()}
-    print("| 세트 | 다른 점 | 곡 | 재생(초) | 첫 소리→요청답(초) | 첫 소리→화면 보정(초) | 곡 안에 도착 | 최종 base/shift | base 변화 | 답 | 요청 | 독립 판정 | 중앙값(초) | 0.3초 이내 | 최대(초) | lyric-clock gap 최대(ms) | 복귀 뒤 gap(ms) |")
-    print("|" + "---|" * 17)
+    print("| 세트 | 다른 점 | 곡 | 재생(초) | 첫 소리→요청답(초) | 첫 소리→화면 보정(초) | 곡 안에 도착 | 최종 base/shift | base 변화 | 답 | 요청 | 독립 판정 | 중앙값(초) | 0.3초 이내 | 최대(초) | lyric-clock gap 최대(ms) | 복귀 뒤 gap(ms) | 이벤트→다음 lyric-clock(초) |")
+    print("|" + "---|" * 18)
     crashes = {}
     for name in names:
         log = root / name / "smoke-logcat.txt"
         if not log.exists():
-            print(f"| {name} | 결과 없음 |" + " |" * 15)
+            print(f"| {name} | 결과 없음 |" + " |" * 16)
             continue
         text = log.read_text(encoding="utf-8", errors="replace")
         crashes[name] = len(re.findall(r"FATAL EXCEPTION|ANR in com", text))
@@ -209,9 +224,11 @@ def table(root, names):
                     if near:
                         back.append(f"{mark.split()[0]}:{max(near, key=abs)}")
             fmt = lambda v: "" if v is None else f"{v:.1f}"
+            events = [("lyrics", t) for t, mark in p["marks"] if mark.startswith("lyrics open")]
+            events += [("hq", t) for t in p["hq"]]
             print(f"| {name.replace('matrix-', '')} | {what} | {p['id']} | {p.get('played', '')} | {fmt(answer)} | {fmt(shown)} | {inside} | "
                   f"{last[1]}/{last[2]} | {flips[:40]} | {results[:40]} | {requests} | {verdict} | {r.get('median', '')} | {r.get('in03', '')} | "
-                  f"{r.get('max_abs', '')} | {max(gaps) if gaps else ''} | {' '.join(back)[:50]} |")
+                  f"{r.get('max_abs', '')} | {max(gaps) if gaps else ''} | {' '.join(back)[:50]} | {recovery(events, p['gaps'])[:50]} |")
     print()
     print("크래시·ANR:", {k.replace("matrix-", ""): v for k, v in crashes.items() if v} or "0")
 
