@@ -18,6 +18,8 @@ jobs:
       fail-fast: false
       matrix:
         job:
+          - { part: ko, index: 0, of: 2 }
+          - { part: ko, index: 1, of: 2 }
           - { part: jam, index: 0, of: 3 }
           - { part: jam, index: 1, of: 3 }
           - { part: jam, index: 2, of: 3 }
@@ -42,17 +44,18 @@ jobs:
         run: |
           pip install -q "numpy<2" torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
           pip install -q --no-deps demucs==4.0.1
-          pip install -q dora-search einops julius lameenc openunmix pyyaml tqdm soundfile transformers stable-ts
-          pip list 2>/dev/null | grep -i -E "^(torch|torchaudio|demucs|transformers|stable-ts|openai-whisper|numpy) "
+          pip install -q dora-search einops julius lameenc openunmix pyyaml tqdm soundfile "transformers==4.49.0"
+          pip list 2>/dev/null | grep -i -E "^(torch|torchaudio|demucs|transformers|numpy) "
+          python -c "from transformers import AutoModelForCTC, AutoProcessor; print('transformers ok')"
       - name: Run
         env:
           TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD: "1"
           TQDM_DISABLE: "1"
           TRANSFORMERS_VERBOSITY: error
-        run: python bench/research/research.py --part ${{ matrix.job.part }} --index ${{ matrix.job.index }} --of ${{ matrix.job.of }} --out r.json
+        run: python bench/research/research.py --part ${{ matrix.job.part }} --index ${{ matrix.job.index }} --of ${{ matrix.job.of }} --only K --out r.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: research-${{ matrix.job.part }}-${{ matrix.job.index }}
+          name: researchK-${{ matrix.job.part }}-${{ matrix.job.index }}
           path: r.json
           retention-days: 14

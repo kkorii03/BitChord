@@ -224,7 +224,7 @@ def safe(errors, tag, fn):
         return fn()
     except Exception as e:  # noqa: only the type name: messages can quote lyrics
         errors.append({"where": tag, "why": type(e).__name__})
-        print("failed", tag, type(e).__name__, flush=True)
+        print("failed", tag, type(e).__name__, str(e)[:200] if isinstance(e, ImportError) else "", flush=True)
         return None
 
 
@@ -241,8 +241,10 @@ def vocals(d, src, tag):
     return mix, voc, took
 
 
-def run_song(s, mix, voc, lines, sheet, lang, errors, other_sheet=None, other_lines=None):
+def run_song(s, mix, voc, lines, sheet, lang, errors, other_sheet=None, other_lines=None, only=None):
     sid = s["id"]
+    if only == "K":
+        return run_ctc(s, mix, voc, lines, lang, errors, other_lines)
     feats = {}
     for name, wav in (("mix", mix), ("voc", voc)):
         feats[name] = safe(errors, sid + "/rfeat/" + name, lambda: rhythm_features(wav))
@@ -256,19 +258,7 @@ def run_song(s, mix, voc, lines, sheet, lang, errors, other_sheet=None, other_li
             if other_sheet:
                 got = safe(errors, sid + "/Rw", lambda: rhythm_offset(onset, act, other_sheet))
                 s["R_" + name]["wrong"] = got
-    cached = {}
-    for name, wav in (("voc", voc), ("mix", mix)):
-        def k():
-            st, pr, wall, cache = ctc_align(wav, lines, lang)
-            cached[name] = cache
-            return {"pred": st, "conf": pr, "wall_s": wall}
-        s["K_" + name] = safe(errors, sid + "/K_" + name, k)
-    if other_lines and "voc" in cached:
-        def kw():
-            st, pr, wall, _ = ctc_align(voc, other_lines, lang, cached["voc"])
-            return {"conf": pr, "wall_s": wall}
-        s["K_voc_wrong"] = safe(errors, sid + "/Kw", kw)
-    cached.clear()
+    run_ctc(s, mix, voc, lines, lang, errors, other_lines)
     for name, wav in (("voc", voc), ("mix", mix)):
         def w():
             st, pr, wall, ratio = stable_align(wav, lines, lang)
@@ -281,8 +271,25 @@ def run_song(s, mix, voc, lines, sheet, lang, errors, other_sheet=None, other_li
         s["W_voc_wrong"] = safe(errors, sid + "/Ww", ww)
 
 
+def run_ctc(s, mix, voc, lines, lang, errors, other_lines):
+    sid = s["id"]
+    cached = {}
+    for name, wav in (("voc", voc), ("mix", mix)):
+        def k():
+            st, pr, wall, cache = ctc_align(wav, lines, lang)
+            cached[name] = cache
+            return {"pred": st, "conf": pr, "wall_s": wall}
+        s["K_" + name] = safe(errors, sid + "/K_" + name, k)
+    if other_lines and "voc" in cached:
+        def kw():
+            st, pr, wall, _ = ctc_align(voc, other_lines, lang, cached["voc"])
+            return {"conf": pr, "wall_s": wall}
+        s["K_voc_wrong"] = safe(errors, sid + "/Kw", kw)
+
+
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--only")
     ap.add_argument("--part", required=True)
     ap.add_argument("--index", type=int, default=0)
     ap.add_argument("--of", type=int, default=1)
@@ -307,7 +314,7 @@ def main():
             if got:
                 mix, voc, s["demucs_s"] = got
                 s["audio_s"] = round(bench.wav_seconds(mix), 1)
-                run_song(s, mix, voc, lines, sheet, KO, out["errors"], other_sheet, other_lines)
+                run_song(s, mix, voc, lines, sheet, KO, out["errors"], other_sheet, other_lines, a.only)
             out["songs"].append(s)
             json.dump(out, open(a.out, "w"))
             print("done", sid, flush=True)
@@ -341,7 +348,7 @@ def main():
             if prep:
                 mix, voc, s["demucs_s"] = prep
                 s["audio_s"] = round(bench.wav_seconds(mix), 1)
-                run_song(s, mix, voc, lines, sheet, lang, out["errors"])
+                run_song(s, mix, voc, lines, sheet, lang, out["errors"], only=a.only)
             out["songs"].append(s)
             json.dump(out, open(a.out, "w"))
             for f in os.listdir(d):
