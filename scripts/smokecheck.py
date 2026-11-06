@@ -70,9 +70,16 @@ HQ_NO_REFERENCE_REASON_RE = re.compile(
 # The reference WAV never arrived, so nothing was compared. `no-wav` says the
 # opening is not on disk yet, `cancelled` says the play moved on before it was
 # read: the run could not measure the row at all.
-HQ_UNMEASURED_REASONS = ("no-wav", "cancelled")
+HQ_UNMEASURED_REASONS = ("no-wav", "cancelled", "download-network")
 # `decode: hq-verify failed at=... ...`
 DECODE_HQ_FAIL_RE = re.compile(r"decode:\s+hq-verify\s+failed\b")
+# The candidate's connection dropped: nothing about the file was judged. A
+# refused (HTTP 403) or empty download stays a failure.
+HQ_DOWNLOAD_NETWORK_RE = re.compile(
+    r"decode:\s+hq-verify\s+failed\s+at=download\b.*"
+    r"(connection|timeout|timed out|reset|unexpected end)",
+    re.IGNORECASE,
+)
 # `lyrics-sync: <id> source=.. shift=1234ms ...`
 LYRICS_SYNC_SHIFT_RE = re.compile(
     r"lyrics-sync:\s+(?P<id>\S+).*?\bshift=(?P<shift>-?\d+|-)ms"
@@ -304,7 +311,9 @@ def check_log(
                     else:
                         hq_rejected += 1
 
-        if DECODE_HQ_FAIL_RE.search(line):
+        if HQ_DOWNLOAD_NETWORK_RE.search(line):
+            hq_no_reference_reasons["download-network"] += 1
+        elif DECODE_HQ_FAIL_RE.search(line):
             hq_decode_failed += 1
 
         if "lyrics-sync:" in line:

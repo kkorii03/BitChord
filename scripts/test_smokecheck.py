@@ -274,6 +274,27 @@ class QualityUpgradeNoWavTest(unittest.TestCase):
         self.assertEqual("SKIP", result.status)
         self.assertIn("no-wav=2", result.details[0])
 
+    def test_a_dropped_download_is_not_a_decode_failure(self):
+        # r55d: the only row with a verdict-shaped failure was the candidate's
+        # connection closing on the emulator route, counted as decode-failed.
+        log = "\n".join(
+            [
+                log_line("hq-verify: 'Lemon Tang' no reference reason=no-wav"),
+                log_line("decode: hq-verify failed at=download connection closed"),
+            ]
+        )
+        result = statuses_with_songs(log, specs("hq1\thq"))[4]
+        self.assertEqual("SKIP", result.status)
+        self.assertIn("decode-failed=0", result.details[0])
+        self.assertIn("download-network=1", result.details[0])
+
+    def test_a_refused_or_empty_download_still_fails(self):
+        for failure in ("at=download HTTP 403", "at=download bytes=0"):
+            log = log_line(f"decode: hq-verify failed {failure}")
+            self.assertEqual(
+                "FAIL", statuses_with_songs(log, specs("hq1\thq"))[4].status, failure
+            )
+
     def test_no_wav_rows_are_skipped_with_a_song_list(self):
         songs = specs("hq1\thq")
         log = log_line("hq-verify: 'Lemon Tang' no reference reason=no-wav")
