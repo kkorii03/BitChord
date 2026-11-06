@@ -73,6 +73,8 @@ HQ_NO_REFERENCE_REASON_RE = re.compile(
 HQ_UNMEASURED_REASONS = ("no-wav", "cancelled", "download-network")
 # `decode: hq-verify failed at=... ...`
 DECODE_HQ_FAIL_RE = re.compile(r"decode:\s+hq-verify\s+failed\b")
+# TrackLog prefixes `[<id>]` when the message itself does not name the track.
+HQ_LINE_ID_RE = re.compile(r"\[(?P<id>[^\]]+)\]\s+(?:hq-verify:|decode:\s+hq-verify)")
 # The candidate's connection dropped: nothing about the file was judged. A
 # refused (HTTP 403) or empty download stays a failure.
 HQ_DOWNLOAD_NETWORK_RE = re.compile(
@@ -250,6 +252,14 @@ def check_log(
     next_preps: list[tuple[str, str]] = []
     video_radio_ids: set[str] = set()
     prep_video_by_design: set[tuple[str, str]] = set()
+    last_lyrics_shift: dict[str, int | None] = {}
+    # A `search:` hq row has no id to filter by, so such a list keeps every line.
+    hq_specs_listed = [spec for spec in songs if spec.kind == "hq"] if songs is not None else []
+    hq_spec_ids = (
+        {spec.video_id for spec in hq_specs_listed}
+        if songs is not None and all(spec.video_id for spec in hq_specs_listed)
+        else None
+    )
 
     for raw in text.splitlines():
         line = raw.rstrip("\r")
@@ -297,24 +307,33 @@ def check_log(
                     (match.group("title"), match.group("artist"))
                 )
 
-        if "hq-verify:" in line:
-            if HQ_NO_REFERENCE_RE.search(line):
-                reason = HQ_NO_REFERENCE_REASON_RE.search(line)
-                hq_no_reference_reasons[
-                    reason.group("reason") if reason else "unknown"
-                ] += 1
-            else:
-                match = HQ_VERDICT_RE.search(line)
-                if match:
-                    if match.group("verdict") == "accepted":
-                        hq_accepted += 1
-                    else:
-                        hq_rejected += 1
+        # With a song list, a line filed against some other row (a seeked row
+        # outside the set) is not this set's hq row. Lines without an id keep
+        # counting as before.
+        line_track = HQ_LINE_ID_RE.search(line)
+        if (
+            line_track is None
+            or hq_spec_ids is None
+            or line_track.group("id") in hq_spec_ids
+        ):
+            if "hq-verify:" in line:
+                if HQ_NO_REFERENCE_RE.search(line):
+                    reason = HQ_NO_REFERENCE_REASON_RE.search(line)
+                    hq_no_reference_reasons[
+                        reason.group("reason") if reason else "unknown"
+                    ] += 1
+                else:
+                    match = HQ_VERDICT_RE.search(line)
+                    if match:
+                        if match.group("verdict") == "accepted":
+                            hq_accepted += 1
+                        else:
+                            hq_rejected += 1
 
-        if HQ_DOWNLOAD_NETWORK_RE.search(line):
-            hq_no_reference_reasons["download-network"] += 1
-        elif DECODE_HQ_FAIL_RE.search(line):
-            hq_decode_failed += 1
+            if HQ_DOWNLOAD_NETWORK_RE.search(line):
+                hq_no_reference_reasons["download-network"] += 1
+            elif DECODE_HQ_FAIL_RE.search(line):
+                hq_decode_failed += 1
 
         if "lyrics-sync:" in line:
             if "video=y" in line:
@@ -322,13 +341,11 @@ def check_log(
                 if identified:
                     video_flag_ids.add(identified.group("id"))
             match = LYRICS_SYNC_SHIFT_RE.search(line)
-            if match and match.group("shift") != "-":
-                shift = int(match.group("shift"))
-                if abs(shift) > SHIFT_LIMIT_MS:
-                    key = ("lyrics-sync", match.group("id"), str(shift))
-                    if key not in seen_sync:
-                        seen_sync.add(key)
-                        sync_warnings.append(key)
+            if match:
+                raw_shift = match.group("shift")
+                last_lyrics_shift[match.group("id")] = (
+                    int(raw_shift) if raw_shift != "-" else None
+                )
 
         if "song-sync:" in line:
             match = SONG_SYNC_RE.search(line)
@@ -357,6 +374,15 @@ def check_log(
             match = VIDEO_RADIO_RE.search(line)
             if match:
                 video_radio_ids.add(match.group("id"))
+
+    # Only the last measured line per song decides: a later `shift=-` means the
+    # app dropped that measurement, so the earlier number is not the verdict.
+    for video_id, shift in last_lyrics_shift.items():
+        if shift is not None and abs(shift) > SHIFT_LIMIT_MS:
+            key = ("lyrics-sync", video_id, str(shift))
+            if key not in seen_sync:
+                seen_sync.add(key)
+                sync_warnings.append(key)
 
     replaced_sources = {src for src, dst in replacements if dst not in ("none", "-")}
     replaced_targets = {dst for _src, dst in replacements if dst not in ("none", "-")}

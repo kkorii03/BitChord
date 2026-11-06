@@ -209,6 +209,38 @@ class SyncTest(unittest.TestCase):
         )
         self.assertEqual("PASS", statuses(log)[3].status)
 
+    def test_a_discarded_shift_is_not_judged_when_a_later_line_drops_it(self):
+        log = "\n".join(
+            [
+                log_line(
+                    "lyrics-sync: vid1 source=ai base=ai shift=11662ms match=90% "
+                    "bias=0ms manual=0ms stored=n recheck=none silenceSkipMs=0 video=n"
+                ),
+                log_line(
+                    "lyrics-sync: vid1 source=none base=none shift=-ms match=- "
+                    "bias=0ms manual=0ms stored=n recheck=none silenceSkipMs=0 video=n"
+                ),
+            ]
+        )
+        self.assertEqual("PASS", statuses(log)[3].status)
+
+    def test_a_large_shift_on_the_last_line_still_fails(self):
+        log = "\n".join(
+            [
+                log_line(
+                    "lyrics-sync: vid1 source=ai base=0 shift=2500ms match=90% "
+                    "bias=0ms manual=0ms stored=n recheck=none silenceSkipMs=0 video=n"
+                ),
+                log_line(
+                    "lyrics-sync: vid1 source=ai base=0 shift=-3100ms match=90% "
+                    "bias=0ms manual=0ms stored=n recheck=none silenceSkipMs=0 video=n"
+                ),
+            ]
+        )
+        result = statuses(log)[3]
+        self.assertEqual("FAIL", result.status)
+        self.assertIn("3100", result.details[0])
+
     def test_song_sync_refused_shift_fails(self):
         log = log_line(
             "song-sync: vid1 result=refused-shift match=80% shift=100 secs=60 words=10"
@@ -288,12 +320,47 @@ class QualityUpgradeNoWavTest(unittest.TestCase):
         self.assertIn("decode-failed=0", result.details[0])
         self.assertIn("download-network=1", result.details[0])
 
+    def test_a_failure_for_an_unlisted_row_is_not_counted(self):
+        # A song reached by seeking is not in the set's list: its refused
+        # download must not fail a list whose hq row has no verdict at all.
+        songs = specs("hq1\thq")
+        log = "\n".join(
+            [
+                log_line(
+                    "[F1ZyommhrVo] decode: hq-verify failed at=download HTTP 403"
+                ),
+                log_line("hq-verify: 'Lemon Tang' no reference reason=no-wav"),
+            ]
+        )
+        checks = smokecheck.check_log(log, songs=songs, hq_configured=True)
+        self.assertEqual("SKIP", {check.number: check for check in checks}[4].status)
+
+    def test_a_listed_hq_song_rejected_with_an_id_still_fails(self):
+        songs = specs("hq1\thq")
+        log = log_line(
+            "[hq1] hq-verify: Song Qobuz match=80% offset=0 -> rejected reference=wav"
+        )
+        self.assertEqual("FAIL", statuses_with_songs(log, songs)[4].status)
+
+    def test_a_listed_hq_song_refused_download_with_an_id_still_fails(self):
+        songs = specs("hq1\thq")
+        for failure in ("at=download HTTP 403", "at=download bytes=0"):
+            log = log_line(f"[hq1] decode: hq-verify failed {failure}")
+            self.assertEqual(
+                "FAIL", statuses_with_songs(log, songs)[4].status, failure
+            )
+
     def test_a_refused_or_empty_download_still_fails(self):
         for failure in ("at=download HTTP 403", "at=download bytes=0"):
             log = log_line(f"decode: hq-verify failed {failure}")
             self.assertEqual(
                 "FAIL", statuses_with_songs(log, specs("hq1\thq"))[4].status, failure
             )
+
+    def test_a_search_hq_row_keeps_lines_that_carry_an_id(self):
+        log = log_line("[abcdefghijk] decode: hq-verify failed at=download HTTP 403")
+        result = statuses_with_songs(log, specs("search:Some Song\thq"))[4]
+        self.assertEqual("FAIL", result.status)
 
     def test_no_wav_rows_are_skipped_with_a_song_list(self):
         songs = specs("hq1\thq")
