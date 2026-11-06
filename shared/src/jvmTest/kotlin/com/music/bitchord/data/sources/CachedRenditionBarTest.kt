@@ -17,7 +17,8 @@ class CachedRenditionBarTest {
     private fun ascii(text: String) = text.toByteArray(Charsets.US_ASCII)
 
     private val flacHead = ascii("fLaC\u0000\u0000\u0000\u0022")
-    private val mp4Head = ascii("\u0000\u0000\u0000\u0020ftypM4A ")
+    private val mp4Head = ascii("\u0000\u0000\u0000\u0020ftypM4A ") +
+        ascii("\u0000\u0000\u0000\u0020moovmp4a")
     private val webmHead = ByteArray(12).also {
         it[0] = 0x1A; it[1] = 0x45; it[2] = 0xDF.toByte(); it[3] = 0xA3.toByte()
     }

@@ -33,25 +33,30 @@ object StreamContainerSniff {
     private const val FLAC_STREAMINFO_BYTES = 4 + 4 + 18
 
     /**
-     * True when [head] opens a container that cannot be the lossless file a row
-     * claimed: ISO base media ("ftyp", which for these sources is AAC), an MPEG
-     * audio frame or ID3 tag, or an ADTS AAC frame.
+     * True when [head] proves a container that cannot be the lossless file a row
+     * claimed: an ISO base media file whose codec is in view, an MPEG audio
+     * frame or ID3 tag with audio in view, or an ADTS AAC frame.
      */
     fun looksLossy(head: ByteArray): Boolean = lossyContainer(head) != null
 
-    /** Which lossy container [head] opens, for the refusal's log line; null when none. */
+    /** Which lossy container [head] proves, for the refusal's log line; null when unknown. */
     fun lossyContainer(head: ByteArray): String? {
         if (head.size < 2) return null
         // ISO base media. FLAC or ALAC can be carried in MP4, and then its sample
-        // entry says so in the opening; without that it is AAC under a FLAC claim.
+        // entry says so. The codec entry lives in moov; when mdat comes first,
+        // moov is past this head and the file cannot be judged — a real FLAC
+        // must not be refused for that.
         if (head.size >= FTYP_OFFSET + 4 && matches(head, FTYP_OFFSET, FTYP)) {
-            return if (indexOf(head, FLAC_MARKER) >= 0 || indexOf(head, ALAC_MARKER) >= 0) null else "mp4"
+            if (indexOf(head, FLAC_MARKER) >= 0 || indexOf(head, ALAC_MARKER) >= 0) return null
+            return if (indexOf(head, MOOV_MARKER) >= 0) "mp4" else null
         }
         // MPEG audio: an ID3 tag in front of the frames, or a frame sync. FLAC
-        // files sometimes carry an ID3 tag too, and the marker follows it.
+        // files sometimes carry an ID3 tag too, and the marker follows it. When
+        // the tag runs past this head, what follows cannot be judged.
         if (matches(head, 0, ID3)) {
-            val start = afterId3(head)
-            return if (start != null && matches(head, start, FLAC_MARKER)) null else "id3"
+            if (head.size < ID3_HEADER_BYTES) return "id3"
+            val start = afterId3(head) ?: return null
+            return if (matches(head, start, FLAC_MARKER)) null else "id3"
         }
         // ADTS AAC and MPEG layer III both open with eleven set bits.
         val first = head[0].toInt() and 0xFF
@@ -161,6 +166,7 @@ object StreamContainerSniff {
     private val FLAC_MARKER = "fLaC".toByteArray(Charsets.US_ASCII)
     private val ALAC_MARKER = "alac".toByteArray(Charsets.US_ASCII)
     private val FTYP = "ftyp".toByteArray(Charsets.US_ASCII)
+    private val MOOV_MARKER = "moov".toByteArray(Charsets.US_ASCII)
     private val ID3 = "ID3".toByteArray(Charsets.US_ASCII)
 
     /** Lossless catalogues serve stereo. */

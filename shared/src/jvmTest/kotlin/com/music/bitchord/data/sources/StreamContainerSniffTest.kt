@@ -21,7 +21,7 @@ class StreamContainerSniffTest {
 
     @Test
     fun `an MP4 under a FLAC claim is a lie`() {
-        val head = bytes(0, 0, 0, 0x20) + ascii("ftypM4A ")
+        val head = bytes(0, 0, 0, 0x20) + ascii("ftypM4A ") + bytes(0, 0, 0, 0x20) + ascii("moovmp4a")
         assertTrue(StreamContainerSniff.looksLossy(head))
     }
 
@@ -39,6 +39,8 @@ class StreamContainerSniffTest {
     fun `an ID3 tag and an MPEG frame are lies`() {
         assertTrue(StreamContainerSniff.looksLossy(ascii("ID3\u0004\u0000\u0000")))
         assertTrue(StreamContainerSniff.looksLossy(bytes(0xFF, 0xFB, 0x90, 0x00)))
+        // A complete tag in front of an audio frame says the audio is lossy.
+        assertTrue(StreamContainerSniff.looksLossy(id3Header(0) + bytes(0xFF, 0xFB, 0x90, 0x00)))
     }
 
     @Test
@@ -119,7 +121,12 @@ class StreamContainerSniffTest {
         // FLAC carried in MP4 names itself in its sample entry.
         val inMp4 = bytes(0, 0, 0, 0x20) + ascii("ftypiso8") + ByteArray(40) + ascii("fLaC")
         assertFalse(StreamContainerSniff.looksLossy(inMp4))
-        assertEquals("mp4", StreamContainerSniff.lossyContainer(bytes(0, 0, 0, 0x20) + ascii("ftypM4A ")))
+        assertEquals(
+            "mp4",
+            StreamContainerSniff.lossyContainer(
+                bytes(0, 0, 0, 0x20) + ascii("ftypM4A ") + ByteArray(40) + ascii("moov"),
+            ),
+        )
     }
 
     /** ALAC in MP4 names itself the same way, and is every bit as lossless. */
@@ -150,11 +157,34 @@ class StreamContainerSniffTest {
     }
 
     /**
-     * Not knowing is not good enough here: an MP3 with cover art opens exactly
-     * like this, and it is far more common than a FLAC with an ID3 tag.
+     * When the tag runs past the head, what follows it is not in view. A FLAC
+     * behind a long tag must not be refused for the tag alone; the answer is
+     * unknown, not a lossy container.
      */
     @Test
-    fun `a tag whose end cannot be seen is still refused`() {
-        assertEquals("id3", StreamContainerSniff.lossyContainer(id3Header(10_000) + ByteArray(4_000)))
+    fun `a tag whose end cannot be seen is unknown, not an id3 lie`() {
+        assertNull(StreamContainerSniff.lossyContainer(id3Header(10_000) + ByteArray(4_000)))
+        // A FLAC behind that tag is accepted once the tag is in view.
+        val full = id3Header(10_000) + ByteArray(10_000) + flacHead(44_100, 180)
+        assertFalse(StreamContainerSniff.looksLossy(full))
+    }
+
+    /**
+     * An MP4 whose moov comes after mdat keeps its codec entry past this head.
+     * A FLAC in it is not a lossy container; only a visible moov can judge it.
+     */
+    @Test
+    fun `an mp4 whose moov is past the head is unknown, not lossy`() {
+        val lateMoov = bytes(0, 0, 0, 0x20) + ascii("ftypiso8") +
+            bytes(0, 0, 0, 0x40) + ascii("mdat") + ByteArray(48)
+        assertNull(StreamContainerSniff.lossyContainer(lateMoov))
+    }
+
+    /** A lossy MP4 is still refused when its moov is in view, even after mdat. */
+    @Test
+    fun `a lossy mp4 with a late moov is still a lie`() {
+        val head = bytes(0, 0, 0, 0x20) + ascii("ftypM4A ") +
+            bytes(0, 0, 0, 0x10) + ascii("mdat") + bytes(0, 0, 0, 0x20) + ascii("moovmp4a")
+        assertEquals("mp4", StreamContainerSniff.lossyContainer(head))
     }
 }
