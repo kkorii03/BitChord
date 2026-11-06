@@ -7299,14 +7299,6 @@ class PlaybackService : MediaLibraryService() {
                     playing = null,
                 )
             }
-            // The reader still holds the entry, so the bytes are still what the
-            // listener hears. Keep their measured floor below, or the 320kbps
-            // replacement looks like no improvement and is never offered.
-            TrackLog.w(
-                "BitChord",
-                "cached rendition refused but still in use; keeping its floor for the replacement",
-                about = mediaId,
-            )
         }
         val format = withContext(Dispatchers.Main) {
             player
@@ -7314,6 +7306,19 @@ class PlaybackService : MediaLibraryService() {
                 ?.audioFormat
         } ?: return false
         val mime = format.sampleMimeType ?: return false
+        if (refusal != null) {
+            // The reader still holds the entry, so the bytes are still what the
+            // listener hears. Keep their measured floor below, or the 320kbps
+            // replacement looks like no improvement and is never offered.
+            // Logged after the format check: a decoder not ready yet returns
+            // above, and this line would claim a floor kept for a search that
+            // never ran.
+            TrackLog.w(
+                "BitChord",
+                "cached rendition refused but still in use; keeping its floor for the replacement",
+                about = mediaId,
+            )
+        }
         val floor = withContext(Dispatchers.IO) { cachedFloor(uri, format, durationSec) }
         val adoption = CachedRenditionBar.adoptionAfterRefusal(discarded, mime, floor)
         return QualityUpgrade.adoptUnresolved(

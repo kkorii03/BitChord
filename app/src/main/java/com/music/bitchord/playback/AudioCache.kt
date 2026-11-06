@@ -1259,7 +1259,25 @@ object AudioCache {
      * inspects a *stream* ever sees these bytes, and one written by an earlier
      * play of a lying row plays its wrong audio to the end of the track.
      *
+     * Only half of that bar reaches a substitute's copy. An `#alt` entry is not
+     * tagged as a lossless rendition, so [CachedRenditionBar.Refusal.LOSSY_BYTES]
+     * never fires for it: only the runtime half is asked of those bytes. A copy
+     * written before [META_SERVED_SOURCE] was kept cannot be tied to the stream
+     * that refused it, so [invalidateAddonRendition] leaves it alone, and the
+     * runtime check is the only thing that can still catch it.
+     *
      * Call it off the main thread: it reads the cache index and the file's head.
+     *
+     * Only half of that bar reaches a `#alt` copy. The LOSSY_BYTES half needs
+     * [isLosslessRendition], a tag an upgrade's whole-file fetch writes and an
+     * addon's `#alt` fill does not carry, so what is checked there is the
+     * runtime alone; a copy that claimed lossless, is really lossy and has the
+     * right length is not caught. Likewise [invalidateAddonRendition] never
+     * touches a copy written before [META_SERVED_SOURCE] existed. Both are
+     * deliberate: a deletion decided on a guess is worse than a lossy copy of
+     * the right song. YouTube's own bytes under `#alt` (see
+     * `VersionAudioAligner.isYouTubeUnderAltKey`) are tagged with a YouTube
+     * origin, so the invalidation never takes them.
      *
      * @param rowSeconds the runtime the catalogue row states.
      * @param renditionSeconds the runtime measured off these bytes, when the
