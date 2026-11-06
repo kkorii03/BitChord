@@ -162,11 +162,17 @@ object VersionAudioAligner {
         sourceSong: Song,
         targetSong: Song,
         currentPosMs: Long = 0L,
+        /**
+         * Measure with the screen off too. For the wrong-song check only: a
+         * wrong song in a pocket costs more battery than this one bounded
+         * opening, the same reasoning as the song check in [VideoAudio].
+         */
+        ignoreScreen: Boolean = false,
     ): Long? = withContext(Dispatchers.IO) {
         if (sourceSong.videoId == targetSong.videoId) return@withContext 0L
         val cached = offsetCache[sourceSong.videoId to targetSong.videoId]
         if (cached != null) return@withContext cached
-        if (!PowerState.screenOn) return@withContext null
+        if (!ignoreScreen && !PowerState.screenOn) return@withContext null
 
         val sourceDs = openDataSource(context, sourceSong)
         val targetDs = openDataSource(context, targetSong)
@@ -199,7 +205,7 @@ object VersionAudioAligner {
                             sourceDs,
                             0.0,
                             45.0,
-                            abort = { !PowerState.screenOn },
+                            abort = { !ignoreScreen && !PowerState.screenOn },
                             label = "align",
                         )
                     }
@@ -208,7 +214,7 @@ object VersionAudioAligner {
                             targetDs,
                             0.0,
                             45.0,
-                            abort = { !PowerState.screenOn },
+                            abort = { !ignoreScreen && !PowerState.screenOn },
                             label = "align",
                         )
                     }

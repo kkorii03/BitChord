@@ -16,4 +16,15 @@ object VersionSwapPolicy {
     const val MIN_SWAP_CONFIDENCE = 0.6
 
     fun shouldSwap(confidence: Double): Boolean = confidence >= MIN_SWAP_CONFIDENCE
+
+    /**
+     * Below this a song already playing is taken off for being another song.
+     * Stricter than [MIN_SWAP_CONFIDENCE], because the listener hears this one:
+     * a cover sits around 0.45 and is still the same song to them, so between
+     * here and the swap bar the row is left alone. A different song lands well
+     * under both.
+     */
+    const val REFUTES_BELOW_CONFIDENCE = 0.45
+
+    fun refutesPlaying(confidence: Double): Boolean = confidence < REFUTES_BELOW_CONFIDENCE
 }

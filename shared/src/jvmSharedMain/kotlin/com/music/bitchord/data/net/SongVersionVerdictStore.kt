@@ -36,6 +36,19 @@ internal class SongVersionVerdictStore {
 
     fun cached(videoId: String): Song? = cache[videoId]
 
+    /**
+     * The found version was proved to be another song: from here on this run
+     * treats [videoId] as having none, and no later lookup or retry reopens it.
+     */
+    fun refuse(videoId: String) {
+        synchronized(lock) {
+            cache.remove(videoId)
+            waived.remove(videoId)
+            retrySuggested.remove(videoId)
+            missing.add(videoId)
+        }
+    }
+
     /** True when this run has a settled "no song version" verdict. */
     fun isMissing(videoId: String): Boolean =
         videoId in missing && videoId !in waived

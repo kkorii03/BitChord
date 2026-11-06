@@ -478,14 +478,39 @@ internal object KoTrackMatcher {
      *
      * Its three-second window is the one thing that does not carry over: a
      * video's runtime is visual timing, so the 3:12 upload is the 3:05 album
-     * cut. The window is the video switch's own ([videoRuntimeAllows] with
-     * [VIDEO_DURATION_LIMIT_SEC]) and nothing wider. The same act, the same
+     * cut. The window follows that shape and no further: the song may be
+     * [TITLE_UNVERIFIED_VIDEO_OVERHANG_SEC] shorter than its video and only
+     * [ARTIST_UNVERIFIED_DRIFT_SEC] longer. The video switch's own ninety
+     * seconds were too wide here: with no title to compare, any song by the
+     * same act of about that length would have passed. The same act, the same
      * take markers and "not a cover" still come from that grade, and a cover,
      * karaoke or remix row is refused there.
      */
-    internal fun isAudioSwitchTitleUnverified(candidate: Song, target: Target): Boolean =
-        videoRuntimeAllows(target, candidate) &&
-            isTitleUnverifiedOriginal(candidate, target, VIDEO_DURATION_LIMIT_SEC) // [KO] title-unverified
+    internal fun isAudioSwitchTitleUnverified(candidate: Song, target: Target): Boolean { // [KO] title-unverified
+        if (!isTitleUnverifiedOriginal(candidate, target, TITLE_UNVERIFIED_VIDEO_OVERHANG_SEC)) return false
+        val wanted = target.durationSec ?: return false
+        val got = secondsOf(candidate.durationText) ?: return false
+        return got - wanted <= ARTIST_UNVERIFIED_DRIFT_SEC
+    }
+
+    /**
+     * The one row [isAudioSwitchTitleUnverified] may adopt from a page.
+     *
+     * The credit and the runtime are all this grade has, so they can only name
+     * one song. Two differently titled rows on the page that both pass mean the
+     * page cannot say which is the video's song, and picking the nearer runtime
+     * would be a guess at a different track. Copies of one title (an album and
+     * its single) are still the one song, and the nearest of them is taken.
+     */
+    internal fun titleUnverifiedAdoption(candidates: List<Song>, target: Target): Song? {
+        val rows = candidates.filter { isAudioSwitchTitleUnverified(it, target) }
+        if (rows.map { parseTitle(it.title, it.artist).core }.distinct().size != 1) return null
+        val wanted = target.durationSec ?: return null
+        return rows.minByOrNull { abs(wanted - (secondsOf(it.durationText) ?: Int.MAX_VALUE)) }
+    }
+
+    /** The largest overhang measured on a real video over its song (26.6 s), rounded up. */
+    private const val TITLE_UNVERIFIED_VIDEO_OVERHANG_SEC = 30
 
     private fun scriptsDiffer(
         want: Set<Character.UnicodeScript>,

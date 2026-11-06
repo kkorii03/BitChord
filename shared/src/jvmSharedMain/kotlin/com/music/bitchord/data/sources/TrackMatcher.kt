@@ -219,9 +219,11 @@ object TrackMatcher {
         target: Target,
         maxDriftSec: Int = ARTIST_UNVERIFIED_DRIFT_SEC,
     ) = KoTrackMatcher.isTitleUnverifiedOriginal(candidate, target, maxDriftSec) // [KO] title-unverified
-    /** The audio switch's use of that grade, at the video switch's own runtime window. */
+    /** The audio switch's use of that grade, at a window shaped like a video's overhang. */
     internal fun isAudioSwitchTitleUnverified(candidate: Song, target: Target) =
         KoTrackMatcher.isAudioSwitchTitleUnverified(candidate, target) // [KO] title-unverified
+    internal fun titleUnverifiedAdoption(candidates: List<Song>, target: Target) =
+        KoTrackMatcher.titleUnverifiedAdoption(candidates, target) // [KO] title-unverified
     fun artistScriptsDiffer(wanted: String, got: String) = KoTrackMatcher.artistScriptsDiffer(wanted, got) // [KO] artistScriptsDiffer
     fun rejectionReason(
         candidate: Song,

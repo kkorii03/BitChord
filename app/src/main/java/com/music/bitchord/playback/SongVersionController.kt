@@ -1,6 +1,7 @@
 package com.music.bitchord.playback
 
 import android.content.Context
+import android.net.Uri
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
@@ -12,17 +13,28 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.net.DownloadedMvPolicy
 import com.music.bitchord.data.net.SongVersionPolicy
+import com.music.bitchord.data.net.UnprovenVersions
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.download.MvSoundRedownload
+import com.music.bitchord.playback.smart.AutomixAnalysisSource
 import com.music.bitchord.playback.smart.LyricsTiming
+import com.music.bitchord.playback.smart.VersionAudioAligner
+import com.music.bitchord.playback.smart.VersionSwapPolicy
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
+
+/** One bounded measurement per adopted row, whoever is listening. */
+private const val UNPROVEN_CHECK_TIMEOUT_MS = 60_000L
+private const val UNPROVEN_HEAD_TIMEOUT_MS = 25_000L
 
 /**
  * The song-version half of playback: deciding whether a music video should
@@ -82,6 +94,10 @@ internal class SongVersionController(
 
     /** The last id whose "user asked, playing its own audio" line was written. */
     private var userAskedPlayedLoggedFor: String? = null
+
+    /** The running sound check of a version adopted without one — see [checkUnprovenVersion]. */
+    private var unprovenCheckJob: Job? = null
+    private var unprovenCheckFor: String? = null
 
     /**
      * Forgets which songs music-only refused. A new queue and a music-only
@@ -213,6 +229,7 @@ internal class SongVersionController(
      * here would restart a track already playing, so this never touches it.
      */
     fun scheduleUpcomingSongVersions(exoPlayer: ExoPlayer) {
+        checkUnprovenVersion(exoPlayer)
         if (!AppSettings.preferMusicOnly.value) return
         if (ListenTogether.state.value.inParty) return
         // Nothing is looked ahead until this track is audible. Run at the
@@ -952,6 +969,106 @@ internal class SongVersionController(
             exoPlayer.pause()
         }
         return true
+    }
+
+    /**
+     * Compares a song version adopted on credit and runtime alone with the row
+     * it replaced, now that it is audible, and takes it off when the two are
+     * not one song — see [UnprovenVersions]. The lyrics cannot catch this: the
+     * sheet is looked up under the adopted row's own title, so it matches the
+     * wrong song perfectly well.
+     *
+     * Runs on the first sound and only for these rows, which are rare; it is
+     * the same measurement a manual version switch makes. A measurement that
+     * could not run, or lands between the bars, leaves the row playing.
+     */
+    private fun checkUnprovenVersion(exoPlayer: ExoPlayer) {
+        if (ListenTogether.state.value.inParty) return
+        val item = exoPlayer.currentMediaItem ?: return
+        val adoptedId = item.mediaId
+        if (adoptedId != currentAudibleMediaId()) return
+        val source = UnprovenVersions.sourceOf(adoptedId) ?: return
+        if (VersionAudioAligner.isRejected(source.videoId, adoptedId)) {
+            // Already measured wrong; this is another row carrying the same id.
+            takeOffRefutedVersion(exoPlayer, adoptedId, source)
+            return
+        }
+        if (unprovenCheckFor == adoptedId && unprovenCheckJob?.isActive == true) return
+        unprovenCheckFor = adoptedId
+        val adopted = item.toSong()
+        unprovenCheckJob = scope.launch {
+            try {
+                withTimeoutOrNull(UNPROVEN_CHECK_TIMEOUT_MS) {
+                    // The row playing the adopted song fetches its own bytes.
+                    // Nothing fetches the video's, so they are asked for here.
+                    if (source.localUri == null) {
+                        withContext(Dispatchers.IO) {
+                            AudioCache.keepForTiming(source.videoId)
+                            AudioCache.awaitAnalysisHead(
+                                Uri.parse(AutomixAnalysisSource.opusUri(source.videoId)),
+                                UNPROVEN_HEAD_TIMEOUT_MS,
+                            )
+                        }
+                    }
+                    VersionAudioAligner.findOffsetMs(context, source, adopted, ignoreScreen = true)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                TrackLog.w("BitChord", "song version check failed: ${failure.message}", about = adoptedId)
+            }
+            val confidence = VersionAudioAligner.getConfidence(source.videoId, adoptedId)
+            TrackLog.i(
+                "BitChord",
+                "song version check: ${source.videoId} -> $adoptedId conf=${confidence ?: "none"}",
+                about = adoptedId,
+            )
+            when {
+                confidence == null -> Unit
+                VersionSwapPolicy.refutesPlaying(confidence) -> {
+                    VersionAudioAligner.reject(source.videoId, adoptedId)
+                    takeOffRefutedVersion(exoPlayer, adoptedId, source)
+                }
+                VersionSwapPolicy.shouldSwap(confidence) -> UnprovenVersions.settle(adoptedId)
+            }
+        }
+    }
+
+    /**
+     * Puts [source] back in place of a version the sound proved is another song,
+     * from its start: the listener has not heard a note of what they asked for.
+     * The verdict outlives this row, so the next lookup answers "no version".
+     */
+    private fun takeOffRefutedVersion(exoPlayer: ExoPlayer, adoptedId: String, source: Song) {
+        YtMusicRepository.refuseSongVersion(source)
+        if (currentPlayer() !== exoPlayer || exoPlayer.currentMediaItem?.mediaId != adoptedId) return
+        val index = exoPlayer.currentMediaItemIndex
+        if (index !in 0 until exoPlayer.mediaItemCount) return
+        val now = exoPlayer.getMediaItemAt(index)
+        TrackLog.w(
+            "BitChord",
+            "song version: $adoptedId is another song; back to ${source.videoId}",
+            about = source.videoId,
+        )
+        setSwappingMediaId(source.videoId)
+        runCatching {
+            exoPlayer.replaceMediaItem(
+                index,
+                QueueShuffle.withQueueMetadata(
+                    source.toMediaItem(),
+                    newEntryId = now.queueEntryId,
+                    newCanonicalIndex = now.canonicalIndex,
+                    newTier = now.queueTier,
+                    newContextCycleId = now.contextCycleId,
+                ),
+            )
+            exoPlayer.seekTo(index, 0L)
+        }.onSuccess {
+            onVersionInstalled()
+        }.onFailure {
+            setSwappingMediaId(null)
+            TrackLog.w("BitChord", "song version revert failed: ${it.message}", about = source.videoId)
+        }
     }
 
     /**
