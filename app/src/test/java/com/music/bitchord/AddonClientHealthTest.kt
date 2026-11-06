@@ -6,10 +6,12 @@ import com.music.bitchord.data.sources.DeviceCodecs
 import com.music.bitchord.data.sources.SourceConfig
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceResolver
+import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.StreamRequest
 import com.music.bitchord.data.sources.addon.AddonClient
 import com.music.bitchord.data.sources.addon.AddonUnavailable
+import com.music.bitchord.ko.KoStreamProbe
 import com.music.bitchord.playback.HqHostTracker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -310,6 +312,37 @@ class AddonClientHealthTest {
 
         assertTrue("$seen", seen.any { it == "/tok/manifest.json?v=2" })
         assertTrue("$seen", seen.any { it.startsWith("/tok/search?v=2&") })
+    }
+
+    // ── A tag in front of the audio ──────────────────────────────────────
+
+    /** An ID3v2 tag of 10,000 bytes, which is past the probe's first look, then [audio]. */
+    private fun taggedFile(audio: ByteArray): MockResponse {
+        val size = 10_000
+        val header = "ID3".toByteArray(Charsets.US_ASCII) + byteArrayOf(
+            4, 0, 0,
+            ((size shr 21) and 0x7F).toByte(), ((size shr 14) and 0x7F).toByte(),
+            ((size shr 7) and 0x7F).toByte(), (size and 0x7F).toByte(),
+        )
+        val file = header + ByteArray(size) + audio
+        return MockResponse().setBody(okio.Buffer().write(file))
+    }
+
+    private fun flacClaim() = SourceStream(
+        url = server.url("/file").toString(),
+        format = StreamFormat("flac"),
+    )
+
+    @Test
+    fun `a flac behind a large id3 tag is not called lossy`() = runBlocking {
+        server.enqueue(taggedFile("fLaC".toByteArray(Charsets.US_ASCII) + ByteArray(38)))
+        assertTrue(KoStreamProbe.servesBytes(flacClaim()))
+    }
+
+    @Test
+    fun `an mp3 behind a large id3 tag still is`() = runBlocking {
+        server.enqueue(taggedFile(byteArrayOf(0xFF.toByte(), 0xFB.toByte(), 0x90.toByte(), 0) + ByteArray(38)))
+        assertFalse(KoStreamProbe.servesBytes(flacClaim()))
     }
 
     // ── What reaches the log ─────────────────────────────────────────────
