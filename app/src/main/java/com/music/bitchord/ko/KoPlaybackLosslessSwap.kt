@@ -470,6 +470,24 @@ internal suspend fun PlaybackService.koSmoothSwapToLossless(
         if (swappingMediaId == mediaId) swappingMediaId = null
     }
 
+    // The caller only logs "swap-failed", so each gate names itself here.
+    fun refuse(reason: String): Boolean {
+        TrackLog.d("BitChord", "hq-swap: $mediaId aborted $reason", about = mediaId)
+        releaseStandby()
+        return false
+    }
+
+    fun unfitReason(): String? = HqSwapPolicy.standbyUnfitReason(
+        expectedMediaId = mediaId,
+        expectedIndex = index,
+        standbyMediaId = standbyPlayer.currentMediaItem?.mediaId,
+        standbyIndex = standbyPlayer.currentMediaItemIndex,
+        standbyState = standbyPlayer.playbackState,
+        standbyPositionMs = standbyPlayer.currentPosition,
+        standbyDurationMs = standbyPlayer.duration,
+        suppressed = activePlayer.playbackSuppressionReason != Player.PLAYBACK_SUPPRESSION_REASON_NONE,
+    )
+
     val sourceName = stream.sourceConfigId
         ?.let { SourceRegistry.config(it)?.displayName }
         ?: "Upgrade"
@@ -546,6 +564,7 @@ internal suspend fun PlaybackService.koSmoothSwapToLossless(
             releaseStandby()
             return@withContext false
         }
+        unfitReason()?.let { return@withContext refuse(it) }
 
         if (wasPlaying) {
             standbyPlayer.seekTo(
@@ -571,6 +590,9 @@ internal suspend fun PlaybackService.koSmoothSwapToLossless(
             if (started && koIsStillSwapping(activePlayer, index, mediaId) &&
                 standbyPlayer.isPlaying
             ) {
+                // Asked before the seek, which would put a standby that has
+                // run on to the next row back on this one and hide that.
+                unfitReason()?.let { return@withContext refuse(it) }
                 standbyPlayer.seekTo(
                     index,
                     HqSwapPolicy.targetPositionMs(
@@ -614,6 +636,10 @@ internal suspend fun PlaybackService.koSmoothSwapToLossless(
                 releaseStandby()
                 return@withContext false
             }
+            // The first pass also checks the seek just made, and the last pass
+            // is what adoption relies on: nothing suspends between it and the
+            // handover.
+            unfitReason()?.let { return@withContext refuse(it) }
             if (standbyPlayer.playWhenReady != activePlayer.playWhenReady) {
                 standbyPlayer.playWhenReady = activePlayer.playWhenReady
             }

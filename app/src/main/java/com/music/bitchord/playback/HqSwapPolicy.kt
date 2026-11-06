@@ -1,5 +1,6 @@
 package com.music.bitchord.playback
 
+import androidx.media3.common.Player
 import com.music.bitchord.data.sources.HqMatchPolicy
 import kotlin.math.roundToLong
 
@@ -186,6 +187,24 @@ internal object HqSwapPolicy {
         return ((candidateMs - offsetMs) / rate).roundToLong().coerceAtLeast(0L)
     }
 
+    /**
+     * Why the prepared standby must not be blended in or adopted; null when it
+     * still may.
+     *
+     * "READY" and "playing" say nothing about which song. A replacement shorter
+     * than the playhead reads past its own end and ExoPlayer advances the queue,
+     * so the standby reports itself ready and playing on the next row. Adopting
+     * that hands the session to the wrong song, and [PlaybackService.watchUpgrade]
+     * cannot revert it because the item is no longer this track. A standby that
+     * failed or ended during the blend would be adopted as silence.
+     *
+     * [suppressed] is the session player's own state: only that player holds
+     * audio focus, so during a call this is the one thing telling the standby
+     * not to play over it.
+     *
+     * @param standbyDurationMs non-positive while the length is not known yet,
+     *   which is not evidence of a short file.
+     */
     fun standbyUnfitReason(
         expectedMediaId: String,
         expectedIndex: Int,
@@ -195,7 +214,13 @@ internal object HqSwapPolicy {
         standbyPositionMs: Long,
         standbyDurationMs: Long,
         suppressed: Boolean,
-    ): String? = null
+    ): String? = when {
+        suppressed -> "suppressed"
+        standbyMediaId != expectedMediaId || standbyIndex != expectedIndex -> "standby-moved"
+        standbyState == Player.STATE_IDLE || standbyState == Player.STATE_ENDED -> "standby-stopped"
+        standbyDurationMs > 0L && standbyDurationMs <= standbyPositionMs -> "standby-too-short"
+        else -> null
+    }
 
     fun standbyOffTarget(standbyPositionMs: Long, targetMs: Long): Boolean = false
 
