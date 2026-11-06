@@ -367,8 +367,14 @@ object SourceResolver {
                 refusedRows += candidateSource
                 false
             } else if (!probe(candidate)) {
-                KoRefusedRows.note(candidateSource.configId, candidate.trackId)
-                refusedRows += candidateSource
+                // A host that refused the URL (403/404/410) has been recorded
+                // by the probe and is the source's own failure, not a wrong
+                // file: asking it again in this walk only costs the listener
+                // the first note. Only a wrong file earns the next row.
+                if (StreamRefusalRecovery.refusedStream(candidate.url) == null) {
+                    KoRefusedRows.note(candidateSource.configId, candidate.trackId)
+                    refusedRows += candidateSource
+                }
                 false
             } else {
                 verify?.invoke(candidate) ?: true
