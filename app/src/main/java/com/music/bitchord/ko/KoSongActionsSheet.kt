@@ -248,6 +248,11 @@ internal fun KoSongActionsSheet(
     /** Opens the timing control offered only by the main player's menu. */
     onLyricsOffset: (() -> Unit)? = null,
     /**
+     * Opens the Automix mix popup on the next transition. Null hides the row —
+     * the player passes one only while Automix is on.
+     */
+    onAutomixOverview: (() -> Unit)? = null,
+    /**
      * True while a lookup for this track's album/artist ids is still in
      * flight, so it isn't yet known whether "Open album" and "Open artist"
      * belong on this sheet at all. Only the player ever opens a sheet before
@@ -512,6 +517,15 @@ internal fun KoSongActionsSheet(
                 value = sleepTimerStatus(),
                 accent = palette.accent,
             ) { pickingSleepTimer = true }
+        }
+        // The same popup "Mixing" opens mid-blend, on the transition still to come.
+        onAutomixOverview?.let {
+            ActionRow(
+                icon = SfIcons.GraphicEq,
+                label = stringResource(R.string.automix_overview),
+                accent = palette.accent,
+                onClick = it,
+            )
         }
         if (showPlaybackSpeed && !menu) {
             val speed by AppSettings.playbackSpeed.collectAsStateWithLifecycle()

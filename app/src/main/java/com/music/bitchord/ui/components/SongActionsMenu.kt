@@ -18,7 +18,7 @@ fun SongActionsMenu(
     onStartRadio: () -> Unit,
     onDownload: () -> Unit,
     /**
-     * Copies this track to the WebDAV server. Null hides the row — the caller
+     * Copies this track to the WebDAV server. Null hides the row ??the caller
      * passes one only for a readable device file while a server is
      * configured. Uploading while another upload of the same track runs just
      * re-runs it; the conflict dialog keeps that idempotent.
@@ -28,7 +28,7 @@ fun SongActionsMenu(
     onToggleDislike: () -> Unit,
     /**
      * Saves this song to the account's library, or takes it out. Null hides
-     * the row — a guest or a local file has no library entry to write.
+     * the row ??a guest or a local file has no library entry to write.
      */
     onToggleLibrary: (() -> Unit)? = null,
     /** Whether [onToggleLibrary] would remove rather than add. */
@@ -39,13 +39,13 @@ fun SongActionsMenu(
     modifier: Modifier = Modifier,
     onRemoveFromPlaylist: (() -> Unit)? = null,
     /**
-     * Takes this track out of the song cache. Null hides the row — the caller
+     * Takes this track out of the song cache. Null hides the row ??the caller
      * passes one only while the cache actually holds some of it.
      */
     onRemoveFromCache: (() -> Unit)? = null,
     /**
      * Removes this track from the account's listening history. Null hides the
-     * row — the History screen passes one only when the menu is opened there.
+     * row ??the History screen passes one only when the menu is opened there.
      */
     onRemoveFromHistory: (() -> Unit)? = null,
     showSleepTimer: Boolean = false,
@@ -58,7 +58,7 @@ fun SongActionsMenu(
     onTogglePrivateListening: (() -> Unit)? = null,
     /**
      * Sends the playing track back to YouTube's own upload, and keeps it there.
-     * Offered for any player item that has one behind it — a substituted copy
+     * Offered for any player item that has one behind it ??a substituted copy
      * can be the wrong recording from the first second, not only after a
      * visible upgrade. See
      * [com.music.bitchord.playback.hasYouTubeOriginal].
@@ -83,7 +83,7 @@ fun SongActionsMenu(
     redownloadQualityAtBest: Boolean = false,
     /**
      * Switches the playing track between its video and audio-only cuts. Null
-     * hides the row — offered only from the player, and only once an
+     * hides the row ??offered only from the player, and only once an
      * alternate cut is known to exist. See
      * [com.music.bitchord.playback.PlaybackService.smoothSwapCurrentTrackVersion].
      */
@@ -106,18 +106,23 @@ fun SongActionsMenu(
     /** Opens the timing control offered only by the main player's menu. */
     onLyricsOffset: (() -> Unit)? = null,
     /**
+     * Opens the Automix mix popup on the next transition. Null hides the row ??
+     * the player passes one only while Automix is on.
+     */
+    onAutomixOverview: (() -> Unit)? = null,
+    /**
      * True while a lookup for this track's album/artist ids is still in
      * flight, so it isn't yet known whether "Open album" and "Open artist"
      * belong on this sheet at all. Only the player ever opens a sheet before
      * it knows; everywhere else this is simply false, and the two rows behave
-     * as before — present when the id is there, absent when it never was.
+     * as before ??present when the id is there, absent when it never was.
      */
     resolvingLinks: Boolean = false,
     /**
      * Where the rows are drawn. [SongActionsPresentation.Sheet] is the tinted
      * bottom sheet with its own track header; [SongActionsPresentation.Menu]
      * is only the rows, compact and in the theme's own colours, for the
-     * popup a held row lifts into — see [HeldContextMenu], which draws the
+     * popup a held row lifts into ??see [HeldContextMenu], which draws the
      * held row itself above them.
      */
     menu: Boolean = false,
@@ -158,6 +163,7 @@ fun SongActionsMenu(
         onCopyLog = onCopyLog,
         onReportProblem = onReportProblem,
         onLyricsOffset = onLyricsOffset,
+        onAutomixOverview = onAutomixOverview,
         resolvingLinks = resolvingLinks,
         menu = menu,
     )

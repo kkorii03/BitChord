@@ -341,4 +341,5 @@
     <string name="lyrics_timing_ai_button_running">Timing…</string>
     <string name="private_listening_notice">Private mode · not saved to YouTube history</string>
     <string name="private_listening_turn_off">Turn off</string>
+    <string name="automix_overview_unavailable">No Automix transition coming up</string>
 </resources>

@@ -21,6 +21,7 @@ import com.music.bitchord.ko.sourceLookupTimeoutMsFor
 import com.music.bitchord.ko.unverifiedVerdict
 import com.music.bitchord.playback.HqHostTracker
 import com.music.bitchord.playback.StreamRefusalRecovery
+import com.music.bitchord.playback.StreamContainer
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
@@ -321,6 +322,15 @@ object SourceResolver {
          */
         verify: (suspend (SourceStream) -> Boolean)? = null,
         /**
+         * YouTube's runtime for the track, asked only when the queue row never
+         * carried one. Started here, *beside* the addon search rather than
+         * ahead of it, and awaited only once a search has answered and its rows
+         * are about to be filtered — so the search's seconds cover the lookup's
+         * fraction of one. Null back means it could not be had, and the match
+         * falls back to title and artist alone.
+         */
+        lengthOf: (suspend () -> Int?)? = null,
+        /**
          * Whether the candidate can actually serve its first bytes — see
          * [com.music.bitchord.ko.KoStreamProbe]. Injected so the choice can be
          * decided without a network, and so nothing else here has to know about
@@ -336,10 +346,24 @@ object SourceResolver {
         probe: suspend (SourceStream) -> Boolean = {
             com.music.bitchord.ko.KoStreamProbe.servesBytes(it, mediaId)
         },
-    ): SourceStream? {
-        if (target.title.isBlank() || target.isVideo) return null
+    ): SourceStream? = coroutineScope {
+        if (target.title.isBlank() || target.isVideo) return@coroutineScope null
         val addons = directAddons()
-        if (addons.isEmpty()) return null
+        if (addons.isEmpty()) return@coroutineScope null
+        // Never allowed to fail: a child of this scope that throws takes the
+        // addon search down with it, and a missing runtime is not worth that.
+        val length = lengthOf?.takeIf { target.durationSec == null }?.let { fetch ->
+            async {
+                try {
+                    fetch()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    null
+                }
+            }
+        }
+        val lengthLater: (suspend () -> Int?)? = length?.let { pending -> { pending.await() } }
         // This stream plays *instead of* YouTube's own copy, so it clears the
         // same bar as every other replacement: the original recording, its
         // artist, its runtime and no cover/tribute arrangement. Ungated, a
@@ -393,20 +417,39 @@ object SourceResolver {
                 verify?.invoke(candidate) ?: true
             }
         }
-        var found = bestAcross(addons, target, requestForNow(), strictOriginal = true, accept = accept)
-        var retries = 0
-        while (found == null && refusedRows.isNotEmpty() && retries++ < REFUSED_ROW_RETRIES) {
-            val again = refusedRows.toList()
-            refusedRows.clear()
-            found = bestAcross(again, target, requestForNow(), strictOriginal = true, accept = accept)
+        val found = try {
+            var result = bestAcross(
+                addons,
+                target,
+                requestForNow(),
+                strictOriginal = true,
+                lengthLater = lengthLater,
+                accept = accept,
+            )
+            var retries = 0
+            while (result == null && refusedRows.isNotEmpty() && retries++ < REFUSED_ROW_RETRIES) {
+                val again = refusedRows.toList()
+                refusedRows.clear()
+                result = bestAcross(
+                    again,
+                    target,
+                    requestForNow(),
+                    strictOriginal = true,
+                    lengthLater = lengthLater,
+                    accept = accept,
+                )
+            }
+            result
+        } finally {
+            length?.cancel()
         }
-        val (source, stream) = found ?: return null
+        val (source, stream) = found ?: return@coroutineScope null
         TrackLog.d(
             TAG,
             "direct: '${target.title}' from ${source.displayName} at ${stream.format.summary}" +
                 if (stream.belowRequest) " (below request)" else "",
         )
-        return stream
+        return@coroutineScope stream
     }
 
     /** Whether [uri] is an addon row played as itself — see [MIX_PARAM]. */
@@ -1296,6 +1339,19 @@ object SourceResolver {
      * usable stream and cancelled the rest, which could discard an exact Tidal
      * FLAC or JioSaavn 320 result during an upgrade.
      *
+     * Two answers of equal quality go to the higher-ranked source, whenever
+     * each arrived. Arrival order used to decide that, which handed every tie
+     * to JioSaavn's four tenths of a second over an addon the user had ranked
+     * first.
+     *
+     * @param refine runs on each source's answer inside that source's own
+     *   lookup, so its cost is paid in parallel. It may rewrite the stream
+     *   (with what its bytes turned out to be) or refuse it with null.
+     * @param timeoutMs ends the race at that point with whatever has already
+     *   answered, rather than losing those answers along with the slow ones.
+     * @param driftSec the [strictLength] bar — see [matchAndStream].
+     * @param lengthLater, [checkFileLength] — see [matchAndStream]. Shared by
+     *   every source's lookup, so it must be safe to call from each of them.
      * @return the winning source alongside its stream, so callers can name it in
      *   a log line without searching the list again.
      */
@@ -1367,6 +1423,8 @@ object SourceResolver {
          */
         collectGate: (suspend (MusicSource, SourceStream) -> Boolean)? = null,
         /** Runs on each source's answer inside its own lookup, so its cost is paid in parallel. */
+        lengthLater: (suspend () -> Int?)? = null,
+        checkFileLength: Boolean = false,
         refine: suspend (MusicSource, SourceStream) -> SourceStream? = { _, stream -> stream },
         /** Ends the race at that point with whatever has already answered. */
         timeoutMs: Long? = null,
@@ -1450,6 +1508,8 @@ object SourceResolver {
                             manual,
                             allowArtistUnverified,
                             driftSec,
+                            lengthLater,
+                            checkFileLength,
                         )
                     }
                     if (answer == null) {
@@ -1686,6 +1746,12 @@ object SourceResolver {
      *   [upgradeSlackSec]. A download and the YouTube fallback keep the fixed
      *   bar: neither cuts into audio already playing, which is what the setting
      *   is about.
+     * @param lengthLater the runtime for a [target] that has none, already
+     *   being fetched by the caller. Awaited after the first search answers,
+     *   and the rows are then ranked and length-checked against it.
+     * @param checkFileLength measures each opened stream's file before
+     *   accepting it — see [cutShort]. Only for a caller with no audition
+     *   behind it.
      */
     private suspend fun matchAndStream(
         source: MusicSource,
@@ -1698,8 +1764,11 @@ object SourceResolver {
         manual: Boolean = false,
         allowArtistUnverified: Boolean = false,
         driftSec: Int = UPGRADE_DRIFT_SEC,
+        lengthLater: (suspend () -> Int?)? = null,
+        checkFileLength: Boolean = false,
     ): SearchOutcome {
         var last = SearchOutcome()
+        var matchOn = target
         for (query in TrackMatcher.queries(target)) {
             val key = SearchKey(
                 sourceId = source.configId,
@@ -1755,7 +1824,17 @@ object SourceResolver {
                 }
                 rows
             }
-            val ranked = TrackMatcher.ranked(candidates, target)
+            // A runtime the queue row never carried, looked up beside the
+            // search by the caller and asked for only now that the search has
+            // answered — so waiting on it costs the difference, if any, and
+            // only the first query ever waits.
+            if (matchOn.durationSec == null && lengthLater != null) {
+                lengthLater()?.let { matchOn = matchOn.copy(durationSec = it) }
+            }
+            // A strict search against no runtime at all is an empty one — see
+            // [strictLength] — so with nothing to measure by, it is not strict.
+            val strict = strictLength && matchOn.durationSec != null
+            val ranked = TrackMatcher.ranked(candidates, matchOn)
             // Rows whose only disagreement is an artist credit in another
             // script are kept apart so the ordinary match order still wins.
             // Judged over every result, not just the top row: the localised
@@ -1794,7 +1873,7 @@ object SourceResolver {
             if (requireSharedArtist) {
                 matches = matches.filter {
                     it in unverified ||
-                        TrackMatcher.sharesArtist(target.artist, it.artist)
+                        TrackMatcher.sharesArtist(matchOn.artist, it.artist)
                 }
             }
             // JioSaavn can return different audio under the same title and
@@ -1809,13 +1888,13 @@ object SourceResolver {
             // would reinstate the failure this fallback exists to remove.
             val verifiedForConflict = matches.filterNot { it in unverified }
             if (source.kind == SourceKind.JIOSAAVN &&
-                TrackMatcher.hasConflictingAlbums(verifiedForConflict, target)
+                TrackMatcher.hasConflictingAlbums(verifiedForConflict, matchOn)
             ) {
-                val canonical = TrackMatcher.uniquelyMostCreditedCloseMatch(verifiedForConflict, target)
+                val canonical = TrackMatcher.uniquelyMostCreditedCloseMatch(verifiedForConflict, matchOn)
                 if (canonical == null) {
                     TrackLog.w(
                         TAG,
-                        "${source.displayName} returned conflicting albums for '${target.title}'; refusing to guess",
+                        "${source.displayName} returned conflicting albums for '${matchOn.title}'; refusing to guess",
                     )
                     last = SearchOutcome(
                         results = candidates.size,
@@ -1827,7 +1906,7 @@ object SourceResolver {
                 }
                 TrackLog.d(
                     TAG,
-                    "${source.displayName} resolved conflicting albums for '${target.title}' " +
+                    "${source.displayName} resolved conflicting albums for '${matchOn.title}' " +
                         "using the uniquely fullest credit: '${canonical.artist}'",
                 )
                 matches = listOf(canonical)
@@ -1838,15 +1917,27 @@ object SourceResolver {
             // song; a runtime that agrees this closely is one recording, and
             // nothing else is worth cutting a listener's audio for — or filing
             // on their device under the name of the track they asked for.
-            if (strictLength) {
-                matches = matches.filter {
+            if (strict) {
+                val (sameLength, otherLength) = matches.partition {
                     val drift = if (it in unverified) {
                         TrackMatcher.ARTIST_UNVERIFIED_DRIFT_SEC
                     } else {
                         driftSec
                     }
-                    TrackMatcher.withinSeconds(it, target, drift)
+                    TrackMatcher.withinSeconds(it, matchOn, drift)
                 }
+                // Named rather than dropped silently: a copy refused for its
+                // length reads in the log exactly like a source that never had
+                // it, and the two have opposite fixes.
+                if (otherLength.isNotEmpty()) {
+                    TrackLog.d(
+                        TAG,
+                        "${source.displayName}: ${otherLength.size} match(es) for '${matchOn.title}' outside " +
+                            "±${driftSec}s of ${matchOn.durationSec}s: " +
+                            otherLength.joinToString { "'${it.title}' ${it.durationText ?: "?"}" },
+                    )
+                }
+                matches = sameLength
             }
             if (matches.isEmpty()) {
                 val best = matches.firstOrNull() ?: ranked.firstOrNull()
@@ -1862,10 +1953,10 @@ object SourceResolver {
                     best == null -> "title"
                     else -> TrackMatcher.rejectionReason(
                         best,
-                        target,
+                        matchOn,
                         strictOriginal = strictOriginal,
                         requireSharedArtist = requireSharedArtist,
-                        strictLength = strictLength,
+                        strictLength = strict,
                         driftSec = driftSec,
                         allowArtistUnverified = allowArtistUnverified,
                     )
@@ -1893,18 +1984,19 @@ object SourceResolver {
             val verifiedMatches = matches.filterNot { it in unverified }
             val unverifiedMatches = matches.filter { it in unverified }
             val sameLengthSec =
-                if (strictLength) maxOf(SAME_RECORDING_SEC, driftSec) else SAME_RECORDING_SEC
+                if (strict) maxOf(SAME_RECORDING_SEC, driftSec) else SAME_RECORDING_SEC
             val verifiedOpened = if (verifiedMatches.isEmpty()) {
                 null
             } else {
                 streamBest(
                     source,
                     verifiedMatches,
-                    target,
+                    matchOn,
                     request,
                     sameLengthSec = sameLengthSec,
                     // Only the patient lookups can afford to open more than one row.
                     compareRows = waitForAll,
+                    checkFileLength = checkFileLength,
                 )
             }
             // When the credited copy already serves the request, the localised
@@ -1929,10 +2021,11 @@ object SourceResolver {
                 streamBest(
                     source,
                     unverifiedMatches,
-                    target,
+                    matchOn,
                     request,
                     preserveOrder = true,
                     countFailure = !localisedIsAlternate,
+                    checkFileLength = checkFileLength,
                 )
             }
             var opened = verifiedOpened
@@ -1943,7 +2036,7 @@ object SourceResolver {
                     opened = verifiedOpened
                     if (localisedOpened != null) {
                         alternate = localisedOpened
-                        alternateVerdict = unverifiedVerdict(localisedOpened.first, target)
+                        alternateVerdict = unverifiedVerdict(localisedOpened.first, matchOn)
                     }
                 }
                 localisedOpened != null &&
@@ -1985,7 +2078,7 @@ object SourceResolver {
                     // Which signal is missing decides the word; both are the
                     // same tier and both still need the sound comparison.
                     chosen == null || chosen !in unverified -> "match"
-                    else -> unverifiedVerdict(chosen, target)
+                    else -> unverifiedVerdict(chosen, matchOn)
                 },
                 conclusive = conclusive,
                 alternate = alternate?.second,
@@ -2117,6 +2210,7 @@ object SourceResolver {
          * stream call.
          */
         compareRows: Boolean = false,
+        checkFileLength: Boolean = false,
     ): Pair<Song, SourceStream>? {
         val wantsLossless = request is StreamRequest.Lossless
         val ordered = if (preserveOrder) matches else preferred(matches, target, wantsLossless, sameLengthSec)
@@ -2152,6 +2246,9 @@ object SourceResolver {
                 trackTitle = match.title,
                 trackArtist = match.artist,
             )
+            // Dropped outright, not kept as a floor: a clip is not a lesser
+            // copy of the recording, it is not the recording.
+            if (checkFileLength && cutShort(source, match, stream, target)) continue
             val served = stream.format
             if (!wantsLossless || HqQuality.isLosslessTier(served) || served.isDolbyAtmos || served.statesNothingLossy) {
                 TrackLog.d(
@@ -2183,6 +2280,38 @@ object SourceResolver {
             }
         }
         return best ?: settleFor
+    }
+
+    /**
+     * Whether the file behind [stream] is too small to hold the recording —
+     * an addon's 30-second preview, or a cut-off upload, under a row that
+     * claims the full runtime.
+     *
+     * The row cannot say so: it is the row that is wrong. The size of the file
+     * can, at the cost of one header-only request — see [StreamLengthProbe].
+     * Measured against YouTube's runtime when the queue carried one, the row's
+     * otherwise, and with the listener's "Track length tolerance" as the bar.
+     *
+     * Answers no whenever it cannot measure — a manifest, a server that will
+     * not say how big the file is — and leaves the rest to the decoded-length
+     * check playback makes once the track is open.
+     */
+    private suspend fun cutShort(
+        source: MusicSource,
+        match: Song,
+        stream: SourceStream,
+        target: TrackMatcher.Target,
+    ): Boolean {
+        val expectedSec = target.durationSec ?: TrackMatcher.secondsOf(match.durationText) ?: return false
+        if (StreamContainer.isManifest(stream.url)) return false
+        val bytes = StreamLengthProbe.bytesOf(stream) ?: return false
+        if (!StreamLengthProbe.tooShort(bytes, stream.format, expectedSec, upgradeSlackSec())) return false
+        TrackLog.w(
+            TAG,
+            "${source.displayName} served ${bytes / 1024}kB of ${stream.format.summary} for " +
+                "'${match.title}', too little to hold ${expectedSec}s — a preview or a cut-off file; looking further",
+        )
+        return true
     }
 
     /**

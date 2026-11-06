@@ -57,7 +57,11 @@ internal class PrefetchController(
         val nextIndex = player.nextMediaItemIndex
         val upcomingSongs = if (nextIndex != C.INDEX_UNSET) {
             val end = (nextIndex + AudioCache.QUEUE_DEPTH - 1).coerceAtMost(player.mediaItemCount - 1)
-            (nextIndex..end).map { index -> player.getMediaItemAt(index).toSong() }
+            // A video about to be converted plays under another id, so every
+            // byte warmed for it now would be wasted.
+            (nextIndex..end).map(player::getMediaItemAt)
+                .filterNot(MusicOnlyPlayback::wants)
+                .map { it.toSong() }
         } else {
             emptyList()
         }

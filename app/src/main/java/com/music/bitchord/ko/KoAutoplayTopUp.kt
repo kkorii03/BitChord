@@ -32,6 +32,7 @@ import com.music.bitchord.data.videoradio.VideoRadioFallbackAction
 import com.music.bitchord.data.videoradio.videoRadioFallbackAction
 import com.music.bitchord.data.videoradio.videoRadioFallbackStage
 import com.music.bitchord.playback.MAX_QUEUED_AUTOPLAY
+import com.music.bitchord.playback.MusicOnlyPlayback
 import com.music.bitchord.playback.QueueBuilder
 import com.music.bitchord.playback.VideoRadioPick
 import com.music.bitchord.playback.pickVideoRadio
@@ -95,9 +96,12 @@ internal suspend fun loadAutoplayTracks(
     val mode = videoRadioModeFor(seedSong)
     // A shared queue is one running order for everyone; a per-listener video
     // station would make that order depend on whose phone topped it up.
+    // Music-only asks for the audio version, so a video station would only be
+    // converted again — the station's songs are the answer (upstream v1.9.1).
     val videoWanted = AppSettings.videoRadio.value &&
         mode == AutoplayMode.VIDEO_RADIO &&
-        !inParty
+        !inParty &&
+        !MusicOnlyPlayback.isActive()
     val offline = AppSettings.meteredConnection.value == null
 
     // Offline the only video songs that can play are the downloaded ones; no

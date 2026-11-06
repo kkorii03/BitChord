@@ -1843,6 +1843,8 @@ class PlaybackService : MediaLibraryService() {
             DiagnosticsState.queueSize = exoPlayer.mediaItemCount
             DiagnosticsState.queueIndex = exoPlayer.currentMediaItemIndex
             DiagnosticsState.nextTrackId = nextMediaIdOf(exoPlayer)
+            // Whether or not it is playing: a held video buffers until this answers.
+            convertVideosAround(exoPlayer)
             if (exoPlayer.isPlaying) prefetchAround(exoPlayer)
             // A queue edit can change what follows gaplessly, and the loudness
             // stage switches to that track on its own at the boundary.
@@ -2571,7 +2573,7 @@ class PlaybackService : MediaLibraryService() {
         // DsdExtractorsFactory: the stock extractors plus DSF/DFF, which Media3
         // cannot open at all. A DSD file leaves the extractor as float PCM.
         mediaSourceFactory = DefaultMediaSourceFactory(
-            AudioCache.playbackFactory(defaultDataSourceFactory),
+            MusicOnlyPlayback.holdingFactory(AudioCache.playbackFactory(defaultDataSourceFactory)),
             DsdExtractorsFactory(),
         )
             .setLoadErrorHandlingPolicy(PermanentAwareLoadErrorPolicy())
@@ -2857,7 +2859,11 @@ class PlaybackService : MediaLibraryService() {
             // seconds before the blend, so the marker waits for its audio:
             // a window shown over a track that may still fall back to YouTube
             // promises a blend that could start late or not at all.
-            nextStreamReady = { item -> !DirectSourceGate.isActive() || DirectSourceGate.isStreamReady(item) },
+            // The same for a next track still waiting to become its audio version.
+            nextStreamReady = { item ->
+                !MusicOnlyPlayback.wants(item) &&
+                    (!DirectSourceGate.isActive() || DirectSourceGate.isStreamReady(item))
+            },
             screenOn = { PowerState.screenOn },
             mixWaveform = { item, durationMs, from, to, bins ->
                 item.localConfiguration?.uri?.let { uri ->
@@ -4653,6 +4659,11 @@ class PlaybackService : MediaLibraryService() {
         .setLoadControl(farBufferingLoadControl())
         .setAudioAttributes(AUDIO_ATTRIBUTES, /* handleAudioFocus = */ ownsSession)
         .setHandleAudioBecomingNoisy(ownsSession)
+        // Keeps the CPU awake while this player is playing. Normal output gets
+        // that from Android's audio server, but direct USB and AAudio exclusive
+        // feed the DAC from this process, and without it a screen-off phone
+        // suspends mid-track and the stream underruns.
+        .setWakeMode(C.WAKE_MODE_LOCAL)
         // Back restarts the track once you're this far into it; only a
         // press before that steps to the previous one.
         .setMaxSeekToPreviousPositionMs(BACK_RESTARTS_AFTER_MS)
@@ -5286,6 +5297,7 @@ class PlaybackService : MediaLibraryService() {
         }
         if (exoPlayer.isPlaying && !sameTrackSwap) registerCurrentPlay()
         savePlaybackState(exoPlayer)
+        convertVideosAround(exoPlayer)
         // Not before this row has made a sound: read-ahead and its alternate
         // pre-resolve would compete with the resolve that starts it. A cold
         // start reaches here with isPlaying still false and is picked up by
@@ -6011,6 +6023,32 @@ class PlaybackService : MediaLibraryService() {
         val videoId = playbackUri.getQueryParameter("v")
         val substituted = videoId?.let(StreamChoice::isSubstitute) == true
         if (!PlaybackFallback.isAlternative(playbackUri.toString(), substituted)) return false
+        return replaceWithYouTube(
+            item = item,
+            playbackUri = playbackUri,
+            position = position,
+            keepComplete = isNetworkFault(error),
+            why = "failed on a higher-quality source",
+        )
+    }
+
+    /**
+     * Puts [item] back on YouTube's own audio at [position], and never offers
+     * the source it was on again during this playback. Shared by a stream that
+     * failed and one that opened fine and turned out to be the wrong length —
+     * see [checkSubstituteLength].
+     *
+     * @param keepComplete see [AudioCache.discard]: true only when the fault
+     *   was the network's, so the bytes on disk are not to blame.
+     */
+    private fun replaceWithYouTube(
+        item: MediaItem,
+        playbackUri: Uri,
+        position: Long,
+        keepComplete: Boolean,
+        why: String,
+    ): Boolean {
+        val videoId = playbackUri.getQueryParameter("v")
         val fallback = item.toYouTubeFallbackMediaItem() ?: return false
         val mediaId = item.mediaId
 
@@ -6024,14 +6062,13 @@ class PlaybackService : MediaLibraryService() {
         recoveries.remove(mediaId)
         TrackLog.w(
             "BitChord",
-            "$mediaId failed on a higher-quality source; falling back to YouTube audio",
+            "$mediaId $why; falling back to YouTube audio",
             about = mediaId,
         )
 
-        val networkFault = isNetworkFault(error)
         scope.launch(TrackLog.about(mediaId)) {
             delay(RECOVERY_DELAY_MS)
-            withContext(Dispatchers.IO) { AudioCache.discard(playbackUri, keepComplete = networkFault) }
+            withContext(Dispatchers.IO) { AudioCache.discard(playbackUri, keepComplete = keepComplete) }
             withContext(Dispatchers.Main) {
                 val live = this@PlaybackService.player ?: return@withContext
                 if (live.currentMediaItem?.mediaId != mediaId) return@withContext
@@ -9569,6 +9606,160 @@ class PlaybackService : MediaLibraryService() {
         prefetchController.prefetchAround(player)
     }
 
+    /** Audio-version lookups running for the music-only setting, by video id. */
+    private val musicOnlyLookups = HashMap<String, Job>()
+
+    /**
+     * Turns the playing row and the next one into their audio versions, for
+     * "Prefer music-only version" — see [MusicOnlyPlayback]. Run whenever either
+     * could have changed; a row already answered costs a map lookup.
+     *
+     * Not mid-blend or mid-swap, which both copy this queue onto the standby
+     * player. Both end in [onTrackBecameCurrent], which comes back here.
+     */
+    private fun convertVideosAround(exoPlayer: ExoPlayer) {
+        if (!MusicOnlyPlayback.isActive()) return
+        if (crossfade?.isTransitioning() == true || versionSwapJob?.isActive == true) return
+        val rows = listOf(exoPlayer.currentMediaItemIndex, exoPlayer.nextMediaItemIndex)
+            .filter { it in 0 until exoPlayer.mediaItemCount }
+            .distinct()
+        MusicOnlyPlayback.forgetExcept(rows.map { exoPlayer.getMediaItemAt(it).mediaId }.toSet())
+        for (index in rows) {
+            val item = exoPlayer.getMediaItemAt(index)
+            if (!MusicOnlyPlayback.wants(item)) continue
+            val video = item.toSong()
+            val audio = YtMusicRepository.cachedAudioVersion(video.videoId)
+            when {
+                audio == null -> lookUpMusicOnly(video)
+                audio.videoId == video.videoId || audio.isVideo -> MusicOnlyPlayback.settle(video.videoId)
+                else -> {
+                    applyMusicOnly(exoPlayer, index, item, video, audio)
+                    // Replacing a row can run the whole transition, which trims
+                    // history, so the indexes above may no longer hold.
+                    convertVideosAround(exoPlayer)
+                    return
+                }
+            }
+        }
+    }
+
+    private fun lookUpMusicOnly(video: Song) {
+        if (musicOnlyLookups[video.videoId]?.isActive == true) return
+        musicOnlyLookups[video.videoId] = scope.launch {
+            val audio = withTimeoutOrNull(MusicOnlyPlayback.ANSWER_TIMEOUT_MS) {
+                runCatching { YtMusicRepository.resolveAudio(video) }.getOrNull()
+            }
+            musicOnlyLookups.remove(video.videoId)
+            if (audio == null || audio.videoId == video.videoId) {
+                TrackLog.d("BitChord", "music-only: no audio version, playing the video's own audio", about = video.videoId)
+                MusicOnlyPlayback.settle(video.videoId)
+            }
+            val live = player ?: return@launch
+            convertVideosAround(live)
+            if (live.isPlaying) prefetchAround(live)
+        }
+    }
+
+    private fun applyMusicOnly(exoPlayer: ExoPlayer, index: Int, item: MediaItem, video: Song, audio: Song) {
+        TrackLog.d("BitChord", "music-only: playing '${audio.title}' (${audio.videoId})", about = video.videoId)
+        YtMusicRepository.rememberVideoVersion(audio.videoId, video)
+        val replacement = QueueShuffle.withQueueMetadata(
+            audio.asMusicOnlyOf(video).toMediaItem(),
+            newCanonicalIndex = item.canonicalIndex,
+            newContextCycleId = item.contextCycleId,
+        )
+        val isCurrent = index == exoPlayer.currentMediaItemIndex
+        // Only already audible when the setting was turned on with a video
+        // playing: that one is switched over like the player menu's switch.
+        if (isCurrent && exoPlayer.isPlaying) {
+            smoothSwapCurrentTrackVersion(replacement)
+            return
+        }
+        val position = if (isCurrent) exoPlayer.currentPosition else 0L
+        exoPlayer.replaceMediaItem(index, replacement)
+        // A queue restored paused part-way through a video resumes where it was.
+        if (position > 0L) {
+            val mapped = YtMusicRepository.versionTimeMap(video.videoId, audio.videoId)?.map(position) ?: position
+            exoPlayer.seekTo(exoPlayer.currentMediaItemIndex, mapped.coerceAtLeast(0L))
+        }
+    }
+
+    /** The playback URI [checkSubstituteLength] last measured, so each opened item is measured once. */
+    private var lengthCheckedUri: String? = null
+
+    /**
+     * Puts a YouTube-queued track back on YouTube when the addon copy it
+     * started on decodes to the wrong length — the check the upgrade path's
+     * audition makes before any swap, made here for a copy that played from
+     * the first note with no audition behind it.
+     *
+     * What it catches is what the catalogue cannot see: an addon's 30-second
+     * preview, or a different cut, behind a row that claimed the right
+     * runtime. [SourceResolver.directStream] already refuses what it can
+     * measure up front — rows of the wrong length, files too small to hold the
+     * track — and this is the guarantee behind it, since a server that will
+     * not say how big its file is gets past that.
+     *
+     * The bar is the listener's "Track length tolerance", the same one the
+     * audition and [SourceResolver.upgradeFor] use, measured against the
+     * runtime the queue row carried (or the one [DirectSourceGate] looked up
+     * for a row that carried none). A second is added for rounding, because
+     * that runtime is whole seconds and the decoder's is not.
+     *
+     * Only a copy known to be an addon's is held to the tolerance. Bytes
+     * already on disk from an earlier session have no record of who served
+     * them, and may be YouTube's own, whose length can sit a few seconds off
+     * its listing; those are refused only when they hold under half the
+     * track, which is a preview played back from the cache and nothing else.
+     *
+     * Ticked from [driveDirectWindow], so it runs whether or not Direct Source
+     * Stream is on: an addon that wins the ordinary race plays without an
+     * audition too.
+     */
+    private fun checkSubstituteLength(exoPlayer: ExoPlayer) {
+        val item = exoPlayer.currentMediaItem ?: return
+        val uri = item.localConfiguration?.uri ?: return
+        // A track picked from an addon is that addon's or nothing, an upgrade
+        // was auditioned before it was swapped in, and a revert is YouTube's
+        // own audio — none of them is a substitute to measure.
+        if (uri.scheme != "bitchord" || uri.authority == "source") return
+        if (QualityUpgrade.cacheTag(uri) != null) return
+        val key = uri.toString()
+        if (key == lengthCheckedUri) return
+        if (exoPlayer.playbackState != Player.STATE_READY) return
+        val decodedMs = exoPlayer.duration.takeIf { it != C.TIME_UNSET && it > 0 } ?: return
+        lengthCheckedUri = key
+        val videoId = uri.getQueryParameter("v") ?: return
+        val expectedSec = SourceResolver.targetIn(uri).durationSec
+            ?: DirectSourceGate.knownLength(videoId)
+            ?: return
+        val expectedMs = expectedSec * 1_000L
+        val substituted = StreamChoice.isSubstitute(videoId)
+        val unattributed = StreamChoice.of(videoId) == null && SourceResolver.canSubstituteForYouTube()
+        val wrong = when {
+            substituted -> abs(decodedMs - expectedMs) > upgradeLengthSlackMs + 1_000L
+            unattributed -> decodedMs < expectedMs / 2
+            else -> false
+        }
+        if (!wrong) return
+        TrackLog.w(
+            "BitChord",
+            "'${item.mediaMetadata.title}' decodes to ${decodedMs}ms against ${expectedSec}s listed " +
+                "(tolerance ±${AppSettings.upgradeLengthSlackSeconds.value}s) on " +
+                if (substituted) "an addon copy" else "a cached copy of unknown origin",
+            about = item.mediaId,
+        )
+        // From the top: what played was not this recording, so where it had
+        // got to says nothing about where this one should start.
+        replaceWithYouTube(
+            item = item,
+            playbackUri = uri,
+            position = 0L,
+            keepComplete = false,
+            why = "is the wrong length on the copy it started on",
+        )
+    }
+
     /** When the listener last seeked, so [driveDirectWindow] can tell a scrub from playback. */
     private var lastSeekAt = 0L
 
@@ -9588,6 +9779,7 @@ class PlaybackService : MediaLibraryService() {
      */
     private fun driveDirectWindow() {
         val exoPlayer = player ?: return
+        checkSubstituteLength(exoPlayer)
         // [KO] direct-gate: a song version keeps the row's mediaId but streams
         // another video (uri v=…), and the cache holds that id at the gate.
         // Phone 11-03: 'released <MV>' then 'holding <song version>' forever.
@@ -9607,6 +9799,7 @@ class PlaybackService : MediaLibraryService() {
         val nextIndex = exoPlayer.nextMediaItemIndex
         if (nextIndex == C.INDEX_UNSET) return
         val next = exoPlayer.getMediaItemAt(nextIndex)
+        if (MusicOnlyPlayback.wants(next)) return
         val duration = exoPlayer.duration
         if (duration == C.TIME_UNSET || duration <= 0L) return
         val boundary = crossfade?.plannedTransitionFor(current.mediaId) ?: duration
@@ -10677,8 +10870,12 @@ class PlaybackService : MediaLibraryService() {
                 // Which songs music-only refused was that setting's answer;
                 // turning it over asks the question again for every row.
                 songVersionController.resetSkippedOfficialMv()
+                MusicOnlyPlayback.reset()
                 cancelPrefetch()
-                player?.takeIf { it.isPlaying }?.let(::prefetchAround)
+                player?.let { live ->
+                    convertVideosAround(live)
+                    if (live.isPlaying) prefetchAround(live)
+                }
             }
         }
         scope.launch {
@@ -12547,6 +12744,12 @@ class PlaybackService : MediaLibraryService() {
                     val bundle = args.getBundle(EXTRA_SWAP_MEDIA_ITEM)
                     if (bundle != null) {
                         val targetSong = songFromBundle(bundle)
+                        // The listener's own choice outranks the music-only setting.
+                        if (targetSong.isVideo) {
+                            MusicOnlyPlayback.keep(targetSong.videoId)
+                        } else {
+                            session.player.currentMediaItem?.mediaId?.let(MusicOnlyPlayback::letGo)
+                        }
                         smoothSwapCurrentTrackVersion(
                             targetSong.toMediaItem(),
                             skipAlignment = args.getBoolean(EXTRA_SWAP_SKIP_ALIGNMENT, false),

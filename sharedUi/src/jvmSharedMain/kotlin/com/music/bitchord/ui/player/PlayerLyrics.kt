@@ -3,7 +3,6 @@ package com.music.bitchord.ui.player
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.SizeTransform
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -566,25 +565,27 @@ internal fun LyricsStatusWithChange(
 ) {
     val haptics = rememberHaptics()
     Row(
-        modifier = modifier.then(
-            if (onStatusClick != null) {
-                Modifier.clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                ) {
-                    haptics.play(Haptic.Select)
-                    onStatusClick()
-                }
-            } else {
-                Modifier
-            },
-        ),
+        modifier = modifier
+            .additiveChrome(LocalPlayerChrome.current)
+            .then(
+                if (onStatusClick != null) {
+                    Modifier.clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                    ) {
+                        haptics.play(Haptic.Select)
+                        onStatusClick()
+                    }
+                } else {
+                    Modifier
+                },
+            ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = status,
             style = MaterialTheme.typography.titleMedium,
-            color = LocalPlayerTint.current.copy(alpha = 0.55f),
+            color = chromeWhite(0.55f),
             textDecoration = if (onStatusClick != null) TextDecoration.Underline else null,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -1526,10 +1527,11 @@ internal fun TranslationToggleButton(
     onClick: () -> Unit,
 ) {
     val active = showingTranslation || state is LyricsTranslationUiState.Loading
+    val chrome = LocalPlayerChrome.current
     val tint = when {
-        !enabled || state is LyricsTranslationUiState.SameLanguage -> LocalPlayerTint.current.copy(alpha = 0.42f)
-        active -> LocalPlayerTint.current
-        else -> LocalPlayerTint.current.copy(alpha = 0.78f)
+        !enabled || state is LyricsTranslationUiState.SameLanguage -> chromeWhite(0.42f)
+        active -> Color.White.copy(alpha = if (chrome) CHROME_FULL_ALPHA else 1f)
+        else -> chromeWhite(0.78f)
     }
     val discAlpha by animateFloatAsState(
         targetValue = if (active) 0.34f else 0.18f,
@@ -1541,7 +1543,8 @@ internal fun TranslationToggleButton(
             .minimumInteractiveComponentSize()
             .size(34.dp)
             .clip(CircleShape)
-            .background(LocalPlayerTint.current.copy(alpha = discAlpha))
+            .additiveChrome(chrome)
+            .background(Color.White.copy(alpha = discAlpha))
             .clickable(
                 enabled = enabled,
                 interactionSource = remember { MutableInteractionSource() },
@@ -1579,10 +1582,11 @@ internal fun RomanizationToggleButton(
     onClick: () -> Unit,
 ) {
     val active = showingRomanization || state is LyricsTranslationUiState.Loading
+    val chrome = LocalPlayerChrome.current
     val tint = when {
-        !enabled || state is LyricsTranslationUiState.SameLanguage -> LocalPlayerTint.current.copy(alpha = 0.42f)
-        active -> LocalPlayerTint.current
-        else -> LocalPlayerTint.current.copy(alpha = 0.78f)
+        !enabled || state is LyricsTranslationUiState.SameLanguage -> chromeWhite(0.42f)
+        active -> Color.White.copy(alpha = if (chrome) CHROME_FULL_ALPHA else 1f)
+        else -> chromeWhite(0.78f)
     }
     val discAlpha by animateFloatAsState(
         targetValue = if (active) 0.34f else 0.18f,
@@ -1594,7 +1598,8 @@ internal fun RomanizationToggleButton(
             .minimumInteractiveComponentSize()
             .size(34.dp)
             .clip(CircleShape)
-            .background(LocalPlayerTint.current.copy(alpha = discAlpha))
+            .additiveChrome(chrome)
+            .background(Color.White.copy(alpha = discAlpha))
             .clickable(
                 enabled = enabled,
                 interactionSource = remember { MutableInteractionSource() },
@@ -2773,15 +2778,6 @@ private fun PanelVoice(
         val vazirmatn = Font(Res.font.vazirmatn_regular)
         remember(style, vazirmatn) { style.copy(fontFamily = FontFamily(vazirmatn)) }
     } else style
-    // The line being sung is white; every other one — sung or still to come —
-    // takes the sleeve's tint, as the rest of the player's secondary text does
-    // (see [LocalPlayerTint]). Faded across the handover rather than cut, so a
-    // line warms to white as it is reached and cools as it is left. Lyrics
-    // with no timing have no line being sung, and stay white throughout.
-    val color by animateColorAsState(
-        targetValue = if (isActive || !synced) Color.White else LocalPlayerTint.current,
-        label = "lyricLineColor",
-    )
     if (line.isWordSynced && !browsing) {
         // Every word-synced line goes through the sweep, not just the playing
         // one — a line that has already been sung is fully revealed and one
@@ -2809,7 +2805,7 @@ private fun PanelVoice(
             alignEnd = alignEnd,
             laneLocked = laneLocked,
             translationProgress = translationProgress,
-            color = color,
+            color = Color.White,
         )
     } else if (line.isWordSynced) {
         // Browsing: keep the sweep so sung lines stay fully lit and unsung
@@ -2832,7 +2828,7 @@ private fun PanelVoice(
             alignEnd = alignEnd,
             laneLocked = laneLocked,
             translationProgress = translationProgress,
-            color = color,
+            color = Color.White,
         )
     } else {
         // No word timings, so there is no sweep to light the words as they are
@@ -2852,7 +2848,7 @@ private fun PanelVoice(
         Text(
             text = line.text,
             style = lyricStyle,
-            color = color.copy(alpha = lit),
+            color = Color.White.copy(alpha = lit),
             onTextLayout = { layout = it },
             modifier = modifier.lyricParticles(layout, translationProgress, room).padding(room),
         )

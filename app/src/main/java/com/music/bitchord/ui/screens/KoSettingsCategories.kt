@@ -8,6 +8,7 @@ import com.music.bitchord.ui.icons.SfIcons
 enum class SettingsCategory(@param:StringRes val title: Int) {
     DOWNLOADS(R.string.downloads),
     PLAYBACK(R.string.playback),
+    CONTENT_PREFERENCES(R.string.content_preferences),
     APPEARANCE(R.string.appearance),
     LYRICS(R.string.settings_lyrics),
     PERFORMANCE(R.string.performance),
@@ -23,6 +24,7 @@ enum class SettingsCategory(@param:StringRes val title: Int) {
         get() = when (this) {
             DOWNLOADS -> SfIcons.Download
             PLAYBACK -> SfIcons.PlayCircle
+            CONTENT_PREFERENCES -> SfIcons.Video
             APPEARANCE -> SfIcons.Appearance
             LYRICS -> SfIcons.Notes
             PERFORMANCE -> SfIcons.Performance
@@ -31,7 +33,7 @@ enum class SettingsCategory(@param:StringRes val title: Int) {
             YOUR_DATA -> SfIcons.YourData
             MISCELLANEOUS -> SfIcons.Miscellaneous
             LANGUAGE -> SfIcons.Language
-            ADVANCED -> SfIcons.Advanced
+            ADVANCED -> SfIcons.Tune
         }
 }
 

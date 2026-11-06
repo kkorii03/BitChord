@@ -760,7 +760,7 @@ internal object KoAppSettingsTransfer {
         KEY_REDUCE_BLUR -> AppSettings.reduceDynamicBlur.value
         KEY_LIQUID_GLASS -> AppSettings.liquidGlass.value
         KEY_FULL_BLEED_ARTWORK -> AppSettings.fullBleedArtwork.value
-        KEY_LEGACY_MESH_GRADIENT -> AppSettings.legacyMeshGradient.value
+        KEY_LEGACY_MESH_GRADIENT -> AppSettings.playerTheme.value == com.music.bitchord.data.settings.PlayerTheme.LEGACY
         KEY_ANIMATED_CANVAS -> AppSettings.animatedCanvas.value
         KEY_CANVAS_OVER_CELLULAR -> AppSettings.canvasOverCellular.value
         KEY_VIDEO_CANVAS -> AppSettings.videoCanvas.value
