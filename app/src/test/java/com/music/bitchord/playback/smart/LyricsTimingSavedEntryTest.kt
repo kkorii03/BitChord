@@ -339,7 +339,7 @@ class LyricsTimingSavedEntryTest {
         // 11-06 rlYOsUfpi3M: both song-check replies spent and refused.
         write(
             """{"entries":{"song":{"aiAttemptedKey":${keyOf(streamSource)},""" +
-                """"aiAttemptedEngines":["Deepgram Whisper","Deepgram Whisper retry"]}}}""",
+                """"aiAttemptedEngines":["Deepgram Whisper","Deepgram Whisper retry"],"refitVersion":${com.music.bitchord.data.lyrics.SongCheckWindow.FIT_VERSION}}}}""",
         )
 
         val logged = baseApplyLines {
