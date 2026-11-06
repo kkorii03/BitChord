@@ -680,6 +680,10 @@ internal class NextTrackPreparation(
             // `none(deadline)` and the real cause is invisible (11-04).
             deadlineHit = Step.HQ in plan.steps && Step.HQ !in triedThisRun,
             skipReason = hqSkipReason(song),
+            // Direct Source Stream deliberately holds the next track at the
+            // resolver until its window, so the HQ read-ahead this step waits
+            // for has not run yet. That is the expected state, not a miss.
+            directWindow = DirectSourceGate.isActive() && hqWanted(song),
         )
         val mixLabel = if (mix) {
             "ready"
@@ -1127,17 +1131,25 @@ internal class NextTrackPreparation(
  * The `hq=` token for the next-prep summary. The answer already prepared wins
  * unless a newer one has landed since (read-ahead may pin the lossless stream
  * while the step is still being reported); with neither, the old skip reason
- * is kept, including the end-of-track deadline.
+ * is kept, including the end-of-track deadline. [directWindow] says Direct
+ * Source Stream has not opened the next track's window yet, so the HQ
+ * read-ahead answer this step waits for is expected to be absent rather than
+ * missing.
  */
 internal fun nextPrepHqLabel(
     prepared: HqTier?,
     latest: HqTier?,
     deadlineHit: Boolean,
     skipReason: String?,
+    directWindow: Boolean = false,
 ): String {
     val hq = latest ?: prepared
     return hq?.name?.lowercase(Locale.ROOT)
-        ?: NextPrepPolicy.noneWithReason(if (deadlineHit) "deadline" else skipReason)
+        ?: if (directWindow) {
+            "direct-window"
+        } else {
+            NextPrepPolicy.noneWithReason(if (deadlineHit) "deadline" else skipReason)
+        }
 }
 
 /**

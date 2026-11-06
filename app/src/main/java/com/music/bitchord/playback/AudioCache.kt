@@ -1603,6 +1603,11 @@ object AudioCache {
         setJob = { job = it },
         fetchRange = { id, position, length -> fetch(id, position, length) },
         fetchWhole = { id -> fetchWhole(id) },
+        // The entry read-ahead's own fetch will write, so the analysis head
+        // defers only on a real collision (see KoPlaybackReadTracker).
+        readAheadKeyOf = { id ->
+            keyFactory.buildCacheKey(DataSpec(Uri.parse("bitchord://watch?v=$id")))
+        },
         logHqTier = { id, title, candidate, current -> logHqTier(id, title, candidate, current) },
         tracker = koTracker, // [KO] reader-lock
         retryAnalysisHead = ::retryAnalysisHeadIfReaderReleased,
