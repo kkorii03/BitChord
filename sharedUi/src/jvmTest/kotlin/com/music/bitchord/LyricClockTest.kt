@@ -250,7 +250,7 @@ class LyricClockTest {
         val clock = LyricClock(10_000)
         var taken = 0.0
         while (taken <= 4_000.0) {
-            clock.hold(10_000 + taken.toLong(), taken + 5.0)
+            clock.hold(10_000 + taken.toLong(), taken + 5.0, songStopped = false)
             taken += 500.0
         }
         val lastTaken = taken - 500.0
