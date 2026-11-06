@@ -720,7 +720,7 @@ internal object KoTrackMatcher {
             .lowercase(Locale.ROOT)
 
     private val UPPERCASE_MR =
-        Regex("""(?<![A-Za-z])MR(?:\s*(?:ver(?:sion)?\.?|버전))?\s*(?:$|[)\]）】])""")
+        Regex("""(?<![A-Za-z])MR(?:\s*(?:(?i:ver(?:sion)?)\.?|버전))?\s*(?:$|[)\]）】])""")
 
     private val KARAOKE_TRIBUTE_MARKERS = listOf(
         Regex("""originally performed"""),
