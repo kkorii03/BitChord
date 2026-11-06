@@ -48,7 +48,8 @@ class LyricsWordAlignPaceTest {
 
     @Test
     fun aWholeFastSongIsStillAligned() {
-        val words = (0 until 1_400).map { "w${it}abc" }
+        // 7,600 letters each way: past Rap God's own 6,300.
+        val words = (0 until 1_000).map { "w${it}abc" }
         val lines = words.chunked(8).map { it.joinToString(" ") }
         val placement = LyricsWordAlign.placeLinesDetailed(lines, sung(words, 0L, 60L))
         assertTrue(placement.attempted, "not attempted")
