@@ -68,8 +68,9 @@ HQ_NO_REFERENCE_REASON_RE = re.compile(
     r"hq-verify:.*?\bno reference\b.*?\breason=(?P<reason>[\w-]+)"
 )
 # The reference WAV never arrived, so nothing was compared. `no-wav` says the
-# opening is not on disk yet: the run could not measure the row at all.
-HQ_UNMEASURED_REASON = "no-wav"
+# opening is not on disk yet, `cancelled` says the play moved on before it was
+# read: the run could not measure the row at all.
+HQ_UNMEASURED_REASONS = ("no-wav", "cancelled")
 # `decode: hq-verify failed at=... ...`
 DECODE_HQ_FAIL_RE = re.compile(r"decode:\s+hq-verify\s+failed\b")
 # `lyrics-sync: <id> source=.. shift=1234ms ...`
@@ -492,7 +493,9 @@ def check_log(
     #    failing the run. Measured rows still decide, so an HQ step that stopped
     #    running cannot hide behind no-wav (it produces no row either way).
     hq_no_reference = sum(hq_no_reference_reasons.values())
-    hq_unmeasured = hq_no_reference_reasons.get(HQ_UNMEASURED_REASON, 0)
+    hq_unmeasured = sum(
+        hq_no_reference_reasons.get(reason, 0) for reason in HQ_UNMEASURED_REASONS
+    )
     hq_measured = (
         hq_accepted + hq_rejected + hq_decode_failed + hq_no_reference - hq_unmeasured
     )
@@ -522,7 +525,7 @@ def check_log(
             hq_details = [hq_counts, "측정된 행 중 accepted 가 0"]
         elif hq_unmeasured >= 1:
             hq_status = "SKIP"
-            hq_details = [hq_counts, "reference 를 못 받아 측정 불가 (no-wav)"]
+            hq_details = [hq_counts, "reference 를 못 받아 측정 불가 (no-wav/cancelled)"]
         else:
             # Nothing was tried: no addon answered, so there is no verification
             # to judge. That is not the same as every candidate being rejected,
@@ -537,7 +540,7 @@ def check_log(
         hq_details = [hq_counts, "측정된 행 중 accepted 가 0"]
     elif hq_unmeasured >= 1:
         hq_status = "SKIP"
-        hq_details = [hq_counts, "reference 를 못 받아 측정 불가 (no-wav)"]
+        hq_details = [hq_counts, "reference 를 못 받아 측정 불가 (no-wav/cancelled)"]
     else:
         hq_status = "PASS"
         hq_details = [hq_counts]

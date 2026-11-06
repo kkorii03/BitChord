@@ -292,6 +292,30 @@ class QualityUpgradeNoWavTest(unittest.TestCase):
         self.assertEqual("PASS", result.status)
         self.assertIn("no-wav=1", result.details[0])
 
+    def test_a_row_the_play_moved_past_is_not_measured(self):
+        """11-06 auto46-d: six no-wav rows and one `cancelled` failed the run, yet
+        nothing was compared: the track changed before the reference was read."""
+        log = "\n".join(
+            [
+                log_line("hq-verify: 'Animals' no reference reason=no-wav"),
+                log_line("hq-verify: 'Animals' no reference reason=cancelled"),
+            ]
+        )
+        result = statuses_with_songs(log, specs("hq1\thq"))[4]
+        self.assertEqual("SKIP", result.status)
+        self.assertIn("cancelled=1", result.details[0])
+
+    def test_a_rejected_row_still_fails_next_to_a_cancelled_row(self):
+        log = "\n".join(
+            [
+                log_line("hq-verify: 'Animals' no reference reason=cancelled"),
+                log_line(
+                    "hq-verify: Song Qobuz match=80% offset=0 -> rejected reference=wav"
+                ),
+            ]
+        )
+        self.assertEqual("FAIL", statuses_with_songs(log, specs("hq1\thq"))[4].status)
+
     def test_a_rejected_row_still_fails_next_to_no_wav_rows(self):
         log = "\n".join(
             [
