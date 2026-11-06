@@ -44,4 +44,42 @@ class NextPrepHqLabelTest {
             nextPrepHqLabel(null, null, deadlineHit = true, skipReason = "no-answer"),
         )
     }
+
+    @Test
+    fun directModeReportsTheExpectedWindowInsteadOfANoAnswer() {
+        assertEquals(
+            "direct-window",
+            nextPrepHqLabel(
+                prepared = null,
+                latest = null,
+                deadlineHit = false,
+                skipReason = "no-answer",
+                directWindow = true,
+            ),
+        )
+        assertEquals(
+            "direct-window",
+            nextPrepHqLabel(
+                prepared = null,
+                latest = null,
+                deadlineHit = true,
+                skipReason = "no-answer",
+                directWindow = true,
+            ),
+        )
+    }
+
+    @Test
+    fun aRealAnswerStillWinsInDirectMode() {
+        assertEquals(
+            "lossless_16",
+            nextPrepHqLabel(
+                prepared = HqTier.LOSSLESS_16,
+                latest = null,
+                deadlineHit = false,
+                skipReason = "no-answer",
+                directWindow = true,
+            ),
+        )
+    }
 }

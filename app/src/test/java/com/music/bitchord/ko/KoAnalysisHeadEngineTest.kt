@@ -1,5 +1,6 @@
 package com.music.bitchord.ko
 
+import android.net.FakeUri
 import androidx.media3.datasource.cache.Cache
 import androidx.media3.datasource.cache.CacheKeyFactory
 import androidx.media3.datasource.cache.CacheSpan
@@ -8,6 +9,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -42,22 +44,25 @@ class KoAnalysisHeadEngineTest {
 
     private fun engine(
         cache: Cache,
+        scope: CoroutineScope = CoroutineScope(Dispatchers.Default),
+        upstreamAvailable: () -> Boolean = { false },
         now: () -> Long = { 0L },
-        anotherWriter: () -> Boolean = { false },
+        anotherWriter: (String) -> Boolean = { false },
         headComplete: () -> Boolean = { false },
         inFlight: MutableSet<String> = mutableSetOf(),
+        analysisHeads: MutableMap<String, Boolean> = mutableMapOf(),
     ) = KoAnalysisHeadEngine(
         cache = { cache },
-        scope = CoroutineScope(Dispatchers.Default),
-        upstreamAvailable = { false },
+        scope = scope,
+        upstreamAvailable = upstreamAvailable,
         keyFactory = CacheKeyFactory.DEFAULT,
-        analysisHeads = mutableMapOf(),
+        analysisHeads = analysisHeads,
         deferredLogged = mutableSetOf(),
         heldElsewhere = mutableSetOf(),
         inFlight = inFlight,
         stalled = mutableSetOf(),
         wantMap = mutableMapOf(),
-        anotherWriterHas = { anotherWriter() },
+        anotherWriterHas = anotherWriter,
         alignmentPrefixBytes = { 0L },
         alignmentHeadComplete = { headComplete() },
         analysisHeadSize = { it },
@@ -114,5 +119,106 @@ class KoAnalysisHeadEngineTest {
 
         withTimeout(2_000L) { result.await() }
         assertFalse("abc" in inFlight)
+    }
+
+    /**
+     * A track playing from an `#alt`/`#hifi` rendition holds the *video*, not
+     * the plain key the analysis head writes. Deferring on the video alone kept
+     * the one-round claim unstarted for the whole song even though the two
+     * entries never collide.
+     */
+    @Test
+    fun `a player holding only another rendition does not defer the analysis head`() = runBlocking {
+        val tracker = KoPlaybackReadTracker()
+        tracker.retainVideo("abc")
+        // The player is reading the substituted/lossless rendition, not the
+        // plain key the analysis head writes.
+        tracker.retainKey("abc#alt")
+        tracker.retainKey("abc#hifi")
+        val heads = mutableMapOf<String, Boolean>()
+        // The claim is what this test checks; a cancelled scope keeps the
+        // launched fetch from touching the network after the assertion.
+        val scope = CoroutineScope(Dispatchers.Default).apply { cancel() }
+        val engine = engine(
+            cache = RecordingCache().cache,
+            scope = scope,
+            upstreamAvailable = { true },
+            anotherWriter = { tracker.anotherWriterHas(it) },
+            analysisHeads = heads,
+        )
+
+        engine.requestAnalysisHead(FakeUri("bitchord://watch?v=abc"))
+
+        assertTrue(
+            "the round must start while only another rendition is held",
+            heads.containsKey("abc"),
+        )
+        tracker.releaseKey("abc#alt")
+        tracker.releaseKey("abc#hifi")
+        tracker.releaseVideo("abc")
+    }
+
+    /** Read-ahead's write to the analysis key is still a writer it waits for. */
+    @Test
+    fun `read-ahead writing the analysis key still defers the analysis head`() = runBlocking {
+        val tracker = KoPlaybackReadTracker()
+        tracker.retainReadAhead("abc")
+        val heads = mutableMapOf<String, Boolean>()
+        val engine = engine(
+            cache = RecordingCache().cache,
+            upstreamAvailable = { true },
+            anotherWriter = { tracker.anotherWriterHas(it) },
+            analysisHeads = heads,
+        )
+
+        engine.requestAnalysisHead(FakeUri("bitchord://watch?v=abc"))
+
+        assertFalse("read-ahead keeps the round deferred", heads.containsKey("abc"))
+        tracker.releaseReadAhead("abc")
+    }
+
+    /** Read-ahead's `#alt`/`#hifi` write is a different entry, so it does not block the analysis key. */
+    @Test
+    fun `read-ahead writing another rendition does not defer the analysis head`() = runBlocking {
+        val tracker = KoPlaybackReadTracker()
+        tracker.retainReadAhead("abc#alt")
+        val heads = mutableMapOf<String, Boolean>()
+        val scope = CoroutineScope(Dispatchers.Default).apply { cancel() }
+        val engine = engine(
+            cache = RecordingCache().cache,
+            scope = scope,
+            upstreamAvailable = { true },
+            anotherWriter = { tracker.anotherWriterHas(it) },
+            analysisHeads = heads,
+        )
+
+        engine.requestAnalysisHead(FakeUri("bitchord://watch?v=abc"))
+
+        assertTrue("the analysis key is free", heads.containsKey("abc"))
+        tracker.releaseReadAhead("abc#alt")
+    }
+
+    /** The same player on the analysis key itself still defers the round. */
+    @Test
+    fun `a player reading the analysis key defers the analysis head`() = runBlocking {
+        val tracker = KoPlaybackReadTracker()
+        tracker.retainVideo("abc")
+        tracker.retainKey("abc")
+        val heads = mutableMapOf<String, Boolean>()
+        val inFlight = mutableSetOf<String>()
+        val engine = engine(
+            cache = RecordingCache().cache,
+            upstreamAvailable = { true },
+            anotherWriter = { tracker.anotherWriterHas(it) },
+            inFlight = inFlight,
+            analysisHeads = heads,
+        )
+
+        engine.requestAnalysisHead(FakeUri("bitchord://watch?v=abc"))
+
+        assertFalse("the round must wait for the player's entry", heads.containsKey("abc"))
+        assertFalse("no round may be in flight", "abc" in inFlight)
+        tracker.releaseKey("abc")
+        tracker.releaseVideo("abc")
     }
 }

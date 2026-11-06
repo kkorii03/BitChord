@@ -66,6 +66,7 @@ class KoPrefetchQueue(
     private val setJob: (Job?) -> Unit,
     private val fetchRange: suspend (String, Long, Long) -> Unit,
     private val fetchWhole: suspend (String) -> Unit,
+    private val readAheadKeyOf: (String) -> String,
     private val logHqTier: (String, String, SourceStream, HqTier) -> Unit,
     private val tracker: KoPlaybackReadTracker,
     private val retryAnalysisHead: (String) -> Unit,
@@ -265,11 +266,14 @@ class KoPrefetchQueue(
                             return@launch
                         }
                         // Visible to [requestAnalysisHead] while these bytes are
-                        // being written: an analysis round for the same track
-                        // would meet this writer's lock and come up empty. Not
-                        // set during the grace delay above, when no write exists
-                        // to collide with yet.
-                        tracker.retainReadAhead(next)
+                        // being written: an analysis round writing the *same*
+                        // entry would meet this writer's lock and come up empty.
+                        // Keyed by that entry, not by the track, so read-ahead's
+                        // `#alt`/`#hifi` write does not block the plain analysis
+                        // key. Not set during the grace delay above, when no
+                        // write exists to collide with yet.
+                        val readAheadKey = readAheadKeyOf(next)
+                        tracker.retainReadAhead(readAheadKey)
                         try {
                             val nextHost =
                                 (warmed?.url ?: StreamChoice.of(next)?.url)?.let(HqHostTracker::hostOf)
@@ -290,7 +294,7 @@ class KoPrefetchQueue(
                             fetchRange(next, 0, PRELOAD_BYTES)
                             fetchWhole(next)
                         } finally {
-                            tracker.releaseReadAhead(next)
+                            tracker.releaseReadAhead(readAheadKey)
                             retryAnalysisHead(next)
                         }
                     }
