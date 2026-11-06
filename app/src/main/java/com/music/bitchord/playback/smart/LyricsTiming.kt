@@ -2882,7 +2882,9 @@ object LyricsTiming {
                 }
                 val starts = placement?.starts
                 val raw = placement?.let {
-                    fitHeard(videoId, lines, inReach.map { s -> s.index }, it) { fit -> aiMayApply(lines, fit, isVideo) }
+                    fitHeard(videoId, lines, inReach.map { s -> s.index }, it, heard.orEmpty().maxOfOrNull { w -> w.endMs } ?: 0L) { fit, moved ->
+                        LyricsAiGuard.allowsAiTiming(isVideo, fit.matchPercent, moved)
+                    }
                 }
                 val fitted = raw?.takeIf { aiMayApply(lines, it, isVideo) }
                 TrackLog.d(
@@ -3646,9 +3648,8 @@ object LyricsTiming {
         val spellable = com.music.bitchord.data.lyrics.Deepgram.spellableLines(texts, language)
         // Why a match is what it is: lines in the window, lines placed, lines the language could spell.
         val detail = " lines=${texts.size} placed=${starts.count { it != null }} spellable=$spellable lang=$language"
-        val fitted = fitHeard(song.videoId, lines, indices, placement, spellable) { fit ->
-            LyricsAiGuard.agreementAllows(fit.matchPercent) &&
-                LyricsAiGuard.songShiftAllows(shownShiftMs(lines, fit), fit.matchPercent)
+        val fitted = fitHeard(song.videoId, lines, indices, placement, heard.maxOf { it.endMs }, spellable) { fit, moved ->
+            LyricsAiGuard.agreementAllows(fit.matchPercent) && LyricsAiGuard.songShiftAllows(moved, fit.matchPercent)
         } ?: run {
             songLog(song.videoId, "no-fit", null, null, seconds, words = heard.size, http = answer.httpCode, detail = detail)
             recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe, retry)
@@ -4523,23 +4524,26 @@ private const val FIRM_FIT_LINES = 15
         lines: List<LyricLine>,
         indices: List<Int>,
         placement: LyricsWordAlign.Placement,
+        lastHeardMs: Long,
         spellable: Int = indices.size,
-        mayApply: (Adjustment.Mapped) -> Boolean,
+        // The answer and the move to judge: a line's first line, stretches' furthest.
+        mayApply: (Adjustment.Mapped, Long) -> Boolean,
     ): Adjustment.Mapped? {
         val straight = fitAi(lines, indices, placement.starts, spellable)
         val outcome = TimingPieces.fit(
             indices.map { lines[it].timeMs },
             indices.map { lines[it].text },
             placement,
+            lastHeardMs,
             spellable,
         )
         val found = outcome.result
         val pieces = found?.let { Adjustment.Mapped(it.map, byAi = true, rate = it.rate, matchPercent = it.agreePercent) }
-        val straightHolds = straight != null && mayApply(straight)
+        val straightHolds = straight != null && mayApply(straight, shownShiftMs(lines, straight))
         val chosen = when {
             found == null || pieces == null -> straight
             straightHolds && !TimingPieces.overrules(straight!!.map, found) -> straight
-            mayApply(pieces) -> pieces
+            mayApply(pieces, found.largestMoveMs) -> pieces
             else -> straight
         }
         TrackLog.d(

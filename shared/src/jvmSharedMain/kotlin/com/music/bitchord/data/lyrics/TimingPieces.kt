@@ -19,6 +19,13 @@ import kotlin.math.roundToLong
  * map): [MIN_LINES] and [MIN_COVER] decide them (the best wrong pair held 0.11 of its
  * sheet; 0.25 moved one real song 50 s wrong). Pieces, pace, jump, scatter and order
  * decided nothing there and stay as limits on what a recording can do.
+ *
+ * A right sheet can still be read wrong: when Whisper misses the middle of a song, the
+ * last chorus it heard lands on an earlier repeat in the sheet (5bIWIoFDv80, +34.9 s,
+ * 22 lines past the last word). Nothing after such a stretch can show it up, so lines
+ * may not be pushed past the last word ([PAST_HEARD_MS]), and a move over
+ * [LyricsAiGuard.SONG_MAX_SHIFT_MS] needs [BIG_MOVE_COVER] of the sheet (true large
+ * moves held 0.69 and up, that song 0.48).
  */
 object TimingPieces {
 
@@ -37,6 +44,8 @@ object TimingPieces {
     private const val OVERRULE_MISSED = 6
     private const val OVERRULE_FAR_MS = 700L
     private const val MIN_PAIR_SPAN_MS = 4_000L
+    private const val PAST_HEARD_MS = 10_000L
+    private const val BIG_MOVE_COVER = 0.6
 
     /** A line as [LyricsWordAlign.Placement] says it was placed. */
     data class Placed(val timeMs: Long, val startMs: Long?, val share: Double, val letters: Int)
@@ -51,8 +60,10 @@ object TimingPieces {
         val sizes: List<Int>,
         /** How far the clock moves at each boundary. */
         val jumpsMs: List<Long>,
-        /** Of the lines really heard, how many follow the stretches. */
+        /** Of the lines really heard, how many follow the stretches: not of the sheet. */
         val agreePercent: Int,
+        /** The move of the line moved furthest, signed: what a limit on moving must read. */
+        val largestMoveMs: Long,
         internal val heardPoints: List<Point>,
     )
 
@@ -63,6 +74,8 @@ object TimingPieces {
         timesMs: List<Long>,
         texts: List<String>,
         placement: LyricsWordAlign.Placement,
+        /** The end of the last word heard. */
+        lastHeardMs: Long,
         /** Lines the transcript could spell at all, as `Deepgram.spellableLines`. */
         spellable: Int = texts.size,
     ): Outcome {
@@ -73,11 +86,12 @@ object TimingPieces {
             texts.indices.map { i ->
                 Placed(timesMs[i], placement.starts[i], placement.matchedShare.getOrElse(i) { 0.0 }, LyricsWordAlign.fold(texts[i]).length)
             },
+            lastHeardMs,
             spellable,
         )
     }
 
-    fun fit(lines: List<Placed>, spellable: Int = Int.MAX_VALUE): Outcome {
+    fun fit(lines: List<Placed>, lastHeardMs: Long = Long.MAX_VALUE, spellable: Int = Int.MAX_VALUE): Outcome {
         val lettered = lines.count { it.letters > 0 }
         val heard = lines.mapNotNull { line ->
             line.startMs?.takeIf { line.share >= MIN_SHARE && line.letters >= MIN_LETTERS }?.let { Point(line.timeMs, it) }
@@ -93,18 +107,38 @@ object TimingPieces {
             pieces = pieces.take(at) + listOf(pieces[at] + pieces[at + 1]) + pieces.drop(at + 2)
             rate = pooledRate(pieces)
         }
+        // A last stretch pushing a line past the last word is a chorus read as an earlier repeat.
+        while (true) {
+            val last = pieces.last()
+            val offset = offsetOf(last, rate)
+            val past = lines.any {
+                it.letters > 0 && it.timeMs >= last.first().x &&
+                    rate * it.timeMs + offset - PAST_HEARD_MS > maxOf(it.timeMs, lastHeardMs)
+            }
+            if (!past) break
+            if (pieces.size == 1) return Outcome(null, "past-end")
+            pieces = pieces.dropLast(1)
+            rate = pooledRate(pieces)
+        }
         val offsets = pieces.map { offsetOf(it, rate) }
         val used = pieces.sumOf { it.size }
         val base = spellable.takeIf { it >= MIN_LINES }?.coerceAtMost(lettered) ?: lettered
         refusal(pieces, offsets, rate, used, base)?.let { return Outcome(null, it) }
         val map = chain(pieces, offsets, rate) ?: return Outcome(null, "no-map")
+        val jumps = (0 until offsets.size - 1).map { (offsets[it + 1] - offsets[it]).roundToLong() }
+        val largest = lines.filter { it.letters > 0 }.map { map.map(it.timeMs) - it.timeMs }.maxBy { abs(it) }
+        val biggest = maxOf(abs(largest), jumps.maxOfOrNull { abs(it) } ?: 0L)
+        if (biggest > LyricsAiGuard.SONG_MAX_SHIFT_MS && used.toDouble() / base < BIG_MOVE_COVER) {
+            return Outcome(null, "thin")
+        }
         return Outcome(
             Result(
                 map = map,
                 rate = rate,
                 sizes = pieces.map { it.size },
-                jumpsMs = (0 until offsets.size - 1).map { (offsets[it + 1] - offsets[it]).roundToLong() },
+                jumpsMs = jumps,
                 agreePercent = (used * 100.0 / heard.size).roundToInt().coerceIn(0, 100),
+                largestMoveMs = largest,
                 heardPoints = heard,
             ),
             null,

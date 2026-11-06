@@ -65,7 +65,7 @@ class TimingPiecesTest {
     }
 
     private fun fit(sheet: Sheet, words: List<LyricsWordAlign.Heard>): TimingPieces.Outcome =
-        TimingPieces.fit(sheet.times, sheet.texts, LyricsWordAlign.placeLinesDetailed(sheet.texts, words))
+        TimingPieces.fit(sheet.times, sheet.texts, LyricsWordAlign.placeLinesDetailed(sheet.texts, words), words.maxOf { it.endMs })
 
     private fun assertOnClock(
         sheet: Sheet,
@@ -188,6 +188,57 @@ class TimingPiecesTest {
         val held = sheet(11L, 30, 6, 9_000L)
         val korean = Sheet(held.times, held.times.map { "가나다라 마바사아 자차카타" })
         assertNull(fit(korean, hear(held, 1_200L) { _, t -> t }).result)
+    }
+
+    // ---- A chorus read as an earlier repeat ------------------------------------------------
+
+    /** Verse, chorus, verse, chorus, verse, chorus: the chorus is one text three times. */
+    private fun verseChorus(seed: Long): Sheet {
+        val gen = Gen(seed)
+        val chorus = List(6) { List(6) { gen.word() }.joinToString(" ") }
+        val texts = (0 until 3).flatMap { List(8) { List(6) { gen.word() }.joinToString(" ") } + chorus }
+        return Sheet(List(texts.size) { 10_000L + it * 4_000L }, texts)
+    }
+
+    @Test
+    fun `the last chorus heard landing on an earlier repeat moves nothing`() {
+        for (seed in 41L..43L) {
+            val song = verseChorus(seed)
+            // Whisper hears the first verse and chorus, then only the last chorus. The sheet is right.
+            val found = fit(song, hear(song, 600L, (14 until 36).toSet()) { _, t -> t }).result ?: continue
+            assertEquals(1, found.sizes.size, "seed $seed")
+            song.times.forEach { t -> assertTrue(abs(found.map.map(t) - t) <= 1_000L, "seed $seed at $t") }
+        }
+    }
+
+    @Test
+    fun `a last stretch past the last word is dropped and the first stands`() {
+        // 5bIWIoFDv80's shape: 40 lines to 170 s on -1.7 s, the last 12 read 35 s on, last word at 170 s.
+        val lines = placed(0, 28, -1_700L) + placed(28, 40, 33_000L)
+        val found = assertNotNull(TimingPieces.fit(lines, lastHeardMs = 170_000L).result)
+        assertEquals(listOf(28), found.sizes)
+        assertEquals(-1_700L, found.largestMoveMs)
+        // Past the last word by no more than the margin it stays a stretch.
+        assertEquals(2, assertNotNull(TimingPieces.fit(lines, lastHeardMs = 195_000L).result).sizes.size)
+    }
+
+    @Test
+    fun `one stretch past the last word is refused`() {
+        // A right sheet with only its later choruses heard, read on the earlier ones.
+        val heard = placed(0, 12, 44_000L)
+        val unheard = placed(12, 33, 0L).map { it.copy(startMs = null) }
+        assertEquals("past-end", TimingPieces.fit(heard + unheard, lastHeardMs = 145_000L).refused)
+    }
+
+    @Test
+    fun `a large move needs most of the sheet`() {
+        val heard = placed(0, 15, 20_000L)
+        val unheard = placed(15, 30, 0L).map { it.copy(startMs = null) }
+        assertEquals("thin", TimingPieces.fit(heard + unheard).refused)
+        assertEquals("thin", TimingPieces.fit(placed(0, 8, 0L) + placed(8, 16, 20_000L) + placed(16, 40, 0L).map { it.copy(startMs = null) }).refused)
+        // The same share on a small move stands, as does the large move on more of the sheet.
+        assertNotNull(TimingPieces.fit(placed(0, 15, 5_000L) + unheard).result)
+        assertEquals(20_000L, assertNotNull(TimingPieces.fit(heard + unheard.take(9)).result).largestMoveMs)
     }
 
     // ---- The guards, on placements directly ----------------------------------------------
