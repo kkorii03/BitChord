@@ -72,7 +72,7 @@ class UpgradeSpeedTest {
         override val configId: String,
         private val rows: List<Song> = emptyList(),
         private val format: StreamFormat = StreamFormat("flac"),
-        private val failSearch: Boolean = false,
+        var failSearch: Boolean = false,
         override val kind: SourceKind = SourceKind.ADDON,
         /** The stream endpoint answers 403 — the source's own failure, not a bad row. */
         private val refuseStream: Boolean = false,
@@ -205,6 +205,33 @@ class UpgradeSpeedTest {
 
         assertTrue("the walk still gets its one probe", afterFirst > 0)
         assertEquals("the next walk waits its turn", afterFirst, resting.asked)
+    }
+
+    /**
+     * The probe is how a resting source proves it is back. An answer remembered
+     * from before it went down proves nothing, yet it counted as complete and
+     * ended the rest without one request being made.
+     */
+    @Test
+    fun `a remembered answer does not end a rest`() = runBlocking {
+        val source = FakeSource("Flaky")
+        SourceResolver.bestAcross(
+            listOf(source), target(), StreamRequest.Lossless, waitForAll = true, probeResting = true,
+        )
+        val afterMemo = source.asked
+        source.failSearch = true
+        SourceResolver.SourceCooldown.failed(source.configId)
+        SourceResolver.SourceCooldown.failed(source.configId)
+
+        SourceResolver.bestAcross(
+            listOf(source), target(), StreamRequest.Lossless, waitForAll = true, probeResting = true,
+        )
+
+        assertTrue("the probe has to reach the source", source.asked > afterMemo)
+        assertTrue(
+            "a source still down keeps resting",
+            SourceResolver.SourceCooldown.isResting(source.configId),
+        )
     }
 
     @Test

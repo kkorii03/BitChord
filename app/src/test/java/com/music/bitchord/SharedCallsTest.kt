@@ -1,10 +1,12 @@
 package com.music.bitchord
 
 import com.music.bitchord.data.sources.module.SharedCalls
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
@@ -199,6 +201,76 @@ class SharedCallsTest {
         }
         assertEquals("flac", answer.getOrNull())
         assertEquals(1, calls.get())
+    }
+
+    /**
+     * Only the caller still waiting drops a failure from the table. One that
+     * gave up first left it there, and the next caller inside the window was
+     * handed that old failure as a cache hit, without anything being asked.
+     */
+    @Test
+    fun `a failure nobody stayed for is asked again`() = runBlocking {
+        val calls = AtomicInteger()
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val workScope = scope()
+        val shared = SharedCalls<String>(ttlMs = 60_000, scope = workScope)
+
+        val abandoning = scope().launch {
+            shared.get("q", { "" }) {
+                calls.incrementAndGet()
+                started.complete(Unit)
+                release.await()
+                Result.failure(IllegalStateException("server having a bad minute"))
+            }
+        }
+        started.await()
+        abandoning.cancelAndJoin()
+        release.complete(Unit)
+        workScope.coroutineContext[Job]!!.children.forEach { it.join() }
+
+        val answer = withTimeout(5_000) {
+            shared.get("q", { "" }) {
+                calls.incrementAndGet()
+                Result.success("flac")
+            }
+        }
+        assertEquals("flac", answer.getOrNull())
+        assertEquals(2, calls.get())
+    }
+
+    /** The same, for work that ended cancelled or threw: there is no answer in it to keep. */
+    @Test
+    fun `work that was cancelled or threw is asked again`() = runBlocking {
+        for (ending in listOf(CancellationException("gone"), IllegalStateException("boom"))) {
+            val calls = AtomicInteger()
+            val started = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            val workScope = scope()
+            val shared = SharedCalls<String>(ttlMs = 60_000, scope = workScope)
+
+            val abandoning = scope().launch {
+                shared.get("q", { "" }) {
+                    calls.incrementAndGet()
+                    started.complete(Unit)
+                    release.await()
+                    throw ending
+                }
+            }
+            started.await()
+            abandoning.cancelAndJoin()
+            release.complete(Unit)
+            workScope.coroutineContext[Job]!!.children.forEach { it.join() }
+
+            val answer = withTimeout(5_000) {
+                shared.get("q", { "" }) {
+                    calls.incrementAndGet()
+                    Result.success("flac")
+                }
+            }
+            assertEquals("after ${ending::class.simpleName}", "flac", answer.getOrNull())
+            assertEquals(2, calls.get())
+        }
     }
 
     @Test
