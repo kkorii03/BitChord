@@ -106,7 +106,7 @@ object LyricsMismatch {
     ): List<String> {
         val heardLetters = heard.sumOf { LyricsWordAlign.fold(it.text).length }
         if (heardLetters <= 0) return emptyList()
-        val budget = LyricsWordAlign.MAX_CELLS / heardLetters
+        val budget = OPENING_CELLS / heardLetters
         if (budget <= 0) return emptyList()
         val window = ArrayList<String>()
         var letters = 0L
@@ -120,6 +120,9 @@ object LyricsMismatch {
         }
         return window
     }
+
+    /** The opening of a sheet says what it needs to; the aligner's own limit is for whole songs. */
+    private const val OPENING_CELLS = 4_000_000L
 
     /** The log line the lookup writes when it throws a provider's answer away. */
     fun logLine(source: LyricsSource, verdict: Verdict): String =

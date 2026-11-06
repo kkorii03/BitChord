@@ -3289,9 +3289,11 @@ object LyricsTiming {
             )
         }
 
-        if (result != null) {
+        if (result != null && VideoAudio.secondsOnDisk(song) >= VideoAudio.SONG_CHECK_SECONDS) {
             // The refine is the last existing stage; it may use an AI transcript
             // it already has or hear the next row's opening. Same policy and caps.
+            // Only with the opening on disk: otherwise this waits for sound that
+            // comes once the row plays, and the screen asks again then.
             ensureRefineHeard(context, song.videoId, song, lines, result, audioSource)
             result = timing(
                 context, song.videoId, lines, timeable, recordTimed, query.isVideo, audioSource,
@@ -3394,6 +3396,9 @@ object LyricsTiming {
         ) {
             return firstOk
         }
+        // A row not playing yet has only its head: the rest would hold up the
+        // preparation for sound that will not come until it plays.
+        if (probe != null && VideoAudio.secondsOnDisk(song) < VideoAudio.SONG_CHECK_SECONDS) return firstOk
         val fullAsk = hearSongCheck(context, song, lines, key, probe, VideoAudio.SONG_CHECK_SECONDS, retry)
             ?: return firstOk
         return songSyncGate.withLock {

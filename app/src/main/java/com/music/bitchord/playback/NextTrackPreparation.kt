@@ -25,6 +25,7 @@ import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.playback.NextPrepPolicy.Step
 import com.music.bitchord.playback.smart.AudioDecoder
+import com.music.bitchord.playback.smart.AutomixAnalysisSource
 import com.music.bitchord.playback.smart.AutomixWorkPolicy
 import com.music.bitchord.playback.smart.HqVerificationStore
 import com.music.bitchord.playback.smart.LyricsTiming
@@ -388,16 +389,25 @@ internal class NextTrackPreparation(
                             // sync is measured or recorded for it.
                             val query = CoverTitles.lyricsQuery(song)
                             val substituted = StreamChoice.isSubstitute(song.videoId)
-                            // The next row is not playing, so its sound only
-                            // arrives as fast as the stream fills: a song check
-                            // here waits for audio that does not exist yet and
-                            // eats the whole window, which is why every run
-                            // logged hq=none(deadline) and mix=none(deadline)
-                            // (11-04). Run it only when the opening is already on
-                            // disk (a downloaded file, or a stream the player has
-                            // cached); otherwise the foreground check does it once
-                            // the row is actually playing and its audio flows.
-                            val openingReady = VideoAudio.secondsOnDisk(song) >= SongCheckWindow.FIRST_SECONDS
+                            // The next row is not playing, so nothing fetches its
+                            // sound unless asked. Waiting for a stream to fill ate
+                            // the whole window (11-04: every run logged
+                            // hq=none(deadline) and mix=none(deadline)); never
+                            // asking left 56 of 74 songs to start uncorrected
+                            // (11-06, sync=skipped reason=no-audio). The head pull
+                            // is one bounded wait: what landed is checked now, and
+                            // anything short of it is left to the foreground check
+                            // once the row is playing and its audio flows.
+                            var openingReady = VideoAudio.secondsOnDisk(song) >= SongCheckWindow.FIRST_SECONDS
+                            if (lines != null && !substituted && !openingReady && !query.isVideo &&
+                                AppSettings.aiTimingAhead.value && Deepgram.usable
+                            ) {
+                                AudioCache.awaitAnalysisHead(
+                                    android.net.Uri.parse(AutomixAnalysisSource.opusUri(song.videoId)),
+                                    NEXT_OPENING_WAIT_MS,
+                                )
+                                openingReady = VideoAudio.secondsOnDisk(song) >= SongCheckWindow.FIRST_SECONDS
+                            }
                             if (lines != null && !substituted && !openingReady) {
                                 syncFailure = NextPrepPolicy.SyncFailure.NO_AUDIO
                             } else if (lines != null && !substituted) {
@@ -1121,6 +1131,9 @@ internal class NextTrackPreparation(
     private companion object {
         const val MAX_ROWS_REMEMBERED = 12
         const val NEXT_PREP_HQ_WAIT_MS = 15_000L
+
+        /** How long the sync step waits for the next row's opening to be pulled. */
+        const val NEXT_OPENING_WAIT_MS = 20_000L
 
         /** A player message at 30 s is the gate; this only covers a seek/pause race. */
         const val AI_GATE_GRACE_MS = 5_000L
