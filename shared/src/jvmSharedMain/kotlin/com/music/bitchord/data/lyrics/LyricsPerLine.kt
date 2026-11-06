@@ -112,8 +112,12 @@ object LyricsPerLine {
             val rawPace = pace(words)
             if (words.size < 3 && rawPace !in MIN_PACE..MAX_PACE) continue
             val pace = rawPace.coerceIn(MIN_PACE, MAX_PACE)
+            // The heard words are the lead's, so they are held against the lead's first
+            // word: a stamp set by a backing vocal ahead of it is not the line being early
+            // (11-06 w58uXpyHWes: a line 884 ms ahead moved its lead 884 ms late).
+            val leadStart = lines[index].words.firstOrNull()?.startMs ?: lines[index].timeMs
             val residuals = words.map { word ->
-                word.word.startMs - (word.offsetMs * pace).roundToLong() - lines[index].timeMs
+                word.word.startMs - (word.offsetMs * pace).roundToLong() - leadStart
             }
             val median = median(residuals)
             val mad = median(residuals.map { abs(it - median) })
