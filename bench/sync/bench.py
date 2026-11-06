@@ -218,7 +218,9 @@ def korean_smoke():
     """Does the aligner's text path accept Hangul at all? (token count only, no audio, no lyrics)"""
     from ctc_forced_aligner import preprocess_text
     tokens, text_starred = preprocess_text("안녕하세요 반갑습니다 노래", romanize=True, language="kor")
-    return {"tokens": len(tokens), "words": len([t for t in text_starred if t != "<star>"])}
+    return {"tokens": len(tokens), "words": len([t for t in text_starred if t != "<star>"]),
+            "sample_in": "annyeonghaseyo-style hangul, 3 words", "text_starred": [str(t) for t in text_starred][:8],
+            "tokens_head": [str(t) for t in tokens][:8]}
 
 
 def main():
