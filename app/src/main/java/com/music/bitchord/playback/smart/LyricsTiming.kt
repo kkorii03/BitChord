@@ -3567,6 +3567,8 @@ object LyricsTiming {
                         heardCheckClock = checkClock.saved(),
                     )
                 }
+                // The full opening may be a minute away; these words can already prove the sheet wrong.
+                _changes.tryEmit(song.videoId)
             }
             return true
         }
