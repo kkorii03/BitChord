@@ -2629,6 +2629,7 @@ object LyricsTiming {
             return null
         }
         val key = textKey(lines, audioSource)
+        newestSongKey[videoId] = key
         // One decision for every automatic caller, made from what is kept —
         // the screen, the next-song preparation and the calibration sample
         // used to each guard on their own and each miss a case.
@@ -2998,6 +2999,8 @@ object LyricsTiming {
             return null
         }
         persistAttempts()
+        // 11-06 ekzHIouo8Q4, three rounds: the replaced sheet's answer landed 0.5 s after the shown one's and took the slot.
+        if (replacedSheet(videoId, key)) return null
         store(context).update(videoId) {
             it.copy(
                 clockVersion = CLOCK_VERSION,
@@ -3355,9 +3358,9 @@ object LyricsTiming {
      * left the screen with none (11-06 rlYOsUfpi3M: applied at 88%, overwritten
      * a second later, ended sync=none).
      */
-    private val newestSongKey = ConcurrentHashMap<String, Int>()
+    internal val newestSongKey = ConcurrentHashMap<String, Int>()
 
-    private fun replacedSheet(videoId: String, key: Int): Boolean {
+    internal fun replacedSheet(videoId: String, key: Int): Boolean {
         val replaced = newestSongKey[videoId].let { it != null && it != key }
         if (replaced) TrackLog.d(TAG, "song-sync: answer for a replaced sheet dropped", videoId)
         return replaced
