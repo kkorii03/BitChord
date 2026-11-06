@@ -2860,25 +2860,26 @@ object LyricsTiming {
                 // Whatever of the video's sound has landed, up to all of it: a
                 // cover's offset shows in its opening, and no decode or whole
                 // file is waited for any more. Nothing to hear spends no engine.
-                val hearing = SongHearing.hear(
-                    context,
-                    song,
-                    AI_HEAR_SECONDS,
-                    language,
-                    minSeconds = AI_HEAR_LEAST_SECONDS,
-                ) ?: break
+                val hearing = listenForSong(context, song, key, AI_HEAR_SECONDS, language, probe, AI_HEAR_LEAST_SECONDS)
+                if (hearing == null) {
+                    val quiet = songQuietUntilMs - System.currentTimeMillis()
+                    if (quiet > 0L) rateLimitedWaitMs = quiet
+                    break
+                }
                 audioPresent = true
                 listenedClock = hearing.clock
-                noteAttempt(name)
-                if (name == ENGINE_WHISPER) {
-                    if (probe == null) {
-                        store(context).update(videoId) { it.copy(whisperKey = key) }
-                    } else {
-                        pendingWhisper = true
+                // Only a reply spends the turn: 11-06 a dropped connection left 3s1jaFDrp5M 1.5 s off for good.
+                if (AiTimingPolicy.songReplySpends(hearing.httpCode)) {
+                    noteAttempt(name)
+                    if (name == ENGINE_WHISPER) {
+                        if (probe == null) {
+                            store(context).update(videoId) { it.copy(whisperKey = key) }
+                        } else {
+                            pendingWhisper = true
+                        }
                     }
                 }
-                val heardAnswer = hearing
-                val heard = heardAnswer.words
+                val heard = hearing.words
                 if (heard != null) anyEngineAnswered = true
                 // Lines past what was heard cannot have been placed; they are
                 // not disagreement. The whole song leaves every line in.
@@ -2903,15 +2904,6 @@ object LyricsTiming {
                     },
                     videoId,
                 )
-                if (heardAnswer.httpCode == 429) {
-                    val wait = SongSyncRetry.retryDelayMs(heardAnswer.retryAfterMs, 0)
-                    rateLimitedWaitMs = maxOf(rateLimitedWaitMs ?: 0L, wait)
-                    songQuietUntilMs = System.currentTimeMillis() + wait
-                    rateLimitedLog(videoId, wait)
-                    // The same key is refused for Whisper too; Gemini is a
-                    // separate provider and may still answer below.
-                    break
-                }
                 if (fitted != null) {
                     adjustment = fitted
                     engine = name
@@ -3730,6 +3722,7 @@ object LyricsTiming {
         untilSeconds: Double,
         language: String,
         probe: NextSyncProbe? = null,
+        minSeconds: Double = if (untilSeconds < VideoAudio.SONG_CHECK_SECONDS) SONG_FIRST_LEAST_SECONDS else untilSeconds,
     ): SongHearing.Heard? {
         val videoId = song.videoId
         val quiet = songQuietUntilMs - System.currentTimeMillis()
@@ -3751,7 +3744,7 @@ object LyricsTiming {
                 song,
                 untilSeconds,
                 language,
-                minSeconds = if (untilSeconds < VideoAudio.SONG_CHECK_SECONDS) SONG_FIRST_LEAST_SECONDS else untilSeconds,
+                minSeconds = minSeconds,
             ) ?: run {
                 songLog(videoId, "no-audio", null, null, 0)
                 probe?.failure = NextPrepPolicy.SyncFailure.NO_AUDIO
