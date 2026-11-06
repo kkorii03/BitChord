@@ -158,6 +158,17 @@ internal object AiTimingPolicy {
             }
         }
 
+    /** How many AI placements may run at once on the app's own initiative. */
+    const val MAX_AUTOMATIC_REQUESTS = 2
+
+    /**
+     * Whether a placement may start beside [running] others. The cap is for what
+     * the app starts by itself: a tap on the button is the listener waiting on
+     * an answer, and two background passes must not make it look broken.
+     */
+    fun mayStartRequest(automatic: Boolean, running: Int): Boolean =
+        !automatic || running < MAX_AUTOMATIC_REQUESTS
+
     /** Marks the second (last) song check on one lyrics text; see [songRetry]. */
     const val SONG_RETRY = "Deepgram Whisper retry"
 
