@@ -393,6 +393,15 @@ class TimingPiecesTest {
     }
 
     @Test
+    fun `the sheet is fitted again when it is worth it, and only then`() {
+        val now = SongCheckWindow.FIT_VERSION
+        assertTrue(SongCheckWindow.refitDue(now - 1, sameSheet = true, seenMs = 200_000L, keptMs = 200_000L), "older code")
+        assertTrue(SongCheckWindow.refitDue(now, sameSheet = false, seenMs = 200_000L, keptMs = 200_000L), "another sheet")
+        assertTrue(SongCheckWindow.refitDue(now, sameSheet = true, seenMs = 40_000L, keptMs = 210_000L), "longer words")
+        assertFalse(SongCheckWindow.refitDue(now, sameSheet = true, seenMs = 200_000L, keptMs = 205_000L), "nothing new")
+    }
+
+    @Test
     fun `words move with their line and stay in order`() {
         val found = assertNotNull(TimingPieces.fit(placed(0, 15, 2_000L) + placed(15, 30, 30_000L)).result)
         val line = LyricLine(

@@ -38,6 +38,20 @@ object SongCheckWindow {
     fun fullMayReplace(firstFitted: Boolean, fullFitted: Boolean): Boolean =
         !firstFitted || fullFitted
 
+    /** Raise when the fit changes: every kept answer and refusal is judged once more, free. */
+    const val FIT_VERSION = 1
+
+    /** Fewer new words' worth of sound than this says nothing new. */
+    private const val LONGER_MS = 8_000L
+
+    /**
+     * Whether a sheet is worth fitting again on the kept words: older code judged it,
+     * it was judged for another sheet, or the words now reach further. An engine is
+     * spent once per sheet, so nothing else ever looks at it again (11-06).
+     */
+    fun refitDue(seenVersion: Int, sameSheet: Boolean, seenMs: Long, keptMs: Long): Boolean =
+        seenVersion < FIT_VERSION || !sameSheet || keptMs > seenMs + LONGER_MS
+
     /** RIFF/WAVE header before the samples: 16 kHz, mono, 16-bit WAV. */
     const val WAV_HEADER_BYTES = 44
 

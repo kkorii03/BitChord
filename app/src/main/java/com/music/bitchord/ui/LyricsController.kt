@@ -1532,12 +1532,6 @@ class LyricsController(
         // saved without words is heard once too (see ensureRefineHeard).
         if (!AppSettings.heavyWorkAllowed || !AppSettings.aiTimingAhead.value) return
         if (!com.music.bitchord.data.lyrics.Deepgram.usable) return
-        if (LyricsTiming.refineHeardKnown(app, request.videoId, lines, timing, audioSource)) return
-        // Words on their way: this runs again when they land, and reads them.
-        if (LyricsTiming.hearingBusy(request.videoId)) return
-        val key = "${request.videoId}|${request.localUri != null}|${lines.hashCode()}"
-        if (refineHeardStartedFor == key) return
-        refineHeardStartedFor = key
         val song = Song(
             videoId = request.videoId,
             title = request.title,
@@ -1552,6 +1546,17 @@ class LyricsController(
                 "${ms / 60_000}:${((ms / 1_000) % 60).toString().padStart(2, '0')}"
             },
         )
+        scope.launch {
+            if (LyricsTiming.refit(app, song, lines, audioSource) && generation == lyricsGeneration && timingLines === lines) {
+                refreshTiming(generation, lines)
+            }
+        }
+        if (LyricsTiming.refineHeardKnown(app, request.videoId, lines, timing, audioSource)) return
+        // Words on their way: this runs again when they land, and reads them.
+        if (LyricsTiming.hearingBusy(request.videoId)) return
+        val key = "${request.videoId}|${request.localUri != null}|${lines.hashCode()}"
+        if (refineHeardStartedFor == key) return
+        refineHeardStartedFor = key
         refineHeardJob = scope.launch {
             val heard = LyricsTiming.ensureRefineHeard(
                 app,

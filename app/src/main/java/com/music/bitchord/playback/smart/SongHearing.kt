@@ -220,6 +220,16 @@ internal object SongHearing {
         }
     }
 
+    /** The longest words kept for what [song] plays now; never a request. */
+    suspend fun longestKept(context: Context, song: Song, language: String): Heard? {
+        val app = context.applicationContext
+        val recording = recordingKey(song) ?: return null
+        val kept = withContext(Dispatchers.IO) { load(app, song.videoId) }
+        val saved = covering(kept, recording, language, 0.0)
+            ?: streamWords(kept, language)?.takeIf { recording.startsWith(FILE_PREFIX) && LyricsTiming.streamWordsReachFile(app, song.videoId) }
+        return saved?.let(::heardFrom)
+    }
+
     /**
      * Whether a request flying for [flyingSeconds] answers one for [askedSeconds].
      * A shorter one does not: its words are in the file when it lands, and the
