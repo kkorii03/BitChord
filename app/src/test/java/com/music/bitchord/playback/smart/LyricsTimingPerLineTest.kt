@@ -83,6 +83,9 @@ class LyricsTimingPerLineTest {
     private val sheet = (0 until 40).map { line(10_000L + it * 4_000L, "line number $it") }
     private val all = sheet.indices.toList()
 
+    // 20 lines on +7 s and 20 on +40 s, too far apart for one line: half on it at best.
+    private val twoClocks = sheet.mapIndexed { i, it -> it.timeMs + if (i < 20) 7_000L else 40_000L }
+
     private fun placement(starts: List<Long?>) = LyricsWordAlign.Placement(
         starts = starts,
         attempted = true,
@@ -99,9 +102,7 @@ class LyricsTimingPerLineTest {
 
     @Test
     fun `a refused line gives way to the stretches and each line keeps its own clock`() {
-        // 20 lines on +40 s and 20 on +7 s, too far apart for one line: half on it at best.
-        val starts = sheet.mapIndexed { i, it -> it.timeMs + if (i < 20) 7_000L else 40_000L }
-        val fitted = LyricsTiming.fitHeard("v", sheet, all, placement(starts)) { fit ->
+        val fitted = LyricsTiming.fitHeard("v", sheet, all, placement(twoClocks)) { fit ->
             com.music.bitchord.data.lyrics.LyricsAiGuard.agreementAllows(fit.matchPercent)
         }
         assertEquals(100, fitted?.matchPercent)
@@ -111,15 +112,13 @@ class LyricsTimingPerLineTest {
 
     @Test
     fun `when nothing may apply the straight line goes back for the caller to refuse`() {
-        val starts = sheet.mapIndexed { i, it -> it.timeMs + if (i < 20) 7_000L else 40_000L }
-        val line = LyricsTiming.fitAi(sheet, all, starts)
-        assertEquals(line, LyricsTiming.fitHeard("v", sheet, all, placement(starts)) { false })
+        val line = LyricsTiming.fitAi(sheet, all, twoClocks)
+        assertEquals(line, LyricsTiming.fitHeard("v", sheet, all, placement(twoClocks)) { false })
     }
 
     @Test
     fun `stretches carry across a clock change in the order they were measured`() {
-        val starts = sheet.mapIndexed { i, it -> it.timeMs + if (i < 20) 7_000L else 40_000L }
-        val fitted = LyricsTiming.fitHeard("v", sheet, all, placement(starts)) { true }!!
+        val fitted = LyricsTiming.fitHeard("v", sheet, all, placement(twoClocks)) { true }!!
         // On a verified copy two seconds behind the upload, after base and before refine.
         val timing = LyricsTiming.Timing(
             base = fitted,
