@@ -2786,7 +2786,15 @@ object LyricsTiming {
         @Synchronized fun isEmpty(): Boolean = total <= 0
     }
 
-    private val flightWaiters = ConcurrentHashMap<kotlinx.coroutines.Deferred<*>, FlightWaiters>()
+    private val flightWaiters = ConcurrentHashMap<Job, FlightWaiters>()
+
+    /** Whether any caller still waits on the flight running as [job]. */
+    internal fun flightStillWanted(job: Job?): Boolean =
+        job != null && flightWaiters[job]?.isEmpty() == false
+
+    /** Whether a 429 may be retried: the server allows it, the wait fits, and a caller still waits. */
+    internal fun retryHearing(httpCode: Int?, attempt: Int, waitMs: Long, stillWanted: Boolean): Boolean =
+        SongSyncRetry.shouldRetry(httpCode, attempt) && SongSyncRetry.canWaitInline(waitMs) && stillWanted
 
     /**
      * Ties an app-lifetime flight to the callers waiting on it when those
@@ -2830,6 +2838,8 @@ object LyricsTiming {
         probe: NextSyncProbe? = null,
     ): Adjustment.Mapped? {
         val started = System.currentTimeMillis()
+        // The flight this runs in: a 429 backoff stops once no caller waits on it.
+        val flightJob = currentCoroutineContext()[Job]
         // The next-song bundle honours the existing 429 hold: a previous
         // playback may have been turned away, and asking again before the
         // server's wait has passed would spend the same key.
@@ -2935,6 +2945,7 @@ object LyricsTiming {
                     language,
                     // 90 s clears an MV's intro; fewer could spend this turn on no lines, with no second pass.
                     reuseFrom = VideoAudio.SONG_CHECK_SECONDS,
+                    stillWanted = { flightStillWanted(flightJob) },
                 ) ?: break
                 audioPresent = true
                 listenedClock = hearing.clock
@@ -3852,6 +3863,7 @@ object LyricsTiming {
         minSeconds: Double,
         language: String,
         reuseFrom: Double = untilSeconds,
+        stillWanted: () -> Boolean = { true },
     ): SongHearing.Heard? {
         var attempt = 0
         while (true) {
@@ -3864,9 +3876,7 @@ object LyricsTiming {
             val wait = SongSyncRetry.retryDelayMs(answer.retryAfterMs, attempt)
             songQuietUntilMs = System.currentTimeMillis() + wait
             rateLimitedLog(song.videoId, wait)
-            if (!SongSyncRetry.shouldRetry(answer.httpCode, attempt) ||
-                !SongSyncRetry.canWaitInline(wait)
-            ) {
+            if (!retryHearing(answer.httpCode, attempt, wait, stillWanted())) {
                 return answer
             }
             delay(wait)
