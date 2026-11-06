@@ -2922,6 +2922,7 @@ object LyricsTiming {
                 entry.copy(
                     aiAttemptedKey = key,
                     aiAttemptedEngines = ((if (sameLyrics) entry.aiAttemptedEngines else emptyList()) + name).distinct(),
+                    refitVersion = SongCheckWindow.FIT_VERSION,
                 )
             }
         }
