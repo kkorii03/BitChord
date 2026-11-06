@@ -1705,8 +1705,9 @@ object SourceResolver {
             var authRejected = false
             // A hand-made request is evidence that the cached "none" was wrong.
             // Leave it unread, so the source is asked again; the fresh answer
-            // then replaces the memo below.
-            val cached = if (manual) null else {
+            // then replaces the memo below. A resting source is here to prove it
+            // is back, which an answer from before it went down cannot do.
+            val cached = if (manual || SourceCooldown.isResting(source.configId)) null else {
                 searchAnswers[key]?.takeIf { now - it.at < SEARCH_MEMO_TTL_MS }?.rows
             }
             var conclusive = true
