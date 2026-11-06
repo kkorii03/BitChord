@@ -197,8 +197,14 @@ object LyricsTiming {
         val move = refineMs + slopePerMin / 60_000.0 * minOf(atMs, untilMs)
         // Only a move measured across the whole song may pass the narrow cap: a
         // narrow constant or line is held to ±[RefinePolicy.MAX_SHIFT_MS]
-        // (11-04 Sol: a mis-aligned chorus must not move lines 10 s).
-        val cap = if (wide) RefinePolicy.MAX_WIDE_SHIFT_MS else RefinePolicy.MAX_SHIFT_MS
+        // (11-04 Sol: a mis-aligned chorus must not move lines 10 s). A wide move
+        // with no slope is one the policy already held to its own cap; only a
+        // drift can still grow past it here.
+        val cap = when {
+            !wide -> RefinePolicy.MAX_SHIFT_MS
+            slopePerMin == 0.0 -> RefinePolicy.MAX_FLAT_SHIFT_MS
+            else -> RefinePolicy.MAX_WIDE_SHIFT_MS
+        }
         return move.roundToLong().coerceIn(-cap, cap)
     }
 
