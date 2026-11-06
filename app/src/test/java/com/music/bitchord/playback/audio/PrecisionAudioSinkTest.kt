@@ -27,6 +27,15 @@ import java.nio.ByteOrder
 @androidx.annotation.OptIn(UnstableApi::class)
 class PrecisionAudioSinkTest {
 
+    @Test
+    fun `a route change rebuilds the output only under a bed and only across bluetooth`() {
+        assertTrue(Downmix.routeChangeRebuilds(6, wasBluetooth = false, isBluetooth = true))
+        assertTrue(Downmix.routeChangeRebuilds(6, wasBluetooth = true, isBluetooth = false))
+        assertFalse(Downmix.routeChangeRebuilds(6, wasBluetooth = true, isBluetooth = true))
+        assertFalse(Downmix.routeChangeRebuilds(2, wasBluetooth = false, isBluetooth = true))
+        assertFalse(Downmix.routeChangeRebuilds(null, wasBluetooth = false, isBluetooth = true))
+    }
+
     private class FakeAudioSink : AudioSink {
         var configuredConfig: AudioSink.AudioSinkConfig? = null
         private var sinkListener: AudioSink.Listener? = null
