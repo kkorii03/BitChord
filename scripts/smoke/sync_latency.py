@@ -42,11 +42,11 @@ def read(path):
         if m:
             song(m.group(1)).setdefault("audio", t)
             continue
-        m = re.search(r"\[" + ID + r"\] song-hear: sent .*?wait=(\d+)ms send=(\d+)ms requests=(\d+) http=(\S+) words=(\S+)", line)
+        m = re.search(r"song-hear: sent .*?wait=(\d+)ms send=(\d+)ms requests=(\d+) http=(\S+) words=(\S+) audio=\S+ copy=" + ID, line)
         if m:
-            s = song(m.group(1))
-            wait, send = int(m.group(2)), int(m.group(3))
-            s["sends"].append(dict(end=t, wait=wait / 1000, send=send / 1000, requests=int(m.group(4)), http=m.group(5)))
+            s = song(m.group(5 + 1))
+            wait, send = int(m.group(1)), int(m.group(2))
+            s["sends"].append(dict(end=t, wait=wait / 1000, send=send / 1000, requests=int(m.group(3)), http=m.group(4)))
             continue
         m = re.search(r"\[" + ID + r"\] song-hear: kept", line)
         if m:
