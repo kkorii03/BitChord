@@ -1518,7 +1518,12 @@ object LyricsTiming {
                 // caching (the rendition-completion event re-asks, see
                 // LyricsController) or a later play tries the longer listen
                 // again.
-                TrackLog.d(TAG, "extend deferred: ${onDisk}s on disk of ${target}s", videoId)
+                TrackLog.d(
+                    TAG,
+                    "extend deferred: ${onDisk}s on disk of ${target}s " +
+                        "copy=${VersionAudioAligner.renditionToMeasure(videoId)}",
+                    videoId,
+                )
                 if (!hadWords) _changes.tryEmit(videoId)
                 return@withLock !hadWords
             }
