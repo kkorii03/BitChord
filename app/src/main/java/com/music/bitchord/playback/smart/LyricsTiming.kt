@@ -2881,18 +2881,18 @@ object LyricsTiming {
                 ) ?: break
                 audioPresent = true
                 listenedClock = hearing.clock
-                // A 429 heard nothing. Spent anyway, this video's Whisper never came back for these lyrics.
-                val spent = hearing.httpCode != 429
-                if (spent) noteAttempt(name)
-                if (spent && name == ENGINE_WHISPER) {
-                    if (probe == null) {
-                        store(context).update(videoId) { it.copy(whisperKey = key) }
-                    } else {
-                        pendingWhisper = true
+                // Only a reply spends the turn: 11-06 a dropped connection left 3s1jaFDrp5M 1.5 s off for good.
+                if (AiTimingPolicy.songReplySpends(hearing.httpCode)) {
+                    noteAttempt(name)
+                    if (name == ENGINE_WHISPER) {
+                        if (probe == null) {
+                            store(context).update(videoId) { it.copy(whisperKey = key) }
+                        } else {
+                            pendingWhisper = true
+                        }
                     }
                 }
-                val heardAnswer = hearing
-                val heard = heardAnswer.words
+                val heard = hearing.words
                 if (heard != null) anyEngineAnswered = true
                 // Lines past what was heard cannot have been placed; they are
                 // not disagreement. The whole song leaves every line in.
@@ -2920,7 +2920,7 @@ object LyricsTiming {
                     },
                     videoId,
                 )
-                if (heardAnswer.httpCode == 429) {
+                if (hearing.httpCode == 429) {
                     // The retries ran out; the hold they left is the wait.
                     val wait = (songQuietUntilMs - System.currentTimeMillis()).coerceAtLeast(0L)
                     rateLimitedWaitMs = maxOf(rateLimitedWaitMs ?: 0L, wait)
