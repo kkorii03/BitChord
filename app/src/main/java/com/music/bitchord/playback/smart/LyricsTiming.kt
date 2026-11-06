@@ -1551,8 +1551,8 @@ object LyricsTiming {
         seconds: Double,
         extended: Boolean,
     ): RefineSnapshot {
-        store(context).update(videoId) {
-            it.copy(
+        val withHeard = { start: Entry ->
+            start.copy(
                 clockVersion = CLOCK_VERSION,
                 refineHeardKey = key,
                 refineHeardWords = words,
@@ -1561,15 +1561,8 @@ object LyricsTiming {
                 refineHeardExtended = extended,
             )
         }
-        return RefineSnapshot(
-            (before ?: Entry()).copy(
-                refineHeardKey = key,
-                refineHeardWords = words,
-                refineHeardClock = clock.saved(),
-                refineHeardSeconds = seconds,
-                refineHeardExtended = extended,
-            ),
-        )
+        store(context).update(videoId, withHeard)
+        return RefineSnapshot(withHeard(before ?: Entry()))
     }
 
     private suspend fun listenForRefine(
