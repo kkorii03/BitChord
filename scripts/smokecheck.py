@@ -56,9 +56,11 @@ SONG_VERSION_KEPT_NONE_RE = re.compile(
 SONG_VERSION_COVER_RE = re.compile(
     r"song version:\s+(?P<id>\S+)\s+->\s+none\s+via\s+none\s+\(cover\)"
 )
-# `audio switch: no official song match for '<title>' by '<artist>'`
+# `audio switch: no official song match videoId=<id> for '<title>' by '<artist>'`
+# (older logs have no videoId)
 AUDIO_SWITCH_NO_MATCH_RE = re.compile(
-    r"audio switch: no official song match for '(?P<title>.*?)' by '(?P<artist>.*)'"
+    r"audio switch: no official song match(?: videoId=\S+)? "
+    r"for '(?P<title>.*?)' by '(?P<artist>.*)'"
 )
 # `hq-verify: <title> <source> match=..% offset=.. -> accepted|rejected`
 HQ_VERDICT_RE = re.compile(r"hq-verify:.*?->\s*(?P<verdict>accepted|rejected)\b")

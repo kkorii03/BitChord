@@ -84,15 +84,38 @@ internal object KoTrackMatcher {
             // auto-generated channel ("5 Seconds of Summer - Topic"), not to a
             // different act. The suffix is the channel's, not the artist's, so
             // leaving it on made the exact-name check refuse the official song.
-            // A VEVO channel is the same plumbing ("ArtistVEVO" is "Artist").
-            expandArtistName(
-                part.replace(TOPIC_CHANNEL_SUFFIX, "").replace(VEVO_CHANNEL_SUFFIX, ""),
-            ).forEach { name ->
+            // A VEVO channel is the same plumbing ("ArtistVEVO" is "Artist"),
+            // and an artist's own channel prints "Artist Official".
+            val cleaned = part
+                .replace(TOPIC_CHANNEL_SUFFIX, "")
+                .replace(VEVO_CHANNEL_SUFFIX, "")
+                .replace(OFFICIAL_CHANNEL_SUFFIX, "")
+            expandArtistName(cleaned).forEach { name ->
                 out += name
+                // A Korean credit often prints both names ("다비치 DAVICHI",
+                // "이무진 LEE MU JIN"); either half is the same act. A cover or
+                // take marker in the same credit is not a second name, so it
+                // never becomes the original artist.
+                if (!carriesArrangementOrTakeMarker(cleaned)) {
+                    out += scriptMatesOf(name)
+                }
             }
         }
         return out.filter { it.isNotBlank() }
     }
+
+    /** The Hangul and Latin halves of a credit that prints both, if it does. */
+    private fun scriptMatesOf(name: String): List<String> {
+        if (!hasHangul(name) || name.none { it in 'a'..'z' }) return emptyList()
+        val hangul = HANGUL_RUN.findAll(name).map { it.value }.joinToString(" ")
+        val latin = LATIN_RUN.findAll(name).map { it.value }.joinToString(" ")
+        return listOf(hangul, latin).filter { it.isNotBlank() }
+    }
+
+    /** A credit that names a cover, karaoke or take rather than a second spelling. */
+    private fun carriesArrangementOrTakeMarker(text: String): Boolean =
+        COVER_MARKERS.any { it.containsMatchIn(text) } ||
+            text.split(WORD_SPLIT).any { it in VERSION_WORDS }
 
     /** The first credited artist — who a catalogue is most likely to file the track under. */
     internal fun primaryArtist(artist: String): String =
@@ -2124,6 +2147,13 @@ internal object KoTrackMatcher {
 
     /** A VEVO channel is the artist's own channel, not a second name ("ArtistVEVO"). */
     private val VEVO_CHANNEL_SUFFIX = Regex("""(?i)(?<=[a-z0-9])\s*vevo$""")
+
+    /** An artist's own channel prints "Artist Official" or "Artist Official Channel". */
+    private val OFFICIAL_CHANNEL_SUFFIX = Regex("""\s+official(?:\s+channel)?$""", RegexOption.IGNORE_CASE)
+
+    /** The Hangul and Latin runs of a credit that prints both names. */
+    private val HANGUL_RUN = Regex("""[\u1100-\u11FF\u3130-\u318F\uAC00-\uD7A3]+""")
+    private val LATIN_RUN = Regex("""[a-z0-9]+(?:['’][a-z0-9]+)*""")
 
     /**
      * Language words that make a row a version of the song rather than the
