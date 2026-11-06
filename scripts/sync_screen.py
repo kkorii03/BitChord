@@ -25,7 +25,7 @@
 #
 # Numbers and ids only: lyric text stays in the local log file and is never printed.
 # Usage (with the phone connected; the flag is read when a song starts, so let this
-# start the song, or play a new one with --no-start after a run left the flag on):
+# start the song; --no-start needs the flag already there before the song began):
 #   tools\python\python.exe -I scripts\sync_screen.py --video <id> --seconds 150 [--tap X,Y ...]
 #   tools\python\python.exe -I scripts\sync_screen.py --score-only <dir>
 #   tools\python\python.exe -I scripts\sync_screen.py --echo <recording.mp4>
@@ -535,6 +535,8 @@ def main():
         return echo(args.echo)
     if args.score_only:
         return score(args.score_only)
+    if not args.video:
+        ap.error("--video is required to record")
     global SERIAL
     SERIAL = pick_serial(adb("devices"))
     if not SERIAL:
