@@ -684,6 +684,10 @@ def nothing_judged(checks: list[Check], songs: list[SongSpec] | None) -> bool:
     """
     if songs is None:
         return False
+    # Plain rows have no kind check of their own, and a list of only them is
+    # still judged: sync, version, crashes (11-06: 7 of 8 fleet sets read invalid).
+    if any(song.kind == "plain" for song in songs):
+        return False
     kind_checks = [check for check in checks if check.number in (1, 4, 7)]
     return bool(kind_checks) and all(check.status == "SKIP" for check in kind_checks)
 

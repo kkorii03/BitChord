@@ -722,6 +722,11 @@ class NothingJudgedTest(unittest.TestCase):
         checks = smokecheck.check_log("", songs=songs)
         self.assertFalse(smokecheck.nothing_judged(checks, songs))
 
+    def test_a_list_of_plain_songs_is_not_invalid(self):
+        songs = specs("a1\tplain\nb2\tplain")
+        checks = smokecheck.check_log("", songs=songs)
+        self.assertFalse(smokecheck.nothing_judged(checks, songs))
+
     def test_no_song_list_is_not_invalid(self):
         checks = smokecheck.check_log("")
         self.assertFalse(smokecheck.nothing_judged(checks, None))

@@ -18,6 +18,14 @@ path, port = sys.argv[1], int(sys.argv[2])
 emulator = "--emulator" in sys.argv[3:]
 with open(path, encoding="utf-8") as f:
     data = json.load(f)
+# Sync is what these runs measure, and an account's older export had it off
+# (11-06, kkorii123: every song check skipped with ahead=false).
+ahead = (data.get("settings") or {}).get("ko_ai_timing_ahead")
+if isinstance(ahead, dict) and ahead.get("value") != "true":
+    ahead["value"] = "true"
+    print("smoke: ko_ai_timing_ahead forced on")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f)
 proxy = data.get("proxy")
 if not (isinstance(proxy, dict) and proxy.get("host")):
     print("smoke: settings carry no proxy")
