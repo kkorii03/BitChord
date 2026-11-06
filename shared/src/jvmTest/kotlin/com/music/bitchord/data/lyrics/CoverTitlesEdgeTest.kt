@@ -428,4 +428,168 @@ class CoverTitlesEdgeTest {
         assertEquals("오화요 커버", CoverTitles.Cover("Song", null, "오화요 커버 커버 커버").byline)
         assertEquals("원곡자 · 오화요 커버", CoverTitles.Cover("Song", "원곡자 커버", "오화요 커버").byline)
     }
+
+    // ---- Review 11-06: cover-shaped titles that are not covers -------------------------
+
+    @Test
+    fun anUndatedBracketAloneIsNotACover() {
+        CoverTitles.knownSingers = { emptySet() }
+        listOf(
+            "[MV] IU(아이유) _ Palette(팔레트)" to "1theK",
+            "BTS(방탄소년단) - 쩔어 (Dope)" to "1theK",
+            "아이유 - 밤편지 (뮤직비디오)" to "1theK",
+            "Ed Sheeran - Perfect (Music Video)" to "1theK",
+            "Queen - Bohemian Rhapsody (Remastered 2011)" to "1theK",
+            "I Don't Care (with Justin Bieber)" to "1theK",
+            "Ed Sheeran - I Don't Care (with Justin Bieber)" to "1theK",
+            "IU - 밤편지 (IU)" to "IU",
+            "IU - 밤편지 (IU)" to "IU Official",
+        ).forEach { (title, channel) ->
+            assertNull(CoverTitles.read(title, channel, null), title)
+        }
+    }
+
+    @Test
+    fun anUndatedBracketThatNamesTheOriginalIsStillACredit() {
+        CoverTitles.knownSingers = { emptySet() }
+        listOf("IU", "Mr. Big").forEach { artist ->
+            val read = cover("Singer - Song ($artist)", "channel")
+            assertEquals(artist, read.originalArtist, artist)
+        }
+        // A romanised name in all caps still names the original after a Hangul title.
+        assertEquals("IU", cover("가수 - 밤편지(IU)", "1theK").originalArtist)
+    }
+
+    @Test
+    fun aLeadingBracketThatDescribesTheUploadIsNotASinger() {
+        CoverTitles.knownSingers = { emptySet() }
+        val told = mutableListOf<String>()
+        CoverTitles.onSingerSeen = { told += it }
+        listOf(
+            "[도깨비 OST] 찬열, 펀치 - Stay With Me",
+            "[Special Video] 아이유 - 밤편지",
+            "[Official] 아이유 - 밤편지",
+            "[Teaser] 아이유 - 밤편지",
+        ).forEach { title ->
+            assertNull(CoverTitles.read(title, "1theK", null), title)
+            assertNull(CoverTitles.read(title, "1theK", null, unambiguousOnly = true), title)
+        }
+        assertTrue(told.isEmpty(), told.toString())
+    }
+
+    @Test
+    fun aSlashProgramNameIsNotAnOriginalArtistAndIsNotLearned() {
+        CoverTitles.knownSingers = { emptySet() }
+        val told = mutableListOf<String>()
+        CoverTitles.onSingerSeen = { told += it }
+        assertNull(CoverTitles.read("YOASOBI - アイドル / THE FIRST TAKE", "channel", null))
+        assertTrue(told.isEmpty(), told.toString())
+    }
+
+    @Test
+    fun aSongThenArtistSlashOnAnOfficialChannelIsNotANewSinger() {
+        CoverTitles.knownSingers = { emptySet() }
+        val told = mutableListOf<String>()
+        CoverTitles.onSingerSeen = { told += it }
+        assertNull(CoverTitles.read("밤편지 / IU", "1theK", null))
+        assertTrue(told.isEmpty(), told.toString())
+    }
+
+    @Test
+    fun aChannelNameIsNotMatchedInsideAnotherWord() {
+        CoverTitles.knownSingers = { emptySet() }
+        assertNull(CoverTitles.read("The Beatles - Yesterday Cover", "Another Voice", null))
+        val own = cover("Song - 타비 Cover", "아라하시 타비")
+        assertEquals("Song", own.title)
+        assertEquals("타비", own.singer)
+    }
+
+    @Test
+    fun aSongTitleEndingInCoverIsNotACoverTag() {
+        CoverTitles.knownSingers = { emptySet() }
+        assertNull(CoverTitles.read("Mr. Big - Take Cover", "Mr. Big", null))
+        assertNull(CoverTitles.read("Run for Cover", "The Killers", null))
+    }
+
+    @Test
+    fun aLeadingBracketSingerLeavesANamedOriginal() {
+        val read = cover("[오화요] Ed Sheeran - Shape of You Cover", "레몬크림소스")
+        assertEquals("Shape of You", read.title)
+        assertEquals("Ed Sheeran", read.originalArtist)
+        assertEquals("오화요", read.singer)
+        // The channel's own romanised name is still the singer, not the original.
+        val own = cover("[아카네 리제] Akane Lize - Song Cover", "아카네 리제 AKANE LIZE")
+        assertEquals("Song", own.title)
+        assertEquals("아카네 리제", own.singer)
+        assertNull(own.originalArtist)
+    }
+
+    @Test
+    fun aCoverWordKeepsTheOriginalCreditBesideIt() {
+        val read = cover("오화요 - 밤편지 Cover (원곡 : 아이유)", "오화요")
+        assertEquals("밤편지", read.title)
+        assertEquals("아이유", read.originalArtist)
+        assertEquals("오화요", read.singer)
+    }
+
+    @Test
+    fun aNameBeginningWithMrIsNotAVersionWord() {
+        val read = cover("innocent world - Mr.Children (오화요 Cover)", "channel")
+        assertEquals("innocent world", read.title)
+        assertEquals("Mr.Children", read.originalArtist)
+        assertEquals("오화요", read.singer)
+    }
+
+    @Test
+    fun anInstrumentBracketIsNotASinger() {
+        CoverTitles.knownSingers = { emptySet() }
+        listOf("바이올린", "Violin").forEach { instrument ->
+            listOf("커버", "Cover").forEach { word ->
+                assertNull(
+                    CoverTitles.read("IU - 밤편지 ($instrument $word)", "channel", null),
+                    "$instrument $word",
+                )
+            }
+        }
+    }
+
+    @Test
+    fun hangulBeforeAVersionOrOstMarkerStillCountsAsAMarker() {
+        CoverTitles.knownSingers = { emptySet() }
+        assertNull(CoverTitles.read("Singer - Song (원곡 : 도깨비OST)", "channel", null))
+        assertNull(CoverTitles.read("Singer - Song (공식MV)", "channel", null))
+        assertNull(CoverTitles.read("Singer - Song (원곡 : 공식MV)", "channel", null))
+    }
+
+    @Test
+    fun originalCreditLabelsAndOrder() {
+        CoverTitles.knownSingers = { emptySet() }
+        val bySinger = cover("Singer - Song (원곡가수 : 아이유)", "channel")
+        assertEquals("아이유", bySinger.originalArtist)
+        val by = cover("Singer - Song (원곡 by Writer)", "channel")
+        assertEquals("Writer", by.originalArtist)
+        assertNull(CoverTitles.read("Singer - Song (원곡 ver.)", "channel", null))
+    }
+
+    @Test
+    fun aCoverByTitleWithAnAllCapsArtistRunsSongFirst() {
+        val read = cover("Drowning - WOODZ / cover by 오화요", "channel")
+        assertEquals("Drowning", read.title)
+        assertEquals("WOODZ", read.originalArtist)
+        assertEquals("오화요", read.singer)
+        assertTrue(read.orderUnsure)
+    }
+
+    @Test
+    fun aStoredCoverWordMustBeAWholeWord() {
+        assertFalse(CoverTitles.isCover(song("Song", "언더커버")))
+    }
+
+    @Test
+    fun aLiveWordInTheSongTitleIsNotACoverTag() {
+        val read = cover("Long Live Cover by X", "channel")
+        assertEquals("Long Live", read.title)
+        assertEquals("X", read.singer)
+        assertNull(read.originalArtist)
+    }
 }
