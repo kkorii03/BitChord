@@ -460,6 +460,8 @@ internal fun PlaybackService.koUseVerifiedDownload(
     StreamChoice.forget(id)
     player.seekTo(player.currentMediaItemIndex, start)
     player.prepare()
+    // This transition is taken for a same-song swap, so nothing else tells the lock screen.
+    loadLyricsForCurrentTrack()
     return true
 }
 
