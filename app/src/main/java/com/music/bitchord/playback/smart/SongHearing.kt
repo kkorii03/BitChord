@@ -169,7 +169,9 @@ internal object SongHearing {
     /**
      * The words of [song] up to [untilSeconds], from the kept transcript when it
      * reaches that far and otherwise from Deepgram. [minSeconds] is what a request
-     * may settle for after a short wait. Null means there was no sound to send.
+     * may settle for after a short wait. A caller that can make do with less says so
+     * in [reuseFrom]: a replaced sheet is fitted to the words kept, at once and for
+     * free. Null means there was no sound to send.
      */
     suspend fun hear(
         context: Context,
@@ -177,13 +179,14 @@ internal object SongHearing {
         untilSeconds: Double,
         language: String,
         minSeconds: Double = untilSeconds,
+        reuseFrom: Double = untilSeconds,
     ): Heard? {
         val app = context.applicationContext
         while (true) {
             val recording = recordingKey(song)
             if (recording != null) {
                 val kept = withContext(Dispatchers.IO) { load(app, song.videoId) }
-                covering(kept, recording, language, untilSeconds)?.let { saved ->
+                covering(kept, recording, language, minOf(untilSeconds, reuseFrom))?.let { saved ->
                     TrackLog.d(TAG, "song-hear: kept lang=$language until=${untilSeconds.toInt()} secs=${saved.seconds.toInt()} words=${saved.words.size}", song.videoId)
                     return heardFrom(saved)
                 }

@@ -2857,6 +2857,8 @@ object LyricsTiming {
                     AI_HEAR_SECONDS,
                     AI_HEAR_LEAST_SECONDS,
                     language,
+                    // 90 s clears an MV's intro; fewer could spend this turn on no lines, with no second pass.
+                    reuseFrom = VideoAudio.SONG_CHECK_SECONDS,
                 ) ?: break
                 audioPresent = true
                 listenedClock = hearing.clock
@@ -3426,7 +3428,7 @@ object LyricsTiming {
         } else {
             SongCheckWindow.FIRST_SECONDS
         }
-        val firstAsk = hearSongCheck(context, song, lines, key, probe, firstUntil, retry) ?: return false
+        val firstAsk = hearSongCheck(context, song, lines, key, probe, firstUntil, retry, firstPass = true) ?: return false
         val (first, firstOk) = songSyncGate.withLock {
             if (songSyncGenerationOf(song.videoId) != startedGeneration) return@withLock null
             if (replacedSheet(song.videoId, key)) return@withLock null
@@ -3583,6 +3585,8 @@ object LyricsTiming {
         probe: NextSyncProbe?,
         untilSeconds: Double,
         retry: Boolean,
+        /** Whatever is kept will do: a full pass follows if it cannot fit. */
+        firstPass: Boolean = false,
     ): SongAsk? {
         probe?.beginPass()
         val indices = SongCheckWindow.indices(lines.map { it.timeMs }, (untilSeconds * 1000).toLong())
@@ -3596,7 +3600,7 @@ object LyricsTiming {
         val mixed = com.music.bitchord.data.lyrics.Deepgram.mixedPercent(texts, sheetLanguage)
         if (mixed > 0) TrackLog.d(TAG, "song-sync: lang=$sheetLanguage sheet-mixed ratio=$mixed%", song.videoId)
         if (retryLanguage != null) TrackLog.d(TAG, "song-sync: lang retry ($sheetLanguage -> $retryLanguage)", song.videoId)
-        val answer = listenForSong(context, song, key, untilSeconds, language, probe) ?: return null
+        val answer = listenForSong(context, song, key, untilSeconds, language, probe, firstPass) ?: return null
         return SongAsk(answer, language, untilSeconds)
     }
 
@@ -3730,6 +3734,7 @@ object LyricsTiming {
         untilSeconds: Double,
         language: String,
         probe: NextSyncProbe? = null,
+        firstPass: Boolean = false,
     ): SongHearing.Heard? {
         val videoId = song.videoId
         val quiet = songQuietUntilMs - System.currentTimeMillis()
@@ -3748,6 +3753,7 @@ object LyricsTiming {
             untilSeconds,
             minSeconds = if (untilSeconds < VideoAudio.SONG_CHECK_SECONDS) SONG_FIRST_LEAST_SECONDS else untilSeconds,
             language,
+            reuseFrom = if (firstPass) SONG_FIRST_LEAST_SECONDS else untilSeconds,
         ) ?: run {
             songLog(videoId, "no-audio", null, null, 0)
             probe?.failure = NextPrepPolicy.SyncFailure.NO_AUDIO
@@ -3768,11 +3774,12 @@ object LyricsTiming {
         untilSeconds: Double,
         minSeconds: Double,
         language: String,
+        reuseFrom: Double = untilSeconds,
     ): SongHearing.Heard? {
         var attempt = 0
         while (true) {
             // Straight off the file, or the streaming copy as it stands.
-            val answer = SongHearing.hear(context, song, untilSeconds, language, minSeconds) ?: return null
+            val answer = SongHearing.hear(context, song, untilSeconds, language, minSeconds, reuseFrom) ?: return null
             if (answer.httpCode != 429) {
                 songQuietUntilMs = 0L
                 return answer
