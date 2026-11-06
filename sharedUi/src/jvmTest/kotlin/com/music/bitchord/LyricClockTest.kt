@@ -81,6 +81,39 @@ class LyricClockTest {
     }
 
     /** The bug: readings held up behind a busy main thread rolled the words back. */
+    /**
+     * 11-07 phone on Bluetooth, probes after opening the panel: a reading 130-170 ms off
+     * the song, rate 0.915-1.118 for the next seconds, words slowing and rushing.
+     */
+    @Test fun strayReadingsDoNotChangeThePaceAfterOpeningThePanel() {
+        val strays = longArrayOf(0, -130, 30, 90, -160, 40, 120, -70, 20, -140, 60, 100, -30, 50, -90, 10, 130, -60, 0, 80)
+        val clock = LyricClock(44_500L)
+        var now = 0.0
+        var worst = 0.0
+        var reading = -1
+        while (now < 10_000.0) {
+            val at = (now / 500.0).toInt()
+            if (at != reading) reading = at
+            val taken = at * 500.0
+            val report = (44_500.0 + taken).toLong() + strays[at % strays.size]
+            clock.frame(now, report, taken, 0L)
+            worst = maxOf(worst, abs(clock.rate - 1.0))
+            now += frameMs
+        }
+        assertTrue("rate strayed by $worst", worst <= 0.08)
+    }
+
+    @Test fun aRealChangeOfSpeedStillShowsWithinTwoSeconds() {
+        val clock = LyricClock(0L)
+        var now = 0.0
+        while (now < 2_000.0) {
+            val taken = (now / 500.0).toInt() * 500.0
+            clock.frame(now, (taken * 1.25).toLong(), taken, 0L)
+            now += frameMs
+        }
+        assertEquals(1.25, clock.rate, 0.05)
+    }
+
     @Test fun lateReadingsNeverMoveTheWordsBack() {
         val run = run(Playback(maxDelayMs = 800.0), seconds = 90.0, maxStallMs = 600.0)
         assertNeverBack(run)
