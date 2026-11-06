@@ -41,6 +41,7 @@ PKG = "com.music.bitchord"
 APP_DIR = f"/sdcard/Android/data/{PKG}/files"
 REMOTE = "/sdcard/sync-screen.mp4"
 MAX_RECORD_S = 180      # screenrecord refuses a longer --time-limit
+SERIAL = None  # the phone every adb call is aimed at; see pick_serial
 
 # Decoding beside FC Online and the macro: one thread, below normal.
 QUIET = dict(creationflags=getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0))
@@ -66,8 +67,17 @@ WINSCOPE_V2 = b"#VV1NSC0PET1ME2#"
 WINSCOPE_V1 = b"#VV1NSC0PET1ME!#"
 
 
+def pick_serial(devices_text):
+    """The USB phone's serial from `adb devices`; a wireless entry beside it must not make adb refuse."""
+    ready = [p[0] for p in (l.split() for l in devices_text.splitlines()[1:]) if len(p) >= 2 and p[1] == "device"]
+    usb = [s for s in ready if ":" not in s and "_adb-tls-connect" not in s]
+    if len(usb) == 1:
+        return usb[0]
+    return ready[0] if len(ready) == 1 else None
+
+
 def adb(*args, timeout=60):
-    r = subprocess.run([ADB, *args], capture_output=True, timeout=timeout)
+    r = subprocess.run([ADB, *(["-s", SERIAL] if SERIAL else []), *args], capture_output=True, timeout=timeout)
     return r.stdout.decode("utf-8", "replace")
 
 
@@ -439,6 +449,12 @@ def selftest():
     assert parse_session(dump.replace("PLAYING(3)", "3")) == (12345, 678, 1.25)
     assert parse_session(dump.replace("PLAYING(3)", "PAUSED(2)")) is None
 
+    devices = "List of devices attached\nR5CT30ABCDE\tdevice\n192.168.137.157:41234\tdevice\n"
+    assert pick_serial(devices) == "R5CT30ABCDE"
+    assert pick_serial("List of devices attached\n192.168.137.157:41234\tdevice\n") == "192.168.137.157:41234"
+    assert pick_serial("List of devices attached\nA\tdevice\nB\tdevice\n") is None
+    assert pick_serial("List of devices attached\n") is None
+
     anchors = [(10000, 100000, 1.0), (40000, 130000, 1.0)]
     assert position_at(anchors, 101000) == 11000
     assert position_at(anchors, 131000) == 41000
@@ -519,7 +535,9 @@ def main():
         return echo(args.echo)
     if args.score_only:
         return score(args.score_only)
-    if adb("get-state").strip() != "device":
+    global SERIAL
+    SERIAL = pick_serial(adb("devices"))
+    if not SERIAL:
         sys.exit("adb sees no single phone: tools\\phone.ps1 auto, and adb devices")
     if not 1 <= args.seconds <= MAX_RECORD_S:
         sys.exit(f"--seconds must be 1 to {MAX_RECORD_S}: screenrecord stops there")
@@ -541,7 +559,7 @@ def main():
     wall, elapsed = device_clock()
     route_snapshot(out)
     anchors = []
-    recorder = subprocess.Popen([ADB, "shell", "screenrecord", "--time-limit", str(args.seconds),
+    recorder = subprocess.Popen([ADB, "-s", SERIAL, "shell", "screenrecord", "--time-limit", str(args.seconds),
                                  "--size", "720x1560", "--bit-rate", "3000000", REMOTE])
     began = time.time()
     while recorder.poll() is None and time.time() - began < args.seconds + 20:
