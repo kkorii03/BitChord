@@ -269,6 +269,16 @@ class LyricClockTest {
         }
     }
 
+    /** A pause earlier in the song says nothing about readings taken since: they still carry forward. */
+    @Test fun aPauseEarlierInTheSongDoesNotStopLaterReadingsCarrying() {
+        val clock = LyricClock(10_000)
+        clock.hold(10_000, 5.0)
+        clock.restart()
+        clock.frame(100.0, 10_000, 5.0, 0)
+        clock.restart()
+        assertEquals(11_380L, clock.frame(1_480.0, 10_900, 1_000.0, 0))
+    }
+
     /** Moving the lyrics offset shifts every reading at once; announced, it is a jump and not a fault. */
     @Test fun movingTheOffsetIsFollowed() {
         val last = steady(
