@@ -48,7 +48,11 @@ internal class LyricClock(startMs: Long) {
     private var lastReportMs = Long.MIN_VALUE
     private var lastSampledAtMs = Double.NaN
 
-    /** When playback was last seen stopped; a reading taken before then was taken standing still. */
+    /**
+     * When the reading held while stopped was taken; a reading stamped at or
+     * after then was taken standing still, one before it was taken while the
+     * song was still moving.
+     */
     private var heldAtMs = Double.NEGATIVE_INFINITY
 
     private var lastDiscontinuity: Long? = null
