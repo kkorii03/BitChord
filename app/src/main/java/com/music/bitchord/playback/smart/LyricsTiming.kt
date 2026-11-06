@@ -3930,6 +3930,7 @@ object LyricsTiming {
                     engine,
                     retry,
                 ),
+                refitVersion = SongCheckWindow.FIT_VERSION,
                 songRetryKey = null,
                 songRetryAtMs = null,
             )
@@ -4725,15 +4726,19 @@ private const val FIRM_FIT_LINES = 15
     ): Boolean = adjustable && measure && measureNow && cancelAi && !substituted
 
     /** The kept entry as the pure ask-again rule sees it; a missing entry is an empty one. */
-    private fun knowledge(entry: Entry?): AiTimingKnowledge = entry?.let {
+    internal fun knowledge(entry: Entry?): AiTimingKnowledge = entry?.let {
+        // Spent by older code, with no answer and no words kept to judge again (11-07 phone
+        // fsCxgDq2T9k: 6.8 s late for good). Today's code gets one turn: noteAttempt ends it.
+        val spentBefore = it.ai == null && it.refitVersion < SongCheckWindow.FIT_VERSION &&
+            it.refineHeardWords.isEmpty() && it.heardCheckWords.isEmpty()
         AiTimingKnowledge(
             answerKey = it.aiTextKey,
             answerEngine = it.aiEngine,
             answerMatch = it.ai?.match,
-            failedKey = it.aiFailedKey,
-            attemptedKey = it.aiAttemptedKey,
-            attemptedEngines = it.aiAttemptedEngines.toSet(),
-            whisperKey = it.whisperKey,
+            failedKey = it.aiFailedKey.takeUnless { spentBefore },
+            attemptedKey = it.aiAttemptedKey.takeUnless { spentBefore },
+            attemptedEngines = if (spentBefore) emptySet() else it.aiAttemptedEngines.toSet(),
+            whisperKey = it.whisperKey.takeUnless { spentBefore },
             rejectedKey = it.heardCheckKey?.takeIf { _ -> it.heardCheckWords.isNotEmpty() },
         )
     } ?: AiTimingKnowledge()
