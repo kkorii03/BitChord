@@ -23,6 +23,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Before the 9-minute build: a broken watchdog must not cost a run. Sets the Play step's limit.
+      - name: Watchdog check
+        run: |
+          python3 scripts/smoke/test_watchdog.py
+          echo "PLAY_MINUTES=$(python3 scripts/smoke/watchdog.py --minutes)" >> "$GITHUB_ENV"
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -86,6 +92,7 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       - name: Play and judge
+        timeout-minutes: ${{ fromJSON(env.PLAY_MINUTES) }}
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34
@@ -97,7 +104,7 @@ jobs:
           # Device-wide proxy through the runner's authfwd (see set_proxy_port.py).
           script: |
             if [ -n "$SMOKE_UPSTREAM_PROXY" ]; then (nohup python3 scripts/smoke/authfwd.py "$SMOKE_UPSTREAM_PROXY" > "$RUNNER_TEMP/authfwd.log" 2>&1 &) ; sleep 2; adb shell settings put global http_proxy 10.0.2.2:3128; fi
-            bash scripts/smoke/run.sh
+            python3 scripts/smoke/watchdog.py
 
       - name: Report
         if: always()

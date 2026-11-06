@@ -39,8 +39,45 @@ object LyricsMismatch {
         if (texts.none { it.timeMs > 0L }) {
             return Verdict(heard.size, 0, texts.size, rejected = false)
         }
-        return judgeTexts(withinHeardSpan(lines, heard).map { it.text }, heard)
+        val inSpan = withinHeardSpan(lines, heard)
+        val verdict = judgeTexts(inSpan.map { it.text }, heard)
+        return if (!verdict.rejected && wordsNotSung(inSpan, heard)) verdict.copy(rejected = true) else verdict
     }
+
+    /**
+     * Latin letters line up with almost anything, so "its opening was heard" says
+     * little about a Latin sheet: against other songs' transcripts it held for 74%
+     * of the lines and rejected 1 sheet of 143 (11-06, every sheet against every
+     * transcript of 21 songs). What does tell them apart is whether a line's own
+     * letters were heard, and whether the lines lie where the sheet times them.
+     * Wrong sheets: 114 of 131 below both floors here. Right sheets of 21, covers
+     * and MVs among them: none, the nearest 63% heard and 53% on the line.
+     *
+     * Only with this much evidence. A cover sung in another order still has its
+     * lines heard, and a rearranged song is not refused for its line alone.
+     */
+    private fun wordsNotSung(lines: List<LyricLine>, heard: List<LyricsWordAlign.Heard>): Boolean {
+        if (heard.size < MIN_WORDS_READ || lines.size < MIN_LINES_READ) return false
+        val texts = lines.map { it.text }
+        val cells = texts.sumOf { LyricsWordAlign.fold(it).length.toLong() } *
+            heard.sumOf { LyricsWordAlign.fold(it.text).length.toLong() }
+        if (cells > OPENING_CELLS) return false
+        val placement = LyricsWordAlign.placeLinesDetailed(texts, heard)
+        if (!placement.attempted) return false
+        val sung = placement.matchedShare.count { it >= SUNG_SHARE }
+        if (sung * 100 >= MIN_SUNG_PERCENT * lines.size) return false
+        val points = lines.zip(placement.starts).mapNotNull { (line, start) -> start?.let { line.timeMs to it } }
+        val onOneLine = TimingFit.fit(points)?.inliers ?: 0
+        return onOneLine * 100 < MIN_ON_LINE_PERCENT * lines.size
+    }
+
+    private const val MIN_WORDS_READ = 100
+    private const val MIN_LINES_READ = 10
+
+    /** A line counts as sung when this share of its letters was heard. */
+    private const val SUNG_SHARE = 0.5
+    private const val MIN_SUNG_PERCENT = 50
+    private const val MIN_ON_LINE_PERCENT = 25
 
     fun judge(lines: List<String>, heard: List<LyricsWordAlign.Heard>): Verdict =
         judgeTexts(lines.filter { it.isNotBlank() }, heard)
@@ -129,8 +166,8 @@ object LyricsMismatch {
     private const val OPENING_CELLS = 4_000_000L
 
     /** The log line the lookup writes when it throws a provider's answer away. */
-    fun logLine(source: LyricsSource, verdict: Verdict): String =
-        "lyrics-mismatch: ${source.label} heard ${verdict.heardWords} words, " +
+    fun logLine(source: LyricsSource?, verdict: Verdict): String =
+        "lyrics-mismatch: ${source?.label ?: "kept sheet"} heard ${verdict.heardWords} words, " +
             "${verdict.matchedLines}/${verdict.totalLines} lines -> rejected"
 
     /**

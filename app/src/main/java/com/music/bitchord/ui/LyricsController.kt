@@ -144,6 +144,21 @@ class LyricsController(
     private var mismatchReloadedFor: String? = null
 
     /**
+     * Every sheet seen for the playing song, kept across a stream-to-file swap
+     * and a reload: what the words heard choose between — see [SheetChoice].
+     */
+    private val sheetCandidates = ConcurrentHashMap<LyricsSource, LyricsRepository.Result>()
+
+    /** The sheet and transcript last judged: a refresh with neither changed has nothing to ask. */
+    private var sheetJudgedFor: String? = null
+
+    /** The sheet on screen is one the listener saved for this song. */
+    private var sheetByHand = false
+
+    /** The lines on screen stay until the next timing replaces them: no frame without their correction. */
+    private var holdShown = false
+
+    /**
      * The video whose sheet was already re-asked for, once, after its song
      * version answered late. One extra request per playback: asking again
      * would buy the same answer.
@@ -309,6 +324,15 @@ class LyricsController(
         // length, so they may show as a preview until it arrives; only the
         // network request is withheld.
         val previewOnly = action == LyricsRequestAction.LOCAL_PREVIEW
+        if (currentLyricsRequest?.videoId != videoId) sheetCandidates.clear()
+        // A download taking over is the same song: its corrected sheet stays on screen,
+        // [LyricsTiming.timing] carries the answer onto the file's clock.
+        // 11-06 w58uXpyHWes: the file's own sheet took over, uncorrected, for 71 s.
+        val takenOver = rawLyricsResult?.takeIf {
+            localUri != null && currentLyricsRequest?.videoId == videoId &&
+                currentLyricsRequest?.localUri == null && appliedTiming?.base != null
+        }
+        holdShown = takenOver != null
         if (currentLyricsRequest?.videoId != videoId ||
             (currentLyricsRequest?.localUri != null) != (localUri != null)
         ) {
@@ -337,8 +361,10 @@ class LyricsController(
         } else {
             order
         }
-        _lyrics.value = null
-        _lyricsSource.value = null
+        if (takenOver == null) {
+            _lyrics.value = null
+            _lyricsSource.value = null
+        }
         rawLyricsResult = null
         timingLines = null
         timingBaseAllowed = false
@@ -363,7 +389,7 @@ class LyricsController(
         // answer rather than making a request. On by default since 10-31: the
         // bundle's lyrics path is a post-ko-101 addition, and the listener
         // asked for its sync work to run before the next song starts.
-        if (SyncSafetyPolicy.firstFrameCacheAllowed(AppSettings.syncSafetySwitches)) {
+        if (takenOver == null && SyncSafetyPolicy.firstFrameCacheAllowed(AppSettings.syncSafetySwitches)) {
             val preparedAudioSource = if (isVideo) {
                 null
             } else {
@@ -383,7 +409,9 @@ class LyricsController(
                 ),
                 audioSource = preparedAudioSource,
                 substituted = preparedSubstituted,
-            )?.let { prepared ->
+            ).also {
+                TrackLog.d("BitChord", "next-prep used: $videoId where=screen hit=${it != null}", videoId)
+            }?.let { prepared ->
                 if (prepared.source != null) {
                     publishLyrics(
                         LyricsRepository.Result(
@@ -397,12 +425,20 @@ class LyricsController(
             }
         }
         lyricsJob = scope.launch {
+            if (takenOver != null) {
+                keepSheet(videoId, takenOver)
+                showLyricsResult(takenOver)
+                return@launch
+            }
             // A per-song override is the last word: it comes before the
             // downloaded file's tags or `lyrics.lrc`, and before any provider
             // lookup. It also keeps a re-checked sheet out of the audio file,
             // which may be the one playing — see LyricsOverrideFile.
             val override = LyricsOverrideStore.read(app, videoId)
+            sheetByHand = override?.kind == LyricsOverrideFile.Kind.USER
             if (override != null) {
+                // Chosen already, by the listener or by these same words.
+                sheetCandidates.clear()
                 val lines = override.lines
                 val timed = lines.any { it.timeMs > 0 }
                 _lyrics.value = lines
@@ -452,7 +488,9 @@ class LyricsController(
             // recording. The caller has already had the player's length for
             // every track before this job starts.
             if (localUri != null) {
-                EmbeddedLyrics.withSource(app, localUri)?.let { file ->
+                EmbeddedLyrics.withSource(app, localUri)?.takeUnless {
+                    mismatchReloadedFor == "$videoId|${it.lines.hashCode()}"
+                }?.let { file ->
                     val embedded = file.lines
                     _lyrics.value = embedded
                     // No source to name: what the file records is the lyrics,
@@ -663,6 +701,7 @@ class LyricsController(
             return
         }
         lyricsProviderResults[source] = result
+        sheetCandidates[source] = result
         _lyricsProviderStates.update { it + (source to LyricsProviderState.FOUND) }
         // Provider answers arrive on the lookup's IO threads; what is shown is
         // changed on the main thread only, so two of them landing together
@@ -755,8 +794,9 @@ class LyricsController(
             return
         }
         rawLyricsResult = result
-        _lyrics.value = result?.lines
+        if (!holdShown) _lyrics.value = result?.lines
         _lyricsSource.value = result?.source
+        result?.let { sheetCandidates[it.source] = it }
         val request = currentLyricsRequest
         // Any timed lines can be put on the video's clock by Gemini; only the
         // record's are measured against the record.
@@ -855,7 +895,7 @@ class LyricsController(
         val timed = lines != null && lines.any { it.timeMs > 0 }
         // As the source timed them, until [refreshTiming] says otherwise.
         appliedTiming = null
-        if (lines != null) _lyrics.value = lines
+        if (lines != null && !holdShown) _lyrics.value = lines
         _lyricsTiming.value = LyricsTimingUi(
             adjustable = adjustable,
             manualAvailable = timed,
@@ -1311,7 +1351,8 @@ class LyricsController(
         // Every change to this video's timing lands here, its own included;
         // the lines are only rebuilt when what applies actually changed.
         var shown = _lyrics.value
-        if (timing != appliedTiming || _lyrics.value == null) {
+        if (timing != appliedTiming || _lyrics.value == null || holdShown) {
+            holdShown = false
             appliedTiming = timing
             shown = if (timing == null) {
                 lines
@@ -1391,6 +1432,7 @@ class LyricsController(
             shiftMs = shiftMs ?: 0L,
             matchPercent = matchPercent,
             lines = shown ?: lines,
+            heardWords = timing?.heardWords.orEmpty(),
         )
         // Sync-test mode only: a downloaded file's own opening. With the
         // download re-check off no song check runs for it, so nothing else
@@ -1467,6 +1509,16 @@ class LyricsController(
     }
 
     /**
+     * Kept like a re-check's sheet: the file and the next playback would otherwise open
+     * with another sheet than the one the one AI slot holds an answer for.
+     */
+    private suspend fun keepSheet(videoId: String, sheet: LyricsRepository.Result) {
+        com.music.bitchord.download.LyricsTag.embeddable(sheet.source, videoId, sheet.lines)?.let {
+            LyricsOverrideStore.write(app, videoId, sheet.lines, sheet.source)
+        }
+    }
+
+    /**
      * Throws away what is on screen when the transcript the app already has
      * shows the sheet is another song's, and asks again — the same lookup,
      * now able to reject that provider's answer and try the next name. The
@@ -1479,12 +1531,29 @@ class LyricsController(
     ) {
         if (generation != lyricsGeneration || timingLines !== lines) return
         if (selectedLyricsSource != null) return
-        val result = rawLyricsResult ?: return
         val key = "${request.videoId}|${lines.hashCode()}"
         if (mismatchReloadedFor == key) return
         scope.launch {
             val heard = LyricsTiming.heardWordsFor(app, request.videoId)
             if (generation != lyricsGeneration || timingLines !== lines) return@launch
+            // Every refresh lands here: only new words or a new sheet are worth the sums below.
+            val judged = "$key|${heard.size}"
+            if (sheetJudgedFor == judged) return@launch
+            sheetJudgedFor = judged
+            val others = sheetCandidates.values.filter { it.lines != lines && it.lines.any { line -> line.timeMs > 0 } }
+            val better = withContext(Dispatchers.Default) {
+                com.music.bitchord.playback.smart.SheetChoice.better(lines, others, heard)
+            }
+            if (generation != lyricsGeneration || timingLines !== lines) return@launch
+            if (better != null) {
+                TrackLog.i("BitChord", "sheet-choice: -> ${better.source.label} heard=${heard.size}", request.videoId)
+                keepSheet(request.videoId, better)
+                showLyricsResult(better)
+                return@launch
+            }
+            // The listener's own sheet is theirs, whatever was heard.
+            if (sheetByHand) return@launch
+            val result = rawLyricsResult
             // Lining a long sheet up with a long transcript is a full DP table;
             // it must not run on the main thread while the screen is drawing.
             val verdict = withContext(Dispatchers.Default) {
@@ -1495,9 +1564,12 @@ class LyricsController(
             mismatchReloadedFor = key
             TrackLog.i(
                 "BitChord",
-                com.music.bitchord.data.lyrics.LyricsMismatch.logLine(result.source, verdict),
+                com.music.bitchord.data.lyrics.LyricsMismatch.logLine(result?.source, verdict),
                 about = request.videoId,
             )
+            // A file's or a re-check's sheet came through no lookup, so nothing judged it and it
+            // stayed wrong on every play. The reload passes a file's sheet over (mismatchReloadedFor).
+            if (result == null) LyricsOverrideStore.removeRecheck(app, request.videoId)
             requestGate.release()
             loadLyrics(
                 videoId = request.videoId,
@@ -1532,12 +1604,6 @@ class LyricsController(
         // saved without words is heard once too (see ensureRefineHeard).
         if (!AppSettings.heavyWorkAllowed || !AppSettings.aiTimingAhead.value) return
         if (!com.music.bitchord.data.lyrics.Deepgram.usable) return
-        if (LyricsTiming.refineHeardKnown(app, request.videoId, lines, timing, audioSource)) return
-        // Words on their way: this runs again when they land, and reads them.
-        if (LyricsTiming.hearingBusy(request.videoId)) return
-        val key = "${request.videoId}|${request.localUri != null}|${lines.hashCode()}"
-        if (refineHeardStartedFor == key) return
-        refineHeardStartedFor = key
         val song = Song(
             videoId = request.videoId,
             title = request.title,
@@ -1552,6 +1618,17 @@ class LyricsController(
                 "${ms / 60_000}:${((ms / 1_000) % 60).toString().padStart(2, '0')}"
             },
         )
+        scope.launch {
+            if (LyricsTiming.refit(app, song, lines, audioSource) && generation == lyricsGeneration && timingLines === lines) {
+                refreshTiming(generation, lines)
+            }
+        }
+        if (LyricsTiming.refineHeardKnown(app, request.videoId, lines, timing, audioSource)) return
+        // Words on their way: this runs again when they land, and reads them.
+        if (LyricsTiming.hearingBusy(request.videoId)) return
+        val key = "${request.videoId}|${request.localUri != null}|${lines.hashCode()}"
+        if (refineHeardStartedFor == key) return
+        refineHeardStartedFor = key
         refineHeardJob = scope.launch {
             val heard = LyricsTiming.ensureRefineHeard(
                 app,

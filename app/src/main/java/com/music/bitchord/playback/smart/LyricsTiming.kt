@@ -431,10 +431,13 @@ object LyricsTiming {
             // YouTube→copy map must not run a second time.
             hq = null
             saved
-        } else if (baseClock is Clock.Unknown && (playing is Clock.YouTube || hq != null)) {
+        } else if (baseClock is Clock.Unknown &&
+            (playing is Clock.YouTube || hq != null || audioSource == audioSourceKey(videoId, localFile = true))
+        ) {
             // An untagged record was made on the upload. On the upload that is
             // the playing clock; on a copy only the verified HQ map carries it,
-            // and it is applied on top of it below.
+            // and it is applied on top of it below. Under the file's key it was
+            // made for the file.
             saved
         } else {
             val conversion = conversion(context, videoId, baseClock, playing)
@@ -559,25 +562,8 @@ object LyricsTiming {
             )
         }
         val refinedWithPerLine = refined.copy(perLine = perLine)
-        val refinedLines = applyThroughRefine(lines, refinedWithPerLine)
-        // What the per-line layer does to the lines, so the sweep's words can
-        // move with their own line instead of staying on the unshifted clock.
-        val perLineLayer = perLine?.let { words ->
-            LyricsPerLine.compute(refinedLines, words.words, words.wordsKey, words.currentKey)
-        } ?: LyricsPerLine.Layer.identity(lines.size)
-        fun perLineShiftAt(ms: Long): Long {
-            var index = -1
-            for (i in refinedLines.indices) {
-                if (refinedLines[i].timeMs <= ms) index = i else break
-            }
-            return perLineLayer.shiftsMs.getOrElse(index) { 0L }
-        }
-        // The transcript is kept on the video's own clock, and a displayed line
-        // is map(record) + refine + per-line + extraMs; the words are already
-        // video time, so the rest is still missing. Read it here rather than
-        // bake it into the kept words: a correction by hand, a refine, a
-        // per-line move, or a newly learned engine lateness must move the heard
-        // words with their line.
+        // The words are when it was sung: the refine and the per-line layer move the
+        // lines onto these very words, so only the hand's correction is added here.
         val savedHeard = if (base?.byAi == true && entry.aiTextKey == key) {
             entry.heardWords
         } else {
@@ -604,18 +590,25 @@ object LyricsTiming {
         } else {
             null
         }
-        val heard = heardOnClock.map { word ->
-            fun heardAt(ms: Long): Long {
-                val onClock = hqMap?.map(ms) ?: ms
-                val refinedAt = (onClock + refined.refineAt(onClock)).coerceAtLeast(0L)
-                return (refinedAt + perLineShiftAt(refinedAt) + refined.extraMs).coerceAtLeast(0L)
+        val heard = if (savedHeard.isNotEmpty()) {
+            heardOnClock.map { word ->
+                fun heardAt(ms: Long): Long = ((hqMap?.map(ms) ?: ms) + refined.extraMs).coerceAtLeast(0L)
+                val start = heardAt(word.s)
+                LyricsWordAlign.Heard(
+                    text = word.t,
+                    startMs = start,
+                    endMs = maxOf(start, heardAt(word.e)),
+                )
             }
-            val start = heardAt(word.s)
-            LyricsWordAlign.Heard(
-                text = word.t,
-                startMs = start,
-                endMs = maxOf(start, heardAt(word.e)),
-            )
+        } else if (baseAllowed && !refineSource.lineLevel) {
+            // No AI answer on show, but the refine heard the song: a line-synced sheet's
+            // stamps ran 0.4 s early (median, 11-06), and the sweep can wait for the voice.
+            refineClock.map { word ->
+                val start = (word.startMs + refined.extraMs).coerceAtLeast(0L)
+                LyricsWordAlign.Heard(word.text, start, maxOf(start, word.endMs + refined.extraMs))
+            }
+        } else {
+            emptyList()
         }
         logClocks(videoId, playing, baseClock, refineSource.clock, manualClock, converted, dropped)
         return refinedWithPerLine.copy(heardWords = heard).takeUnless { it.isEmpty }
@@ -857,6 +850,13 @@ object LyricsTiming {
             }
             else -> null
         }
+    }
+
+    /** Whether an answer from words heard on the stream would survive [timing] on [videoId]'s file. */
+    internal fun streamWordsReachFile(context: Context, videoId: String): Boolean {
+        val meta = KoDownloadRecords.savedMetadataFor(videoId)
+        val file = clockForLocalCopy(meta?.hqSourceConfigId, meta?.hqTrackId)
+        return conversion(context, videoId, Clock.YouTube, file) != null
     }
 
     /** [adjustment] composed after [conversion]: its map is measured clock → playing clock. */
@@ -1573,6 +1573,71 @@ object LyricsTiming {
             _changes.tryEmit(videoId)
             true
         }
+    }
+
+    /**
+     * The sheet judged again on the longest words kept: no request. An engine is spent
+     * once per sheet, so a fit made on an opening or by older code would otherwise stand
+     * for good, on any row, answered or refused (the whole song's words only reach
+     * [RefinePolicy], which makes one move). True when what shows changed.
+     */
+    suspend fun refit(
+        context: Context,
+        song: Song,
+        lines: List<LyricLine>,
+        audioSource: String?,
+    ): Boolean = withContext(Dispatchers.Default) {
+        val videoId = song.videoId
+        if (hearingBusy(videoId)) return@withContext false
+        val key = textKey(lines, audioSource)
+        val texts = lines.filter { it.text.isNotBlank() }.map { it.text }
+        val language = com.music.bitchord.data.lyrics.Deepgram.languageFor(texts)
+        songSyncGate.withLock {
+            val entry = store(context).get(videoId) ?: Entry()
+            // The listener's own ask stands.
+            if (entry.aiPreferred && entry.aiTextKey == key) return@withLock false
+            val heard = SongHearing.longestKept(context, song, language) ?: wordsInEntry(entry, key)
+                ?: return@withLock false
+            if (!SongCheckWindow.refitDue(entry.refitVersion, entry.refitKey == key, entry.refitMs, heard.audioMs)) {
+                return@withLock false
+            }
+            if (replacedSheet(videoId, key)) return@withLock false
+            val check = fitSongCheck(
+                context, song, lines, key, ENGINE_DEEPGRAM_WHISPER, null,
+                SongAsk(heard, language, heard.audioMs / 1000.0), retry = false,
+            )
+            applySongCheck(context, song, key, ENGINE_DEEPGRAM_WHISPER, check)
+            // Stretches an older fit made and this one no longer stands behind.
+            val dropStale = check.fitted == null && entry.aiTextKey == key &&
+                entry.refitVersion < SongCheckWindow.FIT_VERSION && (entry.ai?.knots?.size ?: 0) > 2
+            store(context).update(videoId) {
+                it.copy(
+                    refitVersion = SongCheckWindow.FIT_VERSION,
+                    refitKey = key,
+                    refitMs = heard.audioMs,
+                    ai = if (dropStale) null else it.ai,
+                )
+            }
+            TrackLog.d(TAG, "song-sync: refit ${check.result} on ${heard.audioMs / 1000}s kept", videoId)
+            if (dropStale) _changes.tryEmit(videoId)
+            check.fitted != null || dropStale
+        }
+    }
+
+    /** Words from before [SongHearing] kept them, which only the entry still holds. */
+    private fun wordsInEntry(entry: Entry, key: Int): SongHearing.Heard? {
+        val (words, clock) = when {
+            entry.refineHeardKey == key && entry.refineHeardWords.isNotEmpty() -> entry.refineHeardWords to entry.refineHeardClock
+            entry.heardCheckKey == key && entry.heardCheckWords.isNotEmpty() -> entry.heardCheckWords to entry.heardCheckClock
+            else -> return null
+        }
+        return SongHearing.Heard(
+            words = words.map { LyricsWordAlign.Heard(it.t, it.s, it.e) },
+            audioMs = words.last().e,
+            clock = clockOf(clock),
+            httpCode = 200,
+            fromStore = true,
+        )
     }
 
     /**
@@ -2631,6 +2696,7 @@ object LyricsTiming {
             return null
         }
         val key = textKey(lines, audioSource)
+        newestSongKey[videoId] = key
         // One decision for every automatic caller, made from what is kept —
         // the screen, the next-song preparation and the calibration sample
         // used to each guard on their own and each miss a case.
@@ -2867,21 +2933,23 @@ object LyricsTiming {
                     AI_HEAR_SECONDS,
                     AI_HEAR_LEAST_SECONDS,
                     language,
+                    // 90 s clears an MV's intro; fewer could spend this turn on no lines, with no second pass.
+                    reuseFrom = VideoAudio.SONG_CHECK_SECONDS,
                 ) ?: break
                 audioPresent = true
                 listenedClock = hearing.clock
-                // A 429 heard nothing. Spent anyway, this video's Whisper never came back for these lyrics.
-                val spent = hearing.httpCode != 429
-                if (spent) noteAttempt(name)
-                if (spent && name == ENGINE_WHISPER) {
-                    if (probe == null) {
-                        store(context).update(videoId) { it.copy(whisperKey = key) }
-                    } else {
-                        pendingWhisper = true
+                // Only a reply spends the turn: 11-06 a dropped connection left 3s1jaFDrp5M 1.5 s off for good.
+                if (AiTimingPolicy.songReplySpends(hearing.httpCode)) {
+                    noteAttempt(name)
+                    if (name == ENGINE_WHISPER) {
+                        if (probe == null) {
+                            store(context).update(videoId) { it.copy(whisperKey = key) }
+                        } else {
+                            pendingWhisper = true
+                        }
                     }
                 }
-                val heardAnswer = hearing
-                val heard = heardAnswer.words
+                val heard = hearing.words
                 if (heard != null) anyEngineAnswered = true
                 // Lines past what was heard cannot have been placed; they are
                 // not disagreement. The whole song leaves every line in.
@@ -2892,7 +2960,9 @@ object LyricsTiming {
                 }
                 val starts = placement?.starts
                 val raw = placement?.let {
-                    fitHeard(videoId, lines, inReach.map { s -> s.index }, it) { fit -> aiMayApply(lines, fit, isVideo) }
+                    fitHeard(videoId, lines, inReach.map { s -> s.index }, it, heard.orEmpty().maxOfOrNull { w -> w.endMs } ?: 0L) { fit, moved ->
+                        LyricsAiGuard.allowsAiTiming(isVideo, fit.matchPercent, moved)
+                    }
                 }
                 val fitted = raw?.takeIf { aiMayApply(lines, it, isVideo) }
                 TrackLog.d(
@@ -2909,7 +2979,7 @@ object LyricsTiming {
                     },
                     videoId,
                 )
-                if (heardAnswer.httpCode == 429) {
+                if (hearing.httpCode == 429) {
                     // The retries ran out; the hold they left is the wait.
                     val wait = (songQuietUntilMs - System.currentTimeMillis()).coerceAtLeast(0L)
                     rateLimitedWaitMs = maxOf(rateLimitedWaitMs ?: 0L, wait)
@@ -3004,6 +3074,8 @@ object LyricsTiming {
             return null
         }
         persistAttempts()
+        // 11-06 ekzHIouo8Q4, three rounds: the replaced sheet's answer landed 0.5 s after the shown one's and took the slot.
+        if (replacedSheet(videoId, key)) return null
         store(context).update(videoId) {
             it.copy(
                 clockVersion = CLOCK_VERSION,
@@ -3361,9 +3433,9 @@ object LyricsTiming {
      * left the screen with none (11-06 rlYOsUfpi3M: applied at 88%, overwritten
      * a second later, ended sync=none).
      */
-    private val newestSongKey = ConcurrentHashMap<String, Int>()
+    internal val newestSongKey = ConcurrentHashMap<String, Int>()
 
-    private fun replacedSheet(videoId: String, key: Int): Boolean {
+    internal fun replacedSheet(videoId: String, key: Int): Boolean {
         val replaced = newestSongKey[videoId].let { it != null && it != key }
         if (replaced) TrackLog.d(TAG, "song-sync: answer for a replaced sheet dropped", videoId)
         return replaced
@@ -3434,7 +3506,7 @@ object LyricsTiming {
         } else {
             SongCheckWindow.FIRST_SECONDS
         }
-        val firstAsk = hearSongCheck(context, song, lines, key, probe, firstUntil, retry) ?: return false
+        val firstAsk = hearSongCheck(context, song, lines, key, probe, firstUntil, retry, firstPass = true) ?: return false
         val (first, firstOk) = songSyncGate.withLock {
             if (songSyncGenerationOf(song.videoId) != startedGeneration) return@withLock null
             if (replacedSheet(song.videoId, key)) return@withLock null
@@ -3508,6 +3580,8 @@ object LyricsTiming {
                         heardCheckClock = checkClock.saved(),
                     )
                 }
+                // The full opening may be a minute away; these words can already prove the sheet wrong.
+                _changes.tryEmit(song.videoId)
             }
             return true
         }
@@ -3589,6 +3663,8 @@ object LyricsTiming {
         probe: NextSyncProbe?,
         untilSeconds: Double,
         retry: Boolean,
+        /** Whatever is kept will do: a full pass follows if it cannot fit. */
+        firstPass: Boolean = false,
     ): SongAsk? {
         probe?.beginPass()
         val indices = SongCheckWindow.indices(lines.map { it.timeMs }, (untilSeconds * 1000).toLong())
@@ -3602,7 +3678,7 @@ object LyricsTiming {
         val mixed = com.music.bitchord.data.lyrics.Deepgram.mixedPercent(texts, sheetLanguage)
         if (mixed > 0) TrackLog.d(TAG, "song-sync: lang=$sheetLanguage sheet-mixed ratio=$mixed%", song.videoId)
         if (retryLanguage != null) TrackLog.d(TAG, "song-sync: lang retry ($sheetLanguage -> $retryLanguage)", song.videoId)
-        val answer = listenForSong(context, song, key, untilSeconds, language, probe) ?: return null
+        val answer = listenForSong(context, song, key, untilSeconds, language, probe, firstPass) ?: return null
         return SongAsk(answer, language, untilSeconds)
     }
 
@@ -3654,9 +3730,8 @@ object LyricsTiming {
         val spellable = com.music.bitchord.data.lyrics.Deepgram.spellableLines(texts, language)
         // Why a match is what it is: lines in the window, lines placed, lines the language could spell.
         val detail = " lines=${texts.size} placed=${starts.count { it != null }} spellable=$spellable lang=$language"
-        val fitted = fitHeard(song.videoId, lines, indices, placement, spellable) { fit ->
-            LyricsAiGuard.agreementAllows(fit.matchPercent) &&
-                LyricsAiGuard.songShiftAllows(shownShiftMs(lines, fit), fit.matchPercent)
+        val fitted = fitHeard(song.videoId, lines, indices, placement, heard.maxOf { it.endMs }, spellable) { fit, moved ->
+            LyricsAiGuard.agreementAllows(fit.matchPercent) && LyricsAiGuard.songShiftAllows(moved, fit.matchPercent)
         } ?: run {
             songLog(song.videoId, "no-fit", null, null, seconds, words = heard.size, http = answer.httpCode, detail = detail)
             recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe, retry)
@@ -3736,6 +3811,7 @@ object LyricsTiming {
         untilSeconds: Double,
         language: String,
         probe: NextSyncProbe? = null,
+        firstPass: Boolean = false,
     ): SongHearing.Heard? {
         val videoId = song.videoId
         val quiet = songQuietUntilMs - System.currentTimeMillis()
@@ -3754,6 +3830,7 @@ object LyricsTiming {
             untilSeconds,
             minSeconds = if (untilSeconds < VideoAudio.SONG_CHECK_SECONDS) SONG_FIRST_LEAST_SECONDS else untilSeconds,
             language,
+            reuseFrom = if (firstPass) SONG_FIRST_LEAST_SECONDS else untilSeconds,
         ) ?: run {
             songLog(videoId, "no-audio", null, null, 0)
             probe?.failure = NextPrepPolicy.SyncFailure.NO_AUDIO
@@ -3774,11 +3851,12 @@ object LyricsTiming {
         untilSeconds: Double,
         minSeconds: Double,
         language: String,
+        reuseFrom: Double = untilSeconds,
     ): SongHearing.Heard? {
         var attempt = 0
         while (true) {
             // Straight off the file, or the streaming copy as it stands.
-            val answer = SongHearing.hear(context, song, untilSeconds, language, minSeconds) ?: return null
+            val answer = SongHearing.hear(context, song, untilSeconds, language, minSeconds, reuseFrom) ?: return null
             if (answer.httpCode != 429) {
                 songQuietUntilMs = 0L
                 return answer
@@ -4531,23 +4609,26 @@ private const val FIRM_FIT_LINES = 15
         lines: List<LyricLine>,
         indices: List<Int>,
         placement: LyricsWordAlign.Placement,
+        lastHeardMs: Long,
         spellable: Int = indices.size,
-        mayApply: (Adjustment.Mapped) -> Boolean,
+        // The answer and the move to judge: a line's first line, stretches' furthest.
+        mayApply: (Adjustment.Mapped, Long) -> Boolean,
     ): Adjustment.Mapped? {
         val straight = fitAi(lines, indices, placement.starts, spellable)
         val outcome = TimingPieces.fit(
             indices.map { lines[it].timeMs },
             indices.map { lines[it].text },
             placement,
+            lastHeardMs,
             spellable,
         )
         val found = outcome.result
         val pieces = found?.let { Adjustment.Mapped(it.map, byAi = true, rate = it.rate, matchPercent = it.agreePercent) }
-        val straightHolds = straight != null && mayApply(straight)
+        val straightHolds = straight != null && mayApply(straight, shownShiftMs(lines, straight))
         val chosen = when {
             found == null || pieces == null -> straight
             straightHolds && !TimingPieces.overrules(straight!!.map, found) -> straight
-            mayApply(pieces) -> pieces
+            mayApply(pieces, found.largestMoveMs) -> pieces
             else -> straight
         }
         TrackLog.d(
@@ -4774,6 +4855,10 @@ private const val FIRM_FIT_LINES = 15
         val refineHeardSeconds: Double = 0.0,
         /** The once-only longer listen has been made (or the song ends before it could help); see [RefineExtendPolicy]. */
         val refineHeardExtended: Boolean = false,
+        /** What [refit] last judged: the fit's version, the sheet, how far the words reached. */
+        val refitVersion: Int = 0,
+        val refitKey: Int? = null,
+        val refitMs: Long = 0L,
         /**
          * The lyrics the last automatic request was for, and the engines it
          * has spent on them; see [AiTimingPolicy]. A song check's key also

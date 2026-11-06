@@ -11421,7 +11421,7 @@ class PlaybackService : MediaLibraryService() {
         position: Long,
     ): Boolean = koRestreamWrongRecording(player, item, position) // [KO] download-health
 
-    private fun loadLyricsForCurrentTrack() {
+    internal fun loadLyricsForCurrentTrack() {
         scheduleTranslationAhead()
         val currentSong = player?.currentMediaItem?.toSong() ?: run {
             serviceLyrics = null
@@ -11470,6 +11470,7 @@ class PlaybackService : MediaLibraryService() {
         } else {
             null
         }
+        TrackLog.d("BitChord", "next-prep used: ${currentSong.videoId} where=service hit=${prepared != null}", about = currentSong.videoId)
         if (prepared != null) {
             serviceLyrics = prepared.shown
             com.music.bitchord.lockscreen.NowPlayingLyrics.publish(
@@ -11510,6 +11511,8 @@ class PlaybackService : MediaLibraryService() {
                     lines = file.lines
                     foundSource = file.source
                     fromFile = true
+                    // The lyrics screen re-checks a file's own sheet whatever its header says.
+                    recheckOverride = true
                 }
             }
             if (lines == null) {

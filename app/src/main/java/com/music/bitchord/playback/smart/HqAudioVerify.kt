@@ -948,14 +948,20 @@ object HqAudioVerify {
                         }
                         return@coroutineScope DownloadedSound.Rejected
                     }
-                    DownloadedSound.Accepted(
-                        HqVerificationStore.Verified(
-                            offsetMs = offset,
-                            rate = rate,
-                            matchPercent = match,
-                            tier = tier ?: HqTier.NORMAL,
-                        ),
+                    val measured = HqVerificationStore.Verified(
+                        offsetMs = offset,
+                        rate = rate,
+                        matchPercent = match,
+                        tier = tier ?: HqTier.NORMAL,
                     )
+                    // The only map between this file's clock and YouTube's; a kept verdict
+                    // stays for its source names (11-06 MUny_GDYIDM: measured, then no map).
+                    if (!sourceConfigId.isNullOrBlank() && !trackId.isNullOrBlank() &&
+                        HqVerificationStore.get(context, youtubeId, sourceConfigId, trackId) == null
+                    ) {
+                        HqVerificationStore.put(context, youtubeId, sourceConfigId, trackId, measured)
+                    }
+                    DownloadedSound.Accepted(measured)
                 }
             }
         } finally {

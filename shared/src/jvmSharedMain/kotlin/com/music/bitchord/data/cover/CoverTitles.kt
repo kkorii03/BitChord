@@ -133,6 +133,9 @@ object CoverTitles {
 
     private val ANY_GROUP = Regex("""\s*[(\[（【][^()\[\]（）【】]*[)\]）】]""")
 
+    /** "아이유(IU)": a Hangul name with its Latin spelling in brackets. */
+    private val NAME_WITH_LATIN = Regex("""[가-힣][가-힣 ]*\s*\([A-Za-z][A-Za-z0-9 .&'-]*\)""")
+
     /**
      * The catalogue's own (title, artist) for a cover video whose original
      * recording has been found and measured against — "Shape of You" / "Ed
@@ -263,7 +266,17 @@ object CoverTitles {
         val group = TRAILING_GROUP.find(right) ?: return listOf(song.title to song.artist)
         val credit = group.groupValues[1].trim()
         val name = right.removeRange(group.range).trim()
-        if (credit.isEmpty() || name.isEmpty() || isVersionWord(credit)) return listOf(song.title to song.artist)
+        if (credit.isEmpty() || name.isEmpty() || isVersionWord(credit)) {
+            // "가수(SINGER) - 곡 [가사/Lyrics]": a Hangul name beside its Latin spelling is
+            // how a lyrics channel credits the singer. Read as a title, the singer's name
+            // found another song of that name (11-06 V6WWJNpIJN4: 0 of 61 lines sung).
+            val singer = left.trim().takeIf { NAME_WITH_LATIN.matches(it) }
+            return if (singer != null && name.isNotEmpty()) {
+                listOf(name to singer, song.title to song.artist)
+            } else {
+                listOf(song.title to song.artist)
+            }
+        }
         // "X - Song (Y)": either X sings Y's song, or X's song in a version
         // called Y. The second is the usual one, so it is tried first.
         return listOf(name to left, name to credit)

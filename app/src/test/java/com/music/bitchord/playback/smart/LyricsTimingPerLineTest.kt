@@ -96,13 +96,13 @@ class LyricsTimingPerLineTest {
     fun `a song the straight line fits comes back on the straight line`() {
         val starts = sheet.map { it.timeMs + 5_000L }
         val line = LyricsTiming.fitAi(sheet, all, starts)
-        val fitted = LyricsTiming.fitHeard("v", sheet, all, placement(starts)) { true }
+        val fitted = LyricsTiming.fitHeard("v", sheet, all, placement(starts), Long.MAX_VALUE) { _, _ -> true }
         assertEquals(line, fitted)
     }
 
     @Test
     fun `a refused line gives way to the stretches and each line keeps its own clock`() {
-        val fitted = LyricsTiming.fitHeard("v", sheet, all, placement(twoClocks)) { fit ->
+        val fitted = LyricsTiming.fitHeard("v", sheet, all, placement(twoClocks), Long.MAX_VALUE) { fit, _ ->
             com.music.bitchord.data.lyrics.LyricsAiGuard.agreementAllows(fit.matchPercent)
         }
         assertEquals(100, fitted?.matchPercent)
@@ -113,12 +113,12 @@ class LyricsTimingPerLineTest {
     @Test
     fun `when nothing may apply the straight line goes back for the caller to refuse`() {
         val line = LyricsTiming.fitAi(sheet, all, twoClocks)
-        assertEquals(line, LyricsTiming.fitHeard("v", sheet, all, placement(twoClocks)) { false })
+        assertEquals(line, LyricsTiming.fitHeard("v", sheet, all, placement(twoClocks), Long.MAX_VALUE) { _, _ -> false })
     }
 
     @Test
     fun `stretches carry across a clock change in the order they were measured`() {
-        val fitted = LyricsTiming.fitHeard("v", sheet, all, placement(twoClocks)) { true }!!
+        val fitted = LyricsTiming.fitHeard("v", sheet, all, placement(twoClocks), Long.MAX_VALUE) { _, _ -> true }!!
         // On a verified copy two seconds behind the upload, after base and before refine.
         val timing = LyricsTiming.Timing(
             base = fitted,
@@ -134,5 +134,16 @@ class LyricsTimingPerLineTest {
         assertEquals(sheet[3].timeMs + 9_000L, shown[3])
         assertEquals(sheet[33].timeMs + 42_000L, shown[33])
         assertEquals(shown.sorted(), shown)
+    }
+
+    @Test
+    fun `stretches are held to their furthest move, not their first line`() {
+        val moves = ArrayList<Long>()
+        LyricsTiming.fitHeard("v", sheet, all, placement(twoClocks), Long.MAX_VALUE) { fit, moved ->
+            moves += moved
+            fit.map.knots == 1 && moved == 0L
+        }
+        // The straight line first, on its first line; then the stretches, on +40 s.
+        assertEquals(40_000L, moves.last())
     }
 }

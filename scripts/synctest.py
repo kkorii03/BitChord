@@ -163,6 +163,7 @@ def parse_blocks(text, vid):
         kind = parts[0]
         if kind == "begin":
             head = dict(p.split("=", 1) for p in raw[i:].split()[3:] if "=" in p)
+            head["lit"] = {}  # line number -> ms the sweep first lights it
             cur = (head, [])
         elif kind == "line" and cur is not None and len(parts) >= 4:
             rest = parts[4] if len(parts) > 4 else ""
@@ -170,11 +171,14 @@ def parse_blocks(text, vid):
             # human reading the log — which time a chorus line came round, how
             # many words it holds — and stripped here so the text handed to the
             # aligner is the lyrics and nothing else. Older logs start straight
-            # at the text and are read the same way.
+            # at the text and are read the same way. `lit=<ms>` (11-06) is when the
+            # sweep first lights the line.
             while True:
-                meta = re.match(r"(?:rep|words)=\S+\s+", rest)
+                meta = re.match(r"(rep|words|lit)=(\S+)\s+", rest)
                 if not meta:
                     break
+                if meta.group(1) == "lit":
+                    cur[0]["lit"][int(parts[2])] = int(meta.group(2))
                 rest = rest[meta.end():]
             cur[1].append((int(parts[2]), int(parts[3]), rest))
         elif kind == "end" and cur is not None:
@@ -652,12 +656,27 @@ def refine_with_fa(vid, both):
     return out, f"fa {len(out)}/{len(both)}"
 
 
+def lit_scores(both, lit):
+    """What the eye sees: first lit letter - sung start, on the lines scored. The stamp
+    decides PASS; these columns show when the sweep tells a different story (old logs: {})."""
+    errs = [lit[n] / 1000 - sung for n, _, sung, _ in both if n in lit]
+    if not errs:
+        return {}
+    later = [lit[n] / 1000 - shown for n, shown, _, _ in both if n in lit]
+    return dict(lit_median=round(statistics.median(errs), 3),
+                lit_in03=round(sum(abs(e) <= 0.3 for e in errs) / len(errs), 2),
+                lit_max=round(max(abs(e) for e in errs), 2),
+                lit_later=round(sum(x >= 0.2 for x in later) / len(later), 2))
+
+
 def finish(vid, row, lines, per_model):
     """Scores the lines against what both hearing models heard in the played audio."""
     # Every answer the app showed for this song, scored the same way: which base
     # (provider's own, ai, measured, ...) was closest to what is sung.
     alts = []
-    for head, blines in row.pop("blocks", []):
+    blocks = row.pop("blocks", [])
+    lit = blocks[-1][0].get("lit", {}) if blocks else {}
+    for head, blines in blocks:
         b, _, _ = agreed([align(blines, words) for words in per_model])
         if len(b) >= 4:
             e = [shown - sung for _, shown, sung, _ in b]
@@ -676,10 +695,11 @@ def finish(vid, row, lines, per_model):
         row["timing"] = "whisper (no YouTube copy for fa)"
     heard_until = min(words[-1][1] for words in per_model if words) if all(per_model) else 0
     eligible = sum(1 for _, ms, t in lines if len(norm(t)[:PREFIX_CHARS]) >= 2 and ms / 1000 <= heard_until)
-    row.update(eligible=eligible, model_gap=round(gap, 3) if gap is not None else "")
+    row.update(eligible=eligible, model_gap=round(gap, 3) if gap is not None else "", **lit_scores(both, lit))
     (OUT / f"{vid}.lines.csv").write_text(
-        "line,shown_s,sung_s,error_s,ratio\n" + "".join(
-            f"{n},{a:.3f},{b:.3f},{a - b:+.3f},{r}\n" for n, a, b, r in both), encoding="utf-8")
+        "line,shown_s,sung_s,error_s,ratio,lit_s\n" + "".join(
+            f"{n},{a:.3f},{b:.3f},{a - b:+.3f},{r},{lit[n] / 1000 if n in lit else ''}\n" for n, a, b, r in both),
+        encoding="utf-8")
     if eligible >= 10 and len(either) < 0.25 * eligible:
         return dict(row, error=f"shown lyrics not heard ({len(either)}/{eligible} lines)", app_fail=True)
     if len(both) < STRICT["min_lines"]:
@@ -695,7 +715,7 @@ def write_report(rows):
     fields = ["playlist", "video", "verdict", "why", "old_verdict", "shape", "slope_ms_min", "span_s", "median",
               "median_abs", "in02", "in03", "in05", "max_abs", "matched", "eligible", "coverage", "model_gap",
               "lines", "stored", "resolve", "source", "base", "shift", "match", "playing", "audio", "error",
-              "app_fail", "alts", "swapped", "timing", "whisper_verdict"]
+              "app_fail", "alts", "swapped", "timing", "whisper_verdict", "lit_median", "lit_in03", "lit_max", "lit_later"]
     with open(OUT / "report.csv", "w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         w.writeheader()
@@ -709,7 +729,8 @@ def write_report(rows):
           f"어긋나지 않음, 점점 벌어짐 ≤ {STRICT['drift_s_per_min']}초/분, 채점 줄 ≥ {STRICT['min_lines']}개, "
           f"들린 줄 ≥ {STRICT['coverage']:.0%}. WARN = 중앙값 ≤ 0.3초. "
           "전체 합격 = 채점한 곡 모두 PASS + 앱 문제(가사 안 뜸·가사가 소리와 다름) 0곡 + 측정 실패 10% 이하. "
-          "'이전' = 예전 기준(중앙값 ≤ 0.2초 + 0.3초 이내 90%).", ""]
+          "'이전' = 예전 기준(중앙값 ≤ 0.2초 + 0.3초 이내 90%). "
+          "'화면' = 첫 글자가 켜지는 시각 기준 중앙값/0.3초 이내/최대, 판정에는 안 쓴다.", ""]
     shapes = {}
     for r in scored:
         shapes[r["shape"]] = shapes.get(r["shape"], 0) + 1
@@ -718,14 +739,15 @@ def write_report(rows):
         s = [r for r in scored if r.get("stored") == flag]
         if s:
             md.append(f"- {label}: 합격 {sum(r['verdict'] == 'PASS' for r in s)}/{len(s)}")
-    md += ["", "| 판정 | 이전 | 못 미친 기준 | 곡 | 저장 | 모양 | 중앙값(초) | 최대(초) | 0.2/0.3/0.5초 이내 | 채점 줄/들려야 할 줄 | 모델차(초) | 제공처 | base/shift/match | 앱이 보인 답 차례(기준shift:중앙값/0.3초 이내) | 오디오 | 시각 기준(whisper 판정) |",
-           "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    md += ["", "| 판정 | 이전 | 못 미친 기준 | 곡 | 저장 | 모양 | 중앙값(초) | 최대(초) | 0.2/0.3/0.5초 이내 | 화면 중앙값/0.3초/최대 | 채점 줄/들려야 할 줄 | 모델차(초) | 제공처 | base/shift/match | 앱이 보인 답 차례(기준shift:중앙값/0.3초 이내) | 오디오 | 시각 기준(whisper 판정) |",
+           "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     order = {"FAIL": 0, "WARN": 1, "PASS": 2}
     for r in sorted(scored, key=lambda r: (order[r["verdict"]], -r["median_abs"])):
         sh = r["shape"] + (f" {r['slope_ms_min']:+}ms/분" if r["shape"] == "drift" else "")
+        seen = f"{r['lit_median']:+.2f}/{r['lit_in03']:.0%}/{r['lit_max']}" if "lit_median" in r else ""
         md.append(f"| {r['verdict']} | {r.get('old_verdict', '')} | {r.get('why', '')} | {r['video']} | "
                   f"{r.get('stored', '')} | {sh} | {r['median']:+.2f} | {r.get('max_abs', '')} | "
-                  f"{r['in02']:.0%}/{r['in03']:.0%}/{r['in05']:.0%} | {r['matched']}/{r.get('eligible', '')} | "
+                  f"{r['in02']:.0%}/{r['in03']:.0%}/{r['in05']:.0%} | {seen} | {r['matched']}/{r.get('eligible', '')} | "
                   f"{r.get('model_gap', '')} | {r['source']} | {r['base']}/{r['shift']}/{r['match']} | "
                   f"{r.get('alts', '')} | {r['audio']} | {r.get('timing', '')} ({r.get('whisper_verdict', '')}) |")
     errors = [r for r in rows if r.get("error") and not r.get("app_fail")]
@@ -795,6 +817,16 @@ def selftest():
     assert shape(drift)[0] == "drift", shape(drift)
     jump = [(t, 0.0 if t < 100 else 1.0) for t in range(0, 200, 10)]
     assert shape(jump)[0] == "jump", shape(jump)
+    # The dump's `lit=`: read off the line, never left in the text; old lines have none.
+    log = ("x sync-dump: begin abc playing=abc source=s base=none shift=0 match=0 lines=2\n"
+           "x sync-dump: line abc 1 1000 rep=1/1 words=2 lit=1400 two words\n"
+           "x sync-dump: line abc 2 3000 rep=1/1 words=1 old\n"
+           "x sync-dump: end abc\n")
+    head, parsed = parse_blocks(log, "abc")[-1]
+    assert parsed == [(1, 1000, "two words"), (2, 3000, "old")] and head["lit"] == {1: 1400}, (head, parsed)
+    assert lit_scores([(1, 1.0, 1.0, 1.0), (2, 3.0, 3.0, 1.0)], head["lit"]) == dict(
+        lit_median=0.4, lit_in03=0.0, lit_max=0.4, lit_later=1.0)
+    assert lit_scores([(2, 3.0, 3.0, 1.0)], head["lit"]) == {}
     print("selftest ok")
 
 

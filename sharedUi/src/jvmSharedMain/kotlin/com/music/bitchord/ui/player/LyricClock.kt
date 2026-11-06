@@ -59,7 +59,8 @@ internal class LyricClock(startMs: Long) {
     private var anchorMs = 0.0
 
     /** The playback rate, learned from how far the song moves between readings. */
-    private var rate = 1.0
+    var rate = 1.0
+        private set
 
     // Readings believed since the playhead last jumped, oldest first: what the
     // rate is measured across. See [learnRate].
@@ -93,12 +94,13 @@ internal class LyricClock(startMs: Long) {
     /**
      * Playback is not moving: settle on [positionMs] outright, as of [nowMs].
      * Called again for every reading that arrives while stopped, which is how a
-     * seek made while paused still moves the words.
+     * seek made while paused still moves the words. [songStopped] false is a panel
+     * not on show while the song plays on: its readings are not standing still.
      */
-    fun hold(positionMs: Long, nowMs: Double) {
+    fun hold(positionMs: Long, nowMs: Double, songStopped: Boolean = true) {
         restart()
         displayedMs = positionMs.toDouble()
-        heldAtMs = nowMs
+        if (songStopped) heldAtMs = nowMs
     }
 
     /**

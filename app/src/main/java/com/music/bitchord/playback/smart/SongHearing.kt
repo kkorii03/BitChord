@@ -169,7 +169,9 @@ internal object SongHearing {
     /**
      * The words of [song] up to [untilSeconds], from the kept transcript when it
      * reaches that far and otherwise from Deepgram. [minSeconds] is what a request
-     * may settle for after a short wait. Null means there was no sound to send.
+     * may settle for after a short wait. A caller that can make do with less says so
+     * in [reuseFrom]: a replaced sheet is fitted to the words kept, at once and for
+     * free. Null means there was no sound to send.
      */
     suspend fun hear(
         context: Context,
@@ -177,13 +179,14 @@ internal object SongHearing {
         untilSeconds: Double,
         language: String,
         minSeconds: Double = untilSeconds,
+        reuseFrom: Double = untilSeconds,
     ): Heard? {
         val app = context.applicationContext
         while (true) {
             val recording = recordingKey(song)
             if (recording != null) {
                 val kept = withContext(Dispatchers.IO) { load(app, song.videoId) }
-                covering(kept, recording, language, untilSeconds)?.let { saved ->
+                covering(kept, recording, language, minOf(untilSeconds, reuseFrom))?.let { saved ->
                     TrackLog.d(TAG, "song-hear: kept lang=$language until=${untilSeconds.toInt()} secs=${saved.seconds.toInt()} words=${saved.words.size}", song.videoId)
                     return heardFrom(saved)
                 }
@@ -192,7 +195,7 @@ internal object SongHearing {
                 // the file through its verified map, or drops them when it has none.
                 // Decoding the file instead left the song uncorrected for 71 s (11-06
                 // w58uXpyHWes, its new sheet 1.0-1.2 s late on the listener's own log).
-                if (recording.startsWith(FILE_PREFIX)) {
+                if (recording.startsWith(FILE_PREFIX) && LyricsTiming.streamWordsReachFile(app, song.videoId)) {
                     streamWords(kept, language)?.let { saved ->
                         TrackLog.d(TAG, "song-hear: file reads the stream's ${saved.seconds.toInt()}s lang=$language", song.videoId)
                         return heardFrom(saved)
@@ -218,6 +221,16 @@ internal object SongHearing {
             if (!flightAnswers(running.untilSeconds, untilSeconds)) continue
             return answer
         }
+    }
+
+    /** The longest words kept for what [song] plays now; never a request. */
+    suspend fun longestKept(context: Context, song: Song, language: String): Heard? {
+        val app = context.applicationContext
+        val recording = recordingKey(song) ?: return null
+        val kept = withContext(Dispatchers.IO) { load(app, song.videoId) }
+        val saved = covering(kept, recording, language, 0.0)
+            ?: streamWords(kept, language)?.takeIf { recording.startsWith(FILE_PREFIX) && LyricsTiming.streamWordsReachFile(app, song.videoId) }
+        return saved?.let(::heardFrom)
     }
 
     /**

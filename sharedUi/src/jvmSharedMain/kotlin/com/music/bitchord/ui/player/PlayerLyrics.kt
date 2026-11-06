@@ -738,6 +738,8 @@ private fun rememberLyricClock(
     trackKey: Any,
     playhead: LyricPlayhead,
     isPlaying: Boolean,
+    /** Whether the song itself is moving; differs from [isPlaying] for a panel not on show. */
+    songMoving: Boolean = isPlaying,
 ): MutableLongState {
     val clock = remember(trackKey) {
         mutableLongStateOf(Snapshot.withoutReadObservation { playhead.positionMs })
@@ -748,9 +750,9 @@ private fun rememberLyricClock(
     // Followed off the snapshot rather than read here, so a reading recomposes
     // nothing.
     if (!isPlaying) {
-        LaunchedEffect(engine, playhead) {
+        LaunchedEffect(engine, playhead, songMoving) {
             snapshotFlow { playhead.positionMs }.collect { positionMs ->
-                engine.hold(positionMs, nanosToMs(System.nanoTime()))
+                engine.hold(positionMs, nanosToMs(System.nanoTime()), songStopped = !songMoving)
                 clock.longValue = positionMs
             }
         }
@@ -804,7 +806,8 @@ private fun rememberLyricClock(
                     com.music.bitchord.data.TrackLog.d(
                         "BitChord",
                         "lyric-clock: drawn=${clock.longValue} reading=$reading age=${age}ms " +
-                            "gap=${clock.longValue - (reading + age.coerceAtLeast(0L))}ms",
+                            "gap=${clock.longValue - (reading + age.coerceAtLeast(0L))}ms " +
+                            "rate=${(engine.rate * 1000).toInt()}",
                     )
                 }
             }
@@ -1899,7 +1902,7 @@ internal fun LyricsPanel(
     modifier: Modifier = Modifier,
 ) {
     val panelPlaying = isPlaying && active
-    val clock = rememberLyricClock(trackKey, playhead, panelPlaying)
+    val clock = rememberLyricClock(trackKey, playhead, panelPlaying, songMoving = isPlaying)
     val subReveal = rememberSubLyricsReveal(subLines, trackKey)
 
     val isSynced = remember(lines) { lines.any { it.timeMs > 0L } }
