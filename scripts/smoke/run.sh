@@ -128,6 +128,15 @@ adb shell "mkdir -p '$APP_DIR' && rm -rf '$APP_DIR/synctest' && touch '$APP_DIR/
 }
 
 SETTINGS_DEVICE=""
+# One set of the sync scenario matrix (scripts/smoke/matrix.sh): a smoke branch
+# made by matrix_launch.py carries this file.
+MATRIX=0
+if [ -f scripts/smoke/matrix.env ]; then
+  MATRIX=1
+  . scripts/smoke/matrix.env
+  . scripts/smoke/matrix.sh
+  [ -n "${SMOKE_SETTINGS_FILE:-}" ] && [ -f "$SMOKE_SETTINGS_FILE" ] && matrix_settings "$SMOKE_SETTINGS_FILE"
+fi
 if [ -n "${SMOKE_SETTINGS_FILE:-}" ]; then
   if [ -f "$SMOKE_SETTINGS_FILE" ]; then
     # A file adb pushes under /sdcard belongs to the shell user and the app
@@ -555,7 +564,11 @@ while IFS=$'\t' read -r -u 3 key kind _rest || [ -n "$key" ]; do
     echo "smoke: song line without kind: $key" >&2
     continue
   }
-  play_song "$key" "$kind"
+  if [ "$MATRIX" = 1 ]; then
+    matrix_play "$key" "$kind"
+  else
+    play_song "$key" "$kind"
+  fi
   # No audio after three songs means YouTube refused this network (the runner
   # IPs get "confirm you're not a bot"); say so now instead of after an hour.
   SONGS_DONE=$(( ${SONGS_DONE:-0} + 1 ))
@@ -565,7 +578,8 @@ while IFS=$'\t' read -r -u 3 key kind _rest || [ -n "$key" ]; do
   # sync engine off (no Deepgram key: 'deepgram=false') every sync score only
   # grades the lyrics files (the invalid 11-02 baseline).
   if [ "$SONGS_DONE" -ge 2 ]; then
-    if grep -qE 'FATAL EXCEPTION|ANR in com\.(dev\.)?bitchord|ANR in com\.music\.bitchord' "$OUT/smoke-logcat.txt"; then
+    # A matrix set plays on: the crash is counted, and the next link restarts the app.
+    if [ "$MATRIX" = 0 ] && grep -qE 'FATAL EXCEPTION|ANR in com\.(dev\.)?bitchord|ANR in com\.music\.bitchord' "$OUT/smoke-logcat.txt"; then
       progress_report "STOP crash/ANR"
       echo "smoke: STOP - crash or ANR after $SONGS_DONE songs" >&2
       exit 4
@@ -653,7 +667,7 @@ heap_report() {
   rm -f "$host"
   adb shell rm -f "$dev" >/dev/null 2>&1 || true
 }
-heap_report
+[ "$MATRIX" = 1 ] || heap_report
 
 cleanup_logcat
 trap - EXIT
