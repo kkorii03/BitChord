@@ -129,10 +129,7 @@ internal object KoAudioSwitch {
         // to say so: it is not the same miss as a page that held no audio row.
         val shape = (if (videoRowsOnly) " (video rows only)" else "") +
             (if (song.typeUnknown) " (type unknown)" else "")
-        Log.w(
-            TAG,
-            "audio switch: no official song match for '${row.title}' by '${row.artist}'" + shape,
-        )
+        Log.w(TAG, noMatchLine(row, shape))
         // A search that failed outright is no verdict: leave it retryable
         // instead of remembering the video as having no catalogue release.
         // The same applies when only some of the queries answered — a later
@@ -148,6 +145,14 @@ internal object KoAudioSwitch {
         }
         return song
     }
+
+    /**
+     * The miss line, with the video id so a device log names the row without
+     * the title and artist alone having to be unique.
+     */
+    internal fun noMatchLine(row: Song, shape: String): String =
+        "audio switch: no official song match videoId=${row.videoId} " +
+            "for '${row.title}' by '${row.artist}'" + shape
 
     /**
      * The row a song-version search is built from: the upload's title and
