@@ -173,7 +173,8 @@ internal class LyricClock(startMs: Long) {
             // 11-07 phone: a reading strays by 150 ms either way, and the words running
             // after each one ran 25 % fast or slow for a moment. Only a share of what a
             // reading says moves the song's place; a real drift still closes in seconds.
-            anchorMs = expected + (reportedMs - expected) * READING_WEIGHT
+            // At another speed the place is what is being learned, so it follows every reading.
+            if (rate == 1.0) anchorMs = expected + (reportedMs - expected) * READING_WEIGHT
             return
         }
         // Off with nothing announced. One reading like that is a bad reading;
