@@ -164,6 +164,38 @@ class DirectSourceGateTest {
     }
 
     /**
+     * A 403 is the host's failure, not a wrong file. The walk used to search the
+     * same source twice more for it, on the listener's first note.
+     */
+    @Test
+    fun aHostRefusalCostsFewerSearchesThanAWrongFile() = runBlocking {
+        val refusing = FakeSource("Deezer", listOf(row("dead-4", "Host Refused")))
+        install(listOf(refusing, FakeSource("YouTube", kind = SourceKind.YOUTUBE)))
+        try {
+            val stream = SourceResolver.directStream(target("Host Refused")) { candidate ->
+                StreamRefusalRecovery.noteRefusedStream(candidate.url, "Deezer", IOException("HTTP 403"))
+                false
+            }
+            assertNull(stream)
+        } finally {
+            StreamRefusalRecovery.resetForTest()
+            install(emptyList())
+        }
+        // A wrong file is the row's: the same source is asked for another one.
+        val wrongFile = FakeSource("Deezer", listOf(row("wrong-4", "Wrong File")))
+        install(listOf(wrongFile, FakeSource("YouTube", kind = SourceKind.YOUTUBE)))
+        try {
+            assertNull(SourceResolver.directStream(target("Wrong File")) { false })
+        } finally {
+            install(emptyList())
+        }
+        assertTrue(
+            "refused=${refusing.searches} wrong file=${wrongFile.searches}",
+            refusing.searches < wrongFile.searches,
+        )
+    }
+
+    /**
      * The other half: a refusal of one source's copy must not cost the listener
      * the copy another source can still serve. The refused URL is skipped, not
      * asked again, and the walk goes on to the one that serves.
@@ -440,6 +472,9 @@ class DirectSourceGateTest {
     ) : MusicSource {
         override val displayName: String get() = configId
 
+        @Volatile
+        var searches = 0
+
         override suspend fun health() = SourceHealth.Ok()
 
         override suspend fun search(
@@ -448,6 +483,7 @@ class DirectSourceGateTest {
             waitForAll: Boolean,
             request: StreamRequest?,
         ): List<Song> {
+            searches++
             if (searchDelayMs > 0) kotlinx.coroutines.delay(searchDelayMs)
             return rows
         }
