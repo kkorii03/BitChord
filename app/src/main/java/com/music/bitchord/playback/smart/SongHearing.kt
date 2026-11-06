@@ -239,7 +239,7 @@ internal object SongHearing {
 
     /** Words a runner already worked out replace a shorter transcript and spare the request. */
     private suspend fun keepFromFarm(app: Context, song: Song, language: String) {
-        val saved = AlignFarm.fetch(song.videoId, language) ?: return
+        val saved = AlignFarm.fetch(app, song.videoId, language) ?: return
         withContext(Dispatchers.IO) { save(app, song.videoId, saved) }
     }
 
