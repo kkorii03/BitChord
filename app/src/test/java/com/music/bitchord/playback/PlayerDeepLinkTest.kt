@@ -72,4 +72,12 @@ class PlayerDeepLinkTest {
             }
         }
     }
+
+    @Test
+    fun `a link does not replace a song picked during its wait`() {
+        assertTrue(MusicLink.linkStillWanted("songA", "songA"))
+        assertFalse(MusicLink.linkStillWanted("songA", "songB"))
+        assertFalse(MusicLink.linkStillWanted(null, "songB"))
+        assertTrue(MusicLink.linkStillWanted(null, null))
+    }
 }
