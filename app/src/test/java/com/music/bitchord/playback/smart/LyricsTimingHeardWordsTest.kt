@@ -94,4 +94,32 @@ class LyricsTimingHeardWordsTest {
         assertEquals(lines[0].timeMs + lateBy + 200L, shown[0].timeMs)
         assertEquals(lines[0].timeMs + lateBy + 200L, timing.heardWords.first().startMs)
     }
+
+    @Test
+    fun `a sheet with no AI answer still sweeps from the refine's transcript`() = runBlocking {
+        val words = lines.joinToString(",") { line ->
+            val start = line.timeMs + lateBy
+            """{"t":"${line.text}","s":$start,"e":${start + 600}}"""
+        }
+        File(directory, "lyrics_timing_v1.json").writeText(
+            """{"entries":{"plain":{"refineHeardKey":$key,"refineHeardWords":[$words],"refineHeardSeconds":90.0,"refineHeardExtended":true}}}""",
+        )
+
+        val timing = LyricsTiming.timing(context, "plain", lines, baseAllowed = true)!!
+
+        assertEquals(null, timing.base)
+        assertEquals(lines.map { it.timeMs + lateBy }, timing.heardWords.map { it.startMs })
+    }
+
+    @Test
+    fun `an AI's line times are no transcript to sweep from`() = runBlocking {
+        val words = lines.joinToString(",") { line ->
+            """{"t":"${line.text}","s":${line.timeMs},"e":${line.timeMs + 600}}"""
+        }
+        File(directory, "lyrics_timing_v1.json").writeText(
+            """{"entries":{"gemini":{"aiTextKey":$key,"aiEngine":"Gemini","heardWords":[$words]}}}""",
+        )
+
+        assertTrue(LyricsTiming.timing(context, "gemini", lines, baseAllowed = true)?.heardWords.orEmpty().isEmpty())
+    }
 }
