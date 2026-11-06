@@ -31,15 +31,23 @@ object LyricsWordAlign {
      * Above this many cells the alignment isn't attempted. Room for a whole
      * song's transcript against its whole sheet: 2,000 letters each way is
      * 4,000,000 cells, and a whole-song listen must not read as "not attempted".
-     * The search keeps two rows of scores and two bits a cell, 10 MB at this size.
+     * Fast rap runs far past that: six minutes at 18 letters a second is 6,500
+     * letters each way, 42,000,000 cells. The search keeps two rows of scores and
+     * two bits a cell, 16 MB at this size.
      */
-    internal const val MAX_CELLS = 40_000_000L
+    internal const val MAX_CELLS = 64_000_000L
 
     /** How far into a line its first heard letter may be and still say when the line starts. */
     private const val LEAD_LETTERS = 4
 
     /** A letter's typical length when sung, for stepping back from the first heard one to the line's start. */
     private const val LETTER_MS = 180L
+
+    /** Faster than this is a mishearing, not a singer. */
+    private const val MIN_LETTER_MS = 30L
+
+    /** Fewer heard letters than this say nothing about a line's pace. */
+    private const val MIN_PACE_LETTERS = 5
 
     /** Where [placeLinesDetailed] found lines, whether it could look at all, and how much of each line was matched. */
     data class Placement(
@@ -85,7 +93,7 @@ object LyricsWordAlign {
             if (opening.size >= 2 && aligned.lyricPos[opening.first()] <= LEAD_LETTERS) {
                 val first = opening.first()
                 starts[line] = (aligned.heardMs[aligned.heardFor[first]] -
-                    aligned.lyricPos[first] * LETTER_MS).coerceAtLeast(0L)
+                    aligned.lyricPos[first] * letterMsOf(aligned, k, end)).coerceAtLeast(0L)
             }
             k = end
         }
@@ -101,6 +109,27 @@ object LyricsWordAlign {
             attempted = true,
             matchedShare = lines.indices.map { if (letters[it] == 0) 0.0 else matched[it].toDouble() / letters[it] },
         )
+    }
+
+    /**
+     * How long one letter of this line takes, read from its own heard letters
+     * (lyric letters [from] until [until]). A fixed [LETTER_MS] steps back up to
+     * 0.7 s where rap sings a letter in 60 ms. The slowest and fastest stretches
+     * are the median's to ignore: a held note in the middle of a line is one long
+     * gap, not a slow line.
+     */
+    private fun letterMsOf(aligned: Alignment, from: Int, until: Int): Long {
+        val heard = (from until until).filter { aligned.heardFor[it] >= 0 }
+        if (heard.size < MIN_PACE_LETTERS) return LETTER_MS
+        val paces = ArrayList<Double>(heard.size - 1)
+        for (i in 1 until heard.size) {
+            val letters = aligned.lyricPos[heard[i]] - aligned.lyricPos[heard[i - 1]]
+            val ms = aligned.heardMs[aligned.heardFor[heard[i]]] - aligned.heardMs[aligned.heardFor[heard[i - 1]]]
+            if (letters > 0) paces += ms.toDouble() / letters
+        }
+        if (paces.isEmpty()) return LETTER_MS
+        paces.sort()
+        return paces[paces.size / 2].toLong().coerceIn(MIN_LETTER_MS, LETTER_MS)
     }
 
     /** A heard word matched to a line, with how far into that line its first matched letter sits. */
