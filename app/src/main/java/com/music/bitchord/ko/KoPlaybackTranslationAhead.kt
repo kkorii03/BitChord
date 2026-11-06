@@ -430,9 +430,21 @@ internal fun PlaybackService.koUseVerifiedDownload(
     val file = Downloads.verifiedSavedUri(id) ?: return false
     val verified = item.toSong().copy(localUri = file, localPath = null).toMediaItem()
     if (verified.localConfiguration?.uri == item.localConfiguration?.uri) return false
+    val meta = Downloads.savedMetadataFor(id)
+    val current = koCurrentPlayingVerification(id)
+    // The file's clock can start elsewhere; no verdict (YouTube's own bytes) keeps the number.
+    val start = HqVerificationStore.get(this, id, meta?.hqSourceConfigId, meta?.hqTrackId)?.let {
+        com.music.bitchord.playback.HqSwapPolicy.swapStartMs(
+            position,
+            current?.offsetMs ?: 0L,
+            current?.rate ?: 1.0,
+            it.offsetMs,
+            it.rate,
+        )
+    } ?: position
     TrackLog.i(
         "BitChord",
-        "$id recording verified; using the downloaded file",
+        "$id recording verified; using the downloaded file at=$position->$start",
         about = id,
     )
     swappingMediaId = id
@@ -446,7 +458,7 @@ internal fun PlaybackService.koUseVerifiedDownload(
     // Left naming YouTube, the lyric clock said playing=youtube over the file: a 97 %
     // answer heard on it dropped (11-06 MUny_GDYIDM), others moved by its offset (w58uXpyHWes).
     StreamChoice.forget(id)
-    player.seekTo(player.currentMediaItemIndex, position)
+    player.seekTo(player.currentMediaItemIndex, start)
     player.prepare()
     return true
 }
