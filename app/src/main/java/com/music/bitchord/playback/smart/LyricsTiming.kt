@@ -557,25 +557,8 @@ object LyricsTiming {
             )
         }
         val refinedWithPerLine = refined.copy(perLine = perLine)
-        val refinedLines = applyThroughRefine(lines, refinedWithPerLine)
-        // What the per-line layer does to the lines, so the sweep's words can
-        // move with their own line instead of staying on the unshifted clock.
-        val perLineLayer = perLine?.let { words ->
-            LyricsPerLine.compute(refinedLines, words.words, words.wordsKey, words.currentKey)
-        } ?: LyricsPerLine.Layer.identity(lines.size)
-        fun perLineShiftAt(ms: Long): Long {
-            var index = -1
-            for (i in refinedLines.indices) {
-                if (refinedLines[i].timeMs <= ms) index = i else break
-            }
-            return perLineLayer.shiftsMs.getOrElse(index) { 0L }
-        }
-        // The transcript is kept on the video's own clock, and a displayed line
-        // is map(record) + refine + per-line + extraMs; the words are already
-        // video time, so the rest is still missing. Read it here rather than
-        // bake it into the kept words: a correction by hand, a refine, a
-        // per-line move, or a newly learned engine lateness must move the heard
-        // words with their line.
+        // The words are when it was sung: the refine and the per-line layer move the
+        // lines onto these very words, so only the hand's correction is added here.
         val savedHeard = if (base?.byAi == true && entry.aiTextKey == key) {
             entry.heardWords
         } else {
@@ -603,11 +586,7 @@ object LyricsTiming {
             null
         }
         val heard = heardOnClock.map { word ->
-            fun heardAt(ms: Long): Long {
-                val onClock = hqMap?.map(ms) ?: ms
-                val refinedAt = (onClock + refined.refineAt(onClock)).coerceAtLeast(0L)
-                return (refinedAt + perLineShiftAt(refinedAt) + refined.extraMs).coerceAtLeast(0L)
-            }
+            fun heardAt(ms: Long): Long = ((hqMap?.map(ms) ?: ms) + refined.extraMs).coerceAtLeast(0L)
             val start = heardAt(word.s)
             LyricsWordAlign.Heard(
                 text = word.t,
