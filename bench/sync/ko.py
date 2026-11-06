@@ -12,7 +12,8 @@ is public. Results hold ids, counts and ms only; no lyric text is written.
   selftest
 
 Audio is fetched with yt-dlp (the app plays YouTube); pass --proxy if the runner
-needs one. E/F use the same ctc_forced_aligner calls as bench.py.
+needs one. The alignment and the fit/score metrics are ko_align.py's, so both
+paths report the same numbers.
 """
 import argparse, glob, json, os, re, statistics, subprocess, sys, time
 
@@ -92,44 +93,6 @@ def unpack(path, passphrase):
     return json.loads(r.stdout.decode("utf-8"))
 
 
-def linfit(xs, ys):
-    n = len(xs)
-    mx, my = sum(xs) / n, sum(ys) / n
-    sxx = sum((x - mx) ** 2 for x in xs)
-    b = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sxx if sxx else 0.0
-    return my - b * mx, b
-
-
-def align(wav, lines, model, tok, lang):
-    from ctc_forced_aligner import (load_audio, generate_emissions, preprocess_text,
-                                    get_alignments, get_spans, postprocess_results)
-    wf = load_audio(wav, model.dtype, model.device)
-    t0 = time.time()
-    emissions, stride = generate_emissions(model, wf, batch_size=4)
-    t_emit = time.time() - t0
-    tokens, texts, per_line = [], [], []
-    for line in lines:
-        tk, tx = preprocess_text(line["text"], romanize=True, language=lang)
-        tokens.extend(tk)
-        texts.extend(tx)
-        per_line.append(sum(1 for t in tx if t != "<star>"))
-    t1 = time.time()
-    segments, scores, blank = get_alignments(emissions, tokens, tok)
-    spans = get_spans(tokens, segments, blank)
-    results = postprocess_results(texts, spans, stride, scores)
-    t_align = time.time() - t1
-    if len(results) != sum(per_line):
-        return {"error": "word count mismatch", "words_out": len(results), "words_in": sum(per_line)}
-    starts = [round(r["start"] * 1000) for r in results]
-    line_starts, k = [], 0
-    for n in per_line:
-        line_starts.append(starts[k] if n else None)
-        k += n
-    return {"line_starts": line_starts, "word_starts": starts, "words": len(results),
-            "audio_s": round(wf.size(0) / 16000, 1), "emit_s": round(t_emit, 1),
-            "align_s": round(t_align, 1)}
-
-
 def fetch_audio(vid, d, proxy=None):
     src = os.path.join(d, "src.mp3")
     if os.path.exists(src):
@@ -143,28 +106,17 @@ def fetch_audio(vid, d, proxy=None):
 
 
 def run(payload, work, out_path, cands, lang, proxy=None):
-    import torch
-    from ctc_forced_aligner import load_alignment_model
-    try:
-        model, tok = load_alignment_model("cpu", dtype=torch.float32)
-    except TypeError:  # transformers 4.x spells it torch_dtype
-        from transformers import AutoModelForCTC, AutoTokenizer
-        path = "MahmoudAshraf/mms-300m-1130-forced-aligner"
-        model = AutoModelForCTC.from_pretrained(path, torch_dtype=torch.float32).to("cpu").eval()
-        tok = AutoTokenizer.from_pretrained(path, word_delimiter_token=None)
+    import ko_align
     out = {"cands": cands, "songs": [], "errors": []}
     for song in payload["songs"]:
-        vid, lines = song["id"], song["lines"]
+        vid = song["id"]
+        lines = [(l["ms"], l["text"].split()) for l in song["lines"]
+                 if any(ch.isalnum() for ch in l["text"])]
+        words = [w for _, ws in lines for w in ws]
+        sheet = [ms for ms, _ in lines]
         d = os.path.join(work, vid)
         os.makedirs(d, exist_ok=True)
-        gt = [l["ms"] for l in lines]
-        s = {"id": vid, "lines": len(lines), "gt_line_start_ms": gt, "cand": {}}
-        xs = [l["n"] for l in lines]
-        a, slope = linfit(xs, gt)
-        resid = [y - (a + slope * x) for x, y in zip(xs, gt)]
-        s["sheet_fit"] = {"slope_ms_per_line": round(slope, 1),
-                          "within_300ms": sum(abs(r) <= 300 for r in resid),
-                          "within_1000ms": sum(abs(r) <= 1000 for r in resid)}
+        s = {"id": vid, "lines": len(lines), "gt_line_start_ms": sheet, "cand": {}}
         try:
             src = fetch_audio(vid, d, proxy)
             if "F" in cands and not os.path.exists(os.path.join(d, "vocals.wav")):
@@ -174,13 +126,17 @@ def run(payload, work, out_path, cands, lang, proxy=None):
                     wav = os.path.join(d, "mix16.wav") if c == "E" else os.path.join(d, "vocals.wav")
                     if c == "E":
                         bench.ffwav(src, wav)
-                    r = align(wav, lines, model, tok, lang)
-                    if "line_starts" in r:
-                        errs = [None if p is None else abs(p - g) for p, g in zip(r["line_starts"], gt)]
-                        placed = [e for e in errs if e is not None]
-                        r.update({"line_err_ms": errs, "placed": len(placed),
-                                  "median_ms": round(statistics.median(placed), 1) if placed else None,
-                                  "pcs300": round(sum(e <= 300 for e in placed) / len(placed), 3) if placed else None})
+                    res, wall, tokens = ko_align.align(wav, words, lang)
+                    r = {"wall_s": wall, "words_out": len(res), "words_in": len(words)}
+                    pred = ko_align.line_starts(res, lines)
+                    if pred is None:
+                        r["error"] = "word count mismatch"
+                    else:
+                        errs = [abs(p - g) for p, g in zip(pred, sheet)]
+                        r.update({"line_starts": pred, "line_err_ms": errs, "placed": len(pred),
+                                  "median_ms": round(statistics.median(errs), 1),
+                                  "pcs300": round(sum(e <= 300 for e in errs) / len(errs), 3)})
+                        r.update(ko_align.sheet_fit(pred, sheet))
                     s["cand"][c] = r
                 except Exception as e:  # noqa
                     out["errors"].append({"song": vid, "cand": c, "why": (type(e).__name__ + ": " + str(e))[:300]})
@@ -216,8 +172,9 @@ def selftest():
     pack(payload, tmp, "test-pass")
     assert unpack(tmp, "test-pass") == payload
     os.remove(tmp)
-    a, slope = linfit([1, 2, 3], [1000, 2000, 3000])
-    assert abs(slope - 1000) < 1e-6 and abs(a) < 1e-6
+    import ko_align
+    a, b = ko_align.theil_sen([1, 2, 3], [1000, 2000, 3000])
+    assert abs(a - 1000) < 1e-6 and abs(b) < 1e-6
     print("selftest ok")
 
 

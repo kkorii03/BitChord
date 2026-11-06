@@ -62,7 +62,13 @@ def align(wav, words, lang_iso):
                                     get_alignments, get_spans, postprocess_results)
     global _CTC
     if _CTC is None:
-        _CTC = load_alignment_model("cpu", dtype=torch.float32)
+        try:
+            _CTC = load_alignment_model("cpu", dtype=torch.float32)
+        except TypeError:  # transformers 4.x spells it torch_dtype
+            from transformers import AutoModelForCTC, AutoTokenizer
+            path = "MahmoudAshraf/mms-300m-1130-forced-aligner"
+            _CTC = (AutoModelForCTC.from_pretrained(path, torch_dtype=torch.float32).to("cpu").eval(),
+                    AutoTokenizer.from_pretrained(path, word_delimiter_token=None))
     model, tok = _CTC
     t0 = time.time()
     wf = load_audio(wav, model.dtype, model.device)
