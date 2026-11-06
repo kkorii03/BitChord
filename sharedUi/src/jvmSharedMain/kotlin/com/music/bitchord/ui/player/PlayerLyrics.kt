@@ -752,7 +752,14 @@ private fun rememberLyricClock(
     if (!isPlaying) {
         LaunchedEffect(engine, playhead, songMoving) {
             snapshotFlow { playhead.positionMs }.collect { positionMs ->
-                engine.hold(positionMs, nanosToMs(System.nanoTime()), songStopped = !songMoving)
+                // The reading's own stamp, so a reading taken before the pause is
+                // not mistaken for one taken during it.
+                val sampledAt = playhead.sampledAtNanos
+                engine.hold(
+                    positionMs,
+                    if (sampledAt > 0L) nanosToMs(sampledAt) else nanosToMs(System.nanoTime()),
+                    songStopped = !songMoving,
+                )
                 clock.longValue = positionMs
             }
         }
