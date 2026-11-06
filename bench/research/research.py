@@ -73,11 +73,12 @@ _ctc = {}
 
 
 def ctc_model(lang):
-    from transformers import AutoModelForCTC, AutoProcessor
+    # Wav2Vec2Processor, not AutoProcessor: some of these repos ship a language model that needs pyctcdecode.
+    from transformers import AutoModelForCTC, Wav2Vec2Processor
     if lang not in _ctc:
         _ctc.clear()  # one language at a time: each model is over 1 GB
         name = CTC_MODEL[lang]
-        _ctc[lang] = (AutoProcessor.from_pretrained(name), AutoModelForCTC.from_pretrained(name).eval())
+        _ctc[lang] = (Wav2Vec2Processor.from_pretrained(name), AutoModelForCTC.from_pretrained(name).eval())
     return _ctc[lang]
 
 
