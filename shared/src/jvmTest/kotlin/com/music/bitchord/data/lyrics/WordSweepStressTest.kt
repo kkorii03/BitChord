@@ -78,9 +78,9 @@ class WordSweepStressTest {
         assertSweepHolds(line, 16_000L)
     }
 
-    /** Whisper dates the start of a held note and stops the word early (10 songs against hand times: -811 ms). */
+    /** Whisper stops a word early; the fill is capped at the heard length, not the pause. */
     @Test
-    fun `a note the transcript clipped still lights to the end of its slot`() {
+    fun `a clipped word is filled by its heard length, not the whole pause`() {
         val line = assertNotNull(
             LyricLine(timeMs = 10_000L, text = "hold on").withHeardWords(
                 listOf(LyricsWordAlign.Heard("hold", 10_000L, 10_300L), LyricsWordAlign.Heard("on", 10_400L, 10_800L)),
@@ -89,10 +89,9 @@ class WordSweepStressTest {
         )
 
         assertEquals(10_400L, line.words.last().startMs)
-        assertEquals(16_000L, line.words.last().endMs)
+        assertEquals(11_200L, line.words.last().endMs, "a 400 ms word is filled by 400 ms, not the 5.5 s pause")
         assertEquals(10_300L, line.words.first().endMs, "only the last word is stretched")
-        assertTrue(line.revealedChars(15_000L) < line.text.length, "fully lit with the note still going")
-        assertSweepHolds(line, 16_000L)
+        assertSweepHolds(line, 11_200L)
     }
 
     @Test
@@ -141,7 +140,7 @@ class WordSweepStressTest {
             ),
         )
 
-        assertEquals(16_000L, line.words.last().endMs, "the sweep still fills the slot")
+        assertEquals(10_800L, line.words.last().endMs, "the sweep fills by the heard length, not the pause")
         assertTrue(line.growingWords.isEmpty(), "a word heard for 200 ms is not a held note")
         assertTrue(line.wordLift(1, 11_000L) <= 0.3f, "and it does not rise like one")
     }

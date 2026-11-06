@@ -30,7 +30,7 @@ class HeardWordsTest {
         assertEquals(10_000L, result.words[0].startMs)
         assertEquals(10_600L, result.words[0].endMs)
         assertEquals(10_800L, result.words[1].startMs)
-        assertEquals(13_700L, result.words[1].endMs, "the last word fills its slot")
+        assertEquals(11_600L, result.words[1].endMs, "the last word fills by its heard length")
         assertTrue(!result.wordsEstimated, "transcript times are not an estimate")
     }
 
@@ -46,7 +46,7 @@ class HeardWordsTest {
         assertEquals(500L, result.words[0].startMs)
         assertEquals(800L, result.words[0].endMs)
         assertEquals(900L, result.words[1].startMs)
-        assertEquals(3_700L, result.words[1].endMs, "the last word fills its slot")
+        assertEquals(1_500L, result.words[1].endMs, "the last word fills by its heard length")
     }
 
     @Test
@@ -140,6 +140,24 @@ class HeardWordsTest {
                 .withHeardWords(listOf(heard("사랑해", 9_700, 10_500)), 14_000),
         )
         assertEquals(10_000L, result.words.first().startMs)
-        assertEquals(13_700L, result.words.first().endMs, "the last word fills its slot")
+        assertEquals(11_000L, result.words.first().endMs, "the last word fills by its heard length")
+    }
+
+    @Test
+    fun aShortLastWordDoesNotCrawlThroughALongPause() {
+        val result = assertNotNull(
+            line("사랑해", at = 10_000, next = 14_000)
+                .withHeardWords(listOf(heard("사랑해", 10_000, 10_200)), 14_000),
+        )
+        assertEquals(10_400L, result.words.last().endMs, "a 200 ms word is not a 3.7 s held note")
+    }
+
+    @Test
+    fun aHeldLastWordIsFilledByItsHeardLength() {
+        val result = assertNotNull(
+            line("사랑해", at = 10_000, next = 14_000)
+                .withHeardWords(listOf(heard("사랑해", 10_000, 11_500)), 14_000),
+        )
+        assertEquals(13_000L, result.words.last().endMs, "a 1.5 s note keeps a 1.5 s fill")
     }
 }

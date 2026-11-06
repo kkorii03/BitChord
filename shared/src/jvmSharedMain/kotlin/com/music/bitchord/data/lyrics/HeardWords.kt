@@ -145,13 +145,23 @@ fun LyricLine.withHeardWords(
 
     // Whisper dates a held note's start but stops the word early (11-06, 10 songs against
     // Apple's hand times: held words ended 811 ms early, 59/547 lines were lit a second or
-    // more before the singer finished; filling the slot leaves 11). Same slot rule as the estimate.
-    val filledTo = sungUntilMs?.takeIf { it > timeMs }
+    // more before the singer finished). Filling the whole slot also crawls through a pause
+    // after a short word, so the guessed fill is capped at the word's heard length.
+    val knownEnd = sungUntilMs?.takeIf { it > timeMs }
+    val filledTo = knownEnd
         ?: nextLineMs?.takeIf { it - timeMs - BREATH_MS <= MAX_FILLED_SLOT_MS }?.let { it - BREATH_MS }
     if (filledTo != null) {
         val last = words.last()
+        // Whisper stops a held note early, but a short word before a long pause is
+        // not a held note: cap the guessed fill at the word's heard length so the
+        // sweep does not crawl through the pause. A provider's own end is not capped.
+        // shortcut: a true long note whisper clipped is filled only to its heard
+        // length, upgrade if the phone shows long notes ending early.
+        val heardLength = (last.endMs - last.startMs).coerceAtLeast(0L)
+        val target = if (knownEnd != null) filledTo else minOf(filledTo, last.endMs + heardLength)
+        val end = maxOf(last.endMs, target)
         // Marked as filled so the extension is not read as a held note.
-        words[words.lastIndex] = last.copy(endMs = maxOf(last.endMs, filledTo), filledMs = maxOf(0L, filledTo - last.endMs))
+        words[words.lastIndex] = last.copy(endMs = end, filledMs = maxOf(0L, end - last.endMs))
     }
     return copy(words = words, wordsEstimated = false)
 }
