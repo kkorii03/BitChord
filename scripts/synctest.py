@@ -524,6 +524,12 @@ def run_song(vid, seconds, dry):
     text = logf.read_text(encoding="utf-8", errors="replace")
     dump_id = vid
     dump = parse_dump(text, vid)
+    # "Prefer music-only version" (v1.9.1) replaces a video within a second of starting: its first
+    # sheet never played, and scoring it reported a FAIL for a song that was fine (11-07 Rap God).
+    only = re.findall(rf"\[{re.escape(vid)}\] music-only: playing .* \(([\w-]{{11}})\)", text)
+    if only and parse_dump(text, only[-1]):
+        dump_id = only[-1]
+        dump = parse_dump(text, dump_id)
     if not dump:
         # The app swapped the row to its song version before the first sound
         # ('song version: <vid> -> <id> via search'); lyrics, their dump and the
