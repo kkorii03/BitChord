@@ -103,6 +103,45 @@ class LyricClockTest {
         assertTrue("rate strayed by $worst", worst <= 0.08)
     }
 
+    @Test fun strayReadingsDoNotMakeTheWordsRushOrDrag() {
+        val strays = longArrayOf(0, -130, 30, 90, -160, 40, 120, -70, 20, -140, 60, 100, -30, 50, -90, 10, 130, -60, 0, 80)
+        val clock = LyricClock(44_500L)
+        var now = 0.0
+        var last = Double.NaN
+        var fastest = 1.0
+        var slowest = 1.0
+        var at = 0L
+        while (now < 12_000.0) {
+            val reading = (now / 500.0).toInt()
+            val taken = reading * 500.0
+            val drawn = clock.frame(now, (44_500.0 + taken).toLong() + strays[reading % strays.size], taken, 0L)
+            // Pace over a quarter second, once the first reading has settled in.
+            if (((now / 250.0).toInt()).toLong() != at) {
+                at = (now / 250.0).toInt().toLong()
+                if (!last.isNaN() && now > 1_000.0) {
+                    val pace = (drawn - last) / 250.0
+                    fastest = maxOf(fastest, pace)
+                    slowest = minOf(slowest, pace)
+                }
+                last = drawn.toDouble()
+            }
+            now += frameMs
+        }
+        assertTrue("fastest $fastest slowest $slowest", fastest <= 1.12 && slowest >= 0.88)
+    }
+
+    @Test fun aRealGapStillClosesWithinSeconds() {
+        val clock = LyricClock(10_000L)
+        var now = 0.0
+        while (now < 8_000.0) {
+            val taken = (now / 500.0).toInt() * 500.0
+            // The song runs 200 ms ahead of where the clock started.
+            clock.frame(now, (10_200.0 + taken).toLong(), taken, 0L)
+            now += frameMs
+        }
+        assertEquals(10_200.0 + now, clock.displayedMs, 40.0)
+    }
+
     @Test fun aRealChangeOfSpeedStillShowsWithinTwoSeconds() {
         val clock = LyricClock(0L)
         var now = 0.0
