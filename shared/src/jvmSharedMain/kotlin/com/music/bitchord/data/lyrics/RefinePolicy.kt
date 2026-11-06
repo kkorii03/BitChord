@@ -522,7 +522,9 @@ object RefinePolicy {
         if (slopes.isEmpty()) return null
         var slope = median(slopes)
         if (!slope.isFinite()) return null
-        slope = slope.coerceIn(-MAX_SLOPE, MAX_SLOPE)
+        // Faster than the cap is not this fit's to answer: clipped, it applied
+        // half the real drift. The whole-song fit in [drift] measures it instead.
+        if (abs(slope) > MAX_SLOPE) return null
         val rate = if (abs(slope) >= MIN_SLOPE) {
             1.0 + slope
         } else {
