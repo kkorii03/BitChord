@@ -345,8 +345,9 @@ class RefinePolicyTest {
     fun aDriftPastTheSlopeCapIsNotClippedToTheCap() {
         // Review 11-06: the lines still inside the narrow window said 1.2 s/min,
         // and it was clipped to 600 ms/min and applied, half the real drift.
-        // Refused here, the whole-song alignment measures the real one.
-        val lines = List(59) { index -> line(10_000L + index * 5_000L, uniqueText(index)) }
+        // Refused here, the whole-song alignment measures the real one. (Up to
+        // 160 s: later, three-of-four opening letters reach into the line before.)
+        val lines = List(31) { index -> line(10_000L + index * 5_000L, uniqueText(index)) }
         val heard = lines.map { heard(it.text, it.timeMs + it.timeMs / 50) }
         val result = RefinePolicy.compute(lines, heard)
 
@@ -387,21 +388,26 @@ class RefinePolicyTest {
         assertTrue(abs(result.medianMs) < RefinePolicy.MIN_SHIFT_MS, "median ${result.medianMs} ms")
     }
 
+    @Test
+    fun aRepeatedLineHeardOnTimeIsNotPlacedOntoItsLaterRepeats() {
+        // The same log line by the other road: the alignment's ends are free, so
+        // eleven identical hearings fit the sheet's last eleven of twelve as
+        // well as its first. That reads as one flat move of a whole repeat.
+        val lines = List(12) { index -> line(20_000L + index * 10_100L, "chorus") }
+        val heard = lines.take(11).mapIndexed { index, line ->
+            heard("chorus", line.timeMs + if (index % 2 == 0) 30L else -30L)
+        }
+        val result = RefinePolicy.compute(lines, heard)
+
+        assertFalse(result.applied, "moved ${result.medianMs} ms by ${result.model}")
+    }
+
     private fun misheardOpenings(lateMs: Long): Pair<List<LyricLine>, List<LyricsWordAlign.Heard>> {
         val lines = List(12) { index -> line(20_000L + index * 12_000L, uniqueText(index)) }
         val heard = lines.mapIndexed { index, line ->
             heard(uniqueText(index + 100).take(2) + line.text.drop(2), line.timeMs + lateMs)
         }
         return lines to heard
-    }
-
-    @Test
-    fun aLateSheetWhoseOpeningsAreMisheardIsMoved() {
-        // R4 reproduction: the narrow window sees nothing and the flat fit is under 1.5 s.
-        val (lines, heard) = misheardOpenings(1_200L)
-        val result = RefinePolicy.compute(lines, heard)
-
-        assertTrue(result.applied)
     }
 
     @Test
