@@ -205,6 +205,15 @@ class AddonClient(rawBaseUrl: String) {
             describe = { "▶ addon search(${redact(baseUrl)}) q=\"$trimmed\" tier=$tier" },
         ) {
             fetch<AddonSearchResponse>(endpoint(listOf("search"), params + ("q" to trimmed)))
+                .mapCatching { answer ->
+                    // Rows beside an error are still rows: one backend came up
+                    // empty and another answered.
+                    val error = answer.error?.ifBlank { null }
+                    if (error != null && answer.tracks.isEmpty()) {
+                        throw AddonException(error.take(MAX_ERROR_CHARS))
+                    }
+                    answer
+                }
         }.map { it.tracks }
     }
 
@@ -636,6 +645,9 @@ class AddonClient(rawBaseUrl: String) {
 
         /** Said when this addon is still resting for longer than a call may wait. */
         private const val QUIET_MESSAGE = "애드온이 BitChord의 요청을 제한하고 있습니다"
+
+        /** As much of an addon's own error text as a log line needs. */
+        private const val MAX_ERROR_CHARS = 120
 
         /**
          * A base URL from whatever the user pasted.

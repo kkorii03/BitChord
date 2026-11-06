@@ -13,6 +13,7 @@ import com.music.bitchord.data.sources.addon.AddonTrack
 import com.music.bitchord.data.sources.addon.AddonUnavailable
 import com.music.bitchord.data.sources.addon.SourceFormats
 import com.music.bitchord.playback.StreamContainer
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.Collections
@@ -247,14 +248,22 @@ class AddonSource(
             if (!admitted("a search")) return@withContext emptyList()
             val tier = request?.tier ?: AddonClient.TIER_LOSSLESS
             val tracks = client.search(query, tier).getOrElse { failure ->
+                if (failure is CancellationException) throw failure
                 TrackLog.w(TAG, "${config.displayName}: search failed — ${failure.message}")
                 if (failure is AddonAuthException) {
                     noteAuthFailure()
-                } else if (failure is AddonUnavailable) {
+                } else {
+                    // The empty list below reads as "this catalogue does not
+                    // have it" unless the failure is reported, and the resolver
+                    // then remembers that for ten minutes. An answer nobody could
+                    // read, an empty body, a 4xx and a 404 on `/search` (which,
+                    // unlike one on `/stream`, is not about a track) are none of
+                    // them that answer.
+                    val unavailable = failure as? AddonUnavailable
                     SourceResolver.reportSourceFailure(
                         config.id,
-                        network = failure.transport,
-                        restUntilMs = failure.restUntilMs,
+                        network = unavailable?.transport == true,
+                        restUntilMs = unavailable?.restUntilMs ?: 0L,
                     )
                 }
                 return@withContext emptyList()
