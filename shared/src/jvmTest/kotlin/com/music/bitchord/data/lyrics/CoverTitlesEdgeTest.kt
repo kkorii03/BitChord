@@ -498,7 +498,11 @@ class CoverTitlesEdgeTest {
     @Test
     fun aChannelNameIsNotMatchedInsideAnotherWord() {
         CoverTitles.knownSingers = { emptySet() }
-        assertNull(CoverTitles.read("The Beatles - Yesterday Cover", "Another Voice", null))
+        // "the" inside "Another" must not make The Beatles the singer: the uploader sings it.
+        val fan = cover("The Beatles - Yesterday Cover", "Another Voice")
+        assertEquals("Yesterday", fan.title)
+        assertEquals("The Beatles", fan.originalArtist)
+        assertEquals("Another Voice", fan.singer)
         val own = cover("Song - 타비 Cover", "아라하시 타비")
         assertEquals("Song", own.title)
         assertEquals("타비", own.singer)
