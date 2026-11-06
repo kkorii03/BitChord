@@ -185,6 +185,7 @@ internal object SongHearing {
         reuseFrom: Double = untilSeconds,
     ): Heard? {
         val app = context.applicationContext
+        keepFromFarm(app, song, language)
         while (true) {
             val recording = recordingKey(song)
             if (recording != null) {
@@ -226,9 +227,18 @@ internal object SongHearing {
         }
     }
 
+    internal fun streamRecording(clock: String) = STREAM_PREFIX + clock
+
+    /** Words a runner already worked out replace a shorter transcript and spare the request. */
+    private suspend fun keepFromFarm(app: Context, song: Song, language: String) {
+        val saved = AlignFarm.fetch(song.videoId, language) ?: return
+        withContext(Dispatchers.IO) { save(app, song.videoId, saved) }
+    }
+
     /** The longest words kept for what [song] plays now; never a request. */
     suspend fun longestKept(context: Context, song: Song, language: String): Heard? {
         val app = context.applicationContext
+        keepFromFarm(app, song, language)
         val recording = recordingKey(song) ?: return null
         val kept = withContext(Dispatchers.IO) { load(app, song.videoId) }
         val saved = covering(kept, recording, language, 0.0)
