@@ -39,6 +39,28 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
+      # task/nextprep-proof only: this branch's dispatch runs the queue proof in
+      # scripts/smoke/run.sh instead of the tour (smoke-play can't be dispatched).
+      - name: Bundle lyrics AI keys
+        env:
+          DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python3 - <<'PY'
+          import os, re
+          p = "app/src/main/res/values/strings.xml"
+          s = open(p, encoding="utf-8").read()
+          for name, env in (("default_deepgram_api_key", "DEEPGRAM_API_KEY"), ("default_gemini_api_key", "GEMINI_API_KEY")):
+              value = os.environ.get(env, "").strip()
+              if not value:
+                  print(f"{name}: no secret, left empty")
+                  continue
+              pat = re.compile(r'<string name="%s"([^>]*)(?:/>|>[^<]*</string>)' % name)
+              s, n = pat.subn(lambda m: f'<string name="{name}"{m.group(1)}>{value}</string>', s)
+              print(f"{name}: bundled={n == 1}")
+          open(p, "w", encoding="utf-8").write(s)
+          PY
+
       - name: Build
         run: |
           chmod +x gradlew
@@ -81,7 +103,32 @@ jobs:
           # Device-wide proxy through the runner's authfwd (see set_proxy_port.py).
           script: |
             if [ -n "$SMOKE_UPSTREAM_PROXY" ]; then (nohup python3 scripts/smoke/authfwd.py "$SMOKE_UPSTREAM_PROXY" > "$RUNNER_TEMP/authfwd.log" 2>&1 &) ; sleep 2; adb shell settings put global http_proxy 10.0.2.2:3128; fi
-            bash .github/ui-tour/tour.sh
+            SMOKE_QUEUE_PROOF=1 bash scripts/smoke/run.sh
+
+      # The artifact of a public repo is downloadable by anyone; a bundled key
+      # that reached a log line (e.g. a request URL) must not go with it.
+      - name: Scrub keys from artifact
+        if: always()
+        env:
+          DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python3 - <<'PY'
+          import os, pathlib
+          keys = [k for k in (os.environ.get("DEEPGRAM_API_KEY", "").strip(), os.environ.get("GEMINI_API_KEY", "").strip()) if k]
+          hits = 0
+          for f in pathlib.Path("shots").rglob("*"):
+              if not keys or not f.is_file() or f.suffix in (".wav", ".png", ".webm"):
+                  continue
+              b = f.read_bytes()
+              n = b
+              for k in keys:
+                  n = n.replace(k.encode(), b"***")
+              if n != b:
+                  hits += 1
+                  f.write_bytes(n)
+          print(f"scrubbed files: {hits}")
+          PY
 
       - name: Upload
         if: always()

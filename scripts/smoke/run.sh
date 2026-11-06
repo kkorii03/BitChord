@@ -504,6 +504,64 @@ run_review_scenarios() {
     --dir "$OUT/scenario" --report "$OUT/scenario-report.md"
 }
 
+# Queue proof: was the next song's correction ready when the queue moved on?
+# A link replaces the whole queue, so an ordinary run never shows it. Each link
+# here only seeds a queue; NEXT and natural ends then move along it, each once
+# the row playing has answered for the row after it (or long enough).
+prep_count() {
+  grep -c 'next-prep sync:' "$OUT/smoke-logcat.txt" 2>/dev/null || true
+}
+
+wait_for_line() {
+  local pattern=$1 before=$2 timeout=$3 i
+  for ((i = 0; i < timeout; i++)); do
+    [ "$(grep -c "$pattern" "$OUT/smoke-logcat.txt" 2>/dev/null || true)" -gt "$before" ] && return 0
+    sleep 1
+  done
+  return 1
+}
+
+run_queue_proof() {
+  local before i
+  play_song rlYOsUfpi3M plain 1
+  for i in 1 2 3; do
+    before=$(prep_count); wait_for_line 'next-prep sync:' "$before" 170 || true; sleep 5
+    adb shell input keyevent 87 >/dev/null 2>&1 || true; sleep 3
+  done
+  # Natural ends, the transition no key can stand in for (a crossfade's, here).
+  for i in 1 2; do
+    before=$(grep -c 'reason=AUTO' "$OUT/smoke-logcat.txt" || true)
+    wait_for_line 'reason=AUTO' "$before" 330 || true
+  done
+  # A pause inside the 30 s before the paid half may run.
+  adb shell input keyevent 87 >/dev/null 2>&1 || true
+  sleep 8
+  adb shell log -t BitChord "queue-proof: pause" >/dev/null 2>&1 || true
+  adb shell input keyevent 127 >/dev/null 2>&1 || true
+  sleep 15
+  adb shell input keyevent 126 >/dev/null 2>&1 || true
+  before=$(prep_count); wait_for_line 'next-prep sync:' "$before" 170 || true; sleep 5
+  adb shell input keyevent 87 >/dev/null 2>&1 || true
+  sleep 30
+  # Video rows: a cover seeds a radio of covers.
+  play_song v59g4HRNIkc cover 1
+  for i in 1 2 3; do
+    before=$(prep_count); wait_for_line 'next-prep sync:' "$before" 170 || true; sleep 5
+    adb shell input keyevent 87 >/dev/null 2>&1 || true; sleep 3
+  done
+  sleep 60
+  cleanup_logcat
+  trap - EXIT
+  adb shell rm -f "$APP_DIR/sync-test.flag" >/dev/null 2>&1 || true
+  python3 scripts/smoke/next_prep_table.py "$OUT/smoke-logcat.txt" > "$OUT/next-prep-table.md" || true
+  python3 scripts/smoke/sync_latency.py --min-played 5 "$OUT/smoke-logcat.txt" > "$OUT/sync-latency.txt" || true
+}
+
+if [ "${SMOKE_QUEUE_PROOF:-0}" = 1 ]; then
+  run_queue_proof
+  exit 0
+fi
+
 if [ "$SCENARIO_MODE" = 1 ]; then
   run_review_scenarios
   SCENARIO_EXIT=$?
