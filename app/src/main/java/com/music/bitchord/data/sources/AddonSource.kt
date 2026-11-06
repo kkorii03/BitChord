@@ -457,7 +457,7 @@ class AddonSource(
         if (ModuleSource.malformed(url)) {
             TrackLog.w(
                 TAG,
-                "${config.displayName}: malformed URL for $trackId; skipping it — ${url.take(120)}",
+                "${config.displayName}: malformed URL for $trackId; skipping it — ${AddonClient.redact(url)}",
             )
             return null
         }
