@@ -202,8 +202,9 @@ class LyricsTimingSavedEntryTest {
     )
     private val fileSource = LyricsTiming.audioSourceKey("song", localFile = true)
     private val streamSource = LyricsTiming.audioSourceKey("song", localFile = false)
-    private fun keyOf(source: String) =
-        31 * source.hashCode() + songLines.joinToString("\n") { it.text }.hashCode()
+    private fun keyOf(source: String?) =
+        source?.let { 31 * it.hashCode() + songLines.joinToString("\n") { it.text }.hashCode() }
+            ?: songLines.joinToString("\n") { it.text }.hashCode()
     private val altClock = "alt\\u0001cfg\\u0001trk"
 
     private fun playSubstitute() {
@@ -347,6 +348,28 @@ class LyricsTimingSavedEntryTest {
             }
         }
         assertTrue(logged.toString(), logged.any { "(chosen by nothing, song-check=spent 2/2, sibling=no-ai)" in it })
+    }
+
+    @Test
+    fun `a refused refit's kept words keep none over the file's stored measurement`() {
+        // 11-07 m7-home 3JWTaaS7LdU: the refit refused the sheet and kept the
+        // words it judged; base-choice then said the provider's own times beat
+        // the stored +1999 ms measurement, but the video-file fallback applied
+        // that measurement anyway in fixed order.
+        val words = songLines.joinToString(",") { line ->
+            """{"t":"${line.text}","s":${line.timeMs + 300},"e":${line.timeMs + 450}}"""
+        }
+        write(
+            """{"entries":{"song":{"autoVersion":${LyricsTiming.AUTO_VERSION},""" +
+                """"auto":{"knots":[0,1999],"headRate":1.0,"tailRate":1.0,"rate":1.0,"match":100},""" +
+                """"refineHeardKey":${keyOf(null)},"refineHeardWords":[$words],""" +
+                """"heardCheckKey":${keyOf(null)},"heardCheckWords":[$words]}}}""",
+        )
+
+        runBlocking {
+            val timing = LyricsTiming.timing(context, "song", songLines, baseAllowed = true, isVideo = true)
+            assertNull(timing?.base)
+        }
     }
 
     @Test
