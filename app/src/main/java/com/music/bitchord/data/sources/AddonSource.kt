@@ -199,6 +199,18 @@ class AddonSource(
                 if (authRecentlyRejected()) {
                     return@fold SourceHealth.Rejected(authRejectedReason())
                 }
+                // An addon that asks for auth is still not usable if this device
+                // can't be verified. Said here, in the auth service's words,
+                // because otherwise the row reads healthy while every search
+                // fails, and the reason is only in the log.
+                if (manifest.requiresBitChordAuth) client.checkAuth().exceptionOrNull()?.let { failure ->
+                    val reason = failure.message ?: "BitChord couldn't verify this device"
+                    return@fold if (failure is AddonUnavailable) {
+                        SourceHealth.Unreachable(reason)
+                    } else {
+                        SourceHealth.Rejected(reason)
+                    }
+                }
                 // A healthy manifest only says the host is reachable: the
                 // token is spent on `/search`, and a fresh instance (after a
                 // restart or a registry rebuild) has no local auth mark yet.

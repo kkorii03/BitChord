@@ -130,7 +130,7 @@ class AddonClient(rawBaseUrl: String, private val pickedQuality: String? = null)
             key = baseUrl,
             describe = { "▶ addon manifest(${redact(baseUrl)})" },
         ) {
-            fetch<AddonManifest>(manifestUrl(baseUrl)).mapCatching { manifest ->
+            fetch<AddonManifest>(manifestUrl(baseUrl), restOnGateway = false).mapCatching { manifest ->
                 if (manifest.id.isBlank()) {
                     throw AddonException("URL이 응답했지만 애드온 매니페스트가 아닙니다")
                 }
@@ -428,9 +428,9 @@ class AddonClient(rawBaseUrl: String, private val pickedQuality: String? = null)
         return builder.build().toString()
     }
 
-    private suspend inline fun <reified T> fetch(url: String): Result<T> =
+    private suspend inline fun <reified T> fetch(url: String, restOnGateway: Boolean = true): Result<T> =
         runCatching {
-            val text = body(url)
+            val text = body(url, restOnGateway = restOnGateway)
             try {
                 json.decodeFromString<T>(text)
             } catch (failure: SerializationException) {
@@ -471,7 +471,7 @@ class AddonClient(rawBaseUrl: String, private val pickedQuality: String? = null)
      * fetched and the request tried once more. Any other refusal is final and
      * says why. None of these retries count against the 429 budget.
      */
-    private suspend fun body(url: String, rejectHtml: Boolean = false): String = withContext(Dispatchers.IO) {
+    private suspend fun body(url: String, rejectHtml: Boolean = false, restOnGateway: Boolean = true): String = withContext(Dispatchers.IO) {
         var attempt = 0
         var authRetries = 0
         var rejectedToken: String? = null
@@ -577,7 +577,11 @@ class AddonClient(rawBaseUrl: String, private val pickedQuality: String? = null)
                                 // instead of turning one refusal into a stream of
                                 // them.
                                 val nowMs = System.currentTimeMillis()
-                                holdOffUntil(nowMs + restMs)
+                                // The manifest is best-effort metadata: a 503 on it
+                                // must not park the whole client, or a search that
+                                // would have answered is never sent. The host rest
+                                // is still recorded above for the source cooldown.
+                                if (restOnGateway) holdOffUntil(nowMs + restMs)
                                 // A sleeping free-tier host wakes in about a
                                 // minute; the source-level 30-minute rest would
                                 // keep its candidates out for the rest of that
