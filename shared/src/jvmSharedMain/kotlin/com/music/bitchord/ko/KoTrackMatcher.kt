@@ -467,9 +467,14 @@ internal object KoTrackMatcher {
      * Japanese version far more often than a localised title, and a chroma
      * comparison cannot tell two vocal languages of one melody apart — the
      * version would then be swapped in under the Korean title.
+     *
+     * Folded first: [hasFilingLatin] reads the matcher's lowercase form, and an
+     * all-caps title read raw counted as carrying no Latin at all. That made
+     * every mixed-case song by the same act an "other-script" name for it (phone
+     * 11-06: 'Camouflage' offered as 'LEMONADE', 'Blue Moon' as 'FOCUS').
      */
     internal fun latinAgainstOtherScript(wanted: String, got: String): Boolean =
-        hasFilingLatin(wanted) != hasFilingLatin(got)
+        hasFilingLatin(normalize(wanted)) != hasFilingLatin(normalize(got))
 
     /**
      * Whether [candidate] may be adopted as the audio of music video [target]

@@ -420,6 +420,26 @@ class AudioSwitchArtistNameTest {
         assertEquals("qsqvJpOgrWw", TrackMatcher.titleUnverifiedAdoption(listOf(arrestAudio()), arrestTarget())?.videoId)
     }
 
+    /**
+     * Phone 11-06: `'LEMONADE' best=Camouflage/aespa/3:07 verdict=title-unverified`.
+     * Two English titles are never the same song in two scripts, whatever their
+     * letter case; the all-caps one read as carrying no Latin.
+     */
+    @Test
+    fun `an all caps title and another english title are not one song in two scripts`() {
+        for ((wanted, got) in listOf(
+            "LEMONADE" to "Camouflage",
+            "FOCUS" to "Blue Moon",
+            "ANTIFRAGILE" to "Eve, Psyche & The Bluebeard's wife",
+            "UNFORGIVEN (feat. Nile Rodgers)" to "ANTIFRAGILE",
+        )) {
+            assertFalse(KoTrackMatcher.latinAgainstOtherScript(wanted, got), "$wanted / $got")
+        }
+        // The real shape still is: an all-caps video and its Korean release.
+        assertTrue(KoTrackMatcher.latinAgainstOtherScript("BREAK EVEN", "체포하겠어"))
+        assertTrue(KoTrackMatcher.latinAgainstOtherScript("후라이의 꿈", "Fry's Dream"))
+    }
+
     @Test
     fun `the same korean title filed by another act is never adopted`() {
         val target = arrestTarget()
