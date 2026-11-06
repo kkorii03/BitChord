@@ -5,7 +5,7 @@ name: Hear farm
 on:
   push:
     branches: [task/hear-farm2]
-    paths: ["bench/farm/hear-ids.enc", ".github/workflows/hear-farm.yml"]
+    paths: ["bench/farm/farm.py", "bench/farm/hear-ids.enc", ".github/workflows/hear-farm.yml"]
 
 permissions:
   contents: write

@@ -189,7 +189,14 @@ def hear(a):
         name = f"{data_name(vid, key_text)}.enc"
         if i % a.of != a.index or (data / name).exists():
             continue
-        body = hear_one(vid, tmp, key_text)
+        try:
+            body = hear_one(vid, tmp, key_text)
+        except Exception as e:  # one odd song must not end the job
+            print(type(e).__name__, flush=True)
+            continue
+        finally:
+            for p in tmp.glob(f"{vid}.*"):
+                p.unlink(missing_ok=True)
         if body is None:
             continue
         (data / name).write_bytes(stream(json.dumps(body, ensure_ascii=False).encode("utf-8"), key_text + vid))
