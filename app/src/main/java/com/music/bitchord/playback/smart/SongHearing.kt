@@ -62,6 +62,9 @@ internal object SongHearing {
     private const val HEDGE_AFTER_LONG_MS = 120_000L
     private const val OPENING_SECONDS = 120.0
 
+    /** Less new sound than this past a kept transcript buys no request. */
+    private const val NOTHING_NEW_SECONDS = 8.0
+
     /** Requests at once. The playing song must not queue behind the next row's, nor the one before. */
     private val requests = Semaphore(3)
 
@@ -155,13 +158,7 @@ internal object SongHearing {
             val kept = withContext(Dispatchers.IO) { load(app, song.videoId) }
             covering(kept, recording, language, untilSeconds)?.let { saved ->
                 TrackLog.d(TAG, "song-hear: kept lang=$language until=${untilSeconds.toInt()} secs=${saved.seconds.toInt()} words=${saved.words.size}", song.videoId)
-                return Heard(
-                    words = saved.words.map { LyricsWordAlign.Heard(it.t, it.s, it.e) },
-                    audioMs = (saved.seconds * 1000).toLong(),
-                    clock = LyricsTiming.clockFromKey(saved.clock),
-                    httpCode = 200,
-                    fromStore = true,
-                )
+                return heardFrom(saved)
             }
         }
         // One request per recording, language and window, whoever asks: a sheet
@@ -180,6 +177,14 @@ internal object SongHearing {
         return running.await()
     }
 
+    private fun heardFrom(saved: Saved) = Heard(
+        words = saved.words.map { LyricsWordAlign.Heard(it.t, it.s, it.e) },
+        audioMs = (saved.seconds * 1000).toLong(),
+        clock = LyricsTiming.clockFromKey(saved.clock),
+        httpCode = 200,
+        fromStore = true,
+    )
+
     private suspend fun listen(
         app: Context,
         song: Song,
@@ -193,6 +198,16 @@ internal object SongHearing {
             .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
             .getOrNull()
         if (raw != null) {
+            // The row's head may be all there is yet (a next row, a blocked
+            // stream): the same sound again would pay for the same words.
+            val recording = recordingKey(raw.fromFile, LyricsTiming.clockForSongAudio(song, raw))
+            val already = recording?.let { key ->
+                load(app, videoId).filter { it.recording == key && it.language == language }.maxByOrNull { it.seconds }
+            }
+            if (already != null && !raw.whole && (raw.roughSeconds ?: 0.0) <= already.seconds + NOTHING_NEW_SECONDS) {
+                TrackLog.d(TAG, "song-hear: nothing new past ${already.seconds.toInt()}s yet", videoId)
+                return heardFrom(already)
+            }
             val waitedMs = System.currentTimeMillis() - started
             val answer = send(raw.bytes, language, raw.mime, untilSeconds, videoId, waitedMs)
             // A server that read it (or a limit or a dead network, which the

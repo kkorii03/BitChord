@@ -337,6 +337,21 @@ object LyricsTiming {
         audioSource: String? = null,
         /** Which caller's gate set [baseAllowed] false, for the base-apply line. */
         deniedBy: String? = null,
+        // A whole song's words against its sheet is real work, and the screen
+        // asks this on its own thread.
+    ): Timing? = withContext(Dispatchers.Default) {
+        timingNow(context, videoId, lines, baseAllowed, measuredAllowed, isVideo, audioSource, deniedBy)
+    }
+
+    private suspend fun timingNow(
+        context: Context,
+        videoId: String,
+        lines: List<LyricLine>,
+        baseAllowed: Boolean,
+        measuredAllowed: Boolean,
+        isVideo: Boolean,
+        audioSource: String?,
+        deniedBy: String?,
     ): Timing? {
         // A missing entry is not "nothing to do": the stream may still be a
         // verified high-quality copy whose clock differs from YouTube's, and
@@ -4759,6 +4774,39 @@ object LyricsTiming {
         }
 
         /**
+         * Word lists stay in memory and in this one file only for the songs
+         * played last. Whole-song transcripts at every song ever played would
+         * run to tens of megabytes rewritten on each save; [SongHearing] keeps
+         * them per song, and a play of an older one reads them back from there
+         * for free ([ensureRefineHeard]). Its answer and maps stay.
+         */
+        private fun stripOldWords(map: LinkedHashMap<String, Entry>) {
+            fun Entry.hasWords() =
+                heardWords.isNotEmpty() || heardCheckWords.isNotEmpty() || refineHeardWords.isNotEmpty()
+            var over = map.values.count { it.hasWords() } - WORD_LISTS_KEPT
+            if (over <= 0) return
+            for (item in map.entries) {
+                if (over <= 0) break
+                val entry = item.value
+                if (!entry.hasWords()) continue
+                item.setValue(
+                    entry.copy(
+                        heardWords = emptyList(),
+                        heardCheckKey = null,
+                        heardCheckWords = emptyList(),
+                        heardCheckClock = null,
+                        refineHeardKey = null,
+                        refineHeardWords = emptyList(),
+                        refineHeardClock = null,
+                        refineHeardSeconds = 0.0,
+                        refineHeardExtended = false,
+                    ),
+                )
+                over--
+            }
+        }
+
+        /**
          * Written a moment later, off the main thread, once for however many
          * changes came in meanwhile: the file holds every video's maps and
          * can run to megabytes, and tapping the sync buttons changes it ten
@@ -4772,6 +4820,7 @@ object LyricsTiming {
                     delay(SAVE_DELAY_MS)
                     mutex.withLock {
                         dirty = false
+                        stripOldWords(loaded())
                         val snapshot = Saved(LinkedHashMap(loaded()), version = CLOCK_VERSION)
                         // The write stays under the lock as well: a restore
                         // holds it while it replaces the file, so whichever
@@ -4814,6 +4863,7 @@ object LyricsTiming {
 
     private val saveScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private const val SAVE_DELAY_MS = 800L
+    private const val WORD_LISTS_KEPT = 200
 
     private const val MAX_ENTRIES = 3_000
     private val json = Json { ignoreUnknownKeys = true }

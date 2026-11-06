@@ -27,8 +27,13 @@ object LyricsWordAlign {
     private const val MISMATCH = -1
     private const val GAP = -1
 
-    /** Above this many cells the alignment isn't attempted (a very long song and transcript). */
-    internal const val MAX_CELLS = 4_000_000L
+    /**
+     * Above this many cells the alignment isn't attempted. Room for a whole
+     * song's transcript against its whole sheet: 2,000 letters each way is
+     * 4,000,000 cells, and a whole-song listen must not read as "not attempted".
+     * The search keeps two rows of scores and two bits a cell, 10 MB at this size.
+     */
+    internal const val MAX_CELLS = 40_000_000L
 
     /** How far into a line its first heard letter may be and still say when the line starts. */
     private const val LEAD_LETTERS = 4
@@ -138,7 +143,28 @@ object LyricsWordAlign {
         val heardFor: IntArray,
     )
 
+    /**
+     * The last few alignments: one timing pass asks about the same lyrics and
+     * words several times (base choice, refine, per line), and a whole song's
+     * answer takes a good fraction of a second to work out on a phone.
+     */
+    private const val ALIGNMENTS_KEPT = 4
+    private val recentAlignments = object : LinkedHashMap<Pair<List<String>, List<Heard>>, Alignment?>(8, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Pair<List<String>, List<Heard>>, Alignment?>?): Boolean =
+            size > ALIGNMENTS_KEPT
+    }
+
     private fun align(lines: List<String>, words: List<Heard>): Alignment? {
+        val key = lines to words
+        synchronized(recentAlignments) {
+            if (recentAlignments.containsKey(key)) return recentAlignments[key]
+        }
+        val made = alignNow(lines, words)
+        synchronized(recentAlignments) { recentAlignments[key] = made }
+        return made
+    }
+
+    private fun alignNow(lines: List<String>, words: List<Heard>): Alignment? {
         val lyricChars = StringBuilder()
         val lyricLine = ArrayList<Int>()
         val lyricPos = ArrayList<Int>()
@@ -169,32 +195,47 @@ object LyricsWordAlign {
         // Semi-global: leading and trailing gaps on either side cost nothing —
         // the video may sing only part of the lyrics, and say things besides.
         val width = m + 1
-        val score = IntArray((n + 1) * width)
-        val from = ByteArray((n + 1) * width) // 1 diagonal, 2 up (skip lyric), 3 left (skip heard)
+        // Two rows of scores are all the search reads. The way back is two bits
+        // a cell: 1 diagonal, 2 up (skip lyric), 3 left (skip heard).
+        var above = IntArray(width)
+        var here = IntArray(width)
+        val from = ByteArray(((n + 1) * width + 3) / 4)
+        fun setFrom(cell: Int, step: Int) {
+            val at = cell ushr 2
+            from[at] = (from[at].toInt() or (step shl ((cell and 3) * 2))).toByte()
+        }
+        fun fromOf(cell: Int): Int = (from[cell ushr 2].toInt() ushr ((cell and 3) * 2)) and 3
         for (i in 1..n) {
-            from[i * width] = 2
+            setFrom(i * width, 2)
+            here[0] = 0
             val a = lyricChars[i - 1]
             for (j in 1..m) {
-                val diagonal = score[(i - 1) * width + j - 1] + if (a == heardChars[j - 1]) MATCH else MISMATCH
-                val up = score[(i - 1) * width + j] + if (j == m) 0 else GAP
-                val left = score[i * width + j - 1] + if (i == n) 0 else GAP
+                val diagonal = above[j - 1] + if (a == heardChars[j - 1]) MATCH else MISMATCH
+                val up = above[j] + if (j == m) 0 else GAP
+                val left = here[j - 1] + if (i == n) 0 else GAP
                 val best = maxOf(diagonal, up, left)
-                score[i * width + j] = best
-                from[i * width + j] = when (best) {
-                    diagonal -> 1
-                    up -> 2
-                    else -> 3
-                }
+                here[j] = best
+                setFrom(
+                    i * width + j,
+                    when (best) {
+                        diagonal -> 1
+                        up -> 2
+                        else -> 3
+                    },
+                )
             }
+            val row = above
+            above = here
+            here = row
         }
-        for (j in 1..m) from[j] = 3
+        for (j in 1..m) setFrom(j, 3)
 
         // Back from the end: the letters that line up and are the same.
         val heardFor = IntArray(n) { -1 }
         var i = n
         var j = m
         while (i > 0 && j > 0) {
-            when (from[i * width + j].toInt()) {
+            when (fromOf(i * width + j)) {
                 1 -> {
                     if (lyricChars[i - 1] == heardChars[j - 1]) heardFor[i - 1] = j - 1
                     i--

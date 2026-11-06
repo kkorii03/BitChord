@@ -83,6 +83,8 @@ object VideoAudio {
         val mime: String = "audio/wav",
         /** These bytes run to the end of the recording. */
         val whole: Boolean = false,
+        /** About how much sound a cut stream holds; null for a decoded window, which knows. */
+        val roughSeconds: Double? = null,
     )
 
     /**
@@ -460,6 +462,8 @@ object VideoAudio {
             fromFile = false,
             mime = mime,
             whole = copy.isComplete && bytes.size.toLong() >= copy.contentLength,
+            roughSeconds = RefineExtendPolicy.cachedSeconds(bytes.size.toLong(), copy.contentLength, durationMs / 1000.0)
+                .takeIf { it >= 0.0 } ?: (bytes.size / RAW_BYTES_PER_SECOND),
         )
     }
 
