@@ -1459,45 +1459,28 @@ object LyricsTiming {
             if (refineHeardKnown(context, videoId, lines, timing, audioSource)) return@withLock false
             val before = store(context).get(videoId)
             val hadWords = before?.refineHeardKey == key && before.refineHeardWords.isNotEmpty()
-            var heardWords: List<SavedWord>? = null
-            var heardClock: Clock = Clock.Unknown
+            var heardAnchor: RefineSnapshot? = null
             if (!hadWords) {
                 val copy = VideoAudio.songWavCopy(context, song, VideoAudio.SONG_CHECK_SECONDS)
                     ?: return@withLock false
                 val listenClock = clockForSongAudio(song, copy)
                 val words = listenForRefine(copy.bytes, lines) ?: return@withLock false
-                heardWords = words
-                heardClock = listenClock
-                store(context).update(videoId) {
-                    it.copy(
-                        clockVersion = CLOCK_VERSION,
-                        refineHeardKey = key,
-                        refineHeardWords = words,
-                        refineHeardClock = listenClock.saved(),
-                        refineHeardSeconds = VideoAudio.SONG_CHECK_SECONDS,
-                        refineHeardExtended = false,
-                    )
-                }
+                heardAnchor = saveRefineHeard(
+                    context,
+                    videoId,
+                    before,
+                    key,
+                    words,
+                    listenClock,
+                    VideoAudio.SONG_CHECK_SECONDS,
+                    extended = false,
+                )
             }
             // Anchor the refine to the entry from before the listen, with our
             // own words write folded in. A newer correction saved during the
             // listen then makes the stored entry differ and the result is
             // dropped instead of overwriting it.
-            val firstAnchor = RefineSnapshot(
-                (before ?: Entry()).let { start ->
-                    if (heardWords == null) {
-                        start
-                    } else {
-                        start.copy(
-                            refineHeardKey = key,
-                            refineHeardWords = heardWords,
-                            refineHeardClock = heardClock.saved(),
-                            refineHeardSeconds = VideoAudio.SONG_CHECK_SECONDS,
-                            refineHeardExtended = false,
-                        )
-                    }
-                },
-            )
+            val firstAnchor = heardAnchor ?: RefineSnapshot(before ?: Entry())
             val entry = store(context).get(videoId) ?: return@withLock false
             val heardSeconds = refineHeardSeconds(entry)
             val result = refineWithSnapshot(context, videoId, lines, timing, audioSource, snapshot = firstAnchor)
@@ -1536,31 +1519,57 @@ object LyricsTiming {
             val copy = VideoAudio.songWavCopy(context, song, target) ?: return@withLock !hadWords
             val extendClock = clockForSongAudio(song, copy)
             val words = listenForRefine(copy.bytes, lines) ?: return@withLock !hadWords
-            store(context).update(videoId) {
-                it.copy(
-                    clockVersion = CLOCK_VERSION,
-                    refineHeardKey = key,
-                    refineHeardWords = words,
-                    refineHeardClock = extendClock.saved(),
-                    refineHeardSeconds = target,
-                    refineHeardExtended = true,
-                )
-            }
             // Same anchor, now taken before this second listen; the first
             // refine's own write is already part of [beforeExtend].
-            val extendAnchor = RefineSnapshot(
-                beforeExtend.copy(
-                    refineHeardKey = key,
-                    refineHeardWords = words,
-                    refineHeardClock = extendClock.saved(),
-                    refineHeardSeconds = target,
-                    refineHeardExtended = true,
-                ),
+            val extendAnchor = saveRefineHeard(
+                context,
+                videoId,
+                beforeExtend,
+                key,
+                words,
+                extendClock,
+                target,
+                extended = true,
             )
             refineWithSnapshot(context, videoId, lines, timing, audioSource, snapshot = extendAnchor)
             _changes.tryEmit(videoId)
             true
         }
+    }
+
+    /**
+     * Saves what a refine listen heard and returns the anchor its refine
+     * compares the store against: [before] with this same save folded in.
+     */
+    internal suspend fun saveRefineHeard(
+        context: Context,
+        videoId: String,
+        before: Entry?,
+        key: Int,
+        words: List<SavedWord>,
+        clock: Clock,
+        seconds: Double,
+        extended: Boolean,
+    ): RefineSnapshot {
+        store(context).update(videoId) {
+            it.copy(
+                clockVersion = CLOCK_VERSION,
+                refineHeardKey = key,
+                refineHeardWords = words,
+                refineHeardClock = clock.saved(),
+                refineHeardSeconds = seconds,
+                refineHeardExtended = extended,
+            )
+        }
+        return RefineSnapshot(
+            (before ?: Entry()).copy(
+                refineHeardKey = key,
+                refineHeardWords = words,
+                refineHeardClock = clock.saved(),
+                refineHeardSeconds = seconds,
+                refineHeardExtended = extended,
+            ),
+        )
     }
 
     private suspend fun listenForRefine(
