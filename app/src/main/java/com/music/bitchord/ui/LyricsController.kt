@@ -1714,7 +1714,12 @@ class LyricsController(
         // Shown at once, so a run of taps on "+" counts from each other.
         _lyricsTiming.update { it.copy(manualMs = value) }
         scope.launch {
-            LyricsTiming.setManual(app, request.videoId, value)
+            LyricsTiming.setManual(
+                app,
+                request.videoId,
+                value,
+                audioSource = if (request.isVideo) null else LyricsTiming.audioSourceKey(request.videoId, request.localUri != null),
+            )
             refreshTiming(generation, lines)
         }
     }

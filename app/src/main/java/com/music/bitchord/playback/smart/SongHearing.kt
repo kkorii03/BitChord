@@ -183,10 +183,16 @@ internal object SongHearing {
                 }
                 // A download taking over from its own stream mid-song. The words heard
                 // on the stream hold on the stream's clock; timing() carries them onto
-                // the file through its verified map, or drops them when it has none.
-                // Decoding the file instead left the song uncorrected for 71 s (11-06
-                // w58uXpyHWes, its new sheet 1.0-1.2 s late on the listener's own log).
-                if (recording.startsWith(FILE_PREFIX)) {
+                // the file through its verified map. Decoding the file instead left the
+                // song uncorrected for 71 s (11-06 w58uXpyHWes, its new sheet 1.0-1.2 s
+                // late on the listener's own log). With no map they would only be
+                // dropped there, every time: that file has to be heard itself.
+                if (recording.startsWith(FILE_PREFIX) && LyricsTiming.carriesFromStream(
+                        app,
+                        song.videoId,
+                        LyricsTiming.clockFromKey(recording.removePrefix(FILE_PREFIX)),
+                    )
+                ) {
                     streamWords(kept, language)?.let { saved ->
                         TrackLog.d(TAG, "song-hear: file reads the stream's ${saved.seconds.toInt()}s lang=$language", song.videoId)
                         return heardFrom(saved)

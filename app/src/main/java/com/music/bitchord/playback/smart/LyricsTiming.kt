@@ -364,7 +364,7 @@ object LyricsTiming {
         } else {
             null
         }
-        val playing = playingClock(videoId)
+        val playing = playingClock(videoId, audioSource)
         // A song check started on the stream can finish after playback moved to
         // the verified file and leave its answer under the stream key (one AI
         // slot, newest wins), so the file-keyed screen found none (11-06
@@ -729,12 +729,18 @@ object LyricsTiming {
         return Clock.Substitute(source, track)
     }
 
-    /** The copy actually serving [videoId] — not the copy it may swap to later. */
-    internal fun playingClock(videoId: String): Clock = when {
+    /**
+     * The copy actually serving [videoId] — not the copy it may swap to later.
+     * [audioSource] is the caller's [audioSourceKey], when it knows what is playing.
+     */
+    internal fun playingClock(videoId: String, audioSource: String? = null): Clock = when {
         StreamChoice.isSubstitute(videoId) -> substituteClock(videoId)
         // An explicit YouTube choice is the stream; a saved file only answers
-        // when nothing has been chosen yet.
-        StreamChoice.isYouTube(videoId) -> Clock.YouTube
+        // when nothing has been chosen yet — or when the file is what is playing.
+        // A verified download taking over mid-song leaves the choice behind, and
+        // read as the stream it threw away an answer heard off this very file
+        // (11-06 MUny_GDYIDM: playing=youtube base=alt dropped=1).
+        StreamChoice.isYouTube(videoId) && audioSource != audioSourceKey(videoId, localFile = true) -> Clock.YouTube
         else -> {
             val meta = KoDownloadRecords.savedMetadataFor(videoId)
             clockForLocalCopy(meta?.hqSourceConfigId, meta?.hqTrackId)
@@ -856,6 +862,10 @@ object LyricsTiming {
             else -> null
         }
     }
+
+    /** Whether words heard on the stream can be put on [clock]: it is the stream's, or a verified map leads there. */
+    internal fun carriesFromStream(context: Context, videoId: String, clock: Clock): Boolean =
+        conversion(context, videoId, Clock.YouTube, clock) != null
 
     /** [adjustment] composed after [conversion]: its map is measured clock → playing clock. */
     private fun convertAdjustment(adjustment: Adjustment, conversion: ClockConversion): Adjustment {
@@ -1337,7 +1347,7 @@ object LyricsTiming {
                 refineLines = result.lines,
                 refineMad = result.madMs,
                 refineWide = appliedWide,
-                refineClock = playingClock(videoId).saved(),
+                refineClock = playingClock(videoId, audioSource).saved(),
             )
         }
         if (!saved) {
@@ -4516,13 +4526,13 @@ private const val FIRM_FIT_LINES = 15
     }
 
     /** Keeps [ms] as the correction for [videoId]; 0 removes it. */
-    suspend fun setManual(context: Context, videoId: String, ms: Long) {
+    suspend fun setManual(context: Context, videoId: String, ms: Long, audioSource: String? = null) {
         val value = ms.coerceIn(-MAX_MANUAL_MS, MAX_MANUAL_MS)
         store(context).update(videoId) {
             it.copy(
                 clockVersion = CLOCK_VERSION,
                 manualMs = value.takeIf { v -> v != 0L },
-                manualClock = playingClock(videoId).saved(),
+                manualClock = playingClock(videoId, audioSource).saved(),
             )
         }
         _changes.tryEmit(videoId)

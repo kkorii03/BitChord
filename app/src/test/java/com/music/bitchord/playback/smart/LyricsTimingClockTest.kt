@@ -284,6 +284,17 @@ class LyricsTimingClockTest {
         assertEquals(11_500L, shownFrom("vE", localFile = true))
     }
 
+    /** With no map the stream's words would be dropped every time, and the file never heard itself. */
+    @Test
+    fun `a stream's words may only start a file a verified map leads to`() {
+        val file = LyricsTiming.Clock.Substitute("src", "track")
+        assertEquals(false, LyricsTiming.carriesFromStream(context, "vE", file))
+        verified("vE", offsetMs = 1_000L)
+        assertEquals(true, LyricsTiming.carriesFromStream(context, "vE", file))
+        assertEquals(true, LyricsTiming.carriesFromStream(context, "vE", LyricsTiming.Clock.YouTube))
+        assertEquals(false, LyricsTiming.carriesFromStream(context, "vE", LyricsTiming.Clock.Unknown))
+    }
+
     @Test
     fun `the stream still playing keeps its own clock whatever is saved`() {
         write("""{"vF":${entry(autoMs = 500L, autoClock = "yt")}}""")
