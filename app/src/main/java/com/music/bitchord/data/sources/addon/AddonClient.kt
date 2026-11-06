@@ -401,7 +401,18 @@ class AddonClient(rawBaseUrl: String) {
     }
 
     private suspend inline fun <reified T> fetch(url: String): Result<T> =
-        runCatching { json.decodeFromString<T>(body(url)) }
+        runCatching {
+            val text = body(url)
+            try {
+                json.decodeFromString<T>(text)
+            } catch (failure: SerializationException) {
+                // Same type, so nothing above reads it differently, but the
+                // parser's own message quotes the body, and a stream answer's
+                // body holds a signed URL. Every caller logs this message, and
+                // the sources screen shows it.
+                throw SerializationException(UNREADABLE_ANSWER)
+            }
+        }
             .onFailure { failure ->
                 if (failure is CancellationException) throw failure
                 // A miss is not worth a line. Everything else is: this is the
@@ -653,6 +664,9 @@ class AddonClient(rawBaseUrl: String) {
 
         /** Said when this addon is still resting for longer than a call may wait. */
         private const val QUIET_MESSAGE = "애드온이 BitChord의 요청을 제한하고 있습니다"
+
+        /** Said when an answer arrived and could not be read. */
+        private const val UNREADABLE_ANSWER = "애드온 응답을 읽을 수 없습니다"
 
         /** As much of an addon's own error text as a log line needs. */
         private const val MAX_ERROR_CHARS = 120
