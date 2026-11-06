@@ -142,8 +142,10 @@ internal object SongHearing {
     /**
      * The first answer that heard something. A second request goes out if the
      * first has said nothing after [hedgeAfterMs]; the loser is cancelled. A plain
-     * failure from one waits for the other, never hides it. With no slot free in
-     * [requests] the second is not sent: it would turn away another song's request.
+     * failure from one waits for the other, never hides it. The second waits for
+     * a free slot in [requests] rather than giving up: a slot opens when another
+     * request ends, and the first may still be the slow one. If the first answers
+     * while the second waits, the second is cancelled before it is sent.
      */
     internal suspend fun <T : Any> hedged(
         hedgeAfterMs: Long,
@@ -153,9 +155,15 @@ internal object SongHearing {
         val first = async { ask() }
         val quick = withTimeoutOrNull(hedgeAfterMs) { first.await() }
         if (quick != null) return@coroutineScope quick
-        if (!requests.tryAcquire()) return@coroutineScope first.await()
-        val second = async { ask() }
-        second.invokeOnCompletion { requests.release() }
+        // A slot opens when another request ends; the first may still be the slow one.
+        val second = async {
+            requests.acquire()
+            try {
+                ask()
+            } finally {
+                requests.release()
+            }
+        }
         val (done, other) = select<Pair<T, Deferred<T>>> {
             first.onAwait { it to second }
             second.onAwait { it to first }
