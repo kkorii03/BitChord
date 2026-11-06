@@ -2,6 +2,7 @@ package com.music.bitchord.playback.smart
 
 import android.content.Context
 import com.music.bitchord.data.lyrics.LyricLine
+import com.music.bitchord.data.lyrics.RefinePolicy
 import com.music.bitchord.testutil.FakeContext
 import com.music.bitchord.testutil.FakePreferences
 import java.io.File
@@ -210,6 +211,15 @@ class LyricsRefineSnapshotTest {
         val text = awaitFile { it.contains("\"manualMs\":1234") }
         assertTrue(text.contains("\"manualMs\":1234"))
         assertFalse(text.contains("\"refineMs\""))
+    }
+
+    @Test
+    fun `a flat whole-song move is shown whole and a drift is still held at the wide cap`() {
+        val flat = LyricsTiming.Timing(base = null, manualMs = 0L, refineMs = 19_400L, refineWide = true)
+        val drift = flat.copy(refineMs = 0L, refineSlopePerMin = 6_000.0)
+
+        assertEquals(19_400L, flat.refineAt(60_000L))
+        assertEquals(RefinePolicy.MAX_WIDE_SHIFT_MS, drift.refineAt(300_000L))
     }
 
     @Test

@@ -65,7 +65,8 @@ object RefinePolicy {
         /**
          * The constant move applied, or the line's offset when [slopePerMin]
          * is non-zero; the median found when [applied] is false. A narrow
-         * move is capped at ±[MAX_SHIFT_MS], a wide one at ±[MAX_WIDE_SHIFT_MS].
+         * move is capped at ±[MAX_SHIFT_MS], a wide one at ±[MAX_WIDE_SHIFT_MS],
+         * a flat fit of the whole song at ±[MAX_FLAT_SHIFT_MS].
          */
         val medianMs: Long,
         /** Median absolute deviation of the line residuals from the model. */
@@ -109,6 +110,15 @@ object RefinePolicy {
 
     /** However far the wide median points, one refine moves no further than this. */
     const val MAX_WIDE_SHIFT_MS = 10_000L
+
+    /**
+     * How far one flat fit of the whole-song alignment may move the sheet: a
+     * cover's quiet intro can be longer than the wide cap (11-06 iKraCjaTBVk:
+     * 19.4 s). The wide window's vote stays at [MAX_WIDE_SHIFT_MS], since this
+     * rests on the lines' own letters and that only on their openings. Past
+     * this the move is reported and not applied, not applied in part.
+     */
+    const val MAX_FLAT_SHIFT_MS = 30_000L
 
     /**
      * The second attempt looks this far either side of a line's shown time: as
@@ -351,11 +361,11 @@ object RefinePolicy {
         // An AI's own line times placed against themselves fit perfectly and say nothing.
         if (lineLevelWords) return null
         val placed = LyricsWordAlign.placeLinesDetailed(lines.map { it.text }, heard)
-        val points = lines.indices.mapNotNull { index ->
-            val start = placed.starts[index] ?: return@mapNotNull null
-            if (placed.matchedShare.getOrElse(index) { 0.0 } < MIN_DRIFT_MATCH_RATIO) return@mapNotNull null
-            lines[index].timeMs to start
+        val usable = lines.indices.filter { index ->
+            placed.starts[index] != null &&
+                placed.matchedShare.getOrElse(index) { 0.0 } >= MIN_DRIFT_MATCH_RATIO
         }
+        val points = usable.map { index -> lines[index].timeMs to placed.starts[index]!! }
         if (points.size < MIN_LINEAR_LINES) return null
         val span = points.maxOf { it.first } - points.minOf { it.first }
         if (span < MIN_LINEAR_SPAN_MS) return null
@@ -377,9 +387,13 @@ object RefinePolicy {
             // its later repeats as well as its own lines: one flat move of a
             // whole repeat, read off lyrics that were heard on time.
             if (onTimeLines * 2 >= points.size) return null
+            // And when most of the placed lines are the same words, nothing pins
+            // which repeat they are, however tight the fit.
+            val distinct = usable.map { LyricsWordAlign.fold(lines[it].text) }.distinct().size
+            if (distinct * 2 < points.size) return null
             return Result(
-                applied = true,
-                medianMs = line.offsetMs.coerceIn(-MAX_WIDE_SHIFT_MS, MAX_WIDE_SHIFT_MS),
+                applied = abs(line.offsetMs) <= MAX_FLAT_SHIFT_MS,
+                medianMs = line.offsetMs,
                 madMs = mad,
                 lines = points.size,
                 model = Model.WIDE,
