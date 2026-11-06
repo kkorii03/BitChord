@@ -1,0 +1,13 @@
+BitChord: stop the emulator judge scripts/smokecheck.py from failing sets for things that are not app failures. Only scripts/smokecheck.py and scripts/test_smokecheck.py may change. No app code, no workflows.
+
+Evidence from real logs:
+1. Check 3 (lyrics sync) reads only `lyrics-sync: <id> ... shift=<n>ms`. A value the app measured and then discarded still fails the set: a song logged `base=ai shift=11662ms`, then two seconds later `base=none shift=-ms`, and the set failed on the first line. The same song in another round had no such line and passed. Judge the last lyrics-sync line for each song, not every line seen. A large shift on the last line still fails as it does now.
+2. Check 4 (quality upgrade) counts every `hq-verify:` and `decode: hq-verify failed` line in the log. A failed download on a row that is not in the set's song list (a row the player reached by seeking, `[F1ZyommhrVo] decode: hq-verify failed at=download HTTP 403`) failed a set whose hq song had no hq-verify line at all. When a song list is given, count only lines whose `[id]` is a song of kind hq. Lines without an id keep today's behaviour. The check must still fail when an hq song of the list is rejected or refused.
+
+Do not weaken anything else. In particular keep: a refused or empty download of a listed hq song fails; a dropped connection stays unmeasured (`download-network`); `refused-shift` handling in the song-sync branch.
+
+Order: write failing tests first for both cases and for the "must still fail" cases in test_smokecheck.py, then fix minimally. Run the tests with: python -m unittest from the scripts folder. Read every use of the counters you change.
+
+Follow AGENTS.md (ponytail).
+
+Finish with a summary of at most 10 lines: files changed / key change / test results / unresolved problems, plus the REMOVED-LINES AUDIT.
