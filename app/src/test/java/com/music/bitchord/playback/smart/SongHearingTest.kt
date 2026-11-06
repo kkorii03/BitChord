@@ -140,23 +140,32 @@ class SongHearingTest {
     }
 
     @Test
-    fun aSecondRequestWaitsForNoSlotAndIsNotSentWithoutOne() = runTest {
-        repeat(3) { SongHearing.requests.acquire() }
+    fun aHedgeThatMissedItsMomentComesBackWhenASlotFrees() = runTest {
+        var held = 0
+        repeat(3) {
+            SongHearing.requests.acquire()
+            held++
+        }
         try {
             var asked = 0
             val slow = CompletableDeferred<String>()
+            launch {
+                delay(20_000L)
+                SongHearing.requests.release()
+                held--
+            }
             launch {
                 delay(40_000L)
                 slow.complete("first")
             }
             val answer = SongHearing.hedged(15_000L, ask = {
                 asked++
-                slow.await()
+                if (asked == 1) slow.await() else "second"
             }, heardSomething = { true })
-            assertEquals("first", answer)
-            assertEquals(1, asked)
+            assertEquals("second", answer)
+            assertEquals(2, asked)
         } finally {
-            repeat(3) { SongHearing.requests.release() }
+            repeat(held) { SongHearing.requests.release() }
         }
     }
 

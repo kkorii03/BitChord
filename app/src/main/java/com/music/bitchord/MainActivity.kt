@@ -2258,6 +2258,8 @@ private fun BitChordApp(
         val session = controller ?: return@LaunchedEffect
         when (request) {
             is LinkRequest.Track -> {
+                // A song picked while the link is looked up wins over the link.
+                val before = session.currentMediaItem?.mediaId
                 val song = YtMusicRepository.trackForLink(request.videoId).getOrNull()
                 if (song == null) {
                     Toast.makeText(
@@ -2265,7 +2267,7 @@ private fun BitChordApp(
                         context.getString(R.string.couldnt_open_link),
                         Toast.LENGTH_SHORT,
                     ).show()
-                } else {
+                } else if (MusicLink.linkStillWanted(before, session.currentMediaItem?.mediaId)) {
                     // A link is one song named on purpose, which is exactly the
                     // case [playRadio] exists for: play it and let AutoPlay
                     // carry on, rather than queueing something around it.

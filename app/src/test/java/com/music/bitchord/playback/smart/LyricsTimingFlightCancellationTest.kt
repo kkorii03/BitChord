@@ -86,4 +86,20 @@ class LyricsTimingFlightCancellationTest {
         )
         second.cancelAndJoin()
     }
+
+    @Test
+    fun aFlightNobodyWaitsOnStopsRetrying() = runBlocking {
+        val caller = launch { delay(60_000) }
+        val flight = async(Dispatchers.Default) { delay(60_000) }
+        with(LyricsTiming) {
+            flight.cancelledWithCaller(caller, cancelWithCaller = false)
+            assertTrue(retryHearing(429, 0, 1_000L, flightStillWanted(flight)))
+        }
+        caller.cancelAndJoin()
+        with(LyricsTiming) {
+            assertFalse(flightStillWanted(flight))
+            assertFalse(retryHearing(429, 0, 1_000L, flightStillWanted(flight)))
+        }
+        flight.cancel()
+    }
 }
