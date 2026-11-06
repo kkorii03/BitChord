@@ -66,6 +66,8 @@ internal object HqSwapPolicy {
         versionSwapActive: Boolean = false,
         videoRadio: Boolean = false,
         isVideo: Boolean = false,
+        suppressed: Boolean = false,
+        currentClockKnown: Boolean = true,
     ): Decision {
         if (!sameTrack) return Decision(false, "track-changed", 0L)
         if (pinned) return Decision(false, "pinned", 0L)
@@ -183,6 +185,33 @@ internal object HqSwapPolicy {
         if (!rate.isFinite() || rate <= 0.0) return candidateMs
         return ((candidateMs - offsetMs) / rate).roundToLong().coerceAtLeast(0L)
     }
+
+    fun standbyUnfitReason(
+        expectedMediaId: String,
+        expectedIndex: Int,
+        standbyMediaId: String?,
+        standbyIndex: Int,
+        standbyState: Int,
+        standbyPositionMs: Long,
+        standbyDurationMs: Long,
+        suppressed: Boolean,
+    ): String? = null
+
+    fun standbyOffTarget(standbyPositionMs: Long, targetMs: Long): Boolean = false
+
+    fun pausedStandbyStale(
+        activePlayWhenReady: Boolean,
+        standbyPositionMs: Long,
+        targetMs: Long,
+    ): Boolean = false
+
+    data class QueueEdits(val head: Boolean, val tail: Boolean)
+
+    fun queueEdits(
+        activeKeys: List<String>,
+        standbyKeys: List<String>,
+        currentIndex: Int,
+    ): QueueEdits = QueueEdits(head = false, tail = false)
 
     /** The candidate's own position for [youtubeMs], using the verified offset and rate. */
     fun targetPositionMs(youtubeMs: Long, offsetMs: Long, rate: Double): Long =
