@@ -7258,29 +7258,49 @@ class PlaybackService : MediaLibraryService() {
     }
 
     private suspend fun adoptCachedTrack(mediaId: String, uri: Uri, durationSec: Int?): Boolean {
+        val videoId = uri.getQueryParameter("v") ?: return false
+        val downloaded = com.music.bitchord.download.Downloads.savedUri(this, videoId) != null
+        if (downloaded) return false
+        val target = SourceResolver.targetIn(uri)
+        // The bar a fresh stream clears before the player starts on it, asked of
+        // the bytes on disk — and asked *before* the decoder's format, which is
+        // the whole point of moving it up here. `audioFormatFor` is only this
+        // track's once the renderer has read a sample of it, and a queue advance
+        // reaches this within milliseconds of the transition, so the guard below
+        // used to answer "not this track's format yet" and return before the
+        // bytes were weighed at all. That is how a cached rendition of a
+        // different recording played to the end of the track while every
+        // candidate for the same song was being refused for its own runtime.
+        val refusal = withContext(Dispatchers.IO) {
+            AudioCache.refusalForCachedRendition(uri, target.durationSec, durationSec)
+        }
+        if (refusal != null) {
+            TrackLog.w(
+                "BitChord",
+                "cached rendition refused (${refusal.name.lowercase()}): playing ${durationSec}s vs " +
+                    "catalogue ${target.durationSec}s for $videoId; discarding it and resolving the track again",
+                about = mediaId,
+            )
+            withContext(Dispatchers.IO) { AudioCache.discardRendition(uri) }
+            // Handed to the search rather than adopted. The bytes are gone, and
+            // the mime the decoder reported describes a file that is no longer
+            // there — reading it as "already lossless" is what would leave the
+            // wrong audio playing for the rest of the session. A null floor is
+            // the same statement: there is nothing on disk left to beat.
+            return QualityUpgrade.adoptUnresolved(
+                mediaId = mediaId,
+                uri = uri,
+                target = target,
+                playingMime = null,
+                playing = null,
+            )
+        }
         val format = withContext(Dispatchers.Main) {
             player
                 ?.takeIf { it.currentMediaItem?.mediaId == mediaId && audioFormatFor == mediaId }
                 ?.audioFormat
         } ?: return false
         val mime = format.sampleMimeType ?: return false
-        val videoId = uri.getQueryParameter("v") ?: return false
-        val downloaded = com.music.bitchord.download.Downloads.savedUri(this, videoId) != null
-        if (downloaded) return false
-        val target = SourceResolver.targetIn(uri)
-        val expectedSec = target.durationSec
-        // [isWrongLength], not just [TrackMatcher.isSevereMismatch]: a cached
-        // preview clip is inside the 30s window of a short row and outside it
-        // by far from a real one, and the preview is the case that measured
-        // wrong on the phone (11-05, NEON).
-        if (TrackMatcher.isWrongLength(expectedSec, durationSec)) {
-            TrackLog.w(
-                "BitChord",
-                "cached rendition refused: playing ${durationSec}s for a ${expectedSec}s track ($videoId); discarding cache rendition",
-                about = mediaId,
-            )
-            withContext(Dispatchers.IO) { AudioCache.discardRendition(uri) }
-        }
         return QualityUpgrade.adoptUnresolved(
             mediaId = mediaId,
             uri = uri,

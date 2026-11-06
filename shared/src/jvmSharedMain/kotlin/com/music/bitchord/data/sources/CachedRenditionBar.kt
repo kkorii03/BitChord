@@ -18,7 +18,7 @@ package com.music.bitchord.data.sources
  *    rendition opens with a lossless container, or it is not one whatever it
  *    was written from.
  *  - **Is it the recording the row names.** A copy whose runtime is a
- *    [TrackMatcher.isSevereMismatch] away from the catalogue's is a different
+ *    [TrackMatcher.isWrongLength] away from the catalogue's is a different
  *    edit, not this song.
  *
  * A refusal means the bytes go — see [invalidatedKeys] for the one an addon
@@ -55,7 +55,7 @@ object CachedRenditionBar {
         renditionSeconds: Int?,
     ): Refusal? = when {
         claimsLossless && head != null && StreamContainerSniff.looksLossy(head) -> Refusal.LOSSY_BYTES
-        TrackMatcher.isSevereMismatch(rowSeconds, renditionSeconds) -> Refusal.DURATION
+        TrackMatcher.isWrongLength(rowSeconds, renditionSeconds) -> Refusal.DURATION
         else -> null
     }
 
