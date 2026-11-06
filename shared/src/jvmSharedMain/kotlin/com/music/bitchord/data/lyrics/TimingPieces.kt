@@ -29,7 +29,7 @@ import kotlin.math.roundToLong
  * transcripts, same language and other (735 whole songs, 651 of 40 s and 729 of
  * 90 s), gave no accepted answer:
  *  - [MIN_LINES] lines in every stretch; a shorter one is dropped, not guessed.
- *    All but 47 of the whole-song wrong pairs stop here or before.
+ *    All but 6 of the whole-song wrong pairs stop here or before.
  *  - [MIN_COVER] of the sheet in stretches. The best wrong pair held 0.11, and
  *    0.25 applied one real song 50 s wrong.
  *  - The rest never decided a real or a wrong sheet in that corpus and stay as
@@ -87,7 +87,7 @@ object TimingPieces {
     data class Placed(val timeMs: Long, val startMs: Long?, val share: Double, val letters: Int)
 
     /** The stretches found: record ms → recording ms. */
-    class Result(
+    class Result internal constructor(
         val map: LyricsTimeMap,
         /** Recording seconds per sheet second, one for all stretches. */
         val rate: Double,
