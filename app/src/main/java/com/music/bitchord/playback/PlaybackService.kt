@@ -213,6 +213,7 @@ import com.music.bitchord.data.settings.EqualizerMode
 import com.music.bitchord.data.settings.ListeningSink
 import com.music.bitchord.data.settings.OutputPcmMode
 import com.music.bitchord.data.settings.PrivateListening
+import com.music.bitchord.data.sources.CachedRenditionBar
 import com.music.bitchord.data.sources.QualityUpgradeAdvice
 import com.music.bitchord.data.sources.HqQuality
 import com.music.bitchord.data.sources.HqTier
@@ -7274,6 +7275,7 @@ class PlaybackService : MediaLibraryService() {
         val refusal = withContext(Dispatchers.IO) {
             AudioCache.refusalForCachedRendition(uri, target.durationSec, durationSec)
         }
+        var discarded = false
         if (refusal != null) {
             TrackLog.w(
                 "BitChord",
@@ -7281,18 +7283,29 @@ class PlaybackService : MediaLibraryService() {
                     "catalogue ${target.durationSec}s for $videoId; discarding it and resolving the track again",
                 about = mediaId,
             )
-            withContext(Dispatchers.IO) { AudioCache.discardRendition(uri) }
-            // Handed to the search rather than adopted. The bytes are gone, and
-            // the mime the decoder reported describes a file that is no longer
-            // there — reading it as "already lossless" is what would leave the
-            // wrong audio playing for the rest of the session. A null floor is
-            // the same statement: there is nothing on disk left to beat.
-            return QualityUpgrade.adoptUnresolved(
-                mediaId = mediaId,
-                uri = uri,
-                target = target,
-                playingMime = null,
-                playing = null,
+            discarded = withContext(Dispatchers.IO) { AudioCache.discardRendition(uri) }
+            if (discarded) {
+                // Handed to the search rather than adopted. The bytes are gone,
+                // and the mime the decoder reported describes a file that is no
+                // longer there — reading it as "already lossless" is what would
+                // leave the wrong audio playing for the rest of the session. A
+                // null floor is the same statement: there is nothing on disk
+                // left to beat.
+                return QualityUpgrade.adoptUnresolved(
+                    mediaId = mediaId,
+                    uri = uri,
+                    target = target,
+                    playingMime = null,
+                    playing = null,
+                )
+            }
+            // The reader still holds the entry, so the bytes are still what the
+            // listener hears. Keep their measured floor below, or the 320kbps
+            // replacement looks like no improvement and is never offered.
+            TrackLog.w(
+                "BitChord",
+                "cached rendition refused but still in use; keeping its floor for the replacement",
+                about = mediaId,
             )
         }
         val format = withContext(Dispatchers.Main) {
@@ -7301,12 +7314,14 @@ class PlaybackService : MediaLibraryService() {
                 ?.audioFormat
         } ?: return false
         val mime = format.sampleMimeType ?: return false
+        val floor = withContext(Dispatchers.IO) { cachedFloor(uri, format, durationSec) }
+        val adoption = CachedRenditionBar.adoptionAfterRefusal(discarded, mime, floor)
         return QualityUpgrade.adoptUnresolved(
             mediaId = mediaId,
             uri = uri,
             target = target,
-            playingMime = mime,
-            playing = withContext(Dispatchers.IO) { cachedFloor(uri, format, durationSec) },
+            playingMime = adoption.playingMime,
+            playing = adoption.playing,
         )
     }
 

@@ -3,6 +3,7 @@ package com.music.bitchord.data.sources
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -114,11 +115,67 @@ class CachedRenditionBarTest {
     }
 
     @Test
-    fun `a refused candidate takes the copy an addon filled, and nothing else`() {
-        val keys = CachedRenditionBar.invalidatedKeys("qh7F1sFkOaY")
+    fun `a refused candidate only inspects the substitute buckets`() {
+        val keys = CachedRenditionBar.candidateKeys("qh7F1sFkOaY")
         // The substitute bucket is where a file played from an addon was cached.
         assertEquals(listOf("qh7F1sFkOaY#alt", "qh7F1sFkOaY#alt-noatmos"), keys)
         // The YouTube entry and a proved upgrade are different files nobody refused.
         assertFalse(keys.any { it == "qh7F1sFkOaY" || it.contains("#hifi") })
+    }
+
+    @Test
+    fun `a copy from another source is not the refused stream's`() {
+        // The same track served by a different addon is a different file.
+        assertFalse(
+            CachedRenditionBar.wroteRefusedCopy(
+                entryIsAddon = true,
+                entrySource = "addonA|track1|flac",
+                refusedSource = "addonB|track1|flac",
+            ),
+        )
+        // The same addon and track, same codec: this is the copy it wrote.
+        assertTrue(
+            CachedRenditionBar.wroteRefusedCopy(
+                entryIsAddon = true,
+                entrySource = "addonA|track1|flac",
+                refusedSource = "addonA|track1|flac",
+            ),
+        )
+        // YouTube's own entry is never the addon's copy.
+        assertFalse(
+            CachedRenditionBar.wroteRefusedCopy(
+                entryIsAddon = false,
+                entrySource = "addonA|track1|flac",
+                refusedSource = "addonA|track1|flac",
+            ),
+        )
+        // No record on the entry is not evidence.
+        assertFalse(
+            CachedRenditionBar.wroteRefusedCopy(
+                entryIsAddon = true,
+                entrySource = null,
+                refusedSource = "addonA|track1|flac",
+            ),
+        )
+    }
+
+    @Test
+    fun `a refusal that could not delete keeps the floor`() {
+        val floor = StreamFormat(kbps = 320)
+        val kept = CachedRenditionBar.adoptionAfterRefusal(
+            discarded = false,
+            mime = "audio/mp4a-latm",
+            floor = floor,
+        )
+        assertEquals("audio/mp4a-latm", kept.playingMime)
+        assertEquals(floor, kept.playing)
+
+        val gone = CachedRenditionBar.adoptionAfterRefusal(
+            discarded = true,
+            mime = "audio/mp4a-latm",
+            floor = floor,
+        )
+        assertNull(gone.playingMime)
+        assertNull(gone.playing)
     }
 }

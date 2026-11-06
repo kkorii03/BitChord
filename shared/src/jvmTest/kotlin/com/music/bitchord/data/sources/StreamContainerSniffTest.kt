@@ -111,6 +111,23 @@ class StreamContainerSniffTest {
     }
 
     @Test
+    fun `an id3 tag longer than the first look still shows the flac behind it`() {
+        // The first look is only the ID3 header; the tag runs past it.
+        val opening = ascii("ID3") + bytes(4, 0, 0, 0, 0, 0, 100)
+        val full = opening + ByteArray(100) + flacHead(44_100, 180)
+        val head = StreamContainerSniff.headForRefusal(opening) { full }
+        assertFalse(StreamContainerSniff.looksLossy(head))
+        assertNull(
+            CachedRenditionBar.refusal(
+                claimsLossless = true,
+                head = head,
+                rowSeconds = 180,
+                renditionSeconds = 180,
+            ),
+        )
+    }
+
+    @Test
     fun `flac inside another wrapper is still lossless`() {
         // An ID3 tag of 16 bytes in front of the marker.
         val tagged = ascii("ID3") + bytes(4, 0, 0, 0, 0, 0, 16) + ByteArray(16) + flacHead(44_100, 180)

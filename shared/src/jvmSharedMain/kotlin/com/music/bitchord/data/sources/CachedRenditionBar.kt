@@ -21,9 +21,9 @@ package com.music.bitchord.data.sources
  *    [TrackMatcher.isWrongLength] away from the catalogue's is a different
  *    edit, not this song.
  *
- * A refusal means the bytes go — see [invalidatedKeys] for the one an addon
- * filled — and the track resolves normally, exactly as if nothing had been
- * cached for it.
+ * A refusal means the bytes go — see [candidateKeys] and [wroteRefusedCopy]
+ * for the one an addon filled — and the track resolves normally, exactly as if
+ * nothing had been cached for it.
  */
 object CachedRenditionBar {
 
@@ -60,11 +60,42 @@ object CachedRenditionBar {
     }
 
     /**
-     * The cache keys a refusal for [mediaId] takes with it: the copy an addon
-     * filled, so the same bad file cannot come back on the next play. The
-     * YouTube entry and any upgraded rendition are left where they are — a
-     * candidate refused now says nothing about bytes that were already proved.
+     * The cache keys a refusal for [mediaId] may take with it: the copies an
+     * addon could have filled. Which of them, if any, is the refused stream's
+     * own copy is decided by [wroteRefusedCopy] from the entry's own tags.
      */
-    fun invalidatedKeys(mediaId: String): List<String> =
+    fun candidateKeys(mediaId: String): List<String> =
         listOf("$mediaId$SUBSTITUTE_SUFFIX", "$mediaId$SUBSTITUTE_SUFFIX-noatmos")
+
+    /**
+     * Whether the cached entry is the copy the refused stream wrote.
+     *
+     * Only an addon's entry can be, and only when the source recorded on the
+     * entry is the one that just refused. An entry with no record — written
+     * before this was kept, or by a path that does not know its source — is
+     * not evidence, and is left alone.
+     */
+    fun wroteRefusedCopy(
+        entryIsAddon: Boolean,
+        entrySource: String?,
+        refusedSource: String?,
+    ): Boolean = entryIsAddon && entrySource != null && entrySource == refusedSource
+
+    /** What [adoptCachedTrack] should tell the upgrade path after a refusal. */
+    data class CachedAdoption(val playingMime: String?, val playing: StreamFormat?)
+
+    /**
+     * The floor to hand the replacement search after a refused cached
+     * rendition.
+     *
+     * A copy that could not be deleted is still the bytes the listener is
+     * hearing, so its measured floor must survive: dropping it would make the
+     * 320kbps replacement look like no improvement. Only a copy that is
+     * actually gone leaves nothing to beat.
+     */
+    fun adoptionAfterRefusal(
+        discarded: Boolean,
+        mime: String?,
+        floor: StreamFormat?,
+    ): CachedAdoption = if (discarded) CachedAdoption(null, null) else CachedAdoption(mime, floor)
 }

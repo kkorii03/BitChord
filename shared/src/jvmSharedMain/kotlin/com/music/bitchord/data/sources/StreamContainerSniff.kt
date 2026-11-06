@@ -130,6 +130,19 @@ object StreamContainerSniff {
     }
 
     /**
+     * The bytes to judge a cached rendition's container by, given its opening
+     * and a reader for more.
+     *
+     * A FLAC can carry an ID3 tag in front of its marker, and the tag can run
+     * past the first look. [bytesPastId3] says how far to read; when the
+     * reader cannot supply that much, the opening is all there is.
+     */
+    fun headForRefusal(opening: ByteArray, readMore: (Int) -> ByteArray?): ByteArray {
+        val wanted = bytesPastId3(opening) ?: return opening
+        return readMore(wanted) ?: opening
+    }
+
+    /**
      * How many bytes would show what follows [head]'s ID3v2 tag, when the tag
      * runs past [head]. Null when there is no tag, or its end is already in view.
      */
