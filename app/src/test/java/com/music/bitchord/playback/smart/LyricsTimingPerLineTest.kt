@@ -57,4 +57,24 @@ class LyricsTimingPerLineTest {
         // Too few spellable lines is no base: back to all of them.
         assertEquals(47, LyricsTiming.fitAi(lines, indices, starts, spellable = 2)?.matchPercent)
     }
+
+    @Test
+    fun `many placed lines on one straight line are judged on themselves`() {
+        // jDrP5Pb2f_o 11-06: 38 lines in the window, 26 placed, every one of them on the fit.
+        val lines = (0 until 38).map { line(it * 2_500L, "line $it") }
+        val indices = lines.indices.toList()
+        val agreeing = indices.map { if (it < 26) lines[it].timeMs + 540L else null }
+        assertEquals(100, LyricsTiming.fitAi(lines, indices, agreeing, spellable = 38)?.matchPercent)
+
+        // Placed lines that scatter keep the sheet's base: half on, half far off.
+        val split = indices.map {
+            when {
+                it >= 26 -> null
+                it % 2 == 0 -> lines[it].timeMs + 540L
+                else -> lines[it].timeMs + 20_000L + it * 700L
+            }
+        }
+        val scattered = LyricsTiming.fitAi(lines, indices, split, spellable = 38)?.matchPercent
+        assertEquals(false, scattered != null && com.music.bitchord.data.lyrics.LyricsAiGuard.agreementAllows(scattered))
+    }
 }

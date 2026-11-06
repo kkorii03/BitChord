@@ -4280,6 +4280,9 @@ object LyricsTiming {
     /** A song's first pass goes with this much when the window is slow to land. */
     private const val SONG_FIRST_LEAST_SECONDS = 24.0
 
+/** Placed lines from which their own agreement, not the sheet's length, judges a fit. */
+private const val FIRM_FIT_LINES = 15
+
     /** A transcript longer than this is cut: enough for any song, bounded on disk. */
     private const val MAX_HEARD_WORDS = 4_000
 
@@ -4479,7 +4482,17 @@ object LyricsTiming {
         if (points.size < MIN_AI_LINES || points.size * 4 < indices.size) return null
         val line = TimingFit.fit(points, minPoints = MIN_AI_LINES) ?: return null
         // Too few spellable lines is no base to judge on: fall back to all of them.
-        val base = spellable.takeIf { it >= MIN_AI_LINES }?.coerceAtMost(indices.size) ?: indices.size
+        val spelled = spellable.takeIf { it >= MIN_AI_LINES }?.coerceAtMost(indices.size) ?: indices.size
+        // A line the transcript never reached does not disagree. When many lines
+        // were placed and they nearly all lie on one line within INLIER_MS, the
+        // answer is about this recording however much singing it missed (11-06:
+        // jDrP5Pb2f_o 26 of 26 placed lines, X1xQhbffaN8 23, refused at 68 % of the
+        // sheet with the words 0.5 s late for the whole song).
+        val base = if (line.answered >= FIRM_FIT_LINES && line.inliers * 10 >= line.answered * 9) {
+            minOf(spelled, line.answered)
+        } else {
+            spelled
+        }
         val match = (line.inliers * 100.0 / base).roundToInt().coerceIn(0, 100)
         return Adjustment.Mapped(line.map, byAi = true, rate = line.rate, matchPercent = match)
     }
