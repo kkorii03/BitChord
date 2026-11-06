@@ -44,7 +44,7 @@ object LyricsWordAlign {
     private const val LETTER_MS = 180L
 
     /** Faster than this is a mishearing, not a singer. */
-    private const val MIN_LETTER_MS = 30L
+    internal const val MIN_LETTER_MS = 30L
 
     /** Fewer heard letters than this say nothing about a line's pace. */
     private const val MIN_PACE_LETTERS = 5

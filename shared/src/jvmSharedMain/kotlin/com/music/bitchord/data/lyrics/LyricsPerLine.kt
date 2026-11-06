@@ -100,7 +100,7 @@ object LyricsPerLine {
         // converts them from the rendition they were heard on, and drops them
         // when no verified map can carry them onto the playing clock.
         val matched = LyricsWordAlign.matchedWords(lines.map { it.text }, heard)
-        val anchors = ArrayList<Anchor>(lines.size)
+        val found = ArrayList<Anchor>(lines.size)
         for (index in lines.indices) {
             val words = matched[index]
             if (words.size < MIN_ANCHOR_WORDS) continue
@@ -126,8 +126,10 @@ object LyricsPerLine {
             // anchor and let its neighbours interpolate.
             val residual = median(residuals)
             if (abs(residual) > cap) continue
-            anchors += Anchor(index, lines[index].timeMs, residual)
+            found += Anchor(index, lines[index].timeMs, residual)
         }
+        val letters = lines.map { LyricsWordAlign.fold(it.text).length }
+        val anchors = sungInOrder(found, letters)
         if (anchors.isEmpty()) return Layer.identity(lines.size)
 
         val heardFrom = heard.minOf { it.startMs }
@@ -190,6 +192,33 @@ object LyricsPerLine {
         val applied = shifts.count { it != 0L }
         val maxAbs = shifts.maxOfOrNull { abs(it) } ?: 0L
         return Layer(shifts.toList(), anchors.size, applied, maxAbs)
+    }
+
+    /**
+     * [anchors] without those whose moves leave the lines between two of them no time
+     * to be sung (11-06 w58uXpyHWes: 2690 ms squeezed to 126 ms, a line 2.3 s early).
+     * Of the two, the one that moves further goes. A gap the sheet itself has is left.
+     */
+    private fun sungInOrder(anchors: List<Anchor>, letters: List<Int>): List<Anchor> {
+        val kept = ArrayList<Anchor>(anchors.size)
+        for (anchor in anchors) {
+            var keep = true
+            while (kept.isNotEmpty()) {
+                val last = kept.last()
+                val sheetGap = anchor.timeMs - last.timeMs
+                val movedGap = sheetGap + anchor.residualMs - last.residualMs
+                val needed = (last.line until anchor.line).sumOf { letters[it] } * LyricsWordAlign.MIN_LETTER_MS
+                if (movedGap >= needed || movedGap >= sheetGap) break
+                if (abs(last.residualMs) > abs(anchor.residualMs)) {
+                    kept.removeAt(kept.lastIndex)
+                } else {
+                    keep = false
+                    break
+                }
+            }
+            if (keep) kept += anchor
+        }
+        return kept
     }
 
     private fun loneAnchorDisagrees(own: Anchor, before: Anchor?, after: Anchor?, lineTime: Long): Boolean {

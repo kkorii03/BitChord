@@ -36,6 +36,47 @@ class LyricsPerLineTest {
     private fun layer(lines: List<LyricLine>, heard: List<LyricsWordAlign.Heard>) =
         LyricsPerLine.compute(lines, heard, heardAudioKey = 1, currentAudioKey = 1)
 
+    /**
+     * 11-06 w58uXpyHWes in figures, made-up words: the line after a line moved 0.6 s
+     * later is heard 1.9 s early, 126 ms after it. No one sings a line in 126 ms.
+     */
+    @Test
+    fun `a line heard too early to leave the one before it time to be sung does not move`() {
+        val sung = line(47_669L, "alpha bravo charlie delta echoes foxtrot golfing")
+        val early = line(50_316L, "hotels indigo juliet kilos lima metro november")
+        val after = line(60_067L, "oscar papas quebec romeo sierra tango uniform")
+        val lines = listOf(sung, early, after)
+
+        val shifts = layer(lines, heardLine(sung, 630L) + heardLine(early, -1_891L) + heardLine(after, 0L)).shiftsMs
+
+        assertEquals(630L, shifts[0])
+        // No anchor of its own: it holds the nearest one's move, not its false one.
+        assertEquals(630L, shifts[1])
+        assertEquals(0L, shifts[2])
+    }
+
+    @Test
+    fun `a false anchor before a true line goes, not the true line`() {
+        val falseLine = line(30_000L, "alpha bravo charlie delta echoes foxtrot golfing")
+        val trueLine = line(32_000L, "hotels indigo juliet kilos lima metro november")
+        val lines = listOf(falseLine, trueLine)
+
+        val shifts = layer(lines, heardLine(falseLine, 1_900L) + heardLine(trueLine, 40L)).shiftsMs
+
+        assertEquals(listOf(40L, 40L), shifts)
+    }
+
+    @Test
+    fun `a gap the sheet already has is not a squeeze`() {
+        val first = line(30_000L, "alpha bravo charlie delta echoes foxtrot golfing")
+        val second = line(30_500L, "hotels indigo juliet kilos lima metro november")
+        val lines = listOf(first, second)
+
+        val shifts = layer(lines, heardLine(first, 200L) + heardLine(second, 200L)).shiftsMs
+
+        assertEquals(listOf(200L, 200L), shifts)
+    }
+
     @Test
     fun `a misheard first word does not set the line's move`() {
         val lines = listOf(line(10_000, "alpha bravo charlie delta echo foxtrot"))
@@ -58,7 +99,8 @@ class LyricsPerLineTest {
         )
         val heard = buildList {
             addAll(heardLine(lines[0], 0L))
-            addAll(heardLine(lines[1], LyricsPerLine.MAX_SHIFT_MANY_WORDS_MS))
+            // Further would leave the next line no time, and go before this check runs.
+            addAll(heardLine(lines[1], 3_000L))
             addAll(heardLine(lines[2], 0L))
         }
         val result = layer(lines, heard)
@@ -132,8 +174,9 @@ class LyricsPerLineTest {
         val heard = heardLine(lines[0], 400L) + heardLine(lines[1], 0L)
         val result = layer(lines, heard)
 
-        assertEquals(400L, result.shiftsMs[0])
-        assertEquals(350L, result.shiftsMs[1])
+        // Two anchors that cross cannot both be right; the one that moves further goes.
+        assertEquals(0L, result.shiftsMs[0])
+        assertEquals(0L, result.shiftsMs[1])
         val starts = lines.indices.map { lines[it].timeMs + result.shiftsMs[it] }
         assertTrue(starts[1] >= starts[0] + LyricsPerLine.MIN_LINE_GAP_MS)
     }
