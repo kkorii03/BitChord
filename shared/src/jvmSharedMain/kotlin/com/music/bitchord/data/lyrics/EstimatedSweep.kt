@@ -179,10 +179,10 @@ private const val MAX_MS_PER_UNIT = 550.0
  * slot longer than this is a break, and one line dragged across it would light
  * up for the whole instrumental.
  */
-private const val MAX_FILLED_SLOT_MS = 8_000L
+internal const val MAX_FILLED_SLOT_MS = 8_000L
 
 /** How long before the next line the sweep is made to finish: a breath between the two. */
-private const val BREATH_MS = 300L
+internal const val BREATH_MS = 300L
 
 /** Shortest sweep worth drawing, unless the slot itself is shorter. */
 private const val MIN_SWEEP_MS = 200L

@@ -143,6 +143,15 @@ fun LyricLine.withHeardWords(
         index = runEnd
     }
 
+    // Whisper dates a held note's start but stops the word early (11-06, 10 songs against
+    // Apple's hand times: held words ended 811 ms early, 59/547 lines were lit a second or
+    // more before the singer finished; filling the slot leaves 11). Same slot rule as the estimate.
+    val filledTo = sungUntilMs?.takeIf { it > timeMs }
+        ?: nextLineMs?.takeIf { it - timeMs - BREATH_MS <= MAX_FILLED_SLOT_MS }?.let { it - BREATH_MS }
+    if (filledTo != null) {
+        val last = words.last()
+        words[words.lastIndex] = last.copy(endMs = maxOf(last.endMs, filledTo))
+    }
     return copy(words = words, wordsEstimated = false)
 }
 
