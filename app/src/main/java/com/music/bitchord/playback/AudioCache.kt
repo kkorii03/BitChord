@@ -1259,13 +1259,6 @@ object AudioCache {
      * inspects a *stream* ever sees these bytes, and one written by an earlier
      * play of a lying row plays its wrong audio to the end of the track.
      *
-     * Only half of that bar reaches a substitute's copy. An `#alt` entry is not
-     * tagged as a lossless rendition, so [CachedRenditionBar.Refusal.LOSSY_BYTES]
-     * never fires for it: only the runtime half is asked of those bytes. A copy
-     * written before [META_SERVED_SOURCE] was kept cannot be tied to the stream
-     * that refused it, so [invalidateAddonRendition] leaves it alone, and the
-     * runtime check is the only thing that can still catch it.
-     *
      * Call it off the main thread: it reads the cache index and the file's head.
      *
      * Only half of that bar reaches a `#alt` copy. The LOSSY_BYTES half needs
