@@ -9,7 +9,7 @@
 #   ..\tools\python\python.exe -I scripts\synctest.py --playlist PL... --limit 5
 #   ..\tools\python\python.exe -I scripts\synctest.py --dry-run      (re-score saved logs, no phone)
 #   ..\tools\python\python.exe -I scripts\synctest.py --selftest     (checks the alignment maths)
-import argparse, csv, datetime, difflib, json, random, re, statistics, subprocess, sys, time, unicodedata, urllib.request
+import argparse, csv, os, datetime, difflib, json, random, re, statistics, subprocess, sys, time, unicodedata, urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]  # Desktop\BitChord
