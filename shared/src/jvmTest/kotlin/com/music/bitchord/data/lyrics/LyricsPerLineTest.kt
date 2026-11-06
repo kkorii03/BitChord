@@ -280,4 +280,48 @@ class LyricsPerLineTest {
         val lines = listOf(line(10_000, "alpha bravo"))
         assertEquals(LyricsPerLine.Layer.identity(1), layer(lines, emptyList()))
     }
+
+    /**
+     * 11-06 Hello (YQHsXMglC9A): the base already matched 90% and sat 0.1 s from
+     * the voice, but three words heard at a later chorus moved one line 2.7 s.
+     * A move that large on a base that already matches is a repeat, not a line
+     * that moved, so it is held to the cap.
+     */
+    @Test
+    fun `a large move on a well matched base is held to the cap`() {
+        val lines = listOf(
+            line(10_000, "alpha bravo"),
+            line(20_000, "charlie delta echo"),
+            line(30_000, "foxtrot golf"),
+        )
+        val heard = buildList {
+            addAll(heardLine(lines[0], 0L))
+            addAll(heardLine(lines[1], 2_700L))
+            addAll(heardLine(lines[2], 0L))
+        }
+        val result = LyricsPerLine.compute(
+            lines, heard, heardAudioKey = 1, currentAudioKey = 1, baseMatchPercent = 90,
+        )
+
+        assertEquals(LyricsPerLine.MAX_SHIFT_GOOD_BASE_MS, result.shiftsMs[1])
+    }
+
+    @Test
+    fun `a large move on a poorly matched base is kept`() {
+        val lines = listOf(
+            line(10_000, "alpha bravo"),
+            line(20_000, "charlie delta echo"),
+            line(30_000, "foxtrot golf"),
+        )
+        val heard = buildList {
+            addAll(heardLine(lines[0], 0L))
+            addAll(heardLine(lines[1], 2_700L))
+            addAll(heardLine(lines[2], 0L))
+        }
+        val result = LyricsPerLine.compute(
+            lines, heard, heardAudioKey = 1, currentAudioKey = 1, baseMatchPercent = 0,
+        )
+
+        assertEquals(2_700L, result.shiftsMs[1])
+    }
 }

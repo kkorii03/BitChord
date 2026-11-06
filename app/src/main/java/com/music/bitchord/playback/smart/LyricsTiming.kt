@@ -1180,7 +1180,13 @@ object LyricsTiming {
         perLineMemo?.let { memo ->
             if (memo.timing == timing && memo.lines == lines) return memo.layer
         }
-        val layer = LyricsPerLine.compute(lines, words.words, words.wordsKey, words.currentKey)
+        val layer = LyricsPerLine.compute(
+            lines,
+            words.words,
+            words.wordsKey,
+            words.currentKey,
+            (timing.base as? Adjustment.Mapped)?.matchPercent,
+        )
         TrackLog.i(
             "BitChord",
             "sync perline: anchors=${layer.anchors} applied=${layer.applied} maxAbsMs=${layer.maxAbsMs}",

@@ -30,6 +30,16 @@ object LyricsPerLine {
     /** A line heard through three or more words can be an arrangement's worth out. */
     const val MAX_SHIFT_MANY_WORDS_MS = 4_000L
 
+    /**
+     * A base that already matches this well is not the thing a line is correcting:
+     * a move beyond [MAX_SHIFT_GOOD_BASE_MS] on it is the same words heard at a
+     * repeated chorus (11-06 Hello: 2.7 s on a 90% base that was 0.1 s off).
+     */
+    const val GOOD_BASE_MATCH_PERCENT = 90
+
+    /** The most a line may move when the base already matches [GOOD_BASE_MATCH_PERCENT]. */
+    const val MAX_SHIFT_GOOD_BASE_MS = 1_000L
+
     /** With only two words, a large move is more likely a mishearing than a real one. */
     const val MAX_SHIFT_TWO_WORDS_MS = 600L
 
@@ -93,6 +103,8 @@ object LyricsPerLine {
         heard: List<LyricsWordAlign.Heard>,
         heardAudioKey: Int?,
         currentAudioKey: Int?,
+        /** How much of the song the base already matched, 0–100; null when it is a plain shift. */
+        baseMatchPercent: Int? = null,
     ): Layer {
         if (heardAudioKey != currentAudioKey) return Layer.identity(lines.size)
         if (lines.isEmpty() || heard.isEmpty()) return Layer.identity(lines.size)
@@ -185,6 +197,11 @@ object LyricsPerLine {
                 }
             }
             var shift = if (abs(target) >= MIN_APPLY_MS) target else 0L
+            if (baseMatchPercent != null && baseMatchPercent >= GOOD_BASE_MATCH_PERCENT &&
+                abs(shift) > MAX_SHIFT_GOOD_BASE_MS
+            ) {
+                shift = shift.coerceIn(-MAX_SHIFT_GOOD_BASE_MS, MAX_SHIFT_GOOD_BASE_MS)
+            }
             val start = lineTime
             if (index > 0) {
                 val minimum = previousStart + MIN_LINE_GAP_MS
