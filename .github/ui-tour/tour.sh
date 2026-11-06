@@ -617,9 +617,8 @@ section_now_playing() {
   if tap "Dance Monkey" last 4 || tap "Rolling" last 4; then
   sleep 2
   shot now-playing "Now playing (expanded)"
-  adb shell input swipe 540 1200 540 400 400; sleep 3
-  shot now-playing-scrolled "Now playing scrolled"
 
+  # Before the swipe below, which can take the lyrics button off the screen.
   if TAP_BOTTOM=1 tap "=가사" first 10 || TAP_BOTTOM=1 tap "=Lyrics" first 6; then
     shot lyrics "Lyrics"
     # Leave the app and come back with the lyrics open, twice: the first frames
@@ -638,7 +637,10 @@ section_now_playing() {
       shot lyrics-providers "Lyrics provider sheet"
       back
     fi
+    TAP_BOTTOM=1 tap "=가사" first 3 || true
   fi
+  adb shell input swipe 540 1200 540 400 400; sleep 3
+  shot now-playing-scrolled "Now playing scrolled"
 
   if tap "다음 재생" first 6 || tap "Up next" first 6; then
     shot queue "Queue sheet"
