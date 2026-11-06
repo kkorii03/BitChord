@@ -13,6 +13,9 @@
 #   MATRIX_LYRICS   1 = open the lyrics on screen (slow on a software GPU, so not always)
 
 # What every set starts from, so an older export on a fork cannot pass for a setting.
+# The first link after boot took up to 180 s (m1), and the search fallback then played
+# the raw video row (source=search, lyrics=none), which is not what this set measures.
+START_TIMEOUT=240
 MATRIX_BASE_KEYS="dolby_atmos=true audio_quality_wifi=LOSSLESS audio_quality_cellular=LOSSLESS \
 auto_prefetch_hq=true smart_fade_enabled=true automix_videos=true crossfade_seconds=0 playback_speed=1.0 \
 synced_lyrics=true auto_lyrics_timing=true ko_ai_lyrics=true ko_ai_timing_ahead=true lyrics_offset_ms=0"
