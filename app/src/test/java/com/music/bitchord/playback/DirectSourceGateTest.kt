@@ -116,6 +116,17 @@ class DirectSourceGateTest {
         }
     }
 
+    /** The rest ends by itself: nothing runs, the source is simply eligible again. */
+    @Test
+    fun aWrongFileRestLastsThirtyMinutes() {
+        val cooldown = SourceResolver.SourceCooldown
+        val now = 1_000_000L
+        listOf("a", "b", "c").forEach { cooldown.wrongFile("LastWave", it, now) }
+
+        assertTrue(cooldown.isUnmeasurable("LastWave", now + 29 * 60_000L))
+        assertFalse(cooldown.isUnmeasurable("LastWave", now + 31 * 60_000L))
+    }
+
     /** A 403 is the host's, and has its own rules; it is no evidence about the files. */
     @Test
     fun aHostRefusalIsNotCountedAsAWrongFile() = runBlocking {

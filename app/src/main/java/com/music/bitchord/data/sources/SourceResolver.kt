@@ -346,7 +346,8 @@ object SourceResolver {
         // — and a catalogue serves one recording as several rows, so the source
         // is asked once more for another copy of the same song rather than
         // being written off for the whole walk. Only the row is remembered (see
-        // [KoRefusedRows]); a genuine 403 or timeout is still the source's own
+        // [KoRefusedRows]), until several songs in a row get nothing better (see
+        // [KoSourceCooldown.wrongFile]); a genuine 403 or timeout is still the source's own
         // failure and rests it through the ordinary rules. YouTube answers only
         // after every addon has had its next row, which is the difference
         // between "no addon has this" and "one addon's first row was broken".
@@ -364,6 +365,7 @@ object SourceResolver {
                         "from ${candidateSource.displayName}",
                 )
                 KoRefusedRows.note(candidateSource.configId, candidate.trackId)
+                SourceCooldown.wrongFile(candidateSource.configId, targetKey(target))
                 refusedRows += candidateSource
                 false
             } else if (!probe(candidate)) {
@@ -373,10 +375,12 @@ object SourceResolver {
                 // the first note. Only a wrong file earns the next row.
                 if (StreamRefusalRecovery.refusedStream(candidate.url) == null) {
                     KoRefusedRows.note(candidateSource.configId, candidate.trackId)
+                    SourceCooldown.wrongFile(candidateSource.configId, targetKey(target))
                     refusedRows += candidateSource
                 }
                 false
             } else {
+                SourceCooldown.rightFile(candidateSource.configId)
                 verify?.invoke(candidate) ?: true
             }
         }
