@@ -107,14 +107,20 @@ def fetch(vid, tmp):
     """A 16 kHz mono wav of the video's own audio, or None: the same clock the app streams."""
     proxy = os.environ.get("FARM_PROXY")
     wav = tmp / f"{vid}.wav"
-    cmd = ["yt-dlp", "-q", "--no-warnings", "--no-playlist", "-f", "bestaudio", "-o", str(tmp / f"{vid}.%(ext)s"),
-           "--extractor-args", "youtube:player_client=android_vr,web_safari,tv"]
+    cmd = ["yt-dlp", "-q", "--no-warnings", "--no-playlist", "-f", "bestaudio/best", "-o", str(tmp / f"{vid}.%(ext)s")]
     if proxy:
         cmd += ["--proxy", proxy]
-    r = subprocess.run(cmd + [f"https://www.youtube.com/watch?v={vid}"], capture_output=True, text=True, timeout=600)
-    got = [p for p in tmp.glob(f"{vid}.*") if p.suffix != ".wav"]
-    if r.returncode or not got:
-        print(f"{vid}: download failed: {r.stderr.strip()[-300:]}", flush=True)
+    got = []
+    # YouTube answers each client differently, and which one works moves from month to month.
+    for client in ("default", "web_safari,tv", "android_vr", "mweb", "tv_simply"):
+        r = subprocess.run(cmd + ["--extractor-args", f"youtube:player_client={client}", f"https://www.youtube.com/watch?v={vid}"],
+                           capture_output=True, text=True, timeout=600)
+        got = [p for p in tmp.glob(f"{vid}.*") if p.suffix != ".wav"]
+        if not r.returncode and got:
+            print(f"{vid}: fetched as {client}", flush=True)
+            break
+        print(f"{vid}: {client} failed: {r.stderr.strip()[-160:]}", flush=True)
+    if not got:
         return None
     subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(got[0]), "-ac", "1", "-ar", str(SR), str(wav)], check=True)
     got[0].unlink()

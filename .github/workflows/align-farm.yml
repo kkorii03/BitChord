@@ -22,12 +22,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }
+      - uses: denoland/setup-deno@v2
+        with: { deno-version: v2.x }
       - name: ffmpeg
         run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
       - name: Install
         run: |
           pip install -q "numpy<2" torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
-          pip install -q soundfile "transformers==4.49.0" yt-dlp
+          pip install -q soundfile "transformers==4.49.0" "yt-dlp[default]"
       - name: Home proxy
         env:
           SMOKE_SETTINGS_B64: ${{ secrets.SMOKE_SETTINGS_B64 }}
