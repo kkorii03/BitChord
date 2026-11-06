@@ -12,6 +12,13 @@ import org.junit.Test
  */
 class AiTimingPolicyTest {
 
+    @Test
+    fun `a background placement waits for its turn but a tap never does`() {
+        assertTrue(AiTimingPolicy.mayStartRequest(automatic = true, running = 1))
+        assertFalse(AiTimingPolicy.mayStartRequest(automatic = true, running = 2))
+        assertTrue(AiTimingPolicy.mayStartRequest(automatic = false, running = 2))
+    }
+
     private val key = 7
 
     @Test

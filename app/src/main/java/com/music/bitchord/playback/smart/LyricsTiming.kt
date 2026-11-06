@@ -2624,7 +2624,10 @@ object LyricsTiming {
         var fresh: kotlinx.coroutines.Deferred<Adjustment.Mapped?>? = null
         val running = synchronized(aiInFlight) {
             aiInFlight[flight] ?: run {
-                if (aiInFlight.size >= 2) return@synchronized null
+                if (!AiTimingPolicy.mayStartRequest(automatic, aiInFlight.size)) {
+                    TrackLog.d(TAG, "lyrics-sync: ai request waits (${aiInFlight.size} running)", videoId)
+                    return@synchronized null
+                }
                 aiScope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
                     askAi(context, videoId, lines, sung, key, engines, title, artist, isVideo, probe)
                 }.also {
