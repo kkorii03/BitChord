@@ -2,6 +2,7 @@ package com.music.bitchord.playback
 
 import androidx.media3.common.Player
 import com.music.bitchord.data.sources.HqMatchPolicy
+import kotlin.math.abs
 import kotlin.math.roundToLong
 
 /**
@@ -29,6 +30,9 @@ internal object HqSwapPolicy {
 
     /** The blend is driven by the clock, in the same shape as the version swap. */
     const val FADE_STEP_MS = 16L
+
+    /** How far the standby may sit from the session's playhead at the handover. */
+    const val POSITION_SLACK_MS = 1_000L
 
     data class Decision(
         val allowed: Boolean,
@@ -226,13 +230,25 @@ internal object HqSwapPolicy {
         else -> null
     }
 
-    fun standbyOffTarget(standbyPositionMs: Long, targetMs: Long): Boolean = false
+    /**
+     * Whether adopting the standby would audibly move the song. Well above the
+     * gap a blend leaves between the two sides, so in practice only a seek by the
+     * listener during the swap trips it.
+     */
+    fun standbyOffTarget(standbyPositionMs: Long, targetMs: Long): Boolean =
+        abs(standbyPositionMs - targetMs) > POSITION_SLACK_MS
 
+    /**
+     * Whether a swap that started paused has lost its place. That path never
+     * seeks its standby again, unlike the playing path, so play or a seek during
+     * the prepare would send the song back to where it was when the swap began.
+     * The swap gives up rather than adding a seek and its wait to this path.
+     */
     fun pausedStandbyStale(
         activePlayWhenReady: Boolean,
         standbyPositionMs: Long,
         targetMs: Long,
-    ): Boolean = false
+    ): Boolean = activePlayWhenReady || standbyOffTarget(standbyPositionMs, targetMs)
 
     data class QueueEdits(val head: Boolean, val tail: Boolean)
 
