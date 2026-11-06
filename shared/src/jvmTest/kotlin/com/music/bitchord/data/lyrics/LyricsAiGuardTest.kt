@@ -108,6 +108,17 @@ class LyricsAiGuardTest {
     }
 
     @Test
+    fun aLongIntroMovesTheWordsOnlyWhenTheSongFollowsTheLine() {
+        // 11-06: Hello's video opens 74.8 s before the record.
+        assertTrue(LyricsAiGuard.allowsAiTiming(isVideo = true, matchPercent = 85, firstLineShiftMs = 74_780L))
+        assertTrue(LyricsAiGuard.songShiftAllows(74_780L, matchPercent = 85))
+        assertTrue(LyricsAiGuard.shiftAllows(isVideo = true, firstLineShiftMs = -30_000L, matchPercent = 90))
+        assertFalse(LyricsAiGuard.allowsAiTiming(isVideo = true, matchPercent = 84, firstLineShiftMs = 74_780L))
+        assertFalse(LyricsAiGuard.songShiftAllows(74_780L, matchPercent = 84))
+        assertFalse(LyricsAiGuard.songShiftAllows(74_780L, matchPercent = null))
+    }
+
+    @Test
     fun instrumentalTitlesSkipTranscriptionAndDeepgram() {
         assertTrue(LyricsAiGuard.isInstrumentalTitle("River Flows in You (Instrumental)"))
         assertTrue(LyricsAiGuard.isInstrumentalTitle("River Flows in You [Inst.]"))

@@ -41,20 +41,33 @@ object LyricsAiGuard {
         matchPercent == null || matchPercent >= MIN_MATCH_PERCENT
 
     /** The first sung line's movement; a video may not be pushed further than [VIDEO_MAX_SHIFT_MS]. */
-    fun shiftAllows(isVideo: Boolean, firstLineShiftMs: Long): Boolean =
-        !isVideo || firstLineShiftMs in -VIDEO_MAX_SHIFT_MS..VIDEO_MAX_SHIFT_MS
+    fun shiftAllows(isVideo: Boolean, firstLineShiftMs: Long, matchPercent: Int? = null): Boolean =
+        !isVideo || firstLineShiftMs in -VIDEO_MAX_SHIFT_MS..VIDEO_MAX_SHIFT_MS || sureOfLongShift(matchPercent)
+
+    /**
+     * How much of the song must follow one straight line for a move past the
+     * limits above. The limits date from single answers over an opening; with the
+     * sung words of the whole recording, a long intro shows as most lines landing
+     * on the same line (11-06: Hello's video 74.8 s and Stay With Me's 30.7 s were
+     * measured and thrown away, every line a minute early for the whole song). A
+     * story following the song, or another edit, does not line up like that.
+     */
+    const val LONG_SHIFT_MIN_MATCH_PERCENT = 85
+
+    private fun sureOfLongShift(matchPercent: Int?): Boolean =
+        matchPercent != null && matchPercent >= LONG_SHIFT_MIN_MATCH_PERCENT
 
     /**
      * The same floor for a record-timed song: [SONG_MAX_SHIFT_MS], whichever
      * way the answer wants to move it. Kept apart from [shiftAllows] so the
      * video rule and every existing record-timed path keep behaving as before.
      */
-    fun songShiftAllows(firstLineShiftMs: Long): Boolean =
-        firstLineShiftMs in -SONG_MAX_SHIFT_MS..SONG_MAX_SHIFT_MS
+    fun songShiftAllows(firstLineShiftMs: Long, matchPercent: Int? = null): Boolean =
+        firstLineShiftMs in -SONG_MAX_SHIFT_MS..SONG_MAX_SHIFT_MS || sureOfLongShift(matchPercent)
 
     /** Whether this AI answer may be applied to these lyrics at all. */
     fun allowsAiTiming(isVideo: Boolean, matchPercent: Int?, firstLineShiftMs: Long): Boolean =
-        agreementAllows(matchPercent) && shiftAllows(isVideo, firstLineShiftMs)
+        agreementAllows(matchPercent) && shiftAllows(isVideo, firstLineShiftMs, matchPercent)
 
     /**
      * Whether Deepgram is worth asking for this song: not for an instrumental

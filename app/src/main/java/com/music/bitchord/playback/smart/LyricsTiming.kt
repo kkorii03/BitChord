@@ -2895,8 +2895,8 @@ object LyricsTiming {
                         raw == null -> "${heard.size} words, ${starts?.count { it != null } ?: 0} of ${inReach.size} lines placed: not enough"
                         !LyricsAiGuard.agreementAllows(raw.matchPercent) ->
                             "${heard.size} words, ${raw.matchPercent}% agree: below ${LyricsAiGuard.MIN_MATCH_PERCENT}%"
-                        !LyricsAiGuard.shiftAllows(isVideo, shownShiftMs(lines, raw)) ->
-                            "${heard.size} words, shift ${shownShiftMs(lines, raw)} ms: too far for a video"
+                        !LyricsAiGuard.shiftAllows(isVideo, shownShiftMs(lines, raw), raw.matchPercent) ->
+                            "${heard.size} words, shift ${shownShiftMs(lines, raw)} ms, ${raw.matchPercent}% agree: too far for a video"
                         else -> "${heard.size} words, rate ${"%.3f".format(java.util.Locale.ROOT, raw.rate)}, " +
                             "shift ${shownShiftMs(lines, raw)} ms, ${raw.matchPercent}% agree"
                     },
@@ -2953,8 +2953,8 @@ object LyricsTiming {
                         raw == null -> "answers agree on no line (${answer.count { it != null }} of ${sung.size} placed)"
                         !LyricsAiGuard.agreementAllows(raw.matchPercent) ->
                             "${raw.matchPercent}% agree: below ${LyricsAiGuard.MIN_MATCH_PERCENT}%"
-                        !LyricsAiGuard.shiftAllows(isVideo, shownShiftMs(lines, raw)) ->
-                            "shift ${shownShiftMs(lines, raw)} ms: too far for a video"
+                        !LyricsAiGuard.shiftAllows(isVideo, shownShiftMs(lines, raw), raw.matchPercent) ->
+                            "shift ${shownShiftMs(lines, raw)} ms, ${raw.matchPercent}% agree: too far for a video"
                         else -> "rate ${"%.3f".format(java.util.Locale.ROOT, raw.rate)}, " +
                             "shift ${shownShiftMs(lines, raw)} ms, ${raw.matchPercent}% agree"
                     },
@@ -3660,7 +3660,7 @@ object LyricsTiming {
                 recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe, retry)
                 return SongCheck("refused-match", null, heard, match, shift, seconds, answer.httpCode, heard.size, clock = listenClock)
             }
-            !LyricsAiGuard.songShiftAllows(shift) -> {
+            !LyricsAiGuard.songShiftAllows(shift, match) -> {
                 songLog(song.videoId, "refused-shift", match, shift, seconds, words = heard.size, http = answer.httpCode, detail = detail)
                 recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe, retry)
                 return SongCheck("refused-shift", null, heard, match, shift, seconds, answer.httpCode, heard.size, clock = listenClock)
