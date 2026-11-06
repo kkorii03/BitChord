@@ -578,7 +578,7 @@ def main():
                 wall_minus_elapsed_ms=wall - elapsed if wall is not None and elapsed is not None else None)
     (out / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
     adb("pull", REMOTE, str(out / "screen.mp4"), timeout=300)
-    (out / f"{vid}.log").write_bytes(subprocess.run([ADB, "logcat", "-d", "-v", "threadtime"],
+    (out / f"{vid}.log").write_bytes(subprocess.run([ADB, "-s", SERIAL, "logcat", "-d", "-v", "threadtime"],
                                                     capture_output=True, timeout=120).stdout)
     adb("pull", f"{APP_DIR}/synctest/{vid}.wav", str(out / f"{vid}.wav"), timeout=120)
     adb("shell", "rm", "-f", f"{APP_DIR}/sync-test.flag", REMOTE)
