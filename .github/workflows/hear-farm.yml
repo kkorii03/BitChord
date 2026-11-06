@@ -1,0 +1,48 @@
+name: Hear farm
+
+# Whisper hears the listener's songs ahead of time (bench/farm/farm.py hear), so the app needs no
+# request and no wait. Audio stays on the runner; each result lands on branch align-data.
+on:
+  push:
+    branches: [task/hear-farm2]
+    paths: ["bench/farm/hear-ids.enc", ".github/workflows/hear-farm.yml"]
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        index: [0, 1, 2]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - uses: denoland/setup-deno@v2
+        with: { deno-version: v2.x }
+      - name: Install
+        run: pip install -q "yt-dlp[default]"
+      - name: Home proxy
+        env:
+          SMOKE_SETTINGS_B64: ${{ secrets.SMOKE_SETTINGS_B64 }}
+        run: |
+          echo "$SMOKE_SETTINGS_B64" | base64 -d | sed '1s/^\xEF\xBB\xBF//' > "$RUNNER_TEMP/s.json"
+          python3 scripts/smoke/set_proxy_port.py "$RUNNER_TEMP/s.json" 8889 --emulator
+          rm -f "$RUNNER_TEMP/s.json"
+      - name: Data branch
+        run: |
+          git config --global user.name "hear-farm"
+          git config --global user.email "hear-farm@users.noreply.github.com"
+          git fetch -q origin align-data
+          git worktree add -q data FETCH_HEAD -b align-local
+      - name: Hear
+        env:
+          FARM_DEEPGRAM: ${{ secrets.DEEPGRAM_API_KEY }}
+        run: |
+          (nohup python3 scripts/smoke/authfwd.py "$SMOKE_UPSTREAM_PROXY" > "$RUNNER_TEMP/authfwd.log" 2>&1 &)
+          sleep 2
+          FARM_PROXY=http://127.0.0.1:3128 python bench/farm/farm.py hear bench/farm/hear-ids.enc --data data --tmp "$RUNNER_TEMP/a" --index ${{ matrix.index }} --of 3

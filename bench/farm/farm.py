@@ -7,10 +7,11 @@ stable-ts. It needs a model over 1 GB, so it runs on a runner and the app reads 
   runner: farm.py run   <in.enc> --index I --of N --out <dir>
   local : farm.py score <dir>                       against the scorer's whisper-large words
 
-Sheets and results hold lyric text, and the repository is public, so both travel enciphered
-with FARM_PASS (the Deepgram key, already a secret here). Scores print numbers and ids only.
+Sheets and results hold lyric text, file names would show what the listener plays, and the
+repository is public: everything travels enciphered under the Deepgram key, a secret on the
+runner and baked into the signed APK, never in the repository. Scores print numbers and ids only.
 """
-import argparse, hashlib, json, os, re, statistics, subprocess, sys, time, unicodedata
+import argparse, hashlib, hmac, json, os, re, statistics, subprocess, sys, time, unicodedata
 from pathlib import Path
 
 SR = 16000
@@ -23,8 +24,13 @@ CTC_MODEL = {
 }
 
 
+def data_name(vid, secret):
+    """A file name that does not say which video it is."""
+    return hmac.new(secret.encode(), vid.encode(), hashlib.sha256).hexdigest()[:32]
+
+
 def stream(data, password):
-    """SHA-256 counter keystream, both ways: keeps text out of a public branch, nothing stronger."""
+    """SHA-256 counter keystream, both ways, under a key the repository does not hold."""
     key, out = password.encode(), bytearray()
     for i in range(0, len(data), 32):
         pad = hashlib.sha256(key + i.to_bytes(8, "big")).digest()
@@ -127,6 +133,76 @@ def fetch(vid, tmp):
     return wav
 
 
+def hear_one(vid, tmp, key_text):
+    """Whole-song whisper-large words of the video's own audio, as the app reads them; None if nothing usable."""
+    import urllib.error, urllib.request
+    proxy = os.environ.get("FARM_PROXY")
+    cmd = ["yt-dlp", "-q", "--no-warnings", "--no-playlist", "-f", "bestaudio/best", "-o", str(tmp / f"{vid}.%(ext)s")]
+    if proxy:
+        cmd += ["--proxy", proxy]
+    got = []
+    for client in ("default", "mweb", "web_safari,tv", "android_vr", "tv_simply"):
+        r = subprocess.run(cmd + ["--extractor-args", f"youtube:player_client={client}", f"https://www.youtube.com/watch?v={vid}"],
+                           capture_output=True, text=True, timeout=600)
+        got = list(tmp.glob(f"{vid}.*"))
+        if not r.returncode and got:
+            break
+    if not got:
+        print("no audio", flush=True)
+        return None
+    audio = got[0].read_bytes()
+    got[0].unlink()
+    url = "https://api.deepgram.com/v1/listen?model=whisper-large&detect_language=true&punctuate=false&smart_format=false&numerals=false"
+    req = urllib.request.Request(url, data=audio, method="POST",
+                                 headers={"Authorization": f"Token {key_text}", "Content-Type": "application/octet-stream"})
+    for attempt in range(6):
+        try:
+            with urllib.request.urlopen(req, timeout=300) as resp:
+                ch = json.load(resp)["results"]["channels"][0]
+            break
+        except urllib.error.HTTPError as e:
+            print(f"http {e.code}", flush=True)
+            if e.code != 429:
+                return None
+        except Exception as e:
+            print(type(e).__name__, flush=True)
+        time.sleep(15 * (attempt + 1))
+    else:
+        return None
+    words = ch["alternatives"][0].get("words", [])
+    if len(words) < 30:
+        print(f"only {len(words)} words", flush=True)
+        return None
+    print(f"{ch.get('detected_language')} words={len(words)}", flush=True)
+    return {"lang": ch.get("detected_language") or "auto", "audio_s": round(float(words[-1]["end"]) + 1.0, 1),
+            "words": [{"t": w["word"], "s": round(w["start"] * 1000), "e": round(w["end"] * 1000)} for w in words]}
+
+
+def hear(a):
+    """Runner: hear each id not yet in the data folder; each result is committed at once, so a dead job loses nothing."""
+    key_text = os.environ["FARM_DEEPGRAM"].strip()
+    data = Path(a.data)
+    tmp = Path(a.tmp)
+    tmp.mkdir(parents=True, exist_ok=True)
+    ids = stream(Path(a.ids).read_bytes(), key_text).decode().split()
+    for i, vid in enumerate(ids):
+        name = f"{data_name(vid, key_text)}.enc"
+        if i % a.of != a.index or (data / name).exists():
+            continue
+        body = hear_one(vid, tmp, key_text)
+        if body is None:
+            continue
+        (data / name).write_bytes(stream(json.dumps(body, ensure_ascii=False).encode("utf-8"), key_text + vid))
+        git = ["git", "-C", str(data)]
+        subprocess.run(git + ["add", name], check=True)
+        subprocess.run(git + ["commit", "-q", "-m", "data"], check=True)
+        for _ in range(8):
+            subprocess.run(git + ["pull", "-q", "--rebase", "origin", "align-data"], check=False)
+            if subprocess.run(git + ["push", "-q", "origin", "HEAD:align-data"]).returncode == 0:
+                break
+            time.sleep(5)
+
+
 def run(a):
     from transformers import AutoModelForCTC, Wav2Vec2Processor
     password = os.environ["FARM_PASS"].strip()
@@ -198,6 +274,11 @@ def pack(a):
     print(f"packed {len(jobs)}: " + " ".join(f"{j['id']}:{j['lang']}:{len(j['lines'])}" for j in jobs))
 
 
+def pack_ids(a):
+    """The ids to hear, enciphered: they are the listener's plays."""
+    Path(a.out).write_bytes(stream(Path(a.src).read_bytes(), key()))
+
+
 def score(a):
     """Per song: CTC line starts against whisper-large's on the lines whisper heard, and how many lines only CTC has."""
     s = st()
@@ -229,6 +310,64 @@ def score(a):
               f"max={max(abs(d - med) for d in diffs):.1f}s conf={statistics.mean(c for _, cs in ctc.values() for c in cs):.2f}")
 
 
+def agreement(vid, r):
+    """(lines both placed, offset, share within 1 s) of CTC against the scorer's whisper-large; None if no whisper."""
+    s = st()
+    files = sorted((root() / "phone-out").glob(f"score-*/{vid}.opus.whisper-large.words.json"),
+                   key=lambda p: p.stat().st_mtime, reverse=True)
+    if not files or not (files[0].parent / f"{vid}.log").exists():
+        return None
+    blocks = s.parse_blocks((files[0].parent / f"{vid}.log").read_text(encoding="utf-8", errors="replace"), vid)
+    lines = blocks[0][1]
+    kept = [row for row in lines if row[2].strip()]
+    first = {}
+    for li, _, start, _, _ in r["words"]:
+        first.setdefault(li, start / 1000.0)
+    whisper = {n: sung for n, _, sung, _ in s.align(lines, [tuple(w) for w in json.loads(files[0].read_text(encoding="utf-8"))])}
+    diffs = [first[i] - whisper[row[0]] for i, row in enumerate(kept) if i in first and row[0] in whisper]
+    if not diffs:
+        return 0, 0.0, 0.0
+    return len(diffs), statistics.median(diffs), sum(abs(d) <= 1 for d in diffs) / len(diffs)
+
+
+def publish(a):
+    """Results that agree with whisper, as the app reads them. A wrong sheet still aligns, so whisper is the guard."""
+    out = Path(a.to)
+    out.mkdir(parents=True, exist_ok=True)
+    for enc in sorted(Path(a.dir).rglob("*.enc")):
+        r = json.loads(stream(enc.read_bytes(), key()).decode("utf-8"))
+        vid = enc.stem
+        agreed = agreement(vid, r)
+        ok = agreed is not None and agreed[0] >= 5 and abs(agreed[1]) <= 0.5 and agreed[2] >= a.min_agree
+        print(f"{vid} {r['lang']} agreed={agreed and tuple(round(x, 2) for x in agreed)} -> {'publish' if ok else 'hold'}")
+        if ok:
+            body = {"lang": r["lang"], "audio_s": r["audio_s"], "words": [{"t": w[1], "s": w[2], "e": w[3]} for w in r["words"]]}
+            (out / f"{data_name(vid, key())}.enc").write_bytes(stream(json.dumps(body, ensure_ascii=False).encode("utf-8"), key() + vid))
+
+
+def publish_heard(a):
+    """Whole-song whisper-large words the scorer already paid for, one file per video: the app needs no request."""
+    s = st()
+    out = Path(a.to)
+    out.mkdir(parents=True, exist_ok=True)
+    newest = {}
+    for tf in sorted((root() / "phone-out").glob("score-*/*.opus.whisper-large.words.json"), key=lambda p: p.stat().st_mtime):
+        newest[tf.name.split(".")[0]] = tf
+    done = skipped = 0
+    for vid, tf in sorted(newest.items()):
+        log = tf.parent / f"{vid}.log"
+        blocks = s.parse_blocks(log.read_text(encoding="utf-8", errors="replace"), vid) if log.exists() else []
+        words = json.loads(tf.read_text(encoding="utf-8"))
+        if not blocks or len(words) < 30:
+            skipped += 1
+            continue
+        body = {"lang": s.language_for(blocks[0][1]), "audio_s": round(words[-1][2] + 1.0, 1),
+                "words": [{"t": w, "s": round(a0 * 1000), "e": round(b0 * 1000)} for w, a0, b0 in words]}
+        (out / f"{data_name(vid, key())}.enc").write_bytes(stream(json.dumps(body, ensure_ascii=False).encode("utf-8"), key() + vid))
+        done += 1
+    print(f"published {done}, skipped {skipped}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -236,6 +375,12 @@ def main():
     p = sub.add_parser("run"); p.add_argument("input"); p.add_argument("--index", type=int, default=0)
     p.add_argument("--of", type=int, default=1); p.add_argument("--out", default="out"); p.set_defaults(fn=run)
     p = sub.add_parser("score"); p.add_argument("dir"); p.set_defaults(fn=score)
+    p = sub.add_parser("publish"); p.add_argument("dir"); p.add_argument("to")
+    p.add_argument("--min-agree", type=float, default=0.8); p.set_defaults(fn=publish)
+    p = sub.add_parser("publish-heard"); p.add_argument("to"); p.set_defaults(fn=publish_heard)
+    p = sub.add_parser("pack-ids"); p.add_argument("src"); p.add_argument("out"); p.set_defaults(fn=pack_ids)
+    p = sub.add_parser("hear"); p.add_argument("ids"); p.add_argument("--data", default="data"); p.add_argument("--tmp", default="tmp")
+    p.add_argument("--index", type=int, default=0); p.add_argument("--of", type=int, default=1); p.set_defaults(fn=hear)
     a = ap.parse_args()
     a.fn(a)
 
