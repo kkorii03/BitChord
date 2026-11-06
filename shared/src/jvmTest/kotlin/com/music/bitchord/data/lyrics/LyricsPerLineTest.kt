@@ -128,7 +128,8 @@ class LyricsPerLineTest {
         val heard = buildList {
             addAll(heardLine(lines[0], 0L))
             // Further would leave the next line no time, and go before this check runs.
-            addAll(heardLine(lines[1], 3_000L))
+            // Under MIN_LONE_BLOCK_MS, so the short-block guard leaves it to this check.
+            addAll(heardLine(lines[1], 1_000L))
             addAll(heardLine(lines[2], 0L))
         }
         val result = layer(lines, heard)
@@ -140,6 +141,36 @@ class LyricsPerLineTest {
             "lone anchor jumped the line: ${result.shiftsMs[1]}",
         )
         assertEquals(0L, result.shiftsMs[2])
+    }
+
+    /**
+     * 11-07 hLQl3WQQoQ0 line 20: two lines heard 1.6 s late while the rest of the
+     * song stayed put. The block is a mishearing, not a move.
+     */
+    @Test
+    fun `a short block heard far from both neighbours does not move`() {
+        val lines = listOf(
+            line(10_000, "alpha bravo"),
+            line(20_000, "charlie delta echo"),
+            line(30_000, "foxtrot golf hotel"),
+            line(40_000, "india juliet"),
+        )
+        val heard = heardLine(lines[0], 0L) +
+            heardLine(lines[1], 1_600L) +
+            heardLine(lines[2], 1_600L) +
+            heardLine(lines[3], 0L)
+        val result = layer(lines, heard)
+
+        assertEquals(0L, result.shiftsMs[0])
+        assertTrue(
+            kotlin.math.abs(result.shiftsMs[1]) <= LyricsPerLine.MAX_INTERPOLATE_DIFF_MS,
+            "a short block jumped the line: ${result.shiftsMs[1]}",
+        )
+        assertTrue(
+            kotlin.math.abs(result.shiftsMs[2]) <= LyricsPerLine.MAX_INTERPOLATE_DIFF_MS,
+            "a short block jumped the line: ${result.shiftsMs[2]}",
+        )
+        assertEquals(0L, result.shiftsMs[3])
     }
 
     @Test
