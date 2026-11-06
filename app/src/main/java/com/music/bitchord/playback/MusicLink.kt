@@ -110,6 +110,13 @@ object MusicLink {
     }
 
     /**
+     * Whether a link's song is still what the listener wants played: the current
+     * media must be the one that was playing when the link's lookup began. A song
+     * picked during the wait wins over the link.
+     */
+    internal fun linkStillWanted(before: String?, now: String?): Boolean = before == now
+
+    /**
      * What a YouTube or YouTube Music URL points at, or null for one this app
      * has nothing to show for.
      *
