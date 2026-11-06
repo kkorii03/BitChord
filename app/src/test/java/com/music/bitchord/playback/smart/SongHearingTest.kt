@@ -107,7 +107,6 @@ class SongHearingTest {
 
     @Test
     fun aRequestWithNoReplyGoesAgainButAServersAnswerDoesNot() {
-        com.music.bitchord.data.lyrics.Deepgram.apiKey = "test-key"
         assertEquals(true, SongHearing.shouldResend(null, 0))
         assertEquals(true, SongHearing.shouldResend(null, 1))
         assertEquals(false, SongHearing.shouldResend(null, 2))

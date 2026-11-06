@@ -258,7 +258,7 @@ internal object SongHearing {
                 },
                 heardSomething = { it.words != null },
             )
-            if (!shouldResend(answer.httpCode, dropped)) break
+            if (!Deepgram.usable || !shouldResend(answer.httpCode, dropped)) break
             dropped++
             delay(RESEND_AFTER_MS * dropped)
         }
@@ -274,7 +274,7 @@ internal object SongHearing {
 
     /** Whether a request that got no reply goes again: a server's own answer never does. */
     internal fun shouldResend(httpCode: Int?, dropped: Int): Boolean =
-        httpCode == null && Deepgram.usable && dropped < MAX_RESENDS
+        httpCode == null && dropped < MAX_RESENDS
 
     private fun kept(
         app: Context,
