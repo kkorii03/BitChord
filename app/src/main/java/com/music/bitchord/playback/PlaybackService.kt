@@ -11421,7 +11421,7 @@ class PlaybackService : MediaLibraryService() {
         position: Long,
     ): Boolean = koRestreamWrongRecording(player, item, position) // [KO] download-health
 
-    private fun loadLyricsForCurrentTrack() {
+    internal fun loadLyricsForCurrentTrack() {
         scheduleTranslationAhead()
         val currentSong = player?.currentMediaItem?.toSong() ?: run {
             serviceLyrics = null
@@ -11510,6 +11510,8 @@ class PlaybackService : MediaLibraryService() {
                     lines = file.lines
                     foundSource = file.source
                     fromFile = true
+                    // The lyrics screen re-checks a file's own sheet whatever its header says.
+                    recheckOverride = true
                 }
             }
             if (lines == null) {
