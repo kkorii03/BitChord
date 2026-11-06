@@ -100,43 +100,27 @@ class Rules(unittest.TestCase):
         j.log(7, line.replace("http=401", "http=403"))
         self.assertEqual(j.stop[:2], ("tool", "key_rejected"))
 
-    def test_two_quiet_songs_are_normal_three_are_not(self):
-        j = judge(songs=5)
-        j.script(1, "a VIEW started")
-        j.script(150, "b VIEW started")
-        j.script(300, "c VIEW started")  # a and b silent, like runs that then played fine
-        j.log(310, "D BitChord: [c] TIMING first audio: 9000ms since track selected")
-        j.script(450, "d VIEW started")
-        j.script(600, "e VIEW started")
-        j.script(750, "smoke: forcing one final track change for the last track summary")
-        self.assertIsNone(j.stop)  # d and e silent: two again, the third song in a row never came
-
-        j = judge()
-        j.script(1, "a VIEW started")
-        j.script(150, "b VIEW started")
-        j.script(300, "c VIEW started")
-        self.assertIsNone(j.stop)
-        j.script(450, "smoke: forcing one final track change for the last track summary")
-        self.assertEqual(j.stop[:2], ("app", "no_audio"))
-
-    def test_songs_that_never_start(self):
+    def test_run_sh_exits_are_read_the_same_way(self):
         j = judge()
         j.script(40, "a VIEW did not start; trying MEDIA_PLAY_FROM_SEARCH")
         j.script(55, "a fallback did not start")
-        j.script(90, "b fallback did not start")
-        self.assertIsNone(j.stop)
-        j.script(125, "c fallback did not start")
-        self.assertEqual(j.stop[:2], ("app", "no_start"))
+        self.assertEqual(j.begun, 1)
+        self.assertEqual(w.run_sh_stop(3, j), ("app", "no_audio", "a", ""))
+        for t in range(60, 60 + w.NET_INFRA):
+            j.log(t, "W BitChord: music browse: proxy unreachable, retrying directly")
+        self.assertEqual(w.run_sh_stop(3, j)[:2], ("infra", "no_audio"))
+        self.assertEqual(w.run_sh_stop(4, j)[:2], ("app", "crash"))
+        self.assertEqual(w.run_sh_stop(5, j)[:2], ("tool", "no_sync_engine"))
+        self.assertIsNone(w.run_sh_stop(0, j))
+        self.assertIsNone(w.run_sh_stop(1, j))  # judged and failed is an answer, not a stop
 
-    def test_quiet_songs_with_net_failures_are_infra(self):
+    def test_last_song_ends_the_play_stage(self):
         j = judge()
-        for t in range(2, 2 + w.NET_INFRA):
-            j.log(t, "W BitChord: music browse: proxy failed, retrying directly")
-        j.script(10, "a VIEW started")
-        j.script(160, "b VIEW started")
-        j.script(310, "c VIEW started")
-        j.script(460, "smoke: forcing one final track change for the last track summary")
-        self.assertEqual(j.stop[:2], ("infra", "no_audio"))
+        j.script(1, "a VIEW started")
+        j.script(150, "smoke: forcing one final track change for the last track summary")
+        j.tick(150 + w.SONG_MARGIN_S + w.STALL_S + 60)
+        self.assertIsNone(j.stop)  # the logcat is closed and the heap report may outlast a song
+        self.assertEqual(j.stage, "post")
 
     def test_bot_check_flood_only_before_any_sound(self):
         bot = "W BitChord: x hit YouTube's bot check; this is the network, not the track"

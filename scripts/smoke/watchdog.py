@@ -22,14 +22,13 @@ import sys
 import time
 import urllib.request
 
-SETUP_S = 420  # start -> logcat: 75-91 s seen; two runs hung here for good on `adb wait-for-device`
+SETUP_S = 420  # start -> logcat: 75-91 s seen; 3 runs hung here for good on `adb wait-for-device`
 STALL_S = 180  # no logcat line at all: longest gap in 145 logs is 57 s
 APP_SILENT_S = 300  # no line from the app while the device logs: longest 136 s
 SONG_MARGIN_S = 180  # past a song's wait: run.sh moves on every wait + ~5 s
-QUIET_SONGS = 3  # songs in a row without sound; two happen in runs that then play fine (first sound took up to 285 s)
 KEY_REJECTS = 2  # one refused answer may be a blip; the bench never saw one
 BOT_CHECKS = 12  # before any sound: 59-70 in runs the proxy refused, 0-2 in every healthy run
-NET_INFRA = 3  # network failures since the last sound; fewer and a silent run is the app's own failure
+NET_INFRA = 3  # network failures since the last sound; fewer and run.sh's NO AUDIO is the app's own failure
 POST_S = 600  # last song -> report: 60-90 s seen
 SCENARIO_HARD_S = 80 * 60  # review scenarios: only the hard limit, they force-stop and cut the net on purpose
 
@@ -54,8 +53,8 @@ class Judge:
         self.stage = "setup"
         self.stop = self.stop_at = None
         self.log_at = self.app_at = self.script_at = None
-        self.begun = self.quiet = self.unstarted = self.net = self.bot_checks = self.rejects = 0
-        self.song, self.listening, self.window_sound, self.any_sound = "-", False, False, False
+        self.begun = self.net = self.bot_checks = self.rejects = 0
+        self.song, self.any_sound = "-", False
         self.sound = self.heard = self.base = self.crash_next = None
 
     def _stop(self, t, category, code, line=""):
@@ -97,7 +96,7 @@ class Judge:
                 self._stop(t, "infra", "bot_check", line)
         m = SOUND.search(line)
         if m:
-            self.window_sound = self.any_sound = True
+            self.any_sound = True
             self.net = 0
             self.sound = int(m.group(1)) // 1000
         m = HEARD.search(line)
@@ -107,33 +106,13 @@ class Judge:
         if m:
             self.base = m.group(1)
 
-    def _song_result(self, t, sound):
-        self.quiet = 0 if sound else self.quiet + 1
-        if self.quiet >= QUIET_SONGS:
-            code = "no_start" if self.unstarted >= QUIET_SONGS else "no_audio"
-            self._stop(t, "infra" if self.net >= NET_INFRA else "app", code)
-
-    def _close_song(self, t):
-        if self.listening:
-            self.listening = False
-            self._song_result(t, self.window_sound)
-
     def script(self, t, line):
         self.script_at = t
-        if self.scenario:
-            return
         m = SCRIPT.match(line.strip())
         if m:
-            self._close_song(t)
             self.begun += 1
             self.song, self.sound, self.heard, self.base = m.group(1), None, None, None
-            if m.group(2) == "started":
-                self.listening, self.window_sound, self.unstarted = True, False, 0
-            else:
-                self.unstarted += 1
-                self._song_result(t, False)
-        elif "did not start" not in line and self.stage != "post":  # "smoke: forcing one final..."
-            self._close_song(t)
+        elif line.startswith("smoke:"):  # "smoke: forcing one final..."
             self.stage = "post"
 
     def tick(self, t):
@@ -145,13 +124,14 @@ class Judge:
             if t - self.t0 > SETUP_S:
                 self._stop(t, "infra", "setup_hang")
             return
+        if self.stage != "play":  # run.sh has closed the logcat by now; the hard limit covers the rest
+            return
         if t - self.log_at > STALL_S:
             self._stop(t, "infra", "logcat_stall")
-        if self.stage == "play":
-            if t - self.app_at > APP_SILENT_S:
-                self._stop(t, "app", "app_silent")
-            if t - self.script_at > self.wait + SONG_MARGIN_S:
-                self._stop(t, "infra", "song_stuck")
+        if t - self.app_at > APP_SILENT_S:
+            self._stop(t, "app", "app_silent")
+        if t - self.script_at > self.wait + SONG_MARGIN_S:
+            self._stop(t, "infra", "song_stuck")
 
     def progress(self):
         if self.stage == "setup":
@@ -238,8 +218,11 @@ def report_stop(stop, elapsed, ps):
     post(desc, "failure")
 
 
-# run.sh's own early exits, so the loops read them the same way.
-RUN_SH_STOPS = {2: ("infra", "setup_failed"), 3: ("infra", "no_audio"), 4: ("app", "crash"), 5: ("tool", "no_sync_engine")}
+def run_sh_stop(rc, judge):
+    """run.sh's own early exits, so the loops read them the same way."""
+    stops = {2: ("infra", "setup_failed"), 3: ("infra" if judge.net >= NET_INFRA else "app", "no_audio"),
+             4: ("app", "crash"), 5: ("tool", "no_sync_engine")}
+    return stops[rc] + (judge.song, "") if rc in stops else None
 
 
 def main():
@@ -274,8 +257,7 @@ def main():
                 pass
             time.sleep(3)
     rc = run.wait()
-    if not stop and rc in RUN_SH_STOPS:
-        stop = RUN_SH_STOPS[rc] + (judge.song, "")
+    stop = stop or run_sh_stop(rc, judge)
     if stop:
         report_stop(stop, time.time() - t0, waiting)
         wrap_up()

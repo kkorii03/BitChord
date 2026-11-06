@@ -68,7 +68,7 @@ def replay(folder):
     events, wait = script_events(lines, playback)
     songs = sum(1 for _, s in events if watchdog.SCRIPT.match(s)) or 1
     judge = watchdog.Judge(lines[0][0], songs, wait, any("smoke-scenario:" in s for _, s in lines))
-    if not playback:  # the song count is unknown, so its hard limit is too
+    if not any(watchdog.SCRIPT.match(s) for _, s in events):  # no playback file, or the old queue format: no song count
         judge.hard = float("inf")
     judge.log(lines[0][0], lines[0][1])
     e = 0
