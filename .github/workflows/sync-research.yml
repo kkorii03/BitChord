@@ -1,0 +1,60 @@
+name: Sync research
+
+# Three sync candidates other than ctc-forced-aligner (bench/research/research.py). Bench only.
+# The Korean bundle stays on task/sync-bench, encrypted; only numbers leave the runner.
+on:
+  push:
+    branches: [task/sync-research]
+    paths: ["bench/research/**", ".github/workflows/sync-research.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        job:
+          - { part: ko, index: 0, of: 2 }
+          - { part: ko, index: 1, of: 2 }
+          - { part: jam, index: 0, of: 3 }
+          - { part: jam, index: 1, of: 3 }
+          - { part: jam, index: 2, of: 3 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - name: Bench helpers and Korean bundle from task/sync-bench
+        env:
+          KO_DATA_KEY: ${{ secrets.KO_DATA_KEY }}
+        run: |
+          git fetch -q --depth=1 origin task/sync-bench
+          git show FETCH_HEAD:bench/sync/bench.py > bench/research/bench.py
+          if [ "${{ matrix.job.part }}" = "ko" ]; then
+            mkdir kodata
+            git show FETCH_HEAD:bench/sync/ko/ko-data.enc | openssl enc -d -aes-256-cbc -pbkdf2 -pass env:KO_DATA_KEY | tar -x -C kodata
+            ls kodata | wc -l
+          fi
+      - name: Install
+        run: |
+          pip install -q "numpy<2" torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
+          pip install -q --no-deps demucs==4.0.1
+          pip install -q dora-search einops julius lameenc openunmix pyyaml tqdm soundfile transformers stable-ts
+          pip list 2>/dev/null | grep -i -E "^(torch|torchaudio|demucs|transformers|stable-ts|openai-whisper|numpy) "
+      - name: Run
+        env:
+          TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD: "1"
+          TQDM_DISABLE: "1"
+          TRANSFORMERS_VERBOSITY: error
+        run: python bench/research/research.py --part ${{ matrix.job.part }} --index ${{ matrix.job.index }} --of ${{ matrix.job.of }} --out r.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: research-${{ matrix.job.part }}-${{ matrix.job.index }}
+          path: r.json
+          retention-days: 14
