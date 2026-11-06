@@ -383,6 +383,8 @@ internal fun PlaybackService.koUpcomingSong(): Pair<Song, Boolean>? {
 internal fun PlaybackService.koScheduleDownloadHealthCheck(song: Song?, player: ExoPlayer) {
     val service = this
     if (song == null || song.videoId.isBlank()) return
+    // A replay on the file finds the stream's choice from the play before, for fifteen minutes.
+    if (song.localUri != null && StreamChoice.isYouTube(song.videoId)) StreamChoice.forget(song.videoId)
     downloadHealthJob?.cancel()
     downloadHealthJob = scope.launch(TrackLog.about(song.videoId)) {
         val outcome = DownloadHealth.onPlayback(service, song) ?: return@launch
@@ -441,6 +443,9 @@ internal fun PlaybackService.koUseVerifiedDownload(
         swappingMediaId = null
         return false
     }
+    // Left naming YouTube, the lyric clock said playing=youtube over the file: a 97 %
+    // answer heard on it dropped (11-06 MUny_GDYIDM), others moved by its offset (w58uXpyHWes).
+    StreamChoice.forget(id)
     player.seekTo(player.currentMediaItemIndex, position)
     player.prepare()
     return true

@@ -192,7 +192,7 @@ internal object SongHearing {
                 // the file through its verified map, or drops them when it has none.
                 // Decoding the file instead left the song uncorrected for 71 s (11-06
                 // w58uXpyHWes, its new sheet 1.0-1.2 s late on the listener's own log).
-                if (recording.startsWith(FILE_PREFIX)) {
+                if (recording.startsWith(FILE_PREFIX) && LyricsTiming.streamWordsReachFile(app, song.videoId)) {
                     streamWords(kept, language)?.let { saved ->
                         TrackLog.d(TAG, "song-hear: file reads the stream's ${saved.seconds.toInt()}s lang=$language", song.videoId)
                         return heardFrom(saved)
