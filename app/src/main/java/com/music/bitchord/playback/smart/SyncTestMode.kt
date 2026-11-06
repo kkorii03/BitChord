@@ -3,6 +3,7 @@ package com.music.bitchord.playback.smart
 import android.content.Context
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.lyrics.LyricLine
+import com.music.bitchord.data.lyrics.LyricsWordAlign
 import com.music.bitchord.data.lyrics.SyncDump
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.SourceTrackKeys
@@ -71,6 +72,7 @@ object SyncTestMode {
         shiftMs: Long,
         matchPercent: Int?,
         lines: List<LyricLine>,
+        heardWords: List<LyricsWordAlign.Heard>,
     ) {
         if (!enabled(context, videoId)) return
         runCatching {
@@ -82,6 +84,7 @@ object SyncTestMode {
                 shiftMs = shiftMs,
                 matchPercent = matchPercent,
                 lines = lines,
+                heardWords = heardWords,
             )
             val signature = dump.joinToString("\n")
             synchronized(this) {
