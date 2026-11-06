@@ -356,8 +356,23 @@ object TrackMatcher {
                 }
                 credited.ifEmpty { scored }
             }
-            .sortedByDescending { it.second }
+            // An exact normalised core is the same title; a candidate whose
+            // core merely contains it ("Song" inside "Song Acoustic") is a
+            // weaker reading of the same words. Confidence still orders rows
+            // of equal title quality, but containment never outranks an exact
+            // match just because its runtime is closer (M1).
+            .sortedWith(
+                compareByDescending<Pair<Song, Int>> { exactCore(it.first, target) }
+                    .thenByDescending { it.second },
+            )
             .map { it.first }
+
+    /** Whether [candidate]'s title core equals [target]'s, not merely contains it. */
+    private fun exactCore(candidate: Song, target: Target): Boolean =
+        coresEqual(
+            parseTitle(target.title, target.artist).cores(),
+            parseTitle(candidate.title, candidate.artist).cores(),
+        )
 
     /**
      * How confident this is the same recording, or null when it is not one.

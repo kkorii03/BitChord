@@ -676,11 +676,8 @@ internal object KoTrackMatcher {
      * from an unfamiliar artist: a radio station is expected to move to other
      * artists, and guessing would discard legitimate suggestions.
      */
-    fun isCoverArrangement(candidate: Song, seed: Song? = null): Boolean {
-        val got = arrangementText(candidate)
-        val wanted = seed?.let { arrangementText(it) }.orEmpty()
-        return COVER_MARKERS.any { it.containsMatchIn(got) && !it.containsMatchIn(wanted) }
-    }
+    fun isCoverArrangement(candidate: Song, seed: Song? = null): Boolean =
+        carriesArrangementMarker(candidate, seed, COVER_MARKERS)
 
     /**
      * Whether [candidate] is a karaoke, tribute, instrumental or other
@@ -692,15 +689,38 @@ internal object KoTrackMatcher {
      * plain "cover"/"커버" markers are deliberately not part of this list —
      * an ordinary cover is exactly what the fallback is meant to rescue.
      */
-    fun isKaraokeOrTributeArrangement(candidate: Song, seed: Song? = null): Boolean {
+    fun isKaraokeOrTributeArrangement(candidate: Song, seed: Song? = null): Boolean =
+        carriesArrangementMarker(candidate, seed, KARAOKE_TRIBUTE_MARKERS)
+
+    /**
+     * Whether [candidate] carries a marker from [markers] that [seed] does not.
+     *
+     * `MR` is the Korean shorthand for a backing track, but a bare "Mr" is
+     * also an ordinary honorific ("Mr. Big"). The lowercased text cannot tell
+     * them apart, so only the uppercase form closing a title counts: "MR.BIG"
+     * and "MR. BLUE SKY" are names, and an artist or album is never the marker.
+     */
+    private fun carriesArrangementMarker(
+        candidate: Song,
+        seed: Song?,
+        markers: List<Regex>,
+    ): Boolean {
+        if (UPPERCASE_MR.containsMatchIn(candidate.title) &&
+            !UPPERCASE_MR.containsMatchIn(seed?.title.orEmpty())
+        ) {
+            return true
+        }
         val got = arrangementText(candidate)
         val wanted = seed?.let { arrangementText(it) }.orEmpty()
-        return KARAOKE_TRIBUTE_MARKERS.any { it.containsMatchIn(got) && !it.containsMatchIn(wanted) }
+        return markers.any { it.containsMatchIn(got) && !it.containsMatchIn(wanted) }
     }
 
     private fun arrangementText(song: Song): String =
         (song.title + " " + song.artist + " " + song.albumName.orEmpty())
             .lowercase(Locale.ROOT)
+
+    private val UPPERCASE_MR =
+        Regex("""(?<![A-Za-z])MR(?:\s*(?:ver(?:sion)?\.?|버전))?\s*(?:$|[)\]）】])""")
 
     private val KARAOKE_TRIBUTE_MARKERS = listOf(
         Regex("""originally performed"""),
@@ -715,6 +735,20 @@ internal object KoTrackMatcher {
         Regex("""\bkaraoke\b"""),
         Regex("""\btribute\b"""),
         Regex("""\binstrumental\b"""),
+        // The shorthand a catalogue prints as a bracketed aside: "(Inst)",
+        // "(MR)", "(Band)", "(Piano)", "(한국어)", "(Eng)". The version
+        // parser rejects the language takes; these keep the same rows out of
+        // the cover/arrangement paths too. Band/Piano/Eng are only markers in
+        // that aside (or with a take suffix) so a real name like "Band of
+        // Horses" is not refused. `MR` is matched case-sensitively above so
+        // "Mr. Big" stays a credit.
+        Regex("""\binst\b"""),
+        Regex("""\(\s*piano\s*\)"""),
+        Regex("""\(\s*band\s*\)"""),
+        Regex("""\bband\s+(version|ver|arrangement)\b"""),
+        Regex("""\(\s*한국어\s*(버전|ver(sion)?\.?)?\s*\)|한국어\s*(버전|ver(sion)?\b)"""),
+        Regex("""\(\s*eng\s*\)"""),
+        Regex("""\beng\s+ver(sion)?\b"""),
         Regex("""\bbacking (track|band|vocals?)\b"""),
         Regex("""\b(piano|guitar)\s+(version|cover|instrumental|arrangement)\b"""),
         Regex("""\b(kpop|idol)\s+guitar\b"""),
@@ -1091,8 +1125,9 @@ internal object KoTrackMatcher {
                 // would search for "live"/"official" instead of the song. The
                 // marker may sit inside a longer tail ("Live at Wembley"), so
                 // any take word rejects the inversion, not only a tail that is
-                // entirely packaging.
-                if (!isPackagingOrTake(tail) && !startsWithTakeMarker(tail) &&
+                // entirely packaging. A language take ("Song - Korean Version")
+                // is the same: the song is the head (M14).
+                if (!isTakeTail(tail) && !isLanguageVersion(tail) &&
                     !isArtistName(tail, rawArtist)
                 ) {
                     return AudioSwitchIdentity(
@@ -1242,7 +1277,12 @@ internal object KoTrackMatcher {
                     present = true
                     tailRemoved = true
                     labelPackaged = true
-                    text = before + " " + stripTrailingNeutralSuffix(after)
+                    // "Song - OST (Part 3)" numbers the release, not the song.
+                    text = if (isPartNumbering(suffix)) {
+                        before
+                    } else {
+                        before + " " + stripTrailingNeutralSuffix(after)
+                    }
                 }
                 isNeutralSoundtrackSuffix(suffixWords) -> {
                     present = true
@@ -1359,6 +1399,9 @@ internal object KoTrackMatcher {
         // recording could stand in for the language take.
         val label = SOUNDTRACK_WORD.findAll(text).lastOrNull()
         val takeText = label?.let { text.substring(it.range.last + 1) } ?: text
+        // "OST Part 3" numbers the release, not the recording: the plain
+        // catalogue row is still the same song (M3).
+        if (isPartNumbering(takeText)) return emptyList()
         // Neutral packaging after the label describes the ordinary release
         // ("Radio Edit", "Original Mix"), so it is not a take. The dash path
         // already applies this gate; the pipe path needs it too or splitting
@@ -1368,7 +1411,7 @@ internal object KoTrackMatcher {
         if (takeWords.joinToString("") in NEUTRAL_SEGMENTS) return emptyList()
         val languageTake = isLanguageVersion(takeText)
         return words.filter {
-            (it in VERSION_WORDS && it !in NEUTRAL_SUFFIX_WORDS) ||
+            (it in VERSION_WORDS && it !in NEUTRAL_SUFFIX_WORDS && it !in PART_WORDS) ||
                 (languageTake && it in VERSION_LANGUAGES)
         }
     }
@@ -1402,6 +1445,19 @@ internal object KoTrackMatcher {
             .map { it.replace(NON_ALNUM, "") }
             .firstOrNull { it.isNotEmpty() } ?: return false
         return first in VERSION_WORDS || first in TRAILING_TAKES
+    }
+
+    /**
+     * Whether [text] is only a shorthand arrangement word and its packaging
+     * ("Inst", "Piano Version"). A real title that merely starts with one
+     * ("Piano Man", "Band on the Run") is not a take.
+     */
+    private fun isShorthandTake(text: String): Boolean {
+        val words = normalize(text).split(WORD_SPLIT)
+            .map { it.replace(NON_ALNUM, "") }
+            .filter { it.isNotEmpty() }
+        return words.any { it in EXTRA_TAKES } &&
+            words.all { it in EXTRA_TAKES || it in LANGUAGE_PACKAGING || it in NOISE_WORDS }
     }
 
     private val PACKAGING_CONNECTORS = setOf(
@@ -1447,8 +1503,16 @@ internal object KoTrackMatcher {
         val soundtrack = stripSoundtrackTail(raw)
         // A playlist row prints its position in front of the name ("3.여수밤바다",
         // "03 Ditto", "Track 3 - Song"). It is the listing's, not the song's,
-        // and every catalogue search for it misses.
-        var text = LEADING_TRACK_NUMBER.replace(normalize(soundtrack.text), "")
+        // and every catalogue search for it misses. A number that is the whole
+        // title before the dash ("22 - Taylor Swift", "505 - Arctic Monkeys")
+        // is the song's own name, so the artist on the other side decides (M11).
+        val normalized = normalize(soundtrack.text)
+        val leading = LEADING_TRACK_NUMBER.find(normalized)
+        var text = if (leading != null && !leadingNumberIsTitle(normalized, leading, artist)) {
+            LEADING_TRACK_NUMBER.replace(normalized, "")
+        } else {
+            normalized
+        }
         val altTexts = mutableListOf<String>()
 
         // Bracketed asides, innermost first: "(From "Satyamev Jayate")",
@@ -1484,8 +1548,15 @@ internal object KoTrackMatcher {
                             classify(head, versions, context)
                             text = tail
                         }
-                        isPackagingOrTake(tail) -> Unit
-                        startsWithTakeMarker(tail) -> Unit
+                        // A language take ("Song - Korean Version") belongs to
+                        // the head, not to the title, even before a pipe OST
+                        // tail (M14). Any other take stays for the ordinary
+                        // dash pass below.
+                        isLanguageVersion(tail) -> {
+                            classify(tail, versions, context)
+                            text = head
+                        }
+                        isTakeTail(tail) -> Unit
                         !isArtistName(head, artist) && !isArtistName(tail, artist) -> {
                             classify(head, versions, context)
                             text = tail
@@ -1511,7 +1582,21 @@ internal object KoTrackMatcher {
             val tail = text.substring(dash.range.last + 1)
             text = when {
                 isArtistName(head, artist) -> {
-                    classify(head, versions, context)
+                    // "Black Sabbath - 2009 Remaster": the head is the act and
+                    // the tail only names the remaster, so the head is the
+                    // title and the year never becomes its identity (M13).
+                    if (isRemasterTail(tail)) {
+                        classify(tail, versions, context)
+                        head
+                    } else {
+                        classify(head, versions, context)
+                        tail
+                    }
+                }
+                // "Goblin OST - Stay With Me": a soundtrack label before the
+                // dash is the uploader, so the song is what follows it (M10).
+                isUploaderCredit(head) -> {
+                    classify(head, versions, context, takeMarkers = false)
                     tail
                 }
                 isLanguageVersion(tail) -> {
@@ -1520,6 +1605,15 @@ internal object KoTrackMatcher {
                     // translation pair so a Hangul title with a Latin language
                     // tail ("여수밤바다 - Japanese Version") stays one take of
                     // the Hangul title instead of gaining a phantom alt core.
+                    classify(tail, versions, context)
+                    head
+                }
+                isTakeTail(tail) -> {
+                    // A take tail belongs to the recording, not to the title:
+                    // "여수밤바다 - Live at Wembley" is the live take and never
+                    // an English name for the song. Tested before the
+                    // translation pair so the tail's Latin words ("wembley",
+                    // "someone") cannot turn it into an alt reading (M4/M5).
                     classify(tail, versions, context)
                     head
                 }
@@ -1579,7 +1673,14 @@ internal object KoTrackMatcher {
             // "Version"/"Edition" after a bracketed take is packaging, not a
             // take: "Song (Live) Version" is the live recording of "Song", and
             // leaving the word in the core made the exact-title gates refuse it.
-            if (last in TRAILING_NOISE || last in NEUTRAL_SUFFIX_WORDS) {
+            // "Song"/"Songs" is only an upload label when the word before it is
+            // one too ("Full Song", "Official Song"); "Love Song" and
+            // "Our Song" are titles and keep the word (M12).
+            val songLabel = last == "song" || last == "songs"
+            val labelled = words.getOrNull(words.size - 2)?.let { it in TRAILING_NOISE } == true
+            if ((last in TRAILING_NOISE || last in NEUTRAL_SUFFIX_WORDS) &&
+                (!songLabel || labelled)
+            ) {
                 words = words.dropLast(1)
                 droppedTail++
             } else if (last in TRAILING_TAKES) {
@@ -1600,7 +1701,11 @@ internal object KoTrackMatcher {
         }
 
         val coreString = if (containsCJK) {
-            coreText.replace(Regex("""[\s\p{Punct}・～〜ー-]+"""), "")
+            // Symbols such as "♡" are not punctuation, so the old punctuation
+            // class kept them in the core ("첫사랑♡" != "첫사랑"). NON_ALNUM is
+            // the same letters-and-digits rule the Latin core uses; the kana
+            // long-vowel mark is a letter but was never part of the identity.
+            coreText.replace(NON_ALNUM, "").replace("ー", "")
         } else {
             words.joinToString("")
         }
@@ -1664,7 +1769,7 @@ internal object KoTrackMatcher {
             .filter { it.isNotEmpty() && it !in JOINING_WORDS }
         if (words.isEmpty()) return null
         val core = if (cjk) {
-            clean.replace(Regex("""[\s\p{Punct}・～〜ー-]+"""), "")
+            clean.replace(NON_ALNUM, "").replace("ー", "")
         } else {
             words.joinToString("")
         }
@@ -1677,6 +1782,9 @@ internal object KoTrackMatcher {
      * Japanese title with a romaji tail is handled as the filing shape above.
      */
     private fun isTranslationPair(head: String, tail: String, artist: String): Boolean {
+        // A take is a different recording, never a second name for the title,
+        // however much Latin it prints ("Live at Wembley", "Sped Up").
+        if (isTakeTail(tail) || isTakeTail(head)) return false
         val headHangul = hasHangul(head)
         val tailHangul = hasHangul(tail)
         if (headHangul == tailHangul) return false
@@ -1684,6 +1792,29 @@ internal object KoTrackMatcher {
             headHangul && !tailHangul && hasFilingLatin(tail) && !isArtistName(tail, artist) -> true
             tailHangul && !headHangul && hasFilingLatin(head) && !isArtistName(head, artist) -> true
             else -> false
+        }
+    }
+
+    /** A dash/bracket tail that names a take or upload packaging, not a title. */
+    private fun isTakeTail(text: String): Boolean =
+        isPackagingOrTake(text) || startsWithTakeMarker(text) || isShorthandTake(text) ||
+            UPPERCASE_MR.containsMatchIn(text)
+
+    /**
+     * Whether [text] only states a remaster ("2009 Remaster", "Remastered
+     * 2011"). When it follows the act's own name, the act's name is the song,
+     * not the year or the remaster note (M13).
+     */
+    private fun isRemasterTail(text: String): Boolean {
+        val words = normalize(text).split(WORD_SPLIT)
+            .map { it.replace(NON_ALNUM, "") }
+            .filter { it.isNotEmpty() }
+        if (words.none { it == "remaster" || it == "remastered" || it == "remastering" }) {
+            return false
+        }
+        return words.all {
+            it in TRAILING_NOISE || it in NOISE_WORDS || it in NEUTRAL_SUFFIX_WORDS ||
+                it.all(Char::isDigit)
         }
     }
 
@@ -1705,7 +1836,16 @@ internal object KoTrackMatcher {
         val words = normalize(aside).split(WORD_SPLIT)
             .map { it.replace(NON_ALNUM, "") }
             .filter { it.isNotEmpty() }
-        if (words.isEmpty() || words.any { it in VERSION_WORDS }) return false
+        val shorthandOnly = words.any { it in EXTRA_TAKES } &&
+            words.all { it in EXTRA_TAKES || it in LANGUAGE_PACKAGING || it in NOISE_WORDS }
+        if (words.isEmpty() || shorthandOnly ||
+            words.any {
+                it in VERSION_WORDS || it in PART_WORDS ||
+                    it in VERSION_LANGUAGES || it in LANGUAGE_ALIASES
+            }
+        ) {
+            return false
+        }
         return words.any { it.length > 1 && it !in NOISE_WORDS && it !in TRAILING_NOISE }
     }
 
@@ -1773,11 +1913,17 @@ internal object KoTrackMatcher {
             val after = segment.substring(label.range.last + 1)
             if (after.isNotBlank()) {
                 if (before.isNotBlank()) classify(before, versions, context, takeMarkers = false)
-                classify(after, versions, context)
+                // "OST Part 3" numbers the release, not the recording, so it
+                // is context only and never a part version (M3).
+                if (isPartNumbering(after)) {
+                    context += wordsOf(after).filter { it.length > 2 && it !in NOISE_WORDS }
+                } else {
+                    classify(after, versions, context)
+                }
                 return
             }
         }
-        val languages = words.mapNotNull { VERSION_LANGUAGES[it] }.distinct()
+        val languages = words.mapNotNull { VERSION_LANGUAGES[it] ?: LANGUAGE_ALIASES[it] }.distinct()
         if (languages.isNotEmpty() && isLanguageVersion(segment)) {
             // A language version is a different recording. "Version"/"ver" is
             // its packaging, so the language is the marker that has to agree;
@@ -1789,7 +1935,27 @@ internal object KoTrackMatcher {
             versions += words.filter { it in VERSION_WORDS && it !in LANGUAGE_PACKAGING }
             return
         }
-        val marks = words.filter { it in VERSION_WORDS }
+        // "Part 1"/"Pt. 1" number a multi-part song. The number is part of
+        // the identity and the two spellings are the same part, so one
+        // canonical key ("part1") stands for both and Part 1 never collides
+        // with Part 2 (M8). An OST part number was handled above.
+        partNumberKey(words)?.let { versions += it }
+        // "Version"/"Edition" on its own is packaging, not a take: "Song
+        // (Live) Version" is the live take, and "Song (Version)" is the plain
+        // record (M7). The shorthand arrangement words are takes when the
+        // aside is only that word ("(Inst)", "(Piano)", "(Band)"), not when
+        // the word is part of a real name ("Piano Man", "Band of Horses").
+        val shorthandOnly = words.any { it in EXTRA_TAKES } &&
+            words.all { it in EXTRA_TAKES || it in LANGUAGE_PACKAGING || it in NOISE_WORDS }
+        val marks = words.filter {
+            when {
+                it in PART_WORDS -> false
+                it in VERSION_WORDS -> it !in LANGUAGE_PACKAGING
+                else -> shorthandOnly && it in EXTRA_TAKES
+            }
+        }
+        // `MR` only counts uppercase ("MR"), never the honorific "Mr".
+        if (UPPERCASE_MR.containsMatchIn(segment)) versions += "mr"
         if (marks.isNotEmpty()) {
             versions += marks
             return
@@ -1807,9 +1973,10 @@ internal object KoTrackMatcher {
             .map { it.replace(NON_ALNUM, "") }
             .filter { it.isNotEmpty() }
         if (words.isEmpty()) return false
-        return words.any { it in VERSION_LANGUAGES } &&
+        return words.any { it in VERSION_LANGUAGES || it in LANGUAGE_ALIASES } &&
             words.all {
-                it in VERSION_LANGUAGES || it in VERSION_WORDS || it in LANGUAGE_PACKAGING ||
+                it in VERSION_LANGUAGES || it in LANGUAGE_ALIASES ||
+                    it in VERSION_WORDS || it in LANGUAGE_PACKAGING ||
                     it in PACKAGING_CONNECTORS || it in NOISE_WORDS || it.all(Char::isDigit)
             }
     }
@@ -1817,8 +1984,11 @@ internal object KoTrackMatcher {
     /** Whether [text] is nothing but (part of) [artist] — the "Artist - Title" upload shape. */
     private fun isArtistName(text: String, artist: String): Boolean {
         if (artist.isBlank()) return false
-        val words =
-            text.split(WORD_SPLIT).map { it.replace(NON_ALNUM, "") }.filter { it.isNotEmpty() }
+        // "David Guetta ft. Sia - Titanium" credits the artist and a featured
+        // act before the dash; the featuring tail is a credit, not part of the
+        // act's own name, so it must not keep the head from matching (M9).
+        val words = text.replace(FEATURING, " ")
+            .split(WORD_SPLIT).map { it.replace(NON_ALNUM, "") }.filter { it.isNotEmpty() }
         if (words.isEmpty()) return false
         // Use the same credit expansion as matching: it drops the Topic/VEVO
         // channel plumbing and splits aliases, so "Artist - Song" is inverted
@@ -1833,6 +2003,18 @@ internal object KoTrackMatcher {
             .filter { it.isNotEmpty() }
             .toSet()
         return words.all { it in credited }
+    }
+
+    /**
+     * Whether a leading number is the song's own name rather than a listing
+     * position: "22 - Taylor Swift" is the song "22" with its artist after the
+     * dash, while "3 - Ditto" is a track number when the rest is not the act.
+     */
+    private fun leadingNumberIsTitle(text: String, match: MatchResult, artist: String): Boolean {
+        if (artist.isBlank()) return false
+        if (match.value.none { it == '-' || it == '–' || it == '—' }) return false
+        val rest = text.substring(match.range.last + 1).trim()
+        return rest.isNotBlank() && isArtistName(rest, artist)
     }
 
     /**
@@ -1960,8 +2142,46 @@ internal object KoTrackMatcher {
     /** Packaging around a language marker: "Version", "Ver.". */
     private val LANGUAGE_PACKAGING = setOf("version", "ver")
 
-    /** Packaging words that follow a soundtrack label without naming a take. */
-    private val NEUTRAL_SUFFIX_WORDS = setOf("version", "edition")
+    /**
+     * Language abbreviations a catalogue prints as a take.
+     *
+     * Each folds to the canonical key [VERSION_LANGUAGES] uses, so "Song
+     * (Eng)" and "Song (English Ver.)" are the same take.
+     */
+    private val LANGUAGE_ALIASES = mapOf("eng" to "english")
+
+    /**
+     * Arrangement shorthand the shared take vocabulary does not carry. A
+     * bracketed "(Inst)", "(Band)", "(Piano)" or "(MR)" names another
+     * recording even though the word is a plain title word elsewhere. The
+     * honorific "Mr. Big" is safe because it is not the only word.
+     */
+    private val EXTRA_TAKES = setOf("inst", "band", "piano", "mr")
+
+    /** `Part`/`Pt` spellings of a numbered part. */
+    private val PART_WORDS = setOf("part", "pt")
+
+    /** Whether [text] is only "Part 3"/"Pt. 3" — a numbered part, not a take. */
+    private fun isPartNumbering(text: String): Boolean {
+        val words = wordsOf(text)
+        if (words.size < 2 || words.first() !in PART_WORDS) return false
+        return words.drop(1).all { it.all(Char::isDigit) }
+    }
+
+    /** `part1` for "Part 1"/"Pt. 1", so both spellings are one version key. */
+    private fun partNumberKey(words: List<String>): String? {
+        val at = words.indexOfFirst { it in PART_WORDS }
+        if (at < 0) return null
+        val number = words.drop(at + 1).takeWhile { it.all(Char::isDigit) }.firstOrNull()
+            ?: return null
+        return "part$number"
+    }
+
+    /**
+     * Packaging words that follow a soundtrack label without naming a take.
+     * "Limited Edition" is the same kind of release note as "Deluxe Edition".
+     */
+    private val NEUTRAL_SUFFIX_WORDS = setOf("version", "edition", "limited")
 
     // Forwarders to upstream members that remain in TrackMatcher.
     internal fun normalize(text: String): String = TrackMatcher.normalize(text)
