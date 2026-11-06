@@ -1602,11 +1602,9 @@ object LyricsTiming {
                 return@withLock false
             }
             if (replacedSheet(videoId, key)) return@withLock false
-            // No code: nothing was asked, so no engine is spent and a waiting retry or song check stands.
-            val kept = SongHearing.Heard(heard.words, heard.audioMs, heard.clock, httpCode = null, fromStore = true)
             val check = fitSongCheck(
                 context, song, lines, key, ENGINE_DEEPGRAM_WHISPER, null,
-                SongAsk(kept, language, heard.audioMs / 1000.0), retry = false,
+                SongAsk(heard.askedNothing(), language, heard.audioMs / 1000.0), retry = false,
             )
             applySongCheck(context, song, key, ENGINE_DEEPGRAM_WHISPER, check)
             // Stretches an older fit made and this one no longer stands behind.

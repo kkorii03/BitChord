@@ -98,7 +98,10 @@ internal object SongHearing {
         val httpCode: Int?,
         val retryAfterMs: Long? = null,
         val fromStore: Boolean = false,
-    )
+    ) {
+        /** These words with no reply code: no engine is spent, and a waiting retry or song check stands. */
+        fun askedNothing() = Heard(words, audioMs, clock, httpCode = null, fromStore = true)
+    }
 
     @Serializable
     internal data class Saved(
