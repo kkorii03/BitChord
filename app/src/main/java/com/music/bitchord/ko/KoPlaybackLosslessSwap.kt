@@ -378,6 +378,8 @@ internal fun PlaybackService.koHqSwapDecision(
         versionSwapActive = versionSwapJob?.isActive == true,
         videoRadio = item?.toSong()?.videoRadio == true,
         isVideo = item?.toSong()?.isVideo == true,
+        suppressed = exoPlayer != null &&
+            exoPlayer.playbackSuppressionReason != Player.PLAYBACK_SUPPRESSION_REASON_NONE,
     )
 }
 

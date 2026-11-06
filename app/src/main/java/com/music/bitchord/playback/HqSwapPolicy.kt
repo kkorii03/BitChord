@@ -53,6 +53,9 @@ internal object HqSwapPolicy {
      * @param pinned whether the listener has held this track on the original.
      *   The revert can land while a search is already running, and that search
      *   neither knows nor can be told; the pin has the last word.
+     * @param suppressed whether the session player wants to play but is being
+     *   held back, as a call does. `playWhenReady` stays true through that and
+     *   the standby holds no audio focus, so it would play over the call.
      */
     fun decide(
         positionMs: Long,
@@ -74,6 +77,7 @@ internal object HqSwapPolicy {
         if (pinned) return Decision(false, "pinned", 0L)
         if (crossfadeActive) return Decision(false, "crossfade", 0L)
         if (versionSwapActive) return Decision(false, "version-swap", 0L)
+        if (suppressed) return Decision(false, "suppressed", 0L)
         // A video-radio row is kept as the upload the listener chose; the
         // mid-song lossless path must refuse it just as the next-track step
         // does, or a catalogue FLAC replaces the upload's own sound.
