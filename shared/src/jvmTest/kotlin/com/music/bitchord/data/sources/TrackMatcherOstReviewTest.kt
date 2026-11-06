@@ -164,6 +164,72 @@ class TrackMatcherOstReviewTest {
     }
 
     @Test
+    fun `an OST part number is release packaging not a take`() {
+        val dash = TrackMatcher.parseTitle("Song - OST Part 3")
+        assertEquals("song", dash.core)
+        assertEquals(emptySet<String>(), dash.versions)
+
+        val pipe = TrackMatcher.parseTitle("Song | Joker OST Part 3")
+        assertEquals("song", pipe.core)
+        assertEquals(emptySet<String>(), pipe.versions)
+
+        val bracket = TrackMatcher.parseTitle("Song (OST Part 3)")
+        assertEquals("song", bracket.core)
+        assertEquals(emptySet<String>(), bracket.versions)
+
+        val plain = Song(videoId = "plain", title = "Song", artist = "Artist", thumbnailUrl = null)
+        assertTrue(
+            TrackMatcher.sameRecording(plain, TrackMatcher.Target("Song - OST Part 3", "Artist")),
+        )
+    }
+
+    @Test
+    fun `a tail take is not read as the title's translation`() {
+        listOf(
+            "여수밤바다 - Live" to "live",
+            "여수밤바다 - Live at Wembley" to "live",
+            "여수밤바다 - Sped Up" to "sped",
+            "여수밤바다 - Remix by Someone" to "remix",
+        ).forEach { (raw, take) ->
+            val parts = TrackMatcher.parseTitle(raw)
+            assertEquals(raw, "여수밤바다", parts.core)
+            assertEquals(raw, setOf(take), parts.versions)
+            assertEquals(raw, emptyList<String>(), parts.altCores)
+        }
+    }
+
+    @Test
+    fun `version alone is packaging and a live version is the live take`() {
+        assertEquals(emptySet<String>(), TrackMatcher.parseTitle("Song (Version)").versions)
+        assertEquals(emptySet<String>(), TrackMatcher.parseTitle("Song - Version").versions)
+        assertEquals(setOf("live"), TrackMatcher.parseTitle("Song (Live Version)").versions)
+        assertEquals(setOf("live"), TrackMatcher.parseTitle("Song - Live Version").versions)
+        assertEquals(emptySet<String>(), TrackMatcher.parseTitle("Song (Remastered Version)").versions)
+        assertEquals(emptySet<String>(), TrackMatcher.parseTitle("Song (Bonus Track Version)").versions)
+        assertEquals(emptySet<String>(), TrackMatcher.parseTitle("Song (LP Version)").versions)
+    }
+
+    @Test
+    fun `part numbers are canonical and stay apart`() {
+        assertEquals(setOf("part1"), TrackMatcher.parseTitle("Song (Part 1)").versions)
+        assertEquals(setOf("part1"), TrackMatcher.parseTitle("Song (Pt. 1)").versions)
+        assertEquals(setOf("part2"), TrackMatcher.parseTitle("Song (Part 2)").versions)
+        assertEquals(setOf("part2"), TrackMatcher.parseTitle("Song - Pt. 2").versions)
+        assertTrue(
+            TrackMatcher.sameTitle(
+                Song("a", "Song (Part 1)", "Artist", null),
+                Song("b", "Song (Pt. 1)", "Artist", null),
+            ),
+        )
+        assertFalse(
+            TrackMatcher.sameTitle(
+                Song("a", "Song (Part 1)", "Artist", null),
+                Song("b", "Song (Part 2)", "Artist", null),
+            ),
+        )
+    }
+
+    @Test
     fun `a CJK title drops trailing packaging from its core`() {
         val bracketed = TrackMatcher.parseTitle("紅蓮華 (Live) Version")
         assertEquals("紅蓮華", bracketed.core)

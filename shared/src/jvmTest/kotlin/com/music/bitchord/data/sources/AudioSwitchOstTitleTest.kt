@@ -316,4 +316,66 @@ class AudioSwitchOstTitleTest {
         assertEquals("the post", identity("Song | The Post OST").work)
         assertEquals("lost", identity("Song (From \"Lost\")").work)
     }
+
+    @Test
+    fun `arrangement and language shorthand is a take not the original`() {
+        val target = TrackMatcher.Target("Song", "Artist", durationSec = 200)
+        listOf("Inst", "Instrumental", "MR", "Band", "Piano", "한국어", "Eng").forEach { aside ->
+            val row = Song(
+                videoId = "row-$aside",
+                title = "Song ($aside)",
+                artist = "Artist",
+                thumbnailUrl = null,
+                durationText = "3:20",
+            )
+            assertNull("aside=$aside", TrackMatcher.bestSameArtist(listOf(row), target))
+            assertFalse("aside=$aside", TrackMatcher.isOriginalRecording(row, target))
+        }
+        // The plain record and an explicitly requested take still pass.
+        val plain = Song(
+            videoId = "plain",
+            title = "Song",
+            artist = "Artist",
+            thumbnailUrl = null,
+            durationText = "3:20",
+        )
+        assertEquals(plain, TrackMatcher.bestSameArtist(listOf(plain), target))
+        assertTrue(
+            TrackMatcher.isOriginalRecording(
+                plain.copy(title = "Song (Instrumental)"),
+                target.copy(title = "Song (Instrumental)"),
+            ),
+        )
+    }
+
+    @Test
+    fun `an honorific Mr in a credit is not a backing track take`() {
+        val target = TrackMatcher.Target("To Be With You", "Mr. Big", durationSec = 200)
+        val row = Song(
+            videoId = "mr-big",
+            title = "To Be With You",
+            artist = "Mr. Big",
+            thumbnailUrl = null,
+            durationText = "3:20",
+        )
+        assertEquals(row, TrackMatcher.bestSameArtist(listOf(row), target))
+        assertTrue(TrackMatcher.isOriginalRecording(row, target))
+    }
+
+    @Test
+    fun `an OST label before the title is the uploader not the title`() {
+        val parts = TrackMatcher.parseTitle("Goblin OST - Stay With Me", "Chanyeol")
+        assertEquals("staywithme", parts.core)
+        assertEquals(emptySet<String>(), parts.versions)
+    }
+
+    @Test
+    fun `a language take before a soundtrack label stays a take`() {
+        val raw = "Song - Korean Version | Joker OST"
+        val parts = TrackMatcher.parseTitle(raw)
+        assertEquals("song", parts.core)
+        assertEquals(setOf("korean"), parts.versions)
+        assertTrue(identity(raw).title.contains("song"))
+        assertFalse(identity(raw).title == "korean version")
+    }
 }
