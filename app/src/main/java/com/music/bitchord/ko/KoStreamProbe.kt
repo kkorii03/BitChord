@@ -147,7 +147,7 @@ internal object KoStreamProbe {
                 "hq-stream: ${HqHostTracker.hostOf(url) ?: "?"} claims ${stream.format.summary} " +
                     "but served a lossy file ($container); not starting this track on it",
             )
-            mediaId?.let { AudioCache.invalidateAddonRendition(it) }
+            mediaId?.let { AudioCache.invalidateAddonRendition(it, stream) }
             return false
         }
         // The same lie with the container kept: a row that says 3:21 and a file
@@ -164,7 +164,7 @@ internal object KoStreamProbe {
             "hq-stream: ${HqHostTracker.hostOf(url) ?: "?"} claims ${stream.format.summary} of " +
                 "${stream.durationSec}s but the file runs ${seconds}s; not starting this track on it",
         )
-        mediaId?.let { AudioCache.invalidateAddonRendition(it) }
+        mediaId?.let { AudioCache.invalidateAddonRendition(it, stream) }
         return false
     }
 
