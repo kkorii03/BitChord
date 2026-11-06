@@ -1372,7 +1372,10 @@ object SourceResolver {
             val unmeasurable = resting && SourceCooldown.isUnmeasurable(source.configId)
             val alreadyProbed = resting && probesResting && (
                 unmeasurable || (manualSession != null &&
-                    !manualRestingProbes.add(manualProbeKey(manualSession, source.configId, target)))
+                    !manualRestingProbes.add(manualProbeKey(manualSession, source.configId, target))) ||
+                    // A hand-made request is worth its probe; a walk the app
+                    // started on its own waits its turn.
+                    (!manual && !com.music.bitchord.ko.KoSourceCooldown.takeRestProbe(source.configId))
                 )
             if (alreadyProbed) {
                 val skipped = SearchOutcome(verdict = "resting", conclusive = false)

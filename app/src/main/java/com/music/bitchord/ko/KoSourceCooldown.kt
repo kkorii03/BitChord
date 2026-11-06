@@ -26,6 +26,9 @@ internal object KoSourceCooldown {
 
     private val states = ConcurrentHashMap<String, State>()
 
+    /** When an upgrade walk last asked each resting source — see [takeRestProbe]. */
+    private val restProbes = ConcurrentHashMap<String, Long>()
+
     /**
      * A monotonic mark for each source's failures, so a caller can tell
      * whether *its* search failed without the source having to throw.
@@ -174,6 +177,7 @@ internal object KoSourceCooldown {
     internal fun clear(configId: String) {
         states.remove(configId)
         unmeasurable.remove(configId)
+        restProbes.remove(configId)
     }
 
     private fun recordFailure(
@@ -199,6 +203,31 @@ internal object KoSourceCooldown {
 
     fun succeeded(configId: String) {
         states.remove(configId)
+        restProbes.remove(configId)
+    }
+
+    /**
+     * Whether an upgrade walk may ask this resting source now, and takes the
+     * turn when it may.
+     *
+     * An upgrade re-search is allowed one short probe of a resting source, since
+     * a parked source may be the one holding the FLAC. Given to every walk it
+     * cancelled the rest: phone 11-06 asked a dead addon on all 72 upgrades, 54
+     * failures in a row, each one spending its four second window, and kept
+     * asking an addon that had said it was being rate limited. One walk per
+     * [REST_PROBE_EVERY_MS] still finds a source that has come back.
+     */
+    internal fun takeRestProbe(configId: String, nowMs: Long = System.currentTimeMillis()): Boolean {
+        var taken = false
+        restProbes.compute(configId) { _, last ->
+            if (last == null || nowMs - last >= REST_PROBE_EVERY_MS) {
+                taken = true
+                nowMs
+            } else {
+                last
+            }
+        }
+        return taken
     }
 
     internal fun resetForTest() {
@@ -206,8 +235,10 @@ internal object KoSourceCooldown {
         failureMarks.clear()
         authMarks.clear()
         unmeasurable.clear()
+        restProbes.clear()
     }
 
+    private const val REST_PROBE_EVERY_MS = 10 * 60 * 1000L
     private const val UNMEASURABLE_TRACKS_BEFORE_REST = 3
     private const val UNMEASURABLE_REST_MS = 6 * 60 * 60 * 1000L
     private const val FAILURES_BEFORE_REST = 2

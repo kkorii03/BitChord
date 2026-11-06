@@ -185,6 +185,36 @@ class UpgradeSpeedTest {
      * that was resting with it (phone 11-04: the lossless sources were resting
      * and every upgrade went straight to YouTube's copy).
      */
+    /**
+     * Phone 11-06: a dead addon asked on all 72 upgrades, 54 failures in a row,
+     * each spending its four second window. A probe on every walk is no rest.
+     */
+    @Test
+    fun `an upgrade walk does not probe a resting source every track`() = runBlocking {
+        val resting = FakeSource("Monochrome", failSearch = true)
+        SourceResolver.SourceCooldown.failed(resting.configId)
+        SourceResolver.SourceCooldown.failed(resting.configId)
+
+        SourceResolver.bestAcross(
+            listOf(resting), target(), StreamRequest.Lossless, waitForAll = true, probeResting = true,
+        )
+        val afterFirst = resting.asked
+        SourceResolver.bestAcross(
+            listOf(resting), target(), StreamRequest.Lossless, waitForAll = true, probeResting = true,
+        )
+
+        assertTrue("the walk still gets its one probe", afterFirst > 0)
+        assertEquals("the next walk waits its turn", afterFirst, resting.asked)
+    }
+
+    @Test
+    fun `the probe turn comes round again`() {
+        val id = "turns"
+        assertTrue(com.music.bitchord.ko.KoSourceCooldown.takeRestProbe(id, nowMs = 0L))
+        assertFalse(com.music.bitchord.ko.KoSourceCooldown.takeRestProbe(id, nowMs = 60_000L))
+        assertTrue(com.music.bitchord.ko.KoSourceCooldown.takeRestProbe(id, nowMs = 10 * 60_000L))
+    }
+
     @Test
     fun `a resting source is asked once during an upgrade`() = runBlocking {
         val resting = FakeSource(
