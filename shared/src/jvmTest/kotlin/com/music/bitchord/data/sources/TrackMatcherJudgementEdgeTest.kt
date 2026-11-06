@@ -790,6 +790,29 @@ class TrackMatcherJudgementEdgeTest {
     }
 
     @Test
+    fun `an uppercase MR in a name is not a backing track`() {
+        val seed = song("seed", "Song", "Artist")
+        listOf(
+            song("a", "Some Song", "MR.BIG"),
+            song("b", "Some Song", "MR BIG"),
+            song("c", "MR. BLUE SKY", "Artist"),
+            song("d", "MR BROWNSTONE", "Artist"),
+        ).forEach { candidate ->
+            assertFalse(candidate.title, TrackMatcher.isKaraokeOrTributeArrangement(candidate, seed))
+        }
+        assertTrue(TrackMatcher.isKaraokeOrTributeArrangement(song("e", "Song MR", "Artist"), seed))
+        assertTrue(TrackMatcher.isKaraokeOrTributeArrangement(song("f", "Song (MR Ver.)", "Artist"), seed))
+    }
+
+    @Test
+    fun `the word for Korean names a take only as a take`() {
+        val seed = song("seed", "Song", "Artist")
+        assertFalse(TrackMatcher.isKaraokeOrTributeArrangement(song("a", "한국어 수업", "Artist"), seed))
+        assertTrue(TrackMatcher.isKaraokeOrTributeArrangement(song("b", "Song 한국어 버전", "Artist"), seed))
+        assertTrue(TrackMatcher.isKaraokeOrTributeArrangement(song("c", "Song (한국어 Ver.)", "Artist"), seed))
+    }
+
+    @Test
     fun `band and eng are arrangements only when they are the aside`() {
         val seed = song("seed", "Song", "Artist")
         assertFalse(
