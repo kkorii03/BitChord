@@ -491,6 +491,12 @@ internal suspend fun PlaybackService.koSmoothSwapToLossless(
         suppressed = activePlayer.playbackSuppressionReason != Player.PLAYBACK_SUPPRESSION_REASON_NONE,
     )
 
+    fun liveTargetMs(): Long = HqSwapPolicy.targetPositionMs(
+        HqSwapPolicy.toYoutubeMs(activePlayer.currentPosition, currentOffsetMs, currentRate),
+        verified.offsetMs,
+        verified.rate,
+    )
+
     val sourceName = stream.sourceConfigId
         ?.let { SourceRegistry.config(it)?.displayName }
         ?: "Upgrade"
@@ -625,6 +631,14 @@ internal suspend fun PlaybackService.koSmoothSwapToLossless(
                 releaseStandby()
                 return@withContext false
             }
+            if (HqSwapPolicy.pausedStandbyStale(
+                    activePlayWhenReady = activePlayer.playWhenReady,
+                    standbyPositionMs = standbyPlayer.currentPosition,
+                    targetMs = liveTargetMs(),
+                )
+            ) {
+                return@withContext refuse("paused-place-lost")
+            }
         }
 
         swappingMediaId = mediaId
@@ -676,6 +690,9 @@ internal suspend fun PlaybackService.koSmoothSwapToLossless(
         ) {
             releaseStandby()
             return@withContext false
+        }
+        if (HqSwapPolicy.standbyOffTarget(standbyPlayer.currentPosition, liveTargetMs())) {
+            return@withContext refuse("standby-off-target")
         }
         // The session player has owned the queue and its modes since the copy
         // was taken, so the standby catches up here, the way a crossfade does
