@@ -1,0 +1,18 @@
+BitChord: fix false rejections in the HQ file container check.
+
+Scope: the file that defines StreamContainerSniff (find it with grep; do not use rg) and its tests. Do not touch other logic.
+
+Problem (from a code reading, unverified, so reproduce first): a real lossless file can be rejected as the wrong file when
+1. a FLAC file starts with an ID3 tag longer than the bytes the sniff looks at (4 KB), or
+2. an MP4 holds FLAC audio but its moov box comes after mdat, so the codec box is not in the bytes the sniff has.
+A wrong rejection loses HQ for a song and, since addon health counts wrong-file rejections (3 in a row rests the source 30 minutes), can rest a good source. A wrong acceptance of a lossy file as lossless is worse than a false rejection, so anything the sniff cannot see must stay "unknown" rather than become "lossless". Read how every caller treats each result first.
+
+Order:
+1. Read the sniff and all callers. Note what each result means to them.
+2. Write one failing test per case with synthetic bytes (no audio files, no network). Add a test that a lossy MP4 with late moov is still not called lossless. New test classes go in the --tests list only if the workflow already covers them by pattern; do not edit .github/workflows. If a new class would need a workflow edit, add the tests to an existing test class instead.
+3. Fix minimally. Battery first: no polling or timers, no extra downloads. Keep every existing guard. If the file really cannot be judged from the head, say so and return the existing unknown result; do not fetch more bytes without explaining the cost in your summary.
+4. Check every caller and type again.
+
+Follow AGENTS.md (ponytail). Unknown Android or Media3 APIs: check with context7.
+
+Finish with a summary of at most 10 lines: files changed / key change / test results / unresolved problems, plus the REMOVED-LINES AUDIT.
