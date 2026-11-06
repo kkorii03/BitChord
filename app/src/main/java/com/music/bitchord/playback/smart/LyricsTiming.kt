@@ -399,7 +399,11 @@ object LyricsTiming {
         // A downloaded video's answer may have been kept under its file key
         // by an older song check; the video key and the file key name the same
         // recording for a video, so look there before saying there is none.
-        if (originalBase == null && baseAllowed && isVideo && audioSource == null) {
+        // Only when this key had no candidate at all: a NONE the heard words
+        // chose here stays none (11-07 3JWTaaS7LdU: a refused refit's words
+        // beat the stored +1999 ms measurement, and the file key's fixed order
+        // put it back).
+        if (originalBase == null && rule == RULE_NOTHING && baseAllowed && isVideo && audioSource == null) {
             val fileSource = audioSourceKey(videoId, localFile = true)
             val fileKey = textKey(lines, fileSource)
             var fileRule = RULE_NOTHING
