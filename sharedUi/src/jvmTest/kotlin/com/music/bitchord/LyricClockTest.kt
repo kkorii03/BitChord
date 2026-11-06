@@ -275,7 +275,8 @@ class LyricClockTest {
         while (now <= lastTaken + 3_000.0) {
             val newest = (now / 500).toLong() * 500.0
             val reading = if (newest <= lastTaken) lastReading else 10_000 + newest.toLong()
-            val shown = clock.frame(now, reading, minOf(newest, now).coerceAtLeast(lastTaken), 0)
+            // The reading's own stamp, as the hold above was given it.
+            val shown = clock.frame(now, reading, minOf(newest + 5.0, now).coerceAtLeast(lastTaken + 5.0), 0)
             assertTrue("went back at $now", shown >= previous)
             assertTrue("${10_000 + now - shown} ms behind the song at $now", abs(10_000 + now - shown) < 40.0)
             previous = shown
