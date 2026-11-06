@@ -1,6 +1,7 @@
 package com.music.bitchord.data
 
 import com.music.bitchord.data.cover.CoverTitles
+import com.music.bitchord.data.model.ArtistNameIndex
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.withVideoThumbnailFallback
 import com.music.bitchord.data.sources.TrackMatcher
@@ -219,7 +220,7 @@ internal object YouTubeDisplayCleaner {
                 // A track number or chapter ("01 'Song'", "Chapter 2 'Song'")
                 // is no credit on any channel; the channel rule below decides.
                 !NUMBERING_CREDIT.containsMatchIn(name) &&
-                (labelChannel || isStatedCredit(name)) &&
+                (labelChannel || isStatedCredit(name) || isKnownCredit(name, rawChannel, knownArtists)) &&
                 // A quoted feature credit ("Feat. X") names no song. Only that:
                 // a song may well start with a packaging word ("Part of Me").
                 song.split(WHITESPACE).first().lowercase().trim('.') !in FEATURE_WORDS
@@ -314,7 +315,31 @@ internal object YouTubeDisplayCleaner {
         val words = name.split(WHITESPACE)
         if (words.isEmpty() || words.size > 4) return false
         if (words.any { it.lowercase().trim('.') in PACKAGING_CREDIT || isVenueWord(it) }) return false
+        if (readsAsAPhrase(words)) return false
         return !isAgencyChannel(name) && !TrackMatcher.isSoundtrackCredit(name)
+    }
+
+    /**
+     * Words before a quote that are the title's own sentence, not an act: "My
+     * Favorite 'Song'", "The Sound of 'Silence'", "제가 좋아하는 '노래'". No channel
+     * vouches for these on a fan upload, so the shape of the words is what is
+     * left. A bare leading "The" stays an act ("The 1975 'Love It'").
+     */
+    private fun readsAsAPhrase(words: List<String>): Boolean {
+        if (words.any { it.lowercase().trim('.', ',') in PHRASE_WORDS }) return true
+        val last = words.last()
+        return words.size > 1 && last.isNotEmpty() && last[0] in '가'..'힣' && last.last() in HANGUL_PARTICLES
+    }
+
+    /**
+     * A name the row or the listener's history already vouches for, whatever its
+     * words read like: "Tears for Fears 'Shout'" on their own channel is an act.
+     */
+    private fun isKnownCredit(name: String, channel: String, knownArtists: Set<String>): Boolean {
+        val key = compact(name)
+        return key == compact(channel) ||
+            knownArtists.any { compact(it) == key } ||
+            ArtistNameIndex.lookup(name) != null
     }
 
     /** `['\"“”‘’]Song['\"“”‘’]` at the end, with the credit before it. */
@@ -477,6 +502,17 @@ internal object YouTubeDisplayCleaner {
         "feat", "ft", "ep", "episode", "vol", "part", "preview", "trailer",
         "making", "behind",
     )
+
+    /** Words of a sentence rather than of a name; see [readsAsAPhrase]. */
+    private val PHRASE_WORDS = setOf(
+        "my", "our", "your", "his", "her", "their", "this", "that", "these", "those",
+        "a", "an", "of", "for", "to", "in", "on", "at", "about", "from", "with",
+        "favorite", "favourite", "best", "top", "new", "song", "songs", "playing", "singing",
+        "제가", "내가", "우리", "노래",
+    )
+
+    /** How a Korean phrase's last word ends when it leads on to what the quote names. */
+    private const val HANGUL_PARTICLES = "는은의을를에"
 
     /** A quoted song that opens with these is a feature credit, not a song. */
     private val FEATURE_WORDS = setOf("feat", "ft")

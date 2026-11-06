@@ -249,6 +249,23 @@ class YouTubeDisplayCleanerTest {
         assertEquals("2NE1", YouTubeDisplayCleaner.clean("2NE1 'Lonely'", "Some Fan").artist)
     }
 
+    /** A fan upload's own sentence is not a credit: review 11-06, wider since the HYPE UNIVERSE fix. */
+    @Test
+    fun `words before a quote that read as a phrase are not an artist`() {
+        for (title in listOf("My Favorite 'Song'", "The Sound of 'Silence'", "제가 좋아하는 '노래'")) {
+            val cleaned = YouTubeDisplayCleaner.clean(title, "Some Fan")
+            assertEquals("Some Fan", cleaned.artist, title)
+            assertEquals(title, cleaned.title)
+        }
+        // A label's own upload is still read for its credit, and "The" alone is a name.
+        assertEquals("The 1975", YouTubeDisplayCleaner.clean("The 1975 'Love It'", "Some Fan").artist)
+        assertEquals("아이유", YouTubeDisplayCleaner.clean("아이유 '밤편지'", "Some Fan").artist)
+        // An act whose name reads like a phrase is still known by its own channel.
+        val own = YouTubeDisplayCleaner.clean("Tears for Fears 'Shout'", "Tears for Fears")
+        assertEquals("Tears for Fears", own.artist)
+        assertEquals("Shout", own.title)
+    }
+
     @Test
     fun `a quoted song that opens with a packaging word is still split`() {
         val label = YouTubeDisplayCleaner.clean("Katy Perry 'Part of Me'", "1theK")
