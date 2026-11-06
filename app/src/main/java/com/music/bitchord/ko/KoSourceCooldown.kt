@@ -95,6 +95,44 @@ internal object KoSourceCooldown {
     }
 
     /**
+     * The songs in a row each source has answered with the wrong file.
+     *
+     * [KoRefusedRows] keeps a bad file by row because a catalogue files good and
+     * bad copies side by side, and one bad file says nothing about the rest. But
+     * a row memory cannot see a source whose files are all bad: phone 11-06,
+     * LastWave matched 99 times and 90 of those were a lossy placeholder under a
+     * FLAC claim, on 59 of 73 songs, each song paying for the lookup anew.
+     */
+    private val wrongFileSongs = ConcurrentHashMap<String, MutableSet<String>>()
+
+    /**
+     * [configId] answered [song] with the wrong file. Parked the same way as an
+     * unmeasurable source, and for the same reason: its search answers fine, so
+     * the failure rule never rests it and a probe would only be refused again.
+     */
+    internal fun wrongFile(configId: String, song: String, nowMs: Long = System.currentTimeMillis()) {
+        var rest = false
+        wrongFileSongs.compute(configId) { _, songs ->
+            val seen = (songs ?: HashSet()).apply { add(song) }
+            rest = seen.size >= WRONG_FILE_SONGS_BEFORE_REST
+            seen.takeUnless { rest }
+        }
+        if (!rest) return
+        val state = unmeasurable.computeIfAbsent(configId) { Unmeasurable() }
+        synchronized(state) { state.untilMs = maxOf(state.untilMs, nowMs + WRONG_FILE_REST_MS) }
+        TrackLog.w(
+            "BitChord",
+            "source $configId resting ${WRONG_FILE_REST_MS / 60_000}m: " +
+                "wrong file on $WRONG_FILE_SONGS_BEFORE_REST songs in a row",
+        )
+    }
+
+    /** A stream of [configId] was what it claimed: the bad files were not in a row after all. */
+    internal fun rightFile(configId: String) {
+        wrongFileSongs.remove(configId)
+    }
+
+    /**
      * Whether [configId] is parked for unmeasurable candidates. Unlike a
      * failure rest, a hand-made upgrade does not probe it: its search
      * would succeed and its download would be refused again.
@@ -177,6 +215,7 @@ internal object KoSourceCooldown {
     internal fun clear(configId: String) {
         states.remove(configId)
         unmeasurable.remove(configId)
+        wrongFileSongs.remove(configId)
         restProbes.remove(configId)
     }
 
@@ -235,9 +274,12 @@ internal object KoSourceCooldown {
         failureMarks.clear()
         authMarks.clear()
         unmeasurable.clear()
+        wrongFileSongs.clear()
         restProbes.clear()
     }
 
+    private const val WRONG_FILE_SONGS_BEFORE_REST = 3
+    private const val WRONG_FILE_REST_MS = 30 * 60 * 1000L
     private const val REST_PROBE_EVERY_MS = 10 * 60 * 1000L
     private const val UNMEASURABLE_TRACKS_BEFORE_REST = 3
     private const val UNMEASURABLE_REST_MS = 6 * 60 * 60 * 1000L
