@@ -80,7 +80,9 @@ internal object SongHearing {
     private val requests = Semaphore(3)
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val inFlight = ConcurrentHashMap<String, Deferred<Heard?>>()
+    private class Flight(val untilSeconds: Double, val answer: Deferred<Heard?>)
+
+    private val inFlight = ConcurrentHashMap<String, Flight>()
     private val fileLocks = ConcurrentHashMap<String, Any>()
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -171,40 +173,54 @@ internal object SongHearing {
         minSeconds: Double = untilSeconds,
     ): Heard? {
         val app = context.applicationContext
-        val recording = recordingKey(song)
-        if (recording != null) {
-            val kept = withContext(Dispatchers.IO) { load(app, song.videoId) }
-            covering(kept, recording, language, untilSeconds)?.let { saved ->
-                TrackLog.d(TAG, "song-hear: kept lang=$language until=${untilSeconds.toInt()} secs=${saved.seconds.toInt()} words=${saved.words.size}", song.videoId)
-                return heardFrom(saved)
-            }
-            // A download taking over from its own stream mid-song. The words heard
-            // on the stream hold on the stream's clock; timing() carries them onto
-            // the file through its verified map, or drops them when it has none.
-            // Decoding the file instead left the song uncorrected for 71 s (11-06
-            // w58uXpyHWes, its new sheet 1.0-1.2 s late on the listener's own log).
-            if (recording.startsWith(FILE_PREFIX)) {
-                streamWords(kept, language)?.let { saved ->
-                    TrackLog.d(TAG, "song-hear: file reads the stream's ${saved.seconds.toInt()}s lang=$language", song.videoId)
+        while (true) {
+            val recording = recordingKey(song)
+            if (recording != null) {
+                val kept = withContext(Dispatchers.IO) { load(app, song.videoId) }
+                covering(kept, recording, language, untilSeconds)?.let { saved ->
+                    TrackLog.d(TAG, "song-hear: kept lang=$language until=${untilSeconds.toInt()} secs=${saved.seconds.toInt()} words=${saved.words.size}", song.videoId)
                     return heardFrom(saved)
                 }
+                // A download taking over from its own stream mid-song. The words heard
+                // on the stream hold on the stream's clock; timing() carries them onto
+                // the file through its verified map, or drops them when it has none.
+                // Decoding the file instead left the song uncorrected for 71 s (11-06
+                // w58uXpyHWes, its new sheet 1.0-1.2 s late on the listener's own log).
+                if (recording.startsWith(FILE_PREFIX)) {
+                    streamWords(kept, language)?.let { saved ->
+                        TrackLog.d(TAG, "song-hear: file reads the stream's ${saved.seconds.toInt()}s lang=$language", song.videoId)
+                        return heardFrom(saved)
+                    }
+                }
             }
+            // One request per recording and language at a time, whoever asks and for
+            // whatever window. Each window flying on its own paid for the same opening
+            // twice over (11-06: 4.25 requests a song against the 2 this design needs).
+            val flight = "${song.videoId}|$recording|$language"
+            val fresh = Flight(
+                untilSeconds,
+                scope.async(start = CoroutineStart.LAZY) { listen(app, song, untilSeconds, minSeconds, language) },
+            )
+            val running = inFlight.putIfAbsent(flight, fresh) ?: fresh
+            if (running === fresh) {
+                fresh.answer.invokeOnCompletion { inFlight.remove(flight, fresh) }
+                fresh.answer.start()
+                return fresh.answer.await()
+            }
+            fresh.answer.cancel()
+            val answer = running.answer.await()
+            if (!flightAnswers(running.untilSeconds, untilSeconds)) continue
+            return answer
         }
-        // One request per recording, language and window, whoever asks: a sheet
-        // arriving while the last one's request is in the air shares its answer.
-        val flight = "${song.videoId}|$recording|$language|$untilSeconds"
-        val fresh = scope.async(start = CoroutineStart.LAZY) {
-            listen(app, song, untilSeconds, minSeconds, language)
-        }
-        val running = inFlight.putIfAbsent(flight, fresh) ?: fresh
-        if (running === fresh) {
-            fresh.invokeOnCompletion { inFlight.remove(flight, fresh) }
-            fresh.start()
-        } else {
-            fresh.cancel()
-        }
-        return running.await()
     }
+
+    /**
+     * Whether a request flying for [flyingSeconds] answers one for [askedSeconds].
+     * A shorter one does not: its words are in the file when it lands, and the
+     * asker goes round for whatever is still new.
+     */
+    internal fun flightAnswers(flyingSeconds: Double, askedSeconds: Double): Boolean =
+        flyingSeconds + 1.0 >= askedSeconds
 
     private fun heardFrom(saved: Saved) = Heard(
         words = saved.words.map { LyricsWordAlign.Heard(it.t, it.s, it.e) },

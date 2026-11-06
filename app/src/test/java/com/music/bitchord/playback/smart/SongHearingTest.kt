@@ -10,6 +10,39 @@ import org.junit.Test
 
 class SongHearingTest {
 
+    private fun rendition(key: String, cached: Long) = com.music.bitchord.playback.AudioCache.Rendition(key, 8_000_000L, cached)
+
+    @Test
+    fun aSongSettledOnYouTubeIsHeardFromItsAltEntry() {
+        // 11-06 ekzHIouo8Q4: a source ranked above YouTube files the stream under #alt-noatmos.
+        assertEquals(true, VersionAudioAligner.isYouTubeUnderAltKey("abc#alt-noatmos", youTubeChosen = true))
+        assertEquals(true, VersionAudioAligner.isYouTubeUnderAltKey("abc#alt", youTubeChosen = true))
+        // Nothing settled, or a real substitute: the name means what it says.
+        assertEquals(false, VersionAudioAligner.isYouTubeUnderAltKey("abc#alt-noatmos", youTubeChosen = false))
+        // An upgrade is another recording whatever was chosen, and the plain key needs no excuse.
+        assertEquals(false, VersionAudioAligner.isYouTubeUnderAltKey("abc#hifi-2", youTubeChosen = true))
+        assertEquals(false, VersionAudioAligner.isYouTubeUnderAltKey("abc", youTubeChosen = true))
+    }
+
+    @Test
+    fun theLongerOfTheStreamsCopiesIsMeasured() {
+        val head = rendition("abc", 900_000L)
+        val playing = rendition("abc#alt-noatmos", 5_000_000L)
+        val candidate = rendition("abc#hifi-1", 7_000_000L)
+        assertEquals(playing, VersionAudioAligner.chooseMeasurementCopy(listOf(head, playing, candidate), youTubeChosen = true))
+        // Not settled on YouTube: as before, the plain head, never a stranger with more bytes.
+        assertEquals(head, VersionAudioAligner.chooseMeasurementCopy(listOf(head, playing, candidate)))
+    }
+
+    @Test
+    fun aRequestInTheAirAnswersWindowsItReaches() {
+        assertEquals(true, SongHearing.flightAnswers(90.0, 40.0))
+        assertEquals(true, SongHearing.flightAnswers(420.0, 90.0))
+        assertEquals(true, SongHearing.flightAnswers(90.0, 90.0))
+        assertEquals(false, SongHearing.flightAnswers(90.0, 420.0))
+        assertEquals(false, SongHearing.flightAnswers(40.0, 90.0))
+    }
+
     private fun saved(
         seconds: Double,
         whole: Boolean = false,

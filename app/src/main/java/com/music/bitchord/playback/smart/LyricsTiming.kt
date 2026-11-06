@@ -743,7 +743,9 @@ object LyricsTiming {
 
     /** The clock of the rendition a measurement read; any substitute key is the substitute's. */
     internal fun clockForRendition(videoId: String, key: String?): Clock =
-        if (key != null && AutomixAnalysisSource.isSubstituteRendition(videoId, key)) {
+        if (key != null && AutomixAnalysisSource.isSubstituteRendition(videoId, key) &&
+            !VersionAudioAligner.isYouTubeUnderAltKey(key, StreamChoice.isYouTube(videoId))
+        ) {
             substituteClock(videoId)
         } else {
             Clock.YouTube

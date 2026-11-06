@@ -427,7 +427,8 @@ object VideoAudio {
         // hold more bytes than the row's own stream, and its words would be for
         // another file (11-06 rlYOsUfpi3M: a first answer on an unknown clock).
         fun ownCopy(): AudioCache.Rendition? = VersionAudioAligner.renditionToMeasure(videoId)?.takeUnless {
-            AutomixAnalysisSource.isSubstituteRendition(videoId, it.key) && !StreamChoice.isSubstitute(videoId)
+            AutomixAnalysisSource.isSubstituteRendition(videoId, it.key) && !StreamChoice.isSubstitute(videoId) &&
+                !VersionAudioAligner.isYouTubeUnderAltKey(it.key, StreamChoice.isYouTube(videoId))
         }
         if ((ownCopy()?.cachedPrefix ?: 0L) < AudioCache.MIN_ALIGNMENT_PREFIX_BYTES) {
             // A row that has not started the stream yet: this is what asks for it.
@@ -453,8 +454,11 @@ object VideoAudio {
             }
         }
         copy = ownCopy() ?: return@withContext null
-        // Never past what has landed: reading on would wait for the stream.
-        val take = minOf(copy.cachedPrefix, bytesFor(untilSeconds, copy))
+        // Never past what has landed: reading on would wait for the stream. A
+        // shorter first look still sends the song check's window when it is there:
+        // that request follows anyway, and this way it reads the kept words
+        // (11-06: a 40 s and a 90 s request went out together on most songs).
+        val take = minOf(copy.cachedPrefix, bytesFor(maxOf(untilSeconds, SONG_CHECK_SECONDS), copy))
         if (take < MIN_RAW_BYTES || take > MAX_RAW_BYTES) return@withContext null
         val source = AudioCache.renditionDataSource(Uri.parse("bitchord://watch?v=$videoId"), copy)
         val bytes = try {

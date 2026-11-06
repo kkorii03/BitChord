@@ -9,6 +9,7 @@ import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.PowerState
+import com.music.bitchord.playback.StreamChoice
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -333,7 +334,24 @@ object VersionAudioAligner {
     /** The copy of [videoId] that [openDataSource] reads — see there for the order. */
     internal fun renditionToMeasure(videoId: String): AudioCache.Rendition? {
         val watch = Uri.parse("bitchord://watch?v=$videoId")
-        return chooseMeasurementCopy(AudioCache.renditionsOf(watch))
+        return chooseMeasurementCopy(AudioCache.renditionsOf(watch), StreamChoice.isYouTube(videoId))
+    }
+
+    /**
+     * Whether [key] holds YouTube's own bytes although its name says substitute.
+     *
+     * With a source ranked above YouTube the player writes under `#alt` or
+     * `#alt-noatmos` whatever the race settles on, so a song that settled on
+     * YouTube plays from there. Taken for a stranger, that copy was never heard
+     * from: the check went round through the decoder and answered 100-240 s
+     * late, after the song had gone by uncorrected (11-06: 3 of 7 songs, one of
+     * them 11.6 s off with the right fit arriving two minutes after its end).
+     * A `#hifi` upgrade has its own recording, and stays out.
+     */
+    internal fun isYouTubeUnderAltKey(key: String, youTubeChosen: Boolean): Boolean {
+        if (!youTubeChosen) return false
+        val tag = key.substringAfter('#', "").substringBefore('#')
+        return tag == "alt" || tag.startsWith("alt-")
     }
 
     /**
@@ -341,9 +359,15 @@ object VersionAudioAligner {
      * [renditionToMeasure] makes, separated from the cache so readiness can be
      * tested with plain values.
      */
-    internal fun chooseMeasurementCopy(onDisk: List<AudioCache.Rendition>): AudioCache.Rendition? {
+    internal fun chooseMeasurementCopy(
+        onDisk: List<AudioCache.Rendition>,
+        youTubeChosen: Boolean = false,
+    ): AudioCache.Rendition? {
         val sameSource = onDisk
-            .filter { !AutomixAnalysisSource.isSubstituteRendition(it.key) }
+            .filter {
+                !AutomixAnalysisSource.isSubstituteRendition(it.key) ||
+                    isYouTubeUnderAltKey(it.key, youTubeChosen)
+            }
             .maxByOrNull { it.cachedPrefix }
         return if (sameSource != null &&
             sameSource.cachedPrefix >= AudioCache.MIN_ALIGNMENT_PREFIX_BYTES
