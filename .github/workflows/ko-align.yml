@@ -1,0 +1,47 @@
+name: Ko align
+
+# Korean forced alignment (E: mix, F: Demucs vocals) vs sheet times and Deepgram. Bench only.
+# Audio and sheets are committed AES-encrypted (bench/sync/ko/ko-data.enc); only numbers leave the runner.
+on:
+  workflow_dispatch:
+  push:
+    branches: [task/sync-bench]
+    paths: ["bench/sync/ko_align.py", "bench/sync/ko/**", ".github/workflows/ko-align.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  ko:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - name: Decrypt data
+        env:
+          KO_DATA_KEY: ${{ secrets.KO_DATA_KEY }}
+        run: |
+          mkdir kodata
+          openssl enc -d -aes-256-cbc -pbkdf2 -in bench/sync/ko/ko-data.enc -pass env:KO_DATA_KEY | tar -x -C kodata
+          ls kodata | wc -l
+      - name: Install torch cpu, demucs, ctc-forced-aligner
+        run: |
+          pip install "numpy<2" torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
+          pip install --no-deps demucs==4.0.1
+          pip install dora-search einops julius lameenc openunmix pyyaml tqdm soundfile
+          pip install "git+https://github.com/MahmoudAshraf97/ctc-forced-aligner.git"
+      - name: Run
+        env:
+          DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
+          TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD: "1"
+        run: python bench/sync/ko_align.py --data kodata --out results-ko.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: results-ko, path: results-ko.json, retention-days: 14 }
+      - name: Summary (numbers only)
+        if: always()
+        run: python -c "import json;d=json.load(open('results-ko.json'));print(json.dumps(d,ensure_ascii=False,indent=1))" >> "$GITHUB_STEP_SUMMARY"
