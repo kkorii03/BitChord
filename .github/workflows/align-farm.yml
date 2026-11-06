@@ -1,0 +1,53 @@
+name: Align farm
+
+# wav2vec2 CTC places each sheet's words on the video's own audio (bench/farm/farm.py).
+# Audio reaches the runner through the home proxy and never leaves it; results are enciphered.
+on:
+  push:
+    branches: [task/align-farm]
+    paths: ["bench/farm/**", ".github/workflows/align-farm.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        index: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - name: Install
+        run: |
+          pip install -q "numpy<2" torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
+          pip install -q soundfile "transformers==4.49.0" yt-dlp
+      - name: Home proxy
+        env:
+          SMOKE_SETTINGS_B64: ${{ secrets.SMOKE_SETTINGS_B64 }}
+        run: |
+          echo "$SMOKE_SETTINGS_B64" | base64 -d | sed '1s/^\xEF\xBB\xBF//' > "$RUNNER_TEMP/s.json"
+          python3 scripts/smoke/set_proxy_port.py "$RUNNER_TEMP/s.json" 8889 --emulator
+          rm -f "$RUNNER_TEMP/s.json"
+      - name: Run
+        env:
+          FARM_PASS: ${{ secrets.DEEPGRAM_API_KEY }}
+          TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD: "1"
+          TQDM_DISABLE: "1"
+          TRANSFORMERS_VERBOSITY: error
+        run: |
+          (nohup python3 scripts/smoke/authfwd.py "$SMOKE_UPSTREAM_PROXY" > "$RUNNER_TEMP/authfwd.log" 2>&1 &)
+          sleep 2
+          FARM_PROXY=http://127.0.0.1:3128 python bench/farm/farm.py run bench/farm/jobs.enc --index ${{ matrix.index }} --of 4 --out out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: farm-${{ matrix.index }}
+          path: out/*.enc
+          retention-days: 14
