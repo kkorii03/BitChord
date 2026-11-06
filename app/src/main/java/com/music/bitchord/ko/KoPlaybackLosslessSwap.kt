@@ -521,6 +521,7 @@ internal suspend fun PlaybackService.koSmoothSwapToLossless(
     val previousUri = currentItem.localConfiguration?.uri?.toString()
     val previousDuration = activePlayer.duration
     val previousFormat = NerdStats.declaredFormat(mediaId)
+    val previousSource = NerdStats.sourceFor(mediaId)
     val expectedDuration = if (previousDuration > 0L) {
         HqSwapPolicy.targetPositionMs(
             HqSwapPolicy.toYoutubeMs(previousDuration, currentOffsetMs, currentRate),
@@ -736,6 +737,7 @@ internal suspend fun PlaybackService.koSmoothSwapToLossless(
                 position = revertPosition,
                 previousDuration = previousDuration,
                 previousFormat = previousFormat,
+                previousSource = previousSource,
                 expectedDuration = expectedDuration,
                 onProven = dropOldCopy,
             )
