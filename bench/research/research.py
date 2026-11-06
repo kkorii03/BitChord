@@ -230,8 +230,9 @@ def safe(errors, tag, fn):
 
 def vocals(d, src, tag):
     """16 kHz mono mix and vocals beside src; returns (mix, vocals or None, demucs seconds)."""
-    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", src, "-ac", "2", "-ar", "44100",
-                    os.path.join(d, "src.mp3")], check=True)
+    if os.path.abspath(src) != os.path.abspath(os.path.join(d, "src.mp3")):
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", src, "-ac", "2", "-ar", "44100",
+                        os.path.join(d, "src.mp3")], check=True)
     mix = os.path.join(d, "mix16.wav")
     bench.ffwav(src, mix)
     took = bench.separate(d, os.cpu_count() or 2)
