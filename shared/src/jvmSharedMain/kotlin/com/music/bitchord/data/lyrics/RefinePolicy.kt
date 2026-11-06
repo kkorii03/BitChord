@@ -380,8 +380,11 @@ object RefinePolicy {
         }
         if (mad > MAX_LINEAR_MAD_MS) return null
         // No measured line may end up further from its own hearing than the
-        // constant move left it, beyond the fit's own scatter.
-        if (errors.any { (onLine, onConstant) -> onLine > onConstant + mad }) return null
+        // constant move left it, beyond the fit's own scatter. [mad] is the
+        // middle of that scatter, and half the lines are past it by definition;
+        // three of it covers ordinary jitter and stays under 600 ms, since
+        // [MAX_LINEAR_MAD_MS] caps it above.
+        if (errors.any { (onLine, onConstant) -> onLine > onConstant + 3 * mad }) return null
         return Result(
             applied = true,
             medianMs = line.offsetMs,
