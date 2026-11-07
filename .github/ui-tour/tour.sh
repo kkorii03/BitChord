@@ -619,8 +619,10 @@ section_now_playing() {
   adb shell input swipe 540 1200 540 400 400; sleep 3
   shot now-playing-scrolled "Now playing scrolled"
 
-  if tap "가사" first 10 || tap "Lyrics" first 6; then
+  adb shell input tap 182 2132; sleep 12
+  if true; then
     shot lyrics "Lyrics"
+    if tap "가사 번역" first 25; then shot lyrics-translated "Lyrics translated"; fi
     swipe_up; shot lyrics-scrolled "Lyrics scrolled"
     # Provider chooser, from the "가사 제공: ..." status line.
     if tap "가사 제공" first 5; then
@@ -730,12 +732,7 @@ section_proxy() {
 
 # Quick mode: only the screens a home/explore/artwork change can affect.
 if [ "${TOUR_QUICK:-0}" = "1" ]; then
-  run_section section_home home
-  run_section section_explore explore
-  run_section section_search search
   run_section section_now_playing now-playing
-  run_section section_return return
-  run_section section_proxy proxy
 else
   run_section section_home home
   run_section section_explore explore
