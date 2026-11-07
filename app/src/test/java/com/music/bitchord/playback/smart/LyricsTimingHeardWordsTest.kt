@@ -112,6 +112,36 @@ class LyricsTimingHeardWordsTest {
     }
 
     @Test
+    fun `a refused song check still sweeps the sheet from the words it kept`() = runBlocking {
+        // 11-07 3JWTaaS7LdU: a 56% check kept 160 words, its +1.52 s fit was refused,
+        // and the refine and per-line layers, which read only the other word lists,
+        // never saw them. The strict score needed +1.44 s: 10 lines, none within 0.3 s.
+        // 1.6 s is past the refine's 1.5 s window, so this can only pass on the
+        // per-line layer's longer move; three words a line allow it.
+        val refusedBy = 1_600L
+        val refusedLines = (0 until 8).map { i ->
+            LyricLine(10_000L + i * 3_000L, "alpha${i} bravo${i} charlie${i}")
+        }
+        val refusedKey = refusedLines.joinToString("\n") { it.text }.hashCode()
+        val words = refusedLines.joinToString(",") { line ->
+            line.text.split(" ").mapIndexed { i, text ->
+                val start = line.timeMs + refusedBy + i * 900L
+                """{"t":"$text","s":$start,"e":${start + 300}}"""
+            }.joinToString(",")
+        }
+        File(directory, "lyrics_timing_v1.json").writeText(
+            """{"entries":{"refused":{"heardCheckKey":$refusedKey,"heardCheckWords":[$words],"heardCheckClock":"yt"}}}""",
+        )
+
+        val timing = LyricsTiming.timing(context, "refused", refusedLines, baseAllowed = true)!!
+
+        assertEquals(null, timing.base)
+        assertEquals(refusedLines[0].timeMs + refusedBy, timing.heardWords.first().startMs)
+        assertTrue("the per-line layer ran", timing.perLine != null)
+        assertEquals(refusedLines[0].timeMs + refusedBy, LyricsTiming.apply(refusedLines, timing)[0].timeMs)
+    }
+
+    @Test
     fun `an AI's line times are no transcript to sweep from`() = runBlocking {
         val words = lines.joinToString(",") { line ->
             """{"t":"${line.text}","s":${line.timeMs},"e":${line.timeMs + 600}}"""
