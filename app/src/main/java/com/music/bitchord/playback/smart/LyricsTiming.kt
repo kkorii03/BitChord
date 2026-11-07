@@ -658,7 +658,9 @@ object LyricsTiming {
             // A check whose whole-sheet fit was refused still keeps the transcript it
             // heard. It is real audio, not a wrong song, and the per-line layer can
             // move the lines it anchors (3JWTaaS7LdU 11-07: 160 words kept, no refine).
-            entry.heardCheckKey == key && entry.heardCheckWords.isNotEmpty() -> {
+            // Not Groq's, though: those moved lines worse than leaving them (78/76% in 0.3 s
+            // against 91/79%), the same reason a rough answer's own words stop above.
+            entry.heardCheckKey == key && entry.heardCheckWords.isNotEmpty() && !entry.heardCheckRough -> {
                 fromCheck = true
                 entry.heardCheckWords to clockOf(entry.heardCheckClock)
             }
@@ -3130,6 +3132,7 @@ object LyricsTiming {
                         heardCheckWords = heard.take(MAX_HEARD_WORDS)
                             .map { word -> SavedWord(t = word.text, s = word.startMs, e = word.endMs) },
                         heardCheckClock = listenedClock.saved(),
+                        heardCheckRough = false,
                     )
                 }
             }
@@ -3667,6 +3670,7 @@ object LyricsTiming {
                         heardCheckWords = check.heard.take(MAX_HEARD_WORDS)
                             .map { word -> SavedWord(t = word.text, s = word.startMs, e = word.endMs) },
                         heardCheckClock = checkClock.saved(),
+                        heardCheckRough = check.rough,
                     )
                 }
                 // The full opening may be a minute away; these words can already prove the sheet wrong.
@@ -4921,13 +4925,16 @@ private const val FIRM_FIT_LINES = 15
         val heardClock: String? = null,
         /**
          * Words heard while checking a sheet they did not fit. They are not a
-         * timing answer and are never applied; they let a later lyrics lookup
-         * see that the shown sheet is not what this video sings.
+         * whole-sheet answer: they let a later lyrics lookup see that the shown
+         * sheet is not what this video sings, and the per-line layer move the
+         * lines they do anchor.
          */
         val heardCheckKey: Int? = null,
         val heardCheckWords: List<SavedWord> = emptyList(),
         /** The audio clock [heardCheckWords] was heard on; null on entries saved before clocks. */
         val heardCheckClock: String? = null,
+        /** [heardCheckWords] are Groq's first pass, good for proving a sheet wrong but not for moving lines. */
+        val heardCheckRough: Boolean = false,
         /**
          * The line-level refine: the offset [RefinePolicy] found, the drift
          * per minute when the residuals followed a straight line, how many

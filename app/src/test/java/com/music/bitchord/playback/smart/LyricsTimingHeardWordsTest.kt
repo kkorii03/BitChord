@@ -142,6 +142,28 @@ class LyricsTimingHeardWordsTest {
     }
 
     @Test
+    fun `a refused check on Groq's words moves no line`() = runBlocking {
+        val refusedLines = (0 until 8).map { i ->
+            LyricLine(10_000L + i * 3_000L, "alpha${i} bravo${i} charlie${i}")
+        }
+        val refusedKey = refusedLines.joinToString("\n") { it.text }.hashCode()
+        val words = refusedLines.joinToString(",") { line ->
+            line.text.split(" ").mapIndexed { i, text ->
+                val start = line.timeMs + 1_600L + i * 900L
+                """{"t":"$text","s":$start,"e":${start + 300}}"""
+            }.joinToString(",")
+        }
+        File(directory, "lyrics_timing_v1.json").writeText(
+            """{"entries":{"refused":{"heardCheckKey":$refusedKey,"heardCheckWords":[$words],"heardCheckClock":"yt","heardCheckRough":true}}}""",
+        )
+
+        val timing = LyricsTiming.timing(context, "refused", refusedLines, baseAllowed = true)!!
+
+        assertEquals(null, timing.perLine)
+        assertEquals(refusedLines[0].timeMs, LyricsTiming.apply(refusedLines, timing)[0].timeMs)
+    }
+
+    @Test
     fun `an AI's line times are no transcript to sweep from`() = runBlocking {
         val words = lines.joinToString(",") { line ->
             """{"t":"${line.text}","s":${line.timeMs},"e":${line.timeMs + 600}}"""
