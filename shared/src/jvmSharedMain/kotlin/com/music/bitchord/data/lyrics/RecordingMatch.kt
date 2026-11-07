@@ -46,10 +46,11 @@ internal object RecordingMatch {
      * every remix, acoustic and live row in that run was caught by
      * [VERSION_WORDS], never by the length.
      *
-     * shortcut: 30 s, the largest overhang seen (26.6 s); widen only if a real
-     * video of the same recording falls outside it.
+     * shortcut: 45 s, the largest overhang seen (37 s: pB-5XG-DbAA, a 210 s
+     * music video of a 173 s track); widen only if a real video of the same
+     * recording falls outside it.
      */
-    private const val VIDEO_OVERHANG_SECONDS = 30.0
+    private const val VIDEO_OVERHANG_SECONDS = 45.0
 
     /** One search row, already flattened onto the fields every source has. */
     internal data class Candidate<T>(

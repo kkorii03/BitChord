@@ -76,8 +76,37 @@ object BiniLyrics {
         val body = lyricsGet(url.toString()) ?: return@withContext null
         val response = runCatching { lyricsJson.decodeFromString<Response>(body) }.getOrNull()
             ?: return@withContext null
-        response.results?.firstOrNull()
+        val results = response.results ?: return@withContext null
+        // An ISRC names one recording, so the first row is it. A name search
+        // does not: the API ranks by length, so a 210 s music video is answered
+        // with the 212 s remix before the 173 s track (pB-5XG-DbAA).
+        if (!isrc.isNullOrBlank()) results.firstOrNull() else rowFor(results, title, artist, durationMs)
     }
+
+    /**
+     * The row sure to be this recording, else the API's first as before. The rules want
+     * the same spelling, and a search under 아이유 is answered under IU: refusing every
+     * such row would lose the song's sheet from all the sources this ISRC feeds.
+     */
+    internal fun rowFor(results: List<Hit>, title: String, artist: String, durationMs: Long): Hit? =
+        pick(results, title, artist, durationMs) ?: results.firstOrNull()
+
+    /** The row that is this recording, or null when none of them is sure to be. */
+    internal fun pick(results: List<Hit>, title: String, artist: String, durationMs: Long): Hit? =
+        RecordingMatch.best(
+            results.map { hit ->
+                RecordingMatch.Candidate(
+                    value = hit,
+                    title = hit.trackName,
+                    artist = hit.artistName,
+                    seconds = hit.duration?.toDouble(),
+                    usable = !hit.lyricsUrl.isNullOrBlank(),
+                )
+            },
+            title,
+            artist,
+            durationMs,
+        )
 
     /**
      * The document a search already found, fetched and parsed. These are
