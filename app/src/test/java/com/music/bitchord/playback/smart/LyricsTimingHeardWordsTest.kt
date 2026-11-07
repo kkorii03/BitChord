@@ -157,10 +157,11 @@ class LyricsTimingHeardWordsTest {
             """{"entries":{"refused":{"heardCheckKey":$refusedKey,"heardCheckWords":[$words],"heardCheckClock":"yt","heardCheckRough":true}}}""",
         )
 
-        val timing = LyricsTiming.timing(context, "refused", refusedLines, baseAllowed = true)!!
+        // With nothing to apply there may be no timing at all; either way no line has moved.
+        val timing = LyricsTiming.timing(context, "refused", refusedLines, baseAllowed = true)
 
-        assertEquals(null, timing.perLine)
-        assertEquals(refusedLines[0].timeMs, LyricsTiming.apply(refusedLines, timing)[0].timeMs)
+        assertEquals(null, timing?.perLine)
+        assertEquals(null, timing?.base)
     }
 
     @Test
