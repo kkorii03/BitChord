@@ -225,7 +225,11 @@ def median_error(round_dir, vid):
 
 
 def line_truth(round_dir, vid):
-    """[line, sung ms] for every line the independent score placed; empty without lines.csv."""
+    """[line, sung ms, shown ms] for every line the independent score placed.
+
+    The third number is what the app displayed, from the same `lines.csv` row;
+    it is left out when an old score has no `shown_s` column.
+    """
     path = round_dir / (vid + ".lines.csv")
     if not path.exists():
         return []
@@ -233,8 +237,13 @@ def line_truth(round_dir, vid):
     with path.open(newline="", encoding="utf-8-sig") as f:
         for row in csv.DictReader(f):
             line, sung = number(row.get("line")), number(row.get("sung_s"))
-            if line is not None and sung is not None:
-                out.append([int(line), round(sung * 1000)])
+            if line is None or sung is None:
+                continue
+            entry = [int(line), round(sung * 1000)]
+            shown = number(row.get("shown_s"))
+            if shown is not None:
+                entry.append(round(shown * 1000))
+            out.append(entry)
     return out
 
 
@@ -372,6 +381,19 @@ def inside(path, root):
         return False
 
 
+def keep_heard2(old, vid, round_name):
+    """The second hearing already recorded for this song's round, or None.
+
+    `bench/replay_second_ear.py` adds `heard2` after the corpus is written. A
+    re-pack must not erase that paid hearing, and a hearing of another round is
+    another recording.
+    """
+    if not isinstance(old, dict) or old.get("id") != vid or old.get("round") != round_name:
+        return None
+    heard2 = old.get("heard2")
+    return heard2 if isinstance(heard2, list) and heard2 else None
+
+
 def self_check():
     """The pairing and path guard a wrong build could silently depend on."""
     def sheet(tag):
@@ -390,6 +412,12 @@ def self_check():
     root = Path("self-check-root").resolve()
     assert inside(root / "corpus", root), "inside missed a child"
     assert not inside(Path("self-check-elsewhere").resolve(), root), "inside overreached"
+    # The second hearing is a paid recording of the same round: a re-pack must
+    # keep it, and must not carry it onto another round or another song.
+    old = {"id": "v", "round": "rs\\r1", "heard2": [{"t": "w", "s": 1, "e": 2}]}
+    assert keep_heard2(old, "v", "rs\\r1") == old["heard2"], "keep_heard2 dropped a second hearing"
+    assert keep_heard2(old, "v", "rs\\r2") is None, "keep_heard2 kept another round's hearing"
+    assert keep_heard2(old, "w", "rs\\r1") is None, "keep_heard2 kept another song's hearing"
 
 
 def main():
@@ -432,6 +460,7 @@ def main():
     args.out.mkdir(parents=True, exist_ok=True)
     baseline = []
     stress = 0
+    second = 0
     total_words = total_lines = 0
     for vid, (_, round_dir, first, last, words, median, verdicts) in sorted(best.items()):
         shift = int(last[0].get("shift", 0))
@@ -445,21 +474,29 @@ def main():
             round_name = str(round_dir.relative_to(PHONE_OUT))
         except ValueError:  # --rs/--rs2 pointed somewhere else
             round_name = str(round_dir)
+        path = args.out / (vid + ".json")
+        try:
+            old = json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+        except (OSError, ValueError):
+            old = None
+        heard2 = keep_heard2(old, vid, round_name)
         corpus = {
             "id": vid,
             "language": language_for([t for _, _, t in first[1]]),
             "sheet": [{"n": n, "t": t, "text": text} for n, t, text in first[1]],
             "heard": words,
-            # Each scored line's sung time, from the independent score: [line, ms].
+            # Each scored line's sung and displayed time: [line, sung ms, shown ms].
             "truth": line_truth(round_dir, vid),
             "expectedOffsetMs": expected,
             "baselineErrorMs": baseline_error,
             "stress": is_stress,
             "round": round_name,
         }
+        if heard2:
+            corpus["heard2"] = heard2
+            second += 1
         corpus.update(verdicts)
-        (args.out / (vid + ".json")).write_text(
-            json.dumps(corpus, ensure_ascii=False), encoding="utf-8")
+        path.write_text(json.dumps(corpus, ensure_ascii=False), encoding="utf-8")
         entry = {
             "id": vid,
             "expectedOffsetMs": expected,
@@ -479,6 +516,7 @@ def main():
     print(f"rounds: {len(rounds)}")
     print(f"songs: {len(best)}")
     print(f"stress: {stress}")
+    print(f"second hearing: {second}")
     print(f"words: {total_words}")
     print(f"lines: {total_lines}")
     print(f"corpus: {args.out}")

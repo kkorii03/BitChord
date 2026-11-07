@@ -53,7 +53,8 @@ private const val HEARD_SHARE = 0.5
  * [RefinePolicy].  Only ids and numbers are printed; the corpus holds lyrics.
  * A verdict is reported as numbers (`reject`, `keep`, `refine`, `pass`), and a
  * corpus song whose id the baseline does not name fails the test instead of
- * disappearing from the run.
+ * disappearing from the run.  A second hearing, when the corpus has one, is
+ * scored as separate `ears2` totals: truth the app never fitted on.
  */
 class SyncReplayTest {
 
@@ -69,7 +70,9 @@ class SyncReplayTest {
         val language: String,
         val sheet: List<SheetLine>,
         val heard: List<Word>,
-        /** `[line, sung ms]` from the independent score; see `scripts/replay_pack.py`. */
+        /** A second, independent hearing of the same recording; see `bench/replay_second_ear.py`. */
+        val heard2: List<Word> = emptyList(),
+        /** `[line, sung ms]`, plus `shown ms` when recorded, from the independent score; see `scripts/replay_pack.py`. */
         val truth: List<List<Long>> = emptyList(),
         val expectedOffsetMs: Long,
         val baselineErrorMs: Long,
@@ -229,9 +232,12 @@ class SyncReplayTest {
     /**
      * A line-accuracy report over the same corpus, one stage per row: the
      * provider's sheet, the heard-words fit (`LyricsTiming.apply`), [RefinePolicy]
-     * on top, and the `LyricsPerLine` layer on top of that. The same stages run
-     * for the first ninety seconds of heard words, and a base fit on every other
-     * anchor is scored on the anchors held out from it. Diagnostic only — no
+     * on top, the `LyricsPerLine` layer on top of that, and the display the app
+     * actually recorded (`app`). The same stages run for the first ninety
+     * seconds of heard words, and a base fit on every other anchor is scored on
+     * the anchors held out from it. Every stage is also scored against a second
+     * hearing of the same recording (`heard2`), which the app never fitted on;
+     * those `ears2` totals are printed beside the old ones. Diagnostic only — no
      * assertion decides on these numbers, and a bug here must not fail the
      * baseline run.
      */
@@ -243,6 +249,24 @@ class SyncReplayTest {
         } catch (e: Exception) {
             println("line accuracy: skipped (${e.javaClass.simpleName})")
         }
+    }
+
+    /**
+     * A second hearing is truth only for the lines it actually placed: a line
+     * it did not hear (or barely heard) has no second-ear time, and a line it
+     * placed takes the second hearing's own start.
+     */
+    @Test
+    fun `second-ear truth keeps only the lines it placed`() {
+        val placement = LyricsWordAlign.Placement(
+            starts = listOf(1_100L, null, 3_400L),
+            attempted = true,
+            matchedShare = listOf(0.9, 0.2, 0.4),
+        )
+        val truth = truthFromPlacement(
+            listOf(0, 1, 2), listOf<Int?>(1, 2, 3), placement,
+        )
+        assertEquals(mapOf(1L to 1_100L), truth)
     }
 
     /** A scored line: which song, which 1-based sheet line, and how far off it ended up. */
@@ -319,7 +343,7 @@ class SyncReplayTest {
     private fun Tally.score(): Score =
         stat(errors, if (eligible == 0) null else found.toDouble() / eligible)
 
-    private val fullStages = listOf("provider", "base", "refine", "perline")
+    private val fullStages = listOf("provider", "base", "refine", "perline", "app")
     private val heldStages = listOf("provider", "base")
 
     private fun lineAccuracyReport(corpus: File) {
@@ -329,8 +353,12 @@ class SyncReplayTest {
         val fullTallies = linkedMapOf<String, Tally>()
         val openingTallies = linkedMapOf<String, Tally>()
         val heldTallies = linkedMapOf<String, Tally>()
+        // New totals: the same stages scored against the independent second hearing.
+        val ear2Tallies = linkedMapOf<String, Tally>()
+        val ear2HeldTallies = linkedMapOf<String, Tally>()
         var songs = 0
         var withTruth = 0
+        var withEar2 = 0
         for (file in files) {
             // A decode message would echo corpus text, so only the exception's shape is printed.
             val song = try {
@@ -354,8 +382,34 @@ class SyncReplayTest {
             val placement = LyricsWordAlign.placeLinesDetailed(texts, heard)
 
             val fullCoverage = coverageOf(indices, lines, song.truth, numbers, placement, heard, null)
-            val full = snapshots(song.id, lines, heard, indices, placement, heard, spellable)
-            report("full", full, fullStages, fullTallies, song, numbers, fullCoverage, null)
+            val sung = sungByLine(song.truth)
+            val shown = shownByLine(song.truth)
+            val full = snapshots(song.id, lines, heard, indices, placement, heard, spellable).toMutableMap()
+            // What the app actually displayed, as recorded by the independent score.
+            // Only when every truth row carries a display time: a partial column
+            // would score provider times as if they were the screen.
+            if (shown.isNotEmpty() && shown.size == song.truth.size) {
+                full["app"] = recordedLines(lines, numbers, shown)
+            }
+            report("full", full, fullStages, fullTallies, song, numbers, fullCoverage, null, sung)
+
+            // The same stages against a hearing the app never fitted on: the
+            // second ear is truth only for the lines it placed itself.
+            val ear2 = song.heard2.map { LyricsWordAlign.Heard(it.t, it.s, it.e) }
+            val truth2 = if (ear2.isEmpty()) {
+                emptyMap<Long, Long>()
+            } else {
+                truthFromPlacement(
+                    indices, numbers, LyricsWordAlign.placeLinesDetailed(texts, ear2),
+                )
+            }
+            if (truth2.isNotEmpty()) {
+                withEar2++
+                report(
+                    "ears2", full, fullStages, ear2Tallies,
+                    song, numbers, null, null, truth2,
+                )
+            }
 
             // What an opening-only listen can fit, scored against the whole song.
             val opening = heard.filter { it.startMs <= OPENING_MS }
@@ -369,7 +423,7 @@ class SyncReplayTest {
                 )
                 report(
                     "first90", openingStages, fullStages, openingTallies,
-                    song, numbers, openingCoverage, null,
+                    song, numbers, openingCoverage, null, sung,
                 )
             }
 
@@ -394,11 +448,17 @@ class SyncReplayTest {
                 )
                 report(
                     "held", held, heldStages, heldTallies,
-                    song, numbers, heldCoverage, heldHalf,
+                    song, numbers, heldCoverage, heldHalf, sung,
                 )
+                if (truth2.isNotEmpty()) {
+                    report(
+                        "ears2 held", held, heldStages, ear2HeldTallies,
+                        song, numbers, null, heldHalf, truth2,
+                    )
+                }
             }
         }
-        println("corpus songs=$songs truth=$withTruth")
+        println("corpus songs=$songs truth=$withTruth ears2=$withEar2")
         for ((label, tally) in fullTallies) {
             println(line("totals full $label", tally.score(), withSong = true))
         }
@@ -407,6 +467,14 @@ class SyncReplayTest {
         }
         for ((label, tally) in heldTallies) {
             println(line("totals held $label", tally.score(), withSong = true))
+        }
+        // The old totals above stay exactly as they were; these are the same
+        // stages against the independent second ear.
+        for ((label, tally) in ear2Tallies) {
+            println(line("totals ears2 $label", tally.score(), withSong = true))
+        }
+        for ((label, tally) in ear2HeldTallies) {
+            println(line("totals ears2 held $label", tally.score(), withSong = true))
         }
     }
 
@@ -420,9 +488,13 @@ class SyncReplayTest {
         numbers: List<Int?>,
         coverage: Coverage?,
         only: Set<Int>?,
+        truth: Map<Long, Long>,
     ) {
         for (label in labels) {
-            val errors = scoreLines(song.id, stages.getValue(label), song.truth, numbers, only)
+            // A variant may not have every stage (e.g. no recorded display in
+            // an old corpus): a missing stage is left out, not scored as provider.
+            val lines = stages[label] ?: continue
+            val errors = scoreAgainst(song.id, lines, truth, numbers, only)
             tallies.getOrPut(label) { Tally() }.add(errors, coverage)
             println(line("${song.id} $tag $label", stat(errors, coverage?.share)))
         }
@@ -528,11 +600,60 @@ class SyncReplayTest {
         only: Set<Int>? = null,
     ): List<LineError> {
         if (truth.isEmpty()) return emptyList()
-        val sungByLine = HashMap<Long, Long>(truth.size)
+        return scoreAgainst(song, adjusted, sungByLine(truth), numbers, only)
+    }
+
+    /** [line, sung] from the corpus's `truth`, by line number. */
+    private fun sungByLine(truth: List<List<Long>>): Map<Long, Long> {
+        val sung = HashMap<Long, Long>(truth.size)
         for (row in truth) {
-            if (row.size >= 2) sungByLine[row[0]] = row[1]
+            if (row.size >= 2) sung[row[0]] = row[1]
         }
-        val errors = ArrayList<LineError>(truth.size)
+        return sung
+    }
+
+    /** The app's recorded display time per line, from `truth`'s third number when present. */
+    private fun shownByLine(truth: List<List<Long>>): Map<Long, Long> =
+        truth.mapNotNull { row -> if (row.size >= 3) row[0] to row[2] else null }.toMap()
+
+    /** The sheet as it was recorded on screen, not as the fit would put it. */
+    private fun recordedLines(
+        lines: List<LyricLine>,
+        numbers: List<Int?>,
+        shown: Map<Long, Long>,
+    ): List<LyricLine> = lines.mapIndexed { index, line ->
+        shown[(numbers.getOrNull(index) ?: (index + 1)).toLong()]?.let { line.copy(timeMs = it) } ?: line
+    }
+
+    /**
+     * The lines a second hearing placed, by sheet line number. A line it started
+     * (>= [HEARD_SHARE] of its letters matched) is truth; a line it did not is
+     * left out rather than scored against another hearing's answer.
+     */
+    private fun truthFromPlacement(
+        indices: List<Int>,
+        numbers: List<Int?>,
+        placement: LyricsWordAlign.Placement,
+    ): Map<Long, Long> {
+        val truth = HashMap<Long, Long>(indices.size)
+        indices.forEachIndexed { p, index ->
+            val start = placement.starts.getOrNull(p) ?: return@forEachIndexed
+            if (placement.matchedShare.getOrElse(p) { 0.0 } < HEARD_SHARE) return@forEachIndexed
+            truth[(numbers.getOrNull(index) ?: (index + 1)).toLong()] = start
+        }
+        return truth
+    }
+
+    /** [adjusted] lines against a stated sung time per line number. */
+    private fun scoreAgainst(
+        song: String,
+        adjusted: List<LyricLine>,
+        sungByLine: Map<Long, Long>,
+        numbers: List<Int?>,
+        only: Set<Int>?,
+    ): List<LineError> {
+        if (sungByLine.isEmpty()) return emptyList()
+        val errors = ArrayList<LineError>(sungByLine.size)
         adjusted.forEachIndexed { index, line ->
             if (only != null && index !in only) return@forEachIndexed
             if (line.text.isBlank()) return@forEachIndexed
