@@ -640,12 +640,11 @@ section_now_playing() {
   tap_raw "가사" 2
   if true; then
     shot lyrics "Lyrics"
-    if tap "가사 제공" first 5; then shot lyrics-sheet-first "Provider sheet"; back; sleep 2; fi
-    sleep 14
-    adb shell input tap 540 2000; sleep 2
-    shot lyrics-reveal "Lyrics after a tap"
-    if tap "원문 가사 보기" first 3; then shot lyrics-original "Translation off"; fi
-    if tap "가사 번역" first 25; then shot lyrics-translated "Translation back on"; fi
+    adb shell input tap 540 2000; sleep 1; burst_shot lyrics-bar-1
+    adb shell input tap 250 1400; sleep 3; shot lyrics-sheet-1 "Sheet opened from the label"; back; sleep 8
+    adb shell input tap 540 2000; sleep 1; burst_shot lyrics-bar-2
+    adb shell input tap 937 1400; sleep 2; burst_shot lyrics-bar-3
+    sleep 3; adb shell input tap 540 2000; sleep 1; burst_shot lyrics-bar-4
     swipe_up; shot lyrics-scrolled "Lyrics scrolled"
     # Provider chooser, from the "가사 제공: ..." status line.
     if tap "가사 제공" first 5; then
