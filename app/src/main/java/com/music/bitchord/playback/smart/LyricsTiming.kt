@@ -3318,7 +3318,16 @@ object LyricsTiming {
                 },
                 videoId,
             )
-            if (fitted == null || heard == null) return
+            if (heard == null) return
+            if (fitted == null) {
+                // Words that do not fit this sheet may prove it is another song's, the way a
+                // song check's do; the whole-song answer was a minute or more away from that
+                // (11-08 KChyOsjqmfM: no fit at 14 s, wrong sheet shown for the whole play).
+                if (heard.size >= MIN_AI_LINES && keepQuickVideoEvidence(context, videoId, key, heard, quick.clock, quick.rough)) {
+                    _changes.tryEmit(videoId)
+                }
+                return
+            }
             if (keepQuickVideoAnswer(context, videoId, key, fitted, heard, quick.clock, quick.rough)) {
                 _changes.tryEmit(videoId)
             }
@@ -3379,6 +3388,43 @@ object LyricsTiming {
             }
         }
         if (kept) TrackLog.d(TAG, "video quick answer kept${if (rough) " (rough)" else ""}", videoId)
+        return kept
+    }
+
+    /**
+     * Keeps a video's quick words that fit no line of the sheet [key] as wrong-song
+     * evidence ([Entry.heardCheckWords], read by the screen's sheet judge), never as
+     * timing. Not over an answer kept for this sheet (other words fit it), nor over exact
+     * evidence already kept for it. True when it was written.
+     */
+    internal suspend fun keepQuickVideoEvidence(
+        context: Context,
+        videoId: String,
+        key: Int,
+        heard: List<LyricsWordAlign.Heard>,
+        clock: Clock,
+        rough: Boolean,
+    ): Boolean {
+        if (replacedSheet(videoId, key)) return false
+        var kept = false
+        store(context).update(videoId) { entry ->
+            val answered = entry.aiTextKey == key && entry.ai != null
+            val exactKept = entry.heardCheckKey == key && entry.heardCheckWords.isNotEmpty() && !entry.heardCheckRough
+            kept = !answered && !(exactKept && rough)
+            if (!kept) {
+                entry
+            } else {
+                entry.copy(
+                    clockVersion = CLOCK_VERSION,
+                    heardCheckKey = key,
+                    heardCheckWords = heard.take(MAX_HEARD_WORDS)
+                        .map { word -> SavedWord(t = word.text, s = word.startMs, e = word.endMs) },
+                    heardCheckClock = clock.saved(),
+                    heardCheckRough = rough,
+                )
+            }
+        }
+        if (kept) TrackLog.d(TAG, "video quick words kept as sheet evidence${if (rough) " (rough)" else ""}", videoId)
         return kept
     }
 

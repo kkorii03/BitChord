@@ -82,4 +82,27 @@ class LyricsTimingVideoQuickListenTest {
             """"ai":{"knots":[0,0],"headRate":1.0,"tailRate":1.0,"rate":1.0,"match":95}"""
         assertFalse(kept("asked", asked))
     }
+
+    private fun evidence(id: String, before: String?, rough: Boolean = true): Boolean = runBlocking {
+        before?.let { File(directory, "lyrics_timing_v1.json").writeText("""{"entries":{"$id":{$it}}}""") }
+        storeField.set(LyricsTiming, null)
+        LyricsTiming.keepQuickVideoEvidence(context, id, key, heard, LyricsTiming.Clock.YouTube, rough)
+    }
+
+    /** 11-08 KChyOsjqmfM: the quick words fit no line and were thrown away; the wrong sheet stayed. */
+    @Test
+    fun `quick words that fit no line are kept as sheet evidence`() = runBlocking {
+        assertTrue(evidence("unfit", before = null))
+        assertEquals(heard.size, LyricsTiming.heardWordsFor(context, "unfit").size)
+    }
+
+    @Test
+    fun `quick evidence never replaces an answer or exact evidence for the sheet`() {
+        val answered = """"aiTextKey":$key,"aiRough":false,""" +
+            """"ai":{"knots":[0,0],"headRate":1.0,"tailRate":1.0,"rate":1.0,"match":95}"""
+        assertFalse(evidence("answered", answered))
+        val exact = """"heardCheckKey":$key,"heardCheckRough":false,"heardCheckWords":[{"t":"one","s":1000,"e":1200}]"""
+        assertFalse(evidence("exact-evidence", exact))
+        assertTrue(evidence("exact-evidence-again", exact, rough = false))
+    }
 }
