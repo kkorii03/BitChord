@@ -102,7 +102,7 @@ internal fun koTimingDetailTexts(timing: LyricsTimingUi): List<String> =
         }
     }
 
-/** The quiet lines under the provider rows. They wrap rather than cut anything off. */
+/** The quiet lines above the provider rows, seen without scrolling. They wrap rather than cut anything off. */
 @Composable
 internal fun koLyricsSheetDetails(details: List<String>) {
     details.forEach { line ->

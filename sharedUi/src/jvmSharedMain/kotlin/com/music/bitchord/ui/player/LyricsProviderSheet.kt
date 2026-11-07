@@ -60,7 +60,7 @@ internal fun LyricsProviderSheet(
     onSelect: (LyricsSource) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
-    /** What the translation and the timing are doing, under the rows. */
+    /** What the translation and the timing are doing, above the rows. */
     details: List<String> = emptyList(),
 ) {
     val savedOrder by PlayerSettings.lyricsSourceOrder.collectAsStateWithLifecycle()
@@ -85,6 +85,7 @@ internal fun LyricsProviderSheet(
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
+            koLyricsSheetDetails(details) // [KO] lyrics-status
             sources.forEach { source ->
                 LyricsProviderRow(
                     source = source,
@@ -98,7 +99,6 @@ internal fun LyricsProviderSheet(
                     },
                 )
             }
-            koLyricsSheetDetails(details) // [KO] lyrics-status
         }
     }
 }
