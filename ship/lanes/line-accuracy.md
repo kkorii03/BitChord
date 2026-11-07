@@ -101,8 +101,105 @@ different transcript than the round the baseline was scored in. That pairing is
 the thing to settle before this gate can be trusted; it lives in the pack
 script, not in this test.
 
+## Corpus run 2026-11-07 (`Sync replay` run 42338789271)
+
+Branch `replay/accuracy` at `fff25ee0c`, pushed to trigger the workflow. The run
+concluded `failure`: the corpus fetch and all three tests ran, the plain score
+test and the diagnostic report passed, the baseline assertion failed. There was
+no infrastructure failure.
+
+- Job `replay` (128301629280): 6m52s; `Replay` step 6m11s.
+- Corpus: `songs=85 truth=85 missing=0`.
+- Gradle: `3 tests completed, 1 failed`, `BUILD FAILED in 6m 11s`.
+- Score test: `songs=85 missing=0 pass=79 fail=6`.
+- Verdict counts: `reject=1 keep=84 refine=41 expectedReject=4 expectedKeep=0 verdictPass=1 verdictKnown=4`.
+- Failure message: `java.lang.AssertionError: 6 songs below baseline`.
+
+### Stage totals
+
+Both variants, every stage, scored against the whole song. Numbers are exactly
+as printed by the report; `worst` is `song:line:abs_ms`.
+
+| variant | stage | lines | med | bias | in02 | in03 | in05 | max | cov | drift | span | worst | verdict |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| full | provider | 2253 | 164 | -60 | 55% | 63% | 74% | 39620 | 97% | -8 | 357860 | `J7p4bzqLvCw:38:39620` | warn |
+| full | base | 2253 | 72 | 5 | 78% | 84% | 89% | 83090 | 97% | 1 | 357860 | `YQHsXMglC9A:6:83090` | warn |
+| full | refine | 2253 | 70 | 3 | 79% | 85% | 89% | 83090 | 97% | 1 | 357860 | `YQHsXMglC9A:6:83090` | warn |
+| full | perline | 2253 | 50 | -10 | 84% | 88% | 90% | 83090 | 97% | 2 | 357860 | `YQHsXMglC9A:6:83090` | warn |
+| first90 | provider | 2253 | 164 | -60 | 55% | 63% | 74% | 39620 | 96% | -8 | 357860 | `J7p4bzqLvCw:38:39620` | warn |
+| first90 | base | 2253 | 82 | -5 | 75% | 81% | 86% | 40080 | 96% | 0 | 357860 | `A4HLeFXyFEY:39:40080` | warn |
+| first90 | refine | 2253 | 75 | -7 | 78% | 83% | 87% | 40080 | 96% | -1 | 357860 | `A4HLeFXyFEY:39:40080` | warn |
+| first90 | perline | 2253 | 67 | -10 | 78% | 83% | 87% | 40080 | 96% | 2 | 357860 | `A4HLeFXyFEY:39:40080` | warn |
+| held | provider | 1140 | 170 | -58 | 54% | 62% | 73% | 31799 | 97% | -4 | 353960 | `NqLB6ub1BOw:35:31799` | warn |
+| held | base | 1140 | 79 | 9 | 76% | 81% | 87% | 81725 | 97% | 6 | 353960 | `YQHsXMglC9A:19:81725` | warn |
+
+The six baseline failures, with the baseline fields this run asserted against:
+
+| id | expected | baselineErr | tolerance | stress | replay fit | error | pass |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `-RJSbO8UZVY` | 2525 | 2525 | 1500 | 1 | 18490 | 15965 | 0 |
+| `8gyLR4NfMiI` | 2094 | 2094 | 1500 | 1 | 22480 | 20386 | 0 |
+| `OxgiiyLp5pk` | -265 | 265 | 300 | 0 | 25670 | 25935 | 0 |
+| `YQHsXMglC9A` | 1899 | 1899 | 1500 | 1 | 75050 | 73151 | 0 |
+| `ekzHIouo8Q4` | -36 | 36 | 300 | 0 | 11677 | 11713 | 0 |
+| `l4Z9kkYAggc` | 97 | 12 | 300 | 0 | 440 | 343 | 0 |
+
+Their `full` stage rows (the other variants are in the run log):
+
+| id | stage | lines | med | bias | in02 | in03 | in05 | max | cov | drift | worst | verdict |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `-RJSbO8UZVY` | provider | 14 | 2656 | -2500 | 21% | 21% | 21% | 13620 | 78% | 18 | 40:13620 | fail |
+| `-RJSbO8UZVY` | base | 14 | 15990 | 15990 | 0% | 0% | 0% | 32110 | 78% | 18 | 40:32110 | fail |
+| `-RJSbO8UZVY` | refine | 14 | 15990 | 15990 | 0% | 0% | 0% | 32110 | 78% | 18 | 40:32110 | fail |
+| `-RJSbO8UZVY` | perline | 14 | 16015 | 16015 | 0% | 0% | 0% | 32030 | 78% | -62 | 40:32030 | fail |
+| `8gyLR4NfMiI` | provider | 14 | 2545 | -2093 | 14% | 14% | 21% | 14640 | 100% | 1249 | 102:14640 | fail |
+| `8gyLR4NfMiI` | base | 14 | 20386 | 20386 | 0% | 0% | 0% | 27145 | 100% | 1249 | 90:27145 | fail |
+| `8gyLR4NfMiI` | refine | 14 | 20386 | 20386 | 0% | 0% | 0% | 27145 | 100% | 1249 | 90:27145 | fail |
+| `8gyLR4NfMiI` | perline | 14 | 20866 | 20866 | 0% | 0% | 0% | 26488 | 100% | -780 | 90:26488 | fail |
+| `OxgiiyLp5pk` | provider | 16 | 25625 | -25625 | 0% | 0% | 0% | 28095 | 100% | 14 | 19:28095 | fail |
+| `OxgiiyLp5pk` | base | 16 | 180 | 45 | 50% | 75% | 94% | 2425 | 100% | 14 | 19:2425 | warn |
+| `OxgiiyLp5pk` | refine | 16 | 180 | 45 | 50% | 75% | 94% | 2425 | 100% | 14 | 19:2425 | warn |
+| `OxgiiyLp5pk` | perline | 16 | 155 | 155 | 50% | 75% | 88% | 2266 | 100% | -2 | 20:2266 | warn |
+| `YQHsXMglC9A` | provider | 10 | 2155 | -1190 | 0% | 0% | 0% | 8040 | 88% | -1424 | 6:8040 | fail |
+| `YQHsXMglC9A` | base | 10 | 73860 | 73860 | 0% | 0% | 0% | 83090 | 88% | -1424 | 6:83090 | fail |
+| `YQHsXMglC9A` | refine | 10 | 73860 | 73860 | 0% | 0% | 0% | 83090 | 88% | -1424 | 6:83090 | fail |
+| `YQHsXMglC9A` | perline | 10 | 73920 | 73920 | 0% | 0% | 0% | 83090 | 88% | -1367 | 6:83090 | fail |
+| `ekzHIouo8Q4` | provider | 32 | 173 | -173 | 59% | 94% | 100% | 458 | 100% | -5 | 27:458 | warn |
+| `ekzHIouo8Q4` | base | 32 | 11503 | 11503 | 0% | 0% | 0% | 11713 | 100% | -5 | 15:11713 | fail |
+| `ekzHIouo8Q4` | refine | 32 | 11503 | 11503 | 0% | 0% | 0% | 11713 | 100% | -5 | 15:11713 | fail |
+| `ekzHIouo8Q4` | perline | 32 | 11463 | 11463 | 0% | 0% | 0% | 11697 | 100% | -36 | 8:11697 | fail |
+| `l4Z9kkYAggc` | provider | 20 | 480 | -480 | 5% | 10% | 60% | 1263 | 100% | -84 | 26:1263 | fail |
+| `l4Z9kkYAggc` | base | 20 | 115 | -40 | 75% | 90% | 90% | 823 | 100% | -84 | 26:823 | warn |
+| `l4Z9kkYAggc` | refine | 20 | 115 | -40 | 75% | 90% | 90% | 823 | 100% | -84 | 26:823 | warn |
+| `l4Z9kkYAggc` | perline | 20 | 57 | -30 | 75% | 80% | 100% | 472 | 100% | -30 | 62:472 | warn |
+
+### Findings from this run
+
+- On the whole corpus the fit is the big gain: median absolute error falls
+  `provider 164 -> base 72 ms`, with `in03 63% -> 84%`. Refine adds almost
+  nothing to the totals (`72 -> 70`). Per-line lowers the median again
+  (`70 -> 50`) and lifts `in03` to 88%.
+- The `first90` variant is worse than `full` at every fitted stage:
+  `base 82`, `refine 75`, `perline 67` against `72 / 70 / 50`. It does cap the
+  worst error at 40080 ms instead of 83090 ms, so the missed second half of the
+  song stops one catastrophic outlier but costs typical accuracy.
+- `held` keeps the fit close to `full` on the anchors it never saw:
+  `base med 79` on 1140 lines against `72` on the full 2253, so the fit is not
+  just memorising its own anchors.
+- Every stage in every totals row is `warn`, never `pass`; the run still fails
+  because the baseline gate is per song. The report cannot make the gate pass.
+- The six failures split by where the damage is:
+  `OxgiiyLp5pk` has a good `base` stage (med 180) while its provider sheet is
+  shifted 25.6 s, yet the score test's own `fit` is 25670; `ekzHIouo8Q4` has a
+  good provider (173) that the base fit moves by 11.5 s; `-RJSbO8UZVY`,
+  `8gyLR4NfMiI` and `YQHsXMglC9A` get a wrong 16-74 s shift from the base fit;
+  `l4Z9kkYAggc` is only 343 ms off against a 300 ms tolerance. These are
+  per-song pairing/transcript symptoms, consistent with the earlier note that
+  the replay transcript differs from the baseline round, not a single fitting
+  bug.
+
 ## Not recorded here
 
-No corpus run was performed in this lane before the run above, and the numbers
-depend on the private corpus. Nothing about lyric text is printed: only song
+Corpus runs recorded here: 42337090753 and 42338789271; the numbers depend on the
+private corpus. Nothing about lyric text is printed: only song
 ids, numbers and `pass`/`fail`.
