@@ -12,7 +12,8 @@ The corpus holds lyric text, so it must stay outside the repository.  This
 script prints counts only, never a line of lyrics.
 
 A round is good for a song when its log has a `base=none` block (the
-provider's own times), a later block for the same sheet, and a word file with
+provider's own times), the later block for that same sheet when the app moved
+it (lone is fine when it kept the provider's times), and a word file with
 enough words.  The independent score in `lines.csv` (or `report.csv` /
 `<round>.summary.json`) gives the offset the sheet still needs; the baseline
 records the app's own error against that answer.
@@ -220,6 +221,7 @@ def language_for(texts):
 def sheet_pair(blocks):
     """The base=none block and its later block for the same sheet, or None.
 
+    A lone base=none block is valid: the app may have kept the provider times.
     One log names several providers for a song; pairing the first and the last
     block overall pairs two different sheets whenever the providers disagree.
     Group by the sheet's text so the shift belongs to the sheet replayed.
