@@ -9,7 +9,7 @@
 #   ..\tools\python\python.exe -I scripts\synctest.py --playlist PL... --limit 5
 #   ..\tools\python\python.exe -I scripts\synctest.py --dry-run      (re-score saved logs, no phone)
 #   ..\tools\python\python.exe -I scripts\synctest.py --selftest     (checks the alignment maths)
-import argparse, csv, os, datetime, difflib, json, random, re, statistics, subprocess, sys, time, unicodedata, urllib.request
+import argparse, csv, os, datetime, difflib, json, random, re, statistics, subprocess, sys, tempfile, time, unicodedata, urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]  # Desktop\BitChord
@@ -25,6 +25,10 @@ DEFAULT_PER_PLAYLIST = 10
 
 MIN_RATIO = 0.6       # how alike a line's opening must be to the heard words
 SEARCH_S = 15.0       # a line is looked for this far either side of its displayed start
+FAR_OFF_S = 1.0       # a whole-song shift this large, when the first pass placed too few lines,
+                      # is reported as FAIL instead of "not heard"
+FAR_OFF_BIN_S = 0.5   # line-opening matches within this of one shift vote together
+FAR_OFF_WIDE_MAX = 3  # first-pass placed lines below which a window-free pass may settle the shift
 DIST_PENALTY_PER_S = 0.01  # tie-break toward the displayed time (a 10 s-away repeat must match 0.1 better)
 PREFIX_CHARS = 8      # characters of each line used to find where it starts
 CONST_STD_S = 0.15
@@ -274,16 +278,17 @@ AMBIGUOUS_RATIO = 0.05  # another place this close in likeness ...
 AMBIGUOUS_ERR_S = 1.0   # ... and a chosen error this large: which repeat it was is unknowable
 
 
-def candidates(key, shown, heard, times):
+def candidates(key, shown, heard, times, window=SEARCH_S):
     """[(rank, ratio, i, t)] places the line's opening may have been sung: the best
     start in each stretch of matching characters, at most MAX_CANDIDATES."""
     found = []
     for i in range(len(heard)):
         t = times[i]
-        if t < shown - SEARCH_S:
-            continue
-        if t > shown + SEARCH_S:
-            break
+        if window is not None:
+            if t < shown - window:
+                continue
+            if t > shown + window:
+                break
         r = difflib.SequenceMatcher(None, key, heard[i:i + len(key)], autojunk=False).ratio()
         if heard[i] != key[0]:
             r -= 0.05  # prefer a match that starts on the line's first sound
@@ -300,7 +305,7 @@ def candidates(key, shown, heard, times):
     return sorted(found, reverse=True)[:MAX_CANDIDATES]
 
 
-def align(lines, words):
+def align(lines, words, window=SEARCH_S):
     """[(n, shown_s, sung_s, ratio)] for every line found in the heard words, in order.
 
     The whole sheet is placed at once (11-02): the sung order must follow the sheet's
@@ -320,7 +325,7 @@ def align(lines, words):
         key = norm(text)[:PREFIX_CHARS]
         if len(key) < 2 or shown > last_heard + 1.0:
             continue
-        cand = candidates(key, shown, heard, times)
+        cand = candidates(key, shown, heard, times, window)
         if cand:
             rows.append((n, shown, cand))
     # best[j][c] = best total ending with line j at its candidate c (indices rising).
@@ -535,7 +540,80 @@ def agreed(per_model):
     return both, set(a) | set(b), (statistics.median(gaps) if gaps else None)
 
 
+def shift_votes(lines, words):
+    """(shift_s, rows) for the song-wide shift most line openings agree on, matched
+    anywhere in the heard words; None unless STRICT['min_lines'] lines agree and
+    twice the next shift's count does. rows = [(n, shown_s, sung_s, ratio)]."""
+    heard, times = char_stream(words)
+    if not heard:
+        return None
+    places, bins, shown_of = {}, {}, {}
+    for n, start_ms, text in lines:
+        key = norm(text)[:PREFIX_CHARS]
+        if len(key) < 2:
+            continue
+        shown = start_ms / 1000.0
+        shown_of[n] = shown
+        for i in range(len(heard)):
+            if heard[i] != key[0]:
+                continue
+            r = difflib.SequenceMatcher(None, key, heard[i:i + len(key)], autojunk=False).ratio()
+            if r < MIN_RATIO:
+                continue
+            b = round((shown - times[i]) / FAR_OFF_BIN_S)
+            bins.setdefault(b, set()).add(n)
+            places.setdefault(n, []).append((b, r, times[i]))
+    if not bins:
+        return None
+    best = max(bins, key=lambda b: sum(len(bins.get(x, ())) for x in (b - 1, b, b + 1)))
+    voted = set().union(*(bins.get(x, set()) for x in (best - 1, best, best + 1)))
+    other = max((len(ids - voted) for b, ids in bins.items() if abs(b - best) > 1), default=0)
+    if len(voted) < STRICT["min_lines"] or len(voted) < 2 * other:
+        return None
+    rows = []
+    for n in sorted(voted):
+        r, t = max((r, t) for b, r, t in places[n] if abs(b - best) <= 1)
+        rows.append((n, shown_of[n], t, round(r, 2)))
+    return statistics.median(shown - sung for _, shown, sung, _ in rows), rows
+
+
+def far_off(lines, per_model, first_lines):
+    """(shift_s, rows) when the whole sheet is shifted and the first pass could not
+    place enough lines, else None. shift = shown - sung: + means the words show late.
+    First lines that agree on one shift anywhere in the song; then, when the first
+    pass placed almost nothing, the median of a pass with no time window at all."""
+    votes = [v for v in (shift_votes(lines, w) for w in per_model) if v]
+    if len(votes) == 2:
+        off = statistics.median(v[0] for v in votes)
+        if abs(votes[0][0] - votes[1][0]) <= FAR_OFF_S and abs(off) >= FAR_OFF_S:
+            return off, votes[0][1]
+    elif len(votes) == 1 and abs(votes[0][0]) >= FAR_OFF_S:
+        return votes[0]
+    if first_lines > FAR_OFF_WIDE_MAX:
+        return None
+    both, _, _ = agreed([align(lines, w, window=None) for w in per_model])
+    if len(both) < STRICT["min_lines"]:
+        return None
+    off = statistics.median(shown - sung for _, shown, sung, _ in both)
+    return (off, both) if abs(off) >= FAR_OFF_S else None
+
+
 # ---------- one song ----------
+
+def safe_name(played):
+    """A `src:<config>::<track>` id as the app names its kept WAV (SyncTestMode.safeName)."""
+    return "".join("_" if c in ("/", "\\", "\0", ":") else c for c in played) or "song"
+
+
+def dumped_id(text, vid):
+    """The id whose sheet is on screen: the last swapped id (music-only / song version)
+    that dumped, else the row's own. A hi-res substitute's head is kept under *this*
+    id's playing=, not the row's (11-08 dND8ysuZqlA never pulled its head)."""
+    swapped = [a or b for a, b in re.findall(
+        rf"\[{re.escape(vid)}\] music-only: playing .* \(([\w-]{{11}})\)"
+        rf"|song version: {re.escape(vid)} -> ([\w-]{{11}})", text)]
+    return next((i for i in reversed(swapped) if parse_dump(text, i)), vid)
+
 
 def run_song(vid, seconds, dry):
     logf, wav = OUT / f"{vid}.log", OUT / f"{vid}.wav"
@@ -554,12 +632,6 @@ def run_song(vid, seconds, dry):
         logf.write_bytes(adb("logcat", "-d", timeout=120, binary=True))
         wav.unlink(missing_ok=True)
         adb("pull", f"{APP_DIR}/synctest/{vid}.wav", str(wav), timeout=120)
-        # A hi-res substitute playing: its own head, kept under the id it plays as.
-        played = parse_dump(logf.read_text(encoding="utf-8", errors="replace"), vid)
-        if played and played[0].get("playing", "").startswith("src:"):
-            # The app writes ':' as '_' in file names (SyncTestMode.safeName).
-            name = played[0]["playing"].replace(":", "_")
-            adb("pull", f"{APP_DIR}/synctest/{name}.wav", str(OUT / f"{vid}.play.wav"), timeout=120)
     if not logf.exists():
         return dict(error="no log")
     text = logf.read_text(encoding="utf-8", errors="replace")
@@ -568,16 +640,19 @@ def run_song(vid, seconds, dry):
     # on screen, its dump and the song check's WAV are then that id's, so that
     # sheet is scored, not the row's first one (11-07 Rap God: the first sheet
     # never played and its FAIL was not the song's).
-    swapped = re.findall(rf"\[{re.escape(vid)}\] music-only: playing .* \(([\w-]{{11}})\)"
-                         rf"|song version: {re.escape(vid)} -> ([\w-]{{11}})", text)
-    played_ids = [a or b for a, b in swapped]
     # The played id's sheet wins when it dumped; a swap whose sheet never dumped
     # leaves the row's own sheet as the only evidence of what was on screen.
-    dump_id = next((i for i in reversed(played_ids) if parse_dump(text, i)), vid)
+    dump_id = dumped_id(text, vid)
     dump = parse_dump(text, dump_id)
     if not dump:
         # No lyrics on screen is the user-facing failure itself, not a test gap.
         return dict(error="no sync-dump (no lyrics shown?)", app_fail=True)
+    # A hi-res substitute playing: its own head, kept under the id it plays as
+    # (SyncTestMode.keepCandidate). Pull it from the dump being scored, by that id;
+    # the row's own dump may not even exist (11-08 dND8ysuZqlA).
+    playing = dump[0].get("playing", "")
+    if not dry and playing.startswith("src:"):
+        adb("pull", f"{APP_DIR}/synctest/{safe_name(playing)}.wav", str(OUT / f"{vid}.play.wav"), timeout=120)
     head, lines = dump
     if dump_id != vid:
         # The song check writes its WAV under the id it plays; the row's own WAV
@@ -606,7 +681,8 @@ def run_song(vid, seconds, dry):
         # mode, 11-02 build on) keeps that copy's verified head under its own id.
         play = OUT / f"{vid}.play.wav"
         if not play.exists() or play.stat().st_size < 1000:
-            return dict(row, error="hi-res substitute playing, its head was not kept (app before 11-02?)")
+            return dict(row, error=f"hi-res substitute {row['playing']} playing, its kept head "
+                                   f"{safe_name(row['playing'])}.wav was not pulled (no phone or an older run)")
         per_model = [hear(f"{vid}.play", play, "audio/wav", lang, m) for m in MODELS]
         if None in per_model:
             return dict(row, error="deepgram failed")
@@ -719,6 +795,14 @@ def lit_scores(both, lit):
                 lit_later=round(sum(x >= 0.2 for x in later) / len(later), 2))
 
 
+def write_lines(vid, both, lit):
+    """The scored lines for this song, for a human checking the CSV."""
+    (OUT / f"{vid}.lines.csv").write_text(
+        "line,shown_s,sung_s,error_s,ratio,lit_s\n" + "".join(
+            f"{n},{a:.3f},{b:.3f},{a - b:+.3f},{r},{lit[n] / 1000 if n in lit else ''}\n" for n, a, b, r in both),
+        encoding="utf-8")
+
+
 def finish(vid, row, lines, per_model):
     """Scores the lines against what both hearing models heard in the played audio."""
     # Every answer the app showed for this song, scored the same way: which base
@@ -747,10 +831,18 @@ def finish(vid, row, lines, per_model):
     eligible = sum(1 for _, ms, t in lines if len(norm(t)[:PREFIX_CHARS]) >= 2 and ms / 1000 <= heard_until)
     row.update(eligible=eligible, model_gap=round(gap, 3) if gap is not None else "", **lit_scores(both, lit))
     row["worst"] = worst_lines(lines, both, per_model[0])
-    (OUT / f"{vid}.lines.csv").write_text(
-        "line,shown_s,sung_s,error_s,ratio,lit_s\n" + "".join(
-            f"{n},{a:.3f},{b:.3f},{a - b:+.3f},{r},{lit[n] / 1000 if n in lit else ''}\n" for n, a, b, r in both),
-        encoding="utf-8")
+    write_lines(vid, both, lit)
+    if len(both) < STRICT["min_lines"]:
+        far = far_off(lines, per_model, len(both))
+        if far:
+            off, rows = far
+            row.update(score(rows, eligible, len(either)) or {})
+            row.update(lit_scores(rows, lit))
+            row["verdict"] = "FAIL"
+            row["why"] = f"far off by {off:+.2f}s (song-wide, {len(rows)} lines)"
+            row["worst"] = ""
+            write_lines(vid, rows, lit)
+            return dict(row)
     if eligible >= 10 and len(either) < 0.25 * eligible:
         return dict(row, error=f"shown lyrics not heard ({len(either)}/{eligible} lines)", app_fail=True)
     if len(both) < STRICT["min_lines"]:
@@ -884,6 +976,64 @@ def selftest():
     assert lit_scores([(1, 1.0, 1.0, 1.0), (2, 3.0, 3.0, 1.0)], head["lit"]) == dict(
         lit_median=0.4, lit_in03=0.0, lit_max=0.4, lit_later=1.0)
     assert lit_scores([(2, 3.0, 3.0, 1.0)], head["lit"]) == {}
+    # 11-08: the id that actually played, not the row's, names the substitute's head.
+    assert safe_name("src:cfg-id::track-1") == "src_cfg-id__track-1"
+    swap = ("x [AAAAAAAAAAA] music-only: playing 'T' (BBBBBBBBBBB)\n"
+            "x sync-dump: begin BBBBBBBBBBB playing=src:cfg-id::track-1 source=test base=none shift=0 match=0 lines=1\n"
+            "x sync-dump: line BBBBBBBBBBB 1 1000 bravo\n"
+            "x sync-dump: end BBBBBBBBBBB\n")
+    assert dumped_id(swap, "AAAAAAAAAAA") == "BBBBBBBBBBB", dumped_id(swap, "AAAAAAAAAAA")
+    own = ("x [AAAAAAAAAAA] music-only: playing 'T' (BBBBBBBBBBB)\n"
+           "x sync-dump: begin AAAAAAAAAAA playing=AAAAAAAAAAA source=test base=none shift=0 match=0 lines=1\n"
+           "x sync-dump: line AAAAAAAAAAA 1 1000 alfa\n"
+           "x sync-dump: end AAAAAAAAAAA\n")
+    assert dumped_id(own, "AAAAAAAAAAA") == "AAAAAAAAAAA"
+    # 11-08: a sheet shifted as a whole is FAILed with its offset, not called unheard.
+    tokens = ["alfa", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliett"]
+    def shifted(shift, count=10, missing=()):
+        lines, words, per_line = [], [], {}
+        for n in range(count):
+            text = f"{tokens[n % 10]} {tokens[(n + 2) % 10]} zulu"
+            lines.append((n + 1, int((10 + 8 * n) * 1000), text))
+            group = []
+            if n + 1 not in missing:
+                t = 10 + 8 * n - shift
+                for w in text.split():
+                    group.append((w, t, t + 0.3))
+                    t += 0.45
+            words += group
+            per_line[n + 1] = group
+        return lines, words, per_line
+    late, late_words, _ = shifted(30.0)
+    assert align(late, late_words) == [], align(late, late_words)
+    far = far_off(late, [late_words, late_words], 0)
+    assert far and abs(far[0] - 30.0) < 0.01 and len(far[1]) >= STRICT["min_lines"], far
+    early, early_words, early_by_line = shifted(-12.75, 12, missing=(5, 8, 11))
+    # One model hears two lines 0.5 s later: the first pass agrees on 7, the shift is still clear.
+    other = [w for n, g in early_by_line.items() if n not in (2, 6) for w in g]
+    other += [(w, s + 0.5, e + 0.5) for n in (2, 6) for w, s, e in early_by_line[n]]
+    other.sort(key=lambda w: w[1])
+    both7, either7, _ = agreed([align(early, early_words), align(early, other)])
+    assert len(both7) == STRICT["min_lines"] - 1, (len(both7), len(either7))
+    far = far_off(early, [early_words, other], len(both7))
+    assert far and abs(far[0] + 12.75) < 0.2 and len(far[1]) >= STRICT["min_lines"], far
+    global OUT
+    old_out = OUT
+    try:
+        OUT = Path(tempfile.mkdtemp())
+        row = finish("wide", dict(source="test", base="none", shift="0", match="0", playing="wide", lines=10),
+                     late, [late_words, late_words])
+        assert row["verdict"] == "FAIL" and "far off by" in row["why"] and abs(row["median"] - 30.0) < 0.01, row
+        row = finish("early", dict(source="test", base="none", shift="0", match="0", playing="early", lines=12),
+                     early, [early_words, other])
+        assert row["verdict"] == "FAIL" and "far off by" in row["why"] and abs(row["median"] + 12.75) < 0.2, row
+        clean, clean_words, _ = shifted(0.05)
+        row = finish("good", dict(source="test", base="none", shift="0", match="0", playing="good", lines=10),
+                     clean, [clean_words, clean_words])
+        assert row["verdict"] == "PASS" and abs(row["median"] - 0.05) < 0.02, row
+    finally:
+        OUT = old_out
+
     print("selftest ok")
 
 
