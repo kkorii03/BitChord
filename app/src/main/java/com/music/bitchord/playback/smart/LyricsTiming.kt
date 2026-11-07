@@ -644,6 +644,7 @@ object LyricsTiming {
         // The refine's own transcript first: an AI answer's words can be
         // Gemini's, which are line-level and match no line's opening letters
         // (vc80: qQNbfxDLxq0, base=ai, refine found 0 lines and stayed -0.24 s).
+        var fromCheck = false
         val (saved, clock) = when {
             entry.refineHeardKey == key && entry.refineHeardWords.isNotEmpty() ->
                 entry.refineHeardWords to clockOf(entry.refineHeardClock)
@@ -654,11 +655,18 @@ object LyricsTiming {
                 entry.heardWords to clockOf(entry.heardClock)
             entry.aiTextKey == key ->
                 entry.heardWords to clockOf(entry.heardClock)
+            // A check whose whole-sheet fit was refused still keeps the transcript it
+            // heard. It is real audio, not a wrong song, and the per-line layer can
+            // move the lines it anchors (3JWTaaS7LdU 11-07: 160 words kept, no refine).
+            entry.heardCheckKey == key && entry.heardCheckWords.isNotEmpty() -> {
+                fromCheck = true
+                entry.heardCheckWords to clockOf(entry.heardCheckClock)
+            }
             else -> emptyList<SavedWord>() to Clock.Unknown
         }
         // Only the AI answer's own words can be line-level: the refine's listen
         // is a transcript, and Gemini's "words" are its line times.
-        val lineLevel = entry.aiEngine == ENGINE_GEMINI &&
+        val lineLevel = !fromCheck && entry.aiEngine == ENGINE_GEMINI &&
             saved.isNotEmpty() &&
             (entry.refineHeardKey != key || entry.refineHeardWords.isEmpty())
         return WordSource(saved.map { LyricsWordAlign.Heard(it.t, it.s, it.e) }, clock, lineLevel)
