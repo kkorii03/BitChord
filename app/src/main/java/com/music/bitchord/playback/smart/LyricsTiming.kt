@@ -3244,7 +3244,9 @@ object LyricsTiming {
         // a timer) tries again.
         val retryAt = entry?.songRetryAtMs
         val retryHeld = entry?.songRetryKey == key &&
-            retryAt != null && retryAt > System.currentTimeMillis()
+            retryAt != null && retryAt > System.currentTimeMillis() &&
+            // The hold is Deepgram's; the first pass is Groq's when it can answer.
+            SongSyncRetry.holdApplies(SongHearing.groqFirst(firstWindowSeconds(song)))
         if (retryHeld) {
             TrackLog.d(
                 TAG,
@@ -3540,6 +3542,14 @@ object LyricsTiming {
     @Volatile
     private var songQuietUntilMs = 0L
 
+    /** The window the first pass asks about: the whole opening when it is on disk, else the short one. */
+    private fun firstWindowSeconds(song: Song): Double =
+        if (VideoAudio.secondsOnDisk(song) >= VideoAudio.SONG_CHECK_SECONDS) {
+            VideoAudio.SONG_CHECK_SECONDS
+        } else {
+            SongCheckWindow.FIRST_SECONDS
+        }
+
     /** The request itself, outliving its caller; see [verifySong]. */
     private suspend fun verifySongRequest(
         context: Context,
@@ -3562,11 +3572,7 @@ object LyricsTiming {
         // opening follows on the same cold playback: applied as a refinement,
         // or as the first answer when the short one could not fit. Already on
         // disk in full (a replay, a row read ahead), one pass does for both.
-        val firstUntil = if (VideoAudio.secondsOnDisk(song) >= VideoAudio.SONG_CHECK_SECONDS) {
-            VideoAudio.SONG_CHECK_SECONDS
-        } else {
-            SongCheckWindow.FIRST_SECONDS
-        }
+        val firstUntil = firstWindowSeconds(song)
         val firstAsk = hearSongCheck(context, song, lines, key, probe, firstUntil, retry, firstPass = true) ?: return false
         val (first, firstOk) = songSyncGate.withLock {
             if (songSyncGenerationOf(song.videoId) != startedGeneration) return@withLock null
@@ -3575,7 +3581,9 @@ object LyricsTiming {
             // this one while its flight was waiting here.
             val pending = store(context).get(song.videoId)
             val retryAt = pending?.songRetryAtMs
-            if (pending?.songRetryKey == key && retryAt != null && retryAt > System.currentTimeMillis()) {
+            if (SongSyncRetry.holdApplies(firstAsk.answer?.rough == true) &&
+                pending?.songRetryKey == key && retryAt != null && retryAt > System.currentTimeMillis()
+            ) {
                 probe?.failure = NextPrepPolicy.SyncFailure.RATE_LIMIT
                 return@withLock null
             }
@@ -3887,8 +3895,9 @@ object LyricsTiming {
         firstPass: Boolean = false,
     ): SongHearing.Heard? {
         val videoId = song.videoId
+        val groqAnswers = firstPass && SongHearing.groqFirst(untilSeconds)
         val quiet = songQuietUntilMs - System.currentTimeMillis()
-        if (quiet > 0) {
+        if (SongSyncRetry.holdApplies(groqAnswers) && quiet > 0) {
             if (!SongSyncRetry.canWaitInline(quiet)) {
                 markRateLimited(context, videoId, key, quiet)
                 rateLimitedLog(videoId, quiet)

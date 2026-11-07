@@ -53,4 +53,11 @@ object SongSyncRetry {
 
     /** Whether [delayMs] can be spent inline while holding the single song-sync slot. */
     fun canWaitInline(delayMs: Long): Boolean = delayMs <= MAX_INLINE_WAIT_MS
+
+    /**
+     * Whether a Deepgram 429 hold applies to a pass. The hold is Deepgram's
+     * account-wide limit; a pass Groq answers is not subject to it, and waiting
+     * would only delay a correction the other provider can give now.
+     */
+    fun holdApplies(groqAnswers: Boolean): Boolean = !groqAnswers
 }

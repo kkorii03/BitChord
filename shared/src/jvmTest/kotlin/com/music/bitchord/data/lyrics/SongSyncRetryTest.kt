@@ -73,4 +73,11 @@ class SongSyncRetryTest {
         assertTrue(SongSyncRetry.canWaitInline(SongSyncRetry.MAX_INLINE_WAIT_MS))
         assertFalse(SongSyncRetry.canWaitInline(SongSyncRetry.MAX_INLINE_WAIT_MS + 1))
     }
+
+    /** A Deepgram hold must not delay a pass Groq answers (11-07, first-latency). */
+    @Test
+    fun aDeepgramHoldDoesNotApplyToAPassGroqAnswers() {
+        assertFalse(SongSyncRetry.holdApplies(groqAnswers = true))
+        assertTrue(SongSyncRetry.holdApplies(groqAnswers = false))
+    }
 }
