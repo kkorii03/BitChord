@@ -640,12 +640,12 @@ section_now_playing() {
   tap_raw "가사" 2
   if true; then
     shot lyrics "Lyrics"
-    adb shell input tap 540 2000; sleep 1; burst_shot lyrics-bar-1
-    adb shell input tap 250 1400; sleep 3; shot lyrics-sheet-1 "Sheet opened from the label"; back; sleep 8
-    adb shell input tap 540 2000; sleep 1; burst_shot lyrics-bar-2
-    adb shell input tap 937 1400; sleep 2; burst_shot lyrics-bar-3
-    sleep 3; adb shell input tap 540 2000; sleep 1; burst_shot lyrics-bar-4
-    swipe_up; shot lyrics-scrolled "Lyrics scrolled"
+    adb shell input swipe 540 1000 540 1500 300; sleep 1; burst_shot lyrics-bar-1
+    if tap "가사 제공" first 2; then burst_shot lyrics-sheet-1; shot lyrics-sheet-1x "Sheet opened from the label"; back; sleep 3; fi
+    adb shell input swipe 540 1000 540 1500 300; sleep 1; burst_shot lyrics-bar-2
+    if tap "원문 가사 보기" first 2; then burst_shot lyrics-bar-3; fi
+    adb shell input swipe 540 1000 540 1500 300; sleep 1; burst_shot lyrics-bar-4
+    true
     # Provider chooser, from the "가사 제공: ..." status line.
     if tap "가사 제공" first 5; then
       shot lyrics-providers "Lyrics provider sheet"
@@ -755,7 +755,6 @@ section_proxy() {
 # Quick mode: only the screens a home/explore/artwork change can affect.
 if [ "${TOUR_QUICK:-0}" = "1" ]; then
   run_section section_home home
-  run_section section_explore explore
   sleep 30
   tap "대기" first 3 || true
   run_section section_now_playing now-playing
