@@ -111,6 +111,13 @@ object CoverTitles {
     /** A "원곡" label left on the original artist's name — never part of the name. */
     private val ORIGINAL_LABEL = Regex("""^\s*원곡\s*[:：-]?\s*""")
 
+    /**
+     * A "Cover" label glued to the name after it: "【Cover】Red Velvet" is
+     * normalised to "CoverRed Velvet", and the label is not part of the name
+     * (11-07 WDe0EBpuqnM: the search asked for "CoverRed Velvet").
+     */
+    private val COVER_LABEL = Regex("""^\s*(?:[Cc]over(?:ed)?|커버)(?:\s*[:：-]\s*)?(?=[A-Z가-힣ぁ-ヿ一-鿿])""")
+
     /** "cover by", "Covered By", "covey by", "coverby", "커버 by" — then the singer. */
     private val COVER_BY = Regex("""(?i)(?<![a-z])(?:cover(?:ed)?|covey|커버)\s*by\s*[:：]?\s*""")
 
@@ -763,7 +770,10 @@ object CoverTitles {
             if (split != null && isAllCapsLatin(split.second) && !isAllCapsLatin(split.first)) {
                 return songFirst(head, singer)
             }
-            return headCover(head, singer, looseDash = true)
+            // The same shape is "song - artist" (5nxb792c-b4: 허니츄러스 - 아이아이)
+            // as often as "artist - song", so the other reading is offered too.
+            val cover = headCover(head, singer, looseDash = true)
+            return if (split != null) cover?.copy(orderUnsure = true) else cover
         }
         // "원곡자 - 곡명 (Cover)" with no name: the channel is the singer.
         if (!allowBareTag) return null
@@ -1491,6 +1501,7 @@ object CoverTitles {
         }
         name = unquote(name.trim(' ', '(', ')', '[', ']', '-', '–', '·', ',', '"', '“', '”'))
         name = stripUploadSuffix(name)
+        name = COVER_LABEL.replace(name, "").trim()
         return name.takeIf { it.isNotEmpty() && it.length <= 60 }
     }
 
