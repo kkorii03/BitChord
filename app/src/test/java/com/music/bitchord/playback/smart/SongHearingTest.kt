@@ -11,6 +11,21 @@ import org.junit.Test
 
 class SongHearingTest {
 
+    @Test
+    fun `the opening goes to Groq only with a key and a later window stays Deepgram's`() {
+        val before = com.music.bitchord.data.lyrics.GroqWhisper.apiKey
+        try {
+            com.music.bitchord.data.lyrics.GroqWhisper.apiKey = "test-key"
+            assertEquals(true, SongHearing.groqFirst(40.0))
+            assertEquals(true, SongHearing.groqFirst(90.0))
+            assertEquals(false, SongHearing.groqFirst(420.0))
+            com.music.bitchord.data.lyrics.GroqWhisper.apiKey = " "
+            assertEquals(false, SongHearing.groqFirst(40.0))
+        } finally {
+            com.music.bitchord.data.lyrics.GroqWhisper.apiKey = before
+        }
+    }
+
     private fun rendition(key: String, cached: Long) = com.music.bitchord.playback.AudioCache.Rendition(key, 8_000_000L, cached)
 
     @Test
