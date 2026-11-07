@@ -458,10 +458,11 @@ object QualityUpgrade {
         playingDurationSec: Int?,
         report: SourceResolver.SearchReport = SourceResolver.SearchReport(),
         /**
-         * The sound comparison, when the caller has one. On a manual request
-         * it runs as candidates arrive, so a high-register copy is proved
-         * while the slow sources are still searching rather than after their
-         * timeout. Fallbacks are left unproved until they are actually tried.
+         * The sound comparison, when the caller has one. It runs as candidates
+         * arrive, so a high-register copy is proved while the slow sources are
+         * still searching rather than after their timeout. On a manual request
+         * fallbacks are left unproved until they are actually tried; on the
+         * automatic path see [KoQualityUpgrade.automaticProof].
          */
         verify: (suspend (TrackMatcher.Target, SourceStream) -> Boolean)? = null,
     ): SourceStream? {
@@ -512,7 +513,7 @@ object QualityUpgrade {
             // against the length the decoder is reporting. Measured here, the
             // difference was a 189-second cut swapped into a 163-second song,
             // which played for five seconds of silence and was then put back.
-            waiting.inFlight?.let { lookup ->
+            val fromLookup: (suspend () -> SourceStream?)? = waiting.inFlight?.let { lookup -> suspend {
                 val late = runCatching { lookup.await() }.getOrNull()
                 val slack = SourceResolver.upgradeSlackSec()
                 val sameLength = late != null &&
@@ -531,9 +532,9 @@ object QualityUpgrade {
                 }
                 if (late != null && sameLength &&
                     KoQualityUpgrade.allowsInFlight(mediaId, late) && // [KO] quality-retry
+                    KoQualityUpgrade.usableByThisLook(koManual, late.format) && // [KO] quality-race
                     SourceResolver.worthSwapping(late.format, waiting.playing)
                 ) {
-                    found = late
                     if (needsLosslessFollowUp(late.format)) {
                         followUps[mediaId] = waiting.copy(
                             target = waiting.target.copy(durationSec = effectiveDurationSec),
@@ -542,12 +543,18 @@ object QualityUpgrade {
                             servedBy = late.sourceConfigId,
                         )
                     }
+                    late
+                } else {
+                    null
+                }
+            } }
+            if (koManual) { // [KO] quality-manual
+                fromLookup?.invoke()?.let { late ->
+                    found = late
                     answered = true
                     conclusive = true
                     return late
                 }
-            }
-            if (koManual) { // [KO] quality-manual
                 val outcome = KoQualityUpgrade.manualLook(
                     mediaId, waiting, effectiveDurationSec, report, koLook.measuredVerify,
                     koLook.excludedSources, koLook.excludedHosts, koSession,
@@ -562,15 +569,27 @@ object QualityUpgrade {
             // again from scratch — this time waiting on every module, which is
             // what the live path could not afford to do. The source already
             // serving the track is left out — see [SourceResolver.upgradeFor].
-            SourceResolver.upgradeFor(
-                waiting.target.copy(durationSec = effectiveDurationSec),
-                playing = waiting.playing,
-                servedBy = waiting.servedBy,
-                excludeSources = koLook.excludedSources, // [KO] quality-retry
-                excludeHosts = koLook.excludedHosts, // [KO] quality-retry
-                manual = koManual, // [KO] quality-manual
-                report = report,
-            ).also {
+            //
+            // [KO] quality-race: and it does not wait for the lookup above to
+            // finish first. See [KoQualityUpgrade.firstAnswerOf].
+            val koTarget = waiting.target.copy(durationSec = effectiveDurationSec)
+            var koLate: SourceStream? = null
+            KoQualityUpgrade.firstAnswerOf<SourceStream>(
+                fromLookup?.let { ask -> suspend { ask().also { koLate = it } } },
+            ) {
+                SourceResolver.upgradeFor(
+                    koTarget,
+                    playing = waiting.playing,
+                    servedBy = waiting.servedBy,
+                    excludeSources = koLook.excludedSources, // [KO] quality-retry
+                    excludeHosts = koLook.excludedHosts, // [KO] quality-retry
+                    manual = koManual, // [KO] quality-manual
+                    report = report,
+                    sourceTimeoutMs = KoQualityUpgrade.AUTOMATIC_SOURCE_TIMEOUT_MS, // [KO] quality-race
+                    enough = { KoQualityUpgrade.isLosslessTier(it.format) }, // [KO] quality-race
+                    verify = KoQualityUpgrade.automaticProof(mediaId, koTarget, koLook.measuredVerify), // [KO] quality-race
+                )
+            }.also {
                 found = it
                 if (it != null && needsLosslessFollowUp(it.format)) {
                     followUps[mediaId] = waiting.copy(
@@ -586,7 +605,7 @@ object QualityUpgrade {
                 // A copy that opened while a better row failed (a fallback
                 // below the request) is not a verdict either: once the source
                 // is back the better row may open.
-                conclusive = report.allConclusive
+                conclusive = report.allConclusive || (it != null && it === koLate) // [KO] quality-race
                 answered = true
             }
         } finally {

@@ -284,6 +284,28 @@ internal fun PlaybackService.koPrefetchLosslessForNextPlay(
 }
 
 /**
+ * A Telegram candidate's audition reads off disk: the whole file is fetched
+ * first, and the header-only warm-up is skipped.
+ *
+ * A partly filled entry has no length, and a FLAC with no seek table cannot seek
+ * without one, so the audition sat at the top of the song buffering towards a
+ * position it could never reach. 11-07: `auditioning … at 1048576`, no second
+ * open, `never proved itself in 25097ms`, with the proof's copy of the same file
+ * already on TDLib's disk. The automatic path never met this because it has the
+ * whole file before it opens anything.
+ *
+ * Bounded by the audition's own ceiling; a read that stops short leaves what it
+ * got, and the audition judges that as it would anything else.
+ *
+ * @return whether this took the warm-up's place.
+ */
+internal suspend fun koPrefillTelegramAudition(uri: Uri, title: String?, stream: SourceStream): Boolean {
+    if (!KoQualityUpgrade.isTelegramStream(stream)) return false
+    withTimeoutOrNull(PlaybackService.UPGRADE_AUDITION_MS) { AudioCache.cacheWholeRendition(uri, title) }
+    return true
+}
+
+/**
  * The lossless copy of the track that is already playing replaces it as
  * soon as the whole file is on disk, through the spare player and a short
  * equal-power blend.

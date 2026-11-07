@@ -21,6 +21,13 @@ internal class DownloadProgress {
     @Volatile
     var failure: String? = null
 
+    /** How long the head took to land; the only figure that tells the network from the decoder. */
+    @Volatile
+    var headMs: Long = -1L
+        private set
+
+    private val startedNanos = System.nanoTime()
+
     private val monitor = Object()
 
     fun changed() {
@@ -29,6 +36,7 @@ internal class DownloadProgress {
 
     fun markFinished(error: Throwable? = null) {
         failure = error?.message?.takeIf { it.isNotBlank() } ?: error?.javaClass?.simpleName
+        headMs = (System.nanoTime() - startedNanos) / 1_000_000L
         finished = true
         changed()
     }
