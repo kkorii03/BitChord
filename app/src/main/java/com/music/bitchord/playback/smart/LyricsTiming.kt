@@ -647,6 +647,9 @@ object LyricsTiming {
         val (saved, clock) = when {
             entry.refineHeardKey == key && entry.refineHeardWords.isNotEmpty() ->
                 entry.refineHeardWords to clockOf(entry.refineHeardClock)
+            // Good enough to move a whole sheet, not one line: lines moved on Groq's words
+            // land worse than not moving them, 78% within 0.3 s against 91% (11-07, replay).
+            entry.aiRough -> emptyList<SavedWord>() to Clock.Unknown
             base?.byAi == true && entry.aiTextKey == key ->
                 entry.heardWords to clockOf(entry.heardClock)
             entry.aiTextKey == key ->

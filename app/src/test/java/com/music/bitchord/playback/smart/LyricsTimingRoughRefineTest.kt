@@ -44,6 +44,23 @@ class LyricsTimingRoughRefineTest {
         LyricsTiming.refineHeardKnown(context, "video", lines, LyricsTiming.Timing(base = null, manualMs = 0L))
     }
 
+    private fun timingWith(rough: Boolean): LyricsTiming.Timing? = runBlocking {
+        val key = lines.joinToString("\n") { it.text }.hashCode()
+        File(directory, "lyrics_timing_v1.json").writeText(
+            """{"entries":{"video":{"aiTextKey":$key,"aiEngine":"deepgram-whisper","aiRough":$rough,""" +
+                """"ai":{"knots":[0,500],"headRate":1.0,"tailRate":1.0,"rate":1.0,"match":90},""" +
+                """"heardWords":[{"t":"one","s":1500,"e":1700},{"t":"two","s":2500,"e":2700},{"t":"three","s":3500,"e":3700}]}}}""",
+        )
+        storeField.set(LyricsTiming, null)
+        LyricsTiming.timing(context, "video", lines, baseAllowed = true, measuredAllowed = true)
+    }
+
+    @Test
+    fun `no line moves on rough words but exact ones may`() {
+        assertTrue(timingWith(rough = false)?.perLine != null)
+        assertTrue(timingWith(rough = true)?.perLine == null)
+    }
+
     @Test
     fun `exact words reaching past the last line need no refine`() {
         assertTrue(known(rough = false))
