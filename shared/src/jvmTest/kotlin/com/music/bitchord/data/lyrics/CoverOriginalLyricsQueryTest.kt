@@ -39,6 +39,29 @@ class CoverOriginalLyricsQueryTest {
         assertEquals("노래 제목", LyricsQueryVariants.names(query.title, query.artist).first().title)
     }
 
+    /**
+     * 11-06 BipM3jsOmDs: "Kenshi Yonezu, Hikaru Utada - JANE DOE (오화요,아야 Cover)"
+     * was read song-first, so the artist list was searched as the song and KuGou
+     * answered with another song of that name (0 of 33 lines sung).
+     */
+    @Test
+    fun `an artist list before the dash is the original, not the song`() {
+        val query = CoverTitles.lyricsQuery(
+            song("Kenshi Yonezu, Hikaru Utada - JANE DOE (오화요,아야 Cover)", channel = "오화요,아야"),
+        )
+        assertEquals("JANE DOE", query.title)
+        assertEquals("Kenshi Yonezu, Hikaru Utada", query.artist)
+        assertTrue(query.artistKnown)
+    }
+
+    /** The ordinary "Song - Artist (Singer Cover)" still searches the song first. */
+    @Test
+    fun `a song before the dash still searches the song first`() {
+        val query = CoverTitles.lyricsQuery(song("innocent world - Mr.Children (오화요 Cover)", channel = "오화요"))
+        assertEquals("innocent world", query.title)
+        assertEquals("Mr.Children", query.artist)
+    }
+
     @Test
     fun `Title(Artist) searches the original title and artist`() {
         val query = CoverTitles.lyricsQuery(song("Tomboy((G)I-DLE)"))
