@@ -1634,7 +1634,12 @@ object LyricsTiming {
         // a refit that waits for the words still tells the in-flight check that
         // its sheet is gone, so its completion asks for this sheet to be fitted.
         if (current()) newestSongKey[videoId] = key
-        if (hearingBusy(videoId)) return@withContext false
+        if (hearingBusy(videoId)) {
+            // Words saved while that request is still in flight would wait for the
+            // next playback: its end asks again ([hearingFreed]), an event, not a poll.
+            noteRefitWaiting(videoId)
+            return@withContext false
+        }
         val texts = lines.filter { it.text.isNotBlank() }.map { it.text }
         val language = com.music.bitchord.data.lyrics.Deepgram.languageFor(texts)
         songSyncGate.withLock {
@@ -2815,6 +2820,7 @@ object LyricsTiming {
             created.invokeOnCompletion {
                 aiInFlight.remove(flight, created)
                 aiSlotFreed()
+                hearingFreed(videoId)
             }
             created.start()
         }
@@ -2867,6 +2873,35 @@ object LyricsTiming {
 
     /** Videos remembered as turned away; more than a playback's worth is not worth keeping. */
     private const val AI_WAITED_KEPT = 16
+
+    /**
+     * Videos whose refit was held because words were still being fetched for them
+     * ([hearingBusy]). The words that request saves are the longest there are, and
+     * nothing else would fit the sheet to them before the next playback (11-08
+     * npFa435R5bU: a 92 s opening's rate stood for the rest of its play).
+     */
+    private val refitWaiting: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    /** Records that [videoId]'s refit waits for its words request to end. */
+    internal fun noteRefitWaiting(videoId: String) {
+        if (refitWaiting.size >= AI_WAITED_KEPT) refitWaiting.clear()
+        refitWaiting.add(videoId)
+    }
+
+    /** A words request for [videoId] ended: a refit held for it asks again, once. */
+    internal fun hearingFreed(videoId: String) {
+        if (refitWaiting.remove(videoId)) _changes.tryEmit(videoId)
+    }
+
+    /**
+     * [SongHearing] kept new words for [videoId]. Exact words reaching further are what a
+     * refit is for, so the screen is asked now, through its usual path and the refit's own
+     * guards ([refit]: busy, due, replaced sheet), instead of at the next playback. Rough
+     * words never refit (they are what the exact ones replace), so they ask nothing.
+     */
+    internal fun wordsKept(videoId: String, rough: Boolean) {
+        if (!rough) _changes.tryEmit(videoId)
+    }
 
     /**
      * Who is still waiting on a shared flight. A next-prep bundle may start one
@@ -3337,6 +3372,9 @@ object LyricsTiming {
                     biasSampled = false,
                     aiEngine = ENGINE_DEEPGRAM_WHISPER,
                     aiRough = rough,
+                    // Made by today's fit: a refused refit must not drop it as an older
+                    // fit's stretch (a map held past the heard words has two knots).
+                    refitVersion = maxOf(entry.refitVersion, SongCheckWindow.FIT_VERSION),
                 )
             }
         }
@@ -3538,7 +3576,10 @@ object LyricsTiming {
         val running = songInFlight.putIfAbsent(flight, fresh) ?: fresh
         running.cancelledWithCaller(currentCoroutineContext()[Job], cancelWithCaller)
         if (running === fresh) {
-            fresh.invokeOnCompletion { songInFlight.remove(flight, fresh) }
+            fresh.invokeOnCompletion {
+                songInFlight.remove(flight, fresh)
+                hearingFreed(song.videoId)
+            }
             fresh.start()
         }
         val result = running.await()
@@ -4982,7 +5023,20 @@ private const val FIRM_FIT_LINES = 15
                 ) + " line=${straight?.matchPercent} used=${if (chosen === pieces && pieces != null) "pieces" else "line"}",
             videoId,
         )
-        return chosen
+        return chosen?.let { heldPastHeard(it, lastHeardMs) }
+    }
+
+    /**
+     * [answer] with its pace held to the record's own past the last heard word
+     * ([LyricsTimeMap.heldAfter]): continuous where the words end, at 1.0 after,
+     * until a refit on words that reach further replaces it. The floors judged the
+     * answer on the stretch the words covered, which this leaves as it is. No end
+     * stated ([Long.MAX_VALUE]) or none heard leaves the answer alone.
+     */
+    private fun heldPastHeard(answer: Adjustment.Mapped, lastHeardMs: Long): Adjustment.Mapped {
+        if (lastHeardMs <= 0L || lastHeardMs == Long.MAX_VALUE) return answer
+        val held = answer.map.heldAfter(answer.map.sourceAt(lastHeardMs))
+        return if (held === answer.map) answer else answer.copy(map = held)
     }
 
     // ---- By hand ----------------------------------------------------------------------

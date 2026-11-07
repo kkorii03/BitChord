@@ -509,8 +509,15 @@ internal object SongHearing {
 
     private fun save(app: Context, videoId: String, new: Saved) {
         runCatching {
-            synchronized(lockOf(videoId)) { writeFile(app, videoId, merged(readFile(app, videoId), new)) }
+            val changed = synchronized(lockOf(videoId)) {
+                val kept = readFile(app, videoId)
+                val next = merged(kept, new)
+                writeFile(app, videoId, next)
+                next != kept
+            }
             prune(app)
+            // The save is the event: a refit on these words need not wait for the next playback.
+            if (changed) LyricsTiming.wordsKept(videoId, new.rough)
         }.onFailure { TrackLog.w(TAG, "song-hear: not kept: ${it.message}", videoId) }
     }
 

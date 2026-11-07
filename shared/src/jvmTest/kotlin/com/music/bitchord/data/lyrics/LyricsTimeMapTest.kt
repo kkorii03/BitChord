@@ -340,4 +340,49 @@ class LyricsTimeMapTest {
             previous = mapped
         }
     }
+
+    @Test
+    fun aPaceReadOffAnOpeningIsNotCarriedPastIt() {
+        // 11-08 npFa435R5bU: 1.124 fitted on a 92 s opening, the cover 4.4 s late at 137 s.
+        val fitted = LyricsTimeMap.linear(1.124, 2_232L)
+        val held = fitted.heldAfter(80_000L)
+        // Up to the last heard moment: the fit, unchanged.
+        assertEquals(fitted.map(40_000L), held.map(40_000L))
+        assertEquals(fitted.map(80_000L), held.map(80_000L))
+        // Past it: the record's own pace from where the fit ended, with no jump.
+        assertEquals(fitted.map(80_000L) + 50_000L, held.map(130_000L))
+        assertEquals(1.0, held.tailRate)
+        assertEquals(1.124, held.headRate)
+        // A map already at 1.0 past its last knot is left alone.
+        val shift = LyricsTimeMap.shift(500L)
+        assertSame(shift, shift.heldAfter(80_000L))
+        // Kept on disk and read back the same.
+        assertEquals(held, LyricsTimeMap.unflatten(held.flatten(), held.headRate, held.tailRate))
+    }
+
+    @Test
+    fun knotsPastTheLastHeardMomentAreDropped() {
+        val pieces = assertNotNull(
+            LyricsTimeMap.through(listOf(0L, 50_000L, 100_000L), listOf(1_000L, 56_000L, 112_000L), 1.1, 1.12),
+        )
+        val held = pieces.heldAfter(60_000L)
+        assertEquals(pieces.map(60_000L), held.map(60_000L))
+        assertEquals(pieces.map(30_000L), held.map(30_000L))
+        assertEquals(pieces.map(60_000L) + 40_000L, held.map(100_000L))
+        assertEquals(3, held.knots)
+    }
+
+    @Test
+    fun sourceAtInvertsTheMap() {
+        val line = LyricsTimeMap.linear(1.124, 2_232L)
+        for (at in listOf(0L, 10_000L, 92_000L, 200_000L)) {
+            assertTrue(abs(line.sourceAt(line.map(at)) - at) <= 1, "at $at")
+        }
+        val pieces = assertNotNull(
+            LyricsTimeMap.through(listOf(0L, 50_000L, 100_000L), listOf(1_000L, 56_000L, 112_000L), 1.1, 1.12),
+        )
+        for (at in listOf(-5_000L, 0L, 25_000L, 50_000L, 75_000L, 100_000L, 150_000L)) {
+            assertTrue(abs(pieces.sourceAt(pieces.map(at)) - at) <= 1, "pieces at $at")
+        }
+    }
 }
