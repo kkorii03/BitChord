@@ -30,6 +30,36 @@ object SongCheckWindow {
      */
     fun needsFullOpening(result: String): Boolean = result != "no-answer"
 
+    /**
+     * The opening a playing video hears first, with the song check's quick request
+     * (Groq when it can answer, which it does up to two minutes of sound). A video's
+     * only other words were one whole-song Deepgram request, which answered 8-184 s in
+     * on 11-08's phone run: WwFUZS8dv_4 kept a measurement 1.1 s early for its whole play.
+     */
+    const val VIDEO_QUICK_SECONDS = 90.0
+
+    /**
+     * Whether a video's words request also hears [VIDEO_QUICK_SECONDS] first, beside the
+     * whole-song request that refines it. Only for the row playing: a next row has its
+     * head only, and its bundle waits on the request. Only while the word engine is still
+     * due on this sheet: a kept answer is not bought twice. A song has its own song check.
+     */
+    fun videoQuickFirst(isVideo: Boolean, nextRow: Boolean, wordEngineDue: Boolean): Boolean =
+        isVideo && !nextRow && wordEngineDue
+
+    /**
+     * Whether a video's opening is heard as its track starts, before its lyrics are in:
+     * a streamed video (a downloaded one is decoded from its file, at the gate), with
+     * the quick engine set up, and the same switches every automatic listen obeys.
+     */
+    fun videoHearAtStart(
+        isVideo: Boolean,
+        streamed: Boolean,
+        quickEngine: Boolean,
+        heavyWorkAllowed: Boolean,
+        aiTimingAhead: Boolean,
+    ): Boolean = isVideo && streamed && quickEngine && heavyWorkAllowed && aiTimingAhead
+
         /**
      * Whether an answer from rough words may be written. Not over an exact fit of the same
      * sheet, or Deepgram answering first would lose to Groq arriving after it.

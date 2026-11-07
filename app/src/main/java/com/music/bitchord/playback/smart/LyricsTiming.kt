@@ -3037,6 +3037,16 @@ object LyricsTiming {
         if (deepgramWanted && com.music.bitchord.data.lyrics.Deepgram.usable) {
             val language = com.music.bitchord.data.lyrics.Deepgram.languageFor(texts)
             val song = Song(videoId = videoId, title = title, artist = artist, thumbnailUrl = null, isVideo = isVideo)
+            // A playing video also hears its opening with the song check's quick request
+            // (Groq when it can answer), beside the whole-song request below, which still
+            // runs and replaces it. That request alone answered 8-184 s in on 11-08's phone
+            // run, and WwFUZS8dv_4 got nothing during its play. Started alongside, so the
+            // exact request is not held up; a child of this flight, so it ends with it.
+            if (SongCheckWindow.videoQuickFirst(isVideo, nextRow = probe != null, wordEngineDue = ENGINE_DEEPGRAM_WHISPER in engines)) {
+                CoroutineScope(currentCoroutineContext()).launch {
+                    quickVideoAnswer(context, videoId, song, lines, sung, key, language)
+                }
+            }
             for (name in listOf(ENGINE_DEEPGRAM_WHISPER, ENGINE_WHISPER).filter { it in engines }) {
                 val asked = System.currentTimeMillis()
                 // Whatever of the video's sound has landed, up to all of it: a
@@ -3224,6 +3234,170 @@ object LyricsTiming {
         sampleBias(context, videoId, lines, key)
         _changes.tryEmit(videoId)
         return adjustment
+    }
+
+    /**
+     * The quick half of a playing video's words request: the opening the song check
+     * hears first ([SongCheckWindow.VIDEO_QUICK_SECONDS], Groq when it can answer),
+     * fitted with the same [fitHeard] and video floors as the whole-song answer, and
+     * kept as an interim answer until that one lands ([keepQuickVideoAnswer]). Spends
+     * no engine turn: the whole-song request beside it is the one that does.
+     */
+    private suspend fun quickVideoAnswer(
+        context: Context,
+        videoId: String,
+        song: Song,
+        lines: List<LyricLine>,
+        sung: List<IndexedValue<LyricLine>>,
+        key: Int,
+        language: String,
+    ) {
+        try {
+            val quick = hearThrough429(
+                context,
+                song,
+                SongCheckWindow.VIDEO_QUICK_SECONDS,
+                SONG_FIRST_LEAST_SECONDS,
+                language,
+                reuseFrom = SONG_FIRST_LEAST_SECONDS,
+                exact = false,
+            ) ?: return
+            val heard = quick.words
+            val inReach = sung.filter { it.value.timeMs <= quick.audioMs }
+            val placement = if (heard != null && heard.size >= MIN_AI_LINES && inReach.size >= MIN_AI_LINES) {
+                LyricsWordAlign.placeLinesDetailed(inReach.map { it.value.text }, heard)
+            } else {
+                null
+            }
+            val fitted = placement?.let {
+                fitHeard(videoId, lines, inReach.map { s -> s.index }, it, heard.orEmpty().maxOfOrNull { w -> w.endMs } ?: 0L) { fit, moved ->
+                    LyricsAiGuard.allowsAiTiming(true, fit.matchPercent, moved)
+                }
+            }?.takeIf { aiMayApply(lines, it, isVideo = true) }
+            TrackLog.d(
+                TAG,
+                "video quick listen ($language, ${quick.audioMs / 1000}s${if (quick.rough) ", rough" else ""}): " + when {
+                    heard == null -> "no answer http=${quick.httpCode}"
+                    fitted == null -> "${heard.size} words, ${inReach.size} lines in reach: no fit"
+                    else -> "${heard.size} words, shift ${shownShiftMs(lines, fitted)} ms, ${fitted.matchPercent}% agree"
+                },
+                videoId,
+            )
+            if (fitted == null || heard == null) return
+            if (keepQuickVideoAnswer(context, videoId, key, fitted, heard, quick.clock, quick.rough)) {
+                _changes.tryEmit(videoId)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (e: Exception) {
+            // Its failure must not cancel the whole-song request it runs beside.
+            TrackLog.w(TAG, "video quick listen failed: ${e.message}", videoId)
+        }
+    }
+
+    /**
+     * Writes a video's quick answer for the sheet [key] unless an exact fit of the same
+     * sheet is already kept (the whole-song answer landed first, or a replay) or the
+     * listener asked for the answer showing. Rough words keep [Entry.aiRough], so no line
+     * moves on them alone and the refine still listens. True when it was written.
+     */
+    internal suspend fun keepQuickVideoAnswer(
+        context: Context,
+        videoId: String,
+        key: Int,
+        fitted: Adjustment.Mapped,
+        heard: List<LyricsWordAlign.Heard>,
+        clock: Clock,
+        rough: Boolean,
+    ): Boolean {
+        if (dropForReplacedSheet(videoId, key)) return false
+        var kept = false
+        store(context).update(videoId) { entry ->
+            val sameSheet = entry.aiTextKey == key
+            kept = SongCheckWindow.roughMayApply(sameSheet, entry.ai != null, entry.aiRough) &&
+                !(entry.aiPreferred && sameSheet)
+            if (!kept) {
+                entry
+            } else {
+                entry.copy(
+                    clockVersion = CLOCK_VERSION,
+                    aiTextKey = key,
+                    ai = savedOf(fitted),
+                    aiShiftMs = null,
+                    aiStarts = null,
+                    aiFailedKey = null,
+                    heardWords = heard.take(MAX_HEARD_WORDS)
+                        .map { word -> SavedWord(t = word.text, s = word.startMs, e = word.endMs) },
+                    aiClock = clock.saved(),
+                    heardClock = clock.saved(),
+                    heardCheckKey = null,
+                    heardCheckWords = emptyList(),
+                    heardCheckClock = null,
+                    aiPreferred = entry.aiPreferred && sameSheet,
+                    biasSampled = false,
+                    aiEngine = ENGINE_DEEPGRAM_WHISPER,
+                    aiRough = rough,
+                )
+            }
+        }
+        if (kept) TrackLog.d(TAG, "video quick answer kept${if (rough) " (rough)" else ""}", videoId)
+        return kept
+    }
+
+    /**
+     * A playing video's opening, heard as its track starts rather than once its lyrics
+     * are in: the lookup may take up to its 12 s deadline (11-08 WwFUZS8dv_4: 11 s). The
+     * words are kept per recording and language ([SongHearing]), so the quick listen of
+     * [askAi] reads them for free when the sheet's language is the title's, and asks once
+     * more when it is not. Nothing is fitted or spent here. Waits for the stream that
+     * names the recording on its own open event, bounded; never polls.
+     */
+    suspend fun hearVideoAtStart(
+        context: Context,
+        videoId: String,
+        title: String,
+        artist: String,
+        streamed: Boolean,
+    ) {
+        if (!SongCheckWindow.videoHearAtStart(
+                isVideo = true,
+                streamed = streamed,
+                quickEngine = com.music.bitchord.data.lyrics.GroqWhisper.apiKey.isNotBlank(),
+                heavyWorkAllowed = AppSettings.heavyWorkAllowed,
+                aiTimingAhead = AppSettings.aiTimingAhead.value,
+            )
+        ) return
+        if (LyricsAiGuard.deepgramSkipReason(title) != null) return
+        withTimeoutOrNull(START_HEAR_STREAM_WAIT_MS) {
+            AudioCache.served
+                .onSubscription { if (VersionAudioAligner.renditionToMeasure(videoId) != null) emit(videoId) }
+                .first { it == videoId }
+        } ?: return
+        val song = Song(videoId = videoId, title = title, artist = artist, thumbnailUrl = null, isVideo = true)
+        val language = com.music.bitchord.data.lyrics.Deepgram.languageFor(listOf(title))
+        val heard = try {
+            hearThrough429(
+                context,
+                song,
+                SongCheckWindow.VIDEO_QUICK_SECONDS,
+                SONG_FIRST_LEAST_SECONDS,
+                language,
+                reuseFrom = SONG_FIRST_LEAST_SECONDS,
+                exact = false,
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (e: Exception) {
+            // Runs on the screen's scope: a failed listen must not take the screen with it.
+            TrackLog.w(TAG, "video heard at start failed: ${e.message}", videoId)
+            return
+        }
+        TrackLog.d(
+            TAG,
+            "video heard at start ($language): ${heard?.words?.size ?: 0} words, " +
+                "${(heard?.audioMs ?: 0L) / 1000}s http=${heard?.httpCode}",
+            videoId,
+        )
     }
 
     /**
@@ -4546,6 +4720,9 @@ object LyricsTiming {
 
     /** A song's first pass goes with this much when the window is slow to land. */
     private const val SONG_FIRST_LEAST_SECONDS = 24.0
+
+    /** How long a video heard at its start waits for its stream to open; a stream that never opens has nothing to hear. */
+    private const val START_HEAR_STREAM_WAIT_MS = 30_000L
 
 /** Placed lines from which their own agreement, not the sheet's length, judges a fit. */
 private const val FIRM_FIT_LINES = 15
