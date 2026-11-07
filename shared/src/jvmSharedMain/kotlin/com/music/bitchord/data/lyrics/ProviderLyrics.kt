@@ -78,6 +78,9 @@ object KaraokeLrc {
     private val PREFIX_WORD = Regex("""\((\d{1,8}),(\d{1,8})(?:,\d{1,8})?\)([^()]*)""")
     private val SUFFIX_WORD = Regex("""([^()]*)\((\d{1,8}),(\d{1,8})(?:,\d{1,8})?\)""")
     private val WORD_TIME = Regex("""\(\d{1,8},\d{1,8}(?:,\d{1,8})?\)""")
+    /** A KuGou-KRC word stamp: offset and length relative to the line's own stamp. */
+    private val KRC_WORD = Regex("""<(\d{1,8}),(\d{1,8})(?:,-?\d{1,3})?>([^<>]*)""")
+    private val KRC_STAMP = Regex("""<\d{1,8},\d{1,8}(?:,-?\d{1,3})?>""")
     private val CONTENT = Regex("""LyricContent\s*=\s*\"([^\"]*)\"""", RegexOption.IGNORE_CASE)
 
     fun looksLike(raw: String): Boolean = lyricContent(raw).lineSequence().any { line ->
@@ -104,11 +107,15 @@ object KaraokeLrc {
                     timedRun(word.groupValues[1], word.groupValues[2], word.groupValues[3])
                 }.toList(),
             )
-            val words = if (prefixed.sumOf { it.text.length } >= suffixed.sumOf { it.text.length }) prefixed else suffixed
+            // KuGou KRC and Soda Music put the stamp before the word and give
+            // its offset relative to the line's stamp — see [krcWords].
+            val words = krcWords(lineStart, body).ifEmpty {
+                if (prefixed.sumOf { it.text.length } >= suffixed.sumOf { it.text.length }) prefixed else suffixed
+            }
             if (words.isEmpty()) return@mapNotNull null
             LyricLine(
                 timeMs = minOf(lineStart, words.first().startMs),
-                text = EnhancedLrc.decodeEntities(body.replace(WORD_TIME, "")).trim(),
+                text = EnhancedLrc.decodeEntities(KRC_STAMP.replace(body.replace(WORD_TIME, ""), "")).trim(),
                 words = words,
                 sungUntilMs = (lineStart + lineDuration).takeIf { lineDuration > 0 },
             )
@@ -119,6 +126,17 @@ object KaraokeLrc {
     private fun timedRun(text: String, start: String, duration: String): TimedRun {
         val startMs = start.toLong()
         return TimedRun(startMs, startMs + duration.toLong(), EnhancedLrc.decodeEntities(text))
+    }
+
+    private fun krcWords(lineStart: Long, body: String): List<LyricWord> {
+        // A KRC row opens with its first word stamp; anything else is not KRC.
+        if (!body.trimStart().startsWith("<")) return emptyList()
+        return wordsFromRuns(
+            KRC_WORD.findAll(body).map { word ->
+                val start = lineStart + word.groupValues[1].toLong()
+                TimedRun(start, start + word.groupValues[2].toLong(), EnhancedLrc.decodeEntities(word.groupValues[3]))
+            }.toList(),
+        )
     }
 
     private fun lyricContent(raw: String): String = CONTENT.find(raw)?.groupValues?.get(1)

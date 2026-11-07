@@ -29,7 +29,8 @@ class LyricsSourceOrderTest {
         assertTrue(order.indexOf(LyricsSource.BINI_LYRICS) < order.indexOf(LyricsSource.BETTER_LYRICS))
         assertTrue(order.indexOf(LyricsSource.LYRICS_PLUS) < order.indexOf(LyricsSource.KUGOU))
         // KuGou's KRC is word-timed (11-07), so it now leads the Korean line-timed services.
-        assertTrue(order.indexOf(LyricsSource.KUGOU) < order.indexOf(LyricsSource.VIBE))
+        assertTrue(order.indexOf(LyricsSource.KUGOU) < order.indexOf(LyricsSource.SODA))
+        assertTrue(order.indexOf(LyricsSource.SODA) < order.indexOf(LyricsSource.VIBE))
         assertTrue(order.indexOf(LyricsSource.VIBE) < order.indexOf(LyricsSource.BUGS))
         assertTrue(order.indexOf(LyricsSource.BUGS) < order.indexOf(LyricsSource.LRCLIB))
         assertTrue(order.indexOf(LyricsSource.MUSIXMATCH) < order.indexOf(LyricsSource.GENIUS))

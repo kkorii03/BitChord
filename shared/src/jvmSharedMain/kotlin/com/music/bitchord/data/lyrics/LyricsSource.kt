@@ -110,6 +110,15 @@ enum class LyricsSource(
         detail = "KRC 단어 시각, 영어권 외 음악에 강함",
         wordSynced = true,
     ),
+    // Soda Music's own official word sheet (see [SodaMusic]): KRC-shaped rows
+    // over a Chinese catalogue. The name search is held to [RecordingMatch],
+    // so a namesake is refused rather than timed. Behind KuGou, whose KRC
+    // covers much of the same ground, and ahead of the line-timed services.
+    SODA(
+        label = "Soda Music",
+        detail = "汽水音乐 KRC 단어 시각, 중국 곡에 강함",
+        wordSynced = true,
+    ),
     // The Korean services: whole lines only, but the Korean catalogue the
     // Apple hosts above miss — indie, OST, the originals covers are made of.
     // Ahead of every line-only fallback below, so a Korean song gets its own
