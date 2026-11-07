@@ -75,9 +75,34 @@ and at least 90% within 300 ms), for comparing past runs.
 The report is diagnostic only: it is wrapped so a report failure prints a label
 and never fails the run. The existing baseline assertions are unchanged.
 
+## Corpus run 2026-11-07 (`Sync replay` run 42337090753)
+
+`3 tests completed, 1 failed`: the plain-number score test and the diagnostic
+report passed, the baseline assertion failed. The same six songs failed on the
+two runs before this change too (42335384847, 42337404431), so their ids and
+figures are:
+
+| id | fit | expected | error | baseline | tolerance |
+| --- | --- | --- | --- | --- | --- |
+| `-RJSbO8UZVY` | 18490 | 2525 | 15965 | 2525 | 1500 |
+| `8gyLR4NfMiI` | 22480 | 2094 | 20386 | 2094 | 300 |
+| `OxgiiyLp5pk` | 25670 | -265 | 25935 | 265 | 300 |
+| `YQHsXMglC9A` | 75050 | 1899 | 73151 | 1899 | 300 |
+| `ekzHIouo8Q4` | 11677 | -36 | 11713 | 36 | 300 |
+| `l4Z9kkYAggc` | 440 | 97 | 343 | 12 | 300 |
+
+The other 79 of 85 songs stay inside baseline + tolerance. The report puts the
+cause on the provider sheet rather than on the fit: for `OxgiiyLp5pk` the
+`base` stage scores 180 ms median but its first-line shift is 25670 ms, and for
+`ekzHIouo8Q4` the provider scores 173 ms while the replay fit moves the sheet
+11503 ms. `scripts/replay_pack.py` prefers the whole-song `.opus` whisper-large
+words over the app's own 90 s file, so for these songs the replay fits a
+different transcript than the round the baseline was scored in. That pairing is
+the thing to settle before this gate can be trusted; it lives in the pack
+script, not in this test.
+
 ## Not recorded here
 
-No corpus run was performed in this lane, and no corpus results are written in
-this file. The numbers depend on the private corpus and must come from an actual
-`SyncReplayTest` run. Nothing about lyric text is printed: only song ids,
-numbers and `pass`/`fail`.
+No corpus run was performed in this lane before the run above, and the numbers
+depend on the private corpus. Nothing about lyric text is printed: only song
+ids, numbers and `pass`/`fail`.
