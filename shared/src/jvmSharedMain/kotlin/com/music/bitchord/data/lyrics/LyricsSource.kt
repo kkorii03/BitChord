@@ -214,7 +214,8 @@ enum class LyricsSource(
         /** A saved order as this build should use it: an untouched old default becomes today's. */
         fun upgraded(saved: List<LyricsSource>): List<LyricsSource> {
             val known = saved.filter { it in offered }.distinct().map { it.name }
-            val added = setOf(SYNCLRC.name, QQ_MUSIC.name)
+            // Sources added on or after 11-07: a saved old default never had them.
+            val added = setOf(SYNCLRC.name, QQ_MUSIC.name, SODA.name)
             return if (known.filterNot { it in added } == DEFAULT_BEFORE_1107) offered else ordered(saved)
         }
 

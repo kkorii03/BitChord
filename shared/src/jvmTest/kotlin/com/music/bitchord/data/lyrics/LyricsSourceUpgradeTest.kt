@@ -30,6 +30,12 @@ class LyricsSourceUpgradeTest {
     }
 
     @Test
+    fun `an old default saved by a build that already had some new sources also becomes today's`() {
+        val savedWithSome = oldDefault.take(9) + listOf(LyricsSource.SYNCLRC, LyricsSource.QQ_MUSIC) + oldDefault.drop(9)
+        assertEquals(LyricsSource.offered, LyricsSource.upgraded(savedWithSome))
+    }
+
+    @Test
     fun `an order the listener made is kept, with new sources slotted in`() {
         val mine = listOf(LyricsSource.LRCLIB) + oldDefault.filterNot { it == LyricsSource.LRCLIB }
         val upgraded = LyricsSource.upgraded(mine)
