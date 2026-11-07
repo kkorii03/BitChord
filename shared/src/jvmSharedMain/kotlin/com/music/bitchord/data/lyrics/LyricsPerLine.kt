@@ -19,7 +19,7 @@ import kotlin.math.roundToLong
 object LyricsPerLine {
 
     /** A line needs this many heard words in order before it may move on its own. */
-    const val MIN_ANCHOR_WORDS = 2
+    const val MIN_ANCHOR_WORDS = 4
 
     /** Words that scatter more than this around their line are not one placement. */
     const val MAX_ANCHOR_MAD_MS = 120L
