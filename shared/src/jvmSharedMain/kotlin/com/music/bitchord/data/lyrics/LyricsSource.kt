@@ -132,8 +132,8 @@ enum class LyricsSource(
     ),
     KUGOU(
         label = "KuGou",
-        detail = "줄 단위, 영어권 외 음악에 강함",
-        wordSynced = false,
+        detail = "KRC 단어 시각, 영어권 외 음악에 강함",
+        wordSynced = true,
     ),
     LRCLIB(
         label = "LRCLIB",

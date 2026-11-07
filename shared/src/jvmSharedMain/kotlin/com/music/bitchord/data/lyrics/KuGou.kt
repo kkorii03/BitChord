@@ -5,7 +5,10 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.util.Base64
+import java.util.zip.InflaterInputStream
 import kotlin.math.abs
 import kotlin.math.min
 
@@ -36,7 +39,15 @@ object KuGou {
         // A candidate whose file turns out to be the "no words" placeholder is
         // a miss, not an answer: the next one is tried instead.
         fun fetch(candidate: Candidate): List<LyricLine>? {
-            val lrc = download(candidate.id, candidate.accesskey) ?: return null
+            val krc = download(candidate.id, candidate.accesskey, "krc")
+                ?.let(::decodeKrc)
+                ?.takeIf { it.isNotEmpty() && !isInstrumentalPlaceholder(it) }
+            if (krc != null) return krc
+            val lrc = download(candidate.id, candidate.accesskey, "lrc")
+                ?.let { runCatching { String(Base64.getDecoder().decode(it), Charsets.UTF_8) }.getOrNull() }
+                ?.stripCredits()
+                ?.takeUnless { it.isInstrumentalNotice() }
+                ?: return null
             return LrcLib.parseLrc(lrc).takeIf { it.isNotEmpty() && !isInstrumentalPlaceholder(it) }
         }
 
@@ -162,9 +173,9 @@ object KuGou {
         return response?.candidates
     }
 
-    private fun download(id: String, accessKey: String): String? {
+    private fun download(id: String, accessKey: String, fmt: String): String? {
         val url = "https://lyrics.kugou.com/download".toHttpUrl().newBuilder()
-            .addQueryParameter("fmt", "lrc")
+            .addQueryParameter("fmt", fmt)
             .addQueryParameter("charset", "utf8")
             .addQueryParameter("client", "pc")
             .addQueryParameter("ver", "1")
@@ -174,11 +185,79 @@ object KuGou {
         val body = lyricsGet(url.toString()) ?: return null
         val response = runCatching { lyricsJson.decodeFromString<DownloadResponse>(body) }.getOrNull()
             ?: return null
-        val decoded = runCatching {
-            Base64.getDecoder().decode(response.content).toString(Charsets.UTF_8)
-        }.getOrNull() ?: return null
-        return decoded.stripCredits().takeUnless { it.isInstrumentalNotice() }
+        return response.content.takeUnless { it.isBlank() }
     }
+
+    /**
+     * A KRC file: the four ASCII bytes `krc1`, then a zlib stream XORed with
+     * [KRC_KEY]. Its lines carry `<offset,duration,0>` per word, offsets relative
+     * to the line's own stamp — the word timing the plain LRC file lacks.
+     *
+     * Any doubt returns null, so the caller falls back to the plain LRC: the
+     * bytes come from the network and the decompressed size is bounded so a
+     * malformed or hostile file cannot expand without limit.
+     */
+    internal fun decodeKrc(content: String): List<LyricLine>? = runCatching {
+        val raw = Base64.getDecoder().decode(content)
+        if (raw.size <= KRC_HEADER.size || String(raw, 0, KRC_HEADER.size, Charsets.US_ASCII) != "krc1") {
+            return@runCatching null
+        }
+        val encrypted = ByteArray(raw.size - KRC_HEADER.size) { index ->
+            (raw[index + KRC_HEADER.size].toInt() xor KRC_KEY[index % KRC_KEY.size].toInt()).toByte()
+        }
+        val text = inflateBounded(encrypted) ?: return@runCatching null
+        parseKrc(text)
+    }.getOrNull()
+
+    private fun inflateBounded(encrypted: ByteArray): String? {
+        InflaterInputStream(ByteArrayInputStream(encrypted)).use { input ->
+            val out = ByteArrayOutputStream()
+            val buffer = ByteArray(8 * 1024)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                if (out.size() + read > MAX_KRC_BYTES) return null
+                out.write(buffer, 0, read)
+            }
+            return String(out.toByteArray(), Charsets.UTF_8).removePrefix("\uFEFF")
+        }
+    }
+
+    private fun parseKrc(text: String): List<LyricLine> {
+        val lines = ArrayList<LyricLine>()
+        for (row in text.lineSequence()) {
+            val match = KRC_LINE.find(row.trim()) ?: continue
+            val lineStart = match.groupValues[1].toLong()
+            val body = match.groupValues[3]
+            val words = ArrayList<LyricWord>()
+            var mark = KRC_WORD.find(body)
+            while (mark != null) {
+                val next = KRC_WORD.find(body, mark.range.last + 1)
+                val word = body.substring(mark.range.last + 1, next?.range?.first ?: body.length).trim()
+                if (word.isNotEmpty()) {
+                    val start = lineStart + mark.groupValues[1].toLong()
+                    words += LyricWord(start, start + mark.groupValues[2].toLong(), word)
+                }
+                mark = next
+            }
+            lines += LyricLine(
+                timeMs = lineStart,
+                text = KRC_WORD.replace(body, "").trim(),
+                words = words,
+            )
+        }
+        return lines
+    }
+
+    private const val MAX_KRC_BYTES = 2_000_000
+    private val KRC_HEADER = "krc1".toByteArray(Charsets.US_ASCII)
+    /** Fixed scramble key of the KRC stream, not a credential. */
+    private val KRC_KEY = byteArrayOf(
+        0x40, 0x47, 0x61, 0x77, 0x5e, 0x32, 0x74, 0x47,
+        0x51, 0x36, 0x31, 0x2d, 0xce.toByte(), 0xd2.toByte(), 0x6e, 0x69,
+    )
+    private val KRC_LINE = Regex("""^\[(\d{1,9}),(\d{1,9})](.*)$""")
+    private val KRC_WORD = Regex("""<(\d{1,9}),(\d{1,9})(?:,-?\d+)?>""")
 
     private fun keyword(title: String, artist: String, album: String?) = Keyword(
         buildString {
