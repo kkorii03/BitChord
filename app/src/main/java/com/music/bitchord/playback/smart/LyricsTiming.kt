@@ -1441,6 +1441,8 @@ object LyricsTiming {
         // Only word-level transcripts serve a refine; Gemini's are line-level.
         val wordLevel = entry.aiEngine != null && entry.aiEngine != ENGINE_GEMINI
         if (!wordLevel || entry.aiTextKey != key || entry.heardWords.isEmpty()) return false
+        // Rough words are what the refine is there to replace.
+        if (entry.aiRough) return false
         // An answer's opening knows nothing of the lines past it: 137 of 139
         // listens stopped at 40 or 90 s, because this said "known" after them.
         return lastLineMs(lines) < entry.heardWords.maxOf { it.e } + RefineExtendPolicy.MARGIN_MS
@@ -2974,6 +2976,7 @@ object LyricsTiming {
                     // 90 s clears an MV's intro; fewer could spend this turn on no lines, with no second pass.
                     reuseFrom = VideoAudio.SONG_CHECK_SECONDS,
                     stillWanted = { flightStillWanted(flightJob) },
+                    exact = true,
                 ) ?: break
                 audioPresent = true
                 listenedClock = hearing.clock
@@ -3139,6 +3142,7 @@ object LyricsTiming {
                 aiPreferred = it.aiPreferred && it.aiTextKey == key,
                 biasSampled = false,
                 aiEngine = engine,
+                aiRough = false,
             )
         }
         sampleBias(context, videoId, lines, key)
@@ -3616,6 +3620,14 @@ object LyricsTiming {
         if (check.result == "no-words") return false
         val checkClock = check.clock
         val fitted = check.fitted
+        if (fitted != null && check.rough) {
+            // Deepgram may have answered while Groq was still on its way.
+            val now = store(context).get(song.videoId)
+            if (!SongCheckWindow.roughMayApply(now?.aiTextKey == key, now?.ai != null, now?.aiRough == true)) {
+                TrackLog.d(TAG, "song-sync: rough answer late, the exact fit stands", song.videoId)
+                return true
+            }
+        }
         if (fitted == null) {
             // The engine answered but its transcript does not fit this sheet.
             // Keep the words as wrong-song evidence; no timing is applied.
@@ -3652,6 +3664,7 @@ object LyricsTiming {
                 aiPreferred = it.aiPreferred && it.aiTextKey == key,
                 biasSampled = false,
                 aiEngine = engine,
+                aiRough = check.rough,
                 songRetryKey = null,
                 songRetryAtMs = null,
             )
@@ -3801,7 +3814,7 @@ object LyricsTiming {
             }
         }
         recordSongAttempt(context, song.videoId, key, engine, answer.httpCode, probe, retry)
-        return SongCheck("applied", fitted, heard, match, shift, seconds, answer.httpCode, heard.size, clock = listenClock, detail = detail)
+        return SongCheck("applied", fitted, heard, match, shift, seconds, answer.httpCode, heard.size, clock = listenClock, detail = detail, rough = answer.rough)
     }
 
     /**
@@ -3847,6 +3860,8 @@ object LyricsTiming {
         val clock: Clock = Clock.Unknown,
         /** The line counts behind [match], for the `applied` log line. */
         val detail: String = "",
+        /** Fitted from [SongHearing.Heard.rough] words. */
+        val rough: Boolean = false,
     )
 
     /**
@@ -4029,6 +4044,7 @@ object LyricsTiming {
                 heardCheckClock = null,
                 aiPreferred = false,
                 aiEngine = null,
+                aiRough = false,
                 aiAttemptedKey = null,
                 aiAttemptedEngines = emptyList(),
                 whisperKey = null,
@@ -4339,6 +4355,7 @@ object LyricsTiming {
                         aiPreferred = false,
                         biasSampled = false,
                         aiEngine = ENGINE_DEEPGRAM_WHISPER,
+                        aiRough = check.rough,
                         songRetryKey = null,
                         songRetryAtMs = null,
                     )
@@ -4908,6 +4925,8 @@ private const val FIRM_FIT_LINES = 15
         val refineHeardClock: String? = null,
         /** How much of the song [refineHeardWords] covers, in seconds; 0 on entries saved before this was kept. */
         val refineHeardSeconds: Double = 0.0,
+        /** The answer in [ai] came off [SongHearing.Heard.rough] words, which Deepgram's are still to replace. */
+        val aiRough: Boolean = false,
         /** The once-only longer listen has been made (or the song ends before it could help); see [RefineExtendPolicy]. */
         val refineHeardExtended: Boolean = false,
         /** What [refit] last judged: the fit's version, the sheet, how far the words reached. */

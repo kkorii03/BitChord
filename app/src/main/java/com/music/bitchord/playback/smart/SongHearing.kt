@@ -103,7 +103,7 @@ internal object SongHearing {
         val rough: Boolean = false,
     ) {
         /** These words with no reply code: no engine is spent, and a waiting retry or song check stands. */
-        fun askedNothing() = Heard(words, audioMs, clock, httpCode = null, fromStore = true)
+        fun askedNothing() = Heard(words, audioMs, clock, httpCode = null, fromStore = true, rough = rough)
     }
 
     @Serializable
@@ -142,13 +142,12 @@ internal object SongHearing {
 
     /**
      * [kept] with [new] taken in: one per recording and language, the longer stays. Exact
-     * words replace [Saved.rough] ones of about the same length, or the opening would stay rough.
+     * words always replace [Saved.rough] ones and never the reverse, whatever the length:
+     * a refit only reads exact words, so losing them would leave the rough fit for good.
      */
     internal fun merged(kept: List<Saved>, new: Saved): List<Saved> {
         val same = kept.firstOrNull { it.recording == new.recording && it.language == new.language }
-        if (same != null && same.rough && !new.rough && new.seconds + NOTHING_NEW_SECONDS >= same.seconds) {
-            return kept.filterNot { it === same } + new
-        }
+        if (same != null && same.rough && !new.rough) return kept.filterNot { it === same } + new
         if (same != null && !same.rough && new.rough) return kept
         if (same != null && (same.whole || same.seconds >= new.seconds) && !new.whole) return kept
         return kept.filterNot { it === same } + new
@@ -208,10 +207,12 @@ internal object SongHearing {
     ): Heard? {
         val app = context.applicationContext
         var farmAsked = false
+        // With no Groq nothing is rough, and two flights would pay Deepgram twice for one window.
+        val wantExact = exact && GroqWhisper.apiKey.isNotBlank()
         while (true) {
             val recording = recordingKey(song)
             if (recording != null) {
-                val kept = withContext(Dispatchers.IO) { load(app, song.videoId) }.filterNot { exact && it.rough }
+                val kept = withContext(Dispatchers.IO) { load(app, song.videoId) }.filterNot { wantExact && it.rough }
                 covering(kept, recording, language, minOf(untilSeconds, reuseFrom))?.let { saved ->
                     TrackLog.d(TAG, "song-hear: kept lang=$language until=${untilSeconds.toInt()} secs=${saved.seconds.toInt()} words=${saved.words.size}", song.videoId)
                     return heardFrom(saved)
@@ -236,10 +237,10 @@ internal object SongHearing {
             // One request per recording and language at a time, whoever asks and for
             // whatever window. Each window flying on its own paid for the same opening
             // twice over (11-06: 4.25 requests a song against the 2 this design needs).
-            val flight = "${song.videoId}|$recording|$language|$exact"
+            val flight = "${song.videoId}|$recording|$language|$wantExact"
             val fresh = Flight(
                 untilSeconds,
-                scope.async(start = CoroutineStart.LAZY) { listen(app, song, untilSeconds, minSeconds, language, exact) },
+                scope.async(start = CoroutineStart.LAZY) { listen(app, song, untilSeconds, minSeconds, language, wantExact) },
             )
             val running = inFlight.putIfAbsent(flight, fresh) ?: fresh
             if (running === fresh) {

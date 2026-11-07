@@ -30,7 +30,14 @@ object SongCheckWindow {
      */
     fun needsFullOpening(result: String): Boolean = result != "no-answer"
 
-    /**
+        /**
+     * Whether an answer from rough words may be written. Not over an exact fit of the same
+     * sheet, or Deepgram answering first would lose to Groq arriving after it.
+     */
+    fun roughMayApply(sameSheet: Boolean, hasFit: Boolean, fitRough: Boolean): Boolean =
+        !sameSheet || !hasFit || fitRough
+
+/**
      * Whether the full pass may be written over the first. An early correction
      * is never replaced by a full pass that found no fit; without a first fit
      * the full answer stands whether or not it fit.

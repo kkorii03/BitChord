@@ -12,15 +12,32 @@ import org.junit.Test
 class SongHearingTest {
 
     @Test
-    fun `exact words replace rough ones of about the same length and never the reverse`() {
+    fun `exact words replace rough ones whatever the length and never the reverse`() {
         val rough = SongHearing.Saved("stream|yt", "en", 88.0, rough = true)
         val exact = SongHearing.Saved("stream|yt", "en", 86.0)
-        val tooShort = SongHearing.Saved("stream|yt", "en", 40.0)
+        val shorter = SongHearing.Saved("stream|yt", "en", 40.0)
         val longerRough = SongHearing.Saved("stream|yt", "en", 118.0, rough = true)
 
         assertEquals(listOf(exact), SongHearing.merged(listOf(rough), exact))
-        assertEquals(listOf(rough), SongHearing.merged(listOf(rough), tooShort))
+        assertEquals(listOf(shorter), SongHearing.merged(listOf(rough), shorter))
         assertEquals(listOf(exact), SongHearing.merged(listOf(exact), longerRough))
+    }
+
+    @Test
+    fun `a rough answer never writes over an exact fit of the same sheet`() {
+        val apply = com.music.bitchord.data.lyrics.SongCheckWindow::roughMayApply
+
+        assertEquals(false, apply(true, true, false))
+        assertEquals(true, apply(true, true, true))
+        assertEquals(true, apply(true, false, false))
+        assertEquals(true, apply(false, true, false))
+    }
+
+    @Test
+    fun `a rough answer stays rough when it is asked nothing again`() {
+        val heard = SongHearing.Heard(emptyList(), 1_000L, LyricsTiming.Clock.YouTube, 200, rough = true)
+
+        assertEquals(true, heard.askedNothing().rough)
     }
 
     @Test
