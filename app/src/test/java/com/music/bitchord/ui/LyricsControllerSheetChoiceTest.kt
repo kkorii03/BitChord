@@ -107,10 +107,22 @@ class LyricsControllerSheetChoiceTest {
         storeField.set(LyricsTiming, ctor.newInstance(File(directory, "lyrics_timing_v1.json")))
     }
 
-    private fun load(winner: LyricsSource, lines: List<LyricLine>, loser: LyricsSource, loserLines: List<LyricLine>) {
+    /**
+     * [loserFirst] holds the winner back until the lower-priority answer is on
+     * screen: the order a slow lookup reaches the screen in by chance, and the
+     * one that used to leave the source at the loser's (11-07 flake).
+     */
+    private fun load(
+        winner: LyricsSource,
+        lines: List<LyricLine>,
+        loser: LyricsSource,
+        loserLines: List<LyricLine>,
+        loserFirst: Boolean = false,
+    ) {
         controller.lyricsLookup = { _, _, _, _, _, _, _, _, _, _, onResult, _, _, _, _, _, _ ->
             val winnerResult = LyricsRepository.Result(winner, lines)
             onResult?.invoke(loser, LyricsRepository.Result(loser, loserLines), null)
+            if (loserFirst) withTimeout(10_000L) { controller.lyricsSource.first { it == loser } }
             onResult?.invoke(winner, winnerResult, null)
             winnerResult
         }
@@ -151,7 +163,7 @@ class LyricsControllerSheetChoiceTest {
         seedHeard(fitting)
         LyricsOverrideStore.write(context, "video", keptWrong, LyricsSource.KUGOU)
 
-        load(LyricsSource.VIBE, fitting, LyricsSource.KUGOU, fitting)
+        load(LyricsSource.VIBE, fitting, LyricsSource.KUGOU, fitting, loserFirst = true)
 
         withTimeout(10_000L) { controller.lyricsSource.first { it == LyricsSource.VIBE } }
         assertEquals(fitting.map { it.text }, controller.lyrics.first { it != null }!!.map { it.text })

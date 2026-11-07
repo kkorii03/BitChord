@@ -791,6 +791,9 @@ class LyricsController(
         // [showFirstUsable] put up early: keep them and their timing work.
         if (result != null && rawLyricsResult?.lines === result.lines) {
             rawLyricsResult = result
+            // The same words from another source: the credit follows the answer
+            // that settled, while the timing work already done for them stands.
+            _lyricsSource.value = result.source
             return
         }
         rawLyricsResult = result
