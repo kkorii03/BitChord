@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 
@@ -15,6 +16,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import synctest
 
+
+def _no_network(*args, **kwargs):
+    raise AssertionError("a test must not reach YouTube or Deepgram")
+
+
+# A missing cache file would otherwise run yt-dlp or read the key and post audio.
+synctest.deepgram_words = _no_network
+synctest.subprocess = types.SimpleNamespace(run=_no_network)
 
 A = "AAAAAAAAAAA"  # the row the test starts
 B = "BBBBBBBBBBB"  # the song version the app replaces it with
@@ -91,6 +100,7 @@ class SwappedSheet(unittest.TestCase):
         # the row's sheet is the only evidence of what was on screen, so it is
         # still scored (and the row is not reported as swapped).
         self._caches(B, sheet())
+        self._caches(A, sheet())
         log = [f"x BitChord: song version: {A} -> {B} via search"]
         log += block(A, sheet())
         (self.dir / f"{A}.log").write_text("\n".join(log), encoding="utf-8")
@@ -99,6 +109,58 @@ class SwappedSheet(unittest.TestCase):
 
         self.assertEqual(row.get("swapped"), "", brief(row))
         self.assertEqual(row.get("playing"), A, brief(row))
+
+
+class SwappedAudio(unittest.TestCase):
+    """The played sheet is scored on the played recording. The row's WAV may be the
+    same song with a long intro, which puts a right sheet seconds off on paper."""
+
+    INTRO = 11.5  # the row's video starts this much before the played copy
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+        self.old_out = synctest.OUT
+        synctest.OUT = self.dir
+        # Four-digit tokens: offset_between only counts words of 3+ letters.
+        self.played = [(n, ms, " ".join(w * 2 for w in text.split())) for n, ms, text in sheet()]
+        # What the played copy sings, and the same singing on the row's clock.
+        self.own = heard(self.played)
+        self.row_words = [[w, s + self.INTRO, e + self.INTRO] for w, s, e in self.own]
+        for model in synctest.MODELS:
+            (self.dir / f"{B}.opus.{model}.words.json").write_text(json.dumps(self.own), encoding="utf-8")
+            (self.dir / f"{A}.app.{model}.words.json").write_text(json.dumps(self.row_words), encoding="utf-8")
+        (self.dir / f"{B}.webm").write_bytes(b"")
+        (self.dir / f"{A}.wav").write_bytes(b"0" * 2000)
+        log = [f"x BitChord: song version: {A} -> {B} via search"] + block(B, self.played)
+        (self.dir / f"{A}.log").write_text("\n".join(log), encoding="utf-8")
+
+    def tearDown(self):
+        synctest.OUT = self.old_out
+
+    def test_played_wav_lines_up_the_played_copy(self):
+        (self.dir / f"{B}.wav").write_bytes(b"0" * 2000)
+        (self.dir / f"{B}.app.{synctest.MODELS[0]}.words.json").write_text(json.dumps(self.own), encoding="utf-8")
+        row = synctest.run_song(A, 75, True)
+        self.assertEqual(row.get("verdict"), "PASS", brief(row))
+        self.assertLess(abs(row["median"]), 0.1, brief(row))
+
+    def test_row_wav_never_lines_up_the_played_copy(self):
+        # The played WAV was not saved: the played copy is scored on its own clock
+        # and labelled unchecked; the row's recording says nothing about this sheet.
+        row = synctest.run_song(A, 75, True)
+        self.assertEqual(row.get("verdict"), "PASS", brief(row))
+        self.assertIn("not checked", row.get("audio", ""), brief(row))
+
+    def test_a_late_played_sheet_still_fails(self):
+        # Same recording, sheet truly 1.5 s early: the fix must not hide it.
+        (self.dir / f"{B}.wav").write_bytes(b"0" * 2000)
+        late = [[w, s + 1.5, e + 1.5] for w, s, e in self.own]
+        for model in synctest.MODELS:
+            (self.dir / f"{B}.opus.{model}.words.json").write_text(json.dumps(late), encoding="utf-8")
+        (self.dir / f"{B}.app.{synctest.MODELS[0]}.words.json").write_text(json.dumps(late), encoding="utf-8")
+        row = synctest.run_song(A, 75, True)
+        self.assertEqual(row.get("verdict"), "FAIL", brief(row))
+        self.assertLess(row["median"], -1.0, brief(row))
 
 
 class WorstLines(unittest.TestCase):
