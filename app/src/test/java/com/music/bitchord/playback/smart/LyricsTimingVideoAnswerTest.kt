@@ -45,4 +45,25 @@ class LyricsTimingVideoAnswerTest {
         assertEquals("replaced", withTimeout(5_000L) { seen.await() })
         collect.cancel()
     }
+
+    /**
+     * 11-07 7PgA6kyqVTc rs6/auto124: the sheet that replaced the timed one had
+     * its request turned away three times while two others ran, and nothing
+     * asked again — the row kept base=none and scored 4.4 s off, while a
+     * 100%-agree answer for the same audio was in the store. A finished
+     * request now asks for the sheets it turned away.
+     */
+    @Test
+    fun `a request turned away for a running one asks again when a slot frees`() = runBlocking {
+        val seen = CompletableDeferred<String>()
+        val collect = launch(start = CoroutineStart.UNDISPATCHED) {
+            seen.complete(LyricsTiming.changes.first { it == "turned-away" })
+        }
+
+        LyricsTiming.noteAiWaited("turned-away")
+        LyricsTiming.aiSlotFreed()
+
+        assertEquals("turned-away", withTimeout(5_000L) { seen.await() })
+        collect.cancel()
+    }
 }

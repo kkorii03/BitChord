@@ -49,7 +49,13 @@ object RecordingPick {
      * answers in the release's own script, the other with Korean names for
      * Korean songs), the second in the US one.
      */
-    suspend fun find(names: List<Pair<String, String>>, videoMs: Long, max: Int = 2): List<Song> = withContext(Dispatchers.IO) {
+    suspend fun find(
+        names: List<Pair<String, String>>,
+        videoMs: Long,
+        max: Int = 2,
+        /** The row playing: never offered to itself as the recording to measure against. */
+        excludeVideoId: String? = null,
+    ): List<Song> = withContext(Dispatchers.IO) {
         val clean = names
             .map { (t, a) -> t.forLyricsSearch() to a.artistForLyricsSearch() }
             .filter { it.first.isNotBlank() }
@@ -102,7 +108,7 @@ object RecordingPick {
         val merged = buildList {
             for (i in 0 until 5) rows.forEach { list -> list.getOrNull(i)?.let(::add) }
         }
-        rank(names.map { it.first } + clean.map { it.first }, names.map { it.second } + clean.map { it.second }, merged, videoMs, max)
+        rank(names.map { it.first } + clean.map { it.first }, names.map { it.second } + clean.map { it.second }, merged, videoMs, max, excludeVideoId)
     }
 
     /**
@@ -132,6 +138,68 @@ object RecordingPick {
         rows: List<Song>,
         videoMs: Long,
         max: Int = 2,
+        /** The row playing: never offered to itself as the recording to measure against. */
+        excludeVideoId: String? = null,
+    ): List<Song> {
+        val available = rows.filter { it.videoId != excludeVideoId }
+        // The catalogue's own tracks first. Only when it named none — the Music
+        // Songs page came back empty and the youtube.com fallback answered with
+        // its own rows (see [pageRows]) — may an upload of the same recording
+        // stand in: 216 of 216 "no original recording found" lines in the
+        // 11-07 rounds are preceded by that fallback, and its upload rows were
+        // all dropped by the first pass. Two passes, never one: an upload does
+        // not compete with a catalogue row that already qualified, so nothing
+        // the catalogue named is displaced.
+        return pickFrom(available.filter { !it.isVideo }, titles, artists, videoMs)
+            .ifEmpty {
+                pickFrom(
+                    available.filter { it.isVideo && uploadIsTheRecord(it, titles, artists, videoMs) },
+                    titles,
+                    artists,
+                    videoMs,
+                )
+            }
+            .take(max)
+    }
+
+    /**
+     * Whether [row], an upload the youtube.com fallback answered with, is the
+     * recording to measure against: [TrackMatcher.isOriginalRecording] holds
+     * the exact title, the take markers, the act behind the channel (Topic and
+     * VEVO suffixes included) and a runtime within
+     * [TrackMatcher.VIDEO_DURATION_LIMIT_SEC] — a music video carries an intro
+     * the master does not. Covers, live takes, instrumentals and remixes carry
+     * their marker and are refused there; a different arrangement that slips
+     * through is still refused by the measurement itself, which has to line the
+     * two recordings up note for note.
+     */
+    private fun uploadIsTheRecord(
+        row: Song,
+        titles: List<String>,
+        artists: List<String>,
+        videoMs: Long,
+    ): Boolean {
+        val durationSec = if (videoMs > 0L) (videoMs / 1000L).toInt() else null
+        return titles.indices.any { index ->
+            TrackMatcher.isOriginalRecording(
+                row,
+                TrackMatcher.Target(
+                    title = titles[index],
+                    artist = artists.getOrNull(index).orEmpty(),
+                    durationSec = durationSec,
+                    isVideo = true,
+                ),
+                maxDriftSec = TrackMatcher.VIDEO_DURATION_LIMIT_SEC,
+            )
+        }
+    }
+
+    /** [rank]'s one pass over [rows]: score them and return them best first. */
+    private fun pickFrom(
+        rows: List<Song>,
+        titles: List<String>,
+        artists: List<String>,
+        videoMs: Long,
     ): List<Song> {
         val wantedTitles = titles.flatMap(::readings).toSet()
         val wantedArtists = artists.flatMap(::artistReadings).toSet()
@@ -182,7 +250,6 @@ object RecordingPick {
         }
         val scored = rows
             .asSequence()
-            .filter { !it.isVideo }
             .filter { row -> seed == null || !TrackMatcher.isCoverArrangement(row, seed) }
             // A take the query did not ask for is not the reference record.
             .filter { row -> askedVersion || !versionWord(row.title) }
@@ -203,7 +270,6 @@ object RecordingPick {
             .map { (row, score) -> row to if (artistSeen && !artistMatches(row, wantedArtists)) score - OTHER_ARTIST_PENALTY else score }
             .sortedByDescending { it.second }
             .map { it.first }
-            .take(max)
     }
 
     private fun artistMatches(row: Song, artists: Set<String>): Boolean {

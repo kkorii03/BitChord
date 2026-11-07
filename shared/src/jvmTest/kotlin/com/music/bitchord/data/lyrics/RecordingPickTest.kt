@@ -106,12 +106,56 @@ class RecordingPickTest {
     }
 
     @Test
-    fun videosAndStrangersAreNotRecords() {
+    fun anUploadOfAnotherSongOrActIsNotTheRecord() {
         val rows = listOf(
-            row("v", "Flashlight", "Jessie J", video = true),
-            row("s", "Completely Different", "Somebody Else", "9:59"),
+            row("v", "Flashlight", "Somebody Else", video = true),
+            row("s", "Completely Different", "Jessie J", "9:59"),
         )
         assertEquals(emptyList(), pick("Flashlight", "Jessie J", rows))
+    }
+
+    /**
+     * 11-07 rs5/rs6: all 216 `no original recording found` lines follow a
+     * youtube.com fallback, whose rows are uploads; the first pass dropped
+     * every one of them, so 41 of 45 base=none video rows had no reference at
+     * all. When the catalogue named nothing, the act's own upload of the song
+     * is the recording to measure against.
+     */
+    @Test
+    fun theActsOwnUploadStandsInWhenTheCatalogueNamedNothing() {
+        val rows = listOf(
+            row("v", "Lose Yourself (Official Music Video)", "EminemVEVO", "5:26", video = true),
+            row("s", "Lose Yourself", "Some Other Band", "5:26", video = true),
+            row("k", "Lose Yourself (Made Popular By Eminem)", "Party Tyme Karaoke", "5:26", video = true),
+        )
+        assertEquals(listOf("v"), pick("Lose Yourself", "Eminem", rows, videoMs = 326_000L))
+    }
+
+    @Test
+    fun aLiveOrCoverUploadIsNotTheRecord() {
+        val rows = listOf(
+            row("l", "Lose Yourself (Live at Wembley)", "Eminem", "5:40", video = true),
+            row("c", "Lose Yourself (Cover)", "Eminem", "5:26", video = true),
+        )
+        assertEquals(emptyList(), pick("Lose Yourself", "Eminem", rows, videoMs = 326_000L))
+    }
+
+    /** A different cut is a different recording, however exactly it names the song. */
+    @Test
+    fun anUploadOfAnotherCutIsNotTheRecord() {
+        val rows = listOf(row("v", "Lose Yourself", "Eminem", "9:50", video = true))
+        assertEquals(emptyList(), pick("Lose Yourself", "Eminem", rows, videoMs = 326_000L))
+    }
+
+    /** The row playing is already its own audio; measuring it against itself says nothing. */
+    @Test
+    fun theRowPlayingIsNeverItsOwnReference() {
+        val rows = listOf(row("v", "Lose Yourself", "Eminem", "5:26", video = true))
+        assertEquals(
+            emptyList(),
+            RecordingPick.rank(listOf("Lose Yourself"), listOf("Eminem"), rows, 326_000L, 2, "v")
+                .map { it.videoId },
+        )
     }
 
     /**
