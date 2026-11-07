@@ -56,7 +56,10 @@ object LyricsPerLine {
     const val MAX_INTERPOLATE_DIFF_MS = 400L
 
     /** Otherwise a line takes the nearest anchor's residual when it is this close. */
-    const val HOLD_RANGE_MS = 8_000L
+    const val HOLD_RANGE_MS = 3_000L
+
+    /** The neighbours a lone anchor is judged against may be this far away. */
+    const val LONE_ANCHOR_NEAR_MS = 8_000L
 
     /** No move outside this much beyond the heard words. */
     const val OUTSIDE_HEARD_RANGE_MS = 8_000L
@@ -294,8 +297,8 @@ object LyricsPerLine {
     }
 
     private fun loneAnchorDisagrees(own: Anchor, before: Anchor?, after: Anchor?, lineTime: Long): Boolean {
-        val nearBefore = before?.takeIf { abs(it.timeMs - lineTime) <= HOLD_RANGE_MS } ?: return false
-        val nearAfter = after?.takeIf { abs(it.timeMs - lineTime) <= HOLD_RANGE_MS } ?: return false
+        val nearBefore = before?.takeIf { abs(it.timeMs - lineTime) <= LONE_ANCHOR_NEAR_MS } ?: return false
+        val nearAfter = after?.takeIf { abs(it.timeMs - lineTime) <= LONE_ANCHOR_NEAR_MS } ?: return false
         if (abs(nearAfter.residualMs - nearBefore.residualMs) >= MAX_INTERPOLATE_DIFF_MS) return false
         return abs(nearBefore.residualMs - own.residualMs) > MAX_INTERPOLATE_DIFF_MS &&
             abs(nearAfter.residualMs - own.residualMs) > MAX_INTERPOLATE_DIFF_MS
