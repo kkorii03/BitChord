@@ -1,11 +1,14 @@
 package com.music.bitchord.data
 
 import com.music.bitchord.data.cover.CoverTitles
+import com.music.bitchord.data.model.ArtistNameIndex
+import com.music.bitchord.data.model.ArtistRef
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.TrackMatcher
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /**
  * The youtube.com display cleaner: label uploads, OST/MV packaging, aliases,
@@ -488,6 +491,67 @@ class YouTubeDisplayCleanerTest {
 
         assertEquals("Dynamite - Remix", cleaned.title)
         assertEquals("아이유", cleaned.artist)
+    }
+
+    /**
+     * Review H1: a personal channel that writes "Song - Artist" must not have
+     * its title inverted. Only a known act or a lyric upload proves the left
+     * side is the artist.
+     */
+    @Test
+    fun `a personal channel song artist title is not inverted without evidence`() {
+        // The index may already know the act on the right; that is proof the
+        // title is "Song - Artist", never that the left side is the credit
+        // (review H1).
+        ArtistNameIndex.record(listOf(ArtistRef("TWICE", "UC_twice")))
+        try {
+            val cheer = YouTubeDisplayCleaner.clean("Cheer Up - TWICE", "kpop lyrics")
+            assertEquals("Cheer Up - TWICE", cheer.title)
+            assertEquals("kpop lyrics", cheer.artist)
+
+            // A lyric tag keeps the left-side branch reachable; the known act
+            // on the right still keeps the title whole.
+            val lyric = YouTubeDisplayCleaner.clean("Cheer Up - TWICE [가사/Lyrics]", "kpop lyrics")
+            assertEquals("Cheer Up - TWICE [가사/Lyrics]", lyric.title)
+            assertEquals("kpop lyrics", lyric.artist)
+        } finally {
+            ArtistNameIndex.forget()
+        }
+
+        val halo = YouTubeDisplayCleaner.clean("Halo - Beyoncé", "somefan")
+        assertEquals("Halo - Beyoncé", halo.title)
+        assertEquals("somefan", halo.artist)
+    }
+
+    @Test
+    fun `a lyric upload still credits the artist its title prints`() {
+        val cleaned = YouTubeDisplayCleaner.clean("아이유(IU) - 좋은 날 [가사/Lyrics]", "웅키")
+
+        assertEquals("아이유", cleaned.artist)
+        assertTrue(cleaned.title.startsWith("좋은 날"), cleaned.title)
+    }
+
+    /**
+     * Review H2: a bracketed take after the dash is packaging, not a credit.
+     * The lyric tag keeps the branch reachable after H1's evidence gate, so
+     * this fails if the packaging trim does not strip brackets.
+     */
+    @Test
+    fun `a bracketed take after the dash is not a credit`() {
+        for (title in listOf(
+            "Dynamite - (Remix)",
+            "Dynamite - （Remix）",
+            "Dynamite - 【Remix】",
+            "Dynamite - (Live)",
+            "Dynamite - (Instrumental)",
+            "Dynamite - [Karaoke]",
+            "Friday - (feat. Jungkook)",
+        )) {
+            val lyric = "$title [가사/Lyrics]"
+            val cleaned = YouTubeDisplayCleaner.clean(lyric, "Jane")
+            assertEquals(lyric, cleaned.title, title)
+            assertEquals("Jane", cleaned.artist, title)
+        }
     }
 
     @Test

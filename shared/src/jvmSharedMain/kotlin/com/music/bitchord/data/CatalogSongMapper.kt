@@ -12,6 +12,7 @@ import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.albumKind
 import com.music.bitchord.data.sources.TrackMatcher
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Semaphore
@@ -30,7 +31,7 @@ import kotlin.math.abs
  *
  * The lookup is deliberately lazy and bounded: [mapPage] only touches the rows
  * a shelf is about to show, [LookupBudget] caps the new lookups one screen
- * build may spend, [MAX_CONCURRENT] caps requests in flight, album pages live
+ * build may spend, [MAX_CONCURRENT_TOTAL] caps requests in flight, album pages live
  * in a small LRU, and every settled answer (including "not found") is persisted
  * per source video id. A miss is retried after [MISS_RETRY_MS]; a hit is not
  * re-asked.
@@ -125,8 +126,14 @@ internal object CatalogSongMapper {
     /** Only the visible head of a shelf or search page is mapped. */
     const val MAX_ROWS_PER_PAGE = 20
 
-    /** Requests in flight at once; battery over latency. */
+    /** Requests in flight at once in the shared lane; battery over latency. */
     const val MAX_CONCURRENT = 2
+
+    /**
+     * Requests in flight at once across the process: the [MAX_CONCURRENT]
+     * shared slots plus the current row's own single-permit lane.
+     */
+    const val MAX_CONCURRENT_TOTAL = MAX_CONCURRENT + 1
 
     /** How long a "not in the catalogue" answer is trusted. */
     const val MISS_RETRY_MS = 7L * 24L * 60L * 60L * 1000L
@@ -157,10 +164,11 @@ internal object CatalogSongMapper {
     private val inFlight = Semaphore(MAX_CONCURRENT)
 
     /**
-     * The row the listener is on gets its own slot: its answer is what the
+     * The row the listener is on gets its own lane: its answer is what the
      * before-audio budget waits for, and the shared [inFlight] slots are held
      * by radio and shelf mapping for tens of seconds (triage 2026-11-08). The
-     * shared ceiling is unchanged — this is a priority lane, not a bigger one.
+     * lane is one separate permit, so the process-wide ceiling is
+     * [MAX_CONCURRENT_TOTAL] ([MAX_CONCURRENT] + 1), not [MAX_CONCURRENT].
      */
     private val currentRowInFlight = Semaphore(1)
 
@@ -407,7 +415,7 @@ internal object CatalogSongMapper {
                 null
             }.orEmpty()
 
-            for (album in albums.take(MAX_ALBUMS_PER_SEARCH)) {
+            for (album in searchAlbumsFor(albums)) {
                 if (budget.remaining() <= 0) break
                 budget.take()
                 val tracks = try {
@@ -765,11 +773,22 @@ internal object CatalogSongMapper {
             .toList()
 
     /**
+     * The album results a search shortcut opens: the album that holds the
+     * song before the singles and EPs relevance ranks above it. The same
+     * order as [albumPagesFor], but a free-text search is not scoped to one
+     * artist, so no artist filter is applied.
+     */
+    internal fun searchAlbumsFor(albums: List<BrowseItem>): List<BrowseItem> =
+        albums.sortedByDescending { !isShortRelease(it.subtitle) }
+            .take(MAX_ALBUMS_PER_SEARCH)
+
+    /**
      * A one- or two-track release ("싱글", "EP"). Its page lists the take that
-     * was released, not the album cut a lookup is after.
+     * was released, not the album cut a lookup is after. The subtitle is read
+     * with [albumKind], so comma and middle-dot shapes count too.
      */
     internal fun isShortRelease(albumSubtitle: String): Boolean =
-        albumSubtitle.substringBefore(" • ").trim().lowercase() in SHORT_RELEASE_WORDS
+        albumKind(albumSubtitle) in SHORT_RELEASE_WORDS
 
     /**
      * A track title answering a free-text search query. Both sides go through

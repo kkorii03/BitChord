@@ -338,9 +338,76 @@ class AudioSwitchArtistNameTest {
         assertTrue(queries.none { it.startsWith("웅키") }, queries.toString())
     }
 
+    /**
+     * Review M1: AUDIO_SWITCH stopped mapping page rows, so a video row that
+     * only a catalogue mapping could turn into audio was dropped before
+     * matching. The recovery selection must include that row and never a
+     * cover, another take or another act.
+     */
     @Test
-    fun `a cover and an artists own channel are left as they are`() {
-        val cover = Song(
+    fun `a video row that mapping can make audio is recovered`() {
+        val row = song("VIDEO000010", "Friday", "IU", "3:30")
+        val target = TrackMatcher.audioSwitchTargetOf(row)
+        val officialAudio = song("AUDIO000001", "Friday (Official Audio)", "IU", "3:30")
+            .copy(isVideo = true)
+
+        assertTrue(KoAudioSwitch.recoverableForAudioSwitch(officialAudio, row, target))
+        // An MV is mapped to its catalogue track, never adopted as the video.
+        assertTrue(
+            KoAudioSwitch.recoverableForAudioSwitch(
+                officialAudio.copy(videoId = "MV000000001", title = "Friday (Official Video)"),
+                row,
+                target,
+            ),
+        )
+        assertFalse(
+            KoAudioSwitch.recoverableForAudioSwitch(
+                officialAudio.copy(videoId = "COVER000001", title = "Friday (Cover)"),
+                row,
+                target,
+            ),
+        )
+        assertFalse(
+            KoAudioSwitch.recoverableForAudioSwitch(
+                officialAudio.copy(videoId = "LIVE0000001", title = "Friday (Live)"),
+                row,
+                target,
+            ),
+        )
+        // A piano take is a different recording, not the catalogue track.
+        assertFalse(
+            KoAudioSwitch.recoverableForAudioSwitch(
+                officialAudio.copy(videoId = "PIANO000001", title = "Friday (Piano)"),
+                row,
+                target,
+            ),
+        )
+        assertFalse(
+            KoAudioSwitch.recoverableForAudioSwitch(
+                officialAudio.copy(videoId = "REMIX000001", title = "Friday (Remix)"),
+                row,
+                target,
+            ),
+        )
+        assertFalse(
+            KoAudioSwitch.recoverableForAudioSwitch(
+                officialAudio.copy(videoId = "OTHER000001", artist = "Another Singer"),
+                row,
+                target,
+            ),
+        )
+        // A row that is already audio is a candidate without mapping.
+        assertFalse(
+            KoAudioSwitch.recoverableForAudioSwitch(
+                officialAudio.copy(videoId = "AUDIO000002", isVideo = false),
+                row,
+                target,
+            ),
+        )
+    }
+
+    @Test
+    fun `a cover and an artists own channel are left as they are`() {        val cover = Song(
             videoId = "COVER000001",
             title = "Shape of You - Ed Sheeran (cover by Jane)",
             artist = "Jane",

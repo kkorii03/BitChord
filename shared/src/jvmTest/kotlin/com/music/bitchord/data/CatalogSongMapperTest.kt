@@ -242,6 +242,49 @@ class CatalogSongMapperTest {
         )
     }
 
+    /**
+     * Review H3: the album subtitle parser already splits `•`, `·` and `,`,
+     * but the short-release rule only read the bullet shape, so a comma or
+     * middle-dot single/EP was ranked as a full album.
+     */
+    @Test
+    fun `single and EP subtitles split by comma or middle dot are short releases`() {
+        assertTrue(CatalogSongMapper.isShortRelease("싱글 • Miley Cyrus • 2023"))
+        assertTrue(CatalogSongMapper.isShortRelease("Miley Cyrus, 싱글, 2023"))
+        assertTrue(CatalogSongMapper.isShortRelease("EP · Bruno Mars · 2013"))
+        assertTrue(CatalogSongMapper.isShortRelease("Bruno Mars, EP, 2013"))
+        assertFalse(CatalogSongMapper.isShortRelease("앨범 • Bruno Mars • 2012"))
+        assertFalse(CatalogSongMapper.isShortRelease("Bruno Mars, 앨범, 2026년"))
+    }
+
+    /**
+     * Review M3: the search shortcut took the raw relevance order, so the
+     * same album-after-singles miss came back on that path.
+     */
+    @Test
+    fun `a search shortcut opens the album ahead of a single ranked above it`() {
+        val albums = listOf(
+            album("single", "Feather (Sped Up)", "싱글 • Sabrina Carpenter • 2023년"),
+            album("album", "Short n' Sweet", "앨범 • Sabrina Carpenter • 2024년"),
+            album("ep", "Treasure Remix EP", "Bruno Mars, EP, 2013"),
+        )
+
+        assertEquals(
+            listOf("album", "single"),
+            CatalogSongMapper.searchAlbumsFor(albums).map { it.browseId },
+        )
+    }
+
+    /**
+     * Review M2: the priority lane is a separate single permit, so the
+     * process-wide ceiling is MAX_CONCURRENT + 1, not MAX_CONCURRENT.
+     */
+    @Test
+    fun `the shared ceiling plus the priority lane is the stated total`() {
+        assertEquals(2, CatalogSongMapper.MAX_CONCURRENT)
+        assertEquals(3, CatalogSongMapper.MAX_CONCURRENT_TOTAL)
+    }
+
     /** Other artists' pages are never opened, and the page cap is unchanged. */
     @Test
     fun `pages of other artists and pages past the cap are not opened`() {

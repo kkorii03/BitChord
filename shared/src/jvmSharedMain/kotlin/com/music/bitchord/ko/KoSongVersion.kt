@@ -69,6 +69,9 @@ internal object KoSongVersion {
         val row = KoAudioSwitch.audioSwitchRow(song)
         val target = TrackMatcher.targetOf(row)
         val excluded = excluding + song.videoId
+        // One cap for the whole rescue: every query shares it, so a page of
+        // near-misses cannot spend a fresh pair of lookups per query.
+        val budget = CatalogSongMapper.newBudget()
         fun acceptable(candidate: Song): Boolean =
             candidate.videoId.isNotBlank() &&
                 candidate.videoId !in excluded &&
@@ -96,7 +99,7 @@ internal object KoSongVersion {
             SearchFilter.VIDEOS to SearchKind.VIDEO_SWITCH,
         )) {
             for (query in TrackMatcher.queries(target)) {
-                val candidates = try {
+                val rows = try {
                     YtMusicRepository.search(query, filter, kind).getOrNull()
                         ?.filterIsInstance<SearchResult.Track>()
                         ?.map { it.song }
@@ -107,7 +110,26 @@ internal object KoSongVersion {
                     Log.w(TAG, "alternate search failed for '$query': ${failure.message}")
                     emptyList()
                 }
-                TrackMatcher.bestSameArtist(candidates.filter(::acceptable), target)?.let { match ->
+                // The same lost-row recovery as the audio switch: a video row
+                // that only a catalogue mapping turns into audio used to be
+                // dropped before matching.
+                val recovered = if (kind == SearchKind.AUDIO_SWITCH) {
+                    try {
+                        KoAudioSwitch.recoverMappedRows(
+                            rows,
+                            row,
+                            target,
+                            budget,
+                        )
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Throwable) {
+                        emptyList()
+                    }
+                } else {
+                    emptyList()
+                }
+                TrackMatcher.bestSameArtist((rows + recovered).filter(::acceptable), target)?.let { match ->
                     Log.d(TAG, "alternate: '${song.title}' -> '${match.title}' (search)")
                     return match
                 }
