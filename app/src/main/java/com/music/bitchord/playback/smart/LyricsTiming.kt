@@ -553,10 +553,7 @@ object LyricsTiming {
             refineSlopePerMin = if (refine.applied) refine.slopePerMin else 0.0,
             refineUntilMs = refineClock.maxOfOrNull { it.endMs } ?: Long.MAX_VALUE,
             refineWide = refine.applied && refine.model.wide,
-            // Only a refine that moved the sheet has placed it. One that measured a tight scatter it
-            // could not apply (a shift past its window, 3JWTaaS7LdU) or did not need leaves the
-            // per-line layer to move what the words heard.
-            refineMadMs = refine.madMs.takeIf { refine.applied && refine.lines >= RefinePolicy.MIN_LINES },
+            refineMadMs = refine.madMs.takeIf { refine.lines >= RefinePolicy.MIN_LINES },
         )
         // The per-line layer runs after refine and under the hand's correction.
         // Its words are already on the playing clock, so [apply] compares them
