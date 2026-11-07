@@ -124,12 +124,15 @@ class SheetChoiceTest {
     @Test
     fun `a line-timed sheet does not replace a word-timed one that clears the floor`() {
         val sheetFits = sheet(0)
-        val sung = sheetFits.mapIndexed { i, line -> if (i in 5..7) sheet(24)[i] else line }
-        val heard = sung(sung)
+        // Three lines sung off the straight line the rest lie on, as another sheet has them.
+        val other = sheetFits.mapIndexed { i, line -> if (i in 5..7) line.copy(timeMs = line.timeMs + 1_500L) else line }
+        val heard = sung(other)
+        val fit = SheetChoice.fitPercent(sheetFits, heard)
+        assertEquals("fit $fit is under good enough and over the floor", true, fit in 70..84)
 
-        assertNull(pick(sheetFits.map(::timedWord), sung, heard))
+        assertNull(pick(sheetFits.map(::timedWord), other, heard))
         // The same sheet without word times is still replaced: the rule is about the times.
-        assertEquals(sung, pick(sheetFits, sung, heard))
+        assertEquals(other, pick(sheetFits, other, heard))
     }
 
     /** w8P-BIQU1qI: 98% against 211 words, 72% against the 158 a later listen kept. */
