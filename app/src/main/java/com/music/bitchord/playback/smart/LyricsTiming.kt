@@ -2182,7 +2182,7 @@ object LyricsTiming {
         // search found nothing.
         val candidates = preferredOriginal?.let { listOf(it) }
             ?: synchronized(picks) { picks[video.videoId] }
-            ?: RecordingPick.find(names, videoMs, max = MAX_CANDIDATES).also { found ->
+            ?: RecordingPick.find(names, videoMs, max = MAX_CANDIDATES, excludeVideoId = video.videoId).also { found ->
                 if (found.isNotEmpty()) synchronized(picks) {
                     picks[video.videoId] = found
                     while (picks.size > PICKS_KEPT) picks.remove(picks.keys.first())
@@ -2796,6 +2796,7 @@ object LyricsTiming {
             aiInFlight[flight] ?: run {
                 if (!AiTimingPolicy.mayStartRequest(automatic, aiInFlight.size)) {
                     TrackLog.d(TAG, "lyrics-sync: ai request waits (${aiInFlight.size} running)", videoId)
+                    noteAiWaited(videoId)
                     return@synchronized null
                 }
                 aiScope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
@@ -2808,7 +2809,10 @@ object LyricsTiming {
         } ?: return null
         running.cancelledWithCaller(currentCoroutineContext()[Job], cancelWithCaller)
         fresh?.let { created ->
-            created.invokeOnCompletion { aiInFlight.remove(flight, created) }
+            created.invokeOnCompletion {
+                aiInFlight.remove(flight, created)
+                aiSlotFreed()
+            }
             created.start()
         }
         val adjustment = running.await() ?: return null
@@ -2823,6 +2827,43 @@ object LyricsTiming {
 
     private val aiScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val aiInFlight = ConcurrentHashMap<String, kotlinx.coroutines.Deferred<Adjustment.Mapped?>>()
+
+    /**
+     * Videos whose automatic request was turned away because
+     * [AiTimingPolicy.MAX_AUTOMATIC_REQUESTS] were already running. Nothing
+     * asked again when a slot freed, so the sheet on screen kept base=none for
+     * the rest of the playback even though the app had the words for it
+     * (11-07: 7PgA6kyqVTc rs6/auto124, three turn-aways on one KuGou sheet
+     * while a 100%-agree answer for the same audio sat in the store; the row
+     * scored 4.4 s off; YQHsXMglC9A rs5/fleet59, 2.0 s off).
+     *
+     * The cap itself is unchanged: this only remembers who was turned away, so
+     * the next finished request can ask for them as an event — no timer, no
+     * poll.
+     */
+    private val aiWaited = LinkedHashSet<String>()
+
+    /** Records that [videoId]'s request was turned away while [AiTimingPolicy.MAX_AUTOMATIC_REQUESTS] ran. */
+    internal fun noteAiWaited(videoId: String) {
+        synchronized(aiWaited) {
+            aiWaited.remove(videoId)
+            aiWaited.add(videoId)
+            while (aiWaited.size > AI_WAITED_KEPT) aiWaited.remove(aiWaited.first())
+        }
+    }
+
+    /** A request finished: the sheets turned away while it ran may ask again now. */
+    internal fun aiSlotFreed() {
+        val waiting = synchronized(aiWaited) {
+            aiWaited.toList().also { aiWaited.clear() }
+        }
+        // The screen's own change collector asks again from what it keeps
+        // (measurement gave up, engines unspent): one event each, nothing new.
+        for (videoId in waiting) _changes.tryEmit(videoId)
+    }
+
+    /** Videos remembered as turned away; more than a playback's worth is not worth keeping. */
+    private const val AI_WAITED_KEPT = 16
 
     /**
      * Who is still waiting on a shared flight. A next-prep bundle may start one
