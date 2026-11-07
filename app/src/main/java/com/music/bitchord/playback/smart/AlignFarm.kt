@@ -19,12 +19,14 @@ import okhttp3.Request
  * [SongHearing]'s kept transcripts, so a song the farm knows needs no request and no wait, from
  * the first line. One GET per video per run; a song it does not know goes on as before.
  *
- * The files sit on a public branch, so names and contents are under the Deepgram key baked into
- * the signed APK, which the repository does not hold. No key, no lookup.
+ * The files sit in a private R2 bucket behind a Worker that can only read, and only for
+ * [readToken] (bench/farm/r2_tool.py). Names and contents are still under the Deepgram key baked
+ * into the signed APK, which the repository does not hold. No key, no lookup.
  */
 internal object AlignFarm {
     private const val TAG = "AlignFarm"
-    private const val BASE = "https://raw.githubusercontent.com/kkorii03/BitChord/align-data/"
+    private const val BASE = "https://bitchord-align-read.bitchord-align.workers.dev/"
+    private const val READ_TOKEN_LABEL = "bitchord-farm-read"
 
     private val asked = ConcurrentHashMap.newKeySet<String>()
     private val json = Json { ignoreUnknownKeys = true }
@@ -47,6 +49,13 @@ internal object AlignFarm {
         val mac = Mac.getInstance("HmacSHA256")
         mac.init(SecretKeySpec(secret.toByteArray(), "HmacSHA256"))
         return mac.doFinal(videoId.toByteArray()).joinToString("") { "%02x".format(it) }.take(32)
+    }
+
+    /** What the Worker asks for: read-only, and no R2 key in the APK. Same as r2_tool.py's read_token. */
+    internal fun readToken(secret: String): String {
+        val mac = Mac.getInstance("HmacSHA256")
+        mac.init(SecretKeySpec(secret.toByteArray(), "HmacSHA256"))
+        return mac.doFinal(READ_TOKEN_LABEL.toByteArray()).joinToString("") { "%02x".format(it) }
     }
 
     /** SHA-256 counter keystream, the same both ways. Same as farm.py's stream. */
@@ -86,7 +95,11 @@ internal object AlignFarm {
         if (secret.isEmpty()) return null
         return withContext(Dispatchers.IO) {
             runCatching {
-                client.newCall(Request.Builder().url("$BASE${nameOf(videoId, secret)}.enc").build()).execute().use { response ->
+                val request = Request.Builder()
+                    .url("$BASE${nameOf(videoId, secret)}.enc")
+                    .header("x-farm-token", readToken(secret))
+                    .build()
+                client.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) return@use null
                     savedFrom(response.body?.bytes() ?: return@use null, language, secret + videoId)
                 }

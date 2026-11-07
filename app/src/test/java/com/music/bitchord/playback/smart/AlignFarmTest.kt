@@ -11,6 +11,11 @@ class AlignFarmTest {
 
     /** Vector from farm.py's stream(), so the runner's files read back on the phone. */
     @Test
+    fun `the read token matches r2_tool`() {
+        assertEquals("708eca2c9fc544ca25b8ecff5e4034b3833bc2800f377690968b83ad5cf1104c", AlignFarm.readToken("test-secret"))
+    }
+
+    @Test
     fun `the cipher matches the runner's`() {
         assertArrayEquals(ByteArray(40) { it.toByte() }, AlignFarm.decipher(hex(PYTHON_40_BYTES), "pw"))
     }
