@@ -79,17 +79,58 @@ def text_key(lines):
     return hash("\n".join(t for _, _, t in lines))
 
 
-def word_file(round_dir, vid):
-    """The large-model word file for `vid`: whole song first, then the app's 90 s.
+def word_file(round_dir, vid, audio, sheet_last_ms):
+    """The large-model word file for `vid` from the recording the score used.
 
-    Only whisper-large is used; a medium transcript is a different measurement
-    and is not substituted, so the replay compares like with like.
+    The app's own transcript (`.app.`) is the recording the app played, which
+    is the one the expected offset was measured on.  It is only the whole song
+    when it reaches the sheet's last line; a 90 s window is not.  The YouTube
+    copy (`.opus.`) is the same recording only when the score named the video
+    itself; otherwise it is another upload and the fit would be compared with
+    another recording's answer.  Only whisper-large is used: a medium
+    transcript is a different measurement and is not substituted.
     """
-    for suffix in (".opus.whisper-large.words.json", ".app.whisper-large.words.json"):
-        path = round_dir / (vid + suffix)
-        if path.exists():
-            return path
+    app = round_dir / (vid + ".app.whisper-large.words.json")
+    if app.exists():
+        try:
+            words = json.loads(app.read_text(encoding="utf-8"))
+            # shortcut: a 5 s tail is treated as the whole song; a longer
+            # partial transcript falls back to the YouTube copy, upgrade if a
+            # real song's last line is sung more than 5 s after its last word.
+            if words and round(float(words[-1][2]) * 1000) >= sheet_last_ms - 5_000:
+                return app
+        except (OSError, ValueError, IndexError):
+            pass
+    if audio == vid:
+        opus = round_dir / (vid + ".opus.whisper-large.words.json")
+        if opus.exists():
+            return opus
     return None
+
+
+def fa_in(round_dir, vid):
+    """The scorer's input for `vid`: the recording it scored and the lines it read."""
+    path = round_dir / (vid + ".fa-in.json")
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def sheet_matches(fa, sheet):
+    """Whether the scored lines are the sheet replayed, by line number and text.
+
+    The scorer reads the app's final display; a sheet that changed between the
+    base=none block and that display is not the sheet the expected offset
+    belongs to.
+    """
+    # shortcut: only the lines the scorer sampled are compared; a sheet that
+    # changed only on an unsampled line is not caught, upgrade if a changed
+    # sheet slips through.
+    scored = {line.get("n"): line.get("text") for line in fa.get("lines", []) if isinstance(line, dict)}
+    return all(scored.get(n, text) == text for n, _, text in sheet)
 
 
 def read_words(path):
@@ -119,6 +160,17 @@ def median_error(round_dir, vid):
     whose lines were not written out.  A missing `error_s` column falls back
     to a millisecond column or to the other files, never to a lyric row.
     """
+    report = round_dir / "report.csv"
+    if report.exists():
+        with report.open(newline="", encoding="utf-8-sig") as f:
+            for row in csv.DictReader(f):
+                if (row.get("video") or "").strip() == vid:
+                    median = number(row.get("median"))
+                    # A score the scorer itself refused is not an answer: its
+                    # few lines are not the song's offset.
+                    if (row.get("error") or "").strip() or median is None:
+                        return None
+                    return round(median * 1000)
     lines_csv = round_dir / (vid + ".lines.csv")
     if lines_csv.exists():
         with lines_csv.open(newline="", encoding="utf-8-sig") as f:
@@ -288,7 +340,12 @@ def round_candidates(round_dir):
             if pair is None:
                 continue
             first, last = pair
-            words_path = word_file(round_dir, vid)
+            fa = fa_in(round_dir, vid)
+            if fa is None or fa.get("audio") != vid:
+                continue
+            if not sheet_matches(fa, first[1]):
+                continue
+            words_path = word_file(round_dir, vid, fa.get("audio"), max(t for _, t, _ in first[1]))
             if words_path is None:
                 continue
             words = read_words(words_path)
@@ -327,6 +384,9 @@ def self_check():
     assert first is base and last is shifted, "sheet_pair paired another sheet"
     single = sheet_pair([other])
     assert single is not None and single[0] is other, "sheet_pair dropped a lone provider sheet"
+    fa = {"audio": "v", "lines": [{"n": 1, "text": "a"}, {"n": 2, "text": "b"}]}
+    assert sheet_matches(fa, [(1, 0, "a"), (2, 0, "b")]), "sheet_matches dropped the same sheet"
+    assert not sheet_matches(fa, [(1, 0, "a"), (2, 0, "c")]), "sheet_matches kept a changed sheet"
     root = Path("self-check-root").resolve()
     assert inside(root / "corpus", root), "inside missed a child"
     assert not inside(Path("self-check-elsewhere").resolve(), root), "inside overreached"

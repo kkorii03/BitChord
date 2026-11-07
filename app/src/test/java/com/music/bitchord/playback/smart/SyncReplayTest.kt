@@ -173,11 +173,18 @@ class SyncReplayTest {
                     LyricsAiGuard.agreementAllows(fit.matchPercent) &&
                         LyricsAiGuard.songShiftAllows(moved, fit.matchPercent)
                 }
-                val fitOffset = fitted?.let { LyricsTiming.shownShiftMs(lines, it) } ?: 0L
+                // The app refuses an answer the guard rejects (LyricsTiming.songCheck);
+                // the replay must refuse it too, or a refused fit reads as applied.
+                val applied = fitted?.takeIf {
+                    LyricsAiGuard.agreementAllows(it.matchPercent) &&
+                        LyricsAiGuard.songShiftAllows(LyricsTiming.shownShiftMs(lines, it), it.matchPercent)
+                }
+                val fitOffset = applied?.let { LyricsTiming.shownShiftMs(lines, it) } ?: 0L
                 val error = abs(fitOffset - song.expectedOffsetMs)
                 val mismatch = LyricsMismatch.judgeSheet(lines, heard)
                 val refine = RefinePolicy.compute(lines, heard)
                 val match = fitted?.matchPercent ?: -1
+                val refused = if (fitted != null && applied == null) 1 else 0
                 val ok = error <= base.baselineErrorMs + base.toleranceMs
                 val reject = if (mismatch.rejected) 1 else 0
                 val keep = 1 - reject
@@ -196,7 +203,7 @@ class SyncReplayTest {
                     if ((expReject == 1) == mismatch.rejected) verdictPass++
                 }
                 rows += "${song.id} fit=$fitOffset exp=${song.expectedOffsetMs} err=$error " +
-                    "base=${base.baselineErrorMs} match=$match " +
+                    "base=${base.baselineErrorMs} match=$match refused=$refused " +
                     "reject=$reject keep=$keep refine=$refineApplied pass=$pass " +
                     "expReject=$expReject expRefine=$expRefine"
             }
