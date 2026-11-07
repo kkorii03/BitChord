@@ -43,6 +43,50 @@ class LyricsTimeMap private constructor(
         return dstMs[lo] + ((dstMs[hi] - dstMs[lo]) * t).roundToLong()
     }
 
+    /**
+     * The record moment that [map] puts at video moment [videoMs]: the inverse,
+     * through the same pieces and end rates. A flat stretch answers its last
+     * record moment.
+     */
+    fun sourceAt(videoMs: Long): Long {
+        val n = srcMs.size
+        if (videoMs <= dstMs[0]) return srcMs[0] + ((videoMs - dstMs[0]) / headRate).roundToLong()
+        if (videoMs >= dstMs[n - 1]) return srcMs[n - 1] + ((videoMs - dstMs[n - 1]) / tailRate).roundToLong()
+        var lo = 0
+        var hi = n - 1
+        while (hi - lo > 1) {
+            val mid = (lo + hi) ushr 1
+            if (dstMs[mid] <= videoMs) lo = mid else hi = mid
+        }
+        val rise = dstMs[hi] - dstMs[lo]
+        if (rise <= 0L) return srcMs[lo]
+        val t = (videoMs - dstMs[lo]).toDouble() / rise
+        return srcMs[lo] + ((srcMs[hi] - srcMs[lo]) * t).roundToLong()
+    }
+
+    /**
+     * This map up to record moment [untilMs], then on at the record's own pace
+     * from where it is there: continuous, no jump. Past the last word a
+     * transcript heard there is no evidence for any other pace, and a pace read
+     * off an opening, carried over the rest of the song, put a cover 4.4 s late
+     * by its 137th second (11-08 npFa435R5bU, 1.124 fitted on 92 s). Knots past
+     * [untilMs] are dropped; a map already at 1.0 there is returned as it is.
+     */
+    fun heldAfter(untilMs: Long): LyricsTimeMap {
+        val n = srcMs.size
+        if (untilMs >= srcMs[n - 1] && tailRate == 1.0) return this
+        val src = ArrayList<Long>(n + 1)
+        val dst = ArrayList<Long>(n + 1)
+        for (i in 0 until n) {
+            if (srcMs[i] >= untilMs) break
+            src += srcMs[i]
+            dst += dstMs[i]
+        }
+        src += untilMs
+        dst += map(untilMs)
+        return through(src, dst, headRate, 1.0) ?: this
+    }
+
     /** The knots, flattened [src0, dst0, src1, dst1, …], for keeping on disk. */
     fun flatten(): List<Long> = buildList(srcMs.size * 2) {
         for (i in srcMs.indices) {

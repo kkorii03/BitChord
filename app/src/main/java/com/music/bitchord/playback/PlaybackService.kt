@@ -2621,6 +2621,8 @@ class PlaybackService : MediaLibraryService() {
         // first, so a restore that lands later is an ordinary timeline change.
         scope.launch {
             val restored = restoreQueue(exoPlayer)
+            // A link looked up while this landed is not overruled by it (MusicLink.linkStillWanted).
+            if (restored == QueueRestore.RESTORED) MusicLink.noteRestored(exoPlayer.currentMediaItem?.mediaId)
             when {
                 restored == QueueRestore.RESTORED -> publishWidgetState()
                 queueRestoreSavesEmptyWidget(restored) -> {

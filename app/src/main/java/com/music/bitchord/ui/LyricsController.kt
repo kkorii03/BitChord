@@ -374,6 +374,7 @@ class LyricsController(
         _lyricsTiming.value = LyricsTimingUi()
         lyricsJob?.cancel()
         startEarlyMeasure(videoId, title, artist, durationMs, localUri, isVideo, alternatives, artistKnown)
+        startEarlyHearing(videoId, title, artist, localUri, isVideo, lyricsLookup = sources.isNotEmpty())
         if (sources.isEmpty()) {
             // Switched off, or every source unticked. Nothing to look up, and
             // nothing to say about it — the player drops the lyric strip
@@ -1338,6 +1339,31 @@ class LyricsController(
             if (LyricsTiming.worthMeasuring(context, videoId)) {
                 LyricsTiming.measure(context, video, names, durationMs)
             }
+        }
+    }
+
+    private var earlyHearingJob: Job? = null
+
+    /**
+     * Hears a video's opening as its track starts, not once its lyrics are in (11-08
+     * WwFUZS8dv_4: the lookup took 11 s, and no words came during its play). The words
+     * are kept per recording, so the video's timing pass reads them when the sheet
+     * lands. One event per track; a new track cancels the wait, never the request.
+     */
+    private fun startEarlyHearing(
+        videoId: String,
+        title: String,
+        artist: String,
+        localUri: String?,
+        isVideo: Boolean,
+        /** A lyrics lookup will run: with every source off no sheet can use the words. */
+        lyricsLookup: Boolean,
+    ) {
+        earlyHearingJob?.cancel()
+        if (!isVideo) return
+        val context = app
+        earlyHearingJob = scope.launch {
+            LyricsTiming.hearVideoAtStart(context, videoId, title, artist, streamed = localUri == null, lyricsLookup = lyricsLookup)
         }
     }
 

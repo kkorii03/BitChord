@@ -80,4 +80,17 @@ class PlayerDeepLinkTest {
         assertFalse(MusicLink.linkStillWanted(null, "songB"))
         assertTrue(MusicLink.linkStillWanted(null, null))
     }
+
+    /**
+     * 11-08 phone round n5, ZdiQsgLWrf4: the link cold-started the app, the saved queue was
+     * restored during its 1 s lookup, and the link was dropped as if the listener had picked
+     * the restored song.
+     */
+    @Test
+    fun `a queue restored during a cold start's lookup does not overrule the link`() {
+        assertTrue(MusicLink.linkStillWanted(null, "restored", restored = "restored"))
+        // Still a pick: another song than the restored one, or a change from a playing song.
+        assertFalse(MusicLink.linkStillWanted(null, "songB", restored = "restored"))
+        assertFalse(MusicLink.linkStillWanted("songA", "restored", restored = "restored"))
+    }
 }

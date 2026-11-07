@@ -110,11 +110,27 @@ object MusicLink {
     }
 
     /**
+     * The song a cold start's queue restore made current, set by the playback service
+     * when it installs the saved queue. That is nobody's pick: a link that cold-starts
+     * the app is looked up while the restore lands, and taking the restore for a pick
+     * dropped the link and played the old queue (11-08 phone round n5, ZdiQsgLWrf4).
+     */
+    @Volatile
+    private var restoredMediaId: String? = null
+
+    /** Records that a restored queue made [mediaId] current; see [linkStillWanted]. */
+    fun noteRestored(mediaId: String?) {
+        restoredMediaId = mediaId
+    }
+
+    /**
      * Whether a link's song is still what the listener wants played: the current
      * media must be the one that was playing when the link's lookup began. A song
-     * picked during the wait wins over the link.
+     * picked during the wait wins over the link; the saved queue restored into an
+     * empty player during the wait ([restored]) does not.
      */
-    internal fun linkStillWanted(before: String?, now: String?): Boolean = before == now
+    internal fun linkStillWanted(before: String?, now: String?, restored: String? = restoredMediaId): Boolean =
+        before == now || (before == null && now != null && now == restored)
 
     /**
      * What a YouTube or YouTube Music URL points at, or null for one this app
