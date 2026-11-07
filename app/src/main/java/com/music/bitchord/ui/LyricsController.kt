@@ -1561,6 +1561,8 @@ class LyricsController(
         scope.launch {
             val heard = LyricsTiming.heardWordsFor(app, request.videoId)
             if (generation != lyricsGeneration || timingLines !== lines) return@launch
+            // What the app measured this sheet at; the guard above proves these are its lines.
+            val measured = _lyricsTiming.value.matchPercent
             // Every refresh lands here: only new words, a new sheet or a new
             // candidate are worth the sums below. A late provider's sheet is a
             // new candidate, and the old key let it go unjudged (QYh6mYIJG2Y).
@@ -1569,7 +1571,7 @@ class LyricsController(
             sheetJudgedFor = judged
             val others = sheetCandidates.values.filter { it.lines != lines && it.lines.any { line -> line.timeMs > 0 } }
             val better = withContext(Dispatchers.Default) {
-                com.music.bitchord.playback.smart.SheetChoice.better(lines, others, heard)
+                com.music.bitchord.playback.smart.SheetChoice.better(lines, others, heard, measured)
             }
             if (generation != lyricsGeneration || timingLines !== lines) return@launch
             if (better != null) {

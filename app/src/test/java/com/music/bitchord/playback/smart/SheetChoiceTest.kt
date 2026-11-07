@@ -100,4 +100,39 @@ class SheetChoiceTest {
     fun `no candidates, no change`() {
         assertNull(SheetChoice.better(sheet(24), emptyList(), sung(sheet(0))))
     }
+
+    /**
+     * w8P-BIQU1qI: the app measured the sheet on screen at 98% against 211 words;
+     * a later listen kept 158, fit it 72% and replaced it, and the log flipped
+     * between two others six times. The shorter listen must not judge it worse.
+     */
+    @Test
+    fun `a sheet the app measured as fitting stays when the words in hand fit it worse`() {
+        val onScreen = sheet(0).map(::timedWord)
+        val heard = sung(sheet(24))
+        assertNull(
+            SheetChoice.better(
+                onScreen,
+                listOf(LyricsRepository.Result(LyricsSource.VIBE, sheet(24))),
+                heard,
+                knownFit = 98,
+            ),
+        )
+    }
+
+    /** w8P-BIQU1qI: 98% against 211 words, 72% against the 158 a later listen kept. */
+    @Test
+    fun `the app's own measure below the floor does not freeze the sheet`() {
+        val onScreen = sheet(0).map(::timedWord)
+        val heard = sung(sheet(24))
+        assertEquals(
+            sheet(24),
+            SheetChoice.better(
+                onScreen,
+                listOf(LyricsRepository.Result(LyricsSource.VIBE, sheet(24))),
+                heard,
+                knownFit = 72,
+            )?.lines,
+        )
+    }
 }

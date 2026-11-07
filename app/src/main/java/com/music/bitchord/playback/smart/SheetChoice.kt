@@ -43,17 +43,23 @@ internal object SheetChoice {
     /**
      * The candidate to put up instead of [current], or null to keep it. It must
      * clear the floor any timing has to clear, and beat [current] by
-     * [MARGIN_PERCENT], and [current] must not already be good enough. Good enough but
-     * line-timed gives way to a sheet that also fits and times every word: the first answer on
-     * screen is often the line-timed one, and a late word-timed one now waits here for the words.
+     * [MARGIN_PERCENT], and [current] must not already be good enough (as measured now, or by
+     * [knownFit]). Good enough but line-timed gives way to a sheet that also fits and times
+     * every word: the first answer on screen is often the line-timed one, and a late word-timed
+     * one now waits here for the words.
+     *
+     * @param knownFit what the app itself measured [current] at, when it has; the words in
+     * hand can be a shorter listen than the one that measured it.
      */
     fun better(
         current: List<LyricLine>,
         candidates: List<LyricsRepository.Result>,
         heard: List<LyricsWordAlign.Heard>,
+        knownFit: Int? = null,
     ): LyricsRepository.Result? {
         if (heard.size < LyricsMismatch.MIN_HEARD_WORDS) return null
-        val mine = fitPercent(current, heard)
+        // 98% against 211 words, 72% against the 158 a later listen kept (w8P-BIQU1qI): not worse.
+        val mine = maxOf(fitPercent(current, heard), knownFit ?: 0)
         if (mine >= GOOD_ENOUGH_PERCENT) {
             if (current.any { it.hasStatedWords() }) return null
             return candidates.filter { sheet -> sheet.lines.any { it.hasStatedWords() } }
