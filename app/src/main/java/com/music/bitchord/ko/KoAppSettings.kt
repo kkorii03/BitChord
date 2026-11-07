@@ -73,6 +73,7 @@ internal object KoAppSettings {
         // Baked into this personal build after CI, like Gemini's — never committed.
         // Also only a default: a key typed in Settings (or removed there) wins.
         bundledDeepgramApiKey = context.getString(com.music.bitchord.R.string.default_deepgram_api_key).trim()
+        com.music.bitchord.data.lyrics.GroqWhisper.apiKey = context.getString(com.music.bitchord.R.string.default_groq_api_key).trim()
     }
 
     // ── Audio quality and downloads ────────────────────────────────────────

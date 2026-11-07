@@ -44,12 +44,13 @@ jobs:
         env:
           DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: |
           python3 - <<'PY'
           import os, re
           p = "app/src/main/res/values/strings.xml"
           s = open(p, encoding="utf-8").read()
-          for name, env in (("default_deepgram_api_key", "DEEPGRAM_API_KEY"), ("default_gemini_api_key", "GEMINI_API_KEY")):
+          for name, env in (("default_deepgram_api_key", "DEEPGRAM_API_KEY"), ("default_gemini_api_key", "GEMINI_API_KEY"), ("default_groq_api_key", "GROQ_API_KEY")):
               value = os.environ.get(env, "").strip()
               if not value:
                   print(f"{name}: no secret, left empty")
@@ -119,10 +120,11 @@ jobs:
         env:
           DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: |
           python3 - <<'PY'
           import os, pathlib
-          keys = [k for k in (os.environ.get("DEEPGRAM_API_KEY", "").strip(), os.environ.get("GEMINI_API_KEY", "").strip()) if k]
+          keys = [k for k in (os.environ.get("DEEPGRAM_API_KEY", "").strip(), os.environ.get("GEMINI_API_KEY", "").strip(), os.environ.get("GROQ_API_KEY", "").strip()) if k]
           hits = 0
           for f in pathlib.Path("shots").rglob("*"):
               if not keys or not f.is_file() or f.suffix in (".wav", ".png", ".webm"):

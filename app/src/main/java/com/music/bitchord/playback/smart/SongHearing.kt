@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.lyrics.Deepgram
+import com.music.bitchord.data.lyrics.GroqWhisper
 import com.music.bitchord.data.lyrics.LyricsWordAlign
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.durationMillis
@@ -327,6 +328,37 @@ internal object SongHearing {
     }
 
     private suspend fun send(
+        bytes: ByteArray,
+        language: String,
+        mime: String,
+        untilSeconds: Double,
+        videoId: String,
+        waitedMs: Long,
+        copyKey: String?,
+    ): Deepgram.Answer {
+        if (groqFirst(untilSeconds)) {
+            val asked = System.currentTimeMillis()
+            val answer = GroqWhisper.listen(bytes, language, mime)
+            TrackLog.d(
+                TAG,
+                "song-hear: groq lang=$language until=${untilSeconds.toInt()} mime=$mime kb=${bytes.size / 1024} " +
+                    "wait=${waitedMs}ms send=${System.currentTimeMillis() - asked}ms " +
+                    "http=${answer.httpCode} words=${answer.words?.size} audio=${answer.audioMs} copy=$copyKey",
+                videoId,
+            )
+            if (!answer.words.isNullOrEmpty()) return answer
+        }
+        return sendToDeepgram(bytes, language, mime, untilSeconds, videoId, waitedMs, copyKey)
+    }
+
+    /**
+     * The opening goes to Groq first: someone is waiting on it, and Deepgram may sit on it
+     * for a minute. A later window is Deepgram's, whose fit then replaces the opening's.
+     */
+    internal fun groqFirst(untilSeconds: Double): Boolean =
+        untilSeconds <= OPENING_SECONDS && GroqWhisper.apiKey.isNotBlank()
+
+    private suspend fun sendToDeepgram(
         bytes: ByteArray,
         language: String,
         mime: String,

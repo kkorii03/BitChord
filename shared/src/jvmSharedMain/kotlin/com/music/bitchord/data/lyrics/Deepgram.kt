@@ -79,7 +79,7 @@ object Deepgram {
      * coroutine is cancelled, so a blocked execute/read returns at once
      * instead of waiting out [client]'s 240 s timeout.
      */
-    private suspend fun <T> Call.runCancellable(block: (Response) -> T): T =
+    internal suspend fun <T> Call.runCancellable(block: (Response) -> T): T =
         withContext(Dispatchers.IO) {
             val watchdog = launch(start = CoroutineStart.UNDISPATCHED) {
                 try {
