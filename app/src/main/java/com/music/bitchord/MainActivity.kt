@@ -270,7 +270,6 @@ import com.music.bitchord.playback.upgradeQuality
 import com.music.bitchord.playback.revertToOriginal
 import com.music.bitchord.playback.swapToVersion
 import com.music.bitchord.playback.smart.VersionAudioAligner
-import com.music.bitchord.playback.smart.HqVerificationStore
 import com.music.bitchord.playback.smart.LyricsTiming
 import com.music.bitchord.download.DownloadSession
 import com.music.bitchord.download.HqLibraryUpgrade
@@ -4857,13 +4856,9 @@ private fun BitChordApp(
             // testing `localUri` on its own.
             val songIsLocalFile = SongOrigins.isLocalFile(song)
             val songIsDownloaded = SongOrigins.isDownloadedYouTube(song)
-            val verifiedTier = remember(song.videoId, song.downloadFormat) {
-                if (songIsDownloaded) HqVerificationStore.bestTier(context, song.videoId) else null
-            }
-            val redownloadAtBest = remember(song.videoId, song.downloadFormat, verifiedTier) {
+            val redownloadAtBest = remember(song.videoId, song.downloadFormat) {
                 songIsDownloaded && DownloadedQuality.isAtBest(
                     song.downloadFormat,
-                    verifiedTier,
                     Downloads.storedTier(song.videoId),
                 )
             }

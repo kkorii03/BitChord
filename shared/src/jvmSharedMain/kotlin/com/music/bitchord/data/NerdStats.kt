@@ -140,6 +140,19 @@ object NerdStats {
             get() = isDolbyAtmosMime(mimeType)
 
         /**
+         * The badge under the seek bar in one word, for the log: on 11-07 a whole
+         * song played with none and no line could say what it had been told.
+         */
+        val badgeName: String
+            get() = when {
+                showsLosslessBadge -> if (isHiRes) "hi-res" else "lossless"
+                isSuspectedFakeLossless -> "none(suspect lossless)"
+                isDolbyAtmos -> "atmos"
+                isHiQuality -> "high"
+                else -> "none"
+            }
+
+        /**
          * Whether this is better than CD quality — the line Tidal, Qobuz and
          * Apple Music all draw it at: past 16-bit or past 48kHz, not merely
          * lossless. A 16-bit/44.1kHz FLAC is a bit-exact CD rip and gets
@@ -401,10 +414,22 @@ object NerdStats {
      * reported as [TelemetryProvenance.DERIVED] only when nothing better is
      * known yet.
      *
+     * @param decodedLossless the decoder is reading a lossless codec. Neither
+     *   [picked] nor a lossy claim can describe that stream, and either one
+     *   under [SUSPECT_LOSSLESS_KBPS] takes the badge away as a fake. 11-07
+     *   'Titanium': a saved FLAC moved in behind the YouTube stream that had been
+     *   picked at 152 kbps, and the song played to its end with no label.
      * @param measuredKbps only called when its answer would be used.
      */
-    fun sourceBitrate(mediaId: String?, measuredKbps: () -> Int?): Pair<Int, TelemetryProvenance>? {
+    fun sourceBitrate(
+        mediaId: String?,
+        decodedLossless: Boolean = false,
+        measuredKbps: () -> Int?,
+    ): Pair<Int, TelemetryProvenance>? {
         val declared = declaredFormat(mediaId)
+        if (decodedLossless && declared?.isLossless != true) {
+            return measuredKbps()?.let { it to TelemetryProvenance.MEASURED }
+        }
         declared?.takeUnless { it.kbpsInferred }?.kbps
             ?.let { return it to TelemetryProvenance.AUTHORITATIVE }
         if (declared?.isLossless == true) return null

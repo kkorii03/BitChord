@@ -779,6 +779,10 @@ object SourceResolver {
          * source after a failed verification does not search again.
          */
         collect: MutableList<Pair<MusicSource, SourceStream>>? = null,
+        /** How long each source gets; see `sourceTimeoutMs` in [bestAcross]. */
+        sourceTimeoutMs: Long = SOURCE_LOOKUP_TIMEOUT_MS,
+        /** Ends the race as soon as an accepted answer satisfies this; see [bestAcross]. */
+        enough: ((SourceStream) -> Boolean)? = null,
         /**
          * The sound comparison, when the caller has one. It runs as each
          * candidate arrives rather than after every source has timed out.
@@ -857,6 +861,8 @@ object SourceResolver {
             report = report,
             collect = collect,
             collectGate = worth,
+            sourceTimeoutMs = sourceTimeoutMs,
+            enough = enough,
         ) { candidate, stream ->
             worth(candidate, stream) && (verify?.invoke(candidate, stream) ?: true)
         } ?: return null
@@ -1428,6 +1434,13 @@ object SourceResolver {
         refine: suspend (MusicSource, SourceStream) -> SourceStream? = { _, stream -> stream },
         /** Ends the race at that point with whatever has already answered. */
         timeoutMs: Long? = null,
+        /**
+         * [waitForAll]'s way out: an accepted answer this says yes to is the
+         * answer, whoever is still searching. The automatic second look passes
+         * "a lossless copy": on 11-07 a proved FLAC sat in hand while the race
+         * waited out a four-second timeout that could only have found its equal.
+         */
+        enough: ((SourceStream) -> Boolean)? = null,
         accept: suspend (MusicSource, SourceStream) -> Boolean = { _, _ -> true },
     ): Pair<MusicSource, SourceStream>? = coroutineScope {
         val until = timeoutMs?.let { System.nanoTime() + it * 1_000_000 }
@@ -1663,6 +1676,8 @@ object SourceResolver {
                             HqHostTracker.penalty(HqHostTracker.hostOf(current.second.url))
                         val beats = when {
                             current == null -> true
+                            // Nothing else in this batch gets a ninety-second proof.
+                            enough?.invoke(current.second) == true -> false
                             candidateRank != currentRank -> candidateRank < currentRank
                             // Among localised rows the smallest runtime
                             // difference is the required choice; quality only
@@ -1701,9 +1716,11 @@ object SourceResolver {
                 // playing, and its caller explicitly requested every source's
                 // patient result. Let every source finish so a fast lower tier
                 // cannot cancel a later, better rendition.
-                if (best != null && !waitForAll) break
+                val settled = best
+                if (settled != null && (!waitForAll || enough?.invoke(settled.second) == true)) break
             }
         } finally {
+            if (enough != null && running.isNotEmpty()) report?.markEndedEarly() // [KO] hq-tier
             running.forEach { it.cancel() }
         }
         best

@@ -5,6 +5,8 @@ import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.net.LogUrl
 import com.music.bitchord.data.sources.HqQuality
+import com.music.bitchord.data.sources.HqTier
+import com.music.bitchord.data.sources.MusicSource
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
@@ -14,6 +16,17 @@ import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.playback.HqHostTracker
 import com.music.bitchord.playback.QualityUpgrade
 import com.music.bitchord.playback.StreamChoice
+import com.music.bitchord.telegram.TelegramClientManager
+import com.music.bitchord.telegram.TelegramStreamUri
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.util.concurrent.ConcurrentHashMap
 
@@ -295,6 +308,93 @@ internal object KoQualityUpgrade {
         failedSources.remove(mediaId)
         failedHosts.remove(mediaId)
         retryAfter.remove(mediaId)
+        retriedThisPlay -= mediaId
+        noLookSaid.removeAll { it.startsWith("$mediaId|") }
+    }
+
+    /** Tracks whose one retry for an inconclusive look has been armed this play. */
+    private val retriedThisPlay: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    /**
+     * Whether an inconclusive look may arm its retry: once a play, so a source
+     * that stays down costs one more search rather than one a minute.
+     */
+    fun takeRetry(mediaId: String): Boolean = retriedThisPlay.add(mediaId)
+
+    /** Takes back a recorded answer: the swap it led to did not happen. */
+    fun reopen(mediaId: String) {
+        QualityUpgrade.asked -= mediaId
+    }
+
+    /**
+     * A proof that throws has failed for this candidate. Left to propagate it took
+     * the whole race with it, every other source's answer included.
+     */
+    private suspend fun proofHolds(
+        mediaId: String,
+        target: TrackMatcher.Target,
+        stream: SourceStream,
+        verify: suspend (TrackMatcher.Target, SourceStream) -> Boolean,
+    ): Boolean = try {
+        verify(target, stream)
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failed: Exception) {
+        TrackLog.w(
+            TAG,
+            "automatic look for $mediaId: the proof of ${stream.format.summary} threw " +
+                "${failed.javaClass.simpleName}; trying the next source",
+            about = mediaId,
+        )
+        false
+    }
+
+    /** How far into the track the retry is armed, past the end of the bounded wait. */
+    const val RETRY_AFTER_POSITION_MS = INCONCLUSIVE_RETRY_MS + 1_000L
+
+    private val noLookSaid: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    /**
+     * Why [QualityUpgrade.couldStillUpgrade] said no, for the log. A play with no
+     * look used to leave no line at all, so "never looked" and "never logged"
+     * read the same (11-07: 33 of 91 songs).
+     */
+    fun noLookReason(
+        hasUri: Boolean,
+        hasVideoId: Boolean,
+        musicVideo: Boolean,
+        marked: Boolean,
+        answered: Boolean,
+        broke: Boolean,
+        retryWindow: Boolean,
+        canSubstitute: Boolean,
+    ): String = when {
+        !hasUri -> "no-item"
+        !hasVideoId -> "plays-a-file"
+        musicVideo -> "video-row"
+        marked -> "already-upgraded"
+        answered -> "already-answered"
+        broke -> "broke-on-upgrade"
+        retryWindow -> "retry-window"
+        !canSubstitute -> "no-source"
+        else -> "direct-source"
+    }
+
+    /** The reason [uri] gets no look, once per reason per play. */
+    fun logNoLook(mediaId: String, uri: Uri?) {
+        val reason = noLookReason(
+            hasUri = uri != null,
+            hasVideoId = uri?.getQueryParameter("v") != null,
+            musicVideo = uri?.getQueryParameter("m") == "1",
+            marked = uri?.getQueryParameter(QualityUpgrade.MARKER) != null,
+            answered = mediaId in QualityUpgrade.asked,
+            broke = mediaId in QualityUpgrade.refused,
+            retryWindow = (retryAfter[mediaId] ?: 0L) > System.currentTimeMillis(),
+            canSubstitute = SourceResolver.canSubstituteForYouTube(),
+        )
+        if (noLookSaid.add("$mediaId|$reason")) {
+            TrackLog.d(TAG, "no upgrade look for $mediaId: $reason", about = mediaId)
+        }
     }
 
     /**
@@ -325,6 +425,8 @@ internal object KoQualityUpgrade {
         manualSessions.clear()
         SourceResolver.clearManualProbes()
         retryAfter.clear()
+        retriedThisPlay.clear()
+        noLookSaid.clear()
     }
 
     /** A lossy swap landed, so candidates collected against the old floor are stale. */
@@ -438,6 +540,211 @@ internal object KoQualityUpgrade {
 
     /** The fork's lossless-tier test, kept beside the follow-up rule it feeds. */
     fun isLosslessTier(format: StreamFormat?): Boolean = HqQuality.isLosslessTier(format)
+
+    /**
+     * Each source's window on the automatic second look.
+     *
+     * The live path's four seconds is about a listener waiting on a first note.
+     * Here music is already playing, and the first proved lossless copy now ends
+     * the race (see `enough` in [SourceResolver.bestAcross]), so a slow source
+     * only ever delays a track nothing faster has an answer for. On 11-07 two
+     * addons missed the four seconds and answered within ten; missing it cost the
+     * track a 60-second wait for [INCONCLUSIVE_RETRY_MS] (63 looks in that log).
+     */
+    const val AUTOMATIC_SOURCE_TIMEOUT_MS = 12_000L
+
+    /** Sound comparisons one automatic look may spend before it gives up for this play. */
+    private const val MAX_AUTOMATIC_PROOFS = 3
+
+    /**
+     * What a look can do with [format]. The automatic path only ever swaps in
+     * a lossless copy, so anything else is passed over rather than allowed to
+     * win; see [automaticProof].
+     */
+    fun usableByThisLook(manual: Boolean, format: StreamFormat?): Boolean =
+        manual || HqQuality.worthProving(format)
+
+    /**
+     * What the automatic path swaps in once the race is over: a lossless rung, or
+     * failing that a copy that states it is on the high lossy rung.
+     *
+     * A lossless label demoted to that rung is a transcode, and a rate guessed
+     * from the tier asked for is not a rate, so neither counts. Atmos stays out.
+     */
+    fun automaticSwapTakes(format: StreamFormat?): Boolean =
+        HqQuality.isLosslessTier(format) || (
+            format != null && format.isLossless != true && !format.kbpsInferred &&
+                HqQuality.tierOf(format) == HqTier.HIGH_LOSSY
+            )
+
+    /**
+     * The best lossy copy a look passed over while it waited for a lossless one.
+     *
+     * 11-07, twelve hours of the phone's logs: 16 of 91 songs played to their end
+     * on YouTube's Opus with JioSaavn's matched 320 kbps in hand and no lossless
+     * copy reachable (Telegram had none, Deezer matched and answered 403), the
+     * look ending on "not lossless; nothing on this path takes it". The copy has
+     * to clear the same sound comparison as any other before it is taken.
+     */
+    class LossyReserve {
+        private var best: SourceStream? = null
+
+        @Synchronized
+        fun offer(stream: SourceStream) {
+            if (HqQuality.isBetter(stream.format, best?.format)) best = stream
+        }
+
+        /** The reserve, once it has passed [verify]; null [verify] means there is no comparison to run. */
+        suspend fun proved(
+            mediaId: String,
+            target: TrackMatcher.Target,
+            verify: (suspend (TrackMatcher.Target, SourceStream) -> Boolean)?,
+        ): SourceStream? {
+            val stream = synchronized(this) { best } ?: return null
+            val accepted = verify == null || proofHolds(mediaId, target, stream, verify)
+            TrackLog.d(
+                TAG,
+                "automatic look for $mediaId: no lossless copy; ${stream.format.summary} " +
+                    if (accepted) "taken" else "failed its proof",
+                about = mediaId,
+            )
+            return stream.takeIf { accepted }
+        }
+    }
+
+    /**
+     * The gate every candidate of an automatic look clears before it can win:
+     * lossless, and then the same sound comparison as ever, run as it arrives.
+     *
+     * Both halves are for the same reason. The race used to return its best
+     * rung unproved, and only then ask whether the path could use it, so one
+     * answer it could not use ended the look with the real copies in hand:
+     *
+     * ```
+     *   14:10:58.274  텔레그램 results=8 best=Stressed Out verdict=match    (FLAC 24-bit)
+     *   14:10:58.656  Lossless Bridge results=7 best=Stressed Out verdict=match  (FLAC 16-bit)
+     *   14:10:58.656  upgrade found: 'Stressed Out' at Dolby Atmos from Trial
+     *   14:10:58.657  upgrade for K1FlAphL2p8: Dolby Atmos is not lossless; nothing on this path takes it
+     *   ——— nothing, until the listener asked by hand 38.9 seconds later ———
+     * ```
+     *
+     * Proving here rather than after the race also means a candidate that fails
+     * its proof hands over to the next one, instead of ending the look.
+     *
+     * [verify] null means the caller has no comparison, and the format is the
+     * whole of the gate.
+     *
+     * @param reserve keeps a lossy copy this gate passes over; see [LossyReserve].
+     */
+    fun automaticProof(
+        mediaId: String,
+        target: TrackMatcher.Target,
+        verify: (suspend (TrackMatcher.Target, SourceStream) -> Boolean)?,
+        reserve: LossyReserve? = null,
+    ): suspend (MusicSource, SourceStream) -> Boolean {
+        var proofs = 0
+        return { source, stream ->
+            when {
+                !HqQuality.worthProving(stream.format) -> {
+                    if (automaticSwapTakes(stream.format)) reserve?.offer(stream)
+                    TrackLog.d(
+                        TAG,
+                        "automatic look for $mediaId: ${source.displayName}'s ${stream.format.summary} " +
+                            "is not lossless; passing over it",
+                        about = mediaId,
+                    )
+                    false
+                }
+                verify == null -> true
+                proofs >= MAX_AUTOMATIC_PROOFS -> {
+                    TrackLog.d(
+                        TAG,
+                        "automatic look for $mediaId: $proofs candidates failed their proof; " +
+                            "not proving ${source.displayName}'s",
+                        about = mediaId,
+                    )
+                    false
+                }
+                else -> {
+                    proofs++
+                    holdTelegramSession(mediaId, stream)
+                    val proved = proofHolds(mediaId, target, stream, verify)
+                    if (!proved) releaseTelegramSession(mediaId)
+                    proved
+                }
+            }
+        }
+    }
+
+    /**
+     * The first non-null answer of [lookup] and [search], both started now; the
+     * other stops being waited for. A null waits for the other one.
+     *
+     * The second look used to finish waiting for the direct lookup before it
+     * asked anybody, which on 11-07 was 8.1 seconds proving a 30-second MP3
+     * preview nothing could use, with Telegram's FLAC not yet asked for. Started
+     * together they share the addon calls (a running call is joined, not
+     * repeated) and the one reference profile.
+     *
+     * The lookup itself is left to finish, as it always was: others can be
+     * awaiting the same one, and cancelling it would throw at them.
+     */
+    suspend fun <T : Any> firstAnswerOf(
+        lookup: (suspend () -> T?)?,
+        search: suspend () -> T?,
+    ): T? {
+        if (lookup == null) return search()
+        return coroutineScope {
+            val racing = mutableListOf<Deferred<T?>>(async { lookup() }, async { search() })
+            var answer: T? = null
+            while (answer == null && racing.isNotEmpty()) {
+                val done = select<Deferred<T?>> {
+                    racing.forEach { racer -> racer.onAwait { racer } }
+                }
+                racing.remove(done)
+                answer = done.await()
+            }
+            racing.forEach { it.cancel() }
+            answer
+        }
+    }
+
+    /** Whether [stream] is read through TDLib rather than over HTTP. */
+    fun isTelegramStream(stream: SourceStream): Boolean =
+        stream.url.startsWith("${TelegramStreamUri.SCHEME}:")
+
+    /**
+     * Keeps TDLib's session open from a Telegram candidate's proof to the end
+     * of its upgrade.
+     *
+     * The client closes on its last lease, so the proof's read closing it meant
+     * the whole-file read straight after paid a cold session again: its first
+     * four megabytes took 2,447 ms on 11-07 against 730 ms for each one after.
+     */
+    private val telegramSessions = ConcurrentHashMap<String, String>()
+    private val telegramSessionScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    private fun holdTelegramSession(mediaId: String, stream: SourceStream) {
+        if (!isTelegramStream(stream)) return
+        val track = TelegramStreamUri.trackId(stream.url) ?: return
+        if (telegramSessions.putIfAbsent(mediaId, track) == null) TelegramClientManager.beginStream(track)
+    }
+
+    /** Off the caller's thread: this waits on the client's worker, and callers are on Main. */
+    fun releaseTelegramSession(mediaId: String) {
+        val track = telegramSessions.remove(mediaId) ?: return
+        telegramSessionScope.launch { TelegramClientManager.endStream(track) }
+    }
+
+    /**
+     * A replacement that cannot seek can never reach the listener, so waiting
+     * for it to buffer past them is waiting for the audition's whole timeout.
+     * Near the very start it does not matter: it opens where the song is.
+     */
+    fun auditionCannotReach(seekable: Boolean, positionMs: Long): Boolean =
+        !seekable && positionMs > AUDITION_ANY_SEEK_NEEDED_MS
+
+    private const val AUDITION_ANY_SEEK_NEEDED_MS = 1_000L
 
     /**
      * Separates the cost of the catalogue search from the cost of the sound

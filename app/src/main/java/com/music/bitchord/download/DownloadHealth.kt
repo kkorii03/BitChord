@@ -116,8 +116,11 @@ object DownloadHealth {
      * 4: a file passed on its opening alone may run minutes past the song
      * (11-07 _GWKkqNoyEA, 344 s under a 258 s row), and it is already recorded
      * as checked and verified on the phone, so it has to be judged once more.
+     *
+     * 5: a saved lossy file now asks for one search for a better copy, and every
+     * such file is already recorded as checked (11-07 cCkAcVOS3ig).
      */
-    const val CHECK_VERSION = 4
+    const val CHECK_VERSION = 5
 
     data class Outcome(
         val verdict: DownloadHealthPolicy.Verdict,
@@ -303,6 +306,7 @@ object DownloadHealth {
                     currentTier = currentTier,
                     verifiedTier = bestTier,
                     online = online,
+                    replacesSavedCopies = AppSettings.autoReplaceHqDownloads.value,
                 ),
             )
             // These bytes were just compared with the song version. Promote

@@ -151,11 +151,21 @@ class KoLosslessCache(
         containerMemo.forget(mediaId)
     }
 
-    suspend fun cacheWholeRendition(uri: Uri, title: String?) {
-        cacheWholeRenditionDetailed(uri, title)
+    /**
+     * @param releasesHost whether the end of this read also ends the download the
+     *   caller began on the host. A read in the middle of a swap passes false: the
+     *   audition and the player are still about to read from that host, and ending
+     *   it here let other work open a second request to it, the 429 the gate exists for.
+     */
+    suspend fun cacheWholeRendition(uri: Uri, title: String?, releasesHost: Boolean = true) {
+        cacheWholeRenditionDetailed(uri, title, releasesHost)
     }
 
-    private suspend fun cacheWholeRenditionDetailed(uri: Uri, title: String?): WholeRenditionResult {
+    private suspend fun cacheWholeRenditionDetailed(
+        uri: Uri,
+        title: String?,
+        releasesHost: Boolean = true,
+    ): WholeRenditionResult {
         val cache = cache() ?: return WholeRenditionResult(false, 0L, "no cache")
         val key = keyFactory.buildCacheKey(DataSpec(uri))
         val mediaId = mediaIdIn(uri)
@@ -219,7 +229,7 @@ class KoLosslessCache(
             } finally {
                 mediaId?.let {
                     wholeRenditionJobs.remove(it, job)
-                    HqHostTracker.endDownload(it, host)
+                    if (releasesHost) HqHostTracker.endDownload(it, host)
                 }
             }
         }
@@ -265,10 +275,21 @@ class KoLosslessCache(
         if (active) losslessPrefetchAttempted.remove(mediaId)
     }
 
-    suspend fun downloadVerifiedRendition(uri: Uri, title: String?, stream: SourceStream): Boolean {
+    /** @param takesLossy the automatic swap's lossy fallback; see [KoQualityUpgrade.automaticSwapTakes]. */
+    suspend fun downloadVerifiedRendition(
+        uri: Uri,
+        title: String?,
+        stream: SourceStream,
+        takesLossy: Boolean = false,
+    ): Boolean {
         val cache = cache() ?: return false
         val mediaId = mediaIdIn(uri) ?: return false
-        if (!HqQuality.isLosslessTier(stream.format)) return false
+        val wanted = if (takesLossy) {
+            KoQualityUpgrade.automaticSwapTakes(stream.format)
+        } else {
+            HqQuality.isLosslessTier(stream.format)
+        }
+        if (!wanted) return false
         val key = keyFactory.buildCacheKey(DataSpec(uri))
         losslessPrefetchJob?.takeIf { it.isActive }?.join()
         // Whether the `#hifi` entry already holds *this* stream's bytes, asked

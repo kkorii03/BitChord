@@ -93,6 +93,8 @@ object DownloadHealthPolicy {
         val verifiedTier: HqTier? = null,
         /** False offline, where the file is all there is until a fetch can run. */
         val online: Boolean = true,
+        /** The listener's "replace saved songs with better copies" switch. */
+        val replacesSavedCopies: Boolean = false,
     )
 
     data class Decision(
@@ -128,6 +130,15 @@ object DownloadHealthPolicy {
         val verified = input.verifiedTier
         if (current != null && verified != null && verified.rank < current.rank) {
             return Decision(Verdict.LOWER_QUALITY, Action.UPGRADE)
+        }
+        // Nothing better proved yet is not nothing better. A saved lossy file plays
+        // from disk, so no second look ever reaches it: 11-07 cCkAcVOS3ig, a saved
+        // Opus, "ok" and left at that. This is the file being sound, so still OK,
+        // and it asks for one search; the proof and the rung check come after it.
+        if (input.replacesSavedCopies && input.online && current != null &&
+            current.rank > HqTier.LOSSLESS_16.rank
+        ) {
+            return Decision(Verdict.OK, Action.UPGRADE)
         }
         return Decision(Verdict.OK, Action.NONE)
     }

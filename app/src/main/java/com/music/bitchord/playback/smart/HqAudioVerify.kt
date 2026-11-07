@@ -246,6 +246,7 @@ object HqAudioVerify {
         val downloadMs: Long = 0L,
         val decodeMs: Long = 0L,
         val chromaMs: Long = 0L,
+        val headMs: Long = -1L,
     )
 
     /** Chroma construction time inside one decode, so it can be told apart from the codec. */
@@ -262,6 +263,8 @@ object HqAudioVerify {
         var decodeMs: Long = 0L
         @Volatile
         var chromaMs: Long = 0L
+        @Volatile
+        var progress: DownloadProgress? = null
     }
 
     private typealias StreamDecode =
@@ -344,7 +347,13 @@ object HqAudioVerify {
      * memory (see [HqReferenceCache]).
      */
     private const val REFERENCE_DIR = "hq_reference"
-    private const val MAX_REFERENCE_FILES = 64
+
+    /**
+     * A kept profile is the 4.7 s reference decode of a track's next first play
+     * of a new candidate (11-07 'Stressed Out'), for a few dozen kilobytes of a
+     * terabyte. Sixty-four was under one evening's listening.
+     */
+    private const val MAX_REFERENCE_FILES = 1024
 
     /**
      * One reference decode per YouTube id at a time.
@@ -1025,7 +1034,7 @@ object HqAudioVerify {
     private fun logTiming(youtubeId: String, candidate: Candidate, alignMs: Long) {
         TrackLog.i(
             TAG,
-            "hq-verify timing: download=${candidate.downloadMs} " +
+            "hq-verify timing: download=${candidate.downloadMs} head=${candidate.headMs} " +
                 "decode=${candidate.decodeMs} chroma=${candidate.chromaMs} " +
                 "align=$alignMs bytes=${candidate.bytes}",
             youtubeId,
@@ -1313,6 +1322,7 @@ object HqAudioVerify {
             // falls back to the complete file below, so this can only save
             // time, not change the answer.
             val decode: StreamDecode = { source, expected, progress ->
+                slot.progress = progress
                 val started = System.nanoTime()
                 val timing = DecodeTiming()
                 val coroutine = currentCoroutineContext()
@@ -1386,6 +1396,7 @@ object HqAudioVerify {
                     downloadMs = downloadMs,
                     decodeMs = slot.decodeMs,
                     chromaMs = slot.chromaMs,
+                    headMs = slot.progress?.headMs ?: -1L,
                 ),
             )
         } catch (cancelled: CancellationException) {
@@ -1748,32 +1759,145 @@ object HqAudioVerify {
      * Reads the head of a Telegram file through the same TDLib reader the
      * player uses, at the lower verify priority. The stream lease keeps the
      * client open only while this read runs; cancelling interrupts the read.
+     *
+     * Decoded as it arrives, as an HTTP candidate is. The head is sized for a
+     * file as big as raw PCM, and a FLAC is a little over half of that, so
+     * waiting for all of it spent 7.0 s of an 8.5 s proof on bytes the comparison
+     * never read (11-07, 28.9 MB at 5.5 MB/s, nineteen of twenty-eight upgrades).
+     *
+     * TDLib keeps what it has fetched, so for as long as the decode runs the read
+     * carries on past the head: those bytes are what the whole-file read needs next
+     * if this candidate passes, and data is the one thing that is free here.
      */
-    private suspend fun downloadTelegramPrefix(url: String, file: File, limit: Long): Long =
-        runInterruptible(Dispatchers.IO) {
-            val id = TelegramStreamUri.trackId(android.net.Uri.parse(url))
-                ?: throw DownloadRefused(404)
-            TelegramClientManager.beginStream(id)
-            try {
-                TelegramAudioReader.open(id, 0L, -1L, TelegramAudioReader.REASON_VERIFY).use { reader ->
-                    FileOutputStream(file).use { output ->
-                        val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
-                        var remaining = limit
-                        while (remaining > 0L) {
-                            val want = minOf(buffer.size.toLong(), remaining).toInt()
-                            val read = reader.read(buffer, 0, want)
-                            if (read < 0) break
-                            output.write(buffer, 0, read)
-                            remaining -= read
-                        }
-                        output.flush()
-                    }
-                }
-            } finally {
-                TelegramClientManager.endStream(id)
+    private suspend fun downloadTelegramPrefix(
+        url: String,
+        file: File,
+        limit: Long,
+        decode: StreamDecode?,
+    ): Long = withContext(Dispatchers.IO) {
+        val id = TelegramStreamUri.trackId(android.net.Uri.parse(url))
+            ?: throw DownloadRefused(404)
+        runInterruptible { TelegramClientManager.beginStream(id) }
+        try {
+            val reader = runInterruptible {
+                TelegramAudioReader.open(id, 0L, -1L, TelegramAudioReader.REASON_VERIFY)
             }
-            file.length()
+            reader.use {
+                if (decode == null) {
+                    runInterruptible { copyTelegramHead(reader, file, limit) }
+                } else {
+                    copyBesideDecode(
+                        file,
+                        expected = if (reader.total > 0L) minOf(reader.total, limit) else limit,
+                        decode = decode,
+                        copy = { runInterruptible { copyTelegramHead(reader, file, limit) } },
+                        afterHead = { warmTelegramTail(reader) },
+                        // Before the cancel takes effect: a synchronous TDLib
+                        // download only answers once it is cancelled, and an
+                        // interrupt alone is read there as a failed download
+                        // and retried.
+                        stop = { reader.close() },
+                    )
+                }
+            }
+        } finally {
+            TelegramClientManager.endStream(id)
         }
+        file.length()
+    }
+
+    private fun copyTelegramHead(reader: TelegramAudioReader, file: File, limit: Long) {
+        FileOutputStream(file).use { output ->
+            val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
+            var remaining = limit
+            while (remaining > 0L) {
+                val want = minOf(buffer.size.toLong(), remaining).toInt()
+                val read = reader.read(buffer, 0, want)
+                if (read < 0) break
+                output.write(buffer, 0, read)
+                remaining -= read
+            }
+            output.flush()
+        }
+    }
+
+    /** Reads on and discards, for what it leaves on TDLib's disk. Its failure costs the proof nothing. */
+    private suspend fun warmTelegramTail(reader: TelegramAudioReader) {
+        try {
+            runInterruptible {
+                val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
+                while (reader.read(buffer, 0, buffer.size) >= 0) Unit
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failed: Exception) {
+            TrackLog.d(TAG, "hq-verify: stopped reading ahead: ${failed.javaClass.simpleName}")
+        }
+    }
+
+    /**
+     * Runs [copy] and [decode] together on the same growing [file], and stops
+     * the transfer as soon as the decoder has all it needs. [afterHead] goes on
+     * from where [copy] ended, past the point the decoder needs anything, until
+     * the decode is over.
+     *
+     * A decode that cannot use the growing file waits for the head to land, so
+     * the caller can decode the complete file instead.
+     *
+     * A transfer broken by being stopped is not a failed transfer. It used to
+     * reach the parent as one, so a decode that finished ahead of the network
+     * would have turned its own success into a failed candidate; no HTTP head on
+     * 11-07 was slow enough to show it, and a Telegram head is.
+     */
+    internal suspend fun copyBesideDecode(
+        file: File,
+        expected: Long,
+        decode: suspend (File, Long, DownloadProgress) -> Boolean,
+        copy: suspend () -> Unit,
+        afterHead: suspend () -> Unit = {},
+        stop: () -> Unit = {},
+    ) {
+        val progress = DownloadProgress()
+        val headDone = CompletableDeferred<Unit>()
+        val stopping = AtomicBoolean(false)
+        coroutineScope {
+            val transfer = async(Dispatchers.IO) {
+                try {
+                    copy()
+                    progress.markFinished()
+                    headDone.complete(Unit)
+                    afterHead()
+                } catch (failed: Throwable) {
+                    if (!stopping.get()) {
+                        progress.markFinished(failed)
+                        throw failed
+                    }
+                    Unit
+                } finally {
+                    if (!progress.finished) progress.markFinished()
+                    headDone.complete(Unit)
+                }
+            }
+            val decoded = try {
+                decode(file, expected, progress)
+            } catch (cancelled: CancellationException) {
+                stopping.set(true)
+                stop()
+                transfer.cancel()
+                throw cancelled
+            } catch (_: Exception) {
+                false
+            }
+            // The decoder gave up on the growing file: the complete head is
+            // what it falls back on, so the head has to land first.
+            if (!decoded) headDone.await()
+            stopping.set(true)
+            // Closing the transfer is what lets a blocked read return at once.
+            stop()
+            transfer.cancel()
+            runCatching { transfer.await() }
+        }
+    }
 
     private suspend fun downloadPrefix(
         stream: SourceStream,
@@ -1785,7 +1909,7 @@ object HqAudioVerify {
         // A Telegram candidate is not an HTTP URL: OkHttp rejected the internal
         // scheme, so no Telegram row could ever be measured or chosen.
         if (stream.url.startsWith("${TelegramStreamUri.SCHEME}:")) {
-            return downloadTelegramPrefix(stream.url, file, limit)
+            return downloadTelegramPrefix(stream.url, file, limit, decode)
         }
         val request = Request.Builder()
             .url(stream.url)
@@ -1850,41 +1974,14 @@ object HqAudioVerify {
                             copyPrefix(input, file, limit)
                             file.length()
                         } else {
-                            val progress = DownloadProgress()
-                            coroutineScope {
-                                val copy = async(Dispatchers.IO) {
-                                    try {
-                                        copyPrefix(input, file, limit)
-                                    } catch (failed: Throwable) {
-                                        progress.markFinished(failed)
-                                        throw failed
-                                    } finally {
-                                        if (!progress.finished) progress.markFinished()
-                                    }
-                                }
-                                val decoded = try {
-                                    decode(file, expected, progress)
-                                } catch (cancelled: CancellationException) {
-                                    copy.cancel()
-                                    throw cancelled
-                                } catch (_: Exception) {
-                                    false
-                                }
-                                if (decoded) {
-                                    // The decoder has all it needs; stop the
-                                    // transfer instead of fetching the rest of
-                                    // the estimated head. Cancelling the call
-                                    // closes the socket so a blocked read
-                                    // returns at once.
-                                    copy.cancel()
-                                    call.cancel()
-                                    runCatching { copy.await() }
-                                } else {
-                                    // Let the head finish, then decode the
-                                    // complete file the old way below.
-                                    copy.await()
-                                }
-                            }
+                            copyBesideDecode(
+                                file,
+                                expected = expected,
+                                decode = decode,
+                                copy = { copyPrefix(input, file, limit) },
+                                // Cancelling the call closes the socket.
+                                stop = { call.cancel() },
+                            )
                             file.length()
                         }
                     }

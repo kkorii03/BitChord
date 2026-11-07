@@ -20,6 +20,9 @@ import com.music.bitchord.ko.koReportPlaybackFailure
 import com.music.bitchord.ko.koIsBotChallenge
 import com.music.bitchord.ko.koPrefetchLosslessForNextPlay
 import com.music.bitchord.ko.koSwapLosslessMidSong
+import com.music.bitchord.ko.koArmInconclusiveRetry
+import com.music.bitchord.ko.koRelookAfterFailedSwap
+import com.music.bitchord.ko.koLogQualityLabel
 import com.music.bitchord.ko.koHqSwapDecision
 import com.music.bitchord.ko.koCurrentPlayingVerification
 import com.music.bitchord.ko.koCurrentIsSubstitute
@@ -6570,6 +6573,10 @@ class PlaybackService : MediaLibraryService() {
      * served from the disk cache was never resolved at all and is judged here
      * instead — see [adoptCachedTrack] and [QualityUpgrade.adoptUnresolved].
      */
+    internal fun koRetryBetterCopy(on: ExoPlayer, mediaId: String) { // [KO] hq-tier
+        if (on === player && on.currentMediaItem?.mediaId == mediaId) lookForBetterCopy(on)
+    }
+
     private fun lookForBetterCopy(player: ExoPlayer): Boolean {
         val item = player.currentMediaItem ?: return false
         val mediaId = item.mediaId
@@ -6589,6 +6596,7 @@ class PlaybackService : MediaLibraryService() {
         val alreadyPending = QualityUpgrade.isPending(mediaId)
         val shelved = QualityUpgrade.shelvedFor(mediaId)
         if (shelved == null && !alreadyPending && !QualityUpgrade.couldStillUpgrade(mediaId, uri)) {
+            com.music.bitchord.ko.KoQualityUpgrade.logNoLook(mediaId, uri) // [KO] hq-tier
             if (manualUpgradeFor == mediaId) {
                 val refusal = QualityUpgrade.refusalFor(mediaId, uri)
                 TrackLog.i(
@@ -6815,6 +6823,7 @@ class PlaybackService : MediaLibraryService() {
                         about = mediaId,
                     )
                     val message = noBetterUpgradeMessage(mediaId, upgradeReport)
+                    if (!manual && !upgradeReport.allConclusive) koArmInconclusiveRetry(mediaId) // [KO] hq-tier
                     if (deferManualAnswer()) {
                         TrackLog.d(
                             "BitChord",
@@ -6848,8 +6857,10 @@ class PlaybackService : MediaLibraryService() {
                         // and [prefetchLosslessForNextPlay] both refuse anything
                         // else, so proving a lossy candidate cost verify=34756ms
                         // on 11-03 with the upgrade badge up for all of it, and was
-                        // then dropped. See [HqQuality.worthProving].
-                        val answer = if (HqQuality.worthProving(better.format)) {
+                        // then dropped. See [HqQuality.worthProving]. The look only
+                        // returns a lossy copy once no lossless one came, for the swap
+                        // below; see [KoQualityUpgrade.LossyReserve].
+                        val answer = if (com.music.bitchord.ko.KoQualityUpgrade.automaticSwapTakes(better.format)) { // [KO] hq-tier
                             HqAudioVerify.verify(this@PlaybackService, mediaId, target, better)
                         } else {
                             TrackLog.d(
@@ -6869,11 +6880,12 @@ class PlaybackService : MediaLibraryService() {
                     }
                     QualityUpgrade.forget(mediaId)
                     if (verified != null && targetTitle != null && uri != null &&
-                        HqQuality.isLosslessTier(better.format)
+                        com.music.bitchord.ko.KoQualityUpgrade.automaticSwapTakes(better.format) // [KO] hq-tier
                     ) {
                         if (swapLosslessMidSong(mediaId, uri, better, targetTitle, verified)) {
                             return@launch
                         }
+                        koRelookAfterFailedSwap(mediaId) // [KO] hq-tier
                         prefetchLosslessForNextPlay(mediaId, uri, better, targetTitle)
                         return@launch
                     }
@@ -6992,6 +7004,7 @@ class PlaybackService : MediaLibraryService() {
                 // race still marked, and the player menu greys "Upgrade quality"
                 // out while a race is marked — for the rest of the song.
                 NerdStats.onLosslessRaceEnd(mediaId)
+                com.music.bitchord.ko.KoQualityUpgrade.releaseTelegramSession(mediaId) // [KO] quality-race
             }
         }
         return true
@@ -7882,7 +7895,7 @@ class PlaybackService : MediaLibraryService() {
         renditionAlreadyFilled: Boolean,
     ): Long? {
         QualityUpgrade.beginAudition(mediaId)
-        val startedAt = SystemClock.elapsedRealtime()
+        var startedAt = SystemClock.elapsedRealtime()
         // Bytes actually read, since bufferedPosition can run far ahead of them on DASH.
         val meter = CountingBandwidthMeter(DefaultBandwidthMeter.getSingletonInstance(this))
         withContext(Dispatchers.IO) {
@@ -7918,7 +7931,11 @@ class PlaybackService : MediaLibraryService() {
             // round trip before the header the audition needs. What remains is
             // the opening here and the seek point the audition player reads
             // next.
-            AudioCache.warmRange(Uri.parse(upgradedUri), 0, UPGRADE_HEADER_BYTES, probeLock = false)
+            if (com.music.bitchord.ko.koPrefillTelegramAudition(Uri.parse(upgradedUri), at.item.mediaMetadata.title?.toString(), stream)) { // [KO] quality-race
+                startedAt = SystemClock.elapsedRealtime() // [KO] quality-race: the clock below is for the audition
+            } else {
+                AudioCache.warmRange(Uri.parse(upgradedUri), 0, UPGRADE_HEADER_BYTES, probeLock = false)
+            }
         }
         val audition = withContext(Dispatchers.Main) {
             buildAuditionPlayer(meter).apply {
@@ -7933,11 +7950,12 @@ class PlaybackService : MediaLibraryService() {
             }
         }
         val warmedThrough: Long?
+        var whereItStopped = ""
         try {
             warmedThrough = withTimeoutOrNull(UPGRADE_AUDITION_MS) {
                 while (true) {
                     val verdict = withContext(Dispatchers.Main) {
-                        auditionVerdict(audition, at.duration, stream, meter.bytes.get())
+                        auditionVerdict(audition, at.duration, stream, meter.bytes.get(), at.position)
                     }
                     when (verdict) {
                         is Audition.Ready -> return@withTimeoutOrNull verdict.bufferedTo
@@ -7976,12 +7994,18 @@ class PlaybackService : MediaLibraryService() {
             // Not optional and not cancellable: a queue that moves on cancels
             // this job, and a player left behind holds an audio decoder and a
             // write lock on a cache entry for the rest of the session.
-            withContext(NonCancellable + Dispatchers.Main) { audition.release() }
+            withContext(NonCancellable + Dispatchers.Main) {
+                whereItStopped = "state=${audition.playbackState} at=${audition.currentPosition}ms " +
+                    "buffered=${audition.bufferedPosition}ms length=${audition.duration}ms " +
+                    "seekable=${audition.isCurrentMediaItemSeekable} read=${meter.bytes.get()}B"
+                audition.release()
+            }
             QualityUpgrade.endAudition(mediaId)
         }
         val took = SystemClock.elapsedRealtime() - startedAt
         if (warmedThrough == null) {
-            TrackLog.d("BitChord", "upgrade for $mediaId never proved itself in ${took}ms")
+            // The figures are what 11-07's 25 s silent wait had nothing of.
+            TrackLog.d("BitChord", "upgrade for $mediaId never proved itself in ${took}ms ($whereItStopped)")
             return null
         }
         TrackLog.d(
@@ -8040,6 +8064,7 @@ class PlaybackService : MediaLibraryService() {
         previousDuration: Long,
         stream: SourceStream,
         bytesLoaded: Long,
+        seekedTo: Long,
     ): Audition {
         audition.playerError?.let {
             rateLimitOf(it)?.let { rate ->
@@ -8065,6 +8090,9 @@ class PlaybackService : MediaLibraryService() {
         if (length <= 0) return Audition.Waiting
         if (previousDuration > 0 && abs(length - previousDuration) > upgradeLengthSlackMs) {
             return Audition.Rejected("replacement is ${length}ms against ${previousDuration}ms")
+        }
+        if (com.music.bitchord.ko.KoQualityUpgrade.auditionCannotReach(audition.isCurrentMediaItemSeekable, seekedTo)) { // [KO] quality-race
+            return Audition.Rejected("replacement cannot seek to ${seekedTo}ms")
         }
         // What the decoder was actually configured with, against what the
         // source said it was sending. The one failure mode a claim cannot
@@ -8860,7 +8888,7 @@ class PlaybackService : MediaLibraryService() {
         return null
     }
 
-    private fun resolveLocalBitrate(mediaId: String, mediaItem: MediaItem?) {
+    internal fun resolveLocalBitrate(mediaId: String, mediaItem: MediaItem?) { // [KO] hq-tier: called from koUseVerifiedDownload
         if (!isLocalPlayback(mediaId, mediaItem)) return
         if (localBitrateCache.get(mediaId) != null) return
 
@@ -8947,16 +8975,19 @@ class PlaybackService : MediaLibraryService() {
                 Pair((format.averageBitrate + 500) / 1000, TelemetryProvenance.AUTHORITATIVE)
             format?.bitrate != null && format.bitrate > 0 ->
                 Pair((format.bitrate + 500) / 1000, TelemetryProvenance.AUTHORITATIVE)
-            mediaId != null && localBitrateCache.get(mediaId) != null ->
+            // Only over the file it was read from: a condemned file handed back
+            // to the stream keeps this entry, and an Opus "at 1000 kbps" reads High.
+            mediaId != null && localBitrateCache.get(mediaId) != null &&
+                isLocalPlayback(mediaId, player.currentMediaItem) ->
                 Pair(localBitrateCache.get(mediaId), TelemetryProvenance.AUTHORITATIVE)
             dsd == null && isRawPcm && pcmDataRate != null ->
                 Pair(pcmDataRate, TelemetryProvenance.DERIVED)
             else ->
-                NerdStats.sourceBitrate(mediaId) { measuredStreamKbps(player) }
+                NerdStats.sourceBitrate(mediaId, decodedLossless = isLossless) { measuredStreamKbps(player) }
                     ?: Pair(null, TelemetryProvenance.UNKNOWN)
         }
 
-        NerdStats.publish(NerdStats.Snapshot(
+        val snapshot = NerdStats.Snapshot(
             mimeType = dsd?.let { "audio/$it" } ?: format?.sampleMimeType,
             bitrateKbps = bitrate,
             bitrateProvenance = provenance,
@@ -8974,7 +9005,8 @@ class PlaybackService : MediaLibraryService() {
                 else -> null
             },
             mediaId = mediaId,
-        ), expectedGeneration = generation)
+        )
+        if (NerdStats.publish(snapshot, expectedGeneration = generation)) koLogQualityLabel(snapshot) // [KO] hq-tier
     }
 
     /**

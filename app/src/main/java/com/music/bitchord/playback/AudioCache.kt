@@ -2073,7 +2073,8 @@ object AudioCache {
      * the same server until the current track is complete.
      */
     /** [KO] hq-lossless */
-    suspend fun cacheWholeRendition(uri: Uri, title: String?) = koLossless.cacheWholeRendition(uri, title) // [KO] hq-lossless
+    suspend fun cacheWholeRendition(uri: Uri, title: String?, releasesHost: Boolean = true) =
+        koLossless.cacheWholeRendition(uri, title, releasesHost) // [KO] hq-lossless
 
     /** [KO] hq-lossless */
     fun prefetchVerifiedRendition(uri: Uri, title: String?, stream: SourceStream): Boolean =
@@ -2083,8 +2084,12 @@ object AudioCache {
     fun cancelLosslessPrefetchFor(mediaId: String?) = koLossless.cancelLosslessPrefetchFor(mediaId) // [KO] hq-lossless
 
     /** [KO] hq-lossless */
-    suspend fun downloadVerifiedRendition(uri: Uri, title: String?, stream: SourceStream): Boolean =
-        koLossless.downloadVerifiedRendition(uri, title, stream) // [KO] hq-lossless
+    suspend fun downloadVerifiedRendition(
+        uri: Uri,
+        title: String?,
+        stream: SourceStream,
+        takesLossy: Boolean = false,
+    ): Boolean = koLossless.downloadVerifiedRendition(uri, title, stream, takesLossy) // [KO] hq-lossless
 
     /** [KO] hq-lossless */
     fun dropLowerQualityAfterLosslessSwap(mediaId: String, keepKey: String) =

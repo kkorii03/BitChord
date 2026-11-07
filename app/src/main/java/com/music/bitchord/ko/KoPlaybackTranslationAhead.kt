@@ -458,6 +458,10 @@ internal fun PlaybackService.koUseVerifiedDownload(
     // Left naming YouTube, the lyric clock said playing=youtube over the file: a 97 %
     // answer heard on it dropped (11-06 MUny_GDYIDM), others moved by its offset (w58uXpyHWes).
     StreamChoice.forget(id)
+    // The transition below is taken for a same-song swap, so nothing else measures the
+    // file, and the claim about the stream it replaced no longer describes anything.
+    com.music.bitchord.data.NerdStats.clearDeclared(id)
+    resolveLocalBitrate(id, verified)
     player.seekTo(player.currentMediaItemIndex, start)
     player.prepare()
     // This transition is taken for a same-song swap, so nothing else tells the lock screen.
