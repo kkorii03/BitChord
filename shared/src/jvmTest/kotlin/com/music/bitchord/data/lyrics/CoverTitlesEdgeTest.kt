@@ -600,6 +600,19 @@ class CoverTitlesEdgeTest {
         assertTrue(queries.contains("허니츄러스" to "아이아이"), queries.toString())
     }
 
+    /**
+     * 11-07 WDe0EBpuqnM: "【Cover】Red Velvet (레드벨벳) - 'Psycho' 보컬 커버"
+     * was read with the leading tag glued to the artist, so the lyrics were
+     * searched for "CoverRed Velvet" and KuGou answered another song.
+     */
+    @Test
+    fun aLeadingCoverTagIsNotPartOfTheOriginalName() {
+        val read = cover("【Cover】Red Velvet (레드벨벳) - 'Psycho' 보컬 커버", "LYNXCATS")
+        assertEquals("Psycho' 보컬", read.title)
+        assertEquals("Red Velvet", read.originalArtist)
+        assertEquals("LYNXCATS", read.singer)
+    }
+
     @Test
     fun aStoredCoverWordMustBeAWholeWord() {
         assertFalse(CoverTitles.isCover(song("Song", "언더커버")))
