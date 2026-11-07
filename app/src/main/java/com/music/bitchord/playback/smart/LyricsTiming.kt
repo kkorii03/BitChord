@@ -2925,6 +2925,7 @@ object LyricsTiming {
                     aiAttemptedKey = key,
                     aiAttemptedEngines = ((if (sameLyrics) entry.aiAttemptedEngines else emptyList()) + pendingAttempts).distinct(),
                     whisperKey = if (pendingWhisper) key else entry.whisperKey,
+                    refitVersion = SongCheckWindow.FIT_VERSION,
                 )
             }
             pendingAttempts.clear()

@@ -90,7 +90,12 @@ internal object AlignFarm {
                     if (!response.isSuccessful) return@use null
                     savedFrom(response.body?.bytes() ?: return@use null, language, secret + videoId)
                 }
-            }.onFailure { TrackLog.d(TAG, "align-farm: ${it.javaClass.simpleName}", videoId) }.getOrNull()
+            }.onFailure {
+                if (it is kotlinx.coroutines.CancellationException) throw it
+                // A dropped connection says nothing about the farm: the next hearing may ask again.
+                asked.remove(videoId)
+                TrackLog.d(TAG, "align-farm: ${it.javaClass.simpleName}", videoId)
+            }.getOrNull()
                 ?.also { TrackLog.i(TAG, "align-farm: ${it.words.size} words lang=$language", videoId) }
         }
     }
