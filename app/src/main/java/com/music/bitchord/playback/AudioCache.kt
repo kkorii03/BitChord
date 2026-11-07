@@ -2479,7 +2479,13 @@ object AudioCache {
      * [key] is a cache key, not a URI: the point of this type is to name a
      * rendition the *player* is not using, which no URI in hand refers to.
      */
-    data class Rendition(val key: String, val contentLength: Long, val cachedPrefix: Long) {
+    data class Rendition(
+        val key: String,
+        val contentLength: Long,
+        val cachedPrefix: Long,
+        /** Who filled this entry, as [recordServed] tagged it; null when untagged. */
+        val origin: Origin? = null,
+    ) {
         val isComplete: Boolean get() = contentLength > 0 && cachedPrefix >= contentLength
     }
 
@@ -2555,11 +2561,13 @@ object AudioCache {
     fun cacheKeyOf(uri: Uri): String = keyFactory.buildCacheKey(DataSpec(uri))
 
     private fun renditionFor(key: String): Rendition? {
-        val contentLength =
-            ContentMetadata.getContentLength(cache.getContentMetadata(key)).coerceAtLeast(0L)
+        val meta = cache.getContentMetadata(key)
+        val contentLength = ContentMetadata.getContentLength(meta).coerceAtLeast(0L)
         val probe = contentLength.takeIf { it > 0 } ?: HEAD_PROBE_BYTES
         val prefix = cache.getCachedLength(key, 0, probe).coerceAtLeast(0L)
-        return if (prefix <= 0L) null else Rendition(key, contentLength, prefix)
+        val origin = meta.get(META_ORIGIN, null as String?)
+            ?.let { name -> Origin.values().firstOrNull { it.name == name } }
+        return if (prefix <= 0L) null else Rendition(key, contentLength, prefix, origin)
     }
 
     /**

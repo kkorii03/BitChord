@@ -15,8 +15,12 @@ class VideoAudioTimingReadyTest {
 
     private val min = AudioCache.MIN_ALIGNMENT_PREFIX_BYTES
 
-    private fun rendition(key: String, contentLength: Long, cachedPrefix: Long) =
-        AudioCache.Rendition(key = key, contentLength = contentLength, cachedPrefix = cachedPrefix)
+    private fun rendition(
+        key: String,
+        contentLength: Long,
+        cachedPrefix: Long,
+        origin: AudioCache.Origin? = null,
+    ) = AudioCache.Rendition(key = key, contentLength = contentLength, cachedPrefix = cachedPrefix, origin = origin)
 
     @Test
     fun anEmptyCacheIsNotReady() {
@@ -106,6 +110,35 @@ class VideoAudioTimingReadyTest {
                     rendition("video", contentLength = 10_000_000L, cachedPrefix = min - 1),
                     rendition("video#alt", contentLength = 5_000_000L, cachedPrefix = 5_000_000L),
                 ),
+            ),
+        )
+    }
+
+    @Test
+    fun aCompleteAltCopyRecordedAsYouTubesIsReadyWhenNothingIsSettled() {
+        assertTrue(
+            VideoAudio.timingAudioReady(
+                recentCached = false,
+                screenOn = true,
+                onDisk = listOf(
+                    rendition("video", contentLength = 10_000_000L, cachedPrefix = min + 1),
+                    rendition("video#alt", contentLength = 5_000_000L, cachedPrefix = 5_000_000L, origin = AudioCache.Origin.YOUTUBE),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun anExplicitYouTubeChoiceMakesReadinessNameTheSameCopyAsWav() {
+        assertTrue(
+            VideoAudio.timingAudioReady(
+                recentCached = false,
+                screenOn = true,
+                onDisk = listOf(
+                    rendition("video", contentLength = 10_000_000L, cachedPrefix = min + 1),
+                    rendition("video#alt", contentLength = 5_000_000L, cachedPrefix = 5_000_000L),
+                ),
+                youTubeChosen = true,
             ),
         )
     }

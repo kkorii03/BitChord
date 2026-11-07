@@ -742,9 +742,18 @@ object LyricsTiming {
     }
 
     /** The clock of the rendition a measurement read; any substitute key is the substitute's. */
-    internal fun clockForRendition(videoId: String, key: String?): Clock =
+    internal fun clockForRendition(
+        videoId: String,
+        key: String?,
+        recordedYouTube: Boolean = false,
+    ): Clock =
         if (key != null && AutomixAnalysisSource.isSubstituteRendition(videoId, key) &&
-            !VersionAudioAligner.isYouTubeUnderAltKey(key, StreamChoice.isYouTube(videoId))
+            // A substitute settled on outranks the record: a stale tag must not put YouTube's clock on it.
+            !VersionAudioAligner.isYouTubeUnderAltKey(
+                key,
+                StreamChoice.isYouTube(videoId),
+                recordedYouTube && !StreamChoice.isSubstitute(videoId),
+            )
         ) {
             substituteClock(videoId)
         } else {
@@ -784,7 +793,7 @@ object LyricsTiming {
             // Captured when the data source was opened; see [VideoAudio.SongAudio].
             clockForLocalCopy(copy.localSourceConfigId, copy.localTrackId)
         } else {
-            clockForRendition(song.videoId, copy.renditionKey)
+            clockForRendition(song.videoId, copy.renditionKey, copy.renditionYouTube)
         }
 
     private class VerifiedClock(val offsetMs: Long, val rate: Double)
@@ -2202,7 +2211,7 @@ object LyricsTiming {
         mark = lap("비디오 대기", mark)
         // Read from the rendition actually opened, not from what is playing now:
         // after a mid-song swap the YouTube copy may already be gone.
-        val measurementClock = clockForRendition(video.videoId, copy.key)
+        val measurementClock = clockForRendition(video.videoId, copy.key, copy.origin == AudioCache.Origin.YOUTUBE)
         val complete = copy.isComplete || video.localUri != null
         val job = currentCoroutineContext()[Job]
         // The video's opening first: decoding all of it before any answer was the
@@ -3051,7 +3060,7 @@ object LyricsTiming {
             val audio = audioCopy?.bytes
             if (audioCopy != null) {
                 audioPresent = true
-                listenedClock = clockForRendition(videoId, audioCopy.renditionKey)
+                listenedClock = clockForRendition(videoId, audioCopy.renditionKey, audioCopy.renditionYouTube)
             } else {
                 listenedClock = Clock.YouTube
             }

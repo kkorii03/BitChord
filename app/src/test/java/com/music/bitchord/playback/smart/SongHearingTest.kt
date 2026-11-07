@@ -55,7 +55,11 @@ class SongHearingTest {
         }
     }
 
-    private fun rendition(key: String, cached: Long) = com.music.bitchord.playback.AudioCache.Rendition(key, 8_000_000L, cached)
+    private fun rendition(
+        key: String,
+        cached: Long,
+        origin: com.music.bitchord.playback.AudioCache.Origin? = null,
+    ) = com.music.bitchord.playback.AudioCache.Rendition(key, 8_000_000L, cached, origin)
 
     @Test
     fun aSongSettledOnYouTubeIsHeardFromItsAltEntry() {
@@ -67,6 +71,53 @@ class SongHearingTest {
         // An upgrade is another recording whatever was chosen, and the plain key needs no excuse.
         assertEquals(false, VersionAudioAligner.isYouTubeUnderAltKey("abc#hifi-2", youTubeChosen = true))
         assertEquals(false, VersionAudioAligner.isYouTubeUnderAltKey("abc", youTubeChosen = true))
+        // Nothing settled, but the cache's own record says YouTube filled it.
+        assertEquals(true, VersionAudioAligner.isYouTubeUnderAltKey("abc#alt", youTubeChosen = false, recordedYouTube = true))
+        assertEquals(false, VersionAudioAligner.isYouTubeUnderAltKey("abc#alt", youTubeChosen = false, recordedYouTube = false))
+    }
+
+    @Test
+    fun anAltCopyRecordedAsYouTubesIsMeasuredWhenNothingIsSettled() {
+        val head = rendition("abc", 900_000L)
+        val alt = rendition("abc#alt-noatmos", 5_000_000L, com.music.bitchord.playback.AudioCache.Origin.YOUTUBE)
+        assertEquals(alt, VersionAudioAligner.chooseMeasurementCopy(listOf(head, alt)))
+    }
+
+    @Test
+    fun anAltCopyRecordedAsAnAddonsIsNotMeasuredWhenNothingIsSettled() {
+        val head = rendition("abc", 900_000L)
+        val alt = rendition("abc#alt-noatmos", 5_000_000L, com.music.bitchord.playback.AudioCache.Origin.OTHER)
+        assertEquals(head, VersionAudioAligner.chooseMeasurementCopy(listOf(head, alt)))
+    }
+
+    @Test
+    fun anAltCopyWithNoRecordIsNotMeasuredWhenNothingIsSettled() {
+        val head = rendition("abc", 900_000L)
+        val alt = rendition("abc#alt-noatmos", 5_000_000L)
+        assertEquals(head, VersionAudioAligner.chooseMeasurementCopy(listOf(head, alt)))
+    }
+
+    @Test
+    fun anExplicitYouTubeChoiceStillTakesTheAltCopy() {
+        val head = rendition("abc", 900_000L)
+        val alt = rendition("abc#alt-noatmos", 5_000_000L, com.music.bitchord.playback.AudioCache.Origin.OTHER)
+        assertEquals(alt, VersionAudioAligner.chooseMeasurementCopy(listOf(head, alt), youTubeChosen = true))
+    }
+
+    @Test
+    fun anAltCopyRecordedAsYouTubesIsYouTubesClock() {
+        assertEquals(
+            LyricsTiming.Clock.YouTube,
+            LyricsTiming.clockForRendition("clock-copy", "clock-copy#alt-noatmos", recordedYouTube = true),
+        )
+    }
+
+    @Test
+    fun anAltCopyRecordedAsAnAddonsIsNotYouTubesClock() {
+        assertEquals(
+            LyricsTiming.Clock.Unknown,
+            LyricsTiming.clockForRendition("clock-copy", "clock-copy#alt-noatmos", recordedYouTube = false),
+        )
     }
 
     @Test

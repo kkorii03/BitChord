@@ -95,6 +95,30 @@ class LyricsTimingOpenedCopyClockTest {
     }
 
     @Test
+    fun `an alt copy recorded as youtubes is youtubes clock`() {
+        val copy = VideoAudio.SongAudio(
+            ByteArray(0),
+            "audio#alt-noatmos",
+            fromFile = false,
+            renditionYouTube = true,
+        )
+
+        assertEquals(LyricsTiming.Clock.YouTube, LyricsTiming.clockForSongAudio(song, copy))
+    }
+
+    @Test
+    fun `an alt copy recorded as an addons is not youtubes clock`() {
+        val copy = VideoAudio.SongAudio(
+            ByteArray(0),
+            "audio#alt-noatmos",
+            fromFile = false,
+            renditionYouTube = false,
+        )
+
+        assertEquals(LyricsTiming.Clock.Unknown, LyricsTiming.clockForSongAudio(song, copy))
+    }
+
+    @Test
     fun `a non alt copy stays youtube even while a substitute plays`() {
         playingSubstitute()
 

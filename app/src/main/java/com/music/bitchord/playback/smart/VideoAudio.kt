@@ -86,6 +86,8 @@ object VideoAudio {
         val whole: Boolean = false,
         /** About how much sound a cut stream holds; null for a decoded window, which knows. */
         val roughSeconds: Double? = null,
+        /** The cache's origin record for [renditionKey], captured when the copy was opened. */
+        val renditionYouTube: Boolean = false,
     )
 
     /**
@@ -168,6 +170,7 @@ object VideoAudio {
             recentCached = false,
             screenOn = screenOn,
             onDisk = AudioCache.renditionsOf(watch),
+            youTubeChosen = StreamChoice.isYouTube(videoId),
         )
     }
 
@@ -186,10 +189,11 @@ object VideoAudio {
         recentCached: Boolean,
         screenOn: Boolean,
         onDisk: List<AudioCache.Rendition>,
+        youTubeChosen: Boolean = false,
     ): Boolean {
         if (recentCached) return true
         if (!screenOn) return false
-        val copy = VersionAudioAligner.chooseMeasurementCopy(onDisk) ?: return false
+        val copy = VersionAudioAligner.chooseMeasurementCopy(onDisk, youTubeChosen) ?: return false
         return copy.isComplete
     }
 
@@ -382,6 +386,7 @@ object VideoAudio {
                     opened.fromFile,
                     opened.localSourceConfigId,
                     opened.localTrackId,
+                    renditionYouTube = opened.renditionYouTube,
                 )
                 recent.put(songKey(key), audio)
                 audio
@@ -428,7 +433,11 @@ object VideoAudio {
         // another file (11-06 rlYOsUfpi3M: a first answer on an unknown clock).
         fun ownCopy(): AudioCache.Rendition? = VersionAudioAligner.renditionToMeasure(videoId)?.takeUnless {
             AutomixAnalysisSource.isSubstituteRendition(videoId, it.key) && !StreamChoice.isSubstitute(videoId) &&
-                !VersionAudioAligner.isYouTubeUnderAltKey(it.key, StreamChoice.isYouTube(videoId))
+                !VersionAudioAligner.isYouTubeUnderAltKey(
+                    it.key,
+                    StreamChoice.isYouTube(videoId),
+                    it.origin == AudioCache.Origin.YOUTUBE,
+                )
         }
         if ((ownCopy()?.cachedPrefix ?: 0L) < AudioCache.MIN_ALIGNMENT_PREFIX_BYTES) {
             // A row that has not started the stream yet: this is what asks for it.
@@ -481,6 +490,7 @@ object VideoAudio {
             whole = copy.isComplete && bytes.size.toLong() >= copy.contentLength,
             roughSeconds = RefineExtendPolicy.cachedSeconds(bytes.size.toLong(), copy.contentLength, durationMs / 1000.0)
                 .takeIf { it >= 0.0 } ?: (bytes.size / RAW_BYTES_PER_SECOND),
+            renditionYouTube = copy.origin == AudioCache.Origin.YOUTUBE,
         )
     }
 
@@ -531,6 +541,7 @@ object VideoAudio {
         val renditionKey: String?,
         val localSourceConfigId: String? = null,
         val localTrackId: String? = null,
+        val renditionYouTube: Boolean = false,
     )
 
     private suspend fun openSongSource(
@@ -619,7 +630,7 @@ object VideoAudio {
             onRefusal?.invoke(SongWavRefusal.NO_WAV)
             return null
         }
-        return SongSource(data, false, copy.key)
+        return SongSource(data, false, copy.key, renditionYouTube = copy.origin == AudioCache.Origin.YOUTUBE)
     }
 
     private fun songCacheKey(song: Song, untilSeconds: Double): String =
@@ -682,7 +693,12 @@ object VideoAudio {
             TrackLog.d(TAG, "too long to send inline", videoId)
             return null
         }
-        return SongAudio(header(data.size) + data, copy.key, fromFile = false)
+        return SongAudio(
+            header(data.size) + data,
+            copy.key,
+            fromFile = false,
+            renditionYouTube = copy.origin == AudioCache.Origin.YOUTUBE,
+        )
     }
 
     /**
@@ -785,6 +801,7 @@ object VideoAudio {
                     opened.fromFile,
                     opened.localSourceConfigId,
                     opened.localTrackId,
+                    renditionYouTube = opened.renditionYouTube,
                 ),
             )
             return null

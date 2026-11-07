@@ -9,6 +9,7 @@ import com.music.bitchord.data.lyrics.LyricsWordAlign
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.ko.downloads.KoDownloadRecords
+import com.music.bitchord.playback.AudioCache
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
@@ -467,7 +468,12 @@ internal object SongHearing {
             val meta = KoDownloadRecords.savedMetadataFor(song.videoId)
             LyricsTiming.clockForLocalCopy(meta?.hqSourceConfigId, meta?.hqTrackId)
         } else {
-            LyricsTiming.clockForRendition(song.videoId, VersionAudioAligner.renditionToMeasure(song.videoId)?.key)
+            val copy = VersionAudioAligner.renditionToMeasure(song.videoId)
+            LyricsTiming.clockForRendition(
+                song.videoId,
+                copy?.key,
+                copy?.origin == AudioCache.Origin.YOUTUBE,
+            )
         }
         return recordingKey(fromFile, clock)
     }

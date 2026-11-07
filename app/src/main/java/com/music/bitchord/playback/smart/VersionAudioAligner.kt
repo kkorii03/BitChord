@@ -347,9 +347,18 @@ object VersionAudioAligner {
      * late, after the song had gone by uncorrected (11-06: 3 of 7 songs, one of
      * them 11.6 s off with the right fit arriving two minutes after its end).
      * A `#hifi` upgrade has its own recording, and stays out.
+     *
+     * When nothing is settled in this process (a restart, or a check that runs
+     * before the resolve), the cache's own META_ORIGIN record is the evidence:
+     * an entry [recordedYouTube] filled is YouTube's clock. An addon's copy, or
+     * one with no record, stays a stranger.
      */
-    internal fun isYouTubeUnderAltKey(key: String, youTubeChosen: Boolean): Boolean {
-        if (!youTubeChosen) return false
+    internal fun isYouTubeUnderAltKey(
+        key: String,
+        youTubeChosen: Boolean,
+        recordedYouTube: Boolean = false,
+    ): Boolean {
+        if (!youTubeChosen && !recordedYouTube) return false
         val tag = key.substringAfter('#', "").substringBefore('#')
         return tag == "alt" || tag.startsWith("alt-")
     }
@@ -366,7 +375,7 @@ object VersionAudioAligner {
         val sameSource = onDisk
             .filter {
                 !AutomixAnalysisSource.isSubstituteRendition(it.key) ||
-                    isYouTubeUnderAltKey(it.key, youTubeChosen)
+                    isYouTubeUnderAltKey(it.key, youTubeChosen, it.origin == AudioCache.Origin.YOUTUBE)
             }
             .maxByOrNull { it.cachedPrefix }
         return if (sameSource != null &&
