@@ -112,8 +112,12 @@ object DownloadHealth {
      * Bump when the rules change enough that every file should be looked at
      * again. The version is part of each file's signature, so an old entry
      * simply stops matching — no migration is needed.
+     *
+     * 4: a file passed on its opening alone may run minutes past the song
+     * (11-07 _GWKkqNoyEA, 344 s under a 258 s row), and it is already recorded
+     * as checked and verified on the phone, so it has to be judged once more.
      */
-    const val CHECK_VERSION = 3
+    const val CHECK_VERSION = 4
 
     data class Outcome(
         val verdict: DownloadHealthPolicy.Verdict,
@@ -284,13 +288,14 @@ object DownloadHealth {
             val stillCurrent = Downloads.savedMetadataFor(id)?.uri == meta.uri &&
                 Downloads.fileVersion(context, meta.uri) == version
             if (!stillCurrent) return@withContext null
+            val catalogMs = meta.durationText?.durationMillis() ?: song.durationMillis()
+            val fileMs = Downloads.localDurationMs(context, meta.uri)
             val decision = DownloadHealthPolicy.judge(
                 DownloadHealthPolicy.Input(
                     songTitle = meta.title,
                     songArtist = meta.artist,
-                    catalogDurationMs = meta.durationText?.durationMillis()
-                        ?: song.durationMillis(),
-                    fileDurationMs = Downloads.localDurationMs(context, meta.uri),
+                    catalogDurationMs = catalogMs,
+                    fileDurationMs = fileMs,
                     sourceTitle = meta.hqSourceTitle,
                     sourceArtist = meta.hqSourceArtist,
                     soundAccepted = soundAccepted,
@@ -314,7 +319,7 @@ object DownloadHealth {
             val heard = sound !is HqAudioVerify.DownloadedSound.Unavailable ||
                 decision.verdict != DownloadHealthPolicy.Verdict.OK
             val outcome = Outcome(decision.verdict, decision.action, currentTier.name)
-            log(id, outcome)
+            log(id, outcome, " fileMs=$fileMs catalogMs=$catalogMs")
             var upgradeQueued = true
             when (decision.action) {
                 DownloadHealthPolicy.Action.STREAM,
@@ -322,6 +327,14 @@ object DownloadHealth {
                 -> {
                     if (!Downloads.markWrongRecording(id, meta.uri, version)) {
                         return@withContext null
+                    }
+                    // The check above may have just stored this pair as accepted. Left
+                    // there, the high-quality walk and the library pass bring the same
+                    // cut back as a stream or a new download.
+                    val source = meta.hqSourceConfigId
+                    val track = meta.hqTrackId
+                    if (!source.isNullOrBlank() && !track.isNullOrBlank()) {
+                        HqVerificationStore.reject(context, id, source, track)
                     }
                     // The file is condemned either way, so the branch above
                     // retries later even if this request was refused for now.
@@ -416,11 +429,11 @@ object DownloadHealth {
         TrackLog.i(TAG, "download-check: versions cleared")
     }
 
-    private fun log(id: String, outcome: Outcome) {
+    private fun log(id: String, outcome: Outcome, detail: String = "") {
         TrackLog.i(
             TAG,
             "download-check: $id result=${outcome.verdict.wire} " +
-                "action=${outcome.action.wire} tier=${outcome.tier}",
+                "action=${outcome.action.wire} tier=${outcome.tier}$detail",
             id,
         )
     }
