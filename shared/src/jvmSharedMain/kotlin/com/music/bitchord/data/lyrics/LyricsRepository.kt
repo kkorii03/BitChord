@@ -805,6 +805,12 @@ object LyricsRepository {
         if (extra.isNotEmpty()) {
             TrackLog.i(TAG, "lyrics: query variants for $videoId: n=${extra.size}", about = videoId)
         }
+        // A cover's other reading — the swapped artist/song order — is sharper
+        // than the title-only variant, which can find a different song of the
+        // same name (11-07 5nxb792c-b4: the title alone found another song).
+        for (alternative in alternatives) {
+            retry(alternative)?.let { return it }
+        }
         for ((index, variant) in extra.withIndex()) {
             retry(variant.title to variant.artist)?.let { found ->
                 TrackLog.i(
@@ -815,9 +821,6 @@ object LyricsRepository {
                 )
                 return found
             }
-        }
-        for (alternative in alternatives) {
-            retry(alternative)?.let { return it }
         }
         // A cover with no original artist named: the singer was never going to
         // find it. Find the song by its title, then search under its real name.

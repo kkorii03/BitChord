@@ -763,7 +763,10 @@ object CoverTitles {
             if (split != null && isAllCapsLatin(split.second) && !isAllCapsLatin(split.first)) {
                 return songFirst(head, singer)
             }
-            return headCover(head, singer, looseDash = true)
+            // The same shape is "song - artist" (5nxb792c-b4: 허니츄러스 - 아이아이)
+            // as often as "artist - song", so the other reading is offered too.
+            val cover = headCover(head, singer, looseDash = true)
+            return if (split != null) cover?.copy(orderUnsure = true) else cover
         }
         // "원곡자 - 곡명 (Cover)" with no name: the channel is the singer.
         if (!allowBareTag) return null

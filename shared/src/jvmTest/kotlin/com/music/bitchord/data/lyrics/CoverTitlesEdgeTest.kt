@@ -584,6 +584,22 @@ class CoverTitlesEdgeTest {
         assertTrue(read.orderUnsure)
     }
 
+    /**
+     * 11-07 5nxb792c-b4: "허니츄러스 - 아이아이 / cover by 오화요" is song first,
+     * artist second, but the same shape is artist first. The swapped reading
+     * has to be offered, or the lyrics are searched under the wrong name.
+     */
+    @Test
+    fun aCoverByTitleWithADashKeepsTheOrderUnsure() {
+        val read = cover("허니츄러스 - 아이아이 / cover by 오화요", "channel")
+        assertEquals("아이아이", read.title)
+        assertEquals("허니츄러스", read.originalArtist)
+        assertEquals("오화요", read.singer)
+        assertTrue(read.orderUnsure)
+        val queries = CoverTitles.lyricsQueries(song("허니츄러스 - 아이아이 / cover by 오화요", "channel"))
+        assertTrue(queries.contains("허니츄러스" to "아이아이"), queries.toString())
+    }
+
     @Test
     fun aStoredCoverWordMustBeAWholeWord() {
         assertFalse(CoverTitles.isCover(song("Song", "언더커버")))
