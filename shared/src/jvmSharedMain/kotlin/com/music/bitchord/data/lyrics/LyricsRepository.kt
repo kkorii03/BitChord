@@ -32,6 +32,7 @@ import java.util.concurrent.ConcurrentHashMap
  *    per-syllable, from three independent hosts so one having a bad day
  *    doesn't cost the timing.
  *  - [LyricsPlus] — the YouLy+ backend; finest timing of the lot, flakiest hosting.
+ *  - [SyncLrc] — one aggregator's word-timed karaoke answer, rate-limited to 30/min.
  *  - [SimpMusicLyrics] — keyed on the video id, so it can't fetch the wrong edit.
  *  - [Unison] — contributed rather than licensed; thin, and occasionally the
  *    only place a track exists.
@@ -1276,6 +1277,7 @@ object LyricsRepository {
             LyricsSource.BETTER_LYRICS -> BetterLyrics.lyrics(title, artist, durationMs, album)
             LyricsSource.BETTER_LYRICS_PORTATO -> BetterLyrics.portato(title, artist, durationMs, album)
             LyricsSource.LYRICS_PLUS -> LyricsPlus.lyrics(title, artist, durationMs, album, isrc)
+            LyricsSource.SYNCLRC -> SyncLrc.lyrics(title, artist, durationMs)
             LyricsSource.BINI_LYRICS ->
                 (hit?.let { BiniLyrics.lyricsFor(it, get) }
                     ?: BiniLyrics.lyrics(title, artist, durationMs, album, isrc, get))
