@@ -419,6 +419,8 @@ class TimingPiecesTest {
         assertTrue(SongCheckWindow.refitDue(now, sameSheet = false, seenMs = 200_000L, keptMs = 200_000L), "another sheet")
         assertTrue(SongCheckWindow.refitDue(now, sameSheet = true, seenMs = 40_000L, keptMs = 210_000L), "longer words")
         assertFalse(SongCheckWindow.refitDue(now, sameSheet = true, seenMs = 200_000L, keptMs = 205_000L), "nothing new")
+        // A pieces answer written under the 15 s guard is judged once more under the 5 s one.
+        assertTrue(SongCheckWindow.refitDue(1, sameSheet = true, seenMs = 200_000L, keptMs = 200_000L), "version 1")
     }
 
     @Test
