@@ -12,13 +12,17 @@ import com.music.bitchord.testutil.FakeContext
 import com.music.bitchord.testutil.FakePreferences
 import java.io.File
 import java.nio.file.Files
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.playback.StreamChoice
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExecutorCoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -40,7 +44,8 @@ import org.junit.Test
 class LyricsControllerSheetChoiceTest {
 
     private val job = SupervisorJob()
-    private val scope = CoroutineScope(job + Dispatchers.Default)
+    private lateinit var mainDispatcher: ExecutorCoroutineDispatcher
+    private lateinit var scope: CoroutineScope
     private lateinit var controller: LyricsController
     private lateinit var directory: File
     private lateinit var context: Context
@@ -60,7 +65,16 @@ class LyricsControllerSheetChoiceTest {
 
     @Before
     fun setUp() {
-        Dispatchers.setMain(Dispatchers.Default)
+        // The app keeps the lookup and every display write on Main, a thread of its
+        // own, and off-loads measurement/alignment to Dispatchers.Default. Pointing
+        // Main at that same shared pool let a busy pool leave the first sheet
+        // unscheduled past a test's wait (11-07: `a same-source late sheet ...`
+        // timed out, 42355390925 / 42369413521). So the class gets one thread.
+        mainDispatcher = Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "lyrics-test-main").apply { isDaemon = true }
+        }.asCoroutineDispatcher()
+        Dispatchers.setMain(mainDispatcher)
+        scope = CoroutineScope(job + mainDispatcher)
         AppSettings.syncedLyrics.value = true
         AppSettings.syncSafetyDownloadRecheck.value = true
         AppSettings.lyricsSources.value = setOf(LyricsSource.KUGOU, LyricsSource.VIBE)
@@ -79,6 +93,7 @@ class LyricsControllerSheetChoiceTest {
     fun tearDown() {
         runBlocking { job.cancelAndJoin() }
         Dispatchers.resetMain()
+        mainDispatcher.close()
         AppSettings.lyricsSources.value = savedSources
         AppSettings.lyricsSourceOrder.value = savedOrder
         AppSettings.syncedLyrics.value = savedSynced
@@ -256,5 +271,29 @@ class LyricsControllerSheetChoiceTest {
         withTimeout(10_000L) { controller.lyricsChecked.first { it } }
         delay(500L)
         assertEquals(fitting.map { it.text }, controller.lyrics.first { it != null }!!.map { it.text })
+    }
+
+    /**
+     * The first sheet's write goes to the screen while the shared pool the app's
+     * measurement/alignment work runs on is fully busy: on 11-07 it did not,
+     * because this class had pointed Dispatchers.Main at that same pool, and the
+     * 10 s wait in [load] missed (42355390925, 42369413521).
+     */
+    @Test
+    fun `the first sheet reaches the screen while the background pool is busy`() = runBlocking {
+        // One task per pool thread blocks in await(): Dispatchers.Default never
+        // grows past its parallelism, so it is busy until the latch opens.
+        val hold = CountDownLatch(1)
+        val busy = (1..64).map { launch(Dispatchers.Default) { hold.await() } }
+        try {
+            load(LyricsSource.KUGOU, other, LyricsSource.KUGOU, fitting, loserFirst = true)
+
+            withTimeout(10_000L) { controller.lyricsChecked.first { it } }
+            assertEquals(fitting.map { it.text }, controller.lyrics.first { it != null }!!.map { it.text })
+        } finally {
+            hold.countDown()
+            busy.forEach { it.cancel() }
+            for (task in busy) task.join()
+        }
     }
 }
