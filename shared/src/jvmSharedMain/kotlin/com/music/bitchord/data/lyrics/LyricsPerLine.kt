@@ -50,7 +50,7 @@ object LyricsPerLine {
     const val MAX_INTERPOLATE_DIFF_MS = 400L
 
     /** Otherwise a line takes the nearest anchor's residual when it is this close. */
-    const val HOLD_RANGE_MS = 8_000L
+    const val HOLD_RANGE_MS = 2_000L
 
     /** No move outside this much beyond the heard words. */
     const val OUTSIDE_HEARD_RANGE_MS = 8_000L
