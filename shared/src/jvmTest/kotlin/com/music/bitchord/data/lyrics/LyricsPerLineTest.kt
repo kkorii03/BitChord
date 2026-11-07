@@ -208,6 +208,35 @@ class LyricsPerLineTest {
     }
 
     /**
+     * 11-07 replay, 85 songs: 8 s let a line four seconds from the nearest heard
+     * line take that line's move. Within 3 s the move is the line's own; past it
+     * the words say nothing about this line.
+     */
+    @Test
+    fun `a line four seconds from the nearest heard line stays put`() {
+        val lines = listOf(
+            line(10_000, "alpha bravo charlie"),
+            line(14_000, "delta echo foxtrot"),
+        )
+        val result = layer(lines, heardLine(lines[0], 500L))
+
+        assertEquals(1, result.anchors)
+        assertEquals(500L, result.shiftsMs[0])
+        assertEquals(0L, result.shiftsMs[1])
+    }
+
+    @Test
+    fun `a line two seconds from the nearest heard line follows it`() {
+        val lines = listOf(
+            line(10_000, "alpha bravo charlie"),
+            line(12_000, "delta echo foxtrot"),
+        )
+        val result = layer(lines, heardLine(lines[0], 500L))
+
+        assertEquals(500L, result.shiftsMs[1])
+    }
+
+    /**
      * 11-07 hLQl3WQQoQ0 line 20: two lines heard 1.6 s late while the rest of the
      * song stayed put. The block is a mishearing, not a move.
      */
