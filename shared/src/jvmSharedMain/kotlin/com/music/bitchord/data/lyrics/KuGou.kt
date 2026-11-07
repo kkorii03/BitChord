@@ -206,7 +206,9 @@ object KuGou {
             (raw[index + KRC_HEADER.size].toInt() xor KRC_KEY[index % KRC_KEY.size].toInt()).toByte()
         }
         val text = inflateBounded(encrypted) ?: return@runCatching null
-        parseKrc(text)
+        // A KRC with no word tag carries nothing the plain LRC does not, so it
+        // is a miss: the caller takes the LRC file instead.
+        parseKrc(text).takeIf { lines -> lines.any { it.isWordSynced } }
     }.getOrNull()
 
     private fun inflateBounded(encrypted: ByteArray): String? {
@@ -246,7 +248,23 @@ object KuGou {
                 words = words,
             )
         }
-        return lines
+        return stripKrcCredits(lines)
+    }
+
+    /**
+     * The same head/tail credit cut [stripCredits] makes on a stamped LRC, on
+     * lines already decoded: KRC files carry the title restatement and the
+     * "Lyrics by："/"Composed by：" credits as ordinary timed lines, and they
+     * would otherwise be sung as the first and last lines of the song.
+     */
+    private fun stripKrcCredits(lines: List<LyricLine>): List<LyricLine> {
+        if (lines.isEmpty()) return lines
+        val headLimit = min(30, lines.lastIndex)
+        val headCut = (headLimit downTo 0).firstOrNull { KRC_CREDIT.matches(lines[it].text) }?.let { it + 1 } ?: 0
+        val body = lines.drop(headCut)
+        val tailLimit = min(30, body.lastIndex)
+        val tailCut = (0..tailLimit).firstOrNull { KRC_CREDIT.matches(body[body.lastIndex - it].text) }?.let { it + 1 } ?: 0
+        return body.dropLast(tailCut)
     }
 
     private const val MAX_KRC_BYTES = 2_000_000
@@ -258,6 +276,8 @@ object KuGou {
     )
     private val KRC_LINE = Regex("""^\[(\d{1,9}),(\d{1,9})](.*)$""")
     private val KRC_WORD = Regex("""<(\d{1,9}),(\d{1,9})(?:,-?\d+)?>""")
+    /** [CREDIT] for a decoded line, whose text no longer carries an LRC stamp. */
+    private val KRC_CREDIT = Regex("""[^\[]+[:：].+""")
 
     private fun keyword(title: String, artist: String, album: String?) = Keyword(
         buildString {

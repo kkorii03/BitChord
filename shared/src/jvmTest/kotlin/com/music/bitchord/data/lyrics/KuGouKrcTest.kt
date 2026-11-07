@@ -61,8 +61,25 @@ class KuGouKrcTest {
     }
 
     @Test
-    fun emptyKrcHasNoLines() {
-        val lines = assertNotNull(KuGou.decodeKrc(encode("[ti:test]")))
-        assertTrue(lines.isEmpty())
+    fun headCreditsAreNotSung() {
+        val lines = assertNotNull(
+            KuGou.decodeKrc(
+                encode(
+                    "[ti:test]\n" +
+                        "[0,1000]<0,500,0>Zib<500,500,0>Wub\n" +
+                        "[1000,500]<0,250,0>Lyrics<250,250,0> by：Person\n" +
+                        "[1500,500]<0,250,0>Composed<250,250,0> by：Person\n" +
+                        "[2000,1000]<0,500,0>real<500,500,0> line",
+                ),
+            ),
+        )
+        assertEquals(listOf(2000L), lines.map { it.timeMs })
+        assertEquals("real line", lines.single().text)
+    }
+
+    @Test
+    fun wordlessKrcIsNoAnswer() {
+        assertNull(KuGou.decodeKrc(encode("[ti:test]")))
+        assertNull(KuGou.decodeKrc(encode("[1000,1000]stray line")))
     }
 }
