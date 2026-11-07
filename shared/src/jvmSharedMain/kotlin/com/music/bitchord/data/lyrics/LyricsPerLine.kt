@@ -40,7 +40,7 @@ object LyricsPerLine {
 
     /** This share of a song's anchors within this of their middle says the sheet is right; see [withoutStrays]. */
     const val GOOD_SHEET_SHARE = 0.9
-    const val GOOD_SHEET_WITHIN_MS = 250L
+    const val GOOD_SHEET_WITHIN_MS = 350L
     const val MIN_GOOD_SHEET_ANCHORS = 8
 
     /** Two anchors further apart than this do not interpolate between themselves. */
