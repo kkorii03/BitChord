@@ -275,6 +275,11 @@ object LyricsPerLine {
         return Layer(shifts.toList(), matched.count { it.size >= MIN_ANCHOR_WORDS }, applied, maxAbs)
     }
 
+    /** The gate value [computeFirstWord] reads, for the diagnostic log; null when it cannot be read. */
+    fun coherenceOf(lines: List<LyricLine>, heard: List<LyricsWordAlign.Heard>): Double? =
+        if (lines.isEmpty() || heard.isEmpty()) null
+        else coherence(lines, LyricsWordAlign.matchedWords(lines.map { it.text }, heard))
+
     /**
      * The share of [lines] with at least [MIN_ANCHOR_WORDS] matched words whose
      * residual is within [COHERENCE_WITHIN_MS] of the median, or null when fewer

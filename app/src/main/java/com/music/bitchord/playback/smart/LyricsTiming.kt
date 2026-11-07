@@ -1213,6 +1213,8 @@ object LyricsTiming {
         // moved the lines. Line-timed sheets are the other way round (6 to 4, 91.3% to 81.0%).
         // With no fit, the words are all this sheet has (3JWTaaS7LdU, refused at 56%).
         val ownWords = LyricsPerLine.statesItsOwnWords(lines)
+        var rule = "anchor"
+        var gate: Double? = null
         val layer = when {
             timing.base != null && ownWords -> LyricsPerLine.Layer.identity(lines.size)
             !ownWords && (timing.refineMs != 0L || timing.refineSlopePerMin != 0.0) -> {
@@ -1221,7 +1223,11 @@ object LyricsTiming {
                 // old anchor layer still serves that case, where its moves are inert on
                 // the measured sample and it still catches a few late lines.
                 val firstWord = LyricsPerLine.computeFirstWord(lines, words.words, words.wordsKey, words.currentKey)
+                // The gate's window is narrow (snap.md section 7): log the value the app
+                // itself reads, so a phone round can re-measure it.
+                gate = LyricsPerLine.coherenceOf(lines, words.words)
                 if (firstWord.applied > 0) {
+                    rule = "firstWord"
                     firstWord
                 } else {
                     LyricsPerLine.compute(lines, words.words, words.wordsKey, words.currentKey)
@@ -1231,7 +1237,8 @@ object LyricsTiming {
         }
         TrackLog.i(
             "BitChord",
-            "sync perline: anchors=${layer.anchors} applied=${layer.applied} maxAbsMs=${layer.maxAbsMs}",
+            "sync perline: anchors=${layer.anchors} applied=${layer.applied} maxAbsMs=${layer.maxAbsMs}" +
+                " rule=$rule coherence=${gate?.let { "%.3f".format(java.util.Locale.ROOT, it) } ?: "-"}",
             timing.videoId,
         )
         perLineMemo = PerLineMemo(timing, lines, layer)
