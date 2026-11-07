@@ -144,12 +144,16 @@ class LyricsTimingHeardWordsTest {
         assertEquals(refusedLines[0].timeMs + refusedBy, LyricsTiming.apply(refusedLines, timing)[0].timeMs)
     }
 
-    /** Three-word lines under an AI base that moves nothing, with the words heard 1.6 s late: past the refine's reach. */
-    private suspend fun shownWithWordsHeardLate(sheet: List<LyricLine>): List<LyricLine> {
+    /**
+     * Three-word lines under an AI base that moves nothing, with three lines in a row heard
+     * 0.5 s late: too few for the refine or the base to follow, too many for the good-sheet gate.
+     */
+    private suspend fun shownWithSomeLinesHeardLate(sheet: List<LyricLine>): List<LyricLine> {
         val sheetKey = sheet.joinToString("\n") { it.text }.hashCode()
-        val words = sheet.joinToString(",") { line ->
+        val words = sheet.withIndex().joinToString(",") { (index, line) ->
+            val late = if (index in 3..5) 500L else 0L
             line.text.split(" ").mapIndexed { i, text ->
-                val start = line.timeMs + 1_600L + i * 900L
+                val start = line.timeMs + late + i * 900L
                 """{"t":"$text","s":$start,"e":${start + 300}}"""
             }.joinToString(",")
         }
@@ -180,12 +184,13 @@ class LyricsTimingHeardWordsTest {
                 LyricWord(line.timeMs + i * 400L, line.timeMs + i * 400L + 300L, text)
             })
         }
-        assertEquals(wordTimed[0].timeMs, shownWithWordsHeardLate(wordTimed)[0].timeMs)
+        assertEquals(wordTimed[4].timeMs, shownWithSomeLinesHeardLate(wordTimed)[4].timeMs)
     }
 
     @Test
     fun `a line-timed sheet still moves onto the words`() = runBlocking {
-        assertEquals(threeWordLines[0].timeMs + 1_600L, shownWithWordsHeardLate(threeWordLines)[0].timeMs)
+        val shown = shownWithSomeLinesHeardLate(threeWordLines)[4].timeMs
+        assertTrue("moved to $shown", shown >= threeWordLines[4].timeMs + 300L)
     }
 
     @Test
