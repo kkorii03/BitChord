@@ -357,7 +357,7 @@ internal object KoQualityUpgrade {
     /**
      * Why [QualityUpgrade.couldStillUpgrade] said no, for the log. A play with no
      * look used to leave no line at all, so "never looked" and "never logged"
-     * read the same (11-07: 19 of 91 songs).
+     * read the same (11-07: 33 of 91 songs).
      */
     fun noLookReason(
         hasUri: Boolean,

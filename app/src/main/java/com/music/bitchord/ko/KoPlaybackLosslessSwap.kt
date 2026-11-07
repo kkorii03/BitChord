@@ -408,7 +408,7 @@ private suspend fun PlaybackService.koSwapDecisionPastCrossfade(
  *
  * The line "will retry" has said so since 11-04, and the window it armed only
  * opened for an event that does not come while a song plays: a pause. In twelve
- * hours of 11-07 it was logged 70 times and no automatic retry ran. A message at a
+ * hours of 11-07 it was logged 74 times and no automatic retry ran. A message at a
  * position in this song is that event; it goes when the song goes, and a player
  * that is not playing does not reach it.
  */
