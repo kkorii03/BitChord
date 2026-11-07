@@ -25,7 +25,7 @@ object LyricsPerLine {
     const val MAX_ANCHOR_MAD_MS = 120L
 
     /** A residual this small is not worth moving the line for. */
-    const val MIN_APPLY_MS = 40L
+    const val MIN_APPLY_MS = 100L
 
     /** A line heard through three or more words can be an arrangement's worth out. */
     const val MAX_SHIFT_MANY_WORDS_MS = 4_000L
