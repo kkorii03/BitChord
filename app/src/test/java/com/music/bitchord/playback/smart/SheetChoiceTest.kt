@@ -123,16 +123,15 @@ class SheetChoiceTest {
     /** QYh6mYIJG2Y: lrc.red fit 83% and a line-timed sheet 93%, and the people's timing was replaced. */
     @Test
     fun `a line-timed sheet does not replace a word-timed one that clears the floor`() {
-        val sheetFits = sheet(0)
-        // Three lines sung off the straight line the rest lie on, as another sheet has them.
-        val other = sheetFits.mapIndexed { i, line -> if (i in 5..7) line.copy(timeMs = line.timeMs + 1_500L) else line }
-        val heard = sung(other)
-        val fit = SheetChoice.fitPercent(sheetFits, heard)
-        assertEquals("fit $fit is under good enough and over the floor", true, fit in 70..84)
+        val lineTimed = LyricsRepository.Result(LyricsSource.VIBE, sheet(24))
+        val wordTimed = LyricsRepository.Result(LyricsSource.VIBE, sheet(24).map(::timedWord))
+        val both = listOf(lineTimed, wordTimed)
 
-        assertNull(pick(sheetFits.map(::timedWord), other, heard))
-        // The same sheet without word times is still replaced: the rule is about the times.
-        assertEquals(other, pick(sheetFits, other, heard))
+        assertEquals(listOf(wordTimed), SheetChoice.mayReplace(sheet(0).map(::timedWord), both, 83))
+        // Under the floor the words on screen are in doubt, and any sheet may take over.
+        assertEquals(both, SheetChoice.mayReplace(sheet(0).map(::timedWord), both, 60))
+        // A line-timed sheet on screen has no times to protect.
+        assertEquals(both, SheetChoice.mayReplace(sheet(0), both, 83))
     }
 
     /** w8P-BIQU1qI: 98% against 211 words, 72% against the 158 a later listen kept. */
