@@ -31,7 +31,7 @@ object LyricsPerLine {
     const val MAX_SHIFT_MANY_WORDS_MS = 4_000L
 
     /** With only two words, a large move is more likely a mishearing than a real one. */
-    const val MAX_SHIFT_TWO_WORDS_MS = 600L
+    const val MAX_SHIFT_TWO_WORDS_MS = 300L
 
     /** A block of anchors this short that disagrees with both neighbours is a mishearing, not a move. */
     const val MAX_LONE_BLOCK = 3
