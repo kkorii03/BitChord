@@ -34,6 +34,13 @@ class SongHearingTest {
     }
 
     @Test
+    fun `only an opening someone waits on gets a quick second copy`() {
+        assertEquals(15_000L, SongHearing.hedgeAfterMs(90.0, exact = false))
+        assertEquals(120_000L, SongHearing.hedgeAfterMs(90.0, exact = true))
+        assertEquals(120_000L, SongHearing.hedgeAfterMs(420.0, exact = false))
+    }
+
+    @Test
     fun `a rough answer stays rough when it is asked nothing again`() {
         val heard = SongHearing.Heard(emptyList(), 1_000L, LyricsTiming.Clock.YouTube, 200, rough = true)
 

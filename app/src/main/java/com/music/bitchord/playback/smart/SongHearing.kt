@@ -367,8 +367,16 @@ internal object SongHearing {
             )
             if (!answer.words.isNullOrEmpty()) return answer
         }
-        return sendToDeepgram(bytes, language, mime, untilSeconds, videoId, waitedMs, copyKey)
+        return sendToDeepgram(bytes, language, mime, untilSeconds, videoId, waitedMs, copyKey, exact)
     }
+
+    /**
+     * When a second copy goes to Deepgram. An exact ask has no listener waiting on it, since
+     * Groq spoke first, and a copy sent while one stalls stalled too, 7 of 7 (11-07), so it
+     * would only pay twice and hold a slot another song's request needs.
+     */
+    internal fun hedgeAfterMs(untilSeconds: Double, exact: Boolean): Long =
+        if (untilSeconds <= OPENING_SECONDS && !exact) HEDGE_AFTER_MS else HEDGE_AFTER_LONG_MS
 
     /**
      * The opening goes to Groq first: someone is waiting on it, and Deepgram may sit on it
@@ -385,6 +393,7 @@ internal object SongHearing {
         videoId: String,
         waitedMs: Long,
         copyKey: String?,
+        exact: Boolean,
     ): Deepgram.Answer = requests.withPermit {
         val asked = System.currentTimeMillis()
         var hedgedTo = 0
@@ -395,7 +404,7 @@ internal object SongHearing {
         var dropped = 0
         while (true) {
             answer = hedged(
-                if (untilSeconds <= OPENING_SECONDS) HEDGE_AFTER_MS else HEDGE_AFTER_LONG_MS,
+                hedgeAfterMs(untilSeconds, exact),
                 ask = {
                     hedgedTo++
                     Deepgram.listen(bytes, language, Deepgram.MODEL_WHISPER, mime)
