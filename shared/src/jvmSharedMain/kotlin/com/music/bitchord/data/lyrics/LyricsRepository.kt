@@ -1276,6 +1276,7 @@ object LyricsRepository {
             LyricsSource.BETTER_LYRICS -> BetterLyrics.lyrics(title, artist, durationMs, album)
             LyricsSource.BETTER_LYRICS_PORTATO -> BetterLyrics.portato(title, artist, durationMs, album)
             LyricsSource.LYRICS_PLUS -> LyricsPlus.lyrics(title, artist, durationMs, album, isrc)
+            LyricsSource.QQ_MUSIC -> QqMusic.lyrics(title, artist, durationMs, get)
             LyricsSource.BINI_LYRICS ->
                 (hit?.let { BiniLyrics.lyricsFor(it, get) }
                     ?: BiniLyrics.lyrics(title, artist, durationMs, album, isrc, get))

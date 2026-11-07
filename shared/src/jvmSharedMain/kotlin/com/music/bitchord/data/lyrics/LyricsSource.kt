@@ -89,6 +89,12 @@ enum class LyricsSource(
         detail = "커뮤니티 미러에서 음절 단위",
         wordSynced = true,
     ),
+    // QQ Music's own karaoke timing (see [QqMusic]): word-level and keyless.
+    QQ_MUSIC(
+        label = "QQ Music",
+        detail = "QQ Music 노래방 타이밍, 단어 단위",
+        wordSynced = true,
+    ),
     // The Korean services: whole lines only, but the Korean catalogue the
     // Apple hosts above miss — indie, OST, the originals covers are made of.
     // Ahead of every line-only fallback below, so a Korean song gets its own
