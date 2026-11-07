@@ -219,10 +219,24 @@ object CoverTitles {
     fun lyricsQueries(song: Song): List<Pair<String, String>> {
         read(song)?.let { cover ->
             val artist = cover.originalArtist
+            val songFirst = cover.title to (artist ?: cover.singer)
+            val artistFirst = artist?.let { it to cover.title }
+            // "Kenshi Yonezu, Hikaru Utada - JANE DOE (Singer Cover)": a
+            // comma-separated list before the dash is a collaboration credit,
+            // not a song title, so the song is the other side. 11-06
+            // BipM3jsOmDs searched the artist list as the song and KuGou
+            // answered with another song of that name.
+            val primary = if (cover.orderUnsure && artist != null && artistFirst != null &&
+                cover.title.contains(", ") && !artist.contains(", ")
+            ) {
+                artistFirst
+            } else {
+                songFirst
+            }
             return listOfNotNull(
-                cover.title to (artist ?: cover.singer),
+                primary,
                 // "Song - Artist" read the other way round, in case it was "Artist - Song".
-                (artist?.let { it to cover.title })?.takeIf { cover.orderUnsure },
+                artistFirst?.takeIf { cover.orderUnsure && it != primary },
                 (cover.title to cover.singer).takeIf { artist != null },
             )
         }
