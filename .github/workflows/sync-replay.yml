@@ -1,0 +1,61 @@
+name: Sync replay
+
+# Runs the real fitting code on recorded songs, with no emulator and no YouTube: minutes
+# against an emulator round's half hour. Push a commit to replay/<name> to try a change.
+# The corpus holds lyrics, so it stays in the private bucket, is fetched only into the
+# runner's temp folder, and is never printed or uploaded. Logs carry ids and numbers only.
+on:
+  workflow_dispatch:
+  push:
+    branches: ['replay/**']
+
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+      - name: Fetch the corpus
+        env:
+          DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, hmac, json, os, pathlib, urllib.request
+          # The Worker's read token, derived as in bench/farm/r2_tool.py: it can only read.
+          token = hmac.new(os.environ["DEEPGRAM_API_KEY"].strip().encode(), b"bitchord-farm-read", hashlib.sha256).hexdigest()
+          out = pathlib.Path(os.environ["RUNNER_TEMP"]) / "replay"
+          out.mkdir()
+          ids = [s["id"] for s in json.load(open("bench/replay/baseline.json", encoding="utf-8"))["songs"]]
+          got = 0
+          for vid in ids:
+              req = urllib.request.Request(f"https://bitchord-align-read.bitchord-align.workers.dev/replay/{vid}.json",
+                                           headers={"x-farm-token": token, "User-Agent": "bitchord-replay"})
+              with urllib.request.urlopen(req, timeout=60) as r:
+                  (out / f"{vid}.json").write_bytes(r.read())
+              got += 1
+          print(f"corpus songs {got} of {len(ids)}")
+          PY
+      - name: Replay
+        shell: bash
+        run: |
+          set +e -o pipefail
+          chmod +x gradlew
+          SYNC_REPLAY_DIR="$RUNNER_TEMP/replay" ./gradlew :app:testProdDebugUnitTest --tests '*SyncReplayTest' --console=plain > replay.log 2>&1
+          status=$?
+          grep -E "^e: |BUILD (SUCCESSFUL|FAILED)|tests completed" replay.log | head -30
+          python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          # Numbers and ids only: that is all the test prints to stdout.
+          for f in glob.glob("app/build/test-results/testProdDebugUnitTest/*SyncReplayTest*.xml"):
+              root = ET.parse(f).getroot()
+              print(root.findtext("system-out") or "")
+              for case in root.iter("testcase"):
+                  for failure in case.findall("failure"):
+                      print("FAILED:", (failure.get("message") or "")[:300])
+          PY
+          exit $status
