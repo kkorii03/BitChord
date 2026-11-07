@@ -21,6 +21,13 @@ object LyricsPerLine {
     /** A line needs this many heard words in order before it may move on its own. */
     const val MIN_ANCHOR_WORDS = 2
 
+    /** The measured line-start rule: a sheet whose lines agree this closely is left alone. */
+    const val COHERENCE_WITHIN_MS = 150L
+    const val COHERENCE_SHARE = 0.42
+
+    /** The measured line-start rule moves a line only when this many of its words were heard. */
+    const val MIN_FIRST_WORD_WORDS = 3
+
     /** Words that scatter more than this around their line are not one placement. */
     const val MAX_ANCHOR_MAD_MS = 120L
 
@@ -225,6 +232,72 @@ object LyricsPerLine {
         val applied = shifts.count { it != 0L }
         val maxAbs = shifts.maxOfOrNull { abs(it) } ?: 0L
         return Layer(shifts.toList(), anchors.size, applied, maxAbs)
+    }
+
+    /**
+     * The measured line-start rule (snap.md section 6): on a line-timed sheet whose
+     * lines do not agree with the transcript, move a line to its first heard word
+     * when that word is the line's opening. A sheet the transcript agrees with is
+     * left alone; the old anchor layer still serves it.
+     *
+     * Coherence is the share of lines with at least [MIN_ANCHOR_WORDS] matched words
+     * whose residual is within [COHERENCE_WITHIN_MS] of the median residual. At or
+     * above [COHERENCE_SHARE] the sheet is coherent and nothing moves. Otherwise a
+     * line moves only when at least [MIN_FIRST_WORD_WORDS] words matched, the first
+     * matched word starts the line (offset 0 and the folded text's prefix), and the
+     * move is within [MIN_APPLY_MS]..[MAX_SHIFT_MANY_WORDS_MS]. No interpolation.
+     */
+    fun computeFirstWord(
+        lines: List<LyricLine>,
+        heard: List<LyricsWordAlign.Heard>,
+        heardAudioKey: Int?,
+        currentAudioKey: Int?,
+    ): Layer {
+        if (heardAudioKey != currentAudioKey) return Layer.identity(lines.size)
+        if (lines.isEmpty() || heard.isEmpty()) return Layer.identity(lines.size)
+        if (statesItsOwnWords(lines)) return Layer.identity(lines.size)
+        val matched = LyricsWordAlign.matchedWords(lines.map { it.text }, heard)
+        val coherence = coherence(lines, matched) ?: return Layer.identity(lines.size)
+        if (coherence >= COHERENCE_SHARE) return Layer.identity(lines.size)
+        val shifts = LongArray(lines.size)
+        for (index in lines.indices) {
+            val words = matched[index]
+            if (words.size < MIN_FIRST_WORD_WORDS) continue
+            val first = words.first()
+            if (first.offsetMs != 0L) continue
+            if (!LyricsWordAlign.fold(lines[index].text).startsWith(LyricsWordAlign.fold(first.word.text))) continue
+            val move = first.word.startMs - lines[index].timeMs
+            if (abs(move) in MIN_APPLY_MS..MAX_SHIFT_MANY_WORDS_MS) shifts[index] = move
+        }
+        enforceOrder(lines, shifts)
+        val applied = shifts.count { it != 0L }
+        val maxAbs = shifts.maxOfOrNull { abs(it) } ?: 0L
+        return Layer(shifts.toList(), matched.count { it.size >= MIN_ANCHOR_WORDS }, applied, maxAbs)
+    }
+
+    /**
+     * The share of [lines] with at least [MIN_ANCHOR_WORDS] matched words whose
+     * residual is within [COHERENCE_WITHIN_MS] of the median, or null when fewer
+     * than two lines have that many words. The residual is the same one the anchor
+     * loop computes, but without its MAD or pace drops: the gate needs the
+     * scattered lines too.
+     */
+    private fun coherence(
+        lines: List<LyricLine>,
+        matched: List<List<LyricsWordAlign.MatchedWord>>,
+    ): Double? {
+        val residuals = ArrayList<Long>(lines.size)
+        for (index in lines.indices) {
+            val words = matched[index]
+            if (words.size < MIN_ANCHOR_WORDS) continue
+            val pace = pace(words).coerceIn(MIN_PACE, MAX_PACE)
+            residuals += median(words.map { word ->
+                word.word.startMs - (word.offsetMs * pace).roundToLong() - lines[index].timeMs
+            })
+        }
+        if (residuals.size < 2) return null
+        val center = median(residuals)
+        return residuals.count { abs(it - center) <= COHERENCE_WITHIN_MS }.toDouble() / residuals.size
     }
 
     /**

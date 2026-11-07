@@ -1212,10 +1212,22 @@ object LyricsTiming {
         // passes, 94.9% to 97.8% within 0.3 s, though the score shares the transcript that
         // moved the lines. Line-timed sheets are the other way round (6 to 4, 91.3% to 81.0%).
         // With no fit, the words are all this sheet has (3JWTaaS7LdU, refused at 56%).
-        val layer = if (timing.base != null && LyricsPerLine.statesItsOwnWords(lines)) {
-            LyricsPerLine.Layer.identity(lines.size)
-        } else {
-            LyricsPerLine.compute(lines, words.words, words.wordsKey, words.currentKey)
+        val ownWords = LyricsPerLine.statesItsOwnWords(lines)
+        val layer = when {
+            timing.base != null && ownWords -> LyricsPerLine.Layer.identity(lines.size)
+            !ownWords && (timing.refineMs != 0L || timing.refineSlopePerMin != 0.0) -> {
+                // The measured line-start rule (snap.md section 6) runs on a line-timed
+                // sheet the whole-song fit moved. It leaves a coherent sheet alone; the
+                // old anchor layer still serves that case, where its moves are inert on
+                // the measured sample and it still catches a few late lines.
+                val firstWord = LyricsPerLine.computeFirstWord(lines, words.words, words.wordsKey, words.currentKey)
+                if (firstWord.applied > 0) {
+                    firstWord
+                } else {
+                    LyricsPerLine.compute(lines, words.words, words.wordsKey, words.currentKey)
+                }
+            }
+            else -> LyricsPerLine.compute(lines, words.words, words.wordsKey, words.currentKey)
         }
         TrackLog.i(
             "BitChord",
