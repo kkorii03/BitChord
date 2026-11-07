@@ -704,6 +704,8 @@ internal class LyricPlayhead(
 
     val sampledAtNanos: Long get() = position.sampledAtNanos
 
+    val speed: Float get() = position.speed
+
     /**
      * Changes whenever the lyrics are meant to jump: the player seeking, or the
      * reader moving the lyrics offset — which shifts every reading at once, and
@@ -798,6 +800,7 @@ private fun rememberLyricClock(
                     reportedMs = playhead.positionMs,
                     sampledAtMs = if (sampledAt > 0L) nanosToMs(sampledAt) else Double.NaN,
                     discontinuity = playhead.discontinuity,
+                    knownSpeed = playhead.speed.toDouble(),
                 )
                 if (probesLeft > 0 && now >= nextProbeNanos) {
                     probesLeft--
@@ -818,7 +821,7 @@ private fun rememberLyricClock(
 }
 
 /** Lines the log gets each time the lyric clock starts a run, and how far apart. */
-private const val LYRIC_PROBES = 3
+private const val LYRIC_PROBES = 40 // A minute's worth: a sag in the readings shows only past the first seconds.
 private const val LYRIC_PROBE_EVERY_NANOS = 1_500_000_000L
 
 /** A frame time this close to [System.nanoTime] is on the same clock. */

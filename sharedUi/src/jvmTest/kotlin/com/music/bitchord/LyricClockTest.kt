@@ -4,6 +4,7 @@ import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricLineIndex
 import com.music.bitchord.data.lyrics.withEstimatedWords
 import com.music.bitchord.ko.ui.player.koShouldDrawLyricFrame
+import com.music.bitchord.playback.playingSpeed
 import com.music.bitchord.ui.player.LyricClock
 import kotlin.math.abs
 import kotlin.random.Random
@@ -184,6 +185,148 @@ class LyricClockTest {
             now += frameMs
         }
         assertEquals(10_200.0 + now, clock.displayedMs, 40.0)
+    }
+
+    private class SteadyRun(val atMs: List<Double>, val offMs: List<Double>, val paces: List<Double>, val shown: List<Long>) {
+        fun medianOff(fromMs: Double = 3_000.0, untilMs: Double = Double.MAX_VALUE): Double =
+            atMs.indices.filter { atMs[it] in fromMs..untilMs }.map { abs(offMs[it]) }.sorted().let { it[it.size / 2] }
+
+        fun worstOff(fromMs: Double = 3_000.0, untilMs: Double = Double.MAX_VALUE): Double =
+            atMs.indices.filter { atMs[it] in fromMs..untilMs }.maxOf { abs(offMs[it]) }
+
+        fun shareOfPaces(test: (Double) -> Boolean): Double = paces.count(test).toDouble() / paces.size
+    }
+
+    /**
+     * Sixty frames a second against a song at [songMs], read every half second. [stray] is how
+     * far each reading is off the song. [speed] is what the clock is told; NaN tells it nothing.
+     */
+    private fun steadyRun(
+        seconds: Double = 120.0,
+        speed: (Double) -> Double = { 1.0 },
+        songMs: (Double) -> Double = { 5_000.0 + it },
+        stray: (java.util.Random, Double) -> Double,
+    ): SteadyRun {
+        val random = java.util.Random(3)
+        val clock = LyricClock(songMs(0.0).toLong())
+        val at = ArrayList<Double>()
+        val off = ArrayList<Double>()
+        val paces = ArrayList<Double>()
+        val shown = ArrayList<Long>()
+        var now = 0.0
+        var nextReading = 0.0
+        var reading = 0L
+        var taken = 0.0
+        var paceFrom = songMs(0.0)
+        var paceFromAt = 0.0
+        while (now < seconds * 1000) {
+            if (now >= nextReading) {
+                reading = (songMs(now) + stray(random, now)).toLong()
+                taken = now
+                nextReading = now + 500.0 + (random.nextDouble() - 0.5) * 40.0
+            }
+            val drawn = clock.frame(now, reading, taken, 0L, speed(now))
+            at += now
+            off += drawn - songMs(now)
+            shown += drawn
+            if (now - paceFromAt >= 250.0) {
+                if (now > 3_000.0) paces += (drawn - paceFrom) / (now - paceFromAt)
+                paceFrom = drawn.toDouble()
+                paceFromAt = now
+            }
+            now += frameMs
+        }
+        return SteadyRun(at, off, paces, shown)
+    }
+
+    /** Readings as on the phone: sliding back at [sag] of real time, back on the song every 3 s. */
+    private fun sagging(sag: Double = 0.35, startsAtMs: Double = 0.0): (java.util.Random, Double) -> Double =
+        { random, now -> -(((now + startsAtMs) % 3_030.0) * sag) + random.nextGaussian() * 25.0 }
+
+    /**
+     * 11-07, Rap God on LDAC Bluetooth, from the listener's screen recording: the sheet was right
+     * to 0.1 s, yet the words ran at 0.54-0.71x and rushed every 3 s, 1.25 s behind at worst.
+     */
+    @Test fun saggingReadingsDoNotSlowTheWordsWhenTheSpeedIsKnown() {
+        val run = steadyRun(stray = sagging())
+        assertTrue("median ${run.medianOff()}", run.medianOff() <= 120.0)
+        assertTrue("worst ${run.worstOff()}", run.worstOff() <= 300.0)
+        assertTrue("slow ${run.shareOfPaces { it < 0.85 }}", run.shareOfPaces { it < 0.85 } <= 0.01)
+        assertTrue("rushed ${run.shareOfPaces { it > 1.25 }}", run.shareOfPaces { it > 1.25 } <= 0.01)
+    }
+
+    /** The control: these same readings do break a clock that learns its rate from them. */
+    @Test fun saggingReadingsAreWhatBrokeTheClock() {
+        val run = steadyRun(speed = { Double.NaN }, stray = sagging())
+        assertTrue("median ${run.medianOff()}", run.medianOff() >= 400.0)
+        assertTrue("slow ${run.shareOfPaces { it < 0.85 }}", run.shareOfPaces { it < 0.85 } >= 0.5)
+    }
+
+    @Test fun aRunThatStartsOnASaggedReadingCatchesUpWithoutRushing() {
+        val run = steadyRun(stray = sagging(startsAtMs = 2_000.0))
+        assertTrue("worst later ${run.worstOff(fromMs = 20_000.0)}", run.worstOff(fromMs = 20_000.0) <= 300.0)
+        assertTrue("rushed ${run.shareOfPaces { it > 1.3 }}", run.shareOfPaces { it > 1.3 } <= 0.01)
+    }
+
+    @Test fun ordinaryNoiseStaysAsCloseAsBeforeAndNeverGoesBack() {
+        val run = steadyRun(stray = { random, _ -> random.nextGaussian() * 100.0 })
+        assertTrue("median ${run.medianOff()}", run.medianOff() <= 60.0)
+        assertTrue("worst ${run.worstOff()}", run.worstOff() <= 250.0)
+        for (i in 1 until run.shown.size) assertTrue("went back at ${run.atMs[i]}", run.shown[i] >= run.shown[i - 1])
+    }
+
+    @Test fun anUnannouncedSlipAheadIsFollowedWithinTwoSeconds() {
+        val run = steadyRun(seconds = 40.0, songMs = { 5_000.0 + it + if (it >= 20_000.0) 1_500.0 else 0.0 }, stray = { _, _ -> 0.0 })
+        assertTrue("worst after ${run.worstOff(fromMs = 22_000.0)}", run.worstOff(fromMs = 22_000.0) <= 100.0)
+    }
+
+    @Test fun aSmallLastingGapClosesWithinSeconds() {
+        val run = steadyRun(seconds = 40.0, songMs = { 5_000.0 + it + if (it >= 20_000.0) 500.0 else 0.0 }, stray = { _, _ -> 0.0 })
+        assertTrue("worst after ${run.worstOff(fromMs = 28_000.0)}", run.worstOff(fromMs = 28_000.0) <= 100.0)
+    }
+
+    @Test fun anUnannouncedSlipBehindClosesWithoutGoingBack() {
+        val run = steadyRun(seconds = 40.0, songMs = { 5_000.0 + it - if (it >= 20_000.0) 1_500.0 else 0.0 }, stray = { _, _ -> 0.0 })
+        assertTrue("worst after ${run.worstOff(fromMs = 32_000.0)}", run.worstOff(fromMs = 32_000.0) <= 100.0)
+        for (i in 1 until run.shown.size) assertTrue("went back at ${run.atMs[i]}", run.shown[i] >= run.shown[i - 1])
+    }
+
+    @Test fun anAnnouncedSeekStillMovesTheWordsBackAtOnce() {
+        val clock = LyricClock(60_000L)
+        var now = 0.0
+        while (now < 5_000.0) {
+            val taken = (now / 500.0).toInt() * 500.0
+            clock.frame(now, (60_000.0 + taken).toLong(), taken, 0L, 1.0)
+            now += frameMs
+        }
+        val seekAt = now
+        while (now < seekAt + 400.0) {
+            val taken = maxOf(seekAt, seekAt + ((now - seekAt) / 500.0).toInt() * 500.0)
+            clock.frame(now, (10_000.0 + (taken - seekAt)).toLong(), taken, 1L, 1.0)
+            now += frameMs
+        }
+        assertEquals(10_000.0 + (now - seekAt), clock.displayedMs, 50.0)
+    }
+
+    @Test fun theWordsRunAtTheSpeedTheyAreTold() {
+        val run = steadyRun(speed = { 1.25 }, songMs = { 5_000.0 + it * 1.25 }, stray = { random, _ -> random.nextGaussian() * 40.0 })
+        assertTrue("median ${run.medianOff()}", run.medianOff() <= 60.0)
+        assertEquals(1.25, run.paces.sorted()[run.paces.size / 2], 0.05)
+    }
+
+    /** Automix eases a stretched song back to normal in steps; the real speed follows it, the setting does not. */
+    @Test fun aTempoEasingBackIsFollowed() {
+        val speed = { now: Double -> if (now < 6_000.0) 1.1 else 1.0 }
+        val song = { now: Double -> 5_000.0 + minOf(now, 6_000.0) * 1.1 + maxOf(now - 6_000.0, 0.0) }
+        val run = steadyRun(seconds = 30.0, speed = speed, songMs = song, stray = { random, _ -> random.nextGaussian() * 40.0 })
+        assertTrue("worst ${run.worstOff()}", run.worstOff() <= 150.0)
+    }
+
+    @Test fun aWildSpeedFigureIsNotTakenOnTrust() {
+        assertEquals(1.0f, playingSpeed(1.0f, 1.0f), 0.0001f)
+        assertEquals(1.1f, playingSpeed(1.1f, 1.0f), 0.0001f)
+        assertEquals(0.85f, playingSpeed(0.65f, 1.0f), 0.0001f)
+        assertEquals(1.5f, playingSpeed(0f, 1.5f), 0.0001f)
     }
 
     @Test fun aRealChangeOfSpeedStillShowsWithinTwoSeconds() {
