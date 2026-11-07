@@ -27,8 +27,14 @@ object DownloadedQuality {
      * so a hi-res replacement would look like a plain lossless one on the next
      * pass and be fetched again. [storedHqTier] is the rung the verified pair
      * was proved at, and it wins over the badge.
+     *
+     * Except where the badge names a lossy codec. That is what the saved file
+     * was found to be, and the rung is only what its pair was proved at: a
+     * source can claim FLAC and hand over an MP3 (`cdn.jsdelivr.net claims FLAC
+     * but served a lossy file`, 27 times in the logs of 11-07).
      */
     fun tierOf(badge: String?, storedHqTier: String?): HqTier {
+        if (formatOf(badge).codec in LOSSY_CODECS) return tierOf(badge)
         val stored = storedHqTier
             ?.trim()
             ?.takeIf { it.isNotEmpty() }
@@ -60,20 +66,17 @@ object DownloadedQuality {
         verified?.takeIf { it.rank < tierOf(badge).rank }
 
     /**
-     * Whether the file can be called the best already.
+     * Whether "이미 최고 음질" is true of the file: it is on a top rung, Dolby
+     * Atmos or hi-res at 88.2 kHz and up.
      *
-     * Only a proven answer counts: a verified rung at or below the file's own,
-     * or the top rung by definition (Dolby Atmos). With nothing verified the
-     * row stays actionable — "고음질로 다시 받기" — because silence is not
-     * evidence that a better copy does not exist.
+     * Nothing else earns it. This used to accept any verified rung at or below
+     * the file's own, but a verdict only says what has been proved so far, and
+     * the proof is usually of the file's own pair: a saved 160 kbps Opus proved
+     * at its own rung was "already best", row disabled. A tap on a file that
+     * cannot be beaten costs one search and answers that it found nothing.
      */
-    fun isAtBest(badge: String?, verified: HqTier?, stored: HqTier? = null): Boolean {
-        // The badge says only "FLAC" for every lossless file; the rung the
-        // download recorded is the better witness when there is one.
-        val current = listOfNotNull(tierOf(badge), stored).minBy { it.rank }
-        if (current == HqTier.DOLBY_ATMOS) return true
-        return verified != null && verified.rank >= current.rank
-    }
+    fun isAtBest(badge: String?, stored: HqTier? = null): Boolean =
+        tierOf(badge, stored?.name).rank <= HqTier.HI_RES_24_88.rank
 
     /**
      * The rung a replacement should ask for: the verified better rung when
@@ -116,6 +119,8 @@ object DownloadedQuality {
         HqTier.HIGH_LOSSY -> DownloadQuality.HIGH
         HqTier.NORMAL -> DownloadQuality.STANDARD
     }
+
+    private val LOSSY_CODECS = setOf("aac", "opus", "mp3")
 
     private val KBPS = Regex("""(\d+)\s*KBPS""")
 }

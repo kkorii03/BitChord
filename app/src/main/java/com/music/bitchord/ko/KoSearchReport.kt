@@ -41,6 +41,15 @@ open class KoSearchReport {
         if (!outcome.conclusive) allConclusive = false
     }
 
+    /**
+     * The walk stopped on a good enough answer with sources still running. They
+     * never reached [record], so without this the walk reads as every source
+     * having answered, and the track as settled.
+     */
+    fun markEndedEarly() {
+        allConclusive = false
+    }
+
     /** Sources whose credential was refused, for the listener-facing answer. */
     val authSourceNames: List<String>
         get() = synchronized(entries) { authSources.distinct() }

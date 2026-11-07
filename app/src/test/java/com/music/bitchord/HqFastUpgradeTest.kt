@@ -141,9 +141,12 @@ class HqFastUpgradeTest {
         assertEquals("https://Bridge/Bridge-row", found?.url)
     }
 
-    /** 11-03: `verify=34756ms` for an answer nothing on this path reads. */
+    /**
+     * 11-07: 16 of 91 songs played on Opus to the end with a matched 320 kbps in
+     * hand and nothing lossless to be had. The swap now takes it, on the same proof.
+     */
     @Test
-    fun `a lossy answer is neither proved nor returned`() = runBlocking {
+    fun `with nothing lossless a good lossy copy is proved and returned`() = runBlocking {
         install(listOf(FakeSource("Saavn", aac320), youtube()))
         pending("lossy-only")
         val proved = mutableListOf<String>()
@@ -153,8 +156,51 @@ class HqFastUpgradeTest {
             true
         }
 
+        assertEquals("https://Saavn/Saavn-row", found?.url)
+        assertEquals(listOf("https://Saavn/Saavn-row"), proved)
+    }
+
+    /** Right recording first: a lossy copy gets no easier a proof than a lossless one. */
+    @Test
+    fun `a lossy copy that fails its proof is not taken`() = runBlocking {
+        install(listOf(FakeSource("Saavn", aac320), youtube()))
+        pending("lossy-wrong")
+
+        val found = QualityUpgrade.lookAgain("lossy-wrong", 202) { _, _ -> false }
+
         assertNull(found)
-        assertTrue("proved: $proved", proved.isEmpty())
+    }
+
+    /** Only proved after the race, so 12 s of slow sources cannot lose a FLAC to it. */
+    @Test
+    fun `a lossy copy does not beat a lossless one that arrives later`() = runBlocking {
+        install(listOf(FakeSource("Saavn", aac320), FakeSource("Bridge", flac16, answersAfterMs = 300L), youtube()))
+        pending("lossy-then-flac")
+        val proved = mutableListOf<String>()
+
+        val found = QualityUpgrade.lookAgain("lossy-then-flac", 202) { _, stream ->
+            proved += stream.url
+            true
+        }
+
+        assertEquals("https://Bridge/Bridge-row", found?.url)
+        assertEquals(listOf("https://Bridge/Bridge-row"), proved)
+    }
+
+    @Test
+    fun `Atmos alone still ends with nothing on the automatic path`() = runBlocking {
+        install(listOf(FakeSource("Trial", atmos), youtube()))
+        pending("atmos-only")
+
+        assertNull(QualityUpgrade.lookAgain("atmos-only", 202) { _, _ -> true })
+    }
+
+    @Test
+    fun `a lossy copy no better than what is playing is not taken`() = runBlocking {
+        install(listOf(FakeSource("Saavn", StreamFormat("mp4", kbps = 128)), youtube()))
+        pending("lossy-poor")
+
+        assertNull(QualityUpgrade.lookAgain("lossy-poor", 202) { _, _ -> true })
     }
 
     /** A cover from a fast source used to end the look with the real one unasked. */
@@ -205,6 +251,66 @@ class HqFastUpgradeTest {
         }
 
         assertEquals("https://Quick/Quick-row", found?.url)
+    }
+
+    /** Review of cdeb28855: only a `false` handed over; a throw lost every other answer. */
+    @Test
+    fun `a proof that throws hands over to the next source`() = runBlocking {
+        install(listOf(FakeSource("Broken", flac24), FakeSource("Real", flac16), youtube()))
+        pending("throws-proof")
+
+        val found = QualityUpgrade.lookAgain("throws-proof", 202) { _, stream ->
+            if (stream.url.contains("Broken")) throw IOException("store unreadable")
+            true
+        }
+
+        assertEquals("https://Real/Real-row", found?.url)
+    }
+
+    @Test
+    fun `a cancelled proof is still a cancellation`() = runBlocking {
+        install(listOf(FakeSource("Bridge", flac16), youtube()))
+        pending("cancelled-proof")
+
+        val thrown = runCatching {
+            QualityUpgrade.lookAgain("cancelled-proof", 202) { _, _ ->
+                throw kotlinx.coroutines.CancellationException("the song moved on")
+            }
+        }.exceptionOrNull()
+
+        assertTrue("got $thrown", thrown is kotlinx.coroutines.CancellationException)
+        assertTrue("nothing was learned, so it stays pending", QualityUpgrade.isPending("cancelled-proof"))
+        QualityUpgrade.forget("cancelled-proof")
+    }
+
+    /** A first proved copy with others unasked is not an answer the track can be closed on. */
+    @Test
+    fun `a look ended early by a proved copy is not a settled answer`() = runBlocking {
+        install(listOf(FakeSource("Slow", flac24, answersAfterMs = 30_000L), FakeSource("Quick", flac16), youtube()))
+        pending("ended-early")
+
+        val found = withTimeout(5_000L) {
+            QualityUpgrade.lookAgain("ended-early", 202) { _, _ -> true }
+        }
+
+        assertEquals("https://Quick/Quick-row", found?.url)
+        assertFalse(QualityUpgrade.hasAnsweredFor("ended-early"))
+        assertTrue("a failed swap can ask again after the window", KoQualityUpgrade.suppressesRetry("ended-early"))
+    }
+
+    @Test
+    fun `a look every source answered is settled`() = runBlocking {
+        install(listOf(FakeSource("Quick", flac16), youtube()))
+        pending("all-answered")
+
+        val found = QualityUpgrade.lookAgain("all-answered", 202) { _, _ -> true }
+
+        assertEquals("https://Quick/Quick-row", found?.url)
+        assertTrue(QualityUpgrade.hasAnsweredFor("all-answered"))
+
+        KoQualityUpgrade.reopen("all-answered")
+
+        assertFalse("a swap that failed takes the answer back", QualityUpgrade.hasAnsweredFor("all-answered"))
     }
 
     /** 14:10:49 to 14:10:57: nothing asked while the direct lookup proved a preview. */

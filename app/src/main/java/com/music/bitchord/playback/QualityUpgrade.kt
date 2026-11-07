@@ -574,6 +574,7 @@ object QualityUpgrade {
             // finish first. See [KoQualityUpgrade.firstAnswerOf].
             val koTarget = waiting.target.copy(durationSec = effectiveDurationSec)
             var koLate: SourceStream? = null
+            val koReserve = KoQualityUpgrade.LossyReserve() // [KO] hq-tier
             KoQualityUpgrade.firstAnswerOf<SourceStream>(
                 fromLookup?.let { ask -> suspend { ask().also { koLate = it } } },
             ) {
@@ -587,8 +588,8 @@ object QualityUpgrade {
                     report = report,
                     sourceTimeoutMs = KoQualityUpgrade.AUTOMATIC_SOURCE_TIMEOUT_MS, // [KO] quality-race
                     enough = { KoQualityUpgrade.isLosslessTier(it.format) }, // [KO] quality-race
-                    verify = KoQualityUpgrade.automaticProof(mediaId, koTarget, koLook.measuredVerify), // [KO] quality-race
-                )
+                    verify = KoQualityUpgrade.automaticProof(mediaId, koTarget, koLook.measuredVerify, koReserve), // [KO] quality-race
+                ) ?: koReserve.proved(mediaId, koTarget, koLook.measuredVerify) // [KO] hq-tier
             }.also {
                 found = it
                 if (it != null && needsLosslessFollowUp(it.format)) {

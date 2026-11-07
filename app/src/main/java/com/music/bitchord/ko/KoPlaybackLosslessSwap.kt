@@ -295,14 +295,17 @@ internal fun PlaybackService.koPrefetchLosslessForNextPlay(
  * whole file before it opens anything.
  *
  * Bounded by the audition's own ceiling; a read that stops short leaves what it
- * got, and the audition judges that as it would anything else.
+ * got, and the audition judges that as it would anything else. The swap keeps
+ * the host it began: this read is inside it, not the end of it.
  *
- * @return whether this took the warm-up's place.
+ * @return whether this took the warm-up's place. A read cut off by the ceiling did
+ *   not, so the audition still gets the warm-up's header.
  */
 internal suspend fun koPrefillTelegramAudition(uri: Uri, title: String?, stream: SourceStream): Boolean {
     if (!KoQualityUpgrade.isTelegramStream(stream)) return false
-    withTimeoutOrNull(PlaybackService.UPGRADE_AUDITION_MS) { AudioCache.cacheWholeRendition(uri, title) }
-    return true
+    return withTimeoutOrNull(PlaybackService.UPGRADE_AUDITION_MS) {
+        AudioCache.cacheWholeRendition(uri, title, releasesHost = false)
+    } != null
 }
 
 /**
@@ -319,7 +322,7 @@ internal suspend fun PlaybackService.koSwapLosslessMidSong(
     title: String?,
     verified: HqVerificationStore.Verified,
 ): Boolean {
-    val beforeDownload = koHqSwapDecision(mediaId, verified)
+    val beforeDownload = koSwapDecisionPastCrossfade(mediaId, verified)
     if (!beforeDownload.allowed) {
         TrackLog.d(
             "BitChord",
@@ -329,12 +332,12 @@ internal suspend fun PlaybackService.koSwapLosslessMidSong(
         return false
     }
     val upgradedUri = Uri.parse(QualityUpgrade.upgradedUri(uri.toString()))
-    val downloaded = AudioCache.downloadVerifiedRendition(upgradedUri, title, stream)
+    val downloaded = AudioCache.downloadVerifiedRendition(upgradedUri, title, stream, takesLossy = true)
     if (!downloaded) {
         TrackLog.d("BitChord", "hq-swap: $mediaId skipped download-failed", about = mediaId)
         return false
     }
-    val live = koHqSwapDecision(mediaId, verified)
+    val live = koSwapDecisionPastCrossfade(mediaId, verified)
     if (!live.allowed) {
         TrackLog.d("BitChord", "hq-swap: $mediaId skipped ${live.reason}", about = mediaId)
         return false
@@ -348,14 +351,20 @@ internal suspend fun PlaybackService.koSwapLosslessMidSong(
     hqSwapOwnsStandby = true
     markAudioTrackReason("hq-swap")
     val swapped = try {
-        koSmoothSwapToLossless(
-            mediaId,
-            stream,
-            verified,
-            upgradedUri.toString(),
-            currentVerified?.offsetMs ?: 0L,
-            currentVerified?.rate ?: 1.0,
-        )
+        val attempt = suspend {
+            koSmoothSwapToLossless(
+                mediaId,
+                stream,
+                verified,
+                upgradedUri.toString(),
+                currentVerified?.offsetMs ?: 0L,
+                currentVerified?.rate ?: 1.0,
+            )
+        }
+        // The file is on disk and the standby is silent, so a failed blend costs
+        // nothing to repeat; left at one try, High Hopes (11-07, standby-off-target
+        // at 0:29) played on Opus until the listener tapped.
+        attempt() || (koHqSwapDecision(mediaId, verified).allowed && attempt())
     } finally {
         hqSwapOwnsStandby = false
     }
@@ -365,6 +374,84 @@ internal suspend fun PlaybackService.koSwapLosslessMidSong(
     }
     TrackLog.d("BitChord", "hq-swap: $mediaId done", about = mediaId)
     return true
+}
+
+/**
+ * [koHqSwapDecision], having sat out a crossfade rather than been refused by it.
+ *
+ * A look starts as the crossfade does, and a pair proved before can be ready in
+ * about six seconds, inside the fade or the grace after it. Refused there, nothing
+ * asked again: 11-07 'Light Switch' proved a 24-bit FLAC at 0:06, had it on disk
+ * 0.2 s later and played Opus for the three minutes left. The wait is the one the
+ * manual swap has always made, and it only happens when a transition is on.
+ */
+private suspend fun PlaybackService.koSwapDecisionPastCrossfade(
+    mediaId: String,
+    verified: HqVerificationStore.Verified,
+): HqSwapPolicy.Decision {
+    val first = koHqSwapDecision(mediaId, verified)
+    if (first.allowed || first.reason != "crossfade") return first
+    var waited = 0L
+    while (crossfade?.isTransitioning() == true && waited < PlaybackService.UPGRADE_CROSSFADE_WAIT_TIMEOUT_MS) {
+        delay(PlaybackService.UPGRADE_CROSSFADE_POLL_MS)
+        waited += PlaybackService.UPGRADE_CROSSFADE_POLL_MS
+    }
+    crossfade?.msSinceTransition()?.let { since ->
+        val settle = PlaybackService.UPGRADE_AFTER_CROSSFADE_MS - since
+        if (settle > 0L) delay(settle)
+    }
+    return koHqSwapDecision(mediaId, verified)
+}
+
+/**
+ * The one retry an inconclusive look promised.
+ *
+ * The line "will retry" has said so since 11-04, and the window it armed only
+ * opened for an event that does not come while a song plays: a pause. In twelve
+ * hours of 11-07 it was logged 70 times and no automatic retry ran. A message at a
+ * position in this song is that event; it goes when the song goes, and a player
+ * that is not playing does not reach it.
+ */
+internal fun PlaybackService.koArmInconclusiveRetry(mediaId: String) {
+    val live = player ?: return
+    if (live.currentMediaItem?.mediaId != mediaId) return
+    val at = live.currentPosition + KoQualityUpgrade.RETRY_AFTER_POSITION_MS
+    val duration = live.duration
+    if (duration > 0L && at > duration - HqSwapPolicy.MIN_REMAINING_MS) return
+    if (!KoQualityUpgrade.takeRetry(mediaId)) return
+    runCatching {
+        live.createMessage { _, _ ->
+            TrackLog.d("BitChord", "looking once more for $mediaId: no answer or swap stood", about = mediaId)
+            koRetryBetterCopy(live, mediaId)
+        }
+            .setLooper(live.applicationLooper)
+            .setPosition(at)
+            .setDeleteAfterDelivery(true)
+            .send()
+    }
+}
+
+/**
+ * A swap that did not happen reopens the question, under the same one retry.
+ *
+ * A look can have recorded an answer by now (a lookup's lossless reply is one), and
+ * a first proved copy ending the race left the slower sources unasked. With the
+ * song still on its old stream, neither may stand as the last word.
+ */
+internal fun PlaybackService.koRelookAfterFailedSwap(mediaId: String) {
+    KoQualityUpgrade.reopen(mediaId)
+    koArmInconclusiveRetry(mediaId)
+}
+
+/** What the badge under the seek bar was told, and from what. */
+internal fun koLogQualityLabel(snapshot: NerdStats.Snapshot) {
+    TrackLog.d(
+        "BitChord",
+        "quality label: ${snapshot.mediaId} -> ${snapshot.badgeName} (${snapshot.mimeType} " +
+            "${snapshot.bitDepth ?: "?"}-bit ${snapshot.sampleRateHz ?: "?"}Hz " +
+            "${snapshot.bitrateKbps ?: "?"}kbps ${snapshot.bitrateProvenance} from ${snapshot.sourceName ?: "?"})",
+        about = snapshot.mediaId,
+    )
 }
 
 internal fun PlaybackService.koHqSwapDecision(
@@ -707,7 +794,7 @@ internal suspend fun PlaybackService.koSmoothSwapToLossless(
             return@withContext false
         }
         if (HqSwapPolicy.standbyOffTarget(standbyPlayer.currentPosition, liveTargetMs())) {
-            return@withContext refuse("standby-off-target")
+            return@withContext refuse("standby-off-target at=${standbyPlayer.currentPosition} want=${liveTargetMs()}")
         }
         // The session player has owned the queue and its modes since the copy
         // was taken, so the standby catches up here, the way a crossfade does

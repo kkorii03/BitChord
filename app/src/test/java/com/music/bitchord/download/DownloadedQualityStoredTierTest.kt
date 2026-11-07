@@ -49,41 +49,18 @@ class DownloadedQualityStoredTierTest {
     }
 
     @Test
-    fun `a stored hi-res file is already best against a 16-bit verdict`() {
-        assertTrue(
-            DownloadedQuality.isAtBest(
-                badge = "FLAC",
-                verified = HqTier.LOSSLESS_16,
-                stored = HqTier.HI_RES_24_88,
-            ),
-        )
+    fun `a stored top hi-res file is already best`() {
+        assertTrue(DownloadedQuality.isAtBest(badge = "FLAC", stored = HqTier.HI_RES_24_88))
     }
 
     @Test
-    fun `a stored 16-bit file still offers a verified hi-res replacement`() {
-        assertFalse(
-            DownloadedQuality.isAtBest(
-                badge = "FLAC",
-                verified = HqTier.HI_RES_24_88,
-                stored = HqTier.LOSSLESS_16,
-            ),
-        )
-    }
-
-    @Test
-    fun `a stored rung equal to the verdict is best`() {
-        assertTrue(
-            DownloadedQuality.isAtBest(
-                badge = "FLAC",
-                verified = HqTier.HI_RES_24_88,
-                stored = HqTier.HI_RES_24_88,
-            ),
-        )
+    fun `a stored 16-bit file still offers a replacement`() {
+        assertFalse(DownloadedQuality.isAtBest(badge = "FLAC", stored = HqTier.LOSSLESS_16))
     }
 
     @Test
     fun `a plain FLAC with no stored rung still offers hi-res`() {
-        assertFalse(DownloadedQuality.isAtBest("FLAC", HqTier.HI_RES_24_88))
+        assertFalse(DownloadedQuality.isAtBest("FLAC"))
     }
 
     @Test

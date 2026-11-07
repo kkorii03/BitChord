@@ -1720,6 +1720,7 @@ object SourceResolver {
                 if (settled != null && (!waitForAll || enough?.invoke(settled.second) == true)) break
             }
         } finally {
+            if (enough != null && running.isNotEmpty()) report?.markEndedEarly() // [KO] hq-tier
             running.forEach { it.cancel() }
         }
         best
