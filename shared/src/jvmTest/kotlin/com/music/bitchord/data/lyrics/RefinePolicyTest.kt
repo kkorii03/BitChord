@@ -423,8 +423,9 @@ class RefinePolicyTest {
         // model=drift). The drift's offset was clipped to the 10 s wide cap,
         // leaving it 13.8 s early. A drift whose offset is past the wide cap is
         // a whole-arrangement move: apply it as the flat fit does, up to 30 s,
-        // whole or not at all. The openings are unique so the narrow window
-        // cannot match a neighbouring line's word and hide the drift.
+        // whole or not at all, and keep the slope, or the last line stays 1.8 s
+        // off. The openings are unique so the narrow window cannot match a
+        // neighbouring line's word and hide the drift.
         val lines = List(20) { index -> line(20_000L + index * 12_000L, uniqueText(index)) }
         val heard = lines.map { line ->
             heard(line.text, line.timeMs + 24_339L - 446L * line.timeMs / 60_000L)
@@ -432,8 +433,22 @@ class RefinePolicyTest {
         val result = RefinePolicy.compute(lines, heard)
 
         assertTrue(result.applied)
-        assertEquals(RefinePolicy.Model.WIDE, result.model)
+        assertEquals(RefinePolicy.Model.DRIFT, result.model)
         assertTrue(abs(result.medianMs - 24_339L) <= 100L, "offset ${result.medianMs} ms")
+        assertTrue(abs(result.slopePerMin + 446.0) <= 50.0, "slope ${result.slopePerMin} ms/min")
+    }
+
+    @Test
+    fun aDriftThatWouldPassTheFlatCapByItsEndIsNotAppliedInPart() {
+        // 29 s at the start and growing 1 s a minute: the last lines would need
+        // more than the flat cap allows, and a clipped move says it is corrected.
+        val lines = List(20) { index -> line(20_000L + index * 12_000L, uniqueText(index)) }
+        val heard = lines.map { line ->
+            heard(line.text, line.timeMs + 29_000L + 1_000L * line.timeMs / 60_000L)
+        }
+        val result = RefinePolicy.compute(lines, heard)
+
+        assertFalse(result.applied, "moved ${result.medianMs} ms by ${result.model}")
     }
 
     @Test

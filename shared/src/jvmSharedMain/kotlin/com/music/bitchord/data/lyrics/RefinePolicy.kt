@@ -50,7 +50,8 @@ object RefinePolicy {
         /**
          * A straight line fitted over the whole song's placements, from
          * [drift]: a sheet timed to another edit. Its move grows with the song,
-         * so it is the only one that may reach [MAX_WIDE_SHIFT_MS].
+         * so it may reach [MAX_WIDE_SHIFT_MS]; one whose offset already starts
+         * past that is held to [MAX_FLAT_SHIFT_MS].
          */
         DRIFT,
         ;
@@ -407,18 +408,20 @@ object RefinePolicy {
         // [MAX_LINEAR_MAD_MS] caps it above.
         if (errors.any { (onLine, onConstant) -> onLine > onConstant + 3 * mad }) return null
         // A drift whose offset is past the wide cap is a whole-arrangement
-        // move with a slope on top: apply the offset as the flat fit does,
-        // whole or not at all, rather than clipping it to the wide cap
-        // (11-07 8gyLR4NfMiI: a 24 s offset clipped to 10 s left the sheet
-        // 13.8 s early). The slope is dropped; the offset is what the sheet
-        // needs.
+        // move with a slope on top: apply it as the flat fit does, whole or
+        // not at all, rather than clipping it to the wide cap (11-07
+        // 8gyLR4NfMiI: a 24 s offset clipped to 10 s left the sheet 13.8 s
+        // early). No measured line may need more than the flat cap.
         if (abs(line.offsetMs) > MAX_WIDE_SHIFT_MS) {
             return Result(
-                applied = abs(line.offsetMs) <= MAX_FLAT_SHIFT_MS,
+                applied = points.all { (shown, _) ->
+                    abs(line.offsetMs + slope * shown) <= MAX_FLAT_SHIFT_MS
+                },
                 medianMs = line.offsetMs,
                 madMs = mad,
                 lines = points.size,
-                model = Model.WIDE,
+                slopePerMin = slope * 60_000.0,
+                model = Model.DRIFT,
             )
         }
         return Result(

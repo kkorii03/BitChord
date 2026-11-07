@@ -223,6 +223,20 @@ class LyricsRefineSnapshotTest {
     }
 
     @Test
+    fun `a drift on a whole-arrangement offset is shown whole with its slope`() {
+        val timing = LyricsTiming.Timing(
+            base = null,
+            manualMs = 0L,
+            refineMs = 24_339L,
+            refineSlopePerMin = -446.0,
+            refineWide = true,
+        )
+
+        assertEquals(24_339L, timing.refineAt(0L))
+        assertEquals(22_555L, timing.refineAt(240_000L))
+    }
+
+    @Test
     fun `a just written refine survives eviction from an oversized store`() = runBlocking {
         // More entries than the cap, with "video" as the oldest insertion.
         val others = (1..3_001).joinToString(",") { """"v$it":{}""" }
