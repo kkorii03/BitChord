@@ -1,6 +1,7 @@
 package com.music.bitchord.playback.smart
 
 import com.music.bitchord.data.lyrics.LyricLine
+import com.music.bitchord.data.lyrics.LyricWord
 import com.music.bitchord.data.lyrics.LyricsRepository
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.lyrics.LyricsWordAlign
@@ -53,6 +54,27 @@ class SheetChoiceTest {
         val right = sheet(0)
         val other = sheet(24)
         assertNull(pick(right, other, sung(right)))
+    }
+
+    private fun timedWord(line: LyricLine) = line.copy(words = listOf(LyricWord(line.timeMs, line.timeMs + 1_000L, line.text)))
+
+    @Test
+    fun `a word-timed sheet that also fits takes over from a line-timed one`() {
+        val lineTimed = sheet(0)
+        val wordTimed = lineTimed.map(::timedWord)
+        assertEquals(wordTimed, pick(lineTimed, wordTimed, sung(lineTimed)))
+    }
+
+    @Test
+    fun `a word-timed sheet that does not fit leaves a line-timed one alone`() {
+        val lineTimed = sheet(0)
+        assertNull(pick(lineTimed, sheet(24).map(::timedWord), sung(lineTimed)))
+    }
+
+    @Test
+    fun `a word-timed sheet that fits is not replaced by another`() {
+        val wordTimed = sheet(0).map(::timedWord)
+        assertNull(pick(wordTimed, sheet(0).map { timedWord(it).copy(timeMs = it.timeMs + 300L) }, sung(wordTimed)))
     }
 
     @Test
