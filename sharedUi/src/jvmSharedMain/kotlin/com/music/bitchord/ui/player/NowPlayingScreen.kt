@@ -2416,6 +2416,7 @@ fun NowPlayingScreen(
                                         isPlaying = isPlaying && position.advancing,
                                         durationMs = displayDurationMs,
                                         lyricsUnavailable = lyricsUnavailable,
+                                        loadingText = lyricsLoadingText,
                                         onClick = openLyrics,
                                         heardWords = lyricsTiming.heardWords,
                                     )
@@ -4249,6 +4250,7 @@ fun NowPlayingScreen(
                             isPlaying = isPlaying && position.advancing,
                             durationMs = displayDurationMs,
                             lyricsUnavailable = lyricsUnavailable,
+                            loadingText = lyricsLoadingText,
                             // Still visible over the queue, so still a valid way in:
                             // opens the same full lyrics panel it always has, closing
                             // the queue behind it the same way the "Up next" glyph
