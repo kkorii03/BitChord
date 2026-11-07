@@ -245,7 +245,14 @@ internal class LyricClock(startMs: Long) {
             return
         }
         owedMs = steadyOwed(owed)
-        steerCap = if (owed.size >= STEADY_SURE_READINGS && abs(owedMs) >= STEADY_REAL_GAP_MS) MAX_SLEW else STEADY_STEER
+        // Only a gap ahead of the words closes fast. 11-08, Rap God on LDAC again (vc173 log and
+        // screen recording): the readings dropped about 950 ms and stayed there for ten seconds,
+        // then came back; the recorded sound had no gap at all, so the song never left 1x. The
+        // words followed the readings down at 0.9x for seven seconds and rushed back at 1.4x,
+        // which the listener saw. Readings behind the words are the way they go wrong, so that
+        // side only ever steers unseen; a real slip behind still closes, slowly, and one past
+        // [LOST_MS] is jumped to above.
+        steerCap = if (owed.size >= STEADY_SURE_READINGS && owedMs >= STEADY_REAL_GAP_MS) MAX_SLEW else STEADY_STEER
     }
 
     /**

@@ -822,7 +822,9 @@ private fun rememberLyricClock(
 }
 
 /** Lines the log gets each time the lyric clock starts a run, and how far apart. */
-private const val LYRIC_PROBES = 40 // A minute's worth: a sag in the readings shows only past the first seconds.
+// Six minutes' worth: a sag in the readings shows only past the first seconds, and the 11-08
+// Rap God report was at 1:20, past the minute the probes used to cover.
+private const val LYRIC_PROBES = 240
 private const val LYRIC_PROBE_EVERY_NANOS = 1_500_000_000L
 
 /** A frame time this close to [System.nanoTime] is on the same clock. */
