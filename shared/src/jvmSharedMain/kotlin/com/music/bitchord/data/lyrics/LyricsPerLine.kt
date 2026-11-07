@@ -39,7 +39,7 @@ object LyricsPerLine {
     const val MAX_LONE_BLOCK_MS = 4_000L
 
     /** This share of a song's anchors within this of their middle says the sheet is right; see [withoutStrays]. */
-    const val GOOD_SHEET_SHARE = 0.9
+    const val GOOD_SHEET_SHARE = 0.85
     const val GOOD_SHEET_WITHIN_MS = 250L
     const val MIN_GOOD_SHEET_ANCHORS = 8
 
