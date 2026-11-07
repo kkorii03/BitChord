@@ -575,6 +575,24 @@ internal fun KoSongActionsSheet(
                 onClick = it,
             )
         }
+        // Beside Report a problem and offered exactly where it is: the player, on
+        // the track playing now. In memory only, so a restart always turns it off.
+        if (onReportProblem != null) {
+            val context = LocalContext.current
+            val tapSyncOn = com.music.bitchord.ko.ui.player.KoTapSync.on
+            ActionRow(
+                icon = SfIcons.RadioButtonChecked,
+                label = stringResource(R.string.tap_sync_mode),
+                value = stringResource(if (tapSyncOn) R.string.enabled else R.string.off),
+                tint = if (tapSyncOn) palette.accent else null,
+                accent = palette.accent,
+            ) {
+                com.music.bitchord.ko.ui.player.KoTapSync.set(!tapSyncOn)
+                if (!tapSyncOn) {
+                    android.widget.Toast.makeText(context, R.string.tap_sync_hint, android.widget.Toast.LENGTH_LONG).show()
+                }
+            }
+        }
     }
 
     if (menu) {

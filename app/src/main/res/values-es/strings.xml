@@ -1541,6 +1541,8 @@
     <string name="settings_footer_playback">Sets playback, autoplay and Automix behaviour.</string>
     <string name="problem_mark">Report a problem (writes to the log)</string>
     <string name="problem_marked">Marked in the diagnostic log</string>
+    <string name="tap_sync_mode">Sync tap recording</string>
+    <string name="tap_sync_hint">Tap the screen when the singer starts each line. When done, send it with Copy log.</string>
     <string name="pipeline_source_verified">Source: %1$s · Verified (offset %2$s ms)</string>
     <string name="pipeline_source_unverified">Source: %1$s · Not verified</string>
     <string name="connection_timed_out">The connection timed out. Try again.</string>

@@ -1424,6 +1424,8 @@
     <string name="pipeline_surround">%1$s (서라운드)</string>
     <string name="problem_mark">문제 표시(진단 로그에 기록)</string>
     <string name="problem_marked">진단 로그에 표시했습니다</string>
+    <string name="tap_sync_mode">싱크 기록 모드</string>
+    <string name="tap_sync_hint">가수가 줄을 부르기 시작할 때 화면을 누르십시오. 끝나면 로그 복사로 보내 주십시오.</string>
     <string name="auto_replace_hq_downloads">고음질 자동 교체</string>
     <string name="auto_replace_hq_downloads_subtitle">더 높은 음질로 자동 교체</string>
     <string name="auto_prefetch_hq">고음질 미리 저장</string>
