@@ -68,6 +68,23 @@ jobs:
           grep -E "BUILD (SUCCESSFUL|FAILED)" test.log | while IFS= read -r l; do echo "::notice title=tests-build::$l"; done || true
           exit $status
 
+      # The lyric clock's tests live in sharedUi, which no other step runs.
+      - name: Lyric clock tests
+        shell: bash
+        run: |
+          set +e -o pipefail
+          chmod +x gradlew
+          ./gradlew :sharedUi:jvmTest --tests '*LyricClockTest' --console=plain 2>&1 | tee clock.log
+          status=${PIPESTATUS[0]}
+          for f in sharedUi/build/test-results/jvmTest/*.xml; do
+            [ -f "$f" ] || continue
+            line=$(grep -o '<testsuite [^>]*>' "$f" | head -1 || true)
+            echo "::notice title=clock-tests::$(basename "$f") $(echo "$line" | grep -oE '(tests|failures|errors|skipped)="[0-9]+"' | tr '\n' ' ')"
+          done
+          grep -E "^e: |FAILED|AssertionError|expected:" clock.log | head -30 | while IFS= read -r l; do echo "::error title=clock-test::$l"; done || true
+          grep -E "BUILD (SUCCESSFUL|FAILED)" clock.log | while IFS= read -r l; do echo "::notice title=clock-tests-build::$l"; done || true
+          exit $status
+
       - name: Compile the app
         shell: bash
         run: |
