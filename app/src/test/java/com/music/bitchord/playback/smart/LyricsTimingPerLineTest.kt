@@ -171,15 +171,15 @@ class LyricsTimingPerLineTest {
         )
 
         assertEquals(
-            "eqKhhG4FVoQ mad=43ms: the refine measured this sheet, line 10 keeps its ${lines[10].timeMs} ms",
             lines[10].timeMs,
             LyricsTiming.apply(lines, settled)[10].timeMs,
+            "eqKhhG4FVoQ mad=43ms: the refine measured this sheet, line 10 keeps its ${lines[10].timeMs} ms",
         )
         // Same words, same lines, no refine mad: the guard is the only difference.
         assertEquals(
-            "eqKhhG4FVoQ with no refine mad: the per-line layer moves line 10 by 1 184 ms",
             lines[10].timeMs + 1_184L,
             LyricsTiming.apply(lines, settled.copy(refineMadMs = null))[10].timeMs,
+            "eqKhhG4FVoQ with no refine mad: the per-line layer moves line 10 by 1 184 ms",
         )
     }
 
@@ -197,9 +197,9 @@ class LyricsTimingPerLineTest {
         )
 
         assertEquals(
-            "04tYkKUPPv4 mad=370ms: the per-line layer still moves line 10 by 1 184 ms",
             lines[10].timeMs + 1_184L,
             LyricsTiming.apply(lines, scattered)[10].timeMs,
+            "04tYkKUPPv4 mad=370ms: the per-line layer still moves line 10 by 1 184 ms",
         )
     }
 }
