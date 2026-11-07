@@ -226,4 +226,20 @@ class LyricsControllerSheetChoiceTest {
         delay(500L)
         assertEquals(LyricsSource.KUGOU, controller.lyricsSource.value)
     }
+
+    /**
+     * QYh6mYIJG2Y auto89: the first sheet fit 82% of lines in 0.3 s, the late
+     * provider's 2%, and it replaced the first 5.1 s later. With no words heard
+     * yet there is nothing to prove the late sheet better, so the sheet already
+     * on screen stays; the words heard decide later (SheetChoice).
+     */
+    @Test
+    fun `a late provider does not replace the sheet already on screen`() = runBlocking {
+        load(LyricsSource.KUGOU, other, LyricsSource.VIBE, fitting, loserFirst = true)
+
+        withTimeout(10_000L) { controller.lyricsChecked.first { it } }
+        delay(500L)
+        assertEquals(LyricsSource.VIBE, controller.lyricsSource.value)
+        assertEquals(fitting.map { it.text }, controller.lyrics.first { it != null }!!.map { it.text })
+    }
 }
