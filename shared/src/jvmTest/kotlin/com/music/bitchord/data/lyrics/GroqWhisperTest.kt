@@ -37,6 +37,7 @@ class GroqWhisperTest {
         val answer = GroqWhisper.listen(ByteArray(16), "ko", "audio/webm")
 
         assertEquals(200, answer.httpCode)
+        assertTrue(answer.rough)
         assertEquals(86_790L, answer.audioMs)
         assertEquals(listOf("one", "two"), answer.words?.map { it.text })
         assertEquals(1_500L, answer.words?.first()?.startMs)
@@ -56,6 +57,14 @@ class GroqWhisperTest {
         assertTrue("filename=\"audio.webm\"" in form)
         assertTrue("timestamp_granularities[]" in form && "\r\n\r\nword\r\n" in form)
         assertTrue("name=\"language\"" in form && "\r\n\r\nko\r\n" in form)
+    }
+
+    @Test
+    fun theModelIsTheOneThatMeasuredBetterForTheLanguage() {
+        assertEquals("whisper-large-v3", GroqWhisper.modelFor("ko"))
+        assertEquals("whisper-large-v3", GroqWhisper.modelFor("ja"))
+        assertEquals("whisper-large-v3-turbo", GroqWhisper.modelFor("en"))
+        assertEquals("whisper-large-v3-turbo", GroqWhisper.modelFor("multi"))
     }
 
     @Test

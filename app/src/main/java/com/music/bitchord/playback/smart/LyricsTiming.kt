@@ -1620,6 +1620,9 @@ object LyricsTiming {
                 ?: SongHearing.longestKept(context, song, language)
                 ?: inEntry
                 ?: return@withLock false
+            // The first pass already fitted these; counting them here would leave
+            // Deepgram's words of the same length not due when they land.
+            if (heard.rough) return@withLock false
             if (!SongCheckWindow.refitDue(entry.refitVersion, entry.refitKey == key, entry.refitMs, heard.audioMs)) {
                 return@withLock false
             }
@@ -1702,7 +1705,8 @@ object LyricsTiming {
         val language = com.music.bitchord.data.lyrics.Deepgram.languageFor(
             lines.filter { it.text.isNotBlank() }.map { it.text },
         )
-        val heard = hearThrough429(context, song, untilSeconds, untilSeconds, language) ?: return null
+        // The move stands on these words, so a rough opening is not enough to refine from.
+        val heard = hearThrough429(context, song, untilSeconds, untilSeconds, language, exact = true) ?: return null
         val words = heard.words?.take(MAX_HEARD_WORDS)
             ?.map { word -> SavedWord(t = word.text, s = word.startMs, e = word.endMs) }
             ?.takeIf { it.isNotEmpty() }
@@ -3565,8 +3569,9 @@ object LyricsTiming {
             val first = fitSongCheck(context, song, lines, key, engine, probe, firstAsk, retry)
             first to applySongCheck(context, song, key, engine, first)
         } ?: return false
+        // Rough words that could not fit are worth asking Deepgram about, however long they were.
         if (!SongCheckWindow.needsFullOpening(first.result) ||
-            first.seconds >= VideoAudio.SONG_CHECK_SECONDS - 1
+            (first.seconds >= VideoAudio.SONG_CHECK_SECONDS - 1 && firstAsk.answer?.rough != true)
         ) {
             return firstOk
         }
@@ -3875,6 +3880,7 @@ object LyricsTiming {
             minSeconds = if (untilSeconds < VideoAudio.SONG_CHECK_SECONDS) SONG_FIRST_LEAST_SECONDS else untilSeconds,
             language,
             reuseFrom = if (firstPass) SONG_FIRST_LEAST_SECONDS else untilSeconds,
+            exact = !firstPass,
         ) ?: run {
             songLog(videoId, "no-audio", null, null, 0)
             probe?.failure = NextPrepPolicy.SyncFailure.NO_AUDIO
@@ -3897,11 +3903,12 @@ object LyricsTiming {
         language: String,
         reuseFrom: Double = untilSeconds,
         stillWanted: () -> Boolean = { true },
+        exact: Boolean = false,
     ): SongHearing.Heard? {
         var attempt = 0
         while (true) {
             // Straight off the file, or the streaming copy as it stands.
-            val answer = SongHearing.hear(context, song, untilSeconds, language, minSeconds, reuseFrom) ?: return null
+            val answer = SongHearing.hear(context, song, untilSeconds, language, minSeconds, reuseFrom, exact) ?: return null
             if (answer.httpCode != 429) {
                 songQuietUntilMs = 0L
                 return answer

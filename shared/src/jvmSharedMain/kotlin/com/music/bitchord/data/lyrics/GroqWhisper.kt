@@ -20,7 +20,10 @@ import java.util.concurrent.TimeUnit
  *
  * Deepgram's Whisper stalls about 66 s on 18% of requests whatever the length or format,
  * and a second copy sent 8 s later stalled alongside it 7 times of 7 (11-07,
- * bench/whisper_conn_bench.py). Groq answered ninety seconds in 0.8-4.2 s, 32 of 32.
+ * bench/whisper_conn_bench.py). Groq answered ninety seconds in under 4 s, 187 of 187, one
+ * at 16.6 s. It is less exact: within 0.5 s of Deepgram's large model on 69-84% of lines,
+ * where Deepgram's medium gets 90-98%, and about 0.15 s early. So its answer is [Deepgram.Answer.rough]:
+ * it corrects the screen now, and Deepgram's words replace it.
  *
  * The key ([apiKey]) is baked into this personal build, like Deepgram's. With none, or on
  * any failure, the caller goes on to Deepgram.
@@ -29,7 +32,10 @@ object GroqWhisper {
 
     private const val TAG = "GroqWhisper"
     private const val ENDPOINT = "https://api.groq.com/openai/v1/audio/transcriptions"
-    private const val MODEL = "whisper-large-v3"
+
+    /** Measured 11-07 on 40 songs, lines within 0.5 s: Korean 84% against 76%, Japanese 85% against 75%, English 69% against 77%. */
+    internal fun modelFor(language: String): String =
+        if (language == "ko" || language == "ja") "whisper-large-v3" else "whisper-large-v3-turbo"
 
     /** Long enough for a slow upload of ninety seconds; Deepgram is still there after it. */
     private const val CALL_TIMEOUT_SECONDS = 25L
@@ -51,7 +57,7 @@ object GroqWhisper {
         val key = apiKey.trim()
         if (key.isEmpty()) return Deepgram.Answer(null)
         val form = MultipartBody.Builder().setType(MultipartBody.FORM)
-            .addFormDataPart("model", MODEL)
+            .addFormDataPart("model", modelFor(language))
             .addFormDataPart("response_format", "verbose_json")
             .addFormDataPart("timestamp_granularities[]", "word")
             .addFormDataPart("temperature", "0")
@@ -71,7 +77,7 @@ object GroqWhisper {
                     }
                     val body = response.body?.string() ?: return@runCancellable Deepgram.Answer(null, response.code)
                     // Named: inside with(Deepgram) a bare parse() is Deepgram's, which reads nothing here.
-                    Deepgram.Answer(GroqWhisper.parse(body), response.code, audioMs = GroqWhisper.parseAudioMs(body))
+                    Deepgram.Answer(GroqWhisper.parse(body), response.code, audioMs = GroqWhisper.parseAudioMs(body), rough = true)
                 }
             }
         } catch (cancelled: CancellationException) {

@@ -99,6 +99,8 @@ internal object SongHearing {
         val httpCode: Int?,
         val retryAfterMs: Long? = null,
         val fromStore: Boolean = false,
+        /** Words from the quick engine, which Deepgram's replace. */
+        val rough: Boolean = false,
     ) {
         /** These words with no reply code: no engine is spent, and a waiting retry or song check stands. */
         fun askedNothing() = Heard(words, audioMs, clock, httpCode = null, fromStore = true)
@@ -113,6 +115,8 @@ internal object SongHearing {
         val whole: Boolean = false,
         val clock: String? = null,
         val words: List<LyricsTiming.SavedWord> = emptyList(),
+        /** [Heard.rough]: never whole, so Deepgram is still asked for the song. */
+        val rough: Boolean = false,
     )
 
     /**
@@ -136,9 +140,16 @@ internal object SongHearing {
         .filter { it.whole || it.seconds >= FILE_READS_STREAM_SECONDS }
         .maxByOrNull { it.seconds }
 
-    /** [kept] with [new] taken in: one per recording and language, the longer stays. */
+    /**
+     * [kept] with [new] taken in: one per recording and language, the longer stays. Exact
+     * words replace [Saved.rough] ones of about the same length, or the opening would stay rough.
+     */
     internal fun merged(kept: List<Saved>, new: Saved): List<Saved> {
         val same = kept.firstOrNull { it.recording == new.recording && it.language == new.language }
+        if (same != null && same.rough && !new.rough && new.seconds + NOTHING_NEW_SECONDS >= same.seconds) {
+            return kept.filterNot { it === same } + new
+        }
+        if (same != null && !same.rough && new.rough) return kept
         if (same != null && (same.whole || same.seconds >= new.seconds) && !new.whole) return kept
         return kept.filterNot { it === same } + new
     }
@@ -192,13 +203,15 @@ internal object SongHearing {
         language: String,
         minSeconds: Double = untilSeconds,
         reuseFrom: Double = untilSeconds,
+        /** Rough words will not do: they are what this is meant to check or replace. */
+        exact: Boolean = false,
     ): Heard? {
         val app = context.applicationContext
         var farmAsked = false
         while (true) {
             val recording = recordingKey(song)
             if (recording != null) {
-                val kept = withContext(Dispatchers.IO) { load(app, song.videoId) }
+                val kept = withContext(Dispatchers.IO) { load(app, song.videoId) }.filterNot { exact && it.rough }
                 covering(kept, recording, language, minOf(untilSeconds, reuseFrom))?.let { saved ->
                     TrackLog.d(TAG, "song-hear: kept lang=$language until=${untilSeconds.toInt()} secs=${saved.seconds.toInt()} words=${saved.words.size}", song.videoId)
                     return heardFrom(saved)
@@ -223,10 +236,10 @@ internal object SongHearing {
             // One request per recording and language at a time, whoever asks and for
             // whatever window. Each window flying on its own paid for the same opening
             // twice over (11-06: 4.25 requests a song against the 2 this design needs).
-            val flight = "${song.videoId}|$recording|$language"
+            val flight = "${song.videoId}|$recording|$language|$exact"
             val fresh = Flight(
                 untilSeconds,
-                scope.async(start = CoroutineStart.LAZY) { listen(app, song, untilSeconds, minSeconds, language) },
+                scope.async(start = CoroutineStart.LAZY) { listen(app, song, untilSeconds, minSeconds, language, exact) },
             )
             val running = inFlight.putIfAbsent(flight, fresh) ?: fresh
             if (running === fresh) {
@@ -282,6 +295,7 @@ internal object SongHearing {
         clock = LyricsTiming.clockFromKey(saved.clock),
         httpCode = 200,
         fromStore = true,
+        rough = saved.rough,
     )
 
     private suspend fun listen(
@@ -290,6 +304,7 @@ internal object SongHearing {
         untilSeconds: Double,
         minSeconds: Double,
         language: String,
+        exact: Boolean,
     ): Heard? {
         val videoId = song.videoId
         val started = System.currentTimeMillis()
@@ -301,14 +316,15 @@ internal object SongHearing {
             // stream): the same sound again would pay for the same words.
             val recording = recordingKey(raw.fromFile, LyricsTiming.clockForSongAudio(song, raw))
             val already = recording?.let { key ->
-                load(app, videoId).filter { it.recording == key && it.language == language }.maxByOrNull { it.seconds }
+                load(app, videoId).filter { it.recording == key && it.language == language && !(exact && it.rough) }
+                    .maxByOrNull { it.seconds }
             }
             if (already != null && !raw.whole && (raw.roughSeconds ?: 0.0) <= already.seconds + NOTHING_NEW_SECONDS) {
                 TrackLog.d(TAG, "song-hear: nothing new past ${already.seconds.toInt()}s yet", videoId)
                 return heardFrom(already)
             }
             val waitedMs = System.currentTimeMillis() - started
-            val answer = send(raw.bytes, language, raw.mime, untilSeconds, videoId, waitedMs, raw.renditionKey)
+            val answer = send(raw.bytes, language, raw.mime, untilSeconds, videoId, waitedMs, raw.renditionKey, exact)
             // A server that read it (or a limit or a dead network, which the
             // decoded path would only meet again) ends here. Only bytes it could
             // not read go round through the decoder.
@@ -323,7 +339,7 @@ internal object SongHearing {
         val started2 = System.currentTimeMillis()
         val wav = VideoAudio.songWavCopy(app, song, untilSeconds) ?: return null
         SyncTestMode.saveWav(app, videoId, wav.bytes)
-        val answer = send(wav.bytes, language, wav.mime, untilSeconds, videoId, System.currentTimeMillis() - started2, wav.renditionKey)
+        val answer = send(wav.bytes, language, wav.mime, untilSeconds, videoId, System.currentTimeMillis() - started2, wav.renditionKey, exact)
         return kept(app, song, wav, answer, untilSeconds, language)
     }
 
@@ -335,8 +351,9 @@ internal object SongHearing {
         videoId: String,
         waitedMs: Long,
         copyKey: String?,
+        exact: Boolean,
     ): Deepgram.Answer {
-        if (groqFirst(untilSeconds)) {
+        if (!exact && groqFirst(untilSeconds)) {
             val asked = System.currentTimeMillis()
             val answer = GroqWhisper.listen(bytes, language, mime)
             TrackLog.d(
@@ -353,7 +370,7 @@ internal object SongHearing {
 
     /**
      * The opening goes to Groq first: someone is waiting on it, and Deepgram may sit on it
-     * for a minute. A later window is Deepgram's, whose fit then replaces the opening's.
+     * for a minute. An exact ask or a later window is Deepgram's, whose fit then replaces it.
      */
     internal fun groqFirst(untilSeconds: Double): Boolean =
         untilSeconds <= OPENING_SECONDS && GroqWhisper.apiKey.isNotBlank()
@@ -423,13 +440,14 @@ internal object SongHearing {
                     recording = recording,
                     language = language,
                     seconds = seconds,
-                    whole = copy.whole || (duration > 0.0 && seconds + 3.0 >= duration),
+                    whole = !answer.rough && (copy.whole || (duration > 0.0 && seconds + 3.0 >= duration)),
                     clock = LyricsTiming.clockToKey(clock),
                     words = words.map { LyricsTiming.SavedWord(it.text, it.startMs, it.endMs) },
+                    rough = answer.rough,
                 ),
             )
         }
-        return Heard(words, audioMs, clock, answer.httpCode, answer.retryAfterMs)
+        return Heard(words, audioMs, clock, answer.httpCode, answer.retryAfterMs, rough = answer.rough)
     }
 
     /** Test runs score the shown lines against a WAV of the same opening; off, nothing is decoded. */

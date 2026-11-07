@@ -12,6 +12,18 @@ import org.junit.Test
 class SongHearingTest {
 
     @Test
+    fun `exact words replace rough ones of about the same length and never the reverse`() {
+        val rough = SongHearing.Saved("stream|yt", "en", 88.0, rough = true)
+        val exact = SongHearing.Saved("stream|yt", "en", 86.0)
+        val tooShort = SongHearing.Saved("stream|yt", "en", 40.0)
+        val longerRough = SongHearing.Saved("stream|yt", "en", 118.0, rough = true)
+
+        assertEquals(listOf(exact), SongHearing.merged(listOf(rough), exact))
+        assertEquals(listOf(rough), SongHearing.merged(listOf(rough), tooShort))
+        assertEquals(listOf(exact), SongHearing.merged(listOf(exact), longerRough))
+    }
+
+    @Test
     fun `the opening goes to Groq only with a key and a later window stays Deepgram's`() {
         val before = com.music.bitchord.data.lyrics.GroqWhisper.apiKey
         try {

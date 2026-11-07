@@ -108,6 +108,8 @@ object Deepgram {
         val retryAfterMs: Long? = null,
         /** How much sound the server read (`metadata.duration`); a cut stream may be under what was asked. */
         val audioMs: Long? = null,
+        /** From the quick engine ([GroqWhisper]): good for now, not the last word. */
+        val rough: Boolean = false,
     )
 
     /**
