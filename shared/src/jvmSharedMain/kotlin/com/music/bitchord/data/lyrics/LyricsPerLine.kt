@@ -138,7 +138,7 @@ object LyricsPerLine {
             // repeated chorus, and moving the line by the cap would be a wrong
             // move rather than a partial one (Opus review, 11-04). Drop the
             // anchor and let its neighbours interpolate.
-            val residual = median(residuals)
+            val residual = residuals.first()
             if (abs(residual) > cap) continue
             found += Anchor(index, lines[index].timeMs, residual)
         }
