@@ -45,13 +45,13 @@ jobs:
         run: |
           set +e -o pipefail
           chmod +x gradlew
-          SYNC_REPLAY_DIR="$RUNNER_TEMP/replay" ./gradlew :app:testProdDebugUnitTest --tests '*SyncReplayTest' --console=plain > replay.log 2>&1
+          SYNC_REPLAY_DIR="$RUNNER_TEMP/replay" ./gradlew :app:testProdDebugUnitTest --tests '*SyncReplayTest' --tests '*SyncReplayTwoEarsTest' --console=plain > replay.log 2>&1
           status=$?
           grep -E "^e: |BUILD (SUCCESSFUL|FAILED)|tests completed" replay.log | head -30
           python3 - <<'PY'
           import glob, xml.etree.ElementTree as ET
           # Numbers and ids only: that is all the test prints to stdout.
-          for f in glob.glob("app/build/test-results/testProdDebugUnitTest/*SyncReplayTest*.xml"):
+          for f in glob.glob("app/build/test-results/testProdDebugUnitTest/*SyncReplay*Test*.xml"):
               root = ET.parse(f).getroot()
               print(root.findtext("system-out") or "")
               for case in root.iter("testcase"):
