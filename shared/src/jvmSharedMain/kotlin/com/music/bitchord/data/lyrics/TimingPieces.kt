@@ -24,8 +24,8 @@ import kotlin.math.roundToLong
  * last chorus it heard lands on an earlier repeat in the sheet (5bIWIoFDv80, +34.9 s,
  * 22 lines past the last word). Nothing after such a stretch can show it up, so lines
  * may not be pushed past the last word ([PAST_HEARD_MS]), and a move over
- * [LyricsAiGuard.SONG_MAX_SHIFT_MS] needs [BIG_MOVE_COVER] of the sheet (true large
- * moves held 0.69 and up, that song 0.48).
+ * [BIG_MOVE_MS] needs [BIG_MOVE_COVER] of the sheet (true large moves held 0.66 and
+ * up, that song 0.48).
  */
 object TimingPieces {
 
@@ -46,6 +46,15 @@ object TimingPieces {
     private const val MIN_PAIR_SPAN_MS = 4_000L
     private const val PAST_HEARD_MS = 10_000L
     private const val BIG_MOVE_COVER = 0.6
+
+    /**
+     * A move this large is a structural claim, not a nudge: it needs [BIG_MOVE_COVER]
+     * of the sheet. 11-07 eqKhhG4FVoQ: a 7.08 s jump on 0.51 of the sheet moved a
+     * sheet the provider had right, and 16 lines went 7.2 s past the song's end
+     * (human key 0.38 within 0.3 s, 0.94 on the provider's own times). True large
+     * moves held 0.66 and up (v59g4HRNIkc 7.59 s on 0.66).
+     */
+    private const val BIG_MOVE_MS = 5_000L
 
     /** A line as [LyricsWordAlign.Placement] says it was placed. */
     data class Placed(val timeMs: Long, val startMs: Long?, val share: Double, val letters: Int)
@@ -128,7 +137,7 @@ object TimingPieces {
         val jumps = (0 until offsets.size - 1).map { (offsets[it + 1] - offsets[it]).roundToLong() }
         val largest = lines.filter { it.letters > 0 }.map { map.map(it.timeMs) - it.timeMs }.maxBy { abs(it) }
         val biggest = maxOf(abs(largest), jumps.maxOfOrNull { abs(it) } ?: 0L)
-        if (biggest > LyricsAiGuard.SONG_MAX_SHIFT_MS && used.toDouble() / base < BIG_MOVE_COVER) {
+        if (biggest > BIG_MOVE_MS && used.toDouble() / base < BIG_MOVE_COVER) {
             return Outcome(null, "thin")
         }
         return Outcome(

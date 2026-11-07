@@ -241,6 +241,18 @@ class TimingPiecesTest {
         assertEquals(20_000L, assertNotNull(TimingPieces.fit(heard + unheard.take(9)).result).largestMoveMs)
     }
 
+    @Test
+    fun `a jump of a few seconds needs most of the sheet`() {
+        // 11-07 eqKhhG4FVoQ: 25 of 49 lines heard, two stretches 7.08 s apart, and the
+        // provider's own times were right. The move was applied and 16 lines went 7.2 s
+        // past the song's end (human key: 0.38 within 0.3 s, 0.94 on the provider's times).
+        val heard = placed(0, 21, 300L) + placed(21, 25, 7_380L)
+        val unheard = placed(25, 49, 0L).map { it.copy(startMs = null) }
+        assertEquals("thin", TimingPieces.fit(heard + unheard).refused)
+        // The same jump on most of the sheet stands.
+        assertNotNull(TimingPieces.fit(heard + placed(25, 40, 0L).map { it.copy(startMs = null) }).result)
+    }
+
     // ---- The guards, on placements directly ----------------------------------------------
 
     private fun placed(from: Int, until: Int, offsetMs: Long, gapMs: Long = 4_000L, rate: Double = 1.0): List<TimingPieces.Placed> =
