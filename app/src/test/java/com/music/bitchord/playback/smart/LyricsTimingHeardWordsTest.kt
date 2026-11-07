@@ -2,6 +2,8 @@ package com.music.bitchord.playback.smart
 
 import android.content.Context
 import com.music.bitchord.data.lyrics.LyricLine
+import com.music.bitchord.data.lyrics.LyricWord
+import com.music.bitchord.data.lyrics.LyricsPerLine
 import com.music.bitchord.testutil.FakeContext
 import com.music.bitchord.testutil.FakePreferences
 import java.io.File
@@ -9,6 +11,7 @@ import java.nio.file.Files
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -139,6 +142,59 @@ class LyricsTimingHeardWordsTest {
         assertEquals(refusedLines[0].timeMs + refusedBy, timing.heardWords.first().startMs)
         assertTrue("the per-line layer ran", timing.perLine != null)
         assertEquals(refusedLines[0].timeMs + refusedBy, LyricsTiming.apply(refusedLines, timing)[0].timeMs)
+    }
+
+    /** Three-word lines under an AI base that moves nothing, with the words heard 1.6 s late: past the refine's reach. */
+    private suspend fun shownWithWordsHeardLate(sheet: List<LyricLine>): List<LyricLine> {
+        val sheetKey = sheet.joinToString("\n") { it.text }.hashCode()
+        val words = sheet.joinToString(",") { line ->
+            line.text.split(" ").mapIndexed { i, text ->
+                val start = line.timeMs + 1_600L + i * 900L
+                """{"t":"$text","s":$start,"e":${start + 300}}"""
+            }.joinToString(",")
+        }
+        File(directory, "lyrics_timing_v1.json").writeText(
+            """
+            {"entries":{"sheet":{
+              "clockVersion":1,
+              "aiTextKey":$sheetKey,
+              "ai":{"knots":[0,0],"headRate":1.0,"tailRate":1.0,"rate":1.0,"match":100},
+              "aiClock":"yt",
+              "aiEngine":"Deepgram Whisper",
+              "heardClock":"yt",
+              "heardWords":[$words]
+            }}}
+            """.trimIndent(),
+        )
+        val timing = LyricsTiming.timing(context, "sheet", sheet, baseAllowed = true, isVideo = true)!!
+        assertTrue("a base fit", timing.base != null)
+        return LyricsTiming.apply(sheet, timing)
+    }
+
+    private val threeWordLines = (0 until 8).map { i -> LyricLine(10_000L + i * 3_000L, "alpha${i} bravo${i} charlie${i}") }
+
+    @Test
+    fun `a sheet that states its own word times keeps them after the whole-song fit`() = runBlocking {
+        val wordTimed = threeWordLines.map { line ->
+            line.copy(words = line.text.split(" ").mapIndexed { i, text ->
+                LyricWord(line.timeMs + i * 400L, line.timeMs + i * 400L + 300L, text)
+            })
+        }
+        assertEquals(wordTimed[0].timeMs, shownWithWordsHeardLate(wordTimed)[0].timeMs)
+    }
+
+    @Test
+    fun `a line-timed sheet still moves onto the words`() = runBlocking {
+        assertEquals(threeWordLines[0].timeMs + 1_600L, shownWithWordsHeardLate(threeWordLines)[0].timeMs)
+    }
+
+    @Test
+    fun `guessed word times do not count as the sheet's own`() {
+        val guessed = threeWordLines.map { line ->
+            line.copy(words = listOf(LyricWord(line.timeMs, line.timeMs + 300L, line.text)), wordsEstimated = true)
+        }
+        assertFalse(LyricsPerLine.statesItsOwnWords(guessed))
+        assertFalse(LyricsPerLine.statesItsOwnWords(threeWordLines))
     }
 
     @Test

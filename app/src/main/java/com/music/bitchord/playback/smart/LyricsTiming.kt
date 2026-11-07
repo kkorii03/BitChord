@@ -1207,7 +1207,16 @@ object LyricsTiming {
         perLineMemo?.let { memo ->
             if (memo.timing == timing && memo.lines == lines) return memo.layer
         }
-        val layer = LyricsPerLine.compute(lines, words.words, words.wordsKey, words.currentKey)
+        // A sheet timed word by word was timed by someone listening, which beats a transcript:
+        // after the whole-song fit alone, 30 such sheets on two rounds go from 16 to 20 strict
+        // passes, 94.9% to 97.8% within 0.3 s, though the score shares the transcript that
+        // moved the lines. Line-timed sheets are the other way round (6 to 4, 91.3% to 81.0%).
+        // With no fit, the words are all this sheet has (3JWTaaS7LdU, refused at 56%).
+        val layer = if (timing.base != null && LyricsPerLine.statesItsOwnWords(lines)) {
+            LyricsPerLine.Layer.identity(lines.size)
+        } else {
+            LyricsPerLine.compute(lines, words.words, words.wordsKey, words.currentKey)
+        }
         TrackLog.i(
             "BitChord",
             "sync perline: anchors=${layer.anchors} applied=${layer.applied} maxAbsMs=${layer.maxAbsMs}",

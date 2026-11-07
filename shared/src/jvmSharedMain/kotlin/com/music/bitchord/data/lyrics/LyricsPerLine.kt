@@ -107,6 +107,12 @@ object LyricsPerLine {
      * [heard] (on the same clock). [heardAudioKey] is the rendition those words
      * were heard on; when it is not [currentAudioKey] the layer does nothing.
      */
+    /** Whether the provider itself states when each word falls, on most of the sheet's sung lines. */
+    fun statesItsOwnWords(lines: List<LyricLine>): Boolean {
+        val sung = lines.filter { it.text.isNotBlank() }
+        return sung.isNotEmpty() && sung.count { it.words.isNotEmpty() && !it.wordsEstimated } * 2 >= sung.size
+    }
+
     fun compute(
         lines: List<LyricLine>,
         heard: List<LyricsWordAlign.Heard>,
