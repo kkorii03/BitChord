@@ -169,12 +169,17 @@ internal class LyricClock(startMs: Long) {
         val expected = anchorMs + elapsed * rate
         if (abs(reportedMs - expected) <= tolerance(elapsed)) {
             clearSuspect()
+            val rateBefore = rate
             anchor(takenAt, reportedMs, continues = true)
             // 11-07 phone: a reading strays by 150 ms either way, and the words running
             // after each one ran 25 % fast or slow for a moment. Only a share of what a
             // reading says moves the song's place; a real drift still closes in seconds.
-            // At another speed the place is what is being learned, so it follows every reading.
-            if (rate == 1.0) anchorMs = expected + (reportedMs - expected) * READING_WEIGHT
+            // The rate is measured from the raw readings, so this costs it nothing. A
+            // rate that just changed is followed whole, or the share would lag the new
+            // speed by seconds.
+            if (abs(rate - rateBefore) < CLEAR_RATE_CHANGE) {
+                anchorMs = expected + (reportedMs - expected) * READING_WEIGHT
+            }
             return
         }
         // Off with nothing announced. One reading like that is a bad reading;

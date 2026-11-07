@@ -130,6 +130,50 @@ class LyricClockTest {
         assertTrue("fastest $fastest slowest $slowest", fastest <= 1.12 && slowest >= 0.88)
     }
 
+    /**
+     * The same stray readings at another speed. At 1x the clock damps them; at
+     * 1.25x and 0.75x it used to follow every one, and the words ran 25 % fast
+     * or slow after each. The rate is measured from the raw readings, so the
+     * damping costs it nothing; only the first seconds, while the rate is still
+     * being learned, are left out of the measurement.
+     */
+    @Test fun strayReadingsDoNotMakeTheWordsRushOrDragAtOtherSpeeds() {
+        val strays = longArrayOf(0, -130, 30, 90, -160, 40, 120, -70, 20, -140, 60, 100, -30, 50, -90, 10, 130, -60, 0, 80)
+        fun pace(rate: Double): Pair<Double, Double> {
+            val clock = LyricClock(44_500L)
+            var now = 0.0
+            var last = Double.NaN
+            var fastest = 1.0
+            var slowest = 1.0
+            var at = 0L
+            while (now < 20_000.0) {
+                val reading = (now / 500.0).toInt()
+                val taken = reading * 500.0
+                val drawn = clock.frame(now, (44_500.0 + taken * rate).toLong() + strays[reading % strays.size], taken, 0L)
+                if (((now / 250.0).toInt()).toLong() != at) {
+                    at = (now / 250.0).toInt().toLong()
+                    if (!last.isNaN() && now > 4_000.0) {
+                        val measured = (drawn - last) / 250.0 / rate
+                        fastest = maxOf(fastest, measured)
+                        slowest = minOf(slowest, measured)
+                    }
+                    last = drawn.toDouble()
+                }
+                now += frameMs
+            }
+            assertEquals(rate, clock.rate, 0.05)
+            return fastest to slowest
+        }
+        val normal = pace(1.0)
+        for (rate in doubleArrayOf(1.25, 0.75)) {
+            val (fastest, slowest) = pace(rate)
+            assertTrue(
+                "$rate x: fastest $fastest slowest $slowest (1x: $normal)",
+                fastest <= 1.12 && slowest >= 0.88,
+            )
+        }
+    }
+
     @Test fun aRealGapStillClosesWithinSeconds() {
         val clock = LyricClock(10_000L)
         var now = 0.0
