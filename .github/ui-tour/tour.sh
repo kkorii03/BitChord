@@ -630,8 +630,8 @@ section_now_playing() {
   adb shell am start -a android.intent.action.VIEW -d "https://music.youtube.com/watch?v=$MAIN_VIDEO" $PKG
   sleep 20
   shot now-playing-mini "Now playing (mini player)"
-  tap_raw "대기" 8 || true
-  if tap_raw "Dance Monkey" 4; then
+  found=1; for i in 1 2 3 4 5 6; do tap_raw "대기" 8 || true; if tap_raw "Dance Monkey" 4; then found=0; break; fi; sleep 10; done
+  if [ "$found" = 0 ]; then
   sleep 2
   shot now-playing "Now playing (expanded)"
   adb shell input swipe 540 1200 540 400 400; sleep 3
