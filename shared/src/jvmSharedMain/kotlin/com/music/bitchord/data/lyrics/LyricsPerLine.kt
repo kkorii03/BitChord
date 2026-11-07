@@ -140,6 +140,7 @@ object LyricsPerLine {
             // anchor and let its neighbours interpolate.
             val residual = median(residuals)
             if (abs(residual) > cap) continue
+            if (abs(residual) > 300L && words.first().offsetMs != 0L) continue
             found += Anchor(index, lines[index].timeMs, residual)
         }
         val letters = lines.map { LyricsWordAlign.fold(it.text).length }
