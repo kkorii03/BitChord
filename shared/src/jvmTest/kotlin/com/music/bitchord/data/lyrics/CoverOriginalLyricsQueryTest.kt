@@ -52,6 +52,8 @@ class CoverOriginalLyricsQueryTest {
         assertEquals("JANE DOE", query.title)
         assertEquals("Kenshi Yonezu, Hikaru Utada", query.artist)
         assertTrue(query.artistKnown)
+        // The other order is still tried, in case the comma was the song's.
+        assertTrue(query.alternatives.contains("Kenshi Yonezu, Hikaru Utada" to "JANE DOE"))
     }
 
     /** The ordinary "Song - Artist (Singer Cover)" still searches the song first. */
