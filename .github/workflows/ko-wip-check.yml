@@ -69,7 +69,10 @@ jobs:
           exit $status
 
       # The lyric clock's tests live in sharedUi, which no other step runs.
+      # Run even when an earlier step failed, so a pre-existing failure there
+      # does not hide this module's result.
       - name: Lyric clock tests
+        if: always()
         shell: bash
         run: |
           set +e -o pipefail
