@@ -70,7 +70,8 @@ object GroqWhisper {
                         return@runCancellable Deepgram.Answer(null, response.code)
                     }
                     val body = response.body?.string() ?: return@runCancellable Deepgram.Answer(null, response.code)
-                    Deepgram.Answer(parse(body), response.code, audioMs = parseAudioMs(body))
+                    // Named: inside with(Deepgram) a bare parse() is Deepgram's, which reads nothing here.
+                    Deepgram.Answer(GroqWhisper.parse(body), response.code, audioMs = GroqWhisper.parseAudioMs(body))
                 }
             }
         } catch (cancelled: CancellationException) {
