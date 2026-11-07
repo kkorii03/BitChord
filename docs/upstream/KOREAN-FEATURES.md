@@ -186,7 +186,7 @@ googlevideo URL을 같은 경로로 받는 구조다. 따라서 1.1의 프록시
 - `app/.../playback/TranslationAhead.kt`, `TranslationAheadPolicy.kt`
 - `app/.../ui/LyricsController.kt`
 - `app/.../lockscreen/LockScreenLyrics.kt`, `LockScreenLyricsActivity.kt`
-- `sharedUi/.../ui/player/LyricsTimingUi.kt`, `SongMeaningSheet.kt`,
+- `sharedUi/.../ui/player/LyricsTimingUi.kt`,
   `StandaloneLyricsPanel.kt`
 - `scripts/synctest.py`
 
@@ -426,7 +426,7 @@ googlevideo URL을 같은 경로로 받는 구조다. 따라서 1.1의 프록시
 - `ui`: `LyricsController.kt`
 - `ui/components`: `AppleSubtitleText.kt`, `ForkAlerts.kt`, `LikedMusicCover.kt`,
   `SegmentedControl.kt`
-- `ui/player`: `LyricsTimingUi.kt`, `PlayerExpandGuard.kt`, `SongMeaningSheet.kt`,
+- `ui/player`: `LyricsTimingUi.kt`, `PlayerExpandGuard.kt`,
   `StandaloneLyricsPanel.kt`
 - `ui/screens`: `ContentCountryDialog.kt`, `ProxySettingsSection.kt`
 - `ui/theme`: `PhraseLineBreak.kt`, `PhraseLineBreak.android.kt`,

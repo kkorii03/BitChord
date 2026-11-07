@@ -4,7 +4,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.ui.player.LyricsDisplayMode
-import com.music.bitchord.ui.player.LyricsRomanizationResult
 import com.music.bitchord.ui.player.LyricsTranslationResult
 import com.music.bitchord.ui.player.LyricsTranslationUiState
 import com.music.bitchord.ui.player.PlayerPlatform
@@ -15,9 +14,7 @@ internal fun koRetimedLyricsEffect(
     trackId: String,
     translationLanguage: String,
     translationState: LyricsTranslationUiState,
-    romanizationState: LyricsTranslationUiState,
     onTranslation: (List<LyricLine>, Boolean) -> Unit,
-    onRomanization: (List<LyricLine>) -> Unit,
 ) {
     // Same words, new timings: what is on screen is made again for the moved
     // lines — from the cache, at once — and swapped in quietly, without
@@ -34,17 +31,6 @@ internal fun koRetimedLyricsEffect(
             )
             if (result is LyricsTranslationResult.Translated) {
                 onTranslation(result.lines, result.byGemini)
-            }
-        }
-        val romanized = romanizationState as? LyricsTranslationUiState.Ready
-        if (romanized != null && !koSameTiming(romanized.lines, source)) {
-            val result = PlayerPlatform.host.romanizeLyrics(
-                trackId = trackId,
-                lines = source,
-                targetLanguageTag = translationLanguage,
-            )
-            if (result is LyricsRomanizationResult.Romanized) {
-                onRomanization(result.lines)
             }
         }
     }

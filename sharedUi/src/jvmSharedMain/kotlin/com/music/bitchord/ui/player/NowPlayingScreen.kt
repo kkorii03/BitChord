@@ -21,6 +21,7 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.core.Animatable
 import com.music.bitchord.ui.theme.AppType
 import com.music.bitchord.ko.ui.SongLyricsSync // [KO] lyrics-sync correction
+import com.music.bitchord.ko.ui.player.koTimingDetailTexts // [KO] lyrics-status
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.channels.Channel
 import androidx.compose.animation.core.AnimationVector1D
@@ -992,8 +993,6 @@ fun NowPlayingScreen(
     var showAudioOutput by remember { mutableStateOf(false) }
     var showVideoQuality by remember { mutableStateOf(false) }
     var showLyricsProviders by remember { mutableStateOf(false) }
-    var showSongMeaning by remember { mutableStateOf(false) }
-    val songMeaningAvailable by PlayerPlatform.host.songMeaningAvailable.collectAsStateWithLifecycle()
     // Gated on the Bluetooth permission the first time — see [rememberOutputPicker].
     val openAudioOutput = rememberOutputPicker { showAudioOutput = true }
     // Listening in a party whose host has taken the controls: the transport
@@ -1252,7 +1251,6 @@ fun NowPlayingScreen(
         lyrics = lyrics,
         lyricsSource = lyricsSource,
         lyricsUnavailable = lyricsUnavailable,
-        loadingText = lyricsLoadingText,
         haptics = haptics,
     )
     // The drawer holding the finished card, set the moment Share is confirmed.
@@ -1899,15 +1897,7 @@ fun NowPlayingScreen(
                 states = lyricsProviderStates,
                 onSelect = onSelectLyricsProvider,
                 onDismiss = { showLyricsProviders = false },
-            )
-        }
-        if (showSongMeaning) {
-            SongMeaningSheet(
-                hazeState = playerHaze,
-                song = song,
-                lines = lyrics.orEmpty(),
-                targetLanguage = lyricsTranslation.targetLanguage,
-                onDismiss = { showSongMeaning = false },
+                details = listOfNotNull(lyricsTranslation.translationDetail) + koTimingDetailTexts(lyricsTiming), // [KO] lyrics-status
             )
         }
         if (showAudioPipeline) {
@@ -2426,7 +2416,6 @@ fun NowPlayingScreen(
                                         isPlaying = isPlaying && position.advancing,
                                         durationMs = displayDurationMs,
                                         lyricsUnavailable = lyricsUnavailable,
-                                        loadingText = lyricsLoadingText,
                                         onClick = openLyrics,
                                         heardWords = lyricsTiming.heardWords,
                                     )
@@ -2490,7 +2479,7 @@ fun NowPlayingScreen(
                             } else {
                                 lyricsLoadingText
                             },
-                            status = lyricsStatusWithTiming(lyricsTranslation.status, lyricsTiming),
+                            status = lyricsTranslation.status,
                             onStatusClick = { showLyricsProviders = true },
                             picking = lyricPicker.picking,
                             pickBar = {
@@ -2501,33 +2490,12 @@ fun NowPlayingScreen(
                                     onShare = lyricPicker.share,
                                 )
                             },
-                            romanizationToggle = {
-                                // Romanization is independent of AI timing. The
-                                // slot used to be left empty whenever AI timing
-                                // was offered, on the claim that the control
-                                // lived in the sync drawer — but that drawer
-                                // only holds offset and AI timing, so the
-                                // toggle was unreachable on Android.
-                                RomanizationToggleButton(
-                                    state = lyricsTranslation.romanizationState,
-                                    showingRomanization = lyricsTranslation.showingRomanization,
-                                    enabled = romanizationActionEnabled(!lyrics.isNullOrEmpty()),
-                                    onClick = lyricsTranslation.toggleRomanization,
-                                )
-                            },
                             translationToggle = {
                                 TranslationToggleButton(
                                     state = lyricsTranslation.translationState,
                                     showingTranslation = lyricsTranslation.showingTranslation,
                                     enabled = !lyrics.isNullOrEmpty(),
                                     onClick = lyricsTranslation.toggleTranslation,
-                                )
-                            },
-                            showMeaningToggle = songMeaningAvailable,
-                            meaningToggle = {
-                                SongMeaningButton(
-                                    enabled = !lyrics.isNullOrEmpty(),
-                                    onClick = { showSongMeaning = true },
                                 )
                             },
                         ) { panelModifier ->
@@ -4281,7 +4249,6 @@ fun NowPlayingScreen(
                             isPlaying = isPlaying && position.advancing,
                             durationMs = displayDurationMs,
                             lyricsUnavailable = lyricsUnavailable,
-                            loadingText = lyricsLoadingText,
                             // Still visible over the queue, so still a valid way in:
                             // opens the same full lyrics panel it always has, closing
                             // the queue behind it the same way the "Up next" glyph
@@ -4315,24 +4282,10 @@ fun NowPlayingScreen(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             LyricsStatusWithChange(
-                                status = lyricsStatusWithTiming(lyricsTranslation.status, lyricsTiming),
+                                status = lyricsTranslation.status,
                                 onStatusClick = { showLyricsProviders = true },
                                 modifier = Modifier.weight(1f),
                             )
-                            RomanizationToggleButton(
-                                state = lyricsTranslation.romanizationState,
-                                showingRomanization = lyricsTranslation.showingRomanization,
-                                enabled = romanizationActionEnabled(!lyrics.isNullOrEmpty()),
-                                onClick = lyricsTranslation.toggleRomanization,
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            if (songMeaningAvailable) {
-                                SongMeaningButton(
-                                    enabled = !lyrics.isNullOrEmpty(),
-                                    onClick = { showSongMeaning = true },
-                                )
-                                Spacer(Modifier.width(8.dp))
-                            }
                             TranslationToggleButton(
                                 state = lyricsTranslation.translationState,
                                 showingTranslation = lyricsTranslation.showingTranslation,

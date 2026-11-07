@@ -8,7 +8,7 @@ class LyricsControlPolicyTest {
 
     @Test
     fun aiTimingNeedsAnAdjustableSongAndAUsableProvider() {
-        // Regression: removing the Gemini song-meaning guard left no provider
+        // Regression: removing the old Gemini-key guard left no provider
         // guard at all, so the action was offered with no Deepgram or Gemini
         // key and the press could only end in aiFailed.
         assertTrue(
@@ -31,14 +31,5 @@ class LyricsControlPolicyTest {
                 LyricsTimingUi(adjustable = true, byAi = true, aiAvailable = false),
             ),
         )
-    }
-
-    @Test
-    fun romanizationStaysAvailableWheneverThereAreLyrics() {
-        // Regression: the romanization toggle was hidden whenever AI timing was
-        // offered, which on Android is always, and the sync drawer never had
-        // its own control — so it could not be reached at all.
-        assertTrue(romanizationActionEnabled(hasLyrics = true))
-        assertFalse(romanizationActionEnabled(hasLyrics = false))
     }
 }

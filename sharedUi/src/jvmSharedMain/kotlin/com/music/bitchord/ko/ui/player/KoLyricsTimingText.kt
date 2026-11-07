@@ -6,20 +6,6 @@ import com.music.bitchord.ui.player.LyricsTimingUi
 import org.jetbrains.compose.resources.stringResource
 
 /**
- * The line under the lyrics: who provided them, and — in a word — whether
- * they were moved onto this video's clock. Short on purpose, like the credit
- * line it extends; the figures (how far, how fast, how sure) are in the sync
- * drawer, see [koLyricsTimingDetail].
- */
-@Composable
-internal fun koLyricsStatusWithTiming(status: String, timing: LyricsTimingUi): String = when {
-    timing.aiRunning -> stringResource(Res.string.lyrics_timing_running_short, status)
-    timing.shiftMs != null || timing.byAi -> stringResource(Res.string.lyrics_timing_adjusted, status)
-    timing.manualMs != 0L -> stringResource(Res.string.lyrics_timing_manual_short, status)
-    else -> status
-}
-
-/**
  * What was done to the timing, with its figures — "자동 보정 +3.2초 · 속도
  * 0.98배", "AI 타이밍 +2.1초 · 일치 85%" — or null when nothing moved the lines.
  */
