@@ -261,6 +261,12 @@ object LyricsTiming {
          */
         val refineWide: Boolean = false,
         /**
+         * The refine's own scatter over the lines it measured, ms; null when it measured fewer
+         * lines than [RefinePolicy.MIN_LINES]. A tight scatter means the words already agree with
+         * the sheet as shown (11-07 eqKhhG4FVoQ: mad=43ms, yet the per-line layer moved a line 1.18 s).
+         */
+        val refineMadMs: Long? = null,
+        /**
          * The words the per-line layer uses, on the base/HQ/refine clock (the
          * hand's correction is not in them), and the rendition keys they were
          * heard on. Null when no word-level transcript belongs to the sound
@@ -280,6 +286,10 @@ object LyricsTiming {
         /** The refine's move at [atMs], capped at the narrow or wide limit it belongs to. */
         fun refineAt(atMs: Long): Long =
             refineMove(atMs, refineMs, refineSlopePerMin, refineUntilMs, refineWide)
+
+        /** Whether the refine already measured this sheet on these words: the per-line layer has nothing to add. */
+        val refineSettled: Boolean
+            get() = refineMadMs != null && refineMadMs <= RefinePolicy.MAX_MAD_MS
     }
 
     /**
@@ -543,6 +553,7 @@ object LyricsTiming {
             refineSlopePerMin = if (refine.applied) refine.slopePerMin else 0.0,
             refineUntilMs = refineClock.maxOfOrNull { it.endMs } ?: Long.MAX_VALUE,
             refineWide = refine.applied && refine.model.wide,
+            refineMadMs = refine.madMs.takeIf { refine.lines >= RefinePolicy.MIN_LINES },
         )
         // The per-line layer runs after refine and under the hand's correction.
         // Its words are already on the playing clock, so [apply] compares them
@@ -1207,19 +1218,24 @@ object LyricsTiming {
         perLineMemo?.let { memo ->
             if (memo.timing == timing && memo.lines == lines) return memo.layer
         }
+        // A refine that measured this sheet on these very words has already placed it;
+        // moving single lines again on the same agreement only added error (11-07).
         // A sheet timed word by word was timed by someone listening, which beats a transcript:
         // after the whole-song fit alone, 30 such sheets on two rounds go from 16 to 20 strict
         // passes, 94.9% to 97.8% within 0.3 s, though the score shares the transcript that
         // moved the lines. Line-timed sheets are the other way round (6 to 4, 91.3% to 81.0%).
         // With no fit, the words are all this sheet has (3JWTaaS7LdU, refused at 56%).
-        val layer = if (timing.base != null && LyricsPerLine.statesItsOwnWords(lines)) {
+        val layer = if (timing.refineSettled) {
+            LyricsPerLine.Layer.identity(lines.size)
+        } else if (timing.base != null && LyricsPerLine.statesItsOwnWords(lines)) {
             LyricsPerLine.Layer.identity(lines.size)
         } else {
             LyricsPerLine.compute(lines, words.words, words.wordsKey, words.currentKey)
         }
         TrackLog.i(
             "BitChord",
-            "sync perline: anchors=${layer.anchors} applied=${layer.applied} maxAbsMs=${layer.maxAbsMs}",
+            "sync perline: anchors=${layer.anchors} applied=${layer.applied} maxAbsMs=${layer.maxAbsMs}" +
+                if (timing.refineSettled) " held=refine(mad=${timing.refineMadMs}ms)" else "",
             timing.videoId,
         )
         perLineMemo = PerLineMemo(timing, lines, layer)

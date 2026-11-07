@@ -146,4 +146,60 @@ class LyricsTimingPerLineTest {
         // The straight line first, on its first line; then the stretches, on +40 s.
         assertEquals(40_000L, moves.last())
     }
+
+    // ---- A refine that measured the sheet against the per-line layer --------------------------
+
+    // 21 lines four seconds apart; five in the middle heard 1 184 ms late, the rest where they are
+    // shown. A lone moved line is a stray the layer drops, so the block of five is what it moves for.
+    private fun measuredSheet() = (0 until 21).map { line(it * 4_000L, "alpha$it bravo$it charlie$it") }
+
+    private fun measuredWords(lines: List<LyricLine>) = lines.flatMapIndexed { index, sung ->
+        heardLine(sung, if (index in 8..12) 1_184L else 0L)
+    }
+
+    @Test
+    fun `a refine that already measured the sheet leaves the per-line layer nothing to add`() {
+        // eqKhhG4FVoQ rs5/auto115 11-07: refine lines=21 median=84ms mad=43ms applied=y, then the
+        // per-line layer moved a line up to 1 184 ms. The refine had already placed the sheet.
+        val lines = measuredSheet()
+        val words = measuredWords(lines)
+        val settled = LyricsTiming.Timing(
+            base = null,
+            manualMs = 0L,
+            perLine = LyricsTiming.PerLineWords(words, wordsKey = 1, currentKey = 1),
+            refineMadMs = 43L,
+        )
+
+        assertEquals(
+            lines[10].timeMs,
+            LyricsTiming.apply(lines, settled)[10].timeMs,
+            "eqKhhG4FVoQ mad=43ms: the refine measured this sheet, line 10 keeps its ${lines[10].timeMs} ms",
+        )
+        // Same words, same lines, no refine mad: the guard is the only difference.
+        assertEquals(
+            lines[10].timeMs + 1_184L,
+            LyricsTiming.apply(lines, settled.copy(refineMadMs = null))[10].timeMs,
+            "eqKhhG4FVoQ with no refine mad: the per-line layer moves line 10 by 1 184 ms",
+        )
+    }
+
+    @Test
+    fun `a scattered refine leaves the per-line layer its job`() {
+        // 04tYkKUPPv4 rs5/fleet53 11-07: refine lines=31 median=220ms mad=370ms applied=n, the mad
+        // over RefinePolicy.MAX_MAD_MS, so the per-line layer must still move what it heard.
+        val lines = measuredSheet()
+        val words = measuredWords(lines)
+        val scattered = LyricsTiming.Timing(
+            base = null,
+            manualMs = 0L,
+            perLine = LyricsTiming.PerLineWords(words, wordsKey = 1, currentKey = 1),
+            refineMadMs = 370L,
+        )
+
+        assertEquals(
+            lines[10].timeMs + 1_184L,
+            LyricsTiming.apply(lines, scattered)[10].timeMs,
+            "04tYkKUPPv4 mad=370ms: the per-line layer still moves line 10 by 1 184 ms",
+        )
+    }
 }
