@@ -47,7 +47,7 @@ object LyricsPerLine {
     const val MAX_INTERPOLATE_SPAN_MS = 30_000L
 
     /** Anchors whose residuals differ by more than this do not interpolate either. */
-    const val MAX_INTERPOLATE_DIFF_MS = 400L
+    const val MAX_INTERPOLATE_DIFF_MS = 200L
 
     /** Otherwise a line takes the nearest anchor's residual when it is this close. */
     const val HOLD_RANGE_MS = 8_000L
