@@ -755,7 +755,8 @@ section_proxy() {
 # Quick mode: only the screens a home/explore/artwork change can affect.
 if [ "${TOUR_QUICK:-0}" = "1" ]; then
   run_section section_home home
-  sleep 30
+  run_section section_explore explore
+  sleep 90
   tap "대기" first 3 || true
   run_section section_now_playing now-playing
 else
