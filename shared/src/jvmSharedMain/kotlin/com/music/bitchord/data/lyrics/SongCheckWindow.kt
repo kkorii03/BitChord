@@ -45,8 +45,14 @@ object SongCheckWindow {
     fun fullMayReplace(firstFitted: Boolean, fullFitted: Boolean): Boolean =
         !firstFitted || fullFitted
 
-    /** Raise when the fit changes: every kept answer and refusal is judged once more, free. */
-    const val FIT_VERSION = 1
+    /**
+     * Raise when the fit changes: every kept answer and refusal is judged once more, free.
+     *
+     * 2: 11-08, [TimingPieces] refuses a move over 5 s on under 0.6 of the sheet, so a
+     * stored pieces answer made under the old 15 s guard (eqKhhG4FVoQ, a 7.08 s jump on
+     * 0.51) is dropped by `LyricsTiming.refit` when the re-judged fit refuses.
+     */
+    const val FIT_VERSION = 2
 
     /** Fewer new words' worth of sound than this says nothing new. */
     private const val LONGER_MS = 8_000L
