@@ -556,11 +556,7 @@ object LyricsTiming {
             // Only a refine that moved the sheet has placed it. One that measured a tight scatter it
             // could not apply (a shift past its window, 3JWTaaS7LdU) or did not need leaves the
             // per-line layer to move what the words heard.
-            // A move past the narrow cap is clipped where it is shown, so it has not placed the sheet either.
-            refineMadMs = refine.madMs.takeIf {
-                refine.applied && refine.lines >= RefinePolicy.MIN_LINES &&
-                    abs(refine.medianMs) <= RefinePolicy.MAX_SHIFT_MS
-            },
+            refineMadMs = refine.madMs.takeIf { refine.applied && refine.lines >= RefinePolicy.MIN_LINES },
         )
         // The per-line layer runs after refine and under the hand's correction.
         // Its words are already on the playing clock, so [apply] compares them
