@@ -24,6 +24,12 @@ object LyricsPerLine {
     /** Words that scatter more than this around their line are not one placement. */
     const val MAX_ANCHOR_MAD_MS = 120L
 
+    /** A single opening word may place a line only when it is heard once this close (not a chorus repeat). */
+    const val SINGLE_WORD_WINDOW_MS = 12_000L
+
+    /** Fewer letters than this are too common to place a line on their own. */
+    const val MIN_SINGLE_WORD_LETTERS = 3
+
     /** A residual this small is not worth moving the line for. */
     const val MIN_APPLY_MS = 40L
 
@@ -118,7 +124,11 @@ object LyricsPerLine {
         // The words are expected on the same clock as the lines: LyricsTiming
         // converts them from the rendition they were heard on, and drops them
         // when no verified map can carry them onto the playing clock.
-        val matched = LyricsWordAlign.matchedWords(lines.map { it.text }, heard)
+        val texts = lines.map { it.text }
+        val matched = LyricsWordAlign.matchedWords(texts, heard)
+        // A text sung more than once has a twin, so a word heard at the twin is not this line's.
+        val folded = texts.map { LyricsWordAlign.fold(it) }
+        val repeats = folded.groupingBy { it }.eachCount()
         val found = ArrayList<Anchor>(lines.size)
         for (index in lines.indices) {
             val words = matched[index]
@@ -151,12 +161,16 @@ object LyricsPerLine {
             if (abs(residual) > cap) continue
             found += Anchor(index, lines[index].timeMs, residual)
         }
-        val letters = lines.map { LyricsWordAlign.fold(it.text).length }
+        val letters = folded.map { it.length }
+        // A line whose words reached the anchor gates keeps the guards' answer, not the single word's.
+        val heardAsLine = BooleanArray(lines.size)
+        for (anchor in found) heardAsLine[anchor.line] = true
         val anchors = withoutStrays(withoutLoneBlocks(sungInOrder(found, letters)))
         if (anchors.isEmpty()) return Layer.identity(lines.size)
 
         val heardFrom = heard.minOf { it.startMs }
         val heardTo = heard.maxOf { it.endMs }
+        val heardFold = heard.map { LyricsWordAlign.fold(it.text) }
         val anchorAt = HashMap<Int, Anchor>(anchors.size)
         for (anchor in anchors) anchorAt[anchor.line] = anchor
         val shifts = LongArray(lines.size)
@@ -202,7 +216,22 @@ object LyricsPerLine {
                     }
                 }
             }
-            shifts[index] = if (abs(target) >= MIN_APPLY_MS) target else 0L
+            // One word heard as the line's opening places a line no other rule could: the
+            // transcript's own word agreement gates left this line with no anchor at all.
+            val single = if (abs(target) < MIN_APPLY_MS && !heardAsLine[index]) {
+                singleWordResidual(
+                    lineFold = folded[index],
+                    repeats = repeats[folded[index]] ?: 1,
+                    words = matched[index],
+                    leadStart = lines[index].words.firstOrNull()?.startMs ?: lineTime,
+                    heard = heard,
+                    heardFold = heardFold,
+                )
+            } else {
+                null
+            }
+            val move = single ?: target
+            shifts[index] = if (abs(move) >= MIN_APPLY_MS) move else 0L
         }
         enforceOrder(lines, shifts)
         // A sheet already heard where it is shown: a move larger than the sheet's
@@ -302,6 +331,43 @@ object LyricsPerLine {
         if (abs(nearAfter.residualMs - nearBefore.residualMs) >= MAX_INTERPOLATE_DIFF_MS) return false
         return abs(nearBefore.residualMs - own.residualMs) > MAX_INTERPOLATE_DIFF_MS &&
             abs(nearAfter.residualMs - own.residualMs) > MAX_INTERPOLATE_DIFF_MS
+    }
+
+    /**
+     * How far a line moves when the transcript heard one of its words as its very beginning,
+     * or null. The word must be heard only once within [SINGLE_WORD_WINDOW_MS]: a word heard
+     * again this close belongs to a chorus's copy of the line. [repeats] is how often the
+     * line's own text is sung on the sheet, so a twin line is left alone. The move is capped
+     * like a two-word anchor's: one word is the weakest placement there is.
+     * 11-07 offline, chosen on half the scored sheets and confirmed on the rest: 5 of the 107
+     * line-only lines over 0.3 s placed, none of the right lines pushed out; word-timed
+     * sheets 1 line, none pushed out.
+     */
+    private fun singleWordResidual(
+        lineFold: String,
+        repeats: Int,
+        words: List<LyricsWordAlign.MatchedWord>,
+        leadStart: Long,
+        heard: List<LyricsWordAlign.Heard>,
+        heardFold: List<String>,
+    ): Long? {
+        if (repeats > 1) return null
+        val opening = words.firstOrNull { word ->
+            val letters = LyricsWordAlign.fold(word.word.text)
+            letters.length >= MIN_SINGLE_WORD_LETTERS && lineFold.startsWith(letters)
+        } ?: return null
+        val openingFold = LyricsWordAlign.fold(opening.word.text)
+        var sameNear = 0
+        for (index in heard.indices) {
+            if (heardFold[index] == openingFold &&
+                abs(heard[index].startMs - opening.word.startMs) <= SINGLE_WORD_WINDOW_MS
+            ) {
+                sameNear++
+            }
+        }
+        if (sameNear != 1) return null
+        val residual = opening.word.startMs - leadStart
+        return residual.takeIf { abs(it) <= MAX_SHIFT_TWO_WORDS_MS }
     }
 
     private fun nearest(before: Anchor, after: Anchor, atMs: Long): Long {

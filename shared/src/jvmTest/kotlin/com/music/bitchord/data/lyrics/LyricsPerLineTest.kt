@@ -404,4 +404,58 @@ class LyricsPerLineTest {
         val lines = listOf(line(10_000, "alpha bravo"))
         assertEquals(LyricsPerLine.Layer.identity(1), layer(lines, emptyList()))
     }
+
+    /**
+     * 11-07 line-only sheets, 6rS7OUGXUik line 10 in figures: a four-word line heard 0.55 s
+     * off whose words did not agree, while its opening word was heard alone and 590 ms early.
+     */
+    @Test
+    fun `a unique opening word places a line its own words could not`() {
+        val lines = listOf(
+            line(10_000, "alpha bravo"),
+            line(14_000, "charlie delta echoes foxtrot"),
+            line(18_000, "golf hotel"),
+        )
+        val heard = heardLine(lines[0], 0L) +
+            listOf(LyricsWordAlign.Heard("charlie", 13_410, 13_610)) +
+            heardLine(lines[2], 0L)
+
+        val result = layer(lines, heard)
+
+        assertEquals(0L, result.shiftsMs[0])
+        assertEquals(-590L, result.shiftsMs[1])
+        assertEquals(0L, result.shiftsMs[2])
+    }
+
+    @Test
+    fun `an opening word heard again nearby is a chorus line's, not this one's`() {
+        val lines = listOf(
+            line(10_000, "alpha bravo"),
+            line(14_000, "alpha delta echoes foxtrot"),
+            line(18_000, "golf hotel"),
+        )
+        val heard = heardLine(lines[0], 0L) +
+            listOf(LyricsWordAlign.Heard("alpha", 13_410, 13_610)) +
+            heardLine(lines[2], 0L)
+
+        val result = layer(lines, heard)
+
+        assertEquals(0L, result.shiftsMs[1])
+    }
+
+    @Test
+    fun `a unique word from inside the line is not its opening`() {
+        val lines = listOf(
+            line(10_000, "alpha bravo"),
+            line(14_000, "charlie delta echoes foxtrot"),
+            line(18_000, "golf hotel"),
+        )
+        val heard = heardLine(lines[0], 0L) +
+            listOf(LyricsWordAlign.Heard("delta", 13_400, 13_600)) +
+            heardLine(lines[2], 0L)
+
+        val result = layer(lines, heard)
+
+        assertEquals(0L, result.shiftsMs[1])
+    }
 }
