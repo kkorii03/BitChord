@@ -89,6 +89,14 @@ enum class LyricsSource(
         detail = "커뮤니티 미러에서 음절 단위",
         wordSynced = true,
     ),
+    // One aggregator that answers a karaoke request with word-stamped LRC. It
+    // found sheets for songs the Apple hosts miss (3 of the 21 on 11-07), and
+    // its own 30/min limit is why it asks once and queues; see [SyncLrc].
+    SYNCLRC(
+        label = "SyncLRC",
+        detail = "여러 제공처에서 찾은 음절 단위 타이밍",
+        wordSynced = true,
+    ),
     // The Korean services: whole lines only, but the Korean catalogue the
     // Apple hosts above miss — indie, OST, the originals covers are made of.
     // Ahead of every line-only fallback below, so a Korean song gets its own
