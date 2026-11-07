@@ -43,6 +43,12 @@ object LyricsPerLine {
     const val GOOD_SHEET_WITHIN_MS = 250L
     const val MIN_GOOD_SHEET_ANCHORS = 8
 
+    /** A sheet heard this close to where it is shown, on this share of its lines, is right. */
+    const val GOOD_SHEET_MOVE_MS = 150L
+    const val GOOD_SHEET_MOVE_SHARE = 0.8
+    /** Fewer lines than this is not a song-wide answer. */
+    const val MIN_GOOD_SHEET_LINES = 8
+
     /** Two anchors further apart than this do not interpolate between themselves. */
     const val MAX_INTERPOLATE_SPAN_MS = 30_000L
 
@@ -151,7 +157,6 @@ object LyricsPerLine {
         val anchorAt = HashMap<Int, Anchor>(anchors.size)
         for (anchor in anchors) anchorAt[anchor.line] = anchor
         val shifts = LongArray(lines.size)
-        var previousStart = Long.MIN_VALUE
         var previousAnchor = 0
         for (index in lines.indices) {
             while (previousAnchor < anchors.size && anchors[previousAnchor].line < index) {
@@ -194,14 +199,17 @@ object LyricsPerLine {
                     }
                 }
             }
-            var shift = if (abs(target) >= MIN_APPLY_MS) target else 0L
-            val start = lineTime
-            if (index > 0) {
-                val minimum = previousStart + MIN_LINE_GAP_MS
-                if (start + shift < minimum) shift = minimum - start
-            }
-            shifts[index] = shift
-            previousStart = start + shift
+            shifts[index] = if (abs(target) >= MIN_APPLY_MS) target else 0L
+        }
+        enforceOrder(lines, shifts)
+        // A sheet already heard where it is shown: a move larger than the sheet's
+        // own scatter is a mishearing, not the sheet (11-07: 51 lines of a right
+        // sheet moved up to 0.7 s by scattered lines; dropping those moves passed
+        // 5 songs of the same 52 and lost none).
+        val near = shifts.count { abs(it) <= GOOD_SHEET_MOVE_MS }
+        if (shifts.size >= MIN_GOOD_SHEET_LINES && near >= shifts.size * GOOD_SHEET_MOVE_SHARE) {
+            for (index in shifts.indices) if (abs(shifts[index]) > GOOD_SHEET_MOVE_MS) shifts[index] = 0L
+            enforceOrder(lines, shifts)
         }
         val applied = shifts.count { it != 0L }
         val maxAbs = shifts.maxOfOrNull { abs(it) } ?: 0L
@@ -296,6 +304,19 @@ object LyricsPerLine {
         val toAfter = abs(atMs - after.timeMs)
         val nearest = if (toBefore <= toAfter) before else after
         return if (minOf(toBefore, toAfter) <= HOLD_RANGE_MS) nearest.residualMs else 0L
+    }
+
+    /** No line starts within [MIN_LINE_GAP_MS] of the one before it. */
+    private fun enforceOrder(lines: List<LyricLine>, shifts: LongArray) {
+        var previousStart = Long.MIN_VALUE
+        for (index in lines.indices) {
+            val start = lines[index].timeMs
+            if (index > 0) {
+                val minimum = previousStart + MIN_LINE_GAP_MS
+                if (start + shifts[index] < minimum) shifts[index] = minimum - start
+            }
+            previousStart = start + shifts[index]
+        }
     }
 
     private fun median(values: List<Long>): Long {

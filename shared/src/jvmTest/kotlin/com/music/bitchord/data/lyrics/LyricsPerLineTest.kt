@@ -66,6 +66,27 @@ class LyricsPerLineTest {
     }
 
     /**
+     * 11-07 BL-aIpCLWnU in figures: a sheet heard within 0.3 s, a few lines moved
+     * up to 0.7 s. A move past the good sheet's own scatter is a mishearing.
+     */
+    @Test
+    fun `a good sheet drops the moves past its own scatter`() {
+        val heard = twelve.flatMapIndexed { index, line ->
+            heardLine(line, when {
+                index == 4 -> 300L
+                index == 8 -> 700L
+                index % 2 == 0 -> 60L
+                else -> -60L
+            })
+        }
+
+        val shifts = layer(twelve, heard).shiftsMs
+
+        assertEquals(0L, shifts[4], "a 300 ms mishearing moved the line")
+        assertEquals(0L, shifts[8], "a 700 ms mishearing moved the line")
+    }
+
+    /**
      * 11-06 w58uXpyHWes in figures, made-up words: the line after a line moved 0.6 s
      * later is heard 1.9 s early, 126 ms after it. No one sings a line in 126 ms.
      */
