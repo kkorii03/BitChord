@@ -226,17 +226,18 @@ object CoverTitles {
             // not a song title, so the song is the other side. 11-06
             // BipM3jsOmDs searched the artist list as the song and KuGou
             // answered with another song of that name.
-            val primary = if (cover.orderUnsure && artist != null && artistFirst != null &&
+            val primary = if (cover.orderUnsure && artist != null &&
                 cover.title.contains(", ") && !artist.contains(", ")
             ) {
-                artistFirst
+                artistFirst ?: songFirst
             } else {
                 songFirst
             }
+            // "Song - Artist" read the other way round, in case it was "Artist - Song".
+            val other = if (primary == artistFirst) songFirst else artistFirst
             return listOfNotNull(
                 primary,
-                // "Song - Artist" read the other way round, in case it was "Artist - Song".
-                artistFirst?.takeIf { cover.orderUnsure && it != primary },
+                other?.takeIf { cover.orderUnsure && it != primary },
                 (cover.title to cover.singer).takeIf { artist != null },
             )
         }
