@@ -785,10 +785,11 @@ internal object CatalogSongMapper {
     /**
      * A one- or two-track release ("싱글", "EP"). Its page lists the take that
      * was released, not the album cut a lookup is after. The subtitle is read
-     * with [albumKind], so comma and middle-dot shapes count too.
+     * with [albumKind], so comma and middle-dot shapes count too. [albumKind]
+     * returns the word as written ("EP"), so it is lowercased before the lookup.
      */
     internal fun isShortRelease(albumSubtitle: String): Boolean =
-        albumKind(albumSubtitle) in SHORT_RELEASE_WORDS
+        albumKind(albumSubtitle)?.lowercase() in SHORT_RELEASE_WORDS
 
     /**
      * A track title answering a free-text search query. Both sides go through
