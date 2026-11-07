@@ -45,7 +45,7 @@ class LyricsTimeMap private constructor(
 
     /**
      * The record moment that [map] puts at video moment [videoMs]: the inverse,
-     * through the same pieces and end rates. A flat stretch answers its first
+     * through the same pieces and end rates. A flat stretch answers its last
      * record moment.
      */
     fun sourceAt(videoMs: Long): Long {

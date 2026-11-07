@@ -105,4 +105,13 @@ class LyricsTimingVideoQuickListenTest {
         assertFalse(evidence("exact-evidence", exact))
         assertTrue(evidence("exact-evidence-again", exact, rough = false))
     }
+
+    /** Sol review F3: an opening that fits must not wipe the whole song's wrong-sheet evidence. */
+    @Test
+    fun `a quick answer leaves the kept wrong-sheet evidence alone`() = runBlocking {
+        val words = (1..5).joinToString(",") { """{"t":"w$it","s":${it * 30_000},"e":${it * 30_000 + 200}}""" }
+        val evidence = """"heardCheckKey":$key,"heardCheckRough":false,"heardCheckWords":[$words]"""
+        assertTrue(kept("evidence-stays", evidence))
+        assertEquals(5, LyricsTiming.heardWordsFor(context, "evidence-stays").size)
+    }
 }

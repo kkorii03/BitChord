@@ -6,6 +6,7 @@ import kotlin.math.abs
 import kotlin.math.roundToLong
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -99,5 +100,33 @@ class LyricsTimingHeardTailTest {
         LyricsTiming.hearingFreed("held-refit")
         assertNull(withTimeoutOrNull(300L) { again.await() })
         second.cancel()
+    }
+
+    /**
+     * Sol tail-review F2: `changes` holds 8 values, and with a collector still busy the
+     * refit's event was dropped by `tryEmit`; nothing asked again before the next playback.
+     */
+    @Test
+    fun `a refit event is not lost while the change buffer is full`() = runBlocking {
+        val gate = CompletableDeferred<Unit>()
+        val target = CompletableDeferred<String>()
+        // Subscribed before the first emit, then held on its first value.
+        val collect = launch(Dispatchers.Default, start = CoroutineStart.UNDISPATCHED) {
+            LyricsTiming.changes.collect { id ->
+                if (id == "slow-first") gate.await()
+                if (id == "refit-after-burst") target.complete(id)
+            }
+        }
+        LyricsTiming.newestSongKey["slow-first"] = 2
+        LyricsTiming.dropForReplacedSheet("slow-first", 1)
+        // Fill the buffer behind it: these are best-effort events and may be refused.
+        repeat(12) { i ->
+            LyricsTiming.newestSongKey["filler-$i"] = 2
+            LyricsTiming.dropForReplacedSheet("filler-$i", 1)
+        }
+        LyricsTiming.wordsKept("refit-after-burst", rough = false)
+        gate.complete(Unit)
+        assertEquals("refit-after-burst", withTimeout(5_000L) { target.await() })
+        collect.cancel()
     }
 }

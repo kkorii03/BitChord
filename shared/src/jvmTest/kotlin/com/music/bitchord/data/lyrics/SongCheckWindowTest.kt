@@ -54,22 +54,48 @@ class SongCheckWindowTest {
     @Test
     fun `a playing video hears the quick opening beside its whole-song request`() {
         // 11-08 WwFUZS8dv_4: only the whole-song request was asked, and it answered after the play.
-        assertEquals(true, SongCheckWindow.videoQuickFirst(isVideo = true, nextRow = false, wordEngineDue = true))
+        assertEquals(true, SongCheckWindow.videoQuickFirst(isVideo = true, nextRow = false, wordEngineDue = true, quickEngine = true))
         // A next row has its head only; a song has its own song check; a spent engine is not bought twice.
-        assertEquals(false, SongCheckWindow.videoQuickFirst(isVideo = true, nextRow = true, wordEngineDue = true))
-        assertEquals(false, SongCheckWindow.videoQuickFirst(isVideo = false, nextRow = false, wordEngineDue = true))
-        assertEquals(false, SongCheckWindow.videoQuickFirst(isVideo = true, nextRow = false, wordEngineDue = false))
+        assertEquals(false, SongCheckWindow.videoQuickFirst(isVideo = true, nextRow = true, wordEngineDue = true, quickEngine = true))
+        assertEquals(false, SongCheckWindow.videoQuickFirst(isVideo = false, nextRow = false, wordEngineDue = true, quickEngine = true))
+        assertEquals(false, SongCheckWindow.videoQuickFirst(isVideo = true, nextRow = false, wordEngineDue = false, quickEngine = true))
         // The quick request's window: the song check's opening, inside what Groq answers (120 s).
         assertEquals(true, SongCheckWindow.VIDEO_QUICK_SECONDS in SongCheckWindow.FIRST_SECONDS..120.0)
     }
 
     @Test
     fun `a streamed video is heard as its track starts when the quick engine may run`() {
-        assertEquals(true, SongCheckWindow.videoHearAtStart(true, streamed = true, quickEngine = true, heavyWorkAllowed = true, aiTimingAhead = true))
-        assertEquals(false, SongCheckWindow.videoHearAtStart(false, streamed = true, quickEngine = true, heavyWorkAllowed = true, aiTimingAhead = true))
-        assertEquals(false, SongCheckWindow.videoHearAtStart(true, streamed = false, quickEngine = true, heavyWorkAllowed = true, aiTimingAhead = true))
-        assertEquals(false, SongCheckWindow.videoHearAtStart(true, streamed = true, quickEngine = false, heavyWorkAllowed = true, aiTimingAhead = true))
-        assertEquals(false, SongCheckWindow.videoHearAtStart(true, streamed = true, quickEngine = true, heavyWorkAllowed = false, aiTimingAhead = true))
-        assertEquals(false, SongCheckWindow.videoHearAtStart(true, streamed = true, quickEngine = true, heavyWorkAllowed = true, aiTimingAhead = false))
+        assertEquals(true, SongCheckWindow.videoHearAtStart(true, streamed = true, quickEngine = true, heavyWorkAllowed = true, aiTimingAhead = true, wordEngine = true, lyricsLookup = true))
+        assertEquals(false, SongCheckWindow.videoHearAtStart(false, streamed = true, quickEngine = true, heavyWorkAllowed = true, aiTimingAhead = true, wordEngine = true, lyricsLookup = true))
+        assertEquals(false, SongCheckWindow.videoHearAtStart(true, streamed = false, quickEngine = true, heavyWorkAllowed = true, aiTimingAhead = true, wordEngine = true, lyricsLookup = true))
+        assertEquals(false, SongCheckWindow.videoHearAtStart(true, streamed = true, quickEngine = false, heavyWorkAllowed = true, aiTimingAhead = true, wordEngine = true, lyricsLookup = true))
+        assertEquals(false, SongCheckWindow.videoHearAtStart(true, streamed = true, quickEngine = true, heavyWorkAllowed = false, aiTimingAhead = true, wordEngine = true, lyricsLookup = true))
+        assertEquals(false, SongCheckWindow.videoHearAtStart(true, streamed = true, quickEngine = true, heavyWorkAllowed = true, aiTimingAhead = false, wordEngine = true, lyricsLookup = true))
+    }
+
+    @Test
+    fun `no quick engine, no second paid request beside the whole song`() {
+        // Sol review F4: without Groq the quick request was a 90 s Deepgram one for every video.
+        assertEquals(false, SongCheckWindow.videoQuickFirst(isVideo = true, nextRow = false, wordEngineDue = true, quickEngine = false))
+        // ...and without Deepgram nothing reads the words heard at the start.
+        assertEquals(false, SongCheckWindow.videoHearAtStart(true, streamed = true, quickEngine = true, heavyWorkAllowed = true, aiTimingAhead = true, wordEngine = false, lyricsLookup = true))
+    }
+
+    @Test
+    fun `no lyrics lookup, nothing heard at the start`() {
+        // Sol review F5: with every lyrics source off, no sheet can ever read the words.
+        assertEquals(false, SongCheckWindow.videoHearAtStart(true, streamed = true, quickEngine = true, heavyWorkAllowed = true, aiTimingAhead = true, wordEngine = true, lyricsLookup = false))
+    }
+
+    @Test
+    fun `the quick listen reads the words heard at the start when their language may serve`() {
+        // 11-08 n5: "multi" words at the start, asked again in "ko" and "en" for the same words.
+        assertEquals("multi", SongCheckWindow.quickLanguage("multi", "ko"))
+        assertEquals("ko", SongCheckWindow.quickLanguage("ko", "ko"))
+        // The sheet's language unknown: the start's words serve.
+        assertEquals("ja", SongCheckWindow.quickLanguage("ja", "multi"))
+        // Another language, or nothing heard at the start: the sheet's.
+        assertEquals("ko", SongCheckWindow.quickLanguage("en", "ko"))
+        assertEquals("ko", SongCheckWindow.quickLanguage(null, "ko"))
     }
 }

@@ -1634,12 +1634,13 @@ object LyricsTiming {
         // a refit that waits for the words still tells the in-flight check that
         // its sheet is gone, so its completion asks for this sheet to be fitted.
         if (current()) newestSongKey[videoId] = key
-        if (hearingBusy(videoId)) {
-            // Words saved while that request is still in flight would wait for the
-            // next playback: its end asks again ([hearingFreed]), an event, not a poll.
-            noteRefitWaiting(videoId)
-            return@withContext false
-        }
+        // Words saved while a request is still in flight would wait for the next playback:
+        // its end asks again ([hearingFreed]), an event, not a poll. Noted before the busy
+        // test, so a flight ending between the two still finds the note (Sol tail-review
+        // F3); one that ended earlier costs at most one extra refresh.
+        noteRefitWaiting(videoId)
+        if (hearingBusy(videoId)) return@withContext false
+        refitNotWaiting(videoId)
         val texts = lines.filter { it.text.isNotBlank() }.map { it.text }
         val language = com.music.bitchord.data.lyrics.Deepgram.languageFor(texts)
         songSyncGate.withLock {
@@ -2888,9 +2889,25 @@ object LyricsTiming {
         refitWaiting.add(videoId)
     }
 
+    /** The refit ran after all ([hearingBusy] was false): nothing waits. */
+    internal fun refitNotWaiting(videoId: String) {
+        refitWaiting.remove(videoId)
+    }
+
     /** A words request for [videoId] ended: a refit held for it asks again, once. */
     internal fun hearingFreed(videoId: String) {
-        if (refitWaiting.remove(videoId)) _changes.tryEmit(videoId)
+        if (refitWaiting.remove(videoId)) refitEvent(videoId)
+    }
+
+    /**
+     * A refit's change event, never dropped: [_changes] holds 8 and `tryEmit` loses the
+     * value when two slow collectors leave it full (Sol tail-review F2), and nothing else
+     * would ask again before the next playback. Suspends on the app scope until there is
+     * room; with no collector it returns at once. One coroutine per event, no timer.
+     */
+    private fun refitEvent(videoId: String) {
+        if (_changes.tryEmit(videoId)) return
+        aiScope.launch { _changes.emit(videoId) }
     }
 
     /**
@@ -2900,7 +2917,7 @@ object LyricsTiming {
      * words never refit (they are what the exact ones replace), so they ask nothing.
      */
     internal fun wordsKept(videoId: String, rough: Boolean) {
-        if (!rough) _changes.tryEmit(videoId)
+        if (!rough) refitEvent(videoId)
     }
 
     /**
@@ -3075,11 +3092,19 @@ object LyricsTiming {
             // A playing video also hears its opening with the song check's quick request
             // (Groq when it can answer), beside the whole-song request below, which still
             // runs and replaces it. That request alone answered 8-184 s in on 11-08's phone
-            // run, and WwFUZS8dv_4 got nothing during its play. Started alongside, so the
-            // exact request is not held up; a child of this flight, so it ends with it.
-            if (SongCheckWindow.videoQuickFirst(isVideo, nextRow = probe != null, wordEngineDue = ENGINE_DEEPGRAM_WHISPER in engines)) {
-                CoroutineScope(currentCoroutineContext()).launch {
-                    quickVideoAnswer(context, videoId, song, lines, sung, key, language)
+            // run, and WwFUZS8dv_4 got nothing during its play. Started beside the flight,
+            // on the app's own scope: as a child it held the flight, one of the two
+            // automatic AI slots and hearingBusy open until the quick request ended
+            // (Sol review F1). It stops retrying a 429 once nobody waits on the flight (F2).
+            if (SongCheckWindow.videoQuickFirst(
+                    isVideo,
+                    nextRow = probe != null,
+                    wordEngineDue = ENGINE_DEEPGRAM_WHISPER in engines,
+                    quickEngine = com.music.bitchord.data.lyrics.GroqWhisper.apiKey.isNotBlank(),
+                )
+            ) {
+                aiScope.launch {
+                    quickVideoAnswer(context, videoId, song, lines, sung, key, language) { flightStillWanted(flightJob) }
                 }
             }
             for (name in listOf(ENGINE_DEEPGRAM_WHISPER, ENGINE_WHISPER).filter { it in engines }) {
@@ -3285,8 +3310,14 @@ object LyricsTiming {
         lines: List<LyricLine>,
         sung: List<IndexedValue<LyricLine>>,
         key: Int,
-        language: String,
+        sheetLanguage: String,
+        /** Whether anyone still waits on the AI flight this runs beside; a 429 is not retried past that. */
+        stillWanted: () -> Boolean,
     ) {
+        // The words heard at the track's start are reused when they were asked in the
+        // sheet's language or in "multi" (any): a mixed title asked Groq a second time for
+        // the same words (n5: 66/66, 118/118 and 228/228 words, 5 of 9 rows).
+        val language = SongCheckWindow.quickLanguage(startLanguages[videoId], sheetLanguage)
         try {
             val quick = hearThrough429(
                 context,
@@ -3295,6 +3326,7 @@ object LyricsTiming {
                 SONG_FIRST_LEAST_SECONDS,
                 language,
                 reuseFrom = SONG_FIRST_LEAST_SECONDS,
+                stillWanted = stillWanted,
                 exact = false,
             ) ?: return
             val heard = quick.words
@@ -3324,12 +3356,13 @@ object LyricsTiming {
                 // song check's do; the whole-song answer was a minute or more away from that
                 // (11-08 KChyOsjqmfM: no fit at 14 s, wrong sheet shown for the whole play).
                 if (heard.size >= MIN_AI_LINES && keepQuickVideoEvidence(context, videoId, key, heard, quick.clock, quick.rough)) {
-                    _changes.tryEmit(videoId)
+                    refitEvent(videoId)
                 }
                 return
             }
             if (keepQuickVideoAnswer(context, videoId, key, fitted, heard, quick.clock, quick.rough)) {
-                _changes.tryEmit(videoId)
+                // Lands after the flight now (F1), so its one event must not be lost either.
+                refitEvent(videoId)
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -3374,9 +3407,8 @@ object LyricsTiming {
                         .map { word -> SavedWord(t = word.text, s = word.startMs, e = word.endMs) },
                     aiClock = clock.saved(),
                     heardClock = clock.saved(),
-                    heardCheckKey = null,
-                    heardCheckWords = emptyList(),
-                    heardCheckClock = null,
+                    // Wrong-sheet evidence (heardCheck*) is left as it is: it may be the
+                    // whole song's, and an opening that fits does not disprove it (Sol F3).
                     aiPreferred = entry.aiPreferred && sameSheet,
                     biasSampled = false,
                     aiEngine = ENGINE_DEEPGRAM_WHISPER,
@@ -3442,6 +3474,8 @@ object LyricsTiming {
         title: String,
         artist: String,
         streamed: Boolean,
+        /** A lyrics lookup will run for this track: with no source, no sheet can use the words (Sol F5). */
+        lyricsLookup: Boolean = true,
     ) {
         if (!SongCheckWindow.videoHearAtStart(
                 isVideo = true,
@@ -3449,6 +3483,9 @@ object LyricsTiming {
                 quickEngine = com.music.bitchord.data.lyrics.GroqWhisper.apiKey.isNotBlank(),
                 heavyWorkAllowed = AppSettings.heavyWorkAllowed,
                 aiTimingAhead = AppSettings.aiTimingAhead.value,
+                // The words are only read by the AI ask, which runs only with Deepgram (Sol F4).
+                wordEngine = com.music.bitchord.data.lyrics.Deepgram.usable,
+                lyricsLookup = lyricsLookup,
             )
         ) return
         if (LyricsAiGuard.deepgramSkipReason(title) != null) return
@@ -3459,6 +3496,9 @@ object LyricsTiming {
         } ?: return
         val song = Song(videoId = videoId, title = title, artist = artist, thumbnailUrl = null, isVideo = true)
         val language = com.music.bitchord.data.lyrics.Deepgram.languageFor(listOf(title))
+        // Read by the quick listen ([SongCheckWindow.quickLanguage]); a playback's worth is kept.
+        if (startLanguages.size >= START_LANGUAGES_KEPT) startLanguages.clear()
+        startLanguages[videoId] = language
         val heard = try {
             hearThrough429(
                 context,
@@ -4810,6 +4850,10 @@ object LyricsTiming {
 
     /** How long a video heard at its start waits for its stream to open; a stream that never opens has nothing to hear. */
     private const val START_HEAR_STREAM_WAIT_MS = 30_000L
+
+    /** The language each video's opening was heard in at its start, for [SongCheckWindow.quickLanguage]. */
+    private val startLanguages = ConcurrentHashMap<String, String>()
+    private const val START_LANGUAGES_KEPT = 32
 
 /** Placed lines from which their own agreement, not the sheet's length, judges a fit. */
 private const val FIRM_FIT_LINES = 15

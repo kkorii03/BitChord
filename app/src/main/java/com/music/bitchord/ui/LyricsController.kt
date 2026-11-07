@@ -374,7 +374,7 @@ class LyricsController(
         _lyricsTiming.value = LyricsTimingUi()
         lyricsJob?.cancel()
         startEarlyMeasure(videoId, title, artist, durationMs, localUri, isVideo, alternatives, artistKnown)
-        startEarlyHearing(videoId, title, artist, localUri, isVideo)
+        startEarlyHearing(videoId, title, artist, localUri, isVideo, lyricsLookup = sources.isNotEmpty())
         if (sources.isEmpty()) {
             // Switched off, or every source unticked. Nothing to look up, and
             // nothing to say about it — the player drops the lyric strip
@@ -1356,12 +1356,14 @@ class LyricsController(
         artist: String,
         localUri: String?,
         isVideo: Boolean,
+        /** A lyrics lookup will run: with every source off no sheet can use the words. */
+        lyricsLookup: Boolean,
     ) {
         earlyHearingJob?.cancel()
         if (!isVideo) return
         val context = app
         earlyHearingJob = scope.launch {
-            LyricsTiming.hearVideoAtStart(context, videoId, title, artist, streamed = localUri == null)
+            LyricsTiming.hearVideoAtStart(context, videoId, title, artist, streamed = localUri == null, lyricsLookup = lyricsLookup)
         }
     }
 

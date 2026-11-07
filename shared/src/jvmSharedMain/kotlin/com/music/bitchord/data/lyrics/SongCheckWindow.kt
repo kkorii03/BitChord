@@ -43,14 +43,18 @@ object SongCheckWindow {
      * whole-song request that refines it. Only for the row playing: a next row has its
      * head only, and its bundle waits on the request. Only while the word engine is still
      * due on this sheet: a kept answer is not bought twice. A song has its own song check.
+     * Only with the quick engine: without it the quick request is a second paid Deepgram
+     * one beside the whole-song request (Sol review F4).
      */
-    fun videoQuickFirst(isVideo: Boolean, nextRow: Boolean, wordEngineDue: Boolean): Boolean =
-        isVideo && !nextRow && wordEngineDue
+    fun videoQuickFirst(isVideo: Boolean, nextRow: Boolean, wordEngineDue: Boolean, quickEngine: Boolean): Boolean =
+        isVideo && !nextRow && wordEngineDue && quickEngine
 
     /**
      * Whether a video's opening is heard as its track starts, before its lyrics are in:
      * a streamed video (a downloaded one is decoded from its file, at the gate), with
-     * the quick engine set up, and the same switches every automatic listen obeys.
+     * the quick engine set up, and the same switches every automatic listen obeys. Only
+     * when something will read the words: a lyrics lookup runs ([lyricsLookup], Sol F5)
+     * and the word engine the AI ask needs is usable ([wordEngine], Sol F4).
      */
     fun videoHearAtStart(
         isVideo: Boolean,
@@ -58,7 +62,28 @@ object SongCheckWindow {
         quickEngine: Boolean,
         heavyWorkAllowed: Boolean,
         aiTimingAhead: Boolean,
-    ): Boolean = isVideo && streamed && quickEngine && heavyWorkAllowed && aiTimingAhead
+        wordEngine: Boolean,
+        lyricsLookup: Boolean,
+    ): Boolean = isVideo && streamed && quickEngine && heavyWorkAllowed && aiTimingAhead && wordEngine && lyricsLookup
+
+    /** A transcript asked in this language heard whatever was sung (Whisper's own detection). */
+    const val ANY_LANGUAGE = "multi"
+
+    /**
+     * The language a video's quick listen asks in: the one its opening was heard in at the
+     * track's start when that is the sheet's or [ANY_LANGUAGE], or when the sheet's own
+     * language is unknown ([ANY_LANGUAGE]), so the kept words are read rather than bought
+     * again (11-08 n5: a mixed title's "multi" words were asked again in "ko"/"en" and came
+     * back the same, 5 of 9 rows); else the sheet's.
+     */
+    fun quickLanguage(heardAtStart: String?, sheetLanguage: String): String =
+        if (heardAtStart != null &&
+            (heardAtStart == sheetLanguage || heardAtStart == ANY_LANGUAGE || sheetLanguage == ANY_LANGUAGE)
+        ) {
+            heardAtStart
+        } else {
+            sheetLanguage
+        }
 
         /**
      * Whether an answer from rough words may be written. Not over an exact fit of the same
