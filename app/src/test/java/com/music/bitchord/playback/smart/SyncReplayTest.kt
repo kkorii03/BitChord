@@ -19,10 +19,26 @@ import kotlin.math.abs
 /** The opening a measured song's first pass hears. */
 private const val OPENING_MS = 90_000L
 
-/** Strict synctest: half the lines inside 200 ms, 80% inside 300 ms, 95% inside 500 ms. */
-private const val STRICT_MEDIAN_MS = 200L
-private const val STRICT_WITHIN_300_PCT = 80
-private const val STRICT_WITHIN_500_PCT = 95
+/** Strict rules from `scripts/synctest.py` `score()`: every rule must hold for `pass`. */
+private const val STRICT_MIN_LINES = 8
+private const val STRICT_MEDIAN_ABS_MS = 120L
+private const val STRICT_BIAS_MS = 80L
+private const val STRICT_IN03_PCT = 95
+private const val STRICT_IN02_PCT = 85
+private const val STRICT_MAX_ABS_MS = 800L
+private const val STRICT_COVERAGE = 0.4
+private const val STRICT_DRIFT_MS_PER_MIN = 60.0
+private const val STRICT_DRIFT_SPAN_MS = 90_000L
+
+/** The loose `old` rule kept by `score()`: median <= 200 ms and 90% within 300 ms. */
+private const val OLD_MEDIAN_MS = 200L
+private const val OLD_IN03_PCT = 90
+
+/** The loose rule behind `warn`: median absolute error at or below 300 ms. */
+private const val WARN_MEDIAN_MS = 300L
+
+/** A line counts as heard when this share of its letters was matched. */
+private const val HEARD_SHARE = 0.5
 
 /**
  * Replays recorded songs through the real fitting path, without a device.
@@ -100,6 +116,8 @@ class SyncReplayTest {
         assertEquals(3, scores.w500)
         assertEquals(4, scores.worst?.line)
         assertEquals(1_000L, scores.worst?.errorMs)
+        assertEquals(-225L, scores.biasMs)
+        assertEquals(1_000L, scores.maxAbsMs)
         assertFalse(scores.strict)
     }
 
@@ -202,10 +220,13 @@ class SyncReplayTest {
     }
 
     /**
-     * A line-accuracy report over the same corpus: the whole heard words, the
-     * first ninety seconds of them, and a fit on half the lines scored on the
-     * other half. Diagnostic only — no assertion decides on these numbers, and
-     * a bug here must not fail the baseline run.
+     * A line-accuracy report over the same corpus, one stage per row: the
+     * provider's sheet, the heard-words fit (`LyricsTiming.apply`), [RefinePolicy]
+     * on top, and the `LyricsPerLine` layer on top of that. The same stages run
+     * for the first ninety seconds of heard words, and a base fit on every other
+     * anchor is scored on the anchors held out from it. Diagnostic only — no
+     * assertion decides on these numbers, and a bug here must not fail the
+     * baseline run.
      */
     @Test
     fun `line accuracy report is printed`() {
@@ -218,7 +239,13 @@ class SyncReplayTest {
     }
 
     /** A scored line: which song, which 1-based sheet line, and how far off it ended up. */
-    private data class LineError(val song: String, val line: Int, val errorMs: Long)
+    private data class LineError(
+        val song: String,
+        val line: Int,
+        val errorMs: Long,
+        val signedMs: Long = errorMs,
+        val sungMs: Long = 0L,
+    )
 
     private data class Score(
         val lines: Int,
@@ -227,23 +254,74 @@ class SyncReplayTest {
         val w300: Int,
         val w500: Int,
         val worst: LineError?,
+        val biasMs: Long = 0L,
+        val maxAbsMs: Long = 0L,
+        val coverage: Double? = null,
+        val driftMsPerMin: Double = 0.0,
+        val spanMs: Long = 0L,
     ) {
-        // Strict synctest: half the lines inside 200 ms, 80% inside 300 ms and
-        // 95% inside 500 ms. Named here so the report's verdict has a definition.
+        // Strict rules copied from scripts/synctest.py score(): every rule must
+        // hold for `pass`; the verdict is `warn` up to a 300 ms median.
         val strict: Boolean
-            get() = lines > 0 &&
-                medianMs <= STRICT_MEDIAN_MS &&
-                w300 * 100 >= STRICT_WITHIN_300_PCT * lines &&
-                w500 * 100 >= STRICT_WITHIN_500_PCT * lines
+            get() = lines >= STRICT_MIN_LINES &&
+                medianMs <= STRICT_MEDIAN_ABS_MS &&
+                abs(biasMs) <= STRICT_BIAS_MS &&
+                w300 * 100 >= STRICT_IN03_PCT * lines &&
+                w200 * 100 >= STRICT_IN02_PCT * lines &&
+                maxAbsMs <= STRICT_MAX_ABS_MS &&
+                (coverage == null || coverage >= STRICT_COVERAGE) &&
+                !(spanMs >= STRICT_DRIFT_SPAN_MS && abs(driftMsPerMin) > STRICT_DRIFT_MS_PER_MIN)
+
+        val verdict: String
+            get() = when {
+                lines == 0 -> "n/a"
+                strict -> "pass"
+                medianMs <= WARN_MEDIAN_MS -> "warn"
+                else -> "fail"
+            }
+
+        /** The legacy `old_verdict` in `synctest.py`, for comparing past runs. */
+        val oldVerdict: String
+            get() = when {
+                lines == 0 -> "n/a"
+                medianMs <= OLD_MEDIAN_MS && w300 * 100 >= OLD_IN03_PCT * lines -> "pass"
+                medianMs <= WARN_MEDIAN_MS -> "warn"
+                else -> "fail"
+            }
     }
+
+    /** Lines heard near their shown time over lines that should have been heard. */
+    private data class Coverage(val found: Int, val eligible: Int) {
+        val share: Double? get() = if (eligible == 0) null else found.toDouble() / eligible
+    }
+
+    private class Tally {
+        val errors = ArrayList<LineError>()
+        var found = 0
+        var eligible = 0
+
+        fun add(more: List<LineError>, coverage: Coverage?) {
+            errors += more
+            if (coverage != null) {
+                found += coverage.found
+                eligible += coverage.eligible
+            }
+        }
+    }
+
+    private fun Tally.score(): Score =
+        stat(errors, if (eligible == 0) null else found.toDouble() / eligible)
+
+    private val fullStages = listOf("provider", "base", "refine", "perline")
+    private val heldStages = listOf("provider", "base")
 
     private fun lineAccuracyReport(corpus: File) {
         val files = corpus.listFiles { file -> file.isFile && file.extension == "json" }
             .orEmpty()
             .sortedBy { it.name }
-        val allFull = ArrayList<LineError>()
-        val allOpening = ArrayList<LineError>()
-        val allHeld = ArrayList<LineError>()
+        val fullTallies = linkedMapOf<String, Tally>()
+        val openingTallies = linkedMapOf<String, Tally>()
+        val heldTallies = linkedMapOf<String, Tally>()
         var songs = 0
         var withTruth = 0
         for (file in files) {
@@ -268,19 +346,24 @@ class SyncReplayTest {
             val spellable = Deepgram.spellableLines(texts, song.language)
             val placement = LyricsWordAlign.placeLinesDetailed(texts, heard)
 
-            val full = play(song.id, lines, heard, indices, placement, heard, spellable)
-            val fullErrors = scoreLines(song.id, full, song.truth, numbers)
-            allFull += fullErrors
-            println(line("${song.id} full", stat(fullErrors)))
+            val fullCoverage = coverageOf(indices, lines, song.truth, numbers, placement, heard, null)
+            val full = snapshots(song.id, lines, heard, indices, placement, heard, spellable)
+            report("full", full, fullStages, fullTallies, song, numbers, fullCoverage, null)
 
             // What an opening-only listen can fit, scored against the whole song.
             val opening = heard.filter { it.startMs <= OPENING_MS }
             if (opening.isNotEmpty()) {
                 val openingPlacement = LyricsWordAlign.placeLinesDetailed(texts, opening)
-                val openingLines = play(song.id, lines, opening, indices, openingPlacement, opening, spellable)
-                val openingErrors = scoreLines(song.id, openingLines, song.truth, numbers)
-                allOpening += openingErrors
-                println(line("${song.id} first90", stat(openingErrors)))
+                val openingCoverage = coverageOf(
+                    indices, lines, song.truth, numbers, openingPlacement, opening, null,
+                )
+                val openingStages = snapshots(
+                    song.id, lines, opening, indices, openingPlacement, opening, spellable,
+                )
+                report(
+                    "first90", openingStages, fullStages, openingTallies,
+                    song, numbers, openingCoverage, null,
+                )
             }
 
             // Fit on every other anchor, score the lines held out from it.
@@ -296,24 +379,55 @@ class SyncReplayTest {
                         placement.matchedShare.getOrElse(position.getValue(it)) { 0.0 }
                     },
                 )
-                val heldLines = play(song.id, lines, heard, fitHalf, halfPlacement, emptyList(), spellable)
-                val heldErrors = scoreLines(song.id, heldLines, song.truth, numbers, heldHalf)
-                allHeld += heldErrors
-                println(line("${song.id} held", stat(heldErrors)))
+                val heldCoverage = coverageOf(
+                    indices, lines, song.truth, numbers, placement, heard, heldHalf,
+                )
+                val held = snapshots(
+                    song.id, lines, heard, fitHalf, halfPlacement, emptyList(), spellable,
+                )
+                report(
+                    "held", held, heldStages, heldTallies,
+                    song, numbers, heldCoverage, heldHalf,
+                )
             }
         }
         println("corpus songs=$songs truth=$withTruth")
-        println(line("totals full", stat(allFull), withSong = true))
-        println(line("totals first90", stat(allOpening), withSong = true))
-        println(line("totals held", stat(allHeld), withSong = true))
+        for ((label, tally) in fullTallies) {
+            println(line("totals full $label", tally.score(), withSong = true))
+        }
+        for ((label, tally) in openingTallies) {
+            println(line("totals first90 $label", tally.score(), withSong = true))
+        }
+        for ((label, tally) in heldTallies) {
+            println(line("totals held $label", tally.score(), withSong = true))
+        }
+    }
+
+    /** One row per stage, accumulated into the variant's totals. */
+    private fun report(
+        tag: String,
+        stages: Map<String, List<LyricLine>>,
+        labels: List<String>,
+        tallies: MutableMap<String, Tally>,
+        song: Song,
+        numbers: List<Int?>,
+        coverage: Coverage?,
+        only: Set<Int>?,
+    ) {
+        for (label in labels) {
+            val errors = scoreLines(song.id, stages.getValue(label), song.truth, numbers, only)
+            tallies.getOrPut(label) { Tally() }.add(errors, coverage)
+            println(line("${song.id} $tag $label", stat(errors, coverage?.share)))
+        }
     }
 
     /**
-     * The app's own order: provider times, the heard-words fit, the applied base,
-     * [RefinePolicy] on those lines, then LyricsPerLine through
-     * [LyricsTiming.apply]. No hand correction and no HQ clock, as recorded.
+     * The app's own order as separate snapshots: provider times, the heard-words
+     * fit through [LyricsTiming.apply], [RefinePolicy] on those lines, then the
+     * per-line layer through [LyricsTiming.apply]. No hand correction and no HQ
+     * clock, as recorded.
      */
-    private fun play(
+    private fun snapshots(
         id: String,
         lines: List<LyricLine>,
         heard: List<LyricsWordAlign.Heard>,
@@ -321,7 +435,9 @@ class SyncReplayTest {
         placement: LyricsWordAlign.Placement,
         refineWords: List<LyricsWordAlign.Heard>,
         spellable: Int,
-    ): List<LyricLine> {
+    ): Map<String, List<LyricLine>> {
+        val out = LinkedHashMap<String, List<LyricLine>>()
+        out["provider"] = lines
         val base = LyricsTiming.fitHeard(
             id,
             lines,
@@ -333,25 +449,67 @@ class SyncReplayTest {
             LyricsAiGuard.agreementAllows(fit.matchPercent) &&
                 LyricsAiGuard.songShiftAllows(moved, fit.matchPercent)
         }
-        val baseOnly = LyricsTiming.Timing(base = base, manualMs = 0L)
+        val baseTiming = LyricsTiming.Timing(base = base, manualMs = 0L)
+        val baseLines = LyricsTiming.apply(lines, baseTiming)
+        out["base"] = baseLines
         val refine = if (refineWords.isEmpty()) {
             RefinePolicy.Result.NONE
         } else {
-            RefinePolicy.compute(LyricsTiming.apply(lines, baseOnly), refineWords)
+            RefinePolicy.compute(baseLines, refineWords)
         }
-        val perLine = refineWords.takeIf { it.isNotEmpty() }?.let {
-            LyricsTiming.PerLineWords(words = it, wordsKey = 0, currentKey = 0)
-        }
-        val timing = LyricsTiming.Timing(
-            base = base,
-            manualMs = 0L,
+        val refineTiming = baseTiming.copy(
             refineMs = if (refine.applied) refine.medianMs else 0L,
             refineSlopePerMin = if (refine.applied) refine.slopePerMin else 0.0,
             refineUntilMs = refineWords.maxOfOrNull { it.endMs } ?: Long.MAX_VALUE,
             refineWide = refine.applied && refine.model.wide,
-            perLine = perLine,
         )
-        return LyricsTiming.apply(lines, timing)
+        val refineLines = LyricsTiming.apply(lines, refineTiming)
+        out["refine"] = refineLines
+        val perLine = refineWords.takeIf { it.isNotEmpty() }?.let {
+            LyricsTiming.PerLineWords(words = it, wordsKey = 0, currentKey = 0)
+        }
+        out["perline"] = if (perLine == null) {
+            refineLines
+        } else {
+            LyricsTiming.apply(lines, refineTiming.copy(perLine = perLine))
+        }
+        return out
+    }
+
+    /**
+     * Lines heard near their shown time over lines that should have been heard:
+     * a truth line whose shown time is inside the heard audio, and whose own
+     * letters were at least [HEARD_SHARE] matched by the placement.
+     */
+    private fun coverageOf(
+        indices: List<Int>,
+        lines: List<LyricLine>,
+        truth: List<List<Long>>,
+        numbers: List<Int?>,
+        placement: LyricsWordAlign.Placement,
+        heard: List<LyricsWordAlign.Heard>,
+        only: Set<Int>?,
+    ): Coverage? {
+        if (truth.isEmpty() || heard.isEmpty()) return null
+        val from = heard.minOf { it.startMs }
+        val to = heard.maxOf { it.endMs }
+        val position = HashMap<Int, Int>(indices.size)
+        indices.forEachIndexed { p, index -> position[index] = p }
+        var eligible = 0
+        var found = 0
+        for (row in truth) {
+            if (row.size < 2) continue
+            val index = lines.indices.firstOrNull { idx ->
+                (numbers.getOrNull(idx) ?: (idx + 1)).toLong() == row[0]
+            } ?: continue
+            if (only != null && index !in only) continue
+            val shown = lines[index].timeMs
+            if (shown < from || shown > to) continue
+            val p = position[index] ?: continue
+            eligible++
+            if (placement.matchedShare.getOrElse(p) { 0.0 } >= HEARD_SHARE) found++
+        }
+        return if (eligible == 0) null else Coverage(found, eligible)
     }
 
     /** Each shown line's distance from the independent score's sung time, ms. */
@@ -373,17 +531,35 @@ class SyncReplayTest {
             if (line.text.isBlank()) return@forEachIndexed
             val number = (numbers.getOrNull(index) ?: (index + 1)).toLong()
             val sung = sungByLine[number] ?: return@forEachIndexed
-            errors += LineError(song, index + 1, abs(line.timeMs - sung))
+            errors += LineError(song, index + 1, abs(line.timeMs - sung), line.timeMs - sung, sung)
         }
         return errors
     }
 
-    private fun stat(errors: List<LineError>): Score {
-        if (errors.isEmpty()) return Score(0, 0, 0, 0, 0, null)
+    private fun stat(errors: List<LineError>, coverage: Double? = null): Score {
+        if (errors.isEmpty()) return Score(0, 0, 0, 0, 0, null, coverage = coverage)
         val values = errors.map { it.errorMs }
         val sorted = values.sorted()
         val middle = sorted.size / 2
         val median = if (sorted.size % 2 == 1) sorted[middle] else (sorted[middle - 1] + sorted[middle]) / 2
+        val signed = errors.map { it.signedMs }.sorted()
+        val bias = if (signed.size % 2 == 1) signed[middle] else (signed[middle - 1] + signed[middle]) / 2
+        // scripts/synctest.py drift_slope: least squares over the signed errors,
+        // lines more than 0.5 s off the median left out; fewer than 4 points
+        // have no drift.
+        var drift = 0.0
+        var span = 0L
+        if (errors.size >= 4) {
+            val points = errors.filter { abs(it.signedMs - bias) <= 500L }.ifEmpty { errors }
+            val ts = points.map { it.sungMs.toDouble() }
+            val es = points.map { it.signedMs.toDouble() }
+            val mt = ts.average()
+            val me = es.average()
+            val variance = ts.sumOf { (it - mt) * (it - mt) }.takeIf { it > 0.0 } ?: 1e-9
+            val slope = ts.indices.sumOf { (ts[it] - mt) * (es[it] - me) } / variance
+            drift = slope * 60_000.0
+            span = points.maxOf { it.sungMs } - points.minOf { it.sungMs }
+        }
         return Score(
             lines = values.size,
             medianMs = median,
@@ -391,6 +567,11 @@ class SyncReplayTest {
             w300 = values.count { it <= 300L },
             w500 = values.count { it <= 500L },
             worst = errors.maxByOrNull { it.errorMs },
+            biasMs = bias,
+            maxAbsMs = values.maxOrNull() ?: 0L,
+            coverage = coverage,
+            driftMsPerMin = drift,
+            spanMs = span,
         )
     }
 
@@ -398,14 +579,12 @@ class SyncReplayTest {
         val worst = score.worst?.let {
             if (withSong) "${it.song}:${it.line}:${it.errorMs}" else "${it.line}:${it.errorMs}"
         } ?: "-"
-        val verdict = when {
-            score.lines == 0 -> "n/a"
-            score.strict -> "pass"
-            else -> "fail"
-        }
-        return "$label lines=${score.lines} med=${score.medianMs} " +
-            "w200=${pct(score.w200, score.lines)} w300=${pct(score.w300, score.lines)} " +
-            "w500=${pct(score.w500, score.lines)} worst=$worst strict=$verdict"
+        val coverage = score.coverage?.let { pct((it * 100).toInt(), 100) } ?: "-"
+        return "$label lines=${score.lines} med=${score.medianMs} bias=${score.biasMs} " +
+            "in02=${pct(score.w200, score.lines)} in03=${pct(score.w300, score.lines)} " +
+            "in05=${pct(score.w500, score.lines)} max=${score.maxAbsMs} cov=$coverage " +
+            "drift=${score.driftMsPerMin.toLong()} span=${score.spanMs} worst=$worst " +
+            "verdict=${score.verdict} old=${score.oldVerdict}"
     }
 
     private fun pct(part: Int, whole: Int): String =
