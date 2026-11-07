@@ -576,7 +576,7 @@ class LyricsController(
                 TrackLog.i("BitChord", "lyrics: deadline after ${backstopMs}ms", about = videoId)
             }
             val selected = selectedLyricsSource?.let(lyricsProviderResults::get) ?: found
-            publishLyrics(selected)
+            publishLyrics(selected, force = selectedLyricsSource != null)
             _lyricsChecked.value = true
             // A miss is not a final answer: a source may have been down or the
             // phone offline. Forget the claim so a later look at the same
