@@ -607,19 +607,36 @@ section_search() {
 }
 
 # ---- Now playing, lyrics, queue, sheets ---------------------------------
+# Throwaway: find_center drops anything in the bottom 14% of the screen, which is where the mini player and the lyrics button sit.
+tap_raw() {
+  dump_ui
+  local at
+  at=$(python3 - "$1" <<'PY'
+import re, sys, xml.etree.ElementTree as ET
+want = sys.argv[1]
+hits = [n for n in ET.parse('/tmp/ui.xml').iter('node') if want in ((n.get('text') or ''), (n.get('content-desc') or ''))]
+if hits:
+    x1, y1, x2, y2 = map(int, re.findall(r'\d+', hits[-1].get('bounds')))
+    print((x1 + x2) // 2, (y1 + y2) // 2)
+PY
+)
+  [ -n "$at" ] || { echo "tap_raw not found: $1"; return 1; }
+  adb shell input tap $at
+  sleep "${2:-4}"
+}
 section_now_playing() {
   reset_home
   # A shared link populates the player even though the datacenter IP cannot play.
   adb shell am start -a android.intent.action.VIEW -d "https://music.youtube.com/watch?v=$MAIN_VIDEO" $PKG
   sleep 20
   shot now-playing-mini "Now playing (mini player)"
-  if tap "Dance Monkey" last 4 || tap "Rolling" last 4; then
+  if tap_raw "Dance Monkey" 4; then
   sleep 2
   shot now-playing "Now playing (expanded)"
   adb shell input swipe 540 1200 540 400 400; sleep 3
   shot now-playing-scrolled "Now playing scrolled"
 
-  adb shell input tap 182 2132; sleep 12
+  tap_raw "가사" 12
   if true; then
     shot lyrics "Lyrics"
     if tap "가사 번역" first 25; then shot lyrics-translated "Lyrics translated"; fi
@@ -733,7 +750,6 @@ section_proxy() {
 # Quick mode: only the screens a home/explore/artwork change can affect.
 if [ "${TOUR_QUICK:-0}" = "1" ]; then
   run_section section_home home
-  run_section section_explore explore
   sleep 30
   tap "대기" first 3 || true
   run_section section_now_playing now-playing
