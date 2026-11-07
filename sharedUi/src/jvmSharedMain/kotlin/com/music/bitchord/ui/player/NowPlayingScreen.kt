@@ -1026,6 +1026,7 @@ fun NowPlayingScreen(
         // and say which mode was asked for beside what came back.
         val source = lyricsSource?.label
             ?: if (lyrics?.isNotEmpty() == true) "file" else "none"
+        com.music.bitchord.ko.ui.player.KoTapSync.source = source // [KO] tap-sync
         TrackLog.i(
             "BitChord",
             "lyrics: source=$source state=$state synced=$synced " +

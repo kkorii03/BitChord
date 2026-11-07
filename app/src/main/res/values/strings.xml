@@ -534,6 +534,8 @@
     <string name="copy_log">Copy log</string>
     <string name="problem_mark">Report a problem (writes to the log)</string>
     <string name="problem_marked">Marked in the diagnostic log</string>
+    <string name="tap_sync_mode">Sync tap recording</string>
+    <string name="tap_sync_hint">Tap the screen when the singer starts each line. When done, send it with Copy log.</string>
     <string name="couldnt_find">Couldn\'t find %1$s</string>
     <string name="couldnt_open_link">Couldn\'t open that link</string>
     <string name="create_playlist">Create playlist</string>

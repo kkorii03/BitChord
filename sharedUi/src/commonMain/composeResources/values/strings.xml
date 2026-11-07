@@ -36,6 +36,7 @@
     <string name="high_quality_upgrading">High quality, upgrading</string>
     <string name="increase_lyrics_offset">Increase lyrics offset</string>
     <string name="instrumental">Instrumental</string>
+    <string name="tap_sync_count">Taps</string>
     <string name="like">Like</string>
     <string name="listen_together">Listen together</string>
     <string name="listen_together_away">Away — their slot is held</string>

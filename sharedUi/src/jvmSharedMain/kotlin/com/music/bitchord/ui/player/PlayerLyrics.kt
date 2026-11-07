@@ -161,6 +161,8 @@ import com.music.bitchord.ko.ui.player.koShownLine
 import com.music.bitchord.ko.ui.player.koStaggerDelayMs
 import com.music.bitchord.ko.ui.player.koStatusChevron
 import com.music.bitchord.ko.ui.player.koSweptLine
+import com.music.bitchord.ko.ui.player.KoTapSync
+import com.music.bitchord.ko.ui.player.koTapSync
 import com.music.bitchord.ko.ui.player.koTranscribingPlaceholder
 import com.music.bitchord.ko.ui.player.koWordFeatherPx
 import com.music.bitchord.ko.ui.player.rememberKoLineIndex
@@ -696,7 +698,7 @@ internal fun CurrentLyricStrip(
  */
 @Stable
 internal class LyricPlayhead(
-    private val position: PlaybackPosition,
+    val position: PlaybackPosition, // [KO] tap-sync reads the raw playhead
     private val offsetMs: State<Int>,
 ) {
     val positionMs: Long get() = adjustedLyricsPosition(position.positionMs, offsetMs.value)
@@ -2180,11 +2182,12 @@ internal fun LyricsPanel(
             .bleedHorizontally(PLAYER_GUTTER)
             .nestedScroll(controlsOnScroll)
             .nestedScroll(keepScroll)
+            .koTapSync(trackKey, lines, playhead, clock, { activeRows.firstOrNull() ?: -1 }, isPlaying, active) // [KO] tap-sync
             // Browsing leaves taps to each lyric row's seek action throughout
             // the list — and picking leaves them nothing at all: the gesture
             // below takes taps at the initial pass, so while a pick is open it
             // would swallow every choice before the row ever saw it.
-            .revealLyricsControlsOnTap(!controlsOpen && !picking, onBottomHalfTap)
+            .revealLyricsControlsOnTap(!controlsOpen && !picking && !KoTapSync.on, onBottomHalfTap) // [KO] tap-sync
             .fadingEdges(),
         // Each row carries GLOW_ROOM of its own inset for the halo, so the
         // list hands that much back — otherwise the lines would sit a glow's
