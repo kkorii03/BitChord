@@ -9,6 +9,21 @@ import androidx.compose.runtime.remember
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricLineIndex
 
+/**
+ * The panel's lead, held to the silence before the next line when the current
+ * line's end is known. The lead has a 350 ms floor, so on fast rap with no gap
+ * between lines the panel left a line while its last word was still being
+ * sung, and the eye left with it. The user saw half a word lit at each
+ * handover (Rap God, vc171). A line with no known end (line-timed) keeps
+ * the full lead, because its "end" is only its start.
+ */
+internal fun koLeadBeforeLastWord(lines: List<LyricLine>, current: Int, lead: Long): Long {
+    val line = lines.getOrNull(current) ?: return lead
+    if (!line.hasKnownEnd) return lead
+    val next = lines.getOrNull(current + 1) ?: return lead
+    return lead.coerceAtMost((next.timeMs - line.endMs).coerceAtLeast(0L))
+}
+
 internal class KoLyricPanelIndexes(
     val rowIndex: LyricLineIndex,
     val leadIndex: LyricLineIndex,
@@ -50,7 +65,8 @@ internal fun rememberKoLyricPanelIndexes(
                 -1
             } else {
                 val now = clock.longValue
-                val lead = scrollLead(lines, leadIndex.lineAt(now))
+                val current = leadIndex.lineAt(now)
+                val lead = koLeadBeforeLastWord(lines, current, scrollLead(lines, current))
                 leadIndex.activeRows(now + lead).firstOrNull() ?: -1
             }
         }

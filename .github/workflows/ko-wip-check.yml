@@ -77,7 +77,7 @@ jobs:
         run: |
           set +e -o pipefail
           chmod +x gradlew
-          ./gradlew :sharedUi:jvmTest --tests '*LyricClockTest' --tests '*KoLyricsStatusTest' --tests '*LyricsControlPolicyTest' --console=plain 2>&1 | tee clock.log
+          ./gradlew :sharedUi:jvmTest --tests '*LyricClockTest' --tests '*KoLyricsStatusTest' --tests '*KoLeadBeforeLastWordTest' --tests '*LyricsControlPolicyTest' --console=plain 2>&1 | tee clock.log
           status=${PIPESTATUS[0]}
           for f in sharedUi/build/test-results/jvmTest/*.xml; do
             [ -f "$f" ] || continue
