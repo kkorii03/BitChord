@@ -145,6 +145,101 @@ class DownloadHealthPolicyTest {
         assertEquals(DownloadHealthPolicy.Verdict.ARRANGEMENT, decision.verdict)
     }
 
+    /**
+     * Phone 11-07, Counting Stars: `hq-verify: downloaded file download match=100%
+     * offset=9187 -> accepted`, then `download-check: _GWKkqNoyEA result=ok`, and the
+     * player moved onto a 344 s file under a 258 s album row. The comparison hears the
+     * opening ninety seconds; it cannot speak for the other four minutes.
+     */
+    @Test
+    fun `a fresh acceptance does not hide a cut far longer than the song`() {
+        val online = DownloadHealthPolicy.judge(
+            input(soundAccepted = true, catalogMs = 258_000L, fileMs = 343_666L),
+        )
+        assertEquals(DownloadHealthPolicy.Verdict.WRONG_RECORDING, online.verdict)
+        assertEquals(DownloadHealthPolicy.Action.STREAM, online.action)
+
+        val offline = DownloadHealthPolicy.judge(
+            input(soundAccepted = true, catalogMs = 258_000L, fileMs = 343_666L, online = false),
+        )
+        assertEquals(DownloadHealthPolicy.Action.REDOWNLOAD, offline.action)
+    }
+
+    /** What the same file meets on its next play: the stored verdict of the first. */
+    @Test
+    fun `the replay of that cut is condemned on its stored acceptance too`() {
+        val decision = DownloadHealthPolicy.judge(
+            input(soundAccepted = true, soundCached = true, catalogMs = 258_000L, fileMs = 343_666L),
+        )
+        assertEquals(DownloadHealthPolicy.Verdict.WRONG_RECORDING, decision.verdict)
+    }
+
+    @Test
+    fun `a fresh acceptance does not hide a clip of the song`() {
+        val decision = DownloadHealthPolicy.judge(
+            input(soundAccepted = true, catalogMs = 180_000L, fileMs = 30_000L),
+        )
+        assertEquals(DownloadHealthPolicy.Verdict.WRONG_RECORDING, decision.verdict)
+    }
+
+    /** A fade a service trims differently is still the recording the audio proved. */
+    @Test
+    fun `a fresh acceptance keeps a file inside the matcher's window`() {
+        val limitMs = TrackMatcher.DURATION_LIMIT_SEC * 1_000L
+        listOf(200_000L + limitMs, 200_000L - limitMs).forEach { fileMs ->
+            val decision = DownloadHealthPolicy.judge(
+                input(soundAccepted = true, catalogMs = 200_000L, fileMs = fileMs),
+            )
+            assertEquals(fileMs.toString(), DownloadHealthPolicy.Verdict.OK, decision.verdict)
+        }
+    }
+
+    @Test
+    fun `a fresh acceptance with no runtime to compare stays accepted`() {
+        listOf(null to 343_666L, 258_000L to null, 258_000L to 0L).forEach { (catalogMs, fileMs) ->
+            val decision = DownloadHealthPolicy.judge(
+                input(soundAccepted = true, catalogMs = catalogMs, fileMs = fileMs),
+            )
+            assertEquals(DownloadHealthPolicy.Verdict.OK, decision.verdict)
+        }
+    }
+
+    /** Chroma follows the harmony, so a stage take in the same key can clear the bar. */
+    @Test
+    fun `a fresh acceptance does not hide a source row naming a live take`() {
+        listOf(
+            "Song (Live)",
+            "Song (Live at Wembley)",
+            "Song - Live",
+            "Song (Concert Version)",
+            "Song [Spotify Sessions]",
+            "Song (MTV Unplugged)",
+            "Song (라이브)",
+        ).forEach { title ->
+            val decision = DownloadHealthPolicy.judge(input(soundAccepted = true, sourceTitle = title))
+            assertEquals(title, DownloadHealthPolicy.Verdict.ARRANGEMENT, decision.verdict)
+            assertEquals(title, DownloadHealthPolicy.Action.STREAM, decision.action)
+        }
+    }
+
+    @Test
+    fun `live in the song's own name is not a live take`() {
+        listOf(
+            Triple("Let Me Live", "Let Me Live", "Queen"),
+            Triple("Song (Live)", "Song (Live)", "Artist"),
+        ).forEach { (sourceTitle, songTitle, songArtist) ->
+            val decision = DownloadHealthPolicy.judge(
+                input(
+                    soundAccepted = true,
+                    sourceTitle = sourceTitle,
+                    songTitle = songTitle,
+                    songArtist = songArtist,
+                ),
+            )
+            assertEquals(sourceTitle, DownloadHealthPolicy.Verdict.OK, decision.verdict)
+        }
+    }
+
     @Test
     fun `a file replaced during verification is not marked wrong`() {
         assertFalse(
