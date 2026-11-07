@@ -43,7 +43,9 @@ internal object SheetChoice {
     /**
      * The candidate to put up instead of [current], or null to keep it. It must
      * clear the floor any timing has to clear, and beat [current] by
-     * [MARGIN_PERCENT], and [current] must not already be good enough.
+     * [MARGIN_PERCENT], and [current] must not already be good enough. Good enough but
+     * line-timed gives way to a sheet that also fits and times every word: the first answer on
+     * screen is often the line-timed one, and a late word-timed one now waits here for the words.
      */
     fun better(
         current: List<LyricLine>,
@@ -52,8 +54,16 @@ internal object SheetChoice {
     ): LyricsRepository.Result? {
         if (heard.size < LyricsMismatch.MIN_HEARD_WORDS) return null
         val mine = fitPercent(current, heard)
-        if (mine >= GOOD_ENOUGH_PERCENT) return null
+        if (mine >= GOOD_ENOUGH_PERCENT) {
+            if (current.any { it.hasStatedWords() }) return null
+            return candidates.filter { sheet -> sheet.lines.any { it.hasStatedWords() } }
+                .map { it to fitPercent(it.lines, heard) }
+                .filter { it.second >= GOOD_ENOUGH_PERCENT }
+                .maxByOrNull { it.second }?.first
+        }
         val (best, percent) = candidates.map { it to fitPercent(it.lines, heard) }.maxByOrNull { it.second } ?: return null
         return best.takeIf { percent >= maxOf(LyricsAiGuard.MIN_MATCH_PERCENT, mine + MARGIN_PERCENT) }
     }
+
+    private fun LyricLine.hasStatedWords() = words.isNotEmpty() && !wordsEstimated
 }

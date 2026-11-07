@@ -23,6 +23,19 @@ import androidx.compose.runtime.setValue
  * Take care to keep it that way — reading [positionMs] high in the tree and
  * passing the `Long` down puts the invalidation straight back where it was.
  */
+/**
+ * The speed for [PlaybackPosition.speed]: what the player says, which follows Automix easing a
+ * tempo, but no further from the listener's own speed than Automix ever goes. The reading sag
+ * behind this value is unexplained (see LyricClock), so a wild figure is not taken on trust.
+ */
+fun playingSpeed(reported: Float, listenersOwn: Float): Float {
+    val own = if (listenersOwn > 0f) listenersOwn else 1f
+    return if (reported > 0f) reported.coerceIn(own * MIN_STRETCH, own * MAX_STRETCH) else own
+}
+
+private const val MIN_STRETCH = 0.85f
+private const val MAX_STRETCH = 1.15f
+
 @Stable
 class PlaybackPosition {
     /** The latest reading of the playhead. Written through [report], with the time it was taken. */
@@ -59,6 +72,13 @@ class PlaybackPosition {
      * playing — the desktop engine does, because its "playing" also drives Listen Together.
      */
     var advancing by mutableStateOf(true)
+
+    /**
+     * The speed the player is playing at, NaN where the owner does not know it. Plain, not state:
+     * the lyric clock reads it every frame, and nothing needs to recompose when it changes.
+     */
+    @Volatile
+    var speed: Float = Float.NaN
 
     /**
      * Records a reading of the playhead and when it was taken. Pass

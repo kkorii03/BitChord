@@ -579,13 +579,16 @@ def run_song(vid, seconds, dry):
         # No lyrics on screen is the user-facing failure itself, not a test gap.
         return dict(error="no sync-dump (no lyrics shown?)", app_fail=True)
     head, lines = dump
-    if not dry and dump_id != vid:
+    if dump_id != vid:
         # The song check writes its WAV under the id it plays; the row's own WAV
-        # is another recording than the swapped sheet (and may be stale).
-        played_wav = OUT / f"{vid}.swapped.wav"
-        adb("pull", f"{APP_DIR}/synctest/{dump_id}.wav", str(played_wav), timeout=120)
-        if played_wav.exists() and played_wav.stat().st_size > 1000:
-            wav = played_wav
+        # is another recording than the swapped sheet (and may be stale), so it
+        # never stands in for the played one: a video's long intro put the played
+        # sheet 11 s (ekzHIouo8Q4) or 75 s (YQHsXMglC9A) off its own audio on paper.
+        # A saved round keeps that WAV under the id, a live run pulls it.
+        wav = OUT / f"{dump_id}.wav"
+        if not dry:
+            wav = OUT / f"{vid}.swapped.wav"
+            adb("pull", f"{APP_DIR}/synctest/{dump_id}.wav", str(wav), timeout=120)
     # A downloaded song plays its stored file with its stored lyrics and timing,
     # which may themselves be wrong; scored the same way but reported apart.
     resolve = resolve_of(text, dump_id)
@@ -611,7 +614,7 @@ def run_song(vid, seconds, dry):
         return finish(vid, row, lines, per_model)
     app_words = None
     if wav.exists() and wav.stat().st_size > 1000:
-        app_words = hear(f"{vid}.app", wav, "audio/wav", lang, MODELS[0])
+        app_words = hear(f"{dump_id}.app", wav, "audio/wav", lang, MODELS[0])
         if app_words is None:
             return dict(row, error="deepgram failed")
     elif stored:
@@ -648,7 +651,7 @@ def run_song(vid, seconds, dry):
             return dict(row, error="no audio")
         # YouTube's copy is missing or another recording than the phone's: the app's
         # 90 s is all that is certainly what was played.
-        second = hear(f"{vid}.app", wav, "audio/wav", lang, MODELS[1])
+        second = hear(f"{dump_id}.app", wav, "audio/wav", lang, MODELS[1])
         if second is None:
             return dict(row, error="deepgram failed")
         per_model, row["audio"] = [app_words, second], "app wav only (first 90 s; YouTube copy did not line up)"

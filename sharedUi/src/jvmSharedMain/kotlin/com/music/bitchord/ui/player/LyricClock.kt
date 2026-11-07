@@ -38,6 +38,15 @@ import kotlin.math.abs
  * `rememberLyricClock` is the composable that drives it.
  */
 internal class LyricClock(startMs: Long) {
+    // Steady mode, see [steadyAdvance]: what recent readings said against the words, oldest
+    // first, how far the words have been steered since each was stored, and what is still owed.
+    private val heardAtMs = DoubleArray(STEADY_READINGS)
+    private val heardOffsetMs = DoubleArray(STEADY_READINGS)
+    private var heardCount = 0
+    private var steeredMs = 0.0
+    private var owedMs = 0.0
+    private var steerCap = STEADY_STEER
+
     /** Where the lyrics are drawn, in song milliseconds. */
     var displayedMs: Double = startMs.toDouble()
         private set
@@ -89,6 +98,14 @@ internal class LyricClock(startMs: Long) {
         jumpPending = false
         glideStartMs = Double.NaN
         clearSuspect()
+        forgetHeard()
+    }
+
+    private fun forgetHeard() {
+        heardCount = 0
+        steeredMs = 0.0
+        owedMs = 0.0
+        steerCap = STEADY_STEER
     }
 
     /**
@@ -111,9 +128,20 @@ internal class LyricClock(startMs: Long) {
      * taken, or NaN where nobody said — it is then dated by the first frame that
      * sees it, the best that can be done. [discontinuity] is any value that
      * changes when the playhead jumps on purpose; only its changing matters.
+     * [knownSpeed] is the speed the player is playing at, where that is known: the words then run
+     * at exactly it, and readings only steer them (see [steadyAdvance]). NaN learns the rate from
+     * the readings, as above.
      */
-    fun frame(nowMs: Double, reportedMs: Long, sampledAtMs: Double, discontinuity: Long): Long {
+    fun frame(
+        nowMs: Double,
+        reportedMs: Long,
+        sampledAtMs: Double,
+        discontinuity: Long,
+        knownSpeed: Double = Double.NaN,
+    ): Long {
         val firstOfRun = lastNowMs.isNaN()
+        val steady = !knownSpeed.isNaN()
+        if (steady) rate = knownSpeed.coerceIn(MIN_RATE, MAX_RATE)
         if (discontinuity != lastDiscontinuity) {
             if (lastDiscontinuity != null && !firstOfRun) jumpPending = true
             lastDiscontinuity = discontinuity
@@ -143,16 +171,98 @@ internal class LyricClock(startMs: Long) {
         // by this frame a second time.
         val dt = (nowMs - lastNowMs).coerceAtLeast(0.0)
         lastNowMs = nowMs
-        advance(nowMs, dt)
+        if (steady) steadyAdvance(nowMs, dt) else advance(nowMs, dt)
 
         if (isNew) {
             // A stamp from the future is a frame clock running a hair behind
             // the reading; one from before the anchor is out of order, and says
             // nothing the anchor does not.
             val takenAt = if (sampledAtMs.isNaN()) nowMs else minOf(sampledAtMs, nowMs)
-            if (takenAt >= anchorAtMs || jumpPending) take(nowMs, takenAt, reportedMs)
+            when {
+                !steady -> if (takenAt >= anchorAtMs || jumpPending) take(nowMs, takenAt, reportedMs)
+                jumpPending -> {
+                    forgetHeard()
+                    take(nowMs, takenAt, reportedMs)
+                }
+                // Mid-glide the words are on their way to a reading already believed, so where
+                // they stand says nothing about this one.
+                glideStartMs.isNaN() -> steadyTake(nowMs, takenAt, reportedMs)
+            }
         }
         return displayedMs.toLong()
+    }
+
+    /**
+     * The words at the player's own speed, steered by at most [steerCap].
+     *
+     * 11-07, Rap God on LDAC Bluetooth, measured off the listener's screen recording: the
+     * provider's word times were right to 0.1 s, yet the words ran at 0.54-0.71x and rushed
+     * every 3 s, up to 1.25 s behind. The readings on that route sag and leap (0.34x, 0.63x,
+     * 3.5x over 1.5 s), and the clock obeyed them: behind a sagging reading it thought itself
+     * ahead and ran at half speed, then glided forward at the leap. The sound was at 1x all the
+     * while. Why the readings sag is not established; the words no longer depend on it.
+     * Simulated (bench/lyric_clock_steady.py): on sagging readings 805 ms median off becomes 73,
+     * and 85% of the time running slow becomes none; on ordinary readings it stays where it was.
+     */
+    private fun steadyAdvance(nowMs: Double, dt: Double) {
+        if (!glideStartMs.isNaN()) {
+            advance(nowMs, dt)
+            return
+        }
+        val step = dt * rate
+        val moved = (owedMs * (dt / (dt + CORRECTION_MS))).coerceIn(-steerCap * step, steerCap * step)
+        displayedMs += step + moved
+        steeredMs += moved
+        owedMs -= moved
+    }
+
+    /** One reading in steady mode: on the books, and acted on at once only if every recent one agrees. */
+    private fun steadyTake(nowMs: Double, takenAt: Double, reportedMs: Long) {
+        if (heardCount > 0 && takenAt < heardAtMs[heardCount - 1]) return
+        val offset = reportedMs - (displayedMs - (nowMs - takenAt) * rate)
+        if (heardCount == STEADY_READINGS) {
+            heardAtMs.copyInto(heardAtMs, 0, 1, STEADY_READINGS)
+            heardOffsetMs.copyInto(heardOffsetMs, 0, 1, STEADY_READINGS)
+            heardCount--
+        }
+        heardAtMs[heardCount] = takenAt
+        heardOffsetMs[heardCount] = offset + steeredMs
+        heardCount++
+        var first = 0
+        while (first < heardCount - 1 && takenAt - heardAtMs[first] > STEADY_WINDOW_MS) first++
+        val owed = DoubleArray(heardCount - first) { heardOffsetMs[first + it] - steeredMs }
+        // The last few readings all say the song is elsewhere: it is, and nothing else announced
+        // it. A sagging reading is only ever behind the words, and ahead it can only mean the words
+        // are late, so going there at once is right either way. Behind them, only another part of
+        // the song counts: nothing unannounced moves the words backwards.
+        val recent = owed.size - STEADY_SURE_READINGS
+        if (recent >= 0 && takenAt - heardAtMs[heardCount - STEADY_SURE_READINGS] >= STEADY_CONFIRM_MS &&
+            (recent until owed.size).let { last -> last.all { owed[it] > STEADY_FAR_MS } || last.all { owed[it] < -LOST_MS } }
+        ) {
+            forgetHeard()
+            anchor(takenAt, reportedMs)
+            jumpTo(nowMs)
+            return
+        }
+        owedMs = steadyOwed(owed)
+        steerCap = if (owed.size >= STEADY_SURE_READINGS && abs(owedMs) >= STEADY_REAL_GAP_MS) MAX_SLEW else STEADY_STEER
+    }
+
+    /**
+     * Where readings say the song is, against the words. Noise goes either way, so its middle
+     * is the song; readings that sag fall step after step and then leap back, so their top is.
+     */
+    private fun steadyOwed(owed: DoubleArray): Double {
+        val sorted = owed.sorted()
+        val steps = owed.size - 1
+        if (steps >= STEADY_SAG_MIN_STEPS) {
+            val falls = DoubleArray(steps) { owed[it + 1] - owed[it] }
+            val falling = falls.count { it < 0.0 }
+            if (falling >= steps * STEADY_SAG_SHARE && falls.sorted()[steps / 2] <= -STEADY_SAG_STEP_MS) {
+                return sorted.last()
+            }
+        }
+        return sorted[sorted.size / 2]
     }
 
     /** Folds one new reading in — or holds it back, if it disagrees with the song so far. */
@@ -433,3 +543,23 @@ private const val GLIDE_MAX_MS = 2_000.0
 
 /** A confirmed gap this wide either way is another part of the song, and is jumped to. */
 private const val LOST_MS = 3_000.0
+
+/** The most readings can speed up or slow down the words when the player's speed is known: too little to see. */
+private const val STEADY_STEER = 0.05
+
+/** A gap this wide from this many readings is real, and closes at [MAX_SLEW] rather than unseen. */
+private const val STEADY_REAL_GAP_MS = 300.0
+private const val STEADY_SURE_READINGS = 3
+
+/** The readings steady mode weighs: long enough to hold the top of a sag that resets every 3 s. */
+private const val STEADY_WINDOW_MS = 4_000.0
+private const val STEADY_READINGS = 16
+
+/** How far ahead every reading must be, and for how long, to be gone to at once: the sag seen on the phone stays inside it. */
+private const val STEADY_FAR_MS = 700.0
+private const val STEADY_CONFIRM_MS = 800.0
+
+/** Most steps falling, by this much each, is a sag rather than noise. */
+private const val STEADY_SAG_MIN_STEPS = 4
+private const val STEADY_SAG_SHARE = 0.7
+private const val STEADY_SAG_STEP_MS = 40.0

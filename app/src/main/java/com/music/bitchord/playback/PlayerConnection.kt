@@ -447,8 +447,16 @@ fun rememberPlayerState(controller: MediaController?): PlayerState {
     // events, and the first thing that happens on the way back is a fresh read.
     val foreground = rememberIsForeground()
     LaunchedEffect(controller, state.isPlaying, foreground) {
+        var loggedSpeed = Float.NaN
         while (controller != null && state.isPlaying && foreground) {
             position.report(controller.currentPosition.coerceAtLeast(0L))
+            val reportedSpeed = controller.playbackParameters.speed
+            val ownSpeed = com.music.bitchord.data.settings.AppSettings.playbackSpeed.value
+            position.speed = playingSpeed(reportedSpeed, ownSpeed)
+            if (reportedSpeed != loggedSpeed) {
+                loggedSpeed = reportedSpeed
+                com.music.bitchord.data.TrackLog.d("BitChord", "lyric-clock: player speed=$reportedSpeed own=$ownSpeed")
+            }
             val duration = controller.duration.coerceAtLeast(0L)
             if (duration != state.durationMs) state = state.copy(durationMs = duration)
             delay(500)

@@ -13,10 +13,13 @@ import kotlin.math.abs
  * the two runtimes and the two sets of names into a verdict and an action.
  *
  * The order matters. A sound comparison that explicitly rejected the file is
- * the strongest evidence, so it wins outright. An accepted comparison is
- * equally strong the other way and stops a marker from condemning a recording
- * the audio proved is the same take. Only when the audio could not answer does
- * the arrangement vocabulary and the runtime difference decide.
+ * the strongest evidence, so it wins outright. An accepted comparison stops an
+ * arrangement marker or a small runtime gap from condemning a recording the
+ * audio proved is the same take; when the audio could not answer, those two
+ * decide. An acceptance does not reach further than that. It hears the opening
+ * ninety seconds, by harmony, so it can speak for neither a cut that runs on
+ * for minutes past them nor a stage take in the same key: those two are decided
+ * by the runtime and the source's names whatever the audio said.
  */
 object DownloadHealthPolicy {
 
@@ -113,6 +116,14 @@ object DownloadHealthPolicy {
         if ((input.soundAccepted == null || input.soundCached) && lengthDiffers(input)) {
             return wrong(input.online)
         }
+        // Phone 11-07, Counting Stars: match=100% over the opening, and a 344 s file
+        // played under a 258 s album row because a fresh acceptance skipped the line above.
+        if (namesLiveTake(input)) {
+            return Decision(Verdict.ARRANGEMENT, if (input.online) Action.STREAM else Action.REDOWNLOAD)
+        }
+        if (isAnotherCut(input)) {
+            return wrong(input.online)
+        }
         val current = input.currentTier
         val verified = input.verifiedTier
         if (current != null && verified != null && verified.rank < current.rank) {
@@ -149,6 +160,30 @@ object DownloadHealthPolicy {
         val catalog = input.catalogDurationMs?.takeIf { it > 0L } ?: return false
         return abs(file - catalog) > DURATION_TOLERANCE_MS
     }
+
+    /**
+     * The rule a stream row and a cached copy already answer to, for the file's
+     * measured runtime. Wider than [DURATION_TOLERANCE_MS]: with the audio on
+     * the file's side, only a gap no fade or trimmed intro explains counts.
+     */
+    private fun isAnotherCut(input: Input): Boolean =
+        TrackMatcher.isWrongLength(
+            input.catalogDurationMs?.div(1_000L)?.toInt(),
+            input.fileDurationMs?.div(1_000L)?.toInt(),
+        )
+
+    /** Whether the source row's title marks a stage take the song's own names do not. */
+    private fun namesLiveTake(input: Input): Boolean {
+        val source = input.sourceTitle?.takeIf { it.isNotBlank() } ?: return false
+        val named = TrackMatcher.parseTitle(source, input.sourceArtist.orEmpty()).versions
+        val own = TrackMatcher.parseTitle(input.songTitle, input.songArtist).versions
+        return (named intersect LIVE_TAKES).any { it !in own }
+    }
+
+    /** The [TrackMatcher.VERSION_WORDS] that mean a performance rather than the album cut. */
+    private val LIVE_TAKES = setOf(
+        "live", "concert", "unplugged", "session", "sessions", "ライブ", "现场", "라이브",
+    )
 
     /**
      * Whether the source row names an arrangement the song itself does not.
