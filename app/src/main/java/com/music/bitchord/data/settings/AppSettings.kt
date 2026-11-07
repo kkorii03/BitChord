@@ -1889,7 +1889,7 @@ object AppSettings {
             ?: return LyricsSource.offered
         val saved = stored.split(",")
             .mapNotNull { name -> LyricsSource.entries.firstOrNull { it.name == name } }
-        return LyricsSource.ordered(saved)
+        return LyricsSource.upgraded(saved)
     }
 
     fun setPrioritizeSyllableSync(value: Boolean) {

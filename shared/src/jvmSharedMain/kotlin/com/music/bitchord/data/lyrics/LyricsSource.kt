@@ -103,6 +103,13 @@ enum class LyricsSource(
         detail = "QQ Music 노래방 타이밍, 단어 단위",
         wordSynced = true,
     ),
+    // Word times since KRC is read (11-07): against people's sheets, 95% of line starts within
+    // 0.3 s, where line-timed sheets end near 81% after the app's fit. So ahead of them all.
+    KUGOU(
+        label = "KuGou",
+        detail = "KRC 단어 시각, 영어권 외 음악에 강함",
+        wordSynced = true,
+    ),
     // The Korean services: whole lines only, but the Korean catalogue the
     // Apple hosts above miss — indie, OST, the originals covers are made of.
     // Ahead of every line-only fallback below, so a Korean song gets its own
@@ -144,11 +151,6 @@ enum class LyricsSource(
         wordSynced = false,
         hidden = true,
     ),
-    KUGOU(
-        label = "KuGou",
-        detail = "KRC 단어 시각, 영어권 외 음악에 강함",
-        wordSynced = true,
-    ),
     LRCLIB(
         label = "LRCLIB",
         detail = "줄 단위만, 항상 접속 가능",
@@ -189,6 +191,24 @@ enum class LyricsSource(
          * puts it relative to its neighbours, rather than under every
          * line-only fallback where it would never get to answer.
          */
+        /**
+         * The default order before 11-07, when KuGou was line-timed and sat with the line
+         * fallbacks. A saved order that is exactly this was never changed by the listener, so it
+         * takes today's default instead of keeping KuGou down there.
+         */
+        private val DEFAULT_BEFORE_1107 = listOf(
+            "AMLL_TTML", "LRC_RED", "BINI_LYRICS", "BETTER_LYRICS", "BETTER_LYRICS_PORTATO", "PAXSENIX",
+            "PAXSENIX_SPOTIFY", "PAXSENIX_MUSIXMATCH", "LYRICS_PLUS", "VIBE", "BUGS", "UNISON",
+            "YOUTUBE_TRANSCRIPT", "YOUTUBE_MUSIC", "KUGOU", "LRCLIB", "MUSIXMATCH", "GENIUS",
+        )
+
+        /** A saved order as this build should use it: an untouched old default becomes today's. */
+        fun upgraded(saved: List<LyricsSource>): List<LyricsSource> {
+            val known = saved.filter { it in offered }.distinct().map { it.name }
+            val added = setOf(SYNCLRC.name, QQ_MUSIC.name)
+            return if (known.filterNot { it in added } == DEFAULT_BEFORE_1107) offered else ordered(saved)
+        }
+
         fun ordered(saved: List<LyricsSource>): List<LyricsSource> {
             val result = saved.filter { it in offered }.distinct().toMutableList()
             offered.forEachIndexed { index, source ->
