@@ -285,10 +285,27 @@ class LyricClockTest {
         assertTrue("worst after ${run.worstOff(fromMs = 28_000.0)}", run.worstOff(fromMs = 28_000.0) <= 100.0)
     }
 
+    // A slip behind closes at the unseen steer only (5%: 1.5 s in about 30 s), see the next test.
     @Test fun anUnannouncedSlipBehindClosesWithoutGoingBack() {
-        val run = steadyRun(seconds = 40.0, songMs = { 5_000.0 + it - if (it >= 20_000.0) 1_500.0 else 0.0 }, stray = { _, _ -> 0.0 })
-        assertTrue("worst after ${run.worstOff(fromMs = 32_000.0)}", run.worstOff(fromMs = 32_000.0) <= 100.0)
+        val run = steadyRun(seconds = 80.0, songMs = { 5_000.0 + it - if (it >= 20_000.0) 1_500.0 else 0.0 }, stray = { _, _ -> 0.0 })
+        assertTrue("worst after ${run.worstOff(fromMs = 60_000.0)}", run.worstOff(fromMs = 60_000.0) <= 100.0)
+        assertTrue("slow ${run.shareOfPaces { it < 0.9 }}", run.shareOfPaces { it < 0.9 } <= 0.01)
         for (i in 1 until run.shown.size) assertTrue("went back at ${run.atMs[i]}", run.shown[i] >= run.shown[i - 1])
+    }
+
+    /**
+     * 11-08, Rap God on LDAC, vc173 log: the readings fell about 950 ms behind for ten seconds and
+     * came back, while the recorded sound never paused. The words went to 0.9x for seven seconds
+     * and then 1.4x to catch up.
+     */
+    @Test fun readingsThatDropBehindForSecondsDoNotSlowTheWords() {
+        val run = steadyRun(
+            seconds = 60.0,
+            stray = { random, now -> (if (now >= 20_000.0 && now < 30_000.0) -950.0 else 0.0) + random.nextGaussian() * 25.0 },
+        )
+        assertTrue("slow ${run.shareOfPaces { it < 0.9 }}", run.shareOfPaces { it < 0.9 } <= 0.01)
+        assertTrue("rushed ${run.shareOfPaces { it > 1.3 }}", run.shareOfPaces { it > 1.3 } <= 0.01)
+        assertTrue("worst ${run.worstOff()}", run.worstOff() <= 600.0)
     }
 
     @Test fun anAnnouncedSeekStillMovesTheWordsBackAtOnce() {
