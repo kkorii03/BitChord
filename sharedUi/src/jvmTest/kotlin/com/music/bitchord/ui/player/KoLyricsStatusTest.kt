@@ -4,6 +4,7 @@ import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.ko.ui.player.KoLyricsBarStatus
 import com.music.bitchord.ko.ui.player.KoTimingDetail
 import com.music.bitchord.ko.ui.player.KoTranslationDetail
+import com.music.bitchord.ko.ui.player.koBarNamesTranslation
 import com.music.bitchord.ko.ui.player.koLyricsBarStatus
 import com.music.bitchord.ko.ui.player.koTimingDetails
 import com.music.bitchord.ko.ui.player.koTranslationDetail
@@ -15,6 +16,16 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class KoLyricsStatusTest {
+
+    /** 11-07: the listener wants to see which engine translated, beside the source. */
+    @Test
+    fun theBarNamesTheTranslationBesideTheSourceOnly() {
+        assertTrue(koBarNamesTranslation(KoLyricsBarStatus.Source, KoTranslationDetail.ByGemini))
+        assertTrue(koBarNamesTranslation(KoLyricsBarStatus.Source, KoTranslationDetail.Translating))
+        assertFalse(koBarNamesTranslation(KoLyricsBarStatus.Source, null))
+        assertFalse(koBarNamesTranslation(KoLyricsBarStatus.Looking, KoTranslationDetail.Translating))
+        assertFalse(koBarNamesTranslation(KoLyricsBarStatus.NoLyrics, KoTranslationDetail.ByGemini))
+    }
 
     @Test
     fun theBarLabelFollowsTheLookupOnly() {
@@ -90,7 +101,10 @@ class KoLyricsStatusTest {
     @Test
     fun koreanBarLabelsStayShortNouns() {
         val strings = koreanStrings()
-        listOf("lyrics_looking", "lyrics_not_available", "lyrics_saved_with_download").forEach { key ->
+        listOf(
+            "lyrics_looking", "lyrics_not_available", "lyrics_saved_with_download",
+            "lyrics_bar_translation_by", "lyrics_bar_translated", "lyrics_bar_translating",
+        ).forEach { key ->
             val label = strings.getValue(key)
             assertTrue(label.length <= 8, "$key is too long for the bar: $label")
             assertFalse(label.endsWith("."), "$key must be a noun label, not a sentence: $label")

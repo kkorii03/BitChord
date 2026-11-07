@@ -151,6 +151,7 @@ import com.music.bitchord.ko.ui.player.koLineBlurAllowed
 import com.music.bitchord.ko.ui.player.koLyricSpringForInterval
 import com.music.bitchord.ko.ui.player.koLyricsBarText
 import com.music.bitchord.ko.ui.player.koLyricsTimingDetail
+import com.music.bitchord.ko.ui.player.koTranslationDetail
 import com.music.bitchord.ko.ui.player.koTranslationDetailText
 import com.music.bitchord.ko.ui.player.koRetimedLyricsEffect
 import com.music.bitchord.ko.ui.player.koSameTiming
@@ -3473,7 +3474,7 @@ internal fun rememberLyricsTranslation(
     // Worked out once for both layouts — the portrait player puts it over its
     // half-player, the landscape one under its lyric column — so the two can
     // never disagree about what it says.
-    val status = koLyricsBarText(lyricsSource, lyricsUnavailable, !lyrics.isNullOrEmpty()) // [KO] lyrics-status
+    val status = koLyricsBarText(lyricsSource, lyricsUnavailable, !lyrics.isNullOrEmpty(), koTranslationDetail(translationState, showingTranslation)) // [KO] lyrics-status
     val translationDetail = koTranslationDetailText(translationState, showingTranslation, translationLanguageName) // [KO] lyrics-status
 
     return LyricsTranslationUi(

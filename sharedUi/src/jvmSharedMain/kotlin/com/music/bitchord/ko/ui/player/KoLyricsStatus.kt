@@ -35,16 +35,34 @@ internal fun koLyricsBarStatus(
     else -> KoLyricsBarStatus.Saved
 }
 
+/**
+ * Whether the bar names the translation beside the source. The listener asked for it back
+ * (11-07): which engine translated the lines is worth seeing without opening the sheet.
+ */
+internal fun koBarNamesTranslation(status: KoLyricsBarStatus, translation: KoTranslationDetail?): Boolean =
+    status == KoLyricsBarStatus.Source && translation != null
+
 @Composable
 internal fun koLyricsBarText(
     source: LyricsSource?,
     unavailable: Boolean,
     hasLyrics: Boolean,
-): String = when (koLyricsBarStatus(source != null, unavailable, hasLyrics)) {
-    KoLyricsBarStatus.Source -> stringResource(Res.string.lyrics_by, source?.label.orEmpty())
-    KoLyricsBarStatus.Looking -> stringResource(Res.string.lyrics_looking)
-    KoLyricsBarStatus.NoLyrics -> stringResource(Res.string.lyrics_not_available)
-    KoLyricsBarStatus.Saved -> stringResource(Res.string.lyrics_saved_with_download)
+    translation: KoTranslationDetail? = null,
+): String {
+    val status = koLyricsBarStatus(source != null, unavailable, hasLyrics)
+    val text = when (status) {
+        KoLyricsBarStatus.Source -> stringResource(Res.string.lyrics_by, source?.label.orEmpty())
+        KoLyricsBarStatus.Looking -> stringResource(Res.string.lyrics_looking)
+        KoLyricsBarStatus.NoLyrics -> stringResource(Res.string.lyrics_not_available)
+        KoLyricsBarStatus.Saved -> stringResource(Res.string.lyrics_saved_with_download)
+    }
+    if (!koBarNamesTranslation(status, translation)) return text
+    val part = when (translation) {
+        KoTranslationDetail.Translating -> stringResource(Res.string.lyrics_bar_translating)
+        KoTranslationDetail.ByGemini -> stringResource(Res.string.lyrics_bar_translation_by, "Gemini")
+        else -> stringResource(Res.string.lyrics_bar_translated)
+    }
+    return "$text · $part"
 }
 
 /** What the sheet says about the translation; null when it has nothing to add. */

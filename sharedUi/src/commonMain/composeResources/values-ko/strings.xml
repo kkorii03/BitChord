@@ -223,6 +223,9 @@
     <string name="import_spotify">Spotify에서 가져오기</string>
     <string name="import_spotify_subtitle">플레이리스트 링크 사용</string>
     <string name="lyrics_translated_gemini">%1$s 번역 · Gemini</string>
+    <string name="lyrics_bar_translation_by">번역: %1$s</string>
+    <string name="lyrics_bar_translated">번역</string>
+    <string name="lyrics_bar_translating">번역 중</string>
     <string name="ai_lyrics_timing">AI로 이 비디오에 가사 타이밍 맞추기</string>
     <string name="ai_lyrics_timing_undo">AI 타이밍 되돌리기</string>
     <string name="lyrics_timing_running">AI가 이 비디오에 가사 타이밍을 맞추는 중…</string>

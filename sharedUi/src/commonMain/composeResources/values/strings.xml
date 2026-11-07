@@ -302,6 +302,9 @@
     <string name="switch_to_grid_view">Switch to grid view</string>
     <string name="switch_to_list_view">Switch to list view</string>
     <string name="lyrics_translated_gemini">%1$s translation · Gemini</string>
+    <string name="lyrics_bar_translation_by">Translation: %1$s</string>
+    <string name="lyrics_bar_translated">Translated</string>
+    <string name="lyrics_bar_translating">Translating</string>
     <string name="ai_lyrics_timing">Time the lyrics to this video with AI</string>
     <string name="ai_lyrics_timing_undo">Undo AI timing</string>
     <string name="lyrics_timing_running">AI is timing the lyrics to this video…</string>
