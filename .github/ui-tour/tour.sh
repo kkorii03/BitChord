@@ -641,9 +641,9 @@ section_now_playing() {
   if true; then
     shot lyrics "Lyrics"
     adb shell input swipe 540 1000 540 1500 300; sleep 1; burst_shot lyrics-bar-1
-    if tap "가사 제공" first 2; then burst_shot lyrics-sheet-1; shot lyrics-sheet-1x "Sheet opened from the label"; back; sleep 3; fi
+    adb shell input swipe 540 1000 540 1500 300; sleep 1; adb shell input tap 216 1478; sleep 3; burst_shot lyrics-sheet-1; shot lyrics-sheet-1x "Sheet opened from the label"; back; sleep 3
     adb shell input swipe 540 1000 540 1500 300; sleep 1; burst_shot lyrics-bar-2
-    if tap "원문 가사 보기" first 2; then burst_shot lyrics-bar-3; fi
+    adb shell input tap 938 1478; sleep 2; burst_shot lyrics-bar-3
     adb shell input swipe 540 1000 540 1500 300; sleep 1; burst_shot lyrics-bar-4
     true
     # Provider chooser, from the "가사 제공: ..." status line.
