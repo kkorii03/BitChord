@@ -87,6 +87,20 @@ class LyricsPerLineTest {
     }
 
     /**
+     * 11-07 replay NPZtKA6343o: no whole-song fit, every heard line truly 2.25 s off, and the many
+     * lines past the words have no move at all. Those say nothing about whether the sheet is right.
+     */
+    @Test
+    fun `lines the words never reached do not make a sheet look right`() {
+        val later = List(60) { index -> line(200_000L + index * 12_000L, "nothing${index}q heard${index}r here${index}s") }
+        val heard = twelve.flatMap { heardLine(it, 2_250L) }
+
+        val shifts = layer(twelve + later, heard).shiftsMs
+
+        assertEquals(2_250L, shifts[3], "a true move was dropped")
+    }
+
+    /**
      * 11-06 w58uXpyHWes in figures, made-up words: the line after a line moved 0.6 s
      * later is heard 1.9 s early, 126 ms after it. No one sings a line in 126 ms.
      */

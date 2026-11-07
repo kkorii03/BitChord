@@ -206,8 +206,10 @@ object LyricsPerLine {
         // own scatter is a mishearing, not the sheet (11-07: 51 lines of a right
         // sheet moved up to 0.7 s by scattered lines; dropping those moves passed
         // 5 songs of the same 52 and lost none).
-        val near = shifts.count { abs(it) <= GOOD_SHEET_MOVE_MS }
-        if (shifts.size >= MIN_GOOD_SHEET_LINES && near >= shifts.size * GOOD_SHEET_MOVE_SHARE) {
+        // Only lines the words reached say anything: on a sheet with no whole-song fit, most
+        // lines have no anchor and no move, and NPZtKA6343o's true 2.25 s moves were dropped.
+        val near = anchors.count { abs(shifts[it.line]) <= GOOD_SHEET_MOVE_MS }
+        if (anchors.size >= MIN_GOOD_SHEET_LINES && near >= anchors.size * GOOD_SHEET_MOVE_SHARE) {
             for (index in shifts.indices) if (abs(shifts[index]) > GOOD_SHEET_MOVE_MS) shifts[index] = 0L
             enforceOrder(lines, shifts)
         }
