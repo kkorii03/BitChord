@@ -3149,7 +3149,7 @@ object LyricsTiming {
         }
         persistAttempts()
         // 11-06 ekzHIouo8Q4, three rounds: the replaced sheet's answer landed 0.5 s after the shown one's and took the slot.
-        if (replacedSheet(videoId, key)) return null
+        if (dropForReplacedSheet(videoId, key)) return null
         store(context).update(videoId) {
             it.copy(
                 clockVersion = CLOCK_VERSION,
@@ -3525,6 +3525,18 @@ object LyricsTiming {
         val replaced = newestSongKey[videoId].let { it != null && it != key }
         if (replaced) TrackLog.d(TAG, "song-sync: answer for a replaced sheet dropped", videoId)
         return replaced
+    }
+
+    /**
+     * Drops an accepted answer for a sheet that is no longer on screen and asks
+     * the screen to fit the sheet now showing. The song check already does this
+     * when it finishes for a replaced sheet; the AI answer returned silently, so
+     * the new sheet kept no base (11-07 7PgA6kyqVTc, ekzHIouo8Q4).
+     */
+    internal fun dropForReplacedSheet(videoId: String, key: Int): Boolean {
+        if (!replacedSheet(videoId, key)) return false
+        _changes.tryEmit(videoId)
+        return true
     }
 
     /**
