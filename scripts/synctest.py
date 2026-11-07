@@ -358,6 +358,37 @@ def align(lines, words):
     return out
 
 
+WORST_RECHECK_S = 5.0  # a line this far off may be the wrong repeat: re-check it
+
+
+def worst_lines(lines, both, words):
+    """Every scored line over WORST_RECHECK_S off, re-checked against the song: how
+    many other places its opening is sung while keeping the order of the lines
+    scored around it. One or more means the repeat chosen may be the wrong one;
+    none means the line really is that far off (a bad sheet, not a bad match)."""
+    if not both:
+        return ""
+    heard, times = char_stream(words)
+    text_of = {n: t for n, _, t in lines}
+    out = []
+    for i, (n, shown, sung, ratio) in enumerate(both):
+        err = shown - sung
+        if abs(err) <= WORST_RECHECK_S:
+            continue
+        lo = both[i - 1][2] if i else float("-inf")
+        hi = both[i + 1][2] if i + 1 < len(both) else float("inf")
+        key = norm(text_of.get(n, ""))[:PREFIX_CHARS]
+        places = 0
+        for j in range(len(heard)):
+            if heard[j] != key[0] or not lo < times[j] < hi or abs(times[j] - sung) < 0.5:
+                continue
+            r = difflib.SequenceMatcher(None, key, heard[j:j + len(key)], autojunk=False).ratio()
+            if r >= ratio - AMBIGUOUS_RATIO:
+                places += 1
+        out.append(f"n={n} {err:+.2f}s alts={places}")
+    return "; ".join(out)
+
+
 def trimmed(values, frac=0.1):
     """Values with the worst `frac` dropped, so a misheard line does not set the shape."""
     if len(values) < 6:
@@ -532,32 +563,32 @@ def run_song(vid, seconds, dry):
     if not logf.exists():
         return dict(error="no log")
     text = logf.read_text(encoding="utf-8", errors="replace")
-    dump_id = vid
-    dump = parse_dump(text, vid)
-    # "Prefer music-only version" (v1.9.1) replaces a video within a second of starting: its first
-    # sheet never played, and scoring it reported a FAIL for a song that was fine (11-07 Rap God).
-    only = re.findall(rf"\[{re.escape(vid)}\] music-only: playing .* \(([\w-]{{11}})\)", text)
-    if only and parse_dump(text, only[-1]):
-        dump_id = only[-1]
-        dump = parse_dump(text, dump_id)
-    if not dump:
-        # The app swapped the row to its song version before the first sound
-        # ('song version: <vid> -> <id> via search'); lyrics, their dump and the
-        # song check's WAV then belong to that id (11-02 round 3: three
-        # "no lyrics" were this).
-        m = re.findall(rf"song version: {re.escape(vid)} -> ([\w-]{{11}})", text)
-        if m and parse_dump(text, m[-1]):
-            dump_id = m[-1]
-            dump = parse_dump(text, dump_id)
-            if not dry and not (wav.exists() and wav.stat().st_size > 1000):
-                adb("pull", f"{APP_DIR}/synctest/{dump_id}.wav", str(wav), timeout=120)
+    # The app may replace the row with its music-only / song version ("Prefer
+    # music-only version", v1.9.1, and "song version: <vid> -> <id>"). The sheet
+    # on screen, its dump and the song check's WAV are then that id's, so that
+    # sheet is scored, not the row's first one (11-07 Rap God: the first sheet
+    # never played and its FAIL was not the song's).
+    swapped = re.findall(rf"\[{re.escape(vid)}\] music-only: playing .* \(([\w-]{{11}})\)"
+                         rf"|song version: {re.escape(vid)} -> ([\w-]{{11}})", text)
+    played_ids = [a or b for a, b in swapped]
+    # The played id's sheet wins when it dumped; a swap whose sheet never dumped
+    # leaves the row's own sheet as the only evidence of what was on screen.
+    dump_id = next((i for i in reversed(played_ids) if parse_dump(text, i)), vid)
+    dump = parse_dump(text, dump_id)
     if not dump:
         # No lyrics on screen is the user-facing failure itself, not a test gap.
         return dict(error="no sync-dump (no lyrics shown?)", app_fail=True)
     head, lines = dump
+    if not dry and dump_id != vid:
+        # The song check writes its WAV under the id it plays; the row's own WAV
+        # is another recording than the swapped sheet (and may be stale).
+        played_wav = OUT / f"{vid}.swapped.wav"
+        adb("pull", f"{APP_DIR}/synctest/{dump_id}.wav", str(played_wav), timeout=120)
+        if played_wav.exists() and played_wav.stat().st_size > 1000:
+            wav = played_wav
     # A downloaded song plays its stored file with its stored lyrics and timing,
     # which may themselves be wrong; scored the same way but reported apart.
-    resolve = resolve_of(text, vid)
+    resolve = resolve_of(text, dump_id)
     stored = resolve == "cache" or head.get("source", "").startswith("file:") or "@unknown" in head.get("source", "")
     row = dict(source=head.get("source", ""), base=head.get("base", ""), shift=head.get("shift", ""),
                match=head.get("match", ""), playing=head.get("playing", ""), lines=len(lines),
@@ -712,6 +743,7 @@ def finish(vid, row, lines, per_model):
     heard_until = min(words[-1][1] for words in per_model if words) if all(per_model) else 0
     eligible = sum(1 for _, ms, t in lines if len(norm(t)[:PREFIX_CHARS]) >= 2 and ms / 1000 <= heard_until)
     row.update(eligible=eligible, model_gap=round(gap, 3) if gap is not None else "", **lit_scores(both, lit))
+    row["worst"] = worst_lines(lines, both, per_model[0])
     (OUT / f"{vid}.lines.csv").write_text(
         "line,shown_s,sung_s,error_s,ratio,lit_s\n" + "".join(
             f"{n},{a:.3f},{b:.3f},{a - b:+.3f},{r},{lit[n] / 1000 if n in lit else ''}\n" for n, a, b, r in both),
@@ -731,7 +763,8 @@ def write_report(rows):
     fields = ["playlist", "video", "verdict", "why", "old_verdict", "shape", "slope_ms_min", "span_s", "median",
               "median_abs", "in02", "in03", "in05", "max_abs", "matched", "eligible", "coverage", "model_gap",
               "lines", "stored", "resolve", "source", "base", "shift", "match", "playing", "audio", "error",
-              "app_fail", "alts", "swapped", "timing", "whisper_verdict", "lit_median", "lit_in03", "lit_max", "lit_later"]
+              "app_fail", "alts", "swapped", "timing", "whisper_verdict", "lit_median", "lit_in03", "lit_max", "lit_later",
+              "worst"]
     with open(OUT / "report.csv", "w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         w.writeheader()
@@ -766,6 +799,11 @@ def write_report(rows):
                   f"{r['in02']:.0%}/{r['in03']:.0%}/{r['in05']:.0%} | {seen} | {r['matched']}/{r.get('eligible', '')} | "
                   f"{r.get('model_gap', '')} | {r['source']} | {r['base']}/{r['shift']}/{r['match']} | "
                   f"{r.get('alts', '')} | {r['audio']} | {r.get('timing', '')} ({r.get('whisper_verdict', '')}) |")
+    worst = [r for r in scored if r.get("worst")]
+    if worst:
+        md += ["", f"## {WORST_RECHECK_S:g}초 넘게 어긋난 줄 재확인 (alts = 이웃 줄 순서를 지키는 다른 곳에서 불린 횟수)",
+               "alts가 1 이상이면 다른 반복 위치를 잘못 골랐을 수 있다. 0이면 그 줄은 실제로 그만큼 어긋났다."] + [
+            f"- {r['video']}: {r['worst']}" for r in worst]
     errors = [r for r in rows if r.get("error") and not r.get("app_fail")]
     app_fails = [r for r in rows if r.get("app_fail")]
     if app_fails:
