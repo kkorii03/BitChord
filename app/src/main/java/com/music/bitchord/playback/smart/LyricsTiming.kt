@@ -4355,7 +4355,7 @@ object LyricsTiming {
                         aiPreferred = false,
                         biasSampled = false,
                         aiEngine = ENGINE_DEEPGRAM_WHISPER,
-                        aiRough = check.rough,
+                        aiRough = result.rough,
                         songRetryKey = null,
                         songRetryAtMs = null,
                     )
