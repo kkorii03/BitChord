@@ -723,26 +723,6 @@ object LyricsTranslation {
 
     // ---- [KO] Korean fork features, implemented in com.music.bitchord.ko ----
 
-    @Serializable
-    data class SongMeaning( // [KO] song-meaning
-        /** One line on what the song is about. */
-        val summary: String,
-        /** A few short paragraphs, separated by blank lines. */
-        val meaning: String,
-        val highlights: List<MeaningHighlight> = emptyList(),
-    )
-
-    /** One line of the song quoted, and what it says. */
-    @Serializable
-    data class MeaningHighlight(val line: String, val note: String) // [KO] song-meaning
-
-    sealed interface MeaningResult { // [KO] song-meaning
-        data class Ready(val meaning: SongMeaning) : MeaningResult
-        /** No Gemini key is set, or Gemini refused the one that is. */
-        data object NoKey : MeaningResult
-        data object Unavailable : MeaningResult
-    }
-
     /** What Gemini made of a Hangul title: the original's name, or that there is none. */
     sealed interface NativeNameResult { // [KO] native-name
         data class Found(val title: String, val artist: String) : NativeNameResult
@@ -754,16 +734,6 @@ object LyricsTranslation {
 
     /** A lyric line to place: its text, and when the original recording sings it. */
     data class LineToPlace(val text: String, val referenceMs: Long) // [KO] video-timing
-
-    suspend fun explain(
-        trackId: String,
-        title: String,
-        artist: String,
-        lines: List<LyricLine>,
-        targetLanguageTag: String,
-    ): MeaningResult = KoLyricsTranslation.explain( // [KO] song-meaning
-        trackId, title, artist, lines, targetLanguageTag,
-    )
 
     suspend fun nativeName(title: String, artist: String): NativeNameResult =
         KoLyricsTranslation.nativeName(title, artist) // [KO] native-name

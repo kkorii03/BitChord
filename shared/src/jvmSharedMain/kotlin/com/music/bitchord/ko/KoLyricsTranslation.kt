@@ -50,9 +50,6 @@ object KoLyricsTranslation {
     private const val KEPT_DIRECTORY = "lyrics_translation_kept"
     private const val KEPT_NAMESPACE = "kept"
     private const val MAX_KEPT_BYTES = 32L * 1024L * 1024L
-    private const val MEANING_DIRECTORY = "song_meaning_v1"
-    private const val MAX_MEANING_BYTES = 4L * 1024L * 1024L
-    private const val MAX_MEANING_LYRIC_CHARS = 6_000
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -501,137 +498,6 @@ object KoLyricsTranslation {
         return "ko".takeIf { hangul > 0 && hangul >= other * 4 }
     }
 
-    // ---- What a song means ---------------------------------------------------
-
-    private val meanings = object {
-        private val entries = object : LinkedHashMap<String, LyricsTranslation.SongMeaning>(8, 0.75f, true) {
-            override fun removeEldestEntry(eldest: Map.Entry<String, LyricsTranslation.SongMeaning>) = size > 8
-        }
-
-        @Synchronized fun get(key: String): LyricsTranslation.SongMeaning? = entries[key]
-
-        @Synchronized fun put(key: String, value: LyricsTranslation.SongMeaning) {
-            entries[key] = value
-        }
-    }
-
-    /**
-     * Gemini's explanation of the song — what it is about, its images and
-     * slang, a few lines worth a note — written in [targetLanguageTag].
-     * Asked once per song and language, then kept for good.
-     */
-    suspend fun explain(
-        trackId: String,
-        title: String,
-        artist: String,
-        lines: List<LyricLine>,
-        targetLanguageTag: String,
-    ): LyricsTranslation.MeaningResult {
-        val target = targetLanguageTag.trim().ifBlank { "en" }
-        val key = LyricsTranslation.cacheKey("meaning\u0000$trackId", target, emptyList())
-        val root = keepDir ?: LyricsTranslation.cacheDir
-        meanings.get(key)?.let { return LyricsTranslation.MeaningResult.Ready(it) }
-        LyricsTranslation.readStored(root, MEANING_DIRECTORY, key)
-            ?.let { text -> runCatching { json.decodeFromString<LyricsTranslation.SongMeaning>(text) }.getOrNull() }
-            ?.let {
-                meanings.put(key, it)
-                return LyricsTranslation.MeaningResult.Ready(it)
-            }
-        if (!geminiKeyUsable) return LyricsTranslation.MeaningResult.NoKey
-
-        val lyricText = lines
-            .map { it.text.trim() }
-            .filter { it.isNotEmpty() }
-            .joinToString("\n")
-            .take(MAX_MEANING_LYRIC_CHARS)
-        if (lyricText.isBlank()) return LyricsTranslation.MeaningResult.Unavailable
-
-        val input = buildJsonObject {
-            put("title", title)
-            put("artist", artist)
-            put("lyrics", lyricText)
-        }
-        val body = buildJsonObject {
-            putJsonObject("systemInstruction") {
-                putJsonArray("parts") {
-                    add(buildJsonObject { put("text", meaningInstruction(target)) })
-                }
-            }
-            putJsonArray("contents") {
-                add(buildJsonObject {
-                    put("role", "user")
-                    putJsonArray("parts") {
-                        add(buildJsonObject { put("text", input.toString()) })
-                    }
-                })
-            }
-            putJsonObject("generationConfig") {
-                put("responseMimeType", "application/json")
-                putJsonObject("responseSchema") {
-                    put("type", "OBJECT")
-                    putJsonObject("properties") {
-                        putJsonObject("summary") { put("type", "STRING") }
-                        putJsonObject("meaning") { put("type", "STRING") }
-                        putJsonObject("highlights") {
-                            put("type", "ARRAY")
-                            putJsonObject("items") {
-                                put("type", "OBJECT")
-                                putJsonObject("properties") {
-                                    putJsonObject("line") { put("type", "STRING") }
-                                    putJsonObject("note") { put("type", "STRING") }
-                                }
-                                putJsonArray("required") {
-                                    add("line")
-                                    add("note")
-                                }
-                            }
-                        }
-                    }
-                    putJsonArray("required") {
-                        add("summary")
-                        add("meaning")
-                        add("highlights")
-                    }
-                }
-            }
-        }.toString()
-
-        val answer = try {
-            askGemini(body) { parseMeaning(it) }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Exception) {
-            null
-        }
-        if (answer == null) {
-            return if (geminiKeyUsable) LyricsTranslation.MeaningResult.Unavailable else LyricsTranslation.MeaningResult.NoKey
-        }
-        meanings.put(key, answer)
-        LyricsTranslation.writeStored(root, MEANING_DIRECTORY, key, json.encodeToString(answer), MAX_MEANING_BYTES)
-        return LyricsTranslation.MeaningResult.Ready(answer)
-    }
-
-    private fun meaningInstruction(target: String): String {
-        val locale = Locale.forLanguageTag(target.replace('_', '-'))
-        val languageName = locale.getDisplayName(Locale.ENGLISH).ifBlank { target }
-        val korean = LyricsTranslation.canonicalLanguage(target) == "ko"
-        return buildString {
-            appendLine("You write short, insightful song explanations for a music app, like the notes on a lyric site.")
-            appendLine("Write everything in $languageName ($target).")
-            if (korean) {
-                appendLine("Use natural, friendly modern Korean in 해요체. Never use '당신'. Avoid translationese.")
-            }
-            appendLine()
-            appendLine("Return JSON with:")
-            appendLine("- \"summary\": one sentence saying what the song is about${if (korean) " (under 60 Korean characters)" else ""}.")
-            appendLine("- \"meaning\": two or three short paragraphs separated by one blank line. First the story and the feeling of the song, then its key images, metaphors and slang and what they mean.")
-            appendLine("- \"highlights\": up to four items. Each has \"line\", copied exactly from the lyrics given, and \"note\", one or two sentences on what that line means.")
-            appendLine()
-            appendLine("Base everything on the lyrics given. Mention background about the artist or the song only if you are certain it is true. Never invent facts, chart records, interviews or quotes.")
-            appendLine("Plain text only: no markdown, no bullet characters, no emojis.")
-        }
-    }
-
     // ---- A song's name in its own language -----------------------------------
 
     @Serializable
@@ -1056,17 +922,4 @@ object KoLyricsTranslation {
         Listen to the video's audio and find, for each line, the moment in THIS video when the singer starts singing its first word. Give that moment as M:SS.s counted from the very start of the video (0:00.0). The video may begin earlier or later than the recording (an intro, talking), may run slightly faster or slower, and may leave parts out, so use "ref" only for the order and the spacing of lines; never copy it or add a fixed amount to it.
         Return JSON {"placements":[{"i":0,"t":"0:12.4"},...]} with one entry per line you actually hear sung, in order. Leave out lines that are not sung in this video. Times must never decrease. Only give a time you heard; do not guess.
     """.trimIndent()
-
-    private fun parseMeaning(response: String): LyricsTranslation.SongMeaning? = runCatching {
-        val parsed = json.decodeFromString<LyricsTranslation.SongMeaning>(geminiText(response))
-        val cleaned = parsed.copy(
-            summary = parsed.summary.trim(),
-            meaning = parsed.meaning.trim(),
-            highlights = parsed.highlights
-                .map { LyricsTranslation.MeaningHighlight(it.line.trim(), it.note.trim()) }
-                .filter { it.line.isNotEmpty() && it.note.isNotEmpty() }
-                .take(4),
-        )
-        cleaned.takeIf { it.summary.isNotEmpty() && it.meaning.isNotEmpty() }
-    }.getOrNull()
 }

@@ -118,7 +118,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.ResolvedTextDirection
 import androidx.compose.ui.text.style.TextOverflow
@@ -150,8 +149,9 @@ import com.music.bitchord.ko.ui.player.koInterludeExitAlpha
 import com.music.bitchord.ko.ui.player.koLineBlurDp
 import com.music.bitchord.ko.ui.player.koLineBlurAllowed
 import com.music.bitchord.ko.ui.player.koLyricSpringForInterval
-import com.music.bitchord.ko.ui.player.koLyricsStatusWithTiming
+import com.music.bitchord.ko.ui.player.koLyricsBarText
 import com.music.bitchord.ko.ui.player.koLyricsTimingDetail
+import com.music.bitchord.ko.ui.player.koTranslationDetailText
 import com.music.bitchord.ko.ui.player.koRetimedLyricsEffect
 import com.music.bitchord.ko.ui.player.koSameTiming
 import com.music.bitchord.ko.ui.player.koSameWords
@@ -550,7 +550,7 @@ private data class TranslationParticle(
  *
  * The provider's name is the one line here that names something the reader can
  * act on — it is a choice, not a fact — so it is the line that opens the
- * chooser, underlined the way the other actions are.
+ * chooser.
  *
  * The link is absent where it has nothing to open: a line that only says the
  * lookup is still running is a fact, and one that says there are no lyrics is a
@@ -586,9 +586,7 @@ internal fun LyricsStatusWithChange(
             text = status,
             style = MaterialTheme.typography.titleMedium,
             color = chromeWhite(0.55f),
-            textDecoration = if (onStatusClick != null) TextDecoration.Underline else null,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+            // [KO] lyrics-status: the chevron marks it as tappable, and nothing is cut off.
             modifier = Modifier.weight(1f, fill = false),
         )
         if (onStatusClick != null) koStatusChevron() // [KO] lyrics-status-chevron
@@ -1630,10 +1628,6 @@ internal fun RomanizationToggleButton(
         }
     }
 }
-
-@Composable
-internal fun lyricsStatusWithTiming(status: String, timing: LyricsTimingUi): String =
-    koLyricsStatusWithTiming(status, timing) // [KO] lyrics-timing
 
 @Composable
 internal fun lyricsTimingDetail(timing: LyricsTimingUi): String? =
@@ -3253,11 +3247,13 @@ internal class LyricsTranslationUi(
     /** Bumped on every switch between versions — the particle motion's trigger. */
     val transition: Int,
     val reduceMotion: Boolean,
-    /** The line naming the lyrics' source, or what the translation is doing. */
+    /** The label naming the lyrics' source. */
     val status: String,
+    /** What the translation is doing, for the sheet that label opens; null for nothing. */
+    val translationDetail: String?,
     val toggleTranslation: () -> Unit,
     val toggleRomanization: () -> Unit,
-    /** The language translations and song explanations are written in. */
+    /** The language translations are written in. */
     val targetLanguage: String,
 )
 
@@ -3272,8 +3268,6 @@ internal fun rememberLyricsTranslation(
     lyrics: List<LyricLine>?,
     lyricsSource: LyricsSource?,
     lyricsUnavailable: Boolean,
-    /** What the status line says while the lyrics are still being looked up. */
-    loadingText: String,
     haptics: Haptics,
 ): LyricsTranslationUi {
     val reduceTranslationMotion by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
@@ -3405,12 +3399,8 @@ internal fun rememberLyricsTranslation(
         trackId = trackId,
         translationLanguage = translationLanguage,
         translationState = translationState,
-        romanizationState = romanizationState,
         onTranslation = { lines, byGemini ->
             translationState = LyricsTranslationUiState.Ready(lines, byGemini)
-        },
-        onRomanization = { lines ->
-            romanizationState = LyricsTranslationUiState.Ready(lines)
         },
     ) // [KO] lyrics-retime
     // Auto-translate: each new lyric sheet asks for its translation once, as
@@ -3479,33 +3469,12 @@ internal fun rememberLyricsTranslation(
             }
         }
     }
-    // The one line that sits above the scrubber while the lyrics are open: which
-    // of the providers the timings came from, or what the translation is doing.
+    // The one line that sits above the scrubber while the lyrics are open.
     // Worked out once for both layouts — the portrait player puts it over its
     // half-player, the landscape one under its lyric column — so the two can
     // never disagree about what it says.
-    val status = when {
-        translationState is LyricsTranslationUiState.Loading ->
-            stringResource(Res.string.translating_lyrics_to, translationLanguageName)
-        romanizationState is LyricsTranslationUiState.Loading ->
-            stringResource(Res.string.romanizing_lyrics)
-        // Named only when Gemini wrote it: Google Translate is the default the
-        // line has always meant, and naming it too would be noise.
-        showingTranslation && (translationState as? LyricsTranslationUiState.Ready)?.byGemini == true ->
-            stringResource(Res.string.lyrics_translated_gemini, translationLanguageName)
-        showingTranslation ->
-            stringResource(Res.string.lyrics_translated_to, translationLanguageName)
-        showingRomanization ->
-            stringResource(Res.string.lyrics_romanized)
-        translationState is LyricsTranslationUiState.SameLanguage ->
-            stringResource(Res.string.lyrics_already_in_language, translationLanguageName)
-        romanizationState is LyricsTranslationUiState.SameLanguage ->
-            stringResource(Res.string.lyrics_already_romanized)
-        lyricsSource != null -> stringResource(Res.string.lyrics_by, lyricsSource.label)
-        lyricsUnavailable -> stringResource(Res.string.no_lyrics_found)
-        lyrics.isNullOrEmpty() -> loadingText
-        else -> stringResource(Res.string.lyrics_saved_with_download)
-    }
+    val status = koLyricsBarText(lyricsSource, lyricsUnavailable, !lyrics.isNullOrEmpty()) // [KO] lyrics-status
+    val translationDetail = koTranslationDetailText(translationState, showingTranslation, translationLanguageName) // [KO] lyrics-status
 
     return LyricsTranslationUi(
         displayedLyrics = displayedLyrics,
@@ -3517,6 +3486,7 @@ internal fun rememberLyricsTranslation(
         transition = translationTransition,
         reduceMotion = reduceTranslationMotion || lowPower,
         status = status,
+        translationDetail = translationDetail,
         toggleTranslation = toggleTranslation,
         toggleRomanization = toggleRomanization,
         targetLanguage = translationLanguage,

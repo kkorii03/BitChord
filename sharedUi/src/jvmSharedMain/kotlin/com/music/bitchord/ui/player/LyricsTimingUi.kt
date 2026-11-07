@@ -51,19 +51,10 @@ data class LyricsTimingUi(
  *
  * A hand-asked timing may spend Deepgram, Whisper or Gemini, so at least one
  * engine must be able to answer for this song and its audio — see
- * [LyricsTimingUi.aiAvailable]. It used to be gated on the Gemini song-meaning
+ * [LyricsTimingUi.aiAvailable]. It used to be gated on the Gemini
  * key alone, which hid the action from a listener with only Deepgram set up.
  * The shown answer can still be taken back without a key, so `byAi` keeps the
  * action reachable even after a key is removed.
  */
 internal fun aiTimingActionEnabled(timing: LyricsTimingUi): Boolean =
     timing.adjustable && (timing.byAi || timing.aiAvailable)
-
-/**
- * Whether the romanization toggle belongs on the lyric controls.
- *
- * It is about the text on screen, not about timing. Leaving the slot empty
- * whenever AI timing was offered made the toggle unreachable on Android,
- * where the AI timing action is always offered to the player.
- */
-internal fun romanizationActionEnabled(hasLyrics: Boolean): Boolean = hasLyrics

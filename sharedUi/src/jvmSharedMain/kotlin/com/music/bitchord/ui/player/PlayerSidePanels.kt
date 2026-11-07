@@ -28,8 +28,8 @@ import org.jetbrains.compose.resources.stringResource
 // translation arrives exactly as they do in there.
 
 /**
- * The lyric sheet with its provider line and its romanization and translation
- * toggles — the landscape player's lyrics pane, without the player around it.
+ * The lyric sheet with its provider line and its translation toggle — the
+ * landscape player's lyrics pane, without the player around it.
  *
  * [position] is read only by the panel itself, for the same reason the player
  * passes it down as an object: a tick recomposes the lines, not this.
@@ -62,14 +62,11 @@ fun LyricsSidePanel(
         lyrics = lyrics,
         lyricsSource = lyricsSource,
         lyricsUnavailable = lyricsUnavailable,
-        loadingText = lyricsLoadingText,
         haptics = haptics,
     )
     // The provider drawer frosts this column, not the page beside it.
     val haze = remember { HazeState() }
     var showLyricsProviders by remember { mutableStateOf(false) }
-    var showSongMeaning by remember { mutableStateOf(false) }
-    val songMeaningAvailable by PlayerPlatform.host.songMeaningAvailable.collectAsStateWithLifecycle()
 
     Box(modifier) {
         Box(Modifier.fillMaxSize().hazeSource(haze)) {
@@ -82,27 +79,12 @@ fun LyricsSidePanel(
                 },
                 status = lyricsTranslation.status,
                 onStatusClick = { showLyricsProviders = true },
-                romanizationToggle = {
-                    RomanizationToggleButton(
-                        state = lyricsTranslation.romanizationState,
-                        showingRomanization = lyricsTranslation.showingRomanization,
-                        enabled = !lyrics.isNullOrEmpty(),
-                        onClick = lyricsTranslation.toggleRomanization,
-                    )
-                },
                 translationToggle = {
                     TranslationToggleButton(
                         state = lyricsTranslation.translationState,
                         showingTranslation = lyricsTranslation.showingTranslation,
                         enabled = !lyrics.isNullOrEmpty(),
                         onClick = lyricsTranslation.toggleTranslation,
-                    )
-                },
-                showMeaningToggle = songMeaningAvailable,
-                meaningToggle = {
-                    SongMeaningButton(
-                        enabled = !lyrics.isNullOrEmpty(),
-                        onClick = { showSongMeaning = true },
                     )
                 },
             ) { panelModifier ->
@@ -139,15 +121,7 @@ fun LyricsSidePanel(
                 states = lyricsProviderStates,
                 onSelect = onSelectLyricsProvider,
                 onDismiss = { showLyricsProviders = false },
-            )
-        }
-        if (showSongMeaning) {
-            SongMeaningSheet(
-                hazeState = haze,
-                song = song,
-                lines = lyrics.orEmpty(),
-                targetLanguage = lyricsTranslation.targetLanguage,
-                onDismiss = { showSongMeaning = false },
+                details = listOfNotNull(lyricsTranslation.translationDetail), // [KO] lyrics-status
             )
         }
     }

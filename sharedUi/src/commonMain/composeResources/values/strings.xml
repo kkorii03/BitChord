@@ -302,13 +302,6 @@
     <string name="switch_to_grid_view">Switch to grid view</string>
     <string name="switch_to_list_view">Switch to list view</string>
     <string name="lyrics_translated_gemini">%1$s translation · Gemini</string>
-    <string name="song_meaning">What this song means</string>
-    <string name="song_meaning_loading">Reading the song…</string>
-    <string name="song_meaning_unavailable">Couldn’t explain this song right now</string>
-    <string name="song_meaning_no_key">Add a Gemini API key in Settings to use this</string>
-    <string name="song_meaning_highlights">Lines to note</string>
-    <string name="song_meaning_retry">Try again</string>
-    <string name="song_meaning_footer">Written by Gemini from the lyrics. It can be wrong.</string>
     <string name="ai_lyrics_timing">Time the lyrics to this video with AI</string>
     <string name="ai_lyrics_timing_undo">Undo AI timing</string>
     <string name="lyrics_timing_running">AI is timing the lyrics to this video…</string>
@@ -329,9 +322,9 @@
     <string name="lyrics_tap_previous_line">Previous line</string>
     <string name="lyrics_tap_next_line">Next line</string>
     <string name="lyrics_tap_no_lines">No timed lyrics to sync.</string>
-    <string name="lyrics_timing_adjusted">%1$s · Timed to video</string>
-    <string name="lyrics_timing_manual_short">%1$s · Sync adjusted</string>
-    <string name="lyrics_timing_running_short">%1$s · AI is timing…</string>
+    <string name="lyrics_timing_manual_short">This song’s sync %1$ss</string>
+    <string name="lyrics_timing_sheet_line">Video timing: %1$s</string>
+    <string name="lyrics_looking">Looking for lyrics</string>
     <string name="lyrics_timing_detail_auto">Auto-timed %1$s</string>
     <string name="lyrics_timing_detail_ai">AI timing %1$s</string>
     <string name="lyrics_timing_section">Video timing</string>
