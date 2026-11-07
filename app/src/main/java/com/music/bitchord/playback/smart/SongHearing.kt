@@ -193,7 +193,7 @@ internal object SongHearing {
         reuseFrom: Double = untilSeconds,
     ): Heard? {
         val app = context.applicationContext
-        keepFromFarm(app, song, language)
+        var farmAsked = false
         while (true) {
             val recording = recordingKey(song)
             if (recording != null) {
@@ -213,6 +213,11 @@ internal object SongHearing {
                         return heardFrom(saved)
                     }
                 }
+            }
+            // The farm's GET can take its whole timeout: only words not kept wait on it.
+            if (!farmAsked) {
+                farmAsked = true
+                if (keepFromFarm(app, song, language)) continue
             }
             // One request per recording and language at a time, whoever asks and for
             // whatever window. Each window flying on its own paid for the same opening
@@ -238,20 +243,28 @@ internal object SongHearing {
     internal fun streamRecording(clock: String) = STREAM_PREFIX + clock
 
     /** Words a runner already worked out replace a shorter transcript and spare the request. */
-    private suspend fun keepFromFarm(app: Context, song: Song, language: String) {
-        val saved = AlignFarm.fetch(app, song.videoId, language) ?: return
+    private suspend fun keepFromFarm(app: Context, song: Song, language: String): Boolean {
+        val saved = AlignFarm.fetch(app, song.videoId, language) ?: return false
         withContext(Dispatchers.IO) { save(app, song.videoId, saved) }
+        return true
     }
 
     /** The longest words kept for what [song] plays now; never a request. */
     suspend fun longestKept(context: Context, song: Song, language: String): Heard? {
         val app = context.applicationContext
-        keepFromFarm(app, song, language)
         val recording = recordingKey(song) ?: return null
-        val kept = withContext(Dispatchers.IO) { load(app, song.videoId) }
-        val saved = covering(kept, recording, language, 0.0)
-            ?: streamWords(kept, language)?.takeIf { recording.startsWith(FILE_PREFIX) && LyricsTiming.streamWordsReachFile(app, song.videoId) }
+        var saved = longestSaved(app, song, recording, language)
+        // A whole song leaves the farm nothing to add, so its GET is not waited on.
+        if (saved?.whole != true && keepFromFarm(app, song, language)) {
+            saved = longestSaved(app, song, recording, language)
+        }
         return saved?.let(::heardFrom)
+    }
+
+    private suspend fun longestSaved(app: Context, song: Song, recording: String, language: String): Saved? {
+        val kept = withContext(Dispatchers.IO) { load(app, song.videoId) }
+        return covering(kept, recording, language, 0.0)
+            ?: streamWords(kept, language)?.takeIf { recording.startsWith(FILE_PREFIX) && LyricsTiming.streamWordsReachFile(app, song.videoId) }
     }
 
     /**
