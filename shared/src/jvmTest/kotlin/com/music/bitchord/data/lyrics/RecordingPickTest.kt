@@ -159,6 +159,191 @@ class RecordingPickTest {
     }
 
     /**
+     * 11-07 review M1: the lyrics name list carries `title to ""` for a cover
+     * that never names the original. With no act, the strict gate has no
+     * artist to check, so any uploader's exact-titled upload stood in.
+     */
+    @Test
+    fun anUploadIsNotTheRecordWhenTheActIsUnknown() {
+        val rows = listOf(
+            row("x", "Lose Yourself", "Some Other Band", "5:26", video = true),
+            row("y", "Lose Yourself (Official Music Video)", "EminemVEVO", "5:26", video = true),
+        )
+        assertEquals(emptyList(), pick("Lose Yourself", "", rows, videoMs = 326_000L))
+    }
+
+    /** The blank entry must not hide the name that does state the act. */
+    @Test
+    fun aBlankNameDoesNotHideTheActTheOtherNameStates() {
+        val rows = listOf(
+            row("x", "Lose Yourself", "Some Other Band", "5:26", video = true),
+            row("y", "Lose Yourself (Official Music Video)", "EminemVEVO", "5:26", video = true),
+        )
+        assertEquals(
+            listOf("y"),
+            RecordingPick.rank(
+                listOf("Lose Yourself", "Lose Yourself"),
+                listOf("", "Eminem"),
+                rows,
+                326_000L,
+            ).map { it.videoId },
+        )
+    }
+
+    /**
+     * The review's M2 case, closed: the take is named only in the snippet the
+     * search row prints, and the title reads exactly `Song`. Without the
+     * description the gate saw a plain-titled upload by the act and admitted
+     * a live take as the record.
+     */
+    @Test
+    fun anUploadWhoseDescriptionNamesAnotherTakeIsNotTheRecord() {
+        val rows = listOf(
+            row("v", "Lose Yourself", "Eminem", "5:26", video = true)
+                .copy(description = "Lose Yourself (Live at Wembley) · 2002"),
+        )
+        assertEquals(emptyList(), pick("Lose Yourself", "Eminem", rows, videoMs = 326_000L))
+    }
+
+    /**
+     * The description guard must not refuse what the request did ask for: an
+     * official video's snippet is full of packaging words ("Official", "Video",
+     * "From …"), and those are context, never a take.
+     */
+    @Test
+    fun anUploadWithOnlyPackagingInItsDescriptionIsTheRecord() {
+        val rows = listOf(
+            row("v", "Lose Yourself", "Eminem", "5:26", video = true)
+                .copy(description = "Official music video for Lose Yourself (From \"8 Mile\") [Official Video]"),
+        )
+        assertEquals(listOf("v"), pick("Lose Yourself", "Eminem", rows, videoMs = 326_000L))
+    }
+
+    /**
+     * The take the request did ask for still passes: the snippet and the target
+     * agree on "live", so the row is the live take the caller asked about.
+     */
+    @Test
+    fun anUploadWithTheTakeTheRequestAskedForIsTheRecord() {
+        val rows = listOf(
+            row("v", "Lose Yourself (Live at Wembley)", "Eminem", "5:26", video = true)
+                .copy(description = "Lose Yourself (Live at Wembley) · 2002"),
+        )
+        assertEquals(
+            listOf("v"),
+            pick("Lose Yourself (Live at Wembley)", "Eminem", rows, videoMs = 326_000L),
+        )
+    }
+
+    /**
+     * 11-07 review M2: an upload that names its take only on its release
+     * ("Live at Wembley") is still not the record. A youtube.com search row
+     * carries no album, so this guard only ever sees a row that states one.
+     */
+    @Test
+    fun anUploadWhoseReleaseNamesAnotherTakeIsNotTheRecord() {
+        val rows = listOf(
+            row("v", "Lose Yourself", "Eminem", "5:26", video = true)
+                .copy(albumName = "Lose Yourself (Live at Wembley)"),
+        )
+        assertEquals(emptyList(), pick("Lose Yourself", "Eminem", rows, videoMs = 326_000L))
+    }
+
+    /**
+     * 11-07 review M3: the runtime rule is the video's, not a symmetric drift.
+     * A 6:30 music video can carry an intro its 4:00 single does not; the
+     * single is still the record. Old code refused it outright (150 s apart).
+     */
+    @Test
+    fun theMasterMayBeShorterThanItsVideo() {
+        val rows = listOf(row("v", "Lose Yourself", "Eminem", "4:00", video = true))
+        assertEquals(listOf("v"), pick("Lose Yourself", "Eminem", rows, videoMs = 390_000L))
+    }
+
+    /** The other direction stays refused: a 7:10 cut under a 5:26 video is another edit. */
+    @Test
+    fun anUploadMuchLongerThanItsVideoIsNotTheRecord() {
+        val rows = listOf(row("v", "Lose Yourself", "Eminem", "7:10", video = true))
+        assertEquals(emptyList(), pick("Lose Yourself", "Eminem", rows, videoMs = 326_000L))
+    }
+
+    /**
+     * The reused video rule's longer side is `VIDEO_DURATION_LIMIT_SEC` itself:
+     * 6:50 against a 5:26 video (84 s) is still offered as the record. Pinned
+     * at the rule's own number on purpose — the picker must read
+     * [com.music.bitchord.data.sources.TrackMatcher.videoRuntimeAllows] exactly
+     * as the audio switch does, not with a tighter number of its own.
+     */
+    @Test
+    fun anUploadWithinTheVideoAllowanceLongerThanItsVideoIsStillTheRecord() {
+        val rows = listOf(row("v", "Lose Yourself", "Eminem", "6:50", video = true))
+        assertEquals(listOf("v"), pick("Lose Yourself", "Eminem", rows, videoMs = 326_000L))
+    }
+
+    /** An upload that states no runtime cannot be checked at all. */
+    @Test
+    fun anUploadWithoutARuntimeIsNotTheRecord() {
+        val rows = listOf(row("v", "Lose Yourself", "Eminem", video = true).copy(durationText = null))
+        assertEquals(emptyList(), pick("Lose Yourself", "Eminem", rows, videoMs = 326_000L))
+    }
+
+    /**
+     * 11-07 review LOW 5: a catalogue row with the playing video's own id is
+     * what used to be picked, and the caller reads that id as "the video is
+     * the record". Excluding it must not turn the row into "no original
+     * found", which makes a paid automatic request eligible.
+     */
+    @Test
+    fun theCatalogueRowOfThePlayingVideoStillRecordsNoChange() {
+        val rows = listOf(row("v", "Lose Yourself", "Eminem", "5:26"))
+        assertEquals(
+            listOf("v"),
+            RecordingPick.rank(listOf("Lose Yourself"), listOf("Eminem"), rows, 326_000L, 2, "v")
+                .map { it.videoId },
+        )
+    }
+
+    /**
+     * The old candidate list is returned whole — the playing row included when
+     * the catalogue pass named it — because that list is exactly what the
+     * pre-exclude code handed over, and the caller reads the id as "the video
+     * is the record" and returns before any download. The extra row is not a
+     * reference; nothing measures against it.
+     */
+    @Test
+    fun thePlayingRowsOwnRowIsInTheCandidatesItUsedToBeIn() {
+        val rows = listOf(
+            row("v", "Lose Yourself", "Eminem", "5:26"),
+            row("o", "Lose Yourself", "Eminem", "5:25"),
+        )
+        assertEquals(
+            listOf("v", "o"),
+            RecordingPick.rank(listOf("Lose Yourself"), listOf("Eminem"), rows, 326_000L, 2, "v")
+                .map { it.videoId },
+        )
+    }
+
+    /**
+     * The verdict is the *old candidate list's*, not "the row would score":
+     * with three equal rows and `max = 2` the catalogue pass kept only the
+     * first two, so the playing row was never the record it now claims to be.
+     * Restoring more than the old code did would refuse a reference it used.
+     */
+    @Test
+    fun thePlayingRowOnlyWinsWhenTheCataloguePassWouldHaveNamedIt() {
+        val rows = listOf(
+            row("a", "Lose Yourself", "Eminem", "5:26"),
+            row("b", "Lose Yourself", "Eminem", "5:26"),
+            row("v", "Lose Yourself", "Eminem", "5:26"),
+        )
+        assertEquals(
+            listOf("a", "b"),
+            RecordingPick.rank(listOf("Lose Yourself"), listOf("Eminem"), rows, 326_000L, 2, "v")
+                .map { it.videoId },
+        )
+    }
+
+    /**
      * 2026-11-05 smoke: from a Korean IP without Premium Music's Songs filter
      * answered no rows at all, the page was taken at its word, and all eight
      * covers in the run read "no original recording found" — so the cover

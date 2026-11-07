@@ -1770,7 +1770,7 @@ object LyricsTiming {
      * Found nothing to measure against with an older way of searching: worth
      * one more search, since the newer one finds originals the old one missed.
      */
-    private fun searchOutdated(entry: Entry): Boolean =
+    internal fun searchOutdated(entry: Entry): Boolean =
         entry.auto == null && !entry.autoNoChange && entry.searchVersion < SEARCH_VERSION
 
     /**
@@ -2699,12 +2699,15 @@ object LyricsTiming {
     private const val GIVE_UP_AFTER_SECONDS = 150.0
 
     /** ko-27: covers read singer-first, title-only searches for covers that don't name the original. */
-    private const val SEARCH_VERSION = 3 // ko-97: reference rows are now the same song and the same artist
+    private const val SEARCH_VERSION = 4 // video-timing: an act's own upload, the video's runtime rule, the playing row as its own record
 
     /**
      * Measurements kept before this version are measured again. ko-97: the
      * reference recording rules changed, so a kept shift may describe a
      * karaoke arrangement or a namesake by the same artist (The Hills).
+     * video-timing (4): the picker started taking an act's own upload, the
+     * video's runtime rule and the playing row as its own record, so a stored
+     * "no original recording found" was not a verdict on the new search.
      */
     internal const val AUTO_VERSION = 4
 

@@ -288,8 +288,22 @@ internal object YouTubeWebParser {
                 ?.takeIf { DURATION.matches(it) },
             channelId = video.bylineChannelId(),
             isVideo = video.isVideoRow(item.subtitle),
+            description = video.descriptionSnippet(),
         )
     }
+
+    /**
+     * The snippet a search `videoRenderer` prints under its row, joined when
+     * YouTube sends more than one ("Lose Yourself (Live at Wembley) · ...").
+     * Null on rows that carry none, which is most of them — the field is only
+     * used to read a take the title never names.
+     */
+    private fun JsonObject.descriptionSnippet(): String? =
+        findArray("detailedMetadataSnippets")
+            ?.mapNotNull { (it as? JsonObject)?.findObject("snippetText")?.text() }
+            ?.filter { it.isNotBlank() }
+            ?.joinToString("\n")
+            ?.takeIf { it.isNotBlank() }
 
     private fun playlistVideoSong(video: JsonObject): Song? {
         val item = playlistVideoItem(video) ?: return null

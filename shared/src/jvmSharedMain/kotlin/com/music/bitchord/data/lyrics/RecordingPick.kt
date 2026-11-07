@@ -53,7 +53,7 @@ object RecordingPick {
         names: List<Pair<String, String>>,
         videoMs: Long,
         max: Int = 2,
-        /** The row playing: never offered to itself as the recording to measure against. */
+        /** The row playing: never offered to itself as the reference (see [rank]). */
         excludeVideoId: String? = null,
     ): List<Song> = withContext(Dispatchers.IO) {
         val clean = names
@@ -138,7 +138,12 @@ object RecordingPick {
         rows: List<Song>,
         videoMs: Long,
         max: Int = 2,
-        /** The row playing: never offered to itself as the recording to measure against. */
+        /**
+         * The row playing: never offered to itself as the reference. Its own
+         * catalogue row is still handed back when it is what the catalogue pass
+         * named, because the caller reads that id as "the video is the record"
+         * — see the self check in [rank].
+         */
         excludeVideoId: String? = null,
     ): List<Song> {
         val available = rows.filter { it.videoId != excludeVideoId }
@@ -150,48 +155,87 @@ object RecordingPick {
         // all dropped by the first pass. Two passes, never one: an upload does
         // not compete with a catalogue row that already qualified, so nothing
         // the catalogue named is displaced.
-        return pickFrom(available.filter { !it.isVideo }, titles, artists, videoMs)
-            .ifEmpty {
-                pickFrom(
-                    available.filter { it.isVideo && uploadIsTheRecord(it, titles, artists, videoMs) },
-                    titles,
-                    artists,
-                    videoMs,
-                )
-            }
-            .take(max)
+        //
+        // This pass keeps the row playing, exactly as before it was excluded:
+        // the candidate list is the one the old verdict was taken from, so a
+        // row that used to record "the video is the record" still does, and
+        // measureFresh reads that id and returns before any download. An
+        // upload row never enters this pass, so exclusion still holds for
+        // every row that is only ever a reference.
+        val catalogue = pickFrom(rows.filter { !it.isVideo }, titles, artists, videoMs).take(max)
+        if (catalogue.isNotEmpty()) return catalogue
+        return pickFrom(
+            available.filter { it.isVideo && uploadIsTheRecord(it, titles, artists, videoMs) },
+            titles,
+            artists,
+            videoMs,
+        ).take(max)
     }
 
     /**
      * Whether [row], an upload the youtube.com fallback answered with, is the
      * recording to measure against: [TrackMatcher.isOriginalRecording] holds
-     * the exact title, the take markers, the act behind the channel (Topic and
-     * VEVO suffixes included) and a runtime within
-     * [TrackMatcher.VIDEO_DURATION_LIMIT_SEC] — a music video carries an intro
-     * the master does not. Covers, live takes, instrumentals and remixes carry
-     * their marker and are refused there; a different arrangement that slips
-     * through is still refused by the measurement itself, which has to line the
-     * two recordings up note for note.
+     * the exact title, the take markers and the act behind the channel (Topic
+     * and VEVO suffixes included); the runtime is the codebase's video rule
+     * ([TrackMatcher.videoRuntimeAllows], the one the audio switch uses) — the
+     * upload may be shorter than the video by any amount, since the video
+     * carries the intro/outro the master does not, and longer by up to
+     * [TrackMatcher.VIDEO_DURATION_LIMIT_SEC]. A blank credit is refused
+     * outright. Covers, live takes, instrumentals and remixes carry their
+     * marker and are refused there; a different arrangement that slips through
+     * is still refused by the measurement itself, which has to line the two
+     * recordings up note for note.
      */
     private fun uploadIsTheRecord(
         row: Song,
         titles: List<String>,
         artists: List<String>,
         videoMs: Long,
-    ): Boolean {
-        val durationSec = if (videoMs > 0L) (videoMs / 1000L).toInt() else null
-        return titles.indices.any { index ->
-            TrackMatcher.isOriginalRecording(
-                row,
-                TrackMatcher.Target(
-                    title = titles[index],
-                    artist = artists.getOrNull(index).orEmpty(),
-                    durationSec = durationSec,
-                    isVideo = true,
-                ),
-                maxDriftSec = TrackMatcher.VIDEO_DURATION_LIMIT_SEC,
-            )
-        }
+    ): Boolean = titles.indices.any { index ->
+        val artist = artists.getOrNull(index).orEmpty()
+        // A blank credit is a cover that never named the original ("title to
+        // \"\"", LyricsController's name list). Nothing then says whose song it
+        // is, and the strict gate skips its artist check when the target has
+        // none — so any uploader's exact-titled row of about the right length
+        // would stand in. Only a known act may have its upload used.
+        artist.isNotBlank() && recordMatches(row, titles[index], artist, videoMs)
+    }
+
+    /** One name against [row]: the strict recording gate plus the video runtime rule. */
+    private fun recordMatches(row: Song, title: String, artist: String, videoMs: Long): Boolean {
+        val target = TrackMatcher.Target(
+            title = title,
+            artist = artist,
+            durationSec = if (videoMs > 0L) (videoMs / 1000L).toInt() else null,
+            isVideo = true,
+        )
+        // Duration is checked below by the video rule: a video may be longer
+        // than its master for an intro/outro, its master may not be a longer
+        // cut. The gate's own window is symmetric and would also refuse the
+        // 4:00 single under a 6:30 video.
+        if (!TrackMatcher.isOriginalRecording(row, target.copy(durationSec = null))) return false
+        // A row that will not say how long it is cannot be checked; the gate
+        // refused that before and still does (videoRuntimeAllows reads silence
+        // as no disagreement).
+        if (target.durationSec != null && TrackMatcher.secondsOf(row.durationText) == null) return false
+        // The runtime is the codebase's video rule, exactly as it stands: an
+        // upload shorter than the video by any amount is the same master (the
+        // video carries the intro/outro), and one within
+        // [TrackMatcher.VIDEO_DURATION_LIMIT_SEC] longer is too. No bound is
+        // added on top — the audio switch reads the same rule, and a picker-only
+        // tighter number would make the two disagree.
+        if (!TrackMatcher.videoRuntimeAllows(target, row)) return false
+        // A take the title never names can still be stated by the row: on the
+        // release it came from ("Live at Wembley"), or in the snippet
+        // www.youtube.com prints under it ("… (Live at Wembley)"). Either way,
+        // a take the request did not ask for is a different recording. Both are
+        // read with the same title parser, so what counts is a bracketed or
+        // dashed aside — a take word loose in the description's prose is not a
+        // statement about this row.
+        val askedTakes = TrackMatcher.parseTitle(title, artist).versions
+        val statedTakes = TrackMatcher.albumVersionMarkers(row.albumName) +
+            TrackMatcher.parseTitle(row.description.orEmpty()).versions
+        return (statedTakes - askedTakes).isEmpty()
     }
 
     /** [rank]'s one pass over [rows]: score them and return them best first. */

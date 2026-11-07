@@ -94,6 +94,47 @@ class LyricsTimingMeasurementGateTest {
         assertTrue(LyricsTiming.staleReadingNeedsRestart(70.0, AudioDecoder.FAILURE_NO_FIRST_SAMPLE, false))
     }
 
+    /**
+     * 11-07 video-timing: the reference rules changed after these rows were
+     * recorded (an act's own upload, the video's runtime rule, the playing row
+     * as the record), so a stored "no original recording found" is not a
+     * verdict on the new search. The stored version (3) must stay below
+     * SEARCH_VERSION or that whole round's fix never runs for them.
+     */
+    @Test
+    fun `a row that found nothing under the previous search is searched once more`() {
+        assertTrue(
+            LyricsTiming.searchOutdated(
+                LyricsTiming.Entry(
+                    autoVersion = LyricsTiming.AUTO_VERSION,
+                    auto = null,
+                    autoComplete = true,
+                    searchVersion = 3,
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `a no-change verdict is never searched again`() {
+        assertFalse(
+            LyricsTiming.searchOutdated(
+                LyricsTiming.Entry(
+                    autoVersion = LyricsTiming.AUTO_VERSION,
+                    auto = null,
+                    autoComplete = true,
+                    autoNoChange = true,
+                    searchVersion = 3,
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `a row with an answer keeps it`() {
+        assertFalse(LyricsTiming.searchOutdated(answer("authoritative")))
+    }
+
     @Test
     fun `another decode failure does not re-decode the prefix`() {
         assertFalse(LyricsTiming.staleReadingNeedsRestart(70.0, "codec-start", false))

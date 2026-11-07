@@ -207,6 +207,17 @@ data class Song(
      * video — is still played as one.
      */
     val musicVideoType: String? = null,
+    /**
+     * The snippet `www.youtube.com` prints under a search row, when the response
+     * carries one (`detailedMetadataSnippets`). Only the web fallback fills it.
+     *
+     * A live or alternate upload often names the take in its description rather
+     * than its title ("Lose Yourself (Live at Wembley)"), and that is the one
+     * place the picker could otherwise never see it — the title-only take
+     * comparison reads nothing there. Kept off the music.youtube.com rows, which
+     * have no such field.
+     */
+    val description: String? = null,
 ) {
     /** Legacy derived property: true if and only if [queueTier] is [QueueTier.AUTOPLAY]. */
     val fromAutoplay: Boolean get() = queueTier == QueueTier.AUTOPLAY

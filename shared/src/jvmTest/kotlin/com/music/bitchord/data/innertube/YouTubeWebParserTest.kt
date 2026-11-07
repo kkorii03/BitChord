@@ -95,6 +95,22 @@ class YouTubeWebParserTest {
         assertTrue(songs[1].isVideo)
     }
 
+    /**
+     * 11-07 video-timing M2: the take a live upload never puts in its title is
+     * printed under the row, and the picker needs it to refuse that row as the
+     * record. Rows without a snippet stay null, so nothing is invented.
+     */
+    @Test
+    fun `a search video row keeps the snippet printed under it`() {
+        val songs = YouTubeWebParser.parseHistory(json(SEARCH_SNIPPETS))
+
+        assertEquals(
+            "Lose Yourself (Live at Wembley) · 2002",
+            songs.first { it.videoId == "liveUploa1" }.description,
+        )
+        assertNull(songs.first { it.videoId == "plainRow1" }.description)
+    }
+
     @Test
     fun `home shelves keep only music rows when asked`() {
         val all = YouTubeWebParser.parseHome(json(CHANNEL), musicOnly = false)
@@ -503,6 +519,35 @@ class YouTubeWebParserTest {
                 "lengthText":{"simpleText":"3:20"},
                 "thumbnail":{"thumbnails":[
                   {"url":"https://i.ytimg.com/vi/stageUploa1/hq.jpg","width":720,"height":404}
+                ]}
+              }}
+            ]}}
+        """
+
+        const val SEARCH_SNIPPETS = """
+            {"contents":{"contents":[
+              {"videoRenderer":{
+                "videoId":"liveUploa1",
+                "title":{"runs":[{"text":"Lose Yourself"}]},
+                "ownerText":{"runs":[{"text":"Eminem"}]},
+                "lengthText":{"simpleText":"5:26"},
+                "detailedMetadataSnippets":[
+                  {"snippetText":{"runs":[
+                    {"text":"Lose Yourself (Live at Wembley)"},
+                    {"text":" · 2002"}
+                  ]}}
+                ],
+                "thumbnail":{"thumbnails":[
+                  {"url":"https://i.ytimg.com/vi/liveUploa1/hq.jpg","width":720,"height":404}
+                ]}
+              }},
+              {"videoRenderer":{
+                "videoId":"plainRow1",
+                "title":{"runs":[{"text":"Lose Yourself"}]},
+                "ownerText":{"runs":[{"text":"Eminem"}]},
+                "lengthText":{"simpleText":"5:26"},
+                "thumbnail":{"thumbnails":[
+                  {"url":"https://i.ytimg.com/vi/plainRow1/hq.jpg","width":720,"height":404}
                 ]}
               }}
             ]}}
