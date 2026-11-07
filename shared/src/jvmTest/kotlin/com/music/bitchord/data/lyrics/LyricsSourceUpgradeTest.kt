@@ -14,10 +14,14 @@ class LyricsSourceUpgradeTest {
     )
 
     @Test
-    fun `word-timed KuGou comes before every line-timed source by default`() {
+    fun `word-timed KuGou comes before the line-timed services and fallbacks by default`() {
         val order = LyricsSource.offered
         val kugou = order.indexOf(LyricsSource.KUGOU)
-        assertTrue(order.filter { !it.wordSynced }.all { order.indexOf(it) > kugou }, "order $order")
+        val lineTimed = listOf(
+            LyricsSource.VIBE, LyricsSource.BUGS, LyricsSource.YOUTUBE_TRANSCRIPT, LyricsSource.YOUTUBE_MUSIC,
+            LyricsSource.LRCLIB, LyricsSource.MUSIXMATCH, LyricsSource.GENIUS,
+        )
+        assertTrue(lineTimed.all { order.indexOf(it) > kugou }, "order $order")
     }
 
     @Test
