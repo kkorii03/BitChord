@@ -38,6 +38,11 @@ object LyricsPerLine {
     const val MIN_LONE_BLOCK_MS = 1_200L
     const val MAX_LONE_BLOCK_MS = 4_000L
 
+    /** This share of a song's anchors within this of their middle says the sheet is right; see [withoutStrays]. */
+    const val GOOD_SHEET_SHARE = 0.9
+    const val GOOD_SHEET_WITHIN_MS = 250L
+    const val MIN_GOOD_SHEET_ANCHORS = 8
+
     /** Two anchors further apart than this do not interpolate between themselves. */
     const val MAX_INTERPOLATE_SPAN_MS = 30_000L
 
@@ -138,7 +143,7 @@ object LyricsPerLine {
             found += Anchor(index, lines[index].timeMs, residual)
         }
         val letters = lines.map { LyricsWordAlign.fold(it.text).length }
-        val anchors = withoutLoneBlocks(sungInOrder(found, letters))
+        val anchors = withoutStrays(withoutLoneBlocks(sungInOrder(found, letters)))
         if (anchors.isEmpty()) return Layer.identity(lines.size)
 
         val heardFrom = heard.minOf { it.startMs }
@@ -201,6 +206,21 @@ object LyricsPerLine {
         val applied = shifts.count { it != 0L }
         val maxAbs = shifts.maxOfOrNull { abs(it) } ?: 0L
         return Layer(shifts.toList(), anchors.size, applied, maxAbs)
+    }
+
+    /**
+     * [anchors] without the odd ones out on a sheet that is right. When nearly every line was
+     * heard about where it is shown, the sheet is good, and the few heard far from it are
+     * mishearings. Moving them made it worse: 14 of 46 songs lost lines they had right, up to
+     * 1 s off from 0.12 s (11-07 BL-aIpCLWnU). Simulated on the 51 scored songs under the
+     * strict rules, chosen on half and confirmed on the rest: 22 pass, then 27, none lost.
+     * A sheet with many lines to move keeps them all: there the moves are real.
+     */
+    private fun withoutStrays(anchors: List<Anchor>): List<Anchor> {
+        if (anchors.size < MIN_GOOD_SHEET_ANCHORS) return anchors
+        val center = median(anchors.map { it.residualMs })
+        val near = anchors.filter { abs(it.residualMs - center) <= GOOD_SHEET_WITHIN_MS }
+        return if (near.size >= anchors.size * GOOD_SHEET_SHARE) near else anchors
     }
 
     /**

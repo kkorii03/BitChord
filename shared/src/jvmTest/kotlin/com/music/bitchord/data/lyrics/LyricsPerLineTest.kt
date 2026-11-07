@@ -36,6 +36,35 @@ class LyricsPerLineTest {
     private fun layer(lines: List<LyricLine>, heard: List<LyricsWordAlign.Heard>) =
         LyricsPerLine.compute(lines, heard, heardAudioKey = 1, currentAudioKey = 1)
 
+    private val twelve = List(12) { index ->
+        val a = "alpha bravo charlie delta echoes foxtrot golfing hotels indigo juliet kilos lima".split(" ")
+        line(20_000L + index * 12_000L, "${a[index]}x ${a[(index + 1) % 12]}y ${a[(index + 2) % 12]}z ${a[(index + 3) % 12]}w")
+    }
+
+    /** 11-07 BL-aIpCLWnU in figures: a sheet within 0.12 s, moved up to 1 s by one misheard line. */
+    @Test
+    fun `one line heard far off leaves a sheet that is right alone`() {
+        val heard = twelve.flatMapIndexed { index, line ->
+            heardLine(line, if (index == 5) 1_000L else if (index % 2 == 0) 60L else -60L)
+        }
+
+        val shifts = layer(twelve, heard).shiftsMs
+
+        assertTrue(kotlin.math.abs(shifts[5]) <= 100L, "the stray line moved ${shifts[5]} ms")
+    }
+
+    @Test
+    fun `a sheet with many lines to move keeps every move`() {
+        val heard = twelve.flatMapIndexed { index, line ->
+            heardLine(line, if (index % 3 == 0) 900L else 0L)
+        }
+
+        val shifts = layer(twelve, heard).shiftsMs
+
+        assertEquals(900L, shifts[3])
+        assertEquals(0L, shifts[4])
+    }
+
     /**
      * 11-06 w58uXpyHWes in figures, made-up words: the line after a line moved 0.6 s
      * later is heard 1.9 s early, 126 ms after it. No one sings a line in 126 ms.
