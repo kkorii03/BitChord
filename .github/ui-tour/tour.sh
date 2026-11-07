@@ -630,6 +630,7 @@ section_now_playing() {
   adb shell am start -a android.intent.action.VIEW -d "https://music.youtube.com/watch?v=$MAIN_VIDEO" $PKG
   sleep 20
   shot now-playing-mini "Now playing (mini player)"
+  tap_raw "대기" 8 || true
   if tap_raw "Dance Monkey" 4; then
   sleep 2
   shot now-playing "Now playing (expanded)"
@@ -750,6 +751,7 @@ section_proxy() {
 # Quick mode: only the screens a home/explore/artwork change can affect.
 if [ "${TOUR_QUICK:-0}" = "1" ]; then
   run_section section_home home
+  run_section section_explore explore
   sleep 30
   tap "대기" first 3 || true
   run_section section_now_playing now-playing
