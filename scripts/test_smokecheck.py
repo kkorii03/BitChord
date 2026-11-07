@@ -825,5 +825,84 @@ class OutputTest(unittest.TestCase):
             self.assertIn("비어", stderr.getvalue())
 
 
+def heard_summary(video_id: str, title: str, video: bool, first: str, played: int) -> str:
+    return log_line(
+        f"track-summary: {video_id} '{title}' video={'y' if video else 'n'} "
+        f"source=shared_link:{video_id} resolve=direct firstAudio={first} "
+        f"played={played} lyrics=lrc.red sync=verified shift=0 match=100 "
+        "manualOffset=0 ended=skipped"
+    )
+
+
+class LateVersionTest(unittest.TestCase):
+    """11-07 rounds 133-136 and fleet 77-80 (emulator, Korean home IP)."""
+
+    def test_music_only_swap_before_audio_counts_as_a_swap(self):
+        # 134d: the MV never sounded, the release played; was failed as an MV.
+        log = "\n".join(
+            [
+                play("mv1", "Song", "Artist"),
+                log_line("song version: mv1 kept (timeout)"),
+                log_line("[mv1] music-only: playing 'Song' (aud1)"),
+                heard_summary("mv1", "Song", True, "-", 0),
+                play("aud1", "Song", "Artist"),
+                heard_summary("aud1", "Song", False, "5368", 131),
+            ]
+        )
+        self.assertEqual(
+            "PASS", statuses_with_songs(log, specs("mv1\tmv"))[1].status
+        )
+
+    def test_late_lookup_answer_does_not_excuse_an_audible_mv(self):
+        # 133a: the answer landed after the MV's first sound; the MV played on.
+        log = "\n".join(
+            [
+                play("mv1", "Song", "Artist"),
+                log_line("song version: mv1 kept (timeout)"),
+                log_line("song version: mv1 -> aud1 via search"),
+                log_line("song version: mv1 -> aud1 via retry"),
+                heard_summary("mv1", "Song", True, "17982", 132),
+                log_line("song version: mv1 -> aud1 via cache before-audio"),
+            ]
+        )
+        result = statuses_with_songs(log, specs("mv1\tmv"))[1]
+        self.assertEqual("FAIL", result.status)
+        self.assertIn("mv1", result.details[0])
+
+    def test_late_lookup_answer_also_fails_without_a_song_list(self):
+        log = "\n".join(
+            [
+                log_line("song version: mv1 -> aud1 via search shared"),
+                heard_summary("mv1", "Song", True, "18285", 131),
+            ]
+        )
+        self.assertEqual("FAIL", statuses(log)[1].status)
+
+    def test_sync_of_a_row_that_never_sounded_is_not_judged(self):
+        # 136b: a stored measurement of the replaced MV, never heard.
+        log = "\n".join(
+            [
+                log_line("[mv1] music-only: playing 'Song' (aud1)"),
+                log_line(
+                    "song-sync: mv1 result=applied match=100% shift=11370 secs=227 words=303"
+                ),
+                heard_summary("mv1", "Song", True, "-", 0),
+                heard_summary("aud1", "Song", False, "6672", 127),
+            ]
+        )
+        self.assertEqual("PASS", statuses(log)[3].status)
+
+    def test_sync_of_a_heard_row_is_still_judged(self):
+        log = "\n".join(
+            [
+                log_line(
+                    "song-sync: vid1 result=applied match=100% shift=11640 secs=234 words=303"
+                ),
+                heard_summary("vid1", "Song", True, "17982", 132),
+            ]
+        )
+        self.assertEqual("FAIL", statuses(log)[3].status)
+
+
 if __name__ == "__main__":
     unittest.main()

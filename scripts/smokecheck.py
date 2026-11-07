@@ -37,6 +37,13 @@ TRACK_SUMMARY_RE = re.compile(
 # A numeric `firstAudio=` is the only proof that a track actually played sound;
 # scripts/smoke/run.sh uses the same expression for its NO AUDIO stop.
 TRACK_AUDIO_RE = re.compile(r"track-summary:.*\bfirstAudio=\d")
+# The same summary's `firstAudio=<ms|-> played=<s>`: a row is heard only with both.
+TRACK_HEARD_RE = re.compile(r"\bfirstAudio=(?P<first>\S+)\s+played=(?P<played>\d+)")
+# `[<video id>] music-only: playing '<title>' (<song id>)`: the music-only path
+# put the release in the video's place before its first sound.
+MUSIC_ONLY_SWAP_RE = re.compile(
+    r"\[(?P<src>[^\]\s]+)\]\s+music-only: playing '.*' \((?P<dst>[^()\s]+)\)\s*$"
+)
 INVALID_NOTHING = "INVALID: nothing could be judged (판정한 곡 없음)"
 INVALID_NO_AUDIO = (
     "INVALID: no audio in the whole run (전체 무음: 유튜브 봇 체크/프록시)"
@@ -255,6 +262,12 @@ def check_log(
     video_radio_ids: set[str] = set()
     prep_video_by_design: set[tuple[str, str]] = set()
     last_lyrics_shift: dict[str, int | None] = {}
+    # (source, target, line number, installed before audio) per swap line.
+    swap_lines: list[tuple[str, str, int, bool]] = []
+    summarized_ids: set[str] = set()
+    heard_ids: set[str] = set()
+    # Line of the first summary saying this video itself was heard.
+    first_heard_video_at: dict[str, int] = {}
     # A `search:` hq row has no id to filter by, so such a list keeps every line.
     hq_specs_listed = [spec for spec in songs if spec.kind == "hq"] if songs is not None else []
     hq_spec_ids = (
@@ -263,7 +276,7 @@ def check_log(
         else None
     )
 
-    for raw in text.splitlines():
+    for line_no, raw in enumerate(text.splitlines()):
         line = raw.rstrip("\r")
 
         if "play: ->" in line:
@@ -283,6 +296,24 @@ def check_log(
                         video=match.group("video") == "y",
                     )
                 )
+                summary_id = match.group("id")
+                summarized_ids.add(summary_id)
+                heard = TRACK_HEARD_RE.search(line)
+                if (
+                    heard
+                    and heard.group("first")[:1].isdigit()
+                    and int(heard.group("played")) > 0
+                ):
+                    heard_ids.add(summary_id)
+                    if match.group("video") == "y":
+                        first_heard_video_at.setdefault(summary_id, line_no)
+
+        if "music-only: playing" in line:
+            match = MUSIC_ONLY_SWAP_RE.search(line)
+            if match:
+                replacements.append((match.group("src"), match.group("dst")))
+                version_subjects.add(match.group("src"))
+                swap_lines.append((match.group("src"), match.group("dst"), line_no, True))
 
         if "song version:" in line:
             cover = SONG_VERSION_COVER_RE.search(line)
@@ -297,6 +328,7 @@ def check_log(
                 target = match.group("dst")
                 replacements.append((source, target))
                 version_subjects.add(source)
+                swap_lines.append((source, target, line_no, "before-audio" in line))
             # A "kept" line is not evidence of an MV: the lookup also runs for
             # rows of unknown type and keeps a song version that is already one
             # (10-26: Burn the House Down, Wbxh1fNakos = AJR - Topic, was failed
@@ -386,7 +418,24 @@ def check_log(
                 seen_sync.add(key)
                 sync_warnings.append(key)
 
-    replaced_sources = {src for src, dst in replacements if dst not in ("none", "-")}
+    # The app never swaps a recording that is already audible (see
+    # SongVersionController.watchForLateVersion): a lookup answer that lands
+    # after the video made its first sound only steers the lyrics. So once a
+    # video's own summary says it was heard, only a swap installed before audio
+    # (`before-audio` or the music-only line) and logged before that summary
+    # proves it was replaced. 11-07 rounds 133-136: Youngblood and When I Was
+    # Your Man played as MVs for two minutes and passed as "replaced".
+    def counts_as_swap(src: str, line_no: int, installed: bool) -> bool:
+        heard_at = first_heard_video_at.get(src)
+        if heard_at is None:
+            return True
+        return installed and line_no < heard_at
+
+    replaced_sources = {
+        src
+        for src, dst, line_no, installed in swap_lines
+        if dst not in ("none", "-") and counts_as_swap(src, line_no, installed)
+    }
     replaced_targets = {dst for _src, dst in replacements if dst not in ("none", "-")}
     mv_ids = {
         summary.video_id
@@ -505,8 +554,13 @@ def check_log(
     )
 
     # 3. A shift beyond three seconds, or a refused shift, smells like MV sound.
+    #    A row whose every summary says it never made a sound was not heard
+    #    with any sheet: its measurement (often a stored one for the MV the
+    #    music-only path replaced before audio) is not this run's sync.
     sync_details: list[str] = []
     for source, video_id, value in sync_warnings:
+        if video_id in summarized_ids and video_id not in heard_ids:
+            continue
         title = title_by_id.get(video_id)
         label = f"{video_id} ({title})" if title else video_id
         if source == "lyrics-sync":
