@@ -120,6 +120,18 @@ class SheetChoiceTest {
         )
     }
 
+    /** QYh6mYIJG2Y: lrc.red fit 83% and a line-timed sheet 93%, and the people's timing was replaced. */
+    @Test
+    fun `a line-timed sheet does not replace a word-timed one that clears the floor`() {
+        val sheetFits = sheet(0)
+        val sung = sheetFits.mapIndexed { i, line -> if (i in 5..7) sheet(24)[i] else line }
+        val heard = sung(sung)
+
+        assertNull(pick(sheetFits.map(::timedWord), sung, heard))
+        // The same sheet without word times is still replaced: the rule is about the times.
+        assertEquals(sung, pick(sheetFits, sung, heard))
+    }
+
     /** w8P-BIQU1qI: 98% against 211 words, 72% against the 158 a later listen kept. */
     @Test
     fun `the app's own measure below the floor does not freeze the sheet`() {

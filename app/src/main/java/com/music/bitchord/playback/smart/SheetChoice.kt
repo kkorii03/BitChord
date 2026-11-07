@@ -59,7 +59,16 @@ internal object SheetChoice {
     ): LyricsRepository.Result? {
         if (heard.size < LyricsMismatch.MIN_HEARD_WORDS) return null
         // 98% against 211 words, 72% against the 158 a later listen kept (w8P-BIQU1qI): not worse.
-        val mine = maxOf(fitPercent(current, heard), knownFit ?: 0)
+        val fitsNow = fitPercent(current, heard)
+        val mine = maxOf(fitsNow, knownFit ?: 0)
+        // Word times were set by someone listening, so a sheet that has them and clears the floor
+        // gives way only to another that has them. Scored against such sheets, line-timed ones
+        // that took over by fit alone were worse (QYh6mYIJG2Y: 83% against 93%, lrc.red replaced).
+        val usable = if (current.any { it.hasStatedWords() } && fitsNow >= LyricsAiGuard.MIN_MATCH_PERCENT) {
+            candidates.filter { sheet -> sheet.lines.any { it.hasStatedWords() } }
+        } else {
+            candidates
+        }
         if (mine >= GOOD_ENOUGH_PERCENT) {
             if (current.any { it.hasStatedWords() }) return null
             return candidates.filter { sheet -> sheet.lines.any { it.hasStatedWords() } }
@@ -67,7 +76,7 @@ internal object SheetChoice {
                 .filter { it.second >= GOOD_ENOUGH_PERCENT }
                 .maxByOrNull { it.second }?.first
         }
-        val (best, percent) = candidates.map { it to fitPercent(it.lines, heard) }.maxByOrNull { it.second } ?: return null
+        val (best, percent) = usable.map { it to fitPercent(it.lines, heard) }.maxByOrNull { it.second } ?: return null
         return best.takeIf { percent >= maxOf(LyricsAiGuard.MIN_MATCH_PERCENT, mine + MARGIN_PERCENT) }
     }
 
