@@ -156,6 +156,14 @@ internal object CatalogSongMapper {
      */
     private val inFlight = Semaphore(MAX_CONCURRENT)
 
+    /**
+     * The row the listener is on gets its own slot: its answer is what the
+     * before-audio budget waits for, and the shared [inFlight] slots are held
+     * by radio and shelf mapping for tens of seconds (triage 2026-11-08). The
+     * shared ceiling is unchanged — this is a priority lane, not a bigger one.
+     */
+    private val currentRowInFlight = Semaphore(1)
+
     private val cache = StoredVerdictCache(
         STORE_KEY,
         CACHE_ENTRIES,
@@ -195,8 +203,9 @@ internal object CatalogSongMapper {
         song: Song,
         budget: LookupBudget = newBudget(),
         allowLocalVideo: Boolean = false,
+        priority: Boolean = false,
     ): CatalogSong? =
-        when (val result = mapResult(song, budget, allowLocalVideo)) {
+        when (val result = mapResult(song, budget, allowLocalVideo, priority)) {
             is MapResult.Found -> result.song
             else -> null
         }
@@ -205,11 +214,15 @@ internal object CatalogSongMapper {
      * [map] with the lookup's outcome kept. A caller that remembers "no song
      * version" must tell a completed miss from a transient failure: only the
      * former may be cached for the rest of the run.
+     *
+     * [priority] is for the row the listener is on: its lookup takes
+     * [currentRowInFlight] instead of queueing behind radio and shelf work.
      */
     internal suspend fun mapResult(
         song: Song,
         budget: LookupBudget = newBudget(),
         allowLocalVideo: Boolean = false,
+        priority: Boolean = false,
     ): MapResult {
         if (song.videoId.isBlank()) return MapResult.NotFound
         if (song.localUri != null &&
@@ -245,7 +258,7 @@ internal object CatalogSongMapper {
         if (!budget.take()) return MapResult.Failed
 
         val outcome = try {
-            inFlight.withPermit {
+            withLookupPermit(priority) {
                 resolve(
                     song.videoId,
                     title,
@@ -365,20 +378,28 @@ internal object CatalogSongMapper {
      * every track whose title matches the typed query is prepended, then the
      * youtube.com rows are mapped as usual. Callers still decide how many rows
      * to show and may run the cover resolver over whatever is left unmapped.
+     *
+     * A [SearchKind.AUDIO_SWITCH] page is a different question: the caller is
+     * reading the one row it already holds, so the uploads beside it must not
+     * each spend an album search (twenty of them, triage 2026-11-08). Its
+     * album shortcut also takes [currentRowInFlight], so the row the listener
+     * is waiting on does not queue behind radio and shelf work.
      */
     suspend fun forSearch(
         query: String,
         youtubeSongs: List<Song>,
         limit: Int = MAX_ROWS_PER_PAGE,
+        kind: SearchKind = SearchKind.TYPED,
     ): List<Song> {
         val trimmed = query.trim()
         if (trimmed.isBlank() && youtubeSongs.isEmpty()) return youtubeSongs
         val budget = newBudget()
+        val priority = kind == SearchKind.AUDIO_SWITCH
         val out = LinkedHashMap<String, Song>()
 
         if (trimmed.isNotBlank() && budget.take()) {
             val albums = try {
-                inFlight.withPermit { searchAlbums(trimmed) }
+                withLookupPermit(priority) { searchAlbums(trimmed) }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
@@ -390,7 +411,7 @@ internal object CatalogSongMapper {
                 if (budget.remaining() <= 0) break
                 budget.take()
                 val tracks = try {
-                    inFlight.withPermit { albumTracks(album.browseId) }
+                    withLookupPermit(priority) { albumTracks(album.browseId) }
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (failure: Exception) {
@@ -408,13 +429,18 @@ internal object CatalogSongMapper {
             }
         }
 
+        val mapsRows = mapsPageRows(kind)
         if (youtubeSongs.isNotEmpty()) {
             for (song in youtubeSongs.take(limit)) {
-                val mapped = try {
-                    map(song, budget)
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (failure: Exception) {
+                val mapped = if (mapsRows) {
+                    try {
+                        map(song, budget, priority = priority)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Exception) {
+                        null
+                    }
+                } else {
                     null
                 }
                 val row = mapped?.toSong(song) ?: YouTubeDisplayCleaner.clean(song)
@@ -429,7 +455,47 @@ internal object CatalogSongMapper {
         return out.values.toList()
     }
 
+    /**
+     * Whether a page's own upload rows are looked up one by one. The
+     * song-version search reads the row it was given; the uploads on the page
+     * around it are somebody else's songs, and each one cost an album search.
+     */
+    internal fun mapsPageRows(kind: SearchKind): Boolean = kind != SearchKind.AUDIO_SWITCH
+
     // ---- Lookup -------------------------------------------------------------
+
+    /** One album search or page read, in the shared ceiling or in the current row's lane. */
+    private suspend fun <T> withLookupPermit(priority: Boolean, block: suspend () -> T): T =
+        if (priority) currentRowInFlight.withPermit { block() } else inFlight.withPermit { block() }
+
+    /**
+     * One line per catalogue miss: which exit it took, and how far the lookup
+     * got. The old line (`no matching track`) printed only when an album page
+     * had opened, so a miss with no album naming the artist said nothing at
+     * all, and neither line could say where the chain stopped
+     * (triage 2026-11-08).
+     *
+     * Only identities and counts reach this line — the source video id, the
+     * query's length and hash, and the exit reason. The fork's log carries no
+     * typed text, so neither the song's title, its artist nor the query may be
+     * written; the id is what a device log can be joined back to.
+     */
+    internal fun missLine(
+        sourceVideoId: String,
+        sourceIsVideo: Boolean,
+        reason: String,
+        query: String,
+        albums: Int,
+        matching: Int,
+        pages: Int,
+        tracks: Int,
+        candidates: Int,
+    ): String =
+        "catalogue mapping: no matching track videoId=$sourceVideoId" +
+            (if (sourceIsVideo) " (video source)" else "") +
+            " reason=$reason albums=$albums matching=$matching pages=$pages" +
+            " tracks=$tracks candidates=$candidates" +
+            " queryLength=${query.length} queryHash=${Integer.toHexString(query.hashCode())}"
 
     private sealed interface Outcome {
         data class Found(val song: CatalogSong) : Outcome
@@ -450,12 +516,32 @@ internal object CatalogSongMapper {
         sourceIsVideo: Boolean = false,
     ): Outcome {
         val query = "$artist $title".replace(Regex("""\s+"""), " ").trim()
-        val albums = searchAlbums(query) ?: return Outcome.Failed
-        val matching = albums.asSequence()
-            .filter { albumArtistMatches(artist, it.subtitle) }
-            .take(MAX_ALBUMS_PER_SONG)
-            .toList()
-        if (matching.isEmpty()) return Outcome.NotFound
+        val albums = searchAlbums(query)
+        if (albums == null) {
+            Log.i(
+                TAG,
+                missLine(sourceVideoId, sourceIsVideo, "album-search-failed", query, 0, 0, 0, 0, 0),
+            )
+            return Outcome.Failed
+        }
+        val matching = albumPagesFor(albums, artist)
+        if (matching.isEmpty()) {
+            Log.i(
+                TAG,
+                missLine(
+                    sourceVideoId,
+                    sourceIsVideo,
+                    "no-album-artist",
+                    query,
+                    albums.size,
+                    0,
+                    0,
+                    0,
+                    0,
+                ),
+            )
+            return Outcome.NotFound
+        }
 
         val target = TrackMatcher.Target(
             title = title,
@@ -473,15 +559,18 @@ internal object CatalogSongMapper {
                 add(target.copy(title = alternative))
             }
         }
-        var opened = false
+        var opened = 0
         var failed = false
+        var tracksRead = 0
+        var candidatesRead = 0
         for (album in matching) {
             val tracks = albumTracks(album.browseId)
             if (tracks == null) {
                 failed = true
                 continue
             }
-            opened = true
+            opened++
+            tracksRead += tracks.size
             val candidates = tracks
                 .asSequence()
                 .filter { it.videoId != sourceVideoId }
@@ -495,6 +584,7 @@ internal object CatalogSongMapper {
                     )
                 }
                 .toList()
+            candidatesRead += candidates.size
             val match = targets.firstNotNullOfOrNull { wanted ->
                 // The ordinary matcher first, so every mapping that works today
                 // keeps working unchanged. A video's runtime is visual timing,
@@ -513,14 +603,27 @@ internal object CatalogSongMapper {
             if (catalog.videoId.isBlank()) continue
             return Outcome.Found(catalog)
         }
-        if (opened) {
-            Log.i(
-                TAG,
-                "catalogue mapping: no matching track for '$title' / '$artist'" +
-                    if (sourceIsVideo) " (video source)" else "",
-            )
+        val reason = when {
+            opened == 0 && failed -> "page-failed"
+            opened == 0 -> "no-page"
+            candidatesRead == 0 -> "no-candidates"
+            else -> "no-track"
         }
-        return if (opened) Outcome.NotFound else if (failed) Outcome.Failed else Outcome.NotFound
+        Log.i(
+            TAG,
+            missLine(
+                sourceVideoId,
+                sourceIsVideo,
+                reason,
+                query,
+                albums.size,
+                matching.size,
+                opened,
+                tracksRead,
+                candidatesRead,
+            ),
+        )
+        return if (opened > 0) Outcome.NotFound else if (failed) Outcome.Failed else Outcome.NotFound
     }
 
     /** Anonymous WEB_REMIX album search, or null when the request itself failed. */
@@ -638,6 +741,37 @@ internal object CatalogSongMapper {
         artistsMatch(artist, albumSubtitle)
 
     /**
+     * Which album pages one lookup opens, in the order it opens them.
+     *
+     * Albums first, singles and EPs after: the album filter ranks a song's
+     * *releases* by relevance, so a sped-up take, a tribute cover or a remix
+     * EP by the same artist is listed above the album that actually holds the
+     * song ("Feather (Sped Up)", "Short n' Sweet", "Treasure Remix EP"), and
+     * taking the first [MAX_ALBUMS_PER_SONG] rows spent every page on a
+     * release that cannot answer the lookup — the logged 280 misses, none of
+     * them a hit (catalogue mapping, 2026-11-08). A song released only as a
+     * single keeps working: singles are still opened when no album matched.
+     * The sort is stable, so the search's own order decides within each kind.
+     *
+     * shortcut: a song that exists only on an EP, while the artist has three or
+     * more other releases ranked above that EP, still spends all three slots on
+     * albums; <widen when a device `reason=no-track matching=3` line names it>.
+     */
+    internal fun albumPagesFor(albums: List<BrowseItem>, artist: String): List<BrowseItem> =
+        albums.asSequence()
+            .filter { albumArtistMatches(artist, it.subtitle) }
+            .sortedByDescending { !isShortRelease(it.subtitle) }
+            .take(MAX_ALBUMS_PER_SONG)
+            .toList()
+
+    /**
+     * A one- or two-track release ("싱글", "EP"). Its page lists the take that
+     * was released, not the album cut a lookup is after.
+     */
+    internal fun isShortRelease(albumSubtitle: String): Boolean =
+        albumSubtitle.substringBefore(" • ").trim().lowercase() in SHORT_RELEASE_WORDS
+
+    /**
      * A track title answering a free-text search query. Both sides go through
      * [TrackMatcher]'s packaging removal, so "IU 금요일에 만나요" can match the
      * album's plain "금요일에 만나요".
@@ -750,6 +884,9 @@ internal object CatalogSongMapper {
     // ---- Folding data -------------------------------------------------------
 
     private const val MAX_TRACKS_PER_SEARCH_ALBUM = 2
+
+    /** The subtitle words that name a one- or two-track release; see [isShortRelease]. */
+    private val SHORT_RELEASE_WORDS = setOf("싱글", "single", "ep")
 
     private val BRACKET = Regex("""[(\[（【]([^()\[\]（）【】]*)[)\]）】]""")
 

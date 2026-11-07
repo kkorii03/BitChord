@@ -308,6 +308,36 @@ class AudioSwitchArtistNameTest {
         assertEquals("ILLIT", row.artist)
     }
 
+    /**
+     * Fork 78a (2026-11-07): an upload on a lyric channel — the song's artist
+     * and name in the title, a stranger's channel — was searched for as the
+     * channel: the queries sent were "아이유 웅키" and "아이유", so the song
+     * name never reached the search and no catalogue row could answer. The
+     * title's own credit is the artist the switch must ask for.
+     */
+    @Test
+    fun `a lyric channels upload is searched for the artist its title prints`() {
+        val upload = Song(
+            videoId = "hA1RtBgMFn0",
+            title = "아이유(IU) - 좋은 날 [가사/Lyrics]",
+            artist = "웅키",
+            thumbnailUrl = null,
+            durationText = "3:53",
+            isVideo = true,
+        )
+
+        val row = KoAudioSwitch.audioSwitchRow(upload)
+
+        // The channel is only whoever uploaded it; the title names both halves.
+        assertEquals("아이유", row.artist)
+        assertTrue(row.title.startsWith("좋은 날"), row.title)
+        val queries = TrackMatcher.audioSwitchQueries(row)
+        val first = queries.first()
+        assertTrue(first.startsWith("좋은 날"), first)
+        assertTrue(first.contains("아이유"), first)
+        assertTrue(queries.none { it.startsWith("웅키") }, queries.toString())
+    }
+
     @Test
     fun `a cover and an artists own channel are left as they are`() {
         val cover = Song(

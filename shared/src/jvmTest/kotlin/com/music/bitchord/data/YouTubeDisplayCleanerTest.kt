@@ -448,6 +448,40 @@ class YouTubeDisplayCleanerTest {
         assertEquals("킹 누", cleaned.artist)
     }
 
+    /**
+     * Emulator 134d/135c (2026-11-07): the catalogue lookup was handed
+     * 'Sabrina Carpenter - Feather' / 'Miley Cyrus - Flowers' and searched the
+     * albums for those whole lines (`catalogue mapping: no matching track`).
+     * A title that prints its own row's channel as the left half of
+     * "Artist - Song" names the song on the right.
+     */
+    @Test
+    fun `a title that prints the rows own channel leaves the song name`() {
+        val feather = YouTubeDisplayCleaner.clean(
+            Song(
+                videoId = "XbGs_qK2PQA",
+                title = "Sabrina Carpenter - Feather",
+                artist = "Sabrina Carpenter",
+                thumbnailUrl = null,
+                isVideo = true,
+            ),
+        )
+        assertEquals("Feather", feather.title)
+        assertEquals("Sabrina Carpenter", feather.artist)
+
+        val flowers = YouTubeDisplayCleaner.clean(
+            Song(
+                videoId = "YQHsXMglC9A",
+                title = "Miley Cyrus - Flowers",
+                artist = "MILEY",
+                thumbnailUrl = null,
+                isVideo = true,
+            ),
+        )
+        assertEquals("Flowers", flowers.title)
+        assertEquals("Miley Cyrus", flowers.artist)
+    }
+
     @Test
     fun `a one-word left side is part of the title, not a credit`() {
         val cleaned = YouTubeDisplayCleaner.clean("Dynamite - Remix", "아이유")

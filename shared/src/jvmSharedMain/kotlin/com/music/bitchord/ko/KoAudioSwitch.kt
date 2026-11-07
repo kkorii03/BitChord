@@ -110,8 +110,10 @@ internal object KoAudioSwitch {
         // search. This is the same mapping the gated search uses, asked
         // directly for this one row. A downloaded video still qualifies: the
         // lookup reads album metadata only and never touches its file.
+        // priority: this is the row the before-audio budget is waiting on, so
+        // it does not queue behind radio and shelf work (triage 2026-11-08).
         val catalogueLookup = try {
-            CatalogSongMapper.mapResult(song, allowLocalVideo = true)
+            CatalogSongMapper.mapResult(song, allowLocalVideo = true, priority = true)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {

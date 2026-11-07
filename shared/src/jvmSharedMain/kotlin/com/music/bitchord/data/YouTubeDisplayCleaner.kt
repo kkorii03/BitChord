@@ -55,7 +55,14 @@ internal object YouTubeDisplayCleaner {
         // the singer is the artist; otherwise the uploader is all we know.
         CoverTitles.read(fixed)?.let { cover -> return cleanCover(fixed, cover) }
         if (isCover(fixed.title)) return cleanCoverTitle(fixed)
-        val cleaned = clean(fixed.title, fixed.artist, knownArtists)
+        // The row's own channel is the credit its "Artist - Song" title
+        // prints, so it counts as a known act here: an artist's own upload
+        // used to keep "Sabrina Carpenter - Feather" as the song's name,
+        // which the catalogue lookup then searched the albums for
+        // (catalogue mapping, 2026-11-07).
+        val credit = fixed.artist.trim()
+        val known = if (credit.isEmpty()) knownArtists else knownArtists + credit
+        val cleaned = clean(fixed.title, credit, known)
         val album = cleaned.album?.takeIf { it.isNotBlank() } ?: fixed.albumName
         if (cleaned.title == fixed.title && cleaned.artist == fixed.artist && album == fixed.albumName) {
             return fixed
@@ -265,6 +272,26 @@ internal object YouTubeDisplayCleaner {
             val byline = channelArtist.ifBlank { rawChannel }
             if (songTitle.isNotBlank() && !TrackMatcher.isSoundtrackCredit(byline)) {
                 return Cleaned(songTitle, byline)
+            }
+        }
+        // A fan or lyric channel prints the song's artist in front of the dash
+        // and leaves its own name as the uploader
+        // ("아이유(IU) - 좋은 날 [가사/Lyrics]" by "웅키"). The title is then the
+        // only place that names the artist, so a stated credit there is the
+        // artist and the tail is the song — the reading the song-version
+        // search needs before it builds its query (fork 78a).
+        if (split != null && !labelChannel) {
+            val credit = collapseAliases(split.first)
+            val songTitle = split.second.trim().trim(' ', '-', '_', '|', '·', '/')
+            if (songTitle.isNotBlank() &&
+                compact(credit) != compact(rawChannel) &&
+                isStatedCredit(credit) &&
+                // A take after the dash ("Dynamite - Remix") belongs to the
+                // title; a credit before a take is not the "Artist - Song"
+                // shape at all.
+                songTitle.split(WHITESPACE).none { it.lowercase().trim('.', ',') in PACKAGING_CREDIT }
+            ) {
+                return Cleaned(songTitle, credit)
             }
         }
         val fallbackArtist = channelArtist.ifBlank { if (labelChannel) "" else rawChannel }
