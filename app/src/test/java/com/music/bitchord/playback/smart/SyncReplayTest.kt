@@ -333,6 +333,7 @@ class SyncReplayTest {
                 continue
             }
             songs++
+            println("${song.id} lang=${song.language}")
             if (song.truth.isEmpty()) {
                 println("${song.id} truth=0")
                 continue
