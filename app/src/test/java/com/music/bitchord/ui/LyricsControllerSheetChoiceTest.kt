@@ -242,4 +242,19 @@ class LyricsControllerSheetChoiceTest {
         assertEquals(LyricsSource.VIBE, controller.lyricsSource.value)
         assertEquals(fitting.map { it.text }, controller.lyrics.first { it != null }!!.map { it.text })
     }
+
+    /**
+     * qsqvJpOgrWw auto93: the same provider's first sheet fit 96% of lines in
+     * 0.3 s (24/46 matched), its second 26% (23/46), and the second replaced the
+     * first 0.2 s later. A differing sheet from the same source is still a late
+     * answer: with no words heard it must not replace the sheet on screen.
+     */
+    @Test
+    fun `a same-source late sheet does not replace the sheet already on screen`() = runBlocking {
+        load(LyricsSource.KUGOU, other, LyricsSource.KUGOU, fitting, loserFirst = true)
+
+        withTimeout(10_000L) { controller.lyricsChecked.first { it } }
+        delay(500L)
+        assertEquals(fitting.map { it.text }, controller.lyrics.first { it != null }!!.map { it.text })
+    }
 }

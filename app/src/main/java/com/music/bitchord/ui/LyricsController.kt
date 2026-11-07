@@ -787,10 +787,11 @@ class LyricsController(
      * that aren't the video's own — on the video's clock. See [startTiming].
      *
      * [force] is a decision already made (a provider picked by hand, or
-     * [SheetChoice] choosing a sheet the words fit). A late answer from another
-     * provider is not: it is kept as a candidate and the words heard decide,
-     * because a word-synced answer can fit worse than the sheet already shown
-     * (QYh6mYIJG2Y auto89: 82% in 0.3 s replaced by 2% 5.1 s later).
+     * [SheetChoice] choosing a sheet the words fit). A late answer is not: it is
+     * kept as a candidate and the words heard decide, because a word-synced
+     * answer can fit worse than the sheet already shown (QYh6mYIJG2Y auto89:
+     * 82% in 0.3 s replaced by 2% 5.1 s later; qsqvJpOgrWw auto93: the same
+     * provider's 96% replaced by 26% 0.2 s later).
      */
     private fun publishLyrics(result: LyricsRepository.Result?, force: Boolean = false) {
         // The same lines already showing — the lookup confirming what
@@ -804,11 +805,11 @@ class LyricsController(
         }
         val current = rawLyricsResult
         if (!force && result != null && current != null && _lyrics.value != null &&
-            current.lines !== result.lines && current.source != result.source
+            current.lines !== result.lines
         ) {
-            // A late provider's sheet waits for the words heard; the sheet on
-            // screen was shown because it answered first, and replacing it here
-            // is what let a worse sheet take over before any words arrived.
+            // A late sheet waits for the words heard; the sheet on screen was
+            // shown because it answered first, and replacing it here is what let
+            // a worse sheet take over before any words arrived.
             sheetCandidates[result.source] = result
             currentLyricsRequest?.let { request ->
                 rejectWrongLyricsIfHeard(lyricsGeneration, request, current.lines)
