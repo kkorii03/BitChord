@@ -158,6 +158,24 @@ class BaseChoicePolicyTest {
     }
 
     @Test
+    fun aRefusedPickStaysWhenTheWordsPutNoneClearlyFurtherOff() {
+        // 11-08 rmgyNRxWcKI (live session, repeated lines): `none:12830/0%/16
+        // measured:4970/31%/16 -> none (below threshold)`. The scorer put the
+        // measurement at +0.01 s and the provider's times 12.75 s early.
+        val heard = List(16) { 10_000L + it * 6_000L }
+        val measured = heard.mapIndexed { index, ms -> if (index < 5) ms else ms + 4_970L }
+        val candidates = listOf(
+            BaseChoicePolicy.Candidate(BaseChoicePolicy.NONE, heard.map { it - 12_830L }),
+            BaseChoicePolicy.Candidate(BaseChoicePolicy.MEASURED, measured),
+        )
+        val pick = BaseChoicePolicy.choose(BaseChoicePolicy.MEASURED, heard, candidates)
+        assertEquals(BaseChoicePolicy.MEASURED, pick.name)
+        assertEquals("below threshold, none further off", pick.reason)
+        // Both refused and none no worse on the within share: none, as before.
+        assertEquals(BaseChoicePolicy.NONE, choice(default = BaseChoicePolicy.MEASURED, none = 9_000L, measured = 4_000L))
+    }
+
+    @Test
     fun tooFewHeardLinesCannotRefuseAPick() {
         val few = List(5) { 10_000L + it * 5_000L }
         val candidates = listOf(

@@ -74,7 +74,9 @@ object AndroidStreamHooks {
 
     /** Debug lines a release build still echoes to logcat. */
     private val RELEASE_DEBUG_TAGS = setOf(
-        "LyricsTiming", "AiLyrics", "VideoAudio", "VersionAudioAligner", "BitChordAudioDecoder",
+        // SongHearing: when each song check was sent, to whom and how long it took
+        // (11-08: a video's whole-song request left no line at all on a release build).
+        "LyricsTiming", "AiLyrics", "VideoAudio", "VersionAudioAligner", "BitChordAudioDecoder", "SongHearing",
         "CanvasRepository", "AppleMusicCanvas", "CanvasArtworkPlayer",
     )
     private const val RELEASE_LINE_CHARS = 1_000

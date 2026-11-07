@@ -69,7 +69,8 @@ object BaseChoicePolicy {
      * candidate replaces it only when it has at least [MIN_MATCHED_LINES]
      * matched lines, its within-[WITHIN_MS] share is [MIN_RATIO_GAIN] higher,
      * and its median error is [MIN_MEDIAN_GAIN_MS] smaller. A pick that is
-     * [belowThreshold] becomes [NONE]. [manual] keeps the listener's choice
+     * [belowThreshold] becomes [NONE], unless [NONE] itself is clearly worse by
+     * the same two gains. [manual] keeps the listener's choice
      * whatever the scores say.
      */
     fun choose(
@@ -95,11 +96,25 @@ object BaseChoicePolicy {
             .firstOrNull()
         val pick = better ?: (defaultName to defaultScore)
         // No correction beats a wrong one: a pick the words refuse leaves the provider's times.
+        // Not when the same words put the provider's times clearly further off still: then
+        // "none" is the worse of two refused answers, not the safe one (11-08 rmgyNRxWcKI:
+        // `none:12830/0% measured:4970/31% -> none`, the measurement was +0.01 s on the
+        // scorer and the sheet was shown 12.75 s early for the rest of the song).
         if (pick.first != NONE && belowThreshold(pick.second)) {
+            val none = scores.firstOrNull { it.first == NONE }?.second
+            if (none != null && clearlyBetter(pick.second, none)) {
+                return Choice(pick.first, scores, reason = "below threshold, none further off")
+            }
             return Choice(NONE, scores, reason = "below threshold")
         }
         return Choice(pick.first, scores)
     }
+
+    /** The switch rule of [choose]: [candidate] beats [other] on both the within share and the median. */
+    private fun clearlyBetter(candidate: Score, other: Score): Boolean =
+        other.matched >= MIN_MATCHED_LINES &&
+            candidate.withinRatio - other.withinRatio >= MIN_RATIO_GAIN - 1e-9 &&
+            other.medianAbsMs - candidate.medianAbsMs >= MIN_MEDIAN_GAIN_MS
 
     /** Matched lines, median absolute error and the within-[WITHIN_MS] share of one candidate. */
     fun score(candidateStarts: List<Long?>, heardStarts: List<Long?>): Score {
