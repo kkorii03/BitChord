@@ -247,6 +247,8 @@ object HqAudioVerify {
         val decodeMs: Long = 0L,
         val chromaMs: Long = 0L,
         val headMs: Long = -1L,
+        /** How the profile was read, for the timing line — see [readLabel]. */
+        val read: String = "-",
     )
 
     /** Chroma construction time inside one decode, so it can be told apart from the codec. */
@@ -265,7 +267,24 @@ object HqAudioVerify {
         var chromaMs: Long = 0L
         @Volatile
         var progress: DownloadProgress? = null
+        /** Bytes on disk when the growing decode finished, and the head it was reading towards. */
+        @Volatile
+        var onDiskAtEnd: Long = -1L
+        @Volatile
+        var expected: Long = -1L
     }
+
+    /**
+     * `growing:<on disk when the decode ended>/<head size>` or `file`.
+     *
+     * Two Telegram heads on 11-08 (19.3 MB at 16/44, 62.9 MB at 24/96) finished
+     * decoding within 0.3 s of their last byte although ninety seconds of FLAC
+     * is about 60% of either. Either the growing read waited for the whole head
+     * or it gave up and the finished file was decoded; this says which, so the
+     * head can be sized on evidence rather than on a guess.
+     */
+    internal fun readLabel(streamed: Boolean, onDiskAtEnd: Long, expected: Long): String =
+        if (streamed) "growing:$onDiskAtEnd/$expected" else "file"
 
     private typealias StreamDecode =
         suspend (File, Long, DownloadProgress) -> Boolean
@@ -1036,7 +1055,7 @@ object HqAudioVerify {
             TAG,
             "hq-verify timing: download=${candidate.downloadMs} head=${candidate.headMs} " +
                 "decode=${candidate.decodeMs} chroma=${candidate.chromaMs} " +
-                "align=$alignMs bytes=${candidate.bytes}",
+                "align=$alignMs bytes=${candidate.bytes} read=${candidate.read}",
             youtubeId,
         )
     }
@@ -1323,6 +1342,7 @@ object HqAudioVerify {
             // time, not change the answer.
             val decode: StreamDecode = { source, expected, progress ->
                 slot.progress = progress
+                slot.expected = expected
                 val started = System.nanoTime()
                 val timing = DecodeTiming()
                 val coroutine = currentCoroutineContext()
@@ -1335,6 +1355,7 @@ object HqAudioVerify {
                 )
                 coroutine.ensureActive()
                 if (features != null) {
+                    slot.onDiskAtEnd = source.length()
                     slot.features = features
                     slot.decodeMs = millisSince(started)
                     slot.chromaMs = timing.chromaNanos / 1_000_000L
@@ -1363,6 +1384,7 @@ object HqAudioVerify {
             // finished file when the growing source could not be read (an
             // extractor that insists on the whole file, or a codec that needs
             // the tail). The file has all the fetched bytes by then.
+            val streamed = slot.features != null
             val features = slot.features ?: run {
                 val coroutine = currentCoroutineContext()
                 val started = System.nanoTime()
@@ -1397,6 +1419,7 @@ object HqAudioVerify {
                     decodeMs = slot.decodeMs,
                     chromaMs = slot.chromaMs,
                     headMs = slot.progress?.headMs ?: -1L,
+                    read = readLabel(streamed, slot.onDiskAtEnd, slot.expected),
                 ),
             )
         } catch (cancelled: CancellationException) {

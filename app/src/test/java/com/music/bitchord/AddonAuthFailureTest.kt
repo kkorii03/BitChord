@@ -64,6 +64,30 @@ class AddonAuthFailureTest {
         HqHostTracker.resetForTest()
     }
 
+    // 11-08 user log: the verification service refused this fork's signature
+    // 14 times in ten hours, once per 15-minute backoff. That refusal is kept
+    // for the installed build; every other refusal still backs off and retries.
+    @Test
+    fun `only the signature refusal is kept for the build`() {
+        val signature = "BitChord couldn't verify this device: This app is not signed with the official BitChord key"
+        assertTrue(com.music.bitchord.ko.KoAddonAuthRefusal.isPermanent(signature))
+        assertFalse(com.music.bitchord.ko.KoAddonAuthRefusal.isPermanent("BitChord couldn't verify this device: HTTP 403"))
+        assertFalse(com.music.bitchord.ko.KoAddonAuthRefusal.isPermanent("Couldn't reach BitChord's addon verification service"))
+        assertFalse(com.music.bitchord.ko.KoAddonAuthRefusal.isPermanent(null))
+    }
+
+    @Test
+    fun `a kept refusal lapses when the app or the service changes`() {
+        val refusal = "This app is not signed with the official BitChord key"
+        val k = com.music.bitchord.ko.KoAddonAuthRefusal
+        val build = k.buildKey(39, "https://auth.example")
+        assertEquals(refusal, k.standing(build, refusal, build))
+        assertNull(k.standing(build, refusal, k.buildKey(40, "https://auth.example")))
+        assertNull(k.standing(build, refusal, k.buildKey(39, "https://auth2.example")))
+        assertNull(k.standing(build, "HTTP 403", build))
+        assertNull(k.standing(null, null, build))
+    }
+
     private fun target() = TrackMatcher.Target("Flowers", "Miley Cyrus", durationSec = 200)
 
     private fun config(id: String = "Qobuz") = SourceConfig(
