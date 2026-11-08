@@ -45,6 +45,60 @@ object LateVersionSwapPolicy {
      */
     const val MIN_REMAINING_MS = 20_000L
 
+    /**
+     * How long the handover waits for the standby player to be ready. Longer
+     * than a manual switch's 7 s: the video keeps playing meanwhile, so the
+     * wait is not heard.
+     */
+    const val STANDBY_WAIT_MS = 15_000L
+
+    /**
+     * Wall-clock time an alignment pass started at [videoPositionMs] may take
+     * before its answer is useless: once the playhead passes
+     * [MAX_VIDEO_POSITION_MS] the handover is refused anyway, so a pass that
+     * runs past that point only burns the battery. At [speed] the playhead
+     * covers the room faster or slower than the wall clock. 0 when there is no
+     * room left. Never more than [MAX_VIDEO_POSITION_MS] at normal speed.
+     */
+    fun passBudgetMs(videoPositionMs: Long, speed: Float): Long {
+        val room = MAX_VIDEO_POSITION_MS - videoPositionMs.coerceAtLeast(0L)
+        if (room <= 0L) return 0L
+        // Slower than half speed is read as half: the budget stays bounded.
+        val rate = speed.takeIf { it.isFinite() && it > 0f }?.coerceAtLeast(0.5f) ?: 1f
+        return (room / rate).toLong()
+    }
+
+    /** What to do with music-only's own audio-version answer when it lands after the cap. */
+    enum class LateAudioAnswer {
+        /** The row is the playing one: hand it to the late-version route. */
+        HAND_OVER,
+
+        /** A row that has not started yet: let music-only convert it now. */
+        CONVERT_UPCOMING,
+
+        /** Nothing usable: no version, the video itself, or the row has gone. */
+        DROP,
+    }
+
+    /**
+     * Music-only's audio-version lookup gives up holding the video after its
+     * cap, but the answer may still come. It used to be cancelled at the cap,
+     * so a version found at 16 s was never heard; now the late answer goes
+     * where SongVersionController's own late answers go.
+     *
+     * [isSongVersion] is SongVersionPolicy.isSongVersionOf(video, answer).
+     */
+    fun lateAudioAnswer(
+        isSongVersion: Boolean,
+        rowIsCurrent: Boolean,
+        rowIsUpcoming: Boolean,
+    ): LateAudioAnswer = when {
+        !isSongVersion -> LateAudioAnswer.DROP
+        rowIsCurrent -> LateAudioAnswer.HAND_OVER
+        rowIsUpcoming -> LateAudioAnswer.CONVERT_UPCOMING
+        else -> LateAudioAnswer.DROP
+    }
+
     enum class Refusal(val reason: String) {
         MUSIC_ONLY_OFF("music only off"),
         LISTEN_TOGETHER("listen together"),

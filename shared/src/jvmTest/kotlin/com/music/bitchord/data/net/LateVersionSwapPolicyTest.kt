@@ -190,4 +190,56 @@ class LateVersionSwapPolicyTest {
         assertEquals(0L, LateVersionSwapPolicy.songStartMs(-50L, -5_000L, 200_000L))
         assertNull(LateVersionSwapPolicy.positionRefusal(-50L, 200_000L))
     }
+
+    /**
+     * Round-score 9: passes started at mv=6.8-46.9 s ran 36-328 s, far past the
+     * point where the playhead rule refuses the handover anyway. The whole pass
+     * now gets only the playhead's room to that point.
+     */
+    @Test
+    fun `the alignment pass ends when the playhead would pass the measured opening`() {
+        // 8gyLR4NfMiI started at mv=19722 ms: 55.3 s of room.
+        assertEquals(55_278L, LateVersionSwapPolicy.passBudgetMs(19_722L, 1f))
+        // 65RQZICv4iI started at mv=46.9 s.
+        assertEquals(28_100L, LateVersionSwapPolicy.passBudgetMs(46_900L, 1f))
+        assertEquals(0L, LateVersionSwapPolicy.passBudgetMs(75_000L, 1f))
+        assertEquals(0L, LateVersionSwapPolicy.passBudgetMs(90_000L, 1f))
+    }
+
+    @Test
+    fun `the budget is bounded and speed is honoured`() {
+        assertEquals(75_000L, LateVersionSwapPolicy.passBudgetMs(0L, 1f))
+        assertEquals(75_000L, LateVersionSwapPolicy.passBudgetMs(-500L, 1f))
+        // At 2x the playhead covers 40 s of room in 20 s.
+        assertEquals(20_000L, LateVersionSwapPolicy.passBudgetMs(35_000L, 2f))
+        // A very slow speed cannot stretch it past twice the room.
+        assertEquals(80_000L, LateVersionSwapPolicy.passBudgetMs(35_000L, 0.1f))
+        // A nonsense speed is read as 1x, never as an endless or zero budget.
+        assertEquals(40_000L, LateVersionSwapPolicy.passBudgetMs(35_000L, 0f))
+        assertEquals(40_000L, LateVersionSwapPolicy.passBudgetMs(35_000L, Float.NaN))
+    }
+
+    /**
+     * Firstsound lane: music-only's 15 s cap cancelled a late audio-version
+     * answer outright, so it never reached the late handover.
+     */
+    @Test
+    fun `music-only's late answer goes to the handover for the playing row`() {
+        assertEquals(
+            LateVersionSwapPolicy.LateAudioAnswer.HAND_OVER,
+            LateVersionSwapPolicy.lateAudioAnswer(isSongVersion = true, rowIsCurrent = true, rowIsUpcoming = false),
+        )
+        assertEquals(
+            LateVersionSwapPolicy.LateAudioAnswer.CONVERT_UPCOMING,
+            LateVersionSwapPolicy.lateAudioAnswer(isSongVersion = true, rowIsCurrent = false, rowIsUpcoming = true),
+        )
+        assertEquals(
+            LateVersionSwapPolicy.LateAudioAnswer.DROP,
+            LateVersionSwapPolicy.lateAudioAnswer(isSongVersion = true, rowIsCurrent = false, rowIsUpcoming = false),
+        )
+        assertEquals(
+            LateVersionSwapPolicy.LateAudioAnswer.DROP,
+            LateVersionSwapPolicy.lateAudioAnswer(isSongVersion = false, rowIsCurrent = true, rowIsUpcoming = false),
+        )
+    }
 }

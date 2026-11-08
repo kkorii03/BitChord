@@ -4,6 +4,7 @@ import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -93,6 +94,90 @@ class DecodePriorityGateTest {
             gate.release()
             job.cancel()
         }
+    }
+
+    /**
+     * 11-08 round-score 9: the late handover's two alignment decodes waited up
+     * to 160 s behind the video's own lyric and Automix decodes, every pass ran
+     * out of time, and 0 of 9 handovers completed. A decode a swap is waiting
+     * on goes before playing-track work that queued earlier.
+     */
+    @Test
+    fun anUrgentDecodeGoesBeforeAPlayingTrackDecodeQueuedEarlier() {
+        val gate = DecodePriorityGate()
+        val order = Collections.synchronizedList(mutableListOf<String>())
+        gate.acquire(background = false) // the video's lyric decode is running
+
+        val lyric = Thread {
+            gate.acquire(background = false)
+            order += "lyric"
+            gate.release()
+        }
+        lyric.start()
+        waitUntilWaiting(lyric)
+        val ahead = Thread {
+            gate.acquire(background = true)
+            order += "ahead"
+            gate.release()
+        }
+        ahead.start()
+        waitUntilWaiting(ahead)
+        val align = Thread {
+            gate.acquire(background = false, urgent = true)
+            order += "align"
+            gate.release()
+        }
+        align.start()
+        waitUntilWaiting(align)
+
+        gate.release()
+        listOf(lyric, ahead, align).forEach { it.join(5_000) }
+        assertEquals(listOf("align", "lyric", "ahead"), order)
+    }
+
+    /** An urgent waiter that is cancelled must not keep the slot from the rest. */
+    @Test
+    fun aCancelledUrgentWaiterLetsTheQueueThrough() {
+        val gate = DecodePriorityGate()
+        gate.acquire(background = false)
+        val urgent = Thread {
+            try {
+                gate.acquire(background = false, urgent = true)
+                gate.release()
+            } catch (_: InterruptedException) {
+                // cancelled while queued
+            }
+        }
+        urgent.start()
+        waitUntilWaiting(urgent)
+        val lyric = CountDownLatch(1)
+        val other = Thread {
+            gate.acquire(background = false)
+            lyric.countDown()
+            gate.release()
+        }
+        other.start()
+        waitUntilWaiting(other)
+        urgent.interrupt()
+        urgent.join(5_000)
+        gate.release()
+        assertTrue("a cancelled urgent waiter blocked the queue", lyric.await(5, TimeUnit.SECONDS))
+    }
+
+    /**
+     * The alignment decode's abort used to ask only about the screen, so a
+     * pass whose deadline or row had gone decoded on with the screen on, or
+     * with the screen rule off (the late handover): 100-330 s into the next
+     * song on the fleet. A cancelled pass aborts.
+     */
+    @Test
+    fun aCancelledAlignmentPassAbortsItsDecode() {
+        val pass = Job()
+        assertEquals(false, VersionAudioAligner.alignmentAbandoned(pass, ignoreScreen = true, screenOn = false))
+        assertEquals(false, VersionAudioAligner.alignmentAbandoned(pass, ignoreScreen = false, screenOn = true))
+        assertEquals(true, VersionAudioAligner.alignmentAbandoned(pass, ignoreScreen = false, screenOn = false))
+        pass.cancel()
+        assertEquals(true, VersionAudioAligner.alignmentAbandoned(pass, ignoreScreen = true, screenOn = true))
     }
 
     private fun waitUntilWaiting(t: Thread) {

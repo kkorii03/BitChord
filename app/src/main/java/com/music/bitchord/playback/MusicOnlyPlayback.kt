@@ -76,6 +76,9 @@ object MusicOnlyPlayback {
     /** [videoId] plays as itself: no audio version, or none in time. */
     fun settle(videoId: String) = settled.update { it + videoId }
 
+    /** [KO] late-swap: the audio version came after all, for a row not yet playing. */
+    fun unsettle(videoId: String) = settled.update { it - videoId }
+
     /** A later play asks again, as a failed lookup may only have been the network. */
     fun forgetExcept(videoIds: Set<String>) = settled.update { it intersect videoIds }
 

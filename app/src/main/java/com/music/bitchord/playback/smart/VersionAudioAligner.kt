@@ -10,10 +10,14 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.PowerState
 import com.music.bitchord.playback.StreamChoice
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.asContextElement
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.job
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
@@ -199,25 +203,38 @@ object VersionAudioAligner {
             // correlation succeeding 10 ms over a tighter budget.
             var decodes: Pair<Pair<AudioDecoder.Pcm, Double>?, Pair<AudioDecoder.Pcm, Double>?> =
                 null to null
+            // Cancellable for real: the caller's deadline (or a track change)
+            // used to cancel only the coroutine around these blocking decodes,
+            // so they sat on at the gate and decoded on while the next song
+            // played, 100-330 s past their deadline (round-score 9), and the
+            // finished result was then thrown away. Now the gate wait is
+            // interrupted and the decode loop stops at its next pass. First in
+            // line at the gate: a swap is waiting on this answer.
             val decodeMs = measureTimeMillis {
                 decodes = coroutineScope {
-                    val source = async(Dispatchers.IO) {
-                        AudioDecoder.decodeRegion(
-                            sourceDs,
-                            0.0,
-                            45.0,
-                            abort = { !ignoreScreen && !PowerState.screenOn },
-                            label = "align",
-                        )
+                    val source = async(Dispatchers.IO + AudioDecoder.firstInLine.asContextElement(true)) {
+                        val pass = coroutineContext.job
+                        AudioDecoder.interruptibleDecode {
+                            AudioDecoder.decodeRegion(
+                                sourceDs,
+                                0.0,
+                                45.0,
+                                abort = { alignmentAbandoned(pass, ignoreScreen, PowerState.screenOn) },
+                                label = "align",
+                            )
+                        }
                     }
-                    val target = async(Dispatchers.IO) {
-                        AudioDecoder.decodeRegion(
-                            targetDs,
-                            0.0,
-                            45.0,
-                            abort = { !ignoreScreen && !PowerState.screenOn },
-                            label = "align",
-                        )
+                    val target = async(Dispatchers.IO + AudioDecoder.firstInLine.asContextElement(true)) {
+                        val pass = coroutineContext.job
+                        AudioDecoder.interruptibleDecode {
+                            AudioDecoder.decodeRegion(
+                                targetDs,
+                                0.0,
+                                45.0,
+                                abort = { alignmentAbandoned(pass, ignoreScreen, PowerState.screenOn) },
+                                label = "align",
+                            )
+                        }
                     }
                     source.await() to target.await()
                 }
@@ -294,6 +311,15 @@ object VersionAudioAligner {
                 "Alignment for '${sourceSong.title}' -> '${targetSong.title}': confidence $confidence below $MIN_CONFIDENCE — no shift measured",
                 sourceSong.videoId,
             )
+        } catch (cancelled: CancellationException) {
+            // A deadline or a track change, not a failure: one line, no trace,
+            // and the cancellation goes on up so nothing waits on this pass.
+            TrackLog.d(
+                TAG,
+                "Alignment for ${sourceSong.videoId} -> ${targetSong.videoId} cancelled: ${cancelled.message}",
+                sourceSong.videoId,
+            )
+            throw cancelled
         } catch (e: Exception) {
             Log.w(TAG, "Failed to compute audio alignment for ${sourceSong.videoId} -> ${targetSong.videoId}", e)
         } finally {
@@ -386,6 +412,14 @@ object VersionAudioAligner {
             onDisk.maxByOrNull { it.cachedPrefix }
         }
     }
+
+    /**
+     * Whether an alignment decode must stop now: its pass was cancelled (a
+     * deadline, a track change, the service going away), or it is a
+     * screen-bound pass and the screen went off.
+     */
+    internal fun alignmentAbandoned(pass: Job, ignoreScreen: Boolean, screenOn: Boolean): Boolean =
+        !pass.isActive || (!ignoreScreen && !screenOn)
 
     private fun safeClose(ds: MediaDataSource?) {
         if (ds != null) {
