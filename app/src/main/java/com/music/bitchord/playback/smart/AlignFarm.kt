@@ -8,8 +8,13 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.Request
@@ -30,9 +35,34 @@ internal object AlignFarm {
 
     private val asked = ConcurrentHashMap.newKeySet<String>()
     private val json = Json { ignoreUnknownKeys = true }
+    private const val CALL_TIMEOUT_MS = 4_000L
+
+    /**
+     * A GET asked while the row is still next: nothing waits on it, so it may take a slow
+     * route's time. Rounds 116-118 on the emulators' tunnel: 24 of 28 failures were the
+     * 4 s call timeout ([CALL_TIMEOUT_MS]), which a hearing must not wait out.
+     */
+    private const val AHEAD_TIMEOUT_MS = 15_000L
     private val client by lazy {
-        Http.client.newBuilder().callTimeout(4, TimeUnit.SECONDS).build()
+        Http.client.newBuilder().callTimeout(CALL_TIMEOUT_MS, TimeUnit.MILLISECONDS).build()
     }
+    private val aheadClient by lazy {
+        Http.client.newBuilder().callTimeout(AHEAD_TIMEOUT_MS, TimeUnit.MILLISECONDS).build()
+    }
+
+    /** Outlives the next-row bundle that asks: a replaced row's small GET just ends unread. */
+    private val aheadScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * GETs asked ahead, by video: the file's bytes, empty when the farm has none, null when
+     * no reply came. Taken by the row's first ask ([fetch]). Only the last few rows are kept:
+     * rows skipped past ask again when they play.
+     */
+    private val ahead = object : LinkedHashMap<String, CompletableDeferred<ByteArray?>>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, CompletableDeferred<ByteArray?>>) =
+            size > MAX_AHEAD
+    }
+    private const val MAX_AHEAD = 4
 
     @Serializable
     internal data class Result(
@@ -103,31 +133,108 @@ internal object AlignFarm {
     /**
      * Failed GETs a video may have before the farm is left alone this run: the ask at the
      * track's start, the one after the wait for sound ([SongHearing]) and one on a retry.
+     * An ask ahead ([askAhead]) counts as one, and never takes the row's last.
      */
     internal const val MAX_FAILED_ASKS = 3
 
+    /**
+     * Whether a next row may be asked ahead: one GET at a time, none once the row itself has
+     * asked, and never with the last failure the row's own asks still need.
+     */
+    internal fun mayAskAhead(failed: Int, askedByRow: Boolean, held: Boolean): Boolean =
+        !askedByRow && !held && failed + 1 < MAX_FAILED_ASKS
+
+    /**
+     * The farm's file for [videoId] while it is still the next row, so its first lines need no
+     * GET of their own: at the row's start the GET races its stream (rounds 116-118: 28 failed
+     * against 19 answered; 161 6rS7OUGXUik failed three times and played uncorrected).
+     */
+    fun askAhead(app: Context, videoId: String) {
+        val secret = secretOf(app) ?: return
+        askAhead(videoId) { download(videoId, secret, aheadClient, ahead = true) }
+    }
+
+    internal fun askAhead(videoId: String, get: suspend () -> ByteArray?): Boolean {
+        val pending = CompletableDeferred<ByteArray?>()
+        synchronized(ahead) {
+            if (!mayAskAhead(failures[videoId] ?: 0, videoId in asked, ahead.containsKey(videoId))) return false
+            ahead[videoId] = pending
+        }
+        aheadScope.launch {
+            val bytes = runCatching { get() }.getOrNull()
+            // No reply: counted, and the row asks for itself.
+            if (bytes == null) {
+                synchronized(ahead) { if (ahead[videoId] === pending) ahead.remove(videoId) }
+                noteFailure(videoId)
+            } else {
+                TrackLog.d(TAG, "align-farm ahead: ${bytes.size / 1024}KB", videoId)
+            }
+            pending.complete(bytes)
+        }
+        return true
+    }
+
     /** What the farm holds for [videoId], asked once a run; null on anything but a usable answer. */
     suspend fun fetch(app: Context, videoId: String, language: String): SongHearing.Saved? {
-        if (!mayAsk(videoId) || !asked.add(videoId)) return null
-        val secret = app.getString(com.music.bitchord.R.string.default_deepgram_api_key).trim()
-        if (secret.isEmpty()) return null
-        return withContext(Dispatchers.IO) {
+        val secret = secretOf(app) ?: return null
+        return answer(videoId, language, secret + videoId) { download(videoId, secret, client, ahead = false) }
+    }
+
+    /**
+     * [fetch] past the key. A GET asked ahead is this ask's, waited on no longer than a GET of
+     * its own would take; [get] runs only when none holds or is getting the answer.
+     */
+    internal suspend fun answer(
+        videoId: String,
+        language: String,
+        password: String,
+        get: suspend () -> ByteArray?,
+    ): SongHearing.Saved? {
+        val pending = synchronized(ahead) {
+            val held = ahead[videoId]
+            if (held == null && (!mayAsk(videoId) || !asked.add(videoId))) return null
+            held
+        }
+        val bytes = if (pending != null) {
+            withTimeoutOrNull(CALL_TIMEOUT_MS) { pending.await() }
+            // Still flying: a later ask (the one after the wait for sound) waits on it again.
+            if (!pending.isCompleted) return null
+            // It got no reply, which is counted: ask as before.
+            val got = pending.await() ?: return answer(videoId, language, password, get)
+            if (!asked.add(videoId)) return null
+            synchronized(ahead) { if (ahead[videoId] === pending) ahead.remove(videoId) }
+            got
+        } else {
+            get() ?: run {
+                noteFailure(videoId)
+                return null
+            }
+        }
+        val how = if (pending != null) " asked ahead" else ""
+        return withContext(Dispatchers.IO) { savedFrom(bytes, language, password) }
+            ?.also { TrackLog.i(TAG, "align-farm: ${it.words.size} words lang=$language$how", videoId) }
+    }
+
+    private fun secretOf(app: Context): String? =
+        app.getString(com.music.bitchord.R.string.default_deepgram_api_key).trim().takeIf { it.isNotEmpty() }
+
+    /** One GET of [videoId]'s file: its bytes, empty when the farm has none, null when no reply came. */
+    private suspend fun download(videoId: String, secret: String, client: okhttp3.OkHttpClient, ahead: Boolean): ByteArray? =
+        withContext(Dispatchers.IO) {
             runCatching {
                 val request = Request.Builder()
                     .url("$BASE${nameOf(videoId, secret)}.enc")
                     .header("x-farm-token", readToken(secret))
                     .build()
                 client.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) return@use null
-                    savedFrom(response.body?.bytes() ?: return@use null, language, secret + videoId)
+                    if (!response.isSuccessful) return@use ByteArray(0)
+                    response.body?.bytes() ?: ByteArray(0)
                 }
             }.onFailure {
                 if (it is kotlinx.coroutines.CancellationException) throw it
                 // A dropped connection says nothing about the farm: the next hearing may ask again.
-                noteFailure(videoId)
-                TrackLog.d(TAG, "align-farm: ${it.javaClass.simpleName}", videoId)
+                // The message tells a timeout ("timeout") from a route that dropped the call.
+                TrackLog.d(TAG, "align-farm: ${it.javaClass.simpleName}${if (ahead) " ahead" else ""} ${it.message?.take(80)}", videoId)
             }.getOrNull()
-                ?.also { TrackLog.i(TAG, "align-farm: ${it.words.size} words lang=$language", videoId) }
         }
-    }
 }

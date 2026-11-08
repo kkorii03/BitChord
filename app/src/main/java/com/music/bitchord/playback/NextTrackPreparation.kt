@@ -24,6 +24,7 @@ import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.playback.NextPrepPolicy.Step
+import com.music.bitchord.playback.smart.AlignFarm
 import com.music.bitchord.playback.smart.AudioDecoder
 import com.music.bitchord.playback.smart.AutomixAnalysisSource
 import com.music.bitchord.playback.smart.AutomixWorkPolicy
@@ -307,6 +308,10 @@ internal class NextTrackPreparation(
             }
         }
         if (!stillCurrent()) return
+        // The farm's words for the recording that will play, while nothing waits on them.
+        val farmWanted = switches.nextPrepLyrics && AppSettings.syncedLyrics.value &&
+            Deepgram.usable && syncWanted(song)
+        if (farmWanted) AlignFarm.askAhead(context, song.videoId)
 
         // (b) The lyrics for that recording, then (c) its high-quality copy.
         // The lyrics switch is off by default: the cache may hold lines from
@@ -509,6 +514,9 @@ internal class NextTrackPreparation(
         }
 
         if (!stillCurrent()) return
+        // The steps' end is the retry's event: a farm GET the route dropped above asks once
+        // more, still ahead of the row (no-op when it answered, said no or is still flying).
+        if (farmWanted) AlignFarm.askAhead(context, song.videoId)
 
         val found = lyrics
         val lines = found?.lines?.takeIf { line -> line.any { it.text.isNotBlank() } }
