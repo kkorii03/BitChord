@@ -20,10 +20,10 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.asContextElement
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
@@ -83,6 +83,19 @@ internal object SongHearing {
      * (measured 11-06). The playing song must not queue behind the next row's, nor the one before.
      */
     internal val requests = Semaphore(3)
+
+    /** [requests] with the playing row first; see [HearingSlots]. */
+    private val slots = HearingSlots(
+        requests,
+        playing = { com.music.bitchord.data.DiagnosticsState.currentTrackId },
+        upNext = { com.music.bitchord.data.DiagnosticsState.nextTrackId },
+    )
+
+    /** Whether [videoId] is neither playing nor next, read as [HearingSlots] reads it. */
+    private fun rowGone(videoId: String): Boolean {
+        val playing = com.music.bitchord.data.DiagnosticsState.currentTrackId ?: return false
+        return videoId != playing && videoId != com.music.bitchord.data.DiagnosticsState.nextTrackId
+    }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private class Flight(val untilSeconds: Double, val answer: Deferred<Heard?>)
@@ -161,17 +174,24 @@ internal object SongHearing {
      * a free slot in [requests] rather than giving up: a slot opens when another
      * request ends, and the first may still be the slow one. If the first answers
      * while the second waits, the second is cancelled before it is sent.
+     * With [videoId] the slot comes through [slots], so a row no longer playing
+     * never doubles its upload ahead of the playing row's request.
      */
     internal suspend fun <T : Any> hedged(
         hedgeAfterMs: Long,
         ask: suspend () -> T,
         heardSomething: (T) -> Boolean,
+        videoId: String? = null,
     ): T = coroutineScope {
         val first = async { ask() }
         val quick = withTimeoutOrNull(hedgeAfterMs) { first.await() }
         if (quick != null) return@coroutineScope quick
         // A slot opens when another request ends; the first may still be the slow one.
         val second = async {
+            if (videoId != null) {
+                // It goes with the request it doubles: that one gives way for both.
+                return@async slots.withSlot(videoId, mayYield = false) { ask() }
+            }
             requests.acquire()
             try {
                 ask()
@@ -419,8 +439,13 @@ internal object SongHearing {
         exact: Boolean,
         /** When this began waiting for one of the [requests] slots: a queue behind slow uploads shows as `slot`. */
         queuedAt: Long = System.currentTimeMillis(),
-    ): Deepgram.Answer = requests.withPermit {
+    ): Deepgram.Answer = slots.withSlot(
+        videoId,
+        onYield = { TrackLog.d(TAG, "song-hear: gave its slot to the playing row; asks again after it", videoId) },
+    ) {
         val asked = System.currentTimeMillis()
+        // An answer may land after the row or the log has ended; this says it went out, and when.
+        TrackLog.d(TAG, "song-hear: sending until=${untilSeconds.toInt()} kb=${bytes.size / 1024} wait=${waitedMs}ms slot=${asked - queuedAt}ms", videoId)
         var hedgedTo = 0
         // No reply at all means the connection failed, usually in under a second
         // (11-06: 7 of 18 requests, none billed). Such a song used to go without
@@ -435,6 +460,7 @@ internal object SongHearing {
                     Deepgram.listen(bytes, language, Deepgram.MODEL_WHISPER, mime)
                 },
                 heardSomething = { it.words != null },
+                videoId = videoId,
             )
             if (!Deepgram.usable || !shouldResend(answer.httpCode, dropped)) break
             dropped++
@@ -490,7 +516,9 @@ internal object SongHearing {
     /** Test runs score the shown lines against a WAV of the same opening; off, nothing is decoded. */
     private fun keepWavForTest(app: Context, song: Song, untilSeconds: Double) {
         if (!SyncTestMode.enabled(app, song.videoId)) return
-        scope.launch {
+        // A row that has left decodes behind the playing one's: 11-08 150a the row before's
+        // whole-song WAV held the one-at-a-time gate 63 s while PEIvcxSO9zQ played.
+        scope.launch(AudioDecoder.aheadOfTime.asContextElement(rowGone(song.videoId))) {
             VideoAudio.songWavCopy(app, song, untilSeconds)?.let { SyncTestMode.saveWav(app, song.videoId, it.bytes) }
         }
     }
