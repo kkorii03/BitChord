@@ -220,6 +220,34 @@ class LateVersionSwapPolicyTest {
     }
 
     /**
+     * Round-score 10, 107a V6WWJNpIJN4: the video's lyrics waited for the whole
+     * 73 s pass, the row ended untimed (sync=none) and FAILed -0.309 s. The
+     * wait is short and well inside any pass.
+     */
+    @Test
+    fun `the video's lyrics never wait for the whole pass`() {
+        assertEquals(true, LateVersionSwapPolicy.LYRICS_WAIT_MS in 1L..10_000L)
+        // 107a V6WWJNpIJN4's pass had 72 998 ms of budget.
+        assertEquals(true, LateVersionSwapPolicy.LYRICS_WAIT_MS < LateVersionSwapPolicy.passBudgetMs(2_002L, 1f))
+    }
+
+    /**
+     * Round-score 10, 108a fDb0tKHcZhg -> aVQKVqYvpHs and 108b XbGs_qK2PQA ->
+     * OcKSsXs0FA4: `late, before audio` swapped the release in place, its sheet
+     * stayed base=none past the row's end, and both rows FAILed (+0.46, -0.385).
+     * A late release takes a silent row as a new track, as music-only does on time.
+     */
+    @Test
+    fun `a late release takes a silent row as a new track`() {
+        assertEquals(true, LateVersionSwapPolicy.silentInstallIsNewTrack("aVQKVqYvpHs", "fDb0tKHcZhg", late = true))
+        assertEquals(true, LateVersionSwapPolicy.silentInstallIsNewTrack("OcKSsXs0FA4", "XbGs_qK2PQA", late = true))
+        // On time the swap happens inside the row's own start: unchanged.
+        assertEquals(false, LateVersionSwapPolicy.silentInstallIsNewTrack("aVQKVqYvpHs", "fDb0tKHcZhg", late = false))
+        // A release filed under the video's own id is the same row.
+        assertEquals(false, LateVersionSwapPolicy.silentInstallIsNewTrack("fDb0tKHcZhg", "fDb0tKHcZhg", late = true))
+    }
+
+    /**
      * Firstsound lane: music-only's 15 s cap cancelled a late audio-version
      * answer outright, so it never reached the late handover.
      */

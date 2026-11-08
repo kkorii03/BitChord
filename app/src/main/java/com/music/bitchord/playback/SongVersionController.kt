@@ -300,19 +300,25 @@ internal class SongVersionController(
                 )
                 // Done either way: a same-id release keeps the media id, so
                 // the id says nothing about whether the install happened.
-                installSongVersionBeforeAudio(exoPlayer, mediaId, song, late)
+                if (LateVersionSwapPolicy.silentInstallIsNewTrack(late.videoId, mediaId, late = true)) {
+                    installLateVersionAsNewTrack(exoPlayer, mediaId, song, late)
+                } else {
+                    installSongVersionBeforeAudio(exoPlayer, mediaId, song, late)
+                }
                 return
             }
-            // The video's lyrics are measured once the handover has settled,
-            // not beside it: both decodes share the one-at-a-time gate, and
-            // the lyrics pass took it first and held it for ~55 s on the
-            // emulator, so the alignment ran out of time (round-score 9,
-            // 102a r_0JjYUe5jo: a 5 s alignment that started 56 s late). A
-            // handover that lands makes the measurement moot (the row is the
-            // release, measureLateLyrics returns); one refused or cancelled
-            // ends the job, and the lyrics are measured then. The job is
-            // bounded by the playhead, so the wait is too.
-            LateVersionSwapPolicy.Route.HAND_OVER -> swapAudibleToVersion(exoPlayer, mediaId, song, late)?.join()
+            // The video's lyrics wait a short, bounded moment for the
+            // handover, so the alignment can take the one-at-a-time decode
+            // slot first (round-score 9, 102a r_0JjYUe5jo: a 5 s alignment
+            // that started 56 s late behind this measurement), and then run
+            // whether or not the pass has ended: waiting for its end left a
+            // refused row untimed (round-score 10, 107a V6WWJNpIJN4). A
+            // handover that has landed by then makes the measurement moot
+            // (the row is the release, measureLateLyrics returns).
+            LateVersionSwapPolicy.Route.HAND_OVER ->
+                swapAudibleToVersion(exoPlayer, mediaId, song, late)?.let { handover ->
+                    withTimeoutOrNull(LateVersionSwapPolicy.LYRICS_WAIT_MS) { handover.join() }
+                }
             LateVersionSwapPolicy.Route.LYRICS_ONLY -> Unit
         }
         // In the caller's own job, so a track change still cancels it.
@@ -1318,6 +1324,42 @@ internal class SongVersionController(
             }
             .onFailure {
                 setSwappingMediaId(null)
+                TrackLog.w(
+                    "BitChord",
+                    "song version replace failed before audio: ${it.message}",
+                    about = song.videoId,
+                )
+            }
+    }
+
+    /**
+     * A late release taking a row that has not sounded yet, as a new track:
+     * the same replacement music-only's own conversion makes (see
+     * PlaybackService.applyMusicOnly), with no version-swap mark, so the
+     * transition runs the release's whole per-track start — selection, its
+     * analysis heads and song check, lyric timing, its own summary. The
+     * in-place swap skipped that start, which had run for the video tens of
+     * seconds earlier: see [LateVersionSwapPolicy.silentInstallIsNewTrack].
+     */
+    private fun installLateVersionAsNewTrack(exoPlayer: ExoPlayer, mediaId: String, song: Song, late: Song) {
+        if (currentPlayer() !== exoPlayer ||
+            exoPlayer.currentMediaItem?.mediaId != mediaId ||
+            SongVersionPolicy.hasMadeFirstSound(mediaId, currentAudibleMediaId()) ||
+            !SongVersionPolicy.isSongVersionOf(song, late) ||
+            late.isVideo
+        ) return
+        val index = exoPlayer.currentMediaItemIndex
+        if (index !in 0 until exoPlayer.mediaItemCount) return
+        val now = exoPlayer.getMediaItemAt(index)
+        // The player menu's switch back to the video returns to this row.
+        YtMusicRepository.rememberVideoVersion(late.videoId, song)
+        val replacement = QueueShuffle.withQueueMetadata(
+            late.asMusicOnlyOf(song).toMediaItem(),
+            newCanonicalIndex = now.canonicalIndex,
+            newContextCycleId = now.contextCycleId,
+        )
+        runCatching { exoPlayer.replaceMediaItem(index, replacement) }
+            .onFailure {
                 TrackLog.w(
                     "BitChord",
                     "song version replace failed before audio: ${it.message}",

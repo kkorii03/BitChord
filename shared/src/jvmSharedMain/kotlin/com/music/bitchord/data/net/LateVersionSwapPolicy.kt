@@ -68,6 +68,37 @@ object LateVersionSwapPolicy {
         return (room / rate).toLong()
     }
 
+    /**
+     * How long the video's lyric measurement waits for a handover that has
+     * started, before it runs anyway. Short and bounded: long enough for the
+     * alignment to take the decode slot first on a phone (the pair decodes in
+     * ~7 s, and once it holds the slot its second decode goes ahead of the
+     * lyrics), never "until the pass ends" — on the emulator a pass ran 73 s
+     * and the row ended before its lyrics were timed (round-score 10, 107a
+     * V6WWJNpIJN4 FAIL -0.309, sync=none).
+     */
+    const val LYRICS_WAIT_MS = 10_000L
+
+    /**
+     * Whether a release that takes a still-silent row arrives as a new track
+     * (its own selection, analysis heads, song check, lyric timing and
+     * summary, exactly as music-only's own conversion) rather than as an
+     * in-place version swap that skips the per-track start.
+     *
+     * On time, the swap happens inside the row's own start, which then runs
+     * for the release. Late — 48-101 s after the row was selected — that start
+     * ran for the video long ago, so an in-place swap left the release with
+     * no song check and no early timing: its sheet stayed `base=none` until
+     * after the row ended (round-score 10, 108a fDb0tKHcZhg +0.46, 108b
+     * XbGs_qK2PQA -0.385).
+     *
+     * A release filed under the video's own id stays an in-place swap: it is
+     * the same row id, so a new-track transition would have nothing new to
+     * start and would only book the row twice.
+     */
+    fun silentInstallIsNewTrack(versionId: String, rowId: String, late: Boolean): Boolean =
+        late && versionId != rowId
+
     /** What to do with music-only's own audio-version answer when it lands after the cap. */
     enum class LateAudioAnswer {
         /** The row is the playing one: hand it to the late-version route. */
