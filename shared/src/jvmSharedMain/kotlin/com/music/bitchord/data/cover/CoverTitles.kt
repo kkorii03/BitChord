@@ -1,8 +1,10 @@
 package com.music.bitchord.data.cover
 
 import com.music.bitchord.data.BoundedMemo
+import com.music.bitchord.data.innertube.InnertubeParser
 import com.music.bitchord.data.lyrics.ArtistAliases
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.parseAlbumSubtitle
 
 /**
  * Reads a cover upload's title for the song, whose song it is and who sings it.
@@ -102,6 +104,46 @@ object CoverTitles {
     @Volatile
     var onSingerSeen: (String) -> Unit = {}
 
+    /**
+     * Told a whole burst of newly learned singers at once, so the app writes
+     * its list once instead of once per name. Defaults to the single-name hook,
+     * keeping every existing collector working.
+     */
+    @Volatile
+    var onSingersSeen: (Collection<String>) -> Unit = { names -> names.forEach { onSingerSeen(it) } }
+
+    /** Names gathered by [collectingSingers] on this thread, if a pass is open. */
+    private val singerBatch = ThreadLocal<MutableSet<String>?>()
+
+    /**
+     * Runs [block] (a list/shelf mapping) as one learning burst: every singer
+     * it names is handed to [onSingersSeen] once, at the end, and only if the
+     * pass actually named any. Event-driven — there is no timer.
+     */
+    fun <T> collectingSingers(block: () -> T): T {
+        val parent = singerBatch.get()
+        val batch = LinkedHashSet<String>()
+        singerBatch.set(batch)
+        try {
+            return block()
+        } finally {
+            singerBatch.set(parent)
+            if (batch.isNotEmpty()) {
+                if (parent != null) parent.addAll(batch) else runCatching { onSingersSeen(batch) }
+            }
+        }
+    }
+
+    private fun learnSinger(name: String) {
+        val singer = normalizeSingerName(name) ?: return
+        val batch = singerBatch.get()
+        if (batch != null) {
+            batch.add(singer)
+            return
+        }
+        runCatching { onSingerSeen(singer) }
+    }
+
     private const val COVER_WORD = "커버"
     private const val SEPARATOR = " · "
 
@@ -191,7 +233,7 @@ object CoverTitles {
                 ?: readA(raw, channel, allowBareTag = false) ?: readCredit(raw, channel)
             )?.let {
             val cover = withSingerFromChannel(it, channel)
-            if (learn) runCatching { onSingerSeen(cover.singer) }
+            if (learn) learnSinger(cover.singer)
             return cover
         }
         // A slash credit names the original, so its singer is not certain enough to learn.
@@ -999,7 +1041,7 @@ object CoverTitles {
         val known = compactName(singer) in knownSingerKeys()
         if (!known && !looksLikeNewSinger(singer, song, channel)) return null
         val title = cleanTitle(song) ?: return null
-        if (!known) runCatching { onSingerSeen(singer) }
+        if (!known) learnSinger(singer)
         return Cover(title = title, originalArtist = null, singer = singer)
     }
 
@@ -1096,7 +1138,7 @@ object CoverTitles {
     private fun withSingerFromChannel(cover: Cover, channel: String): Cover {
         val original = cover.originalArtist ?: return cover
         if (!sameName(cover.singer, original)) return cover
-        val uploader = cleanName(channel) ?: return cover
+        val uploader = normalizeSingerName(channel) ?: return cover
         if (sameName(uploader, original)) return cover
         return cover.copy(singer = uploader)
     }
@@ -1117,6 +1159,27 @@ object CoverTitles {
             if (next == text || next.isEmpty()) return text
             text = next
         }
+    }
+
+    /**
+     * A singer name worth keeping: the credit before YouTube's byline bullet
+     * ("SEVENTEEN • 조회수 1246만회" is SEVENTEEN the act, not the view count),
+     * with tallies, dates and other counted fragments refused. Reuses the
+     * parser's own tally rule instead of a second view-count parser.
+     */
+    fun cleanSingerName(name: String): String? =
+        normalizeSingerName(name)?.takeIf { it.length in 2..40 }
+
+    /** The byline-bullet and tally rules, without the storage length limit. */
+    private fun normalizeSingerName(name: String): String? {
+        val cleaned = cleanName(name) ?: return null
+        val credit = cleaned.split('•').first().trim()
+        if (credit.isEmpty()) return null
+        if (InnertubeParser.isTallyText(credit)) return null
+        // A fragment the album-subtitle reader knows is only a date or a release
+        // kind ("2026년 1월 1일", "Album") is not an act.
+        if (parseAlbumSubtitle(credit).credit.isBlank()) return null
+        return credit
     }
 
     /**

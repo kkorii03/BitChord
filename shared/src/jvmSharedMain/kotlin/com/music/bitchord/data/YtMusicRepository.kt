@@ -350,9 +350,10 @@ object YtMusicRepository {
         // instead of sending the same request again.
         historyMemo?.takeIf { it.cookie == cookie && System.currentTimeMillis() - it.at < HISTORY_SHARE_MS }
             ?.let { return@withLock it.songs }
-        InnertubeParser.collectSongsDeep(Innertube.browse(HISTORY)).distinctBy { it.videoId }
-            .map(StoredSongDisplay::clean) // [KO] history-titles: kept from 1.8, lost in the 1.9 merge
-            .also { historyMemo = HistoryMemo(cookie, System.currentTimeMillis(), it) }
+        val parsed = InnertubeParser.collectSongsDeep(Innertube.browse(HISTORY)).distinctBy { it.videoId }
+        CoverTitles.collectingSingers {
+            parsed.map(StoredSongDisplay::clean) // [KO] history-titles: kept from 1.8, lost in the 1.9 merge
+        }.also { historyMemo = HistoryMemo(cookie, System.currentTimeMillis(), it) }
     }
 
     private val historyLock = Mutex()
@@ -1174,12 +1175,15 @@ object YtMusicRepository {
     suspend fun browseSongs(browseId: String): Result<SongPage> = call("browse:$browseId") {
         if (isYouTubePlaylistId(browseId) && ensureGateKnown()) {
             val result = YouTubeFallback.playlistPage(browseId)
-            val songs = result.songs.map(StoredSongDisplay::clean)
+            val (songs, hidden) = CoverTitles.collectingSingers {
+                result.songs.map(StoredSongDisplay::clean) to
+                    result.hiddenSongs.map(StoredSongDisplay::clean)
+            }
             return@call SongPage(
                 songs = songs,
                 continuation = result.continuation,
                 header = result.header.withArtworkFallback(songs),
-                hiddenSongs = result.hiddenSongs.map(StoredSongDisplay::clean),
+                hiddenSongs = hidden,
             )
         }
         val response = Innertube.browse(browseId)
@@ -1209,12 +1213,15 @@ object YtMusicRepository {
             }
             TrackLog.i(TAG, "playlist: $browseId rows via youtube.com (no music-video type on rows)")
             val result = YouTubeFallback.playlistPage(browseId)
-            val songs = result.songs.map(StoredSongDisplay::clean)
+            val (songs, hidden) = CoverTitles.collectingSingers {
+                result.songs.map(StoredSongDisplay::clean) to
+                    result.hiddenSongs.map(StoredSongDisplay::clean)
+            }
             return@call SongPage(
                 songs = songs,
                 continuation = result.continuation,
                 header = result.header.withArtworkFallback(songs),
-                hiddenSongs = result.hiddenSongs.map(StoredSongDisplay::clean),
+                hiddenSongs = hidden,
             )
         }
         val shown = if (browseId == LIKED_MUSIC) musicOnlyLikedPage(page) else page
@@ -1238,8 +1245,10 @@ object YtMusicRepository {
             return page
         }
         val (music, videos) = YouTubeMusicClassifier.splitMusic(page.songs, LIKED_JUDGE_LIMIT)
-        val shown = music.map { YouTubeDisplayCleaner.cleanUpload(it) }
-        val hidden = videos.map { YouTubeDisplayCleaner.cleanUpload(it) }
+        val (shown, hidden) = CoverTitles.collectingSingers {
+            music.map { YouTubeDisplayCleaner.cleanUpload(it) } to
+                videos.map { YouTubeDisplayCleaner.cleanUpload(it) }
+        }
         Log.i(TAG, "liked: shown=${shown.size} hidden=${hidden.size} (music mode)")
         return page.copy(songs = shown, hiddenSongs = hidden)
     }
@@ -1311,12 +1320,15 @@ object YtMusicRepository {
     suspend fun moreSongs(token: String): Result<SongPage> = call("browse:more") {
         if (YouTubeFallback.isContinuation(token)) {
             val result = YouTubeFallback.morePlaylist(token)
-            val songs = result.songs.map(StoredSongDisplay::clean)
+            val (songs, hidden) = CoverTitles.collectingSingers {
+                result.songs.map(StoredSongDisplay::clean) to
+                    result.hiddenSongs.map(StoredSongDisplay::clean)
+            }
             return@call SongPage(
                 songs = songs,
                 continuation = result.continuation,
                 header = result.header.withArtworkFallback(songs),
-                hiddenSongs = result.hiddenSongs.map(StoredSongDisplay::clean),
+                hiddenSongs = hidden,
             )
         }
         if (token in anonymousContinuations) {
@@ -1368,11 +1380,14 @@ object YtMusicRepository {
             // A signed playlist/album row arrives as the upload's own title
             // and channel. Clean it here, where every browse page is read, so
             // a fresh playlist row matches a replayed one.
-            val shown = shelf.songs.map(StoredSongDisplay::clean)
+            val (shown, suggested) = CoverTitles.collectingSingers {
+                shelf.songs.map(StoredSongDisplay::clean) to
+                    shelf.suggested.map(StoredSongDisplay::clean)
+            }
             return SongPage(
                 songs = shown,
                 continuation = shelf.continuation,
-                suggested = shelf.suggested.map(StoredSongDisplay::clean),
+                suggested = suggested,
                 library = library,
                 header = parsedHeader.withArtworkFallback(shown),
             )
@@ -1381,7 +1396,7 @@ object YtMusicRepository {
         val continuation = InnertubeParser.continuationToken(response)
         if (podcast != null && continuation != null) showByToken[continuation] = podcast
         val songs = InnertubeParser.collectSongsDeep(response, podcast).distinctBy { it.videoId }
-        val shown = songs.map(StoredSongDisplay::clean)
+        val shown = CoverTitles.collectingSingers { songs.map(StoredSongDisplay::clean) }
         return SongPage(
             // One response can name the same track twice — an album page that
             // also carries a "you might also like" shelf, say. Collecting into a
@@ -1423,7 +1438,8 @@ object YtMusicRepository {
      */
     private suspend fun songsPaged(browseId: String): List<Song> {
         if (isYouTubePlaylistId(browseId) && ensureGateKnown()) {
-            return YouTubeFallback.allSongs(browseId).map(StoredSongDisplay::clean)
+            val all = YouTubeFallback.allSongs(browseId)
+            return CoverTitles.collectingSingers { all.map(StoredSongDisplay::clean) }
         }
         val out = LinkedHashMap<String, Song>()
         var response = Innertube.browse(browseId)
@@ -1458,7 +1474,7 @@ object YtMusicRepository {
                 anonymous = runCatching { Innertube.browseContinuationMusicAnonymous(token) }.getOrNull()
             }
         }
-        return out.values.map(StoredSongDisplay::clean)
+        return CoverTitles.collectingSingers { out.values.map(StoredSongDisplay::clean) }
     }
 
     /**
@@ -1653,7 +1669,7 @@ object YtMusicRepository {
             if (page++ >= MAX_PAGES) error("playlist too long to reorder")
             response = Innertube.browseContinuation(token)
         }
-        out.values.map(StoredSongDisplay::clean)
+        CoverTitles.collectingSingers { out.values.map(StoredSongDisplay::clean) }
     }
 
     /**

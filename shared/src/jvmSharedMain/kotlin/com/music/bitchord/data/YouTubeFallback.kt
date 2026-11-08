@@ -3,6 +3,7 @@ package com.music.bitchord.data
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.charts.ChartType
 import com.music.bitchord.data.charts.ChartsApi
+import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.cover.YouTubeCoverResolver
 import com.music.bitchord.data.cover.squareFriendlyThumbnail
 import com.music.bitchord.data.cover.videoThumbnailUrl
@@ -253,7 +254,11 @@ internal object YouTubeFallback {
 
         val recents = recentSongs
             .takeIf { it.isNotEmpty() }
-            ?.let { musicOnlyShelf(HomeShelf(RECENT_TITLE, it.map(::shelfItem))) }
+            ?.let {
+                musicOnlyShelf(
+                    HomeShelf(RECENT_TITLE, CoverTitles.collectingSingers { it.map(::shelfItem) }),
+                )
+            }
             ?.let {
                 CatalogSongMapper.mapShelf(
                     it,
@@ -512,7 +517,12 @@ internal object YouTubeFallback {
         ).distinctBy { it.videoId }
             .take(YouTubeFallbackFeed.QUICK_PICKS_LIMIT)
         if (songs.isEmpty()) return null
-        val shown = CatalogSongMapper.mapPage(songs.map(::displaySong), budget)
+        // The per-row display read is the burst; the lookups after it add no
+        // name the pass did not already learn.
+        val shown = CatalogSongMapper.mapPage(
+            CoverTitles.collectingSingers { songs.map(::displaySong) },
+            budget,
+        )
         val covered = YouTubeCoverResolver.enrich(shown, YouTubeFallbackFeed.QUICK_PICKS_LIMIT)
         return HomeShelf(YouTubeFallbackFeed.QUICK_PICKS_TITLE, covered.map(::shelfItem))
     }
@@ -524,15 +534,22 @@ internal object YouTubeFallback {
     private suspend fun mixShelf(localPlays: List<LocalPlay>): HomeShelf? {
         val seeds = YouTubeFallbackFeed.mixSeeds(localPlays)
         if (seeds.isEmpty()) return null
-        val items = seeds.map { seed ->
-            val shown = displaySong(
-                Song(
-                    videoId = seed.videoId,
-                    title = seed.title,
-                    artist = seed.artist,
-                    thumbnailUrl = seed.thumbnailUrl,
-                ),
-            )
+        // Learn the seed rows in one synchronous pass; the cover lookup below
+        // may suspend, so it stays outside the burst.
+        val shownSeeds = CoverTitles.collectingSingers {
+            seeds.map { seed ->
+                displaySong(
+                    Song(
+                        videoId = seed.videoId,
+                        title = seed.title,
+                        artist = seed.artist,
+                        thumbnailUrl = seed.thumbnailUrl,
+                    ),
+                )
+            }
+        }
+        val items = seeds.mapIndexed { index, seed ->
+            val shown = shownSeeds[index]
             ShelfItem(
                 title = if (shown.artist.isBlank()) "${shown.title} 믹스" else "${shown.artist} 믹스",
                 subtitle = "믹스",
@@ -563,7 +580,10 @@ internal object YouTubeFallback {
             .distinctBy { it.videoId }
             .take(RECENT_LIMIT)
         if (music.isEmpty()) return null
-        return HomeShelf(YouTubeFallbackFeed.LIKED_TITLE, music.map(::shelfItem))
+        return HomeShelf(
+            YouTubeFallbackFeed.LIKED_TITLE,
+            CoverTitles.collectingSingers { music.map(::shelfItem) },
+        )
     }
 
     /** Drops rows [YouTubeMusicClassifier] states are not music, keeping collection cards. */
@@ -612,11 +632,13 @@ internal object YouTubeFallback {
      * ([RecentShelf.LOCAL_ONLY_MINIMUM]), because it mixes in everything watched
      * in the YouTube app.
      */
-    suspend fun history(): List<Song> =
-        CatalogSongMapper.mapPage(
-            mergedHistory(HISTORY_LIMIT).map(::displaySong),
+    suspend fun history(): List<Song> {
+        val merged = mergedHistory(HISTORY_LIMIT)
+        return CatalogSongMapper.mapPage(
+            CoverTitles.collectingSingers { merged.map(::displaySong) },
             CatalogSongMapper.newBudget(),
         )
+    }
 
     private suspend fun mergedHistory(
         limit: Int,
@@ -650,7 +672,10 @@ internal object YouTubeFallback {
     private suspend fun youtubeHistory(): List<Song> {
         val parsed = YouTubeWebParser.parseHistory(Innertube.browseYouTube("FEhistory"))
         val music = YouTubeMusicClassifier.filterMusic(parsed, HISTORY_LIMIT)
-        return YouTubeCoverResolver.enrich(music.map(::displaySong), HISTORY_LIMIT)
+        return YouTubeCoverResolver.enrich(
+            CoverTitles.collectingSingers { music.map(::displaySong) },
+            HISTORY_LIMIT,
+        )
     }
 
     suspend fun quickPicks(excludeSongIds: Set<String>): List<Song> {
@@ -787,7 +812,7 @@ internal object YouTubeFallback {
                 .take(CATEGORY_LIMIT)
             val shelves = YouTubeCategoryRules.categoryShelves(
                 official = official,
-                songs = songs.map(::shelfItem),
+                songs = CoverTitles.collectingSingers { songs.map(::shelfItem) },
                 community = community,
                 limitPerShelf = CATEGORY_LIMIT,
                 songLimit = CATEGORY_SONG_LIMIT,
@@ -815,11 +840,13 @@ internal object YouTubeFallback {
         budget: CatalogSongMapper.LookupBudget = CatalogSongMapper.newBudget(),
     ): List<Song> {
         val page = webPlaylistPage(browseId, anonymous = true)
-        val songs = page.songs.asSequence()
-            .filter(YouTubeCategoryRules::isOfficialTrack)
-            .take(limit)
-            .map(::displaySong)
-            .toList()
+        val songs = CoverTitles.collectingSingers {
+            page.songs.asSequence()
+                .filter(YouTubeCategoryRules::isOfficialTrack)
+                .take(limit)
+                .map(::displaySong)
+                .toList()
+        }
         val mapped = CatalogSongMapper.mapPage(songs, budget)
         return YouTubeCoverResolver.enrich(mapped, CATEGORY_COVER_LIMIT)
     }
@@ -1038,9 +1065,12 @@ internal object YouTubeFallback {
     ): YouTubeWebParser.PlaylistResult {
         if (result.songs.isEmpty()) return result
         val (music, videos) = YouTubeMusicClassifier.splitMusic(result.songs, LIKED_JUDGE_LIMIT)
+        val (shown, hidden) = CoverTitles.collectingSingers {
+            music.map(::displaySong) to videos.map(::displaySong)
+        }
         return result.copy(
-            songs = music.map(::displaySong),
-            hiddenSongs = videos.map(::displaySong),
+            songs = shown,
+            hiddenSongs = hidden,
         )
     }
 
@@ -1065,7 +1095,7 @@ internal object YouTubeFallback {
 
     private suspend fun officialPlaylistPage(browseId: String): YouTubeWebParser.PlaylistResult {
         val result = webPlaylistPage(browseId, anonymous = true)
-        val cleaned = result.songs.map(::displaySong)
+        val cleaned = CoverTitles.collectingSingers { result.songs.map(::displaySong) }
         return result.copy(
             songs = YouTubeCoverResolver.enrich(cleaned, CATEGORY_COVER_LIMIT),
         )
@@ -1108,9 +1138,12 @@ internal object YouTubeFallback {
         // A video station needs the upload rows as the mix filed them. The
         // music filter and catalogue mapper turn a cover into a catalogue
         // track, which is the wrong id for a station that must keep videos.
-        if (preferVideo) return songs.map(::displaySong)
+        if (preferVideo) return CoverTitles.collectingSingers { songs.map(::displaySong) }
         val music = YouTubeMusicClassifier.filterMusic(songs, songs.size)
-        return CatalogSongMapper.mapPage(music.map(::displaySong), CatalogSongMapper.newBudget())
+        return CatalogSongMapper.mapPage(
+            CoverTitles.collectingSingers { music.map(::displaySong) },
+            CatalogSongMapper.newBudget(),
+        )
     }
 
     /** The RD mix as youtube.com sends it, before any display or music filtering. */
@@ -1223,35 +1256,36 @@ internal object YouTubeFallback {
     )
 
     /** The rows the cover budget reaches, planned in page order without lookups. */
-    private fun coverPlans(shelves: List<HomeShelf>): List<CoverPlan> {
-        var budget = HOME_COVER_LIMIT
-        val plans = ArrayList<CoverPlan>()
-        shelves.forEachIndexed { shelfIndex, shelf ->
-            if (budget <= 0) return@forEachIndexed
-            val indexes = shelf.items.indices
-                .filter { index ->
+    private fun coverPlans(shelves: List<HomeShelf>): List<CoverPlan> =
+        CoverTitles.collectingSingers {
+            var budget = HOME_COVER_LIMIT
+            val plans = ArrayList<CoverPlan>()
+            shelves.forEachIndexed { shelfIndex, shelf ->
+                if (budget <= 0) return@forEachIndexed
+                val indexes = shelf.items.indices
+                    .filter { index ->
+                        val item = shelf.items[index]
+                        item.videoId != null && YouTubeCoverResolver.isVideoThumbnail(item.thumbnailUrl)
+                    }
+                    .take(minOf(SHELF_COVER_LIMIT, budget))
+                if (indexes.isEmpty()) return@forEachIndexed
+                val songs = indexes.map { index ->
                     val item = shelf.items[index]
-                    item.videoId != null && YouTubeCoverResolver.isVideoThumbnail(item.thumbnailUrl)
+                    displaySong(
+                        Song(
+                            videoId = item.videoId.orEmpty(),
+                            title = item.title,
+                            artist = item.subtitle,
+                            thumbnailUrl = item.thumbnailUrl,
+                            isVideo = item.isVideo,
+                        ),
+                    )
                 }
-                .take(minOf(SHELF_COVER_LIMIT, budget))
-            if (indexes.isEmpty()) return@forEachIndexed
-            val songs = indexes.map { index ->
-                val item = shelf.items[index]
-                displaySong(
-                    Song(
-                        videoId = item.videoId.orEmpty(),
-                        title = item.title,
-                        artist = item.subtitle,
-                        thumbnailUrl = item.thumbnailUrl,
-                        isVideo = item.isVideo,
-                    ),
-                )
+                budget -= indexes.size
+                plans += CoverPlan(shelfIndex, indexes, songs)
             }
-            budget -= indexes.size
-            plans += CoverPlan(shelfIndex, indexes, songs)
+            plans
         }
-        return plans
-    }
 
     /** The display strings for a youtube.com row, before its cover is resolved. */
     private fun displaySong(song: Song): Song {
@@ -1276,8 +1310,10 @@ internal object YouTubeFallback {
     }
 
     private fun displayShelf(shelf: HomeShelf): HomeShelf = shelf.copy(
-        items = shelf.items.map { item ->
-            if (item.videoId != null) displayItem(item) else item
+        items = CoverTitles.collectingSingers {
+            shelf.items.map { item ->
+                if (item.videoId != null) displayItem(item) else item
+            }
         },
     )
 

@@ -2002,6 +2002,10 @@ object InnertubeParser {
             """|[\d.,]+\s*[천만억]?\s*(?:회|곡|시간|분|초|명)(?:\s.*)?""",
         RegexOption.IGNORE_CASE,
     )
+
+    /** Whether [text] is a counted quantity or a bare year, never a name. */
+    internal fun isTallyText(text: String): Boolean =
+        text.matches(TALLY) || text.matches(YEAR)
     /** Header words that mark a page as a release, whose rows share its credit. */
     private val RELEASE_WORDS = setOf("album", "single", "ep", "앨범", "싱글", "シングル", "アルバム")
     private val HEADER_RENDERERS = listOf(
