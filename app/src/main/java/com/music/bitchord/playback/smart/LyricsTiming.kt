@@ -180,6 +180,8 @@ object LyricsTiming {
         val currentKey: Int,
         val wordsClock: Clock = Clock.Unknown,
         val currentClock: Clock = Clock.Unknown,
+        /** The sheet is Gemini's transcript of this recording: [LyricsPerLine.MIN_OWN_TRANSCRIPT_SHARE]. */
+        val ownTranscript: Boolean = false,
     )
 
     /**
@@ -340,10 +342,12 @@ object LyricsTiming {
         audioSource: String? = null,
         /** Which caller's gate set [baseAllowed] false, for the base-apply line. */
         deniedBy: String? = null,
+        /** The sheet is [LyricsSource.GEMINI_TRANSCRIPT]: its lines are the sung words, placed by the heard ones. */
+        ownTranscript: Boolean = false,
         // A whole song's words against its sheet is real work, and the screen
         // asks this on its own thread.
     ): Timing? = withContext(Dispatchers.Default) {
-        timingNow(context, videoId, lines, baseAllowed, measuredAllowed, isVideo, audioSource, deniedBy)
+        timingNow(context, videoId, lines, baseAllowed, measuredAllowed, isVideo, audioSource, deniedBy, ownTranscript)
     }
 
     private suspend fun timingNow(
@@ -355,6 +359,7 @@ object LyricsTiming {
         isVideo: Boolean,
         audioSource: String?,
         deniedBy: String?,
+        ownTranscript: Boolean,
     ): Timing? {
         // A missing entry is not "nothing to do": the stream may still be a
         // verified high-quality copy whose clock differs from YouTube's, and
@@ -564,6 +569,7 @@ object LyricsTiming {
                 currentKey = key,
                 wordsClock = playing,
                 currentClock = playing,
+                ownTranscript = ownTranscript,
             )
         }
         val refinedWithPerLine = refined.copy(perLine = perLine)
@@ -1215,7 +1221,7 @@ object LyricsTiming {
         val layer = if (timing.base != null && LyricsPerLine.statesItsOwnWords(lines)) {
             LyricsPerLine.Layer.identity(lines.size)
         } else {
-            LyricsPerLine.compute(lines, words.words, words.wordsKey, words.currentKey)
+            LyricsPerLine.compute(lines, words.words, words.wordsKey, words.currentKey, words.ownTranscript)
         }
         TrackLog.i(
             "BitChord",

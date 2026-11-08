@@ -1119,6 +1119,7 @@ internal class NextTrackPreparation(
             baseAllowed = timeable,
             measuredAllowed = recordTimed,
             deniedBy = "file-own-timing@next-prep",
+            ownTranscript = found.source == LyricsSource.GEMINI_TRANSCRIPT,
             isVideo = query.isVideo,
             audioSource = if (query.isVideo) {
                 null
