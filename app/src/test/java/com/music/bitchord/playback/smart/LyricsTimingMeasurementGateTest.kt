@@ -173,4 +173,79 @@ class LyricsTimingMeasurementGateTest {
         assertEquals(LyricsTiming.ReadPlan.DECODE, LyricsTiming.readPlan(2_800_000L, exhaustedAt = null, failedAt = null))
         assertEquals(LyricsTiming.ReadPlan.DECODE, LyricsTiming.readPlan(-1L, exhaustedAt = 2_800_000L, failedAt = 2_800_000L))
     }
-}
+
+    // 11-08 checkretry: song-check transport retry and the wanted-before-hearing gate.
+    @Test
+    fun `no reply and no words is a transport failure`() {
+        assertTrue(SongCheckRetry.transportFailure(null))
+    }
+
+    @Test
+    fun `a real answer is never a transport failure`() {
+        assertFalse(SongCheckRetry.transportFailure(200))
+        assertFalse(SongCheckRetry.transportFailure(404))
+    }
+
+    @Test
+    fun `a failed check is asked once more for the same track`() {
+        assertTrue(SongCheckRetry.mayRetry("k", "k", retriesDone = 0, sameTrack = true, heavyAllowed = true))
+    }
+
+    @Test
+    fun `at most one retry per track`() {
+        assertFalse(SongCheckRetry.mayRetry("k", "k", retriesDone = 1, sameTrack = true, heavyAllowed = true))
+    }
+
+    @Test
+    fun `no retry without a failure, for another sheet, another track or in low power`() {
+        assertFalse(SongCheckRetry.mayRetry(null, "k", 0, sameTrack = true, heavyAllowed = true))
+        assertFalse(SongCheckRetry.mayRetry("k", "other", 0, sameTrack = true, heavyAllowed = true))
+        assertFalse(SongCheckRetry.mayRetry("k", "k", 0, sameTrack = false, heavyAllowed = true))
+        assertFalse(SongCheckRetry.mayRetry("k", "k", 0, sameTrack = true, heavyAllowed = false))
+    }
+
+    @Test
+    fun `a replaced row is not heard for`() {
+        assertFalse(SongCheckRetry.hearingWanted("mv", "release", "next"))
+        assertTrue(SongCheckRetry.hearingWanted("release", "release", "next"))
+        assertTrue(SongCheckRetry.hearingWanted("next", "release", "next"))
+    }
+
+    @Test
+    fun `a track that is still starting is heard for`() {
+        assertEquals(true, SongCheckRetry.hearingWanted("any", null, null))
+    }
+
+    @Test
+    fun `a flag left by an earlier check is not read as the next check's`() {
+        LyricsTiming.noteSongTransportFailure("song")
+        LyricsTiming.resetSongOutcome("song")
+        assertFalse(LyricsTiming.takeSongTransportFailure("song"))
+    }
+
+    @Test
+    fun `a transport failure is read once`() {
+        LyricsTiming.resetSongOutcome("song")
+        LyricsTiming.noteSongTransportFailure("song")
+        assertTrue(LyricsTiming.takeSongTransportFailure("song"))
+        assertFalse(LyricsTiming.takeSongTransportFailure("song"))
+    }
+
+    @Test
+    fun `a skipped hearing is its own outcome and not a transport failure`() {
+        LyricsTiming.resetSongOutcome("song")
+        LyricsTiming.noteSongSkippedGone("song")
+        assertFalse(LyricsTiming.takeSongTransportFailure("song"))
+        assertTrue(LyricsTiming.takeSongSkippedGone("song"))
+        assertFalse(LyricsTiming.takeSongSkippedGone("song"))
+    }
+    @Test
+    fun `a check that never listened does not use up the retry`() {
+        LyricsTiming.resetSongOutcome("song")
+        assertFalse(LyricsTiming.takeSongRequestReached("song"))
+        LyricsTiming.noteSongRequestReached("song")
+        LyricsTiming.resetSongOutcome("song")
+        assertFalse(LyricsTiming.takeSongRequestReached("song"))
+        LyricsTiming.noteSongRequestReached("song")
+        assertTrue(LyricsTiming.takeSongRequestReached("song"))
+    }}

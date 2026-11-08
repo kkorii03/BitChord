@@ -1861,6 +1861,7 @@ object LyricsTiming {
         val language = com.music.bitchord.data.lyrics.Deepgram.languageFor(
             lines.filter { it.text.isNotBlank() }.map { it.text },
         )
+        if (!hearingWantedNow(song.videoId)) return null
         // The move stands on these words, so a rough opening is not enough to refine from.
         val heard = hearThrough429(context, song, untilSeconds, untilSeconds, language, exact = true) ?: return null
         val words = heard.words?.take(MAX_HEARD_WORDS)
@@ -2313,6 +2314,8 @@ object LyricsTiming {
                 }
             }
         var mark = lap("검색", began)
+        // The search can take long enough for the row to be replaced (112b): stop before any fetch.
+        if (!wanted()) return Measured.Retry
         if (candidates.isEmpty()) {
             TrackLog.d(TAG, "no original recording found for $names", video.videoId)
             return Measured.Done(null, complete = true, note = "원곡을 찾지 못함 ($times)")
@@ -2355,6 +2358,7 @@ object LyricsTiming {
             return Measured.Retry
         }
         mark = lap("비디오 대기", mark)
+        if (!wanted()) return Measured.Retry
         // Read from the rendition actually opened, not from what is playing now:
         // after a mid-song swap the YouTube copy may already be gone.
         val measurementClock = clockForRendition(video.videoId, copy.key, copy.origin == AudioCache.Origin.YOUTUBE)
@@ -2466,6 +2470,7 @@ object LyricsTiming {
             log(verdict, record, "kept")
             return Tried(original, result, reached = true, partial = false, note = "$name: $verdict (저장된 원곡, ${seconds(System.currentTimeMillis() - began)})")
         }
+        if (!wanted()) return Tried(original, null, reached = false, partial = false, note = "$name: 곡이 바뀌어 중단")
         if (original.localUri == null) {
             AudioCache.keepForTiming(original.videoId)
             val uri = Uri.parse(AutomixAnalysisSource.opusUri(original.videoId))
@@ -3718,6 +3723,8 @@ object LyricsTiming {
                 .onSubscription { if (VersionAudioAligner.renditionToMeasure(videoId) != null) emit(videoId) }
                 .first { it == videoId }
         } ?: return
+        // The wait above can outlast the row (a release replaced the MV, 112b): ask nothing, store nothing.
+        if (!hearingWantedNow(videoId)) return
         val song = Song(videoId = videoId, title = title, artist = artist, thumbnailUrl = null, isVideo = true)
         val language = com.music.bitchord.data.lyrics.Deepgram.languageFor(listOf(title))
         // Read by the quick listen ([SongCheckWindow.quickLanguage]); a playback's worth is kept.
@@ -3804,6 +3811,7 @@ object LyricsTiming {
         /** The next-prep bundle stops its own request when its row is replaced. */
         cancelWithCaller: Boolean = false,
     ): Boolean {
+        resetSongOutcome(song.videoId)
         val sung = lines.withIndex().filter { it.value.text.isNotBlank() }
         val timed = lines.any { it.timeMs > 0 }
         if (!LyricsAiGuard.songTimingWanted(
@@ -4174,6 +4182,7 @@ object LyricsTiming {
         // nobody's request; [SongHearing] caps how many run at once and shares
         // one between callers. A reset during that wait voids the answer.
         val startedGeneration = songSyncGenerationOf(song.videoId)
+        noteSongRequestReached(song.videoId)
         // The first pass listens to the short opening that is already on disk,
         // so the screen is corrected while the song is still playing. The full
         // opening follows on the same cold playback: applied as a refinement,
@@ -4369,6 +4378,41 @@ object LyricsTiming {
         return SongAsk(answer, language, untilSeconds)
     }
 
+    /** Videos whose last song check ended without any reply (network down), see [SongCheckRetry]. */
+    private val songTransportFailed: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
+    /** Whether the last song check of [videoId] failed in transport; read once, then forgotten. */
+    internal fun takeSongTransportFailure(videoId: String): Boolean = songTransportFailed.remove(videoId)
+
+    /** Song checks whose hearing was skipped because the track left: nothing was asked, nothing is stored. */
+    private val songSkippedGone: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
+    internal fun takeSongSkippedGone(videoId: String): Boolean = songSkippedGone.remove(videoId)
+
+    /** Every [verifySong] starts clean, so a flag left by an earlier check (next prep, one that asked nothing) is never read as this one's. */
+    internal fun resetSongOutcome(videoId: String) {
+        songRequestReached.remove(videoId)
+        songTransportFailed.remove(videoId)
+        songSkippedGone.remove(videoId)
+    }
+
+    /** Song checks that got as far as listening (not held, spent, guarded or skipped): only these use up a retry. */
+    private val songRequestReached: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
+    internal fun takeSongRequestReached(videoId: String): Boolean = songRequestReached.remove(videoId)
+
+    internal fun noteSongRequestReached(videoId: String) { songRequestReached.add(videoId) }
+
+    internal fun noteSongTransportFailure(videoId: String) { songTransportFailed.add(videoId) }
+
+    internal fun noteSongSkippedGone(videoId: String) { songSkippedGone.add(videoId) }
+
+    private fun hearingWantedNow(videoId: String): Boolean = SongCheckRetry.hearingWanted(
+        videoId,
+        com.music.bitchord.data.DiagnosticsState.currentTrackId,
+        com.music.bitchord.data.DiagnosticsState.nextTrackId,
+    )
+
     /** Fits the lines to what [ask] heard. Runs under the gate: this and the apply are what it is for. */
     private suspend fun fitSongCheck(
         context: Context,
@@ -4397,6 +4441,7 @@ object LyricsTiming {
         val texts = indices.map { lines[it].text }
         val heard = answer.words ?: run {
             songLog(song.videoId, "no-answer", null, null, seconds, words = 0, http = answer.httpCode)
+            if (SongCheckRetry.transportFailure(answer.httpCode)) noteSongTransportFailure(song.videoId)
             probe?.failure = when {
                 answer.httpCode == 429 -> NextPrepPolicy.SyncFailure.RATE_LIMIT
                 answer.httpCode == null -> NextPrepPolicy.SyncFailure.ERROR
@@ -4503,6 +4548,12 @@ object LyricsTiming {
         firstPass: Boolean = false,
     ): SongHearing.Heard? {
         val videoId = song.videoId
+        // A row that left asks nothing and stores nothing (no NO_AUDIO, no failure): a later ask for it works.
+        if (!hearingWantedNow(videoId)) {
+            noteSongSkippedGone(videoId)
+            TrackLog.d(TAG, "song-sync: skipped, the track is no longer wanted", videoId)
+            return null
+        }
         val groqAnswers = firstPass && SongHearing.groqFirst(untilSeconds)
         val quiet = songQuietUntilMs - System.currentTimeMillis()
         if (SongSyncRetry.holdApplies(groqAnswers) && quiet > 0) {
