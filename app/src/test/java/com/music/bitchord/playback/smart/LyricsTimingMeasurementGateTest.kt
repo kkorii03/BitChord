@@ -238,4 +238,14 @@ class LyricsTimingMeasurementGateTest {
         assertFalse(LyricsTiming.takeSongTransportFailure("song"))
         assertTrue(LyricsTiming.takeSongSkippedGone("song"))
         assertFalse(LyricsTiming.takeSongSkippedGone("song"))
+    }
+    @Test
+    fun `a check that never listened does not use up the retry`() {
+        LyricsTiming.resetSongOutcome("song")
+        assertFalse(LyricsTiming.takeSongRequestReached("song"))
+        LyricsTiming.noteSongRequestReached("song")
+        LyricsTiming.resetSongOutcome("song")
+        assertFalse(LyricsTiming.takeSongRequestReached("song"))
+        LyricsTiming.noteSongRequestReached("song")
+        assertTrue(LyricsTiming.takeSongRequestReached("song"))
     }}

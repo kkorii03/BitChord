@@ -4182,6 +4182,7 @@ object LyricsTiming {
         // nobody's request; [SongHearing] caps how many run at once and shares
         // one between callers. A reset during that wait voids the answer.
         val startedGeneration = songSyncGenerationOf(song.videoId)
+        noteSongRequestReached(song.videoId)
         // The first pass listens to the short opening that is already on disk,
         // so the screen is corrected while the song is still playing. The full
         // opening follows on the same cold playback: applied as a refinement,
@@ -4390,9 +4391,17 @@ object LyricsTiming {
 
     /** Every [verifySong] starts clean, so a flag left by an earlier check (next prep, one that asked nothing) is never read as this one's. */
     internal fun resetSongOutcome(videoId: String) {
+        songRequestReached.remove(videoId)
         songTransportFailed.remove(videoId)
         songSkippedGone.remove(videoId)
     }
+
+    /** Song checks that got as far as listening (not held, spent, guarded or skipped): only these use up a retry. */
+    private val songRequestReached: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
+    internal fun takeSongRequestReached(videoId: String): Boolean = songRequestReached.remove(videoId)
+
+    internal fun noteSongRequestReached(videoId: String) { songRequestReached.add(videoId) }
 
     internal fun noteSongTransportFailure(videoId: String) { songTransportFailed.add(videoId) }
 

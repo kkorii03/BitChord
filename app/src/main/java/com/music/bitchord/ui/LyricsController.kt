@@ -1296,7 +1296,8 @@ class LyricsController(
     private var songCheckRetryFor: String? = null
     private var songCheckRetriesDone = 0
 
-    private suspend fun runSongCheck(generation: Long, request: LyricsRequest, lines: List<LyricLine>, checkKey: String) {
+    /** Returns whether the check got as far as listening (a held, spent, guarded or skipped one did not). */
+    private suspend fun runSongCheck(generation: Long, request: LyricsRequest, lines: List<LyricLine>, checkKey: String): Boolean {
         val ok = LyricsTiming.verifySong(
             app,
             Song(
@@ -1313,6 +1314,7 @@ class LyricsController(
             ),
             lines,
         )
+        val reached = LyricsTiming.takeSongRequestReached(request.videoId)
         if (!ok) {
             if (LyricsTiming.takeSongTransportFailure(request.videoId)) {
                 songCheckRetryFor = checkKey
@@ -1322,6 +1324,7 @@ class LyricsController(
             }
         }
         refreshTiming(generation, lines)
+        return reached
     }
 
     /**
@@ -1346,8 +1349,12 @@ class LyricsController(
             )
         ) return
         songCheckRetryFor = null
-        songCheckRetriesDone += 1
-        runSongCheck(generation, request, lines, checkKey)
+        // The one retry is used up only when it really listened; a held or skipped one stays pending.
+        if (runSongCheck(generation, request, lines, checkKey)) {
+            songCheckRetriesDone += 1
+        } else if (songCheckRetryFor == null && generation == lyricsGeneration) {
+            songCheckRetryFor = pending
+        }
     }
 
     private var earlyMeasureJob: Job? = null
