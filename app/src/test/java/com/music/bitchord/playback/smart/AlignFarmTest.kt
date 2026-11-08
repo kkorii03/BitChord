@@ -6,7 +6,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import org.junit.Assert.fail
 import org.junit.Test
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
@@ -69,12 +68,12 @@ class AlignFarmTest {
     fun `an answer asked ahead is the row's own, with no GET at its start`() = runBlocking {
         val id = "aheadtest01"
         assertTrue(AlignFarm.askAhead(id) { cipher(BODY) })
-        val saved = AlignFarm.answer(id, "en", PASS) { fail("the row asked again") }
+        val saved = AlignFarm.answer(id, "en", PASS) { noGet("the row asked again") }
         assertNotNull(saved)
         assertEquals(2, saved!!.words.size)
         // Asked once a run: nothing more, ahead or at the row.
-        assertNull(AlignFarm.answer(id, "en", PASS) { fail("asked a second time") })
-        assertFalse(AlignFarm.askAhead(id) { fail("asked ahead a second time") })
+        assertNull(AlignFarm.answer(id, "en", PASS) { noGet("asked a second time") })
+        assertFalse(AlignFarm.askAhead(id) { noGet("asked ahead a second time") })
     }
 
     @Test
@@ -82,8 +81,8 @@ class AlignFarmTest {
         val id = "aheadtest02"
         val reply = CompletableDeferred<ByteArray?>()
         assertTrue(AlignFarm.askAhead(id) { reply.await() })
-        assertFalse(AlignFarm.askAhead(id) { fail("two GETs in flight") })
-        val row = async { AlignFarm.answer(id, "en", PASS) { fail("a GET of its own while one flies") } }
+        assertFalse(AlignFarm.askAhead(id) { noGet("two GETs in flight") })
+        val row = async { AlignFarm.answer(id, "en", PASS) { noGet("a GET of its own while one flies") } }
         reply.complete(cipher(BODY))
         assertNotNull(row.await())
     }
@@ -105,8 +104,8 @@ class AlignFarmTest {
     fun `a farm that has no file, asked ahead, is not asked at the row`() = runBlocking {
         val id = "aheadtest04"
         assertTrue(AlignFarm.askAhead(id) { ByteArray(0) })
-        assertNull(AlignFarm.answer(id, "en", PASS) { fail("asked at the row") })
-        assertNull(AlignFarm.answer(id, "en", PASS) { fail("asked at the row") })
+        assertNull(AlignFarm.answer(id, "en", PASS) { noGet("asked at the row") })
+        assertNull(AlignFarm.answer(id, "en", PASS) { noGet("asked at the row") })
     }
 
     /** The row's own asks keep at least one of the three: asking ahead never leaves it none. */
@@ -118,6 +117,9 @@ class AlignFarmTest {
         assertFalse(AlignFarm.mayAskAhead(failed = 0, askedByRow = true, held = false))
         assertFalse(AlignFarm.mayAskAhead(failed = 0, askedByRow = false, held = true))
     }
+
+    /** A GET that must not happen. */
+    private fun noGet(why: String): ByteArray? = throw AssertionError(why)
 
     private fun cipher(text: String) = AlignFarm.decipher(text.toByteArray(), PASS) // the same both ways
 
