@@ -188,6 +188,63 @@ class LyricsTimingHeardWordsTest {
         assertEquals(wordTimed[4].timeMs, shownWithSomeLinesHeardLate(wordTimed)[4].timeMs)
     }
 
+    /** [sheet] under an AI base that moves nothing, with word k of line i heard at [heardAt] (i, k). */
+    private suspend fun shownWithWordsHeardAt(sheet: List<LyricLine>, heardAt: (Int, Int) -> Long): List<LyricLine> {
+        val sheetKey = sheet.joinToString("\n") { it.text }.hashCode()
+        val words = sheet.withIndex().joinToString(",") { (index, line) ->
+            line.text.split(" ").mapIndexed { i, text ->
+                val start = heardAt(index, i)
+                """{"t":"$text","s":$start,"e":${start + 300}}"""
+            }.joinToString(",")
+        }
+        File(directory, "lyrics_timing_v1.json").writeText(
+            """
+            {"entries":{"wordsheet":{
+              "clockVersion":1,
+              "aiTextKey":$sheetKey,
+              "ai":{"knots":[0,0],"headRate":1.0,"tailRate":1.0,"rate":1.0,"match":100},
+              "aiClock":"yt",
+              "aiEngine":"Deepgram Whisper",
+              "heardClock":"yt",
+              "heardWords":[$words]
+            }}}
+            """.trimIndent(),
+        )
+        val timing = LyricsTiming.timing(context, "wordsheet", sheet, baseAllowed = true, isVideo = true)!!
+        assertTrue("a base fit", timing.base != null)
+        return LyricsTiming.apply(sheet, timing)
+    }
+
+    /**
+     * 11-09 phone, KuGou OxgiiyLp5pk / SyncLRC 6rS7OUGXUik: a word sheet on a right whole-song fit,
+     * its line stamps off by their own ±0.35 s with the words, each line heard from its first word.
+     * The per-line layer skipped word sheets with a base, so those lines stayed 0.3-0.56 s off.
+     */
+    @Test
+    fun `a word sheet's scattered stamps start on the heard first word after the whole-song fit`() = runBlocking {
+        val texts = listOf(
+            "amber north zebra", "blaze oasis azure", "cider pearl briar", "dunes quilt coral",
+            "ember raven delta", "fable sable eagle", "glint tulip flint", "hazel umber grove",
+        )
+        val jitter = listOf(0L, 350L, -320L, 0L, 450L, -380L, 0L, 330L)
+        fun sung(i: Int, k: Int) = 10_000L + i * 4_000L + k * 900L
+        val sheet = texts.mapIndexed { i, text ->
+            val words = text.split(" ").mapIndexed { k, w -> LyricWord(sung(i, k) + jitter[i], sung(i, k) + jitter[i] + 300L, w) }
+            LyricLine(words.first().startMs, text, words = words)
+        }
+        assertTrue(LyricsPerLine.statesItsOwnWords(sheet))
+
+        val shown = shownWithWordsHeardAt(sheet) { i, k -> sung(i, k) }
+
+        jitter.forEachIndexed { i, off ->
+            if (kotlin.math.abs(off) >= 300L) {
+                assertTrue("line $i shown ${shown[i].timeMs}, sung ${sung(i, 0)}", kotlin.math.abs(shown[i].timeMs - sung(i, 0)) <= 60L)
+            } else {
+                assertTrue("line $i kept, shown ${shown[i].timeMs}", kotlin.math.abs(shown[i].timeMs - sheet[i].timeMs) <= 40L)
+            }
+        }
+    }
+
     @Test
     fun `a line-timed sheet still moves onto the words`() = runBlocking {
         val shown = shownWithSomeLinesHeardLate(threeWordLines)[4].timeMs
