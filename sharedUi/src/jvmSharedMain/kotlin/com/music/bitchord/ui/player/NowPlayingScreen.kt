@@ -22,6 +22,7 @@ import androidx.compose.animation.core.Animatable
 import com.music.bitchord.ui.theme.AppType
 import com.music.bitchord.ko.ui.SongLyricsSync // [KO] lyrics-sync correction
 import com.music.bitchord.ko.ui.player.koTimingDetailTexts // [KO] lyrics-status
+import com.music.bitchord.ko.ui.player.songArtistCredits // [KO] cover credits
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.channels.Channel
 import androidx.compose.animation.core.AnimationVector1D

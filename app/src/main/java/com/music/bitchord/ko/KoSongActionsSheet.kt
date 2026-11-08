@@ -113,7 +113,7 @@ import com.music.bitchord.ui.components.rememberRemoteArtworkUrl
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.components.trackArtSize
 import com.music.bitchord.ui.icons.BitChordIcons
-import com.music.bitchord.ui.player.coverSingerChannelId
+import com.music.bitchord.ko.ui.player.coverSingerChannelId
 import com.music.bitchord.ui.rememberIsForeground
 import com.music.bitchord.ui.theme.ArtworkPalette
 import com.music.bitchord.ui.theme.rememberArtworkPalette
