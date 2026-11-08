@@ -7,6 +7,7 @@ import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.net.BlockedStartPolicy
 import com.music.bitchord.data.net.BlockedStartRescue
 import com.music.bitchord.data.net.BlockedStartStep
+import com.music.bitchord.data.net.LateLegRace
 import com.music.bitchord.data.net.LogUrl
 import com.music.bitchord.data.net.NoStreamPath
 import com.music.bitchord.data.net.ProxyFailure
@@ -14,8 +15,10 @@ import com.music.bitchord.data.net.ProxyHealthMonitor
 import com.music.bitchord.data.net.ProxyPlayback
 import com.music.bitchord.data.net.ProxyPlaybackPolicy
 import com.music.bitchord.data.net.ResolutionFacts
+import com.music.bitchord.data.net.ResolveBooking
 import com.music.bitchord.data.net.YouTubeProxy
 import com.music.bitchord.data.net.raceForFirstSuccess
+import com.music.bitchord.data.net.raceLateLeg
 import com.music.bitchord.ko.KoDirectBench
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -23,7 +26,9 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
@@ -703,11 +708,21 @@ object StreamResolver {
         val preferDirect = learned == ResolutionOrder.DIRECT
         val orderLabel = if (learned != null) "learned" else "default"
 
-        var servedKey: String? = null
-        var servedLabel: String? = null
+        // Which path served, the learned path's miss and the proxy memory are
+        // one decision (see [ResolveBooking]): a walk the proxy stopped cannot
+        // book itself the winner after the proxy stream was adopted.
+        val booking = ResolveBooking()
         fun served(key: String, label: String) {
-            servedKey = key
-            servedLabel = label
+            booking.served(key, label)
+        }
+
+        // A proxy leg's stream is handed on: it teaches [order] nothing (the
+        // path still walking was stopped, not refused) and only now is the
+        // track remembered as one the proxy plays, with its URL registered to
+        // the route that minted it. Every place a leg's stream wins goes here.
+        fun adoptProxyLeg(stream: Stream, late: Boolean): Stream {
+            booking.adoptProxy(if (late) "proxy (late)" else "proxy")
+            return stream
         }
 
         var itxWalked = false
@@ -744,6 +759,55 @@ object StreamResolver {
         // The InnerTubeX walk started beside the direct ask on a gated start,
         // so the proxy window measures a walk that is already warm.
         var itxEarly: Deferred<Stream?>? = null
+
+        // This resolve's one proxy leg (proxyAttempted allows only one), owned
+        // here so the finally stops it on every way out, a track change included.
+        var proxyLeg: Deferred<Stream?>? = null
+        // A leg whose early-race window closed while it was still asking. The
+        // no-stream fallback below races it instead of throwing its answer away.
+        var lateProxy: Deferred<Stream?>? = null
+
+        /**
+         * The proxy walk as a leg of its own, outside the window's race, so the
+         * window closing stops waiting for it without cancelling it. Bounded by
+         * [BlockedStartPolicy.lateProxyCeilingMs]: at most the grace past the
+         * window it was started for.
+         */
+        fun startProxyLeg(windowMs: Long, onFailure: (Exception) -> Unit = {}): Deferred<Stream?> =
+            resolverScope.async(TrackLog.about(videoId)) {
+                try {
+                    withTimeoutOrNull(BlockedStartPolicy.lateProxyCeilingMs(windowMs)) {
+                        // Its memory is held by [booking] until the stream is
+                        // adopted ([adoptProxyLeg]); a leg the walk beat leaves none.
+                        resolveViaProxy(videoId, remember = { url, generation ->
+                            booking.proxyAnswered { rememberProxyStream(videoId, url, generation) }
+                        })
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Exception) {
+                    onFailure(failure)
+                    null
+                }
+            }.also { proxyLeg = it }
+
+        /**
+         * Whether the leg survives its window: [won] is the window's stream.
+         * A leg that answered just as the window shut counts as kept, so its
+         * stream is adopted by the late race at once rather than dropped.
+         */
+        fun keptAfterWindow(leg: Deferred<Stream?>, won: Stream?): Deferred<Stream?>? {
+            val answered = leg.isCompleted && !leg.isCancelled &&
+                runCatching { leg.getCompleted() }.getOrNull() != null
+            return leg.takeIf {
+                BlockedStartPolicy.keepProxyAfterWindow(
+                    windowAnswered = won != null,
+                    legActive = leg.isActive,
+                    legAnswered = answered,
+                )
+            }
+        }
+
         var directPrecheck: Deferred<DirectProbe<DirectRun>>? =
             if (itxLeads && order.directAllowed()) {
                 resolverScope.async(TrackLog.about(videoId)) {
@@ -810,13 +874,19 @@ object StreamResolver {
             if (itxWalked) return null
             itxWalked = true
             var servedHere: String? = null
+            // A walk stopped by a winning proxy leg can still finish its
+            // blocking HTTP call. What it then finds is not what served the
+            // track, and what it missed is not a refusal (see below).
+            val walkJob = currentCoroutineContext()[Job]
             val found = timed("$videoId InnerTubeX") {
                 innerTubeXStreamAllowingUploads(
                     videoId,
                     preferredManifest = preferredManifest,
                     onServed = { key, label ->
                         servedHere = key
-                        served(key, label)
+                        // Checked and written as one step: a proxy adopted in
+                        // between cannot be overwritten by this walk.
+                        booking.served(key, label, stillWalking = { walkJob?.isActive != false })
                     },
                     onFailure = {
                         itxUnplayableReason = UnplayableReason.keepTrackSpecific(itxUnplayableReason, it)
@@ -840,10 +910,17 @@ object StreamResolver {
             // winner outright, and one transient timeout made the 15-45 s
             // cipher client (TVHTML5_SIMPLY) lead every start for the run
             // (11-08 rounds 150-153, both builds). See [ResolutionOrder.noteServed].
+            //
+            // A walk cancelled because the proxy won was stopped, not refused:
+            // it books nothing, even if the cancel lands after this check
+            // ([ResolveBooking.bookMiss] decides under the same lock).
+            currentCoroutineContext().ensureActive()
             if (preferredManifest != null && servedHere != ResolutionOrder.itx(preferredManifest) &&
                 KoDirectBench.countsAgainstPath(itxUnplayableReason) // [KO] direct-bench-scope
             ) {
-                order.noteRefused(ResolutionOrder.itx(preferredManifest))
+                booking.bookMiss(stillWalking = { walkJob?.isActive != false }) {
+                    order.noteRefused(ResolutionOrder.itx(preferredManifest))
+                }
             }
             return found
         }
@@ -916,6 +993,38 @@ object StreamResolver {
                     UnplayableReason.keepTrackSpecific(directUnplayableReason, directRun.reason)
             }
             val elapsed = MonotonicClock.nowMs() - resolveStart
+
+            // The walk's last race: the direct probe's verdict beside InnerTubeX.
+            // Run once, either below or as the rest a late proxy leg races.
+            suspend fun finalRace(): Stream? {
+                val outcome = try {
+                    if (precheck != null) {
+                        raceDirectDefinitive(precheck, itx)
+                    } else {
+                        // No direct probe to watch: InnerTubeX is the only ask.
+                        itx.await()?.let { DirectVerdictRace.ViaInnerTubeX(it) }
+                            ?: DirectVerdictRace.None
+                    }
+                } catch (cancelled: CancellationException) {
+                    itx.cancel()
+                    throw cancelled
+                }
+                return when (outcome) {
+                    is DirectVerdictRace.Gone -> {
+                        directUnplayable = true
+                        directUnplayableReason =
+                            UnplayableReason.keepTrackSpecific(directUnplayableReason, outcome.reason)
+                        TrackLog.d(
+                            TAG,
+                            "resolve: $videoId definitive by direct in ${MonotonicClock.nowMs() - resolveStart}ms",
+                        )
+                        throw PermanentlyUnplayableException(outcome.reason)
+                    }
+                    is DirectVerdictRace.ViaInnerTubeX -> outcome.value.stream
+                    DirectVerdictRace.None -> null
+                }
+            }
+
             // A direct probe that already has a playable stream is not a
             // blocked start: InnerTubeX still leads it, and racing the proxy
             // would only add a Tokyo request to a track that can play.
@@ -967,30 +1076,31 @@ object StreamResolver {
                 // handler remembers for ten minutes and which skipped
                 // extraction — the exact guard [ProxyFailure.isProxyDown]
                 // exists to keep transient (see the proxy retry below).
+                //
+                // The proxy walk is its own leg rather than a route inside the
+                // window's race: when the window closes it is no longer waited
+                // for, but it is not cancelled either. Its answer used to land
+                // 0.1-2.6 s after the window and be thrown away while the start
+                // waited for this walk (rs20 171a WdiSosDz4ss: proxy stream at
+                // 3.9 s, first sound at 27.4 s). It now races the rest below.
                 var proxyFailure: Throwable? = null
+                val leg = startProxyLeg(proxyTimeout) { proxyFailure = it }
                 val racedPair = try {
                     withTimeoutOrNull(proxyTimeout) {
                         raceForFirstSuccess(
                             direct = { itxStream.await() },
-                            proxy = {
-                                try {
-                                    withTimeoutOrNull(proxyTimeout) { resolveViaProxy(videoId) }
-                                } catch (cancelled: CancellationException) {
-                                    throw cancelled
-                                } catch (failure: Exception) {
-                                    proxyFailure = failure
-                                    null
-                                }
-                            },
+                            proxy = { leg.await() },
                         )
                     }
                 } catch (cancelled: CancellationException) {
                     itxStream.cancel()
                     itx.cancel()
+                    leg.cancel()
                     throw cancelled
                 }
                 val winner = racedPair?.first
                 val won = racedPair?.second
+                val lateLeg = keptAfterWindow(leg, won)
                 if (winner == "proxy") {
                     itxStream.cancel()
                     itx.cancel()
@@ -1001,6 +1111,9 @@ object StreamResolver {
                     // throw CancellationException and abort the whole resolve.
                     itxStream.cancel()
                 }
+                // The walk won inside the window: stop the leg, as the race
+                // used to stop the proxy route it ran itself.
+                if (won != null && winner != "proxy") leg.cancel()
                 TrackLog.i(
                     TAG,
                     BlockedStartPolicy.logLine(
@@ -1010,8 +1123,12 @@ object StreamResolver {
                         MonotonicClock.nowMs() - resolveStart,
                     ),
                 )
-                if (won != null) return won
-                val deadProxy = proxyFailure
+                if (won != null) return if (winner == "proxy") adoptProxyLeg(won, late = false) else won
+                // Only a failure inside the window decides what follows, as
+                // before. A leg kept past it can add a stream, never a verdict:
+                // if it fails, the start goes on exactly as if it had been cut
+                // at the window.
+                val deadProxy = if (lateLeg == null) proxyFailure else null
                 if (deadProxy != null && ProxyFailure.isProxyDown(deadProxy)) {
                     TrackLog.w(
                         TAG,
@@ -1023,11 +1140,39 @@ object StreamResolver {
                     itx.cancel()
                     throw deadProxy
                 }
-                if (BlockedStartPolicy.shouldSkipExtraction(
-                        directRefused = directRefused,
-                        proxyFailed = true,
-                    )
-                ) {
+                val skipWalk = BlockedStartPolicy.shouldSkipExtraction(
+                    directRefused = directRefused,
+                    proxyFailed = true,
+                )
+                if (lateLeg != null) {
+                    // A walk this start would give up on is not raced: the
+                    // leg gets the rest of its ceiling alone, then the old
+                    // verdict below applies.
+                    val walkRest: suspend () -> Stream? = { finalRace() }
+                    when (val late = raceLateLeg(lateLeg, if (skipWalk) null else walkRest)) {
+                        is LateLegRace.Late -> {
+                            adoptProxyLeg(late.value, late = true)
+                            itx.cancel()
+                            TrackLog.i(
+                                TAG,
+                                "proxy-playback: $videoId late leg adopted at " +
+                                    "${MonotonicClock.nowMs() - resolveStart}ms",
+                            )
+                            return late.value
+                        }
+                        is LateLegRace.Rest -> {
+                            TrackLog.d(
+                                TAG,
+                                "proxy-playback: $videoId late leg dropped " +
+                                    "(${if (late.value != null) "walk first" else "no answer"}) at " +
+                                    "${MonotonicClock.nowMs() - resolveStart}ms",
+                            )
+                            // The final race has already run as [rest].
+                            if (!skipWalk) return late.value
+                        }
+                    }
+                }
+                if (skipWalk) {
                     // Extraction reads the same watch page and answers the same
                     // gate; walking it here is the rest of the reported minute.
                     TrackLog.w(
@@ -1044,32 +1189,7 @@ object StreamResolver {
             // No early refusal, or no proxy to ask: preserve the old race
             // exactly. The direct result is already complete, so this costs no
             // second request.
-            val outcome = try {
-                if (precheck != null) {
-                    raceDirectDefinitive(precheck, itx)
-                } else {
-                    // No direct probe to watch: InnerTubeX is the only ask.
-                    itx.await()?.let { DirectVerdictRace.ViaInnerTubeX(it) }
-                        ?: DirectVerdictRace.None
-                }
-            } catch (cancelled: CancellationException) {
-                itx.cancel()
-                throw cancelled
-            }
-            return when (outcome) {
-                is DirectVerdictRace.Gone -> {
-                    directUnplayable = true
-                    directUnplayableReason =
-                        UnplayableReason.keepTrackSpecific(directUnplayableReason, outcome.reason)
-                    TrackLog.d(
-                        TAG,
-                        "resolve: $videoId definitive by direct in ${MonotonicClock.nowMs() - resolveStart}ms",
-                    )
-                    throw PermanentlyUnplayableException(outcome.reason)
-                }
-                is DirectVerdictRace.ViaInnerTubeX -> outcome.value.stream
-                DirectVerdictRace.None -> null
-            }
+            return finalRace()
         }
 
         try {
@@ -1126,6 +1246,9 @@ object StreamResolver {
                 val raced = if (proxyTimeout <= 0L) {
                     null
                 } else {
+                    // The proxy is its own leg so a window that closes does
+                    // not throw its answer away; the fallback below races it.
+                    val leg = startProxyLeg(proxyTimeout)
                     withTimeoutOrNull(proxyTimeout) {
                         raceForFirstSuccess(
                             direct = {
@@ -1135,16 +1258,14 @@ object StreamResolver {
                                     tryInnerTubeX(null) ?: tryDirect()
                                 }
                             },
-                            proxy = {
-                                try {
-                                    resolveViaProxy(videoId)
-                                } catch (cancelled: CancellationException) {
-                                    throw cancelled
-                                } catch (e: Exception) {
-                                    null
-                                }
-                            },
+                            proxy = { leg.await() },
                         )
+                    }.also { r ->
+                        val won = r?.second
+                        if (won != null) {
+                            if (r?.first == "proxy") adoptProxyLeg(won, late = false) else leg.cancel()
+                        }
+                        lateProxy = keptAfterWindow(leg, won)
                     }
                 }
                 TrackLog.i(
@@ -1202,19 +1323,20 @@ object StreamResolver {
                     val raced = if (proxyTimeout <= 0L) {
                         null
                     } else {
+                        // Its own leg, like the walk: a window that closes
+                        // stops waiting for it and the fallback races both.
+                        val leg = startProxyLeg(proxyTimeout)
                         withTimeoutOrNull(proxyTimeout) {
                             raceForFirstSuccess(
                                 direct = { innerTubeXLeg() },
-                                proxy = {
-                                    try {
-                                        resolveViaProxy(videoId)
-                                    } catch (cancelled: CancellationException) {
-                                        throw cancelled
-                                    } catch (e: Exception) {
-                                        null
-                                    }
-                                },
+                                proxy = { leg.await() },
                             )
+                        }.also { r ->
+                            val won = r?.second
+                            if (won != null) {
+                                if (r?.first == "proxy") adoptProxyLeg(won, late = false) else leg.cancel()
+                            }
+                            lateProxy = keptAfterWindow(leg, won)
                         }
                     }
                     TrackLog.i(
@@ -1243,6 +1365,31 @@ object StreamResolver {
                 // still asking. It is the only thing here that can answer
                 // sooner than extraction — see [extractionBesideWalk].
                 val lateWalk = itxEarly?.takeIf { it.isActive }
+                // The proxy leg whose early-race window closed while it was
+                // still asking. It races whatever this fallback does next and
+                // can only add a stream: if it fails, the fallback ends exactly
+                // as it did when the window cancelled it. A verdict about the
+                // recording (GONE) does not wait for it.
+                val lateLeg = lateProxy.also { lateProxy = null }
+                suspend fun orLateProxy(rest: (suspend () -> Stream?)?): Stream? {
+                    val outcome = raceLateLeg(lateLeg, rest)
+                    if (outcome is LateLegRace.Late) {
+                        adoptProxyLeg(outcome.value, late = true)
+                        itxEarly?.cancel()
+                    }
+                    if (lateLeg != null) {
+                        TrackLog.i(
+                            TAG,
+                            "proxy-playback: $videoId late leg " +
+                                "${if (outcome is LateLegRace.Late) "adopted" else "dropped"} at " +
+                                "${MonotonicClock.nowMs() - resolveStart}ms",
+                        )
+                    }
+                    return when (outcome) {
+                        is LateLegRace.Late -> outcome.value
+                        is LateLegRace.Rest -> outcome.value
+                    }
+                }
                 when (noStreamPath) {
                     NoStreamPath.GONE -> {
                         // The direct ladder may have been the one to name the claim
@@ -1258,6 +1405,9 @@ object StreamResolver {
                         // Spending its three attempts is the remaining silence in
                         // the report, so stop here and let playback spend the
                         // reserved budget on a catalogue copy or the next row.
+                        // A proxy leg still asking is the same recording, so it
+                        // gets the rest of its ceiling first.
+                        orLateProxy(null)?.let { return@run it }
                         TrackLog.w(
                             TAG,
                             "blocked-start: $videoId extraction skipped after the first refusal at " +
@@ -1278,43 +1428,57 @@ object StreamResolver {
                             // `direct`/`proxy` are [raceForFirstSuccess]'s
                             // labels: here they are the walk and extraction.
                             var extractionFailure: Throwable? = null
-                            val raced = raceForFirstSuccess(
-                                direct = { lateWalk!!.await() },
-                                proxy = {
-                                    try {
-                                        timed("$videoId newPipeStream") {
-                                            newPipeStream(videoId, ::pickForQuality)
+                            val walkOrExtraction: suspend () -> Stream? = {
+                                val raced = raceForFirstSuccess(
+                                    direct = { lateWalk!!.await() },
+                                    proxy = {
+                                        try {
+                                            timed("$videoId newPipeStream") {
+                                                newPipeStream(videoId, ::pickForQuality)
+                                            }
+                                        } catch (cancelled: CancellationException) {
+                                            throw cancelled
+                                        } catch (e: Exception) {
+                                            // Kept so a failed extraction still
+                                            // reports its own reason (a bot check
+                                            // is not a generic failure).
+                                            extractionFailure = e
+                                            throw e
                                         }
-                                    } catch (cancelled: CancellationException) {
-                                        throw cancelled
-                                    } catch (e: Exception) {
-                                        // Kept so a failed extraction still
-                                        // reports its own reason (a bot check
-                                        // is not a generic failure).
-                                        extractionFailure = e
-                                        throw e
-                                    }
-                                },
-                            )
-                            val walkWon = raced.first == "direct" && raced.second != null
-                            TrackLog.d(
-                                TAG,
-                                "TIMING $videoId late walk: ${if (walkWon) "adopted" else "dropped"} " +
-                                    "${MonotonicClock.nowMs() - resolveStart}ms",
-                            )
-                            val picked = raced.second
-                            if (picked == null) {
-                                throw extractionFailure
-                                    ?: IOException("stream resolution found no stream for $videoId")
+                                    },
+                                )
+                                val walkWon = raced.first == "direct" && raced.second != null
+                                TrackLog.d(
+                                    TAG,
+                                    "TIMING $videoId late walk: ${if (walkWon) "adopted" else "dropped"} " +
+                                        "${MonotonicClock.nowMs() - resolveStart}ms",
+                                )
+                                // A walk winner has already named its own path
+                                // through [served] in its onServed callback.
+                                raced.second?.also { if (!walkWon) served(ResolutionOrder.NEW_PIPE, "NewPipe") }
                             }
-                            // A walk winner has already named its own path
-                            // through [served] in its onServed callback.
-                            if (!walkWon) served(ResolutionOrder.NEW_PIPE, "NewPipe")
-                            picked
+                            orLateProxy(walkOrExtraction) ?: throw extractionFailure
+                                ?: IOException("stream resolution found no stream for $videoId")
                         } else {
                             TrackLog.w(TAG, "InnerTubeX found no usable stream for $videoId; falling back to extraction")
-                            timed("$videoId newPipeStream") { newPipeStream(videoId, ::pickForQuality) }
-                                .also { served(ResolutionOrder.NEW_PIPE, "NewPipe") }
+                            // The failure is kept, not thrown inside the race,
+                            // so a late proxy leg can still answer after a
+                            // quick extraction failure; it is thrown as before
+                            // when nothing answered.
+                            var extractionFailure: Throwable? = null
+                            val extraction: suspend () -> Stream? = {
+                                try {
+                                    timed("$videoId newPipeStream") { newPipeStream(videoId, ::pickForQuality) }
+                                        .also { served(ResolutionOrder.NEW_PIPE, "NewPipe") }
+                                } catch (cancelled: CancellationException) {
+                                    throw cancelled
+                                } catch (e: Exception) {
+                                    extractionFailure = e
+                                    null
+                                }
+                            }
+                            orLateProxy(extraction) ?: throw extractionFailure
+                                ?: IOException("stream resolution found no stream for $videoId")
                         }
                     }
                 }
@@ -1423,10 +1587,10 @@ object StreamResolver {
         // Learn only paths that are cheap enough to lead with. Extraction is
         // the failsafe: it is slow by design and must not become the default
         // because it happened to answer once.
-        servedKey?.takeIf { it != ResolutionOrder.NEW_PIPE }?.let(order::noteServed)
+        booking.winnerKey()?.takeIf { it != ResolutionOrder.NEW_PIPE }?.let(order::noteServed)
         TrackLog.d(
             TAG,
-            "resolve: $videoId via ${servedLabel ?: "unknown"} in $took ms (order=$orderLabel)",
+            "resolve: $videoId via ${booking.winnerLabel() ?: "unknown"} in $took ms (order=$orderLabel)",
         )
         TrackLog.d(TAG, "TIMING $videoId total resolve: $took ms")
         ResolutionFacts.note(videoId, "direct")
@@ -1438,6 +1602,9 @@ object StreamResolver {
             // rather than letting it finish out on resolverScope.
             directPrecheck?.cancel()
             itxEarly?.cancel()
+            // The proxy leg, kept past its window or not, never outlives the
+            // resolve: a returned stream, a verdict or a track change stops it.
+            proxyLeg?.cancel()
         }
     }
 
@@ -1456,6 +1623,11 @@ object StreamResolver {
         maxKbps: Int = maxKbps(),
         requireM4a: Boolean = false,
         allowBackupRetry: Boolean = true,
+        // When the answer's proxy memory is written. A proxy leg defers it
+        // until its stream is adopted; every other caller plays what it gets.
+        remember: (url: String, generation: Long) -> Unit = { url, generation ->
+            rememberProxyStream(videoId, url, generation)
+        },
     ): Stream {
         val start = MonotonicClock.nowMs()
         // The route this request is actually sent on. The answer is stamped
@@ -1485,7 +1657,7 @@ object StreamResolver {
                     ProxyHealthMonitor.recordUnreachable("stream $videoId")
                     if (YouTubeProxy.usingBackup && !ProxyHealthMonitor.isMarkedUnreachable()) {
                         TrackLog.i(TAG, "proxy-playback: $videoId retrying through the backup proxy")
-                        return resolveViaProxy(videoId, allowBackupRetry = false)
+                        return resolveViaProxy(videoId, allowBackupRetry = false, remember = remember)
                     }
                 }
             }
@@ -1496,11 +1668,24 @@ object StreamResolver {
             throw IOException("stream resolution found no stream for $videoId")
         }
         ProxyHealthMonitor.recordSuccess(allowRouteChange = false)
-        val first = ProxyPlayback.markResolved(videoId, found.url, requestGeneration)
-        ResolutionFacts.note(videoId, "proxy")
+        // A leg the walk beat was cancelled while its blocking call finished.
+        // Its stream plays nowhere, so the track is not remembered as one that
+        // needs the proxy (the next start would skip a direct path that works).
+        currentCoroutineContext().ensureActive()
         TrackLog.i(TAG, "proxy-playback: $videoId ok in ${MonotonicClock.nowMs() - start}ms")
-        if (first) TrackLog.d(TAG, "proxy-playback: $videoId remembered")
+        remember(found.url, requestGeneration)
         return found
+    }
+
+    /**
+     * The proxy memory for a stream that is handed to the player: the URL is
+     * registered to the route that minted it (the media fetch follows it
+     * there) and the track is remembered as one the proxy plays.
+     */
+    private fun rememberProxyStream(videoId: String, url: String, generation: Long) {
+        val first = ProxyPlayback.markResolved(videoId, url, generation)
+        ResolutionFacts.note(videoId, "proxy")
+        if (first) TrackLog.d(TAG, "proxy-playback: $videoId remembered")
     }
 
     /**
