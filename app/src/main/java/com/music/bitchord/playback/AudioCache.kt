@@ -1598,13 +1598,8 @@ object AudioCache {
                 // answer is already thrown away, and pinning one would hand the
                 // resolver the very stream that was just refused. The YouTube
                 // half below is still worth doing.
-                val addon = if (StreamChoice.substitutesRefused(videoId)) {
-                    null
-                } else {
-                    runCatching { DirectSourceGate.lookup(videoId, SourceResolver.targetIn(uri)) }
-                        .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
-                        .getOrNull()
-                }
+                val settle = com.music.bitchord.ko.KoFirstSound.settleDirect(videoId, SourceResolver.targetIn(uri), StreamChoice.substitutesRefused(videoId)) // [KO] first-sound
+                val addon = settle.addon
                 // Read-ahead may have settled it while this waited.
                 if (StreamChoice.of(videoId) != null) return@runBlocking
                 if (addon != null) {
@@ -1617,7 +1612,7 @@ object AudioCache {
                         return@runBlocking
                     }
                 }
-                runCatching { StreamResolver.resolve(videoId) }
+                settle.youTube.await() // [KO] first-sound: walked beside the lookup
                     .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
                     .getOrNull()
                     ?.let { url ->
