@@ -4407,9 +4407,9 @@ object LyricsTiming {
 
     internal fun noteSongSkippedGone(videoId: String) { songSkippedGone.add(videoId) }
 
-    private fun hearingWantedNow(videoId: String): Boolean = SongCheckRetry.hearingWanted(
+    internal fun hearingWantedNow(videoId: String): Boolean = SongCheckRetry.hearingWanted(
         videoId,
-        com.music.bitchord.data.DiagnosticsState.currentTrackId,
+        com.music.bitchord.data.DiagnosticsState.soundingTrackId,
         com.music.bitchord.data.DiagnosticsState.nextTrackId,
     )
 

@@ -609,9 +609,21 @@ def dumped_id(text, vid):
     """The id whose sheet is on screen: the last swapped id (music-only / song version)
     that dumped, else the row's own. A hi-res substitute's head is kept under *this*
     id's playing=, not the row's (11-08 dND8ysuZqlA never pulled its head)."""
-    swapped = [a or b for a, b in re.findall(
+    found = [(m.start(), m.group(1) or m.group(2)) for m in re.finditer(
         rf"\[{re.escape(vid)}\] music-only: playing .* \(([\w-]{{11}})\)"
         rf"|song version: {re.escape(vid)} -> ([\w-]{{11}})", text)]
+    # 11-09 phone: the music-only line is D-level and the phone's logcat drops it
+    # (XbGs_qK2PQA -> MBJFPq2Llps, OxgiiyLp5pk -> ZtcM3KhgF-s showed lyrics but
+    # scored "no sync-dump"). A replacement of the row is also the PLAYLIST_CHANGED
+    # transition straight after one of the row's ids, which is I-level.
+    row, prev = {vid}, None
+    for m in re.finditer(r"play: -> .* \(([\w-]{11})\) idx=\S+ reason=(\w+)", text):
+        pid = m.group(1)
+        if prev in row and pid not in row and m.group(2) == "PLAYLIST_CHANGED":
+            row.add(pid)
+            found.append((m.start(), pid))
+        prev = pid
+    swapped = [i for _, i in sorted(found)]
     return next((i for i in reversed(swapped) if parse_dump(text, i)), vid)
 
 
@@ -988,6 +1000,18 @@ def selftest():
            "x sync-dump: line AAAAAAAAAAA 1 1000 alfa\n"
            "x sync-dump: end AAAAAAAAAAA\n")
     assert dumped_id(own, "AAAAAAAAAAA") == "AAAAAAAAAAA"
+    # 11-09 phone: no music-only line (D-level dropped), only the replacing transition.
+    quiet = ("x play: -> Old - X (CCCCCCCCCCC) idx=0/11 reason=PLAYLIST_CHANGED meta=ok\n"
+             "x play: -> T - A (AAAAAAAAAAA) idx=0/1 reason=PLAYLIST_CHANGED meta=ok\n"
+             "x play: -> T - A (BBBBBBBBBBB) idx=0/1 reason=PLAYLIST_CHANGED meta=ok\n"
+             "x sync-dump: begin BBBBBBBBBBB playing=BBBBBBBBBBB source=test base=none shift=0 match=0 lines=1\n"
+             "x sync-dump: line BBBBBBBBBBB 1 1000 bravo\n"
+             "x sync-dump: end BBBBBBBBBBB\n"
+             "x play: -> Next - N (DDDDDDDDDDD) idx=1/11 reason=AUTO meta=ok\n"
+             "x sync-dump: begin DDDDDDDDDDD playing=DDDDDDDDDDD source=test base=none shift=0 match=0 lines=1\n"
+             "x sync-dump: line DDDDDDDDDDD 1 1000 delta\n"
+             "x sync-dump: end DDDDDDDDDDD\n")
+    assert dumped_id(quiet, "AAAAAAAAAAA") == "BBBBBBBBBBB", dumped_id(quiet, "AAAAAAAAAAA")
     # 11-08: a sheet shifted as a whole is FAILed with its offset, not called unheard.
     tokens = ["alfa", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliett"]
     def shifted(shift, count=10, missing=()):

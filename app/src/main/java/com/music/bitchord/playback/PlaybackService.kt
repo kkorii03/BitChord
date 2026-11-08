@@ -1540,6 +1540,9 @@ class PlaybackService : MediaLibraryService() {
                 mediaItem.mediaId == swappingMediaId
             ) {
                 swappingMediaId = null
+                // The hearing gates read this: without it the copy now playing was
+                // "no longer wanted" all song (11-09 phone 6rS7OUGXUik). // [KO] swap-hear
+                DiagnosticsState.currentSwapId = mediaItem.mediaId
                 // A song-version swap puts another id on this row. AutoPlay's
                 // job seeded with the old id drops its answer once it sees the
                 // new one, and nothing else asks again, so a one-song queue
