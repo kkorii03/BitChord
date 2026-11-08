@@ -167,6 +167,10 @@ private fun BitExactVerdict.label(outputExactDetail: String?): String = when (th
  * stage, so the only question left there is the source and the DAC. Kept as a
  * separate overload so the shared verdict enum stays usable from tests.
  */
+// [KO] Localised: v1.9 brought this back as English literals inside the Korean
+// dialog. The non-bit-perfect branches reuse [BitExactVerdict.label], whose
+// order (DSD, loudness, EQ, spatial, sink) is the same as the old literals'.
+@Composable
 internal fun bitExactVerdict(
     dsd: Boolean,
     bitPerfect: BitPerfectOutput.Status,
@@ -176,17 +180,16 @@ internal fun bitExactVerdict(
     eqActive: Boolean,
     spatialActive: Boolean,
 ): String = when {
-    dsd -> "No — DSD converted to PCM"
-    bitPerfect.active && bitPerfect.dacLimited ->
-        "No — ${bitPerfect.sourceBits}-bit / ${rateText(bitPerfect.sourceRateHz)} converted to " +
-            "${bitPerfect.deviceName}'s max"
-    bitPerfect.active && bitPerfect.exact -> "Yes — bit-perfect to ${bitPerfect.deviceName}"
-    bitPerfect.active -> "No — source isn't lossless PCM"
-    loudnessActive -> "No — loudness normalization"
-    eqActive -> "No — equalizer"
-    spatialActive -> "No — spatial audio"
-    outputExact -> "Yes${outputExactDetail?.let { " ($it)" }.orEmpty()}"
-    else -> "No — ${outputExactDetail ?: "converted downstream"}"
+    !dsd && bitPerfect.active && bitPerfect.dacLimited -> stringResource(
+        R.string.pipeline_bit_exact_dac_limited,
+        bitPerfect.sourceBits.toString(),
+        rateText(bitPerfect.sourceRateHz),
+        bitPerfect.deviceName.orEmpty(),
+    )
+    !dsd && bitPerfect.active && bitPerfect.exact ->
+        stringResource(R.string.pipeline_bit_exact_bit_perfect, bitPerfect.deviceName.orEmpty())
+    !dsd && bitPerfect.active -> stringResource(R.string.pipeline_bit_exact_not_lossless)
+    else -> bitExactVerdict(dsd, outputExact, loudnessActive, eqActive, spatialActive).label(outputExactDetail)
 }
 
 /**

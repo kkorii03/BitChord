@@ -26,6 +26,8 @@ class KoreanStringsTest {
             "하세요", "해 주세요", "해주세요", "보세요", "주세요",
             "있어요", "없어요", "돼요", "할게요", "거예요", "예요", "이에요",
             "나요", "가요",
+            // 11-08: the v1.9 bit-perfect dialogs came in as 켤까요? / 낮추세요.
+            "까요", "세요",
         )
         for ((name, file) in koreanFiles()) {
             for ((key, text) in strings(file)) {
@@ -60,6 +62,21 @@ class KoreanStringsTest {
         assertEquals("다음 항목", value("tv", "tv_up_next"))
         assertEquals("나중에 재생", value("tv", "tv_play_last"))
         assertEquals("다음 항목 재생", value("wearos", "up_next"))
+    }
+
+    @Test
+    fun automixAndLikedSongsReadTheSameOnEveryScreen() {
+        // 11-08: the settings row said 자동 믹스, the song menu said Automix 개요,
+        // the TV said 오토믹스; two empty states said 좋아요한 where every list
+        // says 좋아요 표시한.
+        for ((name, file) in koreanFiles()) {
+            for ((key, text) in strings(file)) {
+                assertFalse("$name/$key: $text", text.contains("Automix") || text.contains("오토믹스"))
+                assertFalse("$name/$key: $text", text.contains("좋아요한"))
+            }
+        }
+        assertEquals("자동 믹스 개요", value("app", "automix_overview"))
+        assertEquals("자동 믹스", value("tv", "tv_automix"))
     }
 
     @Test

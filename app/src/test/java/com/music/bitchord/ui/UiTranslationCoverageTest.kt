@@ -24,6 +24,10 @@ class UiTranslationCoverageTest {
         "pipeline_bit_exact_spatial",
         "pipeline_bit_exact_downstream",
         "pipeline_bit_exact_downstream_unknown",
+        // 11-08: the bit-perfect verdicts v1.9 wrote as English literals.
+        "pipeline_bit_exact_bit_perfect",
+        "pipeline_bit_exact_dac_limited",
+        "pipeline_bit_exact_not_lossless",
         "route_phone",
         "route_wired",
         "route_usb",

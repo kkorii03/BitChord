@@ -84,6 +84,33 @@ class FriendlyErrorTest {
     }
 
     @Test
+    fun anEnglishSourceRefusalGetsAKoreanLine() {
+        // 11-08 user log, Lossless Bridge, 70 times: this was the Sources row.
+        assertEquals(
+            R.string.addon_device_not_verified,
+            FriendlyError.reasonResource(
+                "BitChord couldn't verify this device: This app is not signed with the official BitChord key",
+            ),
+        )
+        assertEquals(
+            R.string.addon_device_not_verified,
+            FriendlyError.reasonResource("This addon didn't accept BitChord's verification (403)"),
+        )
+        assertEquals(
+            R.string.addon_unsupported,
+            FriendlyError.reasonResource("This addon declares stream — BitChord needs search"),
+        )
+        // Anything else English still never reaches the row as English.
+        assertEquals(R.string.something_went_wrong, FriendlyError.reasonResource("weird server reply"))
+    }
+
+    @Test
+    fun koreanSourceReasonsAreShownAsWritten() {
+        assertNull(FriendlyError.reasonResource("Lossless Bridge 애드온 인증이 거부되었습니다."))
+        assertNull(FriendlyError.reasonResource(""))
+    }
+
+    @Test
     fun everyFriendlyBranchHasAKoreanMessage() {
         val base = strings("values")
         val korean = strings("values-ko")
@@ -99,6 +126,8 @@ class FriendlyErrorTest {
             "error_content_unavailable",
             "connection_failed",
             "something_went_wrong",
+            "addon_device_not_verified",
+            "addon_unsupported",
         )
 
         for (key in keys) {
