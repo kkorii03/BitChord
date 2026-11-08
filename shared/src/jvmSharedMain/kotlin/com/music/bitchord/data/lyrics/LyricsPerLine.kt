@@ -53,9 +53,19 @@ object LyricsPerLine {
      * A sheet that is a transcript of this very recording (Gemini's) has the sung words
      * as its text, so a line whose letters were mostly heard (this share) may be placed
      * by where its opening was heard even when the transcript split it into fewer than
-     * [MIN_ANCHOR_WORDS] words or spread them over [MAX_ANCHOR_MAD_MS]. Same move cap as two words.
+     * [MIN_ANCHOR_WORDS] words or spread them over [MAX_ANCHOR_MAD_MS].
+     *
+     * Gemini stamps each line on its own, so its errors are a line's or a few lines' worth,
+     * 1-3 s, in no pattern (11-08 n3 4Jo__IP-Vdk: 5 lines in a row 1.2-3.0 s late, single
+     * lines 1.9-2.4 s off between right ones). Where the whole-song alignment placed such a
+     * line is where it was sung (within 70 ms on 27 of its 30 scored lines), so the move
+     * may reach [MAX_OWN_TRANSCRIPT_MOVE_MS], and a placed line is not taken for a mishearing
+     * because its neighbours moved less ([withoutLoneBlocks], [loneAnchorDisagrees]).
      */
     const val MIN_OWN_TRANSCRIPT_SHARE = 0.6
+
+    /** How far a placed transcript line may move; past it the line keeps its word anchor and every guard (11-02 RrfF9cuJuQU: three lines heard 3.5 s early, sung on time). */
+    const val MAX_OWN_TRANSCRIPT_MOVE_MS = 3_000L
 
     /** Two anchors further apart than this do not interpolate between themselves. */
     const val MAX_INTERPOLATE_SPAN_MS = 30_000L
@@ -108,7 +118,8 @@ object LyricsPerLine {
         }
     }
 
-    private class Anchor(val line: Int, val timeMs: Long, val residualMs: Long)
+    /** [placed]: from where a transcript sheet's line was heard ([addPlacedLines]), not from its words. */
+    private class Anchor(val line: Int, val timeMs: Long, val residualMs: Long, val placed: Boolean = false)
 
     /**
      * The per-line moves for [lines] (already after base, HQ and refine) from
@@ -239,24 +250,24 @@ object LyricsPerLine {
     }
 
     /**
-     * Adds an anchor for each line of a transcript sheet the word anchors missed, from where
-     * [LyricsWordAlign.placeLinesDetailed] heard its opening. The anchors still pass every
-     * guard below (order, lone blocks, strays, good sheet).
+     * An anchor for each line of a transcript sheet from where [LyricsWordAlign.placeLinesDetailed]
+     * heard its opening, in place of its word anchor: the words' median sits a line's own
+     * scatter off it, and the placement is where it was sung (see [MIN_OWN_TRANSCRIPT_SHARE]).
+     * A line placed on too few of its letters keeps its word anchor. The anchors still pass the
+     * order, strays and good-sheet guards below.
      */
     private fun addPlacedLines(lines: List<LyricLine>, heard: List<LyricsWordAlign.Heard>, found: MutableList<Anchor>) {
         val placement = LyricsWordAlign.placeLinesDetailed(lines.map { it.text }, heard)
-        val have = found.mapTo(HashSet()) { it.line }
-        var added = false
+        val byLine = found.associateByTo(LinkedHashMap()) { it.line }
         for (index in lines.indices) {
-            if (index in have) continue
             val start = placement.starts[index] ?: continue
             if ((placement.matchedShare.getOrNull(index) ?: 0.0) < MIN_OWN_TRANSCRIPT_SHARE) continue
             val residual = start - lines[index].timeMs
-            if (abs(residual) > MAX_SHIFT_TWO_WORDS_MS) continue
-            found += Anchor(index, lines[index].timeMs, residual)
-            added = true
+            if (abs(residual) > MAX_OWN_TRANSCRIPT_MOVE_MS) continue
+            byLine[index] = Anchor(index, lines[index].timeMs, residual, placed = true)
         }
-        if (added) found.sortBy { it.line }
+        found.clear()
+        found += byLine.values.sortedBy { it.line }
     }
 
     /**
@@ -297,7 +308,8 @@ object LyricsPerLine {
             val move = median(block.map { it.residualMs })
             val before = blocks.getOrNull(k - 1)?.let { median(it.map { a -> a.residualMs }) }
             val after = blocks.getOrNull(k + 1)?.let { median(it.map { a -> a.residualMs }) }
-            val lone = block.size <= MAX_LONE_BLOCK &&
+            val lone = block.none { it.placed } &&
+                block.size <= MAX_LONE_BLOCK &&
                 abs(move) in MIN_LONE_BLOCK_MS..MAX_LONE_BLOCK_MS &&
                 before != null && after != null &&
                 abs(move - before) > MAX_INTERPOLATE_DIFF_MS &&
@@ -335,6 +347,7 @@ object LyricsPerLine {
     }
 
     private fun loneAnchorDisagrees(own: Anchor, before: Anchor?, after: Anchor?, lineTime: Long): Boolean {
+        if (own.placed) return false
         val nearBefore = before?.takeIf { abs(it.timeMs - lineTime) <= LONE_ANCHOR_NEAR_MS } ?: return false
         val nearAfter = after?.takeIf { abs(it.timeMs - lineTime) <= LONE_ANCHOR_NEAR_MS } ?: return false
         if (abs(nearAfter.residualMs - nearBefore.residualMs) >= MAX_INTERPOLATE_DIFF_MS) return false
