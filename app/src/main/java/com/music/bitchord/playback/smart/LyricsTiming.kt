@@ -2525,9 +2525,37 @@ object LyricsTiming {
         val rate: Int,
         val startSeconds: Double,
         var untilSeconds: Double,
+        /** What the source held when the last complete pass ended, or -1 when unknown. */
+        var bytes: Long = -1L,
+        /** That pass stopped because the bytes ran out, not at the limit it was given. */
+        var exhausted: Boolean = false,
     )
 
     private val videoReadings = LinkedHashMap<String, VideoReading>()
+
+    /** Copies whose read found no sample, with the bytes they held then: not decoded again until more arrive. */
+    private val failedReadings = LinkedHashMap<String, Pair<String, Long>>()
+
+    /** What a pass over a copy holding [bytesNow] bytes should do. */
+    internal enum class ReadPlan { DECODE, KEEP, SKIP }
+
+    /**
+     * Whether a pass has anything to decode.
+     *
+     * A pass that already read to the end of what was on disk ([exhaustedAt],
+     * the bytes it saw) has nothing new until more bytes arrive: seeking to
+     * where it stopped finds no sample ("no-first-sample", user phone 11-08:
+     * 27 in 3 h, each a 1-2 s extractor scan followed by a re-decode of the
+     * whole prefix from zero). It is answered from what was read ([KEEP]).
+     * A copy whose read found nothing at [failedAt] bytes is not decoded again
+     * until it grows ([SKIP]). An unknown size (-1) decodes as before.
+     */
+    internal fun readPlan(bytesNow: Long, exhaustedAt: Long?, failedAt: Long?): ReadPlan = when {
+        bytesNow <= 0L -> ReadPlan.DECODE
+        exhaustedAt != null && bytesNow <= exhaustedAt -> ReadPlan.KEEP
+        failedAt != null && bytesNow <= failedAt -> ReadPlan.SKIP
+        else -> ReadPlan.DECODE
+    }
 
     /**
      * [video]'s profiles: everything on disk, read only from where the last
@@ -2580,6 +2608,20 @@ object LyricsTiming {
             return reading.extractor.finish(startSeconds = reading.startSeconds).takeIf { it.frames > 0 }
         }
         val source = VersionAudioAligner.openDataSource(context, video) ?: return null
+        val bytes = runCatching { source.size }.getOrDefault(-1L)
+        val failedAt = synchronized(videoReadings) { failedReadings[video.videoId] }?.takeIf { it.first == copyKey }?.second
+        when (readPlan(bytes, reading?.takeIf { it.exhausted }?.bytes, failedAt)) {
+            ReadPlan.DECODE -> Unit
+            ReadPlan.KEEP -> {
+                runCatching { source.close() }
+                return reading?.let { it.extractor.finish(startSeconds = it.startSeconds).takeIf { f -> f.frames > 0 } }
+            }
+            ReadPlan.SKIP -> {
+                runCatching { source.close() }
+                TrackLog.d(TAG, "lyrics-timing: $copyKey found no sample at $bytes bytes; waiting for more", video.videoId)
+                return null
+            }
+        }
         val decoded = try {
             AudioDecoder.decodeMonoStream(
                 source,
@@ -2615,12 +2657,31 @@ object LyricsTiming {
             synchronized(videoReadings) { videoReadings.remove(video.videoId) }
             return readFeatures(context, video, copyKey, job, untilSeconds, wanted, restartedStaleReading = true)
         }
+        // A read from zero that found nothing will find nothing in the same
+        // bytes again: remembered, so the next pass waits for more to arrive.
+        // (A resumed read that was not restarted is not: from zero it may work.)
+        synchronized(videoReadings) {
+            if (failure == AudioDecoder.FAILURE_NO_FIRST_SAMPLE && from == 0.0) {
+                failedReadings.remove(video.videoId)
+                failedReadings[video.videoId] = copyKey to bytes
+                while (failedReadings.size > VIDEOS_KEPT) failedReadings.remove(failedReadings.keys.first())
+            } else if (decoded != null) {
+                failedReadings.remove(video.videoId)
+            }
+        }
         if (job?.isActive == false) return null
         // The screen going off aborts the decoder mid-read; what is in
         // [videoReadings] is a prefix, not a measurement, and must not be
         // published as one. The next screen-on pass resumes from it.
         if (!PowerState.screenOn) return null
         val done = reading ?: return null
+        // Only a pass the decoder finished says where the bytes end: an aborted
+        // one keeps what the last finished pass recorded.
+        if (decoded != null) {
+            done.bytes = bytes
+            // A pass stopped by its limit ends within a frame of it (20 ms Opus).
+            done.exhausted = done.untilSeconds < minOf(MAX_SECONDS, untilSeconds) - 0.25
+        }
         synchronized(videoReadings) {
             videoReadings.remove(video.videoId)
             videoReadings[video.videoId] = done
