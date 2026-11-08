@@ -32,6 +32,29 @@ class KoCacheRetention {
         SystemClock.elapsedRealtime() - at < TIMING_KEEP_MS
     }
 
+    /**
+     * Tracks whose analysis head was asked for in the last [ANALYSIS_KEEP_MS].
+     *
+     * Automix's head and tail reads and the alignment waits ask for a track's
+     * analysis-only copy and then come back for it. The drop pass used to
+     * remove that copy in between (it runs 30 s after every track change), and
+     * the next ask downloaded the whole file again: on the 11-08 phone log every
+     * one of 79 repeat rounds followed a drop pass, 281 MB of 927 MB read-ahead.
+     * Kept apart from [timingKeep] so these asks cannot push a timing keep out.
+     */
+    private val analysisKeep = LinkedHashMap<String, Long>()
+
+    fun keepForAnalysis(videoId: String, nowMs: Long = SystemClock.elapsedRealtime()) = synchronized(analysisKeep) {
+        analysisKeep.remove(videoId)
+        analysisKeep[videoId] = nowMs
+        while (analysisKeep.size > ANALYSIS_KEEP_MAX) analysisKeep.remove(analysisKeep.keys.first())
+    }
+
+    fun keptForAnalysis(videoId: String, nowMs: Long = SystemClock.elapsedRealtime()): Boolean = synchronized(analysisKeep) {
+        val at = analysisKeep[videoId] ?: return false
+        nowMs - at < ANALYSIS_KEEP_MS
+    }
+
     private val purgeCandidates = ConcurrentHashMap.newKeySet<String>()
 
     @Volatile
@@ -101,6 +124,7 @@ class KoCacheRetention {
                         // for an analysis-only YouTube entry.
                         keepsAddonCopy = origin == AudioCache.Origin.OTHER.name && keepsAddonCopy(key),
                         keptByQueueOrTiming = keptByQueueOrTiming,
+                        keptForAnalysis = mediaId != null && keptForAnalysis(mediaId),
                     )
                 ) {
                     return@forEach
@@ -121,6 +145,10 @@ class KoCacheRetention {
         private const val TIMING_KEEP_MS = 15 * 60_000L
         private const val TIMING_KEEP_MAX = 16
 
+        /** Long enough for a track's head and tail reads; bounded so analysis copies still go. */
+        private const val ANALYSIS_KEEP_MS = 10 * 60_000L
+        private const val ANALYSIS_KEEP_MAX = 12
+
         private const val META_ORIGIN = "bc_origin"
         private const val META_MEDIA_ID = "bc_media_id"
         private const val META_PLAYBACK = "bc_playback"
@@ -136,7 +164,9 @@ class KoCacheRetention {
  * and decodable may be read back off disk, so it outlives the queue moving on.
  * [keepAnalysis] spares Automix's analysis-only copies for callers that are
  * only dropping addon entries. [keptByQueueOrTiming] covers the playhead window
- * and [KoCacheRetention.keptForTiming]'s analysis keeps.
+ * and [KoCacheRetention.keptForTiming]'s analysis keeps. [keptForAnalysis]
+ * ([KoCacheRetention.keptForAnalysis]) spares only an analysis-only copy, never
+ * a partial addon file, which must still go.
  */
 internal fun cacheEntryShouldDrop(
     origin: String?,
@@ -147,9 +177,10 @@ internal fun cacheEntryShouldDrop(
     keepAnalysis: Boolean,
     keepsAddonCopy: Boolean,
     keptByQueueOrTiming: Boolean,
+    keptForAnalysis: Boolean = false,
 ): Boolean {
     if (keptByQueueOrTiming) return false
     val foreign = origin == foreignOrigin && !keepsAddonCopy
-    val analysisOnly = hasAnalysis && !hasPlayback && !hasPlayed && !keepAnalysis
+    val analysisOnly = hasAnalysis && !hasPlayback && !hasPlayed && !keepAnalysis && !keptForAnalysis
     return foreign || analysisOnly
 }

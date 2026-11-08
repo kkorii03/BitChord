@@ -51,6 +51,7 @@ class KoAnalysisHeadEngineTest {
         headComplete: () -> Boolean = { false },
         inFlight: MutableSet<String> = mutableSetOf(),
         analysisHeads: MutableMap<String, Boolean> = mutableMapOf(),
+        onWanted: (String) -> Unit = {},
     ) = KoAnalysisHeadEngine(
         cache = { cache },
         scope = scope,
@@ -72,7 +73,17 @@ class KoAnalysisHeadEngineTest {
         forgetPurgeCandidate = {},
         waitKeys = { listOf(it) },
         now = now,
+        onWanted = onWanted,
     )
+
+    @Test
+    fun `waiting for a head marks the track as wanted, even when it is already complete`() = runBlocking {
+        val wanted = mutableListOf<String>()
+        val engine = engine(RecordingCache().cache, headComplete = { true }, onWanted = { wanted += it })
+
+        assertTrue(engine.awaitAnalysisHeadFor("abc", 1_000L))
+        assertTrue(wanted == listOf("abc"))
+    }
 
     @Test
     fun `a cache span event wakes the head wait`() = runBlocking {
