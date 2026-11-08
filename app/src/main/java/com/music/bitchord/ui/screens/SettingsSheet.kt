@@ -2022,16 +2022,6 @@ private fun AudioQuality.localizedLabel(): String = stringResource(
 )
 
 @Composable
-private fun AudioQuality.localizedDetail(): String = stringResource(
-    when (this) {
-        AudioQuality.LOW -> R.string.quality_efficient_detail
-        AudioQuality.MEDIUM -> R.string.quality_high_detail
-        AudioQuality.HIGH -> R.string.quality_lossless_detail
-        AudioQuality.LOSSLESS -> R.string.quality_hi_res_detail
-    },
-)
-
-@Composable
 private fun DownloadQuality.localizedLabel(): String = stringResource(
     when (this) {
         DownloadQuality.STANDARD -> R.string.quality_efficient
@@ -2217,42 +2207,6 @@ internal fun AccountCard(
             Chevron()
         }
     }
-}
-
-/** Which ceiling the open picker is editing. */
-private enum class QualityTarget(val icon: ImageVector) {
-    WIFI(SfIcons.Wifi),
-    CELLULAR(SfIcons.SignalCellularAlt),
-}
-
-/** The quality options for one connection, with what each costs in data. */
-@Composable
-private fun QualitySheet(
-    target: QualityTarget,
-    selected: AudioQuality,
-    onSelect: (AudioQuality) -> Unit,
-) {
-    KoQualitySheet(target == QualityTarget.WIFI, selected, onSelect) // [KO] quality-sheet
-}
-
-/** CPU budget picker for the background models that prepare Automix. */
-@Composable
-private fun AutomixPerformanceSheet(
-    selected: AutomixPerformanceMode,
-    onSelect: (AutomixPerformanceMode) -> Unit,
-) {
-    KoAutomixPerformanceSheet(selected, onSelect) // [KO] automix-performance-sheet
-}
-
-/**
- * What to keep when a track is saved, with what each rung costs on disk.
- */
-@Composable
-private fun DownloadQualitySheet(
-    selected: DownloadQuality,
-    onSelect: (DownloadQuality) -> Unit,
-) {
-    KoDownloadQualitySheet(selected, onSelect) // [KO] download-quality-sheet
 }
 
 /**

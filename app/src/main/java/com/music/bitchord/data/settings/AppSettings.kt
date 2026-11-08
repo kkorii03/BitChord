@@ -778,7 +778,6 @@ object AppSettings {
     val localMusicViewType = MutableStateFlow(LibraryViewType.LIST)
     val downloadedMusicViewType = MutableStateFlow(LibraryViewType.LIST)
     /** Layout used by the Recents shelf on Play; compact tracks are the default. */
-    val homeRecentsViewType = MutableStateFlow(LibraryViewType.LIST) // [KO]
     val librarySort = MutableStateFlow(LibrarySort.DEFAULT)
 
     /**
@@ -1181,7 +1180,6 @@ object AppSettings {
         dontRepeatSuggestions.value = prefs.getBoolean(KEY_DONT_REPEAT_SUGGESTIONS, false)
         KoAppSettings.readPreferMusicOnly(hadSettingsBeforeMigrations) // [KO] prefer music only
         KoAppSettings.readSkipping() // [KO] skipping
-        homeRecentsViewType.value = readLibraryViewType(KEY_HOME_RECENTS_VIEW_TYPE) // [KO] recents layout
         hideRecents.value = prefs.getBoolean(KEY_HIDE_RECENTS, false)
         hideHomeVideos.value = prefs.getBoolean(KEY_HIDE_HOME_VIDEOS, false)
         hideTopPicks.value = prefs.getBoolean(KEY_HIDE_TOP_PICKS, false)
@@ -1613,12 +1611,6 @@ object AppSettings {
     fun setShowNerdStats(value: Boolean) {
         showNerdStats.value = value
         prefs.edit().putBoolean(KEY_NERD_STATS, value).apply()
-    }
-
-    /** Persists the main-thread stall kill switch; the printer reads it live. */
-    fun setMainStallLog(value: Boolean) {
-        mainStallLog.value = value
-        prefs.edit().putBoolean(KEY_MAIN_STALL_LOG, value).apply()
     }
 
     fun setShowListenTogetherButton(value: Boolean) {
@@ -2303,11 +2295,6 @@ object AppSettings {
         prefs.edit().putString(KEY_DOWNLOADED_MUSIC_VIEW_TYPE, value.name).apply()
     }
 
-    fun setHomeRecentsViewType(value: LibraryViewType) { // [KO]
-        homeRecentsViewType.value = value
-        prefs.edit().putString(KEY_HOME_RECENTS_VIEW_TYPE, value.name).apply()
-    }
-
     fun setLocalMusicFolderUri(value: String) {
         localMusicFolderUri.value = value
         prefs.edit().putString(KEY_LOCAL_MUSIC_FOLDER_URI, value).apply()
@@ -2693,7 +2680,6 @@ object AppSettings {
     private const val KEY_DETAIL_SONG_SORTS = "detail_song_sorts"
     private const val KEY_LOCAL_MUSIC_VIEW_TYPE = "local_music_view_type"
     private const val KEY_DOWNLOADED_MUSIC_VIEW_TYPE = "downloaded_music_view_type"
-    private const val KEY_HOME_RECENTS_VIEW_TYPE = "home_recents_view_type" // [KO]
     private const val KEY_LOCAL_MUSIC_FOLDER_URI = "local_music_folder_uri"
     private const val KEY_WEBDAV_URL = "webdav_url"
     private const val KEY_WEBDAV_USERNAME = "webdav_username"

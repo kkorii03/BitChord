@@ -1,6 +1,5 @@
 package com.music.bitchord.ui.theme
 
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -35,13 +34,7 @@ object AppType {
 object AppSpacing {
     val ScreenHorizontal = 20.dp
     val Section = 24.dp
-    val Gutter = 16.dp
     val Tight = 8.dp
     val ListRowVertical = 12.dp
     val ListRowMinHeight = 52.dp
 }
-
-/** iOS sheets and alerts are softer than Material's 28dp default corners. */
-val IosSheetShape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
-val IosDialogShape = RoundedCornerShape(24.dp)
-val IosPillShape = RoundedCornerShape(percent = 50)

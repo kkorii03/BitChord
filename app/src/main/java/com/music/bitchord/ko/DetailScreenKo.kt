@@ -31,8 +31,6 @@ import com.music.bitchord.data.stats.SmartPlaylist
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.ui.components.BROWSE_LOADING_TIMEOUT_MS
 import com.music.bitchord.ui.components.EmptyState
-import com.music.bitchord.ui.components.HqLibraryProgressLine
-import com.music.bitchord.ui.components.HqLibraryUpgradeAllRow
 import com.music.bitchord.ui.components.LoadingTimeoutState
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER

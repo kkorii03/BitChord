@@ -2,13 +2,9 @@ package com.music.bitchord.playback
 
 import com.music.bitchord.ko.koTryAutoplayRefillBeforeStopping
 import com.music.bitchord.ko.koScheduleTranslationAhead
-import com.music.bitchord.ko.koAwaitTranslationAheadAiGate
 import com.music.bitchord.ko.koScheduleCurrentTranslationAhead
-import com.music.bitchord.ko.koUpcomingSong
 import com.music.bitchord.ko.koScheduleDownloadHealthCheck
-import com.music.bitchord.ko.koRestreamWrongRecording
 import com.music.bitchord.ko.koLoadSkipSegmentsForCurrentTrack
-import com.music.bitchord.ko.koFetchSkipSegments
 import com.music.bitchord.ko.koScheduleSkipSegmentMessages
 import com.music.bitchord.ko.koCancelSkipSegmentMessages
 import com.music.bitchord.ko.koRefreshSkipSegmentsForSettings
@@ -25,9 +21,6 @@ import com.music.bitchord.ko.koRelookAfterFailedSwap
 import com.music.bitchord.ko.koLogQualityLabel
 import com.music.bitchord.ko.koHqSwapDecision
 import com.music.bitchord.ko.koCurrentPlayingVerification
-import com.music.bitchord.ko.koCurrentIsSubstitute
-import com.music.bitchord.ko.koSmoothSwapToLossless
-import com.music.bitchord.ko.koIsStillSwapping
 import com.music.bitchord.ko.koAwaitPlayerCondition
 import com.music.bitchord.ko.koLosslessAheadItem
 import com.music.bitchord.ko.koLogHqAhead
@@ -6784,31 +6777,6 @@ class PlaybackService : MediaLibraryService() {
     private fun currentPlayingVerification(mediaId: String): HqVerificationStore.Verified? =
         koCurrentPlayingVerification(mediaId) // [KO] hq-lossless
 
-    private fun currentIsSubstitute(mediaId: String): Boolean =
-        koCurrentIsSubstitute(mediaId) // [KO] hq-lossless
-
-    private suspend fun smoothSwapToLossless(
-        mediaId: String,
-        stream: SourceStream,
-        verified: HqVerificationStore.Verified,
-        upgradedUri: String,
-        currentOffsetMs: Long,
-        currentRate: Double,
-    ): Boolean = koSmoothSwapToLossless(
-        mediaId,
-        stream,
-        verified,
-        upgradedUri,
-        currentOffsetMs,
-        currentRate,
-    ) // [KO] hq-lossless
-
-    private fun isStillSwapping(
-        activePlayer: ExoPlayer,
-        index: Int,
-        mediaId: String,
-    ): Boolean = koIsStillSwapping(activePlayer, index, mediaId) // [KO] hq-lossless
-
     private suspend fun awaitPlayerCondition(
         timeoutMs: Long,
         vararg players: Player,
@@ -11902,23 +11870,11 @@ class PlaybackService : MediaLibraryService() {
     private fun scheduleTranslationAhead() =
         koScheduleTranslationAhead() // [KO] translation-ahead
 
-    private suspend fun awaitTranslationAheadAiGate(): Boolean =
-        koAwaitTranslationAheadAiGate() // [KO] translation-ahead
-
     private fun scheduleCurrentTranslationAhead(song: Song) =
         koScheduleCurrentTranslationAhead(song) // [KO] translation-ahead
 
-    private fun upcomingSong(): Pair<Song, Boolean>? =
-        koUpcomingSong() // [KO] translation-ahead
-
     private fun scheduleDownloadHealthCheck(song: Song?, player: ExoPlayer) =
         koScheduleDownloadHealthCheck(song, player) // [KO] download-health
-
-    private fun restreamWrongRecording(
-        player: ExoPlayer,
-        item: MediaItem,
-        position: Long,
-    ): Boolean = koRestreamWrongRecording(player, item, position) // [KO] download-health
 
     internal fun loadLyricsForCurrentTrack() {
         scheduleTranslationAhead()
@@ -12168,9 +12124,6 @@ class PlaybackService : MediaLibraryService() {
 
     private fun loadSkipSegmentsForCurrentTrack() =
         koLoadSkipSegmentsForCurrentTrack() // [KO] skip-segments
-
-    private fun fetchSkipSegments(videoId: String) =
-        koFetchSkipSegments(videoId) // [KO] skip-segments
 
     private fun scheduleSkipSegmentMessages() =
         koScheduleSkipSegmentMessages() // [KO] skip-segments

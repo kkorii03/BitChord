@@ -1,37 +1,16 @@
 package com.music.bitchord.ko
 
 import com.music.bitchord.data.sources.TrackMatcher
-import java.util.Locale
 
 /**
  * Korean-fork title rules restored after the upstream v1.9 merge.
  *
  * Kept here so the next merge leaves the upstream TrackMatcher intact except
- * for the one-line hooks marked `// [KO] title-rules`.
+ * for the one-line hooks marked `// [KO] title-rules`. Tribute / "originally
+ * performed by" / "in the style of" / "made famous by" titles are refused by
+ * KoTrackMatcher's arrangement markers.
  */
 object KoTitleRules {
-
-    /**
-     * The take marker written for a tribute-style title. Existing markers
-     * (`cover`, `karaoke`, `instrumental`) live in TrackMatcher's
-     * VERSION_WORDS; these phrases are the ones that were missing there.
-     */
-    const val TRIBUTE_TAKE = "tribute"
-
-    private val TRIBUTE_TAKE_PATTERNS = listOf(
-        Regex("""\btribute\s+to\b"""),
-        Regex("""\boriginally\s+performed\s+by\b"""),
-        Regex("""\bin\s+the\s+style\s+of\b"""),
-        Regex("""\bmade\s+famous\s+by\b"""),
-    )
-
-    /** [TRIBUTE_TAKE] when [text] is a tribute/covers-catalogue title, else null. */
-    fun tributeTake(text: String): String? {
-        val folded = text.lowercase(Locale.ROOT)
-        return TRIBUTE_TAKE.takeIf {
-            TRIBUTE_TAKE_PATTERNS.any { pattern -> pattern.containsMatchIn(folded) }
-        }
-    }
 
     /**
      * Whether an exact-runtime credit disagreement may stand in for a shared

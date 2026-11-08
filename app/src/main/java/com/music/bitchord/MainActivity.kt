@@ -1122,7 +1122,7 @@ private fun BitChordApp(
     // has a cover and a track list, so it takes the bar every other release page
     // takes — as does an album or artist opened out of a folder. Hence the
     // folder question rather than the prefix.
-    val isLocalDetail = detail?.browseId.isDeviceFolderPage()
+    val isLocalDetail = detail?.browseId.isDeviceFolder()
     // An album or playlist page: the one whose top bar carries its search,
     // sort and overflow controls.
     val isReleaseDetail = detail != null && !isLocalDetail && detail.type != BrowseType.ARTIST
@@ -3543,7 +3543,7 @@ private fun BitChordApp(
                             // this same release page: the header any playlist has, then
                             // Songs / Artists / Albums under it. An album or artist
                             // picked there opens as a page of its own — see LocalGroups.
-                            val folder = if (page.browseId.isDeviceFolderPage()) {
+                            val folder = if (page.browseId.isDeviceFolder()) {
                                 val isDownloads = page.browseId == "local:downloads"
                                 val isCache = page.browseId == CACHE_FOLDER_BROWSE_ID
                                 // The whole device: the one folder that is an offline
@@ -6165,7 +6165,7 @@ private fun BitChordApp(
             )
         }
 
-        val menuFolder = detail?.browseId?.takeIf { it.isDeviceFolderPage() }
+        val menuFolder = detail?.browseId?.takeIf { it.isDeviceFolder() }
         if (folderMenuOpen && menuFolder != null) {
             BackHandler { folderMenuOpen = false }
             val downloadsFolder = menuFolder == "local:downloads"
@@ -6780,7 +6780,7 @@ private fun FrostedMenuRow(
  * every other release page gets. See [Downloads.PLAYLIST_PREFIX] and
  * [LocalGroups.PREFIX] for why they share a namespace at all.
  */
-private fun String?.isDeviceFolderPage(): Boolean =
+private fun String?.isDeviceFolder(): Boolean =
     this != null && startsWith("local:") &&
         !startsWith(Downloads.PLAYLIST_PREFIX) && !startsWith(LocalGroups.PREFIX) &&
         !startsWith(OfflinePlaylists.PREFIX)

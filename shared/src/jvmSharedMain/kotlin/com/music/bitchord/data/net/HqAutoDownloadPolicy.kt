@@ -17,9 +17,6 @@ object HqAutoDownloadPolicy {
     /** One automatic target at a time, whichever hosts its plan names. */
     const val MAX_CONCURRENT = 1
 
-    /** And one request per host, shared with playback's own host gate. */
-    const val MAX_CONCURRENT_PER_HOST = 1
-
     /** First wait when a refusal names none. */
     const val BASE_RETRY_MS = 60_000L
 

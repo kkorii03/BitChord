@@ -156,8 +156,6 @@ data class VideoFilterResult(
     val kept: List<VideoCandidate>,
     val dropped: Map<VideoDropReason, Int>,
 ) {
-    val droppedTotal: Int get() = dropped.values.sum()
-
     /** The `dropped=` half of the video-radio log line. */
     fun droppedSummary(): String =
         VideoDropReason.entries.mapNotNull { reason ->

@@ -1251,12 +1251,6 @@ internal fun OutputCaption(
 ) {
     val badge = rememberPartyBadge()
     val outputName = rememberAudioOutputName(accountName)
-    val cast by PlayerPlatform.host.castState.collectAsStateWithLifecycle()
-    val watch by PlayerPlatform.host.watchOutput.collectAsStateWithLifecycle()
-    val activeOutput = rememberAudioOutputs().firstOrNull { it.isActive }
-    val externalOutput = cast.connectedName != null ||
-        watch.active ||
-        (activeOutput != null && activeOutput.kind != AudioOutputKind.PHONE)
     val outputFormat by PlayerPlatform.host.outputFormat.collectAsStateWithLifecycle()
     val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
     val lowPower by PlayerSettings.lowPower.collectAsStateWithLifecycle()

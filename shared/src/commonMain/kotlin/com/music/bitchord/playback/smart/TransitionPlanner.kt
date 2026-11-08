@@ -368,16 +368,6 @@ private fun fallbackVariantFor(
     }
 }
 
-/** A small stable hash so the same queue pair always receives the same gesture on every target. */
-private fun filterVariantFor(current: TransitionTrackInfo?, next: TransitionTrackInfo?): FilterTransitionVariant {
-    var hash = 0xCBF29CE484222325uL
-    val key = "${current?.id.orEmpty()}\u0000${next?.id.orEmpty()}"
-    for (character in key) {
-        hash = (hash xor character.code.toULong()) * 0x100000001B3uL
-    }
-    return FilterTransitionVariant.entries[(hash % FilterTransitionVariant.entries.size.toULong()).toInt()]
-}
-
 /**
  * Gapless is for an album being played through, not for any two songs that
  * happen to share an album. A playlist, a manual queue or a shuffle that
@@ -1503,17 +1493,6 @@ const val FILTER_ECHO_AT = 0.5
 /** The longest echo time; a slow track's beat is clamped to it. */
 const val MAX_ECHO_SECONDS = 1.0
 
-/** Slack past the tail, so the outgoing file never ends under the last repeat. */
-private const val ECHO_ROOM_MARGIN_SECONDS = 0.5
-
-/**
- * A one-beat echo. The dotted three-quarter beat that was here first
- * syncopates against the outgoing track, which is its appeal on a matched
- * pair — and over an incoming track at another tempo it read as the outgoing
- * song glitching. On the beat, the repeats sound like the song, trailing off.
- */
-private fun echoSecondsFor(beatSeconds: Double): Double = min(beatSeconds, MAX_ECHO_SECONDS)
-
 fun echoTailSeconds(echoSeconds: Double): Double = echoSeconds * ECHO_REPEATS
 
 private fun standardTransition(
@@ -1962,10 +1941,6 @@ private fun mixPlan(
         )
     val confidentGrid = analysis.beatConfidence.orZero() >= 0.2 ||
         nextAnalysis.beatConfidence.orZero() >= 0.2
-    // When the two tempi need a stretch, only a pair whose *both* grids clear
-    // the beat-match floor may take the blend branch. Every old term stays:
-    // tempoBlendable, confidentGrid, and the advanced incoming-rate check.
-    val tempoNeedsStretch = abs(1 - normalizedTempoRatio(currentBpm, nextBpm)) > 1e-6
     val sameBeatBlend = (traits == null || incomingPlaybackRate >= 1.0 - MAX_ALIGN_STRETCH) && (
         currentBpm > 0 && nextBpm > 0 &&
         abs(1 - normalizedTempoRatio(currentBpm, nextBpm)) <= 0.05 &&

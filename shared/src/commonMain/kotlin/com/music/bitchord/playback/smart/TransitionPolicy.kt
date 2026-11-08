@@ -79,16 +79,6 @@ const val MAX_SPEED_UP = 0.10
 const val MAX_ALIGN_STRETCH = 0.06
 
 /**
- * The speed-up that meets [outgoingBpm] and [incomingBpm] (octave-aligned),
- * as a factor above 1 — whichever track it applies to.
- */
-fun speedUpBetween(outgoingBpm: Double, incomingBpm: Double): Double {
-    if (outgoingBpm <= 0 || incomingBpm <= 0) return Double.POSITIVE_INFINITY
-    val ratio = outgoingBpm / alignTempoOctave(outgoingBpm, incomingBpm)
-    return max(ratio, 1 / ratio)
-}
-
-/**
  * A vocal-activity mask value at or above this counts as singing. A fallback
  * analyzer that emits a flat 0.5 mask never trips vocal logic; only a real
  * mask can.
