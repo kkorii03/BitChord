@@ -1030,6 +1030,29 @@ internal object KoTrackMatcher {
     }
 
     /**
+     * The rows on [page] that print [target]'s title together with a second
+     * name for it: the evidence [bestTitleBridged] reads, kept so a lookup made
+     * after the search can read it too. The catalogue lookup behind an MV opens
+     * the album page that lists the release, and that page may hold only the
+     * other name (NPZtKA6343o, emulator 182a/184d: the search pages held the
+     * Korean MV "체포하겠어 (You're Under Arrest)" and its fanchant, BREAK EVEN
+     * lists only "체포하겠어", so the lookup ended `no-track`).
+     *
+     * The same two tests [bestTitleBridged] opens with; the take, act and
+     * runtime checks stay there, against the track that would play.
+     */
+    fun titleBridges(page: List<Song>, target: Target): List<Song> {
+        val wanted = parseTitle(target.title, target.artist)
+        if (wanted.core.isBlank()) return emptyList()
+        val wantedCores = wanted.cores()
+        return page.filter { row ->
+            val readings = readingCores(row)
+            readings.size >= 2 &&
+                readings.any { coresMatch(wantedCores, listOf(it), containment = true) }
+        }
+    }
+
+    /**
      * Every reading a row files its title under: the one it displays, and for a
      * row whose display title was replaced by the catalogue release's, the
      * upload's own title too (see `Song.uploadTitle`).

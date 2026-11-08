@@ -34,6 +34,10 @@ internal object KoAudioSwitch {
         var failedQueries = 0
         var videoRowsOnly = false
         val loggedRejects = HashSet<String>()
+        // Rows that print this title with a second name, kept for the
+        // catalogue lookup below: its album page may file the release only
+        // under that other name (NPZtKA6343o / 체포하겠어).
+        val bridges = LinkedHashMap<String, Song>()
         val budget = CatalogSongMapper.newBudget()
         for (query in TrackMatcher.audioSwitchQueries(row)) {
             queriesRun++
@@ -45,6 +49,7 @@ internal object KoAudioSwitch {
                 ?.map { it.song }
                 .orEmpty()
             var candidates = rows.filterNot { it.isVideo }
+            KoTrackMatcher.titleBridges(rows, target).forEach { bridges.getOrPut(it.videoId) { it } }
             // The free audio rows first: a page that already answers costs no
             // mapping.
             adoptBest(rows, candidates, target, song, query.length)?.let { return it }
@@ -85,6 +90,7 @@ internal object KoAudioSwitch {
                 budget,
                 allowLocalVideo = true,
                 priority = true,
+                bridges = bridges.values.toList(),
             )
         } catch (cancelled: CancellationException) {
             throw cancelled

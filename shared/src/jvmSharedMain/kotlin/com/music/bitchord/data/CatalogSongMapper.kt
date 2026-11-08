@@ -231,6 +231,14 @@ internal object CatalogSongMapper {
         budget: LookupBudget = newBudget(),
         allowLocalVideo: Boolean = false,
         priority: Boolean = false,
+        /**
+         * Rows the caller already holds that print this song's title together
+         * with a second name for it (see `KoTrackMatcher.titleBridges`). An
+         * album page may file the release only under that other name, which
+         * no title comparison can reach (NPZtKA6343o: the MV is "You're Under
+         * Arrest", BREAK EVEN lists only "체포하겠어").
+         */
+        bridges: List<Song> = emptyList(),
     ): MapResult {
         if (song.videoId.isBlank()) return MapResult.NotFound
         if (song.localUri != null &&
@@ -256,7 +264,11 @@ internal object CatalogSongMapper {
         if (stored != null) {
             if (stored.value != NONE) {
                 decode(stored.value)?.let { return MapResult.Found(it) }
-            } else if (!shouldRetryMiss(stored.at, now)) {
+            } else if (bridges.isEmpty() && !shouldRetryMiss(stored.at, now)) {
+                // A stored miss was read without bridging rows, so it says
+                // nothing about the other name they bring; only that case
+                // re-asks. The audio switch's own per-run cache keeps it to
+                // once per row.
                 return MapResult.NotFound
             }
         }
@@ -273,6 +285,7 @@ internal object CatalogSongMapper {
                     artist,
                     song.durationText,
                     sourceIsVideo = isVideoSource(song),
+                    bridges = bridges,
                 )
             }
         } catch (cancelled: CancellationException) {
@@ -522,6 +535,7 @@ internal object CatalogSongMapper {
          * shorter; a song-to-song comparison keeps the tight window.
          */
         sourceIsVideo: Boolean = false,
+        bridges: List<Song> = emptyList(),
     ): Outcome {
         val query = "$artist $title".replace(Regex("""\s+"""), " ").trim()
         val albums = searchAlbums(query)
@@ -593,20 +607,11 @@ internal object CatalogSongMapper {
                 }
                 .toList()
             candidatesRead += candidates.size
-            val match = targets.firstNotNullOfOrNull { wanted ->
-                // The ordinary matcher first, so every mapping that works today
-                // keeps working unchanged. A video's runtime is visual timing,
-                // though: its album track may be minutes shorter
-                // (intro/skit/outro) and is still the song, which the ordinary
-                // matcher rightly refuses. Only that gap uses the video-switch
-                // rule, and only when title, versions and artist agree.
-                TrackMatcher.best(candidates, wanted)
-                    ?: if (sourceIsVideo) {
-                        TrackMatcher.bestOfficialAudioForVideo(candidates, wanted)
-                    } else {
-                        null
-                    }
-            } ?: continue
+            val match = albumTrackFor(candidates, targets, sourceIsVideo)
+                ?: bridgedAlbumTrack(candidates, target, bridges)?.also {
+                    Log.i(TAG, "catalogue mapping: bridged videoId=$sourceVideoId -> ${it.videoId}")
+                }
+                ?: continue
             val catalog = catalogOf(match, album, artist) ?: continue
             if (catalog.videoId.isBlank()) continue
             return Outcome.Found(catalog)
@@ -690,6 +695,49 @@ internal object CatalogSongMapper {
     }
 
     // ---- Pure rules (tested without a network) ------------------------------
+
+    /**
+     * The track on one album page that is the song, by title: [targets] holds
+     * the source's title and its bracketed spellings, all with the same artist
+     * and runtime.
+     *
+     * The ordinary matcher first, so every mapping that works today keeps
+     * working unchanged. A video's runtime is visual timing, though: its album
+     * track may be minutes shorter (intro/skit/outro) and is still the song,
+     * which the ordinary matcher rightly refuses. Only that gap uses the
+     * video-switch rule, and only when title, versions and artist agree.
+     */
+    internal fun albumTrackFor(
+        candidates: List<Song>,
+        targets: List<TrackMatcher.Target>,
+        sourceIsVideo: Boolean,
+    ): Song? = targets.firstNotNullOfOrNull { wanted ->
+        TrackMatcher.best(candidates, wanted)
+            ?: if (sourceIsVideo) {
+                TrackMatcher.bestOfficialAudioForVideo(candidates, wanted)
+            } else {
+                null
+            }
+    }
+
+    /**
+     * The track on one album page that is [target]'s song under its other
+     * name, proven by a [bridges] row that prints both names, or null.
+     *
+     * Asked only after [albumTrackFor] found nothing. It is the audio switch's
+     * own title bridge ([TrackMatcher.bestTitleBridged]) with the album page's
+     * tracks as the candidates, so the same take, act and runtime checks stand
+     * between the wider title and a wrong track. With no bridging row nothing
+     * is guessed.
+     */
+    internal fun bridgedAlbumTrack(
+        candidates: List<Song>,
+        target: TrackMatcher.Target,
+        bridges: List<Song>,
+    ): Song? {
+        if (bridges.isEmpty() || candidates.isEmpty()) return null
+        return TrackMatcher.bestTitleBridged(bridges, candidates, target)?.first
+    }
 
     /** "cover by X", a bracketed cover tag, or the Korean word. */
     private val COVER_MARKER = Regex(
