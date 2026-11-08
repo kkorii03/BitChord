@@ -188,7 +188,11 @@ class NextHqDirectSourceGateTest {
         val answer = KoDirectHqAhead.lookup(
             "Ahead Seven",
             Job(),
-            addons = { SourceStream("https://Addon/ad-7", format = flac, sourceConfigId = "Addon") },
+            addons = {
+                // The addon walk takes a moment, so the other half is under way.
+                delay(100)
+                SourceStream("https://Addon/ad-7", format = flac, sourceConfigId = "Addon")
+            },
             hq = {
                 try {
                     delay(10_000)
@@ -286,6 +290,8 @@ class NextHqDirectSourceGateTest {
                 kind = source.kind,
                 label = source.configId,
                 baseUrl = if (source.kind == SourceKind.YOUTUBE) "" else "https://${source.configId}",
+                // Telegram and JioSaavn ship switched off.
+                enabled = true,
             )
         }
         instancesField.set(SourceRegistry, sources.associateBy { it.configId })
