@@ -48,6 +48,8 @@ class KoAnalysisHeadEngine(
     private val forgetPurgeCandidate: (String) -> Unit,
     private val waitKeys: (String) -> List<String>,
     private val now: () -> Long = SystemClock::elapsedRealtime,
+    /** Someone asked for [videoId]'s head: its copy is in use, so the drop pass spares it for a while. */
+    private val onWanted: (String) -> Unit = {},
 ) {
     private val tag = "BitChord"
 
@@ -62,6 +64,7 @@ class KoAnalysisHeadEngine(
     /** The same wait by id, so the event wiring is testable without a URI. */
     internal suspend fun awaitAnalysisHeadFor(videoId: String, timeoutMs: Long = 20_000L): Boolean {
         val openedCache = cache() ?: return false
+        onWanted(videoId)
         if (alignmentHeadComplete(videoId)) return true
         // A previous round that wrote nothing would otherwise block retries
         // for the rest of the session — but one that ended with no progress is
@@ -207,6 +210,7 @@ class KoAnalysisHeadEngine(
     }
 
     private fun requestAnalysisHead(videoId: String) {
+        onWanted(videoId)
         // Each of these gates used to stop a head dead with nothing in the
         // log to show for it: an unwired cache or upstream looked from the
         // outside exactly like a network that refuses everything.

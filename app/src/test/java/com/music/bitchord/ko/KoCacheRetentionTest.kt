@@ -18,6 +18,7 @@ class KoCacheRetentionTest {
         keepAnalysis: Boolean = false,
         keepsAddonCopy: Boolean = false,
         keptByQueueOrTiming: Boolean = false,
+        keptForAnalysis: Boolean = false,
     ) = cacheEntryShouldDrop(
         origin = origin,
         foreignOrigin = "OTHER",
@@ -27,7 +28,41 @@ class KoCacheRetentionTest {
         keepAnalysis = keepAnalysis,
         keepsAddonCopy = keepsAddonCopy,
         keptByQueueOrTiming = keptByQueueOrTiming,
+        keptForAnalysis = keptForAnalysis,
     )
+
+    // 11-08 phone log: every repeat analysis round (79) came after a drop pass
+    // had removed the copy the analysis had just fetched, and downloaded it again.
+    @Test
+    fun `an analysis copy asked for recently survives the drop pass`() {
+        assertFalse(drop(origin = "YOUTUBE", hasAnalysis = true, keptForAnalysis = true))
+    }
+
+    @Test
+    fun `the analysis keep never spares a partial addon copy`() {
+        assertTrue(drop(origin = "OTHER", keepsAddonCopy = false, keptForAnalysis = true))
+        assertTrue(drop(origin = "OTHER", hasAnalysis = true, keepsAddonCopy = false, keptForAnalysis = true))
+    }
+
+    @Test
+    fun `the analysis keep lasts ten minutes from the last ask`() {
+        val retention = KoCacheRetention()
+        assertFalse(retention.keptForAnalysis("a", nowMs = 0L))
+        retention.keepForAnalysis("a", nowMs = 1_000L)
+        assertTrue(retention.keptForAnalysis("a", nowMs = 1_000L + 9 * 60_000L))
+        assertFalse(retention.keptForAnalysis("a", nowMs = 1_000L + 10 * 60_000L))
+        retention.keepForAnalysis("a", nowMs = 1_000L + 10 * 60_000L)
+        assertTrue(retention.keptForAnalysis("a", nowMs = 1_000L + 15 * 60_000L))
+    }
+
+    @Test
+    fun `the analysis keep holds only the most recent twelve tracks`() {
+        val retention = KoCacheRetention()
+        (0 until 13).forEach { retention.keepForAnalysis("t$it", nowMs = it.toLong()) }
+        assertFalse(retention.keptForAnalysis("t0", nowMs = 20L))
+        assertTrue(retention.keptForAnalysis("t1", nowMs = 20L))
+        assertTrue(retention.keptForAnalysis("t12", nowMs = 20L))
+    }
 
     @Test
     fun `a complete addon copy is kept`() {

@@ -2302,6 +2302,7 @@ object AudioCache {
         invalidateRenditionKeys = { renditionKeys.remove(it) },
         forgetPurgeCandidate = ::forgetPurgeCandidate,
         waitKeys = { videoId -> analysisWaitKeys(videoId, ALT_SUFFIX, renditionKeysFor(videoId)) },
+        onWanted = { koRetention.keepForAnalysis(it) }, // [KO] analysis-keep
     )
 
     private val koAnalysisWaits = KoAnalysisWaits( // [KO] analysis-waits
