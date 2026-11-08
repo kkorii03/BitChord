@@ -4483,6 +4483,8 @@ object LyricsTiming {
 
     /** Forgets the AI answer for [videoId] (and a correction made on top of it); the measurement applies again. */
     suspend fun clearAi(context: Context, videoId: String) {
+        // A base settled on the AI answer must not outlive it.
+        baseDecisions.keys.removeIf { it.startsWith("$videoId|") }
         store(context).update(videoId) {
             it.copy(
                 clockVersion = CLOCK_VERSION,
@@ -5699,7 +5701,8 @@ private const val FIRM_FIT_LINES = 15
                 // Not cached: a directory can appear later, and this store could
                 // never save. The next call builds a real one.
                 ?: return Store(null)
-            return Store(file).also { store = it }
+            // Settled bases describe the entries of the store they were read from.
+            return Store(file).also { store = it; baseDecisions.clear() }
         }
     }
 }

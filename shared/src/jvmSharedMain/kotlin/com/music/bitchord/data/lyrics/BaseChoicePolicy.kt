@@ -133,6 +133,9 @@ object BaseChoicePolicy {
      */
     fun replaces(previous: Evidence?, next: Evidence): Boolean = when {
         previous == null -> true
+        // Neither rests on heard words (the fixed order): the newest reading of
+        // the stored entry wins, so a re-measured or cleared value is not masked.
+        next.matched == 0 && previous.matched == 0 -> true
         next.matched != previous.matched -> next.matched > previous.matched
         next.withinRatio != previous.withinRatio -> next.withinRatio > previous.withinRatio
         next.medianAbsMs != previous.medianAbsMs -> next.medianAbsMs < previous.medianAbsMs
