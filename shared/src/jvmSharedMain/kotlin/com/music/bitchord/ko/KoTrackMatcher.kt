@@ -119,7 +119,16 @@ internal object KoTrackMatcher {
 
     /** The first credited artist — who a catalogue is most likely to file the track under. */
     internal fun primaryArtist(artist: String): String =
-        artistVariants(artist).firstOrNull().orEmpty()
+        artistVariants(artist).firstOrNull().orEmpty().takeUnless { it in YOUTUBE_TYPE_LABELS }.orEmpty()
+
+    /**
+     * Where YouTube prints a type instead of an artist (... - Song, Korean ... - 노래):
+     * upstream 38535595f lists the English/Portuguese ones, the Korean ones are ours.
+     */
+    private val YOUTUBE_TYPE_LABELS = setOf(
+        "música", "musica", "vídeo", "video", "song", "album", "álbum", "artista", "artist",
+        "노래", "동영상", "비디오", "영상", "앨범", "아티스트", "가수", "곡", "음악",
+    )
 
     private val artistNamesMemo = BoundedMemo<String, Set<List<String>>>(MEMO_ENTRIES)
 
