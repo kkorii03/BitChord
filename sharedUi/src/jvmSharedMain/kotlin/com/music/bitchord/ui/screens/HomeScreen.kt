@@ -62,6 +62,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material.icons.rounded.Cached
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.LibraryMusic
@@ -124,6 +125,50 @@ private fun isShortsShelf(shelf: HomeShelf): Boolean {
 
 /** [KO] The shelves Home draws: the feed without its Shorts rail (dropped by the v1.9 merge). */
 internal fun visibleHomeShelves(shelves: List<HomeShelf>): List<HomeShelf> = shelves.filterNot(::isShortsShelf)
+
+/**
+ * The quiet row above Recents while private listening is on.
+ *
+ * The switch lives in Settings and the song menu, both a few taps from here;
+ * this is the one place it can explain why the shelf below is not moving. It
+ * is deliberately not a banner: a small tinted row with the way out beside it.
+ */
+@Composable
+private fun PrivateListeningNotice(onTurnOff: (() -> Unit)?) {
+    Row(
+        modifier = Modifier
+            .padding(horizontal = PAGE_GUTTER, vertical = 2.dp)
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.VisibilityOff,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(16.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = stringResource(Res.string.private_listening_notice),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        if (onTurnOff != null) {
+            Text(
+                text = stringResource(Res.string.private_listening_turn_off),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .clickable(onClick = onTurnOff)
+                    .padding(start = 12.dp, top = 4.dp, bottom = 4.dp),
+            )
+        }
+    }
+}
 
 private fun ShelfItem.matchesCurrentlyPlaying(song: Song?): Boolean {
     song ?: return false

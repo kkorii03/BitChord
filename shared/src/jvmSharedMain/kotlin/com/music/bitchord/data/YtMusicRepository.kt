@@ -112,6 +112,7 @@ object YtMusicRepository {
     // A lookup in flight, so the queue prefetcher and the player's switch
     // share one search instead of sending the same request twice at once.
     private val audioLookups = ConcurrentHashMap<String, CompletableDeferred<Song>>()
+    private val videoVersionLookups = ConcurrentHashMap<String, CompletableDeferred<Song?>>()
     /** Liked Music's continuation tokens, whose later pages need the same split. */
     private val likedContinuations = ConcurrentHashMap.newKeySet<String>()
 
