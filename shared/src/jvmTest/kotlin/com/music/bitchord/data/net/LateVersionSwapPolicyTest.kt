@@ -106,6 +106,86 @@ class LateVersionSwapPolicyTest {
     }
 
     @Test
+    fun `a same-id release is never aligned against itself while audible`() {
+        assertEquals(
+            LateVersionSwapPolicy.Refusal.SAME_UPLOAD,
+            LateVersionSwapPolicy.refusal(
+                musicOnly = true, inParty = false, casting = false,
+                listenerKeptVideo = false, listenerChoseOriginal = false,
+                rowStillCurrent = true, isSongVersion = true,
+                videoPositionMs = 21_000L, videoDurationMs = 233_000L,
+                sameUpload = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `smart alignment off and low power keep the video`() {
+        fun ask(smart: Boolean, low: Boolean) = LateVersionSwapPolicy.refusal(
+            musicOnly = true, inParty = false, casting = false,
+            listenerKeptVideo = false, listenerChoseOriginal = false,
+            rowStillCurrent = true, isSongVersion = true,
+            videoPositionMs = 21_000L, videoDurationMs = 233_000L,
+            smartAlignment = smart, lowPower = low,
+        )
+        assertEquals(LateVersionSwapPolicy.Refusal.SMART_ALIGNMENT_OFF, ask(smart = false, low = false))
+        assertEquals(LateVersionSwapPolicy.Refusal.LOW_POWER, ask(smart = true, low = true))
+        assertNull(ask(smart = true, low = false))
+    }
+
+    @Test
+    fun `a silent row still obeys the listener and the session but not the alignment rules`() {
+        fun silent(
+            musicOnly: Boolean = true,
+            inParty: Boolean = false,
+            casting: Boolean = false,
+            kept: Boolean = false,
+            pinned: Boolean = false,
+        ) = LateVersionSwapPolicy.refusal(
+            musicOnly = musicOnly, inParty = inParty, casting = casting,
+            listenerKeptVideo = kept, listenerChoseOriginal = pinned,
+            rowStillCurrent = true, isSongVersion = true,
+            videoPositionMs = 0L, videoDurationMs = null,
+            audible = false, sameUpload = true, smartAlignment = false, lowPower = true,
+        )
+        assertNull(silent())
+        assertEquals(LateVersionSwapPolicy.Refusal.MUSIC_ONLY_OFF, silent(musicOnly = false))
+        assertEquals(LateVersionSwapPolicy.Refusal.LISTEN_TOGETHER, silent(inParty = true))
+        assertEquals(LateVersionSwapPolicy.Refusal.CASTING, silent(casting = true))
+        assertEquals(LateVersionSwapPolicy.Refusal.LISTENER_KEPT_VIDEO, silent(kept = true))
+        assertEquals(LateVersionSwapPolicy.Refusal.LISTENER_CHOSE_ORIGINAL, silent(pinned = true))
+    }
+
+    @Test
+    fun `the route installs a silent row, hands an audible one over, and otherwise only measures`() {
+        val route = LateVersionSwapPolicy::route
+        assertEquals(LateVersionSwapPolicy.Route.INSTALL_BEFORE_AUDIO, route(true, true, null))
+        assertEquals(LateVersionSwapPolicy.Route.HAND_OVER, route(true, false, null))
+        assertEquals(LateVersionSwapPolicy.Route.LYRICS_ONLY, route(false, true, null))
+        assertEquals(LateVersionSwapPolicy.Route.LYRICS_ONLY, route(false, false, null))
+        assertEquals(
+            LateVersionSwapPolicy.Route.LYRICS_ONLY,
+            route(true, true, LateVersionSwapPolicy.Refusal.MUSIC_ONLY_OFF),
+        )
+        assertEquals(
+            LateVersionSwapPolicy.Route.LYRICS_ONLY,
+            route(true, false, LateVersionSwapPolicy.Refusal.NOT_MEASURED),
+        )
+    }
+
+    @Test
+    fun `the exact boundaries are inclusive`() {
+        // 75 000 ms is still within reach; exactly 20 000 ms left is enough.
+        assertNull(LateVersionSwapPolicy.positionRefusal(75_000L, 95_000L))
+        assertEquals(
+            LateVersionSwapPolicy.Refusal.NEAR_END,
+            LateVersionSwapPolicy.positionRefusal(75_000L, 94_999L),
+        )
+        assertEquals(55_000L, LateVersionSwapPolicy.songStartMs(75_000L, -20_000L, 75_000L))
+        assertNull(LateVersionSwapPolicy.songStartMs(75_000L, -20_000L, 74_999L))
+    }
+
+    @Test
     fun `a negative position is read as the start`() {
         assertEquals(0L, LateVersionSwapPolicy.songStartMs(-50L, -5_000L, 200_000L))
         assertNull(LateVersionSwapPolicy.positionRefusal(-50L, 200_000L))

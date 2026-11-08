@@ -16,11 +16,12 @@ package com.music.bitchord.data.net
  * - the playhead is too far past the opening the alignment was measured on;
  * - too little of the song is left to be worth a handover;
  * - the listener chose the video or the original upload, or is in a party, or
- *   is casting, or music-only is off.
+ *   is casting, or music-only is off;
+ * - the listener turned smart version alignment off, or low power is on.
  *
- * Event-driven: it is asked once, when the late lookup answers, and once more
- * just before the swap commits (after the alignment, which takes time). It is
- * never polled.
+ * Event-driven: it is asked when the late lookup answers, again with live
+ * state after the alignment, and at each step of the (seconds-long) handover
+ * that already runs its own short waits. Nothing new is polled.
  */
 object LateVersionSwapPolicy {
 
@@ -52,16 +53,23 @@ object LateVersionSwapPolicy {
         LISTENER_CHOSE_ORIGINAL("listener chose the original upload"),
         ROW_CHANGED("row is no longer playing"),
         NOT_A_SONG_VERSION("not a song version"),
+        SAME_UPLOAD("same upload id, nothing to align"),
+        SMART_ALIGNMENT_OFF("smart version alignment off"),
+        LOW_POWER("low power"),
         NOT_MEASURED("alignment not measured"),
         PAST_MEASURED_OPENING("past the measured opening"),
         NEAR_END("near the end"),
     }
 
     /**
-     * Why the audible video must not be handed over to its late song version,
-     * or null when it may. Everything here is known the moment the late lookup
-     * answers; the alignment is checked separately by [songStartMs] once it has
-     * been measured.
+     * Why the late song version must not take the video's place, or null when
+     * it may. Asked when the late lookup answers and again, with live state,
+     * after the alignment and at every step of the handover — a listener's
+     * revert, a party, a cast or music-only turned off in between wins.
+     *
+     * [audible] false is a row that has not made its first sound yet: the
+     * release takes it exactly as before audio, so only the listener's and the
+     * session's rules apply, not the alignment ones.
      */
     fun refusal(
         musicOnly: Boolean,
@@ -73,6 +81,10 @@ object LateVersionSwapPolicy {
         isSongVersion: Boolean,
         videoPositionMs: Long,
         videoDurationMs: Long?,
+        audible: Boolean = true,
+        sameUpload: Boolean = false,
+        smartAlignment: Boolean = true,
+        lowPower: Boolean = false,
     ): Refusal? = when {
         !musicOnly -> Refusal.MUSIC_ONLY_OFF
         inParty -> Refusal.LISTEN_TOGETHER
@@ -81,7 +93,36 @@ object LateVersionSwapPolicy {
         listenerChoseOriginal -> Refusal.LISTENER_CHOSE_ORIGINAL
         !rowStillCurrent -> Refusal.ROW_CHANGED
         !isSongVersion -> Refusal.NOT_A_SONG_VERSION
+        !audible -> null
+        // The aligner's cache answers 0 for one id without measuring it, so
+        // an audible same-id swap would be exactly the unmeasured zero shift
+        // this policy exists to refuse.
+        sameUpload -> Refusal.SAME_UPLOAD
+        !smartAlignment -> Refusal.SMART_ALIGNMENT_OFF
+        lowPower -> Refusal.LOW_POWER
         else -> positionRefusal(videoPositionMs, videoDurationMs)
+    }
+
+    /** What to do with a song version that answered after the first-sound budget. */
+    enum class Route {
+        /** Still silent: the release takes the row exactly as before audio. */
+        INSTALL_BEFORE_AUDIO,
+
+        /** Audible: hand over at the same bar (lyrics are measured meanwhile). */
+        HAND_OVER,
+
+        /** Refused or a deliberate performance: the video plays, lyrics are measured. */
+        LYRICS_ONLY,
+    }
+
+    /**
+     * [mayInstall] is SongVersionPolicy.mayInstallSongVersion (never a cover or
+     * a live take); [refusal] is [refusal] asked with `audible = !stillSilent`.
+     */
+    fun route(mayInstall: Boolean, stillSilent: Boolean, refusal: Refusal?): Route = when {
+        !mayInstall || refusal != null -> Route.LYRICS_ONLY
+        stillSilent -> Route.INSTALL_BEFORE_AUDIO
+        else -> Route.HAND_OVER
     }
 
     /** The playhead part of [refusal], also re-checked after the alignment. */

@@ -61,7 +61,7 @@ LATE_SWAP_DONE_RE = re.compile(
     r"song version:\s+(?P<src>\S+)\s+->\s+(?P<dst>\S+)\s+late swap done\b"
 )
 LATE_BEFORE_AUDIO_RE = re.compile(
-    r"song version:\s+(?P<src>\S+)\s+->\s+(?P<dst>\S+)\s+late, before audio\b"
+    r"song version:\s+(?P<src>\S+)\s+->\s+(?P<dst>\S+)\s+late, before audio(?! refused)\b"
 )
 # `song version: <id> kept (none)`, `kept (timeout)`, `kept (local file, none)`.
 SONG_VERSION_KEPT_RE = re.compile(r"song version:\s+(?P<id>\S+)\s+kept\b")

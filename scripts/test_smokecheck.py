@@ -914,6 +914,7 @@ class LateVersionTest(unittest.TestCase):
         for line in (
             "song version: mv1 -> aud1 late swap refused (alignment not measured)",
             "song version: mv1 -> aud1 late swap starting at mv=21000ms",
+            "song version: mv1 -> aud1 late, before audio refused (music only off)",
         ):
             log = "\n".join(
                 [

@@ -12,6 +12,7 @@ import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.net.DownloadedMvPolicy
+import com.music.bitchord.data.net.LateVersionSwapPolicy
 import com.music.bitchord.data.net.SongVersionPolicy
 import com.music.bitchord.data.net.UnprovenVersions
 import com.music.bitchord.data.settings.AppSettings
@@ -54,18 +55,30 @@ internal class SongVersionController(
     private val setSwappingMediaId: (String?) -> Unit,
     private val onVersionInstalled: () -> Unit,
     /**
-     * Hands the audible video [mediaId] over to its late song version at the
-     * same bar — see [com.music.bitchord.data.net.LateVersionSwapPolicy].
-     * True when the handover was started; `onRefused` runs if it declines
-     * later (no trusted alignment, the standby could not prepare, ...).
+     * Why a late song version must not take the video's place now — see
+     * [LateVersionSwapPolicy.refusal] — read from the service's live state
+     * (music-only, party, cast, the listener's choices, power, playhead).
+     * `audible` false asks for a row that has not made its first sound yet.
+     * The default refuses, which is the behaviour before late handovers.
+     */
+    private val lateVersionRefusal: (
+        exoPlayer: ExoPlayer,
+        mediaId: String,
+        video: Song,
+        version: Song,
+        audible: Boolean,
+    ) -> LateVersionSwapPolicy.Refusal? = { _, _, _, _, _ -> LateVersionSwapPolicy.Refusal.MUSIC_ONLY_OFF },
+    /**
+     * Starts handing the audible video [mediaId] over to its late song
+     * version at the same bar. Returns at once; the service measures the
+     * alignment and re-checks [lateVersionRefusal] at every step.
      */
     private val swapAudibleToVersion: (
         exoPlayer: ExoPlayer,
         mediaId: String,
         video: Song,
         version: Song,
-        onRefused: () -> Unit,
-    ) -> Boolean = { _, _, _, _, _ -> false },
+    ) -> Unit = { _, _, _, _ -> },
 ) {
 
     /** Resolves the song versions of the next few queue rows before they play. */
@@ -226,41 +239,55 @@ internal class SongVersionController(
      * [com.music.bitchord.data.net.LateVersionSwapPolicy] for when that is
      * refused). A cover, a live take
      * or another deliberate performance is never handed over, exactly as
-     * before audio. When the handover is refused — now or after the alignment
-     * — the old behaviour stands: the video keeps playing and its lyrics are
-     * measured against the release.
+     * before audio.
+     *
+     * The lyrics are measured against the release right away, exactly as
+     * before, whenever the video is audible — also while a handover is being
+     * prepared — so a refusal or an abort at any later step never leaves the
+     * video unmeasured, and never makes it wait for the alignment.
      *
      * Event-driven: called once per late answer, never on a timer. The late
      * lookup and the post-audio retry can both answer for one row; the
-     * service folds a second call into the swap already running.
+     * service folds a second call into the handover already running.
      */
     private suspend fun onLateVersion(exoPlayer: ExoPlayer, mediaId: String, song: Song, late: Song) {
         // Past the first-sound budget but still silent (the stream is slow, or
         // music-only's own hold is still waiting): nothing has been heard, so
-        // the release simply takes the row, exactly as before audio.
-        if (SongVersionPolicy.mayInstallSongVersion(song) &&
-            SongVersionPolicy.mayAutoSwapBeforeAudio(
-                positionMs = exoPlayer.currentPosition,
-                isPlaying = exoPlayer.isPlaying,
-                alreadyAudible = SongVersionPolicy.hasMadeFirstSound(mediaId, currentAudibleMediaId()),
-            )
-        ) {
+        // the release simply takes the row, exactly as before audio — under
+        // the same listener and session rules as the audible handover.
+        val stillSilent = SongVersionPolicy.mayAutoSwapBeforeAudio(
+            positionMs = exoPlayer.currentPosition,
+            isPlaying = exoPlayer.isPlaying,
+            alreadyAudible = SongVersionPolicy.hasMadeFirstSound(mediaId, currentAudibleMediaId()),
+        )
+        val mayInstall = SongVersionPolicy.mayInstallSongVersion(song)
+        val refusal = lateVersionRefusal(exoPlayer, mediaId, song, late, !stillSilent)
+        val route = LateVersionSwapPolicy.route(mayInstall, stillSilent, refusal)
+        if (mayInstall && refusal != null) {
             TrackLog.i(
                 "BitChord",
-                "song version: ${song.videoId} -> ${late.videoId} late, before audio",
+                if (stillSilent) {
+                    "song version: ${song.videoId} -> ${late.videoId} late, before audio refused (${refusal.reason})"
+                } else {
+                    "song version: ${song.videoId} -> ${late.videoId} late swap refused (${refusal.reason})"
+                },
                 about = song.videoId,
             )
-            installSongVersionBeforeAudio(exoPlayer, mediaId, song, late)
-            if (exoPlayer.currentMediaItem?.mediaId != mediaId) return
         }
-        if (SongVersionPolicy.mayInstallSongVersion(song) &&
-            swapAudibleToVersion(exoPlayer, mediaId, song, late) {
-                // Declined after it started: the video stays, so the lyrics
-                // measurement it would have had is made now.
-                scope.launch { measureLateLyrics(exoPlayer, mediaId, song, late) }
+        when (route) {
+            LateVersionSwapPolicy.Route.INSTALL_BEFORE_AUDIO -> {
+                TrackLog.i(
+                    "BitChord",
+                    "song version: ${song.videoId} -> ${late.videoId} late, before audio",
+                    about = song.videoId,
+                )
+                // Done either way: a same-id release keeps the media id, so
+                // the id says nothing about whether the install happened.
+                installSongVersionBeforeAudio(exoPlayer, mediaId, song, late)
+                return
             }
-        ) {
-            return
+            LateVersionSwapPolicy.Route.HAND_OVER -> swapAudibleToVersion(exoPlayer, mediaId, song, late)
+            LateVersionSwapPolicy.Route.LYRICS_ONLY -> Unit
         }
         // In the caller's own job, so a track change still cancels it.
         measureLateLyrics(exoPlayer, mediaId, song, late)
