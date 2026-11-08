@@ -313,7 +313,7 @@ internal object SongHearing {
         val started = System.currentTimeMillis()
         // Where a listen waits before its request: 11-08 150a PEIvcxSO9zQ logged nothing for 2.5 min.
         TrackLog.d(TAG, "song-hear: listening until=${untilSeconds.toInt()} min=${minSeconds.toInt()}", videoId)
-        val raw = runCatching { VideoAudio.songStreamOpening(song, untilSeconds, minSeconds) }
+        val raw = runCatching { VideoAudio.songStreamOpening(song, untilSeconds, minSeconds) { !rowGone(videoId) } }
             .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
             .getOrNull()
         TrackLog.d(
@@ -327,6 +327,10 @@ internal object SongHearing {
         // decoder 24 s in and was answered 162 s later, after the song had played uncorrected,
         // while the farm held its whole song. No GET when the farm already answered or said no.
         farmAgain(app, song, language, untilSeconds, exact, raw)?.let { return it }
+        if (raw == null && !decodeAfterNoStream(rowGone(videoId), VersionAudioAligner.renditionToMeasure(videoId) != null)) {
+            TrackLog.d(TAG, "song-hear: the row has left with nothing on disk; not decoding", videoId)
+            return null
+        }
         if (raw != null) {
             // The row's head may be all there is yet (a next row, a blocked
             // stream): the same sound again would pay for the same words.
@@ -514,10 +518,26 @@ internal object SongHearing {
     }
 
     /** Whether [videoId] is neither playing nor next; false with nothing playing. */
-    private fun rowGone(videoId: String): Boolean {
-        val playing = com.music.bitchord.data.DiagnosticsState.currentTrackId ?: return false
-        return videoId != playing && videoId != com.music.bitchord.data.DiagnosticsState.nextTrackId
-    }
+    private fun rowGone(videoId: String): Boolean = rowGone(
+        videoId,
+        com.music.bitchord.data.DiagnosticsState.currentTrackId,
+        com.music.bitchord.data.DiagnosticsState.nextTrackId,
+    )
+
+    /** [rowGone] with the playing and next rows given, so the rule is testable. */
+    internal fun rowGone(videoId: String, playing: String?, next: String?): Boolean =
+        playing != null && videoId != playing && videoId != next
+
+    /**
+     * Whether a listen that found no stream to send goes on to the decoder. A row
+     * that has left with nothing of it on disk does not: the decoder has no audio
+     * for it either, and its head wait only asks YouTube for a stream nobody
+     * plays. 11-08 rounds 156-157 and 187-188: 11 of 20 fall-backs were for a
+     * row already gone and all 11 decoded nothing; 187a v59g4HRNIkc's fall-backs
+     * re-resolved the gone row and pulled 6.8 MB of it while the next row never started.
+     */
+    internal fun decodeAfterNoStream(rowGone: Boolean, anythingOnDisk: Boolean): Boolean =
+        !rowGone || anythingOnDisk
 
     /** The recording [song] would be heard from now; null when its clock is not known. */
     private fun recordingKey(song: Song): String? {

@@ -34,6 +34,26 @@ class SongHearingTest {
     }
 
     @Test
+    fun `a music video handed to its song version has left, the song and the next row have not`() {
+        // 11-08 156a: 8gyLR4NfMiI (MV) became R7O2c5Gl1Mc before any audio; its listen went on.
+        assertEquals(true, SongHearing.rowGone("8gyLR4NfMiI", playing = "R7O2c5Gl1Mc", next = "V6WWJNpIJN4"))
+        assertEquals(false, SongHearing.rowGone("R7O2c5Gl1Mc", playing = "R7O2c5Gl1Mc", next = "V6WWJNpIJN4"))
+        assertEquals(false, SongHearing.rowGone("V6WWJNpIJN4", playing = "R7O2c5Gl1Mc", next = "V6WWJNpIJN4"))
+        assertEquals(false, SongHearing.rowGone("8gyLR4NfMiI", playing = null, next = null))
+    }
+
+    @Test
+    fun `a row that has left with nothing on disk is not handed to the decoder`() {
+        // 11-08 187a v59g4HRNIkc: skipped at 16:26:54, its two fall-backs asked YouTube for it again.
+        assertEquals(false, SongHearing.decodeAfterNoStream(rowGone = true, anythingOnDisk = false))
+        // Unchanged: the playing row waits on the decoder (157b Wk3Vxt3knnI's sound came at 158 s),
+        // and a gone row's bytes on disk are still decoded.
+        assertEquals(true, SongHearing.decodeAfterNoStream(rowGone = false, anythingOnDisk = false))
+        assertEquals(true, SongHearing.decodeAfterNoStream(rowGone = true, anythingOnDisk = true))
+        assertEquals(true, SongHearing.decodeAfterNoStream(rowGone = false, anythingOnDisk = true))
+    }
+
+    @Test
     fun `only an opening someone waits on gets a quick second copy`() {
         assertEquals(15_000L, SongHearing.hedgeAfterMs(90.0, exact = false))
         assertEquals(120_000L, SongHearing.hedgeAfterMs(90.0, exact = true))

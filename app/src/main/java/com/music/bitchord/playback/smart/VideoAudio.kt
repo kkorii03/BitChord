@@ -414,11 +414,13 @@ object VideoAudio {
      * Waits on cache events for up to [untilSeconds], or settles for [minSeconds]
      * after [QUICK_WAIT_MS]. Null means nothing fit to send, not an error: the
      * caller decodes instead. A file on the device is left to the decoded path.
+     * [stillWanted] false (the row has left) asks YouTube for nothing more.
      */
     internal suspend fun songStreamOpening(
         song: Song,
         untilSeconds: Double,
         minSeconds: Double = untilSeconds,
+        stillWanted: () -> Boolean = { true },
     ): SongAudio? = withContext(Dispatchers.IO) {
         if (!untilSeconds.isFinite() || untilSeconds <= 0.0) return@withContext null
         val local = song.localUri?.takeIf { it.isNotBlank() }?.let { Uri.parse(it) }
@@ -445,14 +447,17 @@ object VideoAudio {
         val startBytes = ownCopy()?.cachedPrefix ?: 0L
         var headMs = 0L
         var soundMs = 0L
-        if (startBytes < AudioCache.MIN_ALIGNMENT_PREFIX_BYTES) {
+        // A row that has left gets no head round and no sound wait: 11-08 rounds 156-157 and
+        // 187-188 waited 140 s on rows already skipped or swapped to their song version, and
+        // 187a's asked YouTube for v59g4HRNIkc after it left, beside the row trying to start.
+        if (startBytes < AudioCache.MIN_ALIGNMENT_PREFIX_BYTES && stillWanted()) {
             // A row that has not started the stream yet: this is what asks for it.
             AudioCache.awaitAnalysisHead(Uri.parse(AutomixAnalysisSource.opusUri(videoId)), HEAD_TIMEOUT_MS)
             headMs = System.currentTimeMillis() - began
             // A slow start is not "no audio": giving up here left the song with
             // no check for its whole playback once the sound did come (11-06
             // qsqvJpOgrWw, first sound at 76 s). Ended by the wait or by the sound.
-            if ((ownCopy()?.cachedPrefix ?: 0L) < MIN_RAW_BYTES) {
+            if ((ownCopy()?.cachedPrefix ?: 0L) < MIN_RAW_BYTES && stillWanted()) {
                 AudioCache.awaitRenditionPrefix(videoId, MIN_RAW_BYTES, NO_SOUND_WAIT_MS)
                 soundMs = System.currentTimeMillis() - began - headMs
             }
@@ -466,12 +471,17 @@ object VideoAudio {
             TrackLog.d(TAG, "song check: no stream to send ($why), decoding instead; ${waits()}", videoId)
             return null
         }
-        var copy = ownCopy() ?: return@withContext noStream("no own copy")
+        var copy = ownCopy() ?: return@withContext noStream(if (stillWanted()) "no own copy" else "no own copy, the row has left")
+        // A copy that left the disk mid-listen is fetched again by the head round within
+        // seconds: 11-08 187c ekzHIouo8Q4's copy left the disk between 16:29:16 and 16:29:26, was
+        // back by 16:29:30, and the decoder it went to answered 163 s on. One bounded cache wait.
+        suspend fun regained(): AudioCache.Rendition? =
+            if (stillWanted() && AudioCache.awaitRenditionPrefix(videoId, MIN_RAW_BYTES, QUICK_WAIT_MS)) ownCopy() else null
         val want = bytesFor(untilSeconds, copy)
         if (!copy.isComplete && copy.cachedPrefix < want &&
             !AudioCache.awaitRenditionPrefix(videoId, want, QUICK_WAIT_MS)
         ) {
-            copy = ownCopy() ?: return@withContext noStream("own copy gone after the wait")
+            copy = ownCopy() ?: regained() ?: return@withContext noStream("own copy gone after the wait")
             val least = bytesFor(minSeconds, copy)
             if (!copy.isComplete && copy.cachedPrefix < least &&
                 !AudioCache.awaitRenditionPrefix(videoId, least, (minSeconds * 1000).toLong() + QUICK_WAIT_MS)
@@ -479,7 +489,7 @@ object VideoAudio {
                 TrackLog.d(TAG, "song check: ${copy.cachedPrefix} bytes on disk, $least wanted", videoId)
             }
         }
-        copy = ownCopy() ?: return@withContext noStream("own copy gone")
+        copy = ownCopy() ?: regained() ?: return@withContext noStream("own copy gone")
         // Never past what has landed: reading on would wait for the stream. A
         // shorter first look still sends the song check's window when it is there:
         // that request follows anyway, and this way it reads the kept words
