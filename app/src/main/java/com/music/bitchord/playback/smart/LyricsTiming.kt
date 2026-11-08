@@ -2005,9 +2005,10 @@ object LyricsTiming {
 
     /**
      * A music video whose song version was found only after its first sound
-     * has already started. The recording is not swapped — that rule stands —
-     * but its lyrics can now be measured against the right release instead of
-     * being left unaligned.
+     * has already started, and whose handover to that version was refused
+     * (see LateVersionSwapPolicy) — the video keeps playing, but its lyrics
+     * can now be measured against the right release instead of being left
+     * unaligned.
      */
     suspend fun measureLateVersion(context: Context, video: Song, original: Song, videoMs: Long) {
         if (original.videoId.isBlank() || original.videoId == video.videoId) return

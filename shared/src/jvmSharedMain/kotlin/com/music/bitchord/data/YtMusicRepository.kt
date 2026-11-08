@@ -597,7 +597,7 @@ object YtMusicRepository {
                     // catalogue tracks and put the matching album tracks first;
                     // whatever stays unmapped keeps the cover resolver's
                     // cleaned youtube.com metadata.
-                    val catalogue = CatalogSongMapper.forSearch(query, songs)
+                    val catalogue = CatalogSongMapper.forSearch(query, songs, kind = kind)
                     if (catalogue.isNotEmpty()) {
                         val shown = YouTubeCoverResolver.enrich(
                             catalogue,

@@ -1,11 +1,15 @@
 package com.music.bitchord.data
 
+import com.music.bitchord.data.innertube.SearchKind
+import com.music.bitchord.data.model.BrowseItem
+import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.Song
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.test.fail
 
 /**
  * The pure decisions behind [CatalogSongMapper]: which credit is the same act,
@@ -120,6 +124,195 @@ class CatalogSongMapperTest {
         )
         assertTrue(CatalogSongMapper.alternateTitles("Friday (Live)").isEmpty())
         assertTrue(CatalogSongMapper.alternateTitles("Friday").isEmpty())
+    }
+
+    /**
+     * 134d/135c/136b (2026-11-07): 280 `catalogue mapping: no matching track`
+     * lines and no `(catalogue)` hit, and the line named neither the row's id
+     * nor why the albums it opened held nothing. The fork's log rule allows no
+     * typed text, so the query is reported as a length and a hash, and the row
+     * only as the video id the log can be joined back to.
+     */
+    @Test
+    fun `a catalogue miss names its exit and counts without any typed text`() {
+        val query = "Bruno Mars When I Was Your Man"
+        val line = CatalogSongMapper.missLine(
+            sourceVideoId = "ekzHIouo8Q4",
+            sourceIsVideo = true,
+            reason = "no-album-artist",
+            query = query,
+            albums = 4,
+            matching = 0,
+            pages = 0,
+            tracks = 0,
+            candidates = 0,
+        )
+        assertTrue(line.startsWith("catalogue mapping: no matching track videoId=ekzHIouo8Q4"), line)
+        assertTrue(line.contains("(video source)"), line)
+        assertTrue(line.contains("reason=no-album-artist"), line)
+        for (field in listOf("albums=4", "matching=0", "pages=0", "tracks=0", "candidates=0")) {
+            assertTrue(line.contains(field), line)
+        }
+        assertTrue(line.contains("queryLength=${query.length}"), line)
+        // Nothing the listener typed, and no display text from the row.
+        for (text in listOf("When I Was Your Man", "Bruno Mars", query)) {
+            assertFalse(line.contains(text, ignoreCase = true), "$text leaked into: $line")
+        }
+        // Not the old "'title' / 'artist'" shape either.
+        assertFalse(line.contains(" for '"), line)
+        // The hash is the line's last field, so no count before it can be read
+        // as part of it, and it is the query's own hash.
+        assertEquals(Integer.toHexString(query.hashCode()), queryHashOf(line))
+        assertEquals(
+            queryHashOf(line),
+            queryHashOf(
+                CatalogSongMapper.missLine("id", false, "no-track", query, 1, 1, 1, 1, 1),
+            ),
+        )
+    }
+
+    /** The `queryHash=` value, which must close the line. */
+    private fun queryHashOf(line: String): String =
+        Regex("""queryHash=([0-9a-fA-F]+)$""").find(line)?.groupValues?.get(1)
+            ?: fail("no trailing queryHash field in: $line")
+
+    private fun album(browseId: String, title: String, subtitle: String) = BrowseItem(
+        browseId = browseId,
+        title = title,
+        subtitle = subtitle,
+        thumbnailUrl = null,
+        type = BrowseType.ALBUM,
+    )
+
+    /**
+     * The album filter answers a song's *releases* by relevance: a sped-up
+     * take and the artist's other albums are listed above the album that holds
+     * the song. Taking the first three rows opened three pages that cannot
+     * answer the lookup and logged a miss — the 2026-11-08 run's 280 misses,
+     * none of them a hit. Rows below are the live album-filter answer for
+     * `Sabrina Carpenter - Feather` (title, subtitle and browse id verbatim).
+     */
+    @Test
+    fun `an album is opened ahead of the singles and EPs that outrank it`() {
+        val albums = listOf(
+            album("MPREb_VwIvkLTnuVy", "Sabrina Carpenter - Feather - Piano Cover", "싱글 • Piano Covers • 2024년"),
+            album("MPREb_Vs4cQnUGPVT", "Feather (Sped Up)", "싱글 • Sabrina Carpenter • 2023년"),
+            album("MPREb_FN2r5jrFXVm", "Short n' Sweet", "앨범 • Sabrina Carpenter • 2024년"),
+            album(
+                "MPREb_eBfNDFBZaai",
+                "Feather (Originally Performed by Sabrina Carpenter) (Karaoke Version)",
+                "싱글 • karaoke SESH • 2024년",
+            ),
+            album("MPREb_msfRVJDqlXJ", "Man’s Best Friend", "앨범 • Sabrina Carpenter • 2025년"),
+            album("MPREb_fruitcake", "fruitcake", "EP • Sabrina Carpenter • 2023년"),
+            album("MPREb_fwd", "emails i can’t send fwd:", "앨범 • Sabrina Carpenter • 2023년"),
+        )
+
+        assertEquals(
+            listOf("MPREb_FN2r5jrFXVm", "MPREb_msfRVJDqlXJ", "MPREb_fwd"),
+            CatalogSongMapper.albumPagesFor(albums, "Sabrina Carpenter").map { it.browseId },
+        )
+    }
+
+    /** The same shape for `Bruno Mars - Treasure`: the album is the fifth row. */
+    @Test
+    fun `the release that holds the song is opened even when singles outrank it`() {
+        val albums = listOf(
+            album("MPREb_ThyGRhfjSbZ", "The Romantic", "앨범 • Bruno Mars • 2026년"),
+            album("MPREb_YfEwkO1JDBG", "Treasure: Tribute to Bruno Mars", "싱글 • Nick Down • 2014년"),
+            album("MPREb_wl7Cx4CHeez", "Treasure Remix EP", "EP • Bruno Mars • 2013년"),
+            album("MPREb_mW7gTIMDkSl", "24K Magic", "앨범 • Bruno Mars • 2016년"),
+            album("MPREb_HvNTLCfP5Jk", "Unorthodox Jukebox", "앨범 • Bruno Mars • 2012년"),
+        )
+
+        assertEquals(
+            listOf("MPREb_ThyGRhfjSbZ", "MPREb_mW7gTIMDkSl", "MPREb_HvNTLCfP5Jk"),
+            CatalogSongMapper.albumPagesFor(albums, "Bruno Mars").map { it.browseId },
+        )
+    }
+
+    /** A song released only as a single must still open that single. */
+    @Test
+    fun `a song released only as a single still opens its single`() {
+        val albums = listOf(album("MPREb_vgko26UcRX3", "Flowers", "싱글 • Miley Cyrus • 2023년"))
+
+        assertEquals(
+            listOf("MPREb_vgko26UcRX3"),
+            CatalogSongMapper.albumPagesFor(albums, "Miley Cyrus").map { it.browseId },
+        )
+    }
+
+    /**
+     * Review H3: the album subtitle parser already splits `•`, `·` and `,`,
+     * but the short-release rule only read the bullet shape, so a comma or
+     * middle-dot single/EP was ranked as a full album.
+     */
+    @Test
+    fun `single and EP subtitles split by comma or middle dot are short releases`() {
+        assertTrue(CatalogSongMapper.isShortRelease("싱글 • Miley Cyrus • 2023"))
+        assertTrue(CatalogSongMapper.isShortRelease("Miley Cyrus, 싱글, 2023"))
+        assertTrue(CatalogSongMapper.isShortRelease("EP · Bruno Mars · 2013"))
+        assertTrue(CatalogSongMapper.isShortRelease("Bruno Mars, EP, 2013"))
+        assertFalse(CatalogSongMapper.isShortRelease("앨범 • Bruno Mars • 2012"))
+        assertFalse(CatalogSongMapper.isShortRelease("Bruno Mars, 앨범, 2026년"))
+    }
+
+    /**
+     * Review M3: the search shortcut took the raw relevance order, so the
+     * same album-after-singles miss came back on that path.
+     */
+    @Test
+    fun `a search shortcut opens the album ahead of a single ranked above it`() {
+        val albums = listOf(
+            album("single", "Feather (Sped Up)", "싱글 • Sabrina Carpenter • 2023년"),
+            album("album", "Short n' Sweet", "앨범 • Sabrina Carpenter • 2024년"),
+            album("ep", "Treasure Remix EP", "Bruno Mars, EP, 2013"),
+        )
+
+        assertEquals(
+            listOf("album", "single"),
+            CatalogSongMapper.searchAlbumsFor(albums).map { it.browseId },
+        )
+    }
+
+    /**
+     * Review M2: the priority lane is a separate single permit, so the
+     * process-wide ceiling is MAX_CONCURRENT + 1, not MAX_CONCURRENT.
+     */
+    @Test
+    fun `the shared ceiling plus the priority lane is the stated total`() {
+        assertEquals(2, CatalogSongMapper.MAX_CONCURRENT)
+        assertEquals(3, CatalogSongMapper.MAX_CONCURRENT_TOTAL)
+    }
+
+    /** Other artists' pages are never opened, and the page cap is unchanged. */
+    @Test
+    fun `pages of other artists and pages past the cap are not opened`() {
+        val albums = listOf(
+            album("a", "A", "앨범 • Bruno Mars • 2024년"),
+            album("cover", "When I Was Your Man (Bruno Mars)", "싱글 • Fabio Rodrigues • 2021년"),
+            album("b", "B", "앨범 • Bruno Mars • 2024년"),
+            album("c", "C", "앨범 • Bruno Mars • 2024년"),
+            album("d", "D", "앨범 • Bruno Mars • 2024년"),
+        )
+
+        assertEquals(
+            listOf("a", "b", "c"),
+            CatalogSongMapper.albumPagesFor(albums, "Bruno Mars").map { it.browseId },
+        )
+    }
+
+    /**
+     * The Songs filter answers no rows from a Korean IP, so the youtube.com
+     * uploads are mapped instead — twenty unrelated uploads, each its own
+     * album search. A song-version search reads the row it was given, so its
+     * page must not spend that (triage 2026-11-08).
+     */
+    @Test
+    fun `the song version search maps no unrelated upload rows`() {
+        assertFalse(CatalogSongMapper.mapsPageRows(SearchKind.AUDIO_SWITCH))
+        assertTrue(CatalogSongMapper.mapsPageRows(SearchKind.TYPED))
+        assertTrue(CatalogSongMapper.mapsPageRows(SearchKind.CATALOG))
     }
 
     @Test

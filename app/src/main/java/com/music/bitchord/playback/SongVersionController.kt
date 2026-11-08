@@ -12,6 +12,7 @@ import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.net.DownloadedMvPolicy
+import com.music.bitchord.data.net.LateVersionSwapPolicy
 import com.music.bitchord.data.net.SongVersionPolicy
 import com.music.bitchord.data.net.UnprovenVersions
 import com.music.bitchord.data.settings.AppSettings
@@ -53,6 +54,31 @@ internal class SongVersionController(
     private val currentAudibleMediaId: () -> String?,
     private val setSwappingMediaId: (String?) -> Unit,
     private val onVersionInstalled: () -> Unit,
+    /**
+     * Why a late song version must not take the video's place now — see
+     * [LateVersionSwapPolicy.refusal] — read from the service's live state
+     * (music-only, party, cast, the listener's choices, power, playhead).
+     * `audible` false asks for a row that has not made its first sound yet.
+     * The default refuses, which is the behaviour before late handovers.
+     */
+    private val lateVersionRefusal: (
+        exoPlayer: ExoPlayer,
+        mediaId: String,
+        video: Song,
+        version: Song,
+        audible: Boolean,
+    ) -> LateVersionSwapPolicy.Refusal? = { _, _, _, _, _ -> LateVersionSwapPolicy.Refusal.MUSIC_ONLY_OFF },
+    /**
+     * Starts handing the audible video [mediaId] over to its late song
+     * version at the same bar. Returns at once; the service measures the
+     * alignment and re-checks [lateVersionRefusal] at every step.
+     */
+    private val swapAudibleToVersion: (
+        exoPlayer: ExoPlayer,
+        mediaId: String,
+        video: Song,
+        version: Song,
+    ) -> Unit = { _, _, _, _ -> },
 ) {
 
     /** Resolves the song versions of the next few queue rows before they play. */
@@ -76,9 +102,9 @@ internal class SongVersionController(
 
     /**
      * Waits for a version lookup that outlived the 1.5 s budget. The queue
-     * plays the video meanwhile; when the answer arrives, its lyrics are
-     * measured against the catalogue release. The recording itself is never
-     * swapped once it is audible.
+     * plays the video meanwhile; when the answer arrives, the video is handed
+     * over to the release at the same bar (see [onLateVersion]), or, when that
+     * is refused, its lyrics are measured against the catalogue release.
      */
     private var lateVersionMeasureJob: Job? = null
     private var versionHoldWantsPlay = false
@@ -134,8 +160,9 @@ internal class SongVersionController(
      *
      * Runs only after this track has made its first sound (the player callback
      * that schedules the look-ahead also calls this), and at most once per
-     * track. A found release is cached for the next playback and used as the
-     * lyrics reference; it never replaces a recording that is already audible.
+     * track. A found release is cached for the next playback and handed to
+     * [onLateVersion]: the audible video moves over to it at the same bar when
+     * the alignment allows, and is otherwise measured against it for lyrics.
      * Covers, live rows and other deliberate performances stay exactly as the
      * existing [SongVersionPolicy.mayInstallSongVersion] says.
      */
@@ -171,27 +198,19 @@ internal class SongVersionController(
                 "song version: ${song.videoId} -> ${found.videoId} via retry",
                 about = song.videoId,
             )
-            // The track is audible, so the recording is not swapped under the
-            // listener. The cached answer is what the next playback installs;
-            // the lyrics measurement is the one thing useful right now.
-            if (currentPlayer() === exoPlayer &&
-                exoPlayer.currentMediaItem?.mediaId == id &&
-                TrackDiagnostics.lyricsFor(song.videoId) != null
-            ) {
-                LyricsTiming.measureLateVersion(
-                    context,
-                    song.copy(isVideo = true),
-                    found,
-                    song.durationMillis(),
-                )
+            // The cached answer is what the next playback installs. Right now
+            // the audible video is handed over to it at the same bar, or, when
+            // that is refused, its lyrics are measured against it.
+            if (currentPlayer() === exoPlayer && exoPlayer.currentMediaItem?.mediaId == id) {
+                onLateVersion(exoPlayer, id, song, found)
             }
         }
     }
 
     /**
-     * The version lookup outlived the first-sound budget. This video is
-     * playing and stays playing; if the shared lookup still lands while it is
-     * current, its lyrics are measured against that release.
+     * The version lookup outlived the first-sound budget. This video plays
+     * meanwhile; if the shared lookup still lands while it is current, it is
+     * handed to [onLateVersion].
      */
     fun watchForLateVersion(exoPlayer: ExoPlayer, mediaId: String, song: Song) {
         if (!AppSettings.preferMusicOnly.value) return
@@ -208,16 +227,84 @@ internal class SongVersionController(
             } ?: return@launch
             if (!SongVersionPolicy.isSongVersionOf(song, late)) return@launch
             if (currentPlayer() !== exoPlayer || exoPlayer.currentMediaItem?.mediaId != mediaId) return@launch
-            // Nothing to move if the lyrics never arrived; the normal lyrics
-            // path then measures against the answer already in the cache.
-            if (TrackDiagnostics.lyricsFor(song.videoId) == null) return@launch
-            LyricsTiming.measureLateVersion(
-                context,
-                song.copy(isVideo = true),
-                late,
-                song.durationMillis(),
+            onLateVersion(exoPlayer, mediaId, song, late)
+        }
+    }
+
+    /**
+     * A song version found while its video is already audible.
+     *
+     * Music-only promises the song, so the video is handed over to it at the
+     * same bar through the player's aligned cross-fade (see
+     * [com.music.bitchord.data.net.LateVersionSwapPolicy] for when that is
+     * refused). A cover, a live take
+     * or another deliberate performance is never handed over, exactly as
+     * before audio.
+     *
+     * The lyrics are measured against the release right away, exactly as
+     * before, whenever the video is audible — also while a handover is being
+     * prepared — so a refusal or an abort at any later step never leaves the
+     * video unmeasured, and never makes it wait for the alignment.
+     *
+     * Event-driven: called once per late answer, never on a timer. The late
+     * lookup and the post-audio retry can both answer for one row; the
+     * service folds a second call into the handover already running.
+     */
+    private suspend fun onLateVersion(exoPlayer: ExoPlayer, mediaId: String, song: Song, late: Song) {
+        // Past the first-sound budget but still silent (the stream is slow, or
+        // music-only's own hold is still waiting): nothing has been heard, so
+        // the release simply takes the row, exactly as before audio — under
+        // the same listener and session rules as the audible handover.
+        val stillSilent = SongVersionPolicy.mayAutoSwapBeforeAudio(
+            positionMs = exoPlayer.currentPosition,
+            isPlaying = exoPlayer.isPlaying,
+            alreadyAudible = SongVersionPolicy.hasMadeFirstSound(mediaId, currentAudibleMediaId()),
+        )
+        val mayInstall = SongVersionPolicy.mayInstallSongVersion(song)
+        val refusal = lateVersionRefusal(exoPlayer, mediaId, song, late, !stillSilent)
+        val route = LateVersionSwapPolicy.route(mayInstall, stillSilent, refusal)
+        if (mayInstall && refusal != null) {
+            TrackLog.i(
+                "BitChord",
+                if (stillSilent) {
+                    "song version: ${song.videoId} -> ${late.videoId} late, before audio refused (${refusal.reason})"
+                } else {
+                    "song version: ${song.videoId} -> ${late.videoId} late swap refused (${refusal.reason})"
+                },
+                about = song.videoId,
             )
         }
+        when (route) {
+            LateVersionSwapPolicy.Route.INSTALL_BEFORE_AUDIO -> {
+                TrackLog.i(
+                    "BitChord",
+                    "song version: ${song.videoId} -> ${late.videoId} late, before audio",
+                    about = song.videoId,
+                )
+                // Done either way: a same-id release keeps the media id, so
+                // the id says nothing about whether the install happened.
+                installSongVersionBeforeAudio(exoPlayer, mediaId, song, late)
+                return
+            }
+            LateVersionSwapPolicy.Route.HAND_OVER -> swapAudibleToVersion(exoPlayer, mediaId, song, late)
+            LateVersionSwapPolicy.Route.LYRICS_ONLY -> Unit
+        }
+        // In the caller's own job, so a track change still cancels it.
+        measureLateLyrics(exoPlayer, mediaId, song, late)
+    }
+
+    /** The late answer as the lyrics reference of the video that keeps playing. */
+    private suspend fun measureLateLyrics(exoPlayer: ExoPlayer, mediaId: String, song: Song, late: Song) {
+        if (currentPlayer() !== exoPlayer || exoPlayer.currentMediaItem?.mediaId != mediaId) return
+        // Nothing to move if the lyrics never arrived; the normal lyrics path
+        // then measures against the answer already in the cache.
+        if (TrackDiagnostics.lyricsFor(song.videoId) == null) return
+        LyricsTiming.measureLateVersion(
+            context,
+            song.copy(isVideo = true),
+            late,
+            song.durationMillis(),
+        )
     }
 
     /**
@@ -531,8 +618,9 @@ internal class SongVersionController(
      * way a row can become current without that — a skip, a previous, a
      * restored queue. The first sound is held for at most
      * [SongVersionPolicy.BEFORE_AUDIO_TIMEOUT_MS]; if no version is found in
-     * that window the video plays as it is and is never swapped mid-song. A
-     * cached answer returns without a wait.
+     * that window the video plays, and a version that lands later is handed
+     * over only through the aligned cross-fade in [onLateVersion]. A cached
+     * answer returns without a wait.
      *
      * A row playing from a downloaded file is no exception when it is a video:
      * the file is the video, so the catalogue release is still what should
@@ -788,8 +876,9 @@ internal class SongVersionController(
                     about = song.videoId,
                 )
                 // The lookup itself keeps running in the repository's shared
-                // scope. If it lands while this video is still playing, use it
-                // as the lyrics reference (never as a mid-song swap).
+                // scope. If it lands while this video is still playing, the
+                // video is handed over to it at the same bar, or, when that is
+                // refused, it is used as the lyrics reference.
                 watchForLateVersion(exoPlayer, mediaId, lookupSong)
                 // A timeout is not "no version": one retry is due after the
                 // first sound. If the track is already sounding, run it now,

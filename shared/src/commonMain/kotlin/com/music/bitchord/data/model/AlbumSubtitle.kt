@@ -23,10 +23,7 @@ data class AlbumSubtitle(
 }
 
 fun parseAlbumSubtitle(subtitle: String): AlbumSubtitle {
-    val parts = subtitle
-        .split("•", "·", ",")
-        .map { it.trim() }
-        .filter { it.isNotEmpty() }
+    val parts = subtitleParts(subtitle)
 
     var year: Int? = null
     var month: Int? = null
@@ -54,6 +51,20 @@ fun parseAlbumSubtitle(subtitle: String): AlbumSubtitle {
         day = day,
     )
 }
+
+/**
+ * The release kind a subtitle states ("싱글", "EP", "앨범"), or null. Uses the
+ * same split and [KIND_WORDS] as [parseAlbumSubtitle], so a comma or
+ * middle-dot subtitle is read the same as a bullet one.
+ */
+fun albumKind(subtitle: String): String? =
+    subtitleParts(subtitle).firstOrNull { it.lowercase() in KIND_WORDS }
+
+private fun subtitleParts(subtitle: String): List<String> =
+    subtitle
+        .split("•", "·", ",")
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
 
 /** Year, and the month/day when the token states them. */
 private fun parseDate(raw: String): Triple<Int, Int?, Int?>? {

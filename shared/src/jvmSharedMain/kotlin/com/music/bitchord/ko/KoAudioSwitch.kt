@@ -20,6 +20,9 @@ internal object KoAudioSwitch {
 
     private const val TAG = "BitChord"
 
+    /** Video rows one AUDIO_SWITCH query may spend a catalogue mapping on. */
+    private const val MAX_RECOVERED_ROWS = 2
+
     suspend fun resolveAudioUncached(song: Song): Song {
         val row = audioSwitchRow(song)
         // A row whose type is still unknown is treated as a video for timing:
@@ -31,6 +34,7 @@ internal object KoAudioSwitch {
         var failedQueries = 0
         var videoRowsOnly = false
         val loggedRejects = HashSet<String>()
+        val budget = CatalogSongMapper.newBudget()
         for (query in TrackMatcher.audioSwitchQueries(row)) {
             queriesRun++
             Log.d(TAG, "audio switch: query=$query")
@@ -40,58 +44,21 @@ internal object KoAudioSwitch {
                 ?.filterIsInstance<SearchResult.Track>()
                 ?.map { it.song }
                 .orEmpty()
-            val candidates = rows.filterNot { it.isVideo }
+            var candidates = rows.filterNot { it.isVideo }
+            // The free audio rows first: a page that already answers costs no
+            // mapping.
+            adoptBest(rows, candidates, target, song, query.length)?.let { return it }
+            // A row that only a catalogue mapping can turn into audio (an
+            // official-audio upload with a 16:9 still, an MV mapped to its
+            // track) used to be dropped when AUDIO_SWITCH stopped mapping
+            // every row. Map only the few video rows that could be this song,
+            // and only after the free rows failed.
+            val recovered = recoverMappedRows(rows, row, target, budget)
+            if (recovered.isNotEmpty()) {
+                candidates = candidates + recovered
+                adoptBest(rows, candidates, target, song, query.length)?.let { return it }
+            }
             if (rows.isNotEmpty() && candidates.isEmpty()) videoRowsOnly = true
-            TrackMatcher.bestSameArtist(candidates, target)?.let { match ->
-                Log.d(
-                    TAG,
-                    "audio switch: '${song.title}' -> '${match.title}' (queryLength=${query.length})",
-                )
-                YtMusicRepository.audioVersionCache[song.videoId] = match
-                return match
-            }
-            // Music-video timing is visual timing, not the audio release's
-            // timing. The manual switch may therefore use the exact official
-            // song/artist match even when the video has a long intro or outro.
-            TrackMatcher.bestOfficialAudioForVideo(candidates, target)?.let { match ->
-                Log.d(
-                    TAG,
-                    "audio switch: accepted video/runtime drift '${song.title}' -> " +
-                        "'${match.title}' (queryLength=${query.length})",
-                )
-                YtMusicRepository.audioVersionCache[song.videoId] = match
-                return match
-            }
-            // A Korean release files the song under its own name while the
-            // video is titled in English ("체포하겠어" / "You're Under
-            // Arrest"), so the title cannot be compared at all. A fanchant or
-            // stage upload on this same page prints both names, and that row is
-            // what ties them together; see TrackMatcher.bestTitleBridged for
-            // the artist and runtime checks that keep it from playing a
-            // different song.
-            // Priority: the bridge goes first because a row printing both names
-            // is direct evidence, while title-unverified below rests on credit
-            // and runtime alone. Both pass through adoptAudio, so a swap the
-            // lyrics already proved wrong is refused on either path.
-            TrackMatcher.bestTitleBridged(rows, candidates, target)?.let { (match, reading) ->
-                adoptAudio(song, match, "title-bridge ($reading)")?.let { return it }
-            }
-            // The page that would print both names is not always returned (the
-            // phone's 11-06 page held only the MV and the Korean album row), so
-            // the bridge above cannot fire. The credit and the runtime still
-            // agree, and that is the grade the quality upgrade already trusts
-            // for exactly this song — see
-            // TrackMatcher.isAudioSwitchTitleUnverified. Only when the page can
-            // name one song by them, and a cover, karaoke or remix row is
-            // refused inside it. Nothing compared the sound yet, so the row is
-            // noted for the check its first sound starts — see UnprovenVersions.
-            val unverified = TrackMatcher.titleUnverifiedAdoption(candidates, target)
-            if (unverified != null) {
-                adoptAudio(song, unverified, "title-unverified (artist+length)")?.let { adopted ->
-                    UnprovenVersions.note(song, adopted.videoId)
-                    return adopted
-                }
-            }
             // One line per candidate that did not become the answer, so a
             // device log names the failing check instead of only the outcome.
             for (candidate in rows) {
@@ -110,8 +77,15 @@ internal object KoAudioSwitch {
         // search. This is the same mapping the gated search uses, asked
         // directly for this one row. A downloaded video still qualifies: the
         // lookup reads album metadata only and never touches its file.
+        // priority: this is the row the before-audio budget is waiting on, so
+        // it does not queue behind radio and shelf work (triage 2026-11-08).
         val catalogueLookup = try {
-            CatalogSongMapper.mapResult(song, allowLocalVideo = true)
+            CatalogSongMapper.mapResult(
+                song,
+                budget,
+                allowLocalVideo = true,
+                priority = true,
+            )
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
@@ -145,6 +119,101 @@ internal object KoAudioSwitch {
         }
         return song
     }
+
+    /**
+     * The first row among [candidates] the switch may adopt, or null. [rows]
+     * is the whole page, which the title bridge reads as evidence.
+     */
+    private fun adoptBest(
+        rows: List<Song>,
+        candidates: List<Song>,
+        target: TrackMatcher.Target,
+        song: Song,
+        queryLength: Int,
+    ): Song? {
+        TrackMatcher.bestSameArtist(candidates, target)?.let { match ->
+            Log.d(
+                TAG,
+                "audio switch: '${song.title}' -> '${match.title}' (queryLength=$queryLength)",
+            )
+            YtMusicRepository.audioVersionCache[song.videoId] = match
+            return match
+        }
+        // Music-video timing is visual timing, not the audio release's timing.
+        // The manual switch may therefore use the exact official song/artist
+        // match even when the video has a long intro or outro.
+        TrackMatcher.bestOfficialAudioForVideo(candidates, target)?.let { match ->
+            Log.d(
+                TAG,
+                "audio switch: accepted video/runtime drift '${song.title}' -> " +
+                    "'${match.title}' (queryLength=$queryLength)",
+            )
+            YtMusicRepository.audioVersionCache[song.videoId] = match
+            return match
+        }
+        // A Korean release files the song under its own name while the video
+        // is titled in English, so a fanchant or stage upload printing both
+        // names is what ties them together. The bridge goes first because it is
+        // direct evidence; title-unverified below rests on credit and runtime.
+        // Both pass through adoptAudio, so a swap the lyrics proved wrong is
+        // refused on either path.
+        TrackMatcher.bestTitleBridged(rows, candidates, target)?.let { (match, reading) ->
+            adoptAudio(song, match, "title-bridge ($reading)")?.let { return it }
+        }
+        val unverified = TrackMatcher.titleUnverifiedAdoption(candidates, target)
+        if (unverified != null) {
+            adoptAudio(song, unverified, "title-unverified (artist+length)")?.let { adopted ->
+                UnprovenVersions.note(song, adopted.videoId)
+                return adopted
+            }
+        }
+        return null
+    }
+
+    /**
+     * Video rows a catalogue lookup could turn into this song's audio. Only
+     * rows that already name the same title and act are tried, so a page of
+     * unrelated uploads spends nothing; [MAX_RECOVERED_ROWS] bounds the rest
+     * against the before-audio budget.
+     */
+    internal suspend fun recoverMappedRows(
+        rows: List<Song>,
+        row: Song,
+        target: TrackMatcher.Target,
+        budget: CatalogSongMapper.LookupBudget,
+    ): List<Song> {
+        val recoverable = rows.asSequence()
+            .filter { it.videoId != row.videoId }
+            .filter { recoverableForAudioSwitch(it, row, target) }
+            .take(MAX_RECOVERED_ROWS)
+            .toList()
+        if (recoverable.isEmpty()) return emptyList()
+        return recoverable.mapNotNull { candidate ->
+            try {
+                CatalogSongMapper.map(candidate, budget, priority = true)?.toSong(candidate)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                Log.w(TAG, "audio switch: mapping ${candidate.videoId} failed: ${failure.message}")
+                null
+            }
+        }
+    }
+
+    /**
+     * A video row that a catalogue mapping could make audio, and that could be
+     * this song: same act and same title/version. A cover, a live take or
+     * another act is never recovered.
+     */
+    internal fun recoverableForAudioSwitch(
+        candidate: Song,
+        row: Song,
+        target: TrackMatcher.Target,
+    ): Boolean =
+        candidate.isVideo &&
+            !CatalogSongMapper.isCover(candidate) &&
+            (target.artist.isBlank() || TrackMatcher.sharesArtist(candidate.artist, target.artist)) &&
+            TrackMatcher.sameTitle(candidate, row)
 
     /**
      * The miss line, with the video id so a device log names the row without

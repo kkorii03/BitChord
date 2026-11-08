@@ -55,7 +55,14 @@ internal object YouTubeDisplayCleaner {
         // the singer is the artist; otherwise the uploader is all we know.
         CoverTitles.read(fixed)?.let { cover -> return cleanCover(fixed, cover) }
         if (isCover(fixed.title)) return cleanCoverTitle(fixed)
-        val cleaned = clean(fixed.title, fixed.artist, knownArtists)
+        // The row's own channel is the credit its "Artist - Song" title
+        // prints, so it counts as a known act here: an artist's own upload
+        // used to keep "Sabrina Carpenter - Feather" as the song's name,
+        // which the catalogue lookup then searched the albums for
+        // (catalogue mapping, 2026-11-07).
+        val credit = fixed.artist.trim()
+        val known = if (credit.isEmpty()) knownArtists else knownArtists + credit
+        val cleaned = clean(fixed.title, credit, known)
         val album = cleaned.album?.takeIf { it.isNotBlank() } ?: fixed.albumName
         if (cleaned.title == fixed.title && cleaned.artist == fixed.artist && album == fixed.albumName) {
             return fixed
@@ -267,6 +274,37 @@ internal object YouTubeDisplayCleaner {
                 return Cleaned(songTitle, byline)
             }
         }
+        // A fan or lyric channel prints the song's artist in front of the dash
+        // and leaves its own name as the uploader
+        // ("아이유(IU) - 좋은 날 [가사/Lyrics]" by "웅키"). The title is then the
+        // only place that names the artist, so a stated credit there is the
+        // artist and the tail is the song — but only when the title or the
+        // row's own history proves the left side is an act: a personal channel
+        // that writes "Song - Artist" must keep its title whole (review H1).
+        if (split != null && !labelChannel) {
+            val credit = collapseAliases(split.first)
+            val songTitle = split.second.trim().trim(' ', '-', '_', '|', '·', '/')
+            // A known act on the right says the title is "Song - Artist", not
+            // "Artist - Song": "Cheer Up - TWICE" on a lyric channel must not
+            // invert just because TWICE is a name the index has learned
+            // (review H1).
+            val rightIsKnown = isKnownCredit(collapseAliases(split.second), rawChannel, knownArtists)
+            if (songTitle.isNotBlank() &&
+                compact(credit) != compact(rawChannel) &&
+                isStatedCredit(credit) &&
+                !rightIsKnown &&
+                (isKnownCredit(credit, rawChannel, knownArtists) ||
+                    LYRIC_UPLOAD.containsMatchIn(rawTitle)) &&
+                // A take after the dash ("Dynamite - Remix") belongs to the
+                // title; a credit before a take is not the "Artist - Song"
+                // shape at all.
+                songTitle.split(WHITESPACE).none {
+                    it.lowercase().trim(*PACKAGING_TRIM) in PACKAGING_CREDIT
+                }
+            ) {
+                return Cleaned(songTitle, credit)
+            }
+        }
         val fallbackArtist = channelArtist.ifBlank { if (labelChannel) "" else rawChannel }
         return Cleaned(
             text.ifBlank { rawTitle },
@@ -314,7 +352,7 @@ internal object YouTubeDisplayCleaner {
     private fun isStatedCredit(name: String): Boolean {
         val words = name.split(WHITESPACE)
         if (words.isEmpty() || words.size > 4) return false
-        if (words.any { it.lowercase().trim('.') in PACKAGING_CREDIT || isVenueWord(it) }) return false
+        if (words.any { it.lowercase().trim(*PACKAGING_TRIM) in PACKAGING_CREDIT || isVenueWord(it) }) return false
         if (readsAsAPhrase(words)) return false
         return !isAgencyChannel(name) && !TrackMatcher.isSoundtrackCredit(name)
     }
@@ -379,7 +417,7 @@ internal object YouTubeDisplayCleaner {
         val nameWords = name.split(WHITESPACE)
         if (nameWords.size !in 2..4) return false
         if (byline.split(WHITESPACE).size > 4) return false
-        if (nameWords.any { it.lowercase().trim('.') in PACKAGING_CREDIT || isVenueWord(it) }) return false
+        if (nameWords.any { it.lowercase().trim(*PACKAGING_TRIM) in PACKAGING_CREDIT || isVenueWord(it) }) return false
         return LATIN.containsMatchIn(name) != LATIN.containsMatchIn(byline)
     }
 
@@ -502,6 +540,14 @@ internal object YouTubeDisplayCleaner {
         "feat", "ft", "ep", "episode", "vol", "part", "preview", "trailer",
         "making", "behind",
     )
+
+    /** Brackets and punctuation a packaging word may wear: "(Remix)", "【Live】". */
+    private val PACKAGING_TRIM = charArrayOf(
+        '.', ',', '(', ')', '[', ']', '（', '）', '【', '】',
+    )
+
+    /** A title that says it is a lyric upload, where "Artist - Song" is the shape. */
+    private val LYRIC_UPLOAD = Regex("""(?i)가사|lyrics?\b""")
 
     /** Words of a sentence rather than of a name; see [readsAsAPhrase]. */
     private val PHRASE_WORDS = setOf(
