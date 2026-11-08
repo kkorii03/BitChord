@@ -4198,6 +4198,9 @@ class PlaybackService : MediaLibraryService() {
     private var lateHandoverJob: Job? = null
     private var lateHandoverFor: Pair<String, String>? = null
 
+    /** True once [lateHandoverJob] has handed off to the fade, which [cancelLateHandover] leaves alone. */
+    private var lateHandoverSwapping = false
+
     /**
      * Hands an audible music video over to the song version that was found
      * only after it started — see [LateVersionSwapPolicy].
@@ -4210,15 +4213,16 @@ class PlaybackService : MediaLibraryService() {
      *    against the live player and run [smoothSwapCurrentTrackVersion],
      *    which finds the offset cached and re-checks again at every step.
      *
-     * The caller has already started the video's lyrics measurement, so a
-     * refusal at any point leaves nothing to fall back to.
+     * Returns the job that ends when the handover is done, refused or
+     * cancelled (null when none started); the caller measures the video's
+     * lyrics after it, so the two decodes do not fight over the gate.
      */
     private fun lateSwapToVersion(
         exoPlayer: ExoPlayer,
         mediaId: String,
         video: Song,
         version: Song,
-    ) {
+    ): Job? {
         val pair = mediaId to version.videoId
         // The late lookup, the post-audio retry and music-only's own late
         // answer can all answer for one row, even with different releases.
@@ -4233,12 +4237,12 @@ class PlaybackService : MediaLibraryService() {
                     about = mediaId,
                 )
             }
-            return
+            return lateHandoverJob
         }
         if (lateHandoverFor == pair && versionSwapJob?.isActive == true && swappingMediaId == version.videoId) {
-            return
+            return versionSwapJob
         }
-        val item = exoPlayer.currentMediaItem?.takeIf { it.mediaId == mediaId } ?: return
+        val item = exoPlayer.currentMediaItem?.takeIf { it.mediaId == mediaId } ?: return null
         val row = LateHandoverRow.of(item)
         // The whole pass — both heads and both decodes — must end before the
         // playhead passes the measured opening, where the handover would be
@@ -4263,6 +4267,7 @@ class PlaybackService : MediaLibraryService() {
         val handover = LateHandover(exoPlayer, row, video, version)
         cancelLateHandover("another row's late version")
         lateHandoverFor = pair
+        lateHandoverSwapping = false
         lateHandoverJob = scope.launch(Dispatchers.Main) {
             val source = item.toSong()
             val target = replacement.toSong()
@@ -4322,8 +4327,15 @@ class PlaybackService : MediaLibraryService() {
             // The same bookkeeping as music-only's own conversion: the player
             // menu's switch back to the video returns to this row.
             YtMusicRepository.rememberVideoVersion(version.videoId, video)
+            val before = versionSwapJob
+            lateHandoverSwapping = true
             smoothSwapCurrentTrackVersion(replacement, lateHandover = handover)
+            // Held until the fade has committed or stopped, so the caller's
+            // lyrics measurement follows it; the swap re-checks its own rules
+            // and is not cancelled from here.
+            versionSwapJob?.takeIf { it !== before }?.join()
         }
+        return lateHandoverJob
     }
 
     /**
@@ -4369,7 +4381,7 @@ class PlaybackService : MediaLibraryService() {
      */
     private fun cancelLateHandover(reason: String, keepFor: String? = null) {
         val job = lateHandoverJob ?: return
-        if (!job.isActive) return
+        if (!job.isActive || lateHandoverSwapping) return
         val (videoId, versionId) = lateHandoverFor ?: return
         if (keepFor != null && keepFor == videoId) return
         TrackLog.i(

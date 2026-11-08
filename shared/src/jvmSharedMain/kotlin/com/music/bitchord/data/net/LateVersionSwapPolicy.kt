@@ -46,13 +46,6 @@ object LateVersionSwapPolicy {
     const val MIN_REMAINING_MS = 20_000L
 
     /**
-     * The most one alignment pass (both heads and both decodes) may run. The
-     * playhead bound usually ends it first; this caps a pass started at the
-     * very top of a video, so no pass ever outlives a minute.
-     */
-    const val MAX_PASS_MS = 60_000L
-
-    /**
      * How long the handover waits for the standby player to be ready. Longer
      * than a manual switch's 7 s: the video keeps playing meanwhile, so the
      * wait is not heard.
@@ -65,13 +58,14 @@ object LateVersionSwapPolicy {
      * [MAX_VIDEO_POSITION_MS] the handover is refused anyway, so a pass that
      * runs past that point only burns the battery. At [speed] the playhead
      * covers the room faster or slower than the wall clock. 0 when there is no
-     * room left.
+     * room left. Never more than [MAX_VIDEO_POSITION_MS] at normal speed.
      */
     fun passBudgetMs(videoPositionMs: Long, speed: Float): Long {
         val room = MAX_VIDEO_POSITION_MS - videoPositionMs.coerceAtLeast(0L)
         if (room <= 0L) return 0L
-        val rate = speed.takeIf { it.isFinite() && it > 0f } ?: 1f
-        return (room / rate).toLong().coerceAtMost(MAX_PASS_MS)
+        // Slower than half speed is read as half: the budget stays bounded.
+        val rate = speed.takeIf { it.isFinite() && it > 0f }?.coerceAtLeast(0.5f) ?: 1f
+        return (room / rate).toLong()
     }
 
     /** What to do with music-only's own audio-version answer when it lands after the cap. */

@@ -207,11 +207,13 @@ class LateVersionSwapPolicyTest {
     }
 
     @Test
-    fun `no pass outlives a minute and speed is honoured`() {
-        assertEquals(LateVersionSwapPolicy.MAX_PASS_MS, LateVersionSwapPolicy.passBudgetMs(0L, 1f))
-        assertEquals(LateVersionSwapPolicy.MAX_PASS_MS, LateVersionSwapPolicy.passBudgetMs(-500L, 1f))
+    fun `the budget is bounded and speed is honoured`() {
+        assertEquals(75_000L, LateVersionSwapPolicy.passBudgetMs(0L, 1f))
+        assertEquals(75_000L, LateVersionSwapPolicy.passBudgetMs(-500L, 1f))
         // At 2x the playhead covers 40 s of room in 20 s.
         assertEquals(20_000L, LateVersionSwapPolicy.passBudgetMs(35_000L, 2f))
+        // A very slow speed cannot stretch it past twice the room.
+        assertEquals(80_000L, LateVersionSwapPolicy.passBudgetMs(35_000L, 0.1f))
         // A nonsense speed is read as 1x, never as an endless or zero budget.
         assertEquals(40_000L, LateVersionSwapPolicy.passBudgetMs(35_000L, 0f))
         assertEquals(40_000L, LateVersionSwapPolicy.passBudgetMs(35_000L, Float.NaN))

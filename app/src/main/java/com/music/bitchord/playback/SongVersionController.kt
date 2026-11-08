@@ -70,15 +70,17 @@ internal class SongVersionController(
     ) -> LateVersionSwapPolicy.Refusal? = { _, _, _, _, _ -> LateVersionSwapPolicy.Refusal.MUSIC_ONLY_OFF },
     /**
      * Starts handing the audible video [mediaId] over to its late song
-     * version at the same bar. Returns at once; the service measures the
-     * alignment and re-checks [lateVersionRefusal] at every step.
+     * version at the same bar. Returns at once with the handover's job (or
+     * null when none started); the service measures the alignment and
+     * re-checks [lateVersionRefusal] at every step. The job ends when the
+     * handover is done, refused or cancelled, and is bounded by the playhead.
      */
     private val swapAudibleToVersion: (
         exoPlayer: ExoPlayer,
         mediaId: String,
         video: Song,
         version: Song,
-    ) -> Unit = { _, _, _, _ -> },
+    ) -> Job? = { _, _, _, _ -> null },
 ) {
 
     /** Resolves the song versions of the next few queue rows before they play. */
@@ -256,10 +258,10 @@ internal class SongVersionController(
      * or another deliberate performance is never handed over, exactly as
      * before audio.
      *
-     * The lyrics are measured against the release right away, exactly as
-     * before, whenever the video is audible — also while a handover is being
-     * prepared — so a refusal or an abort at any later step never leaves the
-     * video unmeasured, and never makes it wait for the alignment.
+     * The lyrics are measured against the release whenever the video stays
+     * audible: at once when no handover starts, and when the handover's job
+     * ends otherwise — any refusal or abort ends it, so none can leave the
+     * video unmeasured, and the job is bounded by the playhead.
      *
      * Event-driven: called once per late answer, never on a timer. The late
      * lookup and the post-audio retry can both answer for one row; the
@@ -301,7 +303,16 @@ internal class SongVersionController(
                 installSongVersionBeforeAudio(exoPlayer, mediaId, song, late)
                 return
             }
-            LateVersionSwapPolicy.Route.HAND_OVER -> swapAudibleToVersion(exoPlayer, mediaId, song, late)
+            // The video's lyrics are measured once the handover has settled,
+            // not beside it: both decodes share the one-at-a-time gate, and
+            // the lyrics pass took it first and held it for ~55 s on the
+            // emulator, so the alignment ran out of time (round-score 9,
+            // 102a r_0JjYUe5jo: a 5 s alignment that started 56 s late). A
+            // handover that lands makes the measurement moot (the row is the
+            // release, measureLateLyrics returns); one refused or cancelled
+            // ends the job, and the lyrics are measured then. The job is
+            // bounded by the playhead, so the wait is too.
+            LateVersionSwapPolicy.Route.HAND_OVER -> swapAudibleToVersion(exoPlayer, mediaId, song, late)?.join()
             LateVersionSwapPolicy.Route.LYRICS_ONLY -> Unit
         }
         // In the caller's own job, so a track change still cancels it.
