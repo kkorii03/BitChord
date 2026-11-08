@@ -49,6 +49,14 @@ object LyricsPerLine {
     /** Fewer lines than this is not a song-wide answer. */
     const val MIN_GOOD_SHEET_LINES = 8
 
+    /**
+     * A sheet that is a transcript of this very recording (Gemini's) has the sung words
+     * as its text, so a line whose letters were mostly heard (this share) may be placed
+     * by where its opening was heard even when the transcript split it into fewer than
+     * [MIN_ANCHOR_WORDS] words or spread them over [MAX_ANCHOR_MAD_MS]. Same move cap as two words.
+     */
+    const val MIN_OWN_TRANSCRIPT_SHARE = 0.6
+
     /** Two anchors further apart than this do not interpolate between themselves. */
     const val MAX_INTERPOLATE_SPAN_MS = 30_000L
 
@@ -118,6 +126,8 @@ object LyricsPerLine {
         heard: List<LyricsWordAlign.Heard>,
         heardAudioKey: Int?,
         currentAudioKey: Int?,
+        /** [lines] are a transcript of the recording heard; see [MIN_OWN_TRANSCRIPT_SHARE]. */
+        ownTranscript: Boolean = false,
     ): Layer {
         if (heardAudioKey != currentAudioKey) return Layer.identity(lines.size)
         if (lines.isEmpty() || heard.isEmpty()) return Layer.identity(lines.size)
@@ -157,6 +167,7 @@ object LyricsPerLine {
             if (abs(residual) > cap) continue
             found += Anchor(index, lines[index].timeMs, residual)
         }
+        if (ownTranscript) addPlacedLines(lines, heard, found)
         val letters = lines.map { LyricsWordAlign.fold(it.text).length }
         val anchors = withoutStrays(withoutLoneBlocks(sungInOrder(found, letters)))
         if (anchors.isEmpty()) return Layer.identity(lines.size)
@@ -225,6 +236,27 @@ object LyricsPerLine {
         val applied = shifts.count { it != 0L }
         val maxAbs = shifts.maxOfOrNull { abs(it) } ?: 0L
         return Layer(shifts.toList(), anchors.size, applied, maxAbs)
+    }
+
+    /**
+     * Adds an anchor for each line of a transcript sheet the word anchors missed, from where
+     * [LyricsWordAlign.placeLinesDetailed] heard its opening. The anchors still pass every
+     * guard below (order, lone blocks, strays, good sheet).
+     */
+    private fun addPlacedLines(lines: List<LyricLine>, heard: List<LyricsWordAlign.Heard>, found: MutableList<Anchor>) {
+        val placement = LyricsWordAlign.placeLinesDetailed(lines.map { it.text }, heard)
+        val have = found.mapTo(HashSet()) { it.line }
+        var added = false
+        for (index in lines.indices) {
+            if (index in have) continue
+            val start = placement.starts[index] ?: continue
+            if ((placement.matchedShare.getOrNull(index) ?: 0.0) < MIN_OWN_TRANSCRIPT_SHARE) continue
+            val residual = start - lines[index].timeMs
+            if (abs(residual) > MAX_SHIFT_TWO_WORDS_MS) continue
+            found += Anchor(index, lines[index].timeMs, residual)
+            added = true
+        }
+        if (added) found.sortBy { it.line }
     }
 
     /**

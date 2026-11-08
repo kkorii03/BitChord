@@ -1396,6 +1396,7 @@ class LyricsController(
                 isVideo = request.isVideo,
                 audioSource = audioSource,
                 deniedBy = "not-adjustable@screen",
+                ownTranscript = _lyricsSource.value == LyricsSource.GEMINI_TRANSCRIPT,
             )
         }
         if (generation != lyricsGeneration || timingLines !== lines) return
