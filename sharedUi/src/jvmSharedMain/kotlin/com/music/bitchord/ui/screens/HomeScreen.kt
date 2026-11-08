@@ -131,6 +131,9 @@ private fun isShortsShelf(shelf: HomeShelf): Boolean {
         title == "ショート"
 }
 
+/** [KO] The shelves Home draws: the feed without its Shorts rail (dropped by the v1.9 merge). */
+internal fun visibleHomeShelves(shelves: List<HomeShelf>): List<HomeShelf> = shelves.filterNot(::isShortsShelf)
+
 /**
  * YouTube Music's Quick picks, in the feed's own words whichever language
  * built the shelf. It is always the compact paged list, never a hero card.
@@ -211,6 +214,9 @@ fun HomeScreen(
     onMoodsShowAll: () -> Unit = {},
     /** Whether the Top Picks and mood artwork may animate — see [LocalArtworkMotion]. */
     artworkMotion: Boolean = true,
+    // [KO] private listening: the notice above Recents, lost in the v1.9 merge.
+    privateListening: Boolean = false,
+    onDisablePrivateListening: (() -> Unit)? = null,
 ) {
     // Top Picks' pictures and motion wait for the feed — see LocalArtworkImages.
     val feedReady = state !is UiState.Loading
@@ -298,6 +304,8 @@ fun HomeScreen(
                         onItemLongPress = onItemLongPress,
                         currentSong = currentSong,
                         isPlaying = isPlaying,
+                        privateListening = privateListening, // [KO]
+                        onDisablePrivateListening = onDisablePrivateListening, // [KO]
                     )
                     if (loadingMore) feedMoreSkeleton()
                 }
@@ -337,8 +345,10 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
     isPlaying: Boolean,
     onMoodClick: ((TopPickMood, String) -> Unit)? = null,
     onMoodsShowAll: () -> Unit = {},
+    privateListening: Boolean = false,
+    onDisablePrivateListening: (() -> Unit)? = null,
 ) {
-    shelves.forEachIndexed { index, shelf ->
+    visibleHomeShelves(shelves).forEachIndexed { index, shelf -> // [KO] no Shorts rail
         // Find Your Mood follows the lead shelf, as on Apple Music's Home.
         if (index == 1 && onMoodClick != null) {
             item(key = "find-your-mood") { FindYourMoodShelf(onMoodClick, onMoodsShowAll) }
@@ -350,13 +360,17 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
             if (shelf.layout == ShelfLayout.LIST ||
                 (index == 0 && shelf.title.equals(RECENTS_TITLE, ignoreCase = true))
             ) {
-                RecentShelf(
-                    shelf = shelf,
-                    onItemClick = openItem,
-                    onItemLongPress = onItemLongPress,
-                    currentSong = currentSong,
-                    isPlaying = isPlaying,
-                )
+                Column {
+                    // [KO] why Recents is not moving: private listening keeps plays out of it.
+                    if (privateListening && index == 0) PrivateListeningNotice(onDisablePrivateListening)
+                    RecentShelf(
+                        shelf = shelf,
+                        onItemClick = openItem,
+                        onItemLongPress = onItemLongPress,
+                        currentSong = currentSong,
+                        isPlaying = isPlaying,
+                    )
+                }
             } else {
                 Shelf(
                     shelf = shelf,

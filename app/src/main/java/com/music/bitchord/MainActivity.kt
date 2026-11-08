@@ -3869,6 +3869,10 @@ private fun BitChordApp(
                                 onLoadMore = viewModel::loadMoreHome,
                                 loadingMore = homeLoadingMore,
                                 recentlyPlayedLoading = homeRecentlyPlayedLoading && !hideRecents,
+                                privateListening = privateListening, // [KO] private-listening notice
+                                onDisablePrivateListening = {
+                                    AppSettings.setPrivateListening(false, PrivateListeningSource.SETTINGS)
+                                }, // [KO]
                                 topPicks = topPicks,
                                 topPicksLoading = topPicksLoading,
                                 listenerName = account?.name,
