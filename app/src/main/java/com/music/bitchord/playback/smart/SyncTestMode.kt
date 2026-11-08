@@ -120,7 +120,7 @@ object SyncTestMode {
      * took the one-at-a-time gate first: on the listener's phone, where the
      * flag stays for the nightly runs, 'synctest-wav' sat between the candidate
      * decode and the verdict on all seven upgrades from 04:11 to 07:55 on 11-08:
-     * 3.2-7.0 s from the candidate's last sample to the verdict, median 5.7 s,
+     * 3.2-7.0 s from the candidate's last sample to the verdict, median 4.5 s,
      * with an automix pass slipping in ahead of it in six of them. The head is
      * moved out of the caller's way (it deletes its own copy as soon as this
      * returns) and decoded at ahead-of-time priority, so it never waits in front

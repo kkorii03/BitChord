@@ -119,6 +119,7 @@ object AddonAuth {
         if (token != null && alias != null && expiresAt > System.currentTimeMillis()) {
             session = Session(token, expiresAt, alias)
         }
+        com.music.bitchord.ko.KoAddonAuthRefusal.restore(context)?.let { refusal = Refusal(it, Long.MAX_VALUE, transient = false) } // [KO] auth-refusal
     }
 
     /**
@@ -186,6 +187,7 @@ object AddonAuth {
         val code = normalizeTesterCode(raw)
         testerPrefs?.edit()?.apply { if (code.isEmpty()) remove(TESTER_KEY) else putString(TESTER_KEY, code) }?.apply()
         refusal = null
+        com.music.bitchord.ko.KoAddonAuthRefusal.clear() // [KO] auth-refusal
         session?.let(::drop)
         TrackLog.i(TAG, "addon auth: tester code ${if (code.isEmpty()) "removed" else "saved"}")
     }
@@ -219,7 +221,8 @@ object AddonAuth {
                 throw e
             } catch (e: AttestRefused) {
                 TrackLog.w(TAG, "addon auth: ${e.message}")
-                Refusal(e.message ?: "Verification refused", System.currentTimeMillis() + e.backoffMs, transient = false)
+                val koUntil = if (com.music.bitchord.ko.KoAddonAuthRefusal.note(e.message)) Long.MAX_VALUE else System.currentTimeMillis() + e.backoffMs // [KO] auth-refusal
+                Refusal(e.message ?: "Verification refused", koUntil, transient = false)
                     .also { refusal = it }.raise()
             } catch (e: Exception) {
                 val message = "Couldn't reach BitChord's addon verification service"
