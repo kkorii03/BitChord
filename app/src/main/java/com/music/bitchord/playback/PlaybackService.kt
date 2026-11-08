@@ -20,6 +20,7 @@ import com.music.bitchord.ko.koArmInconclusiveRetry
 import com.music.bitchord.ko.koRelookAfterFailedSwap
 import com.music.bitchord.ko.koLogQualityLabel
 import com.music.bitchord.ko.koHqSwapDecision
+import com.music.bitchord.ko.koCurrentIsSubstitute
 import com.music.bitchord.ko.koCurrentPlayingVerification
 import com.music.bitchord.ko.koAwaitPlayerCondition
 import com.music.bitchord.ko.koLosslessAheadItem
@@ -3203,7 +3204,7 @@ class PlaybackService : MediaLibraryService() {
                 val alignedPosition: (Long) -> Long = if (officialMap != null) {
                     { pos -> VersionSwapMap.positionMs(officialMap, pos, targetMs) }
                 } else {
-                    { pos -> (pos + (alignmentOffsetMs ?: 0L)).coerceAtLeast(0L) }
+                    { pos -> VersionSwapMap.offsetPositionMs(pos, alignmentOffsetMs ?: 0L, targetMs) }
                 }
                 if (officialMap != null) {
                     val mapped = alignedPosition(startPosition)
@@ -3708,6 +3709,11 @@ class PlaybackService : MediaLibraryService() {
         incoming.addAnalyticsListener(formatListener)
         adoptFormatOf(incoming)
 
+        // This is also the lyrics' jump announcement, once: Media3 (1.11
+        // MediaSessionImpl.setPlayerInternal) sends the new player's state with
+        // fresh position infos, and the controller reports that as
+        // onPositionDiscontinuity(AUTO_TRANSITION), which PlayerConnection counts
+        // in PlaybackPosition.seeks. Adding a seek here would announce it twice.
         mediaSession?.player = newSessionPlayer(incoming, requireNotNull(crossfade))
 
         incoming.volume = 1f
@@ -3745,7 +3751,22 @@ class PlaybackService : MediaLibraryService() {
             "reverting ${song.videoId} to the original YouTube upload at the listener's request",
             about = song.videoId,
         )
-        val position = activePlayer.currentPosition
+        // On YouTube's clock: the copy being left may be a verified substitute
+        // whose moments sit at offset + rate x YouTube. Read before the item goes.
+        val raw = activePlayer.currentPosition
+        val playing = currentPlayingVerification(song.videoId)
+        val position = HqSwapPolicy.revertPositionMs(
+            positionMs = raw,
+            playingOffsetMs = playing?.offsetMs,
+            playingRate = playing?.rate,
+            substitute = koCurrentIsSubstitute(song.videoId),
+        ) ?: raw.also {
+            TrackLog.w(
+                "BitChord",
+                "revert: ${song.videoId} plays a substitute with no verified clock; reopening YouTube at the raw ${it}ms",
+                about = song.videoId,
+            )
+        }
         val wasPlaying = activePlayer.isPlaying
         swappingMediaId = song.videoId
         activePlayer.replaceMediaItem(index, song.toDirectYouTubeMediaItem())
@@ -10189,11 +10210,24 @@ class PlaybackService : MediaLibraryService() {
         exoPlayer.replaceMediaItem(index, replacement)
         // A queue restored paused part-way through a video resumes where it was.
         if (position > 0L) {
-            val mapped = VersionSwapMap.usable( // [KO] version-map: a broken map is not trusted
-                YtMusicRepository.versionTimeMap(video.videoId, audio.videoId),
-                video.durationMillis(),
+            // The map first, else the shift measured for this pair (cached both
+            // ways), and the raw playhead only when neither is known.
+            val mapped = VersionSwapMap.knownPositionMs(
+                VersionSwapMap.usable( // [KO] version-map: a broken map is not trusted
+                    YtMusicRepository.versionTimeMap(video.videoId, audio.videoId),
+                    video.durationMillis(),
+                    audio.durationMillis(),
+                ),
+                VersionAudioAligner.getCachedOffsetMs(video.videoId, audio.videoId),
+                position,
                 audio.durationMillis(),
-            )?.let { VersionSwapMap.positionMs(it, position, audio.durationMillis()) } ?: position
+            ) ?: position.also {
+                TrackLog.w(
+                    "BitChord",
+                    "music-only: no map or measured shift for ${video.videoId} -> ${audio.videoId}; resuming at the raw ${it}ms",
+                    about = video.videoId,
+                )
+            }
             exoPlayer.seekTo(exoPlayer.currentMediaItemIndex, mapped.coerceAtLeast(0L))
         }
     }

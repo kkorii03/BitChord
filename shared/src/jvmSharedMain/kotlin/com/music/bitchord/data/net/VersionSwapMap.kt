@@ -44,8 +44,31 @@ object VersionSwapMap {
     }
 
     /** Where [positionMs] of the playing cut lands in the other one, kept inside [targetDurationMs]. */
-    fun positionMs(map: VersionTimeMap, positionMs: Long, targetDurationMs: Long?): Long {
-        val mapped = map.map(positionMs.coerceAtLeast(0L)).coerceAtLeast(0L)
+    fun positionMs(map: VersionTimeMap, positionMs: Long, targetDurationMs: Long?): Long =
+        insideTarget(map.map(positionMs.coerceAtLeast(0L)), targetDurationMs)
+
+    /**
+     * Where [positionMs] lands in the other cut by one measured shift
+     * (target = source + [offsetMs]), kept inside [targetDurationMs] exactly
+     * like a mapped position. Before 11-08 the shift had no upper bound.
+     */
+    fun offsetPositionMs(positionMs: Long, offsetMs: Long, targetDurationMs: Long?): Long =
+        insideTarget(positionMs + offsetMs, targetDurationMs)
+
+    /**
+     * The other cut's moment for [positionMs] through whatever is known: a
+     * usable [map] first, else a measured [offsetMs]. Null when neither is,
+     * so the caller can say it is keeping the raw playhead.
+     */
+    fun knownPositionMs(map: VersionTimeMap?, offsetMs: Long?, positionMs: Long, targetDurationMs: Long?): Long? =
+        when {
+            map != null -> positionMs(map, positionMs, targetDurationMs)
+            offsetMs != null -> offsetPositionMs(positionMs, offsetMs, targetDurationMs)
+            else -> null
+        }
+
+    private fun insideTarget(positionMs: Long, targetDurationMs: Long?): Long {
+        val mapped = positionMs.coerceAtLeast(0L)
         val target = targetDurationMs?.takeIf { it > 0L } ?: return mapped
         return mapped.coerceAtMost((target - 1L).coerceAtLeast(0L))
     }

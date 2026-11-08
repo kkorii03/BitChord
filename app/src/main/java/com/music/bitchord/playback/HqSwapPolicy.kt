@@ -202,6 +202,25 @@ internal object HqSwapPolicy {
     }
 
     /**
+     * Where "revert to original" opens YouTube's own upload for [positionMs] on
+     * the copy playing now: back through the playing copy's verdict
+     * ([playingOffsetMs]/[playingRate]) when it has one, as is when YouTube is
+     * already playing, and null for a [substitute] with no verdict — nothing
+     * says where its moment is on YouTube, and the caller logs keeping it raw.
+     * The revert used to seek the raw position and moved the song by the offset.
+     */
+    fun revertPositionMs(
+        positionMs: Long,
+        playingOffsetMs: Long?,
+        playingRate: Double?,
+        substitute: Boolean,
+    ): Long? = when {
+        playingOffsetMs != null && playingRate != null -> toYoutubeMs(positionMs, playingOffsetMs, playingRate)
+        substitute -> null
+        else -> positionMs
+    }
+
+    /**
      * Why the prepared standby must not be blended in or adopted; null when it
      * still may.
      *
