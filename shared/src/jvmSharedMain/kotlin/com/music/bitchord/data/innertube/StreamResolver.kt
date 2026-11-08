@@ -2395,7 +2395,10 @@ object StreamResolver {
      */
     private val jsPlayerMutex = Mutex()
 
-    private suspend fun <T> jsPlayerManager(block: () -> T): T = jsPlayerMutex.withLock { block() }
+    // [KO] `init` first: a track played from a download or the cache never goes
+    // through [resolve], so NewPipe had no downloader and every history
+    // timestamp failed as "Could not fetch embedded watch page" (user log 11-08).
+    private suspend fun <T> jsPlayerManager(block: () -> T): T = jsPlayerMutex.withLock { init; block() }
 
     /**
      * YouTube's current player revision, as the number a client quotes to prove
@@ -2929,6 +2932,7 @@ object StreamResolver {
         // decoration and comes back on the next cover.
         if (!extractionGate.tryLock()) return null
         val found = try {
+            init // [KO] a cover can come before any resolve: "downloader is null" otherwise
             run {
                 withContext(Dispatchers.IO) {
                     val extractor = ServiceList.YouTube.getStreamExtractor("https://www.youtube.com/watch?v=$videoId")

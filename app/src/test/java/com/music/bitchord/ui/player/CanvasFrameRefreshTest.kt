@@ -1,6 +1,8 @@
 package com.music.bitchord.ui.player
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -83,5 +85,15 @@ class CanvasFrameRefreshTest {
                 pausedForTransition = false,
             ),
         )
+    }
+
+    @Test
+    fun `the refresh loop does not start when it should not refresh`() {
+        // The v1.9 merge kept the key but lost the guard, so the loop ran
+        // behind a locked screen whenever an interval had been asked for.
+        assertNull(frameRefreshIntervalMs(refreshFrames = false, refreshFrameEveryMs = 3_000L, frameCapturePx = 128))
+        assertNull(frameRefreshIntervalMs(refreshFrames = true, refreshFrameEveryMs = 3_000L, frameCapturePx = 0))
+        assertNull(frameRefreshIntervalMs(refreshFrames = true, refreshFrameEveryMs = null, frameCapturePx = 128))
+        assertEquals(3_000L, frameRefreshIntervalMs(refreshFrames = true, refreshFrameEveryMs = 3_000L, frameCapturePx = 128))
     }
 }

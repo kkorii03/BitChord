@@ -773,29 +773,55 @@ object YtMusicRepository {
     suspend fun officialVideo(videoId: String): String? =
         KoSongVersion.officialVideo(videoId) // [KO] song-version
 
+    // [KO] The v1.9.1 merge took upstream's body here and dropped the fork's
+    // guards: the empty-header skip, the remembered miss, the shared in-flight
+    // lookup and the fancam/stage/cover filter of bestForVideoSwitch.
     suspend fun resolveVideo(song: Song): Song? {
         if (song.isVideo) return null
+        if (song.title.isBlank() || song.artist.isBlank()) { // [KO]
+            // Searching the empty string can only return something unrelated.
+            Log.w(TAG, "video switch skipped: ${song.videoId} has empty title/artist")
+            return null
+        }
         videoVersionCache[song.videoId]?.let { return it }
-        officialVersion(song, wantAudio = false)?.let { video ->
-            videoVersionCache[song.videoId] = video
-            return video
-        }
-        val target = TrackMatcher.targetOf(song)
-        for (query in TrackMatcher.queries(target)) {
-            val candidates = search(query, SearchFilter.VIDEOS)
-                .getOrNull()
-                ?.filterIsInstance<SearchResult.Track>()
-                ?.map { it.song }
-                .orEmpty()
-            TrackMatcher.best(candidates, target)?.let { match ->
-                Log.d(TAG, "video switch: '${song.title}' -> '${match.title}' ($query)")
-                videoVersionCache[song.videoId] = match
-                return match
+        if (synchronized(videoVersionMissing) { song.videoId in videoVersionMissing }) return null // [KO]
+        // The alternate-version check and a manual switch can ask for the same
+        // track at once; one search answers both.
+        val mine = CompletableDeferred<Song?>() // [KO]
+        videoVersionLookups.putIfAbsent(song.videoId, mine)?.let { return it.await() } // [KO]
+        try {
+            officialVersion(song, wantAudio = false)?.let { video ->
+                videoVersionCache[song.videoId] = video
+                mine.complete(video)
+                return video
             }
+            val target = TrackMatcher.targetOf(song)
+            var searchFailed = false
+            for (query in TrackMatcher.queries(target)) {
+                val candidates = search(query, SearchFilter.VIDEOS, SearchKind.VIDEO_SWITCH) // [KO]
+                    .onFailure { searchFailed = true }
+                    .getOrNull()
+                    ?.filterIsInstance<SearchResult.Track>()
+                    ?.map { it.song }
+                    .orEmpty()
+                TrackMatcher.bestForVideoSwitch(candidates, target)?.let { match -> // [KO]
+                    Log.d(TAG, "video switch: '${song.title}' -> '${match.title}' (queryLength=${query.length})")
+                    videoVersionCache[song.videoId] = match
+                    mine.complete(match)
+                    return match
+                }
+            }
+            Log.w(TAG, "video switch: no video match for '${song.title}' by '${song.artist}'")
+            // As upstream does for the audio side: a failed search is no verdict.
+            if (!searchFailed) synchronized(videoVersionMissing) { videoVersionMissing[song.videoId] = true }
+            mine.complete(null)
+            return null
+        } catch (failure: Throwable) {
+            mine.completeExceptionally(failure)
+            throw failure
+        } finally {
+            videoVersionLookups.remove(song.videoId, mine)
         }
-        Log.w(TAG, "video switch: no video match for '${song.title}' by '${song.artist}'")
-        synchronized(videoVersionMissing) { videoVersionMissing[song.videoId] = true }
-        return null
     }
 
     fun cachedSongVersionFor(song: Song): Song? =

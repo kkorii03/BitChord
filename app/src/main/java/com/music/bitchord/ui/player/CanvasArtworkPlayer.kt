@@ -456,8 +456,10 @@ internal fun AndroidCanvasArtworkPlayer(
         pausedForTransition = pausedForTransition,
     )
     LaunchedEffect(refreshFrames, refreshFrameEveryMs) {
-        val interval = refreshFrameEveryMs ?: return@LaunchedEffect
-        if (frameCapturePx <= 0) return@LaunchedEffect
+        // The v1.9 merge dropped both this guard and upstream's own, so the
+        // readback ran every interval behind a locked screen.
+        val interval = frameRefreshIntervalMs(refreshFrames, refreshFrameEveryMs, frameCapturePx)
+            ?: return@LaunchedEffect
         Log.d(TAG, "periodic frame refresh started, interval=$interval")
         while (isActive) {
             delay(interval)
@@ -788,6 +790,10 @@ internal fun shouldRefreshFrames(
     rendered &&
     foreground &&
     !pausedForTransition
+
+/** The periodic readback's interval, or null when the effect must not loop at all. */
+internal fun frameRefreshIntervalMs(refreshFrames: Boolean, refreshFrameEveryMs: Long?, frameCapturePx: Int): Long? =
+    refreshFrameEveryMs?.takeIf { refreshFrames && frameCapturePx > 0 }
 
 /**
  * A TextureView stretches its content to its own bounds. Compensate with a

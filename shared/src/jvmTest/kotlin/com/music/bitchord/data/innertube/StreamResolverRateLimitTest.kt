@@ -3,6 +3,7 @@ package com.music.bitchord.data.innertube
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -93,5 +94,15 @@ class StreamResolverRateLimitTest {
         } finally {
             gate.unlock()
         }
+    }
+
+    @Test
+    fun `the cover loop starts NewPipe itself instead of failing on a null downloader`() = runBlocking {
+        // User log 11-08: a track played from a download or the cache never went
+        // through resolve(), so every cover loop failed "downloader is null" and
+        // every history timestamp failed "Could not fetch embedded watch page".
+        // "!!" is not a video id, so the extractor refuses it before any request.
+        assertNull(withTimeout(5_000) { StreamResolver.videoLoop("!!") })
+        assertNotNull(org.schabi.newpipe.extractor.NewPipe.getDownloader())
     }
 }
