@@ -76,7 +76,6 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.pluralStringResource
@@ -105,7 +104,11 @@ import com.music.bitchord.download.Downloads
 import com.music.bitchord.playback.PlaybackParametersMath
 import com.music.bitchord.ui.player.ThinSlider
 import com.music.bitchord.playback.SleepTimer
+import com.music.bitchord.ui.components.ActionRow
+import com.music.bitchord.ui.components.ActionRowStyle
 import com.music.bitchord.ui.components.ArtworkBackdrop
+import com.music.bitchord.ui.components.LocalActionRowStyle
+import com.music.bitchord.ui.components.SheetHeading
 import com.music.bitchord.ui.components.ExplicitSongTitle
 import com.music.bitchord.ui.components.SongInfoDialog
 import com.music.bitchord.ui.components.SongInfoPage
@@ -622,14 +625,6 @@ internal fun KoSongActionsSheet(
         Spacer(Modifier.height(24.dp))
     }
 }
-
-/** How [SongActionsSheet] is being presented. */
-enum class SongActionsPresentation { Sheet, Menu }
-
-/** Row density and layout, set by whichever surface the rows are drawn on. */
-internal enum class ActionRowStyle { Sheet, Menu }
-
-internal val LocalActionRowStyle = staticCompositionLocalOf { ActionRowStyle.Sheet }
 
 /**
  * The popup's colours: the theme's own, so the menu reads the same in light and
@@ -1277,77 +1272,6 @@ private fun sleepTimerCountdown(): String? {
 }
 
 /**
- * One line of a bottom sheet's menu. Shared with the playlist picker so the
- * two sheets read as the same control rather than as two lists that happen to
- * look alike.
- *
- * [tint] is for rows whose icon carries state — a filled heart on a liked
- * track — and is otherwise the ordinary foreground. [accent] colours the
- * trailing [value], and defaults to the app's own red: a sheet tinted from
- * artwork passes the artwork's accent instead, so the row belongs to the sheet
- * it is drawn on.
- */
-@Composable
-internal fun ActionRow(
-    icon: ImageVector,
-    label: String,
-    value: String? = null,
-    tint: Color? = null,
-    accent: Color = MaterialTheme.colorScheme.primary,
-    enabled: Boolean = true,
-    onClick: () -> Unit,
-) {
-    val menu = LocalActionRowStyle.current == ActionRowStyle.Menu
-    // The popup sits on a surface rather than the page background, so its
-    // text follows the surface's colour — the two differ in light mode.
-    val foreground = if (menu) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onBackground
-    val alpha = if (enabled) 1f else 0.4f
-    val iconView: @Composable () -> Unit = {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = (tint ?: foreground).copy(alpha = alpha),
-            modifier = Modifier.size(if (menu) 20.dp else 22.dp),
-        )
-    }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(enabled = enabled, onClick = onClick)
-            .then(
-                if (menu) {
-                    Modifier.heightIn(min = 46.dp).padding(horizontal = 18.dp, vertical = 11.dp)
-                } else {
-                    Modifier.padding(horizontal = 22.dp, vertical = 15.dp)
-                },
-            ),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        // Apple's menus read label-first with the glyph at the far edge, in
-        // the sheet and the popup alike; the old leading icon is gone.
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyLarge,
-            color = foreground.copy(alpha = alpha),
-            maxLines = if (menu) 2 else Int.MAX_VALUE,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        if (value != null) {
-            Spacer(Modifier.width(12.dp))
-            Text(
-                text = value,
-                style = MaterialTheme.typography.bodyLarge,
-                color = accent.copy(alpha = alpha),
-                maxLines = 1,
-            )
-        }
-        Spacer(Modifier.width(14.dp))
-        iconView()
-    }
-}
-
-/**
  * Stands in for [ActionRow] while whether it belongs on the sheet at all is
  * still unknown — "Open album" or "Open artist" before the lookup for their
  * ids has come back. A spinner rather than the row simply being missing, so
@@ -1432,13 +1356,3 @@ internal fun SheetTrackHeader(
     }
 }
 
-/** The heading over a sheet's second half — "Add to playlist". */
-@Composable
-internal fun SheetHeading(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(start = 22.dp, end = 22.dp, top = 16.dp, bottom = 4.dp),
-    )
-}
