@@ -361,10 +361,21 @@ class DirectSourceGateTest {
         }.first { it.exists() }.readText()
         val settle = cache.substringAfter("private fun settleDirectEntry(")
             .substringBefore("dropYouTubeEntry(key, videoId)")
+        // [KO] first-sound: the settle hands the refusal to KoFirstSound.settleDirect,
+        // whose lookup is skipped (and never raced) when it is set.
         assertTrue(
             "the settle must skip the addon walk once this track's substitutions are refused",
             Regex("""val addon = if \(StreamChoice\.substitutesRefused\(videoId\)\)""")
-                .containsMatchIn(settle),
+                .containsMatchIn(settle) ||
+                Regex("""KoFirstSound\.settleDirect\([^\n]*StreamChoice\.substitutesRefused\(videoId\)\)""")
+                    .containsMatchIn(settle),
+        )
+        val ko = listOf("app/", "").map {
+            File(root, "${it}src/main/java/com/music/bitchord/ko/KoFirstSound.kt")
+        }.first { it.exists() }.readText()
+        assertTrue(
+            "a refused track neither races nor waits for the addons",
+            ko.contains("racesYouTube = !substitutesRefused") && ko.contains("if (substitutesRefused) {"),
         )
     }
 

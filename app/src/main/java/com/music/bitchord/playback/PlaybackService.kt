@@ -9900,7 +9900,10 @@ class PlaybackService : MediaLibraryService() {
             val video = item.toSong()
             val audio = YtMusicRepository.cachedAudioVersion(video.videoId)
             when {
-                audio == null -> lookUpMusicOnly(video)
+                audio == null -> {
+                    lookUpMusicOnly(video)
+                    if (index == exoPlayer.currentMediaItemIndex) com.music.bitchord.ko.KoFirstSound.warmHeldVideo(video.videoId) // [KO] first-sound
+                }
                 audio.videoId == video.videoId || audio.isVideo -> MusicOnlyPlayback.settle(video.videoId)
                 else -> {
                     applyMusicOnly(exoPlayer, index, item, video, audio)
