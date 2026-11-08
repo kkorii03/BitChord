@@ -8,8 +8,8 @@ import com.music.bitchord.data.model.completeArtistCredits
 import com.music.bitchord.data.model.creditSegments
 import com.music.bitchord.data.scrobbling.primaryArtist
 import com.music.bitchord.ui.player.artistCredits
-import com.music.bitchord.ui.player.coverCreditTarget
-import com.music.bitchord.ui.player.songArtistCredits
+import com.music.bitchord.ko.ui.player.coverCreditTarget
+import com.music.bitchord.ko.ui.player.songArtistCredits
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Assert.assertNull

@@ -18,9 +18,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -33,7 +31,6 @@ import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.ErrorOutline
-import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -67,7 +64,6 @@ import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.download.DownloadProgress
 import com.music.bitchord.download.DownloadSession
 import com.music.bitchord.download.Downloads
-import com.music.bitchord.download.HqLibraryUpgrade
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
 
@@ -210,7 +206,6 @@ fun DownloadManagerPage(
 ) {
     val context = LocalContext.current
     val session by DownloadSession.state.collectAsStateWithLifecycle()
-    val hqProgress by HqLibraryUpgrade.progress.collectAsStateWithLifecycle()
     // Newest ask last, the order the queue will actually reach them in.
     val items = remember(session.items) { session.items.sortedBy { it.sequence } }
 
@@ -300,212 +295,7 @@ fun DownloadManagerPage(
     }
 }
 
-@Composable
-fun DownloadManagerSheet(onDismiss: () -> Unit, modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    val session by DownloadSession.state.collectAsStateWithLifecycle()
-    val hqProgress by HqLibraryUpgrade.progress.collectAsStateWithLifecycle()
-    // Newest ask last, the order the queue will actually reach them in.
-    val items = remember(session.items) { session.items.sortedBy { it.sequence } }
-
-    Column(modifier.fillMaxWidth().navigationBarsPadding()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 20.dp, end = 8.dp, top = 4.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = stringResource(R.string.downloads),
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onBackground,
-                )
-                Text(
-                    text = session.summary(),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (session.failed > 0 && !session.busy) {
-                        MaterialTheme.colorScheme.error
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                )
-                if (hqProgress.visible) {
-                    Text(
-                        text = if (hqProgress.waiting) {
-                            stringResource(R.string.hq_library_waiting)
-                        } else {
-                            stringResource(
-                                R.string.hq_library_progress,
-                                hqProgress.done,
-                                hqProgress.total,
-                            )
-                        },
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                }
-            }
-            if (session.busy) {
-                TextButton(
-                    onClick = {
-                        // Only what is still going. Cancelling a finished row
-                        // would drop it from the list, which is the one thing
-                        // this sheet exists to still be showing.
-                        items.filterNot { it.progress.settled }
-                            .forEach { Downloads.cancel(it.videoId) }
-                    },
-                ) {
-                    Text(stringResource(R.string.cancel_all))
-                }
-            } else {
-                TextButton(
-                    onClick = {
-                        DownloadSession.clear()
-                        onDismiss()
-                    },
-                ) {
-                    Text(stringResource(R.string.clear))
-                }
-            }
-        }
-
-        // The batch's own bar, under the heading it belongs to. The per-row bars
-        // below are about one track each; this is the one that answers "how much
-        // longer", which is what someone opening this sheet mid-album wants.
-        if (session.busy) {
-            LinearProgressIndicator(
-                progress = { session.fraction },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp)
-                    .height(3.dp),
-                color = MaterialTheme.colorScheme.primary,
-                trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f),
-                strokeCap = StrokeCap.Round,
-                gapSize = 0.dp,
-                drawStopIndicator = {},
-            )
-            Spacer(Modifier.height(8.dp))
-        }
-
-        HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline)
-
-        // Capped rather than left to grow: a hundred-track playlist would
-        // otherwise be a sheet that covers the screen and has to be scrolled
-        // back up before anything else can be reached.
-        LazyColumn(Modifier.heightIn(max = LIST_MAX_HEIGHT)) {
-            items(items, key = { it.videoId }) { item ->
-                DownloadManagerRow(
-                    item = item,
-                    onCancel = { Downloads.cancel(item.videoId) },
-                    onRetry = { Downloads.retry(context, item) },
-                )
-            }
-        }
-        Spacer(Modifier.height(24.dp))
-    }
-}
-
-/**
- * The high-quality pass's one line, shown at the top of the Downloads screen.
- *
- * Drawn from the persisted pass state, so it survives the sheet being closed
- * and the process being restarted. A finished pass that failed something keeps
- * its count and a retry here; otherwise nothing is shown when no pass is
- * running.
- */
-@Composable
-fun HqLibraryProgressLine(modifier: Modifier = Modifier) {
-    val progress by HqLibraryUpgrade.progress.collectAsStateWithLifecycle()
-    val context = LocalContext.current
-    when {
-        progress.failedVisible -> Row(
-            modifier = modifier,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = stringResource(R.string.hq_library_failed, progress.failed),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.error,
-            )
-            TextButton(onClick = { HqLibraryUpgrade.startReplacementPass(context) }) {
-                Text(stringResource(R.string.retry))
-            }
-        }
-        progress.visible -> Text(
-            text = if (progress.waiting) {
-                stringResource(R.string.hq_library_waiting)
-            } else {
-                stringResource(
-                    R.string.hq_library_progress,
-                    progress.done,
-                    progress.total,
-                )
-            },
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = modifier,
-        )
-    }
-}
-
-/**
- * The Downloads screen's "모두 고음질로 다시 받기" control.
- *
- * A deliberate one-off run of the replacement pass, independent of the two
- * automatic switches. It goes through [HqLibraryUpgrade.startReplacementPass],
- * which is the same worker and the same verified-pair downloads the automatic
- * pass uses — never a second implementation.
- */
-@Composable
-fun HqLibraryUpgradeAllRow(modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    val progress by HqLibraryUpgrade.progress.collectAsStateWithLifecycle()
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .clickable { HqLibraryUpgrade.startReplacementPass(context) }
-            .padding(horizontal = 20.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            imageVector = Icons.Rounded.HighQuality,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(20.dp),
-        )
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Text(
-                text = stringResource(R.string.hq_library_upgrade_all),
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onBackground,
-            )
-            Text(
-                text = if (progress.visible) {
-                    if (progress.waiting) {
-                        stringResource(R.string.hq_library_waiting)
-                    } else {
-                        stringResource(
-                            R.string.hq_library_progress,
-                            progress.done,
-                            progress.total,
-                        )
-                    }
-                } else {
-                    stringResource(R.string.hq_library_upgrade_all_subtitle)
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
-
 /** One track: its cover, what it is, and where it has got to. */
-private val LIST_MAX_HEIGHT = 380.dp
-
 @Composable
 private fun DownloadManagerRow(
     item: DownloadSession.Item,

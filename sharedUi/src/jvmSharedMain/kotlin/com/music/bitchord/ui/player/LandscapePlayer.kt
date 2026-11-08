@@ -69,6 +69,7 @@ import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.SongOrigins
+import com.music.bitchord.ko.ui.player.songArtistCredits // [KO] cover credits
 
 /**
  * The widest the two columns are allowed to get between them, centred in

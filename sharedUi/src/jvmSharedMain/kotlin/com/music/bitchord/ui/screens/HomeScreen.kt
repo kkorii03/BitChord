@@ -48,7 +48,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -67,7 +66,6 @@ import androidx.compose.material.icons.rounded.Cached
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.Storage
-import androidx.compose.material.icons.rounded.VisibilityOff
 import com.music.bitchord.ui.icons.BitChordIcons
 import coil3.compose.AsyncImage
 import com.music.bitchord.data.model.CARD_ART_PX
@@ -83,10 +81,7 @@ import com.music.bitchord.data.model.appleCardKind
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.ui.components.LARGE_CARD_CORNER
 import com.music.bitchord.ui.components.MessageState
-import com.music.bitchord.ui.components.LoadingTimeoutState
-import com.music.bitchord.ui.components.rememberLoadingTimedOut
 import com.music.bitchord.ui.components.PAGE_GUTTER
-import com.music.bitchord.ui.components.SMALL_ART_CORNER
 import com.music.bitchord.ui.components.RowMoreButton
 import com.music.bitchord.ui.components.PullToRefresh
 import com.music.bitchord.ui.components.SHELF_CARD_WIDTH
@@ -107,38 +102,10 @@ private val HOME_TITLE_LIFT = 28.dp
 private const val RECENTS_TITLE = "Recents"
 private const val RECENT_TRACKS_PER_COLUMN = 4
 
-/** The app's own Recents key, whichever index the feed puts it at. */
-private fun isRecentsShelf(shelf: HomeShelf): Boolean =
-    shelf.title.trim().equals(RECENTS_TITLE, ignoreCase = true)
-
 /** "Listen again", in the feed's own words — its subtitle is the account name. */
 private fun isListenAgainShelf(title: String): Boolean =
     when (title.trim().lowercase(Locale.ROOT)) {
         "listen again", "다시 듣기", "もう一度聴く", "nghe lại" -> true
-        else -> false
-    }
-
-/**
- * YouTube's Shorts rail is a video feed, not music: Apple Music has no
- * equivalent, so the Home page never draws it. Matched by title because the
- * shelf carries no type of its own, in the languages this fork serves.
- */
-private fun isShortsShelf(shelf: HomeShelf): Boolean {
-    val title = shelf.title.trim().lowercase(Locale.ROOT)
-    return title.startsWith("shorts") ||
-        title == "short" ||
-        title.startsWith("숏") ||
-        title == "ショート"
-}
-
-/**
- * YouTube Music's Quick picks, in the feed's own words whichever language
- * built the shelf. It is always the compact paged list, never a hero card.
- */
-private fun isQuickPicksShelf(shelf: HomeShelf): Boolean =
-    when (shelf.title.trim().lowercase(Locale.ROOT)) {
-        "quick picks", "빠른 선곡", "クイック ミックス",
-        "lựa chọn nhanh", "chọn nhanh đài phát" -> true
         else -> false
     }
 
@@ -406,63 +373,6 @@ private fun RecentShelf(
     }
 }
 
-/**
- * Quick picks as YouTube Music draws it: the compact paged song list Recents
- * uses in list mode (four rows per column), without the list/grid switch —
- * this shelf is always a song list, never a grid of cards or a hero row.
- */
-@Composable
-private fun QuickPicksShelf(
-    shelf: HomeShelf,
-    onItemClick: (ShelfItem) -> Unit,
-    onItemLongPress: ((ShelfItem) -> Unit)?,
-    currentSong: Song?,
-    isPlaying: Boolean,
-) {
-    Column(Modifier.padding(bottom = 26.dp)) {
-        SectionHeader(shelf.title, shelf.subtitle)
-        TrackColumns(
-            shelf = shelf,
-            onItemClick = onItemClick,
-            onItemLongPress = onItemLongPress,
-            currentSong = currentSong,
-            isPlaying = isPlaying,
-        )
-    }
-}
-
-/** One page of columns, [RECENT_TRACKS_PER_COLUMN] songs to each. */
-@Composable
-private fun TrackColumns(
-    shelf: HomeShelf,
-    onItemClick: (ShelfItem) -> Unit,
-    onItemLongPress: ((ShelfItem) -> Unit)?,
-    currentSong: Song?,
-    isPlaying: Boolean,
-) {
-    BoxWithConstraints {
-        val columnWidth = trackColumnWidth(maxWidth)
-        ShelfRow(
-            contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            items(shelf.items.chunked(RECENT_TRACKS_PER_COLUMN)) { column ->
-                Column(Modifier.width(columnWidth)) {
-                    column.forEach { item ->
-                        RecentTrackRow(
-                            item = item,
-                            onClick = { onItemClick(item) },
-                            onLongPress = onItemLongPress?.let { { it(item) } },
-                            isCurrent = item.matchesCurrentlyPlaying(currentSong),
-                            isPlaying = item.matchesCurrentlyPlaying(currentSong) && isPlaying,
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
 @Composable
 private fun RecentSectionHeader(title: String, subtitle: String) {
     Column(
@@ -489,49 +399,6 @@ private fun RecentSectionHeader(title: String, subtitle: String) {
     }
 }
 
-/**
- * The quiet row above Recents while private listening is on.
- *
- * The switch lives in Settings and the song menu, both a few taps from here;
- * this is the one place it can explain why the shelf below is not moving. It
- * is deliberately not a banner: a small tinted row with the way out beside it.
- */
-@Composable
-private fun PrivateListeningNotice(onTurnOff: (() -> Unit)?) {
-    Row(
-        modifier = Modifier
-            .padding(horizontal = PAGE_GUTTER, vertical = 2.dp)
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            imageVector = Icons.Rounded.VisibilityOff,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(16.dp),
-        )
-        Spacer(Modifier.width(8.dp))
-        Text(
-            text = stringResource(Res.string.private_listening_notice),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.weight(1f),
-        )
-        if (onTurnOff != null) {
-            Text(
-                text = stringResource(Res.string.private_listening_turn_off),
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier
-                    .clickable(onClick = onTurnOff)
-                    .padding(start = 12.dp, top = 4.dp, bottom = 4.dp),
-            )
-        }
-    }
-}
 
 @Composable
 private fun RecentTrackRow(

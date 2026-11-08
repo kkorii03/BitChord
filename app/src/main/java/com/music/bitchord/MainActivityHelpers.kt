@@ -6,7 +6,6 @@ import androidx.media3.session.MediaController
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.settings.LibrarySort
 import com.music.bitchord.data.settings.SongSort
-import com.music.bitchord.download.Downloads
 import com.music.bitchord.playback.QualityUpgrade
 import java.util.Locale
 
@@ -28,18 +27,6 @@ internal fun SongSort.localizedLabel(): String = when (this) {
     SongSort.DATE_ADDED_ASC -> stringResource(R.string.sort_date_added_oldest)
     SongSort.DATE_ADDED_DESC -> stringResource(R.string.sort_date_added)
 }
-
-/**
- * Whether this page id is one of the two device folders — `local:downloads` and
- * `local:all`, the tabbed Songs / Artists / Albums view.
- *
- * Asked rather than `startsWith("local:")` because that prefix now covers two
- * unlike pages: a folder, and one downloaded playlist, which is a plain track
- * listing under its own cover and wants the same chrome every other release page
- * gets. See [Downloads.PLAYLIST_PREFIX] for why they share a namespace at all.
- */
-internal fun String?.isDeviceFolder(): Boolean =
-    this != null && startsWith("local:") && !startsWith(Downloads.PLAYLIST_PREFIX)
 
 // playingYouTubesOwn and formatDurationText live in MainActivity.kt again:
 // v1.9 keeps them there (its playingYouTubesOwn also reads the cache origin).

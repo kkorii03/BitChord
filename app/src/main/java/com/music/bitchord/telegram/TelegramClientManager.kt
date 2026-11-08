@@ -168,21 +168,6 @@ object TelegramClientManager {
     }
 
     /**
-     * The Telegram source calls this when its own playback starts or stops.
-     * Global playback (local, YouTube, add-ons) must not reach here. Streams,
-     * metadata lookups and searches use the counted
-     * [beginStream]/[streamMetadata]/[searchTracks] leases instead, so they
-     * cannot close one another.
-     */
-    fun onTelegramPlayback(active: Boolean) {
-        if (context == null) return
-        work.execute {
-            gate.onTelegramPlaybackActive(active)
-            applyGate(if (active) "telegram playback started" else "telegram playback stopped")
-        }
-    }
-
-    /**
      * A Telegram stream has opened. The first one also keeps the client alive
      * in the background; the last close gives it back, all as events.
      */

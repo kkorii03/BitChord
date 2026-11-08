@@ -60,7 +60,7 @@ import com.music.bitchord.playback.commitRadioQueue
 import com.music.bitchord.playback.playSongs
 import com.music.bitchord.playback.toMediaItem
 import com.music.bitchord.ui.MainViewModel
-import com.music.bitchord.ui.player.coverSingerChannelId
+import com.music.bitchord.ko.ui.player.coverSingerChannelId
 import com.music.bitchord.ui.tv.components.TvActivityIndicator
 import com.music.bitchord.ui.tv.components.TvArtwork
 import com.music.bitchord.ui.tv.components.TvDialog
