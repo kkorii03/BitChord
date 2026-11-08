@@ -518,9 +518,9 @@ internal object SongHearing {
     }
 
     /** Whether [videoId] is neither playing nor next; false with nothing playing. */
-    private fun rowGone(videoId: String): Boolean = rowGone(
+    internal fun rowGone(videoId: String): Boolean = rowGone(
         videoId,
-        com.music.bitchord.data.DiagnosticsState.currentTrackId,
+        com.music.bitchord.data.DiagnosticsState.soundingTrackId,
         com.music.bitchord.data.DiagnosticsState.nextTrackId,
     )
 

@@ -23,6 +23,22 @@ object DiagnosticsState {
 
     @Volatile
     var currentTrackId: String? = null
+        set(value) {
+            field = value
+            currentSwapId = null
+        }
+
+    /**
+     * The id an in-place version swap put on the current row, or null. Such a
+     * swap books no transition, so [currentTrackId] keeps the replaced id.
+     * 11-09 phone 6rS7OUGXUik -> G5Lj9tsCK6A: every hearing for the copy that
+     * played was skipped as "no longer wanted", so no AI timing all song.
+     */
+    @Volatile
+    var currentSwapId: String? = null
+
+    /** The id whose sound the current row plays: what hearing is for. */
+    val soundingTrackId: String? get() = currentSwapId ?: currentTrackId
 
     /** The row prepared after the current one; a measurement is wanted only for these two. */
     @Volatile
