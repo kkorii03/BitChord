@@ -170,6 +170,12 @@ object LateVersionSwapPolicy {
         sameUpload: Boolean = false,
         smartAlignment: Boolean = true,
         lowPower: Boolean = false,
+        /**
+         * YouTube's own time map covers this pair ([VersionSwapMap.usable]):
+         * nothing is measured, so the smart-alignment setting and the
+         * measured-opening bound do not apply. Low power and the song's end still do.
+         */
+        mapped: Boolean = false,
     ): Refusal? = when {
         !musicOnly -> Refusal.MUSIC_ONLY_OFF
         inParty -> Refusal.LISTEN_TOGETHER
@@ -183,9 +189,9 @@ object LateVersionSwapPolicy {
         // an audible same-id swap would be exactly the unmeasured zero shift
         // this policy exists to refuse.
         sameUpload -> Refusal.SAME_UPLOAD
-        !smartAlignment -> Refusal.SMART_ALIGNMENT_OFF
+        !smartAlignment && !mapped -> Refusal.SMART_ALIGNMENT_OFF
         lowPower -> Refusal.LOW_POWER
-        else -> positionRefusal(videoPositionMs, videoDurationMs)
+        else -> positionRefusal(videoPositionMs, videoDurationMs, mapped)
     }
 
     /** What to do with a song version that answered after the first-sound budget. */
@@ -210,10 +216,13 @@ object LateVersionSwapPolicy {
         else -> Route.HAND_OVER
     }
 
-    /** The playhead part of [refusal], also re-checked after the alignment. */
-    fun positionRefusal(videoPositionMs: Long, videoDurationMs: Long?): Refusal? {
+    /**
+     * The playhead part of [refusal], also re-checked after the alignment. A
+     * [mapped] pair has no measured opening to stay near.
+     */
+    fun positionRefusal(videoPositionMs: Long, videoDurationMs: Long?, mapped: Boolean = false): Refusal? {
         val position = videoPositionMs.coerceAtLeast(0L)
-        if (position > MAX_VIDEO_POSITION_MS) return Refusal.PAST_MEASURED_OPENING
+        if (!mapped && position > MAX_VIDEO_POSITION_MS) return Refusal.PAST_MEASURED_OPENING
         val duration = videoDurationMs?.takeIf { it > 0L }
         if (duration != null && duration - position < MIN_REMAINING_MS) return Refusal.NEAR_END
         return null
@@ -241,6 +250,18 @@ object LateVersionSwapPolicy {
         val position = videoPositionMs.coerceAtLeast(0L)
         if (position > MAX_VIDEO_POSITION_MS) return null
         val start = (position + offsetMs).coerceAtLeast(0L)
+        val duration = songDurationMs?.takeIf { it > 0L }
+        if (duration != null && duration - start < MIN_REMAINING_MS) return null
+        return start
+    }
+
+    /**
+     * [songStartMs] for a pair YouTube's time map covers: [mappedStartMs] is
+     * already the matching moment ([VersionSwapMap.positionMs]), valid for the
+     * whole video, so only the song's own end can refuse it.
+     */
+    fun mappedSongStartMs(mappedStartMs: Long, songDurationMs: Long?): Long? {
+        val start = mappedStartMs.coerceAtLeast(0L)
         val duration = songDurationMs?.takeIf { it > 0L }
         if (duration != null && duration - start < MIN_REMAINING_MS) return null
         return start

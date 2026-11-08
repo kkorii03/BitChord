@@ -143,6 +143,8 @@ import com.music.bitchord.data.net.BlockedStartRescue
 import com.music.bitchord.data.net.BlockedStartStep
 import com.music.bitchord.data.net.SongVersionPolicy
 import com.music.bitchord.data.net.LateVersionSwapPolicy
+import com.music.bitchord.data.net.VersionSwapMap
+import com.music.bitchord.data.model.VersionTimeMap
 import com.music.bitchord.data.net.UnplayableAlternate
 import com.music.bitchord.data.net.HqRetryPolicy
 import com.music.bitchord.data.net.sessionScopedCacheHit
@@ -3145,11 +3147,21 @@ class PlaybackService : MediaLibraryService() {
 
         val sourceSong = currentItem.toSong()
         val targetSong = targetMediaItem.toSong()
+        // YouTube's own map for an officially paired cut needs nothing fetched
+        // or measured, so it is used whether or not smart alignment is on and
+        // the measurement is skipped (upstream 77634fb60, lost in the v1.9 merge).
+        val officialMap = officialTimeMap(activePlayer, sourceSong.videoId, targetSong) // [KO] version-map
         // An automatic queue resolution already chose the song version before
         // playback; it asks for no measuring pass, so the playing track is
         // never held while a cut is compared.
-        val smartAlignEnabled = lateHandover != null ||
-            (AppSettings.smartVersionAlignment.value && !skipAlignment)
+        val smartAlignEnabled = officialMap == null && (
+            lateHandover != null ||
+                (AppSettings.smartVersionAlignment.value && !skipAlignment)
+            )
+        // The bar's sheen still covers a mapped swap (standby buffering and the
+        // fade); a switch back to the version it came from would otherwise
+        // show only the fade, too short to read as a switch.
+        val holdsSwitchBar = smartAlignEnabled || (officialMap != null && !skipAlignment)
         TrackLog.d(
             "BitChord",
             "queue: replace n=1 at=$currentIndex size=${activePlayer.mediaItemCount} " +
@@ -3168,7 +3180,7 @@ class PlaybackService : MediaLibraryService() {
             var swapStandby: ExoPlayer? = null
             var swapAdopted = false
             swappingMediaId = mediaId
-            if (smartAlignEnabled) {
+            if (holdsSwitchBar) {
                 AppSettings.versionAlignmentInProgress.value = true
             }
             try {
@@ -3183,6 +3195,29 @@ class PlaybackService : MediaLibraryService() {
                     )
                 } else {
                     0L
+                }
+                // Where a moment of the playing cut lands in the other one. A
+                // measured offset is one shift for the whole track; YouTube's
+                // map is per stretch, so a skit mid-video maps correctly too.
+                val targetMs = targetSong.durationMillis().takeIf { it > 0L }
+                val alignedPosition: (Long) -> Long = if (officialMap != null) {
+                    { pos -> VersionSwapMap.positionMs(officialMap, pos, targetMs) }
+                } else {
+                    { pos -> (pos + (alignmentOffsetMs ?: 0L)).coerceAtLeast(0L) }
+                }
+                if (officialMap != null) {
+                    val mapped = alignedPosition(startPosition)
+                    VersionAudioAligner.publishPhase(
+                        VersionAudioAligner.beginAttempt(sourceSong.videoId, targetSong.videoId),
+                        VersionAudioAligner.CutPhase.ALIGNED,
+                        mapped - startPosition,
+                    )
+                    TrackLog.d(
+                        "BitChord",
+                        "version swap using YouTube's time map: ${startPosition}ms -> ${mapped}ms " +
+                            "segments=${officialMap.segments.size}",
+                        about = sourceSong.videoId,
+                    )
                 }
 
                 if (player !== activePlayer ||
@@ -3215,7 +3250,9 @@ class PlaybackService : MediaLibraryService() {
                 // are checked again.
                 if (lateHandover != null) {
                     val trusted = VersionAudioAligner.getCachedOffsetMs(sourceSong.videoId, targetSong.videoId)
-                    val refusal = if (trusted == null) {
+                    val refusal = if (officialMap != null) {
+                        lateHandoverRefusal(lateHandover) ?: songEndRefusal(activePlayer, 0L, targetSong, officialMap)
+                    } else if (trusted == null) {
                         LateVersionSwapPolicy.Refusal.NOT_MEASURED.reason
                     } else {
                         lateHandoverRefusal(lateHandover) ?: songEndRefusal(activePlayer, trusted, targetSong)
@@ -3242,7 +3279,7 @@ class PlaybackService : MediaLibraryService() {
                     return@launch
                 }
                 if (!canCrossfade || standbyPlayer == null) {
-                    val pos = (activePlayer.currentPosition + alignmentOffsetMs).coerceAtLeast(0L)
+                    val pos = alignedPosition(activePlayer.currentPosition)
                     val wasPlaying = activePlayer.playWhenReady
                     activePlayer.replaceMediaItem(currentIndex, targetMediaItem)
                     activePlayer.seekTo(currentIndex, pos)
@@ -3258,7 +3295,7 @@ class PlaybackService : MediaLibraryService() {
                     if (i == currentIndex) targetMediaItem else activePlayer.getMediaItemAt(i)
                 }
                 val wasPlaying = activePlayer.playWhenReady
-                val alignedStartPos = (activePlayer.currentPosition + alignmentOffsetMs).coerceAtLeast(0L)
+                val alignedStartPos = alignedPosition(activePlayer.currentPosition)
 
             // Reset and configure standby player
             swapStandby = standbyPlayer
@@ -3321,7 +3358,7 @@ class PlaybackService : MediaLibraryService() {
                     logLateHandoverRefused(lateHandover, "standby did not prepare")
                     return@launch
                 }
-                val pos = (activePlayer.currentPosition + alignmentOffsetMs).coerceAtLeast(0L)
+                val pos = alignedPosition(activePlayer.currentPosition)
                 activePlayer.replaceMediaItem(currentIndex, targetMediaItem)
                 activePlayer.seekTo(currentIndex, pos)
                 if (wasPlaying) activePlayer.play()
@@ -3338,7 +3375,7 @@ class PlaybackService : MediaLibraryService() {
 
             // Sync playback position with exact live position right before starting playback on standby
             val livePos = activePlayer.currentPosition
-            val targetLivePos = (livePos + alignmentOffsetMs).coerceAtLeast(0L)
+            val targetLivePos = alignedPosition(livePos)
             standbyPlayer.seekTo(currentIndex, targetLivePos)
 
             val willPlay = wasPlaying && activePlayer.playWhenReady
@@ -3360,10 +3397,7 @@ class PlaybackService : MediaLibraryService() {
                     // near-seek lands inside the buffer it already holds, so
                     // the drift accumulated above collapses to this seek's own
                     // resume time, which is the one part that cannot go.
-                    standbyPlayer.seekTo(
-                        currentIndex,
-                        (activePlayer.currentPosition + alignmentOffsetMs).coerceAtLeast(0L),
-                    )
+                    standbyPlayer.seekTo(currentIndex, alignedPosition(activePlayer.currentPosition))
                     val resyncTimeout = SystemClock.elapsedRealtime() + 300L
                     while (isActive && standbyPlayer.playbackState != Player.STATE_READY && SystemClock.elapsedRealtime() < resyncTimeout) {
                         delay(10)
@@ -3382,7 +3416,7 @@ class PlaybackService : MediaLibraryService() {
             // Smooth equal-power crossfade transition (~550ms audio morph)
             val swapCrossfadeMs = 550L
             val fadeStart = SystemClock.elapsedRealtime()
-            if (!smartAlignEnabled) {
+            if (!holdsSwitchBar) {
                 AppSettings.smartMixInProgress.value = true
             }
 
@@ -3430,7 +3464,8 @@ class PlaybackService : MediaLibraryService() {
                     TrackLog.i(
                         "BitChord",
                         "song version: ${lateHandover.videoId} -> $mediaId late swap done " +
-                            "mv=${handedOverAtMs}ms song=${standbyPlayer.currentPosition}ms offset=${alignmentOffsetMs}ms",
+                            "mv=${handedOverAtMs}ms song=${standbyPlayer.currentPosition}ms " +
+                            (if (officialMap != null) "via=map" else "offset=${alignmentOffsetMs}ms"),
                         about = lateHandover.videoId,
                     )
                 }
@@ -3438,7 +3473,7 @@ class PlaybackService : MediaLibraryService() {
             } finally {
                 loudnessA.setBlendTrim(1f)
                 loudnessB.setBlendTrim(1f)
-                if (!smartAlignEnabled) {
+                if (!holdsSwitchBar) {
                     AppSettings.smartMixInProgress.value = false
                 }
             }
@@ -4187,7 +4222,22 @@ class PlaybackService : MediaLibraryService() {
         sameUpload = version.videoId == mediaId,
         smartAlignment = AppSettings.smartVersionAlignment.value,
         lowPower = AppSettings.lowPower.value,
+        mapped = officialTimeMap(exoPlayer, mediaId, version) != null, // [KO] version-map
     )
+
+    /**
+     * YouTube's own time map from [sourceId] (the row [exoPlayer] is playing)
+     * to [target], when [VersionSwapMap.usable] trusts it against both
+     * lengths; null means the swap measures (or refuses) as before.
+     */
+    private fun officialTimeMap(exoPlayer: ExoPlayer, sourceId: String, target: Song): VersionTimeMap? =
+        VersionSwapMap.usable(
+            YtMusicRepository.versionTimeMap(sourceId, target.videoId),
+            sourceDurationMs = exoPlayer.duration.takeIf {
+                it != C.TIME_UNSET && it > 0L && exoPlayer.currentMediaItem?.mediaId == sourceId
+            },
+            targetDurationMs = target.durationMillis(),
+        )
 
     /** The late handover's own measuring pass, and the (video, version) pair it is for. */
     private var lateHandoverJob: Job? = null
@@ -4248,16 +4298,18 @@ class PlaybackService : MediaLibraryService() {
             exoPlayer.currentPosition,
             exoPlayer.playbackParameters.speed,
         )
-        TrackLog.i(
-            "BitChord",
-            "song version: $mediaId -> ${version.videoId} late swap starting at mv=${exoPlayer.currentPosition}ms " +
-                "budget=${budgetMs}ms",
-            about = mediaId,
-        )
         val replacement = QueueShuffle.withQueueMetadata(
             version.asMusicOnlyOf(video).toMediaItem(),
             newCanonicalIndex = item.canonicalIndex,
             newContextCycleId = item.contextCycleId,
+        )
+        // [KO] version-map: YouTube's own map needs no measuring pass.
+        val map = officialTimeMap(exoPlayer, mediaId, replacement.toSong())
+        TrackLog.i(
+            "BitChord",
+            "song version: $mediaId -> ${version.videoId} late swap starting at mv=${exoPlayer.currentPosition}ms " +
+                (if (map != null) "via=map" else "budget=${budgetMs}ms"),
+            about = mediaId,
         )
         val handover = LateHandover(exoPlayer, row, video, version)
         cancelLateHandover("another row's late version")
@@ -4267,7 +4319,8 @@ class PlaybackService : MediaLibraryService() {
             val source = item.toSong()
             val target = replacement.toSong()
             var measuredInTime = true
-            if (!VersionAudioAligner.isRejected(source.videoId, target.videoId) &&
+            if (map == null &&
+                !VersionAudioAligner.isRejected(source.videoId, target.videoId) &&
                 VersionAudioAligner.getCachedOffsetMs(source.videoId, target.videoId) == null
             ) {
                 // Screen off too: one bounded pass, only with smart alignment
@@ -4299,7 +4352,7 @@ class PlaybackService : MediaLibraryService() {
             val confidence = VersionAudioAligner.getConfidence(source.videoId, target.videoId)
             val trusted = VersionAudioAligner.getCachedOffsetMs(source.videoId, target.videoId)
                 .takeUnless { VersionAudioAligner.isRejected(source.videoId, target.videoId) }
-            if (trusted == null) {
+            if (map == null && trusted == null) {
                 val reason = when {
                     confidence != null && !VersionSwapPolicy.shouldSwap(confidence) ->
                         "recordings do not match conf=$confidence"
@@ -4311,7 +4364,7 @@ class PlaybackService : MediaLibraryService() {
                 return@launch
             }
             val refusal = lateHandoverRefusal(handover)
-                ?: songEndRefusal(exoPlayer, trusted, target)
+                ?: songEndRefusal(exoPlayer, trusted ?: 0L, target, map)
                 ?: "another swap is running".takeIf {
                     versionSwapJob?.isActive == true || crossfade?.isTransitioning() == true
                 }
@@ -4357,11 +4410,26 @@ class PlaybackService : MediaLibraryService() {
     }
 
     /** The song's own end, with the video's length standing in when the song's is unknown. */
-    private fun songEndRefusal(exoPlayer: ExoPlayer, offsetMs: Long, target: Song): String? {
+    private fun songEndRefusal(
+        exoPlayer: ExoPlayer,
+        offsetMs: Long,
+        target: Song,
+        /** [KO] version-map: YouTube's own map, used instead of [offsetMs] when present. */
+        map: VersionTimeMap? = null,
+    ): String? {
         val songMs = target.durationMillis().takeIf { it > 0L }
+        if (map != null) {
+            val start = VersionSwapMap.positionMs(map, exoPlayer.currentPosition, songMs)
+            // An unknown runtime is read off the map's last shared stretch.
+            val endMs = songMs ?: map.segments.last().let { it.toStartMs + it.durationMs }
+            return LateVersionSwapPolicy.Refusal.NEAR_END.reason.takeIf {
+                LateVersionSwapPolicy.mappedSongStartMs(start, endMs) == null
+            }
+        }
+        val songOrVideoMs = songMs
             ?: exoPlayer.duration.takeIf { it != C.TIME_UNSET && it > 0L }?.plus(offsetMs)
         return LateVersionSwapPolicy.Refusal.NEAR_END.reason.takeIf {
-            LateVersionSwapPolicy.songStartMs(exoPlayer.currentPosition, offsetMs, songMs) == null
+            LateVersionSwapPolicy.songStartMs(exoPlayer.currentPosition, offsetMs, songOrVideoMs) == null
         }
     }
 
@@ -10086,7 +10154,11 @@ class PlaybackService : MediaLibraryService() {
         exoPlayer.replaceMediaItem(index, replacement)
         // A queue restored paused part-way through a video resumes where it was.
         if (position > 0L) {
-            val mapped = YtMusicRepository.versionTimeMap(video.videoId, audio.videoId)?.map(position) ?: position
+            val mapped = VersionSwapMap.usable( // [KO] version-map: a broken map is not trusted
+                YtMusicRepository.versionTimeMap(video.videoId, audio.videoId),
+                video.durationMillis(),
+                audio.durationMillis(),
+            )?.let { VersionSwapMap.positionMs(it, position, audio.durationMillis()) } ?: position
             exoPlayer.seekTo(exoPlayer.currentMediaItemIndex, mapped.coerceAtLeast(0L))
         }
     }
