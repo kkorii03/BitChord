@@ -657,6 +657,16 @@ def safe_name(played):
     return "".join("_" if c in ("/", "\\", "\0", ":") else c for c in played) or "song"
 
 
+SWAP_WINDOW_S = 3.0
+
+
+def _log_seconds(stamp):
+    """Seconds of a logcat `MM-DD HH:MM:SS.mmm` stamp (a 3 s gap only needs day-of-month order)."""
+    d, t = stamp.split()
+    h, m, s = t.split(":")
+    return (int(d[3:]) * 24 + int(h)) * 3600 + int(m) * 60 + float(s)
+
+
 def dumped_id(text, vid):
     """The id whose sheet is on screen: the last swapped id (music-only / song version)
     that dumped, else the row's own. A hi-res substitute's head is kept under *this*
@@ -668,13 +678,16 @@ def dumped_id(text, vid):
     # (XbGs_qK2PQA -> MBJFPq2Llps, OxgiiyLp5pk -> ZtcM3KhgF-s showed lyrics but
     # scored "no sync-dump"). A replacement of the row is also the PLAYLIST_CHANGED
     # transition straight after one of the row's ids, which is I-level.
-    row, prev = {vid}, None
-    for m in re.finditer(r"play: -> .* \(([\w-]{11})\) idx=\S+ reason=(\w+)", text):
-        pid = m.group(1)
-        if prev in row and pid not in row and m.group(2) == "PLAYLIST_CHANGED":
-            row.add(pid)
-            found.append((m.start(), pid))
-        prev = pid
+    # One hop only, and only for THIS id: the play line straight after one of vid's own
+    # play lines, PLAYLIST_CHANGED, another id, within SWAP_WINDOW_S (the app swaps in
+    # under a second; titles may differ: 8gyLR4NfMiI -> x2_zcyJp2mE). A fleet log is many
+    # songs in a row, each starting with PLAYLIST_CHANGED, and the next requested song
+    # comes a play later, so a chain would hand every song the last one's sheet (rs18 11-09).
+    plays = [(m.start(), _log_seconds(m.group(1)), m.group(2), m.group(3)) for m in re.finditer(
+        r"(\d\d-\d\d \d\d:\d\d:\d\d\.\d+)\s.*?play: -> .*? \(([\w-]{11})\) idx=\S+ reason=(\w+)", text)]
+    for (_, at, pid, _), (pos, nat, nid, reason) in zip(plays, plays[1:]):
+        if pid == vid and nid != vid and reason == "PLAYLIST_CHANGED" and 0 <= nat - at <= SWAP_WINDOW_S:
+            found.append((pos, nid))
     swapped = [i for _, i in sorted(found)]
     return next((i for i in reversed(swapped) if parse_dump(text, i)), vid)
 
@@ -1056,18 +1069,25 @@ def selftest():
            "x sync-dump: line AAAAAAAAAAA 1 1000 alfa\n"
            "x sync-dump: end AAAAAAAAAAA\n")
     assert dumped_id(own, "AAAAAAAAAAA") == "AAAAAAAAAAA"
-    # 11-09 phone: no music-only line (D-level dropped), only the replacing transition.
-    quiet = ("x play: -> Old - X (CCCCCCCCCCC) idx=0/11 reason=PLAYLIST_CHANGED meta=ok\n"
-             "x play: -> T - A (AAAAAAAAAAA) idx=0/1 reason=PLAYLIST_CHANGED meta=ok\n"
-             "x play: -> T - A (BBBBBBBBBBB) idx=0/1 reason=PLAYLIST_CHANGED meta=ok\n"
-             "x sync-dump: begin BBBBBBBBBBB playing=BBBBBBBBBBB source=test base=none shift=0 match=0 lines=1\n"
-             "x sync-dump: line BBBBBBBBBBB 1 1000 bravo\n"
-             "x sync-dump: end BBBBBBBBBBB\n"
-             "x play: -> Next - N (DDDDDDDDDDD) idx=1/11 reason=AUTO meta=ok\n"
-             "x sync-dump: begin DDDDDDDDDDD playing=DDDDDDDDDDD source=test base=none shift=0 match=0 lines=1\n"
-             "x sync-dump: line DDDDDDDDDDD 1 1000 delta\n"
-             "x sync-dump: end DDDDDDDDDDD\n")
+    # 11-09 phone: no music-only line (D-level dropped), only the replacing transition
+    # (a different title is fine: 8gyLR4NfMiI -> x2_zcyJp2mE). One hop, in the song's own window.
+    def play(sec, title, vid, reason="PLAYLIST_CHANGED"):
+        return f"11-09 02:{int(sec // 60):02d}:{sec % 60:06.3f} 1 2 I BitChord: play: -> {title} ({vid * 11}) idx=0/1 reason={reason} meta=ok\n"
+    def sheet(*ids):
+        return "".join(f"x sync-dump: begin {i * 11} playing={i * 11} source=t base=none shift=0 match=0 lines=1\n"
+                       f"x sync-dump: line {i * 11} 1 1000 w\nx sync-dump: end {i * 11}\n" for i in ids)
+    quiet = play(0, "Old - X", "C") + play(1, "T - A", "A") + play(1.5, "t - a (x)", "B") + sheet("B") + play(90, "Next - N", "D", "AUTO") + sheet("D")
     assert dumped_id(quiet, "AAAAAAAAAAA") == "BBBBBBBBBBB", dumped_id(quiet, "AAAAAAAAAAA")
+    # A multi-song log keeps each song's own sheet: only the song's own immediate, sub-3 s
+    # replacement is followed, one hop (B -> C is B's), and the next requested song never is.
+    multi = (play(1, "T - A", "A") + play(1.5, "T - A", "B") + play(2.0, "T - A", "C")
+             + play(60, "U - X", "D") + play(120, "V - Y", "E") + play(120.4, "V - Y", "F") + sheet(*"ABCDEF"))
+    for k, v in dict(A="B", B="C", C="C", D="D", E="F", F="F").items():
+        assert dumped_id(multi, k * 11) == v * 11, (k, dumped_id(multi, k * 11))
+    # A fleet log of back-to-back songs (no replacement, 60 s apart) keeps every song's own sheet.
+    fleet = "".join(play(60 * n, f"S{i}", i) for n, i in enumerate("ABCD")) + sheet(*"ABCD")
+    for i in "ABCD":
+        assert dumped_id(fleet, i * 11) == i * 11, (i, dumped_id(fleet, i * 11))
     # 11-08: a sheet shifted as a whole is FAILed with its offset, not called unheard.
     tokens = ["alfa", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliett"]
     def shifted(shift, count=10, missing=()):
