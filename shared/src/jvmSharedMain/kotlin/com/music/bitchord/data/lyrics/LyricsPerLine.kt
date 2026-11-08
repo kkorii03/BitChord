@@ -288,8 +288,8 @@ object LyricsPerLine {
      * both agreeing neighbours is dropped ([MAX_LONE_FIRST_WORD_DIFF_MS]), and on a sheet the
      * openings say is right, only the moves within its scatter are kept.
      *
-     * 85 recorded songs, after a whole-song shift (heard and scored on whisper-large, offline
-     * port): within 0.3 s 1951 -> 2004 of 2253 lines, 22 songs better, none worse.
+     * Sync replay, 85 recorded songs through the app's fit (heard and scored on whisper-large):
+     * within 0.3 s after the per-line layer 88 % -> 91 % of 2253 lines, median 50 -> 30 ms.
      */
     private fun firstWordSnaps(
         lines: List<LyricLine>,
@@ -300,6 +300,9 @@ object LyricsPerLine {
         val folded = lines.map { LyricsWordAlign.fold(it.text) }
         val copies = folded.groupingBy { it }.eachCount()
         val found = ArrayList<Anchor>()
+        // Openings heard before the line before them ends. They still take part in the order
+        // check, so a pair heard crossed loses the one that moves further, then they go.
+        val insideHeldNote = HashSet<Int>()
         var previousLastWord = -1
         var previousLastEnd = Long.MIN_VALUE
         for (index in lines.indices) {
@@ -311,19 +314,22 @@ object LyricsPerLine {
                 hearing.words.size >= MIN_ANCHOR_WORDS &&
                 opening != previousLastWord &&
                 hearing.openingLetters >= maxOf(1, ceil(MIN_FIRST_WORD_COVER * LyricsWordAlign.fold(heard[opening].text).length).toInt()) &&
-                heard[opening].startMs <= heard[hearing.words[1]].startMs &&
-                heard[opening].startMs >= previousLastEnd
+                heard[opening].startMs <= heard[hearing.words[1]].startMs
             ) {
                 val residual = heard[opening].startMs - leadStart
                 val cap = if ((copies[folded[index]] ?: 0) > 1) MAX_REPEATED_FIRST_WORD_MOVE_MS else MAX_FIRST_WORD_MOVE_MS
-                if (abs(residual) <= cap) found += Anchor(index, lines[index].timeMs, residual)
+                if (abs(residual) <= cap) {
+                    found += Anchor(index, lines[index].timeMs, residual)
+                    if (heard[opening].startMs < previousLastEnd) insideHeldNote += index
+                }
             }
             hearing.words.lastOrNull()?.let {
                 previousLastWord = it
                 previousLastEnd = heard[it].endMs
             }
         }
-        val guarded = withoutLoneFirstWords(withoutStrays(withoutLoneBlocks(sungInOrder(found, letters))))
+        val ordered = sungInOrder(found, letters).filter { it.line !in insideHeldNote }
+        val guarded = withoutLoneFirstWords(withoutStrays(withoutLoneBlocks(ordered)))
         if (guarded.size >= MIN_GOOD_SHEET_LINES &&
             guarded.count { abs(it.residualMs) <= GOOD_SHEET_MOVE_MS } >= guarded.size * GOOD_SHEET_MOVE_SHARE
         ) {
