@@ -239,6 +239,19 @@ internal object SongHearing {
             // whatever window. Each window flying on its own paid for the same opening
             // twice over (11-06: 4.25 requests a song against the 2 this design needs).
             val flight = "${song.videoId}|$recording|$language|$wantExact"
+            // A row that left (the MV a release replaced, 112b) must not take a request
+            // slot: kept words above were free, a new request is not. A flight already
+            // running for this key is joined below, never cancelled here.
+            if (!inFlight.containsKey(flight) &&
+                !SongCheckRetry.hearingWanted(
+                    song.videoId,
+                    com.music.bitchord.data.DiagnosticsState.currentTrackId,
+                    com.music.bitchord.data.DiagnosticsState.nextTrackId,
+                )
+            ) {
+                TrackLog.d(TAG, "song-hear: skipped, the track is no longer wanted", song.videoId)
+                return null
+            }
             val fresh = Flight(
                 untilSeconds,
                 scope.async(start = CoroutineStart.LAZY) { listen(app, song, untilSeconds, minSeconds, language, wantExact) },

@@ -2313,6 +2313,8 @@ object LyricsTiming {
                 }
             }
         var mark = lap("검색", began)
+        // The search can take long enough for the row to be replaced (112b): stop before any fetch.
+        if (!wanted()) return Measured.Retry
         if (candidates.isEmpty()) {
             TrackLog.d(TAG, "no original recording found for $names", video.videoId)
             return Measured.Done(null, complete = true, note = "원곡을 찾지 못함 ($times)")
@@ -2355,6 +2357,7 @@ object LyricsTiming {
             return Measured.Retry
         }
         mark = lap("비디오 대기", mark)
+        if (!wanted()) return Measured.Retry
         // Read from the rendition actually opened, not from what is playing now:
         // after a mid-song swap the YouTube copy may already be gone.
         val measurementClock = clockForRendition(video.videoId, copy.key, copy.origin == AudioCache.Origin.YOUTUBE)
@@ -2466,6 +2469,7 @@ object LyricsTiming {
             log(verdict, record, "kept")
             return Tried(original, result, reached = true, partial = false, note = "$name: $verdict (저장된 원곡, ${seconds(System.currentTimeMillis() - began)})")
         }
+        if (!wanted()) return Tried(original, null, reached = false, partial = false, note = "$name: 곡이 바뀌어 중단")
         if (original.localUri == null) {
             AudioCache.keepForTiming(original.videoId)
             val uri = Uri.parse(AutomixAnalysisSource.opusUri(original.videoId))
@@ -4369,6 +4373,12 @@ object LyricsTiming {
         return SongAsk(answer, language, untilSeconds)
     }
 
+    /** Videos whose last song check ended without any reply (network down), see [SongCheckRetry]. */
+    private val songTransportFailed: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
+    /** Whether the last song check of [videoId] failed in transport; read once, then forgotten. */
+    internal fun takeSongTransportFailure(videoId: String): Boolean = songTransportFailed.remove(videoId)
+
     /** Fits the lines to what [ask] heard. Runs under the gate: this and the apply are what it is for. */
     private suspend fun fitSongCheck(
         context: Context,
@@ -4397,6 +4407,7 @@ object LyricsTiming {
         val texts = indices.map { lines[it].text }
         val heard = answer.words ?: run {
             songLog(song.videoId, "no-answer", null, null, seconds, words = 0, http = answer.httpCode)
+            if (SongCheckRetry.transportFailure(answer.httpCode, hasWords = false)) songTransportFailed.add(song.videoId)
             probe?.failure = when {
                 answer.httpCode == 429 -> NextPrepPolicy.SyncFailure.RATE_LIMIT
                 answer.httpCode == null -> NextPrepPolicy.SyncFailure.ERROR

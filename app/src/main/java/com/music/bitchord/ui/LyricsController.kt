@@ -22,6 +22,7 @@ import com.music.bitchord.playback.PowerState
 import com.music.bitchord.playback.StreamChoice
 import com.music.bitchord.playback.SyncSafetyPolicy
 import com.music.bitchord.playback.smart.LyricsTiming
+import com.music.bitchord.playback.smart.SongCheckRetry
 import com.music.bitchord.playback.smart.SyncTestMode
 import com.music.bitchord.playback.smart.VideoAudio
 import com.music.bitchord.ui.player.LyricsTimingUi
@@ -339,6 +340,8 @@ class LyricsController(
             (currentLyricsRequest?.localUri != null) != (localUri != null)
         ) {
             songCheckStartedFor = null
+            songCheckRetryFor = null
+            songCheckRetriesDone = 0
             refineHeardStartedFor = null
             mismatchReloadedFor = null
             lateSheetAskedFor = null
@@ -953,6 +956,7 @@ class LyricsController(
                 LyricsTiming.changes.collect { videoId ->
                     if (videoId == request.videoId) {
                         refreshTiming(generation, lines)
+                        if (songCheckRetryFor != null) launch { retrySongCheckOnce(generation, lines) }
                         // The words that decide "this accepted timing is wrong"
                         // are stored by the refine listen, which finishes after
                         // the one AI decision taken at load. Ask again when they
@@ -995,6 +999,7 @@ class LyricsController(
                 AudioCache.completedRenditions.collect { completed ->
                     if (request.videoId !in completed) return@collect
                     if (currentLyricsRequest?.videoId != request.videoId) return@collect
+                    if (songCheckRetryFor != null) launch { retrySongCheckOnce(generation, lines) }
                     // The wider refine listen waits for the rest of the file
                     // (RefineExtendPolicy.hasAudioFor). This event says it
                     // arrived: forget this playback's refusal and ask again
@@ -1283,24 +1288,59 @@ class LyricsController(
             } + "|" + lines.hashCode()
             if (songCheckStartedFor == checkKey) return@launch
             songCheckStartedFor = checkKey
-            LyricsTiming.verifySong(
-                context,
-                Song(
-                    videoId = request.videoId,
-                    title = request.title,
-                    artist = request.artist,
-                    thumbnailUrl = null,
-                    isVideo = false,
-                    localUri = request.localUri,
-                    // VideoAudio turns seconds into bytes with this.
-                    durationText = request.durationMs.takeIf { it > 0L }?.let { ms ->
-                        "${ms / 60_000}:${((ms / 1_000) % 60).toString().padStart(2, '0')}"
-                    },
-                ),
-                lines,
-            )
-            refreshTiming(generation, lines)
+            runSongCheck(generation, request, lines, checkKey)
         }
+    }
+
+    /** The key of a song check whose request failed in transport and may be asked once more. */
+    private var songCheckRetryFor: String? = null
+    private var songCheckRetriesDone = 0
+
+    private suspend fun runSongCheck(generation: Long, request: LyricsRequest, lines: List<LyricLine>, checkKey: String) {
+        val ok = LyricsTiming.verifySong(
+            app,
+            Song(
+                videoId = request.videoId,
+                title = request.title,
+                artist = request.artist,
+                thumbnailUrl = null,
+                isVideo = false,
+                localUri = request.localUri,
+                // VideoAudio turns seconds into bytes with this.
+                durationText = request.durationMs.takeIf { it > 0L }?.let { ms ->
+                    "${ms / 60_000}:${((ms / 1_000) % 60).toString().padStart(2, '0')}"
+                },
+            ),
+            lines,
+        )
+        if (!ok && LyricsTiming.takeSongTransportFailure(request.videoId)) songCheckRetryFor = checkKey
+        refreshTiming(generation, lines)
+    }
+
+    /**
+     * Re-asks a song check once when its first request got no reply at all (a
+     * short network outage, 11-08 5cBNNlHoPSg). Called from events that already
+     * happen (a timing change, the audio copy completing), never from a timer.
+     */
+    private suspend fun retrySongCheckOnce(generation: Long, lines: List<LyricLine>) {
+        val request = currentLyricsRequest ?: return
+        val pending = songCheckRetryFor ?: return
+        val checkKey = if (request.isVideo) {
+            request.videoId
+        } else {
+            LyricsTiming.audioSourceKey(request.videoId, request.localUri != null)
+        } + "|" + lines.hashCode()
+        if (!SongCheckRetry.mayRetry(
+                pendingFor = pending,
+                checkKey = checkKey,
+                retriesDone = songCheckRetriesDone,
+                sameTrack = generation == lyricsGeneration,
+                heavyAllowed = AppSettings.heavyWorkAllowed,
+            )
+        ) return
+        songCheckRetryFor = null
+        songCheckRetriesDone += 1
+        runSongCheck(generation, request, lines, checkKey)
     }
 
     private var earlyMeasureJob: Job? = null
