@@ -1,5 +1,6 @@
 package com.music.bitchord.playback.smart
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -144,5 +145,29 @@ class LyricsTimingMeasurementGateTest {
     fun `a read from zero or a second restart does not start over`() {
         assertFalse(LyricsTiming.staleReadingNeedsRestart(0.0, AudioDecoder.FAILURE_NO_FIRST_SAMPLE, false))
         assertFalse(LyricsTiming.staleReadingNeedsRestart(70.0, AudioDecoder.FAILURE_NO_FIRST_SAMPLE, true))
+    }
+
+    /**
+     * User phone 11-08: 27 "no-first-sample" failures in 3 h. Each was a pass
+     * that seeked to where the last pass ran out of bytes with nothing new on
+     * disk, scanned for 1-2 s, then decoded the whole prefix again from zero.
+     */
+    @Test
+    fun `a pass that read to the end is not decoded again until bytes arrive`() {
+        assertEquals(LyricsTiming.ReadPlan.KEEP, LyricsTiming.readPlan(2_800_000L, exhaustedAt = 2_800_000L, failedAt = null))
+        assertEquals(LyricsTiming.ReadPlan.KEEP, LyricsTiming.readPlan(2_000_000L, exhaustedAt = 2_800_000L, failedAt = null))
+        assertEquals(LyricsTiming.ReadPlan.DECODE, LyricsTiming.readPlan(3_200_000L, exhaustedAt = 2_800_000L, failedAt = null))
+    }
+
+    @Test
+    fun `a copy that gave no sample waits for more bytes instead of retrying`() {
+        assertEquals(LyricsTiming.ReadPlan.SKIP, LyricsTiming.readPlan(1_500_000L, exhaustedAt = null, failedAt = 1_500_000L))
+        assertEquals(LyricsTiming.ReadPlan.DECODE, LyricsTiming.readPlan(1_900_000L, exhaustedAt = null, failedAt = 1_500_000L))
+    }
+
+    @Test
+    fun `a first read or an unknown size decodes as before`() {
+        assertEquals(LyricsTiming.ReadPlan.DECODE, LyricsTiming.readPlan(2_800_000L, exhaustedAt = null, failedAt = null))
+        assertEquals(LyricsTiming.ReadPlan.DECODE, LyricsTiming.readPlan(-1L, exhaustedAt = 2_800_000L, failedAt = 2_800_000L))
     }
 }
