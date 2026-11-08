@@ -167,13 +167,15 @@ object LyricsWordAlign {
      * letters were matched to ([words], indices into the heard list, in order), the share of
      * its letters matched, and [opening], the heard word its first letter was matched to when
      * that letter is also that word's own first letter (null otherwise), with how many of the
-     * line's letters went to that word.
+     * line's letters went to that word. [onsets]: each of the line's letters (by its place in the
+     * folded line) matched to a heard word's own first letter, with that word.
      */
     data class LineHearing(
         val words: List<Int>,
         val share: Double,
         val opening: Int?,
         val openingLetters: Int,
+        val onsets: Map<Int, Int> = emptyMap(),
     )
 
     /** [LineHearing] for each of [lines]; all empty when the alignment was not attempted. */
@@ -190,12 +192,14 @@ object LyricsWordAlign {
                 continue
             }
             val heardWords = LinkedHashSet<Int>()
+            val onsets = HashMap<Int, Int>()
             var matched = 0
             for (i in k until end) {
                 val at = aligned.heardFor[i]
                 if (at < 0) continue
                 matched++
                 heardWords += aligned.heardWord[at]
+                if (at == 0 || aligned.heardWord[at - 1] != aligned.heardWord[at]) onsets[i - k] = aligned.heardWord[at]
             }
             val first = aligned.heardFor[k]
             val opening = if (first >= 0 && (first == 0 || aligned.heardWord[first - 1] != aligned.heardWord[first])) {
@@ -208,7 +212,7 @@ object LyricsWordAlign {
             } else {
                 (k until end).count { aligned.heardFor[it] >= 0 && aligned.heardWord[aligned.heardFor[it]] == opening }
             }
-            out += LineHearing(heardWords.toList(), matched.toDouble() / (end - k), opening, openingLetters)
+            out += LineHearing(heardWords.toList(), matched.toDouble() / (end - k), opening, openingLetters, onsets)
             k = end
         }
         return out

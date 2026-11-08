@@ -1329,8 +1329,16 @@ object LyricsTiming {
         // passes, 94.9% to 97.8% within 0.3 s, though the score shares the transcript that
         // moved the lines. Line-timed sheets are the other way round (6 to 4, 91.3% to 81.0%).
         // With no fit, the words are all this sheet has (3JWTaaS7LdU, refused at 56%).
+        // Such a sheet's own line stamps still scatter (11-09 phone: KuGou lines 0.35 s late, a
+        // SyncLRC line 0.56 s late), so only a first-word snap that passes the stricter word-sheet
+        // tests moves a line ([LyricsPerLine.wordSheetSnaps]); no word anchors, no interpolation.
         val layer = if (timing.base != null && LyricsPerLine.statesItsOwnWords(lines)) {
-            LyricsPerLine.Layer.identity(lines.size)
+            // A transcript of this recording is placed by its own rule in compute, never snapped.
+            if (words.ownTranscript) {
+                LyricsPerLine.Layer.identity(lines.size)
+            } else {
+                LyricsPerLine.wordSheetSnaps(lines, words.words, words.wordsKey, words.currentKey)
+            }
         } else {
             LyricsPerLine.compute(lines, words.words, words.wordsKey, words.currentKey, words.ownTranscript)
         }

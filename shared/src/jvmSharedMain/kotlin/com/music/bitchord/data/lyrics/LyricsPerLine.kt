@@ -131,8 +131,11 @@ object LyricsPerLine {
         }
     }
 
-    /** [placed]: from where a transcript sheet's line was heard ([addPlacedLines]), not from its words. */
-    private class Anchor(val line: Int, val timeMs: Long, val residualMs: Long, val placed: Boolean = false)
+    /**
+     * [placed]: from where a transcript sheet's line was heard ([addPlacedLines]), not from its words.
+     * [opening]: the heard word a first-word snap ([firstWordSnaps]) starts the line on, else -1.
+     */
+    private class Anchor(val line: Int, val timeMs: Long, val residualMs: Long, val placed: Boolean = false, val opening: Int = -1)
 
     /**
      * The per-line moves for [lines] (already after base, HQ and refine) from
@@ -319,7 +322,7 @@ object LyricsPerLine {
                 val residual = heard[opening].startMs - leadStart
                 val cap = if ((copies[folded[index]] ?: 0) > 1) MAX_REPEATED_FIRST_WORD_MOVE_MS else MAX_FIRST_WORD_MOVE_MS
                 if (abs(residual) <= cap) {
-                    found += Anchor(index, lines[index].timeMs, residual)
+                    found += Anchor(index, lines[index].timeMs, residual, opening = opening)
                     if (heard[opening].startMs < previousLastEnd) insideHeldNote += index
                 }
             }
@@ -337,6 +340,130 @@ object LyricsPerLine {
         }
         return guarded
     }
+
+    /**
+     * The per-line layer for a sheet that states its own word times ([statesItsOwnWords]) on a
+     * whole-song fit. Such a sheet was timed by someone listening and is otherwise left as it is
+     * (see LyricsTiming.perLineLayer), but its line stamps scatter by their own ±0.35 s (11-09
+     * phone: KuGou OxgiiyLp5pk lines 0.32-0.37 s late after a right +350 ms base, SyncLRC
+     * 6rS7OUGXUik line 13 0.56 s late). A line moves only by a first-word snap ([firstWordSnaps],
+     * with all its guards) that also passes every test here:
+     * - the move is [MIN_WORD_SHEET_MOVE_MS]..[MAX_WORD_SHEET_MOVE_MS]: under it is the sheet's
+     *   own scatter, over it the opening is more likely another place than a tapping slip;
+     * - the sheet does not repeat the line (its opening may be the other copy's);
+     * - no other heard place within [WORD_SHEET_ECHO_MS] opens like the line ([echoed]): 6rS7
+     *   line 37 was heard twice 1.1 s apart, a whisper copy, and the snap took the second;
+     * - the sheet's own later words, where their first letters were heard as word starts, say
+     *   the same move to within [WORD_SHEET_AGREE_MS] ([sheetWordsAgree]): the whole line moves,
+     *   its words with it, so a slip of the first stamp alone is not a reason to move them all.
+     *
+     * Offline on 107 phone and emulator dumps of such sheets (65 also on the app's own transcript),
+     * without the sheet-words test: every scored line moved came closer to where it was sung, none
+     * further; without the echo, repeat or cap tests a line each went 0.35-1.07 s wrong
+     * (ship/lanes/opus-wordsheet.md).
+     */
+    fun wordSheetSnaps(
+        lines: List<LyricLine>,
+        heard: List<LyricsWordAlign.Heard>,
+        heardAudioKey: Int?,
+        currentAudioKey: Int?,
+    ): Layer {
+        if (heardAudioKey != currentAudioKey) return Layer.identity(lines.size)
+        if (lines.isEmpty() || heard.isEmpty()) return Layer.identity(lines.size)
+        val folded = lines.map { LyricsWordAlign.fold(it.text) }
+        val copies = folded.groupingBy { it }.eachCount()
+        val snaps = firstWordSnaps(lines, heard, folded.map { it.length })
+        if (snaps.isEmpty()) return Layer.identity(lines.size)
+        val hearings = LyricsWordAlign.lineHearings(lines.map { it.text }, heard)
+        val kept = snaps.filter { snap ->
+            val start = lines[snap.line].timeMs + snap.residualMs
+            abs(snap.residualMs) in MIN_WORD_SHEET_MOVE_MS..MAX_WORD_SHEET_MOVE_MS &&
+                // Inside its neighbours as the sheet has them: a word sheet's line never pushes another.
+                (snap.line == 0 || start > lines[snap.line - 1].timeMs + MIN_LINE_GAP_MS) &&
+                (snap.line == lines.lastIndex || start < lines[snap.line + 1].timeMs - MIN_LINE_GAP_MS) &&
+                (copies[folded[snap.line]] ?: 0) <= 1 &&
+                snap.opening >= 0 &&
+                !echoed(lines[snap.line].text, heard, snap.opening) &&
+                sheetWordsAgree(lines[snap.line], hearings[snap.line], heard, snap.residualMs)
+        }
+        if (kept.isEmpty()) return Layer.identity(lines.size)
+        val shifts = LongArray(lines.size)
+        for (snap in kept) shifts[snap.line] = snap.residualMs
+        enforceOrder(lines, shifts)
+        val applied = shifts.count { it != 0L }
+        val maxAbs = shifts.maxOfOrNull { abs(it) } ?: 0L
+        return Layer(shifts.toList(), 0, applied, maxAbs, kept.size)
+    }
+
+    /** See [wordSheetSnaps]. */
+    const val MIN_WORD_SHEET_MOVE_MS = 300L
+    const val MAX_WORD_SHEET_MOVE_MS = 800L
+    const val WORD_SHEET_ECHO_MS = 4_000L
+    const val WORD_SHEET_AGREE_MS = 250L
+    /** The opening compared for an echo: the first word, at least this many letters, at most that many. */
+    const val MIN_ECHO_LETTERS = 4
+    const val MAX_ECHO_LETTERS = 8
+    /** Letters in common (twice the longest common run of letters over both lengths) that make two openings one. */
+    const val ECHO_SIMILARITY = 0.75
+
+    /**
+     * Whether a heard place other than [opening], within [WORD_SHEET_ECHO_MS] of it, opens the way
+     * [text] does: the line's first word (at least [MIN_ECHO_LETTERS], at most [MAX_ECHO_LETTERS]
+     * letters) against the heard letters from there, [ECHO_SIMILARITY] in common and the same first
+     * letter. Too short an opening to tell is taken as echoed.
+     */
+    private fun echoed(text: String, heard: List<LyricsWordAlign.Heard>, opening: Int): Boolean {
+        val folded = LyricsWordAlign.fold(text)
+        val first = LyricsWordAlign.fold(text.trim().split(WHITESPACE).firstOrNull().orEmpty())
+        val key = folded.take(minOf(folded.length, maxOf(MIN_ECHO_LETTERS, first.length), MAX_ECHO_LETTERS))
+        if (key.length < 2) return true
+        val at = heard[opening].startMs
+        for (j in heard.indices) {
+            if (j == opening || abs(heard[j].startMs - at) > WORD_SHEET_ECHO_MS) continue
+            val from = StringBuilder()
+            var i = j
+            while (i < heard.size && from.length < key.length) from.append(LyricsWordAlign.fold(heard[i++].text))
+            val other = from.take(key.length)
+            if (other.isNotEmpty() && other[0] == key[0] && commonShare(key, other) >= ECHO_SIMILARITY) return true
+        }
+        return false
+    }
+
+    /** 2 x the longest common subsequence of [a] and [b] over their lengths together. */
+    private fun commonShare(a: String, b: String): Double {
+        if (a.isEmpty() || b.isEmpty()) return 0.0
+        var previous = IntArray(b.length + 1)
+        for (x in a) {
+            val current = IntArray(b.length + 1)
+            for (j in b.indices) current[j + 1] = if (x == b[j]) previous[j] + 1 else maxOf(previous[j + 1], current[j])
+            previous = current
+        }
+        return 2.0 * previous[b.length] / (a.length + b.length)
+    }
+
+    /**
+     * Whether [line]'s own later words, each where its first letter was heard as the start of a
+     * heard word, were heard [residualMs] from where the sheet stamps them (their median, within
+     * [WORD_SHEET_AGREE_MS]). False when the words do not spell the line or none was heard so.
+     */
+    private fun sheetWordsAgree(
+        line: LyricLine,
+        hearing: LyricsWordAlign.LineHearing,
+        heard: List<LyricsWordAlign.Heard>,
+        residualMs: Long,
+    ): Boolean {
+        if (line.words.size < 2) return false
+        val moves = ArrayList<Long>()
+        var position = 0
+        line.words.forEachIndexed { k, word ->
+            if (k > 0) hearing.onsets[position]?.let { moves += heard[it].startMs - word.startMs }
+            position += LyricsWordAlign.fold(word.text).length
+        }
+        if (position != LyricsWordAlign.fold(line.text).length || moves.isEmpty()) return false
+        return abs(median(moves) - residualMs) <= WORD_SHEET_AGREE_MS
+    }
+
+    private val WHITESPACE = Regex("\\s+")
 
     /** [snaps] without one that sits far from both its neighbours while they agree: the opening heard somewhere else. */
     private fun withoutLoneFirstWords(snaps: List<Anchor>): List<Anchor> =
