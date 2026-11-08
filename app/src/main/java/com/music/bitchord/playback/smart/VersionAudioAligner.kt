@@ -7,6 +7,7 @@ import android.util.Log
 import androidx.media3.common.util.UnstableApi
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.net.LateVersionSwapPolicy
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.PowerState
 import com.music.bitchord.playback.StreamChoice
@@ -40,7 +41,23 @@ object VersionAudioAligner {
     private const val TAG = "VersionAudioAligner"
     private const val HOP_MS = 10.0 // 100 frames per second (10ms resolution)
     private const val WIN_MS = 40.0 // 40ms analysis window
-    private const val MAX_LAG_SECONDS = 40.0 // Search up to ±40s drift/intro
+    /** How much of each recording's opening one measurement decodes: the window the late handover's cap is built on. */
+    internal const val WINDOW_SECONDS = LateVersionSwapPolicy.ALIGNMENT_WINDOW_MS / 1000.0
+
+    /** The least overlap a lag at the edge of the search is still judged on. */
+    private const val EDGE_OVERLAP_SECONDS = 5.0
+
+    /** Search up to ±40 s of drift/intro: the window less the overlap a lag needs to be judged at all. */
+    private const val MAX_LAG_SECONDS = WINDOW_SECONDS - EDGE_OVERLAP_SECONDS
+
+    /**
+     * [KO] align-reach: how much of one side a second pass decodes when the
+     * first one's peak is pinned to the lag cap — see [reachFor].
+     */
+    internal const val REACH_SECONDS = 2 * WINDOW_SECONDS
+
+    /** The lag cap of that second pass, by the same rule as [MAX_LAG_SECONDS]. */
+    internal const val REACH_MAX_LAG_SECONDS = REACH_SECONDS - EDGE_OVERLAP_SECONDS
     private const val MIN_CONFIDENCE = VersionSwapPolicy.MIN_SWAP_CONFIDENCE
 
     // Cache computed offsets so subsequent switches are instantaneous:
@@ -82,6 +99,68 @@ object VersionAudioAligner {
     fun reject(sourceVideoId: String, targetVideoId: String) {
         rejectedPairs.add(sourceVideoId to targetVideoId)
         rejectedPairs.add(targetVideoId to sourceVideoId)
+    }
+
+    /** Caches a measured shift both ways (target = source + offset). */
+    internal fun storeOffset(sourceVideoId: String, targetVideoId: String, offsetMs: Long) {
+        offsetCache[sourceVideoId to targetVideoId] = offsetMs
+        offsetCache[targetVideoId to sourceVideoId] = -offsetMs
+    }
+
+    /**
+     * [KO] align-revision: forgets every pair [videoId] is in. The cache is
+     * keyed by id, and one id can change recordings: a downloaded file that
+     * held a music video's sound is replaced by the song version under the
+     * same id (the moment the song check is reset for it too). A shift or a
+     * refusal measured against the old bytes must not be reused for the new.
+     */
+    fun forget(videoId: String) {
+        offsetCache.keys.removeIf { it.first == videoId || it.second == videoId }
+        confidenceCache.keys.removeIf { it.first == videoId || it.second == videoId }
+        rejectedPairs.removeIf { it.first == videoId || it.second == videoId }
+    }
+
+    /** [KO] align-reach: which side a second, longer decode is for. */
+    internal enum class Reach { SOURCE, TARGET }
+
+    /**
+     * [KO] align-reach: whether the true shift may lie past what one
+     * [WINDOW_SECONDS] window can reach — a music video whose intro runs past
+     * ~40 s — and so which side a second pass decodes [REACH_SECONDS] of.
+     *
+     * - A peak pinned to the ±[MAX_LAG_SECONDS] cap says so directly
+     *   (phone/emulator log: lag -4000 of -4000..4000, refused). Negative means
+     *   the source's music starts later, so the source needs more of its
+     *   opening; positive, the target.
+     * - An intro longer than the window leaves no overlap at all, so no peak
+     *   and no pin: a weak correlation between a video and a song is the only
+     *   sign.
+     *
+     * When exactly one side is a video, that side is reached either way: the
+     * intro is the video's, and a pin over audio that does not match at all
+     * points at a random edge.
+     *
+     * A short decode (its search range narrower than the cap) is a truncated
+     * head, not a long intro: more of the same bytes cannot help, so it is left
+     * to refuse. Every other pair pays nothing; a refused pair is not measured
+     * again this process ([reject]).
+     */
+    internal fun reachFor(
+        correlation: Correlation,
+        sourceIsVideo: Boolean,
+        targetIsVideo: Boolean,
+        hopMs: Double = HOP_MS,
+    ): Reach? {
+        val cap = (MAX_LAG_SECONDS * 1000.0 / hopMs).toInt()
+        if (correlation.floor != -cap || correlation.ceiling != cap) return null
+        val pinned = correlation.lagFrames == correlation.floor || correlation.lagFrames == correlation.ceiling
+        if (!pinned && correlation.confidence >= MIN_CONFIDENCE) return null
+        return when {
+            sourceIsVideo != targetIsVideo -> if (sourceIsVideo) Reach.SOURCE else Reach.TARGET
+            correlation.lagFrames == correlation.floor -> Reach.SOURCE
+            correlation.lagFrames == correlation.ceiling -> Reach.TARGET
+            else -> null
+        }
     }
 
     /** How far a switch to the other cut has got; published for stats for nerds. */
@@ -220,30 +299,8 @@ object VersionAudioAligner {
             // line at the gate: a swap is waiting on this answer.
             val decodeMs = measureTimeMillis {
                 decodes = coroutineScope {
-                    val source = async(Dispatchers.IO + AudioDecoder.firstInLine.asContextElement(true)) {
-                        val pass = coroutineContext.job
-                        AudioDecoder.interruptibleDecode {
-                            AudioDecoder.decodeRegion(
-                                sourceDs,
-                                0.0,
-                                45.0,
-                                abort = { alignmentAbandoned(pass, ignoreScreen, PowerState.screenOn) },
-                                label = "align",
-                            )
-                        }
-                    }
-                    val target = async(Dispatchers.IO + AudioDecoder.firstInLine.asContextElement(true)) {
-                        val pass = coroutineContext.job
-                        AudioDecoder.interruptibleDecode {
-                            AudioDecoder.decodeRegion(
-                                targetDs,
-                                0.0,
-                                45.0,
-                                abort = { alignmentAbandoned(pass, ignoreScreen, PowerState.screenOn) },
-                                label = "align",
-                            )
-                        }
-                    }
+                    val source = async { decodeOpening(sourceDs, WINDOW_SECONDS, ignoreScreen) }
+                    val target = async { decodeOpening(targetDs, WINDOW_SECONDS, ignoreScreen) }
                     source.await() to target.await()
                 }
             }
@@ -253,8 +310,10 @@ object VersionAudioAligner {
                 return@withContext null
             }
 
-            val (pcmSource, startSourceSec) = sourceDecode
-            val (pcmTarget, startTargetSec) = targetDecode
+            val (pcmSource, firstSourceSec) = sourceDecode
+            val (pcmTarget, firstTargetSec) = targetDecode
+            var startSourceSec = firstSourceSec
+            var startTargetSec = firstTargetSec
 
             if (pcmSource.samples.isEmpty() || pcmTarget.samples.isEmpty()) {
                 return@withContext null
@@ -276,6 +335,38 @@ object VersionAudioAligner {
                     "envelope=${envelopeMs}ms, correlate=${correlateMs}ms",
                 sourceSong.videoId,
             )
+            // [KO] align-reach: a long intro, measured again with more of the
+            // side that has it. A fresh source: the first one may be closed by
+            // its extractor, and the playing side has grown since. The first
+            // pass's figure is cached before, so a second pass cut off by the
+            // deadline still leaves the refusal its callers act on.
+            confidenceCache[sourceSong.videoId to targetSong.videoId] = correlation.confidence
+            confidenceCache[targetSong.videoId to sourceSong.videoId] = correlation.confidence
+            reachFor(correlation, sourceSong.isVideo, targetSong.isVideo)?.let { side ->
+                val song = if (side == Reach.SOURCE) sourceSong else targetSong
+                val longer = openDataSource(context, song)?.let { ds ->
+                    try {
+                        decodeOpening(ds, REACH_SECONDS, ignoreScreen)
+                    } finally {
+                        safeClose(ds)
+                    }
+                } ?: return@let
+                val longerEnv = computeEnergyEnvelope(longer.first.samples, longer.first.sampleRate)
+                val shorterEnv = if (side == Reach.SOURCE) envelopes.first else envelopes.second
+                if (longerEnv.size <= shorterEnv.size) return@let
+                correlation = if (side == Reach.SOURCE) {
+                    crossCorrelate(longerEnv, envelopes.second, maxLagSec = REACH_MAX_LAG_SECONDS)
+                } else {
+                    crossCorrelate(envelopes.first, longerEnv, maxLagSec = REACH_MAX_LAG_SECONDS)
+                }
+                if (side == Reach.SOURCE) startSourceSec = longer.second else startTargetSec = longer.second
+                TrackLog.d(
+                    TAG,
+                    "Alignment for '${sourceSong.title}': peak pinned to the lag cap, " +
+                        "measured again with ${longerEnv.size / 100}s of the ${side.name.lowercase()}",
+                    sourceSong.videoId,
+                )
+            }
             val bestLagFrames = correlation.lagFrames
             val confidence = correlation.confidence
             confidenceCache[sourceSong.videoId to targetSong.videoId] = confidence
@@ -309,8 +400,7 @@ object VersionAudioAligner {
                 val startDiffMs = ((startTargetSec - startSourceSec) * 1000.0).toLong()
                 val totalOffsetMs = lagMs + startDiffMs
 
-                offsetCache[sourceSong.videoId to targetSong.videoId] = totalOffsetMs
-                offsetCache[targetSong.videoId to sourceSong.videoId] = -totalOffsetMs
+                storeOffset(sourceSong.videoId, targetSong.videoId, totalOffsetMs)
                 return@withContext totalOffsetMs
             }
 
@@ -364,6 +454,33 @@ object VersionAudioAligner {
         val pick = renditionToMeasure(song.videoId) ?: return null
         return AudioCache.renditionDataSource(watch, pick)
     }
+
+    /**
+     * The first [endSeconds] of [ds], decoded for a measurement: first in line
+     * at the decode gate (a swap waits on it), and cancellable for real — the
+     * gate wait is interrupted and the decode loop stops at its next pass when
+     * the caller's deadline or a track change cancels it, or the screen goes
+     * off for a screen-bound pass. Before this the deadline cancelled only the
+     * coroutine around the blocking decodes, so they sat at the gate and
+     * decoded on 100-330 s past it (round-score 9).
+     */
+    private suspend fun decodeOpening(
+        ds: MediaDataSource,
+        endSeconds: Double,
+        ignoreScreen: Boolean,
+    ): Pair<AudioDecoder.Pcm, Double>? =
+        withContext(Dispatchers.IO + AudioDecoder.firstInLine.asContextElement(true)) {
+            val pass = coroutineContext.job
+            AudioDecoder.interruptibleDecode {
+                AudioDecoder.decodeRegion(
+                    ds,
+                    0.0,
+                    endSeconds,
+                    abort = { alignmentAbandoned(pass, ignoreScreen, PowerState.screenOn) },
+                    label = "align",
+                )
+            }
+        }
 
     /** The copy of [videoId] that [openDataSource] reads — see there for the order. */
     internal fun renditionToMeasure(videoId: String): AudioCache.Rendition? {

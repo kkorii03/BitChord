@@ -212,6 +212,16 @@ internal object KoDownloadPipeline {
     }
 
     /**
+     * [videoId]'s file now holds other bytes (or is gone): version alignments
+     * measured against the old recording must not be reused for it — see
+     * [com.music.bitchord.playback.smart.VersionAudioAligner.forget].
+     */
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    fun forgetAlignment(videoId: String) {
+        com.music.bitchord.playback.smart.VersionAudioAligner.forget(videoId)
+    }
+
+    /**
      * The record has been written: refresh artwork rows, drop verdicts and
      * timing answers that belonged to the old file, repoint aliases and remove
      * the replaced file once nothing else names it.
@@ -252,6 +262,9 @@ internal object KoDownloadPipeline {
                 // against the old bytes, so drop it (and the spent engine
                 // record) and let the song check run against the new
                 // recording. Video rows keep their own timing.
+                // The version alignment measured against the old file goes too,
+                // video rows included: their pair shares the replaced bytes.
+                (setOf(asked.videoId, fetched.videoId) + previous.suspects).forEach(::forgetAlignment)
                 buildSet {
                     if (!asked.isVideo) add(asked.videoId)
                     if (!fetched.isVideo) add(fetched.videoId)

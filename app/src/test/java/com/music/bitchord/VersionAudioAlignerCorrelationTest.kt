@@ -125,6 +125,81 @@ class VersionAudioAlignerCorrelationTest {
         assertTrue("the true 4500-frame shift is outside the range", result.ceiling < 4500)
     }
 
+    // Gap: the lag cap (40 s) sits inside the 45 s window, so a music video
+    // whose intro runs past it could never be aligned. A second pass reaches
+    // further into the video's side, and only for such pairs.
+    @Test
+    fun `a 55 s video intro is out of one window's reach and found by the second pass`() {
+        val song = beatTrain(4500, seed = 41)
+        val video = shifted(song, 5500, 9000, seed = 42) // 55 s of intro, then the song
+
+        val first = VersionAudioAligner.crossCorrelate(video.copyOf(4500), song)
+        val pinned = first.lagFrames == first.floor || first.lagFrames == first.ceiling
+        assertTrue(
+            "one window must not pass this as measured, got ${first.confidence} at ${first.lagFrames}",
+            pinned || first.confidence < VersionSwapPolicy.MIN_SWAP_CONFIDENCE,
+        )
+        assertEquals(
+            VersionAudioAligner.Reach.SOURCE,
+            VersionAudioAligner.reachFor(first, sourceIsVideo = true, targetIsVideo = false),
+        )
+
+        val reached = VersionAudioAligner.crossCorrelate(
+            video,
+            song,
+            maxLagSec = VersionAudioAligner.REACH_MAX_LAG_SECONDS,
+        )
+        assertEquals(-5500, reached.lagFrames)
+        assertTrue("expected a confident peak, got ${reached.confidence}", reached.confidence > 0.9)
+        assertTrue(reached.lagFrames != reached.floor && reached.lagFrames != reached.ceiling)
+    }
+
+    @Test
+    fun `only a pinned or failed full window pays for a second pass`() {
+        val cap = (VersionAudioAligner.WINDOW_SECONDS * 100).toInt() - 500 // 40 s at 100 fps
+        fun c(lag: Int, conf: Double, floor: Int = -cap, ceiling: Int = cap) =
+            VersionAudioAligner.Correlation(lag, conf, floor, ceiling)
+
+        // A confident peak inside the range: the common case costs nothing more.
+        assertEquals(null, VersionAudioAligner.reachFor(c(286, 0.95), sourceIsVideo = true, targetIsVideo = false))
+        // Pinned, no video side to prefer: the edge says which side.
+        assertEquals(VersionAudioAligner.Reach.SOURCE, VersionAudioAligner.reachFor(c(-cap, 0.53), false, false))
+        assertEquals(VersionAudioAligner.Reach.TARGET, VersionAudioAligner.reachFor(c(cap, 0.7), false, false))
+        // The intro is the video's, whatever edge a mismatch happened to pin.
+        assertEquals(VersionAudioAligner.Reach.TARGET, VersionAudioAligner.reachFor(c(-cap, 0.4), false, true))
+        assertEquals(VersionAudioAligner.Reach.SOURCE, VersionAudioAligner.reachFor(c(120, 0.3), true, false))
+        // Weak, unpinned, no video: nothing says where an intro would be.
+        assertEquals(null, VersionAudioAligner.reachFor(c(120, 0.3), false, false))
+        // A truncated head's range is narrower than the cap: more of it cannot help.
+        assertEquals(null, VersionAudioAligner.reachFor(c(-500, 0.7, floor = -500), true, false))
+        assertEquals(null, VersionAudioAligner.reachFor(VersionAudioAligner.Correlation(0, 0.0, 0, 0), true, false))
+    }
+
+    @Test
+    fun `the lag cap leaves an edge lag something to be judged on`() {
+        assertEquals(45.0, VersionAudioAligner.WINDOW_SECONDS, 0.0)
+        assertEquals(90.0, VersionAudioAligner.REACH_SECONDS, 0.0)
+        assertEquals(85.0, VersionAudioAligner.REACH_MAX_LAG_SECONDS, 0.0)
+    }
+
+    // Gap: offsets were keyed by id only, and a downloaded file holding a
+    // video's sound is replaced by the song version under the same id.
+    @Test
+    fun `a replaced recording forgets every alignment it was in`() {
+        VersionAudioAligner.storeOffset("mv", "song", 1_200L)
+        VersionAudioAligner.storeOffset("other", "third", 300L)
+        VersionAudioAligner.reject("song", "cover")
+        assertEquals(1_200L, VersionAudioAligner.getCachedOffsetMs("mv", "song"))
+        assertEquals(-1_200L, VersionAudioAligner.getCachedOffsetMs("song", "mv"))
+
+        VersionAudioAligner.forget("song")
+
+        assertEquals(null, VersionAudioAligner.getCachedOffsetMs("mv", "song"))
+        assertEquals(null, VersionAudioAligner.getCachedOffsetMs("song", "mv"))
+        assertTrue(!VersionAudioAligner.isRejected("song", "cover"))
+        assertEquals("an unrelated pair stays", 300L, VersionAudioAligner.getCachedOffsetMs("other", "third"))
+    }
+
     @Test
     fun `empty envelopes yield no measurable correlation`() {
         val result = VersionAudioAligner.crossCorrelate(FloatArray(0), FloatArray(500))

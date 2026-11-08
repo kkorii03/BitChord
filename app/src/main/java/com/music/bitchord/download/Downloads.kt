@@ -786,6 +786,7 @@ object Downloads {
             forget(videoId)
             if (wasSuspect) {
                 runCatching {
+                    com.music.bitchord.ko.downloads.KoDownloadPipeline.forgetAlignment(videoId) // [KO] align-revision
                     com.music.bitchord.playback.smart.LyricsTiming.resetSongCheck(context, videoId)
                 }
             }
@@ -796,6 +797,7 @@ object Downloads {
             forget(videoId)
             if (wasSuspect) {
                 runCatching {
+                    com.music.bitchord.ko.downloads.KoDownloadPipeline.forgetAlignment(videoId) // [KO] align-revision
                     com.music.bitchord.playback.smart.LyricsTiming.resetSongCheck(context, videoId)
                 }
             }
