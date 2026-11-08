@@ -156,4 +156,18 @@ class ArtistNameMatchTest {
         assertNotEquals(normalizedArtistName("माता"), normalizedArtistName("मेता"))
         assertTrue(matches("Мата", "Мата"))
     }
-}
+
+    @Test
+    fun `a name in a script the canvas matcher cannot read is still readable here`() {
+        // The canvas matcher reduces everything outside a-z0-9 to a space, so all four of these fold to the
+        // same empty string; an exact-name check built on it would accept any of them for any other.
+        val empty = ""
+        for (name in listOf("Мата", "Мета", "中島美嘉", "माता")) {
+            assertEquals("$name folds to nothing there", empty, name.normalizeForMatch())
+        }
+
+        assertNotEquals(normalizedArtistName("Мата"), normalizedArtistName("Мета"))
+        assertNotEquals(normalizedArtistName("中島美嘉"), normalizedArtistName("椎名林檎"))
+        assertNotEquals(normalizedArtistName("माता"), normalizedArtistName("मेता"))
+        assertTrue(matches("Мата", "Мата"))
+    }}

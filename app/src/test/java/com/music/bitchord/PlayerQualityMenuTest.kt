@@ -1,6 +1,7 @@
 package com.music.bitchord
 
 import com.music.bitchord.data.sources.SourceStream
+import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.QualityUpgrade
 import com.music.bitchord.playback.StreamChoice
 import org.junit.After
@@ -66,4 +67,41 @@ class PlayerQualityMenuTest {
     fun `an unresolved cached track keeps its revert row`() {
         assertFalse(QualityUpgrade.isKnownToBePlayingYouTubesOwn(videoId, rendition = null))
     }
-}
+
+    // ---- Re-ported from upstream v1.9.1 (deleted in the merges) -------------
+
+    /** Playing straight off YouTube's cached copy after a restart: the entry's tag says whose bytes those are. */
+    @Test
+    fun `a track replayed from YouTube's cached copy is offered an upgrade`() {
+        assertTrue(
+            QualityUpgrade.isKnownToBePlayingYouTubesOwn(
+                videoId,
+                rendition = null,
+                cachedOrigin = AudioCache.Origin.YOUTUBE,
+            ),
+        )
+    }
+
+    /** A cached substitute is still a substitute, and keeps the revert row. */
+    @Test
+    fun `a track replayed from a substitute's cached copy keeps its revert row`() {
+        listOf(AudioCache.Origin.JIOSAAVN, AudioCache.Origin.OTHER).forEach { origin ->
+            assertFalse(
+                QualityUpgrade.isKnownToBePlayingYouTubesOwn(videoId, rendition = null, cachedOrigin = origin),
+            )
+        }
+    }
+
+    /** What this process resolved outranks the tag a previous one left. */
+    @Test
+    fun `a substitute resolved this session outranks a YouTube cache tag`() {
+        StreamChoice.remember(videoId, SourceStream("https://tidal/flac"), substituted = true)
+
+        assertFalse(
+            QualityUpgrade.isKnownToBePlayingYouTubesOwn(
+                videoId,
+                rendition = null,
+                cachedOrigin = AudioCache.Origin.YOUTUBE,
+            ),
+        )
+    }}
