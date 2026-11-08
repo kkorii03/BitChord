@@ -8,8 +8,11 @@ import com.music.bitchord.data.model.Song
  * Android types so a plain JVM test can exercise them.
  *
  * BitChord plays the catalogue release (ATV) of a track, never the music video,
- * and it decides that *before* sound starts. Once a track is audible it is the
- * listener's track: no automatic swap may replace it mid-song.
+ * and it decides that *before* sound starts. Once a track is audible no
+ * automatic swap may *restart* or *jump* it; the one exception is a music
+ * video whose song version was found late, which is handed over at the same
+ * bar through a measured alignment and a cross-fade — see
+ * [LateVersionSwapPolicy].
  */
 object SongVersionPolicy {
     /**
