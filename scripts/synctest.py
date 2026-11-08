@@ -278,9 +278,60 @@ AMBIGUOUS_RATIO = 0.05  # another place this close in likeness ...
 AMBIGUOUS_ERR_S = 1.0   # ... and a chosen error this large: which repeat it was is unknowable
 
 
+ANCHOR_MIN_KEY = 6      # an anchor's opening must be this many characters long
+ANCHOR_MIN_RATIO = 0.8  # ... and read this well, in exactly one place of the whole recording
+ANCHOR_CLUSTER_S = 1.5  # anchors within this of the winning shift agree with it
+ANCHOR_MIN = 3          # agreeing anchors needed before they set where repeats are looked for
+
+
+def anchor_shifts(lines, words):
+    """[(shown_s, shift_s)] for lines whose opening is sung in exactly one place of the
+    whole recording (no window): a repeated chorus cannot alias those. shift = shown - sung."""
+    heard, times = char_stream(words)
+    out = []
+    for _, start_ms, text in lines:
+        key = norm(text)[:PREFIX_CHARS]
+        if len(key) < ANCHOR_MIN_KEY:
+            continue
+        shown = start_ms / 1000.0
+        cand = candidates(key, shown, heard, times, None)
+        if len(cand) == 1 and cand[0][1] >= ANCHOR_MIN_RATIO:
+            out.append((shown, shown - cand[0][3]))
+    return out
+
+
+def shift_model(anchors):
+    """Function shown_s -> expected shift, from the anchors that agree on one whole-song
+    shift (nearest agreeing anchor in shown time, so a drift is followed); None when fewer
+    than ANCHOR_MIN agree or another shift has as many anchors (which one is right is then
+    unknowable and the displayed time stays the guide)."""
+    if len(anchors) < ANCHOR_MIN:
+        return None
+    def members(s):
+        return [a for a in anchors if abs(a[1] - s) <= ANCHOR_CLUSTER_S]
+    centre = max((a[1] for a in anchors), key=lambda s: (len(members(s)), -abs(s)))
+    agree = members(centre)
+    rest = [a for a in anchors if a not in agree]
+    rival = max((sum(abs(b[1] - a[1]) <= ANCHOR_CLUSTER_S for b in rest) for a in rest), default=0)
+    if len(agree) < ANCHOR_MIN or rival >= len(agree):
+        return None
+    agree.sort()
+    return lambda shown: min(agree, key=lambda a: abs(a[0] - shown))[1]
+
+
+def place(lines, words, window=SEARCH_S):
+    """align(), but a repeated line is looked for where the lines that occur once in the
+    recording say the sheet sits, not where it is displayed (11-09 Hello: a 75 s intro
+    is one chorus cycle, so repeats were found a chorus early, ~2 s off the displayed
+    time, and a sheet 75 s early scored as 2 s off)."""
+    model = shift_model(anchor_shifts(lines, words))
+    return align(lines, words, window, model)
+
+
 def candidates(key, shown, heard, times, window=SEARCH_S):
     """[(rank, ratio, i, t)] places the line's opening may have been sung: the best
-    start in each stretch of matching characters, at most MAX_CANDIDATES."""
+    start in each stretch of matching characters, at most MAX_CANDIDATES. `shown`
+    is where the line is expected (the displayed time unless an anchor model says otherwise)."""
     found = []
     for i in range(len(heard)):
         t = times[i]
@@ -305,7 +356,7 @@ def candidates(key, shown, heard, times, window=SEARCH_S):
     return sorted(found, reverse=True)[:MAX_CANDIDATES]
 
 
-def align(lines, words, window=SEARCH_S):
+def align(lines, words, window=SEARCH_S, shift_of=None):
     """[(n, shown_s, sung_s, ratio)] for every line found in the heard words, in order.
 
     The whole sheet is placed at once (11-02): the sung order must follow the sheet's
@@ -323,14 +374,15 @@ def align(lines, words, window=SEARCH_S):
     for n, start_ms, text in lines:
         shown = start_ms / 1000.0
         key = norm(text)[:PREFIX_CHARS]
-        if len(key) < 2 or shown > last_heard + 1.0:
+        expect = shown - shift_of(shown) if shift_of else shown
+        if len(key) < 2 or expect > last_heard + 1.0:
             continue
-        cand = candidates(key, shown, heard, times, window)
+        cand = candidates(key, expect, heard, times, window)
         if cand:
-            rows.append((n, shown, cand))
+            rows.append((n, shown, cand, expect))
     # best[j][c] = best total ending with line j at its candidate c (indices rising).
     best, back = [], []
-    for j, (_, _, cand) in enumerate(rows):
+    for j, (_, _, cand, _) in enumerate(rows):
         bj, kj = [], []
         for rank, _, i, _ in cand:
             top, arg = 0.0, None
@@ -352,9 +404,9 @@ def align(lines, words, window=SEARCH_S):
         end = back[end[0]][end[1]]
     out = []
     for j, c in reversed(chosen):
-        n, shown, cand = rows[j]
+        n, shown, cand, expect = rows[j]
         _, r, _, t = cand[c]
-        if abs(t - shown) > AMBIGUOUS_ERR_S and any(
+        if abs(t - expect) > AMBIGUOUS_ERR_S and any(
             other[1] >= r - AMBIGUOUS_RATIO and abs(other[3] - t) > AMBIGUOUS_ERR_S
             for k, other in enumerate(cand) if k != c
         ):
@@ -590,7 +642,7 @@ def far_off(lines, per_model, first_lines):
     elif len(votes) == 1 and abs(votes[0][0]) >= FAR_OFF_S:
         return votes[0]
     if first_lines > FAR_OFF_WIDE_MAX:
-        return None
+        return None  # (callers also come here for scattered lines; the vote above is their remedy)
     both, _, _ = agreed([align(lines, w, window=None) for w in per_model])
     if len(both) < STRICT["min_lines"]:
         return None
@@ -823,13 +875,13 @@ def finish(vid, row, lines, per_model):
     blocks = row.pop("blocks", [])
     lit = blocks[-1][0].get("lit", {}) if blocks else {}
     for head, blines in blocks:
-        b, _, _ = agreed([align(blines, words) for words in per_model])
+        b, _, _ = agreed([place(blines, words) for words in per_model])
         if len(b) >= 4:
             e = [shown - sung for _, shown, sung, _ in b]
             in03 = sum(abs(x) <= 0.3 for x in e) / len(e)
             alts.append(f"{head.get('base', '?')}{head.get('shift', '')}:{statistics.median(e):+.2f}/{in03:.0%}")
     row["alts"] = " ".join(dict.fromkeys(alts))
-    per = [align(lines, words) for words in per_model]
+    per = [place(lines, words) for words in per_model]
     both, either, gap = agreed(per)
     fa_audio, fa_off = row.pop("fa_audio", None), row.pop("fa_off", None)
     if fa_audio:
@@ -844,7 +896,11 @@ def finish(vid, row, lines, per_model):
     row.update(eligible=eligible, model_gap=round(gap, 3) if gap is not None else "", **lit_scores(both, lit))
     row["worst"] = worst_lines(lines, both, per_model[0])
     write_lines(vid, both, lit)
-    if len(both) < STRICT["min_lines"]:
+    # The whole-song vote also runs when the placed lines disagree wildly (a bimodal
+    # spread is repeats found in the wrong place), not only when too few were placed.
+    errs = sorted(shown - sung for _, shown, sung, _ in both)
+    scattered = len(errs) >= 4 and errs[len(errs) * 9 // 10] - errs[len(errs) // 10] > WORST_RECHECK_S
+    if len(both) < STRICT["min_lines"] or scattered or (errs and abs(statistics.median(errs)) > SEARCH_S):
         far = far_off(lines, per_model, len(both))
         if far:
             off, rows = far
@@ -1041,6 +1097,30 @@ def selftest():
     assert len(both7) == STRICT["min_lines"] - 1, (len(both7), len(either7))
     far = far_off(early, [early_words, other], len(both7))
     assert far and abs(far[0] + 12.75) < 0.2 and len(far[1]) >= STRICT["min_lines"], far
+    # 11-09 Hello: the sheet is 23 s early and the chorus cycle is 24 s, so each chorus
+    # line's window holds the previous repetition ~1 s from where it is shown. Only
+    # the verse lines (opening sung once) tell the truth; repeats follow them.
+    verses = ["kalimba tornado velvet", "marble sunrise hammer", "lantern orchid pepper", "quartz walnut yonder",
+              "dolphin garnet meadow", "falcon harbor jasmine", "cobalt thistle ripple", "saddle willow cinder"]
+    chorus = ["ember chorus ringing", "ember chorus rising", "ember chorus falling"]
+    alias, k = [], 0
+    for block in range(3):
+        for text in chorus:
+            alias.append((len(alias) + 1, int((10 + 24 * block + 4 * chorus.index(text)) * 1000), text))
+        if block < 2:
+            for j in range(4):
+                alias.append((len(alias) + 1, int((22 + 24 * block + 4 * j) * 1000), verses[k]))
+                k += 1
+    alias_words = [(w, ms / 1000 + 23.0 + 0.45 * i, ms / 1000 + 23.3 + 0.45 * i)
+                   for _, ms, text in alias for i, w in enumerate(text.split())]
+    alias_words.sort(key=lambda w: w[1])
+    old_placed = align(alias, alias_words)
+    assert old_placed and abs(statistics.median(sh - su for _, sh, su, _ in old_placed)) < 3, old_placed
+    placed = place(alias, alias_words)
+    assert len(placed) == len(alias) and all(abs(sh - su + 23.0) < 0.01 for _, sh, su, _ in placed), placed
+    assert shift_model([(1.0, 5.0), (2.0, 5.2)]) is None  # two anchors are not a consensus
+    assert shift_model([(1.0, 5.0), (2.0, 5.2), (3.0, 4.9), (4.0, 9.0), (5.0, 9.1), (6.0, 9.2)]) is None  # tie
+    assert abs(shift_model([(1.0, 5.0), (2.0, 5.2), (3.0, 4.9), (4.0, 9.0)])(4.0) - 4.9) < 0.01
     global OUT
     old_out = OUT
     try:
@@ -1051,6 +1131,9 @@ def selftest():
         row = finish("early", dict(source="test", base="none", shift="0", match="0", playing="early", lines=12),
                      early, [early_words, other])
         assert row["verdict"] == "FAIL" and "far off by" in row["why"] and abs(row["median"] + 12.75) < 0.2, row
+        row = finish("alias", dict(source="test", base="none", shift="0", match="0", playing="alias", lines=len(alias)),
+                     alias, [alias_words, alias_words])
+        assert row["verdict"] == "FAIL" and "far off by -23" in row["why"] and abs(row["median"] + 23.0) < 0.01, row
         clean, clean_words, _ = shifted(0.05)
         row = finish("good", dict(source="test", base="none", shift="0", match="0", playing="good", lines=10),
                      clean, [clean_words, clean_words])
