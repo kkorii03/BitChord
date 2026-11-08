@@ -254,7 +254,7 @@ internal object KoSongVersion {
     private val songVersionLookups = SharedLookups<SongVersionAnswer>(lookupScope)
 
     /** A resolved answer and the source that gave it, for the log line. */
-    private data class SongVersionAnswer(
+    internal data class SongVersionAnswer(
         val song: Song?,
         val via: String,
         val definitive: Boolean,
@@ -352,6 +352,13 @@ internal object KoSongVersion {
             // waiver now would let that lookup cache its cut-short miss as a
             // verdict before the fresh search below even starts.
             songVersionVerdicts.beginRetry(song.videoId)
+            // The waiver belongs to a lookup that was cut short. Once no
+            // lookup is in flight it is stale, and keeping it would mark the
+            // retry's own completed search provisional — which used to buy a
+            // third search for the same id (phone 11-08).
+            if (!songVersionLookups.isRunning(song.videoId)) {
+                songVersionVerdicts.beginFreshSearch(song.videoId)
+            }
             if (SongVersionPolicy.cachedSongVersionIsMiss(
                     song,
                     YtMusicRepository.audioVersionCache[song.videoId],
@@ -398,11 +405,11 @@ internal object KoSongVersion {
             throw cancelled
         }
         recordSongVersionAnswer(song, answer)
-        if (retryTimedOut && answer.song == null) {
-            // The timed-out lookup may still have been in flight, so this
-            // retry joined it and got either the same provisional miss or a
-            // stale verdict recorded before the waiver was known. Do not trust
-            // it: spend the one retry on a fresh search after the join.
+        if (retrySearchAfterJoinNeeded(retryTimedOut, answer.song != null, answer.definitive)) {
+            // A joined lookup may have been cut short, so its provisional miss
+            // is not trusted; the retry spends one fresh search after it. A
+            // completed "no version" search is already the verdict and must not
+            // be searched a third time (phone 11-08: three passes in 5 s).
             songVersionVerdicts.beginFreshSearch(song.videoId)
             if (SongVersionPolicy.cachedSongVersionIsMiss(
                     song,
@@ -411,12 +418,8 @@ internal object KoSongVersion {
             ) {
                 YtMusicRepository.audioVersionCache.remove(song.videoId)
             }
-            answer = try {
+            answer = sharedSongVersionSearch(song.videoId, songVersionLookups) {
                 resolveSongVersion(song)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (failure: Throwable) {
-                SongVersionAnswer(null, "none", definitive = false)
             }
             recordSongVersionAnswer(song, answer)
         }
@@ -664,4 +667,35 @@ internal object KoSongVersion {
         "sped up", "slowed", "1 hour", "loop", "teaser", "\uD2F0\uC800", "behind", "making",
     )
 
+}
+
+/**
+ * Whether the post-audio retry must run one fresh search after the lookup it
+ * joined. Only a provisional miss needs it: a definitive miss is the search's
+ * answer, and found recordings are already cached. Without this check the
+ * retry spent a second search on an answer the first one had already given
+ * (phone 11-08: the same video searched three times within 5 s).
+ */
+internal fun retrySearchAfterJoinNeeded(
+    retryTimedOut: Boolean,
+    found: Boolean,
+    definitive: Boolean,
+): Boolean = retryTimedOut && !found && !definitive
+
+/**
+ * The retry's fresh search, through the same in-flight map as every other
+ * asker: two callers that both reach the retry for one video id share its
+ * search instead of searching the song twice at once. A failure stays a
+ * provisional answer, exactly as the retry used to treat it.
+ */
+internal suspend fun sharedSongVersionSearch(
+    videoId: String,
+    lookups: SharedLookups<KoSongVersion.SongVersionAnswer>,
+    search: suspend () -> KoSongVersion.SongVersionAnswer,
+): KoSongVersion.SongVersionAnswer = try {
+    lookups.lookup(videoId) { search() }.result.await()
+} catch (cancelled: CancellationException) {
+    throw cancelled
+} catch (failure: Throwable) {
+    KoSongVersion.SongVersionAnswer(null, "none", definitive = false)
 }
