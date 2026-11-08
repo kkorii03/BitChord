@@ -122,6 +122,38 @@ class HqVerifyStreamingSourceTest {
         }
     }
 
+    // A transfer that stalls and is only stopped after the decode returns must
+    // not keep the read (and the one decode slot) parked once the caller gave up.
+    @Test
+    fun `a read parked at the frontier gives up when its caller does`() {
+        append(byteArrayOf(1, 2))
+        val progress = DownloadProgress() // never finishes: the stalled transfer
+        val gaveUp = java.util.concurrent.atomic.AtomicBoolean(false)
+        val reader = GrowingFileReader(
+            file,
+            expectedSize = 8L,
+            progress = progress,
+            pollMs = 5L,
+            abandoned = { gaveUp.get() },
+        )
+        val pool = Executors.newSingleThreadExecutor()
+        try {
+            val read = pool.submit<Int> { reader.readAt(0L, ByteArray(8), 0, 8) }
+            Thread.sleep(100)
+            assertFalse("the read must still wait while the caller wants it", read.isDone)
+            gaveUp.set(true)
+            try {
+                read.get(2, TimeUnit.SECONDS)
+                fail("an abandoned read must not return bytes as if the file were whole")
+            } catch (expected: java.util.concurrent.ExecutionException) {
+                assertTrue(expected.cause is IOException)
+            }
+        } finally {
+            pool.shutdownNow()
+            reader.close()
+        }
+    }
+
     @Test
     fun `the fetch window is the decode window`() {
         assertEquals(HqAudioVerify.COMPARE_SECONDS + 1.0, HqAudioVerify.FETCH_SECONDS, 0.0001)

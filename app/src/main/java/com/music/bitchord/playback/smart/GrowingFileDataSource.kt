@@ -60,6 +60,16 @@ internal class GrowingFileReader(
     private val expectedSize: Long,
     private val progress: DownloadProgress,
     private val pollMs: Long = 50L,
+    /**
+     * The decode's own abort. Asked only while a read waits at the write
+     * frontier: the decoder's loop polls its abort between packets, but a read
+     * parked here never returns to that loop. A stalled transfer (a TDLib
+     * download that retries instead of answering an interrupt, and is only
+     * cancelled once this decode returns) kept the read, and with it the one
+     * decode slot every other analysis waits on, held after the caller had
+     * given up.
+     */
+    private val abandoned: () -> Boolean = { false },
 ) : AutoCloseable {
 
     private val reader = RandomAccessFile(file, "r")
@@ -92,6 +102,7 @@ internal class GrowingFileReader(
                 progress.failure?.let { throw IOException(it) }
                 return if (filled == 0) -1 else filled
             }
+            if (abandoned()) throw IOException("read abandoned by its caller")
             progress.awaitChange(pollMs)
         }
         return filled

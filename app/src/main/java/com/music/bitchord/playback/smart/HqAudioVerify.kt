@@ -2077,7 +2077,7 @@ object HqAudioVerify {
         timing: DecodeTiming?,
     ): ChromaAlignment.Features? {
         val reader = runCatching {
-            GrowingFileReader(file, expectedSize, progress)
+            GrowingFileReader(file, expectedSize, progress, abandoned = abort)
         }.getOrNull() ?: return null
         val source = GrowingFileDataSource(reader)
         return try {
