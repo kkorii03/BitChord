@@ -8869,7 +8869,7 @@ class PlaybackService : MediaLibraryService() {
             try {
                 val first = runCatching {
                     DirectSourceGate.startLookup(videoId, target)
-                        ?.let { DirectSourceGate.firstAnswer(it, fallback) }
+                        ?.let { DirectSourceGate.firstAnswer(it, fallback, videoId) }
                 }
                     .onFailure { if (it is CancellationException) throw it }
                     .getOrNull()
@@ -8916,7 +8916,7 @@ class PlaybackService : MediaLibraryService() {
             }
             // YouTube cannot serve it, so a lookup still running is all that
             // is left, and there is nothing playing for it to swap into.
-            return Resolved.Module(running?.await() ?: throw e)
+            return Resolved.Module(running?.let { DirectSourceGate.lastResort(videoId, it) } ?: throw e) // [KO] direct-deadline
         }
         DirectSourceGate.startedOnYouTube(videoId, target)
         return Resolved.YouTube(url)

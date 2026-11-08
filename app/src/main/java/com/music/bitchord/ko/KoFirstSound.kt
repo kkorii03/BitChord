@@ -47,7 +47,7 @@ internal object KoFirstSound {
         race = { walk ->
             val answer = runCatching {
                 DirectSourceGate.startLookup(videoId, target)
-                    ?.let { DirectSourceGate.firstAnswer(it, walk) }
+                    ?.let { DirectSourceGate.firstAnswer(it, walk, videoId) }
             }
                 .onFailure { if (it is CancellationException) throw it }
                 .getOrNull()

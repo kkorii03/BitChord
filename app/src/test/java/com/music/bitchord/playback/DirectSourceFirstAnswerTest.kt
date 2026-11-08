@@ -2,6 +2,7 @@ package com.music.bitchord.playback
 
 import com.music.bitchord.data.sources.SourceStream
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -56,6 +57,32 @@ class DirectSourceFirstAnswerTest {
             DirectSourceGate.FirstAnswer.Addon(SourceStream("https://addon.test/flac")),
             answer,
         )
+    }
+
+    // The resolve runs on the player's loader thread, which has no timeout of
+    // its own: an addon that never answers must not leave the track loading forever.
+    @Test
+    fun `a failed youtube walk stops waiting for an addon that never answers`() = runTest {
+        val addon = CompletableDeferred<SourceStream?>()
+        val youtube = CompletableDeferred<Result<String>>()
+        youtube.complete(Result.failure(java.io.IOException("refused")))
+
+        val answer = DirectSourceGate.firstAnswer(addon, youtube)
+
+        assertEquals(null, answer)
+        assertEquals(DirectSourceGate.LAST_RESORT_TIMEOUT_MS, testScheduler.currentTime)
+        assertFalse("the lookup itself runs on for the second look", addon.isCancelled)
+    }
+
+    @Test
+    fun `an addon answering just inside the last resort wait still plays`() = runTest {
+        val addon = CompletableDeferred<SourceStream?>()
+        val late = async {
+            DirectSourceGate.lastResort(null, addon)
+        }
+        testScheduler.advanceTimeBy(DirectSourceGate.LAST_RESORT_TIMEOUT_MS - 1)
+        addon.complete(SourceStream("https://addon.test/flac"))
+        assertEquals(SourceStream("https://addon.test/flac"), late.await())
     }
 
     @Test

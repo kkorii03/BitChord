@@ -333,12 +333,39 @@ object DirectSourceGate {
     internal suspend fun firstAnswer(
         direct: Deferred<SourceStream?>,
         fallback: Deferred<Result<String>>,
+        videoId: String? = null,
     ): FirstAnswer? = select {
         direct.onAwait { it?.let(FirstAnswer::Addon) }
         fallback.onAwait { result ->
             if (result.isSuccess) FirstAnswer.YouTube(result.getOrThrow())
-            else direct.await()?.let(FirstAnswer::Addon)
+            else lastResort(videoId, direct)?.let(FirstAnswer::Addon)
         }
+    }
+
+    /**
+     * How long, from the lookup's start, a track whose YouTube walk failed may
+     * still wait for an addon before its start gives up. The addon is all that
+     * is left then, so the wait is longer than [LOOKUP_TIMEOUT_MS]; but it was
+     * unbounded, and the resolve runs on the player's loader thread, which has
+     * no timeout of its own: an addon search (or its proof download) that
+     * never answered left the track loading in silence with nothing to recover
+     * it. Twice the window: an addon that has not answered by then is not
+     * going to before the listener gives up on the track.
+     */
+    const val LAST_RESORT_TIMEOUT_MS = 2 * LOOKUP_TIMEOUT_MS
+
+    /**
+     * [work]'s answer, waited for at most until [LAST_RESORT_TIMEOUT_MS] after
+     * [videoId]'s lookup started (from now when it is not in the table). Null
+     * past it: the caller fails the start as it does when no addon has it.
+     * The lookup itself runs on for the second look, as always.
+     */
+    internal suspend fun lastResort(videoId: String?, work: Deferred<SourceStream?>): SourceStream? {
+        if (work.isCompleted) return work.await()
+        val now = android.os.SystemClock.elapsedRealtime()
+        val started = videoId?.let { lookups[it]?.startedAtMs } ?: now
+        val left = (LAST_RESORT_TIMEOUT_MS - (now - started)).coerceAtLeast(1L)
+        return withTimeoutOrNull(left) { work.await() }
     }
 
     /**
