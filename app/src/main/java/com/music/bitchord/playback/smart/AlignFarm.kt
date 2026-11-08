@@ -88,9 +88,27 @@ internal object AlignFarm {
         )
     }
 
+    /** GETs that got no reply, per video: each costs a hearing up to the call timeout. */
+    private val failures = ConcurrentHashMap<String, Int>()
+
+    /** Whether [videoId] has failed fewer than [MAX_FAILED_ASKS] times; an answered video is still asked once only. */
+    internal fun mayAsk(videoId: String): Boolean = (failures[videoId] ?: 0) < MAX_FAILED_ASKS
+
+    /** A GET for [videoId] got no reply: it may be asked again, up to [MAX_FAILED_ASKS] in all. */
+    internal fun noteFailure(videoId: String) {
+        failures.merge(videoId, 1, Int::plus)
+        asked.remove(videoId)
+    }
+
+    /**
+     * Failed GETs a video may have before the farm is left alone this run: the ask at the
+     * track's start, the one after the wait for sound ([SongHearing]) and one on a retry.
+     */
+    internal const val MAX_FAILED_ASKS = 3
+
     /** What the farm holds for [videoId], asked once a run; null on anything but a usable answer. */
     suspend fun fetch(app: Context, videoId: String, language: String): SongHearing.Saved? {
-        if (!asked.add(videoId)) return null
+        if (!mayAsk(videoId) || !asked.add(videoId)) return null
         val secret = app.getString(com.music.bitchord.R.string.default_deepgram_api_key).trim()
         if (secret.isEmpty()) return null
         return withContext(Dispatchers.IO) {
@@ -106,7 +124,7 @@ internal object AlignFarm {
             }.onFailure {
                 if (it is kotlinx.coroutines.CancellationException) throw it
                 // A dropped connection says nothing about the farm: the next hearing may ask again.
-                asked.remove(videoId)
+                noteFailure(videoId)
                 TrackLog.d(TAG, "align-farm: ${it.javaClass.simpleName}", videoId)
             }.getOrNull()
                 ?.also { TrackLog.i(TAG, "align-farm: ${it.words.size} words lang=$language", videoId) }

@@ -2,6 +2,7 @@ package com.music.bitchord.playback.smart
 
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -42,6 +43,18 @@ class AlignFarmTest {
         assertNull(AlignFarm.savedFrom(cipher(BODY), "ko", PASS))
         assertNull(AlignFarm.savedFrom(cipher(BODY), "en", "other"))
         assertNull(AlignFarm.savedFrom(byteArrayOf(1, 2, 3), "en", PASS))
+    }
+
+    /** 117b 8gyLR4NfMiI: the start's GET timed out; the ask after the wait for sound must still go, a fourth must not. */
+    @Test
+    fun `a failed GET may be asked again, three failures leave the farm alone`() {
+        val id = "failtest001"
+        assertTrue(AlignFarm.mayAsk(id))
+        AlignFarm.noteFailure(id)
+        assertTrue(AlignFarm.mayAsk(id))
+        repeat(AlignFarm.MAX_FAILED_ASKS - 1) { AlignFarm.noteFailure(id) }
+        assertFalse(AlignFarm.mayAsk(id))
+        assertTrue(AlignFarm.mayAsk("othervideo1"))
     }
 
     private fun cipher(text: String) = AlignFarm.decipher(text.toByteArray(), PASS) // the same both ways
