@@ -57,7 +57,7 @@ class ModuleSource(
                 modules.isEmpty() -> SourceHealth.Rejected(
                     "인덱스가 응답했지만 모듈이 없습니다 — URL을 확인하십시오"
                 )
-                else -> SourceHealth.Ok("${modules.size} module${if (modules.size == 1) "" else "s"}")
+                else -> SourceHealth.Ok("모듈 ${modules.size}개")
             }
         } catch (e: Exception) {
             TrackLog.w(TAG, "module index fetch failed for ${config.displayName}: ${e.message}")

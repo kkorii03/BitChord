@@ -20,7 +20,7 @@
     <string name="tv_appearance">화면 표시</string>
     <string name="tv_appearance_blurb">BitChord 페이지 뒤의 배경입니다.</string>
     <string name="tv_artists">아티스트</string>
-    <string name="tv_automix">오토믹스</string>
+    <string name="tv_automix">자동 믹스</string>
     <string name="tv_automix_blurb">두 곡의 템포에 맞춰 자연스럽게 이어 줍니다.</string>
     <string name="tv_autoplay">자동 재생</string>
     <string name="tv_autoplay_blurb">대기열이 끝나면 듣던 음악과 비슷한 곡을 계속 재생합니다.</string>
@@ -80,7 +80,7 @@
     <string name="tv_interface_size_blurb">모든 요소를 크게 또는 작게 만듭니다. 선택하여 크기를 바꾸십시오.</string>
     <string name="tv_latest_release">최신 발매</string>
     <string name="tv_library">보관함</string>
-    <string name="tv_liked_songs">좋아요한 노래</string>
+    <string name="tv_liked_songs">좋아요 표시한 노래</string>
     <string name="tv_listening">듣기</string>
     <string name="tv_listening_message">행을 선택해 켜거나 끕니다.</string>
     <string name="tv_love">좋아요</string>

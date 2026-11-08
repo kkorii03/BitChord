@@ -32,14 +32,27 @@ object FriendlyError {
 
     /**
      * A source status line, localised for the two addon-address refusals that
-     * have a string of their own. Every other reason is already written for the
-     * listener and is returned unchanged.
+     * have a string of their own. A Korean reason is already written for the
+     * listener and is returned unchanged; an English one (an addon server's or
+     * the auth service's own words) gets the same catalogue as [message].
+     *
+     * 11-08 user log: Lossless Bridge was refused 70 times with "BitChord
+     * couldn't verify this device: This app is not signed with the official
+     * BitChord key", and that English line was the Sources row.
      */
     fun reason(context: Context, rawReason: String): String = when (rawReason) {
         SourceFormats.NOT_ADDON_URL -> context.getString(R.string.source_addon_not_addon)
         SourceFormats.REPOSITORY_URL -> context.getString(R.string.source_addon_repository_url)
-        else -> rawReason
+        else -> reasonResource(rawReason)?.let(context::getString) ?: rawReason
     }
+
+    /** The string [reason] swaps in, or null when the reason is shown as written. */
+    internal fun reasonResource(rawReason: String): Int? =
+        if (rawReason.isBlank() || rawReason.any { it in '가'..'힣' }) {
+            null
+        } else {
+            resourceFor(IllegalStateException(rawReason))
+        }
 
     fun message(context: Context, error: Throwable): String {
         val raw = error.message.orEmpty()
@@ -62,6 +75,16 @@ object FriendlyError {
         val lower = raw.lowercase(Locale.ROOT)
         val status = HTTP_STATUS.find(raw)?.groupValues?.get(1)?.toIntOrNull()
         return when {
+            // Addon auth service (AddonAuth / AddonSource): the device or the
+            // app signature was refused, which no retry or setting fixes.
+            lower.contains("couldn't verify this device") ||
+                lower.contains("not signed with the official") ||
+                lower.contains("accept bitchord's verification") ||
+                lower.contains("verification refused") -> R.string.addon_device_not_verified
+            // SourceFormats: reachable, but not an addon BitChord can search.
+            lower.contains("bitchord needs search") ||
+                lower.contains("not a format bitchord reads") ||
+                lower.contains("unrecognised json") -> R.string.addon_unsupported
             error is UnknownHostException ||
                 lower.contains("resolve host") ||
                 lower.contains("unable to resolve") ||

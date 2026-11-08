@@ -6439,7 +6439,7 @@ private fun BitChordApp(
                             )
                         }
                         Text(
-                            "Sign in to Discord",
+                            stringResource(R.string.sign_in_discord), // [KO] was a hardcoded English title
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onBackground,
                         )

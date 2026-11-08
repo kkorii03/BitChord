@@ -659,6 +659,11 @@
     <string name="error_request_invalid">Couldn\'t handle the request. Check what you entered and try again.</string>
     <string name="error_content_unavailable">No available version of this item was found. Try another source.</string>
     <string name="something_went_wrong">Something went wrong</string>
+    <string name="addon_device_not_verified">The addon couldn\'t verify this device. It doesn\'t accept this device or this app build.</string>
+    <string name="addon_unsupported">BitChord can\'t use this addon.</string>
+    <string name="pipeline_bit_exact_bit_perfect">Yes — bit-perfect to %1$s</string>
+    <string name="pipeline_bit_exact_dac_limited">No — %1$s-bit / %2$s converted to %3$s\'s max</string>
+    <string name="pipeline_bit_exact_not_lossless">No — source isn\'t lossless PCM</string>
     <string name="unknown_artist">Unknown artist</string>
     <plurals name="downloads_failed_count">
         <item quantity="one">Downloads · %1$d failed</item>
