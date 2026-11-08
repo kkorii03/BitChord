@@ -405,7 +405,7 @@ internal object KoSongVersion {
             throw cancelled
         }
         recordSongVersionAnswer(song, answer)
-        if (retrySearchAfterJoinNeeded(retryTimedOut, answer.song != null, answer.definitive)) {
+        if (retrySearchAfterJoinNeeded(retryTimedOut, answer.song != null, answer.definitive, lookup.joined)) {
             // A joined lookup may have been cut short, so its provisional miss
             // is not trusted; the retry spends one fresh search after it. A
             // completed "no version" search is already the verdict and must not
@@ -680,7 +680,9 @@ internal fun retrySearchAfterJoinNeeded(
     retryTimedOut: Boolean,
     found: Boolean,
     definitive: Boolean,
-): Boolean = retryTimedOut && !found && !definitive
+    /** The miss came from a lookup another caller started, which may have been cut short (Sol I1). */
+    joined: Boolean = false,
+): Boolean = retryTimedOut && !found && (joined || !definitive)
 
 /**
  * The retry's fresh search, through the same in-flight map as every other
@@ -696,6 +698,6 @@ internal suspend fun sharedSongVersionSearch(
     lookups.lookup(videoId) { search() }.result.await()
 } catch (cancelled: CancellationException) {
     throw cancelled
-} catch (failure: Throwable) {
+} catch (failure: Exception) {
     KoSongVersion.SongVersionAnswer(null, "none", definitive = false)
 }

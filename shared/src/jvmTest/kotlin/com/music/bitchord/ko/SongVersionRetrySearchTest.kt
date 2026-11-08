@@ -17,6 +17,13 @@ class SongVersionRetrySearchTest {
     }
 
     @Test
+    fun `a definitive miss from a joined lookup still earns the one fresh search`() {
+        // The lookup another caller started may have been cut short (Sol I1):
+        // without this search the MV that is already playing never gets its late version.
+        assertTrue(retrySearchAfterJoinNeeded(retryTimedOut = true, found = false, definitive = true, joined = true))
+    }
+
+    @Test
     fun `a provisional miss earns the one fresh search`() {
         assertTrue(retrySearchAfterJoinNeeded(retryTimedOut = true, found = false, definitive = false))
     }
