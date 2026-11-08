@@ -35,6 +35,7 @@ class LyricsTimingAiKeyTest {
 
     @Before
     fun setUp() {
+        LyricsTiming.resetForTest()
         directory = Files.createTempDirectory("bitchord-lyrics-ai-key").toFile()
         context = FakeContext.create(FakePreferences(), directory)
         storeField.set(LyricsTiming, null)

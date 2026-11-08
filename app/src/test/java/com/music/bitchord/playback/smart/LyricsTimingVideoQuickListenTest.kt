@@ -37,6 +37,7 @@ class LyricsTimingVideoQuickListenTest {
 
     @Before
     fun setUp() {
+        LyricsTiming.resetForTest()
         directory = Files.createTempDirectory("bitchord-video-quick").toFile()
         context = FakeContext.create(FakePreferences(), directory)
         storeField.set(LyricsTiming, null)

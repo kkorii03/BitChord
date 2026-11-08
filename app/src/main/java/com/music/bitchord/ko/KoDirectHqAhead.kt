@@ -58,6 +58,33 @@ internal object KoDirectHqAhead {
     /** YouTube's ordinary Opus rung, the floor a lossy copy has to clear by [SourceResolver.worthSwapping]'s margin. */
     private val YOUTUBE_NORMAL = StreamFormat(codec = "opus", kbps = 160)
 
+    /**
+     * The proof reads about this much of a candidate (19 MB for 16-bit/44.1 kHz
+     * FLAC, 63 MB for 24-bit/96 kHz: opus-nexthq) for a song a skip may never
+     * reach. A candidate whose head would be bigger than [MAX_HEAD_BYTES] is
+     * not proved ahead; the song starts on YouTube and the second look, which
+     * runs only while it plays, still upgrades it.
+     */
+    private const val HEAD_SECONDS = 108L
+    internal const val MAX_HEAD_BYTES = 40_000_000L
+
+    /** Rough size of the opening the proof would read from [format]; null when the source states too little to tell. */
+    internal fun estimatedHeadBytes(format: StreamFormat): Long? {
+        val depth = format.bitDepth
+        val rate = format.sampleRateHz
+        val kbps = format.kbps
+        val bytesPerSecond = when {
+            format.isLossless == true && depth != null && rate != null -> depth * rate * 2L / 8L
+            kbps != null -> kbps * 125L
+            else -> return null
+        }
+        return bytesPerSecond * HEAD_SECONDS
+    }
+
+    /** False for a candidate too big to read ahead for a song that may be skipped. */
+    internal fun headWithinCap(format: StreamFormat): Boolean =
+        (estimatedHeadBytes(format) ?: 0L) <= MAX_HEAD_BYTES
+
     /** Unit tests only: the sound comparison, which needs an app context in production. */
     @Volatile
     internal var proofForTest: (suspend (SourceStream) -> Boolean)? = null
@@ -166,7 +193,9 @@ internal object KoDirectHqAhead {
             report = report,
             enough = { HqQuality.isLosslessTier(it.format) },
         ) { _, candidate ->
-            SourceResolver.worthSwapping(candidate.format, YOUTUBE_NORMAL) && verify(candidate)
+            SourceResolver.worthSwapping(candidate.format, YOUTUBE_NORMAL) &&
+                headWithinCap(candidate.format) &&
+                verify(candidate)
         } ?: return null
         val (source, stream) = found
         if (!HqQuality.isLosslessTier(stream.format) && !report.allConclusive) {

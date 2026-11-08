@@ -61,6 +61,14 @@ object VersionAudioAligner {
      */
     private val rejectedPairs = ConcurrentHashMap.newKeySet<Pair<String, String>>()
 
+    /** Unit tests only: forgets every measured, refused and cached pair. */
+    @androidx.annotation.VisibleForTesting
+    internal fun resetForTest() {
+        offsetCache.clear()
+        confidenceCache.clear()
+        rejectedPairs.clear()
+    }
+
     /** Correlation measured for this pair, if one has been measured. */
     fun getConfidence(sourceVideoId: String, targetVideoId: String): Double? =
         confidenceCache[sourceVideoId to targetVideoId]

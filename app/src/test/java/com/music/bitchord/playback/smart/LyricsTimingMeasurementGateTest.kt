@@ -13,6 +13,9 @@ import org.junit.Test
  */
 class LyricsTimingMeasurementGateTest {
 
+    @org.junit.Before
+    fun resetLyricsTiming() = LyricsTiming.resetForTest()
+
     @Test
     fun `the playing song and the prepared next are wanted`() {
         assertTrue(LyricsTiming.measurementWanted("playing", "playing", "next"))

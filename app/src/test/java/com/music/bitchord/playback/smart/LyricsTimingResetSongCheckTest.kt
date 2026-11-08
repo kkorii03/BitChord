@@ -50,6 +50,7 @@ class LyricsTimingResetSongCheckTest {
 
     @Before
     fun setUp() {
+        LyricsTiming.resetForTest()
         directory = Files.createTempDirectory("bitchord-lyrics-reset-check").toFile()
         context = FakeContext.create(FakePreferences(), directory)
         storeField.set(LyricsTiming, null)

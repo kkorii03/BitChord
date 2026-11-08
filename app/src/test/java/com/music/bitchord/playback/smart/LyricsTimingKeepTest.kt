@@ -11,6 +11,9 @@ import org.junit.Test
  */
 class LyricsTimingKeepTest {
 
+    @org.junit.Before
+    fun resetLyricsTiming() = LyricsTiming.resetForTest()
+
     @Test
     fun `an empty full pass keeps the opening's measurement`() {
         assertEquals(199L, LyricsTiming.autoAfter(previous = 199L, previousCurrent = true, fresh = null, noChange = false))

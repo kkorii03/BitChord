@@ -273,6 +273,33 @@ class NextHqDirectSourceGateTest {
         assertFalse("every source resting", asks(sources = 0))
     }
 
+    @Test
+    fun theHeadEstimateFollowsTheFormat() {
+        val cd = KoDirectHqAhead.estimatedHeadBytes(flac)!!
+        val hiRes = KoDirectHqAhead.estimatedHeadBytes(StreamFormat("flac", bitDepth = 24, sampleRateHz = 96_000))!!
+        assertTrue("16/44.1 about 19 MB, got $cd", cd in 17_000_000L..22_000_000L)
+        assertTrue("24/96 about 63 MB, got $hiRes", hiRes in 58_000_000L..68_000_000L)
+        assertTrue(KoDirectHqAhead.headWithinCap(flac))
+        assertTrue(KoDirectHqAhead.headWithinCap(aac320))
+        assertFalse(KoDirectHqAhead.headWithinCap(StreamFormat("flac", bitDepth = 24, sampleRateHz = 96_000)))
+        assertTrue("an unstated size is not guessed", KoDirectHqAhead.estimatedHeadBytes(StreamFormat("flac")) == null)
+    }
+
+    @Test
+    fun aHiResHeadTooBigToReadAheadIsNotProved() = runBlocking {
+        val hiRes = StreamFormat("flac", bitDepth = 24, sampleRateHz = 96_000)
+        install(
+            listOf(
+                FakeSource("Telegram", listOf(row("tg-11", "Ahead Eleven")), hiRes, SourceKind.TELEGRAM),
+                FakeSource("YouTube", kind = SourceKind.YOUTUBE),
+            ),
+        )
+        var proved = false
+        val answer = KoDirectHqAhead.stream(target("Ahead Eleven"), verify = { proved = true; true })
+        assertNull(answer)
+        assertFalse("the proof must not download a 63 MB head ahead of a skippable song", proved)
+    }
+
     private fun target(title: String) = TrackMatcher.Target(title, "Eljohnzc", durationSec = 200)
 
     private fun row(id: String, title: String) = Song(
