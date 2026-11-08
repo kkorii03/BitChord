@@ -417,6 +417,8 @@ internal object SongHearing {
         waitedMs: Long,
         copyKey: String?,
         exact: Boolean,
+        /** When this began waiting for one of the [requests] slots: a queue behind slow uploads shows as `slot`. */
+        queuedAt: Long = System.currentTimeMillis(),
     ): Deepgram.Answer = requests.withPermit {
         val asked = System.currentTimeMillis()
         var hedgedTo = 0
@@ -442,7 +444,8 @@ internal object SongHearing {
             TAG,
             "song-hear: sent lang=$language until=${untilSeconds.toInt()} mime=$mime kb=${bytes.size / 1024} " +
                 "wait=${waitedMs}ms send=${System.currentTimeMillis() - asked}ms requests=$hedgedTo " +
-                "http=${answer.httpCode} words=${answer.words?.size} audio=${answer.audioMs} copy=$copyKey",
+                "http=${answer.httpCode} words=${answer.words?.size} audio=${answer.audioMs} copy=$copyKey " +
+                "slot=${asked - queuedAt}ms",
             videoId,
         )
         answer
