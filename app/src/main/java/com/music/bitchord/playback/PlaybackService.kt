@@ -3639,6 +3639,22 @@ class PlaybackService : MediaLibraryService() {
         )
     }
 
+    /**
+     * Credits [incoming]'s configured audio format to its own current track,
+     * for a player taken over mid-play (upstream a58cc106c).
+     *
+     * [formatListener] reports a format once, when the renderer is configured,
+     * and the incoming player configured its renderer during the blend, while
+     * the listener was still on the outgoing one. So [audioFormatFor] went on
+     * naming the outgoing track, and [adoptCachedTrack] (which refuses a format
+     * not credited to the track asking) never gave a track entered by blend or
+     * swap from the disk cache its second look or "Upgrading quality".
+     * A renderer with no format yet credits nothing; its callback is still to come.
+     */
+    private fun adoptFormatOf(incoming: ExoPlayer) {
+        if (incoming.audioFormat == null) return
+        audioFormatFor = incoming.currentMediaItem?.mediaId
+    }
     internal fun adoptPlayerForVersionSwap(outgoing: ExoPlayer, incoming: ExoPlayer) {
         setSessionOwner(outgoing, owns = false)
         setSessionOwner(incoming, owns = true)
@@ -3655,6 +3671,7 @@ class PlaybackService : MediaLibraryService() {
 
         incoming.addListener(playbackListener)
         incoming.addAnalyticsListener(formatListener)
+        adoptFormatOf(incoming)
 
         mediaSession?.player = newSessionPlayer(incoming, requireNotNull(crossfade))
 
@@ -5069,6 +5086,7 @@ class PlaybackService : MediaLibraryService() {
         spareFilter = heldFilter
         incoming.addListener(playbackListener)
         incoming.addAnalyticsListener(formatListener)
+        adoptFormatOf(incoming)
 
         mediaSession?.player = newSessionPlayer(incoming, requireNotNull(crossfade))
 
