@@ -322,6 +322,9 @@ object AudioDecoder {
             fail(label, FAILURE_GATE, "interrupted")
             return null
         }
+        // [KO] decode-yield: false once the slot was given up while stepped
+        // aside for an urgent decode, which then must not be released again.
+        var held = true
         try {
             // A request can wait here behind several others, and its caller
             // may have moved on meanwhile (the track changed, the coroutine was
@@ -332,9 +335,35 @@ object AudioDecoder {
                 TrackLog.d(TAG, "decode: $label dropped at the gate (caller gave up)")
                 return null
             }
-            return decodeRawLocked(openSource, startSeconds, endSeconds, abort, label, onBuffer)
+            return decodeRawLocked(openSource, startSeconds, endSeconds, abort, label, onBuffer) {
+                stepAsideForUrgent(label).also { if (!it) held = false }
+            }
         } finally {
-            decodeGate.release()
+            if (held) decodeGate.release()
+        }
+    }
+
+    /**
+     * [KO] decode-yield: lets an urgent decode (a version alignment a swap is
+     * waiting on) use the slot this decode holds, between two of its passes;
+     * see [DecodePriorityGate.yieldToUrgent]. One line when it stepped aside.
+     * False when it was interrupted while waiting to take the slot back.
+     */
+    private fun stepAsideForUrgent(label: String): Boolean {
+        val pausedAt = System.currentTimeMillis()
+        return when (decodeGate.yieldToUrgent()) {
+            DecodePriorityGate.Yield.KEPT -> true
+            DecodePriorityGate.Yield.RESUMED -> {
+                TrackLog.d(
+                    TAG,
+                    "decode: $label stepped aside ${System.currentTimeMillis() - pausedAt}ms for an urgent decode",
+                )
+                true
+            }
+            DecodePriorityGate.Yield.LOST -> {
+                fail(label, FAILURE_GATE, "interrupted while stepped aside")
+                false
+            }
         }
     }
 
@@ -345,6 +374,8 @@ object AudioDecoder {
         abort: () -> Boolean,
         label: String,
         onBuffer: (ByteBuffer, MediaCodec.BufferInfo, Int, Int) -> Unit,
+        /** [KO] decode-yield: asked once per pass; false means the gate slot is gone, so stop. */
+        yieldSlot: () -> Boolean,
     ): Pair<Double, Double>? {
         DecoderMonitor.start(label)
         val extractor = runCatching { MediaExtractor() }.getOrElse { error ->
@@ -403,6 +434,10 @@ object AudioDecoder {
                 // costs in both time and heap. `finally` still tears the codec
                 // and extractor down.
                 //
+                // [KO] decode-yield: first a waiting alignment gets the slot
+                // (this pass's codec state waits as it is), then the abort is
+                // asked, so a caller that left meanwhile still stops here.
+                if (!yieldSlot()) return null
                 if (abort()) return null
                 // Every free input slot is filled, and every ready output
                 // drained, before anything waits. Feeding one packet and then
