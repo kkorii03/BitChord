@@ -79,34 +79,35 @@ object TastePool {
 
     private const val ONE_DAY_MS = 24L * 60 * 60 * 1000
 
-    fun build(sources: PoolSources, taste: TasteView, nowMs: Long): CandidatePool {
-        val seed = sources.seedRadio.mapIndexedNotNull { index, song ->
-            candidateOf(song, CandidateSource.RADIO_SEED, index)
-        }
-        val session = sources.sessionRadio.mapIndexedNotNull { index, song ->
-            candidateOf(song, CandidateSource.RADIO_SESSION, index)
-        }
-        val favourites = favouriteTracks(sources.local, taste, nowMs).mapIndexedNotNull { index, track ->
-            candidateOf(track, CandidateSource.FAVOURITE, index)
-        }
-        val rediscover = rediscoverTracks(sources.local, taste, nowMs).mapIndexedNotNull { index, track ->
-            candidateOf(track, CandidateSource.REDISCOVER, index)
-        }
-        val similar = sources.similar.mapIndexedNotNull { index, song ->
-            candidateOf(song, CandidateSource.SIMILAR, index)
-        }
+    fun build(sources: PoolSources, taste: TasteView, nowMs: Long): CandidatePool =
+        CoverTitles.collectingSingers {
+            val seed = sources.seedRadio.mapIndexedNotNull { index, song ->
+                candidateOf(song, CandidateSource.RADIO_SEED, index)
+            }
+            val session = sources.sessionRadio.mapIndexedNotNull { index, song ->
+                candidateOf(song, CandidateSource.RADIO_SESSION, index)
+            }
+            val favourites = favouriteTracks(sources.local, taste, nowMs).mapIndexedNotNull { index, track ->
+                candidateOf(track, CandidateSource.FAVOURITE, index)
+            }
+            val rediscover = rediscoverTracks(sources.local, taste, nowMs).mapIndexedNotNull { index, track ->
+                candidateOf(track, CandidateSource.REDISCOVER, index)
+            }
+            val similar = sources.similar.mapIndexedNotNull { index, song ->
+                candidateOf(song, CandidateSource.SIMILAR, index)
+            }
 
-        // Seed first, then the session's, then the listener's own favourites,
-        // then collaborative filtering, then rediscovery: a duplicate keeps the
-        // strongest statement of intent. A favourite the data set also suggests
-        // is kept as a favourite.
-        val merged = (seed + session + favourites + similar + rediscover)
-            .distinctBy { it.videoId }
-        val counts = CandidateSource.entries.associateWith { source ->
-            merged.count { it.source == source }
+            // Seed first, then the session's, then the listener's own favourites,
+            // then collaborative filtering, then rediscovery: a duplicate keeps the
+            // strongest statement of intent. A favourite the data set also suggests
+            // is kept as a favourite.
+            val merged = (seed + session + favourites + similar + rediscover)
+                .distinctBy { it.videoId }
+            val counts = CandidateSource.entries.associateWith { source ->
+                merged.count { it.source == source }
+            }
+            CandidatePool(candidates = merged, counts = counts)
         }
-        return CandidatePool(candidates = merged, counts = counts)
-    }
 
     /**
      * The listener's most-affinity tracks that have not been heard today.

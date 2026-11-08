@@ -103,18 +103,20 @@ internal object KoHomeFeed {
         // the upload's own title. A row from an older build is cleaned first,
         // so its stored OST title and "Original Soundtrack" credit never reach
         // the shelf.
-        val items = songs.map(StoredSongDisplay::clean)
-            .map { CoverTitles.applyTo(it) }.map {
-            ShelfItem(
-                title = it.title,
-                subtitle = it.artist,
-                thumbnailUrl = it.thumbnailUrl,
-                videoId = it.videoId,
-                browseId = null,
-                // Phone 11-03: without this a cover video tapped here played
-                // as a plain song (no song version, music radio with no picks).
-                isVideo = it.isVideo,
-            )
+        val items = CoverTitles.collectingSingers {
+            songs.map(StoredSongDisplay::clean)
+                .map { CoverTitles.applyTo(it) }.map {
+                ShelfItem(
+                    title = it.title,
+                    subtitle = it.artist,
+                    thumbnailUrl = it.thumbnailUrl,
+                    videoId = it.videoId,
+                    browseId = null,
+                    // Phone 11-03: without this a cover video tapped here played
+                    // as a plain song (no song version, music radio with no picks).
+                    isVideo = it.isVideo,
+                )
+            }
         }
         return HomeShelf(title = RECENT_TITLE, items = items)
     }
@@ -141,7 +143,7 @@ internal object KoHomeFeed {
         if (shelf.items.none { it.isVideo && !it.videoId.isNullOrBlank() }) {
             shelf
         } else {
-            shelf.copy(items = shelf.items.map(::cleanVideoRow))
+            shelf.copy(items = CoverTitles.collectingSingers { shelf.items.map(::cleanVideoRow) })
         }
     }
 

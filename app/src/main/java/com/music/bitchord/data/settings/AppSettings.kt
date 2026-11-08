@@ -1955,6 +1955,9 @@ object AppSettings {
     fun rememberCoverSinger(name: String) =
         KoAppSettings.rememberCoverSinger(name) // [KO] discovery
 
+    fun rememberCoverSingers(names: Collection<String>) =
+        KoAppSettings.rememberCoverSingers(names) // [KO] discovery
+
     fun hideExploreCategory(title: String) =
         KoAppSettings.hideExploreCategory(title) // [KO] discovery
 

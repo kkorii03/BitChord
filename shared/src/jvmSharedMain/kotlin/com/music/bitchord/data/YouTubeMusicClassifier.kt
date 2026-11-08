@@ -154,7 +154,11 @@ internal object YouTubeMusicClassifier {
                     }
                 }
             }.awaitAll()
-            shown.filterIndexed { index, song -> verdicts[index] || CoverTitles.isCover(song) }
+            // Synchronous, so one burst: a page of covers learns its singers
+            // in one hand-over rather than one write per row.
+            CoverTitles.collectingSingers {
+                shown.filterIndexed { index, song -> verdicts[index] || CoverTitles.isCover(song) }
+            }
         }
         return judged + songs.drop(shown.size)
     }
@@ -187,11 +191,13 @@ internal object YouTubeMusicClassifier {
         }
         val music = ArrayList<Song>(shown.size)
         val hidden = ArrayList<Song>()
-        shown.forEachIndexed { index, song ->
-            // A cover is a music upload even when YouTube files it under a
-            // broad category; it stays visible and the display cleaner names
-            // it as the cover it is.
-            if (verdicts[index] || CoverTitles.isCover(song)) music += song else hidden += song
+        CoverTitles.collectingSingers {
+            shown.forEachIndexed { index, song ->
+                // A cover is a music upload even when YouTube files it under a
+                // broad category; it stays visible and the display cleaner names
+                // it as the cover it is.
+                if (verdicts[index] || CoverTitles.isCover(song)) music += song else hidden += song
+            }
         }
         music += songs.drop(shown.size)
         return music to hidden

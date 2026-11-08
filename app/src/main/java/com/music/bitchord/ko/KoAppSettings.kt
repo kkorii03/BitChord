@@ -6,6 +6,7 @@ import androidx.media3.common.Player
 import com.music.bitchord.data.DebugLog as Debug
 import com.music.bitchord.data.ExploreCategoryFilter
 import com.music.bitchord.data.TrackLog
+import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.innertube.MusicGateFallback
 import com.music.bitchord.data.net.ProxyConfig
 import com.music.bitchord.data.net.ProxyMode
@@ -21,7 +22,6 @@ import com.music.bitchord.playback.EqLayout
 import com.music.bitchord.playback.PlaybackParametersMath
 import com.music.bitchord.playback.SyncSafetyPolicy
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.update
 
 /**
  * The fork's settings that used to live inside [AppSettings].
@@ -655,6 +655,7 @@ internal object KoAppSettings {
     val chartsCountry = MutableStateFlow(DEFAULT_CONTENT_COUNTRY)
     val coverChannels = MutableStateFlow<Set<String>>(emptySet())
     val coverSingers = MutableStateFlow<Set<String>>(emptySet())
+    private val coverSingerLock = Any()
     val hiddenExploreCategories = MutableStateFlow<Set<String>>(emptySet())
     val resumeOnHeadphones = MutableStateFlow(true)
 
@@ -704,18 +705,21 @@ internal object KoAppSettings {
     }
 
     /** Called for every cover title read; writes only when [name] is new. */
-    fun rememberCoverSinger(name: String) {
-        val singer = name.trim()
-        if (singer.length < 2 || singer.length > 40 || singer in coverSingers.value) return
+    fun rememberCoverSinger(name: String) = rememberCoverSingers(listOf(name))
+
+    /**
+     * Remembers a whole burst from one list/shelf mapping in a single write.
+     * Every name is cleaned and de-duplicated first ([CoverTitles.cleanSingerName]),
+     * and nothing is written when the set would not change — the 400-name set
+     * used to rewrite the whole settings file once per newly seen name.
+     */
+    fun rememberCoverSingers(names: Iterable<String>) {
         if (!AppSettings.prefsReady()) return
-        var next: Set<String> = emptySet()
-        coverSingers.update { current ->
-            next = if (singer in current) current else (current + singer).let { all ->
-                if (all.size > MAX_COVER_SINGERS) all.drop(all.size - MAX_COVER_SINGERS).toSet() else all
-            }
-            next
+        synchronized(coverSingerLock) {
+            val next = mergeCoverSingers(coverSingers.value, names) ?: return
+            coverSingers.value = next
+            AppSettings.prefs.edit().putStringSet(KEY_COVER_SINGERS, HashSet(next)).apply()
         }
-        AppSettings.prefs.edit().putStringSet(KEY_COVER_SINGERS, HashSet(next)).apply()
     }
 
     /** Hides one Explore category by the label the listener long-pressed. */
@@ -908,4 +912,22 @@ internal object KoAppSettings {
         value.takeIf { it.isFinite() }
             ?.coerceIn(-EqLayout.MANUAL_RANGE_DB, EqLayout.MANUAL_RANGE_DB)
             ?: 0f
+}
+
+/**
+ * The cover-singer set after adding [names], or null when it would not change.
+ * Junk names (a view-count/date fragment, or a name cleaned away) are dropped
+ * before the comparison; the oldest names go once the cap is reached.
+ */
+internal fun mergeCoverSingers(current: Set<String>, names: Iterable<String>): Set<String>? {
+    var next: LinkedHashSet<String>? = null
+    for (raw in names) {
+        val name = CoverTitles.cleanSingerName(raw) ?: continue
+        if (name in current) continue
+        val merged = next ?: LinkedHashSet(current).also { next = it }
+        merged.add(name)
+    }
+    val merged = next ?: return null
+    while (merged.size > MAX_COVER_SINGERS) merged.remove(merged.first())
+    return merged
 }
