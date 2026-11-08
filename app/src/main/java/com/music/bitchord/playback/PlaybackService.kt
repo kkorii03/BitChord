@@ -4633,6 +4633,7 @@ class PlaybackService : MediaLibraryService() {
             try {
             var remaining = needed
             var emptyRefreshesRemaining = MAX_AUTOPLAY_EMPTY_REFRESHES
+            var seedBack = 0 // [KO] autoplay-retry: how far back along the queue the station is seeded
             while (isActive) {
                 val activePlayer = player ?: return@launch
                 val activeParty = ListenTogether.state.value
@@ -4658,7 +4659,9 @@ class PlaybackService : MediaLibraryService() {
                 }
                 val result = loadAutoplayTracks(
                     existing = existing,
-                    seedSong = current,
+                    seedSong = (activePlayer.currentMediaItemIndex - seedBack)
+                        .takeIf { seedBack > 0 && it in 0 until activePlayer.mediaItemCount }
+                        ?.let { activePlayer.getMediaItemAt(it).toSong() } ?: current,
                     limit = remaining,
                     sessionSong = lastCompletedSong,
                     sessionIds = autoplaySessionIds.toSet(),
@@ -4779,6 +4782,20 @@ class PlaybackService : MediaLibraryService() {
                     return@launch
                 }
                 if (emptyRefreshesRemaining <= 0) {
+                    // [KO] autoplay-retry: this song's station is empty; seed
+                    // from an earlier song before giving up (upstream seedBack).
+                    val back = autoplayNextSeedBack(at, seedBack, latestParty.inParty)
+                    if (back != null) {
+                        seedBack = back
+                        TrackLog.d(
+                            "BitChord",
+                            "autoplay: empty seed=${current.videoId} retry=seed-back $back",
+                            about = current.videoId,
+                        )
+                        delay(AUTOPLAY_EMPTY_REFRESH_DELAY_MS)
+                        remaining = MAX_QUEUED_AUTOPLAY
+                        continue
+                    }
                     // The retries are spent; release the latch so the next
                     // event (a queue edit, pause/resume, or a terminal
                     // continuation) can ask again instead of stopping forever

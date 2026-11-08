@@ -2,6 +2,7 @@ package com.music.bitchord
 
 import com.music.bitchord.playback.ContinuationState
 import com.music.bitchord.playback.autoplayNeedsContinuationTerminalRecheck
+import com.music.bitchord.playback.autoplayNextSeedBack
 import com.music.bitchord.playback.autoplaySeedAfterExhaustedRetries
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -16,6 +17,16 @@ import org.junit.Test
  * budget is used up while the seed stays latched.
  */
 class AutoplayRetryPolicyTest {
+
+    @Test
+    fun `an empty station seeds from earlier songs, a bounded number of times`() {
+        assertEquals(1, autoplayNextSeedBack(currentIndex = 5, seedBack = 0, inParty = false))
+        assertEquals(2, autoplayNextSeedBack(currentIndex = 5, seedBack = 1, inParty = false))
+        assertNull(autoplayNextSeedBack(currentIndex = 5, seedBack = 2, inParty = false))
+        assertNull(autoplayNextSeedBack(currentIndex = 0, seedBack = 0, inParty = false))
+        assertNull(autoplayNextSeedBack(currentIndex = 1, seedBack = 1, inParty = false))
+        assertNull(autoplayNextSeedBack(currentIndex = 5, seedBack = 0, inParty = true))
+    }
 
     @Test
     fun `a terminal continuation asks autoplay to look again`() {
