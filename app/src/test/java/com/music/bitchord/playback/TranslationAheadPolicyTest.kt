@@ -84,16 +84,34 @@ class TranslationAheadPolicyTest {
         )
     }
 
+    // 11-08 user log: all 21 natural transitions went into an AutoPlay row,
+    // and the old NONE here meant no translation was ever made ahead of one.
     @Test
-    fun `an autoplay slot that may be replaced is not prepared`() {
+    fun `an autoplay slot on wifi gets its translation ahead`() {
         assertEquals(
-            Plan.NONE,
+            Plan.TRANSLATION_ONLY,
             TranslationAheadPolicy.plan(
                 metered = false,
                 lowPower = false,
                 allowHeavy = true,
                 autoplayUncertain = true,
             ),
+        )
+    }
+
+    @Test
+    fun `an autoplay slot off wifi or saving power is not prepared`() {
+        assertEquals(
+            Plan.NONE,
+            TranslationAheadPolicy.plan(metered = true, lowPower = false, allowHeavy = true, autoplayUncertain = true),
+        )
+        assertEquals(
+            Plan.NONE,
+            TranslationAheadPolicy.plan(metered = false, lowPower = true, allowHeavy = false, autoplayUncertain = true),
+        )
+        assertEquals(
+            Plan.NONE,
+            TranslationAheadPolicy.plan(metered = null, lowPower = false, allowHeavy = true, autoplayUncertain = true),
         )
     }
 }

@@ -3,6 +3,7 @@ package com.music.bitchord.playback
 import android.content.Context
 import androidx.appcompat.app.AppCompatDelegate
 import com.music.bitchord.data.DebugLog as Log
+import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.lyrics.EmbeddedLyrics
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsOverrideFile
@@ -108,6 +109,8 @@ internal object TranslationAhead {
         next: Song?,
         allowHeavy: Boolean,
         paidGate: suspend () -> Boolean = { true },
+        /** [TranslationAheadPolicy.Plan.TRANSLATION_ONLY]: the text request alone. */
+        translateOnly: Boolean = false,
     ) {
         if (next == null || !AppSettings.syncedLyrics.value) {
             nextJob?.cancel()
@@ -119,7 +122,7 @@ internal object TranslationAhead {
         nextJob?.cancel()
         nextId = next.videoId
         val app = context.applicationContext
-        nextJob = scope.launch { prepare(app, next, allowHeavy, paidGate) }
+        nextJob = scope.launch { prepare(app, next, allowHeavy, paidGate, translateOnly) }
     }
 
     /** The lyrics a prep pass found, and whether they came out of a downloaded file. */
@@ -217,15 +220,18 @@ internal object TranslationAhead {
         song: Song,
         allowHeavy: Boolean,
         paidGate: suspend () -> Boolean = { true },
+        translateOnly: Boolean = false,
     ) {
+        val translationWanted = (allowHeavy || translateOnly) &&
+            (AppSettings.prefetchTranslation.value || AppSettings.autoTranslateLyrics.value)
+        // A translation-only pass leaves the song unmarked, so trackStarted
+        // still makes its timing pass and finds the translation cached.
         // A per-song override is what the player will show, so translate that
         // rather than the file's older tags or a fresh provider answer.
         LyricsOverrideStore.read(app, song.videoId)?.let { override ->
-            if (allowHeavy &&
-                (AppSettings.prefetchTranslation.value || AppSettings.autoTranslateLyrics.value)
-            ) {
+            if (translationWanted) {
                 translate(song.videoId, override.lines, targetLanguage(app), keep = song.localUri != null)
-                markPrepared(song.videoId)
+                if (!translateOnly) markPrepared(song.videoId)
             }
             return
         }
@@ -233,17 +239,19 @@ internal object TranslationAhead {
         song.localUri?.let { uri ->
             val embedded = EmbeddedLyrics.forUri(app, uri)
             if (embedded != null) {
-                if (allowHeavy &&
-                    (AppSettings.prefetchTranslation.value || AppSettings.autoTranslateLyrics.value)
-                ) {
+                if (translationWanted) {
                     translate(song.videoId, embedded, targetLanguage(app), keep = true)
-                    markPrepared(song.videoId)
+                    if (!translateOnly) markPrepared(song.videoId)
                 }
                 return
             }
         }
         val found = lookUp(song, transcribe = allowHeavy && song.localUri == null) ?: return
         val lines = found.lines.takeIf { lines -> lines.any { it.text.isNotBlank() } } ?: return
+        if (translateOnly) {
+            if (translationWanted) translate(song.videoId, lines, targetLanguage(app), keep = song.localUri != null)
+            return
+        }
         if (!allowHeavy) return
         if (wasPrepared(song.videoId)) return
         // The timing alongside the translation rather than after it, and
@@ -459,14 +467,30 @@ internal object TranslationAhead {
             }
             // The failure is not thrown, so without this the automatic pass
             // would leave no trace at all: the next play silently pays for the
-            // same request again.
-            if (result == null || result is LyricsTranslation.Result.Unavailable) {
-                Log.d(TAG, "no translation ahead for $trackId (${target}): ${result ?: "timed out"}")
-            }
+            // same request again. TrackLog, not DebugLog: DebugLog is silent
+            // on release builds, which left the listener's own diagnostic log
+            // unable to say whether this pass ever ran.
+            TrackLog.d(TAG, "translation-ahead: $trackId target=$target result=${outcome(result)}", about = trackId)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (e: Exception) {
-            Log.d(TAG, "no translation ahead for $trackId: ${e.message}")
+            TrackLog.d(TAG, "translation-ahead: $trackId result=failed ${e.javaClass.simpleName}", about = trackId)
         }
+    }
+
+    /**
+     * The player's own translation request, logged so the diagnostic log can
+     * tell whether the ahead pass was used: `cached=y` on a song the pass
+     * translated is the answer it left behind.
+     */
+    fun logPlayerTranslation(trackId: String, target: String, result: LyricsTranslation.Result) {
+        TrackLog.d(TAG, "translation: $trackId target=$target result=${outcome(result)}", about = trackId)
+    }
+
+    internal fun outcome(result: LyricsTranslation.Result?): String = when (result) {
+        null -> "timeout"
+        is LyricsTranslation.Result.Translated -> "translated cached=${if (result.fromCache) "y" else "n"}"
+        is LyricsTranslation.Result.SameLanguage -> "same-language"
+        LyricsTranslation.Result.Unavailable -> "unavailable"
     }
 }
