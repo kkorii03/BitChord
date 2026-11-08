@@ -400,20 +400,30 @@ internal class NextTrackPreparation(
                             // once the row is playing and its audio flows.
                             // Not before the current song passes the early-skip
                             // window: a row skipped past pays for nothing.
-                            var openingReady = VideoAudio.secondsOnDisk(song) >= SongCheckWindow.FIRST_SECONDS
+                            val openingOnDisk = { VideoAudio.secondsOnDisk(song) >= SongCheckWindow.FIRST_SECONDS }
+                            var openingReady = openingOnDisk()
+                            // Set when the wait below gave up on the paid gate: the
+                            // paid half is then not waited for a second time.
+                            var gateRefused = false
                             if (lines != null && !substituted && !openingReady &&
                                 AppSettings.aiTimingAhead.value && Deepgram.usable
                             ) {
-                                val leftBefore = remainingMs(player)
-                                if (NextPrepPolicy.aiGateOpen(player.currentPosition) ||
-                                    (NextPrepPolicy.canStartStep(leftBefore) && awaitAiGate(player, leftBefore))
-                                ) {
-                                    AudioCache.awaitAnalysisHead(
-                                        android.net.Uri.parse(AutomixAnalysisSource.opusUri(song.videoId)),
-                                        NEXT_OPENING_WAIT_MS,
-                                    )
-                                    openingReady = VideoAudio.secondsOnDisk(song) >= SongCheckWindow.FIRST_SECONDS
-                                }
+                                val opening = NextPrepPolicy.openingAroundGate(
+                                    onDisk = openingOnDisk,
+                                    gate = {
+                                        val leftBefore = remainingMs(player)
+                                        NextPrepPolicy.aiGateOpen(player.currentPosition) ||
+                                            (NextPrepPolicy.canStartStep(leftBefore) && awaitAiGate(player, leftBefore))
+                                    },
+                                    pullHead = {
+                                        AudioCache.awaitAnalysisHead(
+                                            android.net.Uri.parse(AutomixAnalysisSource.opusUri(song.videoId)),
+                                            NEXT_OPENING_WAIT_MS,
+                                        )
+                                    },
+                                )
+                                openingReady = opening.ready
+                                gateRefused = opening.gateRefused
                             }
                             if (lines != null && !substituted && !openingReady) {
                                 syncFailure = NextPrepPolicy.SyncFailure.NO_AUDIO
@@ -438,7 +448,7 @@ internal class NextTrackPreparation(
                                 // half has already run, so a short track still
                                 // keeps its measurement and does not push MIX
                                 // behind the 30 s gate.
-                                if (AppSettings.aiTimingAhead.value && Deepgram.usable) {
+                                if (AppSettings.aiTimingAhead.value && Deepgram.usable && !gateRefused) {
                                     val leftNow = remainingMs(player)
                                     val gateOpen = NextPrepPolicy.aiGateOpen(player.currentPosition) ||
                                         (NextPrepPolicy.canStartStep(leftNow) &&

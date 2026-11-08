@@ -176,6 +176,35 @@ object NextPrepPolicy {
     /** Whether the paid engines may be asked after [playedMs] of the current track. */
     fun aiGateOpen(playedMs: Long): Boolean = playedMs >= AI_MIN_PLAYED_MS
 
+    /** The next row's opening as the SYNC step found it, and whether the paid gate said no. */
+    data class Opening(val ready: Boolean, val gateRefused: Boolean)
+
+    /**
+     * Looks for the next row's opening around the paid-engine gate: [onDisk]
+     * now, else wait at [gate] and, once it opens, [pullHead]; then [onDisk]
+     * again either way.
+     *
+     * The second look must not depend on the gate. Read-ahead lands the bytes
+     * a second or so after the step starts, while the gate wait lasts up to
+     * half a minute and fails when the listener pauses or a shared link
+     * replaces the queue (the player drops its position message). 11-08 user
+     * log: 5 of 7 `failed:no-audio` rows had the whole file on disk, so the
+     * free half (stored answers, no upload) never ran and the row was
+     * reported as missing audio. A refused gate is returned so the caller
+     * does not wait at it a second time for the paid half: those rows were
+     * never played, and a second wait would buy an upload for them.
+     */
+    suspend fun openingAroundGate(
+        onDisk: () -> Boolean,
+        gate: suspend () -> Boolean,
+        pullHead: suspend () -> Unit,
+    ): Opening {
+        if (onDisk()) return Opening(ready = true, gateRefused = false)
+        val opened = gate()
+        if (opened) pullHead()
+        return Opening(ready = onDisk(), gateRefused = !opened)
+    }
+
     /**
      * Whether the next row may be replaced by a lossless audio candidate.
      *

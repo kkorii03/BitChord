@@ -1,6 +1,7 @@
 package com.music.bitchord.playback
 
 import com.music.bitchord.playback.NextPrepPolicy.Step
+import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -447,5 +448,72 @@ class NextPrepPolicyTest {
         assertFalse(NextPrepPolicy.deadlineAfterTimeout(Step.SYNC, 25_000L))
         assertTrue(NextPrepPolicy.deadlineAfterTimeout(Step.SYNC, 0L))
         assertTrue(NextPrepPolicy.deadlineAfterTimeout(Step.HQ, 25_000L))
+    }
+
+    // 11-08 user log: the SYNC step looked for the next row's opening before
+    // read-ahead had written it, the paid gate then gave up (listener paused,
+    // or a shared link replaced the queue and the player dropped its position
+    // message), and the bytes were on disk by then. The old code read the disk
+    // only inside the gate-open branch and reported `failed:no-audio`.
+
+    @Test
+    fun bytesThatLandDuringARefusedGateStillCount() = runBlocking {
+        var onDisk = false
+        var pulled = false
+        val opening = NextPrepPolicy.openingAroundGate(
+            onDisk = { onDisk },
+            gate = {
+                onDisk = true // read-ahead finished while the gate was waited for
+                false
+            },
+            pullHead = { pulled = true },
+        )
+        assertTrue(opening.ready, "the opening is on disk; this row is not missing audio")
+        assertTrue(opening.gateRefused, "the paid half must not wait at the gate a second time")
+        assertFalse(pulled, "no head pull without the gate")
+    }
+
+    @Test
+    fun anOpenGatePullsTheHeadAndReadsAgain() = runBlocking {
+        var onDisk = false
+        var pulled = 0
+        val opening = NextPrepPolicy.openingAroundGate(
+            onDisk = { onDisk },
+            gate = { true },
+            pullHead = {
+                pulled++
+                onDisk = true
+            },
+        )
+        assertEquals(1, pulled)
+        assertTrue(opening.ready)
+        assertFalse(opening.gateRefused)
+    }
+
+    @Test
+    fun anOpeningAlreadyOnDiskNeverWaitsAtTheGate() = runBlocking {
+        var asked = false
+        val opening = NextPrepPolicy.openingAroundGate(
+            onDisk = { true },
+            gate = {
+                asked = true
+                true
+            },
+            pullHead = {},
+        )
+        assertTrue(opening.ready)
+        assertFalse(opening.gateRefused, "the paid half keeps its own gate wait, as before")
+        assertFalse(asked)
+    }
+
+    @Test
+    fun noBytesAndARefusedGateIsStillNoAudio() = runBlocking {
+        val opening = NextPrepPolicy.openingAroundGate(
+            onDisk = { false },
+            gate = { false },
+            pullHead = {},
+        )
+        assertFalse(opening.ready)
+        assertTrue(opening.gateRefused)
     }
 }
