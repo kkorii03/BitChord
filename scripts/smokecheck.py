@@ -52,6 +52,17 @@ INVALID_NO_AUDIO = (
 SONG_VERSION_RE = re.compile(
     r"song version:\s+(?P<src>\S+)\s+->\s+(?P<dst>\S+)\s+via\s+(?P<via>\S+)"
 )
+# task/late-swap: `song version: <mv> -> <song> late swap done mv=..` (the audible
+# MV was cross-faded into its song version at the same bar) and
+# `song version: <mv> -> <song> late, before audio` (a late answer that landed
+# while the row was still silent). `late swap starting` / `late swap refused`
+# are not swaps.
+LATE_SWAP_DONE_RE = re.compile(
+    r"song version:\s+(?P<src>\S+)\s+->\s+(?P<dst>\S+)\s+late swap done\b"
+)
+LATE_BEFORE_AUDIO_RE = re.compile(
+    r"song version:\s+(?P<src>\S+)\s+->\s+(?P<dst>\S+)\s+late, before audio\b"
+)
 # `song version: <id> kept (none)`, `kept (timeout)`, `kept (local file, none)`.
 SONG_VERSION_KEPT_RE = re.compile(r"song version:\s+(?P<id>\S+)\s+kept\b")
 # A definitive "no catalogue song" answer from the pre-playback lookup. A
@@ -264,6 +275,8 @@ def check_log(
     last_lyrics_shift: dict[str, int | None] = {}
     # (source, target, line number, installed before audio) per swap line.
     swap_lines: list[tuple[str, str, int, bool]] = []
+    # MVs handed over mid-song to their song version (`late swap done`).
+    late_swapped: set[str] = set()
     summarized_ids: set[str] = set()
     heard_ids: set[str] = set()
     # Line of the first summary saying this video itself was heard.
@@ -329,6 +342,20 @@ def check_log(
                 replacements.append((source, target))
                 version_subjects.add(source)
                 swap_lines.append((source, target, line_no, "before-audio" in line))
+            late_done = LATE_SWAP_DONE_RE.search(line)
+            if late_done:
+                replacements.append((late_done.group("src"), late_done.group("dst")))
+                version_subjects.add(late_done.group("src"))
+                late_swapped.add(late_done.group("src"))
+            late_silent = LATE_BEFORE_AUDIO_RE.search(line)
+            if late_silent:
+                source = late_silent.group("src")
+                target = late_silent.group("dst")
+                replacements.append((source, target))
+                version_subjects.add(source)
+                # Installed before the first sound, so the ordinary rule
+                # (logged before the MV's own heard summary) applies.
+                swap_lines.append((source, target, line_no, True))
             # A "kept" line is not evidence of an MV: the lookup also runs for
             # rows of unknown type and keeps a song version that is already one
             # (10-26: Burn the House Down, Wbxh1fNakos = AJR - Topic, was failed
@@ -418,13 +445,15 @@ def check_log(
                 seen_sync.add(key)
                 sync_warnings.append(key)
 
-    # The app never swaps a recording that is already audible (see
-    # SongVersionController.watchForLateVersion): a lookup answer that lands
-    # after the video made its first sound only steers the lyrics. So once a
-    # video's own summary says it was heard, only a swap installed before audio
-    # (`before-audio` or the music-only line) and logged before that summary
-    # proves it was replaced. 11-07 rounds 133-136: Youngblood and When I Was
-    # Your Man played as MVs for two minutes and passed as "replaced".
+    # A lookup answer that lands after the video made its first sound does not
+    # by itself replace it (the `via search` / `via retry` lines only report the
+    # answer). So once a video's own summary says it was heard, only a swap
+    # installed before audio (`before-audio`, the music-only line or `late,
+    # before audio`) and logged before that summary proves it was replaced.
+    # 11-07 rounds 133-136: Youngblood and When I Was Your Man played as MVs for
+    # two minutes and passed as "replaced". The one exception is `late swap
+    # done` (task/late-swap): the audible MV was cross-faded into its song
+    # version, and the MV's summary is written at that handover, before the line.
     def counts_as_swap(src: str, line_no: int, installed: bool) -> bool:
         heard_at = first_heard_video_at.get(src)
         if heard_at is None:
@@ -436,6 +465,7 @@ def check_log(
         for src, dst, line_no, installed in swap_lines
         if dst not in ("none", "-") and counts_as_swap(src, line_no, installed)
     }
+    replaced_sources.update(late_swapped)
     replaced_targets = {dst for _src, dst in replacements if dst not in ("none", "-")}
     mv_ids = {
         summary.video_id

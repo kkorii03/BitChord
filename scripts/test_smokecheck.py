@@ -878,6 +878,66 @@ class LateVersionTest(unittest.TestCase):
         )
         self.assertEqual("FAIL", statuses(log)[1].status)
 
+    def test_late_swap_done_counts_as_the_song_version_playing(self):
+        # task/late-swap: the audible MV was cross-faded into its song version;
+        # the MV's summary is written at the handover, before the done line.
+        log = "\n".join(
+            [
+                play("mv1", "Song", "Artist"),
+                log_line("song version: mv1 kept (timeout)"),
+                log_line("song version: mv1 -> aud1 via search"),
+                log_line("song version: mv1 -> aud1 late swap starting at mv=21000ms"),
+                heard_summary("mv1", "Song", True, "19913", 25),
+                log_line(
+                    "song version: mv1 -> aud1 late swap done "
+                    "mv=21480ms song=2960ms offset=-18520ms"
+                ),
+                heard_summary("aud1", "Song", False, "0", 190),
+            ]
+        )
+        self.assertEqual("PASS", statuses_with_songs(log, specs("mv1\tmv"))[1].status)
+        self.assertEqual("PASS", statuses(log)[1].status)
+
+    def test_late_answer_installed_while_still_silent_counts(self):
+        log = "\n".join(
+            [
+                play("mv1", "Song", "Artist"),
+                log_line("song version: mv1 kept (timeout)"),
+                log_line("song version: mv1 -> aud1 late, before audio"),
+                heard_summary("mv1", "Song", True, "-", 0),
+                heard_summary("aud1", "Song", False, "21000", 180),
+            ]
+        )
+        self.assertEqual("PASS", statuses_with_songs(log, specs("mv1\tmv"))[1].status)
+
+    def test_a_late_swap_that_was_refused_or_only_started_is_still_an_mv(self):
+        for line in (
+            "song version: mv1 -> aud1 late swap refused (alignment not measured)",
+            "song version: mv1 -> aud1 late swap starting at mv=21000ms",
+        ):
+            log = "\n".join(
+                [
+                    play("mv1", "Song", "Artist"),
+                    log_line("song version: mv1 kept (timeout)"),
+                    log_line("song version: mv1 -> aud1 via search"),
+                    log_line(line),
+                    heard_summary("mv1", "Song", True, "19913", 132),
+                ]
+            )
+            self.assertEqual(
+                "FAIL", statuses_with_songs(log, specs("mv1\tmv"))[1].status, line
+            )
+
+    def test_late_before_audio_logged_after_the_mv_was_heard_does_not_count(self):
+        log = "\n".join(
+            [
+                play("mv1", "Song", "Artist"),
+                heard_summary("mv1", "Song", True, "19913", 132),
+                log_line("song version: mv1 -> aud1 late, before audio"),
+            ]
+        )
+        self.assertEqual("FAIL", statuses_with_songs(log, specs("mv1\tmv"))[1].status)
+
     def test_sync_of_a_row_that_never_sounded_is_not_judged(self):
         # 136b: a stored measurement of the replaced MV, never heard.
         log = "\n".join(
