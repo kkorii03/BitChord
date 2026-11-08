@@ -1,6 +1,7 @@
 package com.music.bitchord.data.lyrics
 
 import kotlin.math.abs
+import kotlin.math.ceil
 import kotlin.math.roundToLong
 
 /**
@@ -67,6 +68,16 @@ object LyricsPerLine {
     /** How far a placed transcript line may move; past it the line keeps its word anchor and every guard (11-02 RrfF9cuJuQU: three lines heard 3.5 s early, sung on time). */
     const val MAX_OWN_TRANSCRIPT_MOVE_MS = 3_000L
 
+    /** See [firstWordSnaps]: what a line's opening must show before the line starts on its first heard word. */
+    const val MIN_FIRST_WORD_SHARE = 0.6
+    const val MIN_FIRST_WORD_COVER = 0.5
+    /** Past this from the fitted line, a first word is another line's or a mishearing (replay: 1.5 s keeps every true jitter). */
+    const val MAX_FIRST_WORD_MOVE_MS = 1_500L
+    /** A repeated line's opening may be the other copy's (replay 11-09: w8P-BIQU1qI, eqKhhG4FVoQ, l4Z9kkYAggc moved 0.7-1.2 s wrong). */
+    const val MAX_REPEATED_FIRST_WORD_MOVE_MS = 500L
+    /** A snap this far from both agreeing neighbours is an opening heard elsewhere (replay: lga4m0pWicc line 11, +1.1 s). */
+    const val MAX_LONE_FIRST_WORD_DIFF_MS = 800L
+
     /** Two anchors further apart than this do not interpolate between themselves. */
     const val MAX_INTERPOLATE_SPAN_MS = 30_000L
 
@@ -112,6 +123,8 @@ object LyricsPerLine {
         val anchors: Int,
         val applied: Int,
         val maxAbsMs: Long,
+        /** Lines started on their first heard word ([firstWordSnaps]). */
+        val snapped: Int = 0,
     ) {
         companion object {
             fun identity(lines: Int): Layer = Layer(List(lines) { 0L }, 0, 0, 0L)
@@ -181,7 +194,9 @@ object LyricsPerLine {
         if (ownTranscript) addPlacedLines(lines, heard, found)
         val letters = lines.map { LyricsWordAlign.fold(it.text).length }
         val anchors = withoutStrays(withoutLoneBlocks(sungInOrder(found, letters)))
-        if (anchors.isEmpty()) return Layer.identity(lines.size)
+        // A transcript sheet's lines are placed by addPlacedLines, from the same openings.
+        val snapped = if (ownTranscript) emptyList() else firstWordSnaps(lines, heard, letters)
+        if (anchors.isEmpty() && snapped.isEmpty()) return Layer.identity(lines.size)
 
         val heardFrom = heard.minOf { it.startMs }
         val heardTo = heard.maxOf { it.endMs }
@@ -244,10 +259,91 @@ object LyricsPerLine {
             for (index in shifts.indices) if (abs(shifts[index]) > GOOD_SHEET_MOVE_MS) shifts[index] = 0L
             enforceOrder(lines, shifts)
         }
+        // A line heard from its very first word starts there ([firstWordSnaps]). Put on after
+        // the moves above, so a line without such an opening keeps what they gave it.
+        if (snapped.isNotEmpty()) {
+            for (snap in snapped) shifts[snap.line] = if (abs(snap.residualMs) >= MIN_APPLY_MS) snap.residualMs else 0L
+            enforceOrder(lines, shifts)
+        }
         val applied = shifts.count { it != 0L }
         val maxAbs = shifts.maxOfOrNull { abs(it) } ?: 0L
-        return Layer(shifts.toList(), anchors.size, applied, maxAbs)
+        return Layer(shifts.toList(), anchors.size, applied, maxAbs, snapped.size)
     }
+
+    /**
+     * Lines that start where their first heard word starts. A hand-tapped sheet is off by
+     * its own ±0.3 s on each line (11-09 6rS7OUGXUik: VIBE/LRCLIB 0.5 s early with ±0.3 s per
+     * line; the shift reached 74 % of lines within 0.3 s, the word anchors 76 %), and where a
+     * line's opening word was heard, that onset is where it was sung: the median of its words
+     * stepped back by 180 ms a letter is not, for held notes and fast rap alike.
+     *
+     * A line qualifies only when the words clearly heard it from its start: [MIN_FIRST_WORD_SHARE]
+     * of its letters and [MIN_ANCHOR_WORDS] words matched, its first letter matched to the first
+     * letter of a heard word that is mostly this line's ([MIN_FIRST_WORD_COVER] of its letters),
+     * not the previous line's last word, in time order with the next word, and starting no earlier
+     * than the previous line's last heard word ends (a held note is not cut short). The move is at
+     * most [MAX_FIRST_WORD_MOVE_MS] from where the fit put the line, [MAX_REPEATED_FIRST_WORD_MOVE_MS]
+     * for a line whose text the sheet repeats (the words may be the other copy's). The snaps then
+     * pass the same order, lone-block and stray guards as the word anchors, a lone one far from
+     * both agreeing neighbours is dropped ([MAX_LONE_FIRST_WORD_DIFF_MS]), and on a sheet the
+     * openings say is right, only the moves within its scatter are kept.
+     *
+     * 85 recorded songs, after a whole-song shift (heard and scored on whisper-large, offline
+     * port): within 0.3 s 1951 -> 2004 of 2253 lines, 22 songs better, none worse.
+     */
+    private fun firstWordSnaps(
+        lines: List<LyricLine>,
+        heard: List<LyricsWordAlign.Heard>,
+        letters: List<Int>,
+    ): List<Anchor> {
+        val hearings = LyricsWordAlign.lineHearings(lines.map { it.text }, heard)
+        val folded = lines.map { LyricsWordAlign.fold(it.text) }
+        val copies = folded.groupingBy { it }.eachCount()
+        val found = ArrayList<Anchor>()
+        var previousLastWord = -1
+        var previousLastEnd = Long.MIN_VALUE
+        for (index in lines.indices) {
+            val hearing = hearings[index]
+            val opening = hearing.opening
+            val leadStart = lines[index].words.firstOrNull()?.startMs ?: lines[index].timeMs
+            if (opening != null &&
+                hearing.share >= MIN_FIRST_WORD_SHARE &&
+                hearing.words.size >= MIN_ANCHOR_WORDS &&
+                opening != previousLastWord &&
+                hearing.openingLetters >= maxOf(1, ceil(MIN_FIRST_WORD_COVER * LyricsWordAlign.fold(heard[opening].text).length).toInt()) &&
+                heard[opening].startMs <= heard[hearing.words[1]].startMs &&
+                heard[opening].startMs >= previousLastEnd
+            ) {
+                val residual = heard[opening].startMs - leadStart
+                val cap = if ((copies[folded[index]] ?: 0) > 1) MAX_REPEATED_FIRST_WORD_MOVE_MS else MAX_FIRST_WORD_MOVE_MS
+                if (abs(residual) <= cap) found += Anchor(index, lines[index].timeMs, residual)
+            }
+            hearing.words.lastOrNull()?.let {
+                previousLastWord = it
+                previousLastEnd = heard[it].endMs
+            }
+        }
+        val guarded = withoutLoneFirstWords(withoutStrays(withoutLoneBlocks(sungInOrder(found, letters))))
+        if (guarded.size >= MIN_GOOD_SHEET_LINES &&
+            guarded.count { abs(it.residualMs) <= GOOD_SHEET_MOVE_MS } >= guarded.size * GOOD_SHEET_MOVE_SHARE
+        ) {
+            return guarded.filter { abs(it.residualMs) <= GOOD_SHEET_MOVE_MS }
+        }
+        return guarded
+    }
+
+    /** [snaps] without one that sits far from both its neighbours while they agree: the opening heard somewhere else. */
+    private fun withoutLoneFirstWords(snaps: List<Anchor>): List<Anchor> =
+        snaps.filterIndexed { k, snap ->
+            val before = snaps.getOrNull(k - 1)
+            val after = snaps.getOrNull(k + 1)
+            !(before != null && after != null &&
+                abs(before.timeMs - snap.timeMs) <= LONE_ANCHOR_NEAR_MS &&
+                abs(after.timeMs - snap.timeMs) <= LONE_ANCHOR_NEAR_MS &&
+                abs(before.residualMs - after.residualMs) < MAX_INTERPOLATE_DIFF_MS &&
+                abs(snap.residualMs - before.residualMs) > MAX_LONE_FIRST_WORD_DIFF_MS &&
+                abs(snap.residualMs - after.residualMs) > MAX_LONE_FIRST_WORD_DIFF_MS)
+        }
 
     /**
      * An anchor for each line of a transcript sheet from where [LyricsWordAlign.placeLinesDetailed]

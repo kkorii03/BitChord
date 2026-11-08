@@ -162,6 +162,58 @@ object LyricsWordAlign {
         }
     }
 
+    /**
+     * How one line was heard, by the same alignment as [matchedWords]: the heard words its
+     * letters were matched to ([words], indices into the heard list, in order), the share of
+     * its letters matched, and [opening], the heard word its first letter was matched to when
+     * that letter is also that word's own first letter (null otherwise), with how many of the
+     * line's letters went to that word.
+     */
+    data class LineHearing(
+        val words: List<Int>,
+        val share: Double,
+        val opening: Int?,
+        val openingLetters: Int,
+    )
+
+    /** [LineHearing] for each of [lines]; all empty when the alignment was not attempted. */
+    fun lineHearings(lines: List<String>, words: List<Heard>): List<LineHearing> {
+        val none = LineHearing(emptyList(), 0.0, null, 0)
+        val aligned = align(lines, words) ?: return List(lines.size) { none }
+        val out = ArrayList<LineHearing>(lines.size)
+        var k = 0
+        for (index in lines.indices) {
+            var end = k
+            while (end < aligned.lyricChars.size && aligned.lyricLine[end] == index) end++
+            if (end == k) {
+                out += none
+                continue
+            }
+            val heardWords = LinkedHashSet<Int>()
+            var matched = 0
+            for (i in k until end) {
+                val at = aligned.heardFor[i]
+                if (at < 0) continue
+                matched++
+                heardWords += aligned.heardWord[at]
+            }
+            val first = aligned.heardFor[k]
+            val opening = if (first >= 0 && (first == 0 || aligned.heardWord[first - 1] != aligned.heardWord[first])) {
+                aligned.heardWord[first]
+            } else {
+                null
+            }
+            val openingLetters = if (opening == null) {
+                0
+            } else {
+                (k until end).count { aligned.heardFor[it] >= 0 && aligned.heardWord[aligned.heardFor[it]] == opening }
+            }
+            out += LineHearing(heardWords.toList(), matched.toDouble() / (end - k), opening, openingLetters)
+            k = end
+        }
+        return out
+    }
+
     /** The lyrics' and transcript's letters aligned end to end, or null when too large to try. */
     private class Alignment(
         val lyricChars: CharArray,
