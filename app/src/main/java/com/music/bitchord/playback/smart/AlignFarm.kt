@@ -227,8 +227,15 @@ internal object AlignFarm {
                     .header("x-farm-token", readToken(secret))
                     .build()
                 client.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) return@use ByteArray(0)
-                    response.body?.bytes() ?: ByteArray(0)
+                    val tag = if (ahead) " ahead" else ""
+                    // The code tells 404 (not in the farm) from 429 / 5xx (the farm or route failed).
+                    if (!response.isSuccessful) {
+                        TrackLog.d(TAG, "align-farm$tag: HTTP ${response.code} non-2xx", videoId)
+                        return@use ByteArray(0)
+                    }
+                    (response.body?.bytes() ?: ByteArray(0)).also {
+                        if (it.isEmpty()) TrackLog.d(TAG, "align-farm$tag: HTTP ${response.code} empty body", videoId)
+                    }
                 }
             }.onFailure {
                 if (it is kotlinx.coroutines.CancellationException) throw it
