@@ -24,7 +24,8 @@ object VersionSwapMap {
      * 0 when unknown, which skips that one check.
      */
     fun usable(map: VersionTimeMap?, sourceDurationMs: Long?, targetDurationMs: Long?): VersionTimeMap? {
-        if (map == null) return null
+        // No stretch at all maps nothing (and songEndRefusal reads the last one).
+        if (map == null || map.segments.isEmpty()) return null
         var fromEnd = 0L
         var toEnd = 0L
         for (segment in map.segments) {

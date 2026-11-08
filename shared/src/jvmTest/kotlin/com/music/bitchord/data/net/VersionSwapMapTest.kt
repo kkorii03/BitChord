@@ -65,6 +65,7 @@ class VersionSwapMapTest {
         assertNull(VersionSwapMap.usable(backwards, mvMs, songMs))
         assertNull(VersionSwapMap.usable(VersionTimeMap(listOf(Segment(0, -5_000, 60_000))), mvMs, songMs))
         assertNull(VersionSwapMap.usable(VersionTimeMap(listOf(Segment(0, 0, 0))), mvMs, songMs))
+        assertNull(VersionSwapMap.usable(VersionTimeMap(emptyList()), mvMs, songMs))
         assertNull(VersionSwapMap.usable(null, mvMs, songMs))
     }
 
