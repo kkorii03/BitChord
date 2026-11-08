@@ -9,11 +9,13 @@ import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.TrackMatcher
+import com.music.bitchord.ko.KoDirectHqAhead // [KO] hq-ahead
 import com.music.bitchord.playback.smart.HqAudioVerify
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job // [KO] hq-ahead
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -102,6 +104,7 @@ object DirectSourceGate {
         val now = open.value
         if (now.playing == mediaIds) return false
         open.value = Open(mediaIds, now.next?.takeIf { it in mediaIds })
+        dropAheadNotAdmitted() // [KO] hq-ahead
         return true
     }
 
@@ -110,7 +113,23 @@ object DirectSourceGate {
         val now = open.value
         if (now.next == mediaId || mediaId in now.playing) return false
         open.value = now.copy(next = mediaId)
+        dropAheadNotAdmitted() // [KO] hq-ahead
         return true
+    }
+
+    /**
+     * [KO] hq-ahead: the high-quality half of a lookup is for the song before
+     * it starts. Once it is audible (its waiters must not hold its first note)
+     * or no longer next (the queue moved), it stops, and that song goes the
+     * ordinary way: YouTube first, the second look after the first sound. See
+     * [com.music.bitchord.ko.KoDirectHqAhead]. The addon half is left as it
+     * always was.
+     */
+    private fun dropAheadNotAdmitted() {
+        val now = open.value
+        lookups.forEach { (id, lookup) ->
+            if (now.next != id || id in now.playing) lookup.ahead?.cancel()
+        }
     }
 
     private fun Open.admits(mediaId: String) = mediaId in playing || mediaId == next
@@ -190,7 +209,8 @@ object DirectSourceGate {
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-    private class Lookup(val work: Deferred<SourceStream?>, val startedAtMs: Long)
+    /** [ahead]: cancels the lookup's high-quality half ([KO] hq-ahead); null when it has none. */
+    private class Lookup(val work: Deferred<SourceStream?>, val startedAtMs: Long, val ahead: Job? = null)
 
     private val lookups = ConcurrentHashMap<String, Lookup>()
 
@@ -218,26 +238,39 @@ object DirectSourceGate {
         start(videoId, target)?.work
 
     private fun start(videoId: String, target: TrackMatcher.Target): Lookup? {
+        val proof = KoDirectHqAhead.proofForTest ?: proofOf(videoId, target) // [KO] hq-ahead
+        // [KO] hq-ahead: the next track, not yet audible, also asks Telegram/JioSaavn.
+        val ahead = open.value.let { it.next == videoId && videoId !in it.playing }
+            .let { KoDirectHqAhead.wanted(videoId, target, nextNotPlaying = it, hasProof = proof != null) }
         // [KO] first-audio: when every addon is resting, the search can only
         // time out. Skipping the wait lets YouTube start at once instead of
         // after the whole direct-source window.
-        if (!directLookupWorthWaiting(
+        if (!ahead && !directLookupWorthWaiting(
                 SourceResolver.directAddons().map { SourceResolver.SourceCooldown.isResting(it.configId) },
             )
         ) {
             TrackLog.d(TAG, "all direct addons are resting; not waiting for $videoId", about = videoId)
             return null
         }
+        val aheadOf = if (ahead) Job() else null // [KO] hq-ahead
         val fresh = Lookup(
             work = scope.async(TrackLog.about(videoId), start = CoroutineStart.LAZY) {
-                SourceResolver.directStream(
-                    target,
-                    mediaId = videoId,
-                    verify = proofOf(videoId, target),
-                    lengthOf = { youTubeLength(videoId) },
+                KoDirectHqAhead.lookup( // [KO] hq-ahead
+                    target.title,
+                    aheadOf,
+                    addons = {
+                        SourceResolver.directStream(
+                            target,
+                            mediaId = videoId,
+                            verify = proof,
+                            lengthOf = { youTubeLength(videoId) },
+                        )
+                    },
+                    hq = proof?.takeIf { ahead }?.let { verify -> suspend { KoDirectHqAhead.stream(target, verify) } },
                 )
             },
             startedAtMs = android.os.SystemClock.elapsedRealtime(),
+            ahead = aheadOf,
         )
         val running = lookups.putIfAbsent(videoId, fresh)
         if (running != null) {
