@@ -33,6 +33,20 @@ internal fun autoplaySeedAfterExhaustedRetries(
     retriesRemaining: Int,
 ): String? = if (retriesRemaining <= 0 && seed == currentVideoId) null else seed
 
+/** How many earlier songs an empty station may fall back to as its seed. */
+internal const val MAX_AUTOPLAY_SEED_BACK = 2
+
+/**
+ * After the plain retries are spent, the next step back along the queue to seed
+ * from (upstream 1.9.1 seedBack), or null when there is none to try.
+ *
+ * Bounded and event-free: at most [MAX_AUTOPLAY_SEED_BACK] extra station
+ * requests, none in a party (the server owns that queue's order), and only
+ * while an earlier song really exists before [currentIndex].
+ */
+internal fun autoplayNextSeedBack(currentIndex: Int, seedBack: Int, inParty: Boolean): Int? =
+    (seedBack + 1).takeIf { !inParty && it <= MAX_AUTOPLAY_SEED_BACK && currentIndex - it >= 0 }
+
 fun needsYoutubeSeedLookup(song: Song): Boolean =
     !SongOrigins.hasYouTubeIdentity(song.videoId)
 

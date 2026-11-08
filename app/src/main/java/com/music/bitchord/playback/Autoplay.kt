@@ -90,6 +90,10 @@ internal fun autoplaySeedAfterExhaustedRetries(
     retriesRemaining,
 )
 
+// [KO] autoplay-retry
+internal fun autoplayNextSeedBack(currentIndex: Int, seedBack: Int, inParty: Boolean): Int? =
+    com.music.bitchord.ko.autoplayNextSeedBack(currentIndex, seedBack, inParty)
+
 // [KO] autoplay-seed
 fun needsYoutubeSeedLookup(song: Song): Boolean =
     com.music.bitchord.ko.needsYoutubeSeedLookup(song)

@@ -402,6 +402,14 @@ class TrackMatcherTitleEdgeTest {
     }
 
     @Test
+    fun `a type label in the artist slot is not an artist`() {
+        assertEquals("", TrackMatcher.primaryArtist("노래"))
+        assertEquals("", TrackMatcher.primaryArtist("동영상"))
+        assertEquals("", TrackMatcher.primaryArtist("Song"))
+        assertEquals("ph-1", TrackMatcher.primaryArtist("pH-1, 노래"))
+    }
+
+    @Test
     fun `blank artist lines produce no names`() {
         assertTrue(TrackMatcher.artistVariants("").isEmpty())
         assertTrue(TrackMatcher.artistVariants("   ").isEmpty())
