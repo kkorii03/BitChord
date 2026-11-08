@@ -1336,7 +1336,7 @@ object LyricsTiming {
         }
         TrackLog.i(
             "BitChord",
-            "sync perline: anchors=${layer.anchors} applied=${layer.applied} maxAbsMs=${layer.maxAbsMs}",
+            "sync perline: anchors=${layer.anchors} applied=${layer.applied} maxAbsMs=${layer.maxAbsMs} firstWord=${layer.snapped}",
             timing.videoId,
         )
         perLineMemo = PerLineMemo(timing, lines, layer)
