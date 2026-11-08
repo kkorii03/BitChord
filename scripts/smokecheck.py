@@ -109,6 +109,8 @@ LYRICS_SYNC_SHIFT_RE = re.compile(
 # The same line ends with `video=y|n`, another statement that the id is an MV.
 LYRICS_SYNC_ID_RE = re.compile(r"lyrics-sync:\s+(?P<id>\S+)")
 # `song-sync: <id> result=applied|refused-shift|... shift=1234 ...`
+# A track-summary's `sync=<verified|measured|ai|none|->`.
+SUMMARY_SYNC_RE = re.compile(r"\bsync=(?P<sync>\S+)")
 SONG_SYNC_RE = re.compile(
     r"song-sync:\s+(?P<id>\S+)\s+result=(?P<result>\S+).*?\bshift=(?P<shift>-?\d+)"
 )
@@ -276,7 +278,10 @@ def check_log(
     # (source, target, line number, installed before audio) per swap line.
     swap_lines: list[tuple[str, str, int, bool]] = []
     # MVs handed over mid-song to their song version (`late swap done`).
-    late_swapped: set[str] = set()
+    late_swapped: dict[str, str] = {}
+    # Ids with a sync measurement of their own: a song-sync / lyrics-sync line,
+    # or a summary whose `sync=` is not none.
+    sync_measured_ids: set[str] = set()
     summarized_ids: set[str] = set()
     heard_ids: set[str] = set()
     # Line of the first summary saying this video itself was heard.
@@ -311,6 +316,9 @@ def check_log(
                 )
                 summary_id = match.group("id")
                 summarized_ids.add(summary_id)
+                summary_sync = SUMMARY_SYNC_RE.search(line)
+                if summary_sync and summary_sync.group("sync") not in ("none", "-"):
+                    sync_measured_ids.add(summary_id)
                 heard = TRACK_HEARD_RE.search(line)
                 if (
                     heard
@@ -346,7 +354,7 @@ def check_log(
             if late_done:
                 replacements.append((late_done.group("src"), late_done.group("dst")))
                 version_subjects.add(late_done.group("src"))
-                late_swapped.add(late_done.group("src"))
+                late_swapped[late_done.group("src")] = late_done.group("dst")
             late_silent = LATE_BEFORE_AUDIO_RE.search(line)
             if late_silent:
                 source = late_silent.group("src")
@@ -404,6 +412,8 @@ def check_log(
             match = LYRICS_SYNC_SHIFT_RE.search(line)
             if match:
                 raw_shift = match.group("shift")
+                if raw_shift != "-":
+                    sync_measured_ids.add(match.group("id"))
                 last_lyrics_shift[match.group("id")] = (
                     int(raw_shift) if raw_shift != "-" else None
                 )
@@ -411,6 +421,7 @@ def check_log(
         if "song-sync:" in line:
             match = SONG_SYNC_RE.search(line)
             if match:
+                sync_measured_ids.add(match.group("id"))
                 result = match.group("result")
                 shift = int(match.group("shift"))
                 if result == "refused-shift" or abs(shift) > SHIFT_LIMIT_MS:
@@ -465,7 +476,7 @@ def check_log(
         for src, dst, line_no, installed in swap_lines
         if dst not in ("none", "-") and counts_as_swap(src, line_no, installed)
     }
-    replaced_sources.update(late_swapped)
+    replaced_sources.update(late_swapped.keys())
     replaced_targets = {dst for _src, dst in replacements if dst not in ("none", "-")}
     mv_ids = {
         summary.video_id
@@ -587,9 +598,17 @@ def check_log(
     #    A row whose every summary says it never made a sound was not heard
     #    with any sheet: its measurement (often a stored one for the MV the
     #    music-only path replaced before audio) is not this run's sync.
+    #    An MV handed over mid-song to its song version (`late swap done`) is
+    #    not scored on its own shift: that is the MV's intro, measured against
+    #    the part that really played as the MV. The song version is scored
+    #    under its own id instead; with no measurement of its own the row is
+    #    noted ("swapped, sync not measured"), not failed.
     sync_details: list[str] = []
+    sync_notes: list[str] = []
     for source, video_id, value in sync_warnings:
         if video_id in summarized_ids and video_id not in heard_ids:
+            continue
+        if video_id in late_swapped:
             continue
         title = title_by_id.get(video_id)
         label = f"{video_id} ({title})" if title else video_id
@@ -597,13 +616,17 @@ def check_log(
             sync_details.append(f"WARN lyrics-sync {label} shift={value}ms")
         else:
             sync_details.append(f"WARN song-sync {label} result={value}")
+    for mv_id, song_id in sorted(late_swapped.items()):
+        if song_id not in sync_measured_ids:
+            sync_notes.append(f"NOTE {mv_id} -> {song_id} swapped, sync not measured")
     checks.append(
         Check(
             3,
             "가사 싱크",
             "FAIL" if sync_details else "PASS",
-            sync_details
-            or [f"|shift| > {SHIFT_LIMIT_MS}ms 또는 refused-shift 없음"],
+            sync_details + sync_notes
+            if sync_details
+            else sync_notes + [f"|shift| > {SHIFT_LIMIT_MS}ms 또는 refused-shift 없음"],
         )
     )
 

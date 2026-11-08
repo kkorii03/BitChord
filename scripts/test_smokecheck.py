@@ -938,6 +938,54 @@ class LateVersionTest(unittest.TestCase):
         )
         self.assertEqual("FAIL", statuses_with_songs(log, specs("mv1\tmv"))[1].status)
 
+    def _late_swap_log(self, song_lines: list[str]) -> str:
+        return "\n".join(
+            [
+                play("mv1", "Song", "Artist"),
+                log_line(
+                    "song-sync: mv1 result=applied match=100% shift=18520 secs=233 words=300"
+                ),
+                log_line("lyrics-sync: mv1 video=y shift=18520ms"),
+                heard_summary("mv1", "Song", True, "19913", 25),
+                log_line(
+                    "song version: mv1 -> aud1 late swap done "
+                    "mv=21480ms song=2960ms offset=-18520ms"
+                ),
+                *song_lines,
+            ]
+        )
+
+    def test_a_late_swapped_mv_intro_shift_is_not_scored(self):
+        # The song version measured itself (summary sync=verified shift=0).
+        log = self._late_swap_log([heard_summary("aud1", "Song", False, "0", 190)])
+        result = statuses(log)[3]
+        self.assertEqual("PASS", result.status, result.details)
+        self.assertFalse(any("NOTE" in d for d in result.details))
+
+    def test_the_song_version_after_a_late_swap_is_still_scored(self):
+        log = self._late_swap_log(
+            [
+                log_line(
+                    "song-sync: aud1 result=applied match=100% shift=7300 secs=213 words=300"
+                ),
+                heard_summary("aud1", "Song", False, "0", 190),
+            ]
+        )
+        result = statuses(log)[3]
+        self.assertEqual("FAIL", result.status)
+        self.assertTrue(any("aud1" in d for d in result.details))
+        self.assertFalse(any("mv1 (" in d and "WARN" in d for d in result.details))
+
+    def test_a_late_swap_without_a_song_measurement_is_noted_not_failed(self):
+        unmeasured = log_line(
+            "track-summary: aud1 'Song' video=n source=shared_link:aud1 resolve=direct "
+            "firstAudio=0 played=190 lyrics=lrc.red sync=none shift=0 match=0 "
+            "manualOffset=0 ended=natural"
+        )
+        result = statuses(self._late_swap_log([unmeasured]))[3]
+        self.assertEqual("PASS", result.status, result.details)
+        self.assertIn("NOTE mv1 -> aud1 swapped, sync not measured", result.details)
+
     def test_sync_of_a_row_that_never_sounded_is_not_judged(self):
         # 136b: a stored measurement of the replaced MV, never heard.
         log = "\n".join(
