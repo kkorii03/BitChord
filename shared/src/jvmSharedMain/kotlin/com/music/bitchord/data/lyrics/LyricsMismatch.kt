@@ -239,7 +239,18 @@ object LyricsMismatch {
         synchronized(rejected) { rejected.containsKey(key(videoId, source, lines)) }
 
     fun rememberRejected(videoId: String, source: LyricsSource, lines: List<LyricLine>, verdict: Verdict) {
-        synchronized(rejected) { rejected[key(videoId, source, lines)] = true }
+        val sheet = key(videoId, source, lines)
+        val fresh = synchronized(rejected) {
+            if (rejected.containsKey(sheet)) {
+                false
+            } else {
+                rejected[sheet] = true
+                true
+            }
+        }
+        // The same sheet judged twice — the screen and a refresh both asked — is
+        // still one wrong sheet, not two providers failing to describe the sound.
+        if (!fresh) return
         val sheets = synchronized(rejectedSheets) {
             val count = (rejectedSheets[videoId] ?: 0) + 1
             rejectedSheets[videoId] = count

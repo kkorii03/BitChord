@@ -26,13 +26,13 @@ class LyricsTimingVideoQuickListenTest {
     private lateinit var directory: File
     private lateinit var context: Context
     private val storeField = LyricsTiming::class.java.getDeclaredField("store").apply { isAccessible = true }
-    private val lines = listOf(LyricLine(1_000L, "one"), LyricLine(2_000L, "two"), LyricLine(3_000L, "three"))
+    private val lines = listOf(LyricLine(1_000L, "p1"), LyricLine(2_000L, "p2"), LyricLine(3_000L, "p3"))
     private val key = lines.joinToString("\n") { it.text }.hashCode()
     private val fit = LyricsTiming.Adjustment.Mapped(LyricsTimeMap.shift(500L), byAi = true, rate = 1.0, matchPercent = 90)
     private val heard = listOf(
-        LyricsWordAlign.Heard("one", 1_500L, 1_700L),
-        LyricsWordAlign.Heard("two", 2_500L, 2_700L),
-        LyricsWordAlign.Heard("three", 3_500L, 3_700L),
+        LyricsWordAlign.Heard("p1", 1_500L, 1_700L),
+        LyricsWordAlign.Heard("p2", 2_500L, 2_700L),
+        LyricsWordAlign.Heard("p3", 3_500L, 3_700L),
     )
 
     @Before
@@ -101,7 +101,7 @@ class LyricsTimingVideoQuickListenTest {
         val answered = """"aiTextKey":$key,"aiRough":false,""" +
             """"ai":{"knots":[0,0],"headRate":1.0,"tailRate":1.0,"rate":1.0,"match":95}"""
         assertFalse(evidence("answered", answered))
-        val exact = """"heardCheckKey":$key,"heardCheckRough":false,"heardCheckWords":[{"t":"one","s":1000,"e":1200}]"""
+        val exact = """"heardCheckKey":$key,"heardCheckRough":false,"heardCheckWords":[{"t":"p1","s":1000,"e":1200}]"""
         assertFalse(evidence("exact-evidence", exact))
         assertTrue(evidence("exact-evidence-again", exact, rough = false))
     }
@@ -113,5 +113,44 @@ class LyricsTimingVideoQuickListenTest {
         val evidence = """"heardCheckKey":$key,"heardCheckRough":false,"heardCheckWords":[$words]"""
         assertTrue(kept("evidence-stays", evidence))
         assertEquals(5, LyricsTiming.heardWordsFor(context, "evidence-stays").size)
+    }
+
+    private fun startWords(count: Int) = SongHearing.Heard(
+        words = (1..count).map { LyricsWordAlign.Heard("w$it", it * 1_000L, it * 1_000L + 300L) },
+        audioMs = count * 1_000L,
+        clock = LyricsTiming.Clock.YouTube,
+        httpCode = 200,
+        rough = true,
+    )
+
+    private fun startEvidence(id: String, before: String?, words: SongHearing.Heard): Boolean = runBlocking {
+        before?.let { File(directory, "lyrics_timing_v1.json").writeText("""{"entries":{"$id":{$it}}}""") }
+        storeField.set(LyricsTiming, null)
+        LyricsTiming.keepStartEvidence(context, id, words)
+    }
+
+    /**
+     * 11-08 Zpw_EQIb7as: the free measurement accepted the wrong sheet, so no AI
+     * quick listen ran and the words heard at the track's start never reached the
+     * sheet judge. Those words are already paid for; keeping them as evidence is
+     * enough for `LyricsController.rejectWrongLyricsIfHeard`.
+     */
+    @Test
+    fun `the words heard at the start reach the wrong-sheet judge`() = runBlocking {
+        assertTrue(startEvidence("start-heard", before = null, startWords(60)))
+        assertEquals(60, LyricsTiming.heardWordsFor(context, "start-heard").size)
+    }
+
+    @Test
+    fun `a shorter start listen never replaces longer words already kept`() = runBlocking {
+        val words = (1..5).joinToString(",") { """{"t":"w$it","s":${it * 30_000},"e":${it * 30_000 + 200}}""" }
+        assertFalse(
+            startEvidence(
+                "start-shorter",
+                before = """"heardCheckWords":[$words]""",
+                words = startWords(3),
+            ),
+        )
+        assertEquals(5, LyricsTiming.heardWordsFor(context, "start-shorter").size)
     }
 }

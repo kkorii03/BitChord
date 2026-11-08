@@ -1616,6 +1616,17 @@ class LyricsController(
             }
             if (generation != lyricsGeneration || timingLines !== lines) return@launch
             if (!verdict.rejected) return@launch
+            // The reload asks the same sources; only a remembered rejection makes the
+            // repository skip this provider's sheet and try the next name. Without
+            // this the same wrong sheet came straight back (KChyOsjqmfM).
+            result?.takeIf { it.lines === lines }?.let {
+                com.music.bitchord.data.lyrics.LyricsMismatch.rememberRejected(
+                    request.videoId,
+                    it.source,
+                    lines,
+                    verdict,
+                )
+            }
             mismatchReloadedFor = key
             TrackLog.i(
                 "BitChord",

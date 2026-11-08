@@ -3265,7 +3265,18 @@ object LyricsTiming {
         persistAttempts()
         // 11-06 ekzHIouo8Q4, three rounds: the replaced sheet's answer landed 0.5 s after the shown one's and took the slot.
         if (dropForReplacedSheet(videoId, key)) return null
+        val accepted = acceptedHeard.orEmpty()
+            .take(MAX_HEARD_WORDS)
+            .map { word -> SavedWord(t = word.text, s = word.startMs, e = word.endMs) }
         store(context).update(videoId) {
+            // The transcript words belong to this answer: another engine's
+            // answer (or Gemini's, which hears no words) replaces them, and
+            // old words for other lyrics must not outlive their answer. The
+            // wrong-sheet evidence a start listen kept is longer than this
+            // answer when the answer hears no words (Gemini) or fewer: it
+            // stays, or the judge would lose the only words that prove the
+            // sheet wrong (KChyOsjqmfM).
+            val shorterThanEvidence = accepted.size < it.heardCheckWords.size
             it.copy(
                 clockVersion = CLOCK_VERSION,
                 aiTextKey = key,
@@ -3273,17 +3284,12 @@ object LyricsTiming {
                 aiShiftMs = null,
                 aiStarts = null,
                 aiFailedKey = null,
-                // The transcript words belong to this answer: another engine's
-                // answer (or Gemini's, which hears no words) replaces them, and
-                // old words for other lyrics must not outlive their answer.
-                heardWords = acceptedHeard.orEmpty()
-                    .take(MAX_HEARD_WORDS)
-                    .map { word -> SavedWord(t = word.text, s = word.startMs, e = word.endMs) },
+                heardWords = accepted,
                 aiClock = listenedClock.saved(),
                 heardClock = listenedClock.saved(),
-                heardCheckKey = null,
-                heardCheckWords = emptyList(),
-                heardCheckClock = null,
+                heardCheckKey = if (shorterThanEvidence) it.heardCheckKey else null,
+                heardCheckWords = if (shorterThanEvidence) it.heardCheckWords else emptyList(),
+                heardCheckClock = if (shorterThanEvidence) it.heardCheckClock else null,
                 // A new answer to the same lyrics keeps whether it was wanted
                 // over the measurement; it's [placeWithAi] that says it is.
                 aiPreferred = it.aiPreferred && it.aiTextKey == key,
@@ -3462,6 +3468,44 @@ object LyricsTiming {
     }
 
     /**
+     * Keeps the words the start listen already heard as wrong-sheet evidence
+     * ([Entry.heardCheckWords], read by the screen's sheet judge), so the judge
+     * has words even when no AI ask ever runs (11-08 Zpw_EQIb7as: the free
+     * measurement accepted the sheet, so no quick listen was made and the wrong
+     * sheet was never judged). No new sheet key is written: the words are
+     * evidence first, and only an already-kept key lets them time a sheet.
+     * The longest words kept for this video stay; a shorter start listen
+     * replaces nothing. True when it wrote.
+     */
+    internal suspend fun keepStartEvidence(
+        context: Context,
+        videoId: String,
+        heard: SongHearing.Heard,
+    ): Boolean {
+        val words = heard.words ?: return false
+        if (words.isEmpty()) return false
+        var kept = false
+        store(context).update(videoId) { entry ->
+            // Exact words are never lost to rough ones; otherwise the longer list wins.
+            kept = words.size > entry.heardCheckWords.size &&
+                (entry.heardCheckWords.isEmpty() || entry.heardCheckRough || !heard.rough)
+            if (!kept) {
+                entry
+            } else {
+                entry.copy(
+                    clockVersion = CLOCK_VERSION,
+                    heardCheckWords = words.take(MAX_HEARD_WORDS)
+                        .map { word -> SavedWord(t = word.text, s = word.startMs, e = word.endMs) },
+                    heardCheckClock = heard.clock.saved(),
+                    heardCheckRough = heard.rough,
+                )
+            }
+        }
+        if (kept) TrackLog.d(TAG, "start words kept as sheet evidence${if (heard.rough) " (rough)" else ""}", videoId)
+        return kept
+    }
+
+    /**
      * A playing video's opening, heard as its track starts rather than once its lyrics
      * are in: the lookup may take up to its 12 s deadline (11-08 WwFUZS8dv_4: 11 s). The
      * words are kept per recording and language ([SongHearing]), so the quick listen of
@@ -3484,7 +3528,8 @@ object LyricsTiming {
                 quickEngine = com.music.bitchord.data.lyrics.GroqWhisper.apiKey.isNotBlank(),
                 heavyWorkAllowed = AppSettings.heavyWorkAllowed,
                 aiTimingAhead = AppSettings.aiTimingAhead.value,
-                // The words are only read by the AI ask, which runs only with Deepgram (Sol F4).
+                // The words are read by the AI ask and by the screen's sheet judge; both
+                // need the word engine, and the start listen itself asks it (Sol F4).
                 wordEngine = com.music.bitchord.data.lyrics.Deepgram.usable,
                 lyricsLookup = lyricsLookup,
             )
@@ -3523,6 +3568,9 @@ object LyricsTiming {
                 "${(heard?.audioMs ?: 0L) / 1000}s http=${heard?.httpCode}",
             videoId,
         )
+        // These words are already paid for; keeping them as sheet evidence lets the
+        // screen judge a wrong sheet even when no AI ask follows (Zpw_EQIb7as).
+        if (heard != null && keepStartEvidence(context, videoId, heard)) refitEvent(videoId)
     }
 
     /**

@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsOverrideStore
+import com.music.bitchord.data.lyrics.LyricsMismatch
 import com.music.bitchord.data.lyrics.LyricsRepository
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.settings.AppSettings
@@ -33,6 +34,7 @@ import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -55,10 +57,10 @@ class LyricsControllerSheetChoiceTest {
     private val savedOrder = AppSettings.lyricsSourceOrder.value
     private val savedSynced = AppSettings.syncedLyrics.value
 
-    private val fitting = sheet(4_000L, "amber birch cedar", "dune ember frost", "glade hazel ivory", "juniper kelp lotus")
+    private val fitting = sheet(4_000L, "fa01 fb02 fc03", "fd04 fe05 ff06", "fg07 fh08 fi09", "fj10 fk11 fl12")
 
     /** Another song: other words on another pace, which is what lets the two be told apart. */
-    private val other = sheet(2_500L, "maple nectar olive", "pebble quartz reed", "sage thistle umber", "violet willow xenon")
+    private val other = sheet(2_500L, "ma01 mb02 mc03", "md04 me05 mf06", "mg07 mh08 mi09", "mj10 mk11 ml12")
 
     private fun sheet(everyMs: Long, vararg texts: String): List<LyricLine> =
         List(16) { i -> LyricLine(5_000L + i * everyMs, texts[i % texts.size] + " " + (i + 1)) }
@@ -104,14 +106,14 @@ class LyricsControllerSheetChoiceTest {
     }
 
     /** Words already heard from this recording, for a sheet they did not fit. */
-    private fun seedHeard(lines: List<LyricLine>) {
+    private fun seedHeard(lines: List<LyricLine>, videoId: String = "video") {
         val words = lines.flatMap { line ->
             line.text.split(' ').mapIndexed { i, word ->
                 val at = line.timeMs + i * 500L
                 """{"t":"$word","s":$at,"e":${at + 400L}}"""
             }
         }.joinToString(",")
-        openStore("""{"entries":{"video":{"heardCheckKey":1,"heardCheckWords":[$words]}}}""")
+        openStore("""{"entries":{"$videoId":{"heardCheckKey":1,"heardCheckWords":[$words]}}}""")
     }
 
     private fun openStore(json: String) {
@@ -167,7 +169,7 @@ class LyricsControllerSheetChoiceTest {
     }
 
     /** Letters the words heard have none of: a kept sheet of another song. Made up. */
-    private val keptWrong = List(16) { i -> LyricLine(5_000L + i * 4_000L, "가나다 라마바 사아자 ${i + 1}번") }
+    private val keptWrong = List(16) { i -> LyricLine(5_000L + i * 4_000L, "vux wux xux yux") }
 
     /**
      * A sheet kept on the device came through no lookup, so nothing judged it: a wrong one
@@ -295,5 +297,33 @@ class LyricsControllerSheetChoiceTest {
             busy.forEach { it.cancel() }
             for (task in busy) task.join()
         }
+    }
+
+    /**
+     * 11-08 KChyOsjqmfM: the screen threw the wrong sheet away but the lookup
+     * fetched it back, because only the lookup's own judge remembered a
+     * rejection. A remembered one makes the next lookup skip it.
+     */
+    @Test
+    fun `a rejected sheet is remembered so the reload cannot show it again`() = runBlocking {
+        val id = "wrong-screen"
+        // Heard and shown sheets are disjoint identifier sets: no lyric text.
+        val heardSheet = List(16) { LyricLine(5_000L + it * 4_000L, "ha hb hc hd") }
+        val wrongSheet = List(16) { i -> LyricLine(5_000L + i * 4_000L, "901 902 903 ${900 + i}") }
+        AppSettings.lyricsSources.value = setOf(LyricsSource.KUGOU)
+        AppSettings.lyricsSourceOrder.value = listOf(LyricsSource.KUGOU)
+        seedHeard(heardSheet, id)
+        var looks = 0
+        controller.lyricsLookup = { _, _, _, _, _, _, _, _, _, _, onResult, _, _, _, _, _, _ ->
+            looks += 1
+            val wrong = LyricsRepository.Result(LyricsSource.KUGOU, wrongSheet)
+            onResult?.invoke(LyricsSource.KUGOU, wrong, null)
+            wrong
+        }
+
+        controller.loadLyrics(id, "Song", "Someone", 200_000L)
+
+        withTimeout(10_000L) { while (looks < 2) delay(50L) }
+        assertTrue(LyricsMismatch.isRejected(id, LyricsSource.KUGOU, wrongSheet))
     }
 }
