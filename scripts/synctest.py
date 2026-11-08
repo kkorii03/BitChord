@@ -31,6 +31,13 @@ FAR_OFF_BIN_S = 0.5   # line-opening matches within this of one shift vote toget
 FAR_OFF_WIDE_MAX = 3  # first-pass placed lines below which a window-free pass may settle the shift
 DIST_PENALTY_PER_S = 0.01  # tie-break toward the displayed time (a 10 s-away repeat must match 0.1 better)
 PREFIX_CHARS = 8      # characters of each line used to find where it starts
+# 11-09 phone vc187: two lines scored 1.2 s off were the scorer's, not the app's. "You're
+# witnessing ..." matched its own later "you're watching" better on 8 letters (Rap God), and
+# "니 숨결 ..." started on the last letter of the previous line's "테니". Among the places a
+# line's opening is found, one that starts a heard word and reads like more of the line wins.
+LONG_CHARS = 24       # this much of the line, when it is longer, also judges between places
+LONG_GAP = 0.2        # the rest of the line may read this much worse than its opening, free
+MID_WORD_PENALTY = 0.1  # rank cost of a place that starts inside a heard word
 CONST_STD_S = 0.15
 
 
@@ -273,6 +280,32 @@ def char_stream(words):
     return "".join(chars), times
 
 
+def word_starts(words):
+    """Positions in char_stream(words) where a heard word begins."""
+    out, k = set(), 0
+    for w, _, _ in words:
+        n = len(norm(w))
+        if n:
+            out.add(k)
+        k += n
+    return out
+
+
+def first_word_len(text):
+    """Letters in the line's first word (0 when it has none)."""
+    return next((len(norm(w)) for w in text.split() if norm(w)), 0)
+
+
+def onset_unheard(key, heard_part, first_len):
+    """The line's whole first word is missing from the heard words at this place (the match
+    begins on its second word, 11-09 Oxgi "그 봄이 ..." heard as "봄이 ..."): when it was
+    sung is not observed, only when its next word was. A misheard first letter, or one not
+    sounded ("know" heard as "no"), is not this."""
+    blocks = difflib.SequenceMatcher(None, key, heard_part, autojunk=False).get_matching_blocks()
+    first = blocks[0] if blocks and blocks[0].size else None
+    return first is not None and first.b == 0 and 0 < first_len <= first.a
+
+
 MAX_CANDIDATES = 6     # places per line the whole-sheet alignment chooses between
 AMBIGUOUS_RATIO = 0.05  # another place this close in likeness ...
 AMBIGUOUS_ERR_S = 1.0   # ... and a chosen error this large: which repeat it was is unknowable
@@ -328,11 +361,20 @@ def place(lines, words, window=SEARCH_S):
     return align(lines, words, window, model)
 
 
-def candidates(key, shown, heard, times, window=SEARCH_S):
+def candidates(key, shown, heard, times, window=SEARCH_S, starts=None, long_key=None):
     """[(rank, ratio, i, t)] places the line's opening may have been sung: the best
     start in each stretch of matching characters, at most MAX_CANDIDATES. `shown`
-    is where the line is expected (the displayed time unless an anchor model says otherwise)."""
-    found = []
+    is where the line is expected (the displayed time unless an anchor model says otherwise).
+    With `starts` (word_starts) a place inside a heard word ranks lower. With `long_key`
+    (more of the line) a place whose rest of the line reads more than LONG_GAP worse than
+    at the line's best-continuing place loses the difference: its opening matched words the
+    line sings later. Only that, and only against another place: a mild re-rank by the
+    longer text moved chorus lines onto each other's repeats (KGo_pX4b4fc), and a lone
+    place whose rest was barely heard lost to an earlier line's repeat (5DhAts7WcPk). The
+    start inside a stretch is still chosen on the opening alone, as the longer text slides
+    along a line that repeats itself ("i know i know", one repeat more heard than written).
+    `ratio` stays the opening's."""
+    found, short = [], []
     for i in range(len(heard)):
         t = times[i]
         if window is not None:
@@ -348,11 +390,22 @@ def candidates(key, shown, heard, times, window=SEARCH_S):
         # A chorus repeats its words: among near-equal matches the one nearest the
         # displayed time is preferred (10-27: repeats were scored as 5 s errors).
         rank = r - DIST_PENALTY_PER_S * abs(t - shown)
+        if starts is not None and i not in starts:
+            rank -= MID_WORD_PENALTY
         if found and i - found[-1][2] < len(key):
-            if rank > found[-1][0]:
-                found[-1] = (rank, r, i, t)  # same stretch: keep its best start
+            if rank > short[-1]:
+                found[-1], short[-1] = (rank, r, i, t), rank  # same stretch: keep its best start
             continue
         found.append((rank, r, i, t))
+        short.append(rank)
+    if long_key and len(found) > 1:
+        def follows(i):
+            # Where the heard audio ends first (a 90 s head), only the part it holds is compared.
+            part = heard[i:i + len(long_key)]
+            return difflib.SequenceMatcher(None, long_key[:len(part)], part, autojunk=False).ratio()
+        rest = [follows(i) for _, _, i, _ in found]
+        best = max(rest)
+        found = [(rank - max(0.0, best - rl - LONG_GAP), r, i, t) for (rank, r, i, t), rl in zip(found, rest)]
     return sorted(found, reverse=True)[:MAX_CANDIDATES]
 
 
@@ -369,17 +422,21 @@ def align(lines, words, window=SEARCH_S, shift_of=None):
     heard, times = char_stream(words)
     if not heard:
         return []
+    starts = word_starts(words)
     last_heard = times[-1]
-    rows = []
+    rows, keys = [], []
     for n, start_ms, text in lines:
         shown = start_ms / 1000.0
-        key = norm(text)[:PREFIX_CHARS]
+        whole = norm(text)
+        key = whole[:PREFIX_CHARS]
         expect = shown - shift_of(shown) if shift_of else shown
         if len(key) < 2 or expect > last_heard + 1.0:
             continue
-        cand = candidates(key, expect, heard, times, window)
+        long_key = whole[:LONG_CHARS] if len(whole) > PREFIX_CHARS else None
+        cand = candidates(key, expect, heard, times, window, starts, long_key)
         if cand:
             rows.append((n, shown, cand, expect))
+            keys.append((key, first_word_len(text)))
     # best[j][c] = best total ending with line j at its candidate c (indices rising).
     best, back = [], []
     for j, (_, _, cand, _) in enumerate(rows):
@@ -405,7 +462,10 @@ def align(lines, words, window=SEARCH_S, shift_of=None):
     out = []
     for j, c in reversed(chosen):
         n, shown, cand, expect = rows[j]
-        _, r, _, t = cand[c]
+        _, r, i, t = cand[c]
+        key, first_len = keys[j]
+        if onset_unheard(key, heard[i:i + len(key)], first_len):
+            continue
         if abs(t - expect) > AMBIGUOUS_ERR_S and any(
             other[1] >= r - AMBIGUOUS_RATIO and abs(other[3] - t) > AMBIGUOUS_ERR_S
             for k, other in enumerate(cand) if k != c
@@ -999,6 +1059,37 @@ def write_report(rows):
     (OUT / "report.md").write_text("\n".join(md) + "\n", encoding="utf-8")
 
 
+def residual_cases():
+    """{name: ((lines, words), error the line must score or None when it must go unscored, line n)}
+    for the 11-09 phone residuals, in made-up words: the right place reads worse on the
+    8-letter opening than a wrong one (Rap God), the opening's first letter also ends the word
+    before (6rS7), and the opening word is missing from what was heard (Oxgi)."""
+    def sung(groups):
+        words = []
+        for t, text in groups:
+            for w in text.split():
+                words.append((w, t, t + 0.3))
+                t += 0.45
+        return words
+    lines = [(1, 10000, "harbor violet ember"), (2, 14000, "tiger lake jogging tiger lamp glowing"),
+             (3, 20000, "silver canyon dawn")]
+    alias = (lines, sung([(10.0, "harbor violet ember"), (14.0, "tig lake jogging tiger lamp glowing"),
+                          (20.0, "silver canyon dawn")]))
+    lines = [(1, 10000, "maple drift banjo"), (2, 12000, "orbit quilt river"), (3, 16000, "copper saddle wren")]
+    inside = (lines, sung([(10.0, "maple drift banjo"), (12.0, "arbit quilt river"), (16.0, "copper saddle wren")]))
+    lines = [(1, 10000, "cobalt thistle ripple"), (2, 13000, "a bloom over meadow"), (3, 17000, "falcon harbor jasmine")]
+    unheard = (lines, sung([(10.0, "cobalt thistle ripple"), (13.3, "bloom over meadow"), (17.0, "falcon harbor jasmine")]))
+    # One repeat more sung than written: the longer text fits best one repeat late.
+    lines = [(1, 10000, "cobalt thistle ripple"), (2, 13000, "ok go ok go stop now"), (3, 17000, "falcon harbor jasmine")]
+    extra = (lines, sung([(10.0, "cobalt thistle ripple"), (13.0, "ok go ok go ok go stop now"), (17.0, "falcon harbor jasmine")]))
+    # A first letter not sounded is heard, not missing ("know" as "no").
+    lines = [(1, 10000, "cobalt thistle ripple"), (2, 13000, "knot river glade"), (3, 17000, "falcon harbor jasmine")]
+    silent = (lines, sung([(10.0, "cobalt thistle ripple"), (13.0, "not river glade"), (17.0, "falcon harbor jasmine")]))
+    return {"own later words": (alias, 0.0, 2), "inside the word before": (inside, 0.0, 2),
+            "opening not heard": (unheard, None, 2), "one repeat more heard": (extra, 0.0, 2),
+            "first letter not sounded": (silent, 0.0, 2)}
+
+
 def selftest():
     # Heard words 0.4 s after the shown times; one line misheard.
     lines = [(1, 10000, "hello darkness my old friend"), (2, 14000, "i've come to talk with you again"),
@@ -1138,6 +1229,26 @@ def selftest():
     assert old_placed and abs(statistics.median(sh - su for _, sh, su, _ in old_placed)) < 3, old_placed
     placed = place(alias, alias_words)
     assert len(placed) == len(alias) and all(abs(sh - su + 23.0) < 0.01 for _, sh, su, _ in placed), placed
+    for case, (line_text, sung, expect_n) in residual_cases().items():
+        got = align(*line_text)
+        err = [sh - su for n, sh, su, _ in got if n == expect_n]
+        if sung is None:
+            assert not err, (case, got)
+        else:
+            assert len(err) == 1 and abs(err[0] - sung) < 0.02, (case, got)
+    # The longer text only ever lowers a place that reads worse than another place of the
+    # same line; a lone place (its rest barely heard, 5DhAts7WcPk) keeps its rank.
+    (later_lines, later_words), _, _ = residual_cases()["own later words"]
+    heard_s, times_s = char_stream(later_words)
+    whole = norm(later_lines[1][2])
+    plain = candidates(whole[:PREFIX_CHARS], 14.0, heard_s, times_s)
+    longer = candidates(whole[:PREFIX_CHARS], 14.0, heard_s, times_s, long_key=whole[:LONG_CHARS])
+    assert {c[2]: c[0] for c in longer}[plain[-1][2]] == plain[-1][0], (plain, longer)  # the right place
+    assert plain[0][3] > 14.5 and longer[0][3] < 14.1, (plain, longer)  # the later words lose
+    lone = [(w, s, e) for w, s, e in later_words if s >= 14.0 and w in ("tig", "lake")]
+    h1, t1 = char_stream(lone)
+    assert candidates(whole[:PREFIX_CHARS], 14.0, h1, t1) == candidates(
+        whole[:PREFIX_CHARS], 14.0, h1, t1, long_key=whole[:LONG_CHARS])
     assert shift_model([(1.0, 5.0), (2.0, 5.2)]) is None  # two anchors are not a consensus
     assert shift_model([(1.0, 5.0), (2.0, 5.2), (3.0, 4.9), (4.0, 9.0), (5.0, 9.1), (6.0, 9.2)]) is None  # tie
     assert abs(shift_model([(1.0, 5.0), (2.0, 5.2), (3.0, 4.9), (4.0, 9.0)])(4.0) - 4.9) < 0.01
