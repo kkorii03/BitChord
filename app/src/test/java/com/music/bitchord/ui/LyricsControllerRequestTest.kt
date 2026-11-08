@@ -10,8 +10,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.resetMain
@@ -41,6 +43,20 @@ class LyricsControllerRequestTest {
     private val savedSources = AppSettings.lyricsSources.value
     private val savedOrder = AppSettings.lyricsSourceOrder.value
     private val savedSynced = AppSettings.syncedLyrics.value
+
+    private val lateLines = listOf(LyricLine(timeMs = 0L, text = "written down after the limit"))
+
+    /** The AI's late answer, asked the way the screen's own lookup asks it. */
+    private suspend fun lateTranscription(videoId: String): LyricsRepository.Result? =
+        LyricsRepository.lyrics(
+            videoId = videoId,
+            title = "Late Sheet",
+            artist = "Nobody",
+            durationMs = 215_000L,
+            sources = setOf(LyricsSource.SIMP_MUSIC),
+            order = listOf(LyricsSource.SIMP_MUSIC),
+            transcribe = true,
+        )
 
     @Before
     fun setUp() {
@@ -133,5 +149,67 @@ class LyricsControllerRequestTest {
 
         assertTrue(controller.lyricsChecked.value)
         assertNull(controller.lyrics.value)
+    }
+
+    /**
+     * The sheet the AI finished after the repository's limit is this track's:
+     * it reaches the screen through the same publish path any sheet does.
+     */
+    @Test
+    fun aLateTranscriptionIsShownForTheTrackStillPlaying() = runBlocking {
+        val previousTranscriber = LyricsRepository.transcriber
+        val previousLimit = LyricsRepository.transcribeLimitMs
+        LyricsRepository.transcribeLimitMs = 100L
+        LyricsRepository.transcriber = { _, _ ->
+            delay(500L)
+            lateLines
+        }
+        try {
+            controller.lyricsLookup = { _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ -> null }
+            controller.loadLyrics("late-sheet-current", "Late Sheet", "Nobody", durationMs = 215_000L)
+            controller.awaitChecked()
+
+            assertNull(async { lateTranscription("late-sheet-current") }.await())
+
+            assertEquals(
+                lateLines.map { it.text },
+                withTimeout(5_000L) { controller.lyrics.first { it != null } }!!.map { it.text },
+            )
+            assertEquals(LyricsSource.GEMINI_TRANSCRIPT, controller.lyricsSource.value)
+        } finally {
+            LyricsRepository.transcriber = previousTranscriber
+            LyricsRepository.transcribeLimitMs = previousLimit
+        }
+    }
+
+    /**
+     * A skip while the AI is still listening: the late sheet must never land
+     * on the track that replaced it (the request video id is the check).
+     */
+    @Test
+    fun aLateTranscriptionForASkippedTrackIsNotShown() = runBlocking {
+        val previousTranscriber = LyricsRepository.transcriber
+        val previousLimit = LyricsRepository.transcribeLimitMs
+        LyricsRepository.transcribeLimitMs = 100L
+        LyricsRepository.transcriber = { _, _ ->
+            delay(500L)
+            lateLines
+        }
+        try {
+            controller.lyricsLookup = { _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ -> null }
+            controller.loadLyrics("late-sheet-skipped", "Late Sheet", "Nobody", durationMs = 215_000L)
+            controller.awaitChecked()
+            controller.loadLyrics("another-track", "Other Song", "Nobody", durationMs = 200_000L)
+            controller.awaitChecked()
+
+            assertNull(async { lateTranscription("late-sheet-skipped") }.await())
+            assertNull(
+                withTimeoutOrNull(1_500L) { controller.lyrics.first { it != null } },
+                "the late sheet must not be shown for the track that replaced it",
+            )
+        } finally {
+            LyricsRepository.transcriber = previousTranscriber
+            LyricsRepository.transcribeLimitMs = previousLimit
+        }
     }
 }

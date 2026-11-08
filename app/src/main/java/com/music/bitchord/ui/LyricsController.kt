@@ -89,7 +89,7 @@ class LyricsController(
      * writing the lyrics down, which has its own longer limit in the
      * repository; without it this backstop ended every AI sheet at 13 s.
      */
-    internal var transcribeTimeoutMs: Long = 120_000L // LyricsRepository.transcribeLimitMs (shared-internal)
+    internal var transcribeTimeoutMs: Long = 120_000L // LyricsRepository.transcribeLimitMs
 
     /** Synced lyrics for whatever is playing; null while unknown or absent. */
     private val _lyrics = MutableStateFlow<List<LyricLine>?>(null)
@@ -242,11 +242,13 @@ class LyricsController(
 
     init {
         // Kept lyrics a background check has since bettered (word timing where
-        // only lines were kept): swapped in for the song on screen, unless a
+        // only lines were kept), or a transcription that finished after its
+        // lookup had given up: swapped in for the song on screen — the video id
+        // is what stops one landing on a track that replaced it — unless a
         // source was picked by hand.
         scope.launch {
             LyricsRepository.upgrades.collect { (videoId, result) ->
-                if (currentLyricsRequest?.videoId == videoId && selectedLyricsSource == null && _lyrics.value != null) {
+                if (currentLyricsRequest?.videoId == videoId && selectedLyricsSource == null) {
                     publishLyrics(result)
                 }
             }

@@ -2,6 +2,7 @@ package com.music.bitchord.data.lyrics
 
 import com.music.bitchord.data.TrackLog
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -175,24 +176,30 @@ object LyricsRepository {
         // track takes tens of seconds (next-prep with lyrics=gemini_transcript
         // took 55 s), so the 12 s bound would end every AI sheet before it was
         // written. Its own, longer bound keeps a stuck request from spinning
-        // the panel for ever; the request itself runs on [background] and
-        // still lands in [heard] for the next look if this wait gives up.
+        // the panel for ever; the request itself runs on [background], so this
+        // bound ends only the caller's wait — a sheet written down after it is
+        // kept by [saveLateTranscription] instead of living in [heard] alone.
+        // Kept like any answer, so the next play — today or after a restart —
+        // shows it without listening again.
+        val key = questionKey(
+            videoId, title, artist, durationMs, album, prioritizeSyllableSync, isrc, isVideo, artistKnown,
+            alternatives, order, sources, artistAliases,
+        )
+        val run = transcriptionRun(videoId, durationMs) ?: return null
         var answered = false
-        val heard = withTimeoutOrNull(transcribeLimitMs) {
-            transcribed(videoId, durationMs).also { answered = true }
-        }
+        val heard = withTimeoutOrNull(transcribeLimitMs) { run.await().also { answered = true } }
         if (!answered) {
             TrackLog.i(TAG, "lyrics: transcription limit after ${transcribeLimitMs}ms", about = videoId)
+            // Event-driven: the run itself reports its end, no timer or poll.
+            run.invokeOnCompletion { cause ->
+                if (cause == null) background.launch {
+                    run.await()?.let { saveLateTranscription(videoId, key, it) }
+                }
+            }
         }
         return heard?.also {
-            // Kept like any answer, so the next play — today or after a
-            // restart — shows it without listening again.
-            val key = questionKey(
-                videoId, title, artist, durationMs, album, prioritizeSyllableSync, isrc, isVideo, artistKnown,
-                alternatives, order, sources, artistAliases,
-            )
-            answers.put(key, Answer(heard))
-            kotlinx.coroutines.withContext(Dispatchers.IO) { LyricsDiskCache.write(key, heard) }
+            answers.put(key, Answer(it))
+            kotlinx.coroutines.withContext(Dispatchers.IO) { LyricsDiskCache.write(key, it) }
         }
     }
 
@@ -424,7 +431,8 @@ object LyricsRepository {
 
     /**
      * Lyrics a background check found better than the ones shown for a video
-     * — word-synced where only lines were kept, say: (video id, lyrics).
+     * — word-synced where only lines were kept, say — or a transcription that
+     * finished after [transcribeLimitMs]: (video id, lyrics).
      */
     val upgrades: kotlinx.coroutines.flow.SharedFlow<Pair<String, Result>> get() = _upgrades
     private val _upgrades = kotlinx.coroutines.flow.MutableSharedFlow<Pair<String, Result>>(extraBufferCapacity = 4)
@@ -616,14 +624,15 @@ object LyricsRepository {
     }
 
     /**
-     * What [transcriber] hears in [videoId], as an answer; null for nothing.
-     * Run once per video however many ask, in the background so a skip
-     * doesn't throw away a minute of listening the next play would want.
+     * The run hearing [videoId], as an answer; null for nothing. Started once
+     * per video however many ask, on [background] so a skip doesn't throw away
+     * a minute of listening the next play would want — and so a caller's own
+     * limit ends only its wait, never the listening.
      */
-    private suspend fun transcribed(videoId: String, durationMs: Long): Result? {
+    private fun transcriptionRun(videoId: String, durationMs: Long): Deferred<Result?>? {
         val ask = transcriber ?: return null
         if (videoId.isBlank() || videoId.contains(':') || durationMs <= 0L) return null
-        synchronized(heard) { heard[videoId] }?.let { return it }
+        synchronized(heard) { heard[videoId] }?.let { return CompletableDeferred(it) }
         val fresh = background.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             val lines = try {
                 ask(videoId, durationMs)
@@ -640,7 +649,23 @@ object LyricsRepository {
             fresh.invokeOnCompletion { transcriptionRuns.remove(videoId, fresh) }
             fresh.start()
         }
-        return running.await()
+        return running
+    }
+
+    /**
+     * A sheet written down after [transcribeLimitMs] ended the caller's wait:
+     * saved under the same question an on-time answer would use, so the next
+     * play shows it at once, and offered to [upgrades] for the track still
+     * playing. Anything a source has beats what Gemini heard, so a provider
+     * answer that landed meanwhile is left alone.
+     */
+    private fun saveLateTranscription(videoId: String, key: String, late: Result) {
+        val kept = LyricsDiskCache.read(key)?.result
+        if (kept != null && kept.source != LyricsSource.GEMINI_TRANSCRIPT) return
+        TrackLog.i(TAG, "lyrics: late sheet kept after the ${transcribeLimitMs}ms limit", about = videoId)
+        answers.put(key, Answer(late))
+        LyricsDiskCache.write(key, late)
+        _upgrades.tryEmit(videoId to late)
     }
 
     private suspend fun search(
@@ -1010,9 +1035,11 @@ object LyricsRepository {
 
     /**
      * The longest the Gemini transcription fallback is waited for, apart from
-     * the search's deadline. Before 11-02 it had no bound at all.
+     * the search's deadline. Before 11-02 it had no bound at all. Public so a
+     * screen test can shorten it; the app keeps its own matching backstop.
      */
-    internal var transcribeLimitMs = 120_000L
+    @Volatile
+    var transcribeLimitMs = 120_000L
 
     internal class LookupDeadline(
         val totalMs: Long = LOOKUP_DEADLINE_MS,
