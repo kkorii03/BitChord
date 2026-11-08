@@ -119,7 +119,10 @@ internal object KoTrackMatcher {
 
     /** The first credited artist — who a catalogue is most likely to file the track under. */
     internal fun primaryArtist(artist: String): String =
-        artistVariants(artist).firstOrNull().orEmpty().takeUnless { it in YOUTUBE_TYPE_LABELS }.orEmpty()
+        artistVariants(artist).firstOrNull().orEmpty()
+            // The label test reads the printed credit, not the cleaned variant: "ArtistVEVO"
+            // cleans to "artist", which is a real (placeholder) name, not a type label.
+            .takeUnless { normalize(artist).split(ARTIST_SEPARATORS).firstOrNull()?.trim() in YOUTUBE_TYPE_LABELS }.orEmpty()
 
     /**
      * Where YouTube prints a type instead of an artist (... - Song, Korean ... - 노래):
