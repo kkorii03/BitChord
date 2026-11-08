@@ -232,6 +232,21 @@ internal class SongVersionController(
     }
 
     /**
+     * Music-only's own audio-version lookup answered after its hold gave up,
+     * with the video now playing as itself: the same route as this
+     * controller's late answers (hand over at the same bar, or install while
+     * still silent, or lyrics only). Before, the lookup was cancelled at the
+     * cap and the answer never reached [onLateVersion].
+     */
+    fun onLateMusicOnlyVersion(exoPlayer: ExoPlayer, mediaId: String, video: Song, audio: Song) {
+        if (!SongVersionPolicy.isSongVersionOf(video, audio)) return
+        if (currentPlayer() !== exoPlayer || exoPlayer.currentMediaItem?.mediaId != mediaId) return
+        scope.launch(TrackLog.about(mediaId)) {
+            onLateVersion(exoPlayer, mediaId, video, audio)
+        }
+    }
+
+    /**
      * A song version found while its video is already audible.
      *
      * Music-only promises the song, so the video is handed over to it at the

@@ -68,6 +68,9 @@ object AudioDecoder {
     /** [KO] decode-priority: true (via asContextElement) for work done ahead for a track not yet playing. */
     val aheadOfTime: ThreadLocal<Boolean> = ThreadLocal.withInitial { false }
 
+    /** [KO] decode-priority: true (via asContextElement) for a decode a version swap is waiting on. */
+    val firstInLine: ThreadLocal<Boolean> = ThreadLocal.withInitial { false }
+
     /**
      * Runs a blocking decode so a cancelled coroutine interrupts it — including
      * its wait at [decodeGate], which otherwise only notices the abort after
@@ -309,7 +312,7 @@ object AudioDecoder {
             return null
         }
         val acquired = try {
-            decodeGate.acquire(background = aheadOfTime.get() == true) // [KO] decode-priority
+            decodeGate.acquire(background = aheadOfTime.get() == true, urgent = firstInLine.get() == true) // [KO] decode-priority
             true
         } catch (_: InterruptedException) {
             Thread.currentThread().interrupt()

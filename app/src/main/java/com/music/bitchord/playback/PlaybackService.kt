@@ -1473,6 +1473,7 @@ class PlaybackService : MediaLibraryService() {
             // already sends a listener's play to the receiver. The phone goes
             // quiet again and the receiver is asked instead.
             player?.let(::updateWakeMode)
+            if (!playWhenReady) cancelLateHandover("paused") // [KO] late-swap
             if (playWhenReady) player?.let(speakers::onLocalStartedPlaying)
             publishWidgetState(playing = playWhenReady)
             // The only place the *reason* can be read. A party has to tell a
@@ -1528,6 +1529,7 @@ class PlaybackService : MediaLibraryService() {
             // session is currently pointed at.
             val exoPlayer = player ?: return
             updateWakeMode(exoPlayer)
+            cancelLateHandover("row changed", keepFor = mediaItem?.mediaId) // [KO] late-swap
             // A quality swap replaces the playing item, which Media3
             // reports here as a playlist change — indistinguishable, from
             // this callback's point of view, from the queue moving on. It
@@ -1638,6 +1640,7 @@ class PlaybackService : MediaLibraryService() {
             // session is currently pointed at.
             val exoPlayer = player ?: return
             PlaybackActivity.onBufferingChanged(state == Player.STATE_BUFFERING)
+            if (state == Player.STATE_IDLE || state == Player.STATE_ENDED) cancelLateHandover("stopped") // [KO] late-swap
             // [KO] first-audio: the load leg of the wait, on the same clock as
             // `TIMING first audio` — track selected → the media period is ready
             // to render. Whatever is left in that figure is the decoder and the
@@ -3280,7 +3283,12 @@ class PlaybackService : MediaLibraryService() {
             standbyPlayer.prepare()
 
             // Wait for standby to buffer and reach STATE_READY in the background
-            val timeoutAt = SystemClock.elapsedRealtime() + 7_000L
+            // A late handover waits longer: the video keeps playing meanwhile,
+            // so nobody hears the wait. On the emulator a standby had its
+            // decoder up after 4 s and was still not ready at 7 s, and the
+            // measured handover was thrown away (round-score 9, 99a).
+            val timeoutAt = SystemClock.elapsedRealtime() +
+                if (lateHandover != null) LateVersionSwapPolicy.STANDBY_WAIT_MS else 7_000L
             var isReady = false
             while (isActive && SystemClock.elapsedRealtime() < timeoutAt) {
                 if (player !== activePlayer ||
@@ -3495,6 +3503,8 @@ class PlaybackService : MediaLibraryService() {
         sourceSong: Song,
         targetSong: Song,
         ignoreScreen: Boolean = false,
+        /** The late handover passes its own whole-pass budget; see [lateSwapToVersion]. */
+        measureTimeoutMs: Long = ALIGNMENT_MEASURE_TIMEOUT_MS,
     ): Deferred<Long?> {
         val sourceId = sourceSong.videoId
         val targetId = targetSong.videoId
@@ -3533,7 +3543,7 @@ class PlaybackService : MediaLibraryService() {
                         )
                     }
                 }
-                withTimeoutOrNull(ALIGNMENT_MEASURE_TIMEOUT_MS) {
+                withTimeoutOrNull(measureTimeoutMs) {
                     VersionAudioAligner.findOffsetMs(
                         context = this@PlaybackService,
                         sourceSong = sourceSong,
@@ -4210,18 +4220,39 @@ class PlaybackService : MediaLibraryService() {
         version: Song,
     ) {
         val pair = mediaId to version.videoId
-        // The late lookup and the post-audio retry can both answer for one row.
-        if (lateHandoverFor == pair &&
-            (lateHandoverJob?.isActive == true ||
-                (versionSwapJob?.isActive == true && swappingMediaId == version.videoId))
-        ) {
+        // The late lookup, the post-audio retry and music-only's own late
+        // answer can all answer for one row, even with different releases.
+        // The first pass keeps going: restarting it threw a half-done
+        // measurement away.
+        if (lateHandoverFor?.first == mediaId && lateHandoverJob?.isActive == true) {
+            if (lateHandoverFor != pair) {
+                TrackLog.d(
+                    "BitChord",
+                    "song version: $mediaId -> ${version.videoId} late swap folded into " +
+                        "the running one for ${lateHandoverFor?.second}",
+                    about = mediaId,
+                )
+            }
+            return
+        }
+        if (lateHandoverFor == pair && versionSwapJob?.isActive == true && swappingMediaId == version.videoId) {
             return
         }
         val item = exoPlayer.currentMediaItem?.takeIf { it.mediaId == mediaId } ?: return
         val row = LateHandoverRow.of(item)
+        // The whole pass — both heads and both decodes — must end before the
+        // playhead passes the measured opening, where the handover would be
+        // refused anyway. Measured from here, not per step: the 20 s + 30 s
+        // design bound was per step and the decodes ignored it, so passes ran
+        // 36-328 s (round-score 9).
+        val budgetMs = LateVersionSwapPolicy.passBudgetMs(
+            exoPlayer.currentPosition,
+            exoPlayer.playbackParameters.speed,
+        )
         TrackLog.i(
             "BitChord",
-            "song version: $mediaId -> ${version.videoId} late swap starting at mv=${exoPlayer.currentPosition}ms",
+            "song version: $mediaId -> ${version.videoId} late swap starting at mv=${exoPlayer.currentPosition}ms " +
+                "budget=${budgetMs}ms",
             about = mediaId,
         )
         val replacement = QueueShuffle.withQueueMetadata(
@@ -4230,34 +4261,51 @@ class PlaybackService : MediaLibraryService() {
             newContextCycleId = item.contextCycleId,
         )
         val handover = LateHandover(exoPlayer, row, video, version)
-        lateHandoverJob?.cancel()
+        cancelLateHandover("another row's late version")
         lateHandoverFor = pair
         lateHandoverJob = scope.launch(Dispatchers.Main) {
             val source = item.toSong()
             val target = replacement.toSong()
+            var measuredInTime = true
             if (!VersionAudioAligner.isRejected(source.videoId, target.videoId) &&
                 VersionAudioAligner.getCachedOffsetMs(source.videoId, target.videoId) == null
             ) {
+                // Screen off too: one bounded pass, only with smart alignment
+                // on and low power off — both checked above. The listener in a
+                // pocket is the one who would otherwise hear the MV for the
+                // whole song.
+                val measuring = measureVersionAlignmentAsync(
+                    source,
+                    target,
+                    ignoreScreen = true,
+                    measureTimeoutMs = budgetMs,
+                )
                 try {
-                    // Screen off too: one bounded pass (head waits 20 s, measure
-                    // 30 s), only with smart alignment on and low power off —
-                    // both checked above. The listener in a pocket is the one
-                    // who would otherwise hear the MV for the whole song.
-                    measureVersionAlignmentAsync(source, target, ignoreScreen = true).await()
+                    measuredInTime = withTimeoutOrNull(budgetMs) {
+                        measuring.await()
+                        true
+                    } == true
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (failure: Exception) {
                     TrackLog.w("BitChord", "late swap alignment failed: ${failure.message}", about = mediaId)
+                } finally {
+                    // The pass lives on the service scope so concurrent askers
+                    // fold into it; nobody else asks with the screen rule off,
+                    // so the one that stops waiting here stops the decode too.
+                    if (!measuring.isCompleted) measuring.cancel()
                 }
             }
             val confidence = VersionAudioAligner.getConfidence(source.videoId, target.videoId)
             val trusted = VersionAudioAligner.getCachedOffsetMs(source.videoId, target.videoId)
                 .takeUnless { VersionAudioAligner.isRejected(source.videoId, target.videoId) }
             if (trusted == null) {
-                val reason = if (confidence != null && !VersionSwapPolicy.shouldSwap(confidence)) {
-                    "recordings do not match conf=$confidence"
-                } else {
-                    LateVersionSwapPolicy.Refusal.NOT_MEASURED.reason
+                val reason = when {
+                    confidence != null && !VersionSwapPolicy.shouldSwap(confidence) ->
+                        "recordings do not match conf=$confidence"
+                    !measuredInTime ->
+                        "${LateVersionSwapPolicy.Refusal.NOT_MEASURED.reason} within ${budgetMs}ms"
+                    else -> LateVersionSwapPolicy.Refusal.NOT_MEASURED.reason
                 }
                 logLateHandoverRefused(handover, reason)
                 return@launch
@@ -4308,6 +4356,28 @@ class PlaybackService : MediaLibraryService() {
         return LateVersionSwapPolicy.Refusal.NEAR_END.reason.takeIf {
             LateVersionSwapPolicy.songStartMs(exoPlayer.currentPosition, offsetMs, songMs) == null
         }
+    }
+
+    /**
+     * Stops a late handover's measuring pass, and with it the pass's decodes,
+     * on the events that make it pointless: the row changed or was skipped,
+     * playback paused or stopped, the service is going away. One line says
+     * so; before, the next row's handover cancelled it with nothing in the
+     * log (round-score 9, 102b). Event-driven: called from player callbacks.
+     * The fade itself ([versionSwapJob]) re-checks its own rules and is not
+     * touched here.
+     */
+    private fun cancelLateHandover(reason: String, keepFor: String? = null) {
+        val job = lateHandoverJob ?: return
+        if (!job.isActive) return
+        val (videoId, versionId) = lateHandoverFor ?: return
+        if (keepFor != null && keepFor == videoId) return
+        TrackLog.i(
+            "BitChord",
+            "song version: $videoId -> $versionId late swap cancelled ($reason)",
+            about = videoId,
+        )
+        job.cancel()
     }
 
     private fun logLateHandoverRefused(handover: LateHandover, reason: String) {
@@ -5228,6 +5298,9 @@ class PlaybackService : MediaLibraryService() {
         alreadyAudible: Boolean = false,
     ) {
         val exoPlayer = player ?: return
+        // Also reached by an Automix blend's player handover, which the
+        // active player's own transition callback does not report.
+        cancelLateHandover("row changed", keepFor = mediaItem?.mediaId) // [KO] late-swap
         // A crossfade hands over a track that has been sounding already, and a
         // gapless auto advance keeps the same decoder running across the item
         // boundary: Media3 never reports isPlaying false there, so
@@ -9946,10 +10019,15 @@ class PlaybackService : MediaLibraryService() {
     private fun lookUpMusicOnly(video: Song) {
         if (musicOnlyLookups[video.videoId]?.isActive == true) return
         musicOnlyLookups[video.videoId] = scope.launch {
-            val audio = withTimeoutOrNull(MusicOnlyPlayback.ANSWER_TIMEOUT_MS) {
-                runCatching { YtMusicRepository.resolveAudio(video) }.getOrNull()
-            }
-            musicOnlyLookups.remove(video.videoId)
+            // [KO] late-swap: the lookup is no longer cancelled at the hold's
+            // cap. Only the hold gives up there; the answer still comes, and a
+            // version found after the cap goes to the late handover instead of
+            // being thrown away (firstsound lane: 166/302 emulator starts hit
+            // the cap).
+            val lookup = async { runCatching { YtMusicRepository.resolveAudio(video) }.getOrNull() }
+            val audio = withTimeoutOrNull(MusicOnlyPlayback.ANSWER_TIMEOUT_MS) { lookup.await() }
+            val late = audio == null && lookup.isActive
+            if (!late) musicOnlyLookups.remove(video.videoId)
             if (audio == null || audio.videoId == video.videoId) {
                 TrackLog.d("BitChord", "music-only: no audio version, playing the video's own audio", about = video.videoId)
                 MusicOnlyPlayback.settle(video.videoId)
@@ -9957,6 +10035,50 @@ class PlaybackService : MediaLibraryService() {
             val live = player ?: return@launch
             convertVideosAround(live)
             if (live.isPlaying) prefetchAround(live)
+            if (late) awaitLateMusicOnlyAnswer(video, lookup)
+        }
+    }
+
+    /**
+     * Music-only's lookup outlived its cap and the video is playing as itself.
+     * Waits for the answer — bounded: past [LateVersionSwapPolicy.MAX_VIDEO_POSITION_MS]
+     * the handover is refused anyway — and routes it like any late song version.
+     */
+    private suspend fun awaitLateMusicOnlyAnswer(video: Song, lookup: Deferred<Song?>) {
+        val videoId = video.videoId
+        val answer = try {
+            withTimeoutOrNull(LateVersionSwapPolicy.MAX_VIDEO_POSITION_MS - MusicOnlyPlayback.ANSWER_TIMEOUT_MS) {
+                lookup.await()
+            }
+        } finally {
+            if (lookup.isActive) lookup.cancel()
+            musicOnlyLookups.remove(videoId)
+        }
+        val live = player ?: return
+        val current = live.currentMediaItem
+        val rowIsCurrent = current?.mediaId == videoId
+        val rowIsUpcoming = !rowIsCurrent &&
+            live.nextMediaItemIndex in 0 until live.mediaItemCount &&
+            live.getMediaItemAt(live.nextMediaItemIndex).mediaId == videoId
+        val route = LateVersionSwapPolicy.lateAudioAnswer(
+            isSongVersion = answer != null && SongVersionPolicy.isSongVersionOf(video, answer),
+            rowIsCurrent = rowIsCurrent,
+            rowIsUpcoming = rowIsUpcoming,
+        )
+        if (answer == null || route == LateVersionSwapPolicy.LateAudioAnswer.DROP) return
+        TrackLog.i(
+            "BitChord",
+            "music-only: late audio version ${answer.videoId} for $videoId -> ${route.name.lowercase()}",
+            about = videoId,
+        )
+        when (route) {
+            LateVersionSwapPolicy.LateAudioAnswer.HAND_OVER ->
+                songVersionController.onLateMusicOnlyVersion(live, videoId, current?.toSong() ?: video, answer)
+            LateVersionSwapPolicy.LateAudioAnswer.CONVERT_UPCOMING -> {
+                MusicOnlyPlayback.unsettle(videoId)
+                convertVideosAround(live)
+            }
+            LateVersionSwapPolicy.LateAudioAnswer.DROP -> Unit
         }
     }
 
@@ -11874,6 +11996,7 @@ class PlaybackService : MediaLibraryService() {
                 runCatching { rpc.closeRPC() }
             }
         }
+        cancelLateHandover("service stopped") // [KO] late-swap: the line; scope.cancel stops it anyway
         scope.cancel()
         QueueShuffle.isCrossfadeTransitioning = null
         crossfade?.release()
