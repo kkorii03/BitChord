@@ -118,9 +118,19 @@ class ResolutionOrder(
         path
     }
 
-    /** Records that [path] served this track: it becomes the winner and is tried first next time. */
+    /** Records that [path] served this track: it becomes the winner and is tried first next time, unless the winner it would replace has one miss and may still answer. */
     fun noteServed(path: String) = synchronized(lock) {
         if (path == NEW_PIPE) return
+        // A winner with a miss on the books keeps its lead until a second miss
+        // in a row clears it: the path that served while it missed is a stand-in.
+        // Taking it at once let one URL-probe timeout hand the lead to a client
+        // three to ten times slower for the rest of the day.
+        val current = winner
+        if (current != null && current != path && winnerMisses in 1 until WINNER_MISS_LIMIT &&
+            now() - winnerAt < WINNER_TTL_MS
+        ) {
+            return
+        }
         winner = path
         winnerAt = now()
         winnerMisses = 0

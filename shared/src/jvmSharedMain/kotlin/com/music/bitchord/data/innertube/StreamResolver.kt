@@ -809,11 +809,15 @@ object StreamResolver {
         suspend fun tryInnerTubeX(preferredManifest: String?): Stream? {
             if (itxWalked) return null
             itxWalked = true
+            var servedHere: String? = null
             val found = timed("$videoId InnerTubeX") {
                 innerTubeXStreamAllowingUploads(
                     videoId,
                     preferredManifest = preferredManifest,
-                    onServed = { key, label -> served(key, label) },
+                    onServed = { key, label ->
+                        servedHere = key
+                        served(key, label)
+                    },
                     onFailure = {
                         itxUnplayableReason = UnplayableReason.keepTrackSpecific(itxUnplayableReason, it)
                     },
@@ -829,7 +833,14 @@ object StreamResolver {
             // the learned path: benching it would make the next, playable track
             // start on the slower default order for a refusal that was never
             // its fault.
-            if (found == null && preferredManifest != null &&
+            //
+            // The learned client also missed when a later client of the same
+            // walk served the track (its URL probe timed out): one miss, not a
+            // silent hand-over. Uncounted, the stand-in's success replaced the
+            // winner outright, and one transient timeout made the 15-45 s
+            // cipher client (TVHTML5_SIMPLY) lead every start for the run
+            // (11-08 rounds 150-153, both builds). See [ResolutionOrder.noteServed].
+            if (preferredManifest != null && servedHere != ResolutionOrder.itx(preferredManifest) &&
                 KoDirectBench.countsAgainstPath(itxUnplayableReason) // [KO] direct-bench-scope
             ) {
                 order.noteRefused(ResolutionOrder.itx(preferredManifest))
