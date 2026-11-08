@@ -1618,7 +1618,6 @@ class CrossfadeController(
         armDeadline = ko.armStartedAt + AutomixWorkPolicy.STANDBY_LEAD_MS +
             CrossfadeArmPolicy.armTimeoutMs(rampSteps * beatMs)
         planInFlight = plan
-        armDeadline = SystemClock.elapsedRealtime() + CrossfadeArmPolicy.armTimeoutMs(rampSteps * beatMs)
         handedOff = false
         outgoing = out
         incoming = into
