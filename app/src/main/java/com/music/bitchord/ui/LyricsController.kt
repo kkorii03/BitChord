@@ -1313,7 +1313,14 @@ class LyricsController(
             ),
             lines,
         )
-        if (!ok && LyricsTiming.takeSongTransportFailure(request.videoId)) songCheckRetryFor = checkKey
+        if (!ok) {
+            if (LyricsTiming.takeSongTransportFailure(request.videoId)) {
+                songCheckRetryFor = checkKey
+            } else if (LyricsTiming.takeSongSkippedGone(request.videoId) && generation == lyricsGeneration) {
+                // Nothing was asked: leave this track's check unspent for a later delivery.
+                songCheckStartedFor = null
+            }
+        }
         refreshTiming(generation, lines)
     }
 

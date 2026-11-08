@@ -11,7 +11,7 @@ package com.music.bitchord.playback.smart
 internal object SongCheckRetry {
 
     /** No reply and no words: the request never reached an answer. A real "no match" has a code or words. */
-    fun transportFailure(httpCode: Int?, hasWords: Boolean): Boolean = httpCode == null && !hasWords
+    fun transportFailure(httpCode: Int?): Boolean = httpCode == null
 
     /**
      * One re-ask per track, on the next event that brings audio: not before the
