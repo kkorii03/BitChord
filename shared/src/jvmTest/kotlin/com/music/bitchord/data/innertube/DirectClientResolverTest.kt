@@ -155,6 +155,54 @@ class DirectClientResolverTest {
         assertEquals(ResolutionOrder.DIRECT, order.preferred())
     }
 
+    // 11-08 rounds 150-153: VISIONOS (3-5 s) led, one of its URLs timed out on the
+    // probe, TVHTML5_SIMPLY (15-45 s, cipher) served that track and then led every
+    // start for the rest of the run.
+    private val fast = ResolutionOrder.itx("VISIONOS")
+    private val slow = ResolutionOrder.itx("TVHTML5_SIMPLY")
+
+    @Test
+    fun `one miss and a stand-in that served keep the winner`() {
+        val order = order()
+        order.noteServed(fast)
+        order.noteRefused(fast)
+        order.noteServed(slow)
+        assertEquals(fast, order.preferred())
+    }
+
+    @Test
+    fun `a second miss in a row hands the lead to the path that served`() {
+        val order = order()
+        order.noteServed(fast)
+        order.noteRefused(fast)
+        order.noteServed(slow)
+        order.noteRefused(fast)
+        order.noteServed(slow)
+        assertEquals(slow, order.preferred())
+    }
+
+    @Test
+    fun `the winner serving again wipes its miss before the next stand-in`() {
+        val order = order()
+        order.noteServed(fast)
+        order.noteRefused(fast)
+        order.noteServed(slow)
+        order.noteServed(fast)
+        order.noteRefused(fast)
+        order.noteServed(slow)
+        assertEquals(fast, order.preferred())
+    }
+
+    @Test
+    fun `an expired winner with a miss does not hold off the path that served`() {
+        val order = order()
+        order.noteServed(fast)
+        order.noteRefused(fast)
+        clock += ResolutionOrder.WINNER_TTL_MS
+        order.noteServed(slow)
+        assertEquals(slow, order.preferred())
+    }
+
     @Test
     fun `extraction is never learned as the path to lead with`() {
         val order = order()
