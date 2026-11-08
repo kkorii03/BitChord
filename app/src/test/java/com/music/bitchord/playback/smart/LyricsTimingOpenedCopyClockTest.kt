@@ -23,6 +23,7 @@ class LyricsTimingOpenedCopyClockTest {
     @Before
     @After
     fun reset() {
+        LyricsTiming.resetForTest()
         StreamChoice.forget("clock-copy")
         Downloads.setSavedMetadata(emptyMap())
     }

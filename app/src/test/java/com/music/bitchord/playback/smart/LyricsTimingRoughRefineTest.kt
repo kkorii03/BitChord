@@ -23,6 +23,7 @@ class LyricsTimingRoughRefineTest {
 
     @Before
     fun setUp() {
+        LyricsTiming.resetForTest()
         directory = Files.createTempDirectory("bitchord-lyrics-rough").toFile()
         context = FakeContext.create(FakePreferences(), directory)
         storeField.set(LyricsTiming, null)

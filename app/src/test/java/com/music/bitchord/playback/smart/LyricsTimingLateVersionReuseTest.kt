@@ -1,4 +1,4 @@
-﻿package com.music.bitchord.playback.smart
+package com.music.bitchord.playback.smart
 
 import android.content.Context
 import com.music.bitchord.data.TrackLog
@@ -43,6 +43,7 @@ class LyricsTimingLateVersionReuseTest {
 
     @Before
     fun setUp() {
+        LyricsTiming.resetForTest()
         directory = Files.createTempDirectory("bitchord-late-version").toFile()
         context = FakeContext.create(FakePreferences(), directory)
         storeField.set(LyricsTiming, null)

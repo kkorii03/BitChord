@@ -7,6 +7,9 @@ import org.junit.Test
 /** A no-change measurement of the upload itself is always on YouTube's clock. */
 class LyricsTimingOriginalClockTest {
 
+    @org.junit.Before
+    fun resetLyricsTiming() = LyricsTiming.resetForTest()
+
     @Test
     fun `the video is the original result is tagged youtube`() {
         val done = LyricsTiming.originalNoChangeMeasurement()

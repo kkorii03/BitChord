@@ -7,6 +7,9 @@ import org.junit.Test
 
 /** 11-07 phone fsCxgDq2T9k: spent by older code, no answer, no words kept, 6.8 s late for good. */
 class LyricsTimingSpentBeforeTest {
+
+    @org.junit.Before
+    fun resetLyricsTiming() = LyricsTiming.resetForTest()
     private val key = 7
     private val engine = LyricsTiming.ENGINE_DEEPGRAM_WHISPER
 

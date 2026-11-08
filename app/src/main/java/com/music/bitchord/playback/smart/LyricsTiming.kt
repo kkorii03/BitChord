@@ -981,6 +981,24 @@ object LyricsTiming {
     private val loggedBaseKept = ConcurrentHashMap.newKeySet<String>()
 
     /**
+     * Unit tests only: forgets the process-wide decision and log maps, so one
+     * test's base decision, logged line or song key never decides another's.
+     */
+    @androidx.annotation.VisibleForTesting
+    internal fun resetForTest() {
+        loggedClocks.clear()
+        loggedBaseApply.clear()
+        baseDecisions.clear()
+        loggedBaseKept.clear()
+        loggedAiOtherLyrics.clear()
+        newestSongKey.clear()
+        songSyncGenerations.clear()
+        recheckTokens.clear()
+        startLanguages.clear()
+        cachedBias.clear()
+    }
+
+    /**
      * (song, source), the song check's generation and the sheet's identity: a
      * replaced recording (resetSongCheck) must not inherit the base the old
      * bytes settled, and a replaced sheet must not inherit the base its

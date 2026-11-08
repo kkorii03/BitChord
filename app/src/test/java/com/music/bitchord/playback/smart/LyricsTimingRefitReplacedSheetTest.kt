@@ -32,6 +32,7 @@ class LyricsTimingRefitReplacedSheetTest {
 
     @Before
     fun setUp() {
+        LyricsTiming.resetForTest()
         directory = Files.createTempDirectory("bitchord-refit-replaced").toFile()
         val fake = FakeContext.create(FakePreferences(), directory)
         context = object : Application() {

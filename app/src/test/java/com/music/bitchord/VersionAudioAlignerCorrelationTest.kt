@@ -1,8 +1,10 @@
 package com.music.bitchord
 
 import com.music.bitchord.playback.smart.VersionAudioAligner
+import com.music.bitchord.playback.smart.VersionSwapPolicy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import kotlin.math.max
 import kotlin.math.min
@@ -63,6 +65,64 @@ class VersionAudioAlignerCorrelationTest {
         assertTrue("expected a confident peak, got ${result.confidence}", result.confidence > 0.9)
         assertTrue("peak must not be pinned to the searchable edge", result.lagFrames != result.floor)
         assertTrue("peak must not be pinned to the searchable edge", result.lagFrames != result.ceiling)
+    }
+
+    @Before
+    fun resetAligner() = VersionAudioAligner.resetForTest()
+
+    /**
+     * An irregular beat train over a noise floor, at 100 frames per second: what
+     * a decoded song's energy envelope looks like, and deterministic for a seed.
+     */
+    private fun beatTrain(frames: Int, seed: Int): FloatArray {
+        val random = Random(seed)
+        val env = FloatArray(frames) { random.nextFloat() * 0.5f }
+        var at = random.nextInt(20, 60)
+        while (at < frames) {
+            for (k in 0 until 8) if (at + k < frames) env[at + k] += 1f - k / 8f
+            at += random.nextInt(25, 90)
+        }
+        return env
+    }
+
+    /** [source] delayed by [lagFrames] (negative: advanced); frames it does not cover are a quiet noise floor. */
+    private fun shifted(source: FloatArray, lagFrames: Int, size: Int, seed: Int): FloatArray {
+        val random = Random(seed)
+        return FloatArray(size) { index ->
+            val sourceIndex = index - lagFrames
+            if (sourceIndex in source.indices) source[sourceIndex] else random.nextFloat() * 0.3f
+        }
+    }
+
+    @Test
+    fun `a beat train delayed by 2_5 s is recovered with high confidence`() {
+        val source = beatTrain(6000, seed = 11)
+        val result = VersionAudioAligner.crossCorrelate(source, shifted(source, 250, 6000, seed = 12))
+
+        assertEquals(250, result.lagFrames)
+        assertTrue("expected a confident peak, got ${result.confidence}", result.confidence > 0.9)
+    }
+
+    @Test
+    fun `a beat train advanced by 7 s is recovered with high confidence`() {
+        val source = beatTrain(6000, seed = 21)
+        val result = VersionAudioAligner.crossCorrelate(source, shifted(source, -700, 6000, seed = 22))
+
+        assertEquals(-700, result.lagFrames)
+        assertTrue("expected a confident peak, got ${result.confidence}", result.confidence > 0.9)
+    }
+
+    @Test
+    fun `a shift beyond the searchable lag is refused rather than locked on at the edge`() {
+        val source = beatTrain(6000, seed = 31)
+        // 45 s late: past the +-40 s search range, so the true peak is unreachable.
+        val result = VersionAudioAligner.crossCorrelate(source, shifted(source, 4500, 10_500, seed = 32))
+
+        assertTrue(
+            "no lag inside the range may look like a match, got ${result.confidence} at ${result.lagFrames}",
+            result.confidence < VersionSwapPolicy.MIN_SWAP_CONFIDENCE,
+        )
+        assertTrue("the true 4500-frame shift is outside the range", result.ceiling < 4500)
     }
 
     @Test

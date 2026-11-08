@@ -12,6 +12,9 @@ import org.junit.Test
  */
 class LyricsTimingGuardTest {
 
+    @org.junit.Before
+    fun resetLyricsTiming() = LyricsTiming.resetForTest()
+
     private fun mayRun(
         adjustable: Boolean = true,
         measure: Boolean = true,

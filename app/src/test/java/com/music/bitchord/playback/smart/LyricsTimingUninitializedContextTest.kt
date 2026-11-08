@@ -20,6 +20,7 @@ class LyricsTimingUninitializedContextTest {
 
     @Before
     fun clearStore() {
+        LyricsTiming.resetForTest()
         storeField.set(LyricsTiming, null)
     }
 

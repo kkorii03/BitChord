@@ -28,6 +28,7 @@ class LyricsTimingFilesDirRetryTest {
 
     @Before
     fun setUp() {
+        LyricsTiming.resetForTest()
         directory = Files.createTempDirectory("bitchord-lyrics-retry").toFile()
         context = FakeContext.create(FakePreferences(), filesDir = null)
         storeField.set(LyricsTiming, null)

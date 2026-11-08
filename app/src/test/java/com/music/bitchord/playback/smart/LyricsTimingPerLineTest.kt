@@ -8,6 +8,9 @@ import org.junit.Test
 /** The per-line layer is applied through [LyricsTiming.apply], after refine and under the hand. */
 class LyricsTimingPerLineTest {
 
+    @org.junit.Before
+    fun resetLyricsTiming() = LyricsTiming.resetForTest()
+
     private fun line(at: Long, text: String) = LyricLine(timeMs = at, text = text)
 
     private fun heardLine(line: LyricLine, residualMs: Long): List<LyricsWordAlign.Heard> {

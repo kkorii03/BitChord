@@ -43,6 +43,7 @@ class LyricsTimingClockTest {
 
     @Before
     fun setUp() {
+        LyricsTiming.resetForTest()
         directory = Files.createTempDirectory("bitchord-lyrics-clock").toFile()
         prefs = FakePreferences()
         context = FakeContext.create(prefs, directory)

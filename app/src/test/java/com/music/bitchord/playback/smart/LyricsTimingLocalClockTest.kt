@@ -6,6 +6,9 @@ import org.junit.Test
 /** A local file's clock comes from the download metadata, not from "it is local". */
 class LyricsTimingLocalClockTest {
 
+    @org.junit.Before
+    fun resetLyricsTiming() = LyricsTiming.resetForTest()
+
     @Test
     fun `an hq download is the substitute clock it was verified against`() {
         assertEquals(

@@ -16,6 +16,9 @@ import org.junit.Test
  */
 class LyricsTimingRefitSpendTest {
 
+    @org.junit.Before
+    fun resetLyricsTiming() = LyricsTiming.resetForTest()
+
     @Test
     fun `words judged again spend no engine`() {
         val fromFile = SongHearing.Heard(

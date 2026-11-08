@@ -24,6 +24,9 @@ import org.junit.Test
  */
 class LyricsTimingHeardTailTest {
 
+    @org.junit.Before
+    fun resetLyricsTiming() = LyricsTiming.resetForTest()
+
     private val sheet = (0 until 30).map { LyricLine(10_000L + it * 6_000L, "line number $it") }
     private val all = sheet.indices.toList()
     private val rate = 1.124
