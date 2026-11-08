@@ -1,9 +1,12 @@
 package com.music.bitchord.data.lyrics
 
+import java.nio.file.Files
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.system.measureTimeMillis
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -144,6 +147,72 @@ class LyricsLookupDeadlineTest {
         } finally {
             LyricsRepository.transcriber = previous
             LyricsRepository.lookupDeadlineMs = previousDeadline
+        }
+    }
+
+    /**
+     * A sheet Gemini finishes after the caller's limit ended must still be
+     * kept where the next play looks for it, under the same question key an
+     * on-time answer would use, instead of living only in the process's
+     * `heard` map (no-lyrics2: four runs, 10-200 s late).
+     */
+    @Test
+    fun aTranscriptionThatOutlivesTheLimitIsKeptOnDisk() = runBlocking {
+        val previousTranscriber = LyricsRepository.transcriber
+        val previousLimit = LyricsRepository.transcribeLimitMs
+        val previousKeep = LyricsTranslation.keepDir
+        val directory = Files.createTempDirectory("bitchord-late-sheet").toFile()
+        val lines = listOf(LyricLine(timeMs = 1_000L, text = "written down after the limit"))
+        LyricsRepository.transcribeLimitMs = 100L
+        LyricsTranslation.keepDir = directory
+        LyricsRepository.transcriber = { _, _ ->
+            delay(500)
+            lines
+        }
+        try {
+            val videoId = "late-sheet-kept"
+            val answer = async {
+                LyricsRepository.lyrics(
+                    videoId = videoId,
+                    title = "Late Sheet",
+                    artist = "Nobody",
+                    durationMs = 200_000L,
+                    sources = setOf(LyricsSource.SIMP_MUSIC),
+                    order = listOf(LyricsSource.SIMP_MUSIC),
+                    transcribe = true,
+                )
+            }
+            assertNull(answer.await())
+            val key = LyricsRepository.questionKey(
+                videoId = videoId,
+                title = "Late Sheet",
+                artist = "Nobody",
+                durationMs = 200_000L,
+                album = null,
+                prioritizeSyllableSync = false,
+                isrc = null,
+                isVideo = false,
+                artistKnown = true,
+                alternatives = emptyList(),
+                order = listOf(LyricsSource.SIMP_MUSIC),
+                sources = setOf(LyricsSource.SIMP_MUSIC),
+            )
+            val kept = withTimeout(5_000L) {
+                var result: LyricsRepository.Result? = null
+                while (result == null) {
+                    delay(20L)
+                    result = LyricsDiskCache.read(key)?.result
+                }
+                result
+            } ?: kotlin.test.fail("the late sheet was not kept under its question key")
+            assertEquals(LyricsSource.GEMINI_TRANSCRIPT, kept.source)
+            assertEquals(lines.map { it.text }, kept.lines.map { it.text })
+            assertEquals(lines.map { it.timeMs }, kept.lines.map { it.timeMs })
+        } finally {
+            LyricsRepository.transcriber = previousTranscriber
+            LyricsRepository.transcribeLimitMs = previousLimit
+            LyricsTranslation.keepDir = previousKeep
+            directory.deleteRecursively()
         }
     }
 }
