@@ -1074,40 +1074,61 @@ object SourceResolver {
         // so the log line at the end can say where the file came from, which is
         // the only record of it there will be once it is on disk.
         var best: Pair<MusicSource, SourceStream>? = null
-        for (source in bitExact) {
-            val remaining = until?.let { remainingMs(it) }
-            if (remaining != null && remaining <= 0L) break
-            val stream = matchAndStreamWithin(
-                source,
-                target,
-                // The request the guard above already narrowed, rather than a
-                // second statement of it that could drift from the first.
-                request,
-                waitForAll = true,
-                strictLength = strictLength,
-                strictOriginal = true,
-                baseTimeoutMs = DOWNLOAD_SOURCE_TIMEOUT_MS,
-            )?.stream?.let { keep(it) } ?: continue
-            // Dolby Atmos is not bit-exact PCM, but it is the native premium
-            // rendition that playback already prefers.  Keep it on the same
-            // first-class download path instead of throwing it away and
-            // falling back to YouTube solely because it has no bitrate tag.
-            if (HqQuality.isLosslessTier(stream.format) || stream.format.isDolbyAtmos) {
+        // Every lossless source is asked at once (one ask each, as before),
+        // then read in the user's rank order. Walked one at a time, a slow
+        // first addon spent the budget and the next was never asked. Each ask
+        // keeps its own 25 s deadline and cooldown bookkeeping inside
+        // [matchAndStreamWithin]; the shared budget is only the read below.
+        val bitExactRuns = bitExact.map { source ->
+            source to async {
+                matchAndStreamWithin(
+                    source,
+                    target,
+                    // The request the guard above already narrowed, rather than a
+                    // second statement of it that could drift from the first.
+                    request,
+                    waitForAll = true,
+                    strictLength = strictLength,
+                    strictOriginal = true,
+                    baseTimeoutMs = DOWNLOAD_SOURCE_TIMEOUT_MS,
+                )?.stream?.let { keep(it) }
+            }
+        }
+        try {
+            for ((source, run) in bitExactRuns) {
+                val stream = when {
+                    run.isCompleted || until == null -> run.await()
+                    else -> withTimeoutOrNull(remainingMs(until)) { run.await() }.also {
+                        if (it == null && !run.isCompleted) {
+                            TrackLog.w(TAG, "${source.displayName} ran out of download lookup time")
+                        }
+                    }
+                } ?: continue
+                // Dolby Atmos is not bit-exact PCM, but it is the native premium
+                // rendition that playback already prefers.  Keep it on the same
+                // first-class download path instead of throwing it away and
+                // falling back to YouTube solely because it has no bitrate tag.
+                if (HqQuality.isLosslessTier(stream.format) || stream.format.isDolbyAtmos) {
+                    TrackLog.d(
+                        TAG,
+                        "download: '${target.title}' from ${source.displayName} at ${stream.format.summary}",
+                    )
+                    // Nothing is waiting on it any more, and leaving it running
+                    // would hold this whole call open on a source whose answer has
+                    // just been beaten by the requested premium rendition.
+                    elsewhereBest.cancel()
+                    return@coroutineScope stream
+                }
                 TrackLog.d(
                     TAG,
-                    "download: '${target.title}' from ${source.displayName} at ${stream.format.summary}",
+                    "${source.displayName} offered ${stream.format.summary} to download; not lossless or Dolby",
                 )
-                // Nothing is waiting on it any more, and leaving it running
-                // would hold this whole call open on a source whose answer has
-                // just been beaten by the requested premium rendition.
-                elsewhereBest.cancel()
-                return@coroutineScope stream
+                if (isBetter(stream.format, best?.second?.format)) best = source to stream
             }
-            TrackLog.d(
-                TAG,
-                "${source.displayName} offered ${stream.format.summary} to download; not lossless or Dolby",
-            )
-            if (isBetter(stream.format, best?.second?.format)) best = source to stream
+        } finally {
+            // [coroutineScope] does not return while a child runs: cancel the
+            // lower-ranked asks the moment the pick is final (battery, budget).
+            bitExactRuns.forEach { (_, run) -> run.cancel() }
         }
 
         // Nothing bit-exact anywhere — or nothing was being looked for.
