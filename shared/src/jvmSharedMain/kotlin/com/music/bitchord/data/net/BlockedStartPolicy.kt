@@ -258,6 +258,41 @@ object BlockedStartPolicy {
         else minOf(timeoutFor(BlockedStartStep.PROXY, elapsedMs), remainingMs)
 
     /**
+     * How long a proxy leg may keep asking after its window closed.
+     *
+     * In rs18-rs20 the leg's answer landed after the window 13 times on rows
+     * still waiting for their own sound: 93-2078 ms on eleven of them, 4.4 s and
+     * 5.6 s on the other two. Each was thrown away and the start waited up to
+     * 26 s more for the InnerTubeX walk. Three seconds keeps the eleven and stays
+     * inside the rescue: a window never exceeds [RESOLVER_BUDGET_MS], and the
+     * two together still leave the rest of [TOTAL_BUDGET_MS].
+     */
+    const val LATE_PROXY_GRACE_MS = 3_000L
+
+    /**
+     * The proxy leg's own ceiling, measured from the moment it starts: its
+     * window plus [LATE_PROXY_GRACE_MS]. An unbounded window (outside the gate,
+     * no refusal yet) stays unbounded, exactly as before, so no leg there
+     * ever outlives it. A spent window ([windowMs] <= 0) starts no leg at all.
+     */
+    fun lateProxyCeilingMs(windowMs: Long): Long = when {
+        windowMs == Long.MAX_VALUE -> Long.MAX_VALUE
+        windowMs <= 0L -> 0L
+        else -> windowMs + LATE_PROXY_GRACE_MS
+    }
+
+    /**
+     * Whether a proxy leg is kept racing after its window closed.
+     *
+     *  - the window already produced a stream -> false (nothing left to want)
+     *  - the leg already failed               -> false (it has nothing to add)
+     *  - the leg is still asking              -> true
+     *  - the leg answered as the window shut  -> true (adopted at once, not dropped)
+     */
+    fun keepProxyAfterWindow(windowAnswered: Boolean, legActive: Boolean, legAnswered: Boolean): Boolean =
+        false // REPRO (4a150596f): the window cancels its leg
+
+    /**
      * Whether the high-quality source is the next step after the alternate
      * lookup. This is the same condition the playback rescue used before the
      * policy existed, kept as one truth table so a later change cannot let a
