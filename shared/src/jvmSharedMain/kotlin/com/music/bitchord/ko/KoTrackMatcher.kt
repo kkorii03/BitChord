@@ -126,10 +126,10 @@ internal object KoTrackMatcher {
 
     /**
      * Where YouTube prints a type instead of an artist (... - Song, Korean ... - 노래):
-     * upstream 38535595f lists the English/Portuguese ones, the Korean ones are ours.
+     * upstream 38535595f lists the English/Portuguese ones, the Korean ones are ours. English "artist" is left out: it is the placeholder name tests and real "Artist" acts use.
      */
     private val YOUTUBE_TYPE_LABELS = setOf(
-        "música", "musica", "vídeo", "video", "song", "album", "álbum", "artista", "artist",
+        "música", "musica", "vídeo", "video", "song", "album", "álbum", "artista",
         "노래", "동영상", "비디오", "영상", "앨범", "아티스트", "가수", "곡", "음악",
     )
 
