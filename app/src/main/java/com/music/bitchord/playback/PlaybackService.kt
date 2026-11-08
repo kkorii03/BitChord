@@ -10116,6 +10116,7 @@ class PlaybackService : MediaLibraryService() {
         )
         val song = next.toSong()
         AudioCache.noteSongs(listOf(song))
+        com.music.bitchord.ko.KoDirectHqAhead.noteNextStream(next.mediaId, next.localConfiguration?.uri?.getQueryParameter("v")) // [KO] hq-ahead
         AudioCache.prefetchDirect(AudioCache.Upcoming(song.videoId, TrackMatcher.targetOf(song)))
     }
 

@@ -51,6 +51,7 @@ class NextHqDirectSourceGateTest {
         AppSettings.lowPower.value = false
         AppSettings.meteredConnection.value = false
         KoDirectHqAhead.proofForTest = { true }
+        KoDirectHqAhead.noteNextStream("", null)
         DirectSourceGate.onPlaying(setOf("hq-playing"))
     }
 
@@ -144,6 +145,18 @@ class NextHqDirectSourceGateTest {
 
         assertNull(withTimeout(3_000) { pending.await() })
         assertTrue(telegram.cancelled)
+    }
+
+    /** A row that streams another upload: a copy proved for its media id would carry the wrong clock. */
+    @Test
+    fun aRowStreamingAnotherUploadIsLeftOut() = runBlocking {
+        val telegram = FakeSource("Telegram", listOf(row("tg-12", "Ahead Twelve")), flac, SourceKind.TELEGRAM)
+        install(listOf(FakeSource("Addon"), telegram, FakeSource("YouTube", kind = SourceKind.YOUTUBE)))
+        DirectSourceGate.openNext("hq-next-12")
+        KoDirectHqAhead.noteNextStream("hq-next-12", "hq-recording-12")
+
+        assertNull(DirectSourceGate.lookup("hq-next-12", target("Ahead Twelve")))
+        assertEquals(0, telegram.searches)
     }
 
     @Test

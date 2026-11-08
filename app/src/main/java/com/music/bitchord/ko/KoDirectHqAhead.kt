@@ -63,6 +63,21 @@ internal object KoDirectHqAhead {
     internal var proofForTest: (suspend (SourceStream) -> Boolean)? = null
 
     /**
+     * The next row's id when it streams another upload (`v=` is not its media
+     * id — a downloaded song played from its streamed recording). The window's
+     * read-ahead looks that row up by its media id, so a copy proved against
+     * that id's YouTube audio would be pinned for a recording the player does
+     * not read, and the lyrics would take its clock. Such a row is left out.
+     */
+    @Volatile
+    private var streamsElsewhere: String? = null
+
+    /** From the window, before its read-ahead starts: what the next row really streams. */
+    fun noteNextStream(mediaId: String, streamedId: String?) {
+        streamsElsewhere = mediaId.takeIf { streamedId != null && streamedId != mediaId }
+    }
+
+    /**
      * Whether the lookup for a track also asks the high-quality sources.
      *
      * Only for the track the window opened as next, not yet audible: a track
@@ -94,7 +109,7 @@ internal object KoDirectHqAhead {
         nextNotPlaying: Boolean,
         hasProof: Boolean,
     ): Boolean {
-        if (!nextNotPlaying) return false
+        if (!nextNotPlaying || videoId == streamsElsewhere) return false
         val eligible = target.title.isNotBlank() && !target.isVideo && target.durationSec != null &&
             SourceRegistry.parseTrackKey(videoId) == null &&
             videoId !in Downloads.saved.value &&
@@ -108,7 +123,8 @@ internal object KoDirectHqAhead {
             trackEligible = eligible,
             hasProof = hasProof,
             awakeSources = if (eligible) {
-                sources(target).count { !SourceResolver.SourceCooldown.isResting(it.configId) }
+                // No target: the signed-out Telegram line is the walk's to log, once.
+                sources().count { !SourceResolver.SourceCooldown.isResting(it.configId) }
             } else {
                 0
             },
