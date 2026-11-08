@@ -1995,7 +1995,9 @@ internal object KoTrackMatcher {
             versions += marks
             return
         }
-        context += words.filter { it.length > 2 && it !in NOISE_WORDS }
+        // A single CJK syllable is a whole title ("Love (愛)"): the length gate
+        // exists for Latin glue words and must not drop it (upstream v1.9.1).
+        context += words.filter { (it.length > 2 || TrackMatcher.containsCJKChar(it)) && it !in NOISE_WORDS }
     }
 
     /**

@@ -634,7 +634,7 @@ object TrackMatcher {
         return false
     }
 
-    private fun containsCJKChar(text: String): Boolean = text.any {
+    internal fun containsCJKChar(text: String): Boolean = text.any { // [KO] track-matcher
         Character.UnicodeBlock.of(it) in CJK_BLOCKS
     }
 

@@ -27,7 +27,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
-import org.junit.Ignore
 import org.junit.Test
 import kotlin.system.measureTimeMillis
 
@@ -1662,15 +1661,16 @@ class SourcesTest {
 
     // ---- Non-Latin script accuracy -----------------------------------------
 
-    @Ignore("Pre-existing test never run in CI before this lane; expectation fails on current code (query list). See ship/lanes/up-tests.md.")
     @Test
     fun `matches the plain Mayonaka row across the wave-dash spellings`() {
         // Mixed kanji+kana titles keep their two as-written queries: the
         // transliteration is partial (kanji has no reading) and is not asked.
-        // ("with me" is eaten as a feat. marker on both sides alike; the wave
-        // dash is a word break, so the query keeps "stay" a separate word.)
+        // The wave dash is a word break, so the query keeps "stay" a separate
+        // word. "with me" stays: ours cuts at `with` only when a name follows
+        // (db882243d), so "Stay With Me" is not searched as "stay" (upstream
+        // v1.9.1 still eats it as a feat. marker).
         assertEquals(
-            listOf("真夜中のドア stay miki matsubara", "真夜中のドア stay"),
+            listOf("真夜中のドア stay with me miki matsubara", "真夜中のドア stay with me"),
             TrackMatcher.queries(
                 TrackMatcher.Target(
                     "真夜中のドア〜stay with me - Mayonaka no Door~stay with me",
@@ -2040,16 +2040,17 @@ class SourcesTest {
         assertEquals("JioSaavn", source.displayName)
     }
 
-    @Ignore("Lost upstream behaviour (38535595f): pt-BR part. guest credit is not stripped. Report opus-vs-upstream191 item 6.")
     @Test
     fun `drops a Portuguese guest credit from the query`() {
         assertEquals(
             listOf("o mundo é mal froid", "o mundo é mal"),
             TrackMatcher.queries(TrackMatcher.Target("O Mundo É Mal (part. Clara Lima)", "Froid")),
         )
-        // A numbered part is the title, not a guest credit.
+        // A numbered part is the title, not a guest credit. Ours keeps the
+        // number as one canonical key (M8: Part 1 never collides with Part 2),
+        // where upstream v1.9.1 keeps only the word "part".
         assertEquals(
-            "song part",
+            "song part1",
             TrackMatcher.queries(TrackMatcher.Target("Song (Part 1)", "")).single(),
         )
         // Neither is an English title that merely starts with the word.
@@ -2059,7 +2060,6 @@ class SourcesTest {
         )
     }
 
-    @Ignore("Lost upstream behaviour (38535595f): KoTrackMatcher keeps the type label as a second query. Report opus-vs-upstream191 item 6.")
     @Test
     fun `ignores a YouTube type label in the artist slot`() {
         assertEquals(
@@ -2068,7 +2068,6 @@ class SourcesTest {
         )
     }
 
-    @Ignore("Lost upstream behaviour: Love (CJK) vs CJK title no longer matches (second assertion). See ship/lanes/up-tests.md.")
     @Test
     fun `matches a bracketed CJK translation against its Latin filing`() {
         assertTrue(
