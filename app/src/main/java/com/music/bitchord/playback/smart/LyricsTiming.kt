@@ -24,6 +24,7 @@ import com.music.bitchord.data.lyrics.LyricsWordAlign
 import com.music.bitchord.data.lyrics.RecordingPick
 import com.music.bitchord.data.lyrics.RefineExtendPolicy
 import com.music.bitchord.data.lyrics.RefinePolicy
+import com.music.bitchord.data.lyrics.SheetIdentity
 import com.music.bitchord.data.lyrics.SongCheckWindow
 import com.music.bitchord.data.lyrics.SongSyncRetry
 import com.music.bitchord.data.lyrics.TimingFit
@@ -950,6 +951,72 @@ object LyricsTiming {
     /** Last base-apply line per (song, source): logged again only when it changes. */
     private val loggedBaseApply = ConcurrentHashMap<String, String>()
 
+    /**
+     * The base the strongest heard evidence picked, per (song, source, sheet).
+     *
+     * The screen, the next-song bundle and the song check each ask for the base
+     * with whatever they have at that moment: one may lack the AI answer for its
+     * text key, another may have heard nothing yet. Left to re-decide on its
+     * own, the caller with less evidence overrode the one with more and the base
+     * flipped back and forth (11-08 1WZ1tfpyu3M, kCHNNCT-blQ 5405 → 5496 ms
+     * from a fixed-order caller after a sheet change). Only stronger heard
+     * evidence replaces a decision, and the same evidence repeats it.
+     */
+    private data class BaseDecision(
+        val name: String,
+        val adjustment: Adjustment?,
+        val evidence: BaseChoicePolicy.Evidence,
+        val rule: String,
+    )
+
+    private val baseDecisions = ConcurrentHashMap<String, BaseDecision>()
+
+    /** (song, source, decision) lines already logged, so a repeated call is quiet. */
+    private val loggedBaseKept = ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * (song, source), the song check's generation and the sheet's identity: a
+     * replaced recording (resetSongCheck) must not inherit the base the old
+     * bytes settled, and a replaced sheet must not inherit the base its
+     * predecessor's words did (11-08 1WZ1tfpyu3M: `used=KUGOU` → `used=QQ_MUSIC`,
+     * and the new sheet took the old `measured` base by fixed order). The same
+     * sheet in another form keeps one identity, so its callers keep one
+     * decision — see [SheetIdentity].
+     */
+    private fun decisionKey(videoId: String?, audioSource: String?, lines: List<LyricLine>): String? =
+        videoId?.let { "$it|${audioSource ?: ""}|${songSyncGenerationOf(it)}|${SheetIdentity.of(lines)}" }
+
+    /**
+     * [next] unless the decision already kept was backed by at least as much
+     * heard evidence.
+     */
+    // shortcut: a kept decision lives until the app restarts or the song check's
+    // generation bumps; a re-measure for the same (song, source) that hears fewer
+    // lines cannot replace it. Upgrade when a song check has to re-open a base on
+    // the same key without a generation bump.
+    private fun settleBase(key: String?, next: BaseDecision, videoId: String?): BaseDecision {
+        if (key == null) return next
+        if (baseDecisions.size > 3_000) baseDecisions.clear()
+        // compute: the screen and the next-song bundle ask at the same moment, and a
+        // weaker decision must not land last just because it read [] before the other
+        // caller wrote. The log stays outside, off the map's bin lock.
+        val winner = baseDecisions.compute(key) { _, previous ->
+            if (BaseChoicePolicy.replaces(previous?.evidence, next.evidence)) next else previous
+        } ?: next
+        if (winner !== next && winner.evidence != next.evidence &&
+            loggedBaseKept.add("$key|${next.name}|${next.evidence.matched}")
+        ) {
+            if (loggedBaseKept.size > 3_000) loggedBaseKept.clear()
+            TrackLog.d(
+                TAG,
+                "base kept: ${winner.name} (${winner.evidence.matched} lines) over " +
+                    "${next.name} (${next.evidence.matched} lines)",
+                videoId,
+            )
+        }
+        return winner
+    }
+
     private fun logBaseApply(videoId: String, base: Adjustment?, shiftMs: Long, rule: String, source: String) {
         val name = when {
             base == null -> "none"
@@ -1035,9 +1102,19 @@ object LyricsTiming {
                 onRule("held")
                 return null
             }
-            return holdIfBuried(lines, default, videoId).also {
-                onRule(if (it == null) "buried" else "fixed-order")
-            }
+            val fixed = holdIfBuried(lines, default, videoId)
+            val decision = settleBase(
+                decisionKey(videoId, audioSource, lines),
+                BaseDecision(
+                    name = defaultName,
+                    adjustment = fixed,
+                    evidence = BaseChoicePolicy.Evidence(defaultName, 0, 0.0, 0L),
+                    rule = if (fixed == null) "buried" else "fixed-order",
+                ),
+                videoId,
+            )
+            onRule(decision.rule)
+            return decision.adjustment
         }
         val heardStarts = BaseChoicePolicy.heardStarts(lines.map { it.text }, heard)
         val candidates = buildList {
@@ -1069,9 +1146,25 @@ object LyricsTiming {
             BaseChoicePolicy.NONE -> null
             else -> default
         }
-        return holdIfBuried(lines, chosen, videoId).also {
-            onRule(if (it == null && chosen != null) "buried" else "base-choice")
-        }
+        val fixed = holdIfBuried(lines, chosen, videoId)
+        val score = choice.scores.firstOrNull { it.first == choice.name }?.second
+        val decision = settleBase(
+            decisionKey(videoId, audioSource, lines),
+            BaseDecision(
+                name = choice.name,
+                adjustment = fixed,
+                evidence = BaseChoicePolicy.Evidence(
+                    choice.name,
+                    score?.matched ?: 0,
+                    score?.withinRatio ?: 0.0,
+                    score?.medianAbsMs ?: 0L,
+                ),
+                rule = if (fixed == null && chosen != null) "buried" else "base-choice",
+            ),
+            videoId,
+        )
+        onRule(decision.rule)
+        return decision.adjustment
     }
 
     /**

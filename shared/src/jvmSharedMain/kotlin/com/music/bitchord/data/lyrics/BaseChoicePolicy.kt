@@ -110,6 +110,35 @@ object BaseChoicePolicy {
         return Choice(pick.first, scores)
     }
 
+    /**
+     * What one base decision rested on: the candidate it picked, the heard
+     * lines that candidate matched, and its [Score].
+     */
+    data class Evidence(val name: String, val matched: Int, val withinRatio: Double, val medianAbsMs: Long)
+
+    /**
+     * Whether [next] is backed by stronger heard evidence than [previous], so
+     * it may replace it. A null [previous] is always replaced.
+     *
+     * More heard lines win first; the same count compares the within share and
+     * then the median, and an exact tie goes to the name, so the same evidence
+     * in any arrival order keeps the same base.
+     *
+     * Every caller that asks for the base compares its own evidence with the
+     * decision already kept (11-08 1WZ1tfpyu3M: the same 69 heard lines scored
+     * the AI answer 68 ms / 96% and the prepared measurement -200 ms at 418 ms
+     * / 17%; a caller that lacked the AI answer re-picked the measurement, a
+     * caller with no words re-picked it again from the fixed order, and the
+     * base flipped three times in 350 ms).
+     */
+    fun replaces(previous: Evidence?, next: Evidence): Boolean = when {
+        previous == null -> true
+        next.matched != previous.matched -> next.matched > previous.matched
+        next.withinRatio != previous.withinRatio -> next.withinRatio > previous.withinRatio
+        next.medianAbsMs != previous.medianAbsMs -> next.medianAbsMs < previous.medianAbsMs
+        else -> next.name < previous.name
+    }
+
     /** The switch rule of [choose]: [candidate] beats [other] on both the within share and the median. */
     private fun clearlyBetter(candidate: Score, other: Score): Boolean =
         other.matched >= MIN_MATCHED_LINES &&
