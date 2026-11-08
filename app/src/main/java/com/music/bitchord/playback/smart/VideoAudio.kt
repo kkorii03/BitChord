@@ -439,20 +439,31 @@ object VideoAudio {
                     it.origin == AudioCache.Origin.YOUTUBE,
                 )
         }
-        if ((ownCopy()?.cachedPrefix ?: 0L) < AudioCache.MIN_ALIGNMENT_PREFIX_BYTES) {
+        // How long each wait took, for the log: a stream still resolving shows as head and
+        // sound waits with nothing on disk, a slow stream as the window wait (11-08 150a).
+        val began = System.currentTimeMillis()
+        val startBytes = ownCopy()?.cachedPrefix ?: 0L
+        var headMs = 0L
+        var soundMs = 0L
+        if (startBytes < AudioCache.MIN_ALIGNMENT_PREFIX_BYTES) {
             // A row that has not started the stream yet: this is what asks for it.
             AudioCache.awaitAnalysisHead(Uri.parse(AutomixAnalysisSource.opusUri(videoId)), HEAD_TIMEOUT_MS)
+            headMs = System.currentTimeMillis() - began
             // A slow start is not "no audio": giving up here left the song with
             // no check for its whole playback once the sound did come (11-06
             // qsqvJpOgrWw, first sound at 76 s). Ended by the wait or by the sound.
             if ((ownCopy()?.cachedPrefix ?: 0L) < MIN_RAW_BYTES) {
                 AudioCache.awaitRenditionPrefix(videoId, MIN_RAW_BYTES, NO_SOUND_WAIT_MS)
+                soundMs = System.currentTimeMillis() - began - headMs
             }
         }
+        fun waits(): String =
+            "start=${startBytes / 1024}KB head=${headMs}ms sound=${soundMs}ms " +
+                "window=${System.currentTimeMillis() - began - headMs - soundMs}ms"
         // Each way out to the decoder is named: 11-08 117b 8gyLR4NfMiI left here unlogged
         // and its decode answered after the song had ended.
         fun noStream(why: String): SongAudio? {
-            TrackLog.d(TAG, "song check: no stream to send ($why), decoding instead", videoId)
+            TrackLog.d(TAG, "song check: no stream to send ($why), decoding instead; ${waits()}", videoId)
             return null
         }
         var copy = ownCopy() ?: return@withContext noStream("no own copy")
@@ -488,6 +499,7 @@ object VideoAudio {
             TrackLog.d(TAG, "song check: cached stream is no container to send as it is", videoId)
             return@withContext null
         }
+        TrackLog.d(TAG, "song check: stream opening ${bytes.size / 1024}KB ready; ${waits()}", videoId)
         SongAudio(
             bytes,
             copy.key,

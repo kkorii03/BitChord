@@ -20,6 +20,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.asContextElement
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Semaphore
@@ -310,9 +311,16 @@ internal object SongHearing {
     ): Heard? {
         val videoId = song.videoId
         val started = System.currentTimeMillis()
+        // Where a listen waits before its request: 11-08 150a PEIvcxSO9zQ logged nothing for 2.5 min.
+        TrackLog.d(TAG, "song-hear: listening until=${untilSeconds.toInt()} min=${minSeconds.toInt()}", videoId)
         val raw = runCatching { VideoAudio.songStreamOpening(song, untilSeconds, minSeconds) }
             .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
             .getOrNull()
+        TrackLog.d(
+            TAG,
+            "song-hear: stream opening ${if (raw == null) "none" else "${raw.bytes.size / 1024}KB"} after ${System.currentTimeMillis() - started}ms",
+            videoId,
+        )
         // The farm's first GET often fails in the rush as a track starts (rounds 116-118: 28
         // failed against 19 answered), and a failed ask is forgotten ([AlignFarm.fetch]). Asked
         // again after the wait for sound, it spares the request: 117b 8gyLR4NfMiI went on to the
@@ -345,7 +353,13 @@ internal object SongHearing {
             TrackLog.d(TAG, "song-hear: http=${answer.httpCode} for ${raw.mime}, decoding instead", videoId)
         }
         val started2 = System.currentTimeMillis()
-        val wav = VideoAudio.songWavCopy(app, song, untilSeconds) ?: return null
+        val wav = VideoAudio.songWavCopy(app, song, untilSeconds)
+        TrackLog.d(
+            TAG,
+            "song-hear: decoded ${if (wav == null) "nothing" else "${wav.bytes.size / 1024}KB"} after ${System.currentTimeMillis() - started2}ms",
+            videoId,
+        )
+        if (wav == null) return null
         SyncTestMode.saveWav(app, videoId, wav.bytes)
         val answer = send(wav.bytes, language, wav.mime, untilSeconds, videoId, System.currentTimeMillis() - started2, wav.renditionKey, exact)
         return kept(app, song, wav, answer, untilSeconds, language)
@@ -421,6 +435,8 @@ internal object SongHearing {
         queuedAt: Long = System.currentTimeMillis(),
     ): Deepgram.Answer = requests.withPermit {
         val asked = System.currentTimeMillis()
+        // A `sending` with no `sent` after it is an upload still in flight when the row or the log ended.
+        TrackLog.d(TAG, "song-hear: sending until=${untilSeconds.toInt()} kb=${bytes.size / 1024} wait=${waitedMs}ms slot=${asked - queuedAt}ms", videoId)
         var hedgedTo = 0
         // No reply at all means the connection failed, usually in under a second
         // (11-06: 7 of 18 requests, none billed). Such a song used to go without
@@ -490,9 +506,17 @@ internal object SongHearing {
     /** Test runs score the shown lines against a WAV of the same opening; off, nothing is decoded. */
     private fun keepWavForTest(app: Context, song: Song, untilSeconds: Double) {
         if (!SyncTestMode.enabled(app, song.videoId)) return
-        scope.launch {
+        // A row that has left decodes behind the playing one's: 11-08 150a the row before's
+        // whole-song WAV held the one-at-a-time gate 63 s while PEIvcxSO9zQ played.
+        scope.launch(AudioDecoder.aheadOfTime.asContextElement(rowGone(song.videoId))) {
             VideoAudio.songWavCopy(app, song, untilSeconds)?.let { SyncTestMode.saveWav(app, song.videoId, it.bytes) }
         }
+    }
+
+    /** Whether [videoId] is neither playing nor next; false with nothing playing. */
+    private fun rowGone(videoId: String): Boolean {
+        val playing = com.music.bitchord.data.DiagnosticsState.currentTrackId ?: return false
+        return videoId != playing && videoId != com.music.bitchord.data.DiagnosticsState.nextTrackId
     }
 
     /** The recording [song] would be heard from now; null when its clock is not known. */
