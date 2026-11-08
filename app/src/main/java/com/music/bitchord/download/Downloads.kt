@@ -2048,12 +2048,18 @@ object Downloads {
             Log.d(TAG, "${track.videoId}: its own source has nothing to download; matching it elsewhere")
             return null
         }
-        val storable = DownloadStore.storable(stream.format.codec)
-        if (storable == null) {
-            Log.d(TAG, "nothing to file a '${stream.format.codec}' as; taking YouTube for ${track.videoId}")
+        val kept = keepable(stream, TrackMatcher.targetOf(track).durationSec) ?: return null
+        // A lossless/m4a label was always enough; anything else (an unlabelled or
+        // lossy answer filed from its bytes) must still beat YouTube's own AAC,
+        // the same floor [SourceResolver.forDownload] applies to a lossy winner.
+        val f = kept.stream.format
+        if (DownloadStore.storable(stream.format.codec) == null &&
+            !HqQuality.isLosslessTier(f) && !f.isDolbyAtmos && !SourceResolver.beatsYouTubeAac(f)
+        ) {
+            Log.d(TAG, "${f.summary} does not beat YouTube's AAC; taking YouTube for ${track.videoId}")
             return null
         }
-        return keepable(stream, storable)
+        return kept
     }
 
     /** A source's stream with how it will be filed and what [Downloader.probe] found there. */
@@ -2063,17 +2069,42 @@ object Downloads {
         val probe: Downloader.Probe,
     )
 
-    /** The v1.9 [SourceResolver.forDownload] gate, keeping the fork's file routing. */
+    /**
+     * The v1.9 [SourceResolver.forDownload] gate, keeping the fork's file routing.
+     *
+     * The label only has to be right when it names a lossless/m4a rendition
+     * (a [DownloadStore.storable]); a missing or lossy one is settled by the
+     * file's opening bytes in [keptFor], as upstream does.
+     */
     private suspend fun keepable(
         stream: SourceStream,
-        storable: DownloadStore.Storable,
-    ): Kept? = keptFor(stream, storable, Downloader.probe(stream.url, stream.headers, stream.format.codec))
+        durationSec: Int?,
+    ): Kept? = keptFor(
+        stream,
+        DownloadStore.storable(stream.format.codec),
+        Downloader.probe(stream.url, stream.headers, stream.format.codec),
+        durationSec,
+    )
 
-    /** [keepable]'s judgement, apart from the request so it can be tested on a probe alone. */
+    /** A file's average bitrate from its size and running time, when both are known. */
+    internal fun estimatedKbps(totalBytes: Long?, durationSec: Int?): Int? {
+        if (totalBytes == null || durationSec == null || durationSec <= 0) return null
+        return (totalBytes * 8 / 1000 / durationSec).toInt().takeIf { it > 0 }
+    }
+
+    /**
+     * [keepable]'s judgement, apart from the request so it can be tested on a probe alone.
+     *
+     * @param storable what the source's label files as, or null when the label
+     *   is missing or lossy (`mp3`, `aac`, nothing): then the probed container
+     *   names the file and, where the source stated no bitrate, the file's size
+     *   over [durationSec] estimates one (marked inferred).
+     */
     internal fun keptFor(
         stream: SourceStream,
-        storable: DownloadStore.Storable,
+        storable: DownloadStore.Storable?,
         probe: Downloader.Probe?,
+        durationSec: Int? = null,
     ): Kept? = when (probe) {
         null -> {
             Log.d(TAG, "${stream.format.summary}: not a file a download can keep; passing")
@@ -2085,7 +2116,12 @@ object Downloads {
         // an unfilable one would make [fromSources] lock onto it only for
         // [routeFromSource] to decline it, without trying the next candidate.
         is Downloader.Probe.Manifest -> {
-            if (AppSettings.exportDownloads.value && storable.extension !in ManifestFile.EXTENSIONS) {
+            if (storable == null) {
+                // The assembler needs a codec to name the joined file, and a
+                // missing or lossy label gives none.
+                Log.d(TAG, "${stream.format.summary}: a manifest with no codec to file it as; passing")
+                null
+            } else if (AppSettings.exportDownloads.value && storable.extension !in ManifestFile.EXTENSIONS) {
                 Log.d(TAG, "${stream.format.summary}: a manifest an export can't file; passing")
                 null
             } else {
@@ -2093,23 +2129,41 @@ object Downloads {
             }
         }
         is Downloader.Probe.File -> {
+            val container = probe.container
             // The bytes decide what the file can be called. A source that
             // labels FLAC while serving AAC/MP4 must not lock onto this
             // candidate only to be filed under the wrong extension; passing
             // here lets the resolver try the next source.
-            if (!DownloadedRecordingPolicy.containerMatches(
-                    storable.extension,
-                    probe.container.extension,
-                )
+            if (storable != null &&
+                !DownloadedRecordingPolicy.containerMatches(storable.extension, container.extension)
             ) {
                 Log.d(
                     TAG,
-                    "${stream.format.summary}: bytes are .${probe.container.extension}, " +
+                    "${stream.format.summary}: bytes are .${container.extension}, " +
                         "not .${storable.extension}; passing",
                 )
                 null
+            } else if (storable == null && container == Downloader.Container.WEBM &&
+                AppSettings.exportDownloads.value
+            ) {
+                // MediaStore.Audio refuses audio/webm on affected Android versions.
+                Log.d(TAG, "${stream.format.summary}: WebM can't be exported; passing")
+                null
             } else {
-                Kept(stream, storable, probe)
+                // Named from the bytes where the label could not name it, and
+                // the codec/bitrate a source left unstated come from the file
+                // (size over runtime), marked inferred like an addon's tier guess.
+                val described = stream.format.copy(
+                    codec = container.codec ?: stream.format.codec ?: container.extension,
+                )
+                val measured = estimatedKbps(probe.totalBytes, stream.durationSec ?: durationSec)
+                    ?.takeIf { described.kbps == null && described.isLossless != true }
+                val format = if (measured != null) described.copy(kbps = measured, kbpsInferred = true) else described
+                Kept(
+                    stream.copy(format = format),
+                    storable ?: DownloadStore.Storable(container.extension, container.mimeType),
+                    probe,
+                )
             }
         }
     }
@@ -2156,17 +2210,16 @@ object Downloads {
         // answer already in hand.
         val kept = java.util.concurrent.ConcurrentHashMap<String, Kept>()
         var timedOut = true
+        val target = TrackMatcher.targetOf(track)
         val stream = withTimeoutOrNull(SOURCE_LOOKUP_MS + LOOKUP_BACKSTOP_MS) {
             try {
                 SourceResolver.forDownload(
-                    TrackMatcher.targetOf(track),
+                    target,
                     SourceResolver.requestForDownload(quality),
                     keep = { candidate ->
-                        DownloadStore.storable(candidate.format.codec)?.let { storable ->
-                            keepable(candidate, storable)
-                                ?.also { kept[it.stream.url] = it }
-                                ?.stream
-                        }
+                        keepable(candidate, target.durationSec)
+                            ?.also { kept[it.stream.url] = it }
+                            ?.stream
                     },
                     excludeSources = setOfNotNull(avoidSourceConfigId),
                     budgetMs = SOURCE_LOOKUP_MS,
