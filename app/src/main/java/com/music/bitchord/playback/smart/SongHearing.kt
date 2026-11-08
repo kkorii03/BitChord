@@ -313,6 +313,12 @@ internal object SongHearing {
         val raw = runCatching { VideoAudio.songStreamOpening(song, untilSeconds, minSeconds) }
             .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
             .getOrNull()
+        // The farm's first GET often fails in the rush as a track starts (rounds 116-118: 28
+        // failed against 19 answered), and a failed ask is forgotten ([AlignFarm.fetch]). Asked
+        // again after the wait for sound, it spares the request: 117b 8gyLR4NfMiI went on to the
+        // decoder 24 s in and was answered 162 s later, after the song had played uncorrected,
+        // while the farm held its whole song. No GET when the farm already answered or said no.
+        farmAgain(app, song, language, untilSeconds, exact, raw)?.let { return it }
         if (raw != null) {
             // The row's head may be all there is yet (a next row, a blocked
             // stream): the same sound again would pay for the same words.
@@ -343,6 +349,23 @@ internal object SongHearing {
         SyncTestMode.saveWav(app, videoId, wav.bytes)
         val answer = send(wav.bytes, language, wav.mime, untilSeconds, videoId, System.currentTimeMillis() - started2, wav.renditionKey, exact)
         return kept(app, song, wav, answer, untilSeconds, language)
+    }
+
+    /** [keepFromFarm] once more, and its words when they cover [untilSeconds] of what is heard from. */
+    private suspend fun farmAgain(
+        app: Context,
+        song: Song,
+        language: String,
+        untilSeconds: Double,
+        exact: Boolean,
+        raw: VideoAudio.SongAudio?,
+    ): Heard? {
+        if (!keepFromFarm(app, song, language)) return null
+        val recording = (if (raw != null) recordingKey(raw.fromFile, LyricsTiming.clockForSongAudio(song, raw)) else recordingKey(song))
+            ?: return null
+        val saved = covering(load(app, song.videoId).filterNot { exact && it.rough }, recording, language, untilSeconds) ?: return null
+        TrackLog.d(TAG, "song-hear: the farm answered a second ask, ${saved.words.size} words", song.videoId)
+        return heardFrom(saved)
     }
 
     private suspend fun send(

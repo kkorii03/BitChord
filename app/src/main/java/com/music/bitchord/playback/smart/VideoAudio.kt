@@ -449,12 +449,18 @@ object VideoAudio {
                 AudioCache.awaitRenditionPrefix(videoId, MIN_RAW_BYTES, NO_SOUND_WAIT_MS)
             }
         }
-        var copy = ownCopy() ?: return@withContext null
+        // Each way out to the decoder is named: 11-08 117b 8gyLR4NfMiI left here unlogged
+        // and its decode answered after the song had ended.
+        fun noStream(why: String): SongAudio? {
+            TrackLog.d(TAG, "song check: no stream to send ($why), decoding instead", videoId)
+            return null
+        }
+        var copy = ownCopy() ?: return@withContext noStream("no own copy")
         val want = bytesFor(untilSeconds, copy)
         if (!copy.isComplete && copy.cachedPrefix < want &&
             !AudioCache.awaitRenditionPrefix(videoId, want, QUICK_WAIT_MS)
         ) {
-            copy = ownCopy() ?: return@withContext null
+            copy = ownCopy() ?: return@withContext noStream("own copy gone after the wait")
             val least = bytesFor(minSeconds, copy)
             if (!copy.isComplete && copy.cachedPrefix < least &&
                 !AudioCache.awaitRenditionPrefix(videoId, least, (minSeconds * 1000).toLong() + QUICK_WAIT_MS)
@@ -462,13 +468,13 @@ object VideoAudio {
                 TrackLog.d(TAG, "song check: ${copy.cachedPrefix} bytes on disk, $least wanted", videoId)
             }
         }
-        copy = ownCopy() ?: return@withContext null
+        copy = ownCopy() ?: return@withContext noStream("own copy gone")
         // Never past what has landed: reading on would wait for the stream. A
         // shorter first look still sends the song check's window when it is there:
         // that request follows anyway, and this way it reads the kept words
         // (11-06: a 40 s and a 90 s request went out together on most songs).
         val take = minOf(copy.cachedPrefix, bytesFor(maxOf(untilSeconds, SONG_CHECK_SECONDS), copy))
-        if (take < MIN_RAW_BYTES || take > MAX_RAW_BYTES) return@withContext null
+        if (take < MIN_RAW_BYTES || take > MAX_RAW_BYTES) return@withContext noStream("$take bytes of ${copy.key.substringAfter('#', "own")}")
         val source = AudioCache.renditionDataSource(Uri.parse("bitchord://watch?v=$videoId"), copy)
         val bytes = try {
             readBytes(source, take.toInt())
