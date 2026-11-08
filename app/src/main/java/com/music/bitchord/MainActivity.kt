@@ -5225,7 +5225,7 @@ private fun BitChordApp(
                 // this row to build a link from — SongActionsMenu already
                 // drops it for a local file via `isOffline`, this catches
                 // the rest.
-                onShare = share.takeIf { song.videoId.isNotBlank() },
+                onShare = share.takeIf { SongOrigins.hasYouTubeIdentity(song.videoId) }, // [KO] lost in the v1.9 merge
                 onCopyLog = if (fromPlayer) {
                     {
                         songActions = null
