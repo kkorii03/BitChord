@@ -9,6 +9,11 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.SourceTrackKeys
 import com.music.bitchord.playback.StreamChoice
 import java.io.File
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asContextElement
+import kotlinx.coroutines.launch
 
 /**
  * The app side of sync-test mode: off unless a `sync-test.flag` file exists in
@@ -109,15 +114,48 @@ object SyncTestMode {
      * check's WAV is always YouTube's copy, so without this a substitute's
      * lyrics could only be scored on the wrong clock. Decodes the head a second
      * time; only test runs (flag file present) pay for it.
+     *
+     * The second decode runs after the proof, not inside it. Inside it, it held
+     * the verdict, and so the swap, for its own 2.8-4.1 s decode plus whatever
+     * took the one-at-a-time gate first: on the listener's phone, where the
+     * flag stays for the nightly runs, 'synctest-wav' sat between the candidate
+     * decode and the verdict on all seven upgrades from 04:11 to 07:55 on 11-08:
+     * 3.2-7.0 s from the candidate's last sample to the verdict, median 5.7 s,
+     * with an automix pass slipping in ahead of it in six of them. The head is
+     * moved out of the caller's way (it deletes its own copy as soon as this
+     * returns) and decoded at ahead-of-time priority, so it never waits in front
+     * of the playing track's own decodes.
      */
     fun keepCandidate(sourceConfigId: String?, trackId: String?, head: File) {
         val context = appContext ?: return
         if (sourceConfigId == null || trackId == null) return
         val on = runCatching { externalRoot(context)?.let { File(it, FLAG_NAME).isFile } == true }.getOrDefault(false)
         if (!on) return
-        val wav = VideoAudio.wavOfFile(head) ?: return
-        write(context, "${SourceTrackKeys.PREFIX}$sourceConfigId${SourceTrackKeys.SEPARATOR}$trackId", wav)
+        val kept = handOff(head) ?: return
+        val id = "${SourceTrackKeys.PREFIX}$sourceConfigId${SourceTrackKeys.SEPARATOR}$trackId"
+        keepScope.launch(AudioDecoder.aheadOfTime.asContextElement(true)) {
+            try {
+                VideoAudio.wavOfFile(kept)?.let { write(context, id, it) }
+            } catch (failed: Exception) {
+                // Off the proof now, so nothing above it would catch this.
+                TrackLog.d(TAG, "sync-test: candidate WAV not kept: ${failed.message}")
+            } finally {
+                kept.delete()
+            }
+        }
     }
+
+    /**
+     * Moves [head] beside itself so the caller's cleanup cannot delete it while
+     * the decode above still reads it. Null when it cannot be moved; the WAV is
+     * then skipped, as any failed write here is.
+     */
+    internal fun handOff(head: File): File? {
+        val kept = File(head.parentFile, "${head.name}.synctest")
+        return if (head.renameTo(kept)) kept else null
+    }
+
+    private val keepScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
      * Keeps the opening of a downloaded file [localUri] as `synctest/<videoId>.wav`

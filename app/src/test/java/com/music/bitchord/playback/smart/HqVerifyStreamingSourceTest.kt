@@ -128,6 +128,35 @@ class HqVerifyStreamingSourceTest {
         assertTrue(HqAudioVerify.FETCH_SECONDS < HqAudioVerify.COMPARE_SECONDS + 2.0)
     }
 
+    // 11-08 user log: the sync-test copy of a candidate head was decoded inside
+    // the proof, holding the verdict 3.2-7.0 s on every upgrade. It is now
+    // handed to a background decode, so the caller's cleanup must not take it.
+    @Test
+    fun `the sync-test head survives the proof's own cleanup`() {
+        append(byteArrayOf(1, 2, 3, 4))
+        val kept = SyncTestMode.handOff(file)
+        // What candidateFetch's finally does the moment the proof returns.
+        file.delete()
+        assertTrue(kept != null && kept.isFile)
+        assertEquals(4L, kept!!.length())
+        assertFalse(file.exists())
+    }
+
+    @Test
+    fun `a head that cannot be moved is not kept`() {
+        file.delete()
+        assertEquals(null, SyncTestMode.handOff(file))
+    }
+
+    @Test
+    fun `the timing line says whether the growing read or the finished head was decoded`() {
+        assertEquals(
+            "growing:11800000/19260150",
+            HqAudioVerify.readLabel(streamed = true, onDiskAtEnd = 11_800_000L, expected = 19_260_150L),
+        )
+        assertEquals("file", HqAudioVerify.readLabel(streamed = false, onDiskAtEnd = -1L, expected = -1L))
+    }
+
     private fun append(bytes: ByteArray) {
         FileOutputStream(file, true).use { it.write(bytes) }
     }
