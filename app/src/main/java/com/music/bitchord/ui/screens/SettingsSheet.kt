@@ -2620,7 +2620,7 @@ internal fun SettingsRow(
                     text = subtitle,
                     style = settingsSubtitleStyle(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
+                    maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
@@ -2687,7 +2687,7 @@ internal fun SettingsSubRow(
                     text = subtitle,
                     style = settingsSubtitleStyle(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
+                    maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
