@@ -204,8 +204,8 @@ class LyricsControllerRequestTest {
 
             assertNull(async { lateTranscription("late-sheet-skipped") }.await())
             assertNull(
-                withTimeoutOrNull(1_500L) { controller.lyrics.first { it != null } },
                 "the late sheet must not be shown for the track that replaced it",
+                withTimeoutOrNull(1_500L) { controller.lyrics.first { it != null } },
             )
         } finally {
             LyricsRepository.transcriber = previousTranscriber
