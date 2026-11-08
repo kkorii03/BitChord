@@ -180,6 +180,135 @@ class DecodePriorityGateTest {
         assertEquals(true, VersionAudioAligner.alignmentAbandoned(pass, ignoreScreen = true, screenOn = true))
     }
 
+    /**
+     * 11-08 fleet 183c/187c/190d: the late handover's alignment queued first
+     * in line, but the video's song check (video-wav, 42-92 s) and lyric
+     * decode already held the slot and kept it to their end; the handover was
+     * refused "alignment not measured within 68-75 s" every time. A running
+     * decode steps aside at its next pass and takes the slot back after.
+     */
+    @Test
+    fun aRunningDecodeStepsAsideForAnUrgentOneAndResumesAfter() {
+        val gate = DecodePriorityGate()
+        val order = Collections.synchronizedList(mutableListOf<String>())
+        gate.acquire(background = false) // the video's song check is decoding
+        val align = Thread {
+            gate.acquire(background = false, urgent = true)
+            order += "align"
+            gate.release()
+        }
+        align.start()
+        waitUntilWaiting(align)
+
+        val step = gate.yieldToUrgent() // its next decode pass
+        order += "song-check"
+        gate.release()
+        align.join(5_000)
+
+        assertEquals(DecodePriorityGate.Yield.RESUMED, step)
+        assertEquals(listOf("align", "song-check"), order)
+    }
+
+    /** The decode that stepped aside goes before work that queued behind it. */
+    @Test
+    fun aDecodeThatSteppedAsideGoesBeforeLaterQueuedWork() {
+        val gate = DecodePriorityGate()
+        val order = Collections.synchronizedList(mutableListOf<String>())
+        gate.acquire(background = false)
+        val lyric = Thread {
+            gate.acquire(background = false)
+            order += "lyric"
+            gate.release()
+        }
+        lyric.start()
+        waitUntilWaiting(lyric)
+        val align = Thread {
+            gate.acquire(background = false, urgent = true)
+            order += "align"
+            gate.release()
+        }
+        align.start()
+        waitUntilWaiting(align)
+
+        assertEquals(DecodePriorityGate.Yield.RESUMED, gate.yieldToUrgent())
+        order += "song-check"
+        gate.release()
+        listOf(lyric, align).forEach { it.join(5_000) }
+        assertEquals(listOf("align", "song-check", "lyric"), order)
+    }
+
+    /** With nothing urgent waiting, or an urgent holder, nothing is let go. */
+    @Test
+    fun nothingIsLetGoWithoutAnUrgentWaiterOrByAnUrgentHolder() {
+        val gate = DecodePriorityGate()
+        gate.acquire(background = false)
+        assertEquals(DecodePriorityGate.Yield.KEPT, gate.yieldToUrgent())
+        gate.release()
+
+        gate.acquire(background = false, urgent = true) // the alignment's first side
+        val second = Thread {
+            gate.acquire(background = false, urgent = true)
+            gate.release()
+        }
+        second.start()
+        waitUntilWaiting(second)
+        assertEquals(DecodePriorityGate.Yield.KEPT, gate.yieldToUrgent())
+        gate.release()
+        second.join(5_000)
+        assertTrue(!second.isAlive)
+    }
+
+    /**
+     * A decode cancelled while stepped aside does not hold the slot, so it
+     * must not free the one the urgent decode holds; the queue still moves.
+     */
+    @Test
+    fun aDecodeCancelledWhileSteppedAsideLosesTheSlotWithoutFreeingAnother() {
+        val gate = DecodePriorityGate()
+        val holding = CountDownLatch(1)
+        val alignQueued = CountDownLatch(1)
+        val alignMayFinish = CountDownLatch(1)
+        val outcome = arrayOfNulls<DecodePriorityGate.Yield>(1)
+        val songCheck = Thread {
+            gate.acquire(background = false)
+            holding.countDown()
+            alignQueued.await(5, TimeUnit.SECONDS)
+            val step = gate.yieldToUrgent()
+            outcome[0] = step
+            if (step != DecodePriorityGate.Yield.LOST) gate.release()
+        }
+        songCheck.start()
+        assertTrue(holding.await(5, TimeUnit.SECONDS))
+        val alignHolds = CountDownLatch(1)
+        val align = Thread {
+            gate.acquire(background = false, urgent = true)
+            alignHolds.countDown()
+            alignMayFinish.await(5, TimeUnit.SECONDS)
+            gate.release()
+        }
+        align.start()
+        waitUntilWaiting(align)
+        alignQueued.countDown()
+        assertTrue("the running decode never stepped aside", alignHolds.await(5, TimeUnit.SECONDS))
+        waitUntilWaiting(songCheck)
+        songCheck.interrupt()
+        songCheck.join(5_000)
+        assertEquals(DecodePriorityGate.Yield.LOST, outcome[0])
+
+        val lyric = CountDownLatch(1)
+        val later = Thread {
+            gate.acquire(background = false)
+            lyric.countDown()
+            gate.release()
+        }
+        later.start()
+        waitUntilWaiting(later)
+        assertEquals("the urgent decode's slot was freed by the cancelled one", 1L, lyric.count)
+        alignMayFinish.countDown()
+        assertTrue("the queue stalled after a cancel while stepped aside", lyric.await(5, TimeUnit.SECONDS))
+        align.join(5_000)
+    }
+
     private fun waitUntilWaiting(t: Thread) {
         val until = System.currentTimeMillis() + 5_000
         while (t.state != Thread.State.WAITING && System.currentTimeMillis() < until) Thread.sleep(5)
