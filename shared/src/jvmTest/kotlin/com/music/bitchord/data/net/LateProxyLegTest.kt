@@ -73,7 +73,7 @@ class LateProxyLegTest {
     }
 
     @Test
-    fun `a proxy answer that lands after its window beats the slow walk`() = runBlocking {
+    fun `a proxy answer that lands after its window beats the slow walk`() = runBlocking<Unit> {
         val walk = leg(answerAtMs = 3_000, value = "walk-url")
         val proxy = leg(answerAtMs = 250, value = "proxy-url")
         val began = System.nanoTime()
@@ -85,7 +85,7 @@ class LateProxyLegTest {
     }
 
     @Test
-    fun `a proxy answer inside the window is unchanged and asks nothing more`() = runBlocking {
+    fun `a proxy answer inside the window is unchanged and asks nothing more`() = runBlocking<Unit> {
         val asked = AtomicInteger()
         val walk = leg(answerAtMs = 3_000, value = "walk-url")
         val proxy = leg(answerAtMs = 50, value = "proxy-url", asked = asked)
@@ -95,7 +95,7 @@ class LateProxyLegTest {
     }
 
     @Test
-    fun `a walk that answers inside the window stops the leg`() = runBlocking {
+    fun `a walk that answers inside the window stops the leg`() = runBlocking<Unit> {
         val walk = leg(answerAtMs = 20, value = "walk-url")
         val proxy = leg(answerAtMs = 2_000, value = "proxy-url")
         assertEquals("window:direct" to "walk-url", start(windowMs = 150, walk = walk, proxyLeg = proxy))
@@ -103,7 +103,7 @@ class LateProxyLegTest {
     }
 
     @Test
-    fun `a walk that answers after the window but before the late leg wins and stops the leg`() = runBlocking {
+    fun `a walk that answers after the window but before the late leg wins and stops the leg`() = runBlocking<Unit> {
         val walk = leg(answerAtMs = 200, value = "walk-url")
         val proxy = leg(answerAtMs = 2_000, value = "proxy-url")
         assertEquals("walk" to "walk-url", start(windowMs = 100, walk = walk, proxyLeg = proxy))
@@ -111,28 +111,28 @@ class LateProxyLegTest {
     }
 
     @Test
-    fun `a late leg that fails leaves the walk exactly as before`() = runBlocking {
+    fun `a late leg that fails leaves the walk exactly as before`() = runBlocking<Unit> {
         val walk = leg(answerAtMs = 400, value = "walk-url")
         val proxy = leg(answerAtMs = 200, value = null)
         assertEquals("walk" to "walk-url", start(windowMs = 100, walk = walk, proxyLeg = proxy))
     }
 
     @Test
-    fun `a walk that finds nothing still gets the late leg's stream`() = runBlocking {
+    fun `a walk that finds nothing still gets the late leg's stream`() = runBlocking<Unit> {
         val walk = leg(answerAtMs = 150, value = null)
         val proxy = leg(answerAtMs = 400, value = "proxy-url")
         assertEquals("late" to "proxy-url", start(windowMs = 100, walk = walk, proxyLeg = proxy))
     }
 
     @Test
-    fun `both failing is no stream`() = runBlocking {
+    fun `both failing is no stream`() = runBlocking<Unit> {
         val walk = leg(answerAtMs = 150, value = null)
         val proxy = leg(answerAtMs = 200, value = null)
         assertEquals("walk" to null, start(windowMs = 100, walk = walk, proxyLeg = proxy))
     }
 
     @Test
-    fun `with no walk left the late leg alone is awaited`() = runBlocking {
+    fun `with no walk left the late leg alone is awaited`() = runBlocking<Unit> {
         val proxy = leg(answerAtMs = 150, value = "proxy-url")
         val outcome = raceLateLeg<String>(proxy, null)
         assertTrue(outcome is LateLegRace.Late && outcome.value == "proxy-url")
@@ -141,7 +141,7 @@ class LateProxyLegTest {
     }
 
     @Test
-    fun `no late leg runs the rest alone and hands on its exception`() = runBlocking {
+    fun `no late leg runs the rest alone and hands on its exception`() = runBlocking<Unit> {
         val walked: suspend () -> String? = { "walk-url" }
         val outcome = raceLateLeg(null, walked)
         assertTrue(outcome is LateLegRace.Rest && outcome.value == "walk-url")
@@ -150,7 +150,7 @@ class LateProxyLegTest {
     }
 
     @Test
-    fun `a verdict from the walk ends the start and stops the leg`() = runBlocking {
+    fun `a verdict from the walk ends the start and stops the leg`() = runBlocking<Unit> {
         val proxy = leg(answerAtMs = 2_000, value = "proxy-url")
         val gone: suspend () -> String? = {
             delay(50)
@@ -161,7 +161,7 @@ class LateProxyLegTest {
     }
 
     @Test
-    fun `a track change stops both the late leg and the walk`() = runBlocking {
+    fun `a track change stops both the late leg and the walk`() = runBlocking<Unit> {
         val proxyStopped = CompletableDeferred<Unit>()
         val walkStopped = AtomicBoolean(false)
         val proxy = legScope.async<String?> {
@@ -190,7 +190,7 @@ class LateProxyLegTest {
     }
 
     @Test
-    fun `a late leg that won does not let the walk keep working`() = runBlocking {
+    fun `a late leg that won does not let the walk keep working`() = runBlocking<Unit> {
         val walkFinished = AtomicBoolean(false)
         val proxy = leg(answerAtMs = 30, value = "proxy-url")
         val walk: suspend () -> String? = {
@@ -230,7 +230,7 @@ class LateProxyLegTest {
     }
 
     @Test
-    fun `a leg that answered as the window shut is adopted, not dropped`() = runBlocking {
+    fun `a leg that answered as the window shut is adopted, not dropped`() = runBlocking<Unit> {
         val proxy = CompletableDeferred<String?>("proxy-url")
         val walk: suspend () -> String? = {
             delay(2_000)
