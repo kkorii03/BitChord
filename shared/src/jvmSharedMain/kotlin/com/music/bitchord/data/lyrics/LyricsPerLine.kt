@@ -423,7 +423,7 @@ object LyricsPerLine {
             val from = StringBuilder()
             var i = j
             while (i < heard.size && from.length < key.length) from.append(LyricsWordAlign.fold(heard[i++].text))
-            val other = from.take(key.length)
+            val other = from.toString().take(key.length)
             if (other.isNotEmpty() && other[0] == key[0] && commonShare(key, other) >= ECHO_SIMILARITY) return true
         }
         return false
