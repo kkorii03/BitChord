@@ -43,7 +43,7 @@ object FriendlyError {
     fun reason(context: Context, rawReason: String): String = when (rawReason) {
         SourceFormats.NOT_ADDON_URL -> context.getString(R.string.source_addon_not_addon)
         SourceFormats.REPOSITORY_URL -> context.getString(R.string.source_addon_repository_url)
-        else -> reasonResource(rawReason)?.let(context::getString) ?: rawReason
+        else -> reasonResource(rawReason)?.let { context.getString(it) } ?: rawReason
     }
 
     /** The string [reason] swaps in, or null when the reason is shown as written. */
