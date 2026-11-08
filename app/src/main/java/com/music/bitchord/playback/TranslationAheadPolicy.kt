@@ -13,13 +13,19 @@ package com.music.bitchord.playback
  * defers it like every other background job: [allowHeavy] is false while the
  * phone saves power, and turning power saving off is what makes it true again.
  * Everywhere else the next track gets its lyrics only, and the heavy pass is
- * made once it is actually playing (see `TranslationAhead.trackStarted`). A
- * track AutoPlay may replace is not prepared at all: its id is not the one that
- * will be current.
+ * made once it is actually playing (see `TranslationAhead.trackStarted`).
+ *
+ * A track AutoPlay added gets only its translation ahead, and only where the
+ * whole pass would be allowed. It used to get nothing, on the grounds that
+ * AutoPlay may replace it — but the user's 11-07/08 log had all 21 natural
+ * transitions land on an AutoPlay row, each the very row the next-song bundle
+ * had prepared, so the translation was made at every song start instead of
+ * before it. Timing stays with [TranslationAhead.trackStarted] for those rows
+ * (the next-song bundle already times them); only the text request moves.
  */
 internal object TranslationAheadPolicy {
 
-    enum class Plan { NONE, LYRICS_ONLY, FULL }
+    enum class Plan { NONE, LYRICS_ONLY, TRANSLATION_ONLY, FULL }
 
     /**
      * @param metered true on mobile data, false on an unmetered connection,
@@ -37,7 +43,7 @@ internal object TranslationAheadPolicy {
     ): Plan = when {
         // Nothing to fetch over, or a slot that may not survive to playback.
         metered == null -> Plan.NONE
-        autoplayUncertain -> Plan.NONE
+        autoplayUncertain -> if (metered == false && allowHeavy) Plan.TRANSLATION_ONLY else Plan.NONE
         metered == true && lowPower -> Plan.NONE
         // Free enough for the whole pass: Wi-Fi (unmetered) with heavy work allowed.
         metered == false && allowHeavy -> Plan.FULL

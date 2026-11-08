@@ -218,7 +218,7 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
                 lines,
                 targetLanguageTag,
                 keep = keep,
-            )
+            ).also { com.music.bitchord.playback.TranslationAhead.logPlayerTranslation(trackId, targetLanguageTag, it) } // [KO] translation-log
         ) {
             is LyricsTranslation.Result.Translated -> LyricsTranslationResult.Translated(
                 lines = result.lines,

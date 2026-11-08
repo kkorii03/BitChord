@@ -276,8 +276,8 @@ import com.music.bitchord.playback.SkipAction
  *
  * Lyrics are always worth fetching ahead; timing and translation only on
  * an unmetered connection when heavy work is allowed (see
- * [TranslationAheadPolicy]). A slot AutoPlay may
- * replace is not prepared at all, and the heavy pass for the track that is
+ * [TranslationAheadPolicy]). A slot AutoPlay added gets
+ * its translation only, and the heavy pass for the track that is
  * actually playing is made when it starts — [scheduleCurrentTranslationAhead].
  */
 internal fun PlaybackService.koScheduleTranslationAhead() {
@@ -299,6 +299,7 @@ internal fun PlaybackService.koScheduleTranslationAhead() {
             next,
             allowHeavy = plan == TranslationAheadPolicy.Plan.FULL,
             paidGate = { koAwaitTranslationAheadAiGate() },
+            translateOnly = plan == TranslationAheadPolicy.Plan.TRANSLATION_ONLY,
         )
     }
 }
