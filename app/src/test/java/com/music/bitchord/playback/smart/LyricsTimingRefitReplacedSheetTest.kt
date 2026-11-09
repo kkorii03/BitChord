@@ -159,11 +159,17 @@ class LyricsTimingRefitReplacedSheetTest {
         val heard = dropped.map {
             com.music.bitchord.data.lyrics.LyricsWordAlign.Heard(it.text, it.timeMs + 18_000L, it.timeMs + 18_400L)
         }
+        // The third sheet's own words, sung where its lines say: its refit stays in the entry.
+        seed("other", keyOf(third), third.joinToString(",") { """{"t":"${it.text}","s":${it.timeMs},"e":${it.timeMs + 600}}""" })
         skipFarm("other")
         LyricsTiming.newestSongKey["other"] = keyOf(shownFirst)
         LyricsTiming.keepQuickVideoAnswer(context, "other", keyOf(dropped), fit, heard, LyricsTiming.Clock.YouTube, rough = true)
 
-        assertEquals(false, LyricsTiming.refit(context, video("other"), third, null))
-        assertEquals(null, LyricsTiming.timing(context, "other", third, baseAllowed = true, isVideo = true)?.base)
+        LyricsTiming.refit(context, video("other"), third, null)
+        val base = LyricsTiming.timing(context, "other", third, baseAllowed = true, isVideo = true)?.base
+        assertTrue(
+            "nothing of the other sheet's +18 s",
+            base == null || kotlin.math.abs(LyricsTiming.shownShiftMs(third, base)) < 1_000L,
+        )
     }
 }
