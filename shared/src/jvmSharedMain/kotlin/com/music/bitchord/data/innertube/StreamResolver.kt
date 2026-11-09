@@ -19,6 +19,7 @@ import com.music.bitchord.data.net.ResolveBooking
 import com.music.bitchord.data.net.YouTubeProxy
 import com.music.bitchord.data.net.raceForFirstSuccess
 import com.music.bitchord.data.net.raceLateLeg
+import com.music.bitchord.data.net.startProxyLeg as launchProxyLeg
 import com.music.bitchord.ko.KoDirectBench
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -766,23 +767,32 @@ object StreamResolver {
         // A leg whose early-race window closed while it was still asking. The
         // no-stream fallback below races it instead of throwing its answer away.
         var lateProxy: Deferred<Stream?>? = null
+        // When the leg's ceiling runs out; only a wait on the leg alone reads it.
+        var proxyLegDeadline = Long.MAX_VALUE
+
+        /** What is left of the leg's ceiling, for [raceLateLeg]'s wait on it alone. */
+        fun proxyLegAloneMs(): Long =
+            if (proxyLegDeadline == Long.MAX_VALUE) Long.MAX_VALUE
+            else (proxyLegDeadline - MonotonicClock.nowMs()).coerceAtLeast(0L)
 
         /**
          * The proxy walk as a leg of its own, outside the window's race, so the
-         * window closing stops waiting for it without cancelling it. Bounded by
-         * [BlockedStartPolicy.lateProxyCeilingMs]: at most the grace past the
-         * window it was started for.
+         * window closing stops waiting for it without cancelling it. While the
+         * walk it races is still asking it keeps asking too (see
+         * [launchProxyLeg]); waited for alone it gets
+         * [BlockedStartPolicy.lateProxyCeilingMs] from its start.
          */
-        fun startProxyLeg(windowMs: Long, onFailure: (Exception) -> Unit = {}): Deferred<Stream?> =
-            resolverScope.async(TrackLog.about(videoId)) {
+        fun startProxyLeg(windowMs: Long, onFailure: (Exception) -> Unit = {}): Deferred<Stream?> {
+            val ceilingMs = BlockedStartPolicy.lateProxyCeilingMs(windowMs)
+            proxyLegDeadline =
+                if (ceilingMs == Long.MAX_VALUE) Long.MAX_VALUE else MonotonicClock.nowMs() + ceilingMs
+            return launchProxyLeg(resolverScope, TrackLog.about(videoId), ceilingMs) {
                 try {
-                    withTimeoutOrNull(BlockedStartPolicy.lateProxyCeilingMs(windowMs)) {
-                        // Its memory is held by [booking] until the stream is
-                        // adopted ([adoptProxyLeg]); a leg the walk beat leaves none.
-                        resolveViaProxy(videoId, remember = { url, generation ->
-                            booking.proxyAnswered { rememberProxyStream(videoId, url, generation) }
-                        })
-                    }
+                    // Its memory is held by [booking] until the stream is
+                    // adopted ([adoptProxyLeg]); a leg the walk beat leaves none.
+                    resolveViaProxy(videoId, remember = { url, generation ->
+                        booking.proxyAnswered { rememberProxyStream(videoId, url, generation) }
+                    })
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (failure: Exception) {
@@ -790,6 +800,7 @@ object StreamResolver {
                     null
                 }
             }.also { proxyLeg = it }
+        }
 
         /**
          * Whether the leg survives its window: [won] is the window's stream.
@@ -1149,7 +1160,7 @@ object StreamResolver {
                     // leg gets the rest of its ceiling alone, then the old
                     // verdict below applies.
                     val walkRest: suspend () -> Stream? = { finalRace() }
-                    when (val late = raceLateLeg(lateLeg, if (skipWalk) null else walkRest)) {
+                    when (val late = raceLateLeg(lateLeg, if (skipWalk) null else walkRest, { proxyLegAloneMs() })) {
                         is LateLegRace.Late -> {
                             adoptProxyLeg(late.value, late = true)
                             itx.cancel()
@@ -1372,7 +1383,7 @@ object StreamResolver {
                 // recording (GONE) does not wait for it.
                 val lateLeg = lateProxy.also { lateProxy = null }
                 suspend fun orLateProxy(rest: (suspend () -> Stream?)?): Stream? {
-                    val outcome = raceLateLeg(lateLeg, rest)
+                    val outcome = raceLateLeg(lateLeg, rest, { proxyLegAloneMs() })
                     if (outcome is LateLegRace.Late) {
                         adoptProxyLeg(outcome.value, late = true)
                         itxEarly?.cancel()

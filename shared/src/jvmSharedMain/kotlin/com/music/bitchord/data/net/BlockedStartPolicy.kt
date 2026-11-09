@@ -271,8 +271,10 @@ object BlockedStartPolicy {
 
     /**
      * The proxy leg's own ceiling, measured from the moment it starts: its
-     * window plus [LATE_PROXY_GRACE_MS]. An unbounded window (outside the gate,
-     * no refusal yet) stays unbounded, exactly as before, so no leg there
+     * window plus [LATE_PROXY_GRACE_MS]. It bounds only a wait on the leg
+     * alone; while the walk it races is still asking, the leg is not cut (rs22
+     * 182a T1tl66trXTQ: answer 1.2 s past the ceiling, walk 143 s later).
+     * An unbounded window (outside the gate, no refusal yet) stays unbounded, exactly as before, so no leg there
      * ever outlives it. A spent window ([windowMs] <= 0) starts no leg at all.
      */
     fun lateProxyCeilingMs(windowMs: Long): Long = when {

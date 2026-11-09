@@ -10,6 +10,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.selects.select
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.coroutines.CoroutineContext
 
 /**
  * The two-route race kept out of the resolver: when a proxy is usable, the
@@ -114,19 +116,24 @@ internal sealed class LateLegRace<out T> {
  *                                     a verdict about the recording ends the start
  *  - the caller is cancelled       -> both are cancelled
  *
- * The leg's own ceiling ([BlockedStartPolicy.lateProxyCeilingMs]) bounds the
- * wait; no timer or poll is added here. [rest] runs on the shared race scope,
+ * The leg's ceiling ([BlockedStartPolicy.lateProxyCeilingMs], handed in as
+ * [aloneWithinMs]) bounds only the wait on the leg alone (no [rest], or a
+ * [rest] that found nothing); the only timer is that one `withTimeoutOrNull`,
+ * no poll. [rest] runs on the shared race scope,
  * like [raceForFirstSuccess]'s routes, so a win does not wait for a loser's
  * blocking HTTP call to come back.
  */
 internal suspend fun <T : Any> raceLateLeg(
     late: Deferred<T?>?,
     rest: (suspend () -> T?)?,
+    // How much of the leg's ceiling is left, read when the leg is waited for
+    // alone. While [rest] is still asking the leg is not cut by it.
+    aloneWithinMs: () -> Long = { Long.MAX_VALUE },
 ): LateLegRace<T> {
     if (late == null) return LateLegRace.Rest(rest?.invoke())
     if (rest == null) {
         val alone = try {
-            awaitLeg(late)
+            awaitLegAlone(late, aloneWithinMs())
         } catch (cancelled: CancellationException) {
             late.cancel()
             throw cancelled
@@ -146,7 +153,7 @@ internal suspend fun <T : Any> raceLateLeg(
                 late.cancel()
                 return LateLegRace.Rest(walked)
             }
-            val proxied = awaitLeg(late)
+            val proxied = awaitLegAlone(late, aloneWithinMs())
             return if (proxied != null) LateLegRace.Late(proxied) else LateLegRace.Rest(null)
         }
         val proxied = awaitLeg(late)
@@ -160,6 +167,33 @@ internal suspend fun <T : Any> raceLateLeg(
         late.cancel()
         throw t
     }
+}
+
+/**
+ * The proxy walk as a leg of its own. It has no clock of its own: while the
+ * walk it races is still asking, its first usable answer wins whenever it
+ * lands. rs22 182a T1tl66trXTQ (Hello): the proxy stream came 4.2 s after the
+ * window, 1.2 s past the 3 s grace that used to cut the leg, while the walk sat
+ * 143 s behind the cipher queue; the row never made a sound. A walk win, a
+ * verdict, a track change or the resolve's finally stops it, and waiting for
+ * it alone is bounded by [raceLateLeg]'s `aloneWithinMs`. A spent window
+ * ([ceilingMs] <= 0) asks nothing, as before.
+ */
+internal fun <T : Any> startProxyLeg(
+    scope: CoroutineScope,
+    context: CoroutineContext,
+    ceilingMs: Long,
+    ask: suspend () -> T?,
+): Deferred<T?> = scope.async(context) {
+    if (ceilingMs <= 0L) null else ask()
+}
+
+/** The leg's answer when nothing else is asking: at most [withinMs] more, then it is stopped. */
+private suspend fun <T : Any> awaitLegAlone(late: Deferred<T?>, withinMs: Long): T? {
+    if (late.isCompleted || withinMs == Long.MAX_VALUE) return awaitLeg(late)
+    val answer = withTimeoutOrNull(withinMs.coerceAtLeast(0L)) { awaitLeg(late) }
+    if (answer == null) late.cancel()
+    return answer
 }
 
 /** The leg's answer; a leg that failed or was stopped by someone else is no answer. */

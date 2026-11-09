@@ -14,6 +14,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -227,6 +228,65 @@ class LateProxyLegTest {
             BlockedStartPolicy.lateProxyCeilingMs(BlockedStartPolicy.RESOLVER_BUDGET_MS) <=
                 BlockedStartPolicy.TOTAL_BUDGET_MS,
         )
+    }
+
+    /** The resolver's leg: [startProxyLeg] plus what is left of its ceiling, read when awaited alone. */
+    private class CeilingLeg(ceilingMs: Long, ask: suspend () -> String?, scope: CoroutineScope) {
+        private val deadline = System.nanoTime() / 1_000_000 + ceilingMs
+        val answer: Deferred<String?> = startProxyLeg(scope, EmptyCoroutineContext, ceilingMs, ask)
+        fun aloneMs(): Long = (deadline - System.nanoTime() / 1_000_000).coerceAtLeast(0L)
+    }
+
+    @Test
+    fun `a leg past its ceiling still wins while the walk is asking`() = runBlocking<Unit> {
+        // rs22 182a T1tl66trXTQ scaled down: ceiling 100 ms, proxy stream at
+        // 250 ms (1.2 s past the real ceiling), walk 143 s later (here 3 s).
+        val began = System.nanoTime()
+        val leg = CeilingLeg(ceilingMs = 100, ask = { delay(250); "proxy-url" }, scope = legScope)
+        val walk: suspend () -> String? = { delay(3_000); "walk-url" }
+        val outcome = raceLateLeg(leg.answer, walk, leg::aloneMs)
+        val tookMs = (System.nanoTime() - began) / 1_000_000
+        assertTrue(outcome is LateLegRace.Late && outcome.value == "proxy-url", "the proxy stream is played ($outcome)")
+        assertTrue(tookMs < 1_500, "not after the walk ($tookMs ms)")
+    }
+
+    @Test
+    fun `a leg waited for alone still stops at its ceiling`() = runBlocking<Unit> {
+        val began = System.nanoTime()
+        val leg = CeilingLeg(ceilingMs = 150, ask = { delay(3_000); "proxy-url" }, scope = legScope)
+        val outcome = raceLateLeg(leg.answer, null, leg::aloneMs)
+        val tookMs = (System.nanoTime() - began) / 1_000_000
+        assertTrue(outcome is LateLegRace.Rest && outcome.value == null)
+        assertTrue(tookMs < 1_500, "the verdict is not held past the ceiling ($tookMs ms)")
+        assertTrue(leg.answer.isCancelled, "the leg stops asking at its ceiling")
+    }
+
+    @Test
+    fun `a walk that found nothing waits for the leg only to its ceiling`() = runBlocking<Unit> {
+        val began = System.nanoTime()
+        val leg = CeilingLeg(ceilingMs = 200, ask = { delay(3_000); "proxy-url" }, scope = legScope)
+        val walk: suspend () -> String? = { delay(50); null }
+        val outcome = raceLateLeg(leg.answer, walk, leg::aloneMs)
+        val tookMs = (System.nanoTime() - began) / 1_000_000
+        assertTrue(outcome is LateLegRace.Rest && outcome.value == null)
+        assertTrue(tookMs < 1_500, "the fallback goes on at the ceiling ($tookMs ms)")
+        assertTrue(leg.answer.isCancelled)
+    }
+
+    @Test
+    fun `a walk that found nothing still takes a leg answering inside its ceiling`() = runBlocking<Unit> {
+        val leg = CeilingLeg(ceilingMs = 1_000, ask = { delay(200); "proxy-url" }, scope = legScope)
+        val walk: suspend () -> String? = { delay(50); null }
+        val outcome = raceLateLeg(leg.answer, walk, leg::aloneMs)
+        assertTrue(outcome is LateLegRace.Late && outcome.value == "proxy-url")
+    }
+
+    @Test
+    fun `a spent window starts no proxy request`() = runBlocking<Unit> {
+        val asked = AtomicInteger()
+        val leg = startProxyLeg(legScope, EmptyCoroutineContext, 0L) { asked.incrementAndGet(); "proxy-url" }
+        assertNull(leg.await())
+        assertEquals(0, asked.get())
     }
 
     @Test
