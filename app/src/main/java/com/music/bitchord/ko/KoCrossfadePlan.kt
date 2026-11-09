@@ -1,9 +1,13 @@
 package com.music.bitchord.ko
 
 import androidx.media3.common.C
+import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.innertube.StreamResolver
+import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.playback.audio.bitperfect.BitPerfectOutput
 import com.music.bitchord.playback.CrossfadeController
 import com.music.bitchord.playback.CrossfadeSkipReason
 import com.music.bitchord.playback.isVideoRow
@@ -56,6 +60,117 @@ internal fun CrossfadeController.koSkipAutoTransition(player: ExoPlayer): Boolea
         return true
     }
     return false
+}
+
+/**
+ * [KO] automix-preview-log
+ *
+ * Why the controller has no Automix plan for the pair playing now, in the order
+ * [CrossfadeController.planAutoTransition] gives up — or null when it should
+ * have one. Pure, so the order is tested.
+ */
+internal object KoMixPreviewWhy {
+    fun reason(
+        automixOn: Boolean,
+        inParty: Boolean,
+        bitPerfect: Boolean,
+        hasNext: Boolean,
+        durationKnown: Boolean,
+        pairSkipped: Boolean,
+        nextUnplayable: Boolean,
+        formatsMix: Boolean,
+        repeatOne: Boolean,
+        videoPairPlain: Boolean,
+    ): String? = when {
+        !automixOn -> "automix-off"
+        inParty -> "listen-together"
+        bitPerfect -> "bit-perfect"
+        !hasNext -> "no-next-track"
+        !durationKnown -> "no-duration-yet"
+        pairSkipped -> "pair-skipped"
+        nextUnplayable -> "next-unplayable"
+        !formatsMix -> "format-mismatch"
+        repeatOne -> "repeat-one"
+        videoPairPlain -> "video-pair-plain-crossfade"
+        else -> null
+    }
+
+    /**
+     * Reasons the playing path refuses a pair before planning but the paused
+     * marker path used to plan anyway, so a paused track (and the mix popup
+     * opened on it) showed a mix that was never going to play.
+     */
+    fun refusesPausedMarker(reason: String?): Boolean =
+        reason == "bit-perfect" || reason == "pair-skipped" || reason == "next-unplayable" || reason == "format-mismatch"
+}
+
+/** [KO] automix-preview-log: [KoMixPreviewWhy.reason] read off the session player. */
+internal fun CrossfadeController.koNoPlanReason(player: ExoPlayer): String? {
+    val current = player.currentMediaItem
+    val nextIndex = player.nextMediaItemIndex
+    val next = if (nextIndex == C.INDEX_UNSET) null else player.getMediaItemAt(nextIndex)
+    val duration = player.duration
+    return KoMixPreviewWhy.reason(
+        automixOn = AppSettings.smartFadeEnabled.value,
+        inParty = ListenTogether.state.value.inParty,
+        bitPerfect = BitPerfectOutput.status.value.active,
+        hasNext = current != null && next != null,
+        // A paused track plans its marker off the queued runtime instead.
+        durationKnown = !player.isPlaying || (duration != C.TIME_UNSET && duration > 0L),
+        pairSkipped = current != null && next != null && ko.skippedPair == (current.mediaId to next.mediaId),
+        nextUnplayable = next != null && StreamResolver.isUnplayable(next.mediaId),
+        formatsMix = current == null || next == null || canMix(current, next),
+        repeatOne = player.repeatMode == Player.REPEAT_MODE_ONE,
+        videoPairPlain = AutomixWorkPolicy.videoPairNeedsPlainCrossfade(
+            automixVideos = AppSettings.automixVideos.value,
+            currentIsVideo = current?.isVideoRow == true,
+            nextIsVideo = next?.isVideoRow == true,
+        ),
+    )
+}
+
+/**
+ * [KO] crossfade-skip
+ *
+ * The paused marker plans through [CrossfadeController.considerSmartTransition]
+ * directly, past the pair rules [koSkipAutoTransition] applies while playing.
+ * A pair those rules refuse gets no marker and no popup plan either.
+ */
+internal fun CrossfadeController.koPausedMarkerRefused(player: ExoPlayer): Boolean {
+    if (!KoMixPreviewWhy.refusesPausedMarker(koNoPlanReason(player))) return false
+    AppSettings.smartTransitionWindow.value = null
+    return true
+}
+
+/**
+ * [KO] automix-preview-log
+ *
+ * One BitChord line when the mix popup is open and no plan reached it, naming
+ * why, so a phone log says whether "예정된 자동 믹스 전환이 없습니다" was the
+ * rules or a planner that never ran. Once per pair and reason; nothing while
+ * the popup is closed.
+ */
+internal fun CrossfadeController.koLogMissingPreview() {
+    if (!AppSettings.mixViewOpen.value ||
+        AppSettings.smartMixView.value != null ||
+        AppSettings.smartMixPreview.value != null
+    ) {
+        ko.lastPreviewWhy = ""
+        return
+    }
+    val player = active()
+    val current = player.currentMediaItem
+    val nextIndex = player.nextMediaItemIndex
+    val nextId = if (nextIndex == C.INDEX_UNSET) null else player.getMediaItemAt(nextIndex).mediaId
+    val why = koNoPlanReason(player) ?: when {
+        phase != CrossfadeController.Phase.IDLE -> "phase-${phase.name.lowercase()}"
+        else -> "planner-stopped-early playing=${player.isPlaying} pos=${player.currentPosition}"
+    }
+    val pair = "${current?.mediaId}->$nextId"
+    val key = "$pair|${why.substringBefore(" pos=")}"
+    if (key == ko.lastPreviewWhy) return
+    ko.lastPreviewWhy = key
+    TrackLog.d("BitChord", "automix-preview: none for $pair because $why", about = current?.mediaId)
 }
 
 /** [KO] crossfade-video-fallback */

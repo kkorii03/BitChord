@@ -25,6 +25,7 @@ import com.music.bitchord.ko.koCurrentPlayingVerification
 import com.music.bitchord.ko.koAwaitPlayerCondition
 import com.music.bitchord.ko.koLosslessAheadItem
 import com.music.bitchord.ko.koLogHqAhead
+import com.music.bitchord.ko.koFollowSession
 import com.music.bitchord.ko.koRefreshArmedIncomingLossless
 
 import android.app.PendingIntent
@@ -3703,6 +3704,7 @@ class PlaybackService : MediaLibraryService() {
 
         player = incoming
         spare = outgoing
+        crossfade?.koFollowSession("version swap") // [KO] crossfade-follow
 
         val heldFilter = activeFilter
         activeFilter = spareFilter

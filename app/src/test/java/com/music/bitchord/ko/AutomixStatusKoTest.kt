@@ -18,6 +18,63 @@ import org.junit.Test
  */
 class AutomixStatusKoTest {
 
+    @Test
+    fun `a plan made for the previous pair does not count down on the next song`() {
+        // vc192: WINTER FLOWER -> Titanium planned, then Titanium playing with
+        // the same "필터 믹스 203초 후" line from the old pair.
+        val planned = "nVSZsRM3-IE" to "Q6dWAkdnGrI"
+        assertTrue(AutomixStatusKo.planDescribes(planned, "nVSZsRM3-IE", "Q6dWAkdnGrI"))
+        assertFalse(AutomixStatusKo.planDescribes(planned, "Q6dWAkdnGrI", "YttXwTpAOB0"))
+        assertFalse(AutomixStatusKo.planDescribes(planned, "nVSZsRM3-IE", "YttXwTpAOB0"))
+        assertFalse(AutomixStatusKo.planDescribes(null, "nVSZsRM3-IE", "Q6dWAkdnGrI"))
+    }
+
+    @Test
+    fun `a video pair with Automix on for videos has a plan to show`() {
+        assertEquals(
+            null,
+            KoMixPreviewWhy.reason(
+                automixOn = true, inParty = false, bitPerfect = false, hasNext = true, durationKnown = true,
+                pairSkipped = false, nextUnplayable = false, formatsMix = true, repeatOne = false,
+                videoPairPlain = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `the popup log names the first rule that stops the plan`() {
+        fun why(
+            automixOn: Boolean = true,
+            inParty: Boolean = false,
+            bitPerfect: Boolean = false,
+            pairSkipped: Boolean = false,
+            formatsMix: Boolean = true,
+            videoPairPlain: Boolean = false,
+        ) = KoMixPreviewWhy.reason(
+            automixOn = automixOn, inParty = inParty, bitPerfect = bitPerfect, hasNext = true, durationKnown = true,
+            pairSkipped = pairSkipped, nextUnplayable = false, formatsMix = formatsMix, repeatOne = false,
+            videoPairPlain = videoPairPlain,
+        )
+        assertEquals("automix-off", why(automixOn = false, inParty = true))
+        assertEquals("listen-together", why(inParty = true, bitPerfect = true))
+        assertEquals("bit-perfect", why(bitPerfect = true, pairSkipped = true))
+        assertEquals("pair-skipped", why(pairSkipped = true, formatsMix = false))
+        assertEquals("format-mismatch", why(formatsMix = false, videoPairPlain = true))
+        assertEquals("video-pair-plain-crossfade", why(videoPairPlain = true))
+    }
+
+    @Test
+    fun `a paused track shows no mix that the playing path would refuse`() {
+        assertTrue(KoMixPreviewWhy.refusesPausedMarker("bit-perfect"))
+        assertTrue(KoMixPreviewWhy.refusesPausedMarker("pair-skipped"))
+        assertTrue(KoMixPreviewWhy.refusesPausedMarker("next-unplayable"))
+        assertTrue(KoMixPreviewWhy.refusesPausedMarker("format-mismatch"))
+        // These the paused path already handles itself, or still plans a marker for.
+        assertFalse(KoMixPreviewWhy.refusesPausedMarker(null))
+        assertFalse(KoMixPreviewWhy.refusesPausedMarker("video-pair-plain-crossfade"))
+        assertFalse(KoMixPreviewWhy.refusesPausedMarker("no-duration-yet"))
+    }
+
     private val loop = Loop(
         outBars = 4,
         outCheck = Check.LYRICS,

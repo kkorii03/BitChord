@@ -46,4 +46,10 @@ internal class KoCrossfadeState {
     /** The session-side player during a bail, and the faded gain it starts from. */
     var bailSurvivor: ExoPlayer? = null
     var bailSurvivorFromGain = 1f
+
+    /** The pair (outgoing, incoming media id) the controller's last Automix plan was made for. */
+    var lastSmartPlanPair: Pair<String, String>? = null
+
+    /** The last "no preview" line logged for an open mix popup, so it is written once per pair and reason. */
+    var lastPreviewWhy = ""
 }
