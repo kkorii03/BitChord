@@ -130,6 +130,8 @@ class PrecisionAudioSink(
      */
     private val silenceSkipper = SilenceSkipper()
 
+    private val resumeCeiling = com.music.bitchord.ko.playback.KoResumeCeiling { com.music.bitchord.data.TrackLog.d("BitChord", it) } // [KO] resume-clock
+
     /** The renderer's unadjusted offset for the current output stream. */
     private var outputStreamOffsetUs: Long = C.TIME_UNSET
 
@@ -680,7 +682,17 @@ class PrecisionAudioSink(
             port.positionUs = position - port.streamOffsetUs
             port.positionNanos = System.nanoTime()
         }
-        return position
+        return resumeCeiling.position(position, System.nanoTime(), playbackParameters.speed, allowed = !silenceSkipper.enabled && port.outArm == null && port.inArm == null) // [KO] resume-clock
+    }
+
+    override fun play() {
+        resumeCeiling.play(System.nanoTime()) // [KO] resume-clock
+        super.play()
+    }
+
+    override fun pause() {
+        super.pause()
+        resumeCeiling.pause(System.nanoTime()) // [KO] resume-clock
     }
 
     // ---- The Automix loop mix ---------------------------------------------------------------
@@ -843,6 +855,7 @@ class PrecisionAudioSink(
         silenceSkipper.reset()
         skippedFramesForStream = 0L
         SilenceSkipStats.reset()
+        resumeCeiling.clear("flush") // [KO] resume-clock
         if (isPrecisionActive) {
             dspChain.flush()
         }
@@ -872,6 +885,7 @@ class PrecisionAudioSink(
         skippedFramesForStream = 0L
         SilenceSkipStats.reset()
         outputStreamOffsetUs = C.TIME_UNSET
+        resumeCeiling.clear("reset") // [KO] resume-clock
         if (isPrecisionActive) {
             dspChain.reset()
         }
@@ -911,6 +925,7 @@ class PrecisionAudioSink(
     }
 
     override fun handleDiscontinuity() {
+        resumeCeiling.clear("stream change") // [KO] resume-clock
         delegate.handleDiscontinuity()
     }
 
