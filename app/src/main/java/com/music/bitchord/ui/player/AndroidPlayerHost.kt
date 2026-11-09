@@ -76,6 +76,7 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
         override val playerTheme get() = AppSettings.playerTheme
         override val lyricsBlur get() = AppSettings.lyricsBlur
         override val lyricsOffsetMs get() = AppSettings.lyricsOffsetMs
+        override val lyricsOffsetRoute get() = com.music.bitchord.ko.KoLyricsRouteOffset.routeLabel // [KO] per-output lyric offset
         override val lyricsSourceOrder get() = AppSettings.lyricsSourceOrder
         override val enabledLyricsSources get() = AppSettings.lyricsSources
         override val lowPower get() = AppSettings.lowPower

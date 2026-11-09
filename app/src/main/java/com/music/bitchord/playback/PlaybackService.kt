@@ -11053,6 +11053,7 @@ class PlaybackService : MediaLibraryService() {
             bluetoothTelemetry = btTelemetry,
             systemMixerRateHz = if (routeKind == AudioRouting.Kind.USB) 48000 else null,
         )
+        com.music.bitchord.ko.KoLyricsRouteOffset.onRoute(activeDevice, routeKind) // [KO] per-output lyric offset
 
         if (format != null) {
             resolvePreferredOutputEncoding(format)

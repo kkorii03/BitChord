@@ -98,6 +98,7 @@ internal fun LyricsOffsetSheet(
     song: SongLyricsSync? = null,
 ) {
     val offsetMs by PlayerSettings.lyricsOffsetMs.collectAsStateWithLifecycle()
+    val routeLabel by PlayerSettings.lyricsOffsetRoute.collectAsStateWithLifecycle() // [KO] per-output lyric offset
     val haptics = rememberHaptics()
     var drag by remember { mutableFloatStateOf(0f) }
     var height by remember { mutableIntStateOf(0) }
@@ -242,6 +243,16 @@ internal fun LyricsOffsetSheet(
                         .padding(horizontal = 12.dp, vertical = 14.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
+                    routeLabel?.let { label -> // [KO] per-output lyric offset
+                        Text(
+                            text = label,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = Color.White.copy(alpha = 0.55f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(bottom = 4.dp),
+                        )
+                    }
                     Text(
                         text = formatOffset(offsetMs),
                         style = MaterialTheme.typography.headlineMedium.copy(
