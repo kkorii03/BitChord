@@ -185,7 +185,7 @@ internal fun <T : Any> startProxyLeg(
     ceilingMs: Long,
     ask: suspend () -> T?,
 ): Deferred<T?> = scope.async(context) {
-    if (ceilingMs <= 0L) null else ask()
+    if (ceilingMs <= 0L) null else withTimeoutOrNull(ceilingMs) { ask() } // REPRO: old cut at the ceiling
 }
 
 /** The leg's answer when nothing else is asking: at most [withinMs] more, then it is stopped. */
