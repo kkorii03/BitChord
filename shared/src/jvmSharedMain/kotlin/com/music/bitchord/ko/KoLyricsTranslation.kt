@@ -2,6 +2,7 @@ package com.music.bitchord.ko
 
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.LocaleTags
+import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsTranslation
 import com.music.bitchord.data.lyrics.LyricsTranslation.CachedTranslation
@@ -370,8 +371,14 @@ object KoLyricsTranslation {
         parse: (String) -> T?,
     ): T? {
         val key = cleanGeminiKey()
-        if (key.isEmpty() || key == rejectedGeminiKey) return null
-        if (System.currentTimeMillis() < geminiCooldownUntil) return null
+        if (key.isEmpty() || key == rejectedGeminiKey) {
+            TrackLog.w(GEMINI_TAG, "ask skipped: ${if (key.isEmpty()) "no key" else "key was refused earlier"}")
+            return null
+        }
+        if (System.currentTimeMillis() < geminiCooldownUntil) {
+            TrackLog.w(GEMINI_TAG, "ask skipped: resting ${(geminiCooldownUntil - System.currentTimeMillis()) / 1000}s after quota refusals")
+            return null
+        }
         var quotaRefusals = 0
         val requestBody = geminiRequestBody(body, audioWav)
         for (model in models) {
@@ -385,14 +392,17 @@ object KoLyricsTranslation {
                 client.newCall(request).awaitResponse()
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: IOException) {
+            } catch (failure: IOException) {
+                TrackLog.w(GEMINI_TAG, "$model: ${failure.javaClass.simpleName} (${if (failure is java.io.InterruptedIOException) "timeout" else "network"}) ${failure.message.orEmpty().take(120)}")
                 return null
             }
             codes?.add(code)
+            if (code !in 200..299) TrackLog.w(GEMINI_TAG, "$model: HTTP $code ${errorSummary(text)}")
             when {
                 code in 200..299 -> {
                     val parsed = parse(text)
                     if (parsed != null) return parsed
+                    TrackLog.w(GEMINI_TAG, "$model: HTTP $code but unusable: ${emptySummary(text)}")
                     // A malformed answer from one model is worth one more try
                     // on the other before giving up on Gemini for this song.
                 }
@@ -418,6 +428,24 @@ object KoLyricsTranslation {
         }
         return null
     }
+
+    private const val GEMINI_TAG = "GeminiAsk"
+
+    /** `error.status: message` of a failed response, cut short; the key is never in it. */
+    private fun errorSummary(response: String): String = runCatching {
+        val error = json.parseToJsonElement(response).jsonObject["error"]!!.jsonObject
+        "${error["status"]?.jsonPrimitive?.contentOrNull.orEmpty()}: ${error["message"]?.jsonPrimitive?.contentOrNull.orEmpty()}"
+    }.getOrElse { response }.replace(Regex("[\\r\\n]+"), " ").replace(Regex("[0-9A-Za-z_-]{30,}"), "[long-token]").take(120)
+
+    /** Why a 2xx response had nothing usable: block reason, finish reason, or the shape of the text. */
+    private fun emptySummary(response: String): String = runCatching {
+        val root = json.parseToJsonElement(response).jsonObject
+        val block = root["promptFeedback"]?.jsonObject?.get("blockReason")?.jsonPrimitive?.contentOrNull
+        val candidates = root["candidates"]?.jsonArray
+        val finish = candidates?.firstOrNull()?.jsonObject?.get("finishReason")?.jsonPrimitive?.contentOrNull
+        val chars = runCatching { geminiText(response).length }.getOrDefault(-1)
+        "blockReason=$block candidates=${candidates?.size ?: 0} finishReason=$finish textChars=$chars"
+    }.getOrElse { "unparseable response, ${response.length} chars" }
 
     /** The model's own text out of a generateContent response, thoughts and fences removed. */
     private fun geminiText(response: String): String {
