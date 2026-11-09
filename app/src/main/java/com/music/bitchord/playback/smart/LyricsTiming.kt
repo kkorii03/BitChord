@@ -888,9 +888,26 @@ object LyricsTiming {
 
     /** Whether an answer from words heard on the stream would survive [timing] on [videoId]'s file. */
     internal fun streamWordsReachFile(context: Context, videoId: String): Boolean {
+        // A file cut from another upload is another recording: its stream's words
+        // are not the file's on any clock (phone 11-10 4rsheRU_bdQ, 1.4-1.9 s apart).
+        if (fileOfAnotherUpload(videoId) != null) return false
         val meta = KoDownloadRecords.savedMetadataFor(videoId)
         val file = clockForLocalCopy(meta?.hqSourceConfigId, meta?.hqTrackId)
         return conversion(context, videoId, Clock.YouTube, file) != null
+    }
+
+    /**
+     * The file playing for [videoId] when its sound was fetched from another upload
+     * (a video filed under the release it resolved to, or the reverse), else null.
+     * Such a row must be heard from the file: [videoId]'s own stream is a different
+     * recording. A chosen stream or a file proved wrong plays the stream instead.
+     */
+    internal fun fileOfAnotherUpload(videoId: String): String? {
+        if (StreamChoice.isSubstitute(videoId) || StreamChoice.isYouTube(videoId)) return null
+        val meta = KoDownloadRecords.savedMetadataFor(videoId) ?: return null
+        val source = meta.soundSourceVideoId ?: return null
+        if (source == videoId || meta.wrongRecording) return null
+        return KoDownloadRecords.savedSongFor(videoId)?.localUri?.takeIf { it.isNotBlank() }
     }
 
     /** [adjustment] composed after [conversion]: its map is measured clock → playing clock. */
@@ -3286,7 +3303,15 @@ object LyricsTiming {
         }
         if (deepgramWanted && com.music.bitchord.data.lyrics.Deepgram.usable) {
             val language = com.music.bitchord.data.lyrics.Deepgram.languageFor(texts)
-            val song = Song(videoId = videoId, title = title, artist = artist, thumbnailUrl = null, isVideo = isVideo)
+            // A file cut from another upload is heard from the file, not this id's stream.
+            val song = Song(
+                videoId = videoId,
+                title = title,
+                artist = artist,
+                thumbnailUrl = null,
+                isVideo = isVideo,
+                localUri = fileOfAnotherUpload(videoId),
+            )
             // A playing video also hears its opening with the song check's quick request
             // (Groq when it can answer), beside the whole-song request below, which still
             // runs and replaces it. That request alone answered 8-184 s in on 11-08's phone

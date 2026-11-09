@@ -89,7 +89,7 @@ class LyricsTimingFileClockTest {
         savedFile(pair)
     }
 
-    private fun savedFile(pair: Boolean = true) {
+    private fun savedFile(pair: Boolean = true, soundSource: String? = null, wrong: Boolean = false) {
         Downloads.setSavedMetadata(
             mapOf(
                 id to SavedSongMetadata(
@@ -100,6 +100,8 @@ class LyricsTimingFileClockTest {
                     hqSourceConfigId = if (pair) "src" else null,
                     hqTrackId = if (pair) "track" else null,
                     recordingVerified = true,
+                    soundSourceVideoId = soundSource,
+                    wrongRecording = wrong,
                 ),
             ),
         )
@@ -144,6 +146,36 @@ class LyricsTimingFileClockTest {
         HqVerificationStore.clear(context)
         savedFile(pair = false)
         assertEquals(true, LyricsTiming.streamWordsReachFile(context, id))
+    }
+
+    /** Phone 11-10 4rsheRU_bdQ: a cover video playing a file cut from another upload. */
+    @Test
+    fun `a file cut from another upload is heard from the file, never from this id's stream`() {
+        savedFile(pair = false, soundSource = "other-upload")
+        assertEquals(false, LyricsTiming.streamWordsReachFile(context, id))
+        assertEquals("file:///$id.flac", LyricsTiming.fileOfAnotherUpload(id))
+
+        // The id's own sound, an old record and a file proved wrong keep the stream as before.
+        savedFile(pair = false, soundSource = id)
+        assertEquals(true, LyricsTiming.streamWordsReachFile(context, id))
+        assertNull(LyricsTiming.fileOfAnotherUpload(id))
+        savedFile(pair = false)
+        assertNull(LyricsTiming.fileOfAnotherUpload(id))
+        savedFile(pair = false, soundSource = "other-upload", wrong = true)
+        assertNull(LyricsTiming.fileOfAnotherUpload(id))
+
+        // A chosen stream plays the stream, so the stream is what to hear.
+        savedFile(pair = false, soundSource = "other-upload")
+        streamChosen()
+        assertNull(LyricsTiming.fileOfAnotherUpload(id))
+    }
+
+    @Test
+    fun `the AI ask hears the file a foreign download plays`() {
+        val ask = source("playback/smart/LyricsTiming.kt")
+            .substringAfter("private suspend fun askAi(")
+            .substringBefore("quickVideoAnswer(")
+        assertTrue("localUri = fileOfAnotherUpload(videoId)" in ask)
     }
 
     @Test
