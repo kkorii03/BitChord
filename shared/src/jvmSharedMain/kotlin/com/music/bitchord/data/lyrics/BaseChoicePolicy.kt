@@ -60,9 +60,34 @@ object BaseChoicePolicy {
     fun belowThreshold(score: Score): Boolean =
         score.matched >= MIN_MATCHED_LINES && score.medianAbsMs > RefinePolicy.MAX_SHIFT_MS
 
-    /** Line starts heard in [words], as [LyricsWordAlign] places them. */
-    fun heardStarts(lines: List<String>, words: List<LyricsWordAlign.Heard>): List<Long?> =
-        LyricsWordAlign.placeLines(lines, words)
+    /** How far past the last heard word a line's own start may sit and still be heard: the widest move an answer may make. */
+    const val REACH_MARGIN_MS = LyricsAiGuard.VIDEO_MAX_SHIFT_MS
+
+    /**
+     * Line starts heard in [words], as [LyricsWordAlign] places them. With the
+     * lines' own starts ([lineStartsMs]) only the lines the words can reach are
+     * placed; the rest stay null. An opening listen placed against the whole
+     * sheet lands on a later repeat of the same words (the alignment's ends are
+     * free), so every base looked 80-95 s off and a right one was refused (11-10
+     * sbUKtlkRDvE: `none:95230/0%/17 ai:82050/0%/17 measured:82138/0%/17 -> none`;
+     * the quick fit on the same 105 s of words, in-reach lines only, agreed 100%).
+     */
+    fun heardStarts(
+        lines: List<String>,
+        words: List<LyricsWordAlign.Heard>,
+        lineStartsMs: List<Long>? = null,
+    ): List<Long?> {
+        val lastHeardMs = words.maxOfOrNull { it.endMs }
+        if (lineStartsMs == null || lineStartsMs.size != lines.size || lastHeardMs == null) {
+            return LyricsWordAlign.placeLines(lines, words)
+        }
+        val inReach = lines.indices.filter { lineStartsMs[it] <= lastHeardMs + REACH_MARGIN_MS }
+        if (inReach.size == lines.size) return LyricsWordAlign.placeLines(lines, words)
+        val placed = LyricsWordAlign.placeLines(inReach.map { lines[it] }, words)
+        val starts = arrayOfNulls<Long>(lines.size)
+        inReach.forEachIndexed { at, line -> starts[line] = placed[at] }
+        return starts.toList()
+    }
 
     /**
      * [defaultName] is the candidate the fixed order picked. A different

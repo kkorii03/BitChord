@@ -1141,7 +1141,7 @@ object LyricsTiming {
             onRule(decision.rule)
             return decision.adjustment
         }
-        val heardStarts = BaseChoicePolicy.heardStarts(lines.map { it.text }, heard)
+        val heardStarts = BaseChoicePolicy.heardStarts(lines.map { it.text }, heard, lines.map { it.timeMs })
         val candidates = buildList {
             add(BaseChoicePolicy.Candidate(BaseChoicePolicy.NONE, lines.map { it.timeMs }))
             ai?.let { add(BaseChoicePolicy.Candidate(BaseChoicePolicy.AI, choiceStarts(lines, it))) }
@@ -1991,7 +1991,7 @@ object LyricsTiming {
         } ?: starts
         return@withContext BaseChoicePolicy.grosslyOff(
             seen,
-            BaseChoicePolicy.heardStarts(lines.map { it.text }, heard),
+            BaseChoicePolicy.heardStarts(lines.map { it.text }, heard, lines.map { it.timeMs }),
         )
     }
 
@@ -5272,7 +5272,7 @@ private const val FIRM_FIT_LINES = 15
         val measuredScore = if (lines != null && heard.isNotEmpty()) {
             BaseChoicePolicy.score(
                 choiceStarts(lines, measured),
-                BaseChoicePolicy.heardStarts(lines.map { it.text }, heard),
+                BaseChoicePolicy.heardStarts(lines.map { it.text }, heard, lines.map { it.timeMs }),
             )
         } else {
             null
