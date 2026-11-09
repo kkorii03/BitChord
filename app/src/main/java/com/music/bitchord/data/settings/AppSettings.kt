@@ -1195,6 +1195,7 @@ object AppSettings {
         lyricsBlur.value = prefs.getBoolean(KEY_LYRICS_BLUR, true)
         lyricsOffsetMs.value = prefs.getInt(KEY_LYRICS_OFFSET_MS, 0)
             .coerceIn(MIN_LYRICS_OFFSET_MS, MAX_LYRICS_OFFSET_MS)
+        KoLyricsRouteOffset.afterLoad() // [KO] per-output lyric offset
         translationLanguage.value = prefs.getString(KEY_TRANSLATION_LANGUAGE, "").orEmpty()
         if (highPerformanceMode.value) {
             reduceAnimation.value = false
@@ -1795,6 +1796,7 @@ object AppSettings {
         val normalized = value.coerceIn(MIN_LYRICS_OFFSET_MS, MAX_LYRICS_OFFSET_MS)
         if (lyricsOffsetMs.value == normalized) return
         lyricsOffsetMs.value = normalized
+        if (KoLyricsRouteOffset.saveForRoute(normalized)) return // [KO] per-output lyric offset
         prefs.edit().putInt(KEY_LYRICS_OFFSET_MS, normalized).apply()
     }
 

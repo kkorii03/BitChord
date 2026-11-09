@@ -170,6 +170,7 @@ interface PlayerHost {
 
 private val NoCast = MutableStateFlow(CastUi())
 private val NoAutoTranslate = MutableStateFlow(false)
+private val NoLyricsOffsetRoute = MutableStateFlow<String?>(null)
 private val NoAutomixVideos = MutableStateFlow(false)
 private val NoLowPower = MutableStateFlow(false)
 private val NoVideoRadio = MutableStateFlow(false)
@@ -267,6 +268,8 @@ interface PlayerSettingsSource {
     val playerTheme: StateFlow<PlayerTheme>
     val lyricsBlur: StateFlow<Boolean>
     val lyricsOffsetMs: StateFlow<Int>
+    /** Which output the offset is for ("이 기기(JBL) 전용"), null when it is the built-in speaker's. */
+    val lyricsOffsetRoute: StateFlow<String?> get() = NoLyricsOffsetRoute
     val lyricsSourceOrder: StateFlow<List<LyricsSource>>
     /** The sources ticked in Settings; the provider picker never offers the rest. */
     val enabledLyricsSources: StateFlow<Set<LyricsSource>>

@@ -350,6 +350,7 @@ internal object KoAppSettingsTransfer {
             KEY_LYRICS_SOURCES,
             KEY_LYRICS_SOURCES_SEEN,
             KEY_LYRICS_SOURCE_ORDER,
+            KoLyricsRouteKey.PREF_KEY,
             KEY_PAXSENIX_API_KEY,
             KEY_GEMINI_API_KEY,
             KEY_CONTENT_COUNTRY,
@@ -577,6 +578,7 @@ internal object KoAppSettingsTransfer {
         // Lyrics: providers, order, translation and timing. No API keys.
         put(KEY_LYRICS_BLUR, TransferCategory.LYRICS, TransferType.BOOLEAN)
         put(KEY_LYRICS_OFFSET_MS, TransferCategory.LYRICS, TransferType.INT)
+        put(KoLyricsRouteKey.PREF_KEY, TransferCategory.LYRICS, TransferType.STRING)
         put(KEY_TRANSLATION_LANGUAGE, TransferCategory.LYRICS, TransferType.STRING)
         put(KEY_SYNCED_LYRICS, TransferCategory.LYRICS, TransferType.BOOLEAN)
         put(KEY_LYRICS_SOURCES, TransferCategory.LYRICS, TransferType.STRING_LIST, lyrics)
@@ -705,7 +707,8 @@ internal object KoAppSettingsTransfer {
         KEY_SMART_VERSION_ALIGNMENT -> AppSettings.smartVersionAlignment.value
 
         KEY_LYRICS_BLUR -> AppSettings.lyricsBlur.value
-        KEY_LYRICS_OFFSET_MS -> AppSettings.lyricsOffsetMs.value
+        KEY_LYRICS_OFFSET_MS -> KoLyricsRouteOffset.speakerOffset() // [KO] the speaker's, not the showing route's
+        KoLyricsRouteKey.PREF_KEY -> prefs.getString(KoLyricsRouteKey.PREF_KEY, null) ?: "{}"
         KEY_TRANSLATION_LANGUAGE -> AppSettings.translationLanguage.value
         KEY_SYNCED_LYRICS -> AppSettings.syncedLyrics.value
         KEY_LYRICS_SOURCES -> AppSettings.lyricsSources.value.joinToString(",") { it.name }
