@@ -149,4 +149,36 @@ class LyricsTimingPerLineTest {
         // The straight line first, on its first line; then the stretches, on +40 s.
         assertEquals(40_000L, moves.last())
     }
+
+    // ---- A whole-song fit the shown answer already agrees with (11-09 -RJSbO8UZVY) -------------
+
+    // 56 lines; the whole song heard with its middle missing: 20 lines on the video's +18.55 s,
+    // the next 14 read onto the last choruses (+66.5 s, past the end), the rest unheard.
+    private val mv = (0 until 56).map { line(16_500L + it * 3_000L, "line number $it") }
+    private val mvAll = mv.indices.toList()
+    private val mvHeard = mv.mapIndexed { i, it ->
+        when {
+            i < 20 -> it.timeMs + 18_550L
+            i < 34 -> it.timeMs + 66_500L
+            else -> null
+        }
+    }
+
+    private fun videoFit(agreed: com.music.bitchord.data.lyrics.LyricsTimeMap?) =
+        LyricsTiming.fitHeard("mv", mv, mvAll, placement(mvHeard), 215_000L, agreed = agreed) { fit, moved ->
+            com.music.bitchord.data.lyrics.LyricsAiGuard.allowsAiTiming(true, fit.matchPercent, moved)
+        }
+
+    @Test
+    fun `a whole-song fit the quick answer agrees with clears the video floors`() {
+        val alone = videoFit(null)
+        assertEquals(false, alone != null && com.music.bitchord.data.lyrics.LyricsAiGuard.agreementAllows(alone.matchPercent))
+
+        val fitted = videoFit(com.music.bitchord.data.lyrics.LyricsTimeMap.shift(18_416L))!!
+        assertEquals(100, fitted.matchPercent)
+        assertEquals(mv[50].timeMs + 18_550L, fitted.map.map(mv[50].timeMs))
+        // Another clock's answer is no agreement.
+        val other = videoFit(com.music.bitchord.data.lyrics.LyricsTimeMap.shift(0L))
+        assertEquals(false, other != null && com.music.bitchord.data.lyrics.LyricsAiGuard.agreementAllows(other.matchPercent))
+    }
 }

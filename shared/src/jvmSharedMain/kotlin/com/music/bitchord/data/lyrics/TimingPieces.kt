@@ -69,11 +69,16 @@ object TimingPieces {
         val sizes: List<Int>,
         /** How far the clock moves at each boundary. */
         val jumpsMs: List<Long>,
-        /** Of the lines really heard, how many follow the stretches: not of the sheet. */
+        /**
+         * Of the lines really heard, how many follow the stretches: not of the sheet. With
+         * [agreed], lines in a stretch dropped as past-end (heard as other lines) are left out.
+         */
         val agreePercent: Int,
         /** The move of the line moved furthest, signed: what a limit on moving must read. */
         val largestMoveMs: Long,
         internal val heardPoints: List<Point>,
+        /** Every line lands within [AGREED_MS] of the `agreed` map [fit] was given. */
+        val agreed: Boolean = false,
     )
 
     /** [result], or why there is none, for the log. */
@@ -87,6 +92,8 @@ object TimingPieces {
         lastHeardMs: Long,
         /** Lines the transcript could spell at all, as `Deepgram.spellableLines`. */
         spellable: Int = texts.size,
+        /** Where an accepted listen of this recording already put this sheet; see [AGREED_MS]. */
+        agreed: LyricsTimeMap? = null,
     ): Outcome {
         if (!placement.attempted || timesMs.size != texts.size || placement.starts.size != texts.size) {
             return Outcome(null, "not-aligned")
@@ -97,10 +104,34 @@ object TimingPieces {
             },
             lastHeardMs,
             spellable,
+            agreed,
         )
     }
 
-    fun fit(lines: List<Placed>, lastHeardMs: Long = Long.MAX_VALUE, spellable: Int = Int.MAX_VALUE): Outcome {
+    /**
+     * How close every line must land to [fit]'s `agreed` map for the answer to be the move
+     * an accepted listen already made, not a new claim: the one-clock tolerance.
+     *
+     * 11-09 -RJSbO8UZVY (loop 220-c, an MV 18.5 s into its song): the whole-song transcript
+     * missed about 48 s of the middle (329 words where this video gave 436-446 on other
+     * runs), so the alignment read the second chorus block onto the last ones (+66 s), a
+     * stretch the past-end rule rightly dropped. What was left, lines 3-22 at +18.55 s, was
+     * this video's clock exactly (scorer: +18.4 to +19.6 s on every line) and the quick
+     * listen's (+18.42 s, 94 %), but (replayed) 20 of 56 lines is under [BIG_MOVE_COVER]
+     * ("thin") and 20 of 37 heard under the 70 % floor once the misread stretch counted
+     * against it. The sheet on screen had no sync for the whole play. Such an answer moves no line more than this
+     * from where the accepted answer already shows it, so neither guard's danger (a big
+     * structural move on little evidence, 5bIWIoFDv80 and eqKhhG4FVoQ, whose openings sit
+     * on the sheet's own clock) applies; every other refusal still does.
+     */
+    const val AGREED_MS = TOLERANCE_MS
+
+    fun fit(
+        lines: List<Placed>,
+        lastHeardMs: Long = Long.MAX_VALUE,
+        spellable: Int = Int.MAX_VALUE,
+        agreed: LyricsTimeMap? = null,
+    ): Outcome {
         val lettered = lines.count { it.letters > 0 }
         val heard = lines.mapNotNull { line ->
             line.startMs?.takeIf { line.share >= MIN_SHARE && line.letters >= MIN_LETTERS }?.let { Point(line.timeMs, it) }
@@ -117,6 +148,8 @@ object TimingPieces {
             rate = pooledRate(pieces)
         }
         // A last stretch pushing a line past the last word is a chorus read as an earlier repeat.
+        // Its lines, heard as other lines, are counted for an answer an accepted listen agrees with.
+        var misread = 0
         while (true) {
             val last = pieces.last()
             val offset = offsetOf(last, rate)
@@ -126,6 +159,7 @@ object TimingPieces {
             }
             if (!past) break
             if (pieces.size == 1) return Outcome(null, "past-end")
+            misread += last.size
             pieces = pieces.dropLast(1)
             rate = pooledRate(pieces)
         }
@@ -137,18 +171,23 @@ object TimingPieces {
         val jumps = (0 until offsets.size - 1).map { (offsets[it + 1] - offsets[it]).roundToLong() }
         val largest = lines.filter { it.letters > 0 }.map { map.map(it.timeMs) - it.timeMs }.maxBy { abs(it) }
         val biggest = maxOf(abs(largest), jumps.maxOfOrNull { abs(it) } ?: 0L)
-        if (biggest > BIG_MOVE_MS && used.toDouble() / base < BIG_MOVE_COVER) {
+        // Every line where the accepted answer already shows it: see [AGREED_MS].
+        val corroborated = agreed != null &&
+            lines.all { it.letters == 0 || abs(map.map(it.timeMs) - agreed.map(it.timeMs)) <= AGREED_MS }
+        if (biggest > BIG_MOVE_MS && used.toDouble() / base < BIG_MOVE_COVER && !corroborated) {
             return Outcome(null, "thin")
         }
+        val judged = if (corroborated) (heard.size - misread).coerceAtLeast(used) else heard.size
         return Outcome(
             Result(
                 map = map,
                 rate = rate,
                 sizes = pieces.map { it.size },
                 jumpsMs = jumps,
-                agreePercent = (used * 100.0 / heard.size).roundToInt().coerceIn(0, 100),
+                agreePercent = (used * 100.0 / judged).roundToInt().coerceIn(0, 100),
                 largestMoveMs = largest,
                 heardPoints = heard,
+                agreed = corroborated,
             ),
             null,
         )

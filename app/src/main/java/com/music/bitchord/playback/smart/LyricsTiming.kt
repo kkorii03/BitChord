@@ -3343,9 +3343,11 @@ object LyricsTiming {
                 val placement = heard?.let {
                     com.music.bitchord.data.lyrics.LyricsWordAlign.placeLinesDetailed(inReach.map { s -> s.value.text }, it)
                 }
+                // What this sheet already shows on this clock (the quick listen's answer, usually).
+                val agreed = if (placement != null) agreedAnswer(context, videoId, lines, key, hearing.clock, isVideo) else null
                 val starts = placement?.starts
                 val raw = placement?.let {
-                    fitHeard(videoId, lines, inReach.map { s -> s.index }, it, heard.orEmpty().maxOfOrNull { w -> w.endMs } ?: 0L) { fit, moved ->
+                    fitHeard(videoId, lines, inReach.map { s -> s.index }, it, heard.orEmpty().maxOfOrNull { w -> w.endMs } ?: 0L, agreed = agreed) { fit, moved ->
                         LyricsAiGuard.allowsAiTiming(isVideo, fit.matchPercent, moved)
                     }
                 }
@@ -3665,6 +3667,29 @@ object LyricsTiming {
         val kept = keepQuickVideoAnswer(context, videoId, key, dropped.fitted, dropped.heard, dropped.clock, dropped.rough)
         if (kept) TrackLog.d(TAG, "video quick answer taken back: its sheet is on screen now", videoId)
         return kept
+    }
+
+    /**
+     * The answer the sheet [key] already has on [clock], as [fitHeard]'s `agreed`: the kept
+     * one, else a quick answer held while another sheet was newest. Only one that clears the
+     * floors it must clear to be shown, with its agreement on record; never another sheet's
+     * or another clock's. 11-09 -RJSbO8UZVY: the whole-song fit that agreed with the quick
+     * listen's +18.4 s was refused as thin (see TimingPieces.AGREED_MS).
+     */
+    private suspend fun agreedAnswer(
+        context: Context,
+        videoId: String,
+        lines: List<LyricLine>,
+        key: Int,
+        clock: Clock,
+        isVideo: Boolean,
+    ): LyricsTimeMap? {
+        val saved = clock.saved() ?: return null
+        val kept = store(context).get(videoId)
+            ?.takeIf { it.aiTextKey == key && it.aiClock == saved }
+            ?.ai?.toAdjustment(byAi = true)
+        val answer = kept ?: droppedQuick[videoId]?.takeIf { it.key == key && it.clock.saved() == saved }?.fitted
+        return answer?.takeIf { it.matchPercent != null && aiMayApply(lines, it, isVideo) }?.map
     }
 
     /**
@@ -5421,6 +5446,8 @@ private const val FIRM_FIT_LINES = 15
         placement: LyricsWordAlign.Placement,
         lastHeardMs: Long,
         spellable: Int = indices.size,
+        // An accepted answer of this sheet on this recording's clock ([agreedAnswer]): see TimingPieces.AGREED_MS.
+        agreed: LyricsTimeMap? = null,
         // The answer and the move to judge: a line's first line, stretches' furthest.
         mayApply: (Adjustment.Mapped, Long) -> Boolean,
     ): Adjustment.Mapped? {
@@ -5431,6 +5458,7 @@ private const val FIRM_FIT_LINES = 15
             placement,
             lastHeardMs,
             spellable,
+            agreed,
         )
         val found = outcome.result
         val pieces = found?.let { Adjustment.Mapped(it.map, byAi = true, rate = it.rate, matchPercent = it.agreePercent) }
@@ -5444,7 +5472,10 @@ private const val FIRM_FIT_LINES = 15
         TrackLog.d(
             TAG,
             "sync pieces: " + (
-                found?.let { "sizes=${it.sizes} jumps=${it.jumpsMs} rate=${"%.3f".format(java.util.Locale.ROOT, it.rate)} agree=${it.agreePercent}" }
+                found?.let {
+                    "sizes=${it.sizes} jumps=${it.jumpsMs} rate=${"%.3f".format(java.util.Locale.ROOT, it.rate)} agree=${it.agreePercent}" +
+                        if (it.agreed) " agreed" else ""
+                }
                     ?: "refused=${outcome.refused}"
                 ) + " line=${straight?.matchPercent} used=${if (chosen === pieces && pieces != null) "pieces" else "line"}",
             videoId,
