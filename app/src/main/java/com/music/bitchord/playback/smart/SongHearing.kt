@@ -345,6 +345,7 @@ internal object SongHearing {
             }
             val waitedMs = System.currentTimeMillis() - started
             val answer = send(raw.bytes, language, raw.mime, untilSeconds, videoId, waitedMs, raw.renditionKey, exact)
+            noteOutcome(videoId, answer)
             // A server that read it (or a limit or a dead network, which the
             // decoded path would only meet again) ends here. Only bytes it could
             // not read go round through the decoder.
@@ -366,7 +367,24 @@ internal object SongHearing {
         if (wav == null) return null
         SyncTestMode.saveWav(app, videoId, wav.bytes)
         val answer = send(wav.bytes, language, wav.mime, untilSeconds, videoId, System.currentTimeMillis() - started2, wav.renditionKey, exact)
+        noteOutcome(videoId, answer)
         return kept(app, song, wav, answer, untilSeconds, language)
+    }
+
+    /**
+     * How an ask ended, for [HearingReask]: no reply at all arms the playing row's one more
+     * ask; any reply (words, nothing heard, a 429) settles its row and says the network is up.
+     */
+    private fun noteOutcome(videoId: String, answer: Deepgram.Answer) {
+        val now = System.currentTimeMillis()
+        if (answer.httpCode == null) {
+            if (answer.words.isNullOrEmpty() && HearingReask.live.noReply(videoId, now)) {
+                TrackLog.d(TAG, "song-hear: no reply; one more ask once the network is back", videoId)
+            }
+            return
+        }
+        HearingReask.live.replied(videoId)
+        HearingReask.live.networkUp(now)
     }
 
     /** [keepFromFarm] once more, and its words when they cover [untilSeconds] of what is heard from. */
