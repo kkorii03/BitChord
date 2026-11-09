@@ -3,6 +3,7 @@ package com.music.bitchord.data.lyrics
 import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -96,6 +97,27 @@ class TimingPiecesAgreedTest {
         assertEquals("cover", TimingPieces.fit(fewer, lastHeardMs, agreed = LyricsTimeMap.shift(18_550L)).refused)
         // Every stretch past the end: nothing left to keep.
         assertEquals("past-end", TimingPieces.fit(placed, 150_000L, agreed = quick).refused)
+    }
+
+    @Test
+    fun `a small move that is not thin gets nothing from an agreed answer`() {
+        // rs26b A4ACeAlwEkk shape: a few lines on +0.2 s, a misread stretch past the end.
+        // Not thin (no big move), so it is judged as without the agreed answer: 6 of 10
+        // heard, under the 70 % floor; leaving the misread 4 out would have made it 100 %.
+        val few = (0 until 12).map { i ->
+            val at = 10_000L + i * 5_000L
+            when {
+                i < 6 -> p(at, at + 200L, 1.0, 10)
+                i < 10 -> p(at, at + 60_000L, 1.0, 10)
+                else -> p(at, null, 0.0, 10)
+            }
+        }
+        val alone = assertNotNull(TimingPieces.fit(few, 70_000L).result)
+        val with = assertNotNull(TimingPieces.fit(few, 70_000L, agreed = LyricsTimeMap.shift(150L)).result)
+        assertEquals(60, alone.agreePercent)
+        assertEquals(60, with.agreePercent)
+        assertFalse(with.agreed)
+        assertEquals(alone.map, with.map)
     }
 
     @Test

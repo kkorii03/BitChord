@@ -77,7 +77,7 @@ object TimingPieces {
         /** The move of the line moved furthest, signed: what a limit on moving must read. */
         val largestMoveMs: Long,
         internal val heardPoints: List<Point>,
-        /** Every line lands within [AGREED_MS] of the `agreed` map [fit] was given. */
+        /** Kept only because every line lands within [AGREED_MS] of the `agreed` map [fit] was given (else thin). */
         val agreed: Boolean = false,
     )
 
@@ -171,10 +171,14 @@ object TimingPieces {
         val jumps = (0 until offsets.size - 1).map { (offsets[it + 1] - offsets[it]).roundToLong() }
         val largest = lines.filter { it.letters > 0 }.map { map.map(it.timeMs) - it.timeMs }.maxBy { abs(it) }
         val biggest = maxOf(abs(largest), jumps.maxOfOrNull { abs(it) } ?: 0L)
-        // Every line where the accepted answer already shows it: see [AGREED_MS].
-        val corroborated = agreed != null &&
+        val thin = biggest > BIG_MOVE_MS && used.toDouble() / base < BIG_MOVE_COVER
+        // Every line where the accepted answer already shows it: see [AGREED_MS]. Only for an
+        // answer this would otherwise refuse as thin; any other answer is judged as without it
+        // (rs26b: 13 of 14 "agreed" fits were not thin, and a 4-line 0.2 s fit, A4ACeAlwEkk,
+        // could reach the 70 % floor only by leaving its misread lines out).
+        val corroborated = thin && agreed != null &&
             lines.all { it.letters == 0 || abs(map.map(it.timeMs) - agreed.map(it.timeMs)) <= AGREED_MS }
-        if (biggest > BIG_MOVE_MS && used.toDouble() / base < BIG_MOVE_COVER && !corroborated) {
+        if (thin && !corroborated) {
             return Outcome(null, "thin")
         }
         val judged = if (corroborated) (heard.size - misread).coerceAtLeast(used) else heard.size
