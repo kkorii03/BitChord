@@ -92,7 +92,7 @@ object KoLyricsTranslation {
     // more of them to fall through before Google Translate. Unknown ones 404
     // and are skipped at no cost.
     private val GEMINI_MODELS = listOf(
-        "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.6-flash-lite", "gemini-3.5-flash", "gemini-3.6-flash",
+        "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.6-flash",
     )
     private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
 
@@ -121,6 +121,22 @@ object KoLyricsTranslation {
     @Volatile
     private var geminiCooldownUntil = 0L
     private const val GEMINI_COOLDOWN_MS = 5L * 60L * 1000L
+
+    /** Models Gemini answered 404 for: skipped for the rest of the process. */
+    private val missingGeminiModels = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /** True when a 429 body says the per-day quota is used up (a minute limit says nothing of the kind). */
+    internal fun isDailyQuota(body: String): Boolean =
+        body.contains("PerDay", ignoreCase = true) || body.contains("per day", ignoreCase = true)
+
+    /** How long to rest after every model refused: until the Pacific-midnight reset for a daily quota, else 5 minutes. */
+    internal fun geminiRestMs(allDaily: Boolean, nowMs: Long): Long {
+        if (!allDaily) return GEMINI_COOLDOWN_MS
+        val zone = java.time.ZoneId.of("America/Los_Angeles")
+        val now = java.time.Instant.ofEpochMilli(nowMs).atZone(zone)
+        val reset = now.toLocalDate().plusDays(1).atStartOfDay(zone)
+        return maxOf(GEMINI_COOLDOWN_MS, reset.toInstant().toEpochMilli() - nowMs)
+    }
 
     /**
      * The key as Gemini will receive it: only the characters an API key can
@@ -380,8 +396,10 @@ object KoLyricsTranslation {
             return null
         }
         var quotaRefusals = 0
+        var dailyRefusals = 0
         val requestBody = geminiRequestBody(body, audioWav)
-        for (model in models) {
+        val tried = models.filter { it !in missingGeminiModels }
+        for (model in tried) {
             val request = Request.Builder()
                 .url(GEMINI_ENDPOINT.format(model))
                 .header("x-goog-api-key", key)
@@ -407,9 +425,13 @@ object KoLyricsTranslation {
                     // on the other before giving up on Gemini for this song.
                 }
                 // Exhausted quota: the next model has its own and may answer.
-                code == 429 -> quotaRefusals++
-                // Unknown model or a transient server error: try the next one.
-                code == 404 || code >= 500 -> Unit
+                code == 429 -> {
+                    quotaRefusals++
+                    if (isDailyQuota(text)) dailyRefusals++
+                }
+                // Unknown model: never asked again this process. A transient server error: try the next one.
+                code == 404 -> missingGeminiModels.add(model)
+                code >= 500 -> Unit
                 // A bad or restricted key fails the same everywhere, so stop
                 // asking with it rather than delay every translation.
                 code == 401 || code == 403 ||
@@ -423,8 +445,9 @@ object KoLyricsTranslation {
                 else -> return null
             }
         }
-        if (quotaRefusals == models.size) {
-            geminiCooldownUntil = System.currentTimeMillis() + GEMINI_COOLDOWN_MS
+        if (tried.isNotEmpty() && quotaRefusals == tried.size) {
+            val now = System.currentTimeMillis()
+            geminiCooldownUntil = now + geminiRestMs(dailyRefusals == quotaRefusals, now)
         }
         return null
     }
