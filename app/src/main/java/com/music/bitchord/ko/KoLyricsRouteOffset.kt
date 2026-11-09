@@ -37,7 +37,8 @@ internal object KoLyricsRouteOffset {
         if (!AppSettings.prefsReady()) return
         val offset = offsetOf(key)
         AppSettings.lyricsOffsetMs.value = offset
-        TrackLog.i(TAG, "lyrics offset route=$key offset=$offset")
+        // Kind and name only: logs are shared, a Bluetooth address is not needed to read them.
+        TrackLog.i(TAG, "lyrics offset route=$tag:${name ?: "-"} offset=$offset")
     }
 
     /**
