@@ -817,6 +817,13 @@ def run_song(vid, seconds, dry):
         # YouTube reference, whose clock may differ by seconds. The app (sync-test
         # mode, 11-02 build on) keeps that copy's verified head under its own id.
         play = OUT / f"{vid}.play.wav"
+        # A saved round (fleet artifact) keeps the head under the app's own file name,
+        # synctest/<safeName(playing)>.wav, never as <vid>.play.wav (rs20 11-09: every
+        # hi-res row was "not pulled" though the WAV sat in the folder).
+        if not play.exists() or play.stat().st_size < 1000:
+            kept = safe_name(row["playing"]) + ".wav"
+            play = next((p for p in (OUT / kept, OUT / "synctest" / kept)
+                         if p.exists() and p.stat().st_size > 1000), play)
         if not play.exists() or play.stat().st_size < 1000:
             return dict(row, error=f"hi-res substitute {row['playing']} playing, its kept head "
                                    f"{safe_name(row['playing'])}.wav was not pulled (no phone or an older run)")
