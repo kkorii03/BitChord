@@ -4,6 +4,7 @@ import com.music.bitchord.data.innertube.SearchKind
 import com.music.bitchord.data.model.BrowseItem
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.Song
+import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -106,6 +107,69 @@ class CatalogSongMapperTest {
         assertTrue(CatalogSongMapper.shouldRetryMiss(now - 7 * day, now))
         assertTrue(CatalogSongMapper.shouldRetryMiss(now - 30 * day, now))
         assertTrue(CatalogSongMapper.shouldRetryMiss(0L, now))
+    }
+
+    /**
+     * rs20 171b XbGs_qK2PQA: "Eminem Rap God" always gets twenty tribute and
+     * karaoke albums, so it missed, and the bare `none` it stored refused for
+     * a week the row titled "Rap God (Explicit)", whose album search does list
+     * The Marshall Mathers LP2. A miss answers only the query that missed.
+     */
+    @Test
+    fun `a stored miss answers only the query that missed`() {
+        val weak = CatalogSongMapper.lookupQuery("Eminem", "Rap God")
+        val strong = CatalogSongMapper.lookupQuery("Eminem", "Rap  God (Explicit)")
+        assertEquals("Eminem Rap God (Explicit)", strong)
+        val miss = CatalogSongMapper.missValue(null, weak)
+        assertTrue(CatalogSongMapper.isMiss(miss))
+        assertTrue(CatalogSongMapper.missCovers(miss, weak))
+        assertFalse(CatalogSongMapper.missCovers(miss, strong))
+        // A bare value from an older build names no query: asked once more.
+        assertTrue(CatalogSongMapper.isMiss("none"))
+        assertFalse(CatalogSongMapper.missCovers("none", weak))
+        // A hit is never a miss.
+        assertFalse(CatalogSongMapper.isMiss("none-such-id\u001FTitle\u001FArtist\u001FAlbum\u001FMPRE1"))
+        // Both queries missed: both stay answered, and the newest four are kept.
+        val both = CatalogSongMapper.missValue(miss, strong)
+        assertTrue(CatalogSongMapper.missCovers(both, weak))
+        assertTrue(CatalogSongMapper.missCovers(both, strong))
+        assertEquals(both, CatalogSongMapper.missValue(both, strong))
+        var many = both
+        for (index in 1..4) many = CatalogSongMapper.missValue(many, "q$index")
+        assertFalse(CatalogSongMapper.missCovers(many, weak))
+        assertFalse(CatalogSongMapper.missCovers(many, strong))
+        assertTrue((1..4).all { CatalogSongMapper.missCovers(many, "q$it") })
+        // Five fields, but still not a catalogue song.
+        assertNull(CatalogSongMapper.decodeForTest(many))
+    }
+
+    @Test
+    fun `a stored miss refuses its own query but not the same upload under another title`() = runBlocking {
+        val now = System.currentTimeMillis()
+        val plain = Song(videoId = "catnone-xbgs", title = "Rap God", artist = "Eminem", thumbnailUrl = null)
+        val explicit = plain.copy(title = "Rap God (Explicit)")
+        fun queryOf(song: Song) = YouTubeDisplayCleaner.clean(song).let {
+            CatalogSongMapper.lookupQuery(it.artist.trim(), it.title.trim())
+        }
+        // The two rows really ask two album searches (168a: a 25-character one).
+        assertEquals("Eminem Rap God (Explicit)", queryOf(explicit))
+        CatalogSongMapper.cachePutForTest(plain.videoId, CatalogSongMapper.missValue(null, queryOf(plain)), now)
+        // The same question is not asked again: no lookup is spent.
+        assertEquals(
+            CatalogSongMapper.MapResult.NotFound,
+            CatalogSongMapper.mapResult(plain, CatalogSongMapper.LookupBudget(0)),
+        )
+        // Another title is a new question: it wants a lookup (refused here).
+        assertEquals(
+            CatalogSongMapper.MapResult.Failed,
+            CatalogSongMapper.mapResult(explicit, CatalogSongMapper.LookupBudget(0)),
+        )
+        // A bare miss from an older build is asked once more.
+        CatalogSongMapper.cachePutForTest("catnone-bare", "none", now)
+        assertEquals(
+            CatalogSongMapper.MapResult.Failed,
+            CatalogSongMapper.mapResult(plain.copy(videoId = "catnone-bare"), CatalogSongMapper.LookupBudget(0)),
+        )
     }
 
     @Test

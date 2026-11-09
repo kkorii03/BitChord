@@ -33,8 +33,8 @@ import kotlin.math.abs
  * a shelf is about to show, [LookupBudget] caps the new lookups one screen
  * build may spend, [MAX_CONCURRENT_TOTAL] caps requests in flight, album pages live
  * in a small LRU, and every settled answer (including "not found") is persisted
- * per source video id. A miss is retried after [MISS_RETRY_MS]; a hit is not
- * re-asked.
+ * per source video id. A miss is retried after [MISS_RETRY_MS], and only
+ * answers the query that missed ([missCovers]); a hit is not re-asked.
  */
 internal object CatalogSongMapper {
 
@@ -260,15 +260,23 @@ internal object CatalogSongMapper {
 
         cache.ensureLoaded(MusicGateFallback.sharedStore())
         val now = System.currentTimeMillis()
+        val query = lookupQuery(artist, title)
         val stored = cache.get(song.videoId)
         if (stored != null) {
-            if (stored.value != NONE) {
+            if (!isMiss(stored.value)) {
                 decode(stored.value)?.let { return MapResult.Found(it) }
-            } else if (bridges.isEmpty() && !shouldRetryMiss(stored.at, now)) {
+            } else if (
+                bridges.isEmpty() &&
+                missCovers(stored.value, query) &&
+                !shouldRetryMiss(stored.at, now)
+            ) {
                 // A stored miss was read without bridging rows, so it says
                 // nothing about the other name they bring; only that case
                 // re-asks. The audio switch's own per-run cache keeps it to
                 // once per row.
+                // It also answers only the album search that missed: the same
+                // upload read under another title asks a different question
+                // (see [missCovers]).
                 return MapResult.NotFound
             }
         }
@@ -301,7 +309,10 @@ internal object CatalogSongMapper {
                 MapResult.Found(outcome.song)
             }
             Outcome.NotFound -> {
-                cache.put(song.videoId, NONE, now)
+                // Earlier queries' misses are kept while they are still
+                // trusted, so two titles that both miss do not re-ask in turn.
+                val earlier = stored?.takeIf { !shouldRetryMiss(it.at, now) }?.value
+                cache.put(song.videoId, missValue(earlier, query), now)
                 MapResult.NotFound
             }
             Outcome.Failed -> MapResult.Failed
@@ -547,7 +558,7 @@ internal object CatalogSongMapper {
         sourceIsVideo: Boolean = false,
         bridges: List<Song> = emptyList(),
     ): Outcome {
-        val query = "$artist $title".replace(Regex("""\s+"""), " ").trim()
+        val query = lookupQuery(artist, title)
         val albums = searchAlbums(query)
         if (albums == null) {
             Log.i(
@@ -792,6 +803,37 @@ internal object CatalogSongMapper {
     internal fun shouldRetryMiss(storedAt: Long, now: Long): Boolean =
         storedAt <= 0L || now - storedAt >= MISS_RETRY_MS
 
+    /** The album search one lookup asks: the row's artist and title. */
+    internal fun lookupQuery(artist: String, title: String): String =
+        "$artist $title".replace(Regex("""\s+"""), " ").trim()
+
+    /** A stored "not in the catalogue" value, bare (older builds) or query-scoped. */
+    internal fun isMiss(value: String): Boolean =
+        value == NONE || value.startsWith(NONE + FIELD)
+
+    /**
+     * Whether a stored miss answers [query]. A miss is the album search's
+     * answer to one query, not a fact about the upload: rs20 171b
+     * (XbGs_qK2PQA) asked "Eminem Rap God" while the tunnel had taken the
+     * youtube.com rows away, got the twenty tribute and karaoke albums that
+     * query always gets (rs10-rs21), and the bare `none` then refused for a
+     * week the row titled "Rap God (Explicit)", whose search does list
+     * The Marshall Mathers LP2. A bare value from an older build names no
+     * query, so it is asked once more and rewritten scoped.
+     */
+    internal fun missCovers(value: String, query: String): Boolean =
+        isMiss(value) && missKey(query) in value.split(FIELD).drop(1)
+
+    /** The miss to store for [query], keeping the queries [previous] already missed. */
+    internal fun missValue(previous: String?, query: String): String {
+        val earlier = previous?.takeIf { isMiss(it) }?.split(FIELD)?.drop(1).orEmpty()
+        val keys = (earlier - missKey(query) + missKey(query)).takeLast(MAX_MISS_QUERIES)
+        return (listOf(NONE) + keys).joinToString(FIELD)
+    }
+
+    /** The same hash the miss line prints, so a stored miss joins its log line. */
+    private fun missKey(query: String): String = Integer.toHexString(query.hashCode())
+
     /**
      * Whether [candidate] names [wanted] once case, brackets and the known
      * Korean/English aliases are folded away.
@@ -915,7 +957,8 @@ internal object CatalogSongMapper {
     ).joinToString(FIELD)
 
     private fun decode(value: String): CatalogSong? {
-        if (value == NONE) return null
+        // A scoped miss with four queries has five fields; it is not a song.
+        if (isMiss(value)) return null
         val parts = value.split(FIELD)
         if (parts.size < 5 || parts[0].isBlank()) return null
         return CatalogSong(
@@ -962,6 +1005,9 @@ internal object CatalogSongMapper {
     // ---- Folding data -------------------------------------------------------
 
     private const val MAX_TRACKS_PER_SEARCH_ALBUM = 2
+
+    /** Queries one stored miss remembers; the oldest is forgotten first. */
+    private const val MAX_MISS_QUERIES = 4
 
     /** The subtitle words that name a one- or two-track release; see [isShortRelease]. */
     private val SHORT_RELEASE_WORDS = setOf("싱글", "single", "ep")
