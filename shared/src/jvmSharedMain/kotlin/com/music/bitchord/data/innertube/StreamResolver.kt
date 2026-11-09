@@ -61,6 +61,7 @@ import org.schabi.newpipe.extractor.stream.AudioStream
 import org.schabi.newpipe.extractor.stream.DeliveryMethod
 import org.schabi.newpipe.extractor.stream.StreamType
 import java.io.IOException
+import java.io.InterruptedIOException
 import java.util.Collections
 import java.util.IdentityHashMap
 import java.util.concurrent.ConcurrentHashMap
@@ -2693,37 +2694,73 @@ object StreamResolver {
             .header("Range", range)
         val sentHeaders = mediaHeadersFor(url)
         sentHeaders.forEach { (name, value) -> builder.header(name, value) }
-        return try {
-            (if (viaProxy) proxyProber else prober).newCall(builder.build()).execute().use { response ->
-                val contentType = response.header("Content-Type")
-                val verdict = when {
-                    response.code in REFUSAL_CODES -> Probe.REFUSED
-                    response.code !in 200..299 && response.code != 416 -> Probe.UNREACHABLE
-                    // A refusal dressed as a success: an error page, or the
-                    // consent/captcha interstitial, rather than audio.
-                    contentType?.startsWith("audio/") != true -> Probe.REFUSED
-                    // Headers can arrive long before a body that never does —
-                    // exactly the shaping this whole path exists to sidestep.
-                    // Insisting on the bytes is the point: a trickle that
-                    // yields its first byte and stalls is a failure too.
-                    response.body?.source()?.request(PROBE_READ_BYTES) != true -> Probe.UNREACHABLE
-                    else -> Probe.OK
+        val request = builder.build()
+        // A connection dropped before any answer ("unexpected end of stream",
+        // a reset) says nothing about the URL, yet one of them used to decide
+        // it: the client was skipped, and when it was the only direct one
+        // left, the track waited minutes for the cipher path or never sounded
+        // (rounds 184-187: half the emulator probes, then the URL re-probed
+        // fine seconds later). OkHttp does not retry a fresh single-route
+        // connection itself. So the same URL is asked once more; a timeout
+        // is not, since a stall is the very failure this probe looks for.
+        for (attempt in 1..PROBE_TRANSPORT_ATTEMPTS) {
+            try {
+                return probeOnce(request, range, url, sentHeaders, viaProxy)
+            } catch (e: InterruptedIOException) {
+                TrackLog.w(TAG, "probe failed: ${e.message}")
+                return Probe.UNREACHABLE
+            } catch (e: IOException) {
+                if (attempt == PROBE_TRANSPORT_ATTEMPTS) {
+                    TrackLog.w(TAG, "probe failed: ${e.message}")
+                    return Probe.UNREACHABLE
                 }
-                if (verdict != Probe.OK) {
-                    TrackLog.w(
-                        TAG,
-                        "probe $verdict: HTTP ${response.code} type=$contentType " +
-                            "range=$range ${describeMediaUrl(url)} " +
-                            "sent=${sentHeaders.keys.sorted()}",
-                    )
-                }
-                verdict
+                TrackLog.w(TAG, "probe dropped, asking the same URL again: ${e.message}")
+            } catch (e: Exception) {
+                TrackLog.w(TAG, "probe failed: ${e.message}")
+                return Probe.UNREACHABLE
             }
-        } catch (e: Exception) {
-            TrackLog.w(TAG, "probe failed: ${e.message}")
-            Probe.UNREACHABLE
         }
+        return Probe.UNREACHABLE
     }
+
+    /** One probe request; a transport failure is thrown for [probe] to judge. */
+    private fun probeOnce(
+        request: okhttp3.Request,
+        range: String,
+        url: String,
+        sentHeaders: Map<String, String>,
+        viaProxy: Boolean,
+    ): Probe = (if (viaProxy) proxyProber else prober).newCall(request).execute().use { response ->
+        val contentType = response.header("Content-Type")
+        val verdict = when {
+            response.code in REFUSAL_CODES -> Probe.REFUSED
+            response.code !in 200..299 && response.code != 416 -> Probe.UNREACHABLE
+            // A refusal dressed as a success: an error page, or the
+            // consent/captcha interstitial, rather than audio.
+            contentType?.startsWith("audio/") != true -> Probe.REFUSED
+            // Headers can arrive long before a body that never does —
+            // exactly the shaping this whole path exists to sidestep.
+            // Insisting on the bytes is the point: a trickle that
+            // yields its first byte and stalls is a failure too.
+            response.body?.source()?.request(PROBE_READ_BYTES) != true -> Probe.UNREACHABLE
+            else -> Probe.OK
+        }
+        if (verdict != Probe.OK) {
+            TrackLog.w(
+                TAG,
+                "probe $verdict: HTTP ${response.code} type=$contentType " +
+                    "range=$range ${describeMediaUrl(url)} " +
+                    "sent=${sentHeaders.keys.sorted()}",
+            )
+        }
+        verdict
+    }
+
+    /** [probe] for tests: the verdict's name for [url], asked directly. */
+    internal fun probeVerdictForTest(url: String): String = probe(url).name
+
+    /** Same-URL probe attempts after a dropped connection; see [probe]. */
+    private const val PROBE_TRANSPORT_ATTEMPTS = 2
 
     private val REFUSAL_CODES = setOf(403, 404, 410)
 
