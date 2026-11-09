@@ -154,18 +154,7 @@ class SheetChoiceTest {
         )
     }
 
-    /**
-     * 11-10 n4uG9ym6kKA: the sheet on screen was already timed at 75% (above the floor); a
-     * sheet the same short listen fit only a few points better replaced it, and timed worse.
-     */
-    @Test
-    fun `a sheet the app timed above the floor stays against one that fits only a little better`() {
-        val heard = sung(sheet(0))
-        val candidate = listOf(LyricsRepository.Result(LyricsSource.LRCLIB, mostly(sheet(0))))
-        assertNull(SheetChoice.better(sheet(24), candidate, heard, knownFit = 75))
-    }
-
-    /** The same candidate with nothing measured yet: the words alone decide, as before. */
+    /** 11-10 n4uG9ym6kKA (the race itself is LyricsControllerSheetChoiceTest's): a candidate with nothing measured yet: the words alone decide, as before. */
     @Test
     fun `with no timing of its own the sheet gives way to the one the words fit`() {
         val heard = sung(sheet(0))
