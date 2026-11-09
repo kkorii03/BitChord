@@ -8,6 +8,8 @@ import com.music.bitchord.data.lyrics.LyricsTranslation
 import com.music.bitchord.data.settings.AppSettings
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** Why the AI transcription did not run, kept apart from "no lyrics found". */
 internal enum class AiLyricsSkipReason { DISABLED, NO_KEY }
@@ -25,6 +27,25 @@ internal fun aiLyricsSkipReason(
     !geminiKeyUsable -> AiLyricsSkipReason.NO_KEY
     else -> null
 }
+
+/**
+ * How long the phone's own copy of the sound may take before Gemini is sent the
+ * YouTube address instead. rs26/rs27 video rows waited 60-270 s here (whole track,
+ * then the decode gate), so the sheet landed after the 120 s limit and the row's end.
+ */
+internal const val AI_LYRICS_AUDIO_WAIT_MS = 20_000L
+
+/** [read]'s answer if it comes within [waitMs]; null on timeout or failure. A caller's own cancellation still propagates. */
+internal suspend fun <T : Any> audioWithin(waitMs: Long, read: suspend () -> T?): T? =
+    withTimeoutOrNull(waitMs) {
+        try {
+            read()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            null
+        }
+    }
 
 /**
  * "가사 못 찾으면 AI 받아쓰기": when no lyrics source has anything for a
@@ -87,9 +108,10 @@ object AiLyrics {
         // has actually started (it is skipped when off or already refused).
         LyricsRepository.markTranscribing(videoId, true)
         val lines = try {
-            // The sound already on the phone when it is all there: heard in
-            // seconds, where Gemini fetching the video itself takes a minute.
-            val audio = context?.let { runCatching { VideoAudio.wav(it, videoId) }.getOrNull() }
+            // The sound already on the phone when it is all there: wait at most
+            // AI_LYRICS_AUDIO_WAIT_MS, then let Gemini fetch the video itself.
+            val audio = context?.let { ctx -> audioWithin(AI_LYRICS_AUDIO_WAIT_MS) { VideoAudio.wav(ctx, videoId) } }
+            if (audio == null) TrackLog.d(TAG, "no phone audio within ${AI_LYRICS_AUDIO_WAIT_MS}ms; Gemini fetches the video", videoId)
             LyricsTranslation.transcribeVideo(videoId, durationMs, audio)
         } finally {
             LyricsRepository.markTranscribing(videoId, false)

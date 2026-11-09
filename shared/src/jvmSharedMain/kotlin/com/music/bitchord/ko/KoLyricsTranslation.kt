@@ -46,6 +46,10 @@ import java.io.OutputStream
  * only carries hook lines. See docs/ko-fork-layout.md.
  */
 object KoLyricsTranslation {
+    /** Whether a request that failed on the network goes on to the next model: one fresh connection for a dropped one, never after a timeout. */
+    internal fun geminiTriesNextAfter(failure: IOException, networkFailures: Int): Boolean =
+        failure !is java.io.InterruptedIOException && networkFailures <= 1
+
     // Translations of downloaded songs, kept out of reach of the cache trim and
     // of Android clearing the cache, so the translate button works offline.
     private const val KEPT_DIRECTORY = "lyrics_translation_kept"
@@ -396,6 +400,7 @@ object KoLyricsTranslation {
             return null
         }
         var quotaRefusals = 0
+        var networkFailures = 0
         var dailyRefusals = 0
         val requestBody = geminiRequestBody(body, audioWav)
         val tried = models.filter { it !in missingGeminiModels }
@@ -412,7 +417,8 @@ object KoLyricsTranslation {
                 throw cancelled
             } catch (failure: IOException) {
                 TrackLog.w(GEMINI_TAG, "$model: ${failure.javaClass.simpleName} (${if (failure is java.io.InterruptedIOException) "timeout" else "network"}) ${failure.message.orEmpty().take(120)}")
-                return null
+                if (!geminiTriesNextAfter(failure, ++networkFailures)) return null
+                continue
             }
             codes?.add(code)
             if (code !in 200..299) TrackLog.w(GEMINI_TAG, "$model: HTTP $code ${errorSummary(text)}")

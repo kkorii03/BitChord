@@ -27,4 +27,14 @@ class GeminiQuotaRestTest {
         val almost = java.time.Instant.parse("2026-11-10T07:59:00Z").toEpochMilli()
         assertEquals(5L * 60_000L, KoLyricsTranslation.geminiRestMs(true, almost))
     }
+
+    @Test
+    fun networkFailureTriesNextModelOnceButTimeoutDoesNot() {
+        assertTrue(KoLyricsTranslation.geminiTriesNextAfter(java.io.IOException("Required SETTINGS preface not received"), 1))
+        assertTrue(KoLyricsTranslation.geminiTriesNextAfter(javax.net.ssl.SSLHandshakeException("connection closed"), 1))
+        assertTrue(KoLyricsTranslation.geminiTriesNextAfter(java.net.SocketException("Software caused connection abort"), 1))
+        assertFalse(KoLyricsTranslation.geminiTriesNextAfter(java.net.SocketTimeoutException("timeout"), 1))
+        assertFalse(KoLyricsTranslation.geminiTriesNextAfter(java.io.InterruptedIOException("timeout"), 1))
+        assertFalse(KoLyricsTranslation.geminiTriesNextAfter(java.io.IOException("second failure"), 2))
+    }
 }
