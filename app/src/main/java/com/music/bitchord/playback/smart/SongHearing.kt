@@ -209,6 +209,7 @@ internal object SongHearing {
     ): Heard? {
         val app = context.applicationContext
         var farmAsked = false
+        var waitedOpening = false
         // With no Groq nothing is rough, and two flights would pay Deepgram twice for one window.
         val wantExact = exact && GroqWhisper.apiKey.isNotBlank()
         while (true) {
@@ -236,10 +237,21 @@ internal object SongHearing {
                 farmAsked = true
                 if (keepFromFarm(app, song, language)) continue
             }
-            // One request per recording and language at a time, whoever asks and for
-            // whatever window. Each window flying on its own paid for the same opening
+            // One request per recording, language and window kind (opening or longer) at a time.
+            // Each window flying on its own paid for the same opening
             // twice over (11-06: 4.25 requests a song against the 2 this design needs).
-            val flight = "${song.videoId}|$recording|$language|$wantExact"
+            val base = "${song.videoId}|$recording|$language|$wantExact"
+            // A whole-song ask that may settle for the opening reads it rather than buying the song beside it.
+            if (!waitedOpening && readsOpening(untilSeconds, reuseFrom)) {
+                val opening = inFlight[flightSlot(base, reuseFrom)]
+                if (opening != null) {
+                    waitedOpening = true
+                    // join, not await: its failure or cancellation is not this ask's; the loop asks for itself.
+                    opening.answer.join()
+                    continue
+                }
+            }
+            val flight = flightSlot(base, untilSeconds)
             val fresh = Flight(
                 untilSeconds,
                 scope.async(start = CoroutineStart.LAZY) { listen(app, song, untilSeconds, minSeconds, language, wantExact) },
@@ -291,6 +303,14 @@ internal object SongHearing {
      */
     internal fun flightAnswers(flyingSeconds: Double, askedSeconds: Double): Boolean =
         flyingSeconds + 1.0 >= askedSeconds
+
+    /** The in-flight slot an ask shares: an opening never waits behind a whole song's upload (11-09 230-d: 167 s). */
+    internal fun flightSlot(base: String, untilSeconds: Double): String =
+        if (untilSeconds <= OPENING_SECONDS) "$base|opening" else base
+
+    /** Whether a longer ask that may settle for the opening waits for one in flight and reads its words. */
+    internal fun readsOpening(untilSeconds: Double, reuseFrom: Double): Boolean =
+        untilSeconds > OPENING_SECONDS && reuseFrom <= OPENING_SECONDS
 
     private fun heardFrom(saved: Saved) = Heard(
         words = saved.words.map { LyricsWordAlign.Heard(it.t, it.s, it.e) },

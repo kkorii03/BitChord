@@ -3507,7 +3507,9 @@ object LyricsTiming {
      * hears first ([SongCheckWindow.VIDEO_QUICK_SECONDS], Groq when it can answer),
      * fitted with the same [fitHeard] and video floors as the whole-song answer, and
      * kept as an interim answer until that one lands ([keepQuickVideoAnswer]). Spends
-     * no engine turn: the whole-song request beside it is the one that does.
+     * no engine turn: the whole-song request beside it is the one that does. After rough words
+     * it also asks the same opening of the exact engine ([SongCheckWindow.videoExactOpening]),
+     * kept through the same [keepQuickVideoAnswer] without the rough mark.
      */
     private suspend fun quickVideoAnswer(
         context: Context,
@@ -3535,40 +3537,58 @@ object LyricsTiming {
                 stillWanted = stillWanted,
                 exact = false,
             ) ?: return
-            val heard = quick.words
-            val inReach = sung.filter { it.value.timeMs <= quick.audioMs }
-            val placement = if (heard != null && heard.size >= MIN_AI_LINES && inReach.size >= MIN_AI_LINES) {
-                LyricsWordAlign.placeLinesDetailed(inReach.map { it.value.text }, heard)
-            } else {
-                null
-            }
-            val fitted = placement?.let {
-                fitHeard(videoId, lines, inReach.map { s -> s.index }, it, heard.orEmpty().maxOfOrNull { w -> w.endMs } ?: 0L) { fit, moved ->
-                    LyricsAiGuard.allowsAiTiming(true, fit.matchPercent, moved)
+            suspend fun fitAndKeep(quick: SongHearing.Heard, language: String) {
+                val heard = quick.words
+                val inReach = sung.filter { it.value.timeMs <= quick.audioMs }
+                val placement = if (heard != null && heard.size >= MIN_AI_LINES && inReach.size >= MIN_AI_LINES) {
+                    LyricsWordAlign.placeLinesDetailed(inReach.map { it.value.text }, heard)
+                } else {
+                    null
                 }
-            }?.takeIf { aiMayApply(lines, it, isVideo = true) }
-            TrackLog.d(
-                TAG,
-                "video quick listen ($language, ${quick.audioMs / 1000}s${if (quick.rough) ", rough" else ""}): " + when {
-                    heard == null -> "no answer http=${quick.httpCode}"
-                    fitted == null -> "${heard.size} words, ${inReach.size} lines in reach: no fit"
-                    else -> "${heard.size} words, shift ${shownShiftMs(lines, fitted)} ms, ${fitted.matchPercent}% agree"
-                },
-                videoId,
-            )
-            if (heard == null) return
-            if (fitted == null) {
-                // Words that do not fit this sheet may prove it is another song's, the way a
-                // song check's do; the whole-song answer was a minute or more away from that
-                // (11-08 KChyOsjqmfM: no fit at 14 s, wrong sheet shown for the whole play).
-                if (heard.size >= MIN_AI_LINES && keepQuickVideoEvidence(context, videoId, key, heard, quick.clock, quick.rough)) {
+                val fitted = placement?.let {
+                    fitHeard(videoId, lines, inReach.map { s -> s.index }, it, heard.orEmpty().maxOfOrNull { w -> w.endMs } ?: 0L) { fit, moved ->
+                        LyricsAiGuard.allowsAiTiming(true, fit.matchPercent, moved)
+                    }
+                }?.takeIf { aiMayApply(lines, it, isVideo = true) }
+                TrackLog.d(
+                    TAG,
+                    "video quick listen ($language, ${quick.audioMs / 1000}s${if (quick.rough) ", rough" else ""}): " + when {
+                        heard == null -> "no answer http=${quick.httpCode}"
+                        fitted == null -> "${heard.size} words, ${inReach.size} lines in reach: no fit"
+                        else -> "${heard.size} words, shift ${shownShiftMs(lines, fitted)} ms, ${fitted.matchPercent}% agree"
+                    },
+                    videoId,
+                )
+                if (heard == null) return@fitAndKeep
+                if (fitted == null) {
+                    // Words that do not fit this sheet may prove it is another song's, the way a
+                    // song check's do; the whole-song answer was a minute or more away from that
+                    // (11-08 KChyOsjqmfM: no fit at 14 s, wrong sheet shown for the whole play).
+                    if (heard.size >= MIN_AI_LINES && keepQuickVideoEvidence(context, videoId, key, heard, quick.clock, quick.rough)) {
+                        refitEvent(videoId)
+                    }
+                    return@fitAndKeep
+                }
+                if (keepQuickVideoAnswer(context, videoId, key, fitted, heard, quick.clock, quick.rough)) {
+                    // Lands after the flight now (F1), so its one event must not be lost either.
                     refitEvent(videoId)
                 }
-                return
             }
-            if (keepQuickVideoAnswer(context, videoId, key, fitted, heard, quick.clock, quick.rough)) {
-                // Lands after the flight now (F1), so its one event must not be lost either.
-                refitEvent(videoId)
+            fitAndKeep(quick, language)
+            // Groq's words are rough; the same opening's exact words reach the screen while the whole song's are still on their way.
+            val exactFitKept = store(context).get(videoId)?.let { it.aiTextKey == key && it.ai != null && !it.aiRough } == true
+            if (SongCheckWindow.videoExactOpening(quick.rough, quick.words != null, exactFitKept)) {
+                val exact = hearThrough429(
+                    context,
+                    song,
+                    SongCheckWindow.VIDEO_QUICK_SECONDS,
+                    SONG_FIRST_LEAST_SECONDS,
+                    sheetLanguage,
+                    reuseFrom = SONG_FIRST_LEAST_SECONDS,
+                    stillWanted = stillWanted,
+                    exact = true,
+                )
+                if (exact != null && !exact.rough) fitAndKeep(exact, sheetLanguage)
             }
         } catch (cancelled: CancellationException) {
             throw cancelled

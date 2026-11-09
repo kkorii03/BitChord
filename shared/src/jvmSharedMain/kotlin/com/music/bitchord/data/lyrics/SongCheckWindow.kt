@@ -50,6 +50,15 @@ object SongCheckWindow {
         isVideo && !nextRow && wordEngineDue && quickEngine
 
     /**
+     * Whether a playing video's quick listen also asks the same opening of the exact engine: its
+     * quick words were rough and no exact fit of this sheet is kept yet. The whole-song answer took
+     * 15-170 s on 11-09's rounds (230-d bYt37InYBlQ landed after the track), so the rough fit was
+     * all the opening showed. At most one more request: the refine's own opening ask shares it.
+     */
+    fun videoExactOpening(quickRough: Boolean, quickHeard: Boolean, exactFitKept: Boolean): Boolean =
+        quickRough && quickHeard && !exactFitKept
+
+    /**
      * Whether a video's opening is heard as its track starts, before its lyrics are in:
      * a streamed video (a downloaded one is decoded from its file, at the gate), with
      * the quick engine set up, and the same switches every automatic listen obeys. Only
