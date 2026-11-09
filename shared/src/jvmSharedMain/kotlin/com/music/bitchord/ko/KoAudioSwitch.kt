@@ -5,6 +5,7 @@ import com.music.bitchord.data.CatalogSongMapper
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.YouTubeDisplayCleaner
 import com.music.bitchord.data.cover.CoverTitles
+import com.music.bitchord.data.cover.YouTubeCoverResolver
 import com.music.bitchord.data.innertube.SearchKind
 import com.music.bitchord.data.lyrics.LyricsMismatch
 import com.music.bitchord.data.model.SearchFilter
@@ -44,15 +45,24 @@ internal object KoAudioSwitch {
             Log.d(TAG, "audio switch: query=$query")
             val page = YtMusicRepository.search(query, SearchFilter.SONGS, SearchKind.AUDIO_SWITCH)
             if (page.isFailure) failedQueries++
-            val rows = page.getOrNull()
+            val plain = page.getOrNull()
                 ?.filterIsInstance<SearchResult.Track>()
                 ?.map { it.song }
                 .orEmpty()
+            KoTrackMatcher.titleBridges(plain, target).forEach { bridges.getOrPut(it.videoId) { it } }
+            // The page as YouTube names it comes back without covers (see
+            // CatalogSongMapper.enrichesCovers), so a page that answers costs
+            // no cover lookup at all.
+            adoptBest(plain, plain.filterNot { it.isVideo }, target, song, query.length)?.let { return it }
+            // No answer: the page as it was read before, with the store's
+            // names on the uploads iTunes/Deezer confirmed, and everything
+            // after this line runs on it exactly as before.
+            val rows = withCovers(plain)
             var candidates = rows.filterNot { it.isVideo }
             KoTrackMatcher.titleBridges(rows, target).forEach { bridges.getOrPut(it.videoId) { it } }
             // The free audio rows first: a page that already answers costs no
             // mapping.
-            adoptBest(rows, candidates, target, song, query.length)?.let { return it }
+            if (rows != plain) adoptBest(rows, candidates, target, song, query.length)?.let { return it }
             // A row that only a catalogue mapping can turn into audio (an
             // official-audio upload with a 16:9 still, an MV mapped to its
             // track) used to be dropped when AUDIO_SWITCH stopped mapping
@@ -127,10 +137,19 @@ internal object KoAudioSwitch {
     }
 
     /**
+     * [rows] with the search screen's covers: a confirmed upload also takes
+     * the store's title and credit. Asked only when the plain page had no
+     * answer, so the slow pass (4-19 s on rs18-rs20) is spent only when it
+     * could change the outcome.
+     */
+    internal suspend fun withCovers(rows: List<Song>): List<Song> =
+        YouTubeCoverResolver.enrich(rows, CatalogSongMapper.MAX_ROWS_PER_PAGE)
+
+    /**
      * The first row among [candidates] the switch may adopt, or null. [rows]
      * is the whole page, which the title bridge reads as evidence.
      */
-    private fun adoptBest(
+    internal fun adoptBest(
         rows: List<Song>,
         candidates: List<Song>,
         target: TrackMatcher.Target,
