@@ -2725,6 +2725,9 @@ object StreamResolver {
         }
     }
 
+    /** [probe] for tests: the verdict's name for [url], asked directly. */
+    internal fun probeVerdictForTest(url: String): String = probe(url).name
+
     private val REFUSAL_CODES = setOf(403, 404, 410)
 
     /** Back-pressure, not a refusal: forget the URL but keep the client. */
