@@ -82,6 +82,7 @@ object InnerTubeXResolver {
     private var warmup: Job? = null
     private var cacheLink: Job? = null
     private val warmLock = Any()
+    private val playerWriteLock = Any() // [KO] ejs-prep
     private var warmStarted: Boolean = false
     private var poTokenPrewarm: (suspend (String?) -> Unit)? = null
     @Volatile private var ejsPrep: com.music.bitchord.ko.KoEjsPlayerPrep? = null // [KO] ejs-prep
@@ -195,7 +196,8 @@ object InnerTubeXResolver {
         playerDir?.let { File(it, key) }?.takeIf { it.isFile }?.readText()
             ?: ejsPrep?.onMissing(key) // [KO] ejs-prep: made once per player version, see KoEjsPlayerPrep
 
-    private fun writePlayer(key: String, value: String?) {
+    // [KO] ejs-prep: two writers (the library and KoEjsPlayerPrep) must not share one "$key.tmp" at once.
+    private fun writePlayer(key: String, value: String?): Unit = synchronized(playerWriteLock) {
         val dir = playerDir ?: return
         val file = File(dir, key)
         if (value == null) {

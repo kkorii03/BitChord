@@ -2,6 +2,7 @@ package com.music.bitchord.ko
 
 import com.dokar.quickjs.QuickJs
 import com.dokar.quickjs.binding.function
+import com.music.bitchord.data.MonotonicClock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -18,33 +19,43 @@ import kotlinx.coroutines.withContext
  * 192 MB heap cap in rs22 182b.
  */
 object KoEjsQuickJs {
-    private const val EVALUATION_TIMEOUT_MS = 90_000L
     // InnerTubeX's figure: a ~2.6 MiB player needs more than 128 MiB while EJS builds its AST.
     private const val NATIVE_MEMORY_LIMIT_BYTES = 192L * 1024L * 1024L
     private const val MAX_STACK_SIZE_BYTES = 256L * 1024L
 
     suspend fun preprocess(playerJs: String, lib: String, core: String): String? =
         withContext(Dispatchers.Default) {
+            // One budget for the whole run, so it always ends before KoEjsPlayerPrep.WAIT_MS does.
+            val deadline = MonotonicClock.nowMs() + KoEjsPlayerPrep.EVAL_BUDGET_MS
             val qjs = QuickJs.create(Dispatchers.Default)
             try {
-                qjs.evaluationTimeoutMillis = EVALUATION_TIMEOUT_MS
                 qjs.memoryLimit = NATIVE_MEMORY_LIMIT_BYTES
                 qjs.function("__bcPlayerJs") { _ -> playerJs }
-                run(qjs, YOUTUBE_GLOBALS)
-                run(qjs, lib)
-                run(qjs, "Object.assign(globalThis, lib);")
-                run(qjs, core)
-                // QuickJS measures its stack limit from the current native thread; refresh before each call.
-                qjs.maxStackSize = MAX_STACK_SIZE_BYTES
+                run(qjs, deadline, YOUTUBE_GLOBALS) ?: return@withContext null
+                run(qjs, deadline, lib) ?: return@withContext null
+                run(qjs, deadline, "Object.assign(globalThis, lib);") ?: return@withContext null
+                run(qjs, deadline, core) ?: return@withContext null
+                if (!budget(qjs, deadline)) return@withContext null
                 qjs.evaluate<String?>(SOLVE)?.takeIf { it.isNotEmpty() }
             } finally {
                 qjs.close()
             }
         }
 
-    private suspend fun run(qjs: QuickJs, code: String) {
+    /** Gives the next evaluate only what is left of the run's budget; false when nothing is left. */
+    private fun budget(qjs: QuickJs, deadline: Long): Boolean {
+        val left = deadline - MonotonicClock.nowMs()
+        if (left <= 0) return false
+        qjs.evaluationTimeoutMillis = left
+        // QuickJS measures its stack limit from the current native thread; refresh before each call.
         qjs.maxStackSize = MAX_STACK_SIZE_BYTES
+        return true
+    }
+
+    private suspend fun run(qjs: QuickJs, deadline: Long, code: String): Unit? {
+        if (!budget(qjs, deadline)) return null
         qjs.evaluate<Any?>("$code\n;undefined;")
+        return Unit
     }
 
     /** One throwaway challenge, as InnerTubeX's own player preload asks; only the preprocessed player is kept. */
@@ -53,6 +64,8 @@ object KoEjsQuickJs {
           var r = jsc({"type":"player","player":__bcPlayerJs(),"output_preprocessed":true,
                        "requests":[{"type":"sig","challenges":["prewarm"]}]});
           if (!r || r.type !== "result" || typeof r.preprocessed_player !== "string") return "";
+          // The throwaway challenge must have been answered too, or the output is not trusted.
+          if (!r.responses || !r.responses[0] || r.responses[0].type !== "result") return "";
           return r.preprocessed_player;
         })()
     """.trimIndent()

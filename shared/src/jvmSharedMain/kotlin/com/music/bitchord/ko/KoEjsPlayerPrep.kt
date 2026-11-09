@@ -10,9 +10,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.Request
+import java.io.IOException
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
@@ -103,7 +105,7 @@ class KoEjsPlayerPrep(
     private suspend fun make(key: String, url: String): String? {
         val start = MonotonicClock.nowMs()
         return try {
-            val js = download(url)?.takeIf { it.isNotBlank() && it.length <= MAX_PLAYER_JS_LENGTH }
+            val js = fetchPlayer(url)?.takeIf { it.isNotBlank() && it.length <= MAX_PLAYER_JS_LENGTH }
             if (js == null) {
                 TrackLog.w(TAG, "EJS player prep: no player JS for ${playerId(url)}")
                 return null
@@ -126,6 +128,21 @@ class KoEjsPlayerPrep(
         }
     }
 
+    /**
+     * One retry after a transient download failure ([download] throws
+     * IOException for a network error or a retryable status). A failed solve
+     * is never retried: that is the expensive part.
+     */
+    private suspend fun fetchPlayer(url: String): String? {
+        try {
+            return download(url)
+        } catch (e: IOException) {
+            TrackLog.w(TAG, "EJS player prep: player JS download failed (${e::class.simpleName}), retrying once")
+        }
+        delay(DOWNLOAD_RETRY_DELAY_MS)
+        return download(url)
+    }
+
     /** The EJS solver bundle InnerTubeX ships, and the hash it puts in its cache keys. */
     class Bundle(val lib: String, val core: String) {
         val hash: String = sha1(lib + core)
@@ -137,8 +154,24 @@ class KoEjsPlayerPrep(
         /** Same bound InnerTubeX applies to a player or a preprocessed player. */
         const val MAX_PLAYER_JS_LENGTH = 8 * 1024 * 1024
 
-        /** The QuickJS run is capped at 90 s; this covers it plus the download. */
-        const val WAIT_MS = 100_000L
+        /** Each player JS download attempt; two attempts at most. */
+        const val DOWNLOAD_ATTEMPT_MS = 12_000L
+        const val DOWNLOAD_RETRY_DELAY_MS = 1_000L
+
+        /**
+         * One budget for every QuickJS evaluate of a run (bootstrap + solve):
+         * each evaluate gets only what is left of it.
+         */
+        const val EVAL_BUDGET_MS = 90_000L
+
+        /**
+         * Longer than the longest possible run (two downloads, the retry delay,
+         * the whole eval budget, plus slack for runtime creation), so the library
+         * never starts its own full solve while ours is still evaluating: two
+         * full EJS solves at once is ~2 x 150 MB native on the slow devices that
+         * already hit OOM.
+         */
+        const val WAIT_MS = 2 * DOWNLOAD_ATTEMPT_MS + DOWNLOAD_RETRY_DELAY_MS + EVAL_BUDGET_MS + 10_000L
         private const val MAX_URLS = 4
 
         /** Read the way InnerTubeX's loader reads it, so the hash matches its keys. */
@@ -174,11 +207,17 @@ class KoEjsPlayerPrep(
             )
         }
 
-        private val playerClient by lazy { Http.client.newBuilder().callTimeout(30, TimeUnit.SECONDS).build() }
+        private val playerClient by lazy {
+            Http.client.newBuilder().callTimeout(DOWNLOAD_ATTEMPT_MS, TimeUnit.MILLISECONDS).build()
+        }
 
+        /** Null for a definitive answer; IOException (network, timeout, 408/425/429/5xx) for a retryable one. */
         private suspend fun downloadPlayer(url: String): String? = withContext(Dispatchers.IO) {
             val request = Request.Builder().url(url).header("Referer", "https://www.youtube.com/").build()
             playerClient.newCall(request).execute().use { response ->
+                if (response.code == 408 || response.code == 425 || response.code == 429 || response.code >= 500) {
+                    throw IOException("HTTP ${response.code}")
+                }
                 if (!response.isSuccessful) return@use null
                 val body = response.body
                 if (body.contentLength() > MAX_PLAYER_JS_LENGTH) return@use null
@@ -189,8 +228,8 @@ class KoEjsPlayerPrep(
         private fun playerId(url: String): String =
             Regex("/s/player/([^/]+)/").find(url)?.groupValues?.get(1) ?: "unknown"
 
-        /** InnerTubeX's sha1: SHA-1 of the default-charset bytes, lowercase hex. */
+        /** InnerTubeX's sha1: SHA-1 of the UTF-8 bytes, lowercase hex. */
         internal fun sha1(s: String): String =
-            MessageDigest.getInstance("SHA-1").digest(s.toByteArray()).joinToString("") { "%02x".format(it) }
+            MessageDigest.getInstance("SHA-1").digest(s.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
     }
 }

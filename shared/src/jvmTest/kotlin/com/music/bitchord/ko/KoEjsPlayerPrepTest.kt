@@ -44,9 +44,13 @@ class KoEjsPlayerPrepTest {
         gate: CompletableDeferred<Unit>? = null,
         waitMs: Long = 5_000,
         output: String? = "PREPROCESSED",
+        failDownloads: Int = 0,
     ) = KoEjsPlayerPrep(
         bundleHash = { bundle },
-        download = { downloads.incrementAndGet(); "PLAYER JS for $it" },
+        download = {
+            if (downloads.incrementAndGet() <= failDownloads) throw java.io.IOException("HTTP 503")
+            "PLAYER JS for $it"
+        },
         preprocess = { js ->
             solves.incrementAndGet()
             assertEquals("PLAYER JS for $url", js)
@@ -142,6 +146,34 @@ class KoEjsPlayerPrepTest {
 
         assertNull(prep.onMissing(key))
         assertTrue(stored.isEmpty())
+    }
+
+    @Test
+    fun `one transient download failure is retried once`() = runBlocking {
+        val prep = prep(failDownloads = 1)
+        prep.onPlayerUrl(url)
+
+        assertEquals("PREPROCESSED", prep.onMissing(key))
+        assertEquals(2, downloads.get())
+        assertEquals(1, solves.get())
+    }
+
+    @Test
+    fun `a second download failure gives up without solving`() = runBlocking {
+        val prep = prep(failDownloads = 2)
+        prep.onPlayerUrl(url)
+
+        assertNull(prep.onMissing(key))
+        assertEquals(2, downloads.get())
+        assertEquals(0, solves.get())
+    }
+
+    @Test
+    fun `the wait outlasts the longest possible run`() {
+        // Otherwise the library starts its own full solve while ours still evaluates: two at once.
+        val longestRun = 2 * KoEjsPlayerPrep.DOWNLOAD_ATTEMPT_MS +
+            KoEjsPlayerPrep.DOWNLOAD_RETRY_DELAY_MS + KoEjsPlayerPrep.EVAL_BUDGET_MS
+        assertTrue(KoEjsPlayerPrep.WAIT_MS >= longestRun + 5_000, "wait ${KoEjsPlayerPrep.WAIT_MS} vs run $longestRun")
     }
 
     @Test
