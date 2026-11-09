@@ -102,15 +102,21 @@ internal object AlignFarm {
         return out
     }
 
-    /** The farm's words as a kept transcript of the YouTube stream, if they suit [language]. */
-    internal fun savedFrom(bytes: ByteArray, language: String, password: String): SongHearing.Saved? {
+    /**
+     * The farm's words as a kept transcript of the YouTube stream, under the file's own
+     * language. The GET is the video's one this run: a file thrown away for not suiting the
+     * hearing that asked is gone for the others. 11-09 rs28 215 pB-5XG-DbAA: a "multi" listen
+     * took it, its "en" whole-song hearing found it spent and paid 99 s for 57% agreement,
+     * while the control kept the farm's 168 words and moved the sheet 30 s.
+     */
+    internal fun savedFrom(bytes: ByteArray, password: String): SongHearing.Saved? {
         val result = runCatching { json.decodeFromString(Result.serializer(), decipher(bytes, password).decodeToString()) }.getOrNull()
             ?: return null
-        if (result.lang != language || result.words.isEmpty()) return null
+        if (result.lang.isBlank() || result.words.isEmpty()) return null
         val clock = LyricsTiming.clockToKey(LyricsTiming.Clock.YouTube) ?: return null
         return SongHearing.Saved(
             recording = SongHearing.streamRecording(clock),
-            language = language,
+            language = result.lang,
             seconds = result.audio_s,
             whole = true,
             clock = clock,
@@ -174,7 +180,10 @@ internal object AlignFarm {
         return true
     }
 
-    /** What the farm holds for [videoId], asked once a run; null on anything but a usable answer. */
+    /**
+     * What the farm holds for [videoId], asked once a run; null on anything but a usable answer.
+     * Its language may not be [language]: the caller keeps it for the hearings it suits.
+     */
     suspend fun fetch(app: Context, videoId: String, language: String): SongHearing.Saved? {
         val secret = secretOf(app) ?: return null
         return answer(videoId, language, secret + videoId) { download(videoId, secret, client, ahead = false) }
@@ -210,9 +219,9 @@ internal object AlignFarm {
                 return null
             }
         }
-        val how = if (pending != null) " asked ahead" else ""
-        return withContext(Dispatchers.IO) { savedFrom(bytes, language, password) }
-            ?.also { TrackLog.i(TAG, "align-farm: ${it.words.size} words lang=$language$how", videoId) }
+        val how = (if (pending != null) " asked ahead" else "") + " for=$language"
+        return withContext(Dispatchers.IO) { savedFrom(bytes, password) }
+            ?.also { TrackLog.i(TAG, "align-farm: ${it.words.size} words lang=${it.language}$how", videoId) }
     }
 
     private fun secretOf(app: Context): String? =

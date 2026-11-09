@@ -32,9 +32,10 @@ class AlignFarmTest {
 
     @Test
     fun `the farm's words become a whole transcript of the YouTube stream`() {
-        val saved = AlignFarm.savedFrom(cipher(BODY), "en", PASS)
+        val saved = AlignFarm.savedFrom(cipher(BODY), PASS)
         assertNotNull(saved)
         assertTrue(saved!!.whole)
+        assertEquals("en", saved.language)
         assertEquals(200.0, saved.seconds, 0.0)
         assertEquals(2, saved.words.size)
         assertEquals(1500L, saved.words[1].s)
@@ -42,10 +43,30 @@ class AlignFarmTest {
     }
 
     @Test
-    fun `another language, another key or a bad file gives nothing`() {
-        assertNull(AlignFarm.savedFrom(cipher(BODY), "ko", PASS))
-        assertNull(AlignFarm.savedFrom(cipher(BODY), "en", "other"))
-        assertNull(AlignFarm.savedFrom(byteArrayOf(1, 2, 3), "en", PASS))
+    fun `another key, a bad file or a file with no words gives nothing`() {
+        assertNull(AlignFarm.savedFrom(cipher(BODY), "other"))
+        assertNull(AlignFarm.savedFrom(byteArrayOf(1, 2, 3), PASS))
+        assertNull(AlignFarm.savedFrom(cipher("""{"lang":"en","audio_s":200.0,"words":[]}"""), PASS))
+        assertNull(AlignFarm.savedFrom(cipher("""{"lang":"","audio_s":200.0,"words":[{"t":"a","s":1000,"e":1400}]}"""), PASS))
+    }
+
+    /**
+     * 11-09 rs28 215 pB-5XG-DbAA: the run's one GET went to a "multi" listen, which threw the
+     * "en" file away, and the "en" whole-song hearing found the farm spent. The file is kept
+     * under its own language: the "en" hearing reads it, a "multi" one still does not.
+     */
+    @Test
+    fun `a hearing in another language keeps the file for the one it suits`() = runBlocking {
+        val id = "langtest001"
+        val saved = AlignFarm.answer(id, "multi", PASS) { cipher(BODY) }
+        assertNotNull(saved)
+        assertEquals("en", saved!!.language)
+        val clock = LyricsTiming.clockToKey(LyricsTiming.Clock.YouTube)!!
+        val stream = SongHearing.streamRecording(clock)
+        assertNotNull(SongHearing.covering(listOf(saved), stream, "en", 420.0))
+        assertNull(SongHearing.covering(listOf(saved), stream, "multi", 90.0))
+        // Still one GET a run.
+        assertNull(AlignFarm.answer(id, "en", PASS) { noGet("asked a second time") })
     }
 
     /** 117b 8gyLR4NfMiI: the start's GET timed out; the ask after the wait for sound must still go, a fourth must not. */

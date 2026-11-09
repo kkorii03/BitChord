@@ -407,7 +407,11 @@ internal object SongHearing {
         HearingReask.live.networkUp(now)
     }
 
-    /** [keepFromFarm] once more, and its words when they cover [untilSeconds] of what is heard from. */
+    /**
+     * [keepFromFarm] once more, and the kept words when they cover [untilSeconds] of what is
+     * heard from. Looked at even when this call got nothing: the farm's one GET a run may
+     * have been answered to another hearing during the wait for sound (rs28 215 pB-5XG-DbAA).
+     */
     private suspend fun farmAgain(
         app: Context,
         song: Song,
@@ -416,11 +420,17 @@ internal object SongHearing {
         exact: Boolean,
         raw: VideoAudio.SongAudio?,
     ): Heard? {
-        if (!keepFromFarm(app, song, language)) return null
+        val answered = keepFromFarm(app, song, language)
         val recording = (if (raw != null) recordingKey(raw.fromFile, LyricsTiming.clockForSongAudio(song, raw)) else recordingKey(song))
             ?: return null
-        val saved = covering(load(app, song.videoId).filterNot { exact && it.rough }, recording, language, untilSeconds) ?: return null
-        TrackLog.d(TAG, "song-hear: the farm answered a second ask, ${saved.words.size} words", song.videoId)
+        val kept = withContext(Dispatchers.IO) { load(app, song.videoId) }
+        val saved = covering(kept.filterNot { exact && it.rough }, recording, language, untilSeconds) ?: return null
+        TrackLog.d(
+            TAG,
+            if (answered) "song-hear: the farm answered a second ask, ${saved.words.size} words"
+            else "song-hear: kept during the wait for sound, ${saved.words.size} words",
+            song.videoId,
+        )
         return heardFrom(saved)
     }
 
