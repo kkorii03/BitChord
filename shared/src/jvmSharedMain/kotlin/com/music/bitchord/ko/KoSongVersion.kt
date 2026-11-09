@@ -99,7 +99,7 @@ internal object KoSongVersion {
             SearchFilter.VIDEOS to SearchKind.VIDEO_SWITCH,
         )) {
             for (query in TrackMatcher.queries(target)) {
-                val rows = try {
+                val plain = try {
                     YtMusicRepository.search(query, filter, kind).getOrNull()
                         ?.filterIsInstance<SearchResult.Track>()
                         ?.map { it.song }
@@ -109,6 +109,18 @@ internal object KoSongVersion {
                 } catch (failure: Throwable) {
                     Log.w(TAG, "alternate search failed for '$query': ${failure.message}")
                     emptyList()
+                }
+                // As in the audio switch: the Songs page comes back without
+                // covers, and the covered page (the store's names on confirmed
+                // uploads) is read only when the plain one has no answer.
+                val rows = if (kind == SearchKind.AUDIO_SWITCH) {
+                    TrackMatcher.bestSameArtist(plain.filter(::acceptable), target)?.let { match ->
+                        Log.d(TAG, "alternate: '${song.title}' -> '${match.title}' (search)")
+                        return match
+                    }
+                    KoAudioSwitch.withCovers(plain)
+                } else {
+                    plain
                 }
                 // The same lost-row recovery as the audio switch: a video row
                 // that only a catalogue mapping turns into audio used to be

@@ -483,6 +483,16 @@ internal object CatalogSongMapper {
      */
     internal fun mapsPageRows(kind: SearchKind): Boolean = kind != SearchKind.AUDIO_SWITCH
 
+    /**
+     * Whether a gated Songs page has square covers looked up for its uploads
+     * before it is returned. A song-version page is read by the matcher and
+     * never shown, and that iTunes + Deezer pass (two requests per upload, up
+     * to twenty uploads, behind the app's shared four-slot cover gate) was
+     * 4-19 s of a 7-45 s lookup on the rs18-rs20 emulators: the song version
+     * then landed after the music video was already audible.
+     */
+    internal fun enrichesCovers(kind: SearchKind): Boolean = kind != SearchKind.AUDIO_SWITCH
+
     // ---- Lookup -------------------------------------------------------------
 
     /** One album search or page read, in the shared ceiling or in the current row's lane. */

@@ -315,6 +315,21 @@ class CatalogSongMapperTest {
         assertTrue(CatalogSongMapper.mapsPageRows(SearchKind.CATALOG))
     }
 
+    /**
+     * rs18-rs20: every MV row's song-version search waited for iTunes and
+     * Deezer covers of up to twenty uploads (165a r_0JjYUe5jo: 36 requests,
+     * about 18 s of a 35 s lookup) before the matcher read the page, so the
+     * song version came after the MV was audible and needed a late swap.
+     * Screens still get their covers.
+     */
+    @Test
+    fun `the song version search does not wait for cover art`() {
+        assertFalse(CatalogSongMapper.enrichesCovers(SearchKind.AUDIO_SWITCH))
+        assertTrue(CatalogSongMapper.enrichesCovers(SearchKind.TYPED))
+        assertTrue(CatalogSongMapper.enrichesCovers(SearchKind.CATALOG))
+        assertTrue(CatalogSongMapper.enrichesCovers(SearchKind.COVER))
+    }
+
     @Test
     fun `a cached catalogue song survives encoding`() {
         val song = CatalogSongMapper.CatalogSong(
