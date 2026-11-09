@@ -397,18 +397,40 @@ internal object SongHearing {
         exact: Boolean,
     ): Deepgram.Answer {
         if (!exact && groqFirst(untilSeconds)) {
-            val asked = System.currentTimeMillis()
-            val answer = GroqWhisper.listen(bytes, language, mime)
-            TrackLog.d(
-                TAG,
-                "song-hear: groq lang=$language until=${untilSeconds.toInt()} mime=$mime kb=${bytes.size / 1024} " +
-                    "wait=${waitedMs}ms send=${System.currentTimeMillis() - asked}ms " +
-                    "http=${answer.httpCode} words=${answer.words?.size} audio=${answer.audioMs} copy=$copyKey",
-                videoId,
-            )
+            val answer = groqWithResend {
+                val asked = System.currentTimeMillis()
+                GroqWhisper.listen(bytes, language, mime).also { answer ->
+                    TrackLog.d(
+                        TAG,
+                        "song-hear: groq lang=$language until=${untilSeconds.toInt()} mime=$mime kb=${bytes.size / 1024} " +
+                            "wait=${waitedMs}ms send=${System.currentTimeMillis() - asked}ms " +
+                            "http=${answer.httpCode} words=${answer.words?.size} audio=${answer.audioMs} copy=$copyKey",
+                        videoId,
+                    )
+                }
+            }
             if (!answer.words.isNullOrEmpty()) return answer
         }
         return sendToDeepgram(bytes, language, mime, untilSeconds, videoId, waitedMs, copyKey, exact)
+    }
+
+    /**
+     * Groq once more, [RESEND_AFTER_MS] later, when its first ask got no reply at all.
+     *
+     * A dropped connection is not an answer: on the 11-09 loop rounds (208-212) 28 of
+     * 93 Groq asks died in 0.3-1.8 s with "unexpected end of stream", nothing billed,
+     * and the opening fell to Deepgram, whose first ask had died the same way and whose
+     * second sat on it 48-80 s in 5 of them (212-b v59g4HRNIkc: answered 12 s after the
+     * row had left, the sheet scored +1.85 s uncorrected). Deepgram already sends a
+     * no-reply again ([shouldResend]); Groq, the engine someone is waiting on, did not.
+     * One resend only, and never over a server's own answer (429, 401, 5xx): those go
+     * to Deepgram exactly as before.
+     */
+    internal suspend fun groqWithResend(ask: suspend () -> Deepgram.Answer): Deepgram.Answer {
+        val first = ask()
+        if (first.httpCode != null || !first.words.isNullOrEmpty()) return first
+        delay(RESEND_AFTER_MS)
+        return ask()
     }
 
     /**
