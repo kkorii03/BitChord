@@ -238,6 +238,59 @@ object LyricsMismatch {
     fun isRejected(videoId: String, source: LyricsSource, lines: List<LyricLine>): Boolean =
         synchronized(rejected) { rejected.containsKey(key(videoId, source, lines)) }
 
+    /**
+     * The words and clock of a rejected sheet, so another catalogue's copy of
+     * the same text is refused too. Two Korean catalogues license one source:
+     * VIBE's 40 long lines were rejected on 264 heard words, and Bugs' 80 short
+     * lines of the same words on the same clock passed and were shown +10 s off
+     * (iKraCjaTBVk, rs27 231-c). The verdict was about the words, not the split.
+     */
+    private class Shape(val words: Set<String>, val firstMs: Long, val lastMs: Long)
+
+    private fun shape(lines: List<LyricLine>): Shape? {
+        val texts = lines.filter { !it.isGap && it.text.isNotBlank() && it.timeMs > 0L }
+        if (texts.isEmpty()) return null
+        val words = texts.flatMapTo(HashSet()) { line ->
+            line.text.split(' ', '\t', '\n').map { LyricsWordAlign.fold(it) }.filter { it.isNotEmpty() }
+        }
+        if (words.size < MIN_SAME_WORDS) return null
+        return Shape(words, texts.first().timeMs, texts.last().timeMs)
+    }
+
+    private fun Shape.sameSheetAs(other: Shape): Boolean {
+        if (kotlin.math.abs(firstMs - other.firstMs) > SAME_CLOCK_MS) return false
+        if (kotlin.math.abs(lastMs - other.lastMs) > SAME_CLOCK_MS) return false
+        val shared = words.count { it in other.words }
+        return shared >= SAME_WORDS_SHARE * maxOf(words.size, other.words.size)
+    }
+
+    /** Fewer distinct words than this say too little to call two sheets the same text. */
+    private const val MIN_SAME_WORDS = 20
+
+    /** Share of the larger sheet's distinct words both must hold (231-c: about 0.97). */
+    private const val SAME_WORDS_SHARE = 0.8
+
+    /** Both sheets open and close within this of each other (231-c: 0.3 s apart). */
+    private const val SAME_CLOCK_MS = 3_000L
+
+    /** A video rarely has more than a few wrong sheets; the oldest goes first. */
+    private const val SHAPES_PER_VIDEO = 4
+
+    private val rejectedShapes = object : LinkedHashMap<String, MutableList<Shape>>(REMEMBERED, 0.75f, true) {
+        override fun removeEldestEntry(eldest: Map.Entry<String, MutableList<Shape>>) = size > REMEMBERED
+    }
+
+    /**
+     * Whether [lines] are a rejected sheet of [videoId] in another split or
+     * from another provider: the same words on the same clock. Read only, so a
+     * copy never counts as a second wrong sheet toward [wrongSound].
+     */
+    fun sameWordsRejected(videoId: String, lines: List<LyricLine>): Boolean {
+        val known = synchronized(rejectedShapes) { rejectedShapes[videoId]?.toList() } ?: return false
+        val candidate = shape(lines) ?: return false
+        return known.any { it.sameSheetAs(candidate) }
+    }
+
     fun rememberRejected(videoId: String, source: LyricsSource, lines: List<LyricLine>, verdict: Verdict) {
         val sheet = key(videoId, source, lines)
         val fresh = synchronized(rejected) {
@@ -246,6 +299,15 @@ object LyricsMismatch {
             } else {
                 rejected[sheet] = true
                 true
+            }
+        }
+        if (fresh) {
+            shape(lines)?.let { found ->
+                synchronized(rejectedShapes) {
+                    val shapes = rejectedShapes.getOrPut(videoId) { ArrayList() }
+                    shapes += found
+                    if (shapes.size > SHAPES_PER_VIDEO) shapes.removeAt(0)
+                }
             }
         }
         // The same sheet judged twice — the screen and a refresh both asked — is

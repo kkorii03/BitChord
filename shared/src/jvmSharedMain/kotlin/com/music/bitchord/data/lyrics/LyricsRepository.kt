@@ -964,6 +964,10 @@ object LyricsRepository {
         if (result.source == LyricsSource.GEMINI_TRANSCRIPT) return false
         if (heard.size < LyricsMismatch.MIN_HEARD_WORDS) return false
         if (LyricsMismatch.isRejected(videoId, result.source, result.lines)) return true
+        if (LyricsMismatch.sameWordsRejected(videoId, result.lines)) {
+            TrackLog.i(TAG, "lyrics-mismatch: ${result.source.label} same words as a rejected sheet -> rejected", about = videoId)
+            return true
+        }
         // The alignment is a full DP table; keep it off the main thread even
         // for an in-memory answer the caller asked for on Main.
         val verdict = withContext(Dispatchers.Default) {
