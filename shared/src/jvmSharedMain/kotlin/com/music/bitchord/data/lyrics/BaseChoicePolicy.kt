@@ -95,7 +95,8 @@ object BaseChoicePolicy {
      * matched lines, its within-[WITHIN_MS] share is [MIN_RATIO_GAIN] higher,
      * and its median error is [MIN_MEDIAN_GAIN_MS] smaller. A pick that is
      * [belowThreshold] becomes [NONE], unless [NONE] itself is clearly worse by
-     * the same two gains. [manual] keeps the listener's choice
+     * the same two gains, overall or on the lines a refine could still reach
+     * ([clearlyBetterInReach]). [manual] keeps the listener's choice
      * whatever the scores say.
      */
     fun choose(
@@ -129,6 +130,9 @@ object BaseChoicePolicy {
             val none = scores.firstOrNull { it.first == NONE }?.second
             if (none != null && clearlyBetter(pick.second, none)) {
                 return Choice(pick.first, scores, reason = "below threshold, none further off")
+            }
+            if (clearlyBetterInReach(pick.first, candidates, heardStarts)) {
+                return Choice(pick.first, scores, reason = "below threshold, right where the words can tell")
             }
             return Choice(NONE, scores, reason = "below threshold")
         }
@@ -172,6 +176,36 @@ object BaseChoicePolicy {
         other.matched >= MIN_MATCHED_LINES &&
             candidate.withinRatio - other.withinRatio >= MIN_RATIO_GAIN - 1e-9 &&
             other.medianAbsMs - candidate.medianAbsMs >= MIN_MEDIAN_GAIN_MS
+
+    /**
+     * Whether [pickName] clearly beats [NONE] on the lines where either of the two
+     * sits within a refine's move ([RefinePolicy.MAX_SHIFT_MS]) of the heard start,
+     * by enough of them and not itself refused there. A sheet timed to another
+     * arrangement past some point is off for every base on those later lines, so
+     * they cannot tell bases apart, yet their median decides [belowThreshold]
+     * (11-10 RKX689yBTfE: the whole-song words put the opening at -1.26 s and the
+     * lines after a 15 s longer break at +15.3 s, `none:15285/0%/20 ai:16544/10%/20
+     * -> none`, and the right AI base of the 90 s answer was dropped).
+     */
+    private fun clearlyBetterInReach(
+        pickName: String,
+        candidates: List<Candidate>,
+        heardStarts: List<Long?>,
+    ): Boolean {
+        val pick = candidates.firstOrNull { it.name == pickName }?.starts ?: return false
+        val none = candidates.firstOrNull { it.name == NONE }?.starts ?: return false
+        val decisive = heardStarts.indices.filter { index ->
+            val heard = heardStarts[index] ?: return@filter false
+            val p = pick.getOrNull(index) ?: return@filter false
+            val n = none.getOrNull(index) ?: return@filter false
+            minOf(abs(p - heard), abs(n - heard)) <= RefinePolicy.MAX_SHIFT_MS
+        }
+        val heardThere = decisive.map { heardStarts[it] }
+        val pickScore = score(decisive.map { pick[it] }, heardThere)
+        val noneScore = score(decisive.map { none[it] }, heardThere)
+        return pickScore.matched >= MIN_MATCHED_LINES && !belowThreshold(pickScore) &&
+            clearlyBetter(pickScore, noneScore)
+    }
 
     /** Matched lines, median absolute error and the within-[WITHIN_MS] share of one candidate. */
     fun score(candidateStarts: List<Long?>, heardStarts: List<Long?>): Score {

@@ -176,6 +176,34 @@ class BaseChoicePolicyTest {
     }
 
     @Test
+    fun aRightBaseStaysWhenTheSheetJumpsLaterInTheSong() {
+        // 11-10 RKX689yBTfE (phone, downloaded cover): the 90 s answer put the
+        // opening at -1.26 s (`ai:103/86%/14 -> ai`). The whole-song words then
+        // heard the lines after a 15 s longer break at +15.3 s on the sheet's
+        // clock; their median refused every base, `none:15285/0%/20
+        // ai:16544/10%/20 -> none (below threshold)`, and the opening lost its
+        // right base for the rest of the play.
+        val sheet = List(22) { 20_000L + it * 7_000L }
+        fun heardWith(openingMs: Long, opening: Int) =
+            sheet.mapIndexed { i, ms -> if (i < opening) ms + openingMs else ms + 15_300L }
+        fun pick(heard: List<Long?>) = BaseChoicePolicy.choose(
+            BaseChoicePolicy.AI,
+            heard,
+            listOf(
+                BaseChoicePolicy.Candidate(BaseChoicePolicy.NONE, sheet),
+                BaseChoicePolicy.Candidate(BaseChoicePolicy.AI, sheet.map { it - 1_259L }),
+            ),
+        )
+        val jump = pick(heardWith(-1_259L, opening = 8))
+        assertEquals(BaseChoicePolicy.AI, jump.name, "scores: ${jump.scores}")
+        assertEquals("below threshold, right where the words can tell", jump.reason)
+        // The opening says the provider's times are the right ones: none, as before.
+        assertEquals(BaseChoicePolicy.NONE, pick(heardWith(0L, opening = 8)).name)
+        // Too few opening lines to be evidence: none, as before.
+        assertEquals(BaseChoicePolicy.NONE, pick(heardWith(-1_259L, opening = 5)).name)
+    }
+
+    @Test
     fun tooFewHeardLinesCannotRefuseAPick() {
         val few = List(5) { 10_000L + it * 5_000L }
         val candidates = listOf(
