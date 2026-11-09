@@ -84,6 +84,7 @@ object InnerTubeXResolver {
     private val warmLock = Any()
     private var warmStarted: Boolean = false
     private var poTokenPrewarm: (suspend (String?) -> Unit)? = null
+    @Volatile private var ejsPrep: com.music.bitchord.ko.KoEjsPlayerPrep? = null // [KO] ejs-prep
 
     /**
      * @param filesDir where the preprocessed EJS players are kept.
@@ -98,7 +99,9 @@ object InnerTubeXResolver {
         store: ConfigStore,
         poTokenProvider: TokenProvider?,
         poTokenPrewarm: (suspend (String?) -> Unit)? = null,
+        ejsPreprocess: (suspend (playerJs: String, lib: String, core: String) -> String?)? = null, // [KO] ejs-prep
     ) {
+        ejsPrep = ejsPreprocess?.let { com.music.bitchord.ko.KoEjsPlayerPrep.create(it, ::writePlayer, scope) } // [KO] ejs-prep
         prefs = store
         poTokens = poTokenProvider
         this.poTokenPrewarm = poTokenPrewarm
@@ -188,8 +191,9 @@ object InnerTubeXResolver {
      * scratch is the 8.7s step; a preprocessed one is reused per player version,
      * so only the first launch after YouTube rotates its player pays it.
      */
-    private fun readPlayer(key: String): String? =
+    private suspend fun readPlayer(key: String): String? =
         playerDir?.let { File(it, key) }?.takeIf { it.isFile }?.readText()
+            ?: ejsPrep?.onMissing(key) // [KO] ejs-prep: made once per player version, see KoEjsPlayerPrep
 
     private fun writePlayer(key: String, value: String?) {
         val dir = playerDir ?: return
@@ -263,7 +267,7 @@ object InnerTubeXResolver {
     private val remoteStore = RemotePlayerConfigStore(http, repository, logger)
     private val cipherService = YouTubeCipherService(http, remoteStore, logger)
     private val extractor = InnerTubeExtractor(
-        configParser = YtConfigParserImpl(http, innerTube, remoteStore, logger),
+        configParser = com.music.bitchord.ko.KoPlayerUrlTap(YtConfigParserImpl(http, innerTube, remoteStore, logger)) { ejsPrep?.onPlayerUrl(it) }, // [KO] ejs-prep
         cipherService = cipherService,
         innerTube = innerTube,
         tokenProvider = tokenProvider,
@@ -284,7 +288,7 @@ object InnerTubeXResolver {
     private val proxyCipherService by lazy { YouTubeCipherService(proxyHttp, proxyRemoteStore, logger) }
     private val proxyExtractor by lazy {
         InnerTubeExtractor(
-            configParser = YtConfigParserImpl(proxyHttp, proxyInnerTube, proxyRemoteStore, logger),
+            configParser = com.music.bitchord.ko.KoPlayerUrlTap(YtConfigParserImpl(proxyHttp, proxyInnerTube, proxyRemoteStore, logger)) { ejsPrep?.onPlayerUrl(it) }, // [KO] ejs-prep
             cipherService = proxyCipherService,
             innerTube = proxyInnerTube,
             tokenProvider = tokenProvider,
@@ -616,6 +620,7 @@ object InnerTubeXResolver {
         prefs = null
         poTokens = null
         poTokenPrewarm = null
+        ejsPrep = null // [KO] ejs-prep
         playerDir = null
         minted.clear()
         excluded.clear()
