@@ -103,4 +103,73 @@ class LyricsTimingRefitReplacedSheetTest {
         assertTrue("the new sheet is fitted from the kept words", fitted)
         assertEquals(newKey, LyricsTiming.newestSongKey["video"])
     }
+
+    private fun sheet(vararg texts: String) = texts.mapIndexed { i, text -> LyricLine(1_000L + i * 4_000L, text) }
+
+    private fun keyOf(lines: List<LyricLine>) = lines.joinToString("\n") { it.text }.hashCode()
+
+    private fun video(id: String) = Song(videoId = id, title = "Youngblood", artist = "Artist", thumbnailUrl = null, isVideo = true)
+
+    /**
+     * 11-09 -RJSbO8UZVY (loop 220-c): the quick answer for SyncLRC's sheet (94% agree,
+     * +18.4 s, an MV intro) landed while the screen still claimed the VIBE sheet, and was
+     * dropped; 0.16 s later the sheet judge showed SyncLRC with no base, 18.6 s early for
+     * the whole play. That answer is SyncLRC's own fit, made by the same floors, so it is
+     * taken back once that sheet is on screen: no request, nothing carried across sheets.
+     */
+    @Test
+    fun `a quick answer dropped while another sheet was newest is taken back when its sheet shows`() = runBlocking {
+        val shownFirst = sheet("one", "two", "three", "four")
+        val shownNext = sheet("alpha", "bravo", "charlie", "delta")
+        val fit = LyricsTiming.Adjustment.Mapped(
+            com.music.bitchord.data.lyrics.LyricsTimeMap.shift(18_000L),
+            byAi = true,
+            rate = 1.0,
+            matchPercent = 94,
+        )
+        val heard = shownNext.map {
+            com.music.bitchord.data.lyrics.LyricsWordAlign.Heard(it.text, it.timeMs + 18_000L, it.timeMs + 18_400L)
+        }
+        skipFarm("swap")
+        LyricsTiming.newestSongKey["swap"] = keyOf(shownFirst)
+
+        val keptThen = LyricsTiming.keepQuickVideoAnswer(
+            context, "swap", keyOf(shownNext), fit, heard, LyricsTiming.Clock.YouTube, rough = true,
+        )
+        assertEquals("another sheet was newest: not written then", false, keptThen)
+
+        assertTrue("its sheet on screen takes it back", LyricsTiming.refit(context, video("swap"), shownNext, null))
+        val base = LyricsTiming.timing(context, "swap", shownNext, baseAllowed = true, isVideo = true)?.base
+        assertTrue("an AI base for the sheet showing", base?.byAi == true)
+        assertEquals(18_000L, LyricsTiming.shownShiftMs(shownNext, base!!))
+    }
+
+    /** The answer is one sheet's fit: a third sheet coming up gets nothing from it. */
+    @Test
+    fun `a dropped quick answer never times another sheet`() = runBlocking {
+        val shownFirst = sheet("one", "two", "three", "four")
+        val dropped = sheet("alpha", "bravo", "charlie", "delta")
+        val third = sheet("echo", "foxtrot", "golf", "hotel")
+        val fit = LyricsTiming.Adjustment.Mapped(
+            com.music.bitchord.data.lyrics.LyricsTimeMap.shift(18_000L),
+            byAi = true,
+            rate = 1.0,
+            matchPercent = 94,
+        )
+        val heard = dropped.map {
+            com.music.bitchord.data.lyrics.LyricsWordAlign.Heard(it.text, it.timeMs + 18_000L, it.timeMs + 18_400L)
+        }
+        // The third sheet's own words, sung where its lines say: its refit stays in the entry.
+        seed("other", keyOf(third), third.joinToString(",") { """{"t":"${it.text}","s":${it.timeMs},"e":${it.timeMs + 600}}""" })
+        skipFarm("other")
+        LyricsTiming.newestSongKey["other"] = keyOf(shownFirst)
+        LyricsTiming.keepQuickVideoAnswer(context, "other", keyOf(dropped), fit, heard, LyricsTiming.Clock.YouTube, rough = true)
+
+        LyricsTiming.refit(context, video("other"), third, null)
+        val base = LyricsTiming.timing(context, "other", third, baseAllowed = true, isVideo = true)?.base
+        assertTrue(
+            "nothing of the other sheet's +18 s",
+            base == null || kotlin.math.abs(LyricsTiming.shownShiftMs(third, base)) < 1_000L,
+        )
+    }
 }

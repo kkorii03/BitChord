@@ -992,6 +992,7 @@ object LyricsTiming {
         loggedBaseKept.clear()
         loggedAiOtherLyrics.clear()
         newestSongKey.clear()
+        droppedQuick.clear()
         songSyncGenerations.clear()
         recheckTokens.clear()
         startLanguages.clear()
@@ -1758,7 +1759,12 @@ object LyricsTiming {
         // asked about the sheet it replaced. Marked before the hearingBusy guard:
         // a refit that waits for the words still tells the in-flight check that
         // its sheet is gone, so its completion asks for this sheet to be fitted.
-        if (current()) newestSongKey[videoId] = key
+        if (current()) {
+            newestSongKey[videoId] = key
+            // An answer for this sheet that landed while another was newest: the screen
+            // refreshes on true and comes back here for the refit below.
+            if (takeBackDroppedQuick(context, videoId, key)) return@withContext true
+        }
         // Words saved while a request is still in flight would wait for the next playback:
         // its end asks again ([hearingFreed]), an event, not a poll. Noted before the busy
         // test, so a flight ending between the two still finds the note (Sol tail-review
@@ -3585,7 +3591,12 @@ object LyricsTiming {
         clock: Clock,
         rough: Boolean,
     ): Boolean {
-        if (dropForReplacedSheet(videoId, key)) return false
+        if (replacedSheet(videoId, key)) {
+            // Held before the screen is asked: its refresh may show this very sheet next.
+            keepDroppedQuick(videoId, DroppedQuick(key, fitted, heard, clock, rough))
+            _changes.tryEmit(videoId)
+            return false
+        }
         var kept = false
         store(context).update(videoId) { entry ->
             val sameSheet = entry.aiTextKey == key
@@ -3618,6 +3629,41 @@ object LyricsTiming {
             }
         }
         if (kept) TrackLog.d(TAG, "video quick answer kept${if (rough) " (rough)" else ""}", videoId)
+        return kept
+    }
+
+    /**
+     * A quick answer turned away because another sheet was newest when it landed. It
+     * is that one sheet's own fit, made by the same floors, so it is kept here (memory
+     * only, latest per video) until that sheet is the one on screen. 11-09 -RJSbO8UZVY
+     * (loop 220-c): SyncLRC's answer (+18.4 s, 94%) was dropped while VIBE was claimed;
+     * the sheet judge showed SyncLRC 0.16 s later, and it stayed 18.6 s early.
+     */
+    private class DroppedQuick(
+        val key: Int,
+        val fitted: Adjustment.Mapped,
+        val heard: List<LyricsWordAlign.Heard>,
+        val clock: Clock,
+        val rough: Boolean,
+    )
+
+    private val droppedQuick = ConcurrentHashMap<String, DroppedQuick>()
+
+    private fun keepDroppedQuick(videoId: String, dropped: DroppedQuick) {
+        if (droppedQuick.size >= AI_WAITED_KEPT) droppedQuick.clear()
+        droppedQuick[videoId] = dropped
+    }
+
+    /**
+     * The sheet [key] is on screen now: its dropped quick answer, if one is held, is
+     * written through [keepQuickVideoAnswer] and its usual rules (an exact fit or the
+     * listener's own ask stands). Never another sheet's. True when it was written.
+     */
+    private suspend fun takeBackDroppedQuick(context: Context, videoId: String, key: Int): Boolean {
+        val dropped = droppedQuick[videoId]?.takeIf { it.key == key } ?: return false
+        droppedQuick.remove(videoId, dropped)
+        val kept = keepQuickVideoAnswer(context, videoId, key, dropped.fitted, dropped.heard, dropped.clock, dropped.rough)
+        if (kept) TrackLog.d(TAG, "video quick answer taken back: its sheet is on screen now", videoId)
         return kept
     }
 
@@ -4713,6 +4759,8 @@ object LyricsTiming {
         // automatic override still holds its old sheet and sync, so it has to
         // go with the answer; a listener's own override is left alone.
         bumpSongSyncGeneration(videoId)
+        // Made from the old bytes, like the answer dropped below.
+        droppedQuick.remove(videoId)
         SongHearing.forgetFile(context, videoId)
         LyricsOverrideStore.removeRecheck(context, videoId)
         store(context).update(videoId) {
