@@ -31,6 +31,8 @@ import com.music.bitchord.ko.koRearmIncoming
 import com.music.bitchord.ko.koReconcileQueue
 import com.music.bitchord.ko.koRequestAnalysisAround
 import com.music.bitchord.ko.koSkipAutoTransition
+import com.music.bitchord.ko.koLogMissingPreview
+import com.music.bitchord.ko.koPausedMarkerRefused
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.MixBlend
 import com.music.bitchord.data.settings.MixDeck
@@ -865,6 +867,18 @@ class CrossfadeController(
         listeningTo = target
     }
 
+    /**
+     * [KO] crossfade-follow: puts [listener] back on the session player when
+     * something moved the session without [handOff] (a version swap). Returns
+     * whether it had to move.
+     */
+    internal fun followSession(): Boolean { // [KO] crossfade-follow
+        val session = active()
+        if (listeningTo === session) return false
+        listenTo(session)
+        return true
+    }
+
     fun start() {
         listenTo(active())
         tickerJob?.cancel()
@@ -969,6 +983,7 @@ class CrossfadeController(
             Phase.LOOP_ARMING -> driveLoopArming()
             Phase.LOOP_RUNNING -> driveLoopMix()
         }
+        koLogMissingPreview() // [KO] automix-preview-log
     }
 
     /**
@@ -1034,6 +1049,7 @@ class CrossfadeController(
             ?: queuedDurationMs(item).takeIf { it > 0L }
             ?: (analysisFor(item).duration * 1000).roundToLong().takeIf { it > 0L }
             ?: return
+        if (koPausedMarkerRefused(player)) return // [KO] crossfade-skip
         considerSmartTransition(duration, markerOnly = true)
     }
 
@@ -1274,6 +1290,7 @@ class CrossfadeController(
         }
 
         lastSmartPlan = plan
+        ko.lastSmartPlanPair = currentItem.mediaId to nextItem.mediaId // [KO] automix-status
         lastSmartPlanStartMs = (plan.transitionStart * 1000).roundToLong()
         publishMixPreview(currentItem, nextItem, duration, nextDuration, currentAnalysis, nextAnalysis, analysisState, plan, advanced)
 
@@ -3226,7 +3243,9 @@ class CrossfadeController(
             return AutomixStatusKo.Status.PlannedLoop(ceil(inSeconds).toInt(), automixLoop(planned))
         }
         val plan = lastSmartPlan
-        if (plan != null && !plan.blocked && next != null && AppSettings.smartTransitionWindow.value != null) {
+        if (plan != null && !plan.blocked && next != null && AppSettings.smartTransitionWindow.value != null &&
+            AutomixStatusKo.planDescribes(ko.lastSmartPlanPair, item.mediaId, next.mediaId) // [KO] automix-status
+        ) {
             val inSeconds = ((lastSmartPlanStartMs - player.currentPosition) / 1000.0).coerceAtLeast(0.0)
             val secondsFromNow = if (inSeconds > 0) ceil(inSeconds).toInt() else null
             val bars = if (plan.beatSeconds > 0) (plan.fadeSeconds / (4 * plan.beatSeconds)).roundToInt() else 0

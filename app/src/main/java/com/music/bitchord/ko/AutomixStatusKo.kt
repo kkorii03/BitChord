@@ -14,6 +14,14 @@ object AutomixStatusKo {
 
     enum class Language { EN, KO }
 
+    /**
+     * Whether the controller's last plan was made for the pair playing now.
+     * A plan made for the previous pair kept the line counting down to a mix
+     * the playing song never had (vc192: "필터 믹스 203초 후" on two covers).
+     */
+    fun planDescribes(planPair: Pair<String, String>?, currentId: String, nextId: String): Boolean =
+        planPair != null && planPair.first == currentId && planPair.second == nextId
+
     enum class Check { LYRICS, MASK, LYRICS_AND_MASK }
 
     enum class Style { CROSSFADE, FILTER, MIX }
