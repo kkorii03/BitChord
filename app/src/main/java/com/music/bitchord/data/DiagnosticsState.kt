@@ -24,9 +24,17 @@ object DiagnosticsState {
     @Volatile
     var currentTrackId: String? = null
         set(value) {
+            if (field != value) currentSinceMs = System.currentTimeMillis()
             field = value
             currentSwapId = null
         }
+
+    /**
+     * When [currentTrackId] last changed. The row has played at most this long, so a
+     * re-ask can tell it still has time left without reading the player.
+     */
+    @Volatile
+    var currentSinceMs: Long = 0L
 
     /**
      * The id an in-place version swap put on the current row, or null. Such a

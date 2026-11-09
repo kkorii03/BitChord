@@ -21,6 +21,7 @@ import com.music.bitchord.playback.NextPrepCache
 import com.music.bitchord.playback.PowerState
 import com.music.bitchord.playback.StreamChoice
 import com.music.bitchord.playback.SyncSafetyPolicy
+import com.music.bitchord.playback.smart.HearingReask
 import com.music.bitchord.playback.smart.LyricsTiming
 import com.music.bitchord.playback.smart.SongCheckRetry
 import com.music.bitchord.playback.smart.SyncTestMode
@@ -976,6 +977,13 @@ class LyricsController(
                     askForVideoSheet(generation, videoId)
                 }
             }
+            // Every ask for this row got no reply, and the network is back: one more,
+            // through the same guarded paths ([HearingReask], at most once per row).
+            launch {
+                HearingReask.due.collect { videoId ->
+                    if (videoId == request.videoId) reaskAfterNoReply(generation, lines)
+                }
+            }
             // A stream that is still arriving when the lyrics load becomes a
             // complete analysis copy later. The cache says so as it commits
             // the last span; re-read the audio term once, then, so the action
@@ -1355,6 +1363,31 @@ class LyricsController(
         } else if (songCheckRetryFor == null && generation == lyricsGeneration) {
             songCheckRetryFor = pending
         }
+    }
+
+    /**
+     * The one more ask [HearingReask] grants a row whose asks all got no reply, once the
+     * network is back (11-09 NPZtKA6343o: nothing asked for the 115 s it went on playing).
+     * It re-runs only what is still owed, each behind its own guards: the song check's
+     * one transport retry, and a video's words-only ask, which [LyricsTiming.wantsAi]
+     * refuses once an engine has answered. Both read the sound already on disk.
+     */
+    private suspend fun reaskAfterNoReply(generation: Long, lines: List<LyricLine>) {
+        val request = currentLyricsRequest ?: return
+        if (generation != lyricsGeneration || timingLines !== lines) return
+        val now = System.currentTimeMillis()
+        if (!HearingReask.enoughLeft(request.durationMs, com.music.bitchord.data.DiagnosticsState.currentSinceMs, now)) {
+            TrackLog.d("BitChord", "song-hear: network back, too little of the row left to ask again", request.videoId)
+            return
+        }
+        TrackLog.d("BitChord", "song-hear: network back, asking once more", request.videoId)
+        if (songCheckRetryFor != null) retrySongCheckOnce(generation, lines)
+        if (request.isVideo && com.music.bitchord.data.lyrics.Deepgram.usable) {
+            aiAhead(app, request.videoId, lines, wordsOnly = true)
+        }
+        if (generation != lyricsGeneration || timingLines !== lines) return
+        refreshTiming(generation, lines)
+        autoAiIfNeeded(generation, lines)
     }
 
     private var earlyMeasureJob: Job? = null

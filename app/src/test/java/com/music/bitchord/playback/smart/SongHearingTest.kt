@@ -379,4 +379,74 @@ class SongHearingTest {
         assertNull(VideoAudio.containerMime(head(1, 2, 3, 4)))
         assertNull(VideoAudio.containerMime(ByteArray(0)))
     }
+
+    /** A [HearingReask] over a fake playing row; [asked] collects what it re-asks. */
+    private class Reask(var playing: String? = "row", var since: Long = 1L) {
+        val asked = mutableListOf<String>()
+        val reask = HearingReask({ playing }, { since }, { asked += it })
+    }
+
+    @Test
+    fun aRowWhoseAsksGotNoReplyIsAskedOnceMoreOnTheFirstNetworkEventPastTheQuietTime() {
+        // 11-09 210-d NPZtKA6343o: every ask died 15 s in; nothing asked again for 115 s.
+        val r = Reask()
+        assertEquals(true, r.reask.noReply("row", nowMs = 0L))
+        r.reask.networkUp(nowMs = 5_000L) // the same outage: the player still pulling bytes
+        assertEquals(emptyList<String>(), r.asked)
+        r.reask.networkUp(nowMs = HearingReask.QUIET_MS)
+        assertEquals(listOf("row"), r.asked)
+        r.reask.networkUp(nowMs = 60_000L)
+        assertEquals(listOf("row"), r.asked)
+    }
+
+    @Test
+    fun aRowThatGotAnyReplyIsNeverAskedAgain() {
+        val before = Reask()
+        before.reask.replied("row") // an answer, a 429 or "heard nothing": the server was reached
+        assertEquals(false, before.reask.noReply("row", 0L))
+        before.reask.networkUp(30_000L)
+        assertEquals(emptyList<String>(), before.asked)
+
+        val after = Reask()
+        after.reask.noReply("row", 0L)
+        after.reask.replied("row") // a later window answered for it
+        after.reask.networkUp(30_000L)
+        assertEquals(emptyList<String>(), after.asked)
+    }
+
+    @Test
+    fun onlyTheSoundingRowArmsAndARowThatLeftIsDropped() {
+        val r = Reask()
+        r.reask.replied("next") // the next row's prep answering settles nothing for this one
+        assertEquals(false, r.reask.noReply("next", 0L)) // only the sounding row arms
+        r.reask.noReply("row", 0L)
+        r.playing = "swap" // the row's song version took over: its own hearing runs
+        r.reask.networkUp(30_000L)
+        r.playing = "row"
+        r.reask.networkUp(40_000L)
+        assertEquals(emptyList<String>(), r.asked)
+    }
+
+    @Test
+    fun theOneMoreAskIsOncePerRowAndANewPlaybackGetsItsOwn() {
+        val r = Reask()
+        r.reask.noReply("row", 0L)
+        r.reask.networkUp(20_000L)
+        assertEquals(false, r.reask.noReply("row", 25_000L)) // the re-ask failed too: no second one
+        r.reask.networkUp(60_000L)
+        assertEquals(listOf("row"), r.asked)
+        r.since = 200_000L // the same video played again from the start
+        assertEquals(true, r.reask.noReply("row", 210_000L))
+        r.reask.networkUp(230_000L)
+        assertEquals(listOf("row", "row"), r.asked)
+    }
+
+    @Test
+    fun theOneMoreAskNeedsFortySecondsLeftAndAKnownLength() {
+        val since = 1_000L
+        assertEquals(true, HearingReask.enoughLeft(200_000L, since, since + 160_000L))
+        assertEquals(false, HearingReask.enoughLeft(200_000L, since, since + 160_001L))
+        assertEquals(false, HearingReask.enoughLeft(0L, since, since + 10_000L))
+        assertEquals(false, HearingReask.enoughLeft(200_000L, 0L, since))
+    }
 }

@@ -73,6 +73,7 @@ class DynamicLruCacheEvictor(
     override fun onCacheInitialized() = Unit
 
     override fun onStartFile(cache: Cache, key: String, position: Long, length: Long) {
+        com.music.bitchord.playback.smart.HearingReask.live.networkUp(System.currentTimeMillis()) // [KO] hearing re-ask: media bytes are arriving
         if (length != C.LENGTH_UNSET.toLong()) {
             evictCache(cache, length)
         }
