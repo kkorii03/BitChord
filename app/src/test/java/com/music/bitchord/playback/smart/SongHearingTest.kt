@@ -331,6 +331,43 @@ class SongHearingTest {
         assertEquals(false, SongHearing.shouldResend(400, 0))
     }
 
+    private val heardWords = listOf(com.music.bitchord.data.lyrics.LyricsWordAlign.Heard("god", 0L, 400L))
+
+    @Test
+    fun anOpeningWhoseGroqAskGotNoReplyIsAskedOnceMore() = runTest {
+        // 11-09 212-b v59g4HRNIkc: Groq's ask died in 340 ms ("unexpected end of stream"),
+        // the opening went to Deepgram, which sat on it 77 s, and the row had left 12 s before.
+        var asked = 0
+        val answer = SongHearing.groqWithResend {
+            asked++
+            if (asked == 1) com.music.bitchord.data.lyrics.Deepgram.Answer(null) else com.music.bitchord.data.lyrics.Deepgram.Answer(heardWords, 200, rough = true)
+        }
+        assertEquals(2, asked)
+        assertEquals(heardWords, answer.words)
+        // Not at once: the same moment's connection would fail the same way.
+        assertEquals(true, testScheduler.currentTime >= 2_000L)
+    }
+
+    @Test
+    fun aGroqAskIsResentAtMostOnceAndNeverOverAServersAnswer() = runTest {
+        var asked = 0
+        val dead = SongHearing.groqWithResend {
+            asked++
+            com.music.bitchord.data.lyrics.Deepgram.Answer(null)
+        }
+        assertEquals(2, asked)
+        assertNull(dead.words)
+        for (code in listOf(200, 429, 401, 500)) {
+            asked = 0
+            val answered = SongHearing.groqWithResend {
+                asked++
+                com.music.bitchord.data.lyrics.Deepgram.Answer(if (code == 200) heardWords else null, code)
+            }
+            assertEquals(1, asked)
+            assertEquals(code, answered.httpCode)
+        }
+    }
+
     @Test
     fun containersAreToldByTheirMagicBytes() {
         fun head(vararg bytes: Int) = ByteArray(16).also { b -> bytes.forEachIndexed { i, v -> b[i] = v.toByte() } }
