@@ -1,6 +1,7 @@
 package com.music.bitchord.ko
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -83,9 +84,9 @@ class KoEjsPlayerPrepTest {
         val prep = prep(gate)
         prep.onPlayerUrl(url)
 
-        val a = async(Dispatchers.Default) { prep.onMissing(key) }
-        val b = async(Dispatchers.Default) { prep.onMissing(key) }
-        withTimeout(5_000) { while (solves.get() == 0) kotlinx.coroutines.delay(5) }
+        // UNDISPATCHED: each ask is registered (parked on the run) before the next line runs.
+        val a = async(start = CoroutineStart.UNDISPATCHED) { prep.onMissing(key) }
+        val b = async(start = CoroutineStart.UNDISPATCHED) { prep.onMissing(key) }
         gate.complete(Unit)
 
         assertEquals("PREPROCESSED", a.await())
@@ -100,13 +101,13 @@ class KoEjsPlayerPrepTest {
         val prep = prep(gate)
         prep.onPlayerUrl(url)
 
-        val skipped = launch(Dispatchers.Default) { prep.onMissing(key) }
-        withTimeout(5_000) { while (solves.get() == 0) kotlinx.coroutines.delay(5) }
+        val skipped = launch(start = CoroutineStart.UNDISPATCHED) { prep.onMissing(key) }
         skipped.cancel()
+        // The next row's miss, still during the solve, joins the same run instead of starting over.
+        val next = async(start = CoroutineStart.UNDISPATCHED) { prep.onMissing(key) }
         gate.complete(Unit)
 
-        // The next row's miss joins the same run instead of starting over.
-        assertEquals("PREPROCESSED", prep.onMissing(key))
+        assertEquals("PREPROCESSED", next.await())
         assertEquals(1, solves.get())
         assertEquals(listOf(key to "PREPROCESSED"), stored)
     }
