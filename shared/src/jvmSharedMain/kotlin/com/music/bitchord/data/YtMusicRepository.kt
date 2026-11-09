@@ -600,10 +600,14 @@ object YtMusicRepository {
                     // cleaned youtube.com metadata.
                     val catalogue = CatalogSongMapper.forSearch(query, songs, kind = kind)
                     if (catalogue.isNotEmpty()) {
-                        val shown = YouTubeCoverResolver.enrich(
-                            catalogue,
-                            CatalogSongMapper.MAX_ROWS_PER_PAGE,
-                        )
+                        val shown = if (CatalogSongMapper.enrichesCovers(kind)) { // [KO] song-version pages are never shown
+                            YouTubeCoverResolver.enrich(
+                                catalogue,
+                                CatalogSongMapper.MAX_ROWS_PER_PAGE,
+                            )
+                        } else {
+                            catalogue
+                        }
                         return@call SearchPage(
                             shown.map { SearchResult.Track(it) }.distinctBy { it.identityKey() },
                             null,
