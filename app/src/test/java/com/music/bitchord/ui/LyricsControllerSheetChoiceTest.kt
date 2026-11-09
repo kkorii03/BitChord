@@ -19,6 +19,7 @@ import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.playback.StreamChoice
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExecutorCoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -27,11 +28,14 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withTimeout
+import com.music.bitchord.ui.player.LyricsTimingUi
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -123,6 +127,13 @@ class LyricsControllerSheetChoiceTest {
         ctor.isAccessible = true
         storeField.set(LyricsTiming, ctor.newInstance(File(directory, "lyrics_timing_v1.json")))
     }
+
+    private fun judgedFor(): String? =
+        LyricsController::class.java.getDeclaredField("sheetJudgedFor").apply { isAccessible = true }.get(controller) as String?
+
+    @Suppress("UNCHECKED_CAST")
+    private fun timingFlow(): MutableStateFlow<LyricsTimingUi> =
+        LyricsController::class.java.getDeclaredField("_lyricsTiming").apply { isAccessible = true }.get(controller) as MutableStateFlow<LyricsTimingUi>
 
     /**
      * [loserFirst] holds the winner back until the lower-priority answer is on
@@ -273,6 +284,41 @@ class LyricsControllerSheetChoiceTest {
         withTimeout(10_000L) { controller.lyricsChecked.first { it } }
         delay(500L)
         assertEquals(fitting.map { it.text }, controller.lyrics.first { it != null }!!.map { it.text })
+    }
+
+    /**
+     * 11-10 n4uG9ym6kKA: the words arrived, the judgement read the sheet as untimed, and while
+     * it summed the fits the sheet's own passing timing landed (75%). The judgement replaced it
+     * anyway with a sheet that timed worse. A measure that changed mid-judgement is judged anew.
+     */
+    @Test
+    fun `a timing that lands while the sheets are judged keeps the sheet it timed`() = runBlocking {
+        val go = CompletableDeferred<Unit>()
+        controller.lyricsLookup = { _, _, _, _, _, _, _, _, _, _, onResult, _, _, _, _, _, _ ->
+            onResult?.invoke(LyricsSource.KUGOU, LyricsRepository.Result(LyricsSource.KUGOU, other), null)
+            go.await()
+            LyricsRepository.Result(LyricsSource.VIBE, fitting)
+        }
+        controller.loadLyrics("video", "Song", "Someone", 200_000L)
+        withTimeout(10_000L) { controller.lyricsSource.first { it == LyricsSource.KUGOU } }
+        withTimeout(10_000L) { while (judgedFor() == null) delay(50L) }
+        delay(300L)
+        seedHeard(fitting)
+        val heardSize = fitting.sumOf { it.text.split(' ').size }
+        val hold = CountDownLatch(1)
+        val busy = (1..64).map { launch(Dispatchers.Default) { hold.await() } }
+        try {
+            go.complete(Unit)
+            withTimeout(10_000L) { while (judgedFor()?.contains("|$heardSize|") != true) delay(20L) }
+            timingFlow().update { it.copy(matchPercent = 90) }
+        } finally {
+            hold.countDown()
+            busy.forEach { it.cancel() }
+            for (task in busy) task.join()
+        }
+        delay(500L)
+        assertEquals(LyricsSource.KUGOU, controller.lyricsSource.value)
+        assertEquals(other.map { it.text }, controller.lyrics.value!!.map { it.text })
     }
 
     /**

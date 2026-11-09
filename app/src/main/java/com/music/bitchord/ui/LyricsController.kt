@@ -1682,14 +1682,17 @@ class LyricsController(
             // Every refresh lands here: only new words, a new sheet or a new
             // candidate are worth the sums below. A late provider's sheet is a
             // new candidate, and the old key let it go unjudged (QYh6mYIJG2Y).
-            val judged = "$key|${heard.size}|${sheetCandidates.size}"
+            // The measure too: a timing landing mid-judgement is judged again by its own call (n4uG9ym6kKA).
+            val judged = "$key|${heard.size}|${sheetCandidates.size}|$measured"
             if (sheetJudgedFor == judged) return@launch
             sheetJudgedFor = judged
             val others = sheetCandidates.values.filter { it.lines != lines && it.lines.any { line -> line.timeMs > 0 } }
             val better = withContext(Dispatchers.Default) {
                 com.music.bitchord.playback.smart.SheetChoice.better(lines, others, heard, measured)
             }
-            if (generation != lyricsGeneration || timingLines !== lines) return@launch
+            // A timing published while the fits were summed (n4uG9ym6kKA: 75% landed, the
+            // judgement still held none) is judged by the call refreshTiming makes after it.
+            if (generation != lyricsGeneration || timingLines !== lines || _lyricsTiming.value.matchPercent != measured) return@launch
             if (better != null) {
                 TrackLog.i("BitChord", "sheet-choice: -> ${better.source.label} heard=${heard.size}", request.videoId)
                 keepSheet(request.videoId, better)
