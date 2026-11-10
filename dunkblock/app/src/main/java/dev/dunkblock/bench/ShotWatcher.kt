@@ -629,7 +629,11 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         val d2 = String.format(Locale.ROOT, "%s xspan=%.3f track=%d me=%.3f/%.3f d=%.3f", detail, xspan, spanNs / 1_000_000L, meX, meY, meDist)
         event(tNs, "shot_trigger", 0f, 0f, 0f, d2)
         snapNow = true     // one colour screen per trigger: checks the my-player finder against the game's verdict
-        if (xspan >= CONFIRM_XSPAN) { reject(tNs, "rejected_xspan", d2); return }
+        // vc1053: a shooter on the move (xspan >= 0.1) is no longer dropped at once. He is held like any moving
+        // shooter but must rise MOVE_RISE (0.06 H) more within the window. Replay on three matches (replay9.py with
+        // MRISE 0.06 = replay10.py): 13 dribble/drive triggers stay dropped; three come back: vc1035 349.9 and 382.4 (real shots,
+        // rose 0.12-0.14) and vc1044 562.4 (drive to the rim, gap 0.24 -> 0.44), pressed 66-92 ms after the trigger.
+        val moving = xspan >= CONFIRM_XSPAN
         if (meDist > ME_FAR) { shotFar++; reject(tNs, "rejected_far", d2); return }
         if (live) main.post { BlockAccessibilityService.instance?.inGame?.armBlock(ARM_MS) }
         // Calm shooter (practice: xspan <= 0.026, 10/15 blocked with an immediate press; waiting for the confirmation
@@ -641,11 +645,14 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         if (calm) { press(tNs, live, d2 + " calm", if (v2) 0L else -EARLY_DELAY_MS); return }
         // Moving shooter: wait (<= 200 ms) for the disc to keep rising: real shots rose 0.039-0.139 H, phantoms at most
         // 0.028 (vc1038), and the two in-range match shots pressed immediately were both '타이밍 빠름'.
-        pendNs = tNs; pendY = discY; pendDetail = d2; pendLive = live
+        pendNs = tNs; pendY = discY; pendDetail = if (moving) "$d2 move" else d2; pendLive = live
+        pendRise = if (moving) MOVE_RISE else CONFIRM_RISE
+        pendDrop = if (moving) "rejected_xspan" else "rejected_norise"
         Bench.shotLive = liveText()
     }
 
     private var pendNs = 0L; private var pendY = 0f; private var pendDetail = ""; private var pendLive = false
+    private var pendRise = CONFIRM_RISE; private var pendDrop = "rejected_norise"
     private var lastArmNs = 0L
     @Volatile var shotRejected = 0; private set
     @Volatile var shotFar = 0; private set
@@ -740,7 +747,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         val age = tNs - pendNs
         val up = if (found) pendY - discY else 0f
         // A step of 0.15 H+ is the tracker switching ring <-> disc, not a rise (see onDisc).
-        if (found && up >= CONFIRM_RISE && up < 0.15f) {
+        if (found && up >= pendRise && up < 0.15f) {
             val detail = String.format(Locale.ROOT, "%s up=%.3f after=%d", pendDetail, up, age / 1_000_000L)
             val live = pendLive
             pendNs = 0L
@@ -748,7 +755,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
             press(tNs, live, detail, age / 1_000_000L)
         } else if (age > CONFIRM_WINDOW_NS) {
             pendNs = 0L
-            reject(tNs, "rejected_norise", String.format(Locale.ROOT, "%s up=%.3f", pendDetail, up))
+            reject(tNs, pendDrop, String.format(Locale.ROOT, "%s up=%.3f", pendDetail, up))
         }
     }
 
@@ -808,6 +815,8 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         /** v3 confirmation (vc1038 offline, 6 real shots / 8 phantoms): x sway limit (W), extra rise needed (H), wait. */
         const val CONFIRM_XSPAN = 0.1f
         const val CONFIRM_RISE = 0.025f
+        /** Extra rise needed from a shooter whose marker swayed >= CONFIRM_XSPAN (replay10.py: none of the 13 dropped match triggers reached it). */
+        const val MOVE_RISE = 0.06f
         // 200 ms (not 133): phantoms stay flat (<= 0.028 H even at 200 ms) while slower practice rises reach 0.028 by
         // 200 ms: vc1035 successes 9/9 kept, vc1033 practice 16/26, vc1038 match real 4/6, phantoms 0/8. The press
         // goes as soon as the rise is reached; trigger->jump was 301-524 ms, so 200 + 75 ms is still before the jump.
