@@ -54,6 +54,8 @@ class MotionFeatures(cells: Int) {
     var roiTop = 0f
     var roiBottom = 0f
     var meanLuma100 = 0
+    /** Scratch for the top-K selection (kept here so analysis allocates nothing per frame). */
+    internal val picked = IntArray(64)
 
     fun reset() {
         java.util.Arrays.fill(cellEnergy, 0f)
@@ -234,12 +236,11 @@ fun gridFeatures(counts: IntArray, cellArea: FloatArray, active: BooleanArray, c
     }
     out.global = if (nAct > 0) sum / nAct else 0f
     // top-K by partial selection (K is tiny)
-    val k = cfg.topK.coerceAtMost(nAct).coerceAtLeast(1)
+    val k = cfg.topK.coerceAtMost(nAct).coerceAtMost(out.picked.size).coerceAtLeast(1)
     var topSum = 0f
     var wx = 0f; var wy = 0f; var wsum = 0f
     var peak = -1; var peakV = -1f
-    // Selection via repeated max with a visited mask encoded in negative energies (reset after).
-    val picked = IntArray(k)
+    val picked = out.picked
     for (j in 0 until k) {
         var bi = -1; var bv = -1f
         for (i in 0 until n) {

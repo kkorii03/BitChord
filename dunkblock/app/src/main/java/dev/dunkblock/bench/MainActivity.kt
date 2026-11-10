@@ -113,6 +113,8 @@ class MainActivity : Activity() {
 
     private fun requestCapture(mode: Bench.Mode) {
         if (Bench.running) { status.text = "이미 측정 중입니다."; return }
+        // Drop the previous session now, so a test screen started next cannot write into its logs.
+        Bench.session = null
         pendingMode = mode
         val mpm = getSystemService(MediaProjectionManager::class.java)
         @Suppress("DEPRECATION")

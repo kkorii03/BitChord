@@ -58,6 +58,11 @@ class CaptureService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) { stopSession("사용자 중지"); return START_NOT_STICKY }
         if (Bench.running) return START_NOT_STICKY
+        if (stopping) {
+            // This instance is still writing the previous session; the projection token cannot be kept for later.
+            Bench.lastSummary = "이전 세션을 저장하는 중이었습니다. 몇 초 뒤 다시 시작하세요."
+            return START_NOT_STICKY
+        }
         val code = intent?.getIntExtra(EXTRA_CODE, 0) ?: 0
         @Suppress("DEPRECATION")
         val data: Intent? = intent?.getParcelableExtra(EXTRA_DATA)

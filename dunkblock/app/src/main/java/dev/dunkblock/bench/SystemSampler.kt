@@ -50,9 +50,11 @@ class SystemSampler(private val ctx: Context, private val session: Bench.Session
             val st = CaptureService.analysisStats(session, lastSize, size)
             val thermal = pm.currentThermalStatus
             val headroom = try { pm.getThermalHeadroom(10).toDouble() } catch (_: Throwable) { Double.NaN }
-            val batt = ctx.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-            val tempC = (batt?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE) ?: Int.MIN_VALUE)
-                .let { if (it == Int.MIN_VALUE) Double.NaN else it / 10.0 }
+            val tempC = try {
+                val batt = ctx.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+                (batt?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE) ?: Int.MIN_VALUE)
+                    .let { if (it == Int.MIN_VALUE) Double.NaN else it / 10.0 }
+            } catch (_: Throwable) { Double.NaN }
             val freq = maxCpuFreqKhz()
             val fps = size - lastSize
             session.seconds.add(Csv.SecondRow(tick, fps, st.mean, st.p95, cores, thermal, headroom, tempC, freq))
