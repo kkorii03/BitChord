@@ -33,8 +33,11 @@ object SendBundle {
         f.name == "shot.csv" -> 2
         f.name == "ingame_proxy_events.csv" -> 4
         f.name == "crops.csv" -> 2
-        f.name.endsWith(".jpg") && f.parentFile?.name?.startsWith("colour_") == true -> 5   // full-res colour around the ball
-        f.name.endsWith(".jpg") && f.parentFile?.name == "frames" -> 5   // colour game screens (thinned to 60 per session)
+        // Auto-block trigger clips decide success vs '블록 위치 부족', so they go before every other image (vc1033: they
+        // were the ones left out).
+        f.name.endsWith(".jpg") && f.parentFile?.name?.contains("_trig_") == true -> 5
+        f.name.endsWith(".jpg") && f.parentFile?.name?.startsWith("colour_") == true -> 6   // full-res colour around the ball
+        f.name.endsWith(".jpg") && f.parentFile?.name == "frames" -> 6   // colour game screens (thinned to 60 per session)
         f.name.endsWith(".jpg") -> 6                                      // clip frames
         f.name.endsWith(".png") -> 7
         else -> 8
@@ -43,7 +46,15 @@ object SendBundle {
     /** Returns a human-readable result line. Runs on a background thread. */
     fun build(ctx: Context): String {
         val root = ctx.getExternalFilesDir("sessions") ?: return "세션 폴더가 없습니다."
-        val files = root.walkTopDown().filter { it.isFile }.toMutableList()
+        // Only the latest run: the game session and the in-game proxy session start together (same yyyyMMdd_HHmmss
+        // prefix, give or take a minute). vc1033: five old sessions filled the 100 MB and pushed out the new clips.
+        val fmt = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.ROOT)
+        fun startMs(d: File): Long = try { fmt.parse(d.name.take(15))?.time ?: -1L } catch (e: Exception) { -1L }
+        val dirs = root.listFiles()?.filter { it.isDirectory } ?: emptyList()
+        val newest = dirs.maxOfOrNull { startMs(it) } ?: -1L
+        val keepDirs = dirs.filter { newest < 0 || startMs(it).let { s -> s < 0 || newest - s <= 120_000L } }.toSet()
+        val older = dirs.size - keepDirs.size
+        val files = root.walkTopDown().filter { it.isFile && (it.parentFile == root || keepDirs.any { d -> it.startsWith(d) }) }.toMutableList()
         listOf(File(ctx.filesDir, "last_crash.txt"), File(ctx.filesDir, "last_crash_seen.txt")).filter { it.isFile }.forEach { files.add(it) }
         if (files.isEmpty()) return "보낼 결과가 없습니다. 먼저 시험을 하나 실행하세요."
         // Newest sessions first inside each priority; at most 12 evidence images overall.
@@ -84,6 +95,7 @@ object SendBundle {
         val manifest = buildString {
             appendLine("DunkBlock 전송용 묶음 (${n}개 파일로 나눔)")
             appendLine(DeviceInfo.short(ctx))
+            if (older > 0) appendLine("가장 최근 시험만 담음 (이전 세션 ${older}개는 폰의 앱 폴더에 남아 있음)")
             if (thin.isNotEmpty()) appendLine("경기 화면 사진은 세션당 60장만 골라 담음(제외 ${thin.size}장)")
             parts.forEachIndexed { i, list ->
                 appendLine("${names[i]}: ${list.size}개")

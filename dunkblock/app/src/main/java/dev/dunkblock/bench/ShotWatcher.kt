@@ -336,8 +336,15 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
     private var ringX = -1f; private var ringYLast = -1f; private var lastRingNs = 0L
 
     private fun onDisc(tNs: Long) {
-        // A big downward step is the tracker switching to another red blob, never the shot: start the track over.
-        if (hCount > 0) { val li = (hPos - 1 + histN) % histN; if (discY - hY[li] > 0.2f) hCount = 0 }
+        // A step of 0.15 H+ in one scan is the tracker switching between the foot ring and the disc (vc1033: every
+        // "release" trigger was a 0.28-0.29 H ring->disc switch), never a real move: start the track over.
+        if (hCount > 0) { val li = (hPos - 1 + histN) % histN; if (Math.abs(discY - hY[li]) > 0.15f) hCount = 0 }
+        if (ringY >= 0f) { gapNs = tNs; gapRing = ringY }
+        if (tNs - gapNs < 150_000_000L && gapRing - discY in 0.12f..0.6f) {
+            gT[gPos] = tNs; gV[gPos] = gapRing - discY
+            gPos = (gPos + 1) % histN
+            if (gCount < histN) gCount++
+        }
         // Compare with the oldest point in the last 160 ms: a carried ball moves with a running player
         // (well under 0.5 screen-heights per second); a shot or pass leaves much faster.
         var refI = -1
@@ -383,6 +390,9 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
      * upward speed. If the gather is missed, the release itself (disc flying up) still fires as a late fallback.
      * All three thresholds are guesses until the vc1026+ bundles are measured; [cfg.shotSens] scales them.
      */
+    private val gT = LongArray(histN); private val gV = FloatArray(histN)
+    private var gPos = 0; private var gCount = 0
+    private var gapNs = 0L; private var gapRing = -1f
     private var lastShotFireNs = 0L
     private var lastDefNs = 0L
     @Volatile var shotTriggers = 0; private set
@@ -428,28 +438,43 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
             if (Math.abs(d) > 0.004f) { val sgn = if (d > 0) 1 else -1; if (lastSign != 0 && sgn != lastSign) flips++; lastSign = sgn }
         }
         if (pts < 5) return
-        val s = SENS[cfg.shotSens.coerceIn(0, SENS.size - 1)]
-        val dribble = flips >= 4
-        val needRise = if (dribble) s[2] * 1.6f else s[2]
-        val speed = Math.sqrt((vx * vx + vy * vy).toDouble()).toFloat()
-        val gather = vy >= s[0] && vy - vyPrev >= s[1] && rise >= needRise && Math.abs(vx) <= 1.2f * vy
-        val release = speed > FAST_SPEED && vy > 0.5f * Math.abs(vx)
-        if (!gather && !release) return
-        val kind = if (gather && speed <= FAST_SPEED) "gather" else "release"
+        // v2 (vc1034): fire on the GAP between the shooter's disc and the defender's foot ring growing fast. The camera
+        // moves both together, so only the shooter's own rise (ball lifted / jump) opens the gap, and the stacked pair
+        // exists only when our player stands under the shooter (in block range). Offline on vc1033 practice it fired
+        // on every ~7 s shot incl. 4 the v1 rule missed (172.6, 179.7, 196.0, 202.9) and never on a ring->disc switch.
+        val need = GAP_RISE[cfg.shotSens.coerceIn(0, GAP_RISE.size - 1)]
+        if (gCount < 6 || tNs - gT[(gPos - 1 + histN) % histN] > 1_000_000L) return     // no gap this scan
+        val gNow = gV[(gPos - 1 + histN) % histN]
+        var gOld = Float.MAX_VALUE; val base = ArrayList<Float>(16)
+        for (i in 1 until gCount) {
+            val idx = (gPos - 1 - i + 2 * histN) % histN
+            val age = tNs - gT[idx]
+            if (age > 600_000_000L) break
+            if (age in 60_000_000L..140_000_000L) gOld = minOf(gOld, gV[idx])
+            if (age >= 250_000_000L) base.add(gV[idx])
+        }
+        if (gOld == Float.MAX_VALUE || base.size < 5) return
+        base.sort()
+        val gBase = base[base.size / 2]
+        if (gNow - gOld < need || gNow - gBase < need) return
+        val kind = "gap"
         lastShotFireNs = tNs
         shotTriggers++
-        if (kind == "gather") synchronized(pendingTriggers) { pendingTriggers.add(tNs) }
+        synchronized(pendingTriggers) { pendingTriggers.add(tNs) }
         val live = cfg.shotBlock && cfg.autoBlockLive
-        val detail = String.format(Locale.ROOT, "%s vy=%.2f vyPrev=%.2f vx=%.2f rise=%.3f flips=%d sens=%d", kind, vy, vyPrev, vx, rise, flips, cfg.shotSens)
-        if (shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_$kind", 1.6, 1.4 + cfg.shotDelayMs / 1000.0) }
+        val detail = String.format(Locale.ROOT, "%s gap=%.3f old=%.3f base=%.3f vy=%.2f vyPrev=%.2f vx=%.2f rise=%.3f flips=%d sens=%d delay=%d",
+            kind, gNow, gOld, gBase, vy, vyPrev, vx, rise, flips, cfg.shotSens, cfg.shotDelayMs)
+        // 0.8 s before is enough to see the lift; 1.4 s after shows the game's verdict ('블록' / '블록 위치 부족' ~+0.6..0.9 s).
+        if (shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_$kind", 0.8, 1.4 + cfg.shotDelayMs / 1000.0) }
         if (!live) {
             shotSkipped++
             event(tNs, "would_press", 0f, 0f, 0f, detail)
             return
         }
-        // The extra delay moves an early gather detection toward "ball raised overhead" (the user's best block moment, 11-10);
-        // a release detection is already late, so it presses at once.
-        val delay = if (kind == "gather") cfg.shotDelayMs.toLong() else 0L
+        // The gap opens when the ball starts going up; the extra delay moves the press toward "ball overhead / jump"
+        // (the user's best block moment, 11-10). vc1033 90.9 s: pressed at the lift, the shooter released ~0.4 s later,
+        // game said '블록 위치 부족'.
+        val delay = cfg.shotDelayMs.toLong()
         main.postDelayed({
             val ok = BlockAccessibilityService.instance?.inGame?.fireBlock("SHOT") ?: false
             if (ok) shotFired++ else shotSkipped++
@@ -504,6 +529,8 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         const val MAX_COLOUR_CLIPS = 20
         const val MAX_LOG_LINES = 120_000
         /** per sensitivity 0 (fewer presses) .. 2 (more): min upward speed (H/s), min speed-up vs the 200 ms before (H/s), min rise (H). */
+        /** v2 gap rule: min growth of (foot ring y - disc y) vs ~100 ms ago and vs the 250-600 ms median, per sensitivity. */
+        val GAP_RISE = floatArrayOf(0.04f, 0.03f, 0.02f)
         val SENS = arrayOf(floatArrayOf(0.45f, 0.35f, 0.035f), floatArrayOf(0.35f, 0.25f, 0.025f), floatArrayOf(0.25f, 0.18f, 0.018f))
         fun sideName(s: Int) = when (s) { SIDE_DEF -> "def"; SIDE_OFF -> "off"; else -> "unk" }
     }
