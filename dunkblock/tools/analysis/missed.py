@@ -15,7 +15,7 @@ for p in pd:
 marks = sorted(m for m in marks if tmin <= m <= tmax)
 print("== %s marks=%d" % (d[-22:], len(marks)))
 for m in marks:
-    near = [e for e in ev if m - 4.0 <= float(e["t_s"]) <= m and e["event"] in ("shot_trigger", "pressed", "not_pressed", "would_press", "rejected_xspan", "rejected_norise", "rejected_far", "disc_fast")]
+    near = [e for e in ev if m - 4.0 <= float(e["t_s"]) <= m and e["event"] in ("shot_trigger", "pressed", "not_pressed", "would_press", "rejected_xspan", "rejected_norise", "rejected_far", "disc_fast", "arms_up", "up_dropped")]
     w = [r for r in R if m - 4.0 <= r[0] <= m]
     dd = [r for r in w if r[2]]; rr = [r for r in dd if r[5] >= 0]
     sides = {}
@@ -23,7 +23,7 @@ for m in marks:
     s = " mark %7.2f scans=%d disc=%d ring=%d sides=%s" % (m, len(w), len(dd), len(rr), sides)
     if dd: s += " x=%.2f..%.2f y=%.2f..%.2f" % (min(r[3] for r in dd), max(r[3] for r in dd), min(r[4] for r in dd), max(r[4] for r in dd))
     print(s)
-    for e in near: print("      %7.2f %-15s %s" % (float(e["t_s"]), e["event"], e["detail"][:60] if e["event"] == "disc_fast" else ""))
+    for e in near: print("      %7.2f %-15s %s" % (float(e["t_s"]), e["event"], e["detail"][:60] if e["event"] in ("disc_fast", "arms_up", "up_dropped") else ""))
     # disc runs: contiguous stretches of disc frames (gap < 0.1 s), with ring share
     runs = []; cur = None
     for r in dd:
