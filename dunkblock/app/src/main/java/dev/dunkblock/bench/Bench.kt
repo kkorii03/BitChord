@@ -46,6 +46,8 @@ object Bench {
         val shotBlock: Boolean = true,
         val shotSens: Int = 1,
         val shotDelayMs: Int = 0,
+        /** Experimental: also press when the ball handler lifts ball and hands to the marker (ShotWatcher.checkUpPending). */
+        val upPress: Boolean = false,
         val recalibrate: Boolean = false,
         val opencvAreaResize: Boolean = false,
         val opencvThreads: Int = 1,

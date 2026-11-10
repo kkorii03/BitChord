@@ -90,8 +90,10 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
                 lastWingSnapNs = tNs; wingSnaps++; snapNow = true
             }
             onDisc(tNs)
+            armsUpEvent(tNs)
         }
         checkPending(tNs, found)
+        checkUpPending(tNs, found)
         colourFrame(buf, w, h, rowStride, tNs, found)
         val us = ((System.nanoTime() - t0) / 1000).toInt()
         usTotal += us; if (us > usMax) usMax = us
@@ -410,7 +412,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
      * that stood in the joystick corner where the foot ring is masked, 0.33 s after a dribble trigger the app rightly
      * dropped. It needs no foot ring, no history and no ball colour (match balls have other skins), and it is relative to
      * the marker, so camera moves cancel. Unknown until a bundle with this column: players far from the camera (smaller
-     * on screen), pump fakes and overhead passes (471.3 s: 3 frames). Nothing acts on it yet.
+     * on screen), pump fakes and overhead passes. Nothing acts on it unless the experimental option is on ([checkUpPending]).
      */
     private fun findTop(buf: ByteBuffer, w: Int, h: Int, rowStride: Int) {
         val u = h / 720f
@@ -457,18 +459,79 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         }
     }
 
-    /** Shadow only: logs "arms_up" when the outline top comes up to the marker (3 scans in a row, standing height seen
-     *  within the last 0.3 s) and keeps a few colour pictures of it, so the next bundle shows what such a moment is. */
+    private var lastStandNs = 0L; private var upPendNs = 0L; private var lastPressNs = 0L
+    @Volatile var upEvents = 0; private set
+    @Volatile var upTriggers = 0; private set
+
+    /** Per scan, before [onDisc] (the trigger detail reads it): how long the outline top has been up at the marker. */
     private fun armsUp(tNs: Long) {
         if (topDy < 0f || topDy > UP_DY + 0.011f) lastLowNs = tNs
+        if (topDy > UP_DY + 0.011f) lastStandNs = tNs
         if (topDy in 0f..UP_DY) { if (upRun == 0) upSinceNs = tNs; upRun++ } else upRun = 0
+    }
+
+    /**
+     * After [onDisc]. Logs "arms_up" when the outline top comes up to the marker (3 scans in a row, not up within the
+     * 0.3 s before) and keeps a few colour pictures of it. same=1 when this same player was seen standing (outline top
+     * 22-90 px under the marker) within the 0.3 s before: a marker that lands on hands already up (a pass being caught),
+     * or sits on a defender's foot ring (vc1038 183.4 / 417.4 s clips), has no such reading. Replay of that condition on
+     * the colour clips (armsup.py, '*'): all 15 practice clips keep their arms-up, the two foot-ring stretches lose it.
+     * With [Bench.Config.upPress] (experimental, off by default) a same=1 event becomes a press, see [checkUpPending].
+     */
+    private fun armsUpEvent(tNs: Long) {
         if (upRun == 3 && side == SIDE_DEF && upSinceNs - lastLowNs < 300_000_000L && tNs - lastUpEventNs > 1_000_000_000L) {
-            lastUpEventNs = tNs
-            event(tNs, "arms_up", 0f, 0f, 0f, String.format(Locale.ROOT, "top=%.4f ring=%.3f run=%d xspan=%.3f",
-                topDy, if (tNs - gapNs < 150_000_000L) gapRing - discY else -1f, (tNs - runNs) / 1_000_000L, runXMax - runXMin))
+            lastUpEventNs = tNs; upEvents++
+            val same = lastStandNs >= runNs && upSinceNs - lastStandNs < 300_000_000L
+            event(tNs, "arms_up", 0f, 0f, 0f, String.format(Locale.ROOT, "top=%.4f ring=%.3f run=%d xspan=%.3f stand=%d same=%d",
+                topDy, if (tNs - gapNs < 150_000_000L) gapRing - discY else -1f, (tNs - runNs) / 1_000_000L, runXMax - runXMin,
+                (upSinceNs - lastStandNs) / 1_000_000L, if (same) 1 else 0))
             if (upSnaps < 25) { upSnaps++; snapNow = true }
             if (upClips < 8) { upClips++; requestColour("up_def", tNs, 0.5, 0.5) }
+            if (same && cfg.shotBlock && cfg.upPress) upPendNs = tNs
         }
+    }
+
+    /**
+     * Experimental arms-up press (vc1056, only with [Bench.Config.upPress]). The gap rules keep their measured timing:
+     * the event is held UP_HOLD_NS (two scans) and pressed only if no gap rule pressed or is waiting for its
+     * confirmation and the arms are still up. In the practice clips the arms-up run began 25-75 ms before the gap
+     * trigger, the event comes ~33 ms into the run, so this press lands about -10..+40 ms around where the gap trigger
+     * would have been. It is the only rule that works without a foot ring (vc1044 practice 18.8 s: ring hidden, no
+     * trigger, arms up; vc1038 match 176.2 s in the joystick corner, 270.3 s at the bottom edge). Known from the match
+     * clips: a dribbler straightening up reads as arms-up too (vc1044 471.3 s, 0.44 s before his real shot), and a
+     * shooter seen from behind lifts the ball beside the marker, not under it (vc1038 207.4 s: seen only after the
+     * release). The rate of such presses over a whole match is not measured yet, so this stays off by default.
+     */
+    private fun checkUpPending(tNs: Long, found: Boolean) {
+        if (upPendNs == 0L) return
+        val age = tNs - upPendNs
+        if (age < UP_HOLD_NS) return
+        upPendNs = 0L
+        val why = when {
+            !found || age > 100_000_000L -> "lost"
+            upRun == 0 -> "down"
+            pendNs != 0L -> "gap_pending"
+            tNs - lastPressNs < 1_500_000_000L -> "pressed"
+            else -> ""
+        }
+        if (why.isNotEmpty()) { event(tNs, "up_dropped", 0f, 0f, 0f, why); return }
+        val live = cfg.autoBlockLive
+        val ringKnown = tNs - gapNs < 150_000_000L && gapRing - discY in 0.12f..0.6f
+        lastShotFireNs = tNs
+        shotTriggers++; upTriggers++
+        synchronized(pendingTriggers) { pendingTriggers.add(tNs) }
+        if (shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_up", 0.6, 1.8 + cfg.shotDelayMs / 1000.0) }
+        // Without a foot ring the feet height is a guess (typical gap 0.3 H), so only the sideways distance counts then.
+        var meDist = findMe(discX, if (ringKnown) gapRing else minOf(0.95f, discY + 0.3f))
+        if (!ringKnown && meDist >= 0f) meDist = Math.abs(meX - discX)
+        val d2 = String.format(Locale.ROOT, "up gap=%.3f top=%.4f upage=%d run=%d sens=%d delay=%d xspan=%.3f me=%.3f/%.3f d=%.3f",
+            if (ringKnown) gapRing - discY else -1f, topDy, (tNs - upSinceNs) / 1_000_000L, (tNs - runNs) / 1_000_000L,
+            cfg.shotSens, cfg.shotDelayMs, runXMax - runXMin, meX, meY, meDist)
+        event(tNs, "shot_trigger", 0f, 0f, 0f, d2)
+        snapNow = true
+        if (meDist > ME_FAR) { shotFar++; reject(tNs, "rejected_far", d2); return }
+        if (live) main.post { BlockAccessibilityService.instance?.inGame?.armBlock(ARM_MS) }
+        press(tNs, live, "$d2 up", 0L)
     }
 
     /** " top=<top_dy> topage=<ms since the arms went up, -1 = not up>" for the trigger detail. */
@@ -750,6 +813,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
 
     /** [ageMs] = time already spent since the trigger; the user's extra delay counts from the trigger. */
     private fun press(tNs: Long, live: Boolean, detail: String, ageMs: Long) {
+        lastPressNs = tNs
         if (!live) { shotSkipped++; event(tNs, "would_press", 0f, 0f, 0f, detail); Bench.shotLive = liveText(); return }
         val delay = (cfg.shotDelayMs.toLong() - ageMs).coerceAtLeast(0L)
         main.postDelayed({
@@ -865,6 +929,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         val leads = synchronized(pendingTriggers) { leadsMs.sorted() }
         val med = if (leads.isEmpty()) "-" else "${leads[leads.size / 2]}ms"
         return "일반 슛 발동 ${shotTriggers}회(${if (cfg.shotBlock && cfg.autoBlockLive) "실제 누름" else "기록만"}, 민감도 ${cfg.shotSens}, 지연 ${cfg.shotDelayMs}ms) → 거름 ${shotRejected}회(그중 내 선수가 멀어서 ${shotFar}회), 버튼 미리 열기 ${shotArms}회, 누름 ${shotFired}회, 건너뜀 ${shotSkipped}회\n" +
+            "  팔 올림 감지 ${upEvents}회(팔 올림으로 누르기 ${if (cfg.upPress) "켬" else "끔"}, 그걸로 발동 ${upTriggers}회)\n" +
             "  모으기 감지 뒤 공이 떠남 ${leads.size}회(앞섬 중앙값 $med, 전체 ${leads.joinToString(" ")}) · 감지했는데 공이 안 떠남(오발 추정) ${triggersWithoutRelease}회 · 공이 떠났는데 미리 감지 못함 ${releasesWithoutTrigger}회"
     }
 
@@ -885,6 +950,8 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         const val MAX_COLOUR_CLIPS = 28
         /** Outline top this close under the marker (share of H; 14 px at 720p) = hands or ball lifted. Shadow only. */
         const val UP_DY = 0.0195f
+        /** Experimental arms-up press: wait this long for a gap rule to fire first (two scans at 60 Hz). */
+        const val UP_HOLD_NS = 30_000_000L
         const val MAX_LOG_LINES = 120_000
         /** per sensitivity 0 (fewer presses) .. 2 (more): min upward speed (H/s), min speed-up vs the 200 ms before (H/s), min rise (H). */
         /** v2 gap rule: min growth of (foot ring y - disc y) vs ~100 ms ago and vs the 250-600 ms median, per sensitivity. */

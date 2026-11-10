@@ -40,6 +40,10 @@ for d in sorted(glob.glob(os.path.join(g, "colour", "colour_*"))):
     while i < len(vs):
         j = i
         while j < len(vs) and vs[j] is not None and 0 <= vs[j] <= T: j += 1
-        if j - i >= 2: ups.append("%+.0f(%d)" % (ts[i], j - i))
+        if j - i >= 2:
+            # '*' = a standing reading (22..90 px) within 300 ms before the run: the vc1056 press rule needs it
+            # (a marker that lands on hands already up, e.g. a pass being caught, must not press).
+            stand = any(vs[k] is not None and vs[k] >= 22 and ts[i] - ts[k] <= 300 for k in range(i))
+            ups.append("%+.0f(%d)%s" % (ts[i], j - i, "*" if stand else ""))
         i = max(j, i + 1)
     print("%-26s t0=%+5.0f %s\n%26s up@ %s" % (os.path.basename(d)[7:], ts[0], row, "", " ".join(ups) or "none"))

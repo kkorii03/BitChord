@@ -45,6 +45,7 @@ class MainActivity : Activity() {
             if (sp.contains("bx")) Bench.config = Bench.config.copy(
                 blockFx = sp.getFloat("bx", Bench.config.blockFx), blockFy = sp.getFloat("by", Bench.config.blockFy),
                 joyFx = sp.getFloat("jx", Bench.config.joyFx), joyFy = sp.getFloat("jy", Bench.config.joyFy))
+            if (sp.getBoolean("upPress", false)) Bench.config = Bench.config.copy(upPress = true)
         }
 
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(32, 48, 32, 48) }
@@ -159,6 +160,11 @@ class MainActivity : Activity() {
             }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         }
         fun <T> cycle(list: List<T>, cur: T) = list[(list.indexOf(cur) + 1) % list.size]
+        // Kept across restarts (the other options are not): the user turns it on once for practice tests.
+        opt("⑧ 실험: 팔 올리는 순간에도 블록 누르기", if (c.upPress) "켬" else "끔(기록만)") {
+            getSharedPreferences("calib", 0).edit().putBoolean("upPress", !c.upPress).apply()
+            c.copy(upPress = !c.upPress)
+        }
         opt("캡처 배율", "${c.captureScale}") { c.copy(captureScale = cycle(listOf(1.0f, 0.5f, 0.33f, 0.25f), c.captureScale)) }
         opt("분석 폭(px)", "${c.analysisWidth}") { c.copy(analysisWidth = cycle(listOf(128, 192, 256, 320), c.analysisWidth)) }
         opt("분석 백엔드", c.backend.label) { c.copy(backend = cycle(Bench.Backend.values().toList(), c.backend)) }
