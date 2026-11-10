@@ -46,6 +46,14 @@ class LyricsMismatchWordsTest {
     }
 
     @Test
+    fun aSheetTheAppAlreadyFittedIsKeptAgainstAPoorLaterListen() {
+        // tjyFqEaWJqA: measured 99%, then a thin whole-song listen rejected it.
+        assertFalse(LyricsMismatch.judgeSheet(sheet(1), sung(sheet(2)), knownFit = 99).rejected)
+        // A weak earlier fit is no such proof.
+        assertTrue(LyricsMismatch.judgeSheet(sheet(1), sung(sheet(2)), knownFit = 40).rejected)
+    }
+
+    @Test
     fun theRightSheetIsKept() {
         assertFalse(LyricsMismatch.judgeSheet(sheet(1), sung(sheet(1))).rejected)
     }

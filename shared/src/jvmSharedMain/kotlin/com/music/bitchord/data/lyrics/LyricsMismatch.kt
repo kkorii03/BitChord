@@ -31,8 +31,24 @@ object LyricsMismatch {
         val rejected: Boolean,
     )
 
-    fun judgeSheet(lines: List<LyricLine>, heard: List<LyricsWordAlign.Heard>): Verdict {
+    /**
+     * A sheet the app itself already fitted to this recording this well is the
+     * song's words, whatever a later listen made of it. tjyFqEaWJqA (11-10): the
+     * kept sheet measured 99% on the first 90 s, then a 131-word whole-song
+     * listen of a rap cover placed 21 of 72 lines, rejected it and every other
+     * provider's copy, and the song played with no lyrics.
+     */
+    const val MEASURED_KEEPS_PERCENT = 85
+
+    fun judgeSheet(
+        lines: List<LyricLine>,
+        heard: List<LyricsWordAlign.Heard>,
+        knownFit: Int? = null,
+    ): Verdict {
         val texts = lines.filter { !it.isGap && it.text.isNotBlank() }
+        if ((knownFit ?: 0) >= MEASURED_KEEPS_PERCENT) {
+            return Verdict(heard.size, 0, texts.size, rejected = false)
+        }
         // A sheet with no times cannot be matched to the part of the song the
         // transcript covers: judging all of it against the opening would hide
         // a correct long sheet. Without timings it is not evidence either way.

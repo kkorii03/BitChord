@@ -1705,7 +1705,7 @@ class LyricsController(
             // Lining a long sheet up with a long transcript is a full DP table;
             // it must not run on the main thread while the screen is drawing.
             val verdict = withContext(Dispatchers.Default) {
-                com.music.bitchord.data.lyrics.LyricsMismatch.judgeSheet(lines, heard)
+                com.music.bitchord.data.lyrics.LyricsMismatch.judgeSheet(lines, heard, knownFit = measured)
             }
             if (generation != lyricsGeneration || timingLines !== lines) return@launch
             if (!verdict.rejected) return@launch
