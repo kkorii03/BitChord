@@ -397,8 +397,20 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         // A step of 0.15 H+ in one scan is the tracker switching between the foot ring and the disc (vc1033: every
         // "release" trigger was a 0.28-0.29 H ring->disc switch), never a real move: start the track over.
         if (hCount > 0) { val li = (hPos - 1 + histN) % histN; if (Math.abs(discY - hY[li]) > 0.15f) hCount = 0 }
+        // A "run" = one unbroken sighting of the marker on one player (see the fresh rule in checkShot). It starts over
+        // after 0.1 s without a marker, an x jump (another player) or a y step > 0.06 H in one scan (real lifts move
+        // <= 0.03 per scan; vc1035 116.65 / 207.99 s: the tracker sat on a lower blob for one scan, then stepped 0.13-0.15).
+        if (runLastNs == 0L || tNs - runLastNs > 100_000_000L || Math.abs(discX - runLastX) > 0.08f || Math.abs(discY - runLastY) > 0.06f) {
+            runNs = tNs; runY0 = discY; runXMin = discX; runXMax = discX; runG = 0
+        }
+        runLastNs = tNs; runLastX = discX; runLastY = discY
+        runXMin = minOf(runXMin, discX); runXMax = maxOf(runXMax, discX)
         if (ringY >= 0f) { gapNs = tNs; gapRing = ringY }
         if (tNs - gapNs < 150_000_000L && gapRing - discY in 0.12f..0.6f) {
+            val g = gapRing - discY
+            if (runG == 0) { runG0 = g; runG1 = g; runRMin = gapRing; runRMax = gapRing }
+            else { if (runG == 1) runG1 = g; runRMin = minOf(runRMin, gapRing); runRMax = maxOf(runRMax, gapRing) }
+            runG++
             // A step of 0.07 H in one scan (real lifts: <= 0.03) or a pause is the marker moving to another player or the
             // tracker switching blobs: the early rule must not compare across it (vc1035 116.87 s: 0.161 -> 0.283).
             if (gCount > 0) {
@@ -458,6 +470,11 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
     private var gPos = 0; private var gCount = 0
     private var gapNs = 0L; private var gapRing = -1f
     private var gJumpNs = 0L
+    // current run of the marker on one player: start, disc y at the start, x range, last point, gap samples (count,
+    // first two values, ring y range)
+    private var runNs = 0L; private var runY0 = 0f; private var runXMin = 0f; private var runXMax = 0f
+    private var runLastNs = 0L; private var runLastX = 0f; private var runLastY = 0f
+    private var runG = 0; private var runG0 = 0f; private var runG1 = 0f; private var runRMin = 0f; private var runRMax = 0f
     private var lastShotFireNs = 0L
     private var lastDefNs = 0L
     @Volatile var shotTriggers = 0; private set
@@ -483,6 +500,45 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         expireTriggers(tNs)
         // The slot can turn grey or into 리바운드 around the shot itself, so accept defence seen within the last second.
         if (side == SIDE_OFF || tNs - lastDefNs > 1_000_000_000L || tNs - lastShotFireNs < 1_500_000_000L) return
+        val live = cfg.shotBlock && cfg.autoBlockLive
+        // v6 (vc1052) fresh rule: pass -> quick shot. The marker lands on a player who is already going up, so the 0.2-0.6 s
+        // of history that v2 / the early rule need never exists (practice marks with no trigger at all: vc1035 73.5, 81.6,
+        // vc1044 45.4, 53.3: marker visible 0.3-0.77 s before the shot). Inside the first 50-350 ms of a run: gap grown
+        // >= FRESH_RISE above the lower of the run's first two gaps, last three gaps not falling, the disc itself up
+        // >= 0.02 H since the run began, foot ring still (<= 0.012 H) and no sideways sway. Replay (replay9.py, F 0.04) on
+        // four bundles: + 6 practice presses, all real shots, 50-70 ms after the marker landed; + 3 match presses
+        // (vc1035 383.6, vc1038 270.6, vc1044 503.0), each a 0.07-0.13 H jump arc; F 0.03 added 6 more unchecked ones.
+        val gLast = (gPos - 1 + histN) % histN
+        if (runG >= 2 && tNs - gT[gLast] <= 1_000_000L && tNs - runNs in 50_000_000L..350_000_000L) {
+            val fNeed = FRESH_RISE[cfg.shotSens.coerceIn(0, FRESH_RISE.size - 1)]
+            val g0 = gV[gLast]
+            val grown = g0 - minOf(runG0, runG1)
+            val up = runY0 - discY
+            val still = runRMax - runRMin <= 0.012f && runXMax - runXMin < CALM_XSPAN
+            if (live && still && grown >= 0.5f * fNeed && up >= 0.0099f && tNs - lastArmNs > 300_000_000L) {
+                lastArmNs = tNs; shotArms++
+                main.post { BlockAccessibilityService.instance?.inGame?.armBlock(ARM_MS) }
+                event(tNs, "arm", 0f, 0f, 0f, "half_fresh")
+            }
+            if (runG >= 3 && still && grown >= fNeed - 0.001f && up >= 0.0199f) {
+                val g1 = gV[(gPos - 2 + histN) % histN]; val g2 = gV[(gPos - 3 + histN) % histN]
+                if (g0 >= g1 - 0.006f && g1 >= g2 - 0.006f) {
+                    lastShotFireNs = tNs
+                    shotTriggers++
+                    synchronized(pendingTriggers) { pendingTriggers.add(tNs) }
+                    if (shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_fresh", 0.6, 1.8 + cfg.shotDelayMs / 1000.0) }
+                    val meDist = findMe(discX, discY + g0)
+                    val d2 = String.format(Locale.ROOT, "fresh gap=%.3f first=%.3f up=%.3f run=%d n=%d sens=%d delay=%d xspan=%.3f me=%.3f/%.3f d=%.3f",
+                        g0, minOf(runG0, runG1), up, (tNs - runNs) / 1_000_000L, runG, cfg.shotSens, cfg.shotDelayMs, runXMax - runXMin, meX, meY, meDist)
+                    event(tNs, "shot_trigger", 0f, 0f, 0f, d2)
+                    snapNow = true
+                    if (meDist > ME_FAR) { shotFar++; reject(tNs, "rejected_far", d2); return }
+                    if (live) main.post { BlockAccessibilityService.instance?.inGame?.armBlock(ARM_MS) }
+                    press(tNs, live, d2 + " fresh", 0L)
+                    return
+                }
+            }
+        }
         val a = ref(tNs, 60_000_000L, 130_000_000L); if (a < 0) return
         val b = ref(tNs, 200_000_000L, 330_000_000L); if (b < 0) return
         val dtA = (tNs - hT[a]) / 1e9f; val dtB = (hT[a] - hT[b]) / 1e9f
@@ -535,7 +591,6 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         val gLow = if (loN >= 5) maxOf(lo0, lo1 - 0.006f) else Float.MAX_VALUE
         val early = loN >= 5 && gNow - gLow >= earlyNeed - 0.001f
         val v2 = v2Ready && gNow - gOld >= need && gNow - gBase >= need
-        val live = cfg.shotBlock && cfg.autoBlockLive
         // vc1038: the press reached the game 40-56 ms after the trigger, 40 of that waiting for the block tile to turn
         // pass-through. Open the tile already at half the rise (offline: 0-34 ms before the trigger in practice).
         val halfV2 = v2Ready && gNow - gOld >= 0.5f * need && gNow - gBase >= 0.5f * need
@@ -745,6 +800,9 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         val GAP_RISE = floatArrayOf(0.04f, 0.03f, 0.02f)
         /** v5 early rule: min growth of the gap above its lowest value of the last 60-400 ms, per sensitivity. */
         val EARLY_RISE = floatArrayOf(0.06f, 0.05f, 0.04f)
+        /** v6 fresh rule: min growth of the gap above the first two gaps of a run that began 50-350 ms ago, per sensitivity
+         *  (0.03 was replayed and added 6 unchecked match presses, so the highest setting stays at 0.04). */
+        val FRESH_RISE = floatArrayOf(0.05f, 0.04f, 0.04f)
         /** Extra wait before an early-only press (see checkShot). */
         const val EARLY_DELAY_MS = 25L
         /** v3 confirmation (vc1038 offline, 6 real shots / 8 phantoms): x sway limit (W), extra rise needed (H), wait. */
