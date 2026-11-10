@@ -40,7 +40,7 @@ class ProxyProbeActivity : Activity() {
     private val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.ROOT).format(Date())
     private val log = StringBuilder("t_ns,source,event,pointer,x,y,device\n")
 
-    private enum class Phase { WAIT, A, B, C, DONE }
+    private enum class Phase { WAIT, A, B, C, D, DONE }
     private var phase = Phase.WAIT
 
     // screen geometry (filled after layout)
@@ -73,6 +73,17 @@ class ProxyProbeActivity : Activity() {
     private val trialsC = ArrayList<TrialC>()
     private val totalC = 3
     private var proxyCancelsBefore = 0
+    // D: pad laid OVER the joystick, pass-through after the finger lands
+    private var dDown = false
+    private var dDowns = 0
+    private var dPadCancels = 0
+    private var dInjectedOnPad = 0
+    private var dStartNs = 0L
+    private var dTaps = 0
+    private var dTapsArrived = 0
+    private var dStickCancelsBefore = 0
+    private var dTapsScheduled = false
+    private val totalD = 4
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -228,7 +239,7 @@ class ProxyProbeActivity : Activity() {
         view.showPass = true
         view.message = "C단계: 패드로 계속 원을 그리면서, 다른 손가락으로 오른쪽 아래 노란 '패스' 버튼을 ${totalC}번 눌러 보세요(한 번에 하나씩, 2초 간격)."
         view.invalidate()
-        main.postDelayed({ if (phase == Phase.C) finishTest("C단계 시간 초과(20초)") }, 20_000)
+        main.postDelayed({ if (phase == Phase.C) beginD() }, 20_000)
     }
 
     fun onPassPressed(t: Long) {
@@ -244,8 +255,66 @@ class ProxyProbeActivity : Activity() {
             tr.padCancelled = padCancelledAt != padBefore && padCancelledAt >= tr.pressNs
             view.message = "C단계 ${tr.n}/$totalC: 대리 조이스틱 ${if (tr.stickCancelled || tr.proxyCancelled) "끊김" else "유지"}, 패드 손가락 ${if (tr.padCancelled) "끊김" else "유지"}"
             view.invalidate()
-            if (trialsC.size >= totalC) main.postDelayed({ finishTest("완료") }, 600)
+            if (trialsC.size >= totalC) main.postDelayed({ beginD() }, 600)
         }, 350)
+    }
+
+    // ------------------------------------------------------------------ D: pad over the joystick, pass-through
+
+    private fun beginD() {
+        if (phase == Phase.D || phase == Phase.DONE) return
+        phase = Phase.D
+        proxy?.stop()
+        val s = svc ?: return
+        s.hidePad()
+        val side = (0.40f * view.height).toInt()
+        val ok = s.showPad((origin.x - side / 2f).toInt(), (origin.y - side / 2f).toInt(), side, side, "") { e, t -> onPadD(e, t) }
+        if (!ok) { finishTest("D단계 패드 실패"); return }
+        dStickCancelsBefore = view.stickCancels
+        view.showPass = false
+        view.message = "D단계: 손가락을 떼세요. 파란 패드가 왼쪽 위 원(조이스틱) 위로 옮겨졌습니다.\n그 패드를 누르고 원 그리기·멈추기를 반복하세요. 블록 탭 ${totalD}번이 들어갑니다."
+        view.invalidate()
+    }
+
+    private fun onPadD(e: MotionEvent, t: Long) {
+        rec(t, "padD", MotionEvent.actionToString(e.actionMasked), e.getPointerId(e.actionIndex), e.rawX, e.rawY, e.deviceId)
+        if (e.deviceId == -1) { dInjectedOnPad++; return }
+        val p = proxy ?: return
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                dDown = true; dDowns++
+                svc?.setPadTouchable(false)
+                val at = PointF(e.rawX, e.rawY)
+                main.postDelayed({
+                    if (!dDown) return@postDelayed
+                    if (dStartNs == 0L) dStartNs = System.nanoTime()
+                    p.start(at)
+                    if (!dTapsScheduled) { dTapsScheduled = true; main.postDelayed({ nextD() }, 1500) }
+                }, 40)
+            }
+            MotionEvent.ACTION_MOVE -> p.target = PointF(e.rawX, e.rawY)
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (e.actionMasked == MotionEvent.ACTION_CANCEL) dPadCancels++
+                dDown = false
+                p.stop()
+                svc?.setPadTouchable(true)
+            }
+        }
+    }
+
+    private fun nextD() {
+        val p = proxy ?: return
+        if (dTaps >= totalD) { finishTest("완료"); return }
+        if (!dDown || !p.active) { dTapsScheduled = false; view.message = "D단계: 패드를 다시 누르면 계속합니다."; view.invalidate(); return }
+        val t = System.nanoTime()
+        dTaps++
+        p.tap(PointF(targetPt.x, targetPt.y), 1)
+        main.postDelayed({
+            if (view.targetDowns.any { it >= t }) dTapsArrived++
+            view.message = "D단계 $dTaps/$totalD: 블록 도착 $dTapsArrived, 패드 끊김 $dPadCancels, 주입이 패드에 떨어짐 $dInjectedOnPad"
+            view.invalidate()
+            main.postDelayed({ nextD() }, 900)
+        }, 400)
     }
 
     // ------------------------------------------------------------------ report
@@ -282,7 +351,11 @@ class ProxyProbeActivity : Activity() {
         val (lag, rms) = lagEstimate()
         val aCancelled = trialsA.count { it.verdict == "PAD_CANCELLED" }
         val aSurvived = trialsA.count { it.verdict == "PAD_SURVIVED" }
-        val bOk = trialsB.count { it.verdict == "BOTH_OK" }
+        // Variant 0 is the control (expected to fail); judge B by the real candidates only.
+        val bReal = trialsB.filter { it.variant != 0 }
+        val bOk = bReal.count { it.verdict == "BOTH_OK" }
+        val dStickMoves = if (dStartNs > 0) view.stickMovesSince(dStartNs).size else 0
+        val dPass = dDowns > 0 && dInjectedOnPad == 0 && dPadCancels == 0 && dStickMoves > 30
         val tapLat = trialsB.filter { it.tapArrived }.map { it.tapLatencyMs }.toDoubleArray()
         val report = buildString {
             appendLine("== ⑥ 대리 조이스틱 시험 (측정값) ==")
@@ -298,7 +371,7 @@ class ProxyProbeActivity : Activity() {
             })
             appendLine()
             appendLine("[B] 대리 조이스틱 + 블록 탭을 한 제스처로 주입")
-            appendLine("  시행 ${trialsB.size}: 둘 다 정상 $bOk ${trialsB.map { it.verdict }}")
+            appendLine("  시행 ${trialsB.size} (대조군 제외 ${bReal.size}): 대조군 제외 둘 다 정상 $bOk ${trialsB.map { it.verdict }}")
             for (v in 0..2) {
                 val tv = trialsB.filter { it.variant == v }
                 val name = arrayOf("조이스틱과 동시 시작(대조군)", "2ms 늦게 시작 + 2px 선", "2ms 늦게 시작 + 점")[v]
@@ -317,11 +390,16 @@ class ProxyProbeActivity : Activity() {
             for (c in trialsC) appendLine("  #${c.n}: 대리 조이스틱 ${if (c.stickCancelled || c.proxyCancelled) "끊김" else "유지"}, 패드 손가락 ${if (c.padCancelled) "끊김" else "유지"}")
             if (trialsC.isEmpty()) appendLine("  시행 없음")
             appendLine()
+            appendLine("[D] 패드를 조이스틱 위에 겹치고, 누른 뒤 통과 상태로 전환")
+            appendLine("  패드 누름 ${dDowns}회, 패드 손가락 끊김 ${dPadCancels}회, 주입이 패드에 떨어진 이벤트 ${dInjectedOnPad}개, '게임'이 받은 대리 조이스틱 이동 ${dStickMoves}개")
+            appendLine("  블록 탭 도착 $dTapsArrived/$dTaps, 이 단계의 '게임' 조이스틱 취소 ${view.stickCancels - dStickCancelsBefore}회")
+            appendLine("  판정: " + if (dDowns == 0) "시행 없음" else if (dPass) "통과 방식 동작 → 실제 조이스틱 위치에서 사용 가능" else "통과 방식 실패(위 수치 참고)")
+            appendLine()
             appendLine("종합: " + when {
                 aCancelled > 0 -> "접근성 주입은 화면의 모든 실제 터치를 끊음 → '사람이 화면으로 이동 + 앱이 블록'은 이 방식으로 불가. 남은 길: 물리 장치 또는 터치가 아닌 이동 입력."
-                trialsB.isNotEmpty() && bOk == trialsB.size && trialsC.none { it.stickCancelled || it.proxyCancelled } ->
-                    "대리 조이스틱 방식 성립 가능(앱 화면 기준). 추종 지연과 게임 내 동작은 추가 확인 필요."
-                trialsB.isNotEmpty() && bOk == trialsB.size -> "이동+블록은 함께 가능하나, 다른 손으로 버튼을 누르면 대리 조이스틱이 끊김 → 실전 사용 제한적."
+                bReal.isNotEmpty() && bOk == bReal.size && trialsC.none { it.stickCancelled || it.proxyCancelled } ->
+                    "대리 조이스틱 방식 성립(앱 화면 기준)" + (if (dPass) ", 조이스틱 위에 겹친 통과 방식도 동작. 다음: ⑦ 게임에서 확인." else ". 겹친 통과 방식은 D 결과 참고.")
+                bReal.isNotEmpty() && bOk == bReal.size -> "이동+블록은 함께 가능하나, 다른 손으로 버튼을 누르면 대리 조이스틱이 끊김 → 실전 사용 제한적."
                 else -> "대리 조이스틱 방식에 문제가 있음(B 결과 참고)."
             })
         }

@@ -88,6 +88,13 @@ class MainActivity : Activity() {
         button("③ 합성 모션 검출 시험 (정답 대비 지연·페이크 오탐)") { requestCapture(Bench.Mode.MOTION) }
         button("④ 수동 조이스틱 + 자동 탭 충돌 시험") { startActivity(Intent(this, TouchProbeActivity::class.java)) }
         button("⑥ 대리 조이스틱 시험 (④ 실패 시 대안 확인, 약 3분)") { startActivity(Intent(this, ProxyProbeActivity::class.java)) }
+        button("⑦ 인게임 대리 조이스틱 (연습 모드 전용)") {
+            val svc = BlockAccessibilityService.instance
+            if (svc == null) { status.text = "접근성 서비스가 꺼져 있습니다."; return@button }
+            if (svc.inGame != null) { status.text = "⑦이 이미 실행 중입니다. 화면 위 검은 버튼으로 끝내세요."; return@button }
+            svc.inGame = InGameProxy(svc).also { it.begin() }
+            status.text = "⑦ 준비됨: 덩크시티를 연습 모드로 열고, 화면 위쪽의 검은 버튼을 누르세요."
+        }
         button("세션 중지") { if (Bench.running) CaptureService.stop(this) }
         button("접근성 설정 열기 (④·⑤에 필요)") { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
 

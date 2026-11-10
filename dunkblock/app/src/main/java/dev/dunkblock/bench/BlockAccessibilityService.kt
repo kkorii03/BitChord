@@ -31,10 +31,12 @@ import android.view.accessibility.AccessibilityEvent
 class BlockAccessibilityService : AccessibilityService() {
     private val main = Handler(Looper.getMainLooper())
     private var pad: View? = null
+    private var padLp: WindowManager.LayoutParams? = null
+    @Volatile var inGame: InGameProxy? = null
     private var proxyThread: HandlerThread? = null
 
     override fun onServiceConnected() { instance = this }
-    override fun onUnbind(intent: Intent?): Boolean { hidePad(); instance = null; return super.onUnbind(intent) }
+    override fun onUnbind(intent: Intent?): Boolean { inGame?.finish("서비스 해제"); hidePad(); instance = null; return super.onUnbind(intent) }
     override fun onDestroy() { hidePad(); proxyThread?.quitSafely(); instance = null; super.onDestroy() }
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
     override fun onInterrupt() {}
@@ -84,6 +86,7 @@ class BlockAccessibilityService : AccessibilityService() {
             }
             wm.addView(v, lp)
             pad = v
+            padLp = lp
             true
         } catch (t: Throwable) {
             android.util.Log.e("DunkBlockA11y", "showPad", t)
@@ -91,9 +94,47 @@ class BlockAccessibilityService : AccessibilityService() {
         }
     }
 
+    /**
+     * Pass-through switch. While a finger that went down on the pad stays down, the pad keeps receiving it;
+     * with touchable=false NEW touches (our injected joystick) fall through to the window below.
+     * Whether Android keeps delivering the existing finger after the flag change is exactly what ⑥-D / ⑦ measure.
+     */
+    fun setPadTouchable(touchable: Boolean) {
+        val v = pad ?: return
+        val lp = padLp ?: return
+        lp.flags = if (touchable) lp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+        else lp.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        try { (getSystemService(Context.WINDOW_SERVICE) as WindowManager).updateViewLayout(v, lp) } catch (_: Throwable) {}
+    }
+
+    /** Adds any overlay view (accessibility overlay, drawn above the game). Width/height may be MATCH_PARENT. */
+    fun addOverlay(v: View, x: Int, y: Int, w: Int, h: Int, gravity: Int = Gravity.TOP or Gravity.START): WindowManager.LayoutParams? = try {
+        val lp = WindowManager.LayoutParams(
+            w, h, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT,
+        ).apply {
+            this.gravity = gravity; this.x = x; this.y = y
+            layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+        }
+        (getSystemService(Context.WINDOW_SERVICE) as WindowManager).addView(v, lp)
+        lp
+    } catch (t: Throwable) { android.util.Log.e("DunkBlockA11y", "addOverlay", t); null }
+
+    fun updateOverlay(v: View, lp: WindowManager.LayoutParams) {
+        try { (getSystemService(Context.WINDOW_SERVICE) as WindowManager).updateViewLayout(v, lp) } catch (_: Throwable) {}
+    }
+
+    fun removeOverlay(v: View?) {
+        if (v == null) return
+        try { (getSystemService(Context.WINDOW_SERVICE) as WindowManager).removeView(v) } catch (_: Throwable) {}
+    }
+
     fun hidePad() {
         val v = pad ?: return
         pad = null
+        padLp = null
         try { (getSystemService(Context.WINDOW_SERVICE) as WindowManager).removeView(v) } catch (_: Throwable) {}
     }
 
