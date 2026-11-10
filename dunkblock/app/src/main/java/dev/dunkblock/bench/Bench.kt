@@ -31,6 +31,13 @@ object Bench {
         val sampleFrames: Boolean = true,
         val sampleEveryMs: Long = 2000,
         val sampleWidth: Int = 960,
+        /** Block button / joystick centre as fractions of the landscape screen (from ⑦ calibration). */
+        val blockFx: Float = 0.889f,
+        val blockFy: Float = 0.835f,
+        val joyFx: Float = 0.207f,
+        val joyFy: Float = 0.769f,
+        /** GAME mode: when the block button visibly changes (the user pressed it), save a 60 fps clip around it. */
+        val pressClips: Boolean = true,
         val opencvAreaResize: Boolean = false,
         val opencvThreads: Int = 1,
         val warmupSec: Double = 5.0,

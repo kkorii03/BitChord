@@ -55,6 +55,9 @@ class FramePipeline(
     private var evidenceCount = 0
 
     val detector: AttackEventDetector
+    /** GAME mode: user's own block presses → 60 fps clips (timing data). */
+    val clipper: PressClipper? = if (session.config.mode == Bench.Mode.GAME)
+        PressClipper(session.config, io, File(evidenceDir.parentFile, "clips"), session.startedNs) else null
 
     init {
         val cells = GRID_COLS * GRID_ROWS
@@ -141,6 +144,7 @@ class FramePipeline(
             sampleFrame(buf, w, h, rowStride, pixelStride, arrivalNs)
         }
 
+        val roiLuma = clipper?.onFrame(buf, w, h, rowStride, pixelStride, arrivalNs) ?: -1
         var counter = -1
         var patLuma = -1
         if (cfg.mode == Bench.Mode.LATENCY) {
@@ -185,6 +189,7 @@ class FramePipeline(
             log.burst[slot] = burst.coerceAtMost(127).toByte()
             log.counter[slot] = counter
             log.patLuma[slot] = patLuma
+            log.blockRoiLuma100[slot] = roiLuma
             log.sampleHash[slot] = hash
             log.dupSampled[slot] = dup
             log.meanLuma100[slot] = if (p != null) feat.meanLuma100 else sampledLuma100

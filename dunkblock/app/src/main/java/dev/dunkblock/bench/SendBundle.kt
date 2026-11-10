@@ -27,7 +27,9 @@ object SendBundle {
         f.name == "display.csv" -> 2
         f.name == "frames.csv" -> 3
         f.name == "touch_events.csv" -> 4
-        f.name.endsWith(".jpg") -> 5
+        f.name == "presses.csv" -> 1
+        f.name.endsWith(".jpg") && f.path.contains("/clips/") -> 5
+        f.name.endsWith(".jpg") -> 6
         f.name.endsWith(".png") -> 6
         else -> 7
     }
@@ -51,7 +53,7 @@ object SendBundle {
                 val rel = if (f.startsWith(root)) f.relativeTo(root).path else "app/${f.name}"
                 if (f.name.endsWith(".png") && images >= 12) { skipped.add("$rel (증거 이미지 12장 초과)"); continue }
                 val raw = f.readBytes()
-                val est = compressedSize(raw, f.name.endsWith(".png"))
+                val est = compressedSize(raw, f.name.endsWith(".png") || f.name.endsWith(".jpg"))
                 if (used + est + 4096 > BUDGET) { skipped.add("$rel (용량 초과, ${raw.size / 1024} KB)"); continue }
                 zip.putNextEntry(ZipEntry(rel))
                 zip.write(raw)

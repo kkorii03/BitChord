@@ -206,6 +206,7 @@ class CaptureService : Service() {
             appendLine("캡처 크기: ${session.captureW}x${session.captureH}")
             appendLine(DeviceInfo.short(this@CaptureService))
             session.error?.let { appendLine("!! 처리 오류: $it") }
+            p?.clipper?.let { appendLine("블록 버튼 누름 감지 ${it.presses}회, 저장한 60fps 클립 ${it.clips}개 (블록 버튼 위치 ${session.config.blockFx}, ${session.config.blockFy})") }
             appendLine("-- 메모 --")
             append(synchronized(session.notes) { session.notes.toString() })
         }
@@ -221,6 +222,7 @@ class CaptureService : Service() {
             File(sessionDir, "seconds.csv").bufferedWriter().use { Csv.seconds(session.seconds.toList(), it) }
             session.display?.let { d -> File(sessionDir, "display.csv").bufferedWriter().use { Csv.display(d, it) } }
             if (truth.isNotEmpty()) File(sessionDir, "truth.csv").bufferedWriter().use { TruthMatcher.csv(truth, it) }
+            p?.clipper?.let { c -> File(sessionDir, "presses.csv").writeText(c.pressLog.toString()) }
             File(sessionDir, "device.txt").writeText(DeviceInfo.full(this))
         } catch (t: Throwable) {
             Log.e(TAG, "write failed", t)

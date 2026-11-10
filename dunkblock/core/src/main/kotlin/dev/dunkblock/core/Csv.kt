@@ -3,7 +3,7 @@ package dev.dunkblock.core
 /** CSV serialisation of the raw logs. The raw CSVs are the source of truth; tools/analyze.py recomputes from them. */
 object Csv {
     const val FRAMES_HEADER = "seq,arrival_ns,image_ts_ns,burst,counter,pat_luma,sample_hash,dup_sampled,mean_luma_x100," +
-        "t_copy_us,t_pre_us,t_roi_us,t_motion_us,t_analysis_us,t_total_us,t_alt_analysis_us,global_motion,local_motion"
+        "t_copy_us,t_pre_us,t_roi_us,t_motion_us,t_analysis_us,t_total_us,t_alt_analysis_us,global_motion,local_motion,block_roi_luma_x100"
 
     fun frames(log: FrameLog, out: Appendable) {
         out.append(FRAMES_HEADER).append('\n')
@@ -25,7 +25,8 @@ object Csv {
                 .append(log.tTotalUs[i].toString()).append(',')
                 .append(log.tAltAnalysisUs[i].toString()).append(',')
                 .append(f(log.globalMotion[i].toDouble(), 5)).append(',')
-                .append(f(log.localMotion[i].toDouble(), 5)).append('\n')
+                .append(f(log.localMotion[i].toDouble(), 5)).append(',')
+                .append(log.blockRoiLuma100[i].toString()).append('\n')
         }
     }
 

@@ -103,6 +103,7 @@ class InGameProxy(private val svc: BlockAccessibilityService) {
                     step = 2; bubble?.text = "② 블록 버튼을 한 번 누르세요"; view.invalidate()
                 } else if (step == 2) {
                     block = PointF(e.rawX, e.rawY); rec("calib", "block", e.rawX, e.rawY, e.deviceId)
+                    saveCalibration()
                     step = 3
                     svc.removeOverlay(view); calib = null
                     main.post { showPad() }
@@ -114,6 +115,21 @@ class InGameProxy(private val svc: BlockAccessibilityService) {
             finish("보정 화면을 띄우지 못함"); return
         }
         calib = v
+    }
+
+    /** Stores the calibration as fractions of the (landscape) screen so ① can find the block button. */
+    @Suppress("DEPRECATION")
+    private fun saveCalibration() {
+        try {
+            val p = android.graphics.Point()
+            svc.getSystemService(android.hardware.display.DisplayManager::class.java).getDisplay(android.view.Display.DEFAULT_DISPLAY).getRealSize(p)
+            if (p.x <= 0 || p.y <= 0) return
+            val c = Bench.config.copy(blockFx = block.x / p.x, blockFy = block.y / p.y, joyFx = joy.x / p.x, joyFy = joy.y / p.y)
+            Bench.config = c
+            svc.getSharedPreferences("calib", 0).edit()
+                .putFloat("bx", c.blockFx).putFloat("by", c.blockFy).putFloat("jx", c.joyFx).putFloat("jy", c.joyFy).apply()
+            rec("calib", "saved_fractions", c.blockFx * 1000, c.blockFy * 1000, p.x)
+        } catch (_: Throwable) {}
     }
 
     private fun showPad() {

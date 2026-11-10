@@ -22,6 +22,8 @@ class FrameLog(val capacity: Int) {
     val counter = IntArray(capacity)
     /** Luma (0..255) at the colour-flip probe point of the LATENCY pattern, or -1 when not in pattern mode. */
     val patLuma = IntArray(capacity)
+    /** Mean luma x100 of a small box on the game's block button (GAME mode, landscape), or -1. Used to detect the user's own block presses. */
+    val blockRoiLuma100 = IntArray(capacity) { -1 }
     /** Hash of ~1k sampled pixels; equal hashes on consecutive frames flag a sampled-duplicate. */
     val sampleHash = IntArray(capacity)
     val dupSampled = BooleanArray(capacity)
