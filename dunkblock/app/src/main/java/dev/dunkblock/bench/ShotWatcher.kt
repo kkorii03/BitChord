@@ -480,8 +480,8 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         val d2 = String.format(Locale.ROOT, "%s xspan=%.3f", detail, xspan)
         event(tNs, "shot_trigger", 0f, 0f, 0f, d2)
         if (xspan >= CONFIRM_XSPAN) { shotRejected++; event(tNs, "rejected_xspan", 0f, 0f, 0f, d2); Bench.shotLive = liveText(); return }
-        // Then wait (<= 140 ms) for the disc to keep rising: real shots rose 0.039-0.100 H in the next 133 ms, phantoms
-        // at most 0.028 (vc1038), practice successes 0.028-0.050 (7 of 9 pass). Checked every scan in [checkPending].
+        // Then wait (<= 200 ms) for the disc to keep rising: real shots rose 0.039-0.139 H, phantoms at most 0.028
+        // (vc1038). Checked every scan in [checkPending].
         pendNs = tNs; pendY = discY; pendDetail = d2; pendLive = live
         Bench.shotLive = liveText()
     }
@@ -566,7 +566,10 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         /** v3 confirmation (vc1038 offline, 6 real shots / 8 phantoms): x sway limit (W), extra rise needed (H), wait. */
         const val CONFIRM_XSPAN = 0.1f
         const val CONFIRM_RISE = 0.025f
-        const val CONFIRM_WINDOW_NS = 140_000_000L
+        // 200 ms (not 133): phantoms stay flat (<= 0.028 H even at 200 ms) while slower practice rises reach 0.028 by
+        // 200 ms: vc1035 successes 9/9 kept, vc1033 practice 16/26, vc1038 match real 4/6, phantoms 0/8. The press
+        // goes as soon as the rise is reached; trigger->jump was 301-524 ms, so 200 + 75 ms is still before the jump.
+        const val CONFIRM_WINDOW_NS = 200_000_000L
         val SENS = arrayOf(floatArrayOf(0.45f, 0.35f, 0.035f), floatArrayOf(0.35f, 0.25f, 0.025f), floatArrayOf(0.25f, 0.18f, 0.018f))
         fun sideName(s: Int) = when (s) { SIDE_DEF -> "def"; SIDE_OFF -> "off"; else -> "unk" }
     }
