@@ -1,0 +1,66 @@
+# dunkvideo — 플레이 영상 → 블록 타이밍 데이터셋
+
+유튜브 링크나 MP4를 넣으면 다음을 자동으로 처리합니다.
+
+**수집 → 프레임 시각 → 1차 스캔 → 공격 후보 → 이벤트 추정 → 근거 시트 → 데이터셋 → 영상 간 비교**
+
+AI에 영상 전체를 넘기지 않습니다. 가벼운 1차 스캔으로 공격 후보 구간만 추리고, 그 구간만 집중 분석하고 근거 이미지를 만듭니다.
+
+## 실행
+
+```
+pip install -r requirements.txt          # opencv-python-headless, numpy, yt-dlp
+cd dunkblock/tools/video
+python -m dunkvideo run "https://youtu.be/XXXX"     # 유튜브 (인터넷이 되는 PC에서)
+python -m dunkvideo run ranker1.mp4                # MP4 파일 (어디서든)
+python -m dunkvideo run ranker1.mp4 --max-seconds 120    # 앞 2분만 시험
+python -m dunkvideo compare runs/a_xxxx runs/b_yyyy --out runs/compare
+python -m dunkvideo selftest                       # 정답을 아는 합성 영상으로 동작 검증
+```
+
+FFmpeg(ffprobe)가 PATH에 있어야 합니다.
+
+## 단계와 산출물 (`runs/<영상>/`)
+
+| 단계 | 파일 | 내용 |
+|---|---|---|
+| 1 수집 | `ingest.json`, `source.mp4` | 성공/실패와 **정확한 실패 원인**, sha256 |
+| 2 프레임 시각 | `probe.json`, `frames_pts.csv` | ffprobe 패킷 PTS(원본 시각 보존), 실측 FPS, 가변 FPS 여부, 시간 분해능 |
+| 3 1차 스캔 | `features.csv`, `scan.json` | 프레임마다: 장면 전환, 카메라 이동(위상 상관), 이동 보정 움직임 영역, 공 후보 |
+| 4 후보·이벤트 | `events.json`, `events.csv` | 공격 후보 구간과 이벤트별 시각·신뢰도·방법·근거 프레임 |
+| 5 근거 시트 | `review/seg_NNN.jpg` | 후보 구간만 다시 디코딩한 24칸 시트(PTS, 슛 시작 대비 ms, 이벤트 표시) |
+| 6 라벨 | `labels.json` | 검토자(사람 또는 Claude)가 슛 종류·캐릭터·블록 여부·프레임 수정을 적는 칸 |
+| 7 비교 | `compare.json`, `compare.csv` | 슛 종류·결과별 간격 통계, 영상 간 교차 검증(leave-one-video-out) |
+
+### 이벤트 (`event`)
+
+| 이벤트 | 근거 | 합성 영상 검증(60fps) |
+|---|---|---|
+| `dribble_last_bounce` | 공의 바닥 바운드(화면 y 국소 최대) | 6/6, 오차 0~3프레임 |
+| `shot_motion_start` | 공이 계속 오르기 시작(카메라 이동 제거 좌표) | 6/6, 오차 0~1프레임 |
+| `release` | 공이 공격자 움직임 영역 위로 벗어남 | 2/6, ±150ms (약함) |
+| `attacker_jump_start` | 공격자 영역 아래쪽이 오르기 시작 | 3/6, 최대 300ms (약함) |
+| `defender_jump_start` | 옆 영역의 위쪽이 급히 오름(블록 애니메이션) | 6/6, 최대 ±260ms (약함) |
+| `ball_contact` | 공 궤적이 포물선에서 이탈 | 1/6 (약함) |
+| `block_outcome` | blocked / not_blocked / unknown | 알려진 2건 정답 |
+
+합성 영상 검증은 **파이프라인이 기계적으로 맞게 동작하는지**만 보여 줍니다. 실제 덩크시티 영상의 정확도는 실제 영상과 검토 라벨로만 잴 수 있습니다.
+
+## 정직성 규칙
+
+- `status`: `auto_estimate`(자동 추정), `reviewed`(검토로 확정), `rejected_by_review`(슛 아님). 추정을 확정값처럼 쓰지 않습니다.
+- `button_press_time = not_observable_in_video`: 영상에는 **버튼을 누른 시각이 없습니다.** `defender_jump_start`는 "점프 애니메이션이 화면에 보이기 시작한 프레임"이며, 실제 입력 시각에 게임의 입력·애니메이션 지연(미상)이 더해진 값입니다.
+- `timing_resolution_ms`: 영상 프레임 간격(30fps면 33ms, 60fps면 16.7ms). 게임은 120fps(8.3ms)라 그보다 짧은 차이는 영상으로 구분할 수 없습니다.
+- 장면 전환(리플레이·카메라 컷)은 후보에서 제외합니다. 슬로모션 리플레이가 컷 없이 이어지면 시각이 틀어질 수 있으니 근거 시트로 확인해야 합니다.
+- 공 색(HSV)·HUD 위치는 영상마다 다를 수 있습니다. 첫 영상의 근거 시트를 보고 `--config`로 보정합니다.
+
+## 알려진 한계와 다음 단계 (데이터셋 ≠ 모델 훈련)
+
+1. **몸 기반 이벤트가 약함**: 움직임 영역 방식은 붙어 있는 선수를 하나로 합칩니다. 개선하려면 사전학습 사람/자세 검출 모델이 필요합니다.
+2. **캐릭터 구분**은 자동이 아닙니다. `labels.json`에 검토자가 적습니다.
+3. **모델 훈련은 별도 단계**입니다. 이 도구는 데이터셋(이벤트 시각 + 근거 프레임 + 라벨)까지만 만듭니다. 훈련 여부는 라벨된 사례 수와 `compare`의 교차 검증 결과를 보고 결정합니다.
+
+## 유튜브 다운로드에 대해
+
+- 개발 세션의 실행 환경에서는 네트워크 정책이 `www.youtube.com` 접속을 거부했습니다(프록시 403). 영상 데이터는 `googlevideo.com` 아래 여러 서버에서 오므로, 호스트 하나만 허용해서는 부족할 가능성이 큽니다. 원인은 `ingest.json`에 그대로 기록됩니다.
+- 유튜브 영상 다운로드는 유튜브 약관과 저작권의 제약을 받습니다. 개인 분석용으로만 쓰고, 영상이나 프레임을 다시 배포하지 마세요.

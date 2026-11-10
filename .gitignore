@@ -44,3 +44,7 @@ keystore.properties
 # AI agent configuration
 AGENTS.md
 /output/
+
+# DunkBlock video pipeline outputs (videos and derived frames stay local)
+dunkblock/tools/video/runs/
+__pycache__/

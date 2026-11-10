@@ -1,0 +1,4 @@
+# DunkBlock video analysis pipeline (offline, PC or this repo's tools environment)
+opencv-python-headless>=4.9
+numpy>=1.26
+yt-dlp>=2024.1.1   # only for YouTube links; MP4 files work without it

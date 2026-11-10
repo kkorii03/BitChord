@@ -39,6 +39,11 @@ jobs:
       - name: Analyzer self-test (Python, stdlib only)
         run: python3 tools/analyze.py --self-test
 
+      - name: Video pipeline selftest (synthetic video with known timings)
+        run: |
+          python3 -m pip install -q opencv-python-headless numpy
+          cd tools/video && python3 -m dunkvideo selftest --dir /tmp/dv_selftest
+
       - name: Cross-check Kotlin summary vs Python recomputation (same synthetic CSVs)
         run: |
           grep -E "캡처 비율|예상 프레젠테이션|색상 전환" core/build/crosscheck/session/summary.txt
