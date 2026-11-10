@@ -78,6 +78,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         scans++
         if (side == SIDE_DEF) { defScans++; lastDefNs = tNs } else if (side == SIDE_OFF) offScans++
         if (found) { discScans++; onDisc(tNs) }
+        checkPending(tNs, found)
         colourFrame(buf, w, h, rowStride, tNs, found)
         val us = ((System.nanoTime() - t0) / 1000).toInt()
         usTotal += us; if (us > usMax) usMax = us
@@ -467,23 +468,53 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         // 0.6 s before shows the lift; the game's verdict ('블록' / '블록 위치 부족' / '블록 타이밍 늦음') shows at
         // +0.4..+1.4 s (vc1035), so keep 1.8 s after.
         if (shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_$kind", 0.6, 1.8 + cfg.shotDelayMs / 1000.0) }
-        if (!live) {
-            shotSkipped++
-            event(tNs, "would_press", 0f, 0f, 0f, detail)
-            return
+        // v3 (vc1038 match: 0/14, 8 presses on dribbles/moves). Sideways sway of the disc over the last 600 ms: practice
+        // shots <= 0.026 W, real match shots 0.023-0.059, phantoms 0.036-0.223. Above 0.1 = dribbling/running, not a shot.
+        var xMin = discX; var xMax = discX
+        for (i in 1 until hCount) {
+            val idx = (hPos - 1 - i + 2 * histN) % histN
+            if (tNs - hT[idx] > 600_000_000L) break
+            xMin = minOf(xMin, hX[idx]); xMax = maxOf(xMax, hX[idx])
         }
-        // The gap opens when the ball starts going up; the extra delay moves the press toward "ball overhead / jump"
-        // (the user's best block moment, 11-10). vc1033 90.9 s: pressed at the lift, the shooter released ~0.4 s later,
-        // game said '블록 위치 부족'.
-        val delay = cfg.shotDelayMs.toLong()
-        main.postDelayed({
-            val ok = BlockAccessibilityService.instance?.inGame?.fireBlock("SHOT") ?: false
-            if (ok) shotFired++ else shotSkipped++
-            event(System.nanoTime(), if (ok) "pressed" else "not_pressed", 0f, 0f, 0f, detail)
-            Bench.shotLive = liveText()
-        }, delay)
-        event(tNs, "shot_trigger", 0f, 0f, 0f, detail)
+        val xspan = xMax - xMin
+        val d2 = String.format(Locale.ROOT, "%s xspan=%.3f", detail, xspan)
+        event(tNs, "shot_trigger", 0f, 0f, 0f, d2)
+        if (xspan >= CONFIRM_XSPAN) { shotRejected++; event(tNs, "rejected_xspan", 0f, 0f, 0f, d2); Bench.shotLive = liveText(); return }
+        // Then wait (<= 140 ms) for the disc to keep rising: real shots rose 0.039-0.100 H in the next 133 ms, phantoms
+        // at most 0.028 (vc1038), practice successes 0.028-0.050 (7 of 9 pass). Checked every scan in [checkPending].
+        pendNs = tNs; pendY = discY; pendDetail = d2; pendLive = live
         Bench.shotLive = liveText()
+    }
+
+    private var pendNs = 0L; private var pendY = 0f; private var pendDetail = ""; private var pendLive = false
+    @Volatile var shotRejected = 0; private set
+
+    /** Capture thread, every scan. Confirms or drops the trigger held by [checkShot]. */
+    private fun checkPending(tNs: Long, found: Boolean) {
+        if (pendNs == 0L) return
+        val age = tNs - pendNs
+        val up = if (found) pendY - discY else 0f
+        // A step of 0.15 H+ is the tracker switching ring <-> disc, not a rise (see onDisc).
+        if (found && up >= CONFIRM_RISE && up < 0.15f) {
+            val detail = String.format(Locale.ROOT, "%s up=%.3f after=%d", pendDetail, up, age / 1_000_000L)
+            val live = pendLive
+            pendNs = 0L
+            if (!live) { shotSkipped++; event(tNs, "would_press", 0f, 0f, 0f, detail); Bench.shotLive = liveText(); return }
+            // The extra delay still counts from the trigger (the gap opening), as before.
+            val delay = (cfg.shotDelayMs.toLong() - age / 1_000_000L).coerceAtLeast(0L)
+            main.postDelayed({
+                val ok = BlockAccessibilityService.instance?.inGame?.fireBlock("SHOT") ?: false
+                if (ok) shotFired++ else shotSkipped++
+                event(System.nanoTime(), if (ok) "pressed" else "not_pressed", 0f, 0f, 0f, detail)
+                Bench.shotLive = liveText()
+            }, delay)
+            event(tNs, "confirmed", 0f, 0f, 0f, detail)
+        } else if (age > CONFIRM_WINDOW_NS) {
+            pendNs = 0L
+            shotRejected++
+            event(tNs, "rejected_norise", 0f, 0f, 0f, String.format(Locale.ROOT, "%s up=%.3f", pendDetail, up))
+            Bench.shotLive = liveText()
+        }
     }
 
     private fun onRelease(tNs: Long) {
@@ -504,12 +535,12 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
             (tNs - startedNs) / 1e9, name, sideName(side), discX, discY, dx, dy, dtMs, detail))
     }
 
-    private fun liveText() = "일반 슛 감지 ${shotTriggers}회 · 블록 누름 ${shotFired}회 · 건너뜀 ${shotSkipped}회"
+    private fun liveText() = "일반 슛 감지 ${shotTriggers}회 · 헛블락 거름 ${shotRejected}회 · 블록 누름 ${shotFired}회 · 건너뜀 ${shotSkipped}회"
 
     fun shotSummary(): String {
         val leads = synchronized(pendingTriggers) { leadsMs.sorted() }
         val med = if (leads.isEmpty()) "-" else "${leads[leads.size / 2]}ms"
-        return "일반 슛 발동 ${shotTriggers}회(${if (cfg.shotBlock && cfg.autoBlockLive) "실제 누름" else "기록만"}, 민감도 ${cfg.shotSens}, 지연 ${cfg.shotDelayMs}ms) → 누름 ${shotFired}회, 건너뜀 ${shotSkipped}회\n" +
+        return "일반 슛 발동 ${shotTriggers}회(${if (cfg.shotBlock && cfg.autoBlockLive) "실제 누름" else "기록만"}, 민감도 ${cfg.shotSens}, 지연 ${cfg.shotDelayMs}ms) → 확인 실패로 거름 ${shotRejected}회, 누름 ${shotFired}회, 건너뜀 ${shotSkipped}회\n" +
             "  모으기 감지 뒤 공이 떠남 ${leads.size}회(앞섬 중앙값 $med, 전체 ${leads.joinToString(" ")}) · 감지했는데 공이 안 떠남(오발 추정) ${triggersWithoutRelease}회 · 공이 떠났는데 미리 감지 못함 ${releasesWithoutTrigger}회"
     }
 
@@ -532,6 +563,10 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         /** per sensitivity 0 (fewer presses) .. 2 (more): min upward speed (H/s), min speed-up vs the 200 ms before (H/s), min rise (H). */
         /** v2 gap rule: min growth of (foot ring y - disc y) vs ~100 ms ago and vs the 250-600 ms median, per sensitivity. */
         val GAP_RISE = floatArrayOf(0.04f, 0.03f, 0.02f)
+        /** v3 confirmation (vc1038 offline, 6 real shots / 8 phantoms): x sway limit (W), extra rise needed (H), wait. */
+        const val CONFIRM_XSPAN = 0.1f
+        const val CONFIRM_RISE = 0.025f
+        const val CONFIRM_WINDOW_NS = 140_000_000L
         val SENS = arrayOf(floatArrayOf(0.45f, 0.35f, 0.035f), floatArrayOf(0.35f, 0.25f, 0.025f), floatArrayOf(0.25f, 0.18f, 0.018f))
         fun sideName(s: Int) = when (s) { SIDE_DEF -> "def"; SIDE_OFF -> "off"; else -> "unk" }
     }
