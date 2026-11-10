@@ -1,6 +1,6 @@
 import sys, os, time, json, subprocess, threading
 import cv2, numpy as np
-# demorec.py <name> <out dir> [seconds per skill=16] [max skills=40]
+# demorec.py <name> <out dir> [seconds per skill=16] [max skills=40] [skip rows=0]
 # Practice court -> "수비 연습", skill list ("스킬 선택") open at its top, opponent already chosen. Records the game's own
 # demonstration of EVERY skill in the list, one screen recording per skill (<name>_r<row>_c<col>.mp4: 2 demonstrations
 # "시연 중", then practice reps "연습 중" with nobody pressing), plus <name>_r<row>.jpg (the icons and labels of that row)
@@ -84,6 +84,7 @@ def main():
     name, out = sys.argv[1], sys.argv[2]
     sec = int(sys.argv[3]) if len(sys.argv) > 3 else 16
     mx = int(sys.argv[4]) if len(sys.argv) > 4 else 40
+    skip = int(sys.argv[5]) if len(sys.argv) > 5 else 0      # rows already recorded by an earlier run: counted, not recorded
     os.makedirs(out, exist_ok=True)
     log = open(os.path.join(out, name + ".log"), "a", encoding="utf-8")
     def L(**k):
@@ -96,6 +97,7 @@ def main():
             ay = cy + S
             if not (0.325 <= cy <= 0.525) or any(abs(ay - d) < 0.07 for d in done): continue
             done.append(ay); ri = len(done)
+            if ri <= skip: continue
             hI, wI = im.shape[:2]
             cv2.imencode(".jpg", im[int(0.2 * hI):int(0.58 * hI), int(0.06 * wI):int(0.36 * wI)], [cv2.IMWRITE_JPEG_QUALITY, 88])[1].tofile(os.path.join(out, "%s_r%d.jpg" % (name, ri)))
             L(row=ri, y=round(cy, 3), abs=round(ay, 3), height=round(hh, 3), cols=has)
