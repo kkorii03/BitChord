@@ -5553,10 +5553,26 @@ private const val FIRM_FIT_LINES = 15
      */
     suspend fun heardWordsFor(context: Context, videoId: String): List<LyricsWordAlign.Heard> {
         val entry = store(context).get(videoId) ?: return emptyList()
-        val saved = listOf(entry.heardWords, entry.refineHeardWords, entry.heardCheckWords)
+        return evidenceWords(entry).map { LyricsWordAlign.Heard(it.t, it.s, it.e) }
+    }
+
+    /**
+     * [heardWordsFor]'s pick. Once Deepgram's own words fitted a sheet of this video at
+     * [LyricsMismatch.MEASURED_KEEPS_PERCENT] or more, those words are what it sings: a
+     * longer list that did not fit that sheet is a thin listen, not proof. 11-10
+     * tjyFqEaWJqA: 76 words fitted the sheet 100% on 90 s; the whole-song listen of the
+     * rap cover heard 131 words in 205 s, fitted nothing, and rejected that sheet and
+     * every provider's copy, so the song showed no lyrics. Rough (Groq) and Gemini
+     * answers prove nothing here: the longest list stands, as before.
+     */
+    internal fun evidenceWords(entry: Entry): List<SavedWord> {
+        val proven = entry.aiTextKey != null && !entry.aiRough &&
+            entry.aiEngine != null && entry.aiEngine != ENGINE_GEMINI &&
+            (entry.ai?.match ?: 0) >= com.music.bitchord.data.lyrics.LyricsMismatch.MEASURED_KEEPS_PERCENT
+        if (proven && entry.heardWords.isNotEmpty()) return entry.heardWords
+        return listOf(entry.heardWords, entry.refineHeardWords, entry.heardCheckWords)
             .maxByOrNull { it.size }
             .orEmpty()
-        return saved.map { LyricsWordAlign.Heard(it.t, it.s, it.e) }
     }
 
     /** Keeps [ms] as the correction for [videoId]; 0 removes it. */

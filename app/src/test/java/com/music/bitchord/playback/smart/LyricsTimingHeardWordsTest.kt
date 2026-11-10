@@ -3,7 +3,9 @@ package com.music.bitchord.playback.smart
 import android.content.Context
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricWord
+import com.music.bitchord.data.lyrics.LyricsMismatch
 import com.music.bitchord.data.lyrics.LyricsPerLine
+import com.music.bitchord.data.lyrics.LyricsWordAlign
 import com.music.bitchord.testutil.FakeContext
 import com.music.bitchord.testutil.FakePreferences
 import java.io.File
@@ -281,6 +283,75 @@ class LyricsTimingHeardWordsTest {
 
         assertEquals(null, timing?.perLine)
         assertEquals(null, timing?.base)
+    }
+
+    /** Made-up three-letter words: the sheet's from a-h, the thin listen's from s-z, so they never meet. */
+    private fun made(n: Int, from: Char) = (0 until 3).joinToString("") { d -> (from + (n shr (3 * d) and 7)).toString() }
+
+    private val provenSheet = (0 until 16).map { i ->
+        LyricLine(5_000L + i * 5_000L, (0 until 4).joinToString(" ") { k -> made(i * 4 + k, 'a') })
+    }
+    private val provenKey = provenSheet.joinToString("\n") { it.text }.hashCode()
+
+    private fun savedWords(words: List<Triple<String, Long, Long>>) =
+        words.joinToString(",") { (t, s, e) -> """{"t":"$t","s":$s,"e":$e}""" }
+
+    /** The opening's words, heard on the first ten lines: the sheet they fitted. */
+    private val openingWords = provenSheet.take(10).flatMap { line ->
+        line.text.split(" ").mapIndexed { k, t -> Triple(t, line.timeMs + k * 900L, line.timeMs + k * 900L + 400L) }
+    }
+
+    /** A longer whole-song listen whose words fit no line: 130 of them across 85 s. */
+    private val thinWords = (0 until 130).map { n -> Triple(made(n, 's'), 1_000L + n * 650L, 1_300L + n * 650L) }
+
+    private fun writeProven(video: String, match: Int, rough: Boolean) {
+        File(directory, "lyrics_timing_v1.json").writeText(
+            """
+            {"entries":{"$video":{
+              "clockVersion":1,
+              "aiTextKey":$provenKey,
+              "ai":{"knots":[0,0],"headRate":1.0,"tailRate":1.0,"rate":1.0,"match":$match},
+              "aiClock":"yt",
+              "aiEngine":"${LyricsTiming.ENGINE_DEEPGRAM_WHISPER}",
+              "aiRough":$rough,
+              "heardClock":"yt",
+              "heardWords":[${savedWords(openingWords)}],
+              "refineHeardKey":$provenKey,
+              "refineHeardWords":[${savedWords(thinWords)}],
+              "refineHeardSeconds":205.0,
+              "heardCheckKey":$provenKey,
+              "heardCheckWords":[${savedWords(thinWords)}],
+              "heardCheckClock":"yt"
+            }}}
+            """.trimIndent(),
+        )
+        storeField.set(LyricsTiming, null)
+    }
+
+    /**
+     * 11-10 tjyFqEaWJqA: the sheet fitted 100% on the 90 s opening; the whole-song listen
+     * of the rap cover heard few words, fitted nothing, and was kept as the refine's words
+     * and as wrong-sheet evidence. Being the longest list, it rejected that sheet and every
+     * provider's copy (LyricsRepository.soundRejects), and the song showed no lyrics.
+     */
+    @Test
+    fun `a listen that missed a sheet fitted at 85 percent cannot reject it`() = runBlocking {
+        writeProven("proven", match = 100, rough = false)
+        val thin = thinWords.map { LyricsWordAlign.Heard(it.first, it.second, it.third) }
+        assertTrue("the thin listen alone rejects it", LyricsMismatch.judgeSheet(provenSheet, thin).rejected)
+
+        val heard = LyricsTiming.heardWordsFor(context, "proven")
+
+        assertEquals(openingWords.size, heard.size)
+        assertFalse(LyricsMismatch.judgeSheet(provenSheet, heard).rejected)
+    }
+
+    @Test
+    fun `below 85 percent or on rough words the longest list is still the evidence`() = runBlocking {
+        writeProven("weak", match = 84, rough = false)
+        assertEquals(thinWords.size, LyricsTiming.heardWordsFor(context, "weak").size)
+        writeProven("rough", match = 100, rough = true)
+        assertEquals(thinWords.size, LyricsTiming.heardWordsFor(context, "rough").size)
     }
 
     @Test
