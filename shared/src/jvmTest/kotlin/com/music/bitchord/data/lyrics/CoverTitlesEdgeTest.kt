@@ -249,6 +249,28 @@ class CoverTitlesEdgeTest {
         assertFalse(read.orderUnsure)
     }
 
+    private val hangulUpload = "선우정아 - 도망가자 / cover by 오화요(허니즈)"
+
+    @Test
+    fun aLatinRecordNeverReplacesAHangulUploadTitleOrAddsAnAlias() {
+        CoverTitles.knownOriginal = { "Run with Me" to "선우정아 sunwoojunga" }
+        val read = assertNotNull(CoverTitles.read(song(hangulUpload, "오화요", videoId = "v")))
+        assertEquals("도망가자", read.title)
+        assertEquals("선우정아", read.originalArtist)
+    }
+
+    @Test
+    fun aSavedRowWithTheRecordsLatinTitleIsMendedFromTheUpload() {
+        CoverTitles.knownOriginal = { "Run with Me" to "선우정아 sunwoojunga" }
+        val saved = song(
+            "Run with Me", "선우정아 sunwoojunga · 오화요 커버", videoId = "v",
+            originalTitle = hangulUpload, originalArtist = "오화요", coverSinger = "오화요",
+        )
+        val mended = com.music.bitchord.data.YouTubeDisplayCleaner.clean(saved)
+        assertEquals("도망가자", mended.title)
+        assertEquals("선우정아 · 오화요 커버", mended.artist)
+    }
+
     @Test
     fun aBlankKnownOriginalKeepsWhatTheTitleSaid() {
         CoverTitles.knownOriginal = { "" to "" }

@@ -74,10 +74,14 @@ internal object YouTubeDisplayCleaner {
     }
 
     private fun lostSingerCover(song: Song): CoverTitles.Cover? {
-        if (!song.coverSinger.isNullOrBlank()) return null
         val upload = song.originalTitle?.trim()?.takeIf { it.isNotBlank() && it != song.title.trim() } ?: return null
+        // A row saved with the record's Latin title over a Hangul upload title
+        // ("Run with Me" for "선우정아 - 도망가자 / cover by ...", phone 11-11)
+        // is read again from the upload, which now keeps its own script.
+        val swapped = !CoverTitles.hasCjk(song.title) && CoverTitles.hasCjk(upload)
+        if (!song.coverSinger.isNullOrBlank() && !swapped) return null
         return CoverTitles.read(song.copy(title = upload, artist = song.originalArtist ?: song.artist))
-            ?.takeIf { it.singer.isNotBlank() && !CoverTitles.sameName(it.singer, it.originalArtist) }
+            ?.takeIf { swapped || (it.singer.isNotBlank() && !CoverTitles.sameName(it.singer, it.originalArtist)) }
     }
 
     /** `오화요 커버 커버` → `오화요 커버`: the word is a tag, never a repeat. */

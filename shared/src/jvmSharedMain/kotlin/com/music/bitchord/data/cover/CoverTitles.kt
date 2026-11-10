@@ -210,11 +210,31 @@ object CoverTitles {
             val known = runCatching { knownOriginal(song.videoId) }.getOrNull()
             if (known == null) cover
             else cover.copy(
-                title = known.first.ifBlank { cover.title },
-                originalArtist = known.second.ifBlank { cover.originalArtist.orEmpty() }.ifBlank { null },
+                title = recordName(cover.title, known.first),
+                originalArtist = recordName(cover.originalArtist.orEmpty(), known.second).ifBlank { null },
                 orderUnsure = false,
             )
         }?.let { withSingerFromChannel(it, song.artist) }
+
+    /**
+     * The name to show when the upload wrote [own] and the record calls it
+     * [record]. The record fixes spelling and capitals of the same name
+     * ("feather" -> "Feather"), but never swaps a Hangul/kana/Han name for
+     * another script ("도망가자" -> "Run with Me", phone 11-11) nor tacks a
+     * romanised alias on it ("선우정아" -> "선우정아 sunwoojunga").
+     */
+    internal fun recordName(own: String, record: String): String {
+        val ownName = own.trim()
+        val recordName = record.trim()
+        if (recordName.isEmpty()) return own
+        if (ownName.isEmpty() || !hasCjk(ownName) || recordName == ownName) return recordName
+        return if (!hasCjk(recordName) || recordName.contains(ownName)) ownName else recordName
+    }
+
+    /** True when [text] has Hangul, kana or Han letters. */
+    internal fun hasCjk(text: String): Boolean = text.any {
+        it in '가'..'힣' || it in 'ㄱ'..'ㆎ' || it in '぀'..'ヿ' || it in '一'..'鿿'
+    }
 
     fun read(title: String, channel: String, channelId: String?, unambiguousOnly: Boolean = false): Cover? =
         readRaw(title, channel, channelId, unambiguousOnly)?.let { withSingerFromChannel(it, channel) }
