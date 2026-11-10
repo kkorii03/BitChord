@@ -227,6 +227,11 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
                 val rt = tNs - swRepNs
                 val got = swRepNs != 0L && rt in 1_000_000_000L..3_500_000_000L
                 if (got) swRepT = rt
+                // A shot the sweep did not press on (the first one against a new opponent = the game's demonstration):
+                // keep a clip of it anyway, it shows when the game itself presses (tools/analysis/btnlit.py).
+                if (cfg.sweepPress && (swPressNs == 0L || tNs - swPressNs > 1_500_000_000L) && shotClips < MAX_SHOT_CLIPS) {
+                    shotClips++; Bench.clipRequester?.invoke("trig_rel", 1.0, 1.2)
+                }
                 event(tNs, "sweep_rel", 0f, 0f, 0f, String.format(Locale.ROOT, "repT=%d lead=%d press_to_rel=%d", if (got) rt / 1_000_000L else -1L,
                     swLeadMs, if (swPressNs != 0L && tNs - swPressNs in 0L..1_500_000_000L) (tNs - swPressNs) / 1_000_000L else -1L))
             }
@@ -1160,6 +1165,8 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
          * requests 282-313 ms before it ('무리한 블록' at 231). So the waits aim at 340 / 300 / 260 ms before the release.
          */
         val CROUCH_DELAYS = longArrayOf(80L, 120L, 160L)
+        /** Sweep (⑩): planned press leads before the release, ms, in a mixed order so a drift cannot pass for a trend. */
+        val SWEEP_LEADS = intArrayOf(250, 400, 100, 325, 175, 275, 375, 125, 225, 350, 150, 300, 200)
         /** Outline top this close under the marker (share of H; 14 px at 720p) = hands or ball lifted. Shadow only. */
         const val UP_DY = 0.0195f
         /** Experimental arms-up press: wait this long for a gap rule to fire first (two scans at 60 Hz). */
