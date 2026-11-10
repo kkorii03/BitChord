@@ -19,7 +19,11 @@ NAME = re.compile(r"f\d+_([+-]\d+\.\d)ms\.jpg$")
 
 
 def scan_clip(folder, tpls, thr):
-    best = (0.0, None)
+    """Earliest label time, or None. On 640 px grey frames any background scores ~0.60 at a wandering spot; the real
+    label (clip_34 vc1031) scores 0.66-0.78 and stays put (within a few px) for 1 s+. So a hit = 4 frames >= thr
+    within 300 ms at the same place (8 px)."""
+    pts = []
+    peak = 0.0
     for f in sorted(os.listdir(folder)):
         m = NAME.match(f)
         if not m:
@@ -35,21 +39,33 @@ def scan_clip(folder, tpls, thr):
         g[: int(0.13 * H), :] = 128
         g[int(0.55 * H):, int(0.72 * W):] = 128
         g[: int(0.5 * H), : int(0.36 * W)] = 128    # 스킬 연습장 explanation panel ("블록 버튼을 탭하여 블록 동작을")
+        mx, loc = 0.0, None
         for t in tpls:
             if t.shape[0] >= g.shape[0] or t.shape[1] >= g.shape[1]:
                 continue
-            mx = cv2.minMaxLoc(cv2.matchTemplate(g, t, cv2.TM_CCOEFF_NORMED))[1]
-            if mx >= thr and (best[1] is None or rel < best[1]):
-                best = (max(best[0], mx), rel)
-            elif mx > best[0] and best[1] is None:
-                best = (mx, None)
-    return best
+            _, m, _, l = cv2.minMaxLoc(cv2.matchTemplate(g, t, cv2.TM_CCOEFF_NORMED))
+            if m > mx:
+                mx, loc = m, (l[0] + t.shape[1] // 2, l[1] + t.shape[0] // 2)
+        peak = max(peak, mx)
+        if mx >= thr:
+            pts.append((rel, loc))
+    pts.sort()
+    starts = []
+    for i, (rel, loc) in enumerate(pts):
+        near = [p for p in pts[i:] if p[0] - rel <= 300 and abs(p[1][0] - loc[0]) <= 8 and abs(p[1][1] - loc[1]) <= 8]
+        if len(near) >= 4:
+            starts.append(rel)
+    # A label already on screen before the event belongs to an earlier play (it stays ~1.5 s): count only new ones.
+    if any(r < 0 for r in starts):
+        return peak, None
+    new = [r for r in starts if r <= 1500]
+    return peak, (new[0] if new else None)
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("root")
-    ap.add_argument("--thr", type=float, default=0.7)
+    ap.add_argument("--thr", type=float, default=0.66)
     a = ap.parse_args()
     base = cv2.imread(TPL, cv2.IMREAD_GRAYSCALE)
     if base is None:
