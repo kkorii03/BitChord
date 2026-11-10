@@ -144,8 +144,10 @@ class PressClipper(
             if (t < j.tNs - j.beforeNs || t > j.tNs + j.afterNs) continue
             // Trigger clips are only read for the game's verdict label (stays ~1 s) and the lift/jump: ~30 fps is
             // plenty and halves their size, so the match gets clips too (vc1035: 40 clips were used up by 227 s).
-            val near = !j.tag.startsWith("trig") && t >= j.tNs - 800_000_000L && t <= j.tNs + 1_000_000_000L
-            if (near || k % 2 == 0) frames.add(t to ring[idx].copyOf())
+            // 기록-button clips cover 3.8 s to find a shot the trigger missed: ~15 fps keeps them near 1 MB so 40 fit.
+            val mark = j.tag.startsWith("mark")
+            val near = !mark && !j.tag.startsWith("trig") && t >= j.tNs - 800_000_000L && t <= j.tNs + 1_000_000_000L
+            if (near || k % (if (mark) 4 else 2) == 0) frames.add(t to ring[idx].copyOf())
             k++
         }
         val cw = clipW; val ch = clipH
@@ -173,7 +175,7 @@ class PressClipper(
 
     companion object {
         const val PRESS_THR = 12f
-        const val MAX_CLIPS = 100
+        const val MAX_CLIPS = 140
         /** Each kind has its own share of [MAX_CLIPS] so one kind cannot use up the rest (vc1035: mark clips at 4 MB). */
         fun clipGroup(tag: String): String = when {
             tag.startsWith("ult") -> "ult"
@@ -182,6 +184,6 @@ class PressClipper(
             tag.startsWith("mark") -> "mark"
             else -> "other"
         }
-        fun groupCap(g: String): Int = when (g) { "ult" -> 6; "press" -> 6; "trig" -> 70; "mark" -> 10; else -> 8 }
+        fun groupCap(g: String): Int = when (g) { "ult" -> 6; "press" -> 6; "trig" -> 70; "mark" -> 40; else -> 8 }
     }
 }

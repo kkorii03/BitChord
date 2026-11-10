@@ -36,6 +36,9 @@ object SendBundle {
         // Auto-block trigger clips decide success vs '블록 위치 부족', so they go before every other image (vc1033: they
         // were the ones left out).
         f.name.endsWith(".jpg") && f.parentFile?.name?.contains("_trig_") == true -> 5
+        // 기록-button clips are the only record of real shots the trigger missed (vc1044 match: none arrived).
+        f.name.endsWith(".jpg") && f.parentFile?.name?.contains("_mark_") == true -> 5
+        f.name.endsWith("_trig.jpg") -> 5                                 // colour screen at a trigger: where my player stood
         f.name.endsWith(".jpg") && f.parentFile?.name?.startsWith("colour_") == true -> 6   // full-res colour around the ball
         f.name.endsWith(".jpg") && f.parentFile?.name == "frames" -> 6   // colour game screens (thinned to 60 per session)
         f.name.endsWith(".jpg") -> 6                                      // clip frames
@@ -62,7 +65,7 @@ object SendBundle {
         var images = 0
         // Colour screen samples: keep 60 evenly spaced per session so clips still fit.
         val thin = HashSet<File>()
-        files.filter { it.name.endsWith(".jpg") && it.parentFile?.name == "frames" }.groupBy { it.parentFile }.forEach { (_, list) ->
+        files.filter { it.name.endsWith(".jpg") && !it.name.endsWith("_trig.jpg") && it.parentFile?.name == "frames" }.groupBy { it.parentFile }.forEach { (_, list) ->
             val sorted = list.sortedBy { it.name }
             if (sorted.size > 60) {
                 val keep = (0 until 60).map { sorted[it * sorted.size / 60] }.toSet()

@@ -344,6 +344,12 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         if (hCount > 0) { val li = (hPos - 1 + histN) % histN; if (Math.abs(discY - hY[li]) > 0.15f) hCount = 0 }
         if (ringY >= 0f) { gapNs = tNs; gapRing = ringY }
         if (tNs - gapNs < 150_000_000L && gapRing - discY in 0.12f..0.6f) {
+            // A step of 0.07 H in one scan (real lifts: <= 0.03) or a pause is the marker moving to another player or the
+            // tracker switching blobs: the early rule must not compare across it (vc1035 116.87 s: 0.161 -> 0.283).
+            if (gCount > 0) {
+                val li = (gPos - 1 + histN) % histN
+                if (tNs - gT[li] > 60_000_000L || Math.abs(gapRing - discY - gV[li]) >= 0.07f) gJumpNs = tNs
+            }
             gT[gPos] = tNs; gV[gPos] = gapRing - discY
             gPos = (gPos + 1) % histN
             if (gCount < histN) gCount++
@@ -396,6 +402,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
     private val gT = LongArray(histN); private val gV = FloatArray(histN)
     private var gPos = 0; private var gCount = 0
     private var gapNs = 0L; private var gapRing = -1f
+    private var gJumpNs = 0L
     private var lastShotFireNs = 0L
     private var lastDefNs = 0L
     @Volatile var shotTriggers = 0; private set
@@ -449,34 +456,41 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         if (gCount < 6 || tNs - gT[(gPos - 1 + histN) % histN] > 1_000_000L) return     // no gap this scan
         val gNow = gV[(gPos - 1 + histN) % histN]
         var gOld = Float.MAX_VALUE; val base = ArrayList<Float>(16)
+        var lo0 = Float.MAX_VALUE; var lo1 = Float.MAX_VALUE; var loN = 0     // two lowest gaps aged 60-400 ms since gJumpNs
         for (i in 1 until gCount) {
             val idx = (gPos - 1 - i + 2 * histN) % histN
             val age = tNs - gT[idx]
             if (age > 600_000_000L) break
             if (age in 60_000_000L..140_000_000L) gOld = minOf(gOld, gV[idx])
             if (age >= 250_000_000L) base.add(gV[idx])
+            if (age in 60_000_000L..400_000_000L && gT[idx] >= gJumpNs) {
+                loN++
+                val v = gV[idx]
+                if (v < lo0) { lo1 = lo0; lo0 = v } else if (v < lo1) lo1 = v
+            }
         }
-        if (gOld == Float.MAX_VALUE || base.size < 5) return
+        val v2Ready = gOld != Float.MAX_VALUE && base.size >= 5
         base.sort()
-        val gBase = base[base.size / 2]
+        val gBase = if (v2Ready) base[base.size / 2] else 0f
+        // v5 (vc1050) early rule. Practice shooters crouch 0.04-0.06 H for ~0.3 s before the jump, so the 250-600 ms
+        // median sits above the crouch and v2 fired only 0.06-0.07 above the bottom: press 47-129 ms after the disc
+        // left the crouch (three practice bundles, timing verdicts only: <= 72 ms 8/8 blocked, 73-100 ms 6/11,
+        // > 100 ms 1/6). Measure the rise from the bottom itself: lowest gap of the last 60-400 ms, one outlier allowed.
+        val earlyNeed = EARLY_RISE[cfg.shotSens.coerceIn(0, EARLY_RISE.size - 1)]
+        val gLow = if (loN >= 5) maxOf(lo0, lo1 - 0.006f) else Float.MAX_VALUE
+        val early = loN >= 5 && gNow - gLow >= earlyNeed - 0.001f
+        val v2 = v2Ready && gNow - gOld >= need && gNow - gBase >= need
         val live = cfg.shotBlock && cfg.autoBlockLive
         // vc1038: the press reached the game 40-56 ms after the trigger, 40 of that waiting for the block tile to turn
         // pass-through. Open the tile already at half the rise (offline: 0-34 ms before the trigger in practice).
-        if (live && gNow - gOld >= 0.5f * need && gNow - gBase >= 0.5f * need && tNs - lastArmNs > 300_000_000L) {
+        val halfV2 = v2Ready && gNow - gOld >= 0.5f * need && gNow - gBase >= 0.5f * need
+        val halfEarly = loN >= 5 && gNow - gLow >= 0.6f * earlyNeed - 0.001f
+        if (live && (halfV2 || halfEarly) && tNs - lastArmNs > 300_000_000L) {
             lastArmNs = tNs; shotArms++
             main.post { BlockAccessibilityService.instance?.inGame?.armBlock(ARM_MS) }
-            event(tNs, "arm", 0f, 0f, 0f, "half")
+            event(tNs, "arm", 0f, 0f, 0f, if (halfV2) "half" else "half_early")
         }
-        if (gNow - gOld < need || gNow - gBase < need) return
-        val kind = "gap"
-        lastShotFireNs = tNs
-        shotTriggers++
-        synchronized(pendingTriggers) { pendingTriggers.add(tNs) }
-        val detail = String.format(Locale.ROOT, "%s gap=%.3f old=%.3f base=%.3f vy=%.2f vyPrev=%.2f vx=%.2f rise=%.3f flips=%d sens=%d delay=%d",
-            kind, gNow, gOld, gBase, vy, vyPrev, vx, rise, flips, cfg.shotSens, cfg.shotDelayMs)
-        // 0.6 s before shows the lift; the game's verdict ('블록' / '블록 위치 부족' / '블록 타이밍 늦음') shows at
-        // +0.4..+1.4 s (vc1035), so keep 1.8 s after.
-        if (shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_$kind", 0.6, 1.8 + cfg.shotDelayMs / 1000.0) }
+        if (!v2 && !early) return
         // v3 (vc1038 match: 0/14, 8 presses on dribbles/moves). Sideways sway of the disc over the last 600 ms: practice
         // shots <= 0.026 W, real match shots 0.023-0.059, phantoms 0.036-0.223. Above 0.1 = dribbling/running, not a shot.
         var xMin = discX; var xMax = discX; var spanNs = 0L
@@ -486,6 +500,20 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
             xMin = minOf(xMin, hX[idx]); xMax = maxOf(xMax, hX[idx]); spanNs = tNs - hT[idx]
         }
         val xspan = xMax - xMin
+        val calm = xspan < CALM_XSPAN && spanNs >= 400_000_000L
+        // The early rule alone is trusted only on a calm shooter (replay on the vc1038/vc1044 matches: +2 / +0 presses);
+        // a moving one still needs v2 and the confirmation below. No lockout here, so v2 can fire a few scans later.
+        if (!v2 && !calm) return
+        val kind = "gap"
+        lastShotFireNs = tNs
+        shotTriggers++
+        synchronized(pendingTriggers) { pendingTriggers.add(tNs) }
+        val detail = String.format(Locale.ROOT, "%s gap=%.3f old=%.3f base=%.3f low=%.3f early=%d vy=%.2f vyPrev=%.2f vx=%.2f rise=%.3f flips=%d sens=%d delay=%d",
+            kind, gNow, if (v2Ready) gOld else -1f, if (v2Ready) gBase else -1f, if (loN >= 5) gLow else -1f, if (v2) 0 else 1,
+            vy, vyPrev, vx, rise, flips, cfg.shotSens, cfg.shotDelayMs)
+        // 0.6 s before shows the lift; the game's verdict ('블록' / '블록 위치 부족' / '블록 타이밍 늦음') shows at
+        // +0.4..+1.4 s (vc1035), so keep 1.8 s after.
+        if (shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_$kind", 0.6, 1.8 + cfg.shotDelayMs / 1000.0) }
         // Where is my own player? (vc1038: all three '블록 위치 부족' presses had him 0.12-0.21 W from the shooter.)
         val meDist = findMe(discX, discY + gNow)
         val d2 = String.format(Locale.ROOT, "%s xspan=%.3f track=%d me=%.3f/%.3f d=%.3f", detail, xspan, spanNs / 1_000_000L, meX, meY, meDist)
@@ -498,7 +526,9 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         // would add 66-167 ms and practice '늦음' was already ~100 ms late): press now.
         // "Calm" needs a track long enough to show sway: right after a ring<->disc switch the history restarts and a
         // moving shooter read as xspan 0.02 (vc1035 330.0 s, really 0.138). Replay: all 15 practice presses had >= 0.57 s.
-        if (xspan < CALM_XSPAN && spanNs >= 400_000_000L) { press(tNs, live, d2 + " calm", 0L); return }
+        // An early-only press is held EARLY_DELAY_MS so it lands 35-80 ms after the disc left the crouch (replay), inside
+        // the range that was blocked; nothing earlier than 47 ms has been tried yet, so do not go below it blindly.
+        if (calm) { press(tNs, live, d2 + " calm", if (v2) 0L else -EARLY_DELAY_MS); return }
         // Moving shooter: wait (<= 200 ms) for the disc to keep rising: real shots rose 0.039-0.139 H, phantoms at most
         // 0.028 (vc1038), and the two in-range match shots pressed immediately were both '타이밍 빠름'.
         pendNs = tNs; pendY = discY; pendDetail = d2; pendLive = live
@@ -658,6 +688,10 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         /** per sensitivity 0 (fewer presses) .. 2 (more): min upward speed (H/s), min speed-up vs the 200 ms before (H/s), min rise (H). */
         /** v2 gap rule: min growth of (foot ring y - disc y) vs ~100 ms ago and vs the 250-600 ms median, per sensitivity. */
         val GAP_RISE = floatArrayOf(0.04f, 0.03f, 0.02f)
+        /** v5 early rule: min growth of the gap above its lowest value of the last 60-400 ms, per sensitivity. */
+        val EARLY_RISE = floatArrayOf(0.06f, 0.05f, 0.04f)
+        /** Extra wait before an early-only press (see checkShot). */
+        const val EARLY_DELAY_MS = 25L
         /** v3 confirmation (vc1038 offline, 6 real shots / 8 phantoms): x sway limit (W), extra rise needed (H), wait. */
         const val CONFIRM_XSPAN = 0.1f
         const val CONFIRM_RISE = 0.025f

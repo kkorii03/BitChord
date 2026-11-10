@@ -173,7 +173,7 @@ class FramePipeline(
         val sw = shot
         if (sw != null) {
             sw.onFrame(buf, w, h, rowStride, pixelStride, arrivalNs, cfg.blockFx, cfg.blockFy)
-            if (sw.snapNow) { sw.snapNow = false; sampleFrame(buf, w, h, rowStride, pixelStride, arrivalNs) }
+            if (sw.snapNow) { sw.snapNow = false; sampleFrame(buf, w, h, rowStride, pixelStride, arrivalNs, true) }
         }
 
         var tPre = 0L; var tRoi = 0L; var tMotion = 0L; var tAnalysis = 0L; var tAlt = 0L
@@ -228,14 +228,18 @@ class FramePipeline(
     private var sampledLuma100 = 0
     private var lastSampleNs = 0L
     private var samplesSaved = 0
+    private var trigSamples = 0
 
     /**
      * Copies the full colour frame (cost: a few ms, once every couple of seconds; those frames show up as
      * outliers in t_total_us) and writes a scaled JPEG on the IO thread. Used offline to design detection of
      * the user's player marker, the ball and shot starts. Not used by the real-time path.
      */
-    private fun sampleFrame(buf: ByteBuffer, w: Int, h: Int, rowStride: Int, pixelStride: Int, tNs: Long) {
-        if (samplesSaved >= 400 || pixelStride != 4) return
+    private fun sampleFrame(buf: ByteBuffer, w: Int, h: Int, rowStride: Int, pixelStride: Int, tNs: Long, trig: Boolean = false) {
+        // Trigger-time screens ("_trig" in the name) have their own allowance and are never thinned out of the send bundle:
+        // they are the only colour picture of where my player stood at a press (vc1044: the 60-per-session pick dropped them).
+        if (pixelStride != 4 || (if (trig) trigSamples >= 150 else samplesSaved - trigSamples >= 400)) return
+        if (trig) trigSamples++
         val full = try {
             val bmp = Bitmap.createBitmap(rowStride / pixelStride, h, Bitmap.Config.ARGB_8888)
             buf.rewind()
@@ -260,7 +264,7 @@ class FramePipeline(
                 val th = (tw.toLong() * h / w).toInt()
                 val small = Bitmap.createScaledBitmap(cropped, tw, th, true)
                 val dir = File(evidenceDir.parentFile, "frames").apply { mkdirs() }
-                FileOutputStream(File(dir, String.format(Locale.ROOT, "f%04d_%07.1fs.jpg", n, secs))).use {
+                FileOutputStream(File(dir, String.format(Locale.ROOT, if (trig) "f%04d_%07.1fs_trig.jpg" else "f%04d_%07.1fs.jpg", n, secs))).use {
                     small.compress(Bitmap.CompressFormat.JPEG, 80, it)
                 }
                 if (small !== cropped) small.recycle()
