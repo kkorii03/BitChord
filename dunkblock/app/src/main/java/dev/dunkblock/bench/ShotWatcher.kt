@@ -58,7 +58,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
     private var usTotal = 0L
     private var usMax = 0
 
-    private val log = StringBuilder(1 shl 16).append("t_ns,t_s,side,disc,x,y,fill,second,dark,orange,slot2_luma,slot2_dark,us,ring_y,sec_x,sec_y,col_x,col_y,col_fill\n")
+    private val log = StringBuilder(1 shl 16).append("t_ns,t_s,side,disc,x,y,fill,second,dark,orange,slot2_luma,slot2_dark,us,ring_y,sec_x,sec_y,col_x,col_y,col_fill,top_dy\n")
     private var logLines = 0
     private val events = StringBuilder("t_ns,t_s,event,side,x,y,dx,dy,dt_ms,detail\n")
 
@@ -79,10 +79,12 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         readSlot2(buf, w, h, rowStride, blockFx, blockFy)
         scans++
         if (side == SIDE_DEF) { defScans++; lastDefNs = tNs } else if (side == SIDE_OFF) offScans++
-        colY = -1f; colX = -1f; colFill = 0f
+        colY = -1f; colX = -1f; colFill = 0f; topDy = -1f
         if (found) {
             discScans++
             findColRing(buf, w, h, rowStride)
+            findTop(buf, w, h, rowStride)
+            armsUp(tNs)
             // One colour screen of a marker on a wing every 4 s: shows what lies under it there and where my player is.
             if (side == SIDE_DEF && (discX < 0.30f || discX > 0.74f) && wingSnaps < 40 && tNs - lastWingSnapNs > 4_000_000_000L) {
                 lastWingSnapNs = tNs; wingSnaps++; snapNow = true
@@ -95,9 +97,9 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         usTotal += us; if (us > usMax) usMax = us
         if (logLines < MAX_LOG_LINES) synchronized(log) {
             logLines++
-            log.append(tNs).append(',').append(String.format(Locale.ROOT, "%.3f,%s,%d,%.4f,%.4f,%.2f,%.2f,%.3f,%.3f,%.1f,%.3f,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.2f\n",
+            log.append(tNs).append(',').append(String.format(Locale.ROOT, "%.3f,%s,%d,%.4f,%.4f,%.2f,%.2f,%.3f,%.3f,%.1f,%.3f,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.2f,%.4f\n",
                 (tNs - startedNs) / 1e9, sideName(side), if (found) 1 else 0, discX, discY, fill, second, sideDark, sideOrange, slot2Luma, slot2Dark, us, ringY, secX, secY,
-                colX, colY, colFill))
+                colX, colY, colFill, topDy))
         }
     }
 
@@ -393,6 +395,86 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         colX = ((gx0 + bi + k / 2f) * s) / w; colY = ((gy0 + bj + k / 2f) * s) / h
     }
 
+    private var topDy = -1f
+    private var upRun = 0; private var upSinceNs = 0L; private var lastLowNs = 0L; private var lastUpEventNs = 0L
+    private var upSnaps = 0; private var upClips = 0
+
+    /**
+     * Shadow measurement (vc1055, logged only: top_dy in shot.csv, "arms_up" events, top=/topage= in the trigger detail).
+     * top_dy = how far below the marker's red the first red-outline row lies (x +-26 px at 720p), as a share of H; -1 = none
+     * within 90 px. The game outlines the ball handler in red, so this is the top of his silhouette: head when standing,
+     * hands and ball when he lifts them to shoot. Colour clips of four sessions (tools/analysis/armsup.py): standing
+     * 27-35 px (55-60 px close to the camera), lifted 3-14 px. In 15 of 17 practice trigger clips it dropped 25-75 ms BEFORE
+     * the gap trigger with no drop earlier in the clip (the other 2, vc1035 60.4 / 65.1 s: 0.36-0.58 s before, the app
+     * triggered late there); in match clips it marked the real jump shot at 175.8 s (vc1038)
+     * that stood in the joystick corner where the foot ring is masked, 0.33 s after a dribble trigger the app rightly
+     * dropped. It needs no foot ring, no history and no ball colour (match balls have other skins), and it is relative to
+     * the marker, so camera moves cancel. Unknown until a bundle with this column: players far from the camera (smaller
+     * on screen), pump fakes and overhead passes (471.3 s: 3 frames). Nothing acts on it yet.
+     */
+    private fun findTop(buf: ByteBuffer, w: Int, h: Int, rowStride: Int) {
+        val u = h / 720f
+        val cx = (discX * w).toInt(); val cy = (discY * h).toInt()
+        var xa = maxOf(0, cx - (10 * u).toInt()); var xb = minOf(w - 1, cx + (10 * u).toInt())
+        var bot = cy
+        var y = cy
+        val yEnd = minOf(h - 1, cy + (30 * u).toInt())
+        while (y <= yEnd) {
+            var n = 0
+            var x = xa
+            while (x <= xb) {
+                val o = y * rowStride + x * 4
+                val r = buf.get(o).toInt() and 0xFF
+                if (r > 160) {
+                    val g = buf.get(o + 1).toInt() and 0xFF
+                    val b = buf.get(o + 2).toInt() and 0xFF
+                    if (g < 25 && b in 30..90 && r - b > 95) n++
+                }
+                x++
+            }
+            if (n >= 3) bot = y else if (y > bot + 2) break
+            y++
+        }
+        xa = maxOf(0, cx - (26 * u).toInt()); xb = minOf(w - 1, cx + (26 * u).toInt())
+        y = bot + (4 * u).toInt()
+        val yLast = minOf(h - 1, bot + (90 * u).toInt())
+        while (y <= yLast) {
+            var n = 0
+            var x = xa
+            while (x <= xb) {
+                val o = y * rowStride + x * 4
+                val r = buf.get(o).toInt() and 0xFF
+                if (r >= 140) {
+                    val g = buf.get(o + 1).toInt() and 0xFF
+                    val b = buf.get(o + 2).toInt() and 0xFF
+                    // The opponent's outline red. My giraffe's brown patches are G >= 0.30 R and stay out.
+                    if (g * 100 <= r * 28 && b * 100 <= r * 55 && r - g >= 90) n++
+                }
+                x++
+            }
+            if (n >= 3) { topDy = (y - bot) / h.toFloat(); return }
+            y++
+        }
+    }
+
+    /** Shadow only: logs "arms_up" when the outline top comes up to the marker (3 scans in a row, standing height seen
+     *  within the last 0.3 s) and keeps a few colour pictures of it, so the next bundle shows what such a moment is. */
+    private fun armsUp(tNs: Long) {
+        if (topDy < 0f || topDy > UP_DY + 0.011f) lastLowNs = tNs
+        if (topDy in 0f..UP_DY) { if (upRun == 0) upSinceNs = tNs; upRun++ } else upRun = 0
+        if (upRun == 3 && side == SIDE_DEF && upSinceNs - lastLowNs < 300_000_000L && tNs - lastUpEventNs > 1_000_000_000L) {
+            lastUpEventNs = tNs
+            event(tNs, "arms_up", 0f, 0f, 0f, String.format(Locale.ROOT, "top=%.4f ring=%.3f run=%d xspan=%.3f",
+                topDy, if (tNs - gapNs < 150_000_000L) gapRing - discY else -1f, (tNs - runNs) / 1_000_000L, runXMax - runXMin))
+            if (upSnaps < 25) { upSnaps++; snapNow = true }
+            if (upClips < 8) { upClips++; requestColour("up_def", tNs, 0.5, 0.5) }
+        }
+    }
+
+    /** " top=<top_dy> topage=<ms since the arms went up, -1 = not up>" for the trigger detail. */
+    private fun topText(tNs: Long): String =
+        String.format(Locale.ROOT, " top=%.4f topage=%d", topDy, if (upRun > 0) (tNs - upSinceNs) / 1_000_000L else -1L)
+
     private fun onDisc(tNs: Long) {
         // A step of 0.15 H+ in one scan is the tracker switching between the foot ring and the disc (vc1033: every
         // "release" trigger was a 0.28-0.29 H ring->disc switch), never a real move: start the track over.
@@ -529,7 +611,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
                     if (shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_fresh", 0.6, 1.8 + cfg.shotDelayMs / 1000.0) }
                     val meDist = findMe(discX, discY + g0)
                     val d2 = String.format(Locale.ROOT, "fresh gap=%.3f first=%.3f up=%.3f run=%d n=%d sens=%d delay=%d xspan=%.3f me=%.3f/%.3f d=%.3f",
-                        g0, minOf(runG0, runG1), up, (tNs - runNs) / 1_000_000L, runG, cfg.shotSens, cfg.shotDelayMs, runXMax - runXMin, meX, meY, meDist)
+                        g0, minOf(runG0, runG1), up, (tNs - runNs) / 1_000_000L, runG, cfg.shotSens, cfg.shotDelayMs, runXMax - runXMin, meX, meY, meDist) + topText(tNs)
                     event(tNs, "shot_trigger", 0f, 0f, 0f, d2)
                     snapNow = true
                     if (meDist > ME_FAR) { shotFar++; reject(tNs, "rejected_far", d2); return }
@@ -626,7 +708,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         if (shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_$kind", 0.6, 1.8 + cfg.shotDelayMs / 1000.0) }
         // Where is my own player? (vc1038: all three '블록 위치 부족' presses had him 0.12-0.21 W from the shooter.)
         val meDist = findMe(discX, discY + gNow)
-        val d2 = String.format(Locale.ROOT, "%s xspan=%.3f track=%d me=%.3f/%.3f d=%.3f", detail, xspan, spanNs / 1_000_000L, meX, meY, meDist)
+        val d2 = String.format(Locale.ROOT, "%s xspan=%.3f track=%d me=%.3f/%.3f d=%.3f", detail, xspan, spanNs / 1_000_000L, meX, meY, meDist) + topText(tNs)
         event(tNs, "shot_trigger", 0f, 0f, 0f, d2)
         snapNow = true     // one colour screen per trigger: checks the my-player finder against the game's verdict
         // vc1053: a shooter on the move (xspan >= 0.1) is no longer dropped at once. He is held like any moving
@@ -800,7 +882,9 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         /** screen-heights per second; set from data later. */
         const val FAST_SPEED = 0.9f
         const val MAX_SHOT_CLIPS = 80
-        const val MAX_COLOUR_CLIPS = 20
+        const val MAX_COLOUR_CLIPS = 28
+        /** Outline top this close under the marker (share of H; 14 px at 720p) = hands or ball lifted. Shadow only. */
+        const val UP_DY = 0.0195f
         const val MAX_LOG_LINES = 120_000
         /** per sensitivity 0 (fewer presses) .. 2 (more): min upward speed (H/s), min speed-up vs the 200 ms before (H/s), min rise (H). */
         /** v2 gap rule: min growth of (foot ring y - disc y) vs ~100 ms ago and vs the 250-600 ms median, per sensitivity. */
