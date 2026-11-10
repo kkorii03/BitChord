@@ -52,6 +52,14 @@ object Bench {
         val crouchPress: Boolean = false,
         /** Calibration, PRACTICE COURT ONLY: press on the practice rep's own clock at stepped leads before the release (ShotWatcher.sweep). */
         val sweepPress: Boolean = false,
+        /** Experimental (vc1067): press darkDelayMs after a signature skill starts to darken the screen (dark2DelayMs for the dark after a fake). ShotWatcher.skillDark. */
+        val darkPress: Boolean = false,
+        val darkDelayMs: Int = 200,
+        val dark2DelayMs: Int = 380,
+        /** Calibration, PRACTICE COURT ONLY: press at stepped delays (+ darkAddMs) after the onset of dark number darkNth; every other press is held back. */
+        val darkSweep: Boolean = false,
+        val darkNth: Int = 1,
+        val darkAddMs: Int = 0,
         val recalibrate: Boolean = false,
         val opencvAreaResize: Boolean = false,
         val opencvThreads: Int = 1,

@@ -67,7 +67,9 @@ class BlockerActivity : Activity() {
         // --ez sweepPress true --ez auto true`. Without the extras every experiment switch is off again (a normal launch never keeps them).
         if (!Bench.running) {
             Bench.config = Bench.config.copy(sweepPress = intent.getBooleanExtra("sweepPress", false),
-                crouchPress = intent.getBooleanExtra("crouchPress", false), upPress = intent.getBooleanExtra("upPress", false))
+                crouchPress = intent.getBooleanExtra("crouchPress", false), upPress = intent.getBooleanExtra("upPress", false),
+                darkSweep = intent.getBooleanExtra("darkSweep", false), darkNth = intent.getIntExtra("darkNth", 1), darkAddMs = intent.getIntExtra("darkAdd", 0),
+                darkPress = intent.getBooleanExtra("darkPress", false), darkDelayMs = intent.getIntExtra("darkDelay", 200), dark2DelayMs = intent.getIntExtra("dark2Delay", 380))
             if (intent.getBooleanExtra("auto", false)) main.postDelayed({ if (!Bench.running && !Bench.saving) onStartStop() }, 600)
         }
 

@@ -78,8 +78,9 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         val found = findDisc(buf, w, h, rowStride)
         readSlot2(buf, w, h, rowStride, blockFx, blockFy)
         scans++
-        if (side == SIDE_DEF) { defScans++; lastDefNs = tNs } else if (side == SIDE_OFF) offScans++
+        if (side == SIDE_DEF) { defScans++; lastDefNs = tNs } else if (side == SIDE_OFF) { offScans++; lastOffNs = tNs }
         sweep(tNs)
+        skillDark(tNs)
         colY = -1f; colX = -1f; colFill = 0f; topDy = -1f; ycY = -1f; ycN = 0
         if (found) {
             discScans++
@@ -253,8 +254,106 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         press(tNs, live, d, cfg.shotDelayMs - rem)
     }
 
-    // ------------------------------------------------------------------ colour crops around the ball
+    // ------------------------------------------------------------------ signature-skill dark (vc1067)
 
+    private val dkL = FloatArray(20); private val dkT = LongArray(20); private var dkN = 0
+    private var dkDark = false; private var dkBase = 0f; private var dkLow = 0f; private var dkOnNs = 0L; private var dkEndNs = 0L
+    private var dkPeak = 0f; private var dkPeakNs = 0L; private var dkNth = 0
+    private var dkDueNs = 0L; private var dkArmed = false; private var dkDelayMs = 0; private var dkSeq = 0; private var dkPlanNth = 0
+    private var lastOffNs = 0L
+    private val holdOthers get() = cfg.sweepPress || cfg.darkSweep
+    @Volatile var darkOnsets = 0; private set
+    @Volatile var darkPresses = 0; private set
+
+    /**
+     * A signature skill ("선수 스킬") darkens the whole screen, HUD included, before the ball leaves (found 11-11 on
+     * Nowitzki in the practice court: the slot2 luma fades 116 -> 71 in ~0.27 s, the game's own demonstration block
+     * jumps ~0.2 s after the fade starts; a fake skill gives a short dark (~0.33 s), then the real one ~40 ms later).
+     * The rule is tools/analysis/darksim.py line for line (replayed on the recordings of 11-11 and on every bundle:
+     * each of the 20 darks of nowitzki_r1 seen 50-110 ms after its start; 0 onsets on defence in six match bundles,
+     * 2 in a seventh, both real darks):
+     *  - onset #1: two falling scans that are a fade, not a jump (<= 8 in two scans), >= 8 under the mean of the 12
+     *    scans that ended 8 scans ago (which must be flat, < 5), >= 6 under their minimum, no more than 20 under;
+     *  - onset #2..: within 0.7 s after a dark ended, a fade of >= 6 from the highest level since;
+     *  - end: back up by 60 % of the depth ("up"), or never deeper than 20 % of the base in 0.3 s ("shallow": a label
+     *    change, not a dark), or 3 s.
+     * Always logged (skill_dark / skill_dark_end). Presses only on defence and only with an experiment switch:
+     * [Bench.Config.darkSweep] (practice court) = onset of dark number darkNth + darkAddMs + a stepped delay
+     * ([DARK_DELAYS]), every other press held back; [Bench.Config.darkPress] = onset + darkDelayMs (dark #1, only if
+     * it is still dark and deep then) or dark2DelayMs (dark #2..).
+     */
+    private fun skillDark(tNs: Long) {
+        val l = slot2Luma
+        System.arraycopy(dkL, 1, dkL, 0, 19); dkL[19] = l
+        System.arraycopy(dkT, 1, dkT, 0, 19); dkT[19] = tNs
+        if (++dkN < 20 || l < 0f) return
+        val p1 = dkL[18]; val p2 = dkL[17]
+        if (!dkDark) {
+            var nth = 0; var onNs = 0L; var base = 0f
+            val falling = l < p1 - 0.8f && p1 < p2 - 0.8f && p2 - l <= 8f
+            val recent = dkEndNs != 0L && tNs - dkEndNs < 700_000_000L
+            if (recent && l > dkPeak) { dkPeak = l; dkPeakNs = tNs }
+            if (falling && recent) {
+                if (l <= dkPeak - 6f) { nth = dkNth + 1; onNs = dkPeakNs; base = dkBase }
+            } else if (falling) {
+                var mn = dkL[0]; var mx = dkL[0]; var s = 0f
+                for (i in 0..11) { mn = minOf(mn, dkL[i]); mx = maxOf(mx, dkL[i]); s += dkL[i] }
+                val b = s / 12f
+                if (mx - mn < 5f && l <= b - 8f && l <= mn - 6f && b - l <= 20f && b >= 60f) {
+                    nth = 1; base = b; onNs = tNs
+                    for (i in 19 downTo 12) if (dkL[i] < b - 1.5f) onNs = dkT[i]
+                }
+            }
+            if (nth > 0) {
+                dkDark = true; dkBase = base; dkLow = l; dkOnNs = onNs; dkNth = nth; darkOnsets++
+                val def = tNs - lastDefNs < 200_000_000L && tNs - lastOffNs > 2_000_000_000L
+                var plan = -1
+                if (cfg.shotBlock && def) {
+                    if (cfg.darkSweep) { if (nth == cfg.darkNth) plan = cfg.darkAddMs + DARK_DELAYS[dkSeq++ % DARK_DELAYS.size] }
+                    else if (cfg.darkPress) plan = if (nth == 1) cfg.darkDelayMs else cfg.dark2DelayMs
+                }
+                if (plan >= 0) { dkDueNs = onNs + plan * 1_000_000L; dkArmed = false; dkDelayMs = plan; dkPlanNth = nth }
+                if (nth == 1 && shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_dark", 0.6, 2.2) }
+                event(tNs, "skill_dark", 0f, 0f, 0f, String.format(Locale.ROOT, "nth=%d base=%.1f luma=%.1f on_ago=%d plan=%d def=%d",
+                    nth, base, l, (tNs - onNs) / 1_000_000L, plan, if (def) 1 else 0))
+            }
+        } else {
+            if (l < dkLow) dkLow = l
+            val depth = dkBase - dkLow
+            val why = when {
+                depth >= 0.2f * dkBase && l >= dkLow + 0.6f * depth -> "up"
+                depth < 0.2f * dkBase && tNs - dkOnNs > 300_000_000L -> "shallow"
+                tNs - dkOnNs > 3_000_000_000L -> "timeout"
+                else -> ""
+            }
+            if (why.isNotEmpty()) {
+                dkDark = false
+                if (why == "up") { dkEndNs = tNs; dkPeak = l; dkPeakNs = tNs } else dkEndNs = 0L
+                event(tNs, "skill_dark_end", 0f, 0f, 0f, String.format(Locale.ROOT, "nth=%d dur=%d low=%.1f base=%.1f %s", dkNth, (tNs - dkOnNs) / 1_000_000L, dkLow, dkBase, why))
+            }
+        }
+        if (dkDueNs == 0L) return
+        val live = cfg.autoBlockLive
+        if (!dkArmed && tNs + 60_000_000L >= dkDueNs) { dkArmed = true; if (live) main.post { BlockAccessibilityService.instance?.inGame?.armBlock(ARM_MS) } }
+        if (tNs + 8_000_000L < dkDueNs) return
+        val rem = ((dkDueNs - tNs) / 1_000_000L).coerceAtLeast(0L)
+        dkDueNs = 0L
+        val why = when {
+            cfg.darkSweep -> ""
+            !dkDark || dkNth != dkPlanNth -> "over"                                     // a fake: its dark is already gone
+            dkDelayMs >= 150 && dkBase - dkLow < 0.2f * dkBase && !(l < p1 - 0.8f) -> "shallow"
+            tNs - lastPressNs < 500_000_000L -> "just_pressed"
+            else -> ""
+        }
+        if (why.isNotEmpty()) { event(tNs, "dark_dropped", 0f, 0f, 0f, why); return }
+        shotTriggers++; darkPresses++
+        val d = String.format(Locale.ROOT, "%s d=%d nth=%d base=%.1f low=%.1f rem=%d", if (cfg.darkSweep) "sweep_dark" else "dark", dkDelayMs, dkPlanNth, dkBase, dkLow, rem)
+        event(tNs, "shot_trigger", 0f, 0f, 0f, d)
+        snapNow = true
+        press(tNs, live, d, cfg.shotDelayMs - rem)
+    }
+
+    // ------------------------------------------------------------------ colour crops around the ball
     private class Crop(var tNs: Long = 0, var x0: Int = 0, var y0: Int = 0, var disc: Boolean = false, var px: ByteArray = ByteArray(0))
     private class ColourReq(val tag: String, val tNs: Long, val beforeNs: Long, val afterNs: Long)
     private val cropN = 96                      // ~3.2 s at 30 Hz
@@ -649,7 +748,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         shotTriggers++; crouchTriggers++
         synchronized(pendingTriggers) { pendingTriggers.add(tNs) }
         // The verdict shows 0.4-1.4 s after the release, and this press is ~0.35 s earlier than a gap press: 2.3 s after.
-        if (!cfg.sweepPress && shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_crouch", 0.6, 2.3 + cfg.shotDelayMs / 1000.0) }
+        if (!holdOthers && shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_crouch", 0.6, 2.3 + cfg.shotDelayMs / 1000.0) }
         var meDist = findMe(discX, if (ringKnown) gapRing else minOf(0.95f, discY + 0.3f))
         if (!ringKnown && meDist >= 0f) meDist = Math.abs(meX - discX)
         val d2 = String.format(Locale.ROOT, "%s cd=%d sens=%d delay=%d me=%.3f/%.3f d=%.3f", d, waitMs, cfg.shotSens, cfg.shotDelayMs, meX, meY, meDist)
@@ -721,7 +820,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         lastShotFireNs = tNs
         shotTriggers++; upTriggers++
         synchronized(pendingTriggers) { pendingTriggers.add(tNs) }
-        if (!cfg.sweepPress && shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_up", 0.6, 1.8 + cfg.shotDelayMs / 1000.0) }
+        if (!holdOthers && shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_up", 0.6, 1.8 + cfg.shotDelayMs / 1000.0) }
         // Without a foot ring the feet height is a guess (typical gap 0.3 H), so only the sideways distance counts then.
         var meDist = findMe(discX, if (ringKnown) gapRing else minOf(0.95f, discY + 0.3f))
         if (!ringKnown && meDist >= 0f) meDist = Math.abs(meX - discX)
@@ -872,7 +971,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
                     lastShotFireNs = tNs
                     shotTriggers++
                     synchronized(pendingTriggers) { pendingTriggers.add(tNs) }
-                    if (!cfg.sweepPress && shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_fresh", 0.6, 1.8 + cfg.shotDelayMs / 1000.0) }
+                    if (!holdOthers && shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_fresh", 0.6, 1.8 + cfg.shotDelayMs / 1000.0) }
                     val meDist = findMe(discX, discY + g0)
                     val d2 = String.format(Locale.ROOT, "fresh gap=%.3f first=%.3f up=%.3f run=%d n=%d sens=%d delay=%d xspan=%.3f me=%.3f/%.3f d=%.3f",
                         g0, minOf(runG0, runG1), up, (tNs - runNs) / 1_000_000L, runG, cfg.shotSens, cfg.shotDelayMs, runXMax - runXMin, meX, meY, meDist) + topText(tNs)
@@ -969,7 +1068,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
             vy, vyPrev, vx, rise, flips, cfg.shotSens, cfg.shotDelayMs)
         // 0.6 s before shows the lift; the game's verdict ('블록' / '블록 위치 부족' / '블록 타이밍 늦음') shows at
         // +0.4..+1.4 s (vc1035), so keep 1.8 s after.
-        if (!cfg.sweepPress && shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_$kind", 0.6, 1.8 + cfg.shotDelayMs / 1000.0) }
+        if (!holdOthers && shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_$kind", 0.6, 1.8 + cfg.shotDelayMs / 1000.0) }
         // Where is my own player? (vc1038: all three '블록 위치 부족' presses had him 0.12-0.21 W from the shooter.)
         val meDist = findMe(discX, discY + gNow)
         val d2 = String.format(Locale.ROOT, "%s xspan=%.3f track=%d me=%.3f/%.3f d=%.3f", detail, xspan, spanNs / 1_000_000L, meX, meY, meDist) + topText(tNs)
@@ -1016,7 +1115,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
     private fun press(tNs: Long, live: Boolean, detail: String, ageMs: Long) {
         val sweep = detail.startsWith("sweep")
         // ⑩ on: only the sweep presses; the shot rules are still logged, untouched by it (no lastPressNs lockout).
-        if (cfg.sweepPress && !sweep) { event(tNs, "would_press", 0f, 0f, 0f, detail); return }
+        if (holdOthers && !sweep) { event(tNs, "would_press", 0f, 0f, 0f, detail); return }
         if (!sweep) lastPressNs = tNs
         if (!live) { shotSkipped++; event(tNs, "would_press", 0f, 0f, 0f, detail); Bench.shotLive = liveText(); return }
         val delay = (cfg.shotDelayMs.toLong() - ageMs).coerceAtLeast(0L)
@@ -1136,6 +1235,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
             "  팔 올림 감지 ${upEvents}회(팔 올림으로 누르기 ${if (cfg.upPress) "켬" else "끔"}, 그걸로 발동 ${upTriggers}회)\n" +
             "  웅크림 감지 ${crouchEvents}회(웅크릴 때 누르기 ${if (cfg.crouchPress) "켬" else "끔"}, 그걸로 발동 ${crouchTriggers}회)\n" +
             "  연습장 박자: 반복 시작 ${sweepReps}회, 공 떠남 ${sweepReleases}회(박자 훑기 ${if (cfg.sweepPress) "켬" else "끔"}, 그걸로 누름 ${sweepPresses}회)\n" +
+            "  선수 스킬 어두워짐 ${darkOnsets}회(그걸로 누름 ${darkPresses}회, 누르기 ${if (cfg.darkSweep) "훑기" else if (cfg.darkPress) "켬" else "끔(기록만)"})\n" +
             "  모으기 감지 뒤 공이 떠남 ${leads.size}회(앞섬 중앙값 $med, 전체 ${leads.joinToString(" ")}) · 감지했는데 공이 안 떠남(오발 추정) ${triggersWithoutRelease}회 · 공이 떠났는데 미리 감지 못함 ${releasesWithoutTrigger}회"
     }
 
@@ -1167,6 +1267,8 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         val CROUCH_DELAYS = longArrayOf(80L, 120L, 160L)
         /** Sweep (⑩): planned press leads before the release, ms, in a mixed order so a drift cannot pass for a trend. */
         val SWEEP_LEADS = intArrayOf(250, 400, 100, 325, 175, 275, 375, 125, 225, 350, 150, 300, 200)
+        /** Dark sweep: planned press delays after the onset of the dark, ms, in a mixed order. */
+        val DARK_DELAYS = intArrayOf(200, 350, 100, 275, 150, 425, 250, 50, 325, 500, 225, 125, 400, 175, 300, 0)
         /** Outline top this close under the marker (share of H; 14 px at 720p) = hands or ball lifted. Shadow only. */
         const val UP_DY = 0.0195f
         /** Experimental arms-up press: wait this long for a gap rule to fire first (two scans at 60 Hz). */

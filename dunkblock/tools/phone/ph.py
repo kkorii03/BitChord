@@ -18,8 +18,8 @@ def adb(*a, raw=False, timeout=240):
 def size():
     import re
     o = adb("shell", "dumpsys", "window", "displays")
-    m = re.search(r"cur=(\d+)x(\d+)", o)
-    return int(m.group(1)), int(m.group(2))
+    # the largest one: while our capture runs its 1560x720 virtual display is listed too (and first)
+    return max(((int(a), int(b)) for a, b in re.findall(r"cur=(\d+)x(\d+)", o)), key=lambda s: s[0] * s[1])
 
 def main():
     c = sys.argv[1]
