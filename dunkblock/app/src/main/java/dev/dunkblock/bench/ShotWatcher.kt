@@ -58,7 +58,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
     private var usTotal = 0L
     private var usMax = 0
 
-    private val log = StringBuilder(1 shl 16).append("t_ns,t_s,side,disc,x,y,fill,second,dark,orange,slot2_luma,slot2_dark,us,ring_y,sec_x,sec_y\n")
+    private val log = StringBuilder(1 shl 16).append("t_ns,t_s,side,disc,x,y,fill,second,dark,orange,slot2_luma,slot2_dark,us,ring_y,sec_x,sec_y,col_x,col_y,col_fill\n")
     private var logLines = 0
     private val events = StringBuilder("t_ns,t_s,event,side,x,y,dx,dy,dt_ms,detail\n")
 
@@ -79,15 +79,25 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         readSlot2(buf, w, h, rowStride, blockFx, blockFy)
         scans++
         if (side == SIDE_DEF) { defScans++; lastDefNs = tNs } else if (side == SIDE_OFF) offScans++
-        if (found) { discScans++; onDisc(tNs) }
+        colY = -1f; colX = -1f; colFill = 0f
+        if (found) {
+            discScans++
+            findColRing(buf, w, h, rowStride)
+            // One colour screen of a marker on a wing every 4 s: shows what lies under it there and where my player is.
+            if (side == SIDE_DEF && (discX < 0.30f || discX > 0.74f) && wingSnaps < 40 && tNs - lastWingSnapNs > 4_000_000_000L) {
+                lastWingSnapNs = tNs; wingSnaps++; snapNow = true
+            }
+            onDisc(tNs)
+        }
         checkPending(tNs, found)
         colourFrame(buf, w, h, rowStride, tNs, found)
         val us = ((System.nanoTime() - t0) / 1000).toInt()
         usTotal += us; if (us > usMax) usMax = us
         if (logLines < MAX_LOG_LINES) synchronized(log) {
             logLines++
-            log.append(tNs).append(',').append(String.format(Locale.ROOT, "%.3f,%s,%d,%.4f,%.4f,%.2f,%.2f,%.3f,%.3f,%.1f,%.3f,%d,%.4f,%.4f,%.4f\n",
-                (tNs - startedNs) / 1e9, sideName(side), if (found) 1 else 0, discX, discY, fill, second, sideDark, sideOrange, slot2Luma, slot2Dark, us, ringY, secX, secY))
+            log.append(tNs).append(',').append(String.format(Locale.ROOT, "%.3f,%s,%d,%.4f,%.4f,%.2f,%.2f,%.3f,%.3f,%.1f,%.3f,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.2f\n",
+                (tNs - startedNs) / 1e9, sideName(side), if (found) 1 else 0, discX, discY, fill, second, sideDark, sideOrange, slot2Luma, slot2Dark, us, ringY, secX, secY,
+                colX, colY, colFill))
         }
     }
 
@@ -337,6 +347,51 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
 
     private var secX = -1f; private var secY = -1f; private var ringY = -1f
     private var ringX = -1f; private var ringYLast = -1f; private var lastRingNs = 0L
+
+    private var colX = -1f; private var colY = -1f; private var colFill = 0f
+    private var colSat = IntArray(0)
+    private var wingSnaps = 0; private var lastWingSnapNs = 0L
+
+    /**
+     * Shadow measurement (vc1051, logged only, col_x/col_y/col_fill in shot.csv): the strongest red window straight under
+     * the disc (x +-0.05 W, 0.12-0.45 H below), read WITHOUT the HUD mask. The normal ring is the second-strongest blob
+     * of the masked screen, so it is missing on 60 % of centre frames and on 98 % of wing frames (ring under the buttons
+     * or the joystick), which is where the three marked wing shots of the vc1044 match were. The next bundle tells
+     * whether this column finds the foot ring there or the HUD's own red; nothing acts on it yet.
+     */
+    private fun findColRing(buf: ByteBuffer, w: Int, h: Int, rowStride: Int) {
+        val s = step
+        val gx0 = ((discX - 0.05f) * w / s).toInt().coerceIn(0, gw - 1); val gx1 = ((discX + 0.05f) * w / s).toInt().coerceIn(0, gw - 1)
+        val gy0 = ((discY + 0.12f) * h / s).toInt().coerceIn(0, gh - 1); val gy1 = minOf(((discY + 0.45f) * h / s).toInt(), (0.90f * gh).toInt()).coerceIn(0, gh - 1)
+        val nx = gx1 - gx0 + 1; val ny = gy1 - gy0 + 1
+        if (nx < k || ny < k) return
+        val stride = nx + 1
+        if (colSat.size < stride * (ny + 1)) colSat = IntArray(stride * (ny + 1))
+        for (i in 0 until stride) colSat[i] = 0
+        for (j in 0 until ny) {
+            var row = 0
+            val py = (gy0 + j) * s
+            colSat[(j + 1) * stride] = 0
+            for (i in 0 until nx) {
+                val o = py * rowStride + (gx0 + i) * s * 4
+                val r = buf.get(o).toInt() and 0xFF
+                if (r > 160) {
+                    val g = buf.get(o + 1).toInt() and 0xFF
+                    val b = buf.get(o + 2).toInt() and 0xFF
+                    if (g < 25 && b in 30..90 && r - b > 95) row++
+                }
+                colSat[(j + 1) * stride + i + 1] = colSat[j * stride + i + 1] + row
+            }
+        }
+        var best = 0; var bi = 0; var bj = 0
+        for (j in 0..ny - k) for (i in 0..nx - k) {
+            val c = colSat[(j + k) * stride + i + k] - colSat[j * stride + i + k] - colSat[(j + k) * stride + i] + colSat[j * stride + i]
+            if (c > best) { best = c; bi = i; bj = j }
+        }
+        if (best == 0) return
+        colFill = best / (k * k).toFloat()
+        colX = ((gx0 + bi + k / 2f) * s) / w; colY = ((gy0 + bj + k / 2f) * s) / h
+    }
 
     private fun onDisc(tNs: Long) {
         // A step of 0.15 H+ in one scan is the tracker switching between the foot ring and the disc (vc1033: every
