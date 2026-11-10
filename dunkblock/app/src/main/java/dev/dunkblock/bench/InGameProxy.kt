@@ -58,9 +58,10 @@ class InGameProxy(private val svc: BlockAccessibilityService, private val autoMo
      * the same injected gesture, so the press no longer needs the thumb on the joystick (v1022 skipped 8 of 10
      * ultimates for that). To stay off menus it still needs a touch on our overlays in the last [RECENT_TOUCH_NS].
      */
-    fun fireBlock(reason: String): Boolean {
+    fun fireBlock(reason: String, needTouch: Boolean = true): Boolean {
         val h = hand
-        val recent = System.nanoTime() - lastTouchNs < RECENT_TOUCH_NS
+        // needTouch = false only for the practice-court sweep (⑩), which is run with nobody holding the phone.
+        val recent = !needTouch || System.nanoTime() - lastTouchNs < RECENT_TOUCH_NS
         if (finished || h == null || !recent) { skippedFires++; rec("auto", "skip_${reason}_${if (h == null) "no_pad" else "idle"}", 0f, 0f, 0); return false }
         val t = tileAt(block)
         // A tile opened only a moment ago (pre-arm) still needs the rest of the pass-through wait.

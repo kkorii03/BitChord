@@ -79,6 +79,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         readSlot2(buf, w, h, rowStride, blockFx, blockFy)
         scans++
         if (side == SIDE_DEF) { defScans++; lastDefNs = tNs } else if (side == SIDE_OFF) offScans++
+        sweep(tNs)
         colY = -1f; colX = -1f; colFill = 0f; topDy = -1f; ycY = -1f; ycN = 0
         if (found) {
             discScans++
@@ -172,6 +173,79 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         }
         slot2Luma = if (n > 0) sum.toFloat() / n else -1f
         slot2Dark = if (n > 0) dark.toFloat() / n else -1f
+    }
+
+    // ------------------------------------------------------------------ sweep (practice court, option ⑩)
+
+    private val swL = FloatArray(16); private var swN = 0
+    private var swAway = 0; private var swIn = 0; private var swFirstNs = 0L
+    private var swRepNs = 0L; private var swRepT = 0L; private var swDueNs = 0L; private var swArmed = false
+    private var swLeadMs = 0; private var swSeq = 0; private var swRelNs = 0L; private var swPressNs = 0L
+    @Volatile var sweepReps = 0; private set
+    @Volatile var sweepReleases = 0; private set
+    @Volatile var sweepPresses = 0; private set
+
+    /**
+     * Calibration for the PRACTICE COURT only (defence practice repeats the same shot every ~7 s). It needs no shot rule:
+     *  - rep start = the "수비" slot back at its normal look (slot2 luma 100..110.5 for 3 scans after >= 10 scans outside
+     *    96..112): the opponent has the ball again;
+     *  - release = the box-out step of the same slot (tools/analysis/boxstep.py);
+     *  - repT = release - rep start of the last shot. Replayed with tools/analysis/sweepsim.py on the vc1056 and vc1035
+     *    practice bundles: repT is constant per opponent (LaMelo 1.61-1.66 s, Curry 2.15-2.22 s, others 1.63-1.84 s),
+     *    so "rep start + last repT" hits the next release within 25 ms (median), 50 ms (90 %).
+     * Both are always logged (sweep_rep / sweep_rel). With [Bench.Config.sweepPress] the block is pressed at
+     * rep start + repT - lead, lead stepping through [SWEEP_LEADS], and every other press is held back ([press]); the
+     * trigger clip then shows whether the block landed (tools/analysis/shots.py), which gives the block window in ms
+     * before the release for that opponent. It also presses on the game's own demonstration shots and ~3 s after a
+     * block (an extra "normal" look there); shots.py tells those apart. Never meant for matches: there is no rep clock.
+     */
+    private fun sweep(tNs: Long) {
+        val l = slot2Luma
+        if (l < 96f || l > 112f) { swAway++; swIn = 0 }
+        else if (l in 100f..110.5f) {
+            if (swIn == 0) swFirstNs = tNs
+            if (++swIn == 3) {
+                if (swAway >= 10) {
+                    swRepNs = swFirstNs; sweepReps++
+                    val plan = cfg.sweepPress && cfg.shotBlock && swRepT > 0L && side == SIDE_DEF
+                    if (plan) {
+                        swLeadMs = SWEEP_LEADS[swSeq++ % SWEEP_LEADS.size]
+                        swDueNs = swRepNs + swRepT - swLeadMs * 1_000_000L; swArmed = false
+                    }
+                    event(tNs, "sweep_rep", 0f, 0f, 0f, String.format(Locale.ROOT, "repT=%d lead=%d", swRepT / 1_000_000L, if (plan) swLeadMs else -1))
+                }
+                swAway = 0
+            }
+        } else swIn = 0
+        System.arraycopy(swL, 1, swL, 0, 15); swL[15] = l
+        if (++swN >= 16) {
+            var mn = swL[0]; var mx = swL[0]
+            for (i in 1..12) { mn = minOf(mn, swL[i]); mx = maxOf(mx, swL[i]) }
+            val b = swL[12]; val d = l - b
+            if (mx - mn < 1.5f && Math.abs(swL[14] - b) < 5f && d in 6f..12f && b in 98f..112f && tNs - swRelNs > 300_000_000L) {
+                swRelNs = tNs; sweepReleases++
+                val rt = tNs - swRepNs
+                val got = swRepNs != 0L && rt in 1_000_000_000L..3_500_000_000L
+                if (got) swRepT = rt
+                event(tNs, "sweep_rel", 0f, 0f, 0f, String.format(Locale.ROOT, "repT=%d lead=%d press_to_rel=%d", if (got) rt / 1_000_000L else -1L,
+                    swLeadMs, if (swPressNs != 0L && tNs - swPressNs in 0L..1_500_000_000L) (tNs - swPressNs) / 1_000_000L else -1L))
+            }
+        }
+        if (swDueNs == 0L) return
+        val live = cfg.autoBlockLive
+        // Open the block tile 60 ms ahead, so the tap leaves at the planned moment (no pass-through wait in fireBlock).
+        if (!swArmed && tNs + 60_000_000L >= swDueNs) { swArmed = true; if (live) main.post { BlockAccessibilityService.instance?.inGame?.armBlock(ARM_MS) } }
+        if (tNs + 8_000_000L < swDueNs) return
+        val rem = ((swDueNs - tNs) / 1_000_000L).coerceAtLeast(0L)
+        swDueNs = 0L
+        if (side == SIDE_OFF || tNs - lastDefNs > 1_000_000_000L) { event(tNs, "sweep_dropped", 0f, 0f, 0f, "not_def"); return }
+        shotTriggers++; sweepPresses++
+        swPressNs = tNs + rem * 1_000_000L
+        if (shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_sweep", 0.6, 1.8) }
+        val d = String.format(Locale.ROOT, "sweep lead=%d repT=%d rem=%d", swLeadMs, swRepT / 1_000_000L, rem)
+        event(tNs, "shot_trigger", 0f, 0f, 0f, d)
+        snapNow = true
+        press(tNs, live, d, cfg.shotDelayMs - rem)
     }
 
     // ------------------------------------------------------------------ colour crops around the ball
@@ -570,7 +644,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         shotTriggers++; crouchTriggers++
         synchronized(pendingTriggers) { pendingTriggers.add(tNs) }
         // The verdict shows 0.4-1.4 s after the release, and this press is ~0.35 s earlier than a gap press: 2.3 s after.
-        if (shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_crouch", 0.6, 2.3 + cfg.shotDelayMs / 1000.0) }
+        if (!cfg.sweepPress && shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_crouch", 0.6, 2.3 + cfg.shotDelayMs / 1000.0) }
         var meDist = findMe(discX, if (ringKnown) gapRing else minOf(0.95f, discY + 0.3f))
         if (!ringKnown && meDist >= 0f) meDist = Math.abs(meX - discX)
         val d2 = String.format(Locale.ROOT, "%s cd=%d sens=%d delay=%d me=%.3f/%.3f d=%.3f", d, waitMs, cfg.shotSens, cfg.shotDelayMs, meX, meY, meDist)
@@ -642,7 +716,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         lastShotFireNs = tNs
         shotTriggers++; upTriggers++
         synchronized(pendingTriggers) { pendingTriggers.add(tNs) }
-        if (shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_up", 0.6, 1.8 + cfg.shotDelayMs / 1000.0) }
+        if (!cfg.sweepPress && shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_up", 0.6, 1.8 + cfg.shotDelayMs / 1000.0) }
         // Without a foot ring the feet height is a guess (typical gap 0.3 H), so only the sideways distance counts then.
         var meDist = findMe(discX, if (ringKnown) gapRing else minOf(0.95f, discY + 0.3f))
         if (!ringKnown && meDist >= 0f) meDist = Math.abs(meX - discX)
@@ -793,7 +867,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
                     lastShotFireNs = tNs
                     shotTriggers++
                     synchronized(pendingTriggers) { pendingTriggers.add(tNs) }
-                    if (shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_fresh", 0.6, 1.8 + cfg.shotDelayMs / 1000.0) }
+                    if (!cfg.sweepPress && shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_fresh", 0.6, 1.8 + cfg.shotDelayMs / 1000.0) }
                     val meDist = findMe(discX, discY + g0)
                     val d2 = String.format(Locale.ROOT, "fresh gap=%.3f first=%.3f up=%.3f run=%d n=%d sens=%d delay=%d xspan=%.3f me=%.3f/%.3f d=%.3f",
                         g0, minOf(runG0, runG1), up, (tNs - runNs) / 1_000_000L, runG, cfg.shotSens, cfg.shotDelayMs, runXMax - runXMin, meX, meY, meDist) + topText(tNs)
@@ -890,7 +964,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
             vy, vyPrev, vx, rise, flips, cfg.shotSens, cfg.shotDelayMs)
         // 0.6 s before shows the lift; the game's verdict ('블록' / '블록 위치 부족' / '블록 타이밍 늦음') shows at
         // +0.4..+1.4 s (vc1035), so keep 1.8 s after.
-        if (shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_$kind", 0.6, 1.8 + cfg.shotDelayMs / 1000.0) }
+        if (!cfg.sweepPress && shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_$kind", 0.6, 1.8 + cfg.shotDelayMs / 1000.0) }
         // Where is my own player? (vc1038: all three '블록 위치 부족' presses had him 0.12-0.21 W from the shooter.)
         val meDist = findMe(discX, discY + gNow)
         val d2 = String.format(Locale.ROOT, "%s xspan=%.3f track=%d me=%.3f/%.3f d=%.3f", detail, xspan, spanNs / 1_000_000L, meX, meY, meDist) + topText(tNs)
@@ -935,11 +1009,14 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
 
     /** [ageMs] = time already spent since the trigger; the user's extra delay counts from the trigger. */
     private fun press(tNs: Long, live: Boolean, detail: String, ageMs: Long) {
-        lastPressNs = tNs
+        val sweep = detail.startsWith("sweep")
+        // ⑩ on: only the sweep presses; the shot rules are still logged, untouched by it (no lastPressNs lockout).
+        if (cfg.sweepPress && !sweep) { event(tNs, "would_press", 0f, 0f, 0f, detail); return }
+        if (!sweep) lastPressNs = tNs
         if (!live) { shotSkipped++; event(tNs, "would_press", 0f, 0f, 0f, detail); Bench.shotLive = liveText(); return }
         val delay = (cfg.shotDelayMs.toLong() - ageMs).coerceAtLeast(0L)
         main.postDelayed({
-            val ok = BlockAccessibilityService.instance?.inGame?.fireBlock("SHOT") ?: false
+            val ok = BlockAccessibilityService.instance?.inGame?.fireBlock("SHOT", needTouch = !sweep) ?: false
             if (ok) shotFired++ else shotSkipped++
             event(System.nanoTime(), if (ok) "pressed" else "not_pressed", 0f, 0f, 0f, detail)
             Bench.shotLive = liveText()
@@ -1053,6 +1130,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         return "일반 슛 발동 ${shotTriggers}회(${if (cfg.shotBlock && cfg.autoBlockLive) "실제 누름" else "기록만"}, 민감도 ${cfg.shotSens}, 지연 ${cfg.shotDelayMs}ms) → 거름 ${shotRejected}회(그중 내 선수가 멀어서 ${shotFar}회), 버튼 미리 열기 ${shotArms}회, 누름 ${shotFired}회, 건너뜀 ${shotSkipped}회\n" +
             "  팔 올림 감지 ${upEvents}회(팔 올림으로 누르기 ${if (cfg.upPress) "켬" else "끔"}, 그걸로 발동 ${upTriggers}회)\n" +
             "  웅크림 감지 ${crouchEvents}회(웅크릴 때 누르기 ${if (cfg.crouchPress) "켬" else "끔"}, 그걸로 발동 ${crouchTriggers}회)\n" +
+            "  연습장 박자: 반복 시작 ${sweepReps}회, 공 떠남 ${sweepReleases}회(박자 훑기 ${if (cfg.sweepPress) "켬" else "끔"}, 그걸로 누름 ${sweepPresses}회)\n" +
             "  모으기 감지 뒤 공이 떠남 ${leads.size}회(앞섬 중앙값 $med, 전체 ${leads.joinToString(" ")}) · 감지했는데 공이 안 떠남(오발 추정) ${triggersWithoutRelease}회 · 공이 떠났는데 미리 감지 못함 ${releasesWithoutTrigger}회"
     }
 

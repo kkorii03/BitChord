@@ -45,8 +45,15 @@ class MainActivity : Activity() {
             if (sp.contains("bx")) Bench.config = Bench.config.copy(
                 blockFx = sp.getFloat("bx", Bench.config.blockFx), blockFy = sp.getFloat("by", Bench.config.blockFy),
                 joyFx = sp.getFloat("jx", Bench.config.joyFx), joyFy = sp.getFloat("jy", Bench.config.joyFy))
-            if (sp.getBoolean("upPress", false)) Bench.config = Bench.config.copy(upPress = true)
-            if (sp.getBoolean("crouchPress", false)) Bench.config = Bench.config.copy(crouchPress = true)
+            // Unattended practice-court tests over adb: `am start --activity-clear-task -n <pkg>/dev.dunkblock.bench.MainActivity
+            // --ez sweepPress true --ez crouchPress false --ez auto true` sets the experiment switches and starts ⑧.
+            if (!Bench.running) {
+                val e = sp.edit()
+                for (k in listOf("upPress", "crouchPress", "sweepPress")) if (intent.hasExtra(k)) e.putBoolean(k, intent.getBooleanExtra(k, false))
+                e.commit()
+            }
+            Bench.config = Bench.config.copy(upPress = sp.getBoolean("upPress", false), crouchPress = sp.getBoolean("crouchPress", false),
+                sweepPress = sp.getBoolean("sweepPress", false))
         }
 
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(32, 48, 32, 48) }
@@ -137,6 +144,10 @@ class MainActivity : Activity() {
         scroll = ScrollView(this).apply { addView(root) }
         setContentView(scroll)
         renderConfig()
+        if (intent.getBooleanExtra("auto", false) && !Bench.running && BlockAccessibilityService.instance?.inGame == null) {
+            intent.removeExtra("auto")
+            if (BlockAccessibilityService.instance == null) status.text = "접근성 서비스가 꺼져 있습니다." else requestCapture(Bench.Mode.GAME, auto = true)
+        }
 
         val crash = App.crashFile(this)
         if (crash.isFile) {
@@ -169,6 +180,10 @@ class MainActivity : Activity() {
         opt("⑨ 실험: 빠른 슛 상대(라멜로 볼 등) — 웅크릴 때 누르기", if (c.crouchPress) "켬" else "끔(기록만)") {
             getSharedPreferences("calib", 0).edit().putBoolean("crouchPress", !c.crouchPress).apply()
             c.copy(crouchPress = !c.crouchPress)
+        }
+        opt("⑩ 실험(연습장 전용): 박자 훑기 — 연습 슛 박자에 맞춰 여러 타이밍으로 누르기", if (c.sweepPress) "켬(다른 누름은 멈춤)" else "끔") {
+            getSharedPreferences("calib", 0).edit().putBoolean("sweepPress", !c.sweepPress).apply()
+            c.copy(sweepPress = !c.sweepPress)
         }
         opt("캡처 배율", "${c.captureScale}") { c.copy(captureScale = cycle(listOf(1.0f, 0.5f, 0.33f, 0.25f), c.captureScale)) }
         opt("분석 폭(px)", "${c.analysisWidth}") { c.copy(analysisWidth = cycle(listOf(128, 192, 256, 320), c.analysisWidth)) }
