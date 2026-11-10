@@ -36,7 +36,12 @@ class PatternActivity : Activity() {
     private var startNs = 0L
     private var nextFlipNs = 0L
     private var flipState = 0
-    private var finished = false
+    /** The scripted test is over (timer reached, or the screen was closed); the session has been asked to stop. */
+    private var ended = false
+    /** Screen not visible right now (notification shade, app switch). The test resumes when it comes back. */
+    private var paused = false
+    private var callbackPending = false
+    private var createdNs = 0L
     private var periodNs = 8_333_333L
 
     // motion script
@@ -54,8 +59,9 @@ class PatternActivity : Activity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         window.attributes = window.attributes.apply {
             layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
-            // Ask for the highest refresh mode the display offers (the user can verify it in display.csv).
-            val modes = display?.supportedModes
+            // Ask for the highest refresh rate at the CURRENT resolution (never switch resolution mid-capture).
+            val cur = display?.mode
+            val modes = display?.supportedModes?.filter { cur == null || (it.physicalWidth == cur.physicalWidth && it.physicalHeight == cur.physicalHeight) }
             val best = modes?.maxByOrNull { it.refreshRate }
             if (best != null) { preferredDisplayModeId = best.modeId; preferredRefreshRate = best.refreshRate }
         }
@@ -67,22 +73,32 @@ class PatternActivity : Activity() {
         }
         display?.refreshRate?.let { if (it > 1f) periodNs = (1e9 / it).toLong() }
         if (Bench.config.cameraAck) Bench.flipSeenListener = { st -> view.post { view.ack = st; view.invalidate() } }
+        createdNs = System.nanoTime()
     }
 
     override fun onResume() {
         super.onResume()
-        startNs = 0L
+        paused = false
         schedule()
     }
 
     override fun onPause() {
         super.onPause()
-        finished = true
+        // Do NOT end the test here: a notification shade or a brief app switch used to freeze it forever,
+        // so the session never stopped and no result was ever produced.
+        paused = true
+    }
+
+    override fun onDestroy() {
+        // Closed before the timer (back button, task removed): still finish the session so a result is saved.
+        if (!ended) { ended = true; Bench.stopRequester?.invoke() }
         Bench.flipSeenListener = null
+        super.onDestroy()
     }
 
     private fun schedule() {
-        if (finished) return
+        if (ended || paused || callbackPending) return
+        callbackPending = true
         val ch = Choreographer.getInstance()
         if (Build.VERSION.SDK_INT >= 33) {
             ch.postVsyncCallback { data ->
@@ -94,9 +110,13 @@ class PatternActivity : Activity() {
     }
 
     private fun frame(frameTimeNs: Long, expectedPresentNs: Long) {
-        if (finished) return
+        callbackPending = false
+        if (ended || paused) return
         val cfg = Bench.config
         val s = Bench.session
+        // The capture service never came up (permission refused, start failure): say so instead of waiting silently.
+        view.warning = if ((s == null || !Bench.running) && System.nanoTime() - createdNs > 5_000_000_000L)
+            "캡처가 실행되지 않고 있습니다. 뒤로 가기를 눌러 앱 화면의 '결과' 칸을 확인하세요." else ""
         if (startNs == 0L) { startNs = frameTimeNs; nextFlipNs = frameTimeNs + 1_000_000_000L; nextTrialNs = frameTimeNs + 3_000_000_000L }
         val elapsedS = (frameTimeNs - startNs) / 1e9
         val idx = s?.display?.recordFrame(frameTimeNs, expectedPresentNs) ?: -1
@@ -163,8 +183,7 @@ class PatternActivity : Activity() {
     }
 
     private fun end() {
-        finished = true
-        Bench.stopRequester?.invoke()
+        if (!ended) { ended = true; Bench.stopRequester?.invoke() }
         finish()
     }
 }
@@ -176,6 +195,8 @@ class PatternView(ctx: Context, private val mode: Bench.Mode) : View(ctx) {
     @Volatile var blobX = 0.5f
     @Volatile var blobLift = 0f
     var status = ""
+    @Volatile var warning = ""
+    private val warnPaint = Paint().apply { color = Color.rgb(255, 120, 90); textSize = 40f; isAntiAlias = true }
     private val white = Paint().apply { color = Color.WHITE }
     private val black = Paint().apply { color = Color.BLACK }
     private val ackPaint = Paint().apply { color = Color.rgb(0, 255, 0) }
@@ -204,5 +225,6 @@ class PatternView(ctx: Context, private val mode: Bench.Mode) : View(ctx) {
         }
         // Status text only in LATENCY mode: in MOTION mode any changing text would itself be detected as motion.
         if (mode == Bench.Mode.LATENCY) canvas.drawText(status, 0.30f * w, 0.97f * h, text)
+        if (warning.isNotEmpty()) canvas.drawText(warning, 0.04f * w, 0.20f * h, warnPaint)
     }
 }

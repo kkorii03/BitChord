@@ -29,7 +29,11 @@ class MainActivity : Activity() {
     private lateinit var summary: TextView
     private lateinit var device: TextView
     private lateinit var cfgButtons: LinearLayout
+    private lateinit var scroll: ScrollView
+    private lateinit var resultBox: LinearLayout
     private var pendingMode = Bench.Mode.GAME
+    private var shownSummary = ""
+    private var crashText = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -43,6 +47,19 @@ class MainActivity : Activity() {
         root.addView(TextView(this).apply {
             text = "자동 블록 프로그램이 아니라, 화면 인식 방식이 블록 타이밍에 쓸 만큼 빠른지 수치로 확인하는 측정 앱입니다. 측정 중에는 화면에 아무것도 띄우지 않고, 종료 후 결과를 저장합니다."
         })
+
+        // Results first: after every test the user lands here and must not have to scroll to find them.
+        resultBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 20, 24, 20); setBackgroundColor(0x22FF8A4C) }
+        root.addView(resultBox, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = 24 })
+        resultBox.addView(TextView(this).apply { text = "상태 · 결과"; textSize = 18f; setTypeface(typeface, Typeface.BOLD) })
+        status = TextView(this).apply { typeface = Typeface.MONOSPACE; textSize = 13f }
+        resultBox.addView(status)
+        summary = TextView(this).apply { typeface = Typeface.MONOSPACE; textSize = 11f; setTextIsSelectable(true) }
+        resultBox.addView(summary)
+        resultBox.addView(Button(this).apply {
+            text = "결과 공유 (카톡·메모 등으로 보내기)"; isAllCaps = false
+            setOnClickListener { shareResult() }
+        }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
 
         title("Phase 0 · 기기 확인")
         device = TextView(this).apply { textSize = 12f; setTextIsSelectable(true) }
@@ -72,15 +89,15 @@ class MainActivity : Activity() {
             InGameTapTest.start(this, xIn.f(88f), yIn.f(70f), cIn.f(10f).toInt(), iIn.f(1500f).toLong(), dIn.f(8000f).toLong(), durIn.f(50f).toLong())
         }
 
-        title("실시간 상태")
-        status = TextView(this).apply { typeface = Typeface.MONOSPACE; textSize = 12f }
-        root.addView(status)
-        title("마지막 결과")
-        summary = TextView(this).apply { typeface = Typeface.MONOSPACE; textSize = 11f; setTextIsSelectable(true) }
-        root.addView(summary)
-
-        setContentView(ScrollView(this).apply { addView(root) })
+        scroll = ScrollView(this).apply { addView(root) }
+        setContentView(scroll)
         renderConfig()
+
+        val crash = App.crashFile(this)
+        if (crash.isFile) {
+            crashText = "!! 지난번 앱이 오류로 종료되었습니다. 이 내용을 '결과 공유'로 보내 주세요 !!\n\n" + crash.readText()
+            crash.renameTo(java.io.File(filesDir, "last_crash_seen.txt"))
+        }
     }
 
     private fun num(hint: String, def: String) = EditText(this).apply {
@@ -138,13 +155,30 @@ class MainActivity : Activity() {
     private val tick = object : Runnable {
         override fun run() {
             val s = Bench.session
-            status.text = if (Bench.running) "측정 중 (${Bench.config.mode.label})\n${Bench.liveText}"
-            else "대기 중" + (InGameTapTest.status.takeIf { it.isNotEmpty() }?.let { "\n$it" } ?: "") +
-                (s?.let { "\n최근 세션 캡처 ${it.captureW}x${it.captureH}" } ?: "")
-            val sum = Bench.lastSummary
-            if (sum.isNotEmpty() && summary.text.toString() != sum + "\n\n저장 위치: " + Bench.lastExportDir)
-                summary.text = sum + "\n\n저장 위치: " + Bench.lastExportDir
+            status.text = when {
+                Bench.running -> "● 측정 중 (${Bench.config.mode.label})\n${Bench.liveText}\n끝나면 알림의 '중지' 또는 아래 '세션 중지'."
+                Bench.saving -> "● 결과 저장 중… 몇 초만 기다리세요."
+                Bench.lastSummary.isNotEmpty() -> "✓ 마지막 시험 결과 (아래). 저장 위치: ${Bench.lastExportDir}"
+                else -> "대기 중. 아래 '시험' 버튼으로 시작하세요."
+            } + (InGameTapTest.status.takeIf { it.isNotEmpty() }?.let { "\n$it" } ?: "") +
+                (s?.takeIf { !Bench.running }?.let { "\n최근 세션 캡처 ${it.captureW}x${it.captureH}" } ?: "")
+            val text = listOf(crashText, Bench.lastSummary).filter { it.isNotEmpty() }.joinToString("\n\n")
+            if (text != shownSummary) {
+                shownSummary = text
+                summary.text = text
+                scroll.post { scroll.smoothScrollTo(0, resultBox.top) }
+            }
             main.postDelayed(this, 500)
+        }
+    }
+
+    private fun shareResult() {
+        val body = (if (shownSummary.isNotEmpty()) shownSummary else "아직 결과가 없습니다.\n" + status.text) +
+            "\n\n저장 위치: " + Bench.lastExportDir + "\n\n" + DeviceInfo.full(this)
+        try {
+            startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, body), "결과 공유"))
+        } catch (t: Throwable) {
+            status.text = "공유를 열 수 없습니다: $t"
         }
     }
 

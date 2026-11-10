@@ -160,6 +160,7 @@ class CaptureService : Service() {
         if (stopping) return
         stopping = true
         val session = Bench.session
+        if (Bench.running) Bench.saving = true
         Bench.running = false
         Bench.stopRequester = null
         Bench.flipSeenListener = null
@@ -177,7 +178,14 @@ class CaptureService : Service() {
         }
         io.execute {
             try { t?.join(3000) } catch (_: InterruptedException) {}
-            if (session != null) finish(session, reason)
+            try {
+                if (session != null) finish(session, reason)
+            } catch (t: Throwable) {
+                Log.e(TAG, "finish failed", t)
+                Bench.lastSummary = "결과 저장 중 오류: $t"
+            } finally {
+                Bench.saving = false
+            }
             main.post {
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()

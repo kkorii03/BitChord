@@ -56,6 +56,8 @@ object Bench {
     @Volatile var session: Session? = null
     @Volatile var running = false
     @Volatile var lastSummary: String = ""
+    /** True between "stop" and "results written" (a few seconds), so the UI can say so. */
+    @Volatile var saving = false
     @Volatile var lastExportDir: String = ""
 
     /** Live numbers for the control screen (written by the 1 Hz sampler). */
