@@ -419,13 +419,15 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         if (kind == "gather") synchronized(pendingTriggers) { pendingTriggers.add(tNs) }
         val live = cfg.shotBlock && cfg.autoBlockLive
         val detail = String.format(Locale.ROOT, "%s vy=%.2f vyPrev=%.2f vx=%.2f rise=%.3f flips=%d sens=%d", kind, vy, vyPrev, vx, rise, flips, cfg.shotSens)
-        if (shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_$kind", 1.6, 1.2) }
+        if (shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_$kind", 1.6, 1.4 + cfg.shotDelayMs / 1000.0) }
         if (!live) {
             shotSkipped++
             event(tNs, "would_press", 0f, 0f, 0f, detail)
             return
         }
-        val delay = cfg.shotDelayMs.toLong()
+        // The extra delay moves an early gather detection toward "ball raised overhead" (the user's best block moment, 11-10);
+        // a release detection is already late, so it presses at once.
+        val delay = if (kind == "gather") cfg.shotDelayMs.toLong() else 0L
         main.postDelayed({
             val ok = BlockAccessibilityService.instance?.inGame?.fireBlock("SHOT") ?: false
             if (ok) shotFired++ else shotSkipped++

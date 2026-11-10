@@ -143,7 +143,7 @@ class BlockerActivity : Activity() {
         }, rowLp(top = 10f, bottom = 14f))
         shotCard.addView(divider())
         shotCard.addView(text("감지 후 추가 지연", 17f, label), rowLp(top = 12f))
-        val shotDelays = listOf(0, 50, 100, 150, 200)
+        val shotDelays = listOf(0, 100, 200, 300, 500)
         shotCard.addView(segmented(shotDelays.map { "${it}ms" }, shotDelays.indexOf(Bench.config.shotDelayMs).coerceAtLeast(0)) { i ->
             Bench.config = Bench.config.copy(shotDelayMs = shotDelays[i]); saveSettings()
         }, rowLp(top = 10f, bottom = 14f))
