@@ -58,14 +58,14 @@ class ProxyProbeActivity : Activity() {
     // A
     private class TrialA(val n: Int, val dispatchNs: Long) { var padCancelled = false; var padMovesAfter = 0; var tapArrived = false; var verdict = "PENDING" }
     private val trialsA = ArrayList<TrialA>()
-    private val totalA = 6
+    private val totalA = 4
     // B
-    private class TrialB(val n: Int, val dispatchNs: Long) {
+    private class TrialB(val n: Int, val dispatchNs: Long, val variant: Int) {
         var tapArrived = false; var tapLatencyMs = Double.NaN; var stickCancelled = false; var padCancelled = false
         var stickGapMs = 0.0; var verdict = "PENDING"
     }
     private val trialsB = ArrayList<TrialB>()
-    private val totalB = 8
+    private val totalB = 12
     private var bStartNs = 0L
     private var bTapsScheduled = false
     // C
@@ -171,7 +171,7 @@ class ProxyProbeActivity : Activity() {
     private fun beginB() {
         phase = Phase.B
         runningA = false
-        view.message = "B단계: 손가락을 떼고 패드를 다시 누르세요. 이제 패드로 움직이면 왼쪽 위 파란 점(대리 조이스틱)이 따라옵니다.\n계속 원을 그리면 2초 뒤 블록 탭 ${totalB}번이 같이 들어갑니다."
+        view.message = "B단계: 손가락을 떼고 패드를 다시 누르세요. 이제 패드로 움직이면 왼쪽 위 파란 점(대리 조이스틱)이 따라옵니다.\n원을 그리다가 2초쯤 손가락을 멈추고 가만히 누르기를 반복하세요. 2초 뒤 블록 탭 ${totalB}번이 같이 들어갑니다."
         view.invalidate()
         if (padDown) startStick()
     }
@@ -196,11 +196,11 @@ class ProxyProbeActivity : Activity() {
             bTapsScheduled = false
             return
         }
-        val tr = TrialB(trialsB.size + 1, System.nanoTime())
+        val tr = TrialB(trialsB.size + 1, System.nanoTime(), trialsB.size % 3)
         trialsB.add(tr)
         val padCancelBefore = padCancelledAt
         val stickCancelBefore = view.stickCancels
-        p.tap(PointF(targetPt.x, targetPt.y))
+        p.tap(PointF(targetPt.x, targetPt.y), tr.variant)
         main.postDelayed({
             val down = view.targetDowns.firstOrNull { it >= tr.dispatchNs }
             tr.tapArrived = down != null
@@ -214,7 +214,7 @@ class ProxyProbeActivity : Activity() {
                 !tr.tapArrived -> "TAP_LOST"
                 else -> "BOTH_OK"
             }
-            view.message = "B단계 ${tr.n}/$totalB: ${tr.verdict} (탭 도착 ${if (tr.tapArrived) "%.1fms".format(tr.tapLatencyMs) else "없음"}, 조이스틱 최대 공백 ${"%.0f".format(tr.stickGapMs)}ms)"
+            view.message = "B단계 ${tr.n}/$totalB (탭 방식 ${tr.variant}): ${tr.verdict} (탭 도착 ${if (tr.tapArrived) "%.1fms".format(tr.tapLatencyMs) else "없음"}, 조이스틱 최대 공백 ${"%.0f".format(tr.stickGapMs)}ms)"
             view.invalidate()
             main.postDelayed({ nextB() }, 800)
         }, 400)
@@ -299,6 +299,12 @@ class ProxyProbeActivity : Activity() {
             appendLine()
             appendLine("[B] 대리 조이스틱 + 블록 탭을 한 제스처로 주입")
             appendLine("  시행 ${trialsB.size}: 둘 다 정상 $bOk ${trialsB.map { it.verdict }}")
+            for (v in 0..2) {
+                val tv = trialsB.filter { it.variant == v }
+                val name = arrayOf("점 탭 30ms", "2px 선 탭 30ms", "2px 선 탭 16ms(세그먼트와 같은 길이)")[v]
+                appendLine("  탭 방식 $v ($name): 도착 ${tv.count { it.tapArrived }}/${tv.size}, 조이스틱 끊김 ${tv.count { it.stickCancelled }}")
+            }
+            appendLine("  손가락 정지 구간에서 1px 흔들기로 보낸 세그먼트: ${proxy?.wiggles ?: 0}")
             appendLine("  블록 탭 도착 지연(요청→수신, 다음 세그먼트까지 대기 포함): ${Stats.summarize(tapLat).fmt("ms")}")
             appendLine("  탭 전후 대리 조이스틱 최대 이벤트 공백: ${Stats.summarize(trialsB.map { it.stickGapMs }.toDoubleArray()).fmt("ms")}")
             appendLine("  손가락 → 대리 조이스틱 추종 지연(상호상관 추정): ${if (lag.isNaN()) "데이터 부족" else "%.0fms (오차 RMS %.0fpx)".format(lag, rms)}")

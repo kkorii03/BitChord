@@ -116,6 +116,10 @@ class BlockAccessibilityService : AccessibilityService() {
         @Volatile var target: PointF? = null
         @Volatile private var ending = false
         @Volatile private var pendingTap: PointF? = null
+        @Volatile private var pendingVariant = 0
+        private var wiggle = 1f
+        /** Segments that would have been zero-length (finger still) and were sent as a 1 px wiggle instead. */
+        @Volatile var wiggles = 0; private set
         @Volatile var active = false; private set
         @Volatile var segments = 0; private set
         @Volatile var cancels = 0; private set
@@ -135,12 +139,20 @@ class BlockAccessibilityService : AccessibilityService() {
         }
 
         fun stop() { ending = true }
-        fun tap(p: PointF) { pendingTap = p }
+        /**
+         * Adds a block tap to the next segment. Variants (round 2 showed a single-point tap inside a continued
+         * gesture was cancelled at once; which form works is measured, not assumed):
+         *  0 = single point, [tapMs]   1 = 2 px line, [tapMs]   2 = 2 px line, same duration as the segment
+         */
+        fun tap(p: PointF, variant: Int = 1) { pendingVariant = variant; pendingTap = p }
 
         private fun tick() {
             if (!active) return
-            val t = target ?: return
-            val path = Path().apply { moveTo(last.x, last.y); if (t.x != last.x || t.y != last.y) lineTo(t.x, t.y) }
+            val t0 = target ?: return
+            // Round 2: zero-length continued segments (finger held still) were cancelled again and again.
+            // Never send one: when the finger is still, move 1 px back and forth around the target.
+            val t = if (t0.x == last.x && t0.y == last.y) { wiggles++; wiggle = -wiggle; PointF(t0.x + wiggle, t0.y) } else t0
+            val path = Path().apply { moveTo(last.x, last.y); lineTo(t.x, t.y) }
             val cont = !ending
             val s = try {
                 stroke?.continueStroke(path, 0, segmentMs, cont)
@@ -153,8 +165,10 @@ class BlockAccessibilityService : AccessibilityService() {
             val tp = pendingTap
             if (tp != null) {
                 pendingTap = null
-                b.addStroke(GestureDescription.StrokeDescription(Path().apply { moveTo(tp.x, tp.y) }, 0, tapMs))
-                log("tap_dispatch", System.nanoTime())
+                val v = pendingVariant
+                val tapPath = Path().apply { moveTo(tp.x, tp.y); if (v != 0) lineTo(tp.x + 2f, tp.y) }
+                b.addStroke(GestureDescription.StrokeDescription(tapPath, 0, if (v == 2) segmentMs else tapMs))
+                log("tap_dispatch_v$v", System.nanoTime())
             }
             stroke = s
             last = PointF(t.x, t.y)
