@@ -176,6 +176,9 @@ def analyze_session(d, warmup_s=5.0, labels_path=None):
             pl = [int(r["pat_luma"]) for r in rows]
             fl, late = [], []
             ptr = 0
+            lo, hi = min(valid), max(valid)
+            # only flips inside the analysed window (a flip during the discarded warm-up would pair with the first kept frame)
+            flips = [(fi, st) for fi, st in flips if lo < fi <= hi]
             for fi, st in flips:
                 while ptr < n and (idx[ptr] < 0 or idx[ptr] < fi):
                     ptr += 1

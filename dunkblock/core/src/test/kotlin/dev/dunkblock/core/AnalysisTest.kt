@@ -111,4 +111,26 @@ class AnalysisTest {
         // arrival(101) - expectedPresent(100) = 15 ms
         assertEquals(15.0, r.flipLatencyMs.median, 0.01)
     }
+
+    @Test fun flipsBeforeTheAnalysedWindowAreIgnored() {
+        val disp = DisplayLog(2000)
+        val t0 = 1_000_000_000L
+        for (i in 0 until 1000) disp.recordFrame(t0 + i * period, t0 + i * period + period)
+        disp.recordFlip(50, 1)   // during warm-up (first second is discarded)
+        disp.recordFlip(600, 0)
+        val log = FrameLog(1000)
+        for (i in 0 until 1000) {
+            val s = log.next()
+            log.arrivalNs[s] = t0 + i * period + 15_000_000L
+            log.imageTsNs[s] = log.arrivalNs[s] - 3_000_000L
+            log.counter[s] = i
+            log.patLuma[s] = if (i in 50 until 600) 255 else 0
+            log.meanLuma100[s] = 5000; log.burst[s] = 1
+            log.commit()
+        }
+        val r = CaptureAnalysis.analyze(log, warmupSec = 1.0, display = disp).latency!!
+        assertEquals(1, r.flipsDisplayed)
+        assertEquals(1, r.flipsCaptured)
+        assertEquals(0.0, r.flipRefreshesLate.max, 1e-9)
+    }
 }

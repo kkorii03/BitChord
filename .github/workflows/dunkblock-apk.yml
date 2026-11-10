@@ -36,6 +36,11 @@ jobs:
       - name: Analyzer self-test (Python, stdlib only)
         run: python3 tools/analyze.py --self-test
 
+      - name: Cross-check Kotlin summary vs Python recomputation (same synthetic CSVs)
+        run: |
+          grep -E "캡처 비율|예상 프레젠테이션|색상 전환" core/build/crosscheck/session/summary.txt
+          python3 tools/analyze.py core/build/crosscheck/session --warmup 1.0 | grep -E "캡처 비율|예상 표시|색상 전환"
+
       - name: Build benchmark APK (release = non-debuggable, debug-signed)
         run: ./gradlew --no-daemon :app:assembleRelease --stacktrace
 

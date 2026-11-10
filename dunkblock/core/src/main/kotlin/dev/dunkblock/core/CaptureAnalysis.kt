@@ -240,14 +240,17 @@ object CaptureAnalysis {
             toStart.add((arr - d.frameTimeNs[u]) / 1e6)
             if (e < 0) neg++
         }
-        // colour flips
+        // colour flips — only those inside the analysed window [first, last captured display index];
+        // a flip from the discarded warm-up would otherwise pair with the first analysed frame.
         val lat = ArrayList<Double>()
         val late = ArrayList<Double>()
         var flipsDisp = 0
         var p = 0
+        var firstIdx = Int.MAX_VALUE; var lastIdx = -1
+        for (u in idx) if (u >= 0) { if (u < firstIdx) firstIdx = u; if (u > lastIdx) lastIdx = u }
         for (fi in 0 until d.size) {
             val st = d.flipState[fi].toInt()
-            if (st < 0) continue
+            if (st < 0 || fi <= firstIdx || fi > lastIdx) continue
             flipsDisp++
             while (p < n && (idx[p] < 0 || idx[p] < fi)) p++
             var q = p
