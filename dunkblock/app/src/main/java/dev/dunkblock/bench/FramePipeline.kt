@@ -59,7 +59,7 @@ class FramePipeline(
     val auto: AutoBlocker? = if (session.config.mode == Bench.Mode.GAME && session.config.autoBlock)
         AutoBlocker(session.config, session.startedNs) else null
     /** GAME mode: offence/defence + opponent ball disc tracking for regular-shot blocking (data only for now). */
-    val shot: ShotWatcher? = if (session.config.mode == Bench.Mode.GAME) ShotWatcher(session.startedNs) else null
+    val shot: ShotWatcher? = if (session.config.mode == Bench.Mode.GAME) ShotWatcher(session.startedNs, io, File(evidenceDir.parentFile, "colour")) else null
     /** GAME mode: user's own block presses → 60 fps clips (timing data). */
     val clipper: PressClipper? = if (session.config.mode == Bench.Mode.GAME)
         PressClipper(session.config, io, File(evidenceDir.parentFile, "clips"), session.startedNs) else null
@@ -78,7 +78,13 @@ class FramePipeline(
         })
         session.detector = detector
         val cl = clipper
-        Bench.clipRequester = if (cl != null) { tag, before, after -> cl.request(tag, System.nanoTime(), before, after) } else null
+        val sw = shot
+        Bench.clipRequester = if (cl != null) { tag, before, after ->
+            val now = System.nanoTime()
+            cl.request(tag, now, before, after)
+            // Colour crops around the ball for everything except block-slot changes (too frequent for the budget).
+            if (sw != null && !tag.startsWith("press")) sw.requestColour(tag, now, minOf(before, 3.1), after)
+        } else null
     }
 
     override fun onImageAvailable(reader: ImageReader) {

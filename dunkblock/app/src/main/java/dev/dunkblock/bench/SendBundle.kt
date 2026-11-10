@@ -30,6 +30,8 @@ object SendBundle {
         f.name in setOf("presses.csv", "clips.csv", "autoblock.csv", "shot_events.csv") -> 1
         f.name == "shot.csv" -> 2
         f.name == "ingame_proxy_events.csv" -> 4
+        f.name == "crops.csv" -> 2
+        f.name.endsWith(".jpg") && f.parentFile?.name?.startsWith("colour_") == true -> 5   // full-res colour around the ball
         f.name.endsWith(".jpg") && f.parentFile?.name == "frames" -> 5   // colour game screens (thinned to 60 per session)
         f.name.endsWith(".jpg") -> 6                                      // clip frames
         f.name.endsWith(".png") -> 7
