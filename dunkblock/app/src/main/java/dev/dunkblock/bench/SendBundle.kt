@@ -4,7 +4,6 @@ import android.content.ContentValues
 import android.content.Context
 import android.os.Environment
 import android.provider.MediaStore
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -14,12 +13,15 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 /**
- * Builds ONE zip small enough to attach to a chat (budget below the 30 MB attachment limit).
+ * Builds up to [MAX_PARTS] zips, each small enough to attach to a chat (below the 30 MB attachment limit).
  * Files go in by priority: summaries first, then small CSVs, then the per-frame logs, then a few
  * evidence images. Whatever does not fit is listed in MANIFEST.txt instead of silently disappearing.
  */
 object SendBundle {
     private const val BUDGET = 25L * 1024 * 1024
+    /** Up to this many zips, each under [BUDGET], attached one by one. */
+    private const val MAX_PARTS = 4
+    private const val MANIFEST_RESERVE = 256L * 1024
 
     private fun priority(f: File): Int = when {
         f.name.endsWith(".txt") -> 0
@@ -56,53 +58,79 @@ object SendBundle {
                 sorted.filter { it !in keep }.forEach { thin.add(it) }
             }
         }
-        val included = ArrayList<String>()
+        // Pass 1: assign each file to the first part (zip) it still fits in. A chat attachment is limited to 30 MB,
+        // so each part stays under BUDGET and the user attaches the parts one by one (11-10 user request).
         val skipped = ArrayList<String>()
-        val zipBytes = ByteArrayOutputStream()
-        var used = 0L
-        ZipOutputStream(zipBytes).use { zip ->
-            zip.setLevel(Deflater.BEST_COMPRESSION)
-            for (f in ordered) {
-                val rel = if (f.startsWith(root)) f.relativeTo(root).path else "app/${f.name}"
-                if (f in thin) continue
-                if (f.name.endsWith(".png") && images >= 12) { skipped.add("$rel (증거 이미지 12장 초과)"); continue }
-                val raw = f.readBytes()
-                val est = compressedSize(raw, f.name.endsWith(".png") || f.name.endsWith(".jpg"))
-                if (used + est + 4096 > BUDGET) { skipped.add("$rel (용량 초과, ${raw.size / 1024} KB)"); continue }
-                zip.putNextEntry(ZipEntry(rel))
-                zip.write(raw)
-                zip.closeEntry()
-                used += est + 200
-                included.add(rel)
-                if (f.name.endsWith(".png")) images++
+        val parts = ArrayList<ArrayList<Pair<File, String>>>()
+        val partUsed = ArrayList<Long>()
+        for (f in ordered) {
+            val rel = if (f.startsWith(root)) f.relativeTo(root).path else "app/${f.name}"
+            if (f in thin) continue
+            if (f.name.endsWith(".png") && images >= 12) { skipped.add("$rel (증거 이미지 12장 초과)"); continue }
+            val est = if (f.name.endsWith(".png") || f.name.endsWith(".jpg")) f.length() else compressedSize(f.readBytes(), false)
+            var p = partUsed.indexOfFirst { it + est + 4096 <= BUDGET - MANIFEST_RESERVE }
+            if (p < 0 && parts.size < MAX_PARTS && est + 4096 <= BUDGET - MANIFEST_RESERVE) {
+                parts.add(ArrayList()); partUsed.add(0L); p = parts.size - 1
             }
-            zip.putNextEntry(ZipEntry("MANIFEST.txt"))
-            zip.write(buildString {
-                appendLine("DunkBlock 전송용 묶음")
-                appendLine(DeviceInfo.short(ctx))
-                if (thin.isNotEmpty()) appendLine("경기 화면 사진은 세션당 60장만 골라 담음(제외 ${thin.size}장)")
-                appendLine("포함 ${included.size}개:")
-                included.forEach { appendLine("  $it") }
-                if (skipped.isNotEmpty()) {
-                    appendLine("용량 때문에 뺀 파일 ${skipped.size}개 (폰의 Download/DunkBlock 에는 남아 있음):")
-                    skipped.forEach { appendLine("  $it") }
-                }
-            }.toByteArray())
-            zip.closeEntry()
+            if (p < 0) { skipped.add("$rel (용량 초과, ${f.length() / 1024} KB)"); continue }
+            parts[p].add(f to rel)
+            partUsed[p] = partUsed[p] + est + 200
+            if (f.name.endsWith(".png")) images++
         }
+        if (parts.isEmpty()) return "보낼 결과가 없습니다."
         val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.ROOT).format(Date())
-        val name = "DunkBlock_send_$stamp.zip"
-        val values = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
-            put(MediaStore.MediaColumns.MIME_TYPE, "application/zip")
-            put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/DunkBlock")
+        val n = parts.size
+        val names = (1..n).map { if (n == 1) "DunkBlock_send_$stamp.zip" else "DunkBlock_send_${stamp}_${it}of$n.zip" }
+        val manifest = buildString {
+            appendLine("DunkBlock 전송용 묶음 (${n}개 파일로 나눔)")
+            appendLine(DeviceInfo.short(ctx))
+            if (thin.isNotEmpty()) appendLine("경기 화면 사진은 세션당 60장만 골라 담음(제외 ${thin.size}장)")
+            parts.forEachIndexed { i, list ->
+                appendLine("${names[i]}: ${list.size}개")
+                list.forEach { appendLine("  ${it.second}") }
+            }
+            if (skipped.isNotEmpty()) {
+                appendLine("용량 때문에 뺀 파일 ${skipped.size}개 (폰의 앱 폴더에는 남아 있음):")
+                skipped.forEach { appendLine("  $it") }
+            }
+        }.toByteArray()
+        // Pass 2: write each part straight to Download/DunkBlock (no whole-zip copy in memory).
+        var totalMb = 0.0
+        var written = 0
+        parts.forEachIndexed { i, list ->
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, names[i])
+                put(MediaStore.MediaColumns.MIME_TYPE, "application/zip")
+                put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/DunkBlock")
+            }
+            val uri = ctx.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                ?: return "전송용 묶음 저장 실패 (${i + 1}/$n)"
+            val counter = CountingStream(ctx.contentResolver.openOutputStream(uri) ?: return "전송용 묶음 저장 실패 (${i + 1}/$n)")
+            ZipOutputStream(counter).use { zip ->
+                zip.setLevel(Deflater.BEST_COMPRESSION)
+                for ((f, rel) in list) {
+                    zip.putNextEntry(ZipEntry(rel))
+                    f.inputStream().use { it.copyTo(zip) }
+                    zip.closeEntry()
+                    written++
+                }
+                zip.putNextEntry(ZipEntry(if (i == 0) "MANIFEST.txt" else "MANIFEST_${i + 1}of$n.txt"))
+                zip.write(manifest)
+                zip.closeEntry()
+            }
+            totalMb += counter.count / (1024.0 * 1024.0)
         }
-        val uri = ctx.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-            ?: return "전송용 묶음 저장 실패"
-        ctx.contentResolver.openOutputStream(uri)!!.use { it.write(zipBytes.toByteArray()) }
-        val mb = zipBytes.size() / (1024.0 * 1024.0)
-        return String.format(Locale.ROOT, "전송용 묶음 완료: Download/DunkBlock/%s (%.1f MB, 파일 %d개%s)", name, mb, included.size,
+        val list = if (n == 1) names[0] else "${names[0]} 외 ${n - 1}개 (_1of$n ~ _${n}of$n, 전부 첨부)"
+        return String.format(Locale.ROOT, "전송용 묶음 완료: Download/DunkBlock/%s (합계 %.1f MB, 파일 %d개%s)", list, totalMb, written,
             if (skipped.isNotEmpty()) ", 용량 때문에 ${skipped.size}개 제외 — MANIFEST.txt 참고" else "")
+    }
+
+    private class CountingStream(private val out: java.io.OutputStream) : java.io.OutputStream() {
+        var count = 0L; private set
+        override fun write(b: Int) { out.write(b); count++ }
+        override fun write(b: ByteArray, off: Int, len: Int) { out.write(b, off, len); count += len }
+        override fun flush() = out.flush()
+        override fun close() = out.close()
     }
 
     private fun compressedSize(raw: ByteArray, alreadyCompressed: Boolean): Long {

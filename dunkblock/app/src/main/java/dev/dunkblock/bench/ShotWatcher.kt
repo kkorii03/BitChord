@@ -165,6 +165,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
     private var lastCx = -1; private var lastCy = -1; private var lastSeenNs = 0L
     private val colourReqs = ConcurrentLinkedQueue<ColourReq>()
     private val colourJobs = ArrayList<ColourReq>()
+    private val colourAccepted = HashMap<String, Int>()
     @Volatile var colourClips = 0; private set
 
     /** Any thread: save the colour crops from [beforeS] before now to [afterS] after now. */
@@ -202,7 +203,10 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         }
         while (true) {
             val r = colourReqs.poll() ?: break
-            if (colourClips + colourJobs.size < MAX_COLOUR_CLIPS) colourJobs.add(r)
+            val g = PressClipper.clipGroup(r.tag)
+            val used = colourAccepted[g] ?: 0
+            val cap = if (g == "other") MAX_COLOUR_CLIPS else 3
+            if (colourClips + colourJobs.size < MAX_COLOUR_CLIPS && used < cap) { colourAccepted[g] = used + 1; colourJobs.add(r) }
         }
         val it = colourJobs.iterator()
         while (it.hasNext()) {
@@ -472,7 +476,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         const val FOUND_FILL = 0.45f
         /** screen-heights per second; set from data later. */
         const val FAST_SPEED = 0.9f
-        const val MAX_SHOT_CLIPS = 12
+        const val MAX_SHOT_CLIPS = 24
         const val MAX_COLOUR_CLIPS = 20
         const val MAX_LOG_LINES = 120_000
         /** per sensitivity 0 (fewer presses) .. 2 (more): min upward speed (H/s), min speed-up vs the 200 ms before (H/s), min rise (H). */

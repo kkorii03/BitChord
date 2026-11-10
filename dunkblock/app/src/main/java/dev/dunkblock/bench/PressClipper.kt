@@ -53,6 +53,7 @@ class PressClipper(
     val pressLog = StringBuilder("t_ns,t_s,luma,baseline,delta\n")
     val clipLog = StringBuilder("clip,tag,event_t_ns,event_t_s,frames,folder\n")
     private val tagCount = HashMap<String, Int>()
+    private val accepted = HashMap<String, Int>()
 
     /** Any thread. [tNs] = System.nanoTime() of the event. */
     fun request(tag: String, tNs: Long, beforeS: Double, afterS: Double) {
@@ -75,7 +76,10 @@ class PressClipper(
             if (filled < ringN) filled++
             while (true) {
                 val r = requests.poll() ?: break
-                if (clips + jobs.size < MAX_CLIPS) jobs.add(r)
+                // Per-kind quota so practice-mode ult clips cannot use up the budget before the match (11-10 bundle).
+                val g = clipGroup(r.tag)
+                val used = accepted[g] ?: 0
+                if (clips + jobs.size < MAX_CLIPS && used < groupCap(g)) { accepted[g] = used + 1; jobs.add(r) }
             }
             val it = jobs.iterator()
             while (it.hasNext()) {
@@ -167,6 +171,13 @@ class PressClipper(
 
     companion object {
         const val PRESS_THR = 12f
-        const val MAX_CLIPS = 30
+        const val MAX_CLIPS = 40
+        /** "ult" / "press" / everything else (mark, shot, trig): each kind has its own share of [MAX_CLIPS]. */
+        fun clipGroup(tag: String): String = when {
+            tag.startsWith("ult") -> "ult"
+            tag.startsWith("press") -> "press"
+            else -> "other"
+        }
+        fun groupCap(g: String): Int = when (g) { "ult" -> 6; "press" -> 8; else -> MAX_CLIPS }
     }
 }

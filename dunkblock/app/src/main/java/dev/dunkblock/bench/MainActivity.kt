@@ -69,7 +69,7 @@ class MainActivity : Activity() {
             setOnClickListener { shareResult() }
         }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         resultBox.addView(Button(this).apply {
-            text = "전송용 묶음 만들기 (모든 결과 → 25MB 이하 zip 1개)"; isAllCaps = false
+            text = "전송용 묶음 만들기 (모든 결과 → 25MB 이하 zip 최대 4개)"; isAllCaps = false
             setOnClickListener {
                 if (Bench.running || Bench.saving) { bundleMsg = "측정이 끝난 뒤에 눌러 주세요."; return@setOnClickListener }
                 bundleMsg = "전송용 묶음 만드는 중…"
