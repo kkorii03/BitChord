@@ -86,6 +86,7 @@ class MainActivity : Activity() {
         button("② 지연·FPS 패턴 시험 (${Bench.config.patternSeconds}초, 자동 종료)") { requestCapture(Bench.Mode.LATENCY) }
         button("③ 합성 모션 검출 시험 (정답 대비 지연·페이크 오탐)") { requestCapture(Bench.Mode.MOTION) }
         button("④ 수동 조이스틱 + 자동 탭 충돌 시험") { startActivity(Intent(this, TouchProbeActivity::class.java)) }
+        button("⑥ 대리 조이스틱 시험 (④ 실패 시 대안 확인, 약 3분)") { startActivity(Intent(this, ProxyProbeActivity::class.java)) }
         button("세션 중지") { if (Bench.running) CaptureService.stop(this) }
         button("접근성 설정 열기 (④·⑤에 필요)") { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
 
