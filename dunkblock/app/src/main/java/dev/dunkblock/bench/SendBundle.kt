@@ -27,11 +27,12 @@ object SendBundle {
         f.name == "display.csv" -> 2
         f.name == "frames.csv" -> 3
         f.name == "touch_events.csv" -> 4
-        f.name == "presses.csv" -> 1
-        f.name.endsWith(".jpg") && f.path.contains("/clips/") -> 5
-        f.name.endsWith(".jpg") -> 6
-        f.name.endsWith(".png") -> 6
-        else -> 7
+        f.name in setOf("presses.csv", "clips.csv", "autoblock.csv") -> 1
+        f.name == "ingame_proxy_events.csv" -> 4
+        f.name.endsWith(".jpg") && f.parentFile?.name == "frames" -> 5   // colour game screens (thinned to 60 per session)
+        f.name.endsWith(".jpg") -> 6                                      // clip frames
+        f.name.endsWith(".png") -> 7
+        else -> 8
     }
 
     /** Returns a human-readable result line. Runs on a background thread. */
@@ -43,6 +44,15 @@ object SendBundle {
         // Newest sessions first inside each priority; at most 12 evidence images overall.
         val ordered = files.sortedWith(compareBy<File>({ priority(it) }, { -(it.parentFile?.lastModified() ?: 0L) }, { it.path }))
         var images = 0
+        // Colour screen samples: keep 60 evenly spaced per session so clips still fit.
+        val thin = HashSet<File>()
+        files.filter { it.name.endsWith(".jpg") && it.parentFile?.name == "frames" }.groupBy { it.parentFile }.forEach { (_, list) ->
+            val sorted = list.sortedBy { it.name }
+            if (sorted.size > 60) {
+                val keep = (0 until 60).map { sorted[it * sorted.size / 60] }.toSet()
+                sorted.filter { it !in keep }.forEach { thin.add(it) }
+            }
+        }
         val included = ArrayList<String>()
         val skipped = ArrayList<String>()
         val zipBytes = ByteArrayOutputStream()
@@ -51,6 +61,7 @@ object SendBundle {
             zip.setLevel(Deflater.BEST_COMPRESSION)
             for (f in ordered) {
                 val rel = if (f.startsWith(root)) f.relativeTo(root).path else "app/${f.name}"
+                if (f in thin) continue
                 if (f.name.endsWith(".png") && images >= 12) { skipped.add("$rel (증거 이미지 12장 초과)"); continue }
                 val raw = f.readBytes()
                 val est = compressedSize(raw, f.name.endsWith(".png") || f.name.endsWith(".jpg"))
@@ -66,6 +77,7 @@ object SendBundle {
             zip.write(buildString {
                 appendLine("DunkBlock 전송용 묶음")
                 appendLine(DeviceInfo.short(ctx))
+                if (thin.isNotEmpty()) appendLine("경기 화면 사진은 세션당 60장만 골라 담음(제외 ${thin.size}장)")
                 appendLine("포함 ${included.size}개:")
                 included.forEach { appendLine("  $it") }
                 if (skipped.isNotEmpty()) {

@@ -75,6 +75,8 @@ class FramePipeline(
             override fun onFinalized(e: AttackEvent) { session.lastEvent = e }
         })
         session.detector = detector
+        val cl = clipper
+        Bench.clipRequester = if (cl != null) { tag, before, after -> cl.request(tag, System.nanoTime(), before, after) } else null
     }
 
     override fun onImageAvailable(reader: ImageReader) {
@@ -346,7 +348,7 @@ class FramePipeline(
         }
     }
 
-    fun release() { primary?.release(); alt?.release() }
+    fun release() { Bench.clipRequester = null; primary?.release(); alt?.release() }
 
     companion object {
         private const val TAG = "DunkBlockPipeline"

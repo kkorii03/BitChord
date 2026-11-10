@@ -78,6 +78,8 @@ object Bench {
     @Volatile var autoReport: String = ""
     /** One-line live state of the auto-blocker for the UI. */
     @Volatile var autoLive: String = ""
+    /** Ask the running capture session to save a clip around now: (tag, secondsBefore, secondsAfter). Null when not capturing. */
+    @Volatile var clipRequester: ((String, Double, Double) -> Unit)? = null
     @Volatile var lastExportDir: String = ""
 
     /** Live numbers for the control screen (written by the 1 Hz sampler). */

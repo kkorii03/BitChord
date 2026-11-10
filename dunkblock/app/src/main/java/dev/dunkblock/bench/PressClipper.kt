@@ -7,17 +7,21 @@ import java.io.File
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.util.Locale
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.ExecutorService
 import kotlin.math.abs
 import kotlin.math.max
 
 /**
- * GAME mode helper for learning BLOCK TIMING from the user's own play (no input is ever injected here):
- *  - watches a small box on the game's block button (position from the ⑦ calibration) every frame;
- *    a sudden change in its brightness is taken as "the user pressed block" (verified offline: the per-frame
- *    value is logged as block_roi_luma_x100),
- *  - keeps a ring of 480-px grayscale frames at ~60 fps; on a press it saves 1.5 s before to 0.5 s after as
- *    JPEGs, so each clip shows the shooter's motion leading up to the press and whether the block worked.
+ * GAME-mode recorder for learning block timing. No input is injected here.
+ *  - Keeps a 4 s ring of 640-px grayscale frames at ~60 fps.
+ *  - Saves a clip (JPEG frames named by their time relative to the event) when asked:
+ *      "press" : the block button box visibly changed (the user's or the app's press), 1.5 s before .. 0.5 s after
+ *      "ult"   : AutoBlocker saw the ultimate darkening, 1.0 s before .. 2.6 s after (the game's "블록" label shows up ~1.2 s later)
+ *      "mark"  : the user tapped the on-screen 기록 button, 3.4 s before .. 0.4 s after
+ *    Frames within -0.8..+1.0 s of the event are kept at full rate, the rest at half rate.
+ *  - Logs every detected press and every clip in presses.csv / clips.csv.
+ * The per-frame button-box luma is returned to the caller and logged as block_roi_luma_x100.
  */
 class PressClipper(
     private val cfg: Bench.Config,
@@ -25,12 +29,14 @@ class PressClipper(
     private val dir: File,
     private val startedNs: Long,
 ) {
-    private val clipW = 480
+    private class Req(val tNs: Long, val tag: String, val beforeNs: Long, val afterNs: Long)
+
+    private val clipW = 640
     private var clipH = 0
     private var colOff = IntArray(0)
     private var rowOff = IntArray(0)
     private var mapKey = 0L
-    private val ringN = 150
+    private val ringN = 244
     private var ring: Array<ByteArray> = emptyArray()
     private val ringT = LongArray(ringN)
     private var pos = 0
@@ -42,9 +48,18 @@ class PressClipper(
     private var lastPressNs = 0L
     @Volatile var presses = 0; private set
     @Volatile var clips = 0; private set
-    private var clipEndNs = 0L
-    private var clipPressNs = 0L
-    val pressLog = StringBuilder("t_ns,t_s,luma,baseline,delta,clip\n")
+    private val requests = ConcurrentLinkedQueue<Req>()
+    private val jobs = ArrayList<Req>()
+    val pressLog = StringBuilder("t_ns,t_s,luma,baseline,delta\n")
+    val clipLog = StringBuilder("clip,tag,event_t_ns,event_t_s,frames,folder\n")
+    private val tagCount = HashMap<String, Int>()
+
+    /** Any thread. [tNs] = System.nanoTime() of the event. */
+    fun request(tag: String, tNs: Long, beforeS: Double, afterS: Double) {
+        requests.add(Req(tNs, tag, (beforeS * 1e9).toLong(), (afterS * 1e9).toLong()))
+    }
+
+    fun countsText(): String = synchronized(tagCount) { tagCount.entries.joinToString(", ") { "${it.key} ${it.value}" }.ifEmpty { "없음" } }
 
     /** Returns the block-button box luma x100, or -1 when not applicable (portrait). Capture thread only. */
     fun onFrame(buf: ByteBuffer, w: Int, h: Int, rowStride: Int, pixelStride: Int, tNs: Long): Int {
@@ -58,7 +73,15 @@ class PressClipper(
             ringT[pos] = tNs
             pos = (pos + 1) % ringN
             if (filled < ringN) filled++
-            if (clipEndNs != 0L && tNs >= clipEndNs) { saveClip(clipPressNs); clipEndNs = 0L }
+            while (true) {
+                val r = requests.poll() ?: break
+                if (clips + jobs.size < MAX_CLIPS) jobs.add(r)
+            }
+            val it = jobs.iterator()
+            while (it.hasNext()) {
+                val j = it.next()
+                if (tNs >= j.tNs + j.afterNs) { it.remove(); saveClip(j) }
+            }
         }
         return (luma * 100).toInt()
     }
@@ -85,10 +108,8 @@ class PressClipper(
             pressed = true
             lastPressNs = tNs
             presses++
-            val startClip = cfg.pressClips && clipEndNs == 0L && clips < MAX_CLIPS && filled > 30
-            if (startClip) { clipPressNs = tNs; clipEndNs = tNs + 500_000_000L }
-            pressLog.append(tNs).append(',').append(String.format(Locale.ROOT, "%.3f,%.1f,%.1f,%.1f,%d\n",
-                (tNs - startedNs) / 1e9, l, base, d, if (startClip) clips + 1 else 0))
+            request("press", tNs, 1.5, 0.5)
+            pressLog.append(tNs).append(',').append(String.format(Locale.ROOT, "%.3f,%.1f,%.1f,%.1f\n", (tNs - startedNs) / 1e9, l, base, d))
         } else if (pressed && abs(d) < PRESS_THR / 2) {
             pressed = false
         }
@@ -106,27 +127,35 @@ class PressClipper(
         pos = 0; filled = 0
     }
 
-    private fun saveClip(pressNs: Long) {
+    private fun saveClip(j: Req) {
         clips++
         val n = clips
+        synchronized(tagCount) { tagCount[j.tag] = (tagCount[j.tag] ?: 0) + 1 }
         val frames = ArrayList<Pair<Long, ByteArray>>()
+        var k = 0
         for (i in 0 until filled) {
             val idx = (pos - filled + i + ringN) % ringN
             val t = ringT[idx]
-            if (t >= pressNs - 1_500_000_000L && t <= pressNs + 500_000_000L) frames.add(t to ring[idx].copyOf())
+            if (t < j.tNs - j.beforeNs || t > j.tNs + j.afterNs) continue
+            val near = t >= j.tNs - 800_000_000L && t <= j.tNs + 1_000_000_000L
+            if (near || k % 2 == 0) frames.add(t to ring[idx].copyOf())
+            k++
         }
         val cw = clipW; val ch = clipH
-        val pressAt = (pressNs - startedNs) / 1e9
+        val at = (j.tNs - startedNs) / 1e9
+        val folder = String.format(Locale.ROOT, "clip_%02d_%s_%06.1fs", n, j.tag, at)
+        clipLog.append(n).append(',').append(j.tag).append(',').append(j.tNs).append(',')
+            .append(String.format(Locale.ROOT, "%.3f", at)).append(',').append(frames.size).append(',').append(folder).append('\n')
         io.execute {
             try {
-                val d = File(dir, String.format(Locale.ROOT, "clip_%02d_%06.1fs", n, pressAt)).apply { mkdirs() }
+                val d = File(dir, folder).apply { mkdirs() }
                 val px = IntArray(cw * ch)
                 for ((i, fr) in frames.withIndex()) {
                     val (t, g) = fr
-                    for (j in px.indices) { val v = g[j].toInt() and 0xFF; px[j] = (0xFF shl 24) or (v shl 16) or (v shl 8) or v }
+                    for (q in px.indices) { val v = g[q].toInt() and 0xFF; px[q] = (0xFF shl 24) or (v shl 16) or (v shl 8) or v }
                     val bmp = Bitmap.createBitmap(px, cw, ch, Bitmap.Config.ARGB_8888)
-                    val rel = (t - pressNs) / 1e6
-                    FileOutputStream(File(d, String.format(Locale.ROOT, "f%03d_%+06.1fms.jpg", i, rel))).use { bmp.compress(Bitmap.CompressFormat.JPEG, 75, it) }
+                    val rel = (t - j.tNs) / 1e6
+                    FileOutputStream(File(d, String.format(Locale.ROOT, "f%03d_%+07.1fms.jpg", i, rel))).use { bmp.compress(Bitmap.CompressFormat.JPEG, 65, it) }
                     bmp.recycle()
                 }
             } catch (t: Throwable) {
@@ -137,6 +166,6 @@ class PressClipper(
 
     companion object {
         const val PRESS_THR = 12f
-        const val MAX_CLIPS = 15
+        const val MAX_CLIPS = 30
     }
 }

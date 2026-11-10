@@ -214,7 +214,7 @@ class CaptureService : Service() {
                 appendLine("  일반 슛·덩크·레이업은 이 초안의 대상이 아닙니다. 블록 성공 여부는 앱이 판정하지 못합니다(clips/ 확인).")
                 if (Bench.autoReport.isNotEmpty()) append(Bench.autoReport)
             }
-            p?.clipper?.let { appendLine("블록 버튼 누름 감지 ${it.presses}회, 저장한 60fps 클립 ${it.clips}개 (블록 버튼 위치 ${session.config.blockFx}, ${session.config.blockFy})") }
+            p?.clipper?.let { appendLine("블록 버튼 변화 감지 ${it.presses}회, 저장한 클립 ${it.clips}개 [${it.countsText()}] (블록 버튼 위치 ${session.config.blockFx}, ${session.config.blockFy})") }
             appendLine("-- 메모 --")
             append(synchronized(session.notes) { session.notes.toString() })
         }
@@ -230,7 +230,10 @@ class CaptureService : Service() {
             File(sessionDir, "seconds.csv").bufferedWriter().use { Csv.seconds(session.seconds.toList(), it) }
             session.display?.let { d -> File(sessionDir, "display.csv").bufferedWriter().use { Csv.display(d, it) } }
             if (truth.isNotEmpty()) File(sessionDir, "truth.csv").bufferedWriter().use { TruthMatcher.csv(truth, it) }
-            p?.clipper?.let { c -> File(sessionDir, "presses.csv").writeText(c.pressLog.toString()) }
+            p?.clipper?.let { c ->
+                File(sessionDir, "presses.csv").writeText(c.pressLog.toString())
+                File(sessionDir, "clips.csv").writeText(c.clipLog.toString())
+            }
             p?.auto?.let { a -> File(sessionDir, "autoblock.csv").writeText(a.csv()) }
             File(sessionDir, "device.txt").writeText(DeviceInfo.full(this))
         } catch (t: Throwable) {

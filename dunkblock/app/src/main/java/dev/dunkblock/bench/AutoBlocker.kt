@@ -50,6 +50,7 @@ class AutoBlocker(private val cfg: Bench.Config, private val startedNs: Long) {
                     lastTriggerNs = tNs
                     triggers++
                     rec(tNs, "ult_dark_detected", l, "delay_ms=${cfg.ultDelayMs}")
+                    Bench.clipRequester?.invoke("ult", 1.0, 2.6)
                     live()
                     main.postDelayed({ fire() }, cfg.ultDelayMs.toLong())
                 }

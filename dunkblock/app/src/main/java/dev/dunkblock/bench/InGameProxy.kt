@@ -30,6 +30,26 @@ import kotlin.math.min
  */
 class InGameProxy(private val svc: BlockAccessibilityService, private val autoMode: Boolean = false) {
     private var skippedFires = 0
+    private var markBubble: TextView? = null
+    private var marks = 0
+
+    /** ⑧: a second small button. Tapping it saves the last 3.4 s as a clip ("that should have been blocked"). */
+    private fun showMarkButton() {
+        val tv = TextView(svc).apply {
+            text = "기록"
+            setTextColor(Color.WHITE); textSize = 15f
+            setBackgroundColor(Color.argb(210, 0, 90, 200)); setPadding(36, 20, 36, 20)
+            setOnClickListener {
+                marks++
+                rec("user", "mark", 0f, 0f, marks)
+                Bench.clipRequester?.invoke("mark", 3.4, 0.4)
+                text = "기록 $marks"
+            }
+        }
+        val dm = svc.resources.displayMetrics
+        if (svc.addOverlay(tv, (0.22f * dm.widthPixels).toInt(), 40, ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP or Gravity.CENTER_HORIZONTAL) != null) markBubble = tv
+    }
     private val tag = if (autoMode) "⑧" else "⑦"
 
     /**
@@ -172,6 +192,7 @@ class InGameProxy(private val svc: BlockAccessibilityService, private val autoMo
         val ok = svc.showPad(left, top, side, side, "") { e, _ -> onPad(e) }
         if (!ok) { finish("패드를 띄우지 못함"); return }
         padShown = true
+        if (autoMode) showMarkButton()
         stick = svc.newProxyStick(16) { what, _ -> rec("proxy", what, 0f, 0f, 0) }
         bubble?.text = if (autoMode) "⑧ 자동 블록 켜짐 · 조이스틱을 누르고 있을 때만 동작 · 여기를 눌러 끝내기"
         else "⑦ 평소처럼 조이스틱으로 움직이세요 · ${tapEveryMs / 1000.0}초마다 자동 블록 · 여기를 눌러 끝내기"
@@ -209,6 +230,7 @@ class InGameProxy(private val svc: BlockAccessibilityService, private val autoMo
         svc.hidePad()
         svc.removeOverlay(calib)
         svc.removeOverlay(bubble)
+        svc.removeOverlay(markBubble)
         val s = stick
         val o = s?.tapOutcome?.get(1)
         val report = buildString {
@@ -220,7 +242,7 @@ class InGameProxy(private val svc: BlockAccessibilityService, private val autoMo
             appendLine("주입이 게임이 아니라 패드에 떨어진 이벤트: ${injectedOnPad}개 ${if (injectedOnPad == 0) "(통과 방식 정상)" else "(통과 방식 실패)"}")
             appendLine("대리 조이스틱 세그먼트 ${s?.segments ?: 0}개, 취소 ${s?.cancels ?: 0}회 (탭 없이 취소 ${s?.cancelsWithoutTap ?: 0}회), 1px 흔들기 ${s?.wiggles ?: 0}")
             appendLine("자동 블록 요청 ${autoTaps}회, 시스템 응답 완료 ${o?.get(1) ?: 0} / 취소 ${o?.get(2) ?: 0}" +
-                if (autoMode) ", 엄지가 조이스틱에 없어 건너뜀 ${skippedFires}회" else "")
+                if (autoMode) ", 엄지가 조이스틱에 없어 건너뜀 ${skippedFires}회, 사용자 기록 버튼 ${marks}회" else "")
             appendLine("※ 게임 캐릭터가 실제로 움직이고 블록했는지는 앱이 볼 수 없습니다. 관찰 내용을 알려 주세요.")
         }
         if (autoMode) Bench.autoReport = report
