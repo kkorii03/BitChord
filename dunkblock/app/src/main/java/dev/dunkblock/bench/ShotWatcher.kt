@@ -479,16 +479,16 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         if (shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_$kind", 0.6, 1.8 + cfg.shotDelayMs / 1000.0) }
         // v3 (vc1038 match: 0/14, 8 presses on dribbles/moves). Sideways sway of the disc over the last 600 ms: practice
         // shots <= 0.026 W, real match shots 0.023-0.059, phantoms 0.036-0.223. Above 0.1 = dribbling/running, not a shot.
-        var xMin = discX; var xMax = discX
+        var xMin = discX; var xMax = discX; var spanNs = 0L
         for (i in 1 until hCount) {
             val idx = (hPos - 1 - i + 2 * histN) % histN
             if (tNs - hT[idx] > 600_000_000L) break
-            xMin = minOf(xMin, hX[idx]); xMax = maxOf(xMax, hX[idx])
+            xMin = minOf(xMin, hX[idx]); xMax = maxOf(xMax, hX[idx]); spanNs = tNs - hT[idx]
         }
         val xspan = xMax - xMin
         // Where is my own player? (vc1038: all three '블록 위치 부족' presses had him 0.12-0.21 W from the shooter.)
         val meDist = findMe(discX, discY + gNow)
-        val d2 = String.format(Locale.ROOT, "%s xspan=%.3f me=%.3f/%.3f d=%.3f", detail, xspan, meX, meY, meDist)
+        val d2 = String.format(Locale.ROOT, "%s xspan=%.3f track=%d me=%.3f/%.3f d=%.3f", detail, xspan, spanNs / 1_000_000L, meX, meY, meDist)
         event(tNs, "shot_trigger", 0f, 0f, 0f, d2)
         snapNow = true     // one colour screen per trigger: checks the my-player finder against the game's verdict
         if (xspan >= CONFIRM_XSPAN) { reject(tNs, "rejected_xspan", d2); return }
@@ -496,7 +496,9 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         if (live) main.post { BlockAccessibilityService.instance?.inGame?.armBlock(ARM_MS) }
         // Calm shooter (practice: xspan <= 0.026, 10/15 blocked with an immediate press; waiting for the confirmation
         // would add 66-167 ms and practice '늦음' was already ~100 ms late): press now.
-        if (xspan < CALM_XSPAN) { press(tNs, live, d2 + " calm", 0L); return }
+        // "Calm" needs a track long enough to show sway: right after a ring<->disc switch the history restarts and a
+        // moving shooter read as xspan 0.02 (vc1035 330.0 s, really 0.138). Replay: all 15 practice presses had >= 0.57 s.
+        if (xspan < CALM_XSPAN && spanNs >= 400_000_000L) { press(tNs, live, d2 + " calm", 0L); return }
         // Moving shooter: wait (<= 200 ms) for the disc to keep rising: real shots rose 0.039-0.139 H, phantoms at most
         // 0.028 (vc1038), and the two in-range match shots pressed immediately were both '타이밍 빠름'.
         pendNs = tNs; pendY = discY; pendDetail = d2; pendLive = live
