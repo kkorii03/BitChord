@@ -88,6 +88,29 @@ class InGameProxy(private val svc: BlockAccessibilityService, private val autoMo
         main.postDelayed({ if (t.fingerId < 0 && System.nanoTime() >= t.armedUntilNs) setTileTouchable(t, true) }, ms + 10)
     }
 
+    private var nudging = false
+
+    /**
+     * Calibration, practice court with nobody holding the phone ([Bench.Config.darkJoyDeg]): holds the joystick
+     * [deg] degrees (0 = screen right, 90 = up) for [ms] as the hand's own joystick finger, so a block pressed
+     * meanwhile jumps that way. Skipped while a real thumb is on the pad. Untested on the phone (written 11-11).
+     */
+    fun nudgeJoy(deg: Int, ms: Long) {
+        val h = hand
+        if (finished || h == null || thumbDown || nudging) { rec("auto", "nudge_skipped", 0f, 0f, deg); return }
+        nudging = true
+        val dm = svc.resources.displayMetrics
+        val r = 0.13f * min(dm.widthPixels, dm.heightPixels)
+        val a = Math.toRadians(deg.toDouble())
+        val to = PointF(joy.x + r * Math.cos(a).toFloat(), joy.y - r * Math.sin(a).toFloat())
+        svc.setPadTouchable(false)
+        main.postDelayed({
+            h.down(JOY, to, anchor = PointF(joy.x, joy.y))
+            main.postDelayed({ h.up(JOY); nudging = false; if (!thumbDown) svc.setPadTouchable(true) }, ms)
+        }, PASS_THROUGH_MS)
+        rec("auto", "nudge_$deg", to.x, to.y, ms.toInt())
+    }
+
     // ------------------------------------------------------------------ button overlays (11-10)
 
     /**

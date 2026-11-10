@@ -343,6 +343,10 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
                     else if (cfg.darkPress) plan = if (jump) cfg.darkJumpDelayMs else if (nth == 1) cfg.darkDelayMs else cfg.dark2DelayMs
                 }
                 if (plan >= 0) { dkDueNs = onNs + plan * 1_000_000L; dkArmed = false; dkDelayMs = plan; dkPlanNth = nth }
+                if (plan >= 0 && cfg.darkSweep && cfg.darkJoyDeg >= 0 && cfg.autoBlockLive) {
+                    val deg = cfg.darkJoyDeg; val ms = (if (cfg.darkJoyMs > 0) cfg.darkJoyMs else plan + 300).toLong()
+                    main.post { BlockAccessibilityService.instance?.inGame?.nudgeJoy(deg, ms) }
+                }
                 if (nth == 1 && shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_dark", 0.6, 2.2) }
                 event(tNs, "skill_dark", 0f, 0f, 0f, String.format(Locale.ROOT, "nth=%d base=%.1f luma=%.1f on_ago=%d plan=%d def=%d jump=%d",
                     nth, base, l, (tNs - onNs) / 1_000_000L, plan, if (def) 1 else 0, if (jump) 1 else 0))

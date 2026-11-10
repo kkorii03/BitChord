@@ -69,6 +69,7 @@ class BlockerActivity : Activity() {
             Bench.config = Bench.config.copy(sweepPress = intent.getBooleanExtra("sweepPress", false),
                 crouchPress = intent.getBooleanExtra("crouchPress", false), upPress = intent.getBooleanExtra("upPress", false),
                 darkSweep = intent.getBooleanExtra("darkSweep", false), darkNth = intent.getIntExtra("darkNth", 1), darkAddMs = intent.getIntExtra("darkAdd", 0),
+                darkJoyDeg = intent.getIntExtra("darkJoy", -1), darkJoyMs = intent.getIntExtra("darkJoyMs", 0),
                 darkPress = intent.getBooleanExtra("darkPress", getSharedPreferences("blocker", 0).getBoolean("dark", false)),
                 darkDelayMs = intent.getIntExtra("darkDelay", Bench.Config().darkDelayMs), dark2DelayMs = intent.getIntExtra("dark2Delay", Bench.Config().dark2DelayMs), darkJumpDelayMs = intent.getIntExtra("darkJumpDelay", Bench.Config().darkJumpDelayMs))
             if (intent.getBooleanExtra("auto", false)) main.postDelayed({ if (!Bench.running && !Bench.saving) onStartStop() }, 600)

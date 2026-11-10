@@ -61,12 +61,19 @@ object Bench {
         val darkPress: Boolean = false,
         val darkDelayMs: Int = 215,
         val dark2DelayMs: Int = 380,
-        /** Delay for a dark that starts as a jump (아일라). 600 is an estimate (her release is ~0.8 s after the jump), not measured. */
-        val darkJumpDelayMs: Int = 600,
+        /**
+         * Delay for a dark that starts as a jump (아일라 "기습 스텝백"). 540: measured 11-11 by the game's own verdict
+         * text, 21 presses at 323-808 ms: "타이밍 빠름" up to 425, "타이밍 늦음" from 656, neither at 442-638 (there
+         * "블록 위치 부족" / "컨테스트 실패": the standing defender was too far, so no block was seen at any delay).
+         */
+        val darkJumpDelayMs: Int = 540,
         /** Calibration, PRACTICE COURT ONLY: press at stepped delays (+ darkAddMs) after the onset of dark number darkNth; every other press is held back. */
         val darkSweep: Boolean = false,
         val darkNth: Int = 1,
         val darkAddMs: Int = 0,
+        /** With darkSweep: from the onset hold the joystick this way (degrees, 0 = screen right, 90 = up; -1 = off) for darkJoyMs (0 = until 300 ms after the press). */
+        val darkJoyDeg: Int = -1,
+        val darkJoyMs: Int = 0,
         val recalibrate: Boolean = false,
         val opencvAreaResize: Boolean = false,
         val opencvThreads: Int = 1,
