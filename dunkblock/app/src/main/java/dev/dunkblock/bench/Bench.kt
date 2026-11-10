@@ -76,6 +76,8 @@ object Bench {
     @Volatile var saving = false
     /** Input-side report of the last ⑧ run (overlay/joystick statistics), merged into the session summary. */
     @Volatile var autoReport: String = ""
+    /** One-line live state of the auto-blocker for the UI. */
+    @Volatile var autoLive: String = ""
     @Volatile var lastExportDir: String = ""
 
     /** Live numbers for the control screen (written by the 1 Hz sampler). */

@@ -50,6 +50,7 @@ class AutoBlocker(private val cfg: Bench.Config, private val startedNs: Long) {
                     lastTriggerNs = tNs
                     triggers++
                     rec(tNs, "ult_dark_detected", l, "delay_ms=${cfg.ultDelayMs}")
+                    live()
                     main.postDelayed({ fire() }, cfg.ultDelayMs.toLong())
                 }
             } else if (inDark && tNs - darkSinceNs > 3_000_000_000L) {
@@ -69,8 +70,10 @@ class AutoBlocker(private val cfg: Bench.Config, private val startedNs: Long) {
         if (!cfg.autoBlockLive) { skipped++; rec(now, "would_press", -1f, "shadow_mode"); return }
         val proxy = BlockAccessibilityService.instance?.inGame
         val ok = proxy?.fireBlock("ULT") ?: false
-        if (ok) { fired++; rec(now, "pressed", -1f, "") } else { skipped++; rec(now, "not_pressed", -1f, if (proxy == null) "no_overlay" else "thumb_not_on_joystick") }
+        if (ok) { fired++; rec(now, "pressed", -1f, ""); live() } else { skipped++; rec(now, "not_pressed", -1f, if (proxy == null) "no_overlay" else "thumb_not_on_joystick") }
     }
+
+    private fun live() { Bench.autoLive = "궁극기 감지 ${triggers}회 · 블록 누름 ${fired}회 · 건너뜀 ${skipped}회" }
 
     companion object { const val DARK_FRACTION = 0.45f }
 }

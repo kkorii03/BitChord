@@ -57,7 +57,8 @@ jobs:
         run: |
           mkdir -p out
           vc=$((1000 + GITHUB_RUN_NUMBER))
-          cp app/build/outputs/apk/release/app-release.apk out/DunkBlockBench-vc${vc}.apk
+          cp app/build/outputs/apk/bench/release/app-bench-release.apk out/DunkBlockBench-vc${vc}.apk
+          cp app/build/outputs/apk/blocker/release/app-blocker-release.apk out/DunkBlock-vc${vc}.apk
           cp -r tools docs README.md out/
           ls -la out
 
@@ -67,20 +68,25 @@ jobs:
           path: dunkblock/out
           retention-days: 30
 
-      # Puts the APK on this same working branch so the development session can fetch it with git
-      # (its network cannot reach the artifact storage). Only when the commit message asks for it.
+      # Puts APKs on this same working branch so the development session can fetch them with git
+      # (its network cannot reach the artifact storage). Only when the commit message asks for it:
+      #   [ship-blocker] = DunkBlock (auto-block app), [ship-bench] = DunkBlock Bench, [ship-apk] = both.
       - name: Commit APK to the working branch
-        if: contains(github.event.head_commit.message, '[ship-apk]')
+        if: contains(github.event.head_commit.message, '[ship-')
+        env:
+          MSG: ${{ github.event.head_commit.message }}
         run: |
           cd "$GITHUB_WORKSPACE"
           vc=$((1000 + GITHUB_RUN_NUMBER))
           mkdir -p dunkblock/dist
-          rm -f dunkblock/dist/*.apk
-          cp dunkblock/out/DunkBlockBench-vc${vc}.apk dunkblock/dist/
+          case "$MSG" in *"[ship-apk]"*|*"[ship-bench]"*)
+            rm -f dunkblock/dist/DunkBlockBench-*.apk; cp dunkblock/out/DunkBlockBench-vc${vc}.apk dunkblock/dist/ ;; esac
+          case "$MSG" in *"[ship-apk]"*|*"[ship-blocker]"*)
+            rm -f dunkblock/dist/DunkBlock-vc*.apk; cp dunkblock/out/DunkBlock-vc${vc}.apk dunkblock/dist/ ;; esac
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A dunkblock/dist
-          git commit -m "dist: DunkBlockBench vc${vc} (${GITHUB_SHA::7})"
+          git commit -m "dist: DunkBlock vc${vc} (${GITHUB_SHA::7})"
           git push origin "HEAD:${GITHUB_REF_NAME}"
 
       - name: Test reports on failure

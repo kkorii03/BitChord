@@ -21,6 +21,15 @@ android {
         ndk { abiFilters += "arm64-v8a" }
     }
 
+    // Two installable apps from one code base:
+    //  bench   = "DunkBlock Bench"  (measurement and experiments, dev.dunkblock.bench)
+    //  blocker = "DunkBlock"        (the auto-block app with its own UI, dev.dunkblock.blocker)
+    flavorDimensions += "app"
+    productFlavors {
+        create("bench") { dimension = "app" }
+        create("blocker") { dimension = "app"; applicationId = "dev.dunkblock.blocker" }
+    }
+
     signingConfigs {
         // A fixed TEST key kept in the repository, so every build is signed the same way and installs as an
         // update. It protects nothing: this APK is a sideloaded measurement tool, never published to a store.
