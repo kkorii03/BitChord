@@ -11,6 +11,9 @@ concurrency:
   group: dunkblock-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: write   # only for the optional "[ship-apk]" commit below
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -47,7 +50,8 @@ jobs:
       - name: Collect
         run: |
           mkdir -p out
-          cp app/build/outputs/apk/release/app-release.apk out/DunkBlockBench-${GITHUB_SHA::7}.apk
+          vc=$((1000 + GITHUB_RUN_NUMBER))
+          cp app/build/outputs/apk/release/app-release.apk out/DunkBlockBench-vc${vc}.apk
           cp -r tools docs README.md out/
           ls -la out
 
@@ -56,6 +60,22 @@ jobs:
           name: DunkBlockBench-apk
           path: dunkblock/out
           retention-days: 30
+
+      # Puts the APK on this same working branch so the development session can fetch it with git
+      # (its network cannot reach the artifact storage). Only when the commit message asks for it.
+      - name: Commit APK to the working branch
+        if: contains(github.event.head_commit.message, '[ship-apk]')
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          vc=$((1000 + GITHUB_RUN_NUMBER))
+          mkdir -p dunkblock/dist
+          rm -f dunkblock/dist/*.apk
+          cp dunkblock/out/DunkBlockBench-vc${vc}.apk dunkblock/dist/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A dunkblock/dist
+          git commit -m "dist: DunkBlockBench vc${vc} (${GITHUB_SHA::7})"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
 
       - name: Test reports on failure
         if: failure()

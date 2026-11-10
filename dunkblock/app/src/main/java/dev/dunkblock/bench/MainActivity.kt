@@ -45,6 +45,7 @@ class MainActivity : Activity() {
         fun button(t: String, f: () -> Unit) = root.addView(Button(this).apply { text = t; isAllCaps = false; setOnClickListener { f() } }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
 
         root.addView(TextView(this).apply { text = "DunkBlock Benchmark"; textSize = 24f; setTypeface(typeface, Typeface.BOLD) })
+        root.addView(TextView(this).apply { text = DeviceInfo.appVersion(this@MainActivity); textSize = 13f })
         root.addView(TextView(this).apply {
             text = "자동 블록 프로그램이 아니라, 화면 인식 방식이 블록 타이밍에 쓸 만큼 빠른지 수치로 확인하는 측정 앱입니다. 측정 중에는 화면에 아무것도 띄우지 않고, 종료 후 결과를 저장합니다."
         })

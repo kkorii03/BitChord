@@ -10,9 +10,14 @@ import android.view.Display
 
 /** Phase 0: what this device actually is and allows. Everything here is read from the OS, not assumed. */
 object DeviceInfo {
+    fun appVersion(ctx: Context): String = try {
+        val pi = ctx.packageManager.getPackageInfo(ctx.packageName, 0)
+        "v${pi.versionName} (vc ${pi.longVersionCode})"
+    } catch (_: Throwable) { "버전 확인 불가" }
+
     fun short(ctx: Context): String {
         val d = ctx.getSystemService(DisplayManager::class.java).getDisplay(Display.DEFAULT_DISPLAY)
-        return "기기: ${Build.MANUFACTURER} ${Build.MODEL} (${Build.DEVICE}), Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT}), " +
+        return "앱 ${appVersion(ctx)} · 기기: ${Build.MANUFACTURER} ${Build.MODEL} (${Build.DEVICE}), Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT}), " +
             "현재 표시 ${d.mode.physicalWidth}x${d.mode.physicalHeight}@${"%.1f".format(d.refreshRate)}Hz"
     }
 
