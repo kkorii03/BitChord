@@ -1071,12 +1071,17 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         const val FAST_SPEED = 0.9f
         const val MAX_SHOT_CLIPS = 80
         const val MAX_COLOUR_CLIPS = 38
-        /** Crouch cue ([crouch]): history size, sink needed (7 px at 720p) within the window, calm y range (9 px), waits tried in turn. */
+        /** Crouch cue ([crouch]): history size, sink needed (7 px at 720p) within the window, calm y range (9 px). */
         const val CR_N = 96
         const val CROUCH_SINK = 0.0097f
         const val CROUCH_WIN_NS = 170_000_000L
         const val CROUCH_CALM = 0.0125f
-        val CROUCH_DELAYS = longArrayOf(0L, 40L, 80L)
+        /**
+         * vc1061: 80/120/160 (was 0/40/80). The box-out step (tools/analysis/boxstep.py) is a release clock: on the LaMelo
+         * track the crouch fired 340-460 ms (median ~420) before it, and Curry's blocks in the same bundle were press
+         * requests 282-313 ms before it ('무리한 블록' at 231). So the waits aim at 340 / 300 / 260 ms before the release.
+         */
+        val CROUCH_DELAYS = longArrayOf(80L, 120L, 160L)
         /** Outline top this close under the marker (share of H; 14 px at 720p) = hands or ball lifted. Shadow only. */
         const val UP_DY = 0.0195f
         /** Experimental arms-up press: wait this long for a gap rule to fire first (two scans at 60 Hz). */
