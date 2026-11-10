@@ -38,6 +38,7 @@ import com.music.bitchord.data.lyrics.RefineExtendPolicy
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.playback.mixWaveformShouldFetchCopy
 import com.music.bitchord.data.settings.AutomixPerformanceMode
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.TrackMatcher
@@ -1915,7 +1916,25 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             sourceAnalysisUris[trackId] ?: return null
         }
         val began = SystemClock.elapsedRealtime()
-        val copy = runCatching { copyToRead(trackId, analysisUri, durationSeconds) }.getOrNull() ?: return null
+        val copy = runCatching { copyToRead(trackId, analysisUri, durationSeconds) }.getOrNull()
+        if (copy == null) {
+            // An analysis restored from disk marks both windows measured, so
+            // [request] never fetches the analysis copy and the tail was never
+            // on disk: a video song or a cached track answered "none" in 2 ms
+            // on every retry. Ask for the copy once (the engine dedupes per
+            // track, as the TAIL path does); the controller's retry hold-off
+            // picks the waveform up when the bytes have landed.
+            if (mixWaveformShouldFetchCopy(
+                    copyMissing = true,
+                    local = LocalAudioSource.isLocal(analysisUri),
+                    heavyWorkAllowed = AppSettings.heavyWorkAllowed,
+                    overheated = overheated,
+                )
+            ) {
+                cache.requestAnalysisHead(analysisUri)
+            }
+            return null
+        }
         val chosen = SystemClock.elapsedRealtime()
         val bands = copy.open()?.use { source ->
             MixWaveform.build(source, fromSeconds, toSeconds, bins) { stopped }

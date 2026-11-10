@@ -184,6 +184,15 @@ class AnalysisHeadRetryTest {
     }
 
     @Test
+    fun aMixWaveformWithNoCopyAsksForTheAnalysisCopyUnlessLocalOrHeldOff() {
+        assertTrue(mixWaveformShouldFetchCopy(copyMissing = true, local = false, heavyWorkAllowed = true, overheated = false))
+        assertFalse(mixWaveformShouldFetchCopy(copyMissing = false, local = false, heavyWorkAllowed = true, overheated = false))
+        assertFalse(mixWaveformShouldFetchCopy(copyMissing = true, local = true, heavyWorkAllowed = true, overheated = false))
+        assertFalse(mixWaveformShouldFetchCopy(copyMissing = true, local = false, heavyWorkAllowed = false, overheated = false))
+        assertFalse(mixWaveformShouldFetchCopy(copyMissing = true, local = false, heavyWorkAllowed = true, overheated = true))
+    }
+
+    @Test
     fun aReleaseAfterTheClaimIsKeptStartsExactlyOneDeferredRound() {
         // Held for a reader, round already gone: the release event owns the
         // retry whether or not the claim map still has it (as v1.9), a claim

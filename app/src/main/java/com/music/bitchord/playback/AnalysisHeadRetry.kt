@@ -79,6 +79,19 @@ internal fun analysisHeadHeldClaimMayRetry(
 ): Boolean = heldForReader && !anotherWriterHas && !inFlight
 
 /**
+ * Whether a mix waveform that found no readable copy should ask for the
+ * analysis copy to be fetched. An analysis restored from disk never asks for
+ * it, so without this the tail of a streamed or video song is never on disk.
+ * Not for files on the device, and not while heavy work is held off.
+ */
+internal fun mixWaveformShouldFetchCopy(
+    copyMissing: Boolean,
+    local: Boolean,
+    heavyWorkAllowed: Boolean,
+    overheated: Boolean,
+): Boolean = copyMissing && !local && heavyWorkAllowed && !overheated
+
+/**
  * Whether a running analysis round has to stop for playback.
  *
  * Playback always wins: its first byte is on the audible path, while the
