@@ -22,12 +22,36 @@ def _rate(s):
         return float("nan")
 
 
+def _probe_opencv(path):
+    """Fallback without ffprobe: timestamps reported by the decoder for every frame (one decode pass)."""
+    import cv2
+    cap = cv2.VideoCapture(path)
+    ts = []
+    while True:
+        ok = cap.grab()
+        if not ok:
+            break
+        ts.append(cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0)
+    w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    cap.release()
+    return {"codec_name": "?", "width": w, "height": h, "r_frame_rate": f"{fps}/1", "avg_frame_rate": f"{fps}/1"}, ts
+
+
 def probe(path: str, work: str) -> dict:
+    import shutil
+    if shutil.which("ffprobe") is None:
+        st, ts = _probe_opencv(path)
+        return _finish(st, np.array(sorted(ts)), work, "opencv_pos_msec (ffprobe 없음: 정확도 낮을 수 있음)")
     st = _ffprobe_json(["-select_streams", "v:0", "-show_entries",
                         "stream=codec_name,width,height,r_frame_rate,avg_frame_rate,nb_frames,duration,time_base", path])["streams"][0]
     pk = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time",
                          "-of", "csv=p=0", path], capture_output=True, text=True, check=True).stdout.split()
     pts = np.array(sorted(float(x.strip(",")) for x in pk if x.strip(",") not in ("", "N/A")))
+    return _finish(st, pts, work, "ffprobe_packet_pts")
+
+
+def _finish(st, pts, work, source):
     dt = np.diff(pts) if len(pts) > 1 else np.array([])
     info = {
         "codec": st.get("codec_name"), "width": int(st["width"]), "height": int(st["height"]),
@@ -41,6 +65,7 @@ def probe(path: str, work: str) -> dict:
     info["measured_fps"] = 1000.0 / info["dt_ms_median"] if info["dt_ms_median"] else None
     info["variable_frame_rate"] = bool(len(dt) and (info["dt_ms_p95"] - info["dt_ms_p5"]) > 1.0)
     info["timing_resolution_ms"] = info["dt_ms_median"]
+    info["pts_source"] = source
     info["note"] = ("영상 프레임 간격이 곧 이 영상으로 잴 수 있는 시간 분해능이다. 게임은 120FPS지만 "
                     f"영상은 약 {info['measured_fps']:.1f}FPS라 그보다 짧은 차이는 구분할 수 없다.") if info["measured_fps"] else ""
     with open(os.path.join(work, "frames_pts.csv"), "w", newline="") as f:

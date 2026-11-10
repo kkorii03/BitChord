@@ -41,6 +41,7 @@ jobs:
 
       - name: Video pipeline selftest (synthetic video with known timings)
         run: |
+          sudo apt-get install -y -qq ffmpeg > /dev/null
           python3 -m pip install -q opencv-python-headless numpy
           cd tools/video && python3 -m dunkvideo selftest --dir /tmp/dv_selftest
 
