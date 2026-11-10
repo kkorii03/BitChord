@@ -9,21 +9,22 @@ import sys, os, csv, glob
 SLOPE = 0.24            # luma per ms over the two falling scans (8 per 2 scans at 60 Hz); a jump is faster
 PRE0, PRE1 = 0.125, 0.335   # the flat stretch before: scans this long ago (12 scans ending 8 scans ago at 60 Hz)
 UNDER = 20.0
+JUMP, SCR = 20.0, 0.5   # the jump form: slot this far under the flat stretch at once, whole screen under this share of its level then
 
 def sim(S):
-    """S = [(t s, luma, side or None)] -> [dict(t, nth, base, on, end, low, why, def_)]"""
+    """S = [(t s, luma, side or None, screen luma or None)] -> [dict(t, nth, base, on, end, low, why, def_, jump)]"""
     N = 40
-    L = [0.0] * N; T = [0.0] * N; n = 0
+    L = [0.0] * N; T = [0.0] * N; C = [-1.0] * N; n = 0
     dark = False; base = low = 0.0; on = end = 0.0; peak = 0.0; peakT = 0.0; nthc = 0
     lastDef = lastOff = -9.0; out = []; cur = None
-    for t, l, side in S:
+    for t, l, side, scr in S:
         if side == "def": lastDef = t
         elif side == "off": lastOff = t
-        L = L[1:] + [l]; T = T[1:] + [t]; n += 1
+        L = L[1:] + [l]; T = T[1:] + [t]; C = C[1:] + [-1.0 if scr is None else scr]; n += 1
         if n < N or l < 0: continue
         p1, p2 = L[N - 2], L[N - 3]
         if not dark:
-            nth = 0
+            nth = 0; jump = False
             # a fade: two falling scans, but never a jump (a pressed button or a new label drops 20-40 at once).
             # By the clock, not per scan: a hot phone scans at 30-45 Hz, not 60 (11-11: 4 of 22 darks missed).
             span = t - T[N - 3]
@@ -40,14 +41,29 @@ def sim(S):
                     for i in range(N - 1, -1, -1):
                         if t - T[i] > PRE0: break
                         if L[i] < b - 1.5: onT = T[i]
+            if not nth and not recent and C[N - 1] >= 0:
+                # a jump (아일라 "기습 스텝백": slot 105 -> 67 and the whole screen 93 -> 12 in one frame). The slot alone
+                # also jumps when a button is pressed or a label changes, so the whole screen has to go dark with it.
+                pre = [i for i in range(N) if PRE0 <= t - T[i] <= PRE1 and C[i] >= 0]
+                if len(pre) >= 4:
+                    pl = [L[i] for i in pre]; b = sum(pl) / len(pl); sb = sum(C[i] for i in pre) / len(pre)
+                    if max(pl) - min(pl) < 5 and b >= 60 and l <= b - JUMP and sb >= 40 and C[N - 1] <= SCR * sb:
+                        nth = 1; jump = True; onT = t
+                        for i in range(N - 1, -1, -1):
+                            if t - T[i] > PRE0: break
+                            if L[i] < b - 1.5: onT = T[i]
             if nth:
-                dark = True; base = b; low = l; on = onT; nthc = nth
-                cur = dict(t=t, nth=nth, base=b, on=onT, luma=l, def_=(side is None) or (t - lastDef < 0.2 and t - lastOff > 2.0), end=None, low=l, why="")
+                dark = True; base = b; low = l; on = onT; nthc = nth; sbase = sb if jump else 0.0
+                cur = dict(t=t, nth=nth, base=b, on=onT, luma=l, def_=(side is None) or (t - lastDef < 0.2 and t - lastOff > 2.0), end=None, low=l, why="", jump=jump)
                 out.append(cur)
         else:
             if l < low: low = l; cur["low"] = l
             depth = base - low; why = ""
-            if depth >= 0.2 * base and l >= low + 0.6 * depth: why = "up"
+            if cur["jump"]:
+                # the slot may brighten in the middle of a jump dark (a label lights up): the whole screen says when it ends
+                if C[N - 1] >= 0.8 * sbase: why = "up"
+                elif t - on > 3.0: why = "timeout"
+            elif depth >= 0.2 * base and l >= low + 0.6 * depth: why = "up"
             elif depth < 0.2 * base and t - on > 0.3: why = "shallow"
             elif t - on > 3.0: why = "timeout"
             if why:
@@ -58,9 +74,13 @@ def sim(S):
 
 def load(p):
     if os.path.isdir(p) and os.path.exists(os.path.join(p, "shot.csv")):
-        return [(float(r["t_s"]), float(r["slot2_luma"]), r["side"]) for r in csv.DictReader(open(os.path.join(p, "shot.csv")))], True
+        scr = {}
+        fp = os.path.join(p, "frames.csv")
+        if os.path.exists(fp):
+            for r in csv.DictReader(open(fp)): scr[r["arrival_ns"]] = float(r["mean_luma_x100"]) / 100
+        return [(float(r["t_s"]), float(r["slot2_luma"]), r["side"], scr.get(r["t_ns"])) for r in csv.DictReader(open(os.path.join(p, "shot.csv")))], True
     R = list(csv.DictReader(open(p)))
-    return [(float(r["t"]), float(r["slot"]), None) for r in R[::2]], False
+    return [(float(r["t"]), float(r["slot"]), None, float(r["scr"]) if r.get("scr") else None) for r in R[::2]], False
 
 if __name__ == "__main__":
     for a in sys.argv[1:]:
@@ -74,4 +94,4 @@ if __name__ == "__main__":
             for d in o:
                 print("   %8.3f nth=%d base %.1f seen +%3.0f ms after onset (luma %.1f)  low %.1f  end %s %s%s" % (
                     d["on"], d["nth"], d["base"], (d["t"] - d["on"]) * 1000, d["luma"], d["low"],
-                    "+%.0f ms" % ((d["end"] - d["on"]) * 1000) if d["end"] else "-", d["why"], "" if d["def_"] else "  NOT-DEF"))
+                    "+%.0f ms" % ((d["end"] - d["on"]) * 1000) if d["end"] else "-", d["why"], ("  JUMP" if d["jump"] else "") + ("" if d["def_"] else "  NOT-DEF")))

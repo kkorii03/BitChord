@@ -257,6 +257,9 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
     // ------------------------------------------------------------------ signature-skill dark (vc1067)
 
     private val dkL = FloatArray(DK_N); private val dkT = LongArray(DK_N); private var dkN = 0
+    private val dkS = FloatArray(DK_N); private var dkJump = false; private var dkScrBase = 0f
+    /** Mean luma of the whole frame (FramePipeline sets it before every [onFrame]); -1 = not known. */
+    @Volatile var screenLuma = -1f
     private var dkDark = false; private var dkBase = 0f; private var dkLow = 0f; private var dkOnNs = 0L; private var dkEndNs = 0L
     private var dkPeak = 0f; private var dkPeakNs = 0L; private var dkNth = 0
     private var dkDueNs = 0L; private var dkArmed = false; private var dkDelayMs = 0; private var dkSeq = 0; private var dkPlanNth = 0
@@ -289,10 +292,12 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         val n = DK_N
         System.arraycopy(dkL, 1, dkL, 0, n - 1); dkL[n - 1] = l
         System.arraycopy(dkT, 1, dkT, 0, n - 1); dkT[n - 1] = tNs
+        val scr = screenLuma
+        System.arraycopy(dkS, 1, dkS, 0, n - 1); dkS[n - 1] = scr
         if (++dkN < n || l < 0f) return
         val p1 = dkL[n - 2]; val p2 = dkL[n - 3]
         if (!dkDark) {
-            var nth = 0; var onNs = 0L; var base = 0f
+            var nth = 0; var onNs = 0L; var base = 0f; var jump = false; var scrBase = 0f
             val spanMs = (tNs - dkT[n - 3]) / 1e6f
             val falling = l < p1 - 0.8f && p1 < p2 - 0.8f && spanMs <= 100f && p2 - l <= 0.24f * spanMs
             val recent = dkEndNs != 0L && tNs - dkEndNs < 700_000_000L
@@ -311,23 +316,46 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
                     for (i in n - 1 downTo 0) { if (tNs - dkT[i] > 125_000_000L) break; if (dkL[i] < b - 1.5f) onNs = dkT[i] }
                 }
             }
+            if (nth == 0 && !recent && scr >= 0f) {
+                // The jump form (아일라 "기습 스텝백": slot 105 -> 67 and the whole screen 93 -> 12 in one frame; the fade
+                // rule saw 2 of 26, session 11-11 03:43). The slot alone also jumps when a button is pressed or a label
+                // changes, so the whole screen has to go dark with it.
+                var mn = 999f; var mx = -1f; var s = 0f; var ss = 0f; var c = 0
+                for (i in 0 until n) {
+                    val ago = tNs - dkT[i]
+                    if (ago in 125_000_000L..335_000_000L && dkS[i] >= 0f) { mn = minOf(mn, dkL[i]); mx = maxOf(mx, dkL[i]); s += dkL[i]; ss += dkS[i]; c++ }
+                }
+                if (c >= 4) {
+                    val b = s / c; val sb = ss / c
+                    if (mx - mn < 5f && b >= 60f && l <= b - JUMP_UNDER && sb >= 40f && scr <= JUMP_SCREEN * sb) {
+                        nth = 1; base = b; onNs = tNs; jump = true; scrBase = sb
+                        for (i in n - 1 downTo 0) { if (tNs - dkT[i] > 125_000_000L) break; if (dkL[i] < b - 1.5f) onNs = dkT[i] }
+                    }
+                }
+            }
             if (nth > 0) {
+                dkJump = jump; dkScrBase = scrBase
                 dkDark = true; dkBase = base; dkLow = l; dkOnNs = onNs; dkNth = nth; darkOnsets++
                 val def = tNs - lastDefNs < 200_000_000L && tNs - lastOffNs > 2_000_000_000L
                 var plan = -1
                 if (cfg.shotBlock && def) {
                     if (cfg.darkSweep) { if (nth == cfg.darkNth) plan = cfg.darkAddMs + DARK_DELAYS[dkSeq++ % DARK_DELAYS.size] }
-                    else if (cfg.darkPress) plan = if (nth == 1) cfg.darkDelayMs else cfg.dark2DelayMs
+                    else if (cfg.darkPress) plan = if (jump) cfg.darkJumpDelayMs else if (nth == 1) cfg.darkDelayMs else cfg.dark2DelayMs
                 }
                 if (plan >= 0) { dkDueNs = onNs + plan * 1_000_000L; dkArmed = false; dkDelayMs = plan; dkPlanNth = nth }
                 if (nth == 1 && shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_dark", 0.6, 2.2) }
-                event(tNs, "skill_dark", 0f, 0f, 0f, String.format(Locale.ROOT, "nth=%d base=%.1f luma=%.1f on_ago=%d plan=%d def=%d",
-                    nth, base, l, (tNs - onNs) / 1_000_000L, plan, if (def) 1 else 0))
+                event(tNs, "skill_dark", 0f, 0f, 0f, String.format(Locale.ROOT, "nth=%d base=%.1f luma=%.1f on_ago=%d plan=%d def=%d jump=%d",
+                    nth, base, l, (tNs - onNs) / 1_000_000L, plan, if (def) 1 else 0, if (jump) 1 else 0))
             }
         } else {
             if (l < dkLow) dkLow = l
             val depth = dkBase - dkLow
-            val why = when {
+            // The slot may brighten in the middle of a jump dark (a label lights up): there the whole screen says when it ends.
+            val why = if (dkJump) when {
+                scr >= 0.8f * dkScrBase -> "up"
+                tNs - dkOnNs > 3_000_000_000L -> "timeout"
+                else -> ""
+            } else when {
                 depth >= 0.2f * dkBase && l >= dkLow + 0.6f * depth -> "up"
                 depth < 0.2f * dkBase && tNs - dkOnNs > 300_000_000L -> "shallow"
                 tNs - dkOnNs > 3_000_000_000L -> "timeout"
@@ -1277,6 +1305,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         val CROUCH_DELAYS = longArrayOf(80L, 120L, 160L)
         /** Sweep (⑩): planned press leads before the release, ms, in a mixed order so a drift cannot pass for a trend. */
         val SWEEP_LEADS = intArrayOf(250, 400, 100, 325, 175, 275, 375, 125, 225, 350, 150, 300, 200)
+        const val JUMP_UNDER = 20f; const val JUMP_SCREEN = 0.5f   // jump form: slot this far under the flat stretch at once, screen under this share
         const val DK_N = 40      // scans kept for skillDark: 335 ms even at 120 scans/s
         /** Dark sweep: planned press delays after the onset of the dark, ms, in a mixed order. */
         val DARK_DELAYS = intArrayOf(200, 350, 100, 275, 150, 425, 250, 50, 325, 500, 225, 125, 400, 175, 300, 0)

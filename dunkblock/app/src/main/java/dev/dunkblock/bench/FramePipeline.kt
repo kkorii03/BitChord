@@ -180,6 +180,7 @@ class FramePipeline(
         auto?.onFrame(sampledLuma100, arrivalNs, w > h)
         val sw = shot
         if (sw != null) {
+            sw.screenLuma = sampledLuma100 / 100f
             sw.onFrame(buf, w, h, rowStride, pixelStride, arrivalNs, cfg.blockFx, cfg.blockFy)
             if (sw.snapNow) { sw.snapNow = false; sampleFrame(buf, w, h, rowStride, pixelStride, arrivalNs, true) }
         }

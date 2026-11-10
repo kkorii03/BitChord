@@ -61,6 +61,8 @@ object Bench {
         val darkPress: Boolean = false,
         val darkDelayMs: Int = 215,
         val dark2DelayMs: Int = 380,
+        /** Delay for a dark that starts as a jump (아일라). 600 is an estimate (her release is ~0.8 s after the jump), not measured. */
+        val darkJumpDelayMs: Int = 600,
         /** Calibration, PRACTICE COURT ONLY: press at stepped delays (+ darkAddMs) after the onset of dark number darkNth; every other press is held back. */
         val darkSweep: Boolean = false,
         val darkNth: Int = 1,
