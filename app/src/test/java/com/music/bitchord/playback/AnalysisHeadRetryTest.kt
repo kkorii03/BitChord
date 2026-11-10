@@ -193,6 +193,45 @@ class AnalysisHeadRetryTest {
     }
 
     @Test
+    fun aMixWaveformReadsAPartialCopyWhoseLengthWasNeverRecorded() {
+        // 11-11 phone: ItUC9TPcb08 held 2999880 bytes, BcjqWNViVU0 3849015,
+        // both with total=0, and the only copy accepted was a complete one
+        // (contentLength > 0), so both decks answered "none" in 2-4 ms.
+        val seconds = { r: AudioCache.Rendition -> r.cachedPrefix / 20_000.0 }
+        val plain = AudioCache.Rendition(key = "ItUC9TPcb08", contentLength = 0L, cachedPrefix = 2_999_880L)
+        assertFalse(plain.isComplete)
+        assertEquals(
+            plain,
+            mixWaveformPartialRendition(listOf(plain), "ItUC9TPcb08", "ItUC9TPcb08", emptySet(), seconds),
+        )
+    }
+
+    @Test
+    fun aMixWaveformTakesThePlayersOwnEntryButNoOtherSubstitute() {
+        val seconds = { r: AudioCache.Rendition -> r.cachedPrefix / 20_000.0 }
+        val plain = AudioCache.Rendition(key = "v", contentLength = 0L, cachedPrefix = 900_000L)
+        val playing = AudioCache.Rendition(key = "v#alt", contentLength = 0L, cachedPrefix = 3_000_000L)
+        val other = AudioCache.Rendition(key = "v#hifi", contentLength = 0L, cachedPrefix = 9_000_000L)
+        val all = listOf(plain, playing, other)
+        // The player's entry holds the late window it has already played.
+        assertEquals(playing, mixWaveformPartialRendition(all, "v", "v#alt", emptySet(), seconds))
+        // A substitute the player is not on is never read.
+        assertEquals(plain, mixWaveformPartialRendition(all, "v", "v", emptySet(), seconds))
+        // A copy already written off, or one with no prefix, is skipped.
+        assertEquals(plain, mixWaveformPartialRendition(all, "v", "v#alt", setOf("v#alt"), seconds))
+        assertEquals(
+            null,
+            mixWaveformPartialRendition(
+                listOf(AudioCache.Rendition("v", 0L, 0L)),
+                "v",
+                "v",
+                emptySet(),
+                seconds,
+            ),
+        )
+    }
+
+    @Test
     fun aReleaseAfterTheClaimIsKeptStartsExactlyOneDeferredRound() {
         // Held for a reader, round already gone: the release event owns the
         // retry whether or not the claim map still has it (as v1.9), a claim

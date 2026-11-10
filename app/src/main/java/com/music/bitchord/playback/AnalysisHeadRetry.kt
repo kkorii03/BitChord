@@ -1,5 +1,7 @@
 package com.music.bitchord.playback
 
+import com.music.bitchord.playback.smart.AutomixAnalysisSource
+
 /**
  * Whether a fresh analysis-head round is worth starting after the last one
  * ended with [heldAfter] bytes on disk, [heldBefore] having been there when it
@@ -90,6 +92,29 @@ internal fun mixWaveformShouldFetchCopy(
     heavyWorkAllowed: Boolean,
     overheated: Boolean,
 ): Boolean = copyMissing && !local && heavyWorkAllowed && !overheated
+
+/**
+ * Which partial copy a mix waveform reads when no complete one qualifies.
+ *
+ * "Complete" needs a recorded length, and a stream whose length the resolver
+ * cannot give (analysis head `total=0`) never gets one: 3-4 MB on disk, the
+ * whole of a video song, read as "no copy" and both decks drew nothing. A
+ * waveform only needs the window's bytes, which a contiguous prefix has or
+ * the decode simply runs out. Candidates are the analysis copy (the plain id)
+ * and the player's own entry ([playerKey]): the window is in the player's
+ * clock, and the player has already cached the part it is playing. The one
+ * holding the most audio wins ([secondsOf]).
+ */
+internal fun mixWaveformPartialRendition(
+    renditions: List<AudioCache.Rendition>,
+    videoId: String?,
+    playerKey: String,
+    bad: Set<String>,
+    secondsOf: (AudioCache.Rendition) -> Double,
+): AudioCache.Rendition? = renditions
+    .filter { it.cachedPrefix > 0L && it.key !in bad }
+    .filter { AutomixAnalysisSource.isCanonicalYouTubeRendition(videoId, it.key) || it.key == playerKey }
+    .maxByOrNull(secondsOf)
 
 /**
  * Whether a running analysis round has to stop for playback.

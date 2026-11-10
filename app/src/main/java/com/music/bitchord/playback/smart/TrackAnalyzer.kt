@@ -38,6 +38,7 @@ import com.music.bitchord.data.lyrics.RefineExtendPolicy
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.playback.mixWaveformPartialRendition
 import com.music.bitchord.playback.mixWaveformShouldFetchCopy
 import com.music.bitchord.data.settings.AutomixPerformanceMode
 import com.music.bitchord.data.sources.SourceResolver
@@ -1916,36 +1917,60 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             sourceAnalysisUris[trackId] ?: return null
         }
         val began = SystemClock.elapsedRealtime()
+        // A complete copy is not required to draw a few seconds of it. A
+        // video stream whose length the resolver cannot give (total=0) never
+        // gets one recorded, so [copyToRead] refused 3-4 MB on disk — the
+        // whole song — and both decks of a video-to-video mix drew nothing.
         val copy = runCatching { copyToRead(trackId, analysisUri, durationSeconds) }.getOrNull()
-        if (copy == null) {
-            // An analysis restored from disk marks both windows measured, so
-            // [request] never fetches the analysis copy and the tail was never
-            // on disk: a video song or a cached track answered "none" in 2 ms
-            // on every retry. Ask for the copy once (the engine dedupes per
-            // track, as the TAIL path does); the controller's retry hold-off
-            // picks the waveform up when the bytes have landed.
-            if (mixWaveformShouldFetchCopy(
-                    copyMissing = true,
-                    local = LocalAudioSource.isLocal(analysisUri),
-                    heavyWorkAllowed = AppSettings.heavyWorkAllowed,
-                    overheated = overheated,
-                )
-            ) {
-                cache.requestAnalysisHead(analysisUri)
-            }
-            return null
-        }
+            ?: runCatching { partialCopyToShow(analysisUri, durationSeconds) }.getOrNull()
         val chosen = SystemClock.elapsedRealtime()
-        val bands = copy.open()?.use { source ->
+        val bands = copy?.open()?.use { source ->
             MixWaveform.build(source, fromSeconds, toSeconds, bins) { stopped }
         }
+        // An analysis restored from disk marks both windows measured, so
+        // [request] never fetches the analysis copy and the tail was never
+        // on disk. Ask for the copy once (the engine dedupes per track, as the
+        // TAIL path does) when nothing complete could draw the window; the
+        // controller's retry hold-off picks the waveform up when the bytes
+        // have landed. Not when a partial copy drew it: a round would only
+        // clear that prefix and fetch it again.
+        if (bands == null &&
+            mixWaveformShouldFetchCopy(
+                copyMissing = copy?.rendition?.isComplete != true,
+                local = LocalAudioSource.isLocal(analysisUri),
+                heavyWorkAllowed = AppSettings.heavyWorkAllowed,
+                overheated = overheated,
+            )
+        ) {
+            cache.requestAnalysisHead(analysisUri)
+        }
+        if (copy == null) return null
         Log.d(
             TAG,
-            "Mix waveform $trackId: copy ${chosen - began}ms, decode ${SystemClock.elapsedRealtime() - chosen}ms, " +
+            "Mix waveform $trackId from ${copy.key}" +
+                "${copy.rendition?.takeIf { !it.isComplete }?.let { " (partial ${it.cachedPrefix / 1024}kB)" } ?: ""}: " +
+                "copy ${chosen - began}ms, decode ${SystemClock.elapsedRealtime() - chosen}ms, " +
                 "asked ${"%.1f".format(Locale.ROOT, fromSeconds)}s, decoder started " +
                 "${bands?.decodedFrom?.let { "%.1f".format(Locale.ROOT, it) } ?: "-"}s",
         )
         return bands
+    }
+
+    /**
+     * The fullest partial copy the mix waveform may read when no complete one
+     * qualifies: the analysis copy, or the player's own entry, whose clock is
+     * the one the window is in. See [mixWaveformPartialRendition].
+     */
+    private fun partialCopyToShow(uri: Uri, durationSeconds: Double): Copy? {
+        if (LocalAudioSource.isLocal(uri)) return null
+        val rendition = mixWaveformPartialRendition(
+            renditions = cache.renditionsOf(uri),
+            videoId = uri.getQueryParameter("v"),
+            playerKey = cache.cacheKeyOf(uri),
+            bad = badRenditions,
+            secondsOf = { headSecondsOf(it, durationSeconds) },
+        ) ?: return null
+        return Copy(key = rendition.key, rendition = rendition) { cache.renditionDataSource(uri, rendition) }
     }
 
     fun release() {
