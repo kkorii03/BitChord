@@ -136,6 +136,10 @@ class FramePipeline(
         val ts = img.timestamp
         val tAccess = System.nanoTime()
         ensureBackends(w, h, rowStride)
+        if (cfg.mode == Bench.Mode.GAME && cfg.sampleFrames && arrivalNs - lastSampleNs >= cfg.sampleEveryMs * 1_000_000L) {
+            lastSampleNs = arrivalNs
+            sampleFrame(buf, w, h, rowStride, pixelStride, arrivalNs)
+        }
 
         var counter = -1
         var patLuma = -1
@@ -198,6 +202,51 @@ class FramePipeline(
     }
 
     private var sampledLuma100 = 0
+    private var lastSampleNs = 0L
+    private var samplesSaved = 0
+
+    /**
+     * Copies the full colour frame (cost: a few ms, once every couple of seconds; those frames show up as
+     * outliers in t_total_us) and writes a scaled JPEG on the IO thread. Used offline to design detection of
+     * the user's player marker, the ball and shot starts. Not used by the real-time path.
+     */
+    private fun sampleFrame(buf: ByteBuffer, w: Int, h: Int, rowStride: Int, pixelStride: Int, tNs: Long) {
+        if (samplesSaved >= 400 || pixelStride != 4) return
+        val full = try {
+            val bmp = Bitmap.createBitmap(rowStride / pixelStride, h, Bitmap.Config.ARGB_8888)
+            buf.rewind()
+            if (buf.remaining() >= rowStride * h) {
+                bmp.copyPixelsFromBuffer(buf)
+            } else {
+                // The last row of an Image plane is often not padded to rowStride: pad it before copying.
+                val tmp = ByteBuffer.allocateDirect(rowStride * h)
+                tmp.put(buf); tmp.rewind()
+                bmp.copyPixelsFromBuffer(tmp)
+            }
+            buf.rewind()
+            bmp
+        } catch (t: Throwable) { Log.e(TAG, "sample copy failed", t); return }
+        samplesSaved++
+        val n = samplesSaved
+        val secs = (tNs - session.startedNs) / 1e9
+        io.execute {
+            try {
+                val cropped = Bitmap.createBitmap(full, 0, 0, w, h)
+                val tw = minOf(cfg.sampleWidth, w)
+                val th = (tw.toLong() * h / w).toInt()
+                val small = Bitmap.createScaledBitmap(cropped, tw, th, true)
+                val dir = File(evidenceDir.parentFile, "frames").apply { mkdirs() }
+                FileOutputStream(File(dir, String.format(Locale.ROOT, "f%04d_%07.1fs.jpg", n, secs))).use {
+                    small.compress(Bitmap.CompressFormat.JPEG, 80, it)
+                }
+                if (small !== cropped) small.recycle()
+                if (cropped !== full) cropped.recycle()
+                full.recycle()
+            } catch (t: Throwable) {
+                Log.e(TAG, "sample write failed", t)
+            }
+        }
+    }
 
     /** FNV-1a over a 32x32 grid of pixels (1024 samples); also yields a coarse mean luma. */
     private fun sampleHash(buf: ByteBuffer, w: Int, h: Int, rowStride: Int, pixelStride: Int): Int {

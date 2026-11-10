@@ -27,6 +27,10 @@ object Bench {
         val diffThreshold: Int = 24,
         val excludeHud: Boolean = true,
         val evidence: Boolean = true,
+        /** GAME mode: save a colour frame every [sampleEveryMs] for designing the recognition step (offline). */
+        val sampleFrames: Boolean = true,
+        val sampleEveryMs: Long = 2000,
+        val sampleWidth: Int = 960,
         val opencvAreaResize: Boolean = false,
         val opencvThreads: Int = 1,
         val warmupSec: Double = 5.0,

@@ -144,6 +144,7 @@ class MainActivity : Activity() {
         opt("차분 임계값", "${c.diffThreshold}") { c.copy(diffThreshold = cycle(listOf(16, 24, 32, 48), c.diffThreshold)) }
         opt("HUD·조작부 제외", if (c.excludeHud) "켬" else "끔") { c.copy(excludeHud = !c.excludeHud) }
         opt("이벤트 증거 이미지", if (c.evidence) "켬" else "끔") { c.copy(evidence = !c.evidence) }
+        opt("경기 화면 2초마다 저장(①)", if (c.sampleFrames) "켬" else "끔") { c.copy(sampleFrames = !c.sampleFrames) }
         opt("OpenCV 축소 방식", if (c.opencvAreaResize) "INTER_AREA" else "INTER_NEAREST") { c.copy(opencvAreaResize = !c.opencvAreaResize) }
         opt("OpenCV 스레드", "${c.opencvThreads}") { c.copy(opencvThreads = cycle(listOf(1, 2, 4), c.opencvThreads)) }
         opt("카메라 검증용 ACK 사각형(②)", if (c.cameraAck) "켬" else "끔") { c.copy(cameraAck = !c.cameraAck) }

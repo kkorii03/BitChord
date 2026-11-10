@@ -27,8 +27,9 @@ object SendBundle {
         f.name == "display.csv" -> 2
         f.name == "frames.csv" -> 3
         f.name == "touch_events.csv" -> 4
-        f.name.endsWith(".png") -> 5
-        else -> 6
+        f.name.endsWith(".jpg") -> 5
+        f.name.endsWith(".png") -> 6
+        else -> 7
     }
 
     /** Returns a human-readable result line. Runs on a background thread. */
