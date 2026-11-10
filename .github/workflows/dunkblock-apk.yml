@@ -1,0 +1,60 @@
+name: DunkBlock Benchmark APK
+
+# Builds the standalone DunkBlock Benchmark project in dunkblock/ (independent of the BitChord build).
+on:
+  push:
+    branches: ['ccr-8af48de0-9efnr2', 'dunkblock/**']
+    paths: ['dunkblock/**', '.github/workflows/dunkblock-apk.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: dunkblock-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dunkblock
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - run: chmod +x gradlew
+
+      - name: Core unit tests (pure Kotlin)
+        run: ./gradlew --no-daemon :core:test
+
+      - name: Analyzer self-test (Python, stdlib only)
+        run: python3 tools/analyze.py --self-test
+
+      - name: Build benchmark APK (release = non-debuggable, debug-signed)
+        run: ./gradlew --no-daemon :app:assembleRelease --stacktrace
+
+      - name: Collect
+        run: |
+          mkdir -p out
+          cp app/build/outputs/apk/release/app-release.apk out/DunkBlockBench-${GITHUB_SHA::7}.apk
+          cp -r tools docs README.md out/
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DunkBlockBench-apk
+          path: dunkblock/out
+          retention-days: 30
+
+      - name: Test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-test-reports
+          path: dunkblock/core/build/reports/tests
