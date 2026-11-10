@@ -1,0 +1,7 @@
+clip,label_onset_s,label_end_s,label_kind_auto,block_word_score,forced_prefix_score,user_note
+Screen_Recording_20261110_145518,2.6556,4.22,clean(블록),0.898,0.19,
+Screen_Recording_20261110_145714,4.6088,6.1743,clean(블록),0.959,0.195,
+Screen_Recording_20261110_150414,4.782,6.3636,clean(블록),0.925,0.179,
+Screen_Recording_20261110_150924,4.8931,6.4245,forced(무리한 블록),0.881,0.84,무리한 블락
+Screen_Recording_20261110_153118,6.4875,8.0853,forced(무리한 블록),0.912,0.823,무리한 블락
+Screen_Recording_20261110_153205,1.9146,3.4626,clean(블록),0.94,0.165,일반 블락(상대 궁극기 슛)
