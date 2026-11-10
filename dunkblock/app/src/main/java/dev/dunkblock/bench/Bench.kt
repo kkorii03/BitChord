@@ -48,6 +48,8 @@ object Bench {
         val shotDelayMs: Int = 0,
         /** Experimental: also press when the ball handler lifts ball and hands to the marker (ShotWatcher.checkUpPending). */
         val upPress: Boolean = false,
+        /** Experimental, for quick-release shooters only: press when the standing ball handler bends his knees (ShotWatcher.crouch). */
+        val crouchPress: Boolean = false,
         val recalibrate: Boolean = false,
         val opencvAreaResize: Boolean = false,
         val opencvThreads: Int = 1,

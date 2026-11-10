@@ -46,6 +46,7 @@ class MainActivity : Activity() {
                 blockFx = sp.getFloat("bx", Bench.config.blockFx), blockFy = sp.getFloat("by", Bench.config.blockFy),
                 joyFx = sp.getFloat("jx", Bench.config.joyFx), joyFy = sp.getFloat("jy", Bench.config.joyFy))
             if (sp.getBoolean("upPress", false)) Bench.config = Bench.config.copy(upPress = true)
+            if (sp.getBoolean("crouchPress", false)) Bench.config = Bench.config.copy(crouchPress = true)
         }
 
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(32, 48, 32, 48) }
@@ -164,6 +165,10 @@ class MainActivity : Activity() {
         opt("⑧ 실험: 팔 올리는 순간에도 블록 누르기", if (c.upPress) "켬" else "끔(기록만)") {
             getSharedPreferences("calib", 0).edit().putBoolean("upPress", !c.upPress).apply()
             c.copy(upPress = !c.upPress)
+        }
+        opt("⑨ 실험: 빠른 슛 상대(라멜로 볼 등) — 웅크릴 때 누르기", if (c.crouchPress) "켬" else "끔(기록만)") {
+            getSharedPreferences("calib", 0).edit().putBoolean("crouchPress", !c.crouchPress).apply()
+            c.copy(crouchPress = !c.crouchPress)
         }
         opt("캡처 배율", "${c.captureScale}") { c.copy(captureScale = cycle(listOf(1.0f, 0.5f, 0.33f, 0.25f), c.captureScale)) }
         opt("분석 폭(px)", "${c.analysisWidth}") { c.copy(analysisWidth = cycle(listOf(128, 192, 256, 320), c.analysisWidth)) }

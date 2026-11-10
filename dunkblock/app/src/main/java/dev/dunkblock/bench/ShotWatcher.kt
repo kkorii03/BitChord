@@ -58,7 +58,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
     private var usTotal = 0L
     private var usMax = 0
 
-    private val log = StringBuilder(1 shl 16).append("t_ns,t_s,side,disc,x,y,fill,second,dark,orange,slot2_luma,slot2_dark,us,ring_y,sec_x,sec_y,col_x,col_y,col_fill,top_dy\n")
+    private val log = StringBuilder(1 shl 16).append("t_ns,t_s,side,disc,x,y,fill,second,dark,orange,slot2_luma,slot2_dark,us,ring_y,sec_x,sec_y,col_x,col_y,col_fill,top_dy,yc,yc_n\n")
     private var logLines = 0
     private val events = StringBuilder("t_ns,t_s,event,side,x,y,dx,dy,dt_ms,detail\n")
 
@@ -79,11 +79,12 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         readSlot2(buf, w, h, rowStride, blockFx, blockFy)
         scans++
         if (side == SIDE_DEF) { defScans++; lastDefNs = tNs } else if (side == SIDE_OFF) offScans++
-        colY = -1f; colX = -1f; colFill = 0f; topDy = -1f
+        colY = -1f; colX = -1f; colFill = 0f; topDy = -1f; ycY = -1f; ycN = 0
         if (found) {
             discScans++
             findColRing(buf, w, h, rowStride)
             findTop(buf, w, h, rowStride)
+            findCentre(buf, w, h, rowStride)
             armsUp(tNs)
             // One colour screen of a marker on a wing every 4 s: shows what lies under it there and where my player is.
             if (side == SIDE_DEF && (discX < 0.30f || discX > 0.74f) && wingSnaps < 40 && tNs - lastWingSnapNs > 4_000_000_000L) {
@@ -91,6 +92,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
             }
             onDisc(tNs)
             armsUpEvent(tNs)
+            crouch(tNs)
         }
         checkPending(tNs, found)
         checkUpPending(tNs, found)
@@ -99,9 +101,9 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         usTotal += us; if (us > usMax) usMax = us
         if (logLines < MAX_LOG_LINES) synchronized(log) {
             logLines++
-            log.append(tNs).append(',').append(String.format(Locale.ROOT, "%.3f,%s,%d,%.4f,%.4f,%.2f,%.2f,%.3f,%.3f,%.1f,%.3f,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.2f,%.4f\n",
+            log.append(tNs).append(',').append(String.format(Locale.ROOT, "%.3f,%s,%d,%.4f,%.4f,%.2f,%.2f,%.3f,%.3f,%.1f,%.3f,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.2f,%.4f,%.5f,%d\n",
                 (tNs - startedNs) / 1e9, sideName(side), if (found) 1 else 0, discX, discY, fill, second, sideDark, sideOrange, slot2Luma, slot2Dark, us, ringY, secX, secY,
-                colX, colY, colFill, topDy))
+                colX, colY, colFill, topDy, ycY, ycN))
         }
     }
 
@@ -437,6 +439,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
             if (n >= 3) bot = y else if (y > bot + 2) break
             y++
         }
+        markBot = bot
         xa = maxOf(0, cx - (26 * u).toInt()); xb = minOf(w - 1, cx + (26 * u).toInt())
         y = bot + (4 * u).toInt()
         val yLast = minOf(h - 1, bot + (90 * u).toInt())
@@ -457,6 +460,125 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
             if (n >= 3) { topDy = (y - bot) / h.toFloat(); return }
             y++
         }
+    }
+
+    private var markBot = -1
+    private var ycY = -1f; private var ycN = 0
+    private val cT = LongArray(CR_N); private val cY = FloatArray(CR_N); private val cNn = IntArray(CR_N)
+    private var cPos = 0; private var cCount = 0; private var cRunNs = 0L
+    private var lastCrouchNs = 0L; private var crouchSeq = 0; private var crouchClips = 0
+    @Volatile var crouchEvents = 0; private set
+    @Volatile var crouchTriggers = 0; private set
+
+    /**
+     * Precise marker height (vc1060; yc / yc_n in shot.csv): centroid of the marker's disc-red pixels in the 45 rows up
+     * from its bottom row ([findTop]) and +-40 px around the grid centre. The grid centre ([discY]) is the best 16 px
+     * window on a 4 px grid, so it moves in 4 px steps and floats inside the 26-36 px marker (idle noise +-1..3 steps);
+     * this one stood within ~0.2 px on a standing shooter (tools/analysis/crouch.py on the colour clips, 360-600 red
+     * pixels per marker). -1 when fewer than 150 red pixels (marker covered or cut).
+     */
+    private fun findCentre(buf: ByteBuffer, w: Int, h: Int, rowStride: Int) {
+        val u = h / 720f
+        val bot = markBot
+        val cx = (discX * w).toInt()
+        val ya = maxOf(0, bot - (44 * u).toInt()); val xa = maxOf(0, cx - (40 * u).toInt()); val xb = minOf(w - 1, cx + (40 * u).toInt())
+        var n = 0; var sy = 0L
+        var y = ya
+        while (y <= bot) {
+            var o = y * rowStride + xa * 4
+            var x = xa
+            while (x <= xb) {
+                val r = buf.get(o).toInt() and 0xFF
+                if (r > 160) {
+                    val g = buf.get(o + 1).toInt() and 0xFF
+                    val b = buf.get(o + 2).toInt() and 0xFF
+                    if (g < 25 && b in 30..90 && r - b > 95) { n++; sy += y }
+                }
+                x++; o += 4
+            }
+            y++
+        }
+        ycN = n
+        if (n >= (150 * u * u).toInt()) ycY = (sy.toDouble() / n / h).toFloat()
+    }
+
+    /**
+     * Crouch cue (vc1060). Quick-release shooters let the ball go before a jump started at the gap trigger can reach it:
+     * LaMelo Ball in practice (vc1056 bundle, 144-208 s): 10 shots, 8 presses, 0 blocks, all '강한 컨테스트'; the ball left
+     * his hands ~30-40 ms after the trigger and my player's arms are up only 200-240 ms after a press (Curry, same bundle:
+     * release 310-330 ms after the trigger, 6 '블록'). The only earlier sign is the knee bend: his marker sinks 13-18 px
+     * (720p) from about -450 to -220 ms before the trigger, after standing still. The grid y cannot show that, the
+     * precise centre can. Rule, replayed by tools/analysis/crouch.py: centre track unbroken 0.7 s, y range <= 9 px over
+     * the 200-700 ms before, now >= 7 px below the lowest point of the last 170 ms and not rising, red pixel count
+     * within 0.8-1.25 of the calm mean (marker whole), outline top at standing height. On a sub-pixel track of the
+     * LaMelo clips it fired 217-417 ms (median 350) before the gap trigger on every shot the clips cover, nowhere else.
+     * Every hit is logged as "crouch". It presses only with [Bench.Config.crouchPress] (off by default), because it is
+     * WRONG for ordinary shooters: on the older practice clips it also fires 220-430 ms before their gap trigger, and
+     * their release comes 300-500 ms after that trigger (the press would be '타이밍 빠름'), and it fired on the passer
+     * 0.8 s before two of Curry's catch-and-shoot shots (the jump would be wasted). Match rate unknown.
+     * The press is held CROUCH_DELAYS[n % 3] ms (cd= in the detail) so one practice session shows which wait the game
+     * accepts; nothing about the tolerance is measured yet.
+     */
+    private fun crouch(tNs: Long) {
+        if (ycY < 0f) return
+        val li = (cPos - 1 + CR_N) % CR_N
+        // The track starts over with the marker's run, after a pause or a step (the run's own limits).
+        if (cCount == 0 || cRunNs < runNs || tNs - cT[li] > 100_000_000L || Math.abs(ycY - cY[li]) > 0.06f) { cCount = 0; cRunNs = tNs }
+        val prevY = if (cCount > 0) cY[li] else ycY
+        cT[cPos] = tNs; cY[cPos] = ycY; cNn[cPos] = ycN
+        cPos = (cPos + 1) % CR_N
+        if (cCount < CR_N) cCount++
+        if (tNs - cRunNs < 700_000_000L || tNs - lastCrouchNs < 1_500_000_000L) return
+        if (side == SIDE_OFF || tNs - lastDefNs > 1_000_000_000L) return
+        var lo = ycY; var loNs = tNs
+        var cMin = Float.MAX_VALUE; var cMax = -1f; var cn = 0; var nSum = 0L; var cOld = tNs; var cNew = 0L
+        for (i in 0 until cCount) {
+            val idx = (cPos - 1 - i + 2 * CR_N) % CR_N
+            val age = tNs - cT[idx]
+            if (age > 700_000_000L) break
+            if (age <= CROUCH_WIN_NS && cY[idx] < lo) { lo = cY[idx]; loNs = cT[idx] }
+            if (age >= 200_000_000L) {
+                if (cn == 0) cNew = cT[idx]
+                cn++; cOld = cT[idx]; nSum += cNn[idx]
+                cMin = minOf(cMin, cY[idx]); cMax = maxOf(cMax, cY[idx])
+            }
+        }
+        if (cn < 10 || cNew - cOld < 400_000_000L || cMax - cMin > CROUCH_CALM) return
+        val sink = ycY - lo
+        if (sink < CROUCH_SINK || ycY < prevY) return
+        val nMean = nSum.toFloat() / cn
+        if (ycN < 0.8f * nMean || ycN > 1.25f * nMean) return
+        if (lastStandNs != tNs) return      // outline top not at standing height: hands already up, or no outline read
+        lastCrouchNs = tNs; crouchEvents++
+        val ringKnown = tNs - gapNs < 150_000_000L && gapRing - discY in 0.12f..0.6f
+        val d = String.format(Locale.ROOT, "crouch sink=%.4f in=%d calm=%.4f n=%d/%.0f top=%.4f run=%d gap=%.3f xspan=%.3f",
+            sink, (tNs - loNs) / 1_000_000L, cMax - cMin, ycN, nMean, topDy, (tNs - runNs) / 1_000_000L,
+            if (ringKnown) gapRing - discY else -1f, runXMax - runXMin)
+        event(tNs, "crouch", 0f, 0f, 0f, d)
+        if (crouchClips < 10) { crouchClips++; requestColour("crouch_def", tNs, 0.8, 0.8) }
+        if (!cfg.shotBlock || !cfg.crouchPress) return
+        val why = when {
+            pendNs != 0L -> "gap_pending"
+            tNs - lastPressNs < 1_500_000_000L -> "pressed"
+            tNs - lastShotFireNs < 1_500_000_000L -> "lockout"
+            else -> ""
+        }
+        if (why.isNotEmpty()) { event(tNs, "crouch_dropped", 0f, 0f, 0f, why); return }
+        val live = cfg.autoBlockLive
+        val waitMs = CROUCH_DELAYS[crouchSeq++ % CROUCH_DELAYS.size]
+        lastShotFireNs = tNs
+        shotTriggers++; crouchTriggers++
+        synchronized(pendingTriggers) { pendingTriggers.add(tNs) }
+        // The verdict shows 0.4-1.4 s after the release, and this press is ~0.35 s earlier than a gap press: 2.3 s after.
+        if (shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_crouch", 0.6, 2.3 + cfg.shotDelayMs / 1000.0) }
+        var meDist = findMe(discX, if (ringKnown) gapRing else minOf(0.95f, discY + 0.3f))
+        if (!ringKnown && meDist >= 0f) meDist = Math.abs(meX - discX)
+        val d2 = String.format(Locale.ROOT, "%s cd=%d sens=%d delay=%d me=%.3f/%.3f d=%.3f", d, waitMs, cfg.shotSens, cfg.shotDelayMs, meX, meY, meDist)
+        event(tNs, "shot_trigger", 0f, 0f, 0f, d2)
+        snapNow = true
+        if (meDist > ME_FAR) { shotFar++; reject(tNs, "rejected_far", d2); return }
+        if (live) main.post { BlockAccessibilityService.instance?.inGame?.armBlock(ARM_MS) }
+        press(tNs, live, d2, -waitMs)
     }
 
     private var lastStandNs = 0L; private var upPendNs = 0L; private var lastPressNs = 0L
@@ -930,6 +1052,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         val med = if (leads.isEmpty()) "-" else "${leads[leads.size / 2]}ms"
         return "일반 슛 발동 ${shotTriggers}회(${if (cfg.shotBlock && cfg.autoBlockLive) "실제 누름" else "기록만"}, 민감도 ${cfg.shotSens}, 지연 ${cfg.shotDelayMs}ms) → 거름 ${shotRejected}회(그중 내 선수가 멀어서 ${shotFar}회), 버튼 미리 열기 ${shotArms}회, 누름 ${shotFired}회, 건너뜀 ${shotSkipped}회\n" +
             "  팔 올림 감지 ${upEvents}회(팔 올림으로 누르기 ${if (cfg.upPress) "켬" else "끔"}, 그걸로 발동 ${upTriggers}회)\n" +
+            "  웅크림 감지 ${crouchEvents}회(웅크릴 때 누르기 ${if (cfg.crouchPress) "켬" else "끔"}, 그걸로 발동 ${crouchTriggers}회)\n" +
             "  모으기 감지 뒤 공이 떠남 ${leads.size}회(앞섬 중앙값 $med, 전체 ${leads.joinToString(" ")}) · 감지했는데 공이 안 떠남(오발 추정) ${triggersWithoutRelease}회 · 공이 떠났는데 미리 감지 못함 ${releasesWithoutTrigger}회"
     }
 
@@ -947,7 +1070,13 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         /** screen-heights per second; set from data later. */
         const val FAST_SPEED = 0.9f
         const val MAX_SHOT_CLIPS = 80
-        const val MAX_COLOUR_CLIPS = 28
+        const val MAX_COLOUR_CLIPS = 38
+        /** Crouch cue ([crouch]): history size, sink needed (7 px at 720p) within the window, calm y range (9 px), waits tried in turn. */
+        const val CR_N = 96
+        const val CROUCH_SINK = 0.0097f
+        const val CROUCH_WIN_NS = 170_000_000L
+        const val CROUCH_CALM = 0.0125f
+        val CROUCH_DELAYS = longArrayOf(0L, 40L, 80L)
         /** Outline top this close under the marker (share of H; 14 px at 720p) = hands or ball lifted. Shadow only. */
         const val UP_DY = 0.0195f
         /** Experimental arms-up press: wait this long for a gap rule to fire first (two scans at 60 Hz). */
