@@ -38,6 +38,11 @@ object Bench {
         val joyFy: Float = 0.769f,
         /** GAME mode: when the block button visibly changes (the user pressed it), save a 60 fps clip around it. */
         val pressClips: Boolean = true,
+        /** ⑧ auto-block draft: see AutoBlocker. */
+        val autoBlock: Boolean = false,
+        val autoBlockLive: Boolean = true,
+        val ultDelayMs: Int = 600,
+        val recalibrate: Boolean = false,
         val opencvAreaResize: Boolean = false,
         val opencvThreads: Int = 1,
         val warmupSec: Double = 5.0,
@@ -69,6 +74,8 @@ object Bench {
     @Volatile var lastSummary: String = ""
     /** True between "stop" and "results written" (a few seconds), so the UI can say so. */
     @Volatile var saving = false
+    /** Input-side report of the last ⑧ run (overlay/joystick statistics), merged into the session summary. */
+    @Volatile var autoReport: String = ""
     @Volatile var lastExportDir: String = ""
 
     /** Live numbers for the control screen (written by the 1 Hz sampler). */

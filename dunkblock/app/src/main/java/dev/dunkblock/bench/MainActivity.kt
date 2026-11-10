@@ -32,6 +32,7 @@ class MainActivity : Activity() {
     private lateinit var scroll: ScrollView
     private lateinit var resultBox: LinearLayout
     private var pendingMode = Bench.Mode.GAME
+    private var pendingAuto = false
     private var shownSummary = ""
     private var crashText = ""
     private var bundleMsg = ""
@@ -103,6 +104,18 @@ class MainActivity : Activity() {
         button("세션 중지") { if (Bench.running) CaptureService.stop(this) }
         button("접근성 설정 열기 (④·⑤에 필요)") { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
 
+        title("⑧ 자동 블록 초안")
+        root.addView(TextView(this).apply {
+            text = "상대 궁극기(화면이 어두워짐)를 감지하면 설정한 지연 뒤에 블록을 누릅니다. 조이스틱을 누르고 있을 때만 동작합니다. " +
+                "일반 슛·덩크·레이업은 아직 대상이 아닙니다. 경기 화면과 블록 장면을 함께 기록합니다. " +
+                "사람과의 공식 경기에서 쓰면 운영정책 위반으로 제재될 수 있습니다."
+        })
+        button("⑧ 자동 블록 초안 시작") {
+            if (BlockAccessibilityService.instance == null) { status.text = "접근성 서비스가 꺼져 있습니다."; return@button }
+            if (BlockAccessibilityService.instance?.inGame != null) { status.text = "이미 실행 중입니다. 화면 위 검은 버튼으로 끝내세요."; return@button }
+            requestCapture(Bench.Mode.GAME, auto = true)
+        }
+
         title("⑤ 인게임 자동 탭 시험 (수동 관찰)")
         root.addView(TextView(this).apply {
             text = "게임에서 이동 조이스틱을 누른 채로 있을 때, 지정 위치에 자동 탭을 보내 캐릭터 이동이 끊기는지 눈으로 확인합니다. " +
@@ -153,10 +166,14 @@ class MainActivity : Activity() {
         opt("블록 누름 순간 60fps 클립(①)", if (c.pressClips) "켬" else "끔") { c.copy(pressClips = !c.pressClips) }
         opt("OpenCV 축소 방식", if (c.opencvAreaResize) "INTER_AREA" else "INTER_NEAREST") { c.copy(opencvAreaResize = !c.opencvAreaResize) }
         opt("OpenCV 스레드", "${c.opencvThreads}") { c.copy(opencvThreads = cycle(listOf(1, 2, 4), c.opencvThreads)) }
+        opt("⑧ 자동 블록 동작", if (c.autoBlockLive) "실제로 누름" else "기록만(누르지 않음)") { c.copy(autoBlockLive = !c.autoBlockLive) }
+        opt("⑧ 궁극기 감지 후 누르기까지(ms)", "${c.ultDelayMs}") { c.copy(ultDelayMs = cycle(listOf(450, 525, 600, 675, 750), c.ultDelayMs)) }
+        opt("⑧ 시작할 때 버튼 위치 다시 맞추기", if (c.recalibrate) "켬" else "끔") { c.copy(recalibrate = !c.recalibrate) }
         opt("카메라 검증용 ACK 사각형(②)", if (c.cameraAck) "켬" else "끔") { c.copy(cameraAck = !c.cameraAck) }
     }
 
-    private fun requestCapture(mode: Bench.Mode) {
+    private fun requestCapture(mode: Bench.Mode, auto: Boolean = false) {
+        pendingAuto = auto
         if (Bench.running) { status.text = "이미 측정 중입니다."; return }
         // Drop the previous session now, so a test screen started next cannot write into its logs.
         Bench.session = null
@@ -172,8 +189,15 @@ class MainActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != REQ_CAPTURE) return
         if (resultCode != RESULT_OK || data == null) { status.text = "화면 캡처 권한이 거부되었습니다."; return }
-        Bench.config = Bench.config.copy(mode = pendingMode)
+        Bench.config = Bench.config.copy(mode = pendingMode, autoBlock = pendingAuto)
+        Bench.autoReport = ""
         CaptureService.start(this, resultCode, data)
+        if (pendingAuto) {
+            val svc = BlockAccessibilityService.instance
+            if (svc != null) svc.inGame = InGameProxy(svc, autoMode = true).also { it.begin() }
+            status.text = "⑧ 준비됨: 게임에서 경기 화면이 나오면 화면 위 검은 버튼을 누르세요. 끝낼 때도 그 버튼입니다."
+            return
+        }
         when (pendingMode) {
             Bench.Mode.GAME -> status.text = "캡처 시작. 게임으로 전환하세요. 끝나면 알림의 '중지' 또는 이 화면의 '세션 중지'."
             else -> main.postDelayed({ startActivity(Intent(this, PatternActivity::class.java)) }, 400)

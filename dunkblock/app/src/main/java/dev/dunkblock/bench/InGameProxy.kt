@@ -28,7 +28,38 @@ import kotlin.math.min
  *  5. the floating button ends the test and saves the log.
  * What the game does with it (does the character keep running while blocking?) is observed by the user.
  */
-class InGameProxy(private val svc: BlockAccessibilityService) {
+class InGameProxy(private val svc: BlockAccessibilityService, private val autoMode: Boolean = false) {
+    private var skippedFires = 0
+    private val tag = if (autoMode) "⑧" else "⑦"
+
+    /**
+     * ⑧: press block now (main thread). Only while the thumb holds the joystick pad, so the press is part of the
+     * stick's own gesture (the only form measured to leave movement intact) and never lands on a menu.
+     */
+    fun fireBlock(reason: String): Boolean {
+        val s = stick
+        if (finished || s == null || !thumbDown || !s.active) { skippedFires++; rec("auto", "skip_$reason", 0f, 0f, 0); return false }
+        s.tap(PointF(block.x, block.y), 1)
+        autoTaps++
+        rec("auto", "fire_$reason", block.x, block.y, 0)
+        bubble?.text = "⑧ 자동 블록 ${autoTaps}회 · 여기를 눌러 끝내기"
+        return true
+    }
+
+    /** Uses the saved calibration (fractions of the landscape screen). False if there is none or the screen is portrait. */
+    @Suppress("DEPRECATION")
+    private fun loadCalibration(): Boolean {
+        val sp = svc.getSharedPreferences("calib", 0)
+        if (!sp.contains("bx")) return false
+        val p = android.graphics.Point()
+        svc.getSystemService(android.hardware.display.DisplayManager::class.java).getDisplay(android.view.Display.DEFAULT_DISPLAY).getRealSize(p)
+        if (p.x <= p.y) return false
+        joy = PointF(sp.getFloat("jx", 0f) * p.x, sp.getFloat("jy", 0f) * p.y)
+        block = PointF(sp.getFloat("bx", 0f) * p.x, sp.getFloat("by", 0f) * p.y)
+        rec("calib", "loaded", block.x, block.y, p.x)
+        return true
+    }
+
     private val main = Handler(Looper.getMainLooper())
     private val log = StringBuilder("t_ns,source,event,x,y,device\n")
     private val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.ROOT).format(Date())
@@ -64,7 +95,7 @@ class InGameProxy(private val svc: BlockAccessibilityService) {
 
     fun begin() {
         val tv = TextView(svc).apply {
-            text = "⑦ 게임(연습 모드)을 연 뒤 여기를 누르세요"
+            text = if (autoMode) "⑧ 경기 화면(가로)이 나오면 여기를 누르세요" else "⑦ 게임(연습 모드)을 연 뒤 여기를 누르세요"
             setTextColor(Color.WHITE); textSize = 15f
             setBackgroundColor(Color.argb(210, 20, 20, 20)); setPadding(32, 20, 32, 20)
             setOnClickListener { onBubble() }
@@ -80,6 +111,7 @@ class InGameProxy(private val svc: BlockAccessibilityService) {
 
     private fun onBubble() {
         when {
+            step == 0 && autoMode && !Bench.config.recalibrate && loadCalibration() -> { step = 3; showPad() }
             step == 0 -> showCalibration()
             padShown -> finish("사용자 종료")
         }
@@ -141,7 +173,8 @@ class InGameProxy(private val svc: BlockAccessibilityService) {
         if (!ok) { finish("패드를 띄우지 못함"); return }
         padShown = true
         stick = svc.newProxyStick(16) { what, _ -> rec("proxy", what, 0f, 0f, 0) }
-        bubble?.text = "⑦ 평소처럼 조이스틱으로 움직이세요 · ${tapEveryMs / 1000.0}초마다 자동 블록 · 여기를 눌러 끝내기"
+        bubble?.text = if (autoMode) "⑧ 자동 블록 켜짐 · 조이스틱을 누르고 있을 때만 동작 · 여기를 눌러 끝내기"
+        else "⑦ 평소처럼 조이스틱으로 움직이세요 · ${tapEveryMs / 1000.0}초마다 자동 블록 · 여기를 눌러 끝내기"
         rec("ctl", "pad_shown", joy.x, joy.y, side)
     }
 
@@ -155,7 +188,7 @@ class InGameProxy(private val svc: BlockAccessibilityService) {
                 svc.setPadTouchable(false)
                 val p = PointF(e.rawX, e.rawY)
                 // Give the window manager a moment to apply the pass-through flag before injecting underneath.
-                main.postDelayed({ if (thumbDown) { s.start(p); main.postDelayed(autoTap, tapEveryMs) } }, 40)
+                main.postDelayed({ if (thumbDown) { s.start(p); if (!autoMode) main.postDelayed(autoTap, tapEveryMs) } }, 40)
             }
             MotionEvent.ACTION_MOVE -> s.target = PointF(e.rawX, e.rawY)
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
@@ -179,23 +212,28 @@ class InGameProxy(private val svc: BlockAccessibilityService) {
         val s = stick
         val o = s?.tapOutcome?.get(1)
         val report = buildString {
-            appendLine("== ⑦ 인게임 대리 조이스틱 (측정값 + 사용자 관찰) ==")
+            appendLine("== $tag 인게임 대리 조이스틱 (측정값 + 사용자 관찰) ==")
             appendLine("기기: ${DeviceInfo.short(svc)}")
             appendLine("종료: $reason")
             appendLine("보정: 조이스틱 (${joy.x.toInt()}, ${joy.y.toInt()}), 블록 버튼 (${block.x.toInt()}, ${block.y.toInt()})")
             appendLine("엄지 누름 ${downs}회, 엄지 끊김(패드가 CANCEL 받음) ${padCancels}회")
             appendLine("주입이 게임이 아니라 패드에 떨어진 이벤트: ${injectedOnPad}개 ${if (injectedOnPad == 0) "(통과 방식 정상)" else "(통과 방식 실패)"}")
             appendLine("대리 조이스틱 세그먼트 ${s?.segments ?: 0}개, 취소 ${s?.cancels ?: 0}회 (탭 없이 취소 ${s?.cancelsWithoutTap ?: 0}회), 1px 흔들기 ${s?.wiggles ?: 0}")
-            appendLine("자동 블록 요청 ${autoTaps}회, 시스템 응답 완료 ${o?.get(1) ?: 0} / 취소 ${o?.get(2) ?: 0}")
+            appendLine("자동 블록 요청 ${autoTaps}회, 시스템 응답 완료 ${o?.get(1) ?: 0} / 취소 ${o?.get(2) ?: 0}" +
+                if (autoMode) ", 엄지가 조이스틱에 없어 건너뜀 ${skippedFires}회" else "")
             appendLine("※ 게임 캐릭터가 실제로 움직이고 블록했는지는 앱이 볼 수 없습니다. 관찰 내용을 알려 주세요.")
         }
-        Bench.lastSummary = report
+        if (autoMode) Bench.autoReport = report
+        if (!autoMode || !Bench.running) Bench.lastSummary = report
         try {
             val dir = File(svc.getExternalFilesDir("sessions"), "${stamp}_ingameproxy").apply { mkdirs() }
             File(dir, "ingame_proxy_summary.txt").writeText(report)
             File(dir, "ingame_proxy_events.csv").writeText(synchronized(log) { log.toString() })
-            Bench.lastExportDir = Exporter.copyToDownloads(svc, dir)
+            val exported = Exporter.copyToDownloads(svc, dir)
+            if (!autoMode || !Bench.running) Bench.lastExportDir = exported
         } catch (_: Throwable) {}
         svc.inGame = null
+        // ⑧: the bubble ends the whole run, including the capture session (which then writes the summary).
+        if (autoMode && Bench.running) CaptureService.stop(svc)
     }
 }

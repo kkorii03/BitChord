@@ -17,10 +17,29 @@ PREFIX = os.path.join(HERE, "assets", "label_forced_prefix_2340.png")   # '무�
 
 FORCED_THR = 0.6
 
+# Each label: the main word, a prefix that grades it, and the names of the two grades.
+SPECS = {
+    "block": {"word": TEMPLATE, "prefix": PREFIX, "event": "game_label_block",
+              "kinds": ("clean(블록)", "forced(무리한 블록)"),
+              "note": "블록 성공 시에만 뜸(사용자 확인). 블록 순간은 글자보다 앞."},
+    "contest": {"word": os.path.join(HERE, "assets", "label_contest_2340.png"),
+                "prefix": os.path.join(HERE, "assets", "label_strong_prefix_2340.png"), "event": "game_label_contest",
+                "kinds": ("contest(컨테스트)", "strong(강한 컨테스트)"),
+                "note": "슛 방해(컨테스트) 판정. 블록은 아님."},
+}
 
-def detect(path, pts, work, step=2, scale=0.75, sizes=(0.8, 0.9, 1.0, 1.12), thr=0.75, min_hits=3, gap_s=0.2):
-    tpl_full = cv2.imread(TEMPLATE, cv2.IMREAD_GRAYSCALE)
-    pre_full = cv2.imread(PREFIX, cv2.IMREAD_GRAYSCALE)
+
+def detect_all(path, pts, work, **kw):
+    out = []
+    for name in SPECS:
+        out.extend(detect(path, pts, work, spec=name, **kw))
+    return sorted(out, key=lambda d: d["onset_pts_s"])
+
+
+def detect(path, pts, work, spec="block", step=2, scale=0.75, sizes=(0.8, 0.9, 1.0, 1.12), thr=0.75, min_hits=3, gap_s=0.2):
+    sp = SPECS[spec]
+    tpl_full = cv2.imread(sp["word"], cv2.IMREAD_GRAYSCALE)
+    pre_full = cv2.imread(sp["prefix"], cv2.IMREAD_GRAYSCALE)
     cap = cv2.VideoCapture(path)
     i, hits = 0, []
     ref_w = None
@@ -70,13 +89,13 @@ def detect(path, pts, work, step=2, scale=0.75, sizes=(0.8, 0.9, 1.0, 1.12), thr
             continue
         lt = float(np.median([h["left_text"] for h in g]))
         first = g[0]
-        out.append({"event": "game_label_block", "onset_frame": first["frame"], "onset_pts_s": round(first["pts_s"], 4),
+        out.append({"event": sp["event"], "onset_frame": first["frame"], "onset_pts_s": round(first["pts_s"], 4),
                     "end_pts_s": round(g[-1]["pts_s"], 4), "peak_score": max(h["score"] for h in g), "hits": len(g),
                     "x": first["x"], "y": first["y"], "left_text_fraction": round(lt, 3),
                     "forced_prefix_score": round(lt, 3),
-                    "label_kind": "forced(무리한 블록)" if lt > FORCED_THR else "clean(블록)",
+                    "label_kind": sp["kinds"][1] if lt > FORCED_THR else sp["kinds"][0],
                     "onset_resolution_ms": round(1000 * step / max(1.0, len(pts) / max(1e-6, pts[-1] - pts[0])), 1),
-                    "note": "글자 등장 시각. 블록 순간은 이보다 앞(4번 영상: 손 아이콘 4.56s, 글자 4.86s)."})
+                    "note": sp["note"]})
     return out
 
 

@@ -165,6 +165,7 @@ class CaptureService : Service() {
         Bench.stopRequester = null
         Bench.flipSeenListener = null
         sampler?.stop()
+        try { BlockAccessibilityService.instance?.inGame?.finish("캡처 종료") } catch (_: Throwable) {}
         displayListener?.let { getSystemService(DisplayManager::class.java).unregisterDisplayListener(it) }
         try { virtualDisplay?.release() } catch (_: Throwable) {}
         try { projection?.stop() } catch (_: Throwable) {}
@@ -206,6 +207,13 @@ class CaptureService : Service() {
             appendLine("캡처 크기: ${session.captureW}x${session.captureH}")
             appendLine(DeviceInfo.short(this@CaptureService))
             session.error?.let { appendLine("!! 처리 오류: $it") }
+            p?.auto?.let {
+                appendLine("== ⑧ 자동 블록 초안 ==")
+                appendLine("궁극기(화면 어두워짐) 감지 ${it.triggers}회 → 블록 누름 ${it.fired}회, 누르지 않음 ${it.skipped}회 " +
+                    "(지연 ${session.config.ultDelayMs}ms, ${if (session.config.autoBlockLive) "실제 누름" else "기록만"})")
+                appendLine("  일반 슛·덩크·레이업은 이 초안의 대상이 아닙니다. 블록 성공 여부는 앱이 판정하지 못합니다(clips/ 확인).")
+                if (Bench.autoReport.isNotEmpty()) append(Bench.autoReport)
+            }
             p?.clipper?.let { appendLine("블록 버튼 누름 감지 ${it.presses}회, 저장한 60fps 클립 ${it.clips}개 (블록 버튼 위치 ${session.config.blockFx}, ${session.config.blockFy})") }
             appendLine("-- 메모 --")
             append(synchronized(session.notes) { session.notes.toString() })
@@ -223,6 +231,7 @@ class CaptureService : Service() {
             session.display?.let { d -> File(sessionDir, "display.csv").bufferedWriter().use { Csv.display(d, it) } }
             if (truth.isNotEmpty()) File(sessionDir, "truth.csv").bufferedWriter().use { TruthMatcher.csv(truth, it) }
             p?.clipper?.let { c -> File(sessionDir, "presses.csv").writeText(c.pressLog.toString()) }
+            p?.auto?.let { a -> File(sessionDir, "autoblock.csv").writeText(a.csv()) }
             File(sessionDir, "device.txt").writeText(DeviceInfo.full(this))
         } catch (t: Throwable) {
             Log.e(TAG, "write failed", t)

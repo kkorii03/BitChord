@@ -55,6 +55,9 @@ class FramePipeline(
     private var evidenceCount = 0
 
     val detector: AttackEventDetector
+    /** ⑧ auto-block draft (GAME mode only). */
+    val auto: AutoBlocker? = if (session.config.mode == Bench.Mode.GAME && session.config.autoBlock)
+        AutoBlocker(session.config, session.startedNs) else null
     /** GAME mode: user's own block presses → 60 fps clips (timing data). */
     val clipper: PressClipper? = if (session.config.mode == Bench.Mode.GAME)
         PressClipper(session.config, io, File(evidenceDir.parentFile, "clips"), session.startedNs) else null
@@ -156,6 +159,7 @@ class FramePipeline(
         val hash = sampleHash(buf, w, h, rowStride, pixelStride)
         val dup = hash == prevHash
         prevHash = hash
+        auto?.onFrame(sampledLuma100, arrivalNs, w > h)
 
         var tPre = 0L; var tRoi = 0L; var tMotion = 0L; var tAnalysis = 0L; var tAlt = 0L
         val p = primary
