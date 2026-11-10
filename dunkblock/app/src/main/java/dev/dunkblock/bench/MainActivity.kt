@@ -36,6 +36,7 @@ class MainActivity : Activity() {
     private var shownSummary = ""
     private var crashText = ""
     private var bundleMsg = ""
+    private var bundling = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -72,10 +73,13 @@ class MainActivity : Activity() {
             text = "전송용 묶음 만들기 (모든 결과 → 25MB 이하 zip 최대 4개)"; isAllCaps = false
             setOnClickListener {
                 if (Bench.running || Bench.saving) { bundleMsg = "측정이 끝난 뒤에 눌러 주세요."; return@setOnClickListener }
+                // A second tap while the first bundle is still being written made every zip twice (vc1035 user report).
+                if (bundling) { bundleMsg = "전송용 묶음 만드는 중… (한 번만 누르세요)"; return@setOnClickListener }
+                bundling = true
                 bundleMsg = "전송용 묶음 만드는 중…"
                 Thread {
                     val msg = try { SendBundle.build(this@MainActivity) } catch (t: Throwable) { "전송용 묶음 실패: $t" }
-                    runOnUiThread { bundleMsg = msg }
+                    runOnUiThread { bundleMsg = msg; bundling = false }
                 }.start()
             }
         }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))

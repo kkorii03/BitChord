@@ -464,8 +464,9 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         val live = cfg.shotBlock && cfg.autoBlockLive
         val detail = String.format(Locale.ROOT, "%s gap=%.3f old=%.3f base=%.3f vy=%.2f vyPrev=%.2f vx=%.2f rise=%.3f flips=%d sens=%d delay=%d",
             kind, gNow, gOld, gBase, vy, vyPrev, vx, rise, flips, cfg.shotSens, cfg.shotDelayMs)
-        // 0.8 s before is enough to see the lift; 1.4 s after shows the game's verdict ('블록' / '블록 위치 부족' ~+0.6..0.9 s).
-        if (shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_$kind", 0.8, 1.4 + cfg.shotDelayMs / 1000.0) }
+        // 0.6 s before shows the lift; the game's verdict ('블록' / '블록 위치 부족' / '블록 타이밍 늦음') shows at
+        // +0.4..+1.4 s (vc1035), so keep 1.8 s after.
+        if (shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_$kind", 0.6, 1.8 + cfg.shotDelayMs / 1000.0) }
         if (!live) {
             shotSkipped++
             event(tNs, "would_press", 0f, 0f, 0f, detail)
@@ -525,7 +526,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         const val FOUND_FILL = 0.45f
         /** screen-heights per second; set from data later. */
         const val FAST_SPEED = 0.9f
-        const val MAX_SHOT_CLIPS = 24
+        const val MAX_SHOT_CLIPS = 80
         const val MAX_COLOUR_CLIPS = 20
         const val MAX_LOG_LINES = 120_000
         /** per sensitivity 0 (fewer presses) .. 2 (more): min upward speed (H/s), min speed-up vs the 200 ms before (H/s), min rise (H). */

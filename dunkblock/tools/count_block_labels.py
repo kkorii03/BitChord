@@ -24,6 +24,7 @@ def scan_clip(folder, tpls, thr):
     within 300 ms at the same place (8 px)."""
     pts = []
     peak = 0.0
+    bestv = (0.0, None, None, None)   # score, rel, gray frame, (x, y, w, h)
     for f in sorted(os.listdir(folder)):
         m = NAME.match(f)
         if not m:
@@ -46,6 +47,8 @@ def scan_clip(folder, tpls, thr):
             _, m, _, l = cv2.minMaxLoc(cv2.matchTemplate(g, t, cv2.TM_CCOEFF_NORMED))
             if m > mx:
                 mx, loc = m, (l[0] + t.shape[1] // 2, l[1] + t.shape[0] // 2)
+                if rel >= 0 and m > bestv[0]:
+                    bestv = (m, rel, g, (l[0], l[1], t.shape[1], t.shape[0]))
         peak = max(peak, mx)
         if mx >= thr:
             pts.append((rel, loc))
@@ -57,9 +60,24 @@ def scan_clip(folder, tpls, thr):
             starts.append(rel)
     # A label already on screen before the event belongs to an earlier play (it stays ~1.5 s): count only new ones.
     if any(r < 0 for r in starts):
-        return peak, None
+        return peak, None, ""
     new = [r for r in starts if r <= 1500]
-    return peak, (new[0] if new else None)
+    return peak, (new[0] if new else None), (verdict(bestv) if new else "")
+
+
+def verdict(b):
+    """'블록' alone = success. '블록 위치 부족' / '블록 타이밍 늦음' carry 2-3 more words of the same white text right
+    of '블록'. Compare bright-pixel density right after the word with the word itself (vc1035: 17 clips read by eye)."""
+    _, _, g, (x, y, w, h) = b
+    if g is None:
+        return ""
+    word = g[y:y + h, x:x + w]
+    right = g[y:y + h, x + w + 2:x + 3 * w + 2]
+    if right.size == 0 or word.size == 0:
+        return "?"
+    thr = max(170, int(np.percentile(word, 85)) - 25)
+    ratio = (right >= thr).mean() / max(1e-3, (word >= thr).mean())
+    return f"실패({ratio:.2f})" if ratio > 0.45 else f"성공({ratio:.2f})"
 
 
 def main():
@@ -78,19 +96,20 @@ def main():
     for dirpath, dirnames, _ in os.walk(a.root):
         for d in dirnames:
             if d.startswith("clip_"):
-                score, rel = scan_clip(os.path.join(dirpath, d), tpls, a.thr)
-                rows.append((os.path.relpath(os.path.join(dirpath, d), a.root), score, rel))
+                score, rel, v = scan_clip(os.path.join(dirpath, d), tpls, a.thr)
+                rows.append((os.path.relpath(os.path.join(dirpath, d), a.root), score, rel, v))
     by_kind = {}
-    for path, score, rel in sorted(rows):
+    for path, score, rel, v in sorted(rows):
         tag = re.sub(r"^clip_\d+_", "", os.path.basename(path)).rsplit("_", 1)[0]
         hit = rel is not None
-        k = by_kind.setdefault(tag, [0, 0])
+        k = by_kind.setdefault(tag, [0, 0, 0])
         k[0] += 1
         k[1] += int(hit)
-        print(f"{path}\tbest={score:.2f}\t" + (f"블록 글자 {rel:+.0f}ms" if hit else "없음"))
-    print("== 종류별: 클립 수 / 블록 글자 있음 ==")
-    for tag, (n, h) in sorted(by_kind.items()):
-        print(f"{tag}\t{n}\t{h}")
+        k[2] += int(v.startswith("성공"))
+        print(f"{path}\tbest={score:.2f}\t" + (f"블록 글자 {rel:+.0f}ms {v}" if hit else "없음"))
+    print("== 종류별: 클립 수 / 판정 글자 있음 / 그중 성공('블록'만) ==")
+    for tag, (n, h, s) in sorted(by_kind.items()):
+        print(f"{tag}\t{n}\t{h}\t{s}")
 
 
 if __name__ == "__main__":
