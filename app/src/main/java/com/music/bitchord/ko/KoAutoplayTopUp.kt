@@ -72,6 +72,21 @@ suspend fun loadAutoplayTracks(
     radio = { id, preferVideo -> YtMusicRepository.radio(id, preferVideo) },
 )
 
+/**
+ * Whether a top-up runs the video station. Music-only skips it because a video
+ * row would just be converted to its audio version again, but a cover has no
+ * audio version (it plays as the video's own audio), so music-only must not
+ * turn a cover seed into an ordinary song station.
+ */
+internal fun videoRadioWanted(
+    switchOn: Boolean,
+    mode: AutoplayMode,
+    inParty: Boolean,
+    musicOnlyActive: Boolean,
+    seedIsCover: Boolean,
+): Boolean = switchOn && mode == AutoplayMode.VIDEO_RADIO && !inParty &&
+    (!musicOnlyActive || seedIsCover)
+
 internal suspend fun loadAutoplayTracks(
     existing: List<Song>,
     seedSong: Song,
@@ -98,10 +113,13 @@ internal suspend fun loadAutoplayTracks(
     // station would make that order depend on whose phone topped it up.
     // Music-only asks for the audio version, so a video station would only be
     // converted again — the station's songs are the answer (upstream v1.9.1).
-    val videoWanted = AppSettings.videoRadio.value &&
-        mode == AutoplayMode.VIDEO_RADIO &&
-        !inParty &&
-        !MusicOnlyPlayback.isActive()
+    val videoWanted = videoRadioWanted(
+        switchOn = AppSettings.videoRadio.value,
+        mode = mode,
+        inParty = inParty,
+        musicOnlyActive = MusicOnlyPlayback.isActive(),
+        seedIsCover = CoverTitles.isCover(seedSong) || seedSong.videoRadio,
+    )
     val offline = AppSettings.meteredConnection.value == null
 
     // Offline the only video songs that can play are the downloaded ones; no

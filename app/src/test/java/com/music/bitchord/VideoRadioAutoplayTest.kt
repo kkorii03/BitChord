@@ -150,4 +150,18 @@ class VideoRadioAutoplayTest {
         )
         assertEquals(listOf("fresh"), pick.ordered.map { it.videoId })
     }
+
+    @Test
+    fun `music-only does not turn a cover seed into a song station`() {
+        val v = AutoplayMode.VIDEO_RADIO
+        // Phone 11-11: cover video, switch on, music-only on -> was mode=music.
+        assertTrue(com.music.bitchord.ko.videoRadioWanted(true, v, false, true, seedIsCover = true))
+        // A non-cover video still defers to music-only (it gets converted).
+        assertTrue(!com.music.bitchord.ko.videoRadioWanted(true, v, false, true, seedIsCover = false))
+        // Switch off, party, or a normal-mode seed never run the video station.
+        assertTrue(!com.music.bitchord.ko.videoRadioWanted(false, v, false, true, true))
+        assertTrue(!com.music.bitchord.ko.videoRadioWanted(true, v, true, false, true))
+        assertTrue(!com.music.bitchord.ko.videoRadioWanted(true, AutoplayMode.NORMAL, false, false, true))
+        assertTrue(com.music.bitchord.ko.videoRadioWanted(true, v, false, false, false))
+    }
 }
