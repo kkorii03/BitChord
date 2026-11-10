@@ -397,6 +397,7 @@
 - 11-10 22:00 **사용자 제보 "커리·라멜로 볼 슛에 반응 안 함" → 반응 없던 연습 슛 조사 + v6 받자마자 쏘는 슛(vc1052)** → 0-4c절. 바꾼 파일: `ShotWatcher.kt`(`onDisc`의 런 추적 `run*`, `checkShot` 맨 앞 fresh 규칙, `FRESH_RISE`). 도구 `missed.py`, `replay9.py` 추가. 실기기 미검증, 제보한 슛이 이 종류인지도 미확인.
 - 11-10 22:20 **움직이는 슈터 확인 경로(vc1053)** → 0-4c 끝, 0-3 ⑤. 바꾼 파일: `ShotWatcher.kt`(`checkShot`에서 xspan ≥ 0.1을 바로 버리지 않고 보류, `pendRise`·`pendDrop`, `MOVE_RISE`, `checkPending`). 도구 `replay10.py`. 실기기 미검증.
 - 11-10 22:18(시계 확인한 실제 시각) **낮고 느린 슛을 E 낮추기로 잡는 안 재생 → 버림**(코드 변경 없음, 빌드 없음) → 0-4c "E를 낮춰서…" 문단, 4절.
+- 11-10 23:05 **폰에서 세션을 직접 가져오는 길(미시험)**: 세션은 폰의 `/sdcard/Download/DunkBlock/<세션>`(내보낸 사본)과 `/sdcard/Android/data/dev.dunkblock.blocker/files/sessions/`에 있다. 폰이 미니PC 핫스팟에 붙어 있고 23:00~08:00이면 `tools\phone.ps1 auto` 뒤 `adb pull`로 묶음 없이 가져올 수 있다(읽기만). 23:00에 시도했으나 폰이 안 보였다(NOT FOUND). 이 대화에서는 10분마다 다시 찾는 대기 작업을 걸어 두었다(07:45까지, 찾으면 세션 목록만 출력).
 - 11-10 22:50 **팔 올림으로 누르는 실험 옵션(vc1056, 기본 끔)** → 0-4d 끝 두 문단. 계기: 사용자 제보(커리·라멜로 슛에 무반응)를 한 번의 시험으로 확인하려면 기록만으로는 한 바퀴가 더 든다. 경기 클립 둘(471.2, 207.4)을 영상으로 확인해 가짜 1·늦음 1임을 알았으므로 기본값은 끔. 바꾼 파일: `ShotWatcher.kt`(`armsUp` 상태만, `armsUpEvent`, `checkUpPending`, `press`가 `lastPressNs` 기록, 요약 한 줄), `Bench.kt`(`upPress`), `MainActivity.kt`(옵션 버튼, prefs `calib/upPress`), `armsup.py`(`*` 표시).
 - 11-10 22:40 **"팔 올림" 신호 발견 + 그림자 측정(vc1055)** → 0-4d. 기존 네 묶음의 컬러 클립을 처음으로 열어 봄(공 위치 → 경기 공 색이 달라 포기 → 테두리선 꼭대기). 바꾼 파일: `ShotWatcher.kt`(`findTop`, `armsUp`, `topText`, `shot.csv`에 `top_dy`, `UP_DY`, `MAX_COLOUR_CLIPS` 20 → 28). 도구 `armsup.py`. 누르는 동작은 vc1053과 같다.
 
