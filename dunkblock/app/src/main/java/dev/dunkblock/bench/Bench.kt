@@ -42,6 +42,10 @@ object Bench {
         val autoBlock: Boolean = false,
         val autoBlockLive: Boolean = true,
         val ultDelayMs: Int = 600,
+        /** Regular-shot auto-block (ShotWatcher trigger v1). Sensitivity 0..2, extra delay after detection. */
+        val shotBlock: Boolean = true,
+        val shotSens: Int = 1,
+        val shotDelayMs: Int = 0,
         val recalibrate: Boolean = false,
         val opencvAreaResize: Boolean = false,
         val opencvThreads: Int = 1,
@@ -82,6 +86,8 @@ object Bench {
     @Volatile var clipRequester: ((String, Double, Double) -> Unit)? = null
     /** ShotWatcher's latest reading of the block-button slot: offence / defence / unknown (ShotWatcher.SIDE_*). */
     @Volatile var shotSide: Int = 0
+    /** One-line live state of the regular-shot trigger for the UI. */
+    @Volatile var shotLive: String = ""
     @Volatile var lastExportDir: String = ""
 
     /** Live numbers for the control screen (written by the 1 Hz sampler). */

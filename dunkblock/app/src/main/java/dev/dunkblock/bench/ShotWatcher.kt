@@ -2,6 +2,8 @@ package dev.dunkblock.bench
 
 import java.nio.ByteBuffer
 import android.graphics.Bitmap
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import java.io.File
 import java.io.FileOutputStream
@@ -26,7 +28,8 @@ import java.util.concurrent.ExecutorService
  *   candidates, 기록 marks and ultimates (not for block-slot changes).
  * Everything per frame goes to shot.csv for offline design of the real trigger.
  */
-class ShotWatcher(private val startedNs: Long, private val io: ExecutorService, private val colourDir: File) {
+class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, private val io: ExecutorService, private val colourDir: File) {
+    private val main = Handler(Looper.getMainLooper())
     @Volatile var side = SIDE_UNKNOWN; private set
     private var frameNo = 0
     private var mapKey = 0L
@@ -72,7 +75,7 @@ class ShotWatcher(private val startedNs: Long, private val io: ExecutorService, 
         val found = findDisc(buf, w, h, rowStride)
         readSlot2(buf, w, h, rowStride, blockFx, blockFy)
         scans++
-        if (side == SIDE_DEF) defScans++ else if (side == SIDE_OFF) offScans++
+        if (side == SIDE_DEF) { defScans++; lastDefNs = tNs } else if (side == SIDE_OFF) offScans++
         if (found) { discScans++; onDisc(tNs) }
         colourFrame(buf, w, h, rowStride, tNs, found)
         val us = ((System.nanoTime() - t0) / 1000).toInt()
@@ -326,9 +329,10 @@ class ShotWatcher(private val startedNs: Long, private val io: ExecutorService, 
                 lastFastNs = tNs
                 fastEvents++
                 val upward = dy < 0 && -dy > 0.5f * Math.abs(dx) * aspect
-                val shotLike = side == SIDE_DEF && upward
+                val shotLike = side != SIDE_OFF && tNs - lastDefNs < 1_000_000_000L && upward
                 if (shotLike) {
                     shotCandidates++
+                    onRelease(tNs)
                     if (shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("shot", 1.6, 0.6) }
                     snapNow = true
                 }
@@ -341,6 +345,118 @@ class ShotWatcher(private val startedNs: Long, private val io: ExecutorService, 
         hT[hPos] = tNs; hX[hPos] = discX; hY[hPos] = discY
         hPos = (hPos + 1) % histN
         if (hCount < histN) hCount++
+        checkShot(tNs)
+    }
+
+    // ------------------------------------------------------------------ live shot trigger (v1, unmeasured)
+
+    /**
+     * SHOT trigger v1. A shot is the only time the disc suddenly starts going UP on defence: the shooter gathers and
+     * jumps (ball/head rise) a few hundred ms before the ball leaves (clip 14: arms up ~300 ms before 박스아웃). Running
+     * up-court also moves the disc up the screen, but steadily, so the rule needs an upward *change* of speed, not just
+     * upward speed. If the gather is missed, the release itself (disc flying up) still fires as a late fallback.
+     * All three thresholds are guesses until the vc1026+ bundles are measured; [cfg.shotSens] scales them.
+     */
+    private var lastShotFireNs = 0L
+    private var lastDefNs = 0L
+    @Volatile var shotTriggers = 0; private set
+    @Volatile var shotFired = 0; private set
+    @Volatile var shotSkipped = 0; private set
+    private val pendingTriggers = ArrayList<Long>()        // trigger times not yet followed by a release
+    private val leadsMs = ArrayList<Int>()                 // trigger -> following release
+    @Volatile var releasesWithoutTrigger = 0; private set
+    @Volatile var triggersWithoutRelease = 0; private set
+
+    private fun ref(tNs: Long, lo: Long, hi: Long): Int {
+        var best = -1; var bestErr = Long.MAX_VALUE; val mid = (lo + hi) / 2
+        for (i in 1 until hCount) {
+            val idx = (hPos - 1 - i + 2 * histN) % histN
+            val age = tNs - hT[idx]
+            if (age > hi) break
+            if (age >= lo && Math.abs(age - mid) < bestErr) { bestErr = Math.abs(age - mid); best = idx }
+        }
+        return best
+    }
+
+    private fun checkShot(tNs: Long) {
+        expireTriggers(tNs)
+        // The slot can turn grey or into 리바운드 around the shot itself, so accept defence seen within the last second.
+        if (side == SIDE_OFF || tNs - lastDefNs > 1_000_000_000L || tNs - lastShotFireNs < 1_500_000_000L) return
+        val a = ref(tNs, 60_000_000L, 130_000_000L); if (a < 0) return
+        val b = ref(tNs, 200_000_000L, 330_000_000L); if (b < 0) return
+        val dtA = (tNs - hT[a]) / 1e9f; val dtB = (hT[a] - hT[b]) / 1e9f
+        if (dtA <= 0f || dtB <= 0f) return
+        val vy = (hY[a] - discY) / dtA                       // screen-heights/s, + = up
+        val vx = (discX - hX[a]) * aspect / dtA
+        val vyPrev = (hY[b] - hY[a]) / dtB
+        val c = ref(tNs, 120_000_000L, 200_000_000L)
+        val rise = (if (c >= 0) hY[c] else hY[a]) - discY
+        // Dribbling (if the disc follows the ball) bounces up and down: count direction changes over 600 ms.
+        var flips = 0; var lastSign = 0; var pts = 0
+        var prevY = discY
+        for (i in 1 until hCount) {
+            val idx = (hPos - 1 - i + 2 * histN) % histN
+            if (tNs - hT[idx] > 600_000_000L) break
+            pts++
+            val d = hY[idx] - prevY; prevY = hY[idx]
+            if (Math.abs(d) > 0.004f) { val sgn = if (d > 0) 1 else -1; if (lastSign != 0 && sgn != lastSign) flips++; lastSign = sgn }
+        }
+        if (pts < 5) return
+        val s = SENS[cfg.shotSens.coerceIn(0, SENS.size - 1)]
+        val dribble = flips >= 4
+        val needRise = if (dribble) s[2] * 1.6f else s[2]
+        val speed = Math.sqrt((vx * vx + vy * vy).toDouble()).toFloat()
+        val gather = vy >= s[0] && vy - vyPrev >= s[1] && rise >= needRise && Math.abs(vx) <= 1.2f * vy
+        val release = speed > FAST_SPEED && vy > 0.5f * Math.abs(vx)
+        if (!gather && !release) return
+        val kind = if (gather && speed <= FAST_SPEED) "gather" else "release"
+        lastShotFireNs = tNs
+        shotTriggers++
+        if (kind == "gather") synchronized(pendingTriggers) { pendingTriggers.add(tNs) }
+        val live = cfg.shotBlock && cfg.autoBlockLive
+        val detail = String.format(Locale.ROOT, "%s vy=%.2f vyPrev=%.2f vx=%.2f rise=%.3f flips=%d sens=%d", kind, vy, vyPrev, vx, rise, flips, cfg.shotSens)
+        if (shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_$kind", 1.6, 1.2) }
+        if (!live) {
+            shotSkipped++
+            event(tNs, "would_press", 0f, 0f, 0f, detail)
+            return
+        }
+        val delay = cfg.shotDelayMs.toLong()
+        main.postDelayed({
+            val ok = BlockAccessibilityService.instance?.inGame?.fireBlock("SHOT") ?: false
+            if (ok) shotFired++ else shotSkipped++
+            event(System.nanoTime(), if (ok) "pressed" else "not_pressed", 0f, 0f, 0f, detail)
+            Bench.shotLive = liveText()
+        }, delay)
+        event(tNs, "shot_trigger", 0f, 0f, 0f, detail)
+        Bench.shotLive = liveText()
+    }
+
+    private fun onRelease(tNs: Long) {
+        synchronized(pendingTriggers) {
+            val t = pendingTriggers.lastOrNull { tNs - it in 0..1_500_000_000L }
+            if (t != null) { leadsMs.add(((tNs - t) / 1_000_000L).toInt()); pendingTriggers.remove(t) }
+            else if (tNs - lastShotFireNs > 1_500_000_000L || lastShotFireNs == 0L) releasesWithoutTrigger++
+        }
+    }
+
+    private fun expireTriggers(tNs: Long) = synchronized(pendingTriggers) {
+        val it = pendingTriggers.iterator()
+        while (it.hasNext()) if (tNs - it.next() > 1_500_000_000L) { it.remove(); triggersWithoutRelease++ }
+    }
+
+    private fun event(tNs: Long, name: String, dx: Float, dy: Float, dtMs: Float, detail: String) = synchronized(events) {
+        events.append(tNs).append(',').append(String.format(Locale.ROOT, "%.3f,%s,%s,%.4f,%.4f,%.4f,%.4f,%.0f,%s\n",
+            (tNs - startedNs) / 1e9, name, sideName(side), discX, discY, dx, dy, dtMs, detail))
+    }
+
+    private fun liveText() = "일반 슛 감지 ${shotTriggers}회 · 블록 누름 ${shotFired}회 · 건너뜀 ${shotSkipped}회"
+
+    fun shotSummary(): String {
+        val leads = synchronized(pendingTriggers) { leadsMs.sorted() }
+        val med = if (leads.isEmpty()) "-" else "${leads[leads.size / 2]}ms"
+        return "일반 슛 발동 ${shotTriggers}회(${if (cfg.shotBlock && cfg.autoBlockLive) "실제 누름" else "기록만"}, 민감도 ${cfg.shotSens}, 지연 ${cfg.shotDelayMs}ms) → 누름 ${shotFired}회, 건너뜀 ${shotSkipped}회\n" +
+            "  모으기 감지 뒤 공이 떠남 ${leads.size}회(앞섬 중앙값 $med, 전체 ${leads.joinToString(" ")}) · 감지했는데 공이 안 떠남(오발 추정) ${triggersWithoutRelease}회 · 공이 떠났는데 미리 감지 못함 ${releasesWithoutTrigger}회"
     }
 
     fun summary(): String = String.format(Locale.ROOT,
@@ -359,6 +475,8 @@ class ShotWatcher(private val startedNs: Long, private val io: ExecutorService, 
         const val MAX_SHOT_CLIPS = 12
         const val MAX_COLOUR_CLIPS = 20
         const val MAX_LOG_LINES = 120_000
+        /** per sensitivity 0 (fewer presses) .. 2 (more): min upward speed (H/s), min speed-up vs the 200 ms before (H/s), min rise (H). */
+        val SENS = arrayOf(floatArrayOf(0.45f, 0.35f, 0.035f), floatArrayOf(0.35f, 0.25f, 0.025f), floatArrayOf(0.25f, 0.18f, 0.018f))
         fun sideName(s: Int) = when (s) { SIDE_DEF -> "def"; SIDE_OFF -> "off"; else -> "unk" }
     }
 }

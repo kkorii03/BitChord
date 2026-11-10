@@ -128,6 +128,28 @@ class BlockerActivity : Activity() {
         col.addView(settings, lp(top = 8f))
         col.addView(footnote("블록이 늦으면 값을 줄이고, 너무 이르면 늘리세요. 기본값 600ms는 영상 1개에서 읽은 값입니다."), lp(top = 8f))
 
+        // Regular shots (trigger v1)
+        col.addView(header("일반 슛 (시험)"), lp(top = 24f))
+        val shotCard = cardView()
+        val shotSwitch = IosSwitch(this, green, fill).apply {
+            setChecked(Bench.config.shotBlock, false)
+            onChange = { v -> Bench.config = Bench.config.copy(shotBlock = v); saveSettings() }
+        }
+        shotCard.addView(row("일반 슛 자동 블록", "수비 중 상대가 슛 자세를 잡으면 누름", shotSwitch, null))
+        shotCard.addView(divider())
+        shotCard.addView(text("민감도", 17f, label), rowLp(top = 12f))
+        shotCard.addView(segmented(listOf("낮음", "보통", "높음"), Bench.config.shotSens.coerceIn(0, 2)) { i ->
+            Bench.config = Bench.config.copy(shotSens = i); saveSettings()
+        }, rowLp(top = 10f, bottom = 14f))
+        shotCard.addView(divider())
+        shotCard.addView(text("감지 후 추가 지연", 17f, label), rowLp(top = 12f))
+        val shotDelays = listOf(0, 50, 100, 150, 200)
+        shotCard.addView(segmented(shotDelays.map { "${it}ms" }, shotDelays.indexOf(Bench.config.shotDelayMs).coerceAtLeast(0)) { i ->
+            Bench.config = Bench.config.copy(shotDelayMs = shotDelays[i]); saveSettings()
+        }, rowLp(top = 10f, bottom = 14f))
+        col.addView(shotCard, lp(top = 8f))
+        col.addView(footnote("아직 측정 전인 첫 규칙입니다. 상대 슛이 아닌데 자꾸 뛰면 민감도를 낮추고, 슛을 놓치면 높이세요. 블록이 늦으면 지연 0, 이르면 지연을 늘리세요. 사람과 하는 경기에서는 제재 위험이 있으니 연습 모드에서 먼저 쓰세요."), lp(top = 8f))
+
         // Result
         col.addView(header("최근 결과"), lp(top = 24f))
         val result = cardView()
@@ -180,6 +202,7 @@ class BlockerActivity : Activity() {
         )
         Bench.autoReport = ""
         Bench.autoLive = ""
+        Bench.shotLive = ""
         CaptureService.start(this, resultCode, data)
         val svc = BlockAccessibilityService.instance
         if (svc != null) svc.inGame = InGameProxy(svc, autoMode = true).also { it.begin() }
@@ -207,7 +230,8 @@ class BlockerActivity : Activity() {
 
     private fun loadSettings() {
         val sp = getSharedPreferences("blocker", 0)
-        var cfg = Bench.config.copy(autoBlockLive = sp.getBoolean("live", true), ultDelayMs = sp.getInt("delay", 600))
+        var cfg = Bench.config.copy(autoBlockLive = sp.getBoolean("live", true), ultDelayMs = sp.getInt("delay", 600),
+            shotBlock = sp.getBoolean("shot", true), shotSens = sp.getInt("shotSens", 1), shotDelayMs = sp.getInt("shotDelay", 0))
         val cal = getSharedPreferences("calib", 0)
         if (cal.contains("bx")) cfg = cfg.copy(
             blockFx = cal.getFloat("bx", cfg.blockFx), blockFy = cal.getFloat("by", cfg.blockFy),
@@ -217,7 +241,8 @@ class BlockerActivity : Activity() {
     }
 
     private fun saveSettings() {
-        getSharedPreferences("blocker", 0).edit().putBoolean("live", Bench.config.autoBlockLive).putInt("delay", Bench.config.ultDelayMs).apply()
+        getSharedPreferences("blocker", 0).edit().putBoolean("live", Bench.config.autoBlockLive).putInt("delay", Bench.config.ultDelayMs)
+            .putBoolean("shot", Bench.config.shotBlock).putInt("shotSens", Bench.config.shotSens).putInt("shotDelay", Bench.config.shotDelayMs).apply()
     }
 
     private fun refreshStatic() {
@@ -234,7 +259,7 @@ class BlockerActivity : Activity() {
             when {
                 Bench.running -> {
                     stateTitle.text = "실행 중"
-                    stateDetail.text = listOf(Bench.autoLive.ifEmpty { "궁극기 감지 대기" }, note).filter { it.isNotEmpty() }.joinToString("\n")
+                    stateDetail.text = listOf(Bench.autoLive.ifEmpty { "궁극기 감지 대기" }, Bench.shotLive, note).filter { it.isNotEmpty() }.joinToString("\n")
                     startButton.text = "중지"; startButton.background = rounded(red, 14f)
                 }
                 Bench.saving -> {
