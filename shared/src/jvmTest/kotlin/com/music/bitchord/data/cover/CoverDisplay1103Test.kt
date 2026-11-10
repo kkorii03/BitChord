@@ -47,6 +47,36 @@ class CoverDisplay1103Test {
         }
     }
 
+    // Phone 11-11 eqpxH1i3Kqw: the record's "Run with Me" / "선우정아 sunwoojunga"
+    // replaced the upload's own Hangul title and artist.
+    private val hangulUpload = "선우정아 - 도망가자 / cover by 오화요(허니즈)"
+
+    private fun withRecord(title: String, artist: String, block: () -> Unit) {
+        val before = CoverTitles.knownOriginal
+        CoverTitles.knownOriginal = { title to artist }
+        try { block() } finally { CoverTitles.knownOriginal = before }
+    }
+
+    @Test
+    fun `a Latin record never replaces a Hangul upload title or adds an alias`() = withRecord("Run with Me", "선우정아 sunwoojunga") {
+        val read = assertNotNull(CoverTitles.read(song(hangulUpload, "오화요")))
+        assertEquals("도망가자", read.title)
+        assertEquals("선우정아", read.originalArtist)
+        assertEquals("Feather", CoverTitles.recordName("feather", "Feather"))
+    }
+
+    @Test
+    fun `a row saved with the records Latin title is mended from the upload`() = withRecord("Run with Me", "선우정아 sunwoojunga") {
+        val saved = song("Run with Me", "선우정아 sunwoojunga · 오화요 커버").copy(
+            originalTitle = hangulUpload,
+            originalArtist = "오화요",
+            coverSinger = "오화요",
+        )
+        val shown = YouTubeDisplayCleaner.clean(saved)
+        assertEquals("도망가자", shown.title)
+        assertEquals("선우정아 · 오화요 커버", shown.artist)
+    }
+
     @Test
     fun `a cover saved without its singer is read again from the upload title`() {
         val saved = song("To. X", "TAEYEON").copy(
