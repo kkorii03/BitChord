@@ -34,6 +34,7 @@ class MainActivity : Activity() {
     private var pendingMode = Bench.Mode.GAME
     private var shownSummary = ""
     private var crashText = ""
+    private var bundleMsg = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -59,6 +60,17 @@ class MainActivity : Activity() {
         resultBox.addView(Button(this).apply {
             text = "결과 공유 (카톡·메모 등으로 보내기)"; isAllCaps = false
             setOnClickListener { shareResult() }
+        }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        resultBox.addView(Button(this).apply {
+            text = "전송용 묶음 만들기 (모든 결과 → 25MB 이하 zip 1개)"; isAllCaps = false
+            setOnClickListener {
+                if (Bench.running || Bench.saving) { bundleMsg = "측정이 끝난 뒤에 눌러 주세요."; return@setOnClickListener }
+                bundleMsg = "전송용 묶음 만드는 중…"
+                Thread {
+                    val msg = try { SendBundle.build(this@MainActivity) } catch (t: Throwable) { "전송용 묶음 실패: $t" }
+                    runOnUiThread { bundleMsg = msg }
+                }.start()
+            }
         }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
 
         title("Phase 0 · 기기 확인")
@@ -160,7 +172,8 @@ class MainActivity : Activity() {
                 Bench.saving -> "● 결과 저장 중… 몇 초만 기다리세요."
                 Bench.lastSummary.isNotEmpty() -> "✓ 마지막 시험 결과 (아래). 저장 위치: ${Bench.lastExportDir}"
                 else -> "대기 중. 아래 '시험' 버튼으로 시작하세요."
-            } + (InGameTapTest.status.takeIf { it.isNotEmpty() }?.let { "\n$it" } ?: "") +
+            } + (bundleMsg.takeIf { it.isNotEmpty() }?.let { "\n$it" } ?: "") +
+                (InGameTapTest.status.takeIf { it.isNotEmpty() }?.let { "\n$it" } ?: "") +
                 (s?.takeIf { !Bench.running }?.let { "\n최근 세션 캡처 ${it.captureW}x${it.captureH}" } ?: "")
             val text = listOf(crashText, Bench.lastSummary).filter { it.isNotEmpty() }.joinToString("\n\n")
             if (text != shownSummary) {
