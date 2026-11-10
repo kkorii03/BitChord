@@ -127,10 +127,16 @@ class BlockAccessibilityService : AccessibilityService() {
         var tapMs = 30L
         private var stroke: GestureDescription.StrokeDescription? = null
         private var last = PointF()
+        private var origin = PointF()
+        /** Joystick strokes cancelled while no block tap was in the gesture (the pure "held stick" failures). */
+        @Volatile var cancelsWithoutTap = 0; private set
+        /** Per tap variant: [dispatched, completed, cancelled]. */
+        val tapOutcome = Array(3) { IntArray(3) }
 
         fun start(origin: PointF) {
             handler.post {
-                last = PointF(origin.x, origin.y)
+                this.origin = PointF(Math.round(origin.x).toFloat(), Math.round(origin.y).toFloat())
+                last = PointF(this.origin.x, this.origin.y)
                 target = PointF(origin.x, origin.y)
                 ending = false; stroke = null; active = true
                 log("proxy_start", System.nanoTime())
@@ -142,17 +148,25 @@ class BlockAccessibilityService : AccessibilityService() {
         /**
          * Adds a block tap to the next segment. Variants (round 2 showed a single-point tap inside a continued
          * gesture was cancelled at once; which form works is measured, not assumed):
-         *  0 = single point, [tapMs]   1 = 2 px line, [tapMs]   2 = 2 px line, same duration as the segment
+         *  0 = starts at 0 ms together with the continued stick (control: round 3 showed this is always cancelled)
+         *  1 = starts 2 ms later, 2 px line   2 = starts 2 ms later, single point
+         * Hypothesis (from AOSP MotionEventInjector): the FIRST step of a gesture that continues a stroke may hold
+         * only continued strokes; a new stroke there makes the whole gesture invalid.
          */
         fun tap(p: PointF, variant: Int = 1) { pendingVariant = variant; pendingTap = p }
 
         private fun tick() {
             if (!active) return
-            val t0 = target ?: return
-            // Round 2: zero-length continued segments (finger held still) were cancelled again and again.
-            // Never send one: when the finger is still, move 1 px back and forth around the target.
+            val raw = target ?: return
+            // Whole pixels only: a continuation must start exactly where the system recorded the stroke's end.
+            val t0 = PointF(Math.round(raw.x).toFloat(), Math.round(raw.y).toFloat())
+            // Never a zero-length segment (round 2): when the finger is still, move 1 px back and forth.
             val t = if (t0.x == last.x && t0.y == last.y) { wiggles++; wiggle = -wiggle; PointF(t0.x + wiggle, t0.y) } else t0
-            val path = Path().apply { moveTo(last.x, last.y); lineTo(t.x, t.y) }
+            // After a cancel the next stroke is a NEW touch: put it down at the stick's centre and move to the target in
+            // the same segment, so a floating joystick in a game re-anchors where it was, not at the displaced point.
+            val fresh = stroke == null
+            val from = if (fresh) origin else last
+            val path = Path().apply { moveTo(from.x, from.y); lineTo(t.x, t.y) }
             val cont = !ending
             val s = try {
                 stroke?.continueStroke(path, 0, segmentMs, cont)
@@ -163,11 +177,16 @@ class BlockAccessibilityService : AccessibilityService() {
             }
             val b = GestureDescription.Builder().addStroke(s)
             val tp = pendingTap
+            var tapV = -1
             if (tp != null) {
                 pendingTap = null
                 val v = pendingVariant
-                val tapPath = Path().apply { moveTo(tp.x, tp.y); if (v != 0) lineTo(tp.x + 2f, tp.y) }
-                b.addStroke(GestureDescription.StrokeDescription(tapPath, 0, if (v == 2) segmentMs else tapMs))
+                tapV = v
+                val x = Math.round(tp.x).toFloat(); val y = Math.round(tp.y).toFloat()
+                val tapPath = Path().apply { moveTo(x, y); if (v == 1) lineTo(x + 2f, y) }
+                val startMs = if (v == 0) 0L else 2L
+                b.addStroke(GestureDescription.StrokeDescription(tapPath, startMs, tapMs))
+                tapOutcome[v][0]++
                 log("tap_dispatch_v$v", System.nanoTime())
             }
             stroke = s
@@ -176,11 +195,13 @@ class BlockAccessibilityService : AccessibilityService() {
                 svc.dispatchGesture(b.build(), object : AccessibilityService.GestureResultCallback() {
                     override fun onCompleted(g: GestureDescription?) {
                         segments++
+                        if (tapV >= 0) { tapOutcome[tapV][1]++; log("tap_completed_v$tapV", System.nanoTime()) }
                         if (!cont) { active = false; stroke = null; log("proxy_end", System.nanoTime()) } else tick()
                     }
                     override fun onCancelled(g: GestureDescription?) {
                         cancels++
-                        log("proxy_cancelled", System.nanoTime())
+                        if (tapV >= 0) tapOutcome[tapV][2]++ else cancelsWithoutTap++
+                        log(if (tapV >= 0) "proxy_cancelled_with_tap_v$tapV" else "proxy_cancelled", System.nanoTime())
                         stroke = null // the held finger is gone; the next segment starts a new DOWN
                         if (cont && active) handler.postDelayed({ tick() }, 1) else { active = false }
                     }

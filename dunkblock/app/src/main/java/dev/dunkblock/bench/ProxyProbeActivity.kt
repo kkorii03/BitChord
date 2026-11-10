@@ -301,9 +301,12 @@ class ProxyProbeActivity : Activity() {
             appendLine("  시행 ${trialsB.size}: 둘 다 정상 $bOk ${trialsB.map { it.verdict }}")
             for (v in 0..2) {
                 val tv = trialsB.filter { it.variant == v }
-                val name = arrayOf("점 탭 30ms", "2px 선 탭 30ms", "2px 선 탭 16ms(세그먼트와 같은 길이)")[v]
-                appendLine("  탭 방식 $v ($name): 도착 ${tv.count { it.tapArrived }}/${tv.size}, 조이스틱 끊김 ${tv.count { it.stickCancelled }}")
+                val name = arrayOf("조이스틱과 동시 시작(대조군)", "2ms 늦게 시작 + 2px 선", "2ms 늦게 시작 + 점")[v]
+                val o = proxy?.tapOutcome?.get(v)
+                appendLine("  탭 방식 $v ($name): 도착 ${tv.count { it.tapArrived }}/${tv.size}, 조이스틱 끊김 ${tv.count { it.stickCancelled }}" +
+                    (o?.let { ", 시스템 응답 완료 ${it[1]} / 취소 ${it[2]}" } ?: ""))
             }
+            appendLine("  탭과 무관한 대리 조이스틱 취소: ${proxy?.cancelsWithoutTap ?: 0}회 (손가락 정지 등)")
             appendLine("  손가락 정지 구간에서 1px 흔들기로 보낸 세그먼트: ${proxy?.wiggles ?: 0}")
             appendLine("  블록 탭 도착 지연(요청→수신, 다음 세그먼트까지 대기 포함): ${Stats.summarize(tapLat).fmt("ms")}")
             appendLine("  탭 전후 대리 조이스틱 최대 이벤트 공백: ${Stats.summarize(trialsB.map { it.stickGapMs }.toDoubleArray()).fmt("ms")}")
