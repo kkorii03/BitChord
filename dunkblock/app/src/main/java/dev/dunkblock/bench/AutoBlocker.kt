@@ -21,8 +21,8 @@ class AutoBlocker(private val cfg: Bench.Config, private val startedNs: Long) {
     private val main = Handler(Looper.getMainLooper())
     private var base = -1f
     private var darkRun = 0
-    private var inDark = false
-    private var darkSinceNs = 0L
+    @Volatile private var inDark = false
+    @Volatile private var darkSinceNs = 0L
     private var lastTriggerNs = 0L
     @Volatile var triggers = 0; private set
     @Volatile var fired = 0; private set
@@ -52,7 +52,9 @@ class AutoBlocker(private val cfg: Bench.Config, private val startedNs: Long) {
                     rec(tNs, "ult_dark_detected", l, "delay_ms=${cfg.ultDelayMs}")
                     Bench.clipRequester?.invoke("ult", 1.0, 2.6)
                     live()
-                    main.postDelayed({ fire() }, cfg.ultDelayMs.toLong())
+                    val sinceNs = tNs
+                    main.post { BlockAccessibilityService.instance?.inGame?.armBlock(cfg.ultDelayMs.toLong() + 200) }
+                    main.postDelayed({ fire(sinceNs) }, cfg.ultDelayMs.toLong())
                 }
             } else if (inDark && tNs - darkSinceNs > 3_000_000_000L) {
                 // Not an ultimate (loading screen, menu): adopt the new brightness instead of staying armed.
@@ -66,12 +68,15 @@ class AutoBlocker(private val cfg: Bench.Config, private val startedNs: Long) {
         }
     }
 
-    private fun fire() {
+    private fun fire(sinceNs: Long) {
         val now = System.nanoTime()
+        // A real ultimate keeps the screen dark well past the delay (0.85 / 0.96 / 1.67 s seen); loading-screen flickers
+        // that tripped v1022 lasted 0.15-0.53 s. Still dark from the same onset = press.
+        if (!inDark || darkSinceNs != sinceNs) { skipped++; rec(now, "not_pressed", -1f, "dark_ended_early"); live(); return }
         if (!cfg.autoBlockLive) { skipped++; rec(now, "would_press", -1f, "shadow_mode"); return }
         val proxy = BlockAccessibilityService.instance?.inGame
         val ok = proxy?.fireBlock("ULT") ?: false
-        if (ok) { fired++; rec(now, "pressed", -1f, ""); live() } else { skipped++; rec(now, "not_pressed", -1f, if (proxy == null) "no_overlay" else "thumb_not_on_joystick") }
+        if (ok) { fired++; rec(now, "pressed", -1f, ""); live() } else { skipped++; rec(now, "not_pressed", -1f, if (proxy == null) "no_overlay" else "no_recent_touch") }
     }
 
     private fun live() { Bench.autoLive = "궁극기 감지 ${triggers}회 · 블록 누름 ${fired}회 · 건너뜀 ${skipped}회" }

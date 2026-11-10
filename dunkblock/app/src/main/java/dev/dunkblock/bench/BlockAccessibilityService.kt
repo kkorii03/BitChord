@@ -143,6 +143,11 @@ class BlockAccessibilityService : AccessibilityService() {
         return ProxyStick(this, Handler(t.looper), segmentMs, log)
     }
 
+    fun newProxyHand(segmentMs: Long, log: (String) -> Unit): ProxyHand {
+        val t = proxyThread ?: HandlerThread("dunkblock-proxy").also { it.start(); proxyThread = it }
+        return ProxyHand(this, Handler(t.looper), segmentMs, log)
+    }
+
     /**
      * A joystick finger held down by the service: a chain of continued strokes, one short segment per gesture,
      * the next one dispatched when the previous completes. [tap] adds a separate stroke to the next segment's
