@@ -38,6 +38,15 @@ def run(source, work=None, config=None, max_seconds=None, do_review=True, root="
     print(f"[4/6] 공격 후보 추출 + 이벤트 추정")
     segs, evs, stats = events.extract(rows, meta["analysis_height"])
     print(f"  공 추적 비율 {stats['ball_tracked_fraction']}, 장면 전환 {stats['scene_cuts']}, 후보 {stats['candidates']}개")
+    print(f"[4b] 게임 표시 '블록' 글자 탐지(블록 성공 정답)")
+    from . import gamelabels
+    labels = gamelabels.detect(path, pr["pts"], work)
+    os.makedirs(os.path.join(work, "review"), exist_ok=True)
+    for k, lab in enumerate(labels, 1):
+        lab["sheet"] = gamelabels.crop_sheet(path, pr["pts"], lab, os.path.join(work, "review", f"block_label_{k:02d}.jpg"))
+        print(f"  블록 글자 #{k}: {lab['onset_pts_s']}s ~ {lab['end_pts_s']}s, {lab['label_kind']}, 점수 {lab['peak_score']}")
+    with open(os.path.join(work, "game_labels.json"), "w", encoding="utf-8") as f:
+        json.dump(labels, f, ensure_ascii=False, indent=2)
     sheets = {}
     if do_review and segs:
         print(f"[5/6] 근거 시트(후보 구간만 다시 디코딩)")
