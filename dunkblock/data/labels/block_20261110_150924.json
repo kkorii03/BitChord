@@ -1,0 +1,25 @@
+{
+  "clip": "Screen_Recording_20261110_150924_NBA_Dunk_City.mp4 (사용자 제공, 저장소에 포함하지 않음)",
+  "source": "게임 리플레이를 갤럭시 화면 녹화로 기록. 2340x1080, 약 117fps 가변 프레임레이트, 1배속(샷 클락으로 확인)",
+  "review": "Claude가 프레임을 직접 보고 판독(reviewed_by_claude). 시각은 영상 PTS 기준, 판독 오차 ±1~2프레임(약 8~17ms)",
+  "context": {"defender": "제임스(사용자 선수, 올드 르브론, 기린 의상)", "shooter": "골대 아래 회색 선수(빨간 윤곽선 = 상대 팀으로 추정)",
+              "game_label": "무리한 블록", "user_comment": "무리한 블락, 애매한 블락이지만 블락은 맞음"},
+  "events": [
+    {"t_s": 3.66, "who": "shooter", "event": "ball_held_at_chest", "note": "3.66~3.74 공을 가슴 앞에 잡음"},
+    {"t_s": 3.761, "who": "shooter", "event": "white_silhouette_flash_start", "note": "3.76~3.89 흰 실루엣(스킬 발동 연출로 추정, 미확인)"},
+    {"t_s": 3.911, "who": "shooter", "event": "gather_crouch", "note": "무릎 굽혀 웅크림"},
+    {"t_s": 4.05, "who": "shooter", "event": "takeoff", "note": "4.04~4.06 사이 발이 뜨기 시작, 4.086 공 머리 위", "uncertainty_ms": 25},
+    {"t_s": 4.32, "who": "defender", "event": "takeoff", "note": "4.311 팔 들기, 4.327 도약, 4.344 상승", "uncertainty_ms": 17},
+    {"t_s": 4.402, "who": "defender", "event": "block_glow_start", "note": "노란 빛 효과 시작"},
+    {"t_s": 4.561, "who": "game", "event": "hand_icon", "note": "큰 흰 손 아이콘(블록 판정 표시)"},
+    {"t_s": 4.66, "who": "game", "event": "label_contest", "note": "'컨테스트' 글자"},
+    {"t_s": 4.86, "who": "game", "event": "label_forced_block", "note": "'무리한 블록' 글자"}
+  ],
+  "intervals_ms": {
+    "shooter_crouch_to_defender_takeoff": 410,
+    "shooter_takeoff_to_defender_takeoff": 270,
+    "defender_takeoff_to_hand_icon": 240,
+    "shooter_takeoff_to_hand_icon": 510
+  },
+  "not_observable": "사용자가 버튼을 누른 시각은 영상에 없다. defender takeoff = 입력 시각 + 게임 지연(미상)."
+}
