@@ -24,6 +24,8 @@ DEFAULTS = {
     "diff_threshold": 25,
     "cut_hist_corr": 0.55,
     "max_blobs": 8,
+    # Only accept ball blobs that overlap camera-compensated motion (static yellow seats/banners are rejected).
+    "ball_require_motion": False,
 }
 
 
@@ -42,7 +44,7 @@ def _hud_mask(w, h, hud):
     return m
 
 
-def _find_ball(hsv, mask_ok, cfg, w, prev):
+def _find_ball(hsv, mask_ok, cfg, w, prev, motion=None):
     lo = np.array([cfg["ball_h"][0], cfg["ball_s_min"], cfg["ball_v_min"]], np.uint8)
     hi = np.array([cfg["ball_h"][1], 255, 255], np.uint8)
     m = cv2.inRange(hsv, lo, hi) & (mask_ok * 255)
@@ -53,6 +55,8 @@ def _find_ball(hsv, mask_ok, cfg, w, prev):
     best, best_score = None, 0.0
     for i in range(1, n):
         x, y, bw, bh, area = stats[i]
+        if motion is not None and not motion[y:y + bh, x:x + bw][lab[y:y + bh, x:x + bw] == i].any():
+            continue
         r = math.sqrt(area / math.pi)
         if r < rmin or r > rmax:
             continue
@@ -114,6 +118,7 @@ def scan(path, pts, work, cfg, max_seconds=None, progress=True):
         resp = 0.0
         motion_frac = 0.0
         blobs = []
+        motion_for_ball = None
         if prev_gray is not None:
             corr = cv2.compareHist(prev_hist, hist, cv2.HISTCMP_CORREL)
             cut = corr < cfg["cut_hist_corr"]
@@ -126,9 +131,11 @@ def scan(path, pts, work, cfg, max_seconds=None, progress=True):
                 motion_frac = float(np.count_nonzero(motion)) / motion.size
                 blobs = _blobs(motion, cfg["max_blobs"], aw)
                 cum_dx += dx; cum_dy += dy
+                if cfg.get("ball_require_motion"):
+                    motion_for_ball = cv2.dilate(motion, np.ones((3, 3), np.uint8)) > 0
         if cut:
             prev_ball = None
-        ball, bscore = _find_ball(hsv, mask_ok, cfg, aw, prev_ball)
+        ball, bscore = _find_ball(hsv, mask_ok, cfg, aw, prev_ball, motion_for_ball)
         prev_ball = ball if ball else None
         rows.append({
             "frame": i, "pts_s": round(t, 6), "cut": int(cut), "pan_dx": round(dx, 3), "pan_dy": round(dy, 3),

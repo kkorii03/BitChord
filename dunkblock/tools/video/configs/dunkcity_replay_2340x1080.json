@@ -1,0 +1,8 @@
+{
+  "_comment": "Calibrated on the user's Dunk City replay recordings (Galaxy S24 Ultra screen recorder, 2340x1080, ~120 fps VFR). Ball = black with yellow panels; only the yellow part is matched and it must be moving.",
+  "analysis_width": 640,
+  "ball_h": [15, 35], "ball_s_min": 120, "ball_v_min": 150,
+  "ball_r_frac": [0.0012, 0.012],
+  "ball_require_motion": true,
+  "hud": [[0.0, 0.0, 0.10, 0.10], [0.0, 0.0, 0.06, 1.0], [0.94, 0.0, 1.0, 1.0], [0.0, 0.86, 1.0, 1.0], [0.93, 0.0, 1.0, 0.10]]
+}
