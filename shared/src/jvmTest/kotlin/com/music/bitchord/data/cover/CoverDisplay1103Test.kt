@@ -35,6 +35,33 @@ class CoverDisplay1103Test {
 
     // The user's own example (11-03): title is the original title only, artist
     // is '<original artist> · <singer> 커버', no '(cover)' anywhere.
+    // Phone 11-10 ItUC9TPcb08: the row read "To. X / TAEYEON", no singer.
+    private val toX = "TAEYEON (태연) 'To. X' / 아오쿠모 린(Aokumo Rin) Cover"
+
+    @Test
+    fun `To X by 아오쿠모 린 names its singer`() {
+        listOf("Aokumo Rin", "아오쿠모 린").forEach { channel ->
+            val shown = StoredSongDisplay.clean(song(toX, channel))
+            assertEquals("To. X", shown.title, channel)
+            assertEquals("TAEYEON · 아오쿠모 린 커버", shown.artist, channel)
+        }
+    }
+
+    @Test
+    fun `a cover saved without its singer is read again from the upload title`() {
+        val saved = song("To. X", "TAEYEON").copy(
+            originalTitle = toX,
+            originalArtist = "Aokumo Rin",
+            coverOriginalArtist = "TAEYEON",
+        )
+        val shown = YouTubeDisplayCleaner.clean(saved)
+        assertEquals("To. X", shown.title)
+        assertEquals("TAEYEON · 아오쿠모 린 커버", shown.artist)
+        assertEquals(toX, shown.originalTitle)
+        // Once mended, a second pass leaves it as it is.
+        assertEquals(shown.artist, YouTubeDisplayCleaner.clean(shown).artist)
+    }
+
     @Test
     fun `Tomboy by 오화요 reads as the user specified`() {
         val shown = StoredSongDisplay.clean(song("Tomboy((G)I-DLE)", "오화요"))

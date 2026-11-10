@@ -49,6 +49,9 @@ internal object YouTubeDisplayCleaner {
         // 커버", phone 11-04) reads as one word again. The growth itself is
         // fixed where the word is appended; this mends rows already saved.
         val fixed = song.copy(artist = singleCoverWord(song.artist))
+        // A cover saved while its singer could not be read ("To. X" by
+        // "TAEYEON" only, phone 11-10) is read again from the upload's own title.
+        lostSingerCover(fixed)?.let { cover -> return cleanCover(fixed, cover) }
         // A cover is music and stays in the list, but its upload title is
         // packaging: "아이묭 - Marigold / cover by 오화요" reads as the song
         // and the singer, not as a video title. When the credit can be read
@@ -68,6 +71,13 @@ internal object YouTubeDisplayCleaner {
             return fixed
         }
         return fixed.copy(title = cleaned.title, artist = cleaned.artist, albumName = album)
+    }
+
+    private fun lostSingerCover(song: Song): CoverTitles.Cover? {
+        if (!song.coverSinger.isNullOrBlank()) return null
+        val upload = song.originalTitle?.trim()?.takeIf { it.isNotBlank() && it != song.title.trim() } ?: return null
+        return CoverTitles.read(song.copy(title = upload, artist = song.originalArtist ?: song.artist))
+            ?.takeIf { it.singer.isNotBlank() && !CoverTitles.sameName(it.singer, it.originalArtist) }
     }
 
     /** `오화요 커버 커버` → `오화요 커버`: the word is a tag, never a repeat. */
