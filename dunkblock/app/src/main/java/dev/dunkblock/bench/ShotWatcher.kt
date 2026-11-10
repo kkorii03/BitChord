@@ -21,7 +21,8 @@ import java.util.concurrent.ExecutorService
  *  DISC: the game draws a solid red disc (ball icon inside) over the ball when the opponent team holds it, and it
  *   flies with the ball on a shot (frames 111.8 s / 117.8 s). Found as the densest window of disc-red cells on a coarse
  *   grid; accepted only when no second, similar blob exists (jersey outlines and court paint give several weak ones),
- *   except the defender's red foot ring stacked 0.12-0.45 H below the disc (vc1031: then the upper blob is the disc).
+ *   except the ball handler's own red foot ring stacked 0.12-0.45 H below the disc (vc1031: then the upper blob is the
+ *   disc). It is NOT my defender's ring (11-10 review): the pair says nothing about how close my player is.
  *   Prototype on the same 60 frames: 9 visible discs found (fill 0.47..0.94), 0 false accepts.
  *  EVENTS: "disc_fast" = the disc moved faster than a carried ball can (a shot, pass or steal). Upward ones on
  *   defence are shot candidates and get a clip + one colour screen, so the next bundle can tell what precedes them.
@@ -71,6 +72,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         if (++frameNo % 2 != 0) return
         val t0 = System.nanoTime()
         ensureGrid(w, h)
+        curBuf = buf; curW = w; curH = h; curStride = rowStride
         side = readSide(buf, w, h, rowStride, blockFx, blockFy)
         Bench.shotSide = side
         val found = findDisc(buf, w, h, rowStride)
@@ -457,12 +459,19 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         if (gOld == Float.MAX_VALUE || base.size < 5) return
         base.sort()
         val gBase = base[base.size / 2]
+        val live = cfg.shotBlock && cfg.autoBlockLive
+        // vc1038: the press reached the game 40-56 ms after the trigger, 40 of that waiting for the block tile to turn
+        // pass-through. Open the tile already at half the rise (offline: 0-34 ms before the trigger in practice).
+        if (live && gNow - gOld >= 0.5f * need && gNow - gBase >= 0.5f * need && tNs - lastArmNs > 300_000_000L) {
+            lastArmNs = tNs; shotArms++
+            main.post { BlockAccessibilityService.instance?.inGame?.armBlock(ARM_MS) }
+            event(tNs, "arm", 0f, 0f, 0f, "half")
+        }
         if (gNow - gOld < need || gNow - gBase < need) return
         val kind = "gap"
         lastShotFireNs = tNs
         shotTriggers++
         synchronized(pendingTriggers) { pendingTriggers.add(tNs) }
-        val live = cfg.shotBlock && cfg.autoBlockLive
         val detail = String.format(Locale.ROOT, "%s gap=%.3f old=%.3f base=%.3f vy=%.2f vyPrev=%.2f vx=%.2f rise=%.3f flips=%d sens=%d delay=%d",
             kind, gNow, gOld, gBase, vy, vyPrev, vx, rise, flips, cfg.shotSens, cfg.shotDelayMs)
         // 0.6 s before shows the lift; the game's verdict ('블록' / '블록 위치 부족' / '블록 타이밍 늦음') shows at
@@ -477,17 +486,111 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
             xMin = minOf(xMin, hX[idx]); xMax = maxOf(xMax, hX[idx])
         }
         val xspan = xMax - xMin
-        val d2 = String.format(Locale.ROOT, "%s xspan=%.3f", detail, xspan)
+        // Where is my own player? (vc1038: all three '블록 위치 부족' presses had him 0.12-0.21 W from the shooter.)
+        val meDist = findMe(discX, discY + gNow)
+        val d2 = String.format(Locale.ROOT, "%s xspan=%.3f me=%.3f/%.3f d=%.3f", detail, xspan, meX, meY, meDist)
         event(tNs, "shot_trigger", 0f, 0f, 0f, d2)
-        if (xspan >= CONFIRM_XSPAN) { shotRejected++; event(tNs, "rejected_xspan", 0f, 0f, 0f, d2); Bench.shotLive = liveText(); return }
-        // Then wait (<= 200 ms) for the disc to keep rising: real shots rose 0.039-0.139 H, phantoms at most 0.028
-        // (vc1038). Checked every scan in [checkPending].
+        snapNow = true     // one colour screen per trigger: checks the my-player finder against the game's verdict
+        if (xspan >= CONFIRM_XSPAN) { reject(tNs, "rejected_xspan", d2); return }
+        if (meDist > ME_FAR) { shotFar++; reject(tNs, "rejected_far", d2); return }
+        if (live) main.post { BlockAccessibilityService.instance?.inGame?.armBlock(ARM_MS) }
+        // Calm shooter (practice: xspan <= 0.026, 10/15 blocked with an immediate press; waiting for the confirmation
+        // would add 66-167 ms and practice '늦음' was already ~100 ms late): press now.
+        if (xspan < CALM_XSPAN) { press(tNs, live, d2 + " calm", 0L); return }
+        // Moving shooter: wait (<= 200 ms) for the disc to keep rising: real shots rose 0.039-0.139 H, phantoms at most
+        // 0.028 (vc1038), and the two in-range match shots pressed immediately were both '타이밍 빠름'.
         pendNs = tNs; pendY = discY; pendDetail = d2; pendLive = live
         Bench.shotLive = liveText()
     }
 
     private var pendNs = 0L; private var pendY = 0f; private var pendDetail = ""; private var pendLive = false
+    private var lastArmNs = 0L
     @Volatile var shotRejected = 0; private set
+    @Volatile var shotFar = 0; private set
+    @Volatile var shotArms = 0; private set
+
+    /** A dropped trigger must not block the real shot that follows a fake (vc1038: 394.5 -> 396.4): 0.4 s, not 1.5 s. */
+    private fun reject(tNs: Long, name: String, detail: String) {
+        shotRejected++
+        lastShotFireNs = tNs - 1_100_000_000L
+        event(tNs, name, 0f, 0f, 0f, detail)
+        Bench.shotLive = liveText()
+    }
+
+    /** [ageMs] = time already spent since the trigger; the user's extra delay counts from the trigger. */
+    private fun press(tNs: Long, live: Boolean, detail: String, ageMs: Long) {
+        if (!live) { shotSkipped++; event(tNs, "would_press", 0f, 0f, 0f, detail); Bench.shotLive = liveText(); return }
+        val delay = (cfg.shotDelayMs.toLong() - ageMs).coerceAtLeast(0L)
+        main.postDelayed({
+            val ok = BlockAccessibilityService.instance?.inGame?.fireBlock("SHOT") ?: false
+            if (ok) shotFired++ else shotSkipped++
+            event(System.nanoTime(), if (ok) "pressed" else "not_pressed", 0f, 0f, 0f, detail)
+            Bench.shotLive = liveText()
+        }, delay)
+    }
+
+    // ------------------------------------------------------------------ my own player
+
+    private var curBuf: ByteBuffer? = null; private var curW = 0; private var curH = 0; private var curStride = 0
+    private var meX = -1f; private var meY = -1f
+
+    /**
+     * My player stands on a dark navy disc with a bright blue rim (team-mates have only a shadow, the ball handler a red
+     * ring). Looks for it around the shooter's feet ([sx], [sy]) on the coarse grid: a 16x6-cell window at least half
+     * navy, blue rim cells on both sides, and not part of a larger dark area. Returns the feet-to-feet distance in
+     * screen widths, or -1 when not found. Prototype on the vc1035/vc1038 colour screens (36 with a tracked disc):
+     * found 4 times in play, all correct and all with my player standing apart (d 0.10-0.17); never found when he
+     * stands against the shooter (rims overlap, feet cover the disc) or in practice. So it can only say "far".
+     * Called once per trigger (capture thread).
+     */
+    private fun findMe(sx: Float, sy: Float): Float {
+        meX = -1f; meY = -1f
+        val buf = curBuf ?: return -1f
+        val w = curW; val h = curH; val s = step
+        val nw = 16; val nh = 6
+        val ax = ((sx - 0.3f) * gw).toInt().coerceIn(0, gw - 1); val bx = ((sx + 0.3f) * gw).toInt().coerceIn(0, gw)
+        val ay = ((discY + 0.05f) * gh).toInt().coerceIn(0, gh - 1); val by = (minOf(0.95f, sy + 0.3f) * gh).toInt().coerceIn(0, gh)
+        val rw = bx - ax; val rh = by - ay
+        if (rw <= nw || rh <= nh) return -1f
+        val st = rw + 1
+        val sn = IntArray(st * (rh + 1)); val sb = IntArray(st * (rh + 1))
+        for (gy in 0 until rh) {
+            var rn = 0; var rb = 0
+            val py = (ay + gy) * s
+            for (gx in 0 until rw) {
+                val px = (ax + gx) * s
+                if (!isHud(px, py, w, h)) {
+                    val o = py * curStride + px * 4
+                    val r = buf.get(o).toInt() and 0xFF
+                    if (r < 120) {
+                        val g = buf.get(o + 1).toInt() and 0xFF; val b = buf.get(o + 2).toInt() and 0xFF
+                        if (r < 75 && g < 70 && b in 25..120 && b - r >= 8) rn++
+                        else if (g in 90..200 && b > 165 && b - r > 80) rb++
+                    }
+                }
+                sn[(gy + 1) * st + gx + 1] = sn[gy * st + gx + 1] + rn
+                sb[(gy + 1) * st + gx + 1] = sb[gy * st + gx + 1] + rb
+            }
+        }
+        fun box(a: IntArray, x0: Int, y0: Int, x1: Int, y1: Int): Int {
+            val xa = x0.coerceIn(0, rw); val xb = x1.coerceIn(0, rw); val ya = y0.coerceIn(0, rh); val yb = y1.coerceIn(0, rh)
+            return a[yb * st + xb] - a[ya * st + xb] - a[yb * st + xa] + a[ya * st + xa]
+        }
+        var best = 0; var bxc = -1; var byc = -1
+        for (y in 0..rh - nh) for (x in 0..rw - nw) {
+            val n = box(sn, x, y, x + nw, y + nh)
+            if (n < nw * nh / 2) continue
+            val l = box(sb, x - 5, y - 2, x + 3, y + nh + 2); if (l < 3) continue
+            val r = box(sb, x + nw - 3, y - 2, x + nw + 5, y + nh + 2); if (r < 3) continue
+            if (box(sn, x - nw, y - nh, x + 2 * nw, y + 2 * nh) > 2.2f * nw * nh) continue
+            val sc = n + minOf(l, 12) + minOf(r, 12)
+            if (sc > best) { best = sc; bxc = x; byc = y }
+        }
+        if (bxc < 0) return -1f
+        meX = (ax + bxc + nw / 2f) * s / w; meY = (ay + byc + nh / 2f) * s / h
+        val dx = meX - sx; val dy = (meY - sy) / aspect
+        return Math.sqrt((dx * dx + dy * dy).toDouble()).toFloat()
+    }
 
     /** Capture thread, every scan. Confirms or drops the trigger held by [checkShot]. */
     private fun checkPending(tNs: Long, found: Boolean) {
@@ -499,21 +602,11 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
             val detail = String.format(Locale.ROOT, "%s up=%.3f after=%d", pendDetail, up, age / 1_000_000L)
             val live = pendLive
             pendNs = 0L
-            if (!live) { shotSkipped++; event(tNs, "would_press", 0f, 0f, 0f, detail); Bench.shotLive = liveText(); return }
-            // The extra delay still counts from the trigger (the gap opening), as before.
-            val delay = (cfg.shotDelayMs.toLong() - age / 1_000_000L).coerceAtLeast(0L)
-            main.postDelayed({
-                val ok = BlockAccessibilityService.instance?.inGame?.fireBlock("SHOT") ?: false
-                if (ok) shotFired++ else shotSkipped++
-                event(System.nanoTime(), if (ok) "pressed" else "not_pressed", 0f, 0f, 0f, detail)
-                Bench.shotLive = liveText()
-            }, delay)
             event(tNs, "confirmed", 0f, 0f, 0f, detail)
+            press(tNs, live, detail, age / 1_000_000L)
         } else if (age > CONFIRM_WINDOW_NS) {
             pendNs = 0L
-            shotRejected++
-            event(tNs, "rejected_norise", 0f, 0f, 0f, String.format(Locale.ROOT, "%s up=%.3f", pendDetail, up))
-            Bench.shotLive = liveText()
+            reject(tNs, "rejected_norise", String.format(Locale.ROOT, "%s up=%.3f", pendDetail, up))
         }
     }
 
@@ -535,12 +628,12 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
             (tNs - startedNs) / 1e9, name, sideName(side), discX, discY, dx, dy, dtMs, detail))
     }
 
-    private fun liveText() = "일반 슛 감지 ${shotTriggers}회 · 헛블락 거름 ${shotRejected}회 · 블록 누름 ${shotFired}회 · 건너뜀 ${shotSkipped}회"
+    private fun liveText() = "일반 슛 감지 ${shotTriggers}회 · 헛블락 거름 ${shotRejected}회(멀어서 ${shotFar}회) · 블록 누름 ${shotFired}회 · 건너뜀 ${shotSkipped}회"
 
     fun shotSummary(): String {
         val leads = synchronized(pendingTriggers) { leadsMs.sorted() }
         val med = if (leads.isEmpty()) "-" else "${leads[leads.size / 2]}ms"
-        return "일반 슛 발동 ${shotTriggers}회(${if (cfg.shotBlock && cfg.autoBlockLive) "실제 누름" else "기록만"}, 민감도 ${cfg.shotSens}, 지연 ${cfg.shotDelayMs}ms) → 확인 실패로 거름 ${shotRejected}회, 누름 ${shotFired}회, 건너뜀 ${shotSkipped}회\n" +
+        return "일반 슛 발동 ${shotTriggers}회(${if (cfg.shotBlock && cfg.autoBlockLive) "실제 누름" else "기록만"}, 민감도 ${cfg.shotSens}, 지연 ${cfg.shotDelayMs}ms) → 거름 ${shotRejected}회(그중 내 선수가 멀어서 ${shotFar}회), 버튼 미리 열기 ${shotArms}회, 누름 ${shotFired}회, 건너뜀 ${shotSkipped}회\n" +
             "  모으기 감지 뒤 공이 떠남 ${leads.size}회(앞섬 중앙값 $med, 전체 ${leads.joinToString(" ")}) · 감지했는데 공이 안 떠남(오발 추정) ${triggersWithoutRelease}회 · 공이 떠났는데 미리 감지 못함 ${releasesWithoutTrigger}회"
     }
 
@@ -570,6 +663,13 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         // 200 ms: vc1035 successes 9/9 kept, vc1033 practice 16/26, vc1038 match real 4/6, phantoms 0/8. The press
         // goes as soon as the rise is reached; trigger->jump was 301-524 ms, so 200 + 75 ms is still before the jump.
         const val CONFIRM_WINDOW_NS = 200_000_000L
+        /** Below this sway the press goes at once (practice shots <= 0.026 W; every match phantom was >= 0.036). */
+        const val CALM_XSPAN = 0.03f
+        /** No press when my player is found this far (screen widths) from the shooter's feet. vc1038, read off the
+         *  trigger frames by eye: '위치 부족' at 0.12 / 0.15 / 0.21, a timing verdict (so in reach) at 0.07 / 0.11. */
+        const val ME_FAR = 0.14f
+        /** How long the block tile stays open to injection after a pre-arm. */
+        const val ARM_MS = 300L
         val SENS = arrayOf(floatArrayOf(0.45f, 0.35f, 0.035f), floatArrayOf(0.35f, 0.25f, 0.025f), floatArrayOf(0.25f, 0.18f, 0.018f))
         fun sideName(s: Int) = when (s) { SIDE_DEF -> "def"; SIDE_OFF -> "off"; else -> "unk" }
     }

@@ -63,7 +63,12 @@ class InGameProxy(private val svc: BlockAccessibilityService, private val autoMo
         val recent = System.nanoTime() - lastTouchNs < RECENT_TOUCH_NS
         if (finished || h == null || !recent) { skippedFires++; rec("auto", "skip_${reason}_${if (h == null) "no_pad" else "idle"}", 0f, 0f, 0); return false }
         val t = tileAt(block)
-        val delay = if (t != null && t.touchable) { setTileTouchable(t, false); PASS_THROUGH_MS } else 0L
+        // A tile opened only a moment ago (pre-arm) still needs the rest of the pass-through wait.
+        val delay = when {
+            t == null -> 0L
+            t.touchable -> { setTileTouchable(t, false); PASS_THROUGH_MS }
+            else -> (PASS_THROUGH_MS - (System.nanoTime() - t.openedNs) / 1_000_000L).coerceIn(0L, PASS_THROUGH_MS)
+        }
         main.postDelayed({
             h.tap(PointF(block.x, block.y))
             if (t != null && t.fingerId < 0) main.postDelayed({ if (t.fingerId < 0 && System.nanoTime() > t.armedUntilNs) setTileTouchable(t, true) }, 150)
@@ -93,6 +98,7 @@ class InGameProxy(private val svc: BlockAccessibilityService, private val autoMo
         var touchable = true
         var fingerId = -1
         var armedUntilNs = 0L
+        var openedNs = 0L
         var started = false
         var downAt = PointF()
     }
@@ -107,6 +113,7 @@ class InGameProxy(private val svc: BlockAccessibilityService, private val autoMo
     private fun setTileTouchable(t: Tile, on: Boolean) {
         if (t.touchable == on) return
         t.touchable = on
+        if (!on) t.openedNs = System.nanoTime()
         t.lp.flags = if (on) t.lp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv() else t.lp.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
         svc.updateOverlay(t.view, t.lp)
     }
