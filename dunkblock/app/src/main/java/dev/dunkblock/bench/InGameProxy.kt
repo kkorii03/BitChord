@@ -205,7 +205,7 @@ class InGameProxy(private val svc: BlockAccessibilityService, private val autoMo
         /** Wait after setting an overlay pass-through before injecting under it (the measured ⑦ value). */
         const val PASS_THROUGH_MS = 40L
         /** Auto-block only while the user touched one of our overlays this recently (playing, not in a menu). */
-        const val RECENT_TOUCH_NS = 8_000_000_000L
+        const val RECENT_TOUCH_NS = 30_000_000_000L    // vc1031: 8 s skipped 3 of 11 shot presses in practice
     }
 
     private val autoTap = object : Runnable {

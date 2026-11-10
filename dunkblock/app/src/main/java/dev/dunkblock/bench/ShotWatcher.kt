@@ -20,7 +20,8 @@ import java.util.concurrent.ExecutorService
  *   cooldown) read as unknown.
  *  DISC: the game draws a solid red disc (ball icon inside) over the ball when the opponent team holds it, and it
  *   flies with the ball on a shot (frames 111.8 s / 117.8 s). Found as the densest window of disc-red cells on a coarse
- *   grid; accepted only when no second, similar blob exists (jersey outlines and court paint give several weak ones).
+ *   grid; accepted only when no second, similar blob exists (jersey outlines and court paint give several weak ones),
+ *   except the defender's red foot ring stacked 0.12-0.45 H below the disc (vc1031: then the upper blob is the disc).
  *   Prototype on the same 60 frames: 9 visible discs found (fill 0.47..0.94), 0 false accepts.
  *  EVENTS: "disc_fast" = the disc moved faster than a carried ball can (a shot, pass or steal). Upward ones on
  *   defence are shot candidates and get a clip + one colour screen, so the next bundle can tell what precedes them.
@@ -56,7 +57,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
     private var usTotal = 0L
     private var usMax = 0
 
-    private val log = StringBuilder(1 shl 16).append("t_ns,t_s,side,disc,x,y,fill,second,dark,orange,slot2_luma,slot2_dark,us\n")
+    private val log = StringBuilder(1 shl 16).append("t_ns,t_s,side,disc,x,y,fill,second,dark,orange,slot2_luma,slot2_dark,us,ring_y,sec_x,sec_y\n")
     private var logLines = 0
     private val events = StringBuilder("t_ns,t_s,event,side,x,y,dx,dy,dt_ms,detail\n")
 
@@ -82,8 +83,8 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         usTotal += us; if (us > usMax) usMax = us
         if (logLines < MAX_LOG_LINES) synchronized(log) {
             logLines++
-            log.append(tNs).append(',').append(String.format(Locale.ROOT, "%.3f,%s,%d,%.4f,%.4f,%.2f,%.2f,%.3f,%.3f,%.1f,%.3f,%d\n",
-                (tNs - startedNs) / 1e9, sideName(side), if (found) 1 else 0, discX, discY, fill, second, sideDark, sideOrange, slot2Luma, slot2Dark, us))
+            log.append(tNs).append(',').append(String.format(Locale.ROOT, "%.3f,%s,%d,%.4f,%.4f,%.2f,%.2f,%.3f,%.3f,%.1f,%.3f,%d,%.4f,%.4f,%.4f\n",
+                (tNs - startedNs) / 1e9, sideName(side), if (found) 1 else 0, discX, discY, fill, second, sideDark, sideOrange, slot2Luma, slot2Dark, us, ringY, secX, secY))
         }
     }
 
@@ -296,26 +297,47 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
                 sat[(gy + 1) * stride + gx + 1] = sat[gy * stride + gx + 1] + row
             }
         }
-        var best = 0; var bx = 0; var by = 0; var sec = 0
-        val far = 2 * k
+        var best = 0; var bx = 0; var by = 0
         for (gy in 0..gh - k) for (gx in 0..gw - k) {
             val c = sat[(gy + k) * stride + gx + k] - sat[gy * stride + gx + k] - sat[(gy + k) * stride + gx] + sat[gy * stride + gx]
-            if (c > best) {
-                if (Math.abs(gx - bx) > far || Math.abs(gy - by) > far) sec = best
-                best = c; bx = gx; by = gy
-            } else if (c > sec && (Math.abs(gx - bx) > far || Math.abs(gy - by) > far)) sec = c
+            if (c > best) { best = c; bx = gx; by = gy }
+        }
+        // Second pass: the strongest window away from the best one, with its position.
+        var sec = 0; var sx = 0; var sy = 0
+        val far = 2 * k
+        for (gy in 0..gh - k) for (gx in 0..gw - k) {
+            if (Math.abs(gx - bx) <= far && Math.abs(gy - by) <= far) continue
+            val c = sat[(gy + k) * stride + gx + k] - sat[gy * stride + gx + k] - sat[(gy + k) * stride + gx] + sat[gy * stride + gx]
+            if (c > sec) { sec = c; sx = gx; sy = gy }
         }
         val kk = (k * k).toFloat()
         fill = best / kk; second = sec / kk
-        val ok = fill >= FOUND_FILL && second <= 0.6f * fill
-        if (ok) {
-            discX = ((bx + k / 2f) * s) / w
-            discY = ((by + k / 2f) * s) / h
-        } else { discX = -1f; discY = -1f }
+        val bX = ((bx + k / 2f) * s) / w; val bY = ((by + k / 2f) * s) / h
+        secX = ((sx + k / 2f) * s) / w; secY = ((sy + k / 2f) * s) / h
+        ringY = -1f
+        var ok = fill >= FOUND_FILL && second <= 0.6f * fill
+        discX = bX; discY = bY
+        // vc1031: the defender's red foot ring (y ~0.80) is the second blob in almost every frame, 0.25-0.35 H below the
+        // shooter's overhead disc (y ~0.50) and within 0.04 W of it. The old "no second blob" rule threw those frames
+        // away (disc seen 16%) and lost the disc during the jump. Stacked like that: the upper blob is the disc.
+        if (!ok && fill >= FOUND_FILL && Math.abs(bX - secX) <= 0.08f && Math.abs(bY - secY) in 0.12f..0.45f) {
+            if (bY < secY) { ok = true; ringY = secY; ringX = secX }
+            else if (second >= FOUND_FILL) { ok = true; discX = secX; discY = secY; ringY = bY; ringX = bX }
+        }
+        if (ringY >= 0f) lastRingNs = System.nanoTime()
+        // The ring alone (disc hidden for a frame) must not pass for the disc: that jump of 0.3 H looked like a release.
+        else if (ok && System.nanoTime() - lastRingNs < 1_500_000_000L && Math.abs(discY - ringYLast) < 0.06f && Math.abs(discX - ringX) < 0.08f) ok = false
+        if (ringY >= 0f) ringYLast = ringY
+        if (!ok) { discX = -1f; discY = -1f }
         return ok
     }
 
+    private var secX = -1f; private var secY = -1f; private var ringY = -1f
+    private var ringX = -1f; private var ringYLast = -1f; private var lastRingNs = 0L
+
     private fun onDisc(tNs: Long) {
+        // A big downward step is the tracker switching to another red blob, never the shot: start the track over.
+        if (hCount > 0) { val li = (hPos - 1 + histN) % histN; if (discY - hY[li] > 0.2f) hCount = 0 }
         // Compare with the oldest point in the last 160 ms: a carried ball moves with a running player
         // (well under 0.5 screen-heights per second); a shot or pass leaves much faster.
         var refI = -1

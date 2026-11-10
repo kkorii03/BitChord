@@ -28,6 +28,13 @@ def scan_clip(folder, tpls, thr):
         g = cv2.imread(os.path.join(folder, f), cv2.IMREAD_GRAYSCALE)
         if g is None:
             continue
+        # Blank out text that always says 블록: our own overlay at the top ("자동 블록 N회") and the
+        # game's "전면 블록" button at the bottom right. The game's success label appears over the players.
+        H, W = g.shape
+        g = g.copy()
+        g[: int(0.13 * H), :] = 128
+        g[int(0.55 * H):, int(0.72 * W):] = 128
+        g[: int(0.5 * H), : int(0.36 * W)] = 128    # 스킬 연습장 explanation panel ("블록 버튼을 탭하여 블록 동작을")
         for t in tpls:
             if t.shape[0] >= g.shape[0] or t.shape[1] >= g.shape[1]:
                 continue
