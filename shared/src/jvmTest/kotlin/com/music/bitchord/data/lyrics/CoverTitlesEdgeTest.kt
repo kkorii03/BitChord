@@ -134,6 +134,19 @@ class CoverTitlesEdgeTest {
     }
 
     @Test
+    fun aQuotedSongWithItsArtistBeforeTheSlashKeepsTheSlashNameAsSinger() {
+        // 11-10 ItUC9TPcb08: the singer was lost and the song kept the artist's name.
+        val title = "TAEYEON (태연) 'To. X' / 아오쿠모 린(Aokumo Rin) Cover"
+        listOf("Aokumo Rin", "아오쿠모 린", "Aokumo Rin Ch.").forEach { channel ->
+            val read = cover(title, channel)
+            assertEquals("To. X", read.title, channel)
+            assertEquals("TAEYEON", read.originalArtist, channel)
+            assertEquals("아오쿠모 린", read.singer, channel)
+            assertEquals("TAEYEON · 아오쿠모 린 커버", read.byline, channel)
+        }
+    }
+
+    @Test
     fun aCoverWordAfterANameNeedsThatNameToBeTheChannel() {
         val own = cover("Song - 타비 Cover", "타비")
         assertEquals("Song", own.title)

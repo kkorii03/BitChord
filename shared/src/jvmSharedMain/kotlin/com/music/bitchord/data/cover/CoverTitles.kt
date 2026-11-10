@@ -879,6 +879,13 @@ object CoverTitles {
             val bare = name.trim().removeSurrounding("(", ")").removeSurrounding("（", "）")
             val singer = cleanName(bare)?.takeUnless { isVersionWord(it) || isDescriptor(it) }
             if (singer != null) {
+                // "TAEYEON (태연) 'To. X' / 아오쿠모 린(Aokumo Rin) Cover": the quoted song
+                // names the original in front of it, so the name after the slash
+                // is the singer even on a known singer's channel.
+                splitArtistQuotedSong(song)?.let { (artist, titleText) ->
+                    val title = cleanTitle(titleText) ?: return null
+                    return Cover(title = title, originalArtist = artist, singer = singer)
+                }
                 val channelName = cleanName(channel)
                 // On a singer's own upload the name before "Cover" is the
                 // original's artist, not a second singer: the uploader sings it.
@@ -1192,6 +1199,17 @@ object CoverTitles {
         val credit = cleanName(artist)?.takeUnless { isVersionWord(it) || isGenericCredit(it) }
             ?: return Cover(title = title, originalArtist = null, singer = singer)
         return Cover(title = title, originalArtist = credit, singer = singer, orderUnsure = true)
+    }
+
+    /** `Artist 'Song'` with nothing after the closing quote. */
+    private val ARTIST_QUOTED_SONG = Regex("""^(.+?)\s+['"“‘]([^'"“”‘’]+)['"”’]$""")
+
+    /** (original artist, song) from "TAEYEON (태연) 'To. X'"; null for any other shape. */
+    private fun splitArtistQuotedSong(text: String): Pair<String, String>? {
+        if (splitTopLevelDash(text) != null) return null
+        val match = ARTIST_QUOTED_SONG.find(text.trim()) ?: return null
+        val artist = cleanName(match.groupValues[1])?.takeUnless { isVersionWord(it) || isDescriptor(it) } ?: return null
+        return artist to match.groupValues[2].trim()
     }
 
     private fun songCover(text: String, singer: String): Cover? {
