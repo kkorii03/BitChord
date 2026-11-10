@@ -91,7 +91,15 @@ class FramePipeline(
         val tCallback = System.nanoTime()
         var k = 0
         while (true) {
-            val img: Image = try { reader.acquireNextImage() } catch (e: IllegalStateException) { null } ?: break
+            // Out of memory here used to kill the process, and with it the accessibility service, which Android then
+            // keeps off as "crashed" until the app is updated (11-11 03:26, third session in one process).
+            val img: Image = try { reader.acquireNextImage() } catch (e: IllegalStateException) { null } catch (e: OutOfMemoryError) {
+                clipper?.free(); shot?.free()
+                Log.e(TAG, "out of memory, ending the session", e)
+                session.error = e.toString()
+                Bench.stopRequester?.invoke()
+                null
+            } ?: break
             k++
             try {
                 process(img, if (k == 1) tCallback else System.nanoTime(), k)
@@ -365,7 +373,8 @@ class FramePipeline(
         }
     }
 
-    fun release() { Bench.clipRequester = null; primary?.release(); alt?.release() }
+    /** Capture thread, after the last frame. The rings (46 + 23 MB) go now: the session object outlives the capture. */
+    fun release() { Bench.clipRequester = null; primary?.release(); alt?.release(); clipper?.free(); shot?.free() }
 
     companion object {
         private const val TAG = "DunkBlockPipeline"

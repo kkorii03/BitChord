@@ -69,7 +69,8 @@ class BlockerActivity : Activity() {
             Bench.config = Bench.config.copy(sweepPress = intent.getBooleanExtra("sweepPress", false),
                 crouchPress = intent.getBooleanExtra("crouchPress", false), upPress = intent.getBooleanExtra("upPress", false),
                 darkSweep = intent.getBooleanExtra("darkSweep", false), darkNth = intent.getIntExtra("darkNth", 1), darkAddMs = intent.getIntExtra("darkAdd", 0),
-                darkPress = intent.getBooleanExtra("darkPress", false), darkDelayMs = intent.getIntExtra("darkDelay", 200), dark2DelayMs = intent.getIntExtra("dark2Delay", 380))
+                darkPress = intent.getBooleanExtra("darkPress", getSharedPreferences("blocker", 0).getBoolean("dark", false)),
+                darkDelayMs = intent.getIntExtra("darkDelay", Bench.Config().darkDelayMs), dark2DelayMs = intent.getIntExtra("dark2Delay", Bench.Config().dark2DelayMs))
             if (intent.getBooleanExtra("auto", false)) main.postDelayed({ if (!Bench.running && !Bench.saving) onStartStop() }, 600)
         }
 
@@ -156,8 +157,14 @@ class BlockerActivity : Activity() {
         shotCard.addView(segmented(shotDelays.map { "${it}ms" }, shotDelays.indexOf(Bench.config.shotDelayMs).coerceAtLeast(0)) { i ->
             Bench.config = Bench.config.copy(shotDelayMs = shotDelays[i]); saveSettings()
         }, rowLp(top = 10f, bottom = 14f))
+        shotCard.addView(divider())
+        val darkSwitch = IosSwitch(this, green, fill).apply {
+            setChecked(Bench.config.darkPress, false)
+            onChange = { v -> Bench.config = Bench.config.copy(darkPress = v); getSharedPreferences("blocker", 0).edit().putBoolean("dark", v).apply() }
+        }
+        shotCard.addView(row("선수 스킬 블록 (시험)", "화면이 어두워지는 선수 스킬에 맞춰 누름", darkSwitch, null))
         col.addView(shotCard, lp(top = 8f))
-        col.addView(footnote("아직 측정 전인 첫 규칙입니다. 상대 슛이 아닌데 자꾸 뛰면 민감도를 낮추고, 슛을 놓치면 높이세요. 블록이 늦으면 지연 0, 이르면 지연을 늘리세요. 사람과 하는 경기에서는 제재 위험이 있으니 연습 모드에서 먼저 쓰세요."), lp(top = 8f))
+        col.addView(footnote("아직 측정 전인 첫 규칙입니다. 상대 슛이 아닌데 자꾸 뛰면 민감도를 낮추고, 슛을 놓치면 높이세요. 블록이 늦으면 지연 0, 이르면 지연을 늘리세요. '선수 스킬 블록'은 노비츠키 위닝 슛 하나로만 맞춘 값입니다(연습장 25번 중 22번 블록). 다른 선수 스킬은 아직 측정 전입니다. 사람과 하는 경기에서는 제재 위험이 있으니 연습 모드에서 먼저 쓰세요."), lp(top = 8f))
 
         // Result
         col.addView(header("최근 결과"), lp(top = 24f))

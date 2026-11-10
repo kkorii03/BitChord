@@ -6,30 +6,39 @@ import sys, os, csv, glob
 # within 0.7 s = the real shot after a fake), how long after the true onset it was seen, and the end of each dark.
 # On match bundles the count per minute and the side at the onset say how often it would fire for nothing.
 
+SLOPE = 0.24            # luma per ms over the two falling scans (8 per 2 scans at 60 Hz); a jump is faster
+PRE0, PRE1 = 0.125, 0.335   # the flat stretch before: scans this long ago (12 scans ending 8 scans ago at 60 Hz)
+UNDER = 20.0
+
 def sim(S):
     """S = [(t s, luma, side or None)] -> [dict(t, nth, base, on, end, low, why, def_)]"""
-    L = [0.0] * 20; T = [0.0] * 20; n = 0
+    N = 40
+    L = [0.0] * N; T = [0.0] * N; n = 0
     dark = False; base = low = 0.0; on = end = 0.0; peak = 0.0; peakT = 0.0; nthc = 0
     lastDef = lastOff = -9.0; out = []; cur = None
     for t, l, side in S:
         if side == "def": lastDef = t
         elif side == "off": lastOff = t
         L = L[1:] + [l]; T = T[1:] + [t]; n += 1
-        if n < 20 or l < 0: continue
-        p1, p2 = L[18], L[17]
+        if n < N or l < 0: continue
+        p1, p2 = L[N - 2], L[N - 3]
         if not dark:
             nth = 0
-            # a fade: two falling scans, but never a jump (a pressed button or a new label drops 20-40 at once)
-            falling = l < p1 - 0.8 and p1 < p2 - 0.8 and p2 - l <= 8
+            # a fade: two falling scans, but never a jump (a pressed button or a new label drops 20-40 at once).
+            # By the clock, not per scan: a hot phone scans at 30-45 Hz, not 60 (11-11: 4 of 22 darks missed).
+            span = t - T[N - 3]
+            falling = l < p1 - 0.8 and p1 < p2 - 0.8 and span <= 0.1 and p2 - l <= SLOPE * span * 1000
             recent = end != 0.0 and t - end < 0.7
             if recent and l > peak: peak = l; peakT = t
             if falling and recent:
                 if l <= peak - 6: nth = nthc + 1; onT = peakT; b = base
             elif falling:
-                pre = L[0:12]; b = sum(pre) / 12.0
-                if max(pre) - min(pre) < 5 and l <= b - 8 and l <= min(pre) - 6 and b - l <= 20 and b >= 60:
+                pre = [L[i] for i in range(N) if PRE0 <= t - T[i] <= PRE1]
+                b = sum(pre) / len(pre) if len(pre) >= 4 else 0
+                if len(pre) >= 4 and max(pre) - min(pre) < 5 and l <= b - 8 and l <= min(pre) - 6 and b - l <= UNDER and b >= 60:
                     nth = 1; onT = t
-                    for i in range(19, 11, -1):
+                    for i in range(N - 1, -1, -1):
+                        if t - T[i] > PRE0: break
                         if L[i] < b - 1.5: onT = T[i]
             if nth:
                 dark = True; base = b; low = l; on = onT; nthc = nth

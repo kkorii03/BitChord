@@ -40,6 +40,7 @@ import java.util.concurrent.Executors
  */
 class CaptureService : Service() {
     private var projection: MediaProjection? = null
+    private var projectionCallback: MediaProjection.Callback? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var reader: ImageReader? = null
     private var captureThread: HandlerThread? = null
@@ -90,7 +91,7 @@ class CaptureService : Service() {
         val mpm = getSystemService(MediaProjectionManager::class.java)
         val mp = mpm.getMediaProjection(code, data) ?: throw IllegalStateException("getMediaProjection returned null")
         projection = mp
-        mp.registerCallback(object : MediaProjection.Callback() {
+        val cb = object : MediaProjection.Callback() {
             override fun onStop() { main.post { stopSession("시스템이 캡처를 중지함") } }
             override fun onCapturedContentResize(width: Int, height: Int) {
                 Bench.session?.note("캡처 콘텐츠 크기 변경 통지: ${width}x$height")
@@ -98,7 +99,9 @@ class CaptureService : Service() {
             override fun onCapturedContentVisibilityChanged(isVisible: Boolean) {
                 Bench.session?.note("캡처 대상 가시성: $isVisible (t=${System.nanoTime()})")
             }
-        }, main)
+        }
+        projectionCallback = cb
+        mp.registerCallback(cb, main)
 
         val t = HandlerThread("dunkblock-capture", Process.THREAD_PRIORITY_URGENT_DISPLAY).also { it.start() }
         captureThread = t
@@ -168,6 +171,8 @@ class CaptureService : Service() {
         try { BlockAccessibilityService.instance?.inGame?.finish("캡처 종료") } catch (_: Throwable) {}
         displayListener?.let { getSystemService(DisplayManager::class.java).unregisterDisplayListener(it) }
         try { virtualDisplay?.release() } catch (_: Throwable) {}
+        // The projection (held by the system for a while after stop) must not keep this service and its session alive.
+        try { projectionCallback?.let { projection?.unregisterCallback(it) } } catch (_: Throwable) {}
         try { projection?.stop() } catch (_: Throwable) {}
         val t = captureThread
         val h = captureHandler
@@ -188,6 +193,8 @@ class CaptureService : Service() {
                 Bench.saving = false
             }
             main.post {
+                pipeline = null; reader = null; virtualDisplay = null; projection = null; projectionCallback = null
+                captureThread = null; captureHandler = null; sampler = null; displayListener = null
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }

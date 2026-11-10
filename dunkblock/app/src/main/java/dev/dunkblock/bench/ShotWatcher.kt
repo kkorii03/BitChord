@@ -256,7 +256,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
 
     // ------------------------------------------------------------------ signature-skill dark (vc1067)
 
-    private val dkL = FloatArray(20); private val dkT = LongArray(20); private var dkN = 0
+    private val dkL = FloatArray(DK_N); private val dkT = LongArray(DK_N); private var dkN = 0
     private var dkDark = false; private var dkBase = 0f; private var dkLow = 0f; private var dkOnNs = 0L; private var dkEndNs = 0L
     private var dkPeak = 0f; private var dkPeakNs = 0L; private var dkNth = 0
     private var dkDueNs = 0L; private var dkArmed = false; private var dkDelayMs = 0; private var dkSeq = 0; private var dkPlanNth = 0
@@ -272,8 +272,10 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
      * The rule is tools/analysis/darksim.py line for line (replayed on the recordings of 11-11 and on every bundle:
      * each of the 20 darks of nowitzki_r1 seen 50-110 ms after its start; 0 onsets on defence in six match bundles,
      * 2 in a seventh, both real darks):
-     *  - onset #1: two falling scans that are a fade, not a jump (<= 8 in two scans), >= 8 under the mean of the 12
-     *    scans that ended 8 scans ago (which must be flat, < 5), >= 6 under their minimum, no more than 20 under;
+     *  - onset #1: two falling scans that are a fade, not a jump (<= 0.24 luma per ms over the two), >= 8 under the
+     *    mean of the scans 125-335 ms ago (which must be flat, < 5), >= 6 under their minimum, no more than 20 under.
+     *    By the clock since vc1068: a hot phone scans at 30-45 Hz, not 60, and the per-scan form of vc1067 then missed
+     *    4 of 108 darks (session 11-11 02:46; replay of the clock form: 108 of 108, and 20 of 20 at 60/40/30/24 Hz);
      *  - onset #2..: within 0.7 s after a dark ended, a fade of >= 6 from the highest level since;
      *  - end: back up by 60 % of the depth ("up"), or never deeper than 20 % of the base in 0.3 s ("shallow": a label
      *    change, not a dark), or 3 s.
@@ -284,24 +286,29 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
      */
     private fun skillDark(tNs: Long) {
         val l = slot2Luma
-        System.arraycopy(dkL, 1, dkL, 0, 19); dkL[19] = l
-        System.arraycopy(dkT, 1, dkT, 0, 19); dkT[19] = tNs
-        if (++dkN < 20 || l < 0f) return
-        val p1 = dkL[18]; val p2 = dkL[17]
+        val n = DK_N
+        System.arraycopy(dkL, 1, dkL, 0, n - 1); dkL[n - 1] = l
+        System.arraycopy(dkT, 1, dkT, 0, n - 1); dkT[n - 1] = tNs
+        if (++dkN < n || l < 0f) return
+        val p1 = dkL[n - 2]; val p2 = dkL[n - 3]
         if (!dkDark) {
             var nth = 0; var onNs = 0L; var base = 0f
-            val falling = l < p1 - 0.8f && p1 < p2 - 0.8f && p2 - l <= 8f
+            val spanMs = (tNs - dkT[n - 3]) / 1e6f
+            val falling = l < p1 - 0.8f && p1 < p2 - 0.8f && spanMs <= 100f && p2 - l <= 0.24f * spanMs
             val recent = dkEndNs != 0L && tNs - dkEndNs < 700_000_000L
             if (recent && l > dkPeak) { dkPeak = l; dkPeakNs = tNs }
             if (falling && recent) {
                 if (l <= dkPeak - 6f) { nth = dkNth + 1; onNs = dkPeakNs; base = dkBase }
             } else if (falling) {
-                var mn = dkL[0]; var mx = dkL[0]; var s = 0f
-                for (i in 0..11) { mn = minOf(mn, dkL[i]); mx = maxOf(mx, dkL[i]); s += dkL[i] }
-                val b = s / 12f
-                if (mx - mn < 5f && l <= b - 8f && l <= mn - 6f && b - l <= 20f && b >= 60f) {
+                var mn = 999f; var mx = -1f; var s = 0f; var c = 0
+                for (i in 0 until n) {
+                    val ago = tNs - dkT[i]
+                    if (ago in 125_000_000L..335_000_000L) { mn = minOf(mn, dkL[i]); mx = maxOf(mx, dkL[i]); s += dkL[i]; c++ }
+                }
+                val b = if (c >= 4) s / c else 0f
+                if (c >= 4 && mx - mn < 5f && l <= b - 8f && l <= mn - 6f && b - l <= 20f && b >= 60f) {
                     nth = 1; base = b; onNs = tNs
-                    for (i in 19 downTo 12) if (dkL[i] < b - 1.5f) onNs = dkT[i]
+                    for (i in n - 1 downTo 0) { if (tNs - dkT[i] > 125_000_000L) break; if (dkL[i] < b - 1.5f) onNs = dkT[i] }
                 }
             }
             if (nth > 0) {
@@ -412,6 +419,9 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
             if (tNs >= j.tNs + j.afterNs) { it.remove(); saveColour(j) }
         }
     }
+
+    /** Capture thread: drop the colour ring (it is built again if another frame comes). */
+    fun free() { for (c in crops) c.px = ByteArray(0); cropPos = 0; cropFilled = 0; colourJobs.clear() }
 
     private fun saveColour(j: ColourReq) {
         colourClips++
@@ -1267,6 +1277,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         val CROUCH_DELAYS = longArrayOf(80L, 120L, 160L)
         /** Sweep (⑩): planned press leads before the release, ms, in a mixed order so a drift cannot pass for a trend. */
         val SWEEP_LEADS = intArrayOf(250, 400, 100, 325, 175, 275, 375, 125, 225, 350, 150, 300, 200)
+        const val DK_N = 40      // scans kept for skillDark: 335 ms even at 120 scans/s
         /** Dark sweep: planned press delays after the onset of the dark, ms, in a mixed order. */
         val DARK_DELAYS = intArrayOf(200, 350, 100, 275, 150, 425, 250, 50, 325, 500, 225, 125, 400, 175, 300, 0)
         /** Outline top this close under the marker (share of H; 14 px at 720p) = hands or ball lifted. Shadow only. */

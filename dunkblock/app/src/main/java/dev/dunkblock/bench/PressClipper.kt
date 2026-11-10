@@ -132,6 +132,9 @@ class PressClipper(
         pos = 0; filled = 0
     }
 
+    /** Capture thread: drop the frame ring (it is built again if another frame comes). */
+    fun free() { ring = emptyArray(); mapKey = 0L; pos = 0; filled = 0; jobs.clear() }
+
     private fun saveClip(j: Req) {
         clips++
         val n = clips

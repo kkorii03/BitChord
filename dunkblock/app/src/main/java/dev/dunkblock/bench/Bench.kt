@@ -52,9 +52,14 @@ object Bench {
         val crouchPress: Boolean = false,
         /** Calibration, PRACTICE COURT ONLY: press on the practice rep's own clock at stepped leads before the release (ShotWatcher.sweep). */
         val sweepPress: Boolean = false,
-        /** Experimental (vc1067): press darkDelayMs after a signature skill starts to darken the screen (dark2DelayMs for the dark after a fake). ShotWatcher.skillDark. */
+        /**
+         * Experimental (vc1067): press darkDelayMs after a signature skill starts to darken the screen (dark2DelayMs for the
+         * dark after a fake). ShotWatcher.skillDark. 215: measured 11-11 on Nowitzki "위닝 슛" only (practice court, ~60
+         * presses at 0-500 ms): blocked at 150-300 ms (22 of 25), never at <= 100 or >= 325. Other skills differ (his
+         * "위닝 페이드어웨이" was not blocked at any delay 0-750; 아일라's dark is a jump with the release ~0.8 s later).
+         */
         val darkPress: Boolean = false,
-        val darkDelayMs: Int = 200,
+        val darkDelayMs: Int = 215,
         val dark2DelayMs: Int = 380,
         /** Calibration, PRACTICE COURT ONLY: press at stepped delays (+ darkAddMs) after the onset of dark number darkNth; every other press is held back. */
         val darkSweep: Boolean = false,
