@@ -58,6 +58,8 @@ class FramePipeline(
     /** ⑧ auto-block draft (GAME mode only). */
     val auto: AutoBlocker? = if (session.config.mode == Bench.Mode.GAME && session.config.autoBlock)
         AutoBlocker(session.config, session.startedNs) else null
+    /** GAME mode: offence/defence + opponent ball disc tracking for regular-shot blocking (data only for now). */
+    val shot: ShotWatcher? = if (session.config.mode == Bench.Mode.GAME) ShotWatcher(session.startedNs) else null
     /** GAME mode: user's own block presses → 60 fps clips (timing data). */
     val clipper: PressClipper? = if (session.config.mode == Bench.Mode.GAME)
         PressClipper(session.config, io, File(evidenceDir.parentFile, "clips"), session.startedNs) else null
@@ -162,6 +164,11 @@ class FramePipeline(
         val dup = hash == prevHash
         prevHash = hash
         auto?.onFrame(sampledLuma100, arrivalNs, w > h)
+        val sw = shot
+        if (sw != null) {
+            sw.onFrame(buf, w, h, rowStride, pixelStride, arrivalNs, cfg.blockFx, cfg.blockFy)
+            if (sw.snapNow) { sw.snapNow = false; sampleFrame(buf, w, h, rowStride, pixelStride, arrivalNs) }
+        }
 
         var tPre = 0L; var tRoi = 0L; var tMotion = 0L; var tAnalysis = 0L; var tAlt = 0L
         val p = primary

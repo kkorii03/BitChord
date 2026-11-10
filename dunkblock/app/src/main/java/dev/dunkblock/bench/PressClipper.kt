@@ -108,7 +108,8 @@ class PressClipper(
             pressed = true
             lastPressNs = tNs
             presses++
-            request("press", tNs, 1.5, 0.5)
+            // The slot also flips 전면 블록 <-> 슛 on every change of possession; tag the side so those can be told apart.
+            request("press_" + ShotWatcher.sideName(Bench.shotSide), tNs, 1.5, 0.5)
             pressLog.append(tNs).append(',').append(String.format(Locale.ROOT, "%.3f,%.1f,%.1f,%.1f\n", (tNs - startedNs) / 1e9, l, base, d))
         } else if (pressed && abs(d) < PRESS_THR / 2) {
             pressed = false

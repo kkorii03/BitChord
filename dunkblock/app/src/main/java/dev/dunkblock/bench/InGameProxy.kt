@@ -43,7 +43,7 @@ class InGameProxy(private val svc: BlockAccessibilityService, private val autoMo
             setOnClickListener {
                 marks++
                 rec("user", "mark", 0f, 0f, marks)
-                Bench.clipRequester?.invoke("mark", 3.4, 0.4)
+                Bench.clipRequester?.invoke("mark_" + ShotWatcher.sideName(Bench.shotSide), 3.4, 0.4)
                 text = "기록 $marks"
             }
         }

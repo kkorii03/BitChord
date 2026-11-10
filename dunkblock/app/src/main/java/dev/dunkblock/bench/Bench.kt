@@ -80,6 +80,8 @@ object Bench {
     @Volatile var autoLive: String = ""
     /** Ask the running capture session to save a clip around now: (tag, secondsBefore, secondsAfter). Null when not capturing. */
     @Volatile var clipRequester: ((String, Double, Double) -> Unit)? = null
+    /** ShotWatcher's latest reading of the block-button slot: offence / defence / unknown (ShotWatcher.SIDE_*). */
+    @Volatile var shotSide: Int = 0
     @Volatile var lastExportDir: String = ""
 
     /** Live numbers for the control screen (written by the 1 Hz sampler). */
