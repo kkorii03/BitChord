@@ -63,6 +63,13 @@ class BlockerActivity : Activity() {
         dark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
         if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf("android.permission.POST_NOTIFICATIONS"), 7)
         loadSettings()
+        // Unattended practice-court tests over adb: `am start --activity-clear-task -n dev.dunkblock.blocker/dev.dunkblock.bench.BlockerActivity
+        // --ez sweepPress true --ez auto true`. Without the extras every experiment switch is off again (a normal launch never keeps them).
+        if (!Bench.running) {
+            Bench.config = Bench.config.copy(sweepPress = intent.getBooleanExtra("sweepPress", false),
+                crouchPress = intent.getBooleanExtra("crouchPress", false), upPress = intent.getBooleanExtra("upPress", false))
+            if (intent.getBooleanExtra("auto", false)) main.postDelayed({ if (!Bench.running && !Bench.saving) onStartStop() }, 600)
+        }
 
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val scroll = ScrollView(this).apply { setBackgroundColor(bg); isFillViewport = true; addView(col) }
