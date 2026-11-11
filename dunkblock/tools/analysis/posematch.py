@@ -11,16 +11,38 @@ posematch.py [-lead ms] [-own] [-thr D] <folder | mp4> ...      needs .pose.npz 
              template within +-250 ms of their P and where it is; (2) everywhere further than 300 ms from every P: the
              lowest distance to ANY template (-own: only templates of the same player) = what would be a false press.
 """
-import sys, os, glob
+import sys, os, glob, csv
 import numpy as np, cv2
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import shotlib
 
 LAGS = [0.05 * k for k in range(8)]; HALFW = 16; CELL = 4
+# Experiment (decide.py -norm): a player's size on screen against the screen row of the feet. Fitted on MY ring's
+# half-width in the 52 demonstration videos of 11-11 (metrack a = 9.5 + 0.0787 * y px at 720p, residual sd 2.5 px);
+# the practice court's fixed camera only. SIZE_REF = that size at the median shooter row (0.754 H).
+NORM = False; SIZE_C = 9.5; SIZE_K = 0.0787; SIZE_REF = 52.2
 
 
-def stacks(mp4, causal=False):
+def stacks(mp4, causal=False, upto=None, scale=1.0):
+    """upto: pretend the recording ends there (decide.py's truncation test: with causal=True the stacks before the cut
+    must come out bit for bit the same as from the whole recording).
+    scale: draw the shooter that much larger / smaller around the feet (decide.py -scale: what a different camera
+    distance would do to the match; a simulation, not a recording)."""
     z = np.load(mp4[:-4] + ".pose.npz"); t = z["t"].astype(np.float64); ok = z["ok"]; m = z["m"]; off = z["off"]
+    if upto is not None:
+        n = int(np.searchsorted(t, upto, side="right")); t = t[:n]; ok = ok[:n]; m = m[:n]; off = off[:n]
+    def resize(x, f):                                   # around the marker x and the foot ring row
+        return cv2.warpAffine(x, np.float32([[f, 0, (1 - f) * x.shape[1] / 2.0], [0, f, (1 - f) * 75.0]]), (x.shape[1], x.shape[0]))
+    if scale != 1.0:
+        m = np.stack([resize(x, scale) for x in m]) if len(m) else m
+        off = np.where(off > -900, off * scale, off)
+    if NORM:                                            # size normalisation by how deep on the court the feet are (decide.py -norm)
+        y = np.array([float(r["y"]) for r in csv.DictReader(open(mp4[:-4] + ".sim.csv"))][:len(t)])
+        ring = (z["gap"][:len(t)] + y) * 720.0          # the foot ring row poseclip anchored the box on (held <= 150 ms, past only)
+        m = m.copy(); off = off.copy()
+        for i in np.nonzero(ok)[0]:
+            f = SIZE_REF / (SIZE_C + SIZE_K * ring[i])
+            if abs(f - 1.0) > 0.01: m[i] = resize(m[i], f); off[i] *= f
     N = len(t); vi = np.nonzero(ok)[0]
     cen = np.zeros(N, np.float32); fr = np.zeros((N, m.shape[1], 2 * HALFW), np.float32)
     for i in vi:

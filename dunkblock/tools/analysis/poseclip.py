@@ -21,8 +21,10 @@ def outline(px):
     return (r >= 140) & (g * 100 <= r * 28) & (b * 100 <= r * 55) & (r - g >= 90)
 
 
-def extract(mp4):
+def extract(mp4, limit=None):
+    """limit: only the first `limit` scans, nothing written, arrays returned (decide.py's truncation test)."""
     rows = list(csv.DictReader(open(mp4[:-4] + ".sim.csv")))
+    if limit is not None: rows = rows[:limit]
     v = cv2.VideoCapture(mp4); n = 0; i = 0
     N = len(rows)
     t = np.zeros(N, np.float32); ok = np.zeros(N, bool); m = np.zeros((N, CH, CW), np.uint8)
@@ -55,6 +57,7 @@ def extract(mp4):
                         off[i] = float((cols * np.arange(len(cols))).sum() / cols.sum() - HALF * u) / u
                         ok[i] = True
         i += 1
+    if limit is not None: return dict(t=t[:i], ok=ok[:i], m=m[:i], off=off[:i], gap=gap[:i])
     np.savez_compressed(mp4[:-4] + ".pose.npz", t=t[:i], ok=ok[:i], m=m[:i], off=off[:i], gap=gap[:i])
     return i, int(ok[:i].sum()), bad
 
