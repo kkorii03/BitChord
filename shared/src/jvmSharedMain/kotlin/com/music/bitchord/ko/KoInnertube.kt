@@ -262,7 +262,64 @@ object KoInnertube {
         forceSigned: Boolean = false,
     ): Boolean = !forceSigned &&
         (forceAnonymous || isAnonymousRequest(endpoint, browseId) ||
-            (MusicGateFallback.isActive() && !isAccountWrite(endpoint)))
+            ((MusicGateFallback.isActive() || sessionRejected()) && !isAccountWrite(endpoint)))
+
+    // ---- Dead session -------------------------------------------------------
+
+    /** The login a request would act as: cookie plus the chosen channel, if any. */
+    internal data class SessionIdentity(
+        val cookie: String,
+        val pageId: String?,
+        val dataSyncId: String?,
+        val authUser: String,
+    ) {
+        override fun toString(): String = "SessionIdentity(pageId=${pageId ?: "none"})"
+    }
+
+    /**
+     * The login youtube.com answered 401 for even after one session refresh.
+     *
+     * A cookie Google stopped accepting is still stored and still sent: the
+     * shell says LOGGED_IN=false, yet every request carries the cookie, its
+     * SAPISID hashes and the chosen channel's page id / onBehalfOfUser, so
+     * youtube.com refuses even the public RD mix with 401 UNAUTHENTICATED that
+     * an anonymous request would get answered. The refresh re-reads only the
+     * shell, so its retry was the same request again. Kept in memory only and
+     * never clears the stored cookie: a new sign-in or channel choice is a new
+     * identity and is asked signed again.
+     */
+    @Volatile
+    private var rejectedSession: SessionIdentity? = null
+
+    internal fun identityOf(cookie: String?): SessionIdentity? = cookie?.let {
+        // Null scope: only the chosen channel counts, not the shell's answer.
+        SessionIdentity(it, Innertube.pageIdFor(null), Innertube.dataSyncIdFor(null), Innertube.authUserFor(null))
+    }
+
+    /** Whether the current login is the one youtube.com refused. */
+    internal fun sessionRejected(): Boolean =
+        rejectedSession?.let { it == identityOf(Innertube.cookie) } == true
+
+    internal fun markSessionRejected(cookie: String?) {
+        val identity = identityOf(cookie) ?: return
+        if (identity != identityOf(Innertube.cookie)) return
+        rejectedSession = identity
+        Log.w(TAG, "session rejected by youtube.com after a refresh; public requests go anonymous until sign-in")
+    }
+
+    /**
+     * Whether a youtube.com failure is the dead-session answer that a public
+     * request may be retried for without the account. Account endpoints and
+     * searches never take this path: the first need the account, the second
+     * never carried it.
+     */
+    internal fun retriesWithoutSession(
+        status: Int?,
+        anonymousRequest: Boolean,
+        cookie: String?,
+        endpoint: String,
+    ): Boolean = status == 401 && !anonymousRequest && cookie != null &&
+        !isAccountWrite(endpoint) && !isSearchEndpoint(endpoint)
 
     /** Endpoints that carry a search query, on either host. */
     fun isSearchEndpoint(endpoint: String): Boolean =
@@ -296,7 +353,8 @@ object KoInnertube {
      * request for the session on a search endpoint.
      */
     fun isAnonymousYouTubeRequest(endpoint: String, anonymous: Boolean): Boolean =
-        anonymous || isAnonymousRequest(endpoint)
+        anonymous || isAnonymousRequest(endpoint) ||
+            (sessionRejected() && !isAccountWrite(endpoint))
 
     /**
      * Browse pages that are not personal: the mood/genre grid and its
@@ -479,6 +537,38 @@ object KoInnertube {
                 ),
             )
         }
+        try {
+            return sendYouTube(endpoint, query, hl, gl, ios, anonymousRequest, bodyExtras)
+        } catch (e: ResponseException) {
+            val cookie = Innertube.cookie
+            if (!retriesWithoutSession(e.response.status.value, anonymousRequest, cookie, endpoint)) throw e
+            if (!sessionRejected()) {
+                // The refresh re-reads only the shell; the cookie, its hashes and
+                // the chosen channel go out unchanged, so one more signed answer
+                // is what tells a rotated context from a dead login.
+                Log.w(TAG, "youtube.com $endpoint answered 401 signed; refreshing the session once")
+                runCatching { Innertube.refreshSessionScope() }
+                    .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
+                try {
+                    return sendYouTube(endpoint, query, hl, gl, ios, false, bodyExtras)
+                } catch (again: ResponseException) {
+                    if (again.response.status.value != 401) throw again
+                }
+                markSessionRejected(cookie)
+            }
+            return sendYouTube(endpoint, query, hl, gl, ios, true, bodyExtras)
+        }
+    }
+
+    private suspend fun sendYouTube(
+        endpoint: String,
+        query: Map<String, String>,
+        hl: String,
+        gl: String,
+        ios: Boolean,
+        anonymousRequest: Boolean,
+        bodyExtras: JsonObjectBuilder.() -> Unit,
+    ): JsonObject {
         // The session scope is read from the Music shell, which a gated Korean
         // session is refused; youtube.com does not need it to answer, so a
         // failure here must not take the fallback down with it.
