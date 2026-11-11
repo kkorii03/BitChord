@@ -1,6 +1,6 @@
 """Score one app session from its own logs: when did the opponents release, and what did the presses do (HANDOFF 0-4y).
 
-sessrel.py <session folder> [-from s] [-to s] [-check t1,t2,...] [-rel t1,t2,...]
+sessrel.py <session folder> [-from s] [-to s] [-check t1,t2,...] [-rel t1,t2,...] [-ev name]
 The block slot's brightness (shot.csv slot2_luma) has four quiet levels on the S24 capture (0-4y):
   수비 104..109 | 박스아웃 113..118 | the same two labels dimmed: 84..90 and 94..98.
 A release = the label turning 수비 -> 박스아웃 on defence:
@@ -14,6 +14,8 @@ Per release: the app's presses (shot_events "pressed") and the observed slot pre
 release - 0.23 s, graded like decide.py (ok -330..-150 ms, early -600..-330, very early < -600, late -150..+100,
 none), whether the slot was dimmed at the app's press, and the share of rows with the disc seen in -0.35..-0.10 s
 (disc, and d2 when logged). Last: the app's presses that belong to no release, and the dimmed time on defence.
+-ev name grades the events of that name in shot_events.csv the same way (a shadow rule that only logs, such as
+rise2 of vc1091+: where would it have pressed) and lists the ones that belong to no release.
 A release is the ball leaving the hand of ANY opponent, not only of my matchup, and "ok" is the timing only: it does
 not say the block succeeded.
 """
@@ -61,12 +63,13 @@ def cls(e):
 
 
 def main():
-    a = sys.argv[1:]; d = a[0]; a = a[1:]; t0 = 0.0; t1 = 1e9; check = None; hand = None
+    a = sys.argv[1:]; d = a[0]; a = a[1:]; t0 = 0.0; t1 = 1e9; check = None; hand = None; evn = None
     while a:
         if a[0] == "-from": t0 = float(a[1])
         elif a[0] == "-to": t1 = float(a[1])
         elif a[0] == "-check": check = [float(q) for q in a[1].split(",")]
         elif a[0] == "-rel": hand = [float(q) for q in a[1].split(",")]
+        elif a[0] == "-ev": evn = a[1]
         else: raise SystemExit("unknown " + a[0])
         a = a[2:]
     rd = csv.DictReader(open(os.path.join(d, "shot.csv"), encoding="utf-8")); has2 = "d2" in rd.fieldnames
@@ -75,6 +78,7 @@ def main():
     seen = np.array([r["disc"] == "1" for r in R]); seen2 = np.array([has2 and r["d2"] == "1" for r in R])
     ev = [r for r in csv.DictReader(open(os.path.join(d, "shot_events.csv"), encoding="utf-8")) if t0 <= float(r["t_s"]) <= t1]
     app = [(float(r["t_s"]), r["detail"].split(" ")[0]) for r in ev if r["event"] == "pressed"]
+    sh = [float(r["t_s"]) for r in ev if r["event"] == evn] if evn else []
     pp = os.path.join(d, "presses.csv")
     obs = [float(r["t_s"]) for r in csv.DictReader(open(pp, encoding="utf-8")) if t0 <= float(r["t_s"]) <= t1] if os.path.exists(pp) else []
     rel = [(q, "hand") for q in hand] if hand else releases(T, L, side)
@@ -89,8 +93,8 @@ def main():
         hit = [q for q in check if any(abs(q - t) <= 0.12 for t, _ in rel)]
         print("check: %d of %d of the hand list found | missing %s | extra %s" % (len(hit), len(check), " ".join("%.2f" % q for q in check if q not in hit) or "-",
               " ".join("%.2f(%s)" % (t, s) for t, s in rel if all(abs(q - t) > 0.12 for q in check)) or "-"))
-    c = {"ok": 0, "early": 0, "vearly": 0, "late": 0, "none": 0}; co = dict(c); used = set(); usedo = set(); g1 = g2 = 0
-    print(" release  src   | app press             | observed press   | disc seen in -0.35..-0.10" + (" | d2" if has2 else ""))
+    c = {"ok": 0, "early": 0, "vearly": 0, "late": 0, "none": 0}; co = dict(c); cs = dict(c); used = set(); usedo = set(); useds = set(); g1 = g2 = 0
+    print(" release  src   | app press             | observed press   | disc seen in -0.35..-0.10" + (" | d2" if has2 else "") + (" | " + evn if evn else ""))
     for q, s in rel:
         E = [t - q for t, _ in app]; e = min(E, key=lambda z: abs(z + 0.23)) if E else None; k = cls(e); c[k] += 1
         if k != "none": used.add(E.index(e))
@@ -98,9 +102,13 @@ def main():
         if ko != "none": usedo.add(O.index(o))
         w = (T >= q - 0.35) & (T <= q - 0.10); n = max(1, int(w.sum())); s1 = 100 * int(seen[w].sum()) // n; s2 = 100 * int(seen2[w].sum()) // n
         g1 += s1 >= 73; g2 += s2 >= 73
-        print("%8.2f  %-5s | %-6s %-9s %-4s | %-6s %-9s | %3d%%" % (q, s, k, "" if k == "none" else "%+.3f" % e, "DIM" if k != "none" and dim_at(q + e) else "", ko, "" if ko == "none" else "%+.3f" % o, s1) + (" | %3d%%" % s2 if has2 else ""))
+        X = [t - q for t in sh]; x = min(X, key=lambda z: abs(z + 0.23)) if X else None; kx = cls(x); cs[kx] += 1
+        if kx != "none": useds.add(X.index(x))
+        print("%8.2f  %-5s | %-6s %-9s %-4s | %-6s %-9s | %3d%%" % (q, s, k, "" if k == "none" else "%+.3f" % e, "DIM" if k != "none" and dim_at(q + e) else "", ko, "" if ko == "none" else "%+.3f" % o, s1) + (" | %3d%%" % s2 if has2 else "") + (" | %-6s %s" % (kx, "" if kx == "none" else "%+.3f" % x) if evn else ""))
     print("app presses : " + ", ".join("%s %d" % z for z in c.items()) + " | elsewhere %d of %d" % (len(app) - len(used), len(app)))
     print("observed    : " + ", ".join("%s %d" % z for z in co.items()) + " | elsewhere %d of %d" % (len(obs) - len(usedo), len(obs)))
+    if evn:
+        print("%-12s: " % evn + ", ".join("%s %d" % z for z in cs.items()) + " | elsewhere %d of %d: " % (len(sh) - len(useds), len(sh)) + " ".join("%.2f" % sh[i] for i in range(len(sh)) if i not in useds))
     print("disc seen in >= 73%% of the window: %d of %d" % (g1, len(rel)) + (" | d2 %d" % g2 if has2 else ""))
     print("app presses elsewhere: " + (" ".join("%.2f(%s%s)" % (app[i][0], app[i][1], " DIM" if dim_at(app[i][0]) else "") for i in range(len(app)) if i not in used) or "-"))
     dt = float(np.median(np.diff(T))); nd = sum(1 for z, sd in zip(St, side) if sd == "def" and z in ("d", "b"))

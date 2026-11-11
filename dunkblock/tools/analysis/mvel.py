@@ -40,16 +40,21 @@ def cls(e):
     return "miss" if e is None or not -1.0 <= e <= 0.1 else "ok" if -0.33 <= e <= -0.15 else "early" if -0.6 <= e < -0.33 else "vearly" if e < -0.6 else "late"
 
 
-def bundle(a):
-    """mvel.py -bundle <shot.csv of an app session> <release times, comma list> <W> <D> [from_s to_s]
+def bundle(a, d2=False):
+    """mvel.py -bundle | -bundle2 <shot.csv of an app session> <release times, comma list> <W> <D> [from_s to_s]
     The same rule on the app's own disc log (side == def, yc = refined disc y in screen heights, radius from the red
     pixel count yc_n on the 1560 x 720 capture, x from the 390-wide grid). No ring value there: ring is taken as 1.
+    -bundle2 (vc1088+ logs; compare only vc1089+, 0-4x): the track of the ring-checked shadow finder instead (d2, x2, y2,
+    n2, ring2) = what the app's own "rise2" events (vc1091+, W 0.08 D 1.6) are computed from, for any W and D.
     (Until 11-12 03:40 this used 1170 x 540 for x and y: rises came out 0.75 of their size. HANDOFF 0-4x.)"""
     rel = [float(q) for q in a[1].split(",")]; W = float(a[2]); D = float(a[3]); t0 = float(a[4]) if len(a) > 4 else 0.0; t1 = float(a[5]) if len(a) > 5 else 1e9
     F = []
     for r in csv.DictReader(open(a[0], encoding="utf-8")):
         t = float(r["t_s"])
-        if t0 <= t <= t1 and r["side"] == "def" and r["disc"] == "1" and float(r["yc"]) > 0 and int(r["yc_n"]) >= 40:
+        if d2:
+            if t0 <= t <= t1 and r["side"] == "def" and r["d2"] == "1":
+                F.append((t, float(r["x2"]) * 1560.0, float(r["y2"]) * 720.0, (int(r["n2"]) / np.pi) ** 0.5, float(r["ring2"])))
+        elif t0 <= t <= t1 and r["side"] == "def" and r["disc"] == "1" and float(r["yc"]) > 0 and int(r["yc_n"]) >= 40:
             F.append((t, float(r["x"]) * 1560.0, float(r["yc"]) * 720.0, (int(r["yc_n"]) / np.pi) ** 0.5, 1.0))
     P = presses(np.array(F, np.float64), W, D, 0.0); c = {"ok": 0, "early": 0, "vearly": 0, "late": 0, "miss": 0}; used = set()
     for q in rel:
@@ -63,7 +68,7 @@ def bundle(a):
 
 def main():
     a = sys.argv[1:]
-    if a[0] == "-bundle": bundle(a[1:]); return
+    if a[0] in ("-bundle", "-bundle2"): bundle(a[1:], a[0] == "-bundle2"); return
     S = load(a[0], a[1]); a = a[2:]
     Ws = [0.05, 0.08, 0.10, 0.15]; Ds = [0.6, 0.8, 1.0, 1.3, 1.6, 2.0]; lat = 0.0; show = None
     while a:

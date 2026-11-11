@@ -79,6 +79,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         Bench.shotSide = side
         val found = findDisc(buf, w, h, rowStride)
         findDisc2(buf, w, h, rowStride)
+        rise2(tNs, w, h)
         // One colour screen when the two finders disagree on defence (at most 25 of the 150 trigger screens, 4 s apart).
         if (side == SIDE_DEF && found != d2 && d2Snaps < 25 && tNs - lastD2SnapNs > 4_000_000_000L) {
             lastD2SnapNs = tNs; d2Snaps++; snapNow = true
@@ -695,6 +696,43 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         }
         d2 = bestRing >= D2_RING_MIN
     }
+
+    /**
+     * Shadow rule (vc1091, logged only as "rise2" events; nothing presses on it) = tools/analysis/mvel.py W 0.08 D 1.6
+     * on the track of [findDisc2]: on defence the disc rose [R2_D] disc radii (radius = median of the last 0.5 s) within
+     * [R2_W_NS], moved sideways less than 1.5 x the rise, and no rise2 in the last 1.5 s. On the five recorded matches
+     * (the data it was designed on) at capture size it falls in -330..-150 ms before the release for 15 of 44 shots
+     * (HANDOFF 0-4z); on the app's own flickering track of the vc1069 bundle it failed (1 of 16, 0-4w). The rise2
+     * events of a match bundle are its independent test: tools/analysis/sessrel.py <session> -ev rise2.
+     */
+    private fun rise2(tNs: Long, w: Int, h: Int) {
+        if (!d2 || side != SIDE_DEF) return
+        val i = r2Head
+        r2T[i] = tNs; r2X[i] = d2X * w; r2Y[i] = d2Y * h; r2R[i] = Math.sqrt(d2N / Math.PI).toFloat()
+        r2Head = (i + 1) % R2_LEN; if (r2Count < R2_LEN) r2Count++
+        var j = -1; var older = -1; var m = 0
+        for (k in 0 until r2Count) {                        // newest first
+            val q = (i - k + R2_LEN) % R2_LEN
+            val age = tNs - r2T[q]
+            if (age <= 500_000_000L) r2S[m++] = r2R[q]
+            if (k > 0 && age <= R2_W_NS) j = q else if (k > 0 && older < 0) older = q
+            if (age > 500_000_000L) break
+        }
+        if (j < 0 || R2_W_NS - (tNs - r2T[j]) > 20_000_000L) return           // no sample close to W ago
+        if (tNs - r2T[if (older >= 0) older else j] > R2_W_NS + 60_000_000L) return   // the track was broken there
+        java.util.Arrays.sort(r2S, 0, m)
+        val rad = if (m % 2 == 1) r2S[m / 2] else (r2S[m / 2 - 1] + r2S[m / 2]) / 2f
+        if (rad <= 0f || r2R[j] < 0.7f * rad || r2R[j] > 1.4f * rad || r2R[i] < 0.7f * rad || r2R[i] > 1.4f * rad) return
+        val rise = (r2Y[j] - r2Y[i]) / rad
+        if (rise < R2_D || Math.abs(r2X[i] - r2X[j]) / rad > 1.5f * rise || tNs - lastRise2Ns < 1_500_000_000L) return
+        lastRise2Ns = tNs
+        event(tNs, "rise2", (r2X[i] - r2X[j]) / w, (r2Y[i] - r2Y[j]) / h, (tNs - r2T[j]) / 1e6f,
+            String.format(Locale.ROOT, "rise=%.2f R=%.1f x2=%.4f y2=%.4f ring2=%.2f", rise, rad, d2X, d2Y, d2Ring))
+    }
+
+    private val r2T = LongArray(R2_LEN); private val r2X = FloatArray(R2_LEN); private val r2Y = FloatArray(R2_LEN)
+    private val r2R = FloatArray(R2_LEN); private val r2S = FloatArray(R2_LEN)
+    private var r2Head = 0; private var r2Count = 0; private var lastRise2Ns = 0L
 
     private var colX = -1f; private var colY = -1f; private var colFill = 0f
     private var colSat = IntArray(0)
@@ -1417,6 +1455,10 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         /** Shadow finder ([findDisc2]): candidates checked, min share of directions with the grey rim at one distance. */
         const val D2_CAND = 5
         const val D2_RING_MIN = 0.55f
+        /** Shadow rule [rise2]: samples kept, the look-back and the rise in disc radii. */
+        const val R2_LEN = 64
+        const val R2_W_NS = 80_000_000L
+        const val R2_D = 1.6f
         private val COS24 = FloatArray(24) { Math.cos(it * Math.PI / 12).toFloat() }
         private val SIN24 = FloatArray(24) { Math.sin(it * Math.PI / 12).toFloat() }
         /** screen-heights per second; set from data later. */
