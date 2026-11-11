@@ -39,6 +39,8 @@ def disc_red(px):
 
 
 class Sim:
+    LOCK_NS = 1_500_000_000; REJECT_LOCK_NS = 400_000_000      # the app's lockouts; decide.py replays other values
+
     def __init__(self, sens=1, up_press=False, crouch_press=False, shot_delay=0, fx=FX, fy=FY):
         self.sens = sens; self.upPress = up_press; self.crouchPress = crouch_press; self.shotDelay = shot_delay
         self.fx = fx; self.fy = fy
@@ -110,6 +112,25 @@ class Sim:
         self.checkUpPending(tNs, found)
         self.rows.append(((tNs - BASE) / 1e9, SIDE[self.side], 1 if found else 0, self.discX, self.discY, self.fill, self.second,
                           self.sideDark, self.sideOrange, self.slot2Luma, self.ringY, self.topDy, self.ycY, self.ycN))
+
+    def onRow(self, r):
+        """The rules alone, fed with one line of <name>.sim.csv instead of a frame (findMe has no picture: override it)."""
+        tNs = BASE + int(round(float(r["t_s"]) * 1e9))
+        if self.key is None: self.key = (1560, 720); self.w = 1560; self.h = 720; self.aspect = 1560 / 720.0
+        self.side = DEF if r["side"] == "def" else OFF if r["side"] == "off" else UNK
+        found = r["disc"] == "1"
+        self.discX = float(r["x"]); self.discY = float(r["y"]); self.ringY = float(r["ring_y"]); self.slot2Luma = float(r["slot2_luma"])
+        if self.side == DEF: self.lastDefNs = tNs
+        elif self.side == OFF: self.lastOffNs = tNs
+        self.topDy = -1.0; self.ycY = -1.0; self.ycN = 0
+        if found:
+            self.topDy = float(r["top_dy"]); self.ycY = float(r["yc"]); self.ycN = int(r["yc_n"])
+            self.armsUp(tNs)
+            self.onDisc(tNs)
+            self.armsUpEvent(tNs)
+            self.crouch(tNs)
+        self.checkPending(tNs, found)
+        self.checkUpPending(tNs, found)
 
     def event(self, tNs, name, detail):
         self.events.append(((tNs - BASE) / 1e9, name, SIDE[self.side], self.discX, self.discY, detail))
@@ -242,7 +263,7 @@ class Sim:
             self.gapRing - self.discY if ringKnown else -1.0, self.runXMax - self.runXMin)
         self.event(tNs, "crouch", d)
         if not self.crouchPress: return
-        why = "gap_pending" if self.pendNs != 0 else "pressed" if tNs - self.lastPressNs < 1_500_000_000 else "lockout" if tNs - self.lastShotFireNs < 1_500_000_000 else ""
+        why = "gap_pending" if self.pendNs != 0 else "pressed" if tNs - self.lastPressNs < self.LOCK_NS else "lockout" if tNs - self.lastShotFireNs < self.LOCK_NS else ""
         if why: self.event(tNs, "crouch_dropped", why); return
         waitMs = CROUCH_DELAYS[self.crouchSeq % len(CROUCH_DELAYS)]; self.crouchSeq += 1
         self.lastShotFireNs = tNs
@@ -275,7 +296,7 @@ class Sim:
         age = tNs - self.upPendNs
         if age < UP_HOLD_NS: return
         self.upPendNs = 0
-        why = "lost" if (not found or age > 100_000_000) else "down" if self.upRun == 0 else "gap_pending" if self.pendNs != 0 else "pressed" if tNs - self.lastPressNs < 1_500_000_000 else ""
+        why = "lost" if (not found or age > 100_000_000) else "down" if self.upRun == 0 else "gap_pending" if self.pendNs != 0 else "pressed" if tNs - self.lastPressNs < self.LOCK_NS else ""
         if why: self.event(tNs, "up_dropped", why); return
         ringKnown = tNs - self.gapNs < 150_000_000 and 0.12 <= self.gapRing - self.discY <= 0.6
         self.lastShotFireNs = tNs
@@ -344,7 +365,7 @@ class Sim:
         return best
 
     def checkShot(self, tNs):
-        if self.side == OFF or tNs - self.lastDefNs > 1_000_000_000 or tNs - self.lastShotFireNs < 1_500_000_000: return
+        if self.side == OFF or tNs - self.lastDefNs > 1_000_000_000 or tNs - self.lastShotFireNs < self.LOCK_NS: return
         gT = self.gT; gV = self.gV; hT = self.hT; hX = self.hX; hY = self.hY
         gLast = (self.gPos - 1) % HN
         if self.runG >= 2 and tNs - gT[gLast] <= 1_000_000 and 50_000_000 <= tNs - self.runNs <= 350_000_000:
@@ -426,7 +447,7 @@ class Sim:
         self.pendDrop = "rejected_xspan" if moving else "rejected_norise"
 
     def reject(self, tNs, name, detail):
-        self.lastShotFireNs = tNs - 1_100_000_000
+        self.lastShotFireNs = tNs - self.LOCK_NS + self.REJECT_LOCK_NS
         self.event(tNs, name, detail)
 
     def press(self, tNs, detail, ageMs):

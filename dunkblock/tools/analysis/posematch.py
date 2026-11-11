@@ -19,12 +19,12 @@ import shotlib
 LAGS = [0.05 * k for k in range(8)]; HALFW = 16; CELL = 4
 
 
-def stacks(mp4):
+def stacks(mp4, causal=False):
     z = np.load(mp4[:-4] + ".pose.npz"); t = z["t"].astype(np.float64); ok = z["ok"]; m = z["m"]; off = z["off"]
     N = len(t); vi = np.nonzero(ok)[0]
     cen = np.zeros(N, np.float32); fr = np.zeros((N, m.shape[1], 2 * HALFW), np.float32)
     for i in vi:
-        near = vi[(t[vi] >= t[i] - 0.08) & (t[vi] <= t[i] + 0.08)]
+        near = vi[(t[vi] >= t[i] - (0.16 if causal else 0.08)) & (t[vi] <= t[i] + (0.0 if causal else 0.08))]   # causal: no future scans
         c = int(round(float(np.median(off[near])) / CELL)) + m.shape[2] // 2
         c = min(m.shape[2] - HALFW, max(HALFW, c))
         fr[i] = cv2.GaussianBlur(m[i, :, c - HALFW:c + HALFW].astype(np.float32) / 255.0, (0, 0), 1.5)
