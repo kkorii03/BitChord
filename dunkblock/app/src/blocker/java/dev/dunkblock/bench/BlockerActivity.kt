@@ -70,7 +70,7 @@ class BlockerActivity : Activity() {
                 crouchPress = intent.getBooleanExtra("crouchPress", false), upPress = intent.getBooleanExtra("upPress", false),
                 darkSweep = intent.getBooleanExtra("darkSweep", false), darkNth = intent.getIntExtra("darkNth", 1), darkAddMs = intent.getIntExtra("darkAdd", 0),
                 darkJoyDeg = intent.getIntExtra("darkJoy", -1), darkJoyMs = intent.getIntExtra("darkJoyMs", 0),
-                follow = intent.getIntExtra("follow", 0),
+                follow = intent.getIntExtra("follow", 0), rise2Press = intent.getBooleanExtra("rise2Press", false),
                 darkPress = intent.getBooleanExtra("darkPress", getSharedPreferences("blocker", 0).getBoolean("dark", false)),
                 darkDelayMs = intent.getIntExtra("darkDelay", Bench.Config().darkDelayMs), dark2DelayMs = intent.getIntExtra("dark2Delay", Bench.Config().dark2DelayMs), darkJumpDelayMs = intent.getIntExtra("darkJumpDelay", Bench.Config().darkJumpDelayMs))
             if (intent.getBooleanExtra("auto", false)) main.postDelayed({ if (!Bench.running && !Bench.saving) onStartStop() }, 600)
@@ -166,6 +166,13 @@ class BlockerActivity : Activity() {
         }
         shotCard.addView(row("선수 스킬 블록 (시험)", "화면이 어두워지는 선수 스킬에 맞춰 누름", darkSwitch, null))
         shotCard.addView(divider())
+        // Not saved: off again at every launch (chosen on recorded matches only, never run on the phone; HANDOFF 0-4z2).
+        val riseSwitch = IosSwitch(this, green, fill).apply {
+            setChecked(Bench.config.rise2Press, false)
+            onChange = { v -> Bench.config = Bench.config.copy(rise2Press = v) }
+        }
+        shotCard.addView(row("공이 솟을 때 누르기 (시험)", "상대 공 표시가 빠르게 위로 솟으면 기존 규칙보다 먼저 누릅니다", riseSwitch, null))
+        shotCard.addView(divider())
         // Not saved: off again at every launch (never tried on the phone, practice court only).
         val followSwitch = IosSwitch(this, green, fill).apply {
             setChecked(Bench.config.follow == 1, false)
@@ -173,7 +180,7 @@ class BlockerActivity : Activity() {
         }
         shotCard.addView(row("매치업 따라가기 (연습장 시험)", "엄지를 조이스틱에 가만히 올려 두면 내 매치업 쪽으로 밉니다. 엄지를 움직이면 바로 내 조작", followSwitch, null))
         col.addView(shotCard, lp(top = 8f))
-        col.addView(footnote("아직 측정 전인 첫 규칙입니다. 상대 슛이 아닌데 자꾸 뛰면 민감도를 낮추고, 슛을 놓치면 높이세요. 블록이 늦으면 지연 0, 이르면 지연을 늘리세요. '선수 스킬 블록'은 노비츠키 위닝 슛 하나로만 맞춘 값입니다(연습장 25번 중 22번 블록). 다른 선수 스킬은 아직 측정 전입니다. '매치업 따라가기'는 폰에서 한 번도 시험하지 않은 기능입니다. 연습장에서만 켜세요(앱을 다시 열면 꺼집니다). 사람과 하는 경기에서는 제재 위험이 있으니 연습 모드에서 먼저 쓰세요."), lp(top = 8f))
+        col.addView(footnote("아직 측정 전인 첫 규칙입니다. 상대 슛이 아닌데 자꾸 뛰면 민감도를 낮추고, 슛을 놓치면 높이세요. 블록이 늦으면 지연 0, 이르면 지연을 늘리세요. '선수 스킬 블록'은 노비츠키 위닝 슛 하나로만 맞춘 값입니다(연습장 25번 중 22번 블록). 다른 선수 스킬은 아직 측정 전입니다. '공이 솟을 때 누르기'는 녹화 5경기로만 고른 규칙이고 폰에서는 한 번도 돌려 보지 않았습니다(녹화 기준 슛 44번 중 10~13번 제때, 헛누름이 늘 수 있음, 느리게 올리는 슛은 못 잡음). 앱을 다시 열면 꺼집니다. '매치업 따라가기'는 폰에서 한 번도 시험하지 않은 기능입니다. 연습장에서만 켜세요(앱을 다시 열면 꺼집니다). 사람과 하는 경기에서는 제재 위험이 있으니 연습 모드에서 먼저 쓰세요."), lp(top = 8f))
 
         // Result
         col.addView(header("최근 결과"), lp(top = 24f))

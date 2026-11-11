@@ -50,6 +50,8 @@ object Bench {
         val upPress: Boolean = false,
         /** Experimental, for quick-release shooters only: press when the standing ball handler bends his knees (ShotWatcher.crouch). */
         val crouchPress: Boolean = false,
+        /** Experimental: press when the ring-checked ball disc rises fast (ShotWatcher.rise2Press). Recorded matches only, never run on the phone. */
+        val rise2Press: Boolean = false,
         /** Calibration, PRACTICE COURT ONLY: press on the practice rep's own clock at stepped leads before the release (ShotWatcher.sweep). */
         val sweepPress: Boolean = false,
         /**

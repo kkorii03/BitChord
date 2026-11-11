@@ -698,7 +698,8 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
     }
 
     /**
-     * Shadow rule (vc1091, logged only as "rise2" events; nothing presses on it) = tools/analysis/mvel.py W 0.08 D 1.6
+     * Shadow rule (vc1091, logged as "rise2" events; presses only through [rise2Press], off by default) =
+     * tools/analysis/mvel.py W 0.08 D 1.6
      * on the track of [findDisc2]: on defence the disc rose [R2_D] disc radii (radius = median of the last 0.5 s) within
      * [R2_W_NS], moved sideways less than 1.5 x the rise, and no rise2 in the last 1.5 s. On the five recorded matches
      * (the data it was designed on) at capture size it falls in -330..-150 ms before the release for 15 of 44 shots
@@ -724,11 +725,54 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         val rad = if (m % 2 == 1) r2S[m / 2] else (r2S[m / 2 - 1] + r2S[m / 2]) / 2f
         if (rad <= 0f || r2R[j] < 0.7f * rad || r2R[j] > 1.4f * rad || r2R[i] < 0.7f * rad || r2R[i] > 1.4f * rad) return
         val rise = (r2Y[j] - r2Y[i]) / rad
-        if (rise < R2_D || Math.abs(r2X[i] - r2X[j]) / rad > 1.5f * rise || tNs - lastRise2Ns < 1_500_000_000L) return
-        lastRise2Ns = tNs
-        event(tNs, "rise2", (r2X[i] - r2X[j]) / w, (r2Y[i] - r2Y[j]) / h, (tNs - r2T[j]) / 1e6f,
-            String.format(Locale.ROOT, "rise=%.2f R=%.1f x2=%.4f y2=%.4f ring2=%.2f", rise, rad, d2X, d2Y, d2Ring))
+        if (rise < R2_D || Math.abs(r2X[i] - r2X[j]) / rad > 1.5f * rise) return
+        val d = String.format(Locale.ROOT, "rise=%.2f R=%.1f x2=%.4f y2=%.4f ring2=%.2f", rise, rad, d2X, d2Y, d2Ring)
+        if (tNs - lastRise2Ns >= 1_500_000_000L) {
+            lastRise2Ns = tNs
+            event(tNs, "rise2", (r2X[i] - r2X[j]) / w, (r2Y[i] - r2Y[j]) / h, (tNs - r2T[j]) / 1e6f, d)
+        }
+        if (rise >= R2_PRESS_D) rise2Press(tNs, d)
     }
+
+    /**
+     * Experimental press on the rise of the ring-checked disc (vc1095, only with [Bench.Config.rise2Press], off by
+     * default): the rule of [rise2] with D = [R2_PRESS_D]. Numbers from the five recorded matches ONLY (the data the
+     * rule was chosen on, never run on the phone; HANDOFF 0-4z2): of 44 opponent shots it falls in -330..-150 ms
+     * before the release for 10-13 (also with the track thinned to the app's scan step and 0-70 ms of added delay),
+     * too early for 2-8, late for 3-6, and presses 5-8 times in the 2 s before that where no shot follows. Slow lifts
+     * (Nowitzki) are not caught. Same guards as the other experimental presses: not while a gap trigger waits for its
+     * confirmation, not within 1.5 s of a press or trigger, not when my player is seen far from the shooter.
+     */
+    private fun rise2Press(tNs: Long, d: String) {
+        if (!cfg.shotBlock || !cfg.rise2Press) return
+        val why = when {
+            pendNs != 0L -> "gap_pending"
+            tNs - lastPressNs < 1_500_000_000L -> "pressed"
+            tNs - lastShotFireNs < 1_500_000_000L -> "lockout"
+            else -> ""
+        }
+        if (why.isNotEmpty()) {
+            if (tNs - lastRise2DropNs >= 1_500_000_000L) { lastRise2DropNs = tNs; event(tNs, "rise2_dropped", 0f, 0f, 0f, "$why $d") }
+            return
+        }
+        val live = cfg.autoBlockLive
+        lastShotFireNs = tNs
+        shotTriggers++; rise2Triggers++
+        synchronized(pendingTriggers) { pendingTriggers.add(tNs) }
+        if (!holdOthers && shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_rise2", 0.6, 1.8 + cfg.shotDelayMs / 1000.0) }
+        // The feet are not known on this track: only the sideways distance to my player counts (as in crouch without a ring).
+        var meDist = findMe(d2X, minOf(0.95f, d2Y + 0.3f), d2Y)
+        if (meDist >= 0f) meDist = Math.abs(meX - d2X)
+        val d2s = String.format(Locale.ROOT, "rise2 %s sens=%d delay=%d me=%.3f/%.3f d=%.3f", d, cfg.shotSens, cfg.shotDelayMs, meX, meY, meDist)
+        event(tNs, "shot_trigger", 0f, 0f, 0f, d2s)
+        snapNow = true
+        if (meDist > ME_FAR) { shotFar++; reject(tNs, "rejected_far", d2s); return }
+        if (live) main.post { BlockAccessibilityService.instance?.inGame?.armBlock(ARM_MS) }
+        press(tNs, live, d2s, 0L)
+    }
+
+    @Volatile var rise2Triggers = 0; private set
+    private var lastRise2DropNs = 0L
 
     private val r2T = LongArray(R2_LEN); private val r2X = FloatArray(R2_LEN); private val r2Y = FloatArray(R2_LEN)
     private val r2R = FloatArray(R2_LEN); private val r2S = FloatArray(R2_LEN)
@@ -1343,13 +1387,13 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
      * stands against the shooter (rims overlap, feet cover the disc) or in practice. So it can only say "far".
      * Called once per trigger (capture thread).
      */
-    private fun findMe(sx: Float, sy: Float): Float {
+    private fun findMe(sx: Float, sy: Float, top: Float = discY): Float {
         meX = -1f; meY = -1f
         val buf = curBuf ?: return -1f
         val w = curW; val h = curH; val s = step
         val nw = 16; val nh = 6
         val ax = ((sx - 0.3f) * gw).toInt().coerceIn(0, gw - 1); val bx = ((sx + 0.3f) * gw).toInt().coerceIn(0, gw)
-        val ay = ((discY + 0.05f) * gh).toInt().coerceIn(0, gh - 1); val by = (minOf(0.95f, sy + 0.3f) * gh).toInt().coerceIn(0, gh)
+        val ay = ((top + 0.05f) * gh).toInt().coerceIn(0, gh - 1); val by = (minOf(0.95f, sy + 0.3f) * gh).toInt().coerceIn(0, gh)
         val rw = bx - ax; val rh = by - ay
         if (rw <= nw || rh <= nh) return -1f
         val st = rw + 1
@@ -1436,6 +1480,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         return "일반 슛 발동 ${shotTriggers}회(${if (cfg.shotBlock && cfg.autoBlockLive) "실제 누름" else "기록만"}, 민감도 ${cfg.shotSens}, 지연 ${cfg.shotDelayMs}ms) → 거름 ${shotRejected}회(그중 내 선수가 멀어서 ${shotFar}회), 버튼 미리 열기 ${shotArms}회, 누름 ${shotFired}회, 건너뜀 ${shotSkipped}회\n" +
             "  팔 올림 감지 ${upEvents}회(팔 올림으로 누르기 ${if (cfg.upPress) "켬" else "끔"}, 그걸로 발동 ${upTriggers}회)\n" +
             "  웅크림 감지 ${crouchEvents}회(웅크릴 때 누르기 ${if (cfg.crouchPress) "켬" else "끔"}, 그걸로 발동 ${crouchTriggers}회)\n" +
+            "  공 솟음으로 누르기 ${if (cfg.rise2Press) "켬" else "끔"}, 그걸로 발동 ${rise2Triggers}회\n" +
             "  연습장 박자: 반복 시작 ${sweepReps}회, 공 떠남 ${sweepReleases}회(박자 훑기 ${if (cfg.sweepPress) "켬" else "끔"}, 그걸로 누름 ${sweepPresses}회)\n" +
             "  선수 스킬 어두워짐 ${darkOnsets}회(그걸로 누름 ${darkPresses}회, 누르기 ${if (cfg.darkSweep) "훑기" else if (cfg.darkPress) "켬" else "끔(기록만)"})\n" +
             "  모으기 감지 뒤 공이 떠남 ${leads.size}회(앞섬 중앙값 $med, 전체 ${leads.joinToString(" ")}) · 감지했는데 공이 안 떠남(오발 추정) ${triggersWithoutRelease}회 · 공이 떠났는데 미리 감지 못함 ${releasesWithoutTrigger}회"
@@ -1459,6 +1504,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         const val R2_LEN = 64
         const val R2_W_NS = 80_000_000L
         const val R2_D = 1.6f
+        const val R2_PRESS_D = 2.2f
         private val COS24 = FloatArray(24) { Math.cos(it * Math.PI / 12).toFloat() }
         private val SIN24 = FloatArray(24) { Math.sin(it * Math.PI / 12).toFloat() }
         /** screen-heights per second; set from data later. */
