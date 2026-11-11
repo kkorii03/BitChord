@@ -586,7 +586,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
 
     private var gBx = 0; private var gBy = 0; private var gBest = 0; private var gSx = 0; private var gSy = 0; private var gSec = 0
     private var d2 = false; private var d2X = -1f; private var d2Y = -1f; private var d2Ring = 0f; private var d2N = 0; private var d2Cand = 0
-    private val candX = IntArray(D2_CAND); private val candY = IntArray(D2_CAND)
+    private val candX = IntArray(D2_CAND); private val candY = IntArray(D2_CAND); private val edge = IntArray(24)
     private var d2Snaps = 0; private var lastD2SnapNs = 0L
 
     private fun discRed(buf: ByteBuffer, o: Int): Boolean {
@@ -598,15 +598,19 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
     }
 
     /**
-     * Shadow finder (vc1088, logged only: d2 / x2 / y2 / ring2 / n2 / cand2 in shot.csv; nothing acts on it).
+     * Shadow finder (vc1088, round rim since vc1089; logged only: d2 / x2 / y2 / ring2 / n2 / cand2 in shot.csv;
+     * nothing acts on it).
      * [findDisc] drops the disc whenever another red blob on the screen is >= 0.6 of it: in the vc1069 match bundle the
      * disc was seen 72 of 149 defence seconds, in one-frame flickers, and in >= 73 % of the 250 ms before a release for
      * only 7 of 16 shots (HANDOFF 0-4x). Here the up to [D2_CAND] strongest windows with fill >= [FOUND_FILL] (the grid
      * of [findDisc], > 2 k apart) are candidates; the red around each gives centre and radius; ring2 = share of 24
-     * directions where a grey pixel (the disc's rim) lies within 5 px outside the last red one. The disc is the candidate
-     * with the highest ring2 >= [D2_RING_MIN]; other red on the screen does not matter. Replay on the five recorded
-     * matches at capture size (tools/analysis/fdtest.py, video pixels, not the raw capture): disc right in >= 73 % of
-     * -0.35..-0.10 s before the release for 32 of 45 shots, [findDisc] 25. Lengths are for a 540-high capture.
+     * directions where a grey pixel (the disc's rim) lies within 5 px outside the last red one AND that edge is within a
+     * quarter of the median edge distance (round). The disc is the candidate with the highest ring2 >= [D2_RING_MIN];
+     * other red on the screen does not matter. Replay on the five recorded matches at capture size
+     * (tools/analysis/fdtest.py, video pixels, not the raw capture): disc right in >= 73 % of -0.35..-0.10 s before the
+     * release for 32 of 45 shots, [findDisc] 25. Without "round" and with a minimum of 0.4 (vc1088) the matchup mark on
+     * the floor (a red ellipse with white digits and a white rim) passed as the disc in about 80 frames of 3 shots;
+     * with them in none, same 32 of 45. Lengths are for a 540-high capture.
      */
     private fun findDisc2(buf: ByteBuffer, w: Int, h: Int, rowStride: Int) {
         d2 = false; d2X = -1f; d2Y = -1f; d2Ring = 0f; d2N = 0; d2Cand = 0
@@ -657,7 +661,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
             if (cnt < minN) continue
             val rad = Math.sqrt(cnt / Math.PI).toFloat().coerceIn(6 * u, 16 * u)
             val rMax = (1.6f * rad + 2 * u).toInt()
-            var hit = 0
+            var ne = 0
             for (a in 0 until 24) {
                 val ca = COS24[a]; val sa = SIN24[a]
                 var e = 0                                   // last red pixel on this ray = the edge of the disc
@@ -676,10 +680,16 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
                     val o = y * rowStride + x * 4
                     val pr = buf.get(o).toInt() and 0xFF; val pg = buf.get(o + 1).toInt() and 0xFF; val pb = buf.get(o + 2).toInt() and 0xFF
                     val lo = minOf(pr, pg, pb)
-                    if (lo >= 150 && maxOf(pr, pg, pb) - lo <= 45) { hit++; break }
+                    if (lo >= 150 && maxOf(pr, pg, pb) - lo <= 45) { edge[ne++] = e; break }
                     r++
                 }
             }
+            if (ne == 0) continue
+            java.util.Arrays.sort(edge, 0, ne)              // round: the rim is at about the same distance all around
+            val em = if (ne % 2 == 1) edge[ne / 2].toFloat() else (edge[ne / 2 - 1] + edge[ne / 2]) / 2f
+            val tol = maxOf(2 * u, 0.25f * em)
+            var hit = 0
+            for (j in 0 until ne) if (Math.abs(edge[j] - em) <= tol) hit++
             val ring = hit / 24f
             if (ring > bestRing) { bestRing = ring; d2X = cx / w.toFloat(); d2Y = cy / h.toFloat(); d2Ring = ring; d2N = cnt }
         }
@@ -1404,9 +1414,9 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         const val SIDE_DEF = 1
         const val SIDE_OFF = 2
         const val FOUND_FILL = 0.45f
-        /** Shadow finder ([findDisc2]): candidates checked, min share of directions with the grey rim. */
+        /** Shadow finder ([findDisc2]): candidates checked, min share of directions with the grey rim at one distance. */
         const val D2_CAND = 5
-        const val D2_RING_MIN = 0.4f
+        const val D2_RING_MIN = 0.55f
         private val COS24 = FloatArray(24) { Math.cos(it * Math.PI / 12).toFloat() }
         private val SIN24 = FloatArray(24) { Math.sin(it * Math.PI / 12).toFloat() }
         /** screen-heights per second; set from data later. */

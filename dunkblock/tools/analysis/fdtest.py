@@ -8,17 +8,17 @@ Every video frame in [release - pre, release] of every shot with a firm release 
   B = a port of ShotWatcher.findDisc2 (shadow, vc1088): the 5 strongest windows with fill >= 0.45 (apart by > 2 k)
       are candidates; for each the centroid and pixel count of red in a box of +-16 px (at 540p) give centre and
       radius; ring = share of 24 directions where a grey pixel (all channels >= 150, spread <= 45) lies within 5 px
-      outside the last red pixel of the ray; the disc is the candidate with the highest ring >= RING_MIN. No rule
-      about other red on the screen.
+      outside the last red pixel of the ray AND that edge is within a quarter of the median edge distance (round);
+      the disc is the candidate with the highest ring >= RING_MIN. No rule about other red on the screen.
 truth = the full-resolution track of mrel.py (rel.csv) at the same frame; "right" = within 14 px (at 540p) of it.
 -loose: disc red as mrel.py reads it from video (the codec shifts colours) instead of the app's thresholds.
-out.csv: shot, t (s before the release), truth_x, truth_y, a_found, a_x, a_y, a_fill, a_second, b_found, b_x, b_y, b_ring, b_n, h
+out.csv: shot, t (s before the release), truth_x, truth_y, a_found, a_x, a_y, a_fill, a_second, b_found, b_x, b_y, b_ring, b_n, h, b_em (median edge distance, px)
 -sum a.csv ...: seen / right shares, whole second and the window -0.35..-0.10 s.
 """
 import sys, os, csv, math
 import numpy as np, cv2
 
-FOUND_FILL = 0.45; RING_MIN = 0.4
+FOUND_FILL = 0.45; RING_MIN = 0.55
 ANG = [(math.cos(a), math.sin(a)) for a in np.linspace(0, 2 * math.pi, 24, endpoint=False)]
 
 
@@ -63,7 +63,7 @@ class A:
 
 def find_b(win, m, im):
     """m = red mask at capture resolution, im = capture image. Returns found, x, y (capture px), ring, n."""
-    w2 = win.copy(); best = (False, -1.0, -1.0, 0.0, 0); half = int(round(16 * U)); out = max(2, int(round(5 * U)))
+    w2 = win.copy(); best = (False, -1.0, -1.0, 0.0, 0, 0.0); half = int(round(16 * U)); out = max(2, int(round(5 * U)))
     for _ in range(5):
         by, bx = np.unravel_index(int(np.argmax(w2)), w2.shape)
         if w2[by, bx] < FOUND_FILL * K * K: break
@@ -74,7 +74,7 @@ def find_b(win, m, im):
             if n < 20 * U * U: break
             ys, xs = np.nonzero(q); cx = int(round(x0 + xs.mean())); cy = int(round(y0 + ys.mean()))
         if n < int(60 * U * U): continue
-        R = min(16.0 * U, max(6.0 * U, math.sqrt(n / math.pi))); hit = 0; rmax = int(1.6 * R + 2 * U)
+        R = min(16.0 * U, max(6.0 * U, math.sqrt(n / math.pi))); E = []; rmax = int(1.6 * R + 2 * U)
         for ca, sa in ANG:
             e = 0                                            # last red pixel on this ray = the rim of the disc
             for r in range(3, rmax + 1):
@@ -86,9 +86,12 @@ def find_b(win, m, im):
                 x = int(round(cx + r * ca)); y = int(round(cy + r * sa))
                 if not (0 <= x < W and 0 <= y < H): break
                 p = im[y, x]; lo = int(p.min())
-                if lo >= 150 and int(p.max()) - lo <= 45: hit += 1; break
-        ring = hit / 24.0
-        if ring >= RING_MIN and ring > best[3]: best = (True, float(cx), float(cy), ring, n)
+                if lo >= 150 and int(p.max()) - lo <= 45: E.append(e); break
+        # A disc is round: the rim lies at one distance. The matchup mark on the floor (a red ellipse with white
+        # digits and a white rim, 81 false frames of the first cut) has red-to-white edges at every distance.
+        em = float(np.median(E)) if E else 0.0; tol = max(2.0 * U, 0.25 * em)
+        ring = sum(1 for e in E if abs(e - em) <= tol) / 24.0
+        if ring >= RING_MIN and ring > best[3]: best = (True, float(cx), float(cy), ring, n, em)
     return best
 
 
@@ -98,7 +101,7 @@ def run(mp4, clips, rel, keyp, outp, loose, pre):
         if float(r["r"]) > 0 and float(r["ring"]) >= 0.3: TR[(int(r["k"]), r["t_rel"])] = (float(r["x"]) * H / 1080.0, float(r["y"]) * H / 1080.0)
     KEY = {int(r["k"]): r for r in csv.DictReader(open(keyp, encoding="utf-8"))}
     name = os.path.basename(clips).split(".")[0]; v = cv2.VideoCapture(mp4)
-    out = csv.writer(open(outp, "w", newline="")); out.writerow("shot,t,truth_x,truth_y,a_found,a_x,a_y,a_fill,a_second,b_found,b_x,b_y,b_ring,b_n,h".split(","))
+    out = csv.writer(open(outp, "w", newline="")); out.writerow("shot,t,truth_x,truth_y,a_found,a_x,a_y,a_fill,a_second,b_found,b_x,b_y,b_ring,b_n,h,b_em".split(","))
     for row in csv.DictReader(open(clips, encoding="utf-8")):
         k = int(row["k"]); ls = float(row["label_s"]); ref = ls if ls > 0 else float(row["shot_s"]); kr = KEY.get(k)
         if not kr or not kr["release_rel"] or kr["src"].endswith("?"): continue
@@ -116,7 +119,7 @@ def run(mp4, clips, rel, keyp, outp, loose, pre):
             win = sat[K:, K:] - sat[:-K, K:] - sat[K:, :-K] + sat[:-K, :-K]
             fa = a.find(win, t); fb = find_b(win, m, im); tr = TR.get((k, "%.3f" % t), (-1, -1))
             out.writerow(["%s%d" % (name, k), "%.3f" % (t - t0), "%.0f" % tr[0], "%.0f" % tr[1], int(fa[0]), "%.0f" % (fa[1] * W), "%.0f" % (fa[2] * H),
-                          "%.2f" % fa[3], "%.2f" % fa[4], int(fb[0]), "%.0f" % fb[1], "%.0f" % fb[2], "%.2f" % fb[3], fb[4], H]); n += 1
+                          "%.2f" % fa[3], "%.2f" % fa[4], int(fb[0]), "%.0f" % fb[1], "%.0f" % fb[2], "%.2f" % fb[3], fb[4], H, "%.1f" % fb[5]]); n += 1
         print(name, k, n, "frames"); sys.stdout.flush()
 
 
