@@ -15,6 +15,8 @@ Rule (causal, scan by scan, same as the app would run it):
              (-fan glob: mscan.find_fans over the whole court; -fan win: mfollow.fan_at, searched only around each tag); fans within 70 px of my own ring are skipped (on offence, and when my matchup is far,
              the game draws a red wedge at MY feet); two candidates -> the one whose feet (tag + (45, -52)) are nearer
   class    = the position that owned the fan most often in the last `keep` s (>= min scans and >= share of them)
+  mine     = the tag of my position under my ring (ring conf 0.2-0.38: above that it was something else in 65 of 67
+             scans of matches A and B); it never owns a fan and is never the target
   target   = the tag of that class; two on screen (a team-mate with the same position) -> the grey-dark one
              (opponents are drawn grey) if exactly one is, else none; tag gone for at most hold s -> last position kept
 """
@@ -55,7 +57,7 @@ def owner(opp, F, me):
 
 
 lastDef = -9.0; lastOff = -9.0; votes = []; offRun = 0
-n = nd = 0; own = {}; tgt = {}; none = {"no class": 0, "class not on screen": 0, "two of the class": 0}; seen_mt = 0; held = 0; lastPick = None; wrong = []; wrongown = []; picks = []
+n = nd = 0; own = {}; tgt = {}; none = {"no class": 0, "class not on screen": 0, "two of the class": 0}; seen_mt = 0; held = 0; steer = 0; steer2 = 0; lastPick = None; wrong = []; wrongown = []; picks = []
 for r in rows:
     t = float(r["t_s"]); n += 1
     if SIDE == "lab":
@@ -72,8 +74,13 @@ for r in rows:
         if offRun >= 2: lastOff = t
         de = t - lastDef < 0.3 and t - lastOff > 1.0
     else: de = True
-    T = tags(r); opp = [q for q in T if q["c"] != ME]
-    me = (float(r["me_x"]), float(r["me_y"])) if float(r["me_conf"]) >= 0.2 else None
+    T = tags(r)
+    me = (float(r["me_x"]), float(r["me_y"])) if 0.2 <= float(r["me_conf"]) < 0.38 else None
+    # my own tag: my position, under my ring (ring = tag + (31, -24)). Without a ring a tag of my position is never a
+    # candidate (match C, 푸즈 SF against my 제임스 SF: the grey-body test let my own tag through at 66.9 s)
+    mine = min([q for q in T if q["c"] == ME], key=lambda q: math.hypot(q["x"] + 31 - me[0], (q["y"] - 24 - me[1]) * 1.6), default=None) if me else None
+    if mine and math.hypot(mine["x"] + 31 - me[0], (mine["y"] - 24 - me[1]) * 1.6) > 45: mine = None
+    opp = [q for q in T if q is not mine and (q["c"] != ME or me is not None)]
     o = owner(opp, fans(r), me) if de else None
     if o: votes.append((t, o["c"]))
     votes = [v for v in votes if t - v[0] <= KEEP]
@@ -104,12 +111,20 @@ for r in rows:
             else:
                 pick = c[0]; lastPick = (t, cls, pick); tgt[cls] = tgt.get(cls, 0) + 1
                 if cls != MT: wrong.append(t)
-    picks.append([t, 1 if de else 0, r["me_x"], r["me_y"], r["me_conf"], cls or "", pick["x"] + 45 if pick else -1, pick["y"] - 52 if pick else -1])
+    if pick and me: steer += 1
+    # my position from my name tag (feet = tag + (45, -52)): the tag under my ring, or - when the matchup has another
+    # position - the only tag of my position on screen. In match E the ring sat on the ball handler's teal fan or on my
+    # own body in 24 % of conf 0.2-0.35 scans; the tag does not have that problem.
+    mt = [q for q in T if q["c"] == ME]
+    my = mine or (mt[0] if cls and cls != ME and len(mt) == 1 else None)
+    if pick and my: steer2 += 1
+    picks.append([t, 1 if de else 0, r["me_x"], r["me_y"], r["me_conf"], cls or "", pick["x"] + 45 if pick else -1, pick["y"] - 52 if pick else -1, my["x"] + 45 if my else -1, my["y"] - 52 if my else -1])
 print("%d scans, defence %d (%.0f%%) | true matchup tag %s on screen in %.0f%% of defence scans" % (n, nd, 100.0 * nd / n, MT, 100.0 * seen_mt / max(nd, 1)))
 k = sum(own.values()); print("fan owner per scan: found in %.0f%% of defence scans -> %s" % (100.0 * k / max(nd, 1), ", ".join("%s %d (%.0f%%)" % (c, v, 100.0 * v / k) for c, v in sorted(own.items(), key=lambda q: -q[1]))))
 print("  owner not %s at: %s" % (MT, " ".join("%.1f%s" % q for q in wrongown[:60])))
 k = sum(tgt.values()); print("target: given in %.0f%% of defence scans (%.0f%% of those with the true tag on screen) -> %s | not given: %s" % (
     100.0 * k / max(nd, 1), 100.0 * k / max(seen_mt, 1), ", ".join("%s %d (%.1f%%)" % (c, v, 100.0 * v / k) for c, v in sorted(tgt.items(), key=lambda q: -q[1])), none) + (" | held positions %d" % held if HOLD else ""))
+print("target and my ring both known: %.0f%% of defence scans | target and my TAG both known (what steering needs): %.0f%%" % (100.0 * steer / max(nd, 1), 100.0 * steer2 / max(nd, 1)))
 if wrong:
     runs = []
     for t in wrong:
@@ -118,4 +133,4 @@ if wrong:
     print("wrong target runs: " + "; ".join("%.1f-%.1f" % tuple(q) for q in runs))
 if OUT:
     with open(OUT, "w", newline="") as f:
-        w = csv.writer(f); w.writerow(["t_s", "def", "me_x", "me_y", "me_conf", "class", "tgt_x", "tgt_y"]); w.writerows(picks)
+        w = csv.writer(f); w.writerow(["t_s", "def", "me_x", "me_y", "me_conf", "class", "tgt_x", "tgt_y", "my_x", "my_y"]); w.writerows(picks)
