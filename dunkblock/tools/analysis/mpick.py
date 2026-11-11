@@ -57,7 +57,7 @@ def owner(opp, F, me):
 
 
 lastDef = -9.0; lastOff = -9.0; votes = []; offRun = 0
-n = nd = 0; own = {}; tgt = {}; none = {"no class": 0, "class not on screen": 0, "two of the class": 0}; seen_mt = 0; held = 0; steer = 0; steer2 = 0; lastPick = None; wrong = []; wrongown = []; picks = []
+n = nd = 0; own = {}; tgt = {}; none = {"no class": 0, "class not on screen": 0, "two of the class": 0}; seen_mt = 0; held = 0; steer = 0; steer2 = 0; fant = 0; fanpicks = []; FT = "-fantgt" in a; lastPick = None; wrong = []; wrongown = []; picks = []
 for r in rows:
     t = float(r["t_s"]); n += 1
     if SIDE == "lab":
@@ -91,6 +91,11 @@ for r in rows:
         c, k = max(cnt.items(), key=lambda q: q[1])
         if k >= SHARE * len(votes): cls = c
     pick = None
+    # my position from my name tag (feet = tag + (45, -52)): the tag under my ring, or - when the matchup has another
+    # position - the only tag of my position on screen. In match E the ring sat on the ball handler's teal fan or on my
+    # own body in 24 % of conf 0.2-0.35 scans; the tag does not have that problem.
+    mt = [q for q in T if q["c"] == ME]
+    my = mine or (mt[0] if cls and cls != ME and len(mt) == 1 else None)
     if de:
         nd += 1
         if any(q["c"] == MT for q in T): seen_mt += 1
@@ -106,17 +111,19 @@ for r in rows:
             if not c and lastPick and lastPick[1] == cls and t - lastPick[0] <= HOLD:
                 pick = lastPick[2]; held += 1; tgt[cls] = tgt.get(cls, 0) + 1
                 if cls != MT: wrong.append(t)
-            elif not c: none["class not on screen"] += 1
+            elif not c:
+                # -fantgt: the matchup's tag is off screen or covered, but his fan is visible -> aim at the fan itself.
+                # Only with my own position known (a fan near me is my own wedge) and no other tag standing on it.
+                f = [q for q in fans(r) if my and math.hypot(q[0] - my["x"] - 45, (q[1] - my["y"] + 52) * 1.6) >= 70
+                     and not any(-30 <= q[0] - o2["x"] <= 150 and -92 <= q[1] - o2["y"] <= -28 for o2 in T)] if FT else []
+                if f:
+                    q = max(f, key=lambda z: z[2] * z[3]); pick = dict(x=q[0] - 45, y=q[1] + 52); fant += 1; fanpicks.append(t)
+                else: none["class not on screen"] += 1
             elif len(c) > 1: none["two of the class"] += 1
             else:
                 pick = c[0]; lastPick = (t, cls, pick); tgt[cls] = tgt.get(cls, 0) + 1
                 if cls != MT: wrong.append(t)
     if pick and me: steer += 1
-    # my position from my name tag (feet = tag + (45, -52)): the tag under my ring, or - when the matchup has another
-    # position - the only tag of my position on screen. In match E the ring sat on the ball handler's teal fan or on my
-    # own body in 24 % of conf 0.2-0.35 scans; the tag does not have that problem.
-    mt = [q for q in T if q["c"] == ME]
-    my = mine or (mt[0] if cls and cls != ME and len(mt) == 1 else None)
     if pick and my: steer2 += 1
     picks.append([t, 1 if de else 0, r["me_x"], r["me_y"], r["me_conf"], cls or "", pick["x"] + 45 if pick else -1, pick["y"] - 52 if pick else -1, my["x"] + 45 if my else -1, my["y"] - 52 if my else -1])
 print("%d scans, defence %d (%.0f%%) | true matchup tag %s on screen in %.0f%% of defence scans" % (n, nd, 100.0 * nd / n, MT, 100.0 * seen_mt / max(nd, 1)))
@@ -125,6 +132,7 @@ print("  owner not %s at: %s" % (MT, " ".join("%.1f%s" % q for q in wrongown[:60
 k = sum(tgt.values()); print("target: given in %.0f%% of defence scans (%.0f%% of those with the true tag on screen) -> %s | not given: %s" % (
     100.0 * k / max(nd, 1), 100.0 * k / max(seen_mt, 1), ", ".join("%s %d (%.1f%%)" % (c, v, 100.0 * v / k) for c, v in sorted(tgt.items(), key=lambda q: -q[1])), none) + (" | held positions %d" % held if HOLD else ""))
 print("target and my ring both known: %.0f%% of defence scans | target and my TAG both known (what steering needs): %.0f%%" % (100.0 * steer / max(nd, 1), 100.0 * steer2 / max(nd, 1)))
+if FT: print("fan used as the target (tag not on screen): %d scans, at %s" % (fant, " ".join("%.1f" % t for t in fanpicks[::max(1, len(fanpicks) // 24)])))
 if wrong:
     runs = []
     for t in wrong:
