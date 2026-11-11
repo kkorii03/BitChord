@@ -74,6 +74,12 @@ object Bench {
         /** With darkSweep: from the onset hold the joystick this way (degrees, 0 = screen right, 90 = up; -1 = off) for darkJoyMs (0 = until 300 ms after the press). */
         val darkJoyDeg: Int = -1,
         val darkJoyMs: Int = 0,
+        /**
+         * Experiment, PRACTICE COURT ONLY, never tried on the phone (11-12): push the joystick towards my matchup
+         * (core FollowRule on the record-only matchup scan). 0 = off, 1 = only while the user's thumb rests on the
+         * joystick pad (moving the thumb takes over), 2 = nobody holds the phone (adb self-test). InGameProxy.steer.
+         */
+        val follow: Int = 0,
         val recalibrate: Boolean = false,
         val opencvAreaResize: Boolean = false,
         val opencvThreads: Int = 1,

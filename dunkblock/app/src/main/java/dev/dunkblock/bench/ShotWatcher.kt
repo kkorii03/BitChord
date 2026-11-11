@@ -49,7 +49,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
     /** Set when a colour screen of this moment would help; FramePipeline clears it after saving one. */
     @Volatile var snapNow = false
     /** Record-only matchup log (matchup.csv); never read by the press rules. */
-    val matchup = MatchupShadow(startedNs)
+    val matchup = MatchupShadow(startedNs, cfg.follow)
 
     @Volatile var scans = 0; private set
     @Volatile var defScans = 0; private set

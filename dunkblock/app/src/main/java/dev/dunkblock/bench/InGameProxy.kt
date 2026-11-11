@@ -111,6 +111,77 @@ class InGameProxy(private val svc: BlockAccessibilityService, private val autoMo
         rec("auto", "nudge_$deg", to.x, to.y, ms.toInt())
     }
 
+    // ------------------------------------------------------------------ follow my matchup (11-12, opt-in experiment)
+
+    private var assisting = false          // mode 1: the injected joystick points at the matchup instead of copying the thumb
+    private var thumbTookOver = false      // the thumb moved since it landed: the user steers until it lifts
+    private var thumbLanded = PointF()
+    private var thumbAt = PointF()
+    private var steerOwn = false           // mode 2: the hand's joystick finger is ours, nobody's thumb is down
+    private var steerDown = false
+    private var steerTo = PointF()
+    private var assists = 0
+    private var assistTakeovers = 0
+    private var ownSteers = 0
+    private val steerWatch = Runnable { steerEnd("stale") }
+
+    /**
+     * [Bench.Config.follow], PRACTICE COURT ONLY, never tried on the phone (written 11-12 without one). Main thread,
+     * called after every matchup scan (about 10 Hz) with FollowRule's answer: [deg] = push the joystick that way
+     * (0 = right on the screen, 90 = up), NaN = let go. Without a call for [STEER_STALE_MS] the push ends by itself.
+     *
+     * mode 1 (the user plays): only while the real thumb RESTS on the pad where it landed (within [deadZone]). The
+     *   injected joystick stroke - the one that normally copies the thumb, the path measured in the real game - then
+     *   points at the matchup. The moment the thumb moves, the stroke copies the thumb again and stays the user's
+     *   until the thumb lifts. Thumb not on the pad -> nothing.
+     * mode 2 (nobody holds the phone, adb self-tests): the app puts its own joystick finger down like [nudgeJoy].
+     *   The pad is pass-through meanwhile, so a real thumb would land on the game unseen: not for playing.
+     * Unknown: whether the game's joystick centre is where the finger lands (assumed here) or fixed.
+     */
+    fun steer(deg: Float, mode: Int) {
+        val h = hand
+        if (finished || h == null || nudging) return
+        if (deg.isNaN()) { steerEnd("rule"); return }
+        main.removeCallbacks(steerWatch); main.postDelayed(steerWatch, STEER_STALE_MS)
+        val dm = svc.resources.displayMetrics
+        val r = 0.13f * min(dm.widthPixels, dm.heightPixels)
+        val a = Math.toRadians(deg.toDouble())
+        val ox = r * Math.cos(a).toFloat(); val oy = -r * Math.sin(a).toFloat()
+        if (thumbDown) {
+            if (mode == 1 && joyStarted && !thumbTookOver) {
+                if (!assisting) { assisting = true; assists++; rec("auto", "assist_on", thumbLanded.x, thumbLanded.y, deg.toInt()) }
+                h.move(JOY, PointF(thumbLanded.x + ox, thumbLanded.y + oy))
+            }
+            return
+        }
+        if (mode != 2) return
+        steerTo = PointF(joy.x + ox, joy.y + oy)
+        if (steerOwn) { if (steerDown) h.move(JOY, steerTo); return }
+        steerOwn = true; steerDown = false; ownSteers++
+        svc.setPadTouchable(false)
+        rec("auto", "steer_on", steerTo.x, steerTo.y, deg.toInt())
+        main.postDelayed({ if (steerOwn && !steerDown && !thumbDown) { steerDown = true; h.down(JOY, steerTo, anchor = PointF(joy.x, joy.y)) } }, PASS_THROUGH_MS)
+    }
+
+    private fun steerEnd(why: String) {
+        main.removeCallbacks(steerWatch)
+        val h = hand
+        if (assisting) {
+            assisting = false
+            rec("auto", "assist_off_$why", thumbAt.x, thumbAt.y, 0)
+            if (h != null && thumbDown && joyStarted) h.move(JOY, thumbAt)
+        }
+        if (steerOwn) {
+            steerOwn = false
+            if (steerDown) h?.up(JOY)
+            steerDown = false
+            rec("auto", "steer_off_$why", 0f, 0f, 0)
+            if (!thumbDown) svc.setPadTouchable(true)
+        }
+    }
+
+    private val deadZone get() = 0.035f * min(svc.resources.displayMetrics.widthPixels, svc.resources.displayMetrics.heightPixels)
+
     // ------------------------------------------------------------------ button overlays (11-10)
 
     /**
@@ -237,6 +308,8 @@ class InGameProxy(private val svc: BlockAccessibilityService, private val autoMo
         const val PASS_THROUGH_MS = 40L
         /** Auto-block only while the user touched one of our overlays this recently (playing, not in a menu). */
         const val RECENT_TOUCH_NS = 30_000_000_000L    // vc1031: 8 s skipped 3 of 11 shot presses in practice
+        /** The follow push ends when no new direction arrived for this long (the matchup scan runs every 105 ms). */
+        const val STEER_STALE_MS = 400L
     }
 
     private val autoTap = object : Runnable {
@@ -346,17 +419,28 @@ class InGameProxy(private val svc: BlockAccessibilityService, private val autoMo
         val s = hand ?: return
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                steerEnd("thumb")           // cannot be steering (the pad is pass-through then), but the thumb always wins
                 thumbDown = true; downs++; lastTouchNs = System.nanoTime()
                 svc.setPadTouchable(false)
                 val p = PointF(e.rawX, e.rawY)
+                thumbLanded = p; thumbAt = p; thumbTookOver = false
                 val n = downs
                 // Give the window manager a moment to apply the pass-through flag before injecting underneath.
                 // Put down where the thumb landed; after a cancel the hand puts it down there again (ProxyStick behaviour).
                 main.postDelayed({ if (thumbDown && downs == n) { s.down(JOY, p, anchor = p); joyStarted = true; if (!autoMode) main.postDelayed(autoTap, tapEveryMs) } }, PASS_THROUGH_MS)
             }
-            MotionEvent.ACTION_MOVE -> s.move(JOY, PointF(e.rawX, e.rawY))
+            MotionEvent.ACTION_MOVE -> {
+                thumbAt = PointF(e.rawX, e.rawY)
+                if (!thumbTookOver && Math.hypot((thumbAt.x - thumbLanded.x).toDouble(), (thumbAt.y - thumbLanded.y).toDouble()) > deadZone) {
+                    thumbTookOver = true
+                    if (assisting) { assisting = false; assistTakeovers++; rec("auto", "assist_off_thumb", thumbAt.x, thumbAt.y, 0) }
+                }
+                // Without the follow experiment [assisting] is never set: the stroke copies the thumb as before.
+                if (!assisting) s.move(JOY, thumbAt)
+            }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 if (e.actionMasked == MotionEvent.ACTION_CANCEL) padCancels++
+                if (assisting) { assisting = false; rec("auto", "assist_off_lift", e.rawX, e.rawY, 0) }
                 thumbDown = false; lastTouchNs = System.nanoTime()
                 main.removeCallbacks(autoTap)
                 if (joyStarted) s.up(JOY)
@@ -368,6 +452,7 @@ class InGameProxy(private val svc: BlockAccessibilityService, private val autoMo
 
     fun finish(reason: String) {
         if (finished) return
+        steerEnd("finish")
         finished = true
         main.removeCallbacks(autoTap)
         hand?.releaseAll()
@@ -389,6 +474,7 @@ class InGameProxy(private val svc: BlockAccessibilityService, private val autoMo
             if (tiles.isNotEmpty()) appendLine("오른쪽 버튼 받침판 ${tiles.size}개: 손가락 ${tileDowns}회(짧은 탭 ${tileQuickTaps}회), 주입이 받침판에 떨어짐 ${injectedOnTile}개 ${if (injectedOnTile == 0) "(정상)" else "(통과 실패)"}")
             appendLine("자동 블록 요청 ${autoTaps}회, 시스템 응답 완료 ${o?.get(1) ?: 0} / 취소 ${o?.get(2) ?: 0}" +
                 if (autoMode) ", 화면을 ${RECENT_TOUCH_NS / 1_000_000_000L}초 넘게 안 만져서 건너뜀 ${skippedFires}회, 사용자 기록 버튼 ${marks}회" else "")
+            if (Bench.config.follow > 0) appendLine("매치업 따라가기(연습장 시험, 방식 ${Bench.config.follow}): 엄지를 올려 둔 동안 대신 밀기 ${assists}회(엄지를 움직여 사용자 조작으로 돌아감 ${assistTakeovers}회), 손 없이 밀기 ${ownSteers}회")
             appendLine("※ 게임 캐릭터가 실제로 움직이고 블록했는지는 앱이 볼 수 없습니다. 관찰 내용을 알려 주세요.")
         }
         if (autoMode) Bench.autoReport = report

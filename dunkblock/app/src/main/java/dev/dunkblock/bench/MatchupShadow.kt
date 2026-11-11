@@ -11,8 +11,9 @@ import kotlin.math.hypot
 
 /**
  * RECORD ONLY (HANDOFF 0-4v): who is my matchup and where are we both, about 9 times a second, into matchup.csv.
- * Nothing here presses or steers; the auto-block behaviour does not read it (only the shot_trigger event text gets
- * the distance appended, see ShotWatcher.event).
+ * Nothing here presses; the auto-block behaviour does not read it (only the shot_trigger event text gets the
+ * distance appended, see ShotWatcher.event). It steers only with the opt-in practice-court experiment [follow]
+ * (default 0 = the follow rule's answer is logged and nothing else happens).
  *
  * The finder was designed on 2340 x 1080 screen recordings scaled to 1170 x 540. Here the picture comes from the app's
  * own capture (about 1560 x 720) by nearest sampling, and our own blue joystick pad is in it: the pad rectangle is
@@ -23,12 +24,16 @@ import kotlin.math.hypot
  * low-priority thread and a frame is skipped while the previous scan is still running. The csv keeps every scan
  * (tags, fans, ring) in mfollow.py's column format, so tools/analysis/mpick.py runs on it unchanged.
  */
-class MatchupShadow(private val startedNs: Long) {
+class MatchupShadow(private val startedNs: Long, private val follow: Int = 0) {
     /** The latest scan, for the trigger text. [d] = feet-to-feet distance in px of the 1170 x 540 picture (dy * 1.6). */
     class Last(val tNs: Long, val src: Int, val dx: Float, val dy: Float, val d: Float)
 
     private val finder = MatchupFinder()
     private val picker = MatchupPicker()
+    // The ONE thing here that is not record-only, and only with the opt-in experiment [Bench.Config.follow] (default 0).
+    private val rule = dev.dunkblock.core.FollowRule()
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+    @Volatile var pushes = 0; private set
     private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "matchup").apply { priority = Thread.MIN_PRIORITY + 1 } }
     private val busy = AtomicBoolean(false)
     private var rows = ByteArray(0)
@@ -39,7 +44,7 @@ class MatchupShadow(private val startedNs: Long) {
     private var lastSnapNs = 0L
     private var snaps = 0
     private var lines = 0
-    private val log = StringBuilder(1 shl 16).append("t_s,side,def,me_x,me_y,me_conf,tags,fans,btn_label,my_cls,cls,src,tgt_x,tgt_y,my_x,my_y,why,us,pad\n")
+    private val log = StringBuilder(1 shl 16).append("t_s,side,def,me_x,me_y,me_conf,tags,fans,btn_label,my_cls,cls,src,tgt_x,tgt_y,my_x,my_y,why,us,pad,push_deg,push_why\n")
 
     @Volatile var last: Last? = null; private set
     /** Set by the scan thread when a colour screen of this moment would help; the capture thread clears it. */
@@ -57,8 +62,9 @@ class MatchupShadow(private val startedNs: Long) {
 
     fun summary(): String {
         fun name(c: Int) = if (c >= 0) MatchupFinder.CLASSES[c] else "모름"
-        return String.format(Locale.ROOT, "매치업 찾기(기록만): 훑기 %d회(수비 %d회, 그중 대상 찾음 %d회), 내 포지션 %s, 매치업 포지션 %s, 평균 %.1f ms, 최대 %.1f ms, 건너뜀 %d회",
-            scans, defScans, withTarget, name(myCls), name(cls), if (scans > 0) usTotal / scans / 1000.0 else 0.0, usMax / 1000.0, skipped)
+        return String.format(Locale.ROOT, "매치업 찾기(기록만): 훑기 %d회(수비 %d회, 그중 대상 찾음 %d회), 내 포지션 %s, 매치업 포지션 %s, 평균 %.1f ms, 최대 %.1f ms, 건너뜀 %d회\n  따라가기 규칙이 밀라고 한 훑기 %d회(%s)",
+            scans, defScans, withTarget, name(myCls), name(cls), if (scans > 0) usTotal / scans / 1000.0 else 0.0, usMax / 1000.0, skipped,
+            pushes, when (follow) { 1 -> "연습장 시험 켬: 엄지를 올려 둔 동안 실제로 밂"; 2 -> "연습장 시험 켬: 손 없이 실제로 밂"; else -> "기록만, 조이스틱은 건드리지 않음" })
     }
 
     /** Capture thread. [side] = ShotWatcher's reading (the block button: 1 defence, 2 offence), [def] = on defence now. */
@@ -103,6 +109,10 @@ class MatchupShadow(private val startedNs: Long) {
         }
         val s = finder.scan(rgb)
         val p = picker.step((tNs - startedNs) / 1e9, def, s)
+        // What the follow rule would do is logged always; it reaches the joystick only with the experiment switched on.
+        val deg = rule.step((tNs - startedNs) / 1e9, p)
+        if (!deg.isNaN()) pushes++
+        if (follow > 0) main.post { BlockAccessibilityService.instance?.inGame?.steer(deg, follow) }
         val us = ((System.nanoTime() - t0) / 1000).toInt()
         scans++; usTotal += us; if (us > usMax) usMax = us
         if (def) defScans++
@@ -124,9 +134,10 @@ class MatchupShadow(private val startedNs: Long) {
         sb.append(',')
         for ((i, q) in s.fans.withIndex()) { if (i > 0) sb.append(';'); sb.append(String.format(Locale.ROOT, "%.1f:%.1f:%d:%.2f", q.x, q.y, q.area, q.rim)) }
         // btn_label: mpick.py reads "defence" from this column (0.20-0.27 = the block label); here it carries [def].
-        sb.append(String.format(Locale.ROOT, ",%s,%s,%s,%d,%.1f,%.1f,%.1f,%.1f,%s,%d,%d\n", if (def) "0.23" else "0.00",
+        sb.append(String.format(Locale.ROOT, ",%s,%s,%s,%d,%.1f,%.1f,%.1f,%.1f,%s,%d,%d,%s,%s\n", if (def) "0.23" else "0.00",
             if (p.myCls >= 0) MatchupFinder.CLASSES[p.myCls] else "", if (p.cls >= 0) MatchupFinder.CLASSES[p.cls] else "", p.src,
-            if (p.src > 0) p.x else -1f, if (p.src > 0) p.y else -1f, p.myX, p.myY, p.why, us, if (pad != null) 1 else 0))
+            if (p.src > 0) p.x else -1f, if (p.src > 0) p.y else -1f, p.myX, p.myY, p.why, us, if (pad != null) 1 else 0,
+            if (deg.isNaN()) "" else String.format(Locale.ROOT, "%.0f", deg), rule.why))
         synchronized(log) { log.append(sb) }
     }
 
