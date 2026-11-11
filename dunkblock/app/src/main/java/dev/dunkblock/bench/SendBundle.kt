@@ -30,7 +30,7 @@ object SendBundle {
         f.name == "frames.csv" -> 3
         f.name == "touch_events.csv" -> 4
         f.name in setOf("presses.csv", "clips.csv", "autoblock.csv", "shot_events.csv") -> 1
-        f.name == "shot.csv" -> 2
+        f.name == "shot.csv" || f.name == "matchup.csv" -> 2
         f.name == "ingame_proxy_events.csv" -> 4
         f.name == "crops.csv" -> 2
         // Auto-block trigger clips decide success vs '블록 위치 부족', so they go before every other image (vc1033: they

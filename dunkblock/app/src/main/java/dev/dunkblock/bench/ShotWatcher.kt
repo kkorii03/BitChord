@@ -48,6 +48,8 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
     private var shotClips = 0
     /** Set when a colour screen of this moment would help; FramePipeline clears it after saving one. */
     @Volatile var snapNow = false
+    /** Record-only matchup log (matchup.csv); never read by the press rules. */
+    val matchup = MatchupShadow(startedNs)
 
     @Volatile var scans = 0; private set
     @Volatile var defScans = 0; private set
@@ -79,6 +81,8 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         readSlot2(buf, w, h, rowStride, blockFx, blockFy)
         scans++
         if (side == SIDE_DEF) { defScans++; lastDefNs = tNs } else if (side == SIDE_OFF) { offScans++; lastOffNs = tNs }
+        matchup.onFrame(buf, w, h, rowStride, tNs, side, tNs - lastDefNs < 300_000_000L && side != SIDE_OFF)
+        if (matchup.wantSnap) { matchup.wantSnap = false; snapNow = true }
         sweep(tNs)
         skillDark(tNs)
         colY = -1f; colX = -1f; colFill = 0f; topDy = -1f; ycY = -1f; ycN = 0
@@ -453,7 +457,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
     }
 
     /** Capture thread: drop the colour ring (it is built again if another frame comes). */
-    fun free() { for (c in crops) c.px = ByteArray(0); cropPos = 0; cropFilled = 0; colourJobs.clear() }
+    fun free() { for (c in crops) c.px = ByteArray(0); cropPos = 0; cropFilled = 0; colourJobs.clear(); matchup.free() }
 
     private fun saveColour(j: ColourReq) {
         colourClips++
@@ -1265,7 +1269,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
 
     private fun event(tNs: Long, name: String, dx: Float, dy: Float, dtMs: Float, detail: String) = synchronized(events) {
         events.append(tNs).append(',').append(String.format(Locale.ROOT, "%.3f,%s,%s,%.4f,%.4f,%.4f,%.4f,%.0f,%s\n",
-            (tNs - startedNs) / 1e9, name, sideName(side), discX, discY, dx, dy, dtMs, detail))
+            (tNs - startedNs) / 1e9, name, sideName(side), discX, discY, dx, dy, dtMs, if (name == "shot_trigger") detail + matchup.triggerText(tNs) else detail))
     }
 
     private fun liveText() = "일반 슛 감지 ${shotTriggers}회 · 헛블락 거름 ${shotRejected}회(멀어서 ${shotFar}회) · 블록 누름 ${shotFired}회 · 건너뜀 ${shotSkipped}회"

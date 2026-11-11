@@ -1,7 +1,7 @@
 """Matchup decision replayed on an mfollow.py csv (HANDOFF 0-4t): which tag would the app follow, and is it right?
 
 mpick.py <mfollow.csv> <true matchup tag, e.g. PF> [my tag, default SF] [-keep 60] [-min 6] [-share 0.7] [-grey 0.15]
-         [-side lab|app|btn|any] [-fan glob|win] [-hold 0] [-out picks.csv]
+         [-side lab|app|btn|any] [-fan glob|win] [-hold 0] [-fantgt] [-autome] [-out picks.csv]
 Truth = the position of the opponent the user guarded, valid only while no other player has that position.
 Rule (causal, scan by scan, same as the app would run it):
   defence  = -side lab: the label under the big button reads "전면 블록" (white share of the label band 0.20-0.27; "슛" gives
@@ -19,6 +19,9 @@ Rule (causal, scan by scan, same as the app would run it):
              scans of matches A and B); it never owns a fan and is never the target
   target   = the tag of that class; two on screen (a team-mate with the same position) -> the grey-dark one
              (opponents are drawn grey) if exactly one is, else none; tag gone for at most hold s -> last position kept
+  -autome  = my position is not given but learned (core/Matchup.kt, MatchupPicker): the class of the tag under my ring
+             (conf 0.2-0.38, within 45 px), majority of the last 200 such scans (>= 15 votes, >= 70 %); until then nothing
+             is voted or picked
 """
 import sys, csv, math
 a = sys.argv[1:]; rows = list(csv.DictReader(open(a[0]))); MT = a[1]; ME = a[2] if len(a) > 2 and not a[2].startswith("-") else "SF"
@@ -58,6 +61,7 @@ def owner(opp, F, me):
 
 lastDef = -9.0; lastOff = -9.0; votes = []; offRun = 0
 n = nd = 0; own = {}; tgt = {}; none = {"no class": 0, "class not on screen": 0, "two of the class": 0}; seen_mt = 0; held = 0; steer = 0; steer2 = 0; fant = 0; fanpicks = []; FT = "-fantgt" in a; lastPick = None; wrong = []; wrongown = []; picks = []
+AUTO = "-autome" in a; mevotes = []; none["my class unknown"] = 0
 for r in rows:
     t = float(r["t_s"]); n += 1
     if SIDE == "lab":
@@ -76,6 +80,17 @@ for r in rows:
     else: de = True
     T = tags(r)
     me = (float(r["me_x"]), float(r["me_y"])) if 0.2 <= float(r["me_conf"]) < 0.38 else None
+    if AUTO:
+        if me and T:
+            q = min(T, key=lambda q: math.hypot(q["x"] + 31 - me[0], (q["y"] - 24 - me[1]) * 1.6))
+            if math.hypot(q["x"] + 31 - me[0], (q["y"] - 24 - me[1]) * 1.6) <= 45: mevotes = (mevotes + [q["c"]])[-200:]
+        ME = None
+        if len(mevotes) >= 15:
+            c = max(set(mevotes), key=mevotes.count)
+            if mevotes.count(c) >= 0.7 * len(mevotes): ME = c
+        if ME is None:
+            if de: nd += 1; none["my class unknown"] += 1
+            picks.append([t, 1 if de else 0, r["me_x"], r["me_y"], r["me_conf"], "", -1, -1, -1, -1]); continue
     # my own tag: my position, under my ring (ring = tag + (31, -24)). Without a ring a tag of my position is never a
     # candidate (match C, 푸즈 SF against my 제임스 SF: the grey-body test let my own tag through at 66.9 s)
     mine = min([q for q in T if q["c"] == ME], key=lambda q: math.hypot(q["x"] + 31 - me[0], (q["y"] - 24 - me[1]) * 1.6), default=None) if me else None

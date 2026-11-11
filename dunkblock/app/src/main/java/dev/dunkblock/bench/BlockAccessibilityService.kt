@@ -33,6 +33,8 @@ class BlockAccessibilityService : AccessibilityService() {
     private var pad: View? = null
     private var padLp: WindowManager.LayoutParams? = null
     @Volatile var inGame: InGameProxy? = null
+    /** The joystick pad as fractions of the screen (left, top, right, bottom) while it is shown: it is in our own capture. */
+    @Volatile var padFrac: FloatArray? = null
     private var proxyThread: HandlerThread? = null
 
     override fun onServiceConnected() { instance = this }
@@ -59,6 +61,7 @@ class BlockAccessibilityService : AccessibilityService() {
     // ------------------------------------------------------------------ overlay pad (⑥)
 
     /** Shows a touchable overlay window at the given SCREEN rectangle. [onTouch] gets every event + System.nanoTime(). */
+    @Suppress("DEPRECATION")
     @SuppressLint("ClickableViewAccessibility")
     fun showPad(left: Int, top: Int, width: Int, height: Int, label: String, onTouch: (MotionEvent, Long) -> Unit): Boolean {
         hidePad()
@@ -87,6 +90,8 @@ class BlockAccessibilityService : AccessibilityService() {
             wm.addView(v, lp)
             pad = v
             padLp = lp
+            val dm = android.util.DisplayMetrics().also { wm.defaultDisplay.getRealMetrics(it) }
+            padFrac = floatArrayOf(left / dm.widthPixels.toFloat(), top / dm.heightPixels.toFloat(), (left + width) / dm.widthPixels.toFloat(), (top + height) / dm.heightPixels.toFloat())
             true
         } catch (t: Throwable) {
             android.util.Log.e("DunkBlockA11y", "showPad", t)
@@ -135,6 +140,7 @@ class BlockAccessibilityService : AccessibilityService() {
         val v = pad ?: return
         pad = null
         padLp = null
+        padFrac = null
         try { (getSystemService(Context.WINDOW_SERVICE) as WindowManager).removeView(v) } catch (_: Throwable) {}
     }
 
