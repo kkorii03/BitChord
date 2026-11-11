@@ -60,7 +60,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
     private var usTotal = 0L
     private var usMax = 0
 
-    private val log = StringBuilder(1 shl 16).append("t_ns,t_s,side,disc,x,y,fill,second,dark,orange,slot2_luma,slot2_dark,us,ring_y,sec_x,sec_y,col_x,col_y,col_fill,top_dy,yc,yc_n\n")
+    private val log = StringBuilder(1 shl 16).append("t_ns,t_s,side,disc,x,y,fill,second,dark,orange,slot2_luma,slot2_dark,us,ring_y,sec_x,sec_y,col_x,col_y,col_fill,top_dy,yc,yc_n,d2,x2,y2,ring2,n2,cand2\n")
     private var logLines = 0
     private val events = StringBuilder("t_ns,t_s,event,side,x,y,dx,dy,dt_ms,detail\n")
 
@@ -78,6 +78,11 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         side = readSide(buf, w, h, rowStride, blockFx, blockFy)
         Bench.shotSide = side
         val found = findDisc(buf, w, h, rowStride)
+        findDisc2(buf, w, h, rowStride)
+        // One colour screen when the two finders disagree on defence (at most 25 of the 150 trigger screens, 4 s apart).
+        if (side == SIDE_DEF && found != d2 && d2Snaps < 25 && tNs - lastD2SnapNs > 4_000_000_000L) {
+            lastD2SnapNs = tNs; d2Snaps++; snapNow = true
+        }
         readSlot2(buf, w, h, rowStride, blockFx, blockFy)
         scans++
         if (side == SIDE_DEF) { defScans++; lastDefNs = tNs } else if (side == SIDE_OFF) { offScans++; lastOffNs = tNs }
@@ -107,9 +112,9 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         usTotal += us; if (us > usMax) usMax = us
         if (logLines < MAX_LOG_LINES) synchronized(log) {
             logLines++
-            log.append(tNs).append(',').append(String.format(Locale.ROOT, "%.3f,%s,%d,%.4f,%.4f,%.2f,%.2f,%.3f,%.3f,%.1f,%.3f,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.2f,%.4f,%.5f,%d\n",
+            log.append(tNs).append(',').append(String.format(Locale.ROOT, "%.3f,%s,%d,%.4f,%.4f,%.2f,%.2f,%.3f,%.3f,%.1f,%.3f,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.2f,%.4f,%.5f,%d,%d,%.4f,%.4f,%.2f,%d,%d\n",
                 (tNs - startedNs) / 1e9, sideName(side), if (found) 1 else 0, discX, discY, fill, second, sideDark, sideOrange, slot2Luma, slot2Dark, us, ringY, secX, secY,
-                colX, colY, colFill, topDy, ycY, ycN))
+                colX, colY, colFill, topDy, ycY, ycN, if (d2) 1 else 0, d2X, d2Y, d2Ring, d2N, d2Cand))
         }
     }
 
@@ -554,6 +559,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
             if (c > sec) { sec = c; sx = gx; sy = gy }
         }
         val kk = (k * k).toFloat()
+        gBx = bx; gBy = by; gBest = best; gSx = sx; gSy = sy; gSec = sec
         fill = best / kk; second = sec / kk
         val bX = ((bx + k / 2f) * s) / w; val bY = ((by + k / 2f) * s) / h
         secX = ((sx + k / 2f) * s) / w; secY = ((sy + k / 2f) * s) / h
@@ -577,6 +583,108 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
 
     private var secX = -1f; private var secY = -1f; private var ringY = -1f
     private var ringX = -1f; private var ringYLast = -1f; private var lastRingNs = 0L
+
+    private var gBx = 0; private var gBy = 0; private var gBest = 0; private var gSx = 0; private var gSy = 0; private var gSec = 0
+    private var d2 = false; private var d2X = -1f; private var d2Y = -1f; private var d2Ring = 0f; private var d2N = 0; private var d2Cand = 0
+    private val candX = IntArray(D2_CAND); private val candY = IntArray(D2_CAND)
+    private var d2Snaps = 0; private var lastD2SnapNs = 0L
+
+    private fun discRed(buf: ByteBuffer, o: Int): Boolean {
+        val r = buf.get(o).toInt() and 0xFF
+        if (r <= 160) return false
+        val g = buf.get(o + 1).toInt() and 0xFF
+        val b = buf.get(o + 2).toInt() and 0xFF
+        return g < 25 && b in 30..90 && r - b > 95
+    }
+
+    /**
+     * Shadow finder (vc1088, logged only: d2 / x2 / y2 / ring2 / n2 / cand2 in shot.csv; nothing acts on it).
+     * [findDisc] drops the disc whenever another red blob on the screen is >= 0.6 of it: in the vc1069 match bundle the
+     * disc was seen 72 of 149 defence seconds, in one-frame flickers, and in >= 73 % of the 250 ms before a release for
+     * only 7 of 16 shots (HANDOFF 0-4x). Here the up to [D2_CAND] strongest windows with fill >= [FOUND_FILL] (the grid
+     * of [findDisc], > 2 k apart) are candidates; the red around each gives centre and radius; ring2 = share of 24
+     * directions where a grey pixel (the disc's rim) lies within 5 px outside the last red one. The disc is the candidate
+     * with the highest ring2 >= [D2_RING_MIN]; other red on the screen does not matter. Replay on the five recorded
+     * matches at capture size (tools/analysis/fdtest.py, video pixels, not the raw capture): disc right in >= 73 % of
+     * -0.35..-0.10 s before the release for 32 of 45 shots, [findDisc] 25. Lengths are for a 540-high capture.
+     */
+    private fun findDisc2(buf: ByteBuffer, w: Int, h: Int, rowStride: Int) {
+        d2 = false; d2X = -1f; d2Y = -1f; d2Ring = 0f; d2N = 0; d2Cand = 0
+        val kk = (k * k).toFloat()
+        if (gBest / kk < FOUND_FILL) return
+        var n = 1
+        candX[0] = gBx; candY[0] = gBy
+        if (gSec / kk >= FOUND_FILL) {
+            candX[1] = gSx; candY[1] = gSy; n = 2
+            val stride = gw + 1; val far = 2 * k
+            while (n < D2_CAND) {
+                var top = 0; var tx = 0; var ty = 0
+                for (gy in 0..gh - k) for (gx in 0..gw - k) {
+                    val c = sat[(gy + k) * stride + gx + k] - sat[gy * stride + gx + k] - sat[(gy + k) * stride + gx] + sat[gy * stride + gx]
+                    if (c <= top) continue
+                    var near = false
+                    for (i in 0 until n) if (Math.abs(gx - candX[i]) <= far && Math.abs(gy - candY[i]) <= far) { near = true; break }
+                    if (!near) { top = c; tx = gx; ty = gy }
+                }
+                if (top / kk < FOUND_FILL) break
+                candX[n] = tx; candY[n] = ty; n++
+            }
+        }
+        d2Cand = n
+        val u = h / 540f
+        val half = Math.round(16 * u); val minN = (60 * u * u).toInt(); val rim = maxOf(2, Math.round(5 * u))
+        var bestRing = -1f
+        for (i in 0 until n) {
+            var cx = ((candX[i] + k / 2f) * step).toInt(); var cy = ((candY[i] + k / 2f) * step).toInt()
+            var cnt = 0
+            for (pass in 0 until 2) {                       // centroid of the red around the window, twice
+                val xa = maxOf(0, cx - half); val xb = minOf(w - 1, cx + half)
+                val ya = maxOf(0, cy - half); val yb = minOf(h - 1, cy + half)
+                var sx = 0L; var sy = 0L; cnt = 0
+                var y = ya
+                while (y <= yb) {
+                    var o = y * rowStride + xa * 4
+                    var x = xa
+                    while (x <= xb) {
+                        if (discRed(buf, o)) { cnt++; sx += x; sy += y }
+                        x++; o += 4
+                    }
+                    y++
+                }
+                if (cnt < 20 * u * u) break
+                cx = Math.round(sx.toFloat() / cnt); cy = Math.round(sy.toFloat() / cnt)
+            }
+            if (cnt < minN) continue
+            val rad = Math.sqrt(cnt / Math.PI).toFloat().coerceIn(6 * u, 16 * u)
+            val rMax = (1.6f * rad + 2 * u).toInt()
+            var hit = 0
+            for (a in 0 until 24) {
+                val ca = COS24[a]; val sa = SIN24[a]
+                var e = 0                                   // last red pixel on this ray = the edge of the disc
+                var r = 3
+                while (r <= rMax) {
+                    val x = Math.round(cx + r * ca); val y = Math.round(cy + r * sa)
+                    if (x < 0 || x >= w || y < 0 || y >= h) break
+                    if (discRed(buf, y * rowStride + x * 4)) e = r
+                    r++
+                }
+                if (e == 0) continue
+                r = e + 1
+                while (r <= e + rim) {                      // the grey rim sits right outside it
+                    val x = Math.round(cx + r * ca); val y = Math.round(cy + r * sa)
+                    if (x < 0 || x >= w || y < 0 || y >= h) break
+                    val o = y * rowStride + x * 4
+                    val pr = buf.get(o).toInt() and 0xFF; val pg = buf.get(o + 1).toInt() and 0xFF; val pb = buf.get(o + 2).toInt() and 0xFF
+                    val lo = minOf(pr, pg, pb)
+                    if (lo >= 150 && maxOf(pr, pg, pb) - lo <= 45) { hit++; break }
+                    r++
+                }
+            }
+            val ring = hit / 24f
+            if (ring > bestRing) { bestRing = ring; d2X = cx / w.toFloat(); d2Y = cy / h.toFloat(); d2Ring = ring; d2N = cnt }
+        }
+        d2 = bestRing >= D2_RING_MIN
+    }
 
     private var colX = -1f; private var colY = -1f; private var colFill = 0f
     private var colSat = IntArray(0)
@@ -1296,6 +1404,11 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         const val SIDE_DEF = 1
         const val SIDE_OFF = 2
         const val FOUND_FILL = 0.45f
+        /** Shadow finder ([findDisc2]): candidates checked, min share of directions with the grey rim. */
+        const val D2_CAND = 5
+        const val D2_RING_MIN = 0.4f
+        private val COS24 = FloatArray(24) { Math.cos(it * Math.PI / 12).toFloat() }
+        private val SIN24 = FloatArray(24) { Math.sin(it * Math.PI / 12).toFloat() }
         /** screen-heights per second; set from data later. */
         const val FAST_SPEED = 0.9f
         const val MAX_SHOT_CLIPS = 80

@@ -43,13 +43,14 @@ def cls(e):
 def bundle(a):
     """mvel.py -bundle <shot.csv of an app session> <release times, comma list> <W> <D> [from_s to_s]
     The same rule on the app's own disc log (side == def, yc = refined disc y in screen heights, radius from the red
-    pixel count yc_n on the 540-high capture, x from the 390-wide grid). No ring value there: ring is taken as 1."""
+    pixel count yc_n on the 1560 x 720 capture, x from the 390-wide grid). No ring value there: ring is taken as 1.
+    (Until 11-12 03:40 this used 1170 x 540 for x and y: rises came out 0.75 of their size. HANDOFF 0-4x.)"""
     rel = [float(q) for q in a[1].split(",")]; W = float(a[2]); D = float(a[3]); t0 = float(a[4]) if len(a) > 4 else 0.0; t1 = float(a[5]) if len(a) > 5 else 1e9
     F = []
     for r in csv.DictReader(open(a[0], encoding="utf-8")):
         t = float(r["t_s"])
         if t0 <= t <= t1 and r["side"] == "def" and r["disc"] == "1" and float(r["yc"]) > 0 and int(r["yc_n"]) >= 40:
-            F.append((t, float(r["x"]) * 1170.0, float(r["yc"]) * 540.0, (int(r["yc_n"]) / np.pi) ** 0.5, 1.0))
+            F.append((t, float(r["x"]) * 1560.0, float(r["yc"]) * 720.0, (int(r["yc_n"]) / np.pi) ** 0.5, 1.0))
     P = presses(np.array(F, np.float64), W, D, 0.0); c = {"ok": 0, "early": 0, "vearly": 0, "late": 0, "miss": 0}; used = set()
     for q in rel:
         E = [p - q for p in P]; e = min(E, key=lambda z: abs(z + 0.23)) if E else None; k = cls(e); c[k] += 1
