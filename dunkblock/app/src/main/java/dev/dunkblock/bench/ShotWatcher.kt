@@ -467,7 +467,9 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
             val r = colourReqs.poll() ?: break
             val g = PressClipper.clipGroup(r.tag)
             val used = colourAccepted[g] ?: 0
-            val cap = if (g == "other") MAX_COLOUR_CLIPS else 3
+            // vc1131: the user's "this was a shot" marks get most of the budget (a mark comes ~0.9 s after the release, the
+            // 3.1 s before covers the pick-up). Match cue search 11-12 (HANDOFF 0-4z34) needs the ball pick-up in colour.
+            val cap = when (g) { "other" -> MAX_COLOUR_CLIPS; "mark" -> 24; else -> 3 }
             if (colourClips + colourJobs.size < MAX_COLOUR_CLIPS && used < cap) { colourAccepted[g] = used + 1; colourJobs.add(r) }
         }
         val it = colourJobs.iterator()
