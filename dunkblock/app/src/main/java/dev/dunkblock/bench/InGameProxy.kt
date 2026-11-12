@@ -63,6 +63,7 @@ class InGameProxy(private val svc: BlockAccessibilityService, private val autoMo
         // needTouch = false only for the practice-court sweep (⑩), which is run with nobody holding the phone.
         val recent = !needTouch || System.nanoTime() - lastTouchNs < RECENT_TOUCH_NS
         if (finished || h == null || !recent) { skippedFires++; rec("auto", "skip_${reason}_${if (h == null) "no_pad" else "idle"}", 0f, 0f, 0); return false }
+        if (defHolding) defRelease("block")
         val t = tileAt(block)
         // A tile opened only a moment ago (pre-arm) still needs the rest of the pass-through wait.
         val delay = when {
@@ -132,6 +133,50 @@ class InGameProxy(private val svc: BlockAccessibilityService, private val autoMo
     private var bends = 0                  // mode 4: stretches in which the thumb's direction was bent
     private var bendAway = 0               // mode 4: stretches in which the thumb pointed away from the matchup (left alone)
     private val steerWatch = Runnable { steerEnd("stale") }
+    private var defAt = PointF()           // mode 5: the game's "수비" button (block button + DEF_DX/DEF_DY of the screen)
+    private var defHolding = false         // mode 5: the hand holds the "수비" button
+    private var defHolds = 0
+    private var defGen = 0
+    private var defTile: Tile? = null
+    private var defPauseUntilNs = 0L
+
+    /**
+     * Mode 5 (11-12): hold the game's own "수비" button through the whole defence (ShotWatcher's slot reading), no
+     * screen recognition of players needed: in the 16:13 practice the app saw both me and the matchup in only 27 %
+     * of defence scans, so the joystick follow pushed in 13 % of the thumb-off time. A guide says holding 수비
+     * "keeps you in front of the ball handler" (the game knows who that is); the user pressed it 8 times in the
+     * 15:28 match (스틸 79). The joystick is not touched, so the thumb steers as always. Released for the user's own
+     * right-hand buttons, before an auto block, and when the screen was not touched for [RECENT_TOUCH_NS] (menus).
+     * Practice court only: in a match the ball handler is often not my matchup. Main thread.
+     */
+    private fun defHold() {
+        val h = hand ?: return
+        if (defHolding || downs == 0 || System.nanoTime() - lastTouchNs > RECENT_TOUCH_NS || System.nanoTime() < defPauseUntilNs) return
+        if (tiles.any { it.fingerId >= 0 }) return   // the user is pressing a right-hand button
+        val t = tileAt(defAt)
+        defHolding = true; defHolds++; defTile = t
+        val g = ++defGen
+        if (t != null) setTileTouchable(t, false)
+        rec("auto", "def_hold_on", defAt.x, defAt.y, defHolds)
+        main.postDelayed({
+            if (defHolding && defGen == g && !finished) {
+                h.down(DEF, defAt)
+                // As in mode 3: the stroke stays with the game window it went down on, so the tile takes the user's
+                // own fingers again (스틸 shares it); their ACTION_DOWN lets go of 수비 (onTile).
+                if (t != null) main.postDelayed({ if (defHolding && defGen == g && t.fingerId < 0) setTileTouchable(t, true) }, PASS_THROUGH_MS)
+            }
+        }, if (t != null) PASS_THROUGH_MS else 0L)
+    }
+
+    private fun defRelease(why: String) {
+        defHolding = false; defGen++
+        // A block or the user's own button: leave its animation alone for a moment before holding again.
+        if (why == "block" || why == "tile") defPauseUntilNs = System.nanoTime() + DEF_PAUSE_NS
+        hand?.up(DEF)
+        val t = defTile; defTile = null
+        rec("auto", "def_hold_off_$why", 0f, 0f, 0)
+        if (t != null) main.postDelayed({ if (!defHolding && t.fingerId < 0 && System.nanoTime() >= t.armedUntilNs) setTileTouchable(t, true) }, 150)
+    }
 
     /**
      * Mode 4: the thumb's own direction (from where it landed), turned by at most [MAX_BEND_DEG] towards [followDeg].
@@ -184,6 +229,7 @@ class InGameProxy(private val svc: BlockAccessibilityService, private val autoMo
         if (finished || h == null || nudging) return
         if (deg.isNaN()) { steerEnd("rule"); return }
         main.removeCallbacks(steerWatch); main.postDelayed(steerWatch, STEER_STALE_MS)
+        if (mode == 5) { defHold(); return }
         val dm = svc.resources.displayMetrics
         val r = 0.13f * min(dm.widthPixels, dm.heightPixels)
         val a = Math.toRadians(deg.toDouble())
@@ -238,6 +284,7 @@ class InGameProxy(private val svc: BlockAccessibilityService, private val autoMo
             rec("auto", "steer_off_$why", 0f, 0f, 0)
             if (!thumbDown) svc.setPadTouchable(true)
         }
+        if (defHolding && why != "thumb") defRelease(why)   // mode 5 holds a button, not the joystick: a landing thumb keeps it
     }
 
     private val deadZone get() = 0.035f * min(svc.resources.displayMetrics.widthPixels, svc.resources.displayMetrics.heightPixels)
@@ -303,6 +350,7 @@ class InGameProxy(private val svc: BlockAccessibilityService, private val autoMo
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 lastTouchNs = System.nanoTime(); tileDowns++
+                if (defHolding) defRelease("tile")   // mode 5: the user's own button wins
                 val fid = 100 + t.id
                 t.fingerId = fid; t.started = false; t.downAt = PointF(e.rawX, e.rawY)
                 rec("tile${t.id}", "DOWN", e.rawX, e.rawY, e.deviceId)
@@ -376,6 +424,16 @@ class InGameProxy(private val svc: BlockAccessibilityService, private val autoMo
         const val MAX_BEND_DEG = 30.0
         /** Follow mode 4: a thumb further than this from the matchup's direction is left alone (the user goes elsewhere). */
         const val BEND_KEEP_DEG = 120.0
+        /** Follow mode 5: the hand's finger id for the "수비" button (tiles use 101-104). */
+        const val DEF = 2
+        /**
+         * The "수비" button = block button + (-DEF_DX W, -DEF_DY H). Read off the 11-12 16:13 practice frame
+         * (f0106, 960x443): block icon (840, 370), 수비 icon centre about (757, 292).
+         */
+        const val DEF_DX = 0.086f
+        const val DEF_DY = 0.18f
+        /** Mode 5: no new 수비 hold for this long after a block or the user's own button (a guess, not measured). */
+        const val DEF_PAUSE_NS = 600_000_000L
     }
 
     private val autoTap = object : Runnable {
@@ -472,6 +530,10 @@ class InGameProxy(private val svc: BlockAccessibilityService, private val autoMo
         val ok = svc.showPad(left, top, side, side, "", outline = true) { e, _ -> onPad(e) }
         if (!ok) { finish("패드를 띄우지 못함"); return }
         padShown = true
+        val rp = android.graphics.Point()
+        @Suppress("DEPRECATION")
+        svc.getSystemService(android.hardware.display.DisplayManager::class.java).getDisplay(android.view.Display.DEFAULT_DISPLAY).getRealSize(rp)
+        defAt = PointF(block.x - DEF_DX * rp.x, block.y - DEF_DY * rp.y)
         hand = svc.newProxyHand(16) { what -> rec("proxy", what, 0f, 0f, 0) }
         if (autoMode) { showMarkButton(); showButtonTiles() }
         bubble?.text = if (autoMode) "⑧ 자동 블록 켜짐 · 여기를 눌러 끝내기"
@@ -548,7 +610,7 @@ class InGameProxy(private val svc: BlockAccessibilityService, private val autoMo
                 if (autoMode) ", 화면을 ${RECENT_TOUCH_NS / 1_000_000_000L}초 넘게 안 만져서 건너뜀 ${skippedFires}회, 사용자 기록 버튼 ${marks}회" else "")
             if (Bench.config.follow > 0) appendLine("매치업 따라가기(연습장 시험, 방식 ${Bench.config.follow}): 엄지를 올려 둔 동안 대신 밀기 ${assists}회(엄지를 움직여 사용자 조작으로 돌아감 ${assistTakeovers}회), 손 없이 밀기 ${ownSteers}회, " +
                 "엄지를 뗀 동안 밀기 ${liftSteers}회(엄지를 대서 사용자 조작으로 돌아감 ${liftTakeovers}회, 앱 손가락이 패드에 떨어져 끊김 ${liftLost}회), " +
-                "엄지 방향 섞기 ${bends}번(엄지가 반대쪽이라 안 섞음 ${bendAway}번)")
+                "엄지 방향 섞기 ${bends}번(엄지가 반대쪽이라 안 섞음 ${bendAway}번), '수비' 버튼 누르고 있기 ${defHolds}번")
             appendLine("※ 게임 캐릭터가 실제로 움직이고 블록했는지는 앱이 볼 수 없습니다. 관찰 내용을 알려 주세요.")
         }
         if (autoMode) Bench.autoReport = report
