@@ -1245,6 +1245,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         // four bundles: + 6 practice presses, all real shots, 50-70 ms after the marker landed; + 3 match presses
         // (vc1035 383.6, vc1038 270.6, vc1044 503.0), each a 0.07-0.13 H jump arc; F 0.03 added 6 more unchecked ones.
         val gLast = (gPos - 1 + histN) % histN
+        if (live && cfg.fastPress > 0 && tNs - lastPreArmNs >= 150_000_000L) preArm(tNs, gLast)
         if (runG >= 2 && tNs - gT[gLast] <= 1_000_000L && tNs - runNs in 50_000_000L..350_000_000L) {
             val fNeed = FRESH_RISE[cfg.shotSens.coerceIn(0, FRESH_RISE.size - 1)]
             val g0 = gV[gLast]
@@ -1378,7 +1379,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         // moving shooter read as xspan 0.02 (vc1035 330.0 s, really 0.138). Replay: all 15 practice presses had >= 0.57 s.
         // An early-only press is held EARLY_DELAY_MS so it lands 35-80 ms after the disc left the crouch (replay), inside
         // the range that was blocked; nothing earlier than 47 ms has been tried yet, so do not go below it blindly.
-        if (calm) { press(tNs, live, d2 + " calm", if (v2) 0L else -EARLY_DELAY_MS); return }
+        if (calm) { press(tNs, live, d2 + " calm", if (v2 || cfg.fastPress >= 2) 0L else -EARLY_DELAY_MS); return }
         // Moving shooter: wait (<= 200 ms) for the disc to keep rising: real shots rose 0.039-0.139 H, phantoms at most
         // 0.028 (vc1038), and the two in-range match shots pressed immediately were both '타이밍 빠름'.
         pendNs = tNs; pendY = discY; pendDetail = if (moving) "$d2 move" else d2; pendLive = live
@@ -1390,6 +1391,41 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
     private var pendNs = 0L; private var pendY = 0f; private var pendDetail = ""; private var pendLive = false
     private var pendRise = CONFIRM_RISE; private var pendDrop = "rejected_norise"
     private var lastArmNs = 0L
+    private var lastPreArmNs = 0L
+    @Volatile var preArms = 0; private set
+
+    /**
+     * [Bench.Config.fastPress] only (off by default; the triggers and the number of presses stay the same). Measured on
+     * practice bundles (latency.py, armlead.py): the trigger came 229-324 ms before the release but the tap left 40-60 ms
+     * later, 40 of it the block tile's pass-through wait, because the half-rise arm above mostly fires in the trigger's
+     * own frame (>= 40 ms ahead for 14/32, 1/12, 9/23 triggers). Taps < 181 ms before the release blocked 0 of 16,
+     * taps at 211-265 ms 13 of 17. So open the tile on a much weaker sign: the marker landed on this player
+     * <= 350 ms ago (covers the fresh rule), or the gap is PRE_RISE above its low of the last 60-400 ms (same low as the
+     * early rule). Replay (prearm.py, same bundles, not independent): open >= 40 ms before the trigger for 27/32,
+     * 12/12, 22/23 practice and 14/22, 25/37 match triggers; one of the two signs is true in roughly 11-25 % of defence
+     * scans, and while the tile is open a real finger on that quarter of the screen goes straight to the game.
+     */
+    private fun preArm(tNs: Long, gLast: Int) {
+        var why = if (tNs - runNs <= 350_000_000L) "pre_run" else ""
+        if (why.isEmpty() && gCount >= 6 && tNs - gT[gLast] <= 1_000_000L) {
+            var lo0 = Float.MAX_VALUE; var lo1 = Float.MAX_VALUE; var loN = 0
+            for (i in 1 until gCount) {
+                val idx = (gPos - 1 - i + 2 * histN) % histN
+                val age = tNs - gT[idx]
+                if (age > 400_000_000L || gT[idx] < gJumpNs) break
+                if (age >= 60_000_000L) {
+                    loN++
+                    val v = gV[idx]
+                    if (v < lo0) { lo1 = lo0; lo0 = v } else if (v < lo1) lo1 = v
+                }
+            }
+            if (loN >= 5 && gV[gLast] - maxOf(lo0, lo1 - 0.006f) >= PRE_RISE - 0.001f) why = "pre"
+        }
+        if (why.isEmpty()) return
+        lastPreArmNs = tNs; preArms++
+        main.post { BlockAccessibilityService.instance?.inGame?.armBlock(PRE_ARM_MS) }
+        event(tNs, "arm", 0f, 0f, 0f, why)
+    }
     @Volatile var shotRejected = 0; private set
     @Volatile var shotFar = 0; private set
     @Volatile var shotArms = 0; private set
@@ -1526,6 +1562,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
             "  팔 올림 감지 ${upEvents}회(팔 올림으로 누르기 ${if (cfg.upPress) "켬" else "끔"}, 그걸로 발동 ${upTriggers}회)\n" +
             "  웅크림 감지 ${crouchEvents}회(웅크릴 때 누르기 ${if (cfg.crouchPress) "켬" else "끔"}, 그걸로 발동 ${crouchTriggers}회)\n" +
             "  공 솟음으로 누르기 ${if (cfg.rise2Press) "켬" else "끔"}, 그걸로 발동 ${rise2Triggers}회\n" +
+            "  빨리 누르기 ${if (cfg.fastPress > 0) "켬(${cfg.fastPress})" else "끔"}, 버튼 더 미리 열기 ${preArms}회\n" +
             "  연습장 박자: 반복 시작 ${sweepReps}회, 공 떠남 ${sweepReleases}회(박자 훑기 ${if (cfg.sweepPress) "켬" else "끔"}, 그걸로 누름 ${sweepPresses}회)\n" +
             "  선수 스킬 어두워짐 ${darkOnsets}회(그걸로 누름 ${darkPresses}회, 누르기 ${if (cfg.darkSweep) "훑기" else if (cfg.darkPress) "켬" else "끔(기록만)"})\n" +
             "  모으기 감지 뒤 공이 떠남 ${leads.size}회(앞섬 중앙값 $med, 전체 ${leads.joinToString(" ")}) · 감지했는데 공이 안 떠남(오발 추정) ${triggersWithoutRelease}회 · 공이 떠났는데 미리 감지 못함 ${releasesWithoutTrigger}회"
@@ -1605,6 +1642,9 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         const val ME_FAR = 0.14f
         /** How long the block tile stays open to injection after a pre-arm. */
         const val ARM_MS = 300L
+        /** fastPress: gap rise above its 60-400 ms low that opens the tile (3 grid steps of 0.0056 H), and how long it stays open. */
+        const val PRE_RISE = 0.0167f
+        const val PRE_ARM_MS = 250L
         val SENS = arrayOf(floatArrayOf(0.45f, 0.35f, 0.035f), floatArrayOf(0.35f, 0.25f, 0.025f), floatArrayOf(0.25f, 0.18f, 0.018f))
         fun sideName(s: Int) = when (s) { SIDE_DEF -> "def"; SIDE_OFF -> "off"; else -> "unk" }
     }

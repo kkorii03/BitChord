@@ -52,6 +52,12 @@ object Bench {
         val crouchPress: Boolean = false,
         /** Experimental: press when the ring-checked ball disc rises fast (ShotWatcher.rise2Press). Recorded matches only, never run on the phone. */
         val rise2Press: Boolean = false,
+        /**
+         * Experimental, off (0) by default: same triggers, but the tap leaves earlier (ShotWatcher.preArm). 1 = open the
+         * block tile ahead of a likely trigger so the press skips the 40 ms pass-through wait; 2 = also drop the 25 ms
+         * hold of early-only presses. Replayed on recorded bundles only (HANDOFF 0-4z8), never run on the phone.
+         */
+        val fastPress: Int = 0,
         /** Calibration, PRACTICE COURT ONLY: press on the practice rep's own clock at stepped leads before the release (ShotWatcher.sweep). */
         val sweepPress: Boolean = false,
         /**
