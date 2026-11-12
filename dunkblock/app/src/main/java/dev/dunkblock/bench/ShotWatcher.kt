@@ -37,7 +37,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
     private var mapKey = 0L
     private var step = 4
     private var gw = 0; private var gh = 0; private var k = 4
-    private var sat = IntArray(0)
+    private var sat = IntArray(0); private var sat2 = IntArray(0); private var lowRed = 0
     private var aspect = 2.17f
 
     // last accepted disc positions (x / W, y / H)
@@ -60,7 +60,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
     private var usTotal = 0L
     private var usMax = 0
 
-    private val log = StringBuilder(1 shl 16).append("t_ns,t_s,side,disc,x,y,fill,second,dark,orange,slot2_luma,slot2_dark,us,ring_y,sec_x,sec_y,col_x,col_y,col_fill,top_dy,yc,yc_n,d2,x2,y2,ring2,n2,cand2\n")
+    private val log = StringBuilder(1 shl 16).append("t_ns,t_s,side,disc,x,y,fill,second,dark,orange,slot2_luma,slot2_dark,us,ring_y,sec_x,sec_y,col_x,col_y,col_fill,top_dy,yc,yc_n,d2,x2,y2,ring2,n2,cand2,low2\n")
     private var logLines = 0
     private val events = StringBuilder("t_ns,t_s,event,side,x,y,dx,dy,dt_ms,detail\n")
 
@@ -113,9 +113,9 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         usTotal += us; if (us > usMax) usMax = us
         if (logLines < MAX_LOG_LINES) synchronized(log) {
             logLines++
-            log.append(tNs).append(',').append(String.format(Locale.ROOT, "%.3f,%s,%d,%.4f,%.4f,%.2f,%.2f,%.3f,%.3f,%.1f,%.3f,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.2f,%.4f,%.5f,%d,%d,%.4f,%.4f,%.2f,%d,%d\n",
+            log.append(tNs).append(',').append(String.format(Locale.ROOT, "%.3f,%s,%d,%.4f,%.4f,%.2f,%.2f,%.3f,%.3f,%.1f,%.3f,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.2f,%.4f,%.5f,%d,%d,%.4f,%.4f,%.2f,%d,%d,%d\n",
                 (tNs - startedNs) / 1e9, sideName(side), if (found) 1 else 0, discX, discY, fill, second, sideDark, sideOrange, slot2Luma, slot2Dark, us, ringY, secX, secY,
-                colX, colY, colFill, topDy, ycY, ycN, if (d2) 1 else 0, d2X, d2Y, d2Ring, d2N, d2Cand))
+                colX, colY, colFill, topDy, ycY, ycN, if (d2) 1 else 0, d2X, d2Y, d2Ring, d2N, d2Cand, lowRed))
         }
     }
 
@@ -513,39 +513,51 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         step = maxOf(2, w / 390)
         gw = w / step; gh = h / step
         k = maxOf(3, Math.round(0.0104f * w / step))
-        sat = IntArray((gw + 1) * (gh + 1))
+        sat = IntArray((gw + 1) * (gh + 1)); sat2 = IntArray((gw + 1) * (gh + 1))
         hCount = 0
     }
 
-    private fun isHud(x: Int, y: Int, w: Int, h: Int): Boolean =
+    private fun isHudTop(x: Int, y: Int, w: Int, h: Int): Boolean =
         (x < 0.30f * w && y < 0.22f * h) ||   // scoreboard
-        (x > 0.62f * w && y < 0.14f * h) ||   // top-right icons and the app's own bubble
+        (x > 0.62f * w && y < 0.14f * h)      // top-right icons and the app's own bubble
+
+    private fun isHudLow(x: Int, y: Int, w: Int, h: Int): Boolean =
         (x > 0.74f * w && y > 0.40f * h) ||   // action buttons
         (x < 0.32f * w && y > 0.50f * h)      // joystick
+
+    private fun isHud(x: Int, y: Int, w: Int, h: Int): Boolean = isHudTop(x, y, w, h) || isHudLow(x, y, w, h)
 
     private fun findDisc(buf: ByteBuffer, w: Int, h: Int, rowStride: Int): Boolean {
         val s = step; val stride = gw + 1
         val y0 = (0.06f * gh).toInt(); val y1 = (0.88f * gh).toInt()
+        // sat = this finder's grid, as before. sat2 (vc1096, for [findDisc2] only) also counts the red under the joystick
+        // and the action buttons; lowRed = how many such cells this frame (0 = the two grids are the same).
+        var low = 0
         for (gy in 0 until gh) {
-            var row = 0
+            var row = 0; var row2 = 0
             val py = gy * s
             val active = gy in y0 until y1
             for (gx in 0 until gw) {
                 if (active) {
                     val px = gx * s
-                    if (!isHud(px, py, w, h)) {
+                    if (!isHudTop(px, py, w, h)) {
                         val o = py * rowStride + px * 4
                         val r = buf.get(o).toInt() and 0xFF
                         if (r > 160) {
                             val g = buf.get(o + 1).toInt() and 0xFF
                             val b = buf.get(o + 2).toInt() and 0xFF
-                            if (g < 25 && b in 30..90 && r - b > 95) row++
+                            if (g < 25 && b in 30..90 && r - b > 95) {
+                                row2++
+                                if (isHudLow(px, py, w, h)) low++ else row++
+                            }
                         }
                     }
                 }
                 sat[(gy + 1) * stride + gx + 1] = sat[gy * stride + gx + 1] + row
+                sat2[(gy + 1) * stride + gx + 1] = sat2[gy * stride + gx + 1] + row2
             }
         }
+        lowRed = low
         var best = 0; var bx = 0; var by = 0
         for (gy in 0..gh - k) for (gx in 0..gw - k) {
             val c = sat[(gy + k) * stride + gx + k] - sat[gy * stride + gx + k] - sat[(gy + k) * stride + gx] + sat[gy * stride + gx]
@@ -612,20 +624,30 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
      * release for 32 of 45 shots, [findDisc] 25. Without "round" and with a minimum of 0.4 (vc1088) the matchup mark on
      * the floor (a red ellipse with white digits and a white rim) passed as the disc in about 80 frames of 3 shots;
      * with them in none, same 32 of 45. Lengths are for a 540-high capture.
+     * vc1096: the candidates also come from under the joystick and the action buttons (sat2 of [findDisc]; that
+     * finder's own grid and everything that presses by default are unchanged). In the recordings the marker of 4 of the
+     * 9 shots this finder did not see stood in those two zones in plain view. Replay on the 3 s before each of the 44
+     * recorded shots (10,087 frames, video pixels without the app's own pad over the joystick, so the gain on the
+     * phone is not known): seen 6,682 -> 7,461 frames, 1 moved, 1 lost, right 3,966 -> 4,116 and wrong 2 -> 1 of the
+     * 4,503 with a truth; shots seen in >= 50 % of -0.45..-0.10 s: 35 -> 40 of 44 (HANDOFF 0-4z3). shot.csv: low2.
      */
     private fun findDisc2(buf: ByteBuffer, w: Int, h: Int, rowStride: Int) {
         d2 = false; d2X = -1f; d2Y = -1f; d2Ring = 0f; d2N = 0; d2Cand = 0
         val kk = (k * k).toFloat()
-        if (gBest / kk < FOUND_FILL) return
-        var n = 1
-        candX[0] = gBx; candY[0] = gBy
-        if (gSec / kk >= FOUND_FILL) {
-            candX[1] = gSx; candY[1] = gSy; n = 2
+        // No red under the joystick or the buttons: the two best windows of [findDisc] are also the best of sat2.
+        val g = if (lowRed > 0) sat2 else sat
+        var n = 0
+        if (lowRed == 0) {
+            if (gBest / kk < FOUND_FILL) return
+            candX[0] = gBx; candY[0] = gBy; n = 1
+            if (gSec / kk >= FOUND_FILL) { candX[1] = gSx; candY[1] = gSy; n = 2 }
+        }
+        if (n != 1) {                                       // n == 1: the second window was already too weak
             val stride = gw + 1; val far = 2 * k
             while (n < D2_CAND) {
                 var top = 0; var tx = 0; var ty = 0
                 for (gy in 0..gh - k) for (gx in 0..gw - k) {
-                    val c = sat[(gy + k) * stride + gx + k] - sat[gy * stride + gx + k] - sat[(gy + k) * stride + gx] + sat[gy * stride + gx]
+                    val c = g[(gy + k) * stride + gx + k] - g[gy * stride + gx + k] - g[(gy + k) * stride + gx] + g[gy * stride + gx]
                     if (c <= top) continue
                     var near = false
                     for (i in 0 until n) if (Math.abs(gx - candX[i]) <= far && Math.abs(gy - candY[i]) <= far) { near = true; break }
@@ -635,6 +657,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
                 candX[n] = tx; candY[n] = ty; n++
             }
         }
+        if (n == 0) return
         d2Cand = n
         val u = h / 540f
         val half = Math.round(16 * u); val minN = (60 * u * u).toInt(); val rim = maxOf(2, Math.round(5 * u))
@@ -704,43 +727,65 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
      * [R2_W_NS], moved sideways less than 1.5 x the rise, and no rise2 in the last 1.5 s. On the five recorded matches
      * (the data it was designed on) at capture size it falls in -330..-150 ms before the release for 15 of 44 shots
      * (HANDOFF 0-4z); on the app's own flickering track of the vc1069 bundle it failed (1 of 16, 0-4w). The rise2
-     * events of a match bundle are its independent test: tools/analysis/sessrel.py <session> -ev rise2.
+     * events of a match bundle are its independent test: tools/analysis/sessrel.py <session> -ev rise2. First one
+     * (vc1092 match, 15 releases, 0-4z3): on time 5, too early 5, none 5, 13 events with no shot.
      */
     private fun rise2(tNs: Long, w: Int, h: Int) {
         if (!d2 || side != SIDE_DEF) return
         val i = r2Head
         r2T[i] = tNs; r2X[i] = d2X * w; r2Y[i] = d2Y * h; r2R[i] = Math.sqrt(d2N / Math.PI).toFloat()
         r2Head = (i + 1) % R2_LEN; if (r2Count < R2_LEN) r2Count++
-        var j = -1; var older = -1; var m = 0
+        var m = 0
         for (k in 0 until r2Count) {                        // newest first
             val q = (i - k + R2_LEN) % R2_LEN
-            val age = tNs - r2T[q]
-            if (age <= 500_000_000L) r2S[m++] = r2R[q]
-            if (k > 0 && age <= R2_W_NS) j = q else if (k > 0 && older < 0) older = q
-            if (age > 500_000_000L) break
+            if (tNs - r2T[q] > 500_000_000L) break
+            r2S[m++] = r2R[q]
         }
-        if (j < 0 || R2_W_NS - (tNs - r2T[j]) > 20_000_000L) return           // no sample close to W ago
-        if (tNs - r2T[if (older >= 0) older else j] > R2_W_NS + 60_000_000L) return   // the track was broken there
         java.util.Arrays.sort(r2S, 0, m)
         val rad = if (m % 2 == 1) r2S[m / 2] else (r2S[m / 2 - 1] + r2S[m / 2]) / 2f
-        if (rad <= 0f || r2R[j] < 0.7f * rad || r2R[j] > 1.4f * rad || r2R[i] < 0.7f * rad || r2R[i] > 1.4f * rad) return
-        val rise = (r2Y[j] - r2Y[i]) / rad
-        if (rise < R2_D || Math.abs(r2X[i] - r2X[j]) / rad > 1.5f * rise) return
-        val d = String.format(Locale.ROOT, "rise=%.2f R=%.1f x2=%.4f y2=%.4f ring2=%.2f", rise, rad, d2X, d2Y, d2Ring)
-        if (tNs - lastRise2Ns >= 1_500_000_000L) {
-            lastRise2Ns = tNs
-            event(tNs, "rise2", (r2X[i] - r2X[j]) / w, (r2Y[i] - r2Y[j]) / h, (tNs - r2T[j]) / 1e6f, d)
+        if (rad <= 0f || r2R[i] < 0.7f * rad || r2R[i] > 1.4f * rad) return
+        var j = r2Ago(tNs, i, rad, R2_W_NS)
+        if (j >= 0) {
+            val rise = (r2Y[j] - r2Y[i]) / rad
+            if (rise >= R2_D && Math.abs(r2X[i] - r2X[j]) / rad <= 1.5f * rise && tNs - lastRise2Ns >= 1_500_000_000L) {
+                lastRise2Ns = tNs
+                event(tNs, "rise2", (r2X[i] - r2X[j]) / w, (r2Y[i] - r2Y[j]) / h, (tNs - r2T[j]) / 1e6f,
+                    String.format(Locale.ROOT, "rise=%.2f R=%.1f x2=%.4f y2=%.4f ring2=%.2f", rise, rad, d2X, d2Y, d2Ring))
+            }
         }
-        if (rise >= R2_PRESS_D) rise2Press(tNs, d)
+        j = r2Ago(tNs, i, rad, R2_PRESS_W_NS)
+        if (j < 0) return
+        val rise = (r2Y[j] - r2Y[i]) / rad
+        if (rise >= R2_PRESS_D && Math.abs(r2X[i] - r2X[j]) / rad <= 1.5f * rise)
+            rise2Press(tNs, String.format(Locale.ROOT, "rise=%.2f w=%d R=%.1f x2=%.4f y2=%.4f ring2=%.2f", rise, R2_PRESS_W_NS / 1_000_000L, rad, d2X, d2Y, d2Ring))
+    }
+
+    /** The sample of the rise2 track taken [wNs] ago (the oldest one not older; within 20 ms of it, the track unbroken
+     *  there, its radius within 0.7..1.4 of [rad]), or -1. [i] = the newest sample. As mvel.py presses(). */
+    private fun r2Ago(tNs: Long, i: Int, rad: Float, wNs: Long): Int {
+        var j = -1; var older = -1
+        for (k in 1 until r2Count) {                        // newest first
+            val q = (i - k + R2_LEN) % R2_LEN
+            if (tNs - r2T[q] <= wNs) j = q else { older = q; break }
+        }
+        if (j < 0 || wNs - (tNs - r2T[j]) > 20_000_000L) return -1           // no sample close to W ago
+        if (tNs - r2T[if (older >= 0) older else j] > wNs + 60_000_000L) return -1   // the track was broken there
+        if (r2R[j] < 0.7f * rad || r2R[j] > 1.4f * rad) return -1
+        return j
     }
 
     /**
      * Experimental press on the rise of the ring-checked disc (vc1095, only with [Bench.Config.rise2Press], off by
-     * default): the rule of [rise2] with D = [R2_PRESS_D]. Numbers from the five recorded matches ONLY (the data the
-     * rule was chosen on, never run on the phone; HANDOFF 0-4z2): of 44 opponent shots it falls in -330..-150 ms
-     * before the release for 10-13 (also with the track thinned to the app's scan step and 0-70 ms of added delay),
-     * too early for 2-8, late for 3-6, and presses 5-8 times in the 2 s before that where no shot follows. Slow lifts
-     * (Nowitzki) are not caught. Same guards as the other experimental presses: not while a gap trigger waits for its
+     * default): the rule of [rise2] over [R2_PRESS_W_NS] with D = [R2_PRESS_D] (mvel.py W 0.12 D 4.0; vc1095 had
+     * W 0.08 D 2.2). Never pressed on the phone yet. Replays (press - release in -330..-150 ms = "on time", which is
+     * the timing only, not a block; HANDOFF 0-4z2, 0-4z3):
+     *   five recorded matches, 44 shots (design data): on time 15, too early 2, late 2, 3 presses in the 2 s before
+     *     with no shot; with 70 ms of added delay on time 7-10. W 0.08 D 2.2: on time 12, 8 such presses.
+     *   the app's own d2 track of the vc1092 match of 11-12 08:30, 15 releases (11 from the slot label, 4 more from
+     *     the user's record marks): on time 7, too early 3, none 5, 3 presses with no shot. W 0.08 D 2.2: on time 5,
+     *     10 presses with no shot. The app's own presses in that match: on time 4, late 1, 3 with no shot.
+     * The height was changed after seeing that bundle, so the next bundle is its test. Slow lifts are not caught.
+     * Same guards as the other experimental presses: not while a gap trigger waits for its
      * confirmation, not within 1.5 s of a press or trigger, not when my player is seen far from the shooter.
      */
     private fun rise2Press(tNs: Long, d: String) {
@@ -1504,7 +1549,8 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         const val R2_LEN = 64
         const val R2_W_NS = 80_000_000L
         const val R2_D = 1.6f
-        const val R2_PRESS_D = 2.2f
+        const val R2_PRESS_W_NS = 120_000_000L
+        const val R2_PRESS_D = 4.0f
         private val COS24 = FloatArray(24) { Math.cos(it * Math.PI / 12).toFloat() }
         private val SIN24 = FloatArray(24) { Math.sin(it * Math.PI / 12).toFloat() }
         /** screen-heights per second; set from data later. */
