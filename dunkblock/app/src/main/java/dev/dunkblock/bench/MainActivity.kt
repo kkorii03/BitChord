@@ -49,11 +49,11 @@ class MainActivity : Activity() {
             // --ez sweepPress true --ez crouchPress false --ez auto true` sets the experiment switches and starts ⑧.
             if (!Bench.running) {
                 val e = sp.edit()
-                for (k in listOf("upPress", "crouchPress", "sweepPress")) if (intent.hasExtra(k)) e.putBoolean(k, intent.getBooleanExtra(k, false))
+                for (k in listOf("upPress", "crouchPress", "sweepPress", "kinPress")) if (intent.hasExtra(k)) e.putBoolean(k, intent.getBooleanExtra(k, false))
                 e.commit()
             }
             Bench.config = Bench.config.copy(upPress = sp.getBoolean("upPress", false), crouchPress = sp.getBoolean("crouchPress", false),
-                sweepPress = sp.getBoolean("sweepPress", false))
+                sweepPress = sp.getBoolean("sweepPress", false), kinPress = sp.getBoolean("kinPress", false))
         }
 
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(32, 48, 32, 48) }
@@ -173,6 +173,10 @@ class MainActivity : Activity() {
         }
         fun <T> cycle(list: List<T>, cur: T) = list[(list.indexOf(cur) + 1) % list.size]
         // Kept across restarts (the other options are not): the user turns it on once for practice tests.
+        opt("★ 실험(일반 경기): 슛 동작 솟음 예측으로 누르기", if (c.kinPress) "켬(다른 슛 누름은 멈춤)" else "끔(기록만)") {
+            getSharedPreferences("calib", 0).edit().putBoolean("kinPress", !c.kinPress).apply()
+            c.copy(kinPress = !c.kinPress)
+        }
         opt("⑧ 실험: 팔 올리는 순간에도 블록 누르기", if (c.upPress) "켬" else "끔(기록만)") {
             getSharedPreferences("calib", 0).edit().putBoolean("upPress", !c.upPress).apply()
             c.copy(upPress = !c.upPress)

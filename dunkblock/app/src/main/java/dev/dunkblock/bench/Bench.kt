@@ -50,6 +50,12 @@ object Bench {
         val upPress: Boolean = false,
         /** Experimental, for quick-release shooters only: press when the standing ball handler bends his knees (ShotWatcher.crouch). */
         val crouchPress: Boolean = false,
+        /**
+         * Experimental (vc1143): press when the d2 marker starts its shot climb (ShotWatcher.kin). Offline on 42 match
+         * shots: fit games 9/35 in the 205-296 ms window, held-out game 3/7, ~10 false fires per minute of defence.
+         * While on, the other shot rules (all late in matches, 0/17) only log would_press.
+         */
+        val kinPress: Boolean = false,
         /** Experimental: press when the ring-checked ball disc rises fast (ShotWatcher.rise2Press). Recorded matches only, never run on the phone. */
         val rise2Press: Boolean = false,
         /**

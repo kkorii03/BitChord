@@ -81,6 +81,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         Bench.shotSide = side
         val found = findDisc(buf, w, h, rowStride)
         findDisc2(buf, w, h, rowStride)
+        kin(tNs)
         rise2(tNs, w, h)
         // One colour screen when the two finders disagree on defence (at most 25 of the 150 trigger screens, 4 s apart).
         if (side == SIDE_DEF && found != d2 && d2Snaps < 25 && tNs - lastD2SnapNs > 4_000_000_000L) {
@@ -289,7 +290,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
     private var dkDueNs = 0L; private var dkArmed = false; private var dkDelayMs = 0; private var dkSeq = 0; private var dkPlanNth = 0
     private var lastOffNs = 0L
     // Only the stepping calibration sweep holds the shot rules back; the beat block (fixed lead) runs beside them.
-    private val holdOthers get() = (cfg.sweepPress && cfg.sweepLeadMs == 0) || cfg.darkSweep
+    private val holdOthers get() = (cfg.sweepPress && cfg.sweepLeadMs == 0) || cfg.darkSweep || cfg.kinPress
     @Volatile var darkOnsets = 0; private set
     @Volatile var darkPresses = 0; private set
 
@@ -1181,6 +1182,68 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         press(tNs, live, "$d2 up", 0L)
     }
 
+    private val kT = LongArray(KIN_N); private val kY = FloatArray(KIN_N); private var kPos = 0; private var kCount = 0
+    private var lastKinNs = 0L
+    @Volatile var kinEvents = 0; private set
+    @Volatile var kinTriggers = 0; private set
+
+    /**
+     * vc1143 "kin" rule, a port of scratchpad cue2\k_pred.py variant H (HANDOFF 0-4z38). Every scan with a d2 marker
+     * keeps (t, y in 720-px units). On defence: least-squares parabola over the last KIN_W_NS of d2 rows (>= 4 rows, the
+     * newest gap <= 50 ms); its slope at now is the vertical speed v (px/s, < 0 = rising). Risen height h = highest y
+     * (lowest point) of the last 0.4 s minus y now. Fires when v < -KIN_VMIN and h >= KIN_HF, at most once per second.
+     * Offline (42 trusted match shots, 6 games): fit 9/35 presses in 205-296 ms before the release, held-out game
+     * 3/7, ~10 false fires per minute of defence (the marker also climbs on drives and dribbles). Always logged as
+     * "kin"; presses only with [Bench.Config.kinPress].
+     */
+    private fun kin(tNs: Long) {
+        if (!d2) return
+        val prevNs = if (kCount > 0) kT[(kPos - 1 + KIN_N) % KIN_N] else 0L
+        kT[kPos] = tNs; kY[kPos] = d2Y * 720f; kPos = (kPos + 1) % KIN_N; if (kCount < KIN_N) kCount++
+        if (side != SIDE_DEF || tNs - prevNs > 50_000_000L || tNs - lastKinNs <= 1_000_000_000L) return
+        var n = 0; var s1 = 0.0; var s2 = 0.0; var s3 = 0.0; var s4 = 0.0; var t0 = 0.0; var t1 = 0.0; var t2 = 0.0
+        var yMax = -1f
+        val yNow = d2Y * 720f
+        for (k in 0 until kCount) {
+            val i = (kPos - 1 - k + KIN_N) % KIN_N
+            val age = tNs - kT[i]
+            if (age > 400_000_000L) break
+            yMax = maxOf(yMax, kY[i])
+            if (age > KIN_W_NS) continue
+            val s = -age / 1e9; val y = kY[i].toDouble()
+            n++; s1 += s; s2 += s * s; s3 += s * s * s; s4 += s * s * s * s; t0 += y; t1 += s * y; t2 += s * s * y
+        }
+        if (n < 4) return
+        // Normal equations [[s4 s3 s2][s3 s2 s1][s2 s1 n]] (a b c) = (t2 t1 t0); b = slope at now (Cramer's rule).
+        val s0 = n.toDouble()
+        val det = s4 * (s2 * s0 - s1 * s1) - s3 * (s3 * s0 - s1 * s2) + s2 * (s3 * s1 - s2 * s2)
+        if (Math.abs(det) < 1e-18) return
+        val detB = s4 * (t1 * s0 - s1 * t0) - t2 * (s3 * s0 - s1 * s2) + s2 * (s3 * t0 - t1 * s2)
+        val v = detB / det
+        val h = yMax - yNow
+        if (v >= -KIN_VMIN || h < KIN_HF) return
+        lastKinNs = tNs; kinEvents++
+        val d = String.format(Locale.ROOT, "kin v=%.0f h=%.1f n=%d x2=%.3f y2=%.3f", v, h, n, d2X, d2Y)
+        event(tNs, "kin", 0f, 0f, 0f, d)
+        if (!cfg.shotBlock || !cfg.kinPress) return
+        if (tNs - lastPressNs < 1_000_000_000L) { event(tNs, "kin_dropped", 0f, 0f, 0f, "pressed"); return }
+        val live = cfg.autoBlockLive
+        lastShotFireNs = tNs
+        shotTriggers++; kinTriggers++
+        synchronized(pendingTriggers) { pendingTriggers.add(tNs) }
+        if (shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_kin", 0.6, 1.8) }
+        // Feet height unknown here: like the arms-up rule, only the sideways distance counts.
+        var meDist = findMe(d2X, minOf(0.95f, d2Y + 0.3f), d2Y)
+        if (meDist >= 0f) meDist = Math.abs(meX - d2X)
+        val d3 = String.format(Locale.ROOT, "%s me=%.3f/%.3f d=%.3f", d, meX, meY, meDist)
+        event(tNs, "shot_trigger", 0f, 0f, 0f, d3)
+        snapNow = true
+        if (meDist > ME_FAR) { shotFar++; reject(tNs, "rejected_far", d3); return }
+        if (notMine(tNs, d3)) return
+        if (live) main.post { BlockAccessibilityService.instance?.inGame?.armBlock(ARM_MS) }
+        press(tNs, live, d3, 0L)
+    }
+
     /** " top=<top_dy> topage=<ms since the arms went up, -1 = not up>" for the trigger detail. */
     private fun topText(tNs: Long): String =
         String.format(Locale.ROOT, " top=%.4f topage=%d", topDy, if (upRun > 0) (tNs - upSinceNs) / 1_000_000L else -1L)
@@ -1527,11 +1590,14 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
     /** [ageMs] = time already spent since the trigger; the user's extra delay counts from the trigger. */
     private fun press(tNs: Long, live: Boolean, detail: String, ageMs: Long) {
         val sweep = detail.startsWith("sweep")
+        val kin = detail.startsWith("kin")
         // ⑩ on: only the sweep presses; the shot rules are still logged, untouched by it (no lastPressNs lockout).
-        if (holdOthers && !sweep) { event(tNs, "would_press", 0f, 0f, 0f, detail); return }
+        // ★ (kinPress) on: only the kin presses.
+        if (holdOthers && !sweep && !kin) { event(tNs, "would_press", 0f, 0f, 0f, detail); return }
         if (!sweep) lastPressNs = tNs
         if (!live) { shotSkipped++; event(tNs, "would_press", 0f, 0f, 0f, detail); Bench.shotLive = liveText(); return }
-        val delay = (cfg.shotDelayMs.toLong() - ageMs).coerceAtLeast(0L)
+        // kin: no extra delay, the offline fit assumed press = detection + ~40 ms.
+        val delay = if (kin) 0L else (cfg.shotDelayMs.toLong() - ageMs).coerceAtLeast(0L)
         main.postDelayed({
             val ok = BlockAccessibilityService.instance?.inGame?.fireBlock("SHOT", needTouch = !sweep) ?: false
             if (ok) shotFired++ else shotSkipped++
@@ -1647,6 +1713,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         return "일반 슛 발동 ${shotTriggers}회(${if (cfg.shotBlock && cfg.autoBlockLive) "실제 누름" else "기록만"}, 민감도 ${cfg.shotSens}, 지연 ${cfg.shotDelayMs}ms) → 거름 ${shotRejected}회(그중 내 선수가 멀어서 ${shotFar}회), 버튼 미리 열기 ${shotArms}회, 누름 ${shotFired}회, 건너뜀 ${shotSkipped}회\n" +
             "  팔 올림 감지 ${upEvents}회(팔 올림으로 누르기 ${if (cfg.upPress) "켬" else "끔"}, 그걸로 발동 ${upTriggers}회)\n" +
             "  웅크림 감지 ${crouchEvents}회(웅크릴 때 누르기 ${if (cfg.crouchPress) "켬" else "끔"}, 그걸로 발동 ${crouchTriggers}회)\n" +
+            "  슛 동작 솟음(kin) 감지 ${kinEvents}회(솟음 예측 누르기 ${if (cfg.kinPress) "켬" else "끔"}, 그걸로 발동 ${kinTriggers}회)\n" +
             "  공 솟음으로 누르기 ${if (cfg.rise2Press) "켬" else "끔"}, 그걸로 발동 ${rise2Triggers}회\n" +
             "  빨리 누르기 ${if (cfg.fastPress > 0) "켬(${cfg.fastPress})" else "끔"}, 버튼 더 미리 열기 ${preArms}회\n" +
             "  내 선수 근처 슛만 누르기 ${if (cfg.nearOnly) "켬" else "끔"}, 그걸로 거름 ${shotNotMine}회(꺼져 있어도 셈: 내 선수와 먼 슛 ${nearNo}회, 내 선수 못 찾음 ${nearUnknown}회)\n" +
@@ -1662,6 +1729,10 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
     private fun pct(n: Int) = if (scans > 0) 100.0 * n / scans else 0.0
 
     companion object {
+        const val KIN_N = 64                      // ~1 s of 60 Hz scans
+        const val KIN_W_NS = 133_000_000L
+        const val KIN_VMIN = 120.0                // px/s in 720-px units
+        const val KIN_HF = 5f                     // px in 720-px units
         const val SIDE_UNKNOWN = 0
         const val SIDE_DEF = 1
         const val SIDE_OFF = 2
