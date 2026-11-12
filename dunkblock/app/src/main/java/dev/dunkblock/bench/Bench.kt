@@ -46,6 +46,9 @@ object Bench {
         val shotBlock: Boolean = true,
         val shotSens: Int = 1,
         val shotDelayMs: Int = 0,
+        /** adb extra only, never saved: unattended bot-game tests (nobody touches, the game's 자동 진행 plays), so
+         *  InGameProxy.fireBlock skips its "a finger touched in the last 30 s" check. 0-4z54: bot game 021923 skipped all 4. */
+        val unattended: Boolean = false,
         /** Experimental: also press when the ball handler lifts ball and hands to the marker (ShotWatcher.checkUpPending). */
         val upPress: Boolean = false,
         /** Experimental, for quick-release shooters only: press when the standing ball handler bends his knees (ShotWatcher.crouch). */

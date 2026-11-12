@@ -62,7 +62,7 @@ class InGameProxy(private val svc: BlockAccessibilityService, private val autoMo
         val h = hand
         // needTouch = false only for the practice-court sweep (⑩), which is run with nobody holding the phone.
         // defHolding (mode 5): the app itself holds '수비' on the defence screen, so nobody touches; 16:36 practice skipped 2 of 3 for that.
-        val recent = !needTouch || defHolding || System.nanoTime() - lastTouchNs < RECENT_TOUCH_NS
+        val recent = !needTouch || defHolding || Bench.config.unattended || System.nanoTime() - lastTouchNs < RECENT_TOUCH_NS
         if (finished || h == null || !recent) { skippedFires++; rec("auto", "skip_${reason}_${if (h == null) "no_pad" else "idle"}", 0f, 0f, 0); return false }
         if (defHolding) defRelease("block")
         val t = tileAt(block)
