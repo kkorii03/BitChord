@@ -33,7 +33,8 @@ def session(g):
     found = sum(1 for m in dm if m["src"] != "0")
     # proxy steering stretches (nanoTime -> session seconds)
     steer = []
-    px = glob.glob(os.path.join(os.path.dirname(g), "*_ingameproxy", "ingame_proxy_events.csv"))
+    # the proxy log of THIS session (same time stamp); a bundle folder can hold several sessions
+    px = glob.glob(os.path.join(os.path.dirname(g), os.path.basename(g)[:-len("_game")] + "_ingameproxy", "ingame_proxy_events.csv"))
     if px:
         on = None
         for e in csv.DictReader(open(px[0], encoding="utf-8")):
