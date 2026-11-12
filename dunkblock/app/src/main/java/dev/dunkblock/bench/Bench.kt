@@ -71,6 +71,7 @@ object Bench {
          * 240 = middle of the measured practice block window 211-265 ms (tap clock, vc1056/vc1035 sweeps, HANDOFF 0-4f).
          * Replayed on the 11-12 16:13 practice bundle (not used to set it): 14/21 shots inside 190-290 ms, the gap
          * trigger 0/21. Practice court only: a match has no rep clock (3/78 on the six other bundles, whose repT is not constant). HANDOFF 0-4z27.
+         * Since vc1129 it presses only on a steady beat (ShotWatcher.SWEEP_TOL_NS) and no longer holds the shot rules back.
          */
         val sweepLeadMs: Int = 0,
         /**

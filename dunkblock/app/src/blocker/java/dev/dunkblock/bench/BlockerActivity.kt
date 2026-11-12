@@ -194,7 +194,7 @@ class BlockerActivity : Activity() {
             setChecked(Bench.config.sweepPress && Bench.config.sweepLeadMs > 0, false)
             onChange = { v -> Bench.config = Bench.config.copy(sweepPress = v, sweepLeadMs = if (v) 240 else 0) }
         }
-        shotCard.addView(row("연습장 박자 블록 (연습장 전용)", "같은 슛을 되풀이하는 수비 연습에서, 앞 슛의 박자로 다음 슛을 누릅니다. 켜면 다른 자동 누름과 '수비 누름'은 쉽니다", beatSwitch, null))
+        shotCard.addView(row("연습장 박자 블록 (연습장 전용)", "같은 슛을 되풀이하는 수비 연습에서, 앞 슛의 박자로 다음 슛을 누릅니다. 박자가 두 번 연달아 같을 때만 누르고, 일반 슛 자동 블록은 그대로 함께 작동합니다. 켜면 '수비 누름'은 쉽니다", beatSwitch, null))
         shotCard.addView(divider())
         // Not saved: off again at every launch (never tried on the phone, practice court only).
         // 3 = "lift to follow" (11-12, HANDOFF 0-4z19): 1 never acted in a real match (the thumb moves at once, 0-4z17).

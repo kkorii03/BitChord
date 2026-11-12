@@ -194,6 +194,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
     private var swAway = 0; private var swIn = 0; private var swFirstNs = 0L
     private var swRepNs = 0L; private var swRepT = 0L; private var swDueNs = 0L; private var swArmed = false
     private var swLeadMs = 0; private var swSeq = 0; private var swRelNs = 0L; private var swPressNs = 0L
+    private var swRepTPrev = 0L; private var swRelSinceRep = false
     @Volatile var sweepReps = 0; private set
     @Volatile var sweepReleases = 0; private set
     @Volatile var sweepPresses = 0; private set
@@ -220,7 +221,13 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
             if (++swIn == 3) {
                 if (swAway >= 10) {
                     swRepNs = swFirstNs; sweepReps++
-                    val plan = cfg.sweepPress && cfg.shotBlock && swRepT > 0L && side == SIDE_DEF
+                    // Beat block (fixed lead): only on a steady beat = the last rep ended in a release and the last two
+                    // repT agree within SWEEP_TOL_NS (25/50 ms median/90 % per opponent on vc1056/vc1035). 17:00 match
+                    // with vc1128: 18 beat presses, none before a shot; guarded replay: 3 presses over 7 match bundles,
+                    // practice 161312 12 of 15 in the window (HANDOFF 0-4z30).
+                    val steady = cfg.sweepLeadMs == 0 || (swRelSinceRep && swRepTPrev > 0L && Math.abs(swRepT - swRepTPrev) < SWEEP_TOL_NS)
+                    val plan = cfg.sweepPress && cfg.shotBlock && swRepT > 0L && side == SIDE_DEF && steady
+                    swRelSinceRep = false
                     if (plan) {
                         swLeadMs = if (cfg.sweepLeadMs > 0) cfg.sweepLeadMs else SWEEP_LEADS[swSeq++ % SWEEP_LEADS.size]
                         swDueNs = swRepNs + swRepT - swLeadMs * 1_000_000L; swArmed = false
@@ -239,7 +246,8 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
                 swRelNs = tNs; sweepReleases++
                 val rt = tNs - swRepNs
                 val got = swRepNs != 0L && rt in 1_000_000_000L..3_500_000_000L
-                if (got) swRepT = rt
+                if (got) { swRepTPrev = swRepT; swRepT = rt }
+                swRelSinceRep = got
                 // A shot the sweep did not press on (the first one against a new opponent = the game's demonstration):
                 // keep a clip of it anyway, it shows when the game itself presses (tools/analysis/btnlit.py).
                 if (cfg.sweepPress && (swPressNs == 0L || tNs - swPressNs > 1_500_000_000L) && shotClips < MAX_SHOT_CLIPS) {
@@ -257,6 +265,10 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         val rem = ((swDueNs - tNs) / 1_000_000L).coerceAtLeast(0L)
         swDueNs = 0L
         if (side == SIDE_OFF || tNs - lastDefNs > 1_000_000_000L) { event(tNs, "sweep_dropped", 0f, 0f, 0f, "not_def"); return }
+        val beat = cfg.sweepLeadMs > 0
+        // Beat block runs beside the shot rules: no second jump right after one of theirs, and lock them out after ours.
+        if (beat && tNs - lastPressNs < 1_000_000_000L) { event(tNs, "sweep_dropped", 0f, 0f, 0f, "pressed"); return }
+        if (beat) { lastPressNs = tNs; lastShotFireNs = tNs }
         shotTriggers++; sweepPresses++
         swPressNs = tNs + rem * 1_000_000L
         if (shotClips < MAX_SHOT_CLIPS) { shotClips++; Bench.clipRequester?.invoke("trig_sweep", 0.6, 1.8) }
@@ -276,7 +288,8 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
     private var dkPeak = 0f; private var dkPeakNs = 0L; private var dkNth = 0
     private var dkDueNs = 0L; private var dkArmed = false; private var dkDelayMs = 0; private var dkSeq = 0; private var dkPlanNth = 0
     private var lastOffNs = 0L
-    private val holdOthers get() = cfg.sweepPress || cfg.darkSweep
+    // Only the stepping calibration sweep holds the shot rules back; the beat block (fixed lead) runs beside them.
+    private val holdOthers get() = (cfg.sweepPress && cfg.sweepLeadMs == 0) || cfg.darkSweep
     @Volatile var darkOnsets = 0; private set
     @Volatile var darkPresses = 0; private set
 
@@ -1480,7 +1493,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         if (lastNear == 0) nearNo++ else nearUnknown++
         // Practice-court tests (follow modes, beat block): the only shooter is my matchup; 16:13 and 16:36 practice
         // dropped 19/31 and 17/24 triggers here with the switch left on (HANDOFF 0-4z26, 0-4z28).
-        if (!cfg.nearOnly || cfg.follow > 0 || cfg.sweepPress) return false
+        if (!cfg.nearOnly || cfg.follow > 0 || (cfg.sweepPress && cfg.sweepLeadMs == 0)) return false
         shotNotMine++; reject(tNs, "rejected_notmine", d); return true
     }
 
@@ -1699,6 +1712,8 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         const val ME_FAR = 0.14f
         /** How long the block tile stays open to injection after a pre-arm. */
         const val ARM_MS = 300L
+        /** Beat block: the last two repT must agree within this to press (steady practice beat). */
+        const val SWEEP_TOL_NS = 80_000_000L
         /** fastPress: gap rise above its 60-400 ms low that opens the tile (3 grid steps of 0.0056 H), and how long it stays open. */
         const val PRE_RISE = 0.0167f
         const val PRE_ARM_MS = 250L
