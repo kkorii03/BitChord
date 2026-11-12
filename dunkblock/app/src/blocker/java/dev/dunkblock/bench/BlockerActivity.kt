@@ -70,6 +70,7 @@ class BlockerActivity : Activity() {
                 crouchPress = intent.getBooleanExtra("crouchPress", false), upPress = intent.getBooleanExtra("upPress", false),
                 darkSweep = intent.getBooleanExtra("darkSweep", false), darkNth = intent.getIntExtra("darkNth", 1), darkAddMs = intent.getIntExtra("darkAdd", 0),
                 darkJoyDeg = intent.getIntExtra("darkJoy", -1), darkJoyMs = intent.getIntExtra("darkJoyMs", 0),
+                shotBlock = intent.getBooleanExtra("shotBlock", Bench.config.shotBlock),   // adb bot-game tests; not saved
                 follow = intent.getIntExtra("follow", 0), rise2Press = intent.getBooleanExtra("rise2Press", getSharedPreferences("blocker", 0).getBoolean("rise", false)),
                 fastPress = intent.getIntExtra("fastPress", if (getSharedPreferences("blocker", 0).getBoolean("fast", false)) 1 else 0),
                 nearOnly = intent.getBooleanExtra("nearOnly", getSharedPreferences("blocker", 0).getBoolean("near", false)),
