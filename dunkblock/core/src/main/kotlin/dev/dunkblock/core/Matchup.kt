@@ -230,6 +230,24 @@ class MatchupFinder {
 }
 
 /**
+ * Is this shot next to MY player? (HANDOFF 0-4z10.) No identity: only where the ball is against my own ring.
+ *  up   = (my ring y - ball y) / screen height: how far above my feet the ball is on the screen
+ *  side = |my ring x - ball x| / screen width
+ * A shooter I am standing next to has the ball about one body above my feet. A dunk or lay-up at the rim while I guard
+ * somebody further out is much higher above my ring (the rim is further from the camera = higher on the screen).
+ * Designed on the 12 auto presses of the phone match of 11-12 11:13 (vc1100, matchup Curry; who shot was looked up by
+ * eye): my matchup or a shooter right next to me up 0.20-0.35, somebody else's rim play 0.39-0.49. [MAX_UP] = the
+ * middle. Applied unchanged to the 8 presses of the match of 11-12 08:30 (vc1092, matchup Paul George): my matchup
+ * 0.19-0.33 (6), somebody else 0.41-0.46 (2). 20 presses, two matches: small. Never run on the phone.
+ * [MAX_SIDE] is loose (the widest "mine" was 0.115); it only stops a ball far to the side.
+ */
+object NearGate {
+    const val MAX_UP = 0.36f
+    const val MAX_SIDE = 0.14f
+    fun near(up: Float, side: Float): Boolean = up <= MAX_UP && side <= MAX_SIDE
+}
+
+/**
  * mpick.py as a causal state machine: one [step] per scan (about 10 Hz).
  *  my class = the class of the tag under my cyan ring (ring conf 0.2-0.38, within 45 px of ring - (31, -24)), by
  *             majority over the last [ME_KEEP] such scans (>= [ME_MIN], >= 70 %); nothing is picked before that.

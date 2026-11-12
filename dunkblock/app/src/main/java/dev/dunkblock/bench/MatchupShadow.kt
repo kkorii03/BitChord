@@ -14,6 +14,8 @@ import kotlin.math.hypot
  * Nothing here presses; the auto-block behaviour does not read it (only the shot_trigger event text gets the
  * distance appended, see ShotWatcher.event). It steers only with the opt-in practice-court experiment [follow]
  * (default 0 = the follow rule's answer is logged and nothing else happens).
+ * One more reader since HANDOFF 0-4z10: [near] (my ring against the ball) is logged at every trigger and DROPS the
+ * trigger only with the opt-in switch Bench.Config.nearOnly (off by default).
  *
  * The finder was designed on 2340 x 1080 screen recordings scaled to 1170 x 540. Here the picture comes from the app's
  * own capture (about 1560 x 720) by nearest sampling. A FILLED blue joystick pad (the bench probe) is painted black
@@ -113,6 +115,10 @@ class MatchupShadow(private val startedNs: Long, private val follow: Int = 0) {
             for (y in y0 until y1) java.util.Arrays.fill(rgb, (y * W + x0) * 3, (y * W + x1) * 3, 0.toByte())
         }
         val s = finder.scan(rgb)
+        if (s.meX >= 0f) synchronized(meT) {
+            if (meN == meT.size) { for (i in 1 until meN) { meT[i - 1] = meT[i]; meXs[i - 1] = meXs[i]; meYs[i - 1] = meYs[i] }; meN-- }
+            meT[meN] = tNs; meXs[meN] = s.meX; meYs[meN] = s.meY; meN++
+        }
         val p = picker.step((tNs - startedNs) / 1e9, def, s)
         // What the follow rule would do is logged always; it reaches the joystick only with the experiment switched on.
         val deg = rule.step((tNs - startedNs) / 1e9, p)
@@ -157,11 +163,28 @@ class MatchupShadow(private val startedNs: Long, private val follow: Int = 0) {
             Math.toDegrees(atan2(-l.dy * 1.6, l.dx.toDouble())), age)
     }
 
+    // My ring of the last three scans (px of the 1170 x 540 picture; one wrong blob in three does not move the median).
+    private val meT = LongArray(3); private val meXs = FloatArray(3); private val meYs = FloatArray(3); private var meN = 0
+
+    /** [near]: 1 = the ball at ([x], [y]) (screen fractions) is next to my ring, 0 = it is not, -1 = no ring in the last 0.4 s. */
+    class Near(val near: Int, val up: Float, val side: Float, val n: Int)
+
+    /** core NearGate on the median of my ring over the last scans. Read by ShotWatcher.notMine (capture thread). */
+    fun near(tNs: Long, x: Float, y: Float): Near {
+        val xs = FloatArray(3); val ys = FloatArray(3); var n = 0
+        synchronized(meT) { for (i in 0 until meN) if (tNs - meT[i] <= NEAR_AGE_NS) { xs[n] = meXs[i]; ys[n] = meYs[i]; n++ } }
+        if (n == 0) return Near(-1, 0f, 0f, 0)
+        java.util.Arrays.sort(xs, 0, n); java.util.Arrays.sort(ys, 0, n)
+        val up = ys[n / 2] / MatchupFinder.H - y; val side = Math.abs(xs[n / 2] / MatchupFinder.W - x)
+        return Near(if (dev.dunkblock.core.NearGate.near(up, side)) 1 else 0, up, side, n)
+    }
+
     fun free() { worker.shutdownNow() }
 
     companion object {
         const val PERIOD_NS = 105_000_000L
         const val MAX_LINES = 14000
         const val MAX_SNAPS = 40
+        const val NEAR_AGE_NS = 400_000_000L
     }
 }
