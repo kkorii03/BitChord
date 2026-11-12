@@ -9,6 +9,9 @@ A release = the label turning 수비 -> 박스아웃 on defence:
   dim   = the same between the two dimmed levels (the slot is dimmed at the start of a defence and at times in it;
           the one press seen in a dimmed slot was refused by the game, 0-4y)
   noisy = the rule of mstep.py where neither fired (+6 within 3 rows from 100..110: a player stands over the button)
+  shift = (11-12, 0-4z13) a step of +6.5..13 within 0.04 s between two quiet stretches (range <= 3 over 0.14 s before
+          and 0.06 s after, level before >= 95) outside the bands above: the slot is at times 5..10 brighter than the
+          bands (seen right after block presses; cause not known). One of them (vc1100 360.16) was checked by eye.
 -rel replaces them with a hand list. -check compares with a hand list (found within 0.12 s / missing / extra).
 Per release: the app's presses (shot_events "pressed") and the observed slot presses (presses.csv) nearest to
 release - 0.23 s, graded like decide.py (ok -330..-150 ms, early -600..-330, very early < -600, late -150..+100,
@@ -55,6 +58,14 @@ def releases(T, L, side):
         if side[i] == "def" and L[i] - L[i - 3] >= 6 and 100 < L[i - 3] < 110 and T[i] - last > 1.0:
             last = T[i]
             if all(abs(T[i] - t) > 0.3 for t, _ in out): out.append((float(T[i]), "noisy"))
+    last = -9.0                                             # shift: the same one-frame step between two quiet stretches at other levels
+    for i in range(8, len(L) - 4):
+        if side[i] != "def" or T[i] - last < 1.0 or T[i] - T[i - 2] > 0.045: continue
+        a = int(np.searchsorted(T, T[i] - 0.14)); b = int(np.searchsorted(T, T[i] + 0.06)); pre = L[a:i - 1]; post = L[i:b + 1]
+        if len(pre) < 5 or len(post) < 3 or pre.max() - pre.min() > 3.0 or post.max() - post.min() > 3.0 or np.median(pre) < 95: continue
+        if 6.5 <= float(np.median(post) - np.median(pre)) <= 13.0:
+            last = T[i]
+            if all(abs(T[i] - t) > 0.3 for t, _ in out): out.append((float(T[i]), "shift"))
     return sorted((t, s) for t, s in out if on_def(t))
 
 
@@ -88,7 +99,7 @@ def main():
         i = min(len(St) - 1, int(np.searchsorted(T, t - 0.03))); return St[i] in ("d", "b")
     print("%.0f s of log, %.0f s on defence, %d releases (%s), app presses %d, observed slot presses %d" % (
         T[-1] - T[0], side.count("def") * float(np.median(np.diff(T))), len(rel),
-        ", ".join("%s %d" % (s, sum(1 for _, z in rel if z == s)) for s in ("firm", "dim", "noisy", "hand") if any(z == s for _, z in rel)), len(app), len(obs)))
+        ", ".join("%s %d" % (s, sum(1 for _, z in rel if z == s)) for s in ("firm", "dim", "noisy", "shift", "hand") if any(z == s for _, z in rel)), len(app), len(obs)))
     if check:
         hit = [q for q in check if any(abs(q - t) <= 0.12 for t, _ in rel)]
         print("check: %d of %d of the hand list found | missing %s | extra %s" % (len(hit), len(check), " ".join("%.2f" % q for q in check if q not in hit) or "-",

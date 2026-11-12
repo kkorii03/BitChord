@@ -10,7 +10,7 @@ import sys, os, csv, re
 a = sys.argv[1:]; g = a[0]; EV = a[a.index("-ev") + 1] if "-ev" in a else "rise2"; LOCK = float(a[a.index("-lock") + 1]) if "-lock" in a else 1.5
 rel = []
 for l in open(a[1], encoding="utf-8"):
-    m = re.match(r"\s+(\d+\.\d+)\s+(firm|noisy|dim)", l)
+    m = re.match(r"\s+(\d+\.\d+)\s+(firm|noisy|dim|shift)", l)
     if m: rel.append((float(m.group(1)), m.group(2)))
 M = [(float(r["t_s"]), float(r["me_x"]), float(r["me_y"])) for r in csv.DictReader(open(os.path.join(g, "matchup.csv"), encoding="utf-8")) if float(r["me_x"]) >= 0]
 S = []
