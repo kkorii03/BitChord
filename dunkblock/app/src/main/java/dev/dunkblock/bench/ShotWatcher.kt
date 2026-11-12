@@ -425,6 +425,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
     private var cropPos = 0; private var cropFilled = 0
     private var cw = 0; private var ch = 0
     private var lastCx = -1; private var lastCy = -1; private var lastSeenNs = 0L
+    private var d2RunNs = 0L; private var d2LastNs = 0L; private var lastRelClipNs = 0L
     private val colourReqs = ConcurrentLinkedQueue<ColourReq>()
     private val colourJobs = ArrayList<ColourReq>()
     private val colourAccepted = HashMap<String, Int>()
@@ -449,6 +450,18 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         // target in 30-60% of the 11-12 match colour frames (HANDOFF 0-4z35); d2 saw 15 of 20 releases vs 9.
         if (side == SIDE_DEF && d2) { lastCx = (d2X * w).toInt(); lastCy = (d2Y * h).toInt(); lastSeenNs = tNs }
         else if (found) { lastCx = (discX * w).toInt(); lastCy = (discY * h).toInt(); lastSeenNs = tNs }
+        // vc1140 (record only): on defence the d2 marker leaves the handler 120-260 ms after the ball does (shot or pass).
+        // 11-12 18:45 match: 8 of 20 colour clips were loading/crowd screens and only 2 covered a release, so save one
+        // clip per d2 vanish (held >= 0.5 s, gone >= 0.15 s) with 1.6 s before it: covers the pick-up of shots and passes.
+        if (side == SIDE_DEF && d2) { if (d2RunNs == 0L) d2RunNs = tNs; d2LastNs = tNs }
+        else if (d2RunNs != 0L && tNs - d2LastNs >= 150_000_000L) {
+            if (side == SIDE_DEF && d2LastNs - d2RunNs >= 500_000_000L && d2LastNs - lastRelClipNs > 1_500_000_000L) {
+                lastRelClipNs = d2LastNs
+                event(d2LastNs, "d2_gone", 0f, 0f, 0f, String.format(Locale.ROOT, "held=%d", (d2LastNs - d2RunNs) / 1_000_000L))
+                requestColour("rel_def", d2LastNs, 1.6, 0.4)
+            }
+            d2RunNs = 0L
+        }
         if (scans % 2 == 0) {
             val useDisc = lastCx >= 0 && tNs - lastSeenNs < 1_000_000_000L
             val cx = if (useDisc) lastCx else w / 2
@@ -468,11 +481,12 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         }
         while (true) {
             val r = colourReqs.poll() ?: break
-            val g = PressClipper.clipGroup(r.tag)
+            val g = if (r.tag.startsWith("rel")) "rel" else PressClipper.clipGroup(r.tag)
             val used = colourAccepted[g] ?: 0
             // vc1131: the user's "this was a shot" marks get most of the budget (a mark comes ~0.9 s after the release, the
             // 3.1 s before covers the pick-up). Match cue search 11-12 (HANDOFF 0-4z34) needs the ball pick-up in colour.
-            val cap = when (g) { "other" -> MAX_COLOUR_CLIPS; "mark" -> 24; else -> 3 }
+            // vc1140: d2-vanish clips (shots and passes, ~0.8 MB each) get their own 40.
+            val cap = when (g) { "other" -> 20; "mark" -> 24; "rel" -> 40; else -> 3 }
             if (colourClips + colourJobs.size < MAX_COLOUR_CLIPS && used < cap) { colourAccepted[g] = used + 1; colourJobs.add(r) }
         }
         val it = colourJobs.iterator()
@@ -1668,7 +1682,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         /** screen-heights per second; set from data later. */
         const val FAST_SPEED = 0.9f
         const val MAX_SHOT_CLIPS = 80
-        const val MAX_COLOUR_CLIPS = 38
+        const val MAX_COLOUR_CLIPS = 90   // vc1140: was 38; + 40 d2-vanish clips (~13 KB per frame, 1 TB phone)
         /** Crouch cue ([crouch]): history size, sink needed (7 px at 720p) within the window, calm y range (9 px). */
         const val CR_N = 96
         const val CROUCH_SINK = 0.0097f
