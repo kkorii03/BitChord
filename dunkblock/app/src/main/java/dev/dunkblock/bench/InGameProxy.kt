@@ -609,7 +609,7 @@ class InGameProxy(private val svc: BlockAccessibilityService, private val autoMo
             if (tiles.isNotEmpty()) appendLine("오른쪽 버튼 받침판 ${tiles.size}개: 손가락 ${tileDowns}회(짧은 탭 ${tileQuickTaps}회), 주입이 받침판에 떨어짐 ${injectedOnTile}개 ${if (injectedOnTile == 0) "(정상)" else "(통과 실패)"}")
             appendLine("자동 블록 요청 ${autoTaps}회, 시스템 응답 완료 ${o?.get(1) ?: 0} / 취소 ${o?.get(2) ?: 0}" +
                 if (autoMode) ", 화면을 ${RECENT_TOUCH_NS / 1_000_000_000L}초 넘게 안 만져서 건너뜀 ${skippedFires}회, 사용자 기록 버튼 ${marks}회" else "")
-            if (Bench.config.follow > 0) appendLine("매치업 따라가기(연습장 시험, 방식 ${Bench.config.follow}): 엄지를 올려 둔 동안 대신 밀기 ${assists}회(엄지를 움직여 사용자 조작으로 돌아감 ${assistTakeovers}회), 손 없이 밀기 ${ownSteers}회, " +
+            if (Bench.config.follow > 0) appendLine("매치업 따라가기(시험, 방식 ${Bench.config.follow}): 엄지를 올려 둔 동안 대신 밀기 ${assists}회(엄지를 움직여 사용자 조작으로 돌아감 ${assistTakeovers}회), 손 없이 밀기 ${ownSteers}회, " +
                 "엄지를 뗀 동안 밀기 ${liftSteers}회(엄지를 대서 사용자 조작으로 돌아감 ${liftTakeovers}회, 앱 손가락이 패드에 떨어져 끊김 ${liftLost}회), " +
                 "엄지 방향 섞기 ${bends}번(엄지가 반대쪽이라 안 섞음 ${bendAway}번), '수비' 버튼 누르고 있기 ${defHolds}번")
             appendLine("※ 게임 캐릭터가 실제로 움직이고 블록했는지는 앱이 볼 수 없습니다. 관찰 내용을 알려 주세요.")

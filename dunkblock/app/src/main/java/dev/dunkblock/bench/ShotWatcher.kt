@@ -1594,6 +1594,10 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         // ⑩ on: only the sweep presses; the shot rules are still logged, untouched by it (no lastPressNs lockout).
         // ★ (kinPress) on: only the kin presses.
         if (holdOthers && !sweep && !kin) { event(tNs, "would_press", 0f, 0f, 0f, detail); return }
+        // Follow on (HANDOFF 0-4z42, user 11-12 20:40 "헛점프가 너무 많아"): the app only steers and the user blocks by
+        // hand. The movement shot rules (gap/fresh/calm/up/crouch/rise2/kin) made 0 blocks in 13 regular matches and
+        // jumped on dribbles, so they only log; the beat block (sweep) and skill-dark presses stay as they were.
+        if (cfg.follow > 0 && !sweep && !detail.startsWith("dark")) { event(tNs, "would_press", 0f, 0f, 0f, "follow_hold $detail"); return }
         if (!sweep) lastPressNs = tNs
         if (!live) { shotSkipped++; event(tNs, "would_press", 0f, 0f, 0f, detail); Bench.shotLive = liveText(); return }
         // kin: no extra delay, the offline fit assumed press = detection + ~40 ms.
