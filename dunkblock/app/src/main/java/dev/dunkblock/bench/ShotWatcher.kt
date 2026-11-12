@@ -809,9 +809,11 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         var meDist = findMe(d2X, minOf(0.95f, d2Y + 0.3f), d2Y)
         if (meDist >= 0f) meDist = Math.abs(meX - d2X)
         val d2s = String.format(Locale.ROOT, "rise2 %s sens=%d delay=%d me=%.3f/%.3f d=%.3f", d, cfg.shotSens, cfg.shotDelayMs, meX, meY, meDist)
+        nearX = d2X; nearY = d2Y
         event(tNs, "shot_trigger", 0f, 0f, 0f, d2s)
         snapNow = true
         if (meDist > ME_FAR) { shotFar++; reject(tNs, "rejected_far", d2s); return }
+        if (notMine(tNs, d2s)) return
         if (live) main.post { BlockAccessibilityService.instance?.inGame?.armBlock(ARM_MS) }
         press(tNs, live, d2s, 0L)
     }
@@ -1046,6 +1048,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         event(tNs, "shot_trigger", 0f, 0f, 0f, d2)
         snapNow = true
         if (meDist > ME_FAR) { shotFar++; reject(tNs, "rejected_far", d2); return }
+        if (notMine(tNs, d2)) return
         if (live) main.post { BlockAccessibilityService.instance?.inGame?.armBlock(ARM_MS) }
         press(tNs, live, d2, -waitMs)
     }
@@ -1121,6 +1124,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         event(tNs, "shot_trigger", 0f, 0f, 0f, d2)
         snapNow = true
         if (meDist > ME_FAR) { shotFar++; reject(tNs, "rejected_far", d2); return }
+        if (notMine(tNs, d2)) return
         if (live) main.post { BlockAccessibilityService.instance?.inGame?.armBlock(ARM_MS) }
         press(tNs, live, "$d2 up", 0L)
     }
@@ -1270,6 +1274,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
                     event(tNs, "shot_trigger", 0f, 0f, 0f, d2)
                     snapNow = true
                     if (meDist > ME_FAR) { shotFar++; reject(tNs, "rejected_far", d2); return }
+                    if (notMine(tNs, d2)) return
                     if (live) main.post { BlockAccessibilityService.instance?.inGame?.armBlock(ARM_MS) }
                     press(tNs, live, d2 + " fresh", 0L)
                     return
@@ -1372,6 +1377,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         // rose 0.12-0.14) and vc1044 562.4 (drive to the rim, gap 0.24 -> 0.44), pressed 66-92 ms after the trigger.
         val moving = xspan >= CONFIRM_XSPAN
         if (meDist > ME_FAR) { shotFar++; reject(tNs, "rejected_far", d2); return }
+        if (notMine(tNs, d2)) return
         if (live) main.post { BlockAccessibilityService.instance?.inGame?.armBlock(ARM_MS) }
         // Calm shooter (practice: xspan <= 0.026, 10/15 blocked with an immediate press; waiting for the confirmation
         // would add 66-167 ms and practice '늦음' was already ~100 ms late): press now.
@@ -1429,6 +1435,32 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
     @Volatile var shotRejected = 0; private set
     @Volatile var shotFar = 0; private set
     @Volatile var shotArms = 0; private set
+    @Volatile var shotNotMine = 0; private set
+    @Volatile var nearNo = 0; private set
+    @Volatile var nearUnknown = 0; private set
+    // Ball of the trigger being logged when it is not the gap track's disc (rise2); -1 = use discX / discY.
+    private var nearX = -1f; private var nearY = -1f
+    private var lastNear = -1
+
+    /** MatchupShadow.near for the trigger being logged: always written into the shot_trigger text, see [notMine]. */
+    private fun nearText(tNs: Long): String {
+        val n = matchup.near(tNs, if (nearX >= 0f) nearX else discX, if (nearX >= 0f) nearY else discY)
+        nearX = -1f; lastNear = n.near
+        return String.format(Locale.ROOT, " near=%d up=%.3f side=%.3f nme=%d", n.near, n.up, n.side, n.n)
+    }
+
+    /**
+     * HANDOFF 0-4z10: is the ball of this trigger away from my own player (core NearGate), or my player not found?
+     * Counted always; the trigger is dropped only with [Bench.Config.nearOnly] (off by default). Phone match of 11-12
+     * 11:13: 6 of 12 auto presses were somebody else's dunk or lay-up at the rim while my player stood with his
+     * matchup further out, and the jump left the matchup open. Call right after the shot_trigger event.
+     */
+    private fun notMine(tNs: Long, d: String): Boolean {
+        if (lastNear == 1) return false
+        if (lastNear == 0) nearNo++ else nearUnknown++
+        if (!cfg.nearOnly) return false
+        shotNotMine++; reject(tNs, "rejected_notmine", d); return true
+    }
 
     /** A dropped trigger must not block the real shot that follows a fake (vc1038: 394.5 -> 396.4): 0.4 s, not 1.5 s. */
     private fun reject(tNs: Long, name: String, detail: String) {
@@ -1550,7 +1582,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
 
     private fun event(tNs: Long, name: String, dx: Float, dy: Float, dtMs: Float, detail: String) = synchronized(events) {
         events.append(tNs).append(',').append(String.format(Locale.ROOT, "%.3f,%s,%s,%.4f,%.4f,%.4f,%.4f,%.0f,%s\n",
-            (tNs - startedNs) / 1e9, name, sideName(side), discX, discY, dx, dy, dtMs, if (name == "shot_trigger") detail + matchup.triggerText(tNs) else detail))
+            (tNs - startedNs) / 1e9, name, sideName(side), discX, discY, dx, dy, dtMs, if (name == "shot_trigger") detail + nearText(tNs) + matchup.triggerText(tNs) else detail))
     }
 
     private fun liveText() = "일반 슛 감지 ${shotTriggers}회 · 헛블락 거름 ${shotRejected}회(멀어서 ${shotFar}회) · 블록 누름 ${shotFired}회 · 건너뜀 ${shotSkipped}회"
@@ -1563,6 +1595,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
             "  웅크림 감지 ${crouchEvents}회(웅크릴 때 누르기 ${if (cfg.crouchPress) "켬" else "끔"}, 그걸로 발동 ${crouchTriggers}회)\n" +
             "  공 솟음으로 누르기 ${if (cfg.rise2Press) "켬" else "끔"}, 그걸로 발동 ${rise2Triggers}회\n" +
             "  빨리 누르기 ${if (cfg.fastPress > 0) "켬(${cfg.fastPress})" else "끔"}, 버튼 더 미리 열기 ${preArms}회\n" +
+            "  내 선수 근처 슛만 누르기 ${if (cfg.nearOnly) "켬" else "끔"}, 그걸로 거름 ${shotNotMine}회(꺼져 있어도 셈: 내 선수와 먼 슛 ${nearNo}회, 내 선수 못 찾음 ${nearUnknown}회)\n" +
             "  연습장 박자: 반복 시작 ${sweepReps}회, 공 떠남 ${sweepReleases}회(박자 훑기 ${if (cfg.sweepPress) "켬" else "끔"}, 그걸로 누름 ${sweepPresses}회)\n" +
             "  선수 스킬 어두워짐 ${darkOnsets}회(그걸로 누름 ${darkPresses}회, 누르기 ${if (cfg.darkSweep) "훑기" else if (cfg.darkPress) "켬" else "끔(기록만)"})\n" +
             "  모으기 감지 뒤 공이 떠남 ${leads.size}회(앞섬 중앙값 $med, 전체 ${leads.joinToString(" ")}) · 감지했는데 공이 안 떠남(오발 추정) ${triggersWithoutRelease}회 · 공이 떠났는데 미리 감지 못함 ${releasesWithoutTrigger}회"

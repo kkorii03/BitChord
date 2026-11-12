@@ -58,6 +58,12 @@ object Bench {
          * hold of early-only presses. Replayed on recorded bundles only (HANDOFF 0-4z8), never run on the phone.
          */
         val fastPress: Int = 0,
+        /**
+         * Experimental, off by default (HANDOFF 0-4z10): drop a shot trigger whose ball is not next to my own player
+         * (core NearGate on the matchup shadow's ring; ShotWatcher.notMine), or when my player is not found. Separated
+         * all 20 auto presses of two recorded phone matches; never run on the phone.
+         */
+        val nearOnly: Boolean = false,
         /** Calibration, PRACTICE COURT ONLY: press on the practice rep's own clock at stepped leads before the release (ShotWatcher.sweep). */
         val sweepPress: Boolean = false,
         /**
