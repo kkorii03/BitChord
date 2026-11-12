@@ -2,10 +2,12 @@
 the foot ring taken from the normal finder only, or from the column finder (col_y, col_fill) when the normal one has
 no ring. (HANDOFF 0-4z14)
 
-colring.py <game folder> <sessrel output txt | -> [-col CF] [-near] [-v]
+colring.py <game folder> <sessrel output txt | -> [-col CF] [-near] [-v] [-crise R M | -hold MS]
     -col CF   use col_y as the ring on scans without ring_y when col_fill >= CF (ShotWatcher.findColRing, logged only)
     -near     the near gate (core NearGate on matchup.csv) drops a trigger as the '내 선수 근처 슛만 누르기' switch does
     -v        list every trigger
+    -crise R M  confirmation rise for a still / a swaying (xspan >= 0.1) shooter instead of 0.025 / 0.06 (H)
+    -hold MS  press a held (not calm) trigger MS ms after it instead of waiting for the confirmation (no drop)
 
 Why: the gap rules need the red foot ring under the shooter's disc. The normal ring is the second-strongest red blob of
 the HUD-masked screen within 0.08 W of the disc; another red blob (e.g. at 0.30 W, 0.11 H, right of the scoreboard
@@ -21,6 +23,8 @@ import sys, os, csv, re, bisect
 a = sys.argv[1:]; g = a[0]
 CF = float(a[a.index("-col") + 1]) if "-col" in a else None
 NEAR = "-near" in a; V = "-v" in a
+CR, MR = (float(a[a.index("-crise") + 1]), float(a[a.index("-crise") + 2])) if "-crise" in a else (0.025, 0.06)
+HOLD = float(a[a.index("-hold") + 1]) / 1000.0 if "-hold" in a else None
 REL = []
 if a[1] != "-":
     for l in open(a[1], encoding="utf-8"):
@@ -104,7 +108,8 @@ with open(os.path.join(g, "shot.csv"), encoding="utf-8") as f:
                 TR.append((t, "gap" + ("" if v2 else "e"), n, src))
                 if NEAR and n == 0: lastFire = t - 1.1; break
                 if calm: PR.append((t, "calm", t + (0.0 if v2 else 0.025))); break
-                pend = (t, y, 0.06 if xspan >= 0.1 else 0.025); break
+                if HOLD is not None: PR.append((t, "hold", t + HOLD)); break
+                pend = (t, y, MR if xspan >= 0.1 else CR); break
         if pend:
             age = t - pend[0]; up = pend[1] - float(r["y"]) if found else 0.0
             if found and pend[2] <= up < 0.15: PR.append((pend[0], "conf", t)); pend = None
