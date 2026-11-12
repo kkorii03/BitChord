@@ -1,5 +1,6 @@
 package dev.dunkblock.core
 
+import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.sqrt
 
@@ -266,9 +267,22 @@ object NearGate {
  *             my own place is also known. Two tags: the cheaper pairing, if each is within reach, "mine" is not the
  *             greyer one ([GVETO]) and the swapped pairing is [MARGIN] px worse. Designed on one phone match and
  *             recording C (both SF v SF, both looked at): HANDOFF 0-4z6; no independent test yet.
+ *  [strict] = believe only what the game itself marks (tools/analysis/mstrict.py is the twin; HANDOFF 0-4z15). The tag
+ *             colour says the POSITION only, and a team mate or an opponent can share it. Phone match of 11-12 11:13
+ *             (my SF against Curry = PG, my team mate LaMelo Ball = PG too): with Curry's tag hidden the rule above
+ *             took LaMelo's tag as the target for seconds (frames looked at), and an opponent SF as "me".
+ *             me     : the tag under my ring, its track, or the ring alone when it continues my last place; never
+ *                      "the only tag of my class".
+ *             target : a tag of the matchup's position with the fan at its feet in this scan; without a fan in this
+ *                      scan only the tag that continues that confirmed one (within reach of its last place, at most
+ *                      [CONF_S] after the last fan); a fan under no tag only when a fan stood within [FAN_NEAR] px in
+ *                      the scan before. Fans of a row of three or more (+-[ROW] px) are scenery.
+ *             Replayed on that match and on the one of 11-12 08:30 (not used for the design): target jumps 46 -> 0
+ *             and 5 -> 0, tag targets away from a visible fan 120 -> 25 and 36 -> 17, defence scans with a target
+ *             45 -> 36 % and 42 -> 32 %. Never run on the phone.
  * All positions are feet positions in px of the 1170 x 540 picture.
  */
-class MatchupPicker(private val fixedMyCls: Int = -1, private val track: Boolean = false) {
+class MatchupPicker(private val fixedMyCls: Int = -1, private val track: Boolean = false, private val strict: Boolean = false) {
     class Pick {
         var defence = false
         /** 0 none, 1 the matchup's tag, 2 the matchup's fan (tag not on screen). */
@@ -289,9 +303,14 @@ class MatchupPicker(private val fixedMyCls: Int = -1, private val track: Boolean
     private var lmX = 0f; private var lmY = 0f; private var lmT = -1e9
     private var lhX = 0f; private var lhY = 0f; private var lhT = -1e9
     private var ringT = -1e9
+    // strict: the last place of the fan-confirmed target (tag coordinates), when it was seen, when a fan last confirmed it
+    private var aX = 0f; private var aY = 0f; private var aT = -1e9; private var aConf = -1e9
+    private var prevFans: List<MatchupFinder.Fan> = emptyList(); private var prevT = -1e9
 
     private fun dist(q: MatchupFinder.Tag, x: Float, y: Float) = hypot((q.x - x).toDouble(), (q.y - y) * 1.6)
     private fun reach(q: MatchupFinder.Tag, x: Float, y: Float, age: Double) = age <= AGE && dist(q, x, y) <= G0 + GV * age
+    /** The fan lies in the feet window of the tag. */
+    private fun owns(q: MatchupFinder.Tag, f: MatchupFinder.Fan) = f.x - q.x >= -30 && f.x - q.x <= 150 && f.y - q.y >= -92 && f.y - q.y <= -28
 
     fun step(t: Double, defence: Boolean, s: MatchupFinder.Scan): Pick {
         val p = Pick(); p.defence = defence
@@ -310,6 +329,8 @@ class MatchupPicker(private val fixedMyCls: Int = -1, private val track: Boolean
             }
         }
         val me = myCls; p.myCls = me
+        val pf = if (t - prevT <= FAN_GAP) prevFans else emptyList()
+        prevFans = s.fans; prevT = t
         if (me < 0) { p.why = "my class unknown"; return p }
         var mine: MatchupFinder.Tag? = null
         if (ring) {
@@ -361,11 +382,43 @@ class MatchupPicker(private val fixedMyCls: Int = -1, private val track: Boolean
             if (cnt[c] >= SHARE * voteC.size) cls = c
         }
         p.cls = cls
-        val my = mine ?: if (cls >= 0 && cls != me && mt.size == 1 && mt[0] !== his) mt[0] else null
+        val my = if (strict) {
+            // The ring alone (its tag hidden) counts only where my tag would continue my last place.
+            mine ?: if (ring) MatchupFinder.Tag(me, s.meX - 31, s.meY + 24, 0f).takeIf { reach(it, lmX, lmY, t - lmT) } else null
+        } else mine ?: if (cls >= 0 && cls != me && mt.size == 1 && mt[0] !== his) mt[0] else null
         if (my != null) { p.myX = my.x + 45; p.myY = my.y - 52; lmX = my.x; lmY = my.y; lmT = t }
         if (!defence) { p.why = "not defence"; return p }
         if (cls < 0) { p.why = "no class"; return p }
         var c = opp.filter { it.cls == cls }
+        if (strict) {
+            val fs = s.fans.filter { f ->
+                s.fans.count { abs(it.y - f.y) <= ROW } < 3 &&
+                    !(ring && hypot((f.x - s.meX).toDouble(), (f.y - s.meY) * 1.6) < 70) &&
+                    !(my != null && hypot((f.x - my.x - 45).toDouble(), (f.y - my.y + 52) * 1.6) < 70)
+            }
+            var tgt: MatchupFinder.Tag? = null; var best = -1.0
+            for (q in c) for (f in fs) if (owns(q, f) && f.area * f.rim.toDouble() > best) { best = f.area * f.rim.toDouble(); tgt = q }
+            if (tgt != null) { aConf = t; p.why = "fan" }
+            else if (t - aConf <= CONF_S && t - aT <= AGE) {
+                var d0 = 1e9; var d1 = 1e9; var q0: MatchupFinder.Tag? = null
+                for (q in c) if (reach(q, aX, aY, t - aT)) { val d = dist(q, aX, aY); if (d < d0) { d1 = d0; d0 = d; q0 = q } else if (d < d1) d1 = d }
+                if (q0 != null && d0 + MARGIN <= d1) { tgt = q0; p.why = "track" }
+            }
+            if (tgt != null) {
+                p.src = 1; p.x = tgt.x + 45; p.y = tgt.y - 52; aX = tgt.x; aY = tgt.y; aT = t
+                if (tgt.cls == me) { lhX = tgt.x; lhY = tgt.y; lhT = t }
+                return p
+            }
+            var bf: MatchupFinder.Fan? = null; best = -1.0
+            for (f in fs) {
+                if (s.tags.any { owns(it, f) }) continue
+                if (pf.none { hypot((f.x - it.x).toDouble(), (f.y - it.y) * 1.6) <= FAN_NEAR }) continue
+                if (f.area * f.rim.toDouble() > best) { best = f.area * f.rim.toDouble(); bf = f }
+            }
+            if (bf != null) { p.src = 2; p.x = bf.x; p.y = bf.y; p.why = "fan alone"; aX = bf.x - 45; aY = bf.y + 52; aT = t; aConf = t }
+            else p.why = if (c.isEmpty()) "class not on screen" else "not confirmed"
+            return p
+        }
         if (c.size > 1) { val g = c.filter { it.grey >= GREY }; if (g.size == 1) c = g }
         when {
             c.isEmpty() -> {
@@ -399,5 +452,9 @@ class MatchupPicker(private val fixedMyCls: Int = -1, private val track: Boolean
         const val G0 = 12.0
         const val GV = 250.0
         const val GVETO = 0.08f
+        const val CONF_S = 2.0
+        const val FAN_NEAR = 40.0
+        const val FAN_GAP = 0.35
+        const val ROW = 8f
     }
 }

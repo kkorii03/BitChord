@@ -34,7 +34,9 @@ class MatchupShadow(private val startedNs: Long, private val follow: Int = 0) {
     private val finder = MatchupFinder()
     // track = true: the identity track for a matchup of my position (HANDOFF 0-4z6). It changes this record and the
     // opt-in follow experiment only; nothing that presses reads the picker.
-    private val picker = MatchupPicker(track = true)
+    // strict = true (HANDOFF 0-4z15): a target only where the game's own marker (the fan) confirms it. The old rule took
+    // a team mate of the matchup's position as the target when the matchup's tag was hidden (phone match of 11-12 11:13).
+    private val picker = MatchupPicker(track = true, strict = true)
     // The ONE thing here that is not record-only, and only with the opt-in experiment [Bench.Config.follow] (default 0).
     private val rule = dev.dunkblock.core.FollowRule()
     private val main = android.os.Handler(android.os.Looper.getMainLooper())

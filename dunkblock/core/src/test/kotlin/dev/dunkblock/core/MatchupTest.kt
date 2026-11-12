@@ -11,6 +11,7 @@ import kotlin.test.assertTrue
  * five frames of the user's colour match recordings and two slices of scan logs with mpick.py's decisions.
  * The identity track (MatchupPicker(track = true)) is pinned to tools/analysis/mtrack.py -track the same way, on a slice
  * of recording C and one of the first phone match (bundle b1112_083909), both SF against SF.
+ * The strict picker (MatchupPicker(track = true, strict = true)) is pinned to tools/analysis/mstrict.py -fixture.
  */
 class MatchupTest {
     private fun res(name: String) = checkNotNull(javaClass.getResourceAsStream("/matchup/$name")) { "missing test resource $name" }
@@ -52,8 +53,8 @@ class MatchupTest {
     }
 
     /** Replays a scan log through the picker; the log holds mpick.py's answer for every scan. */
-    private fun replay(name: String, track: Boolean = false): IntArray {
-        val pk = MatchupPicker(track = track)
+    private fun replay(name: String, track: Boolean = false, strict: Boolean = false): IntArray {
+        val pk = MatchupPicker(track = track, strict = strict)
         var lastDef = -9.0; var n = 0; var withTarget = 0; var withMe = 0; var fanTargets = 0; var trk = 0
         for (line in res(name).bufferedReader().readLines().drop(1).filter { it.isNotBlank() }) {
             val c = line.split(","); val t = c[0].toDouble()
@@ -69,6 +70,7 @@ class MatchupTest {
             near(c[8].toDouble(), if (p.src > 0) p.x else -1f, 0.01, "$at target x"); near(c[9].toDouble(), if (p.src > 0) p.y else -1f, 0.01, "$at target y")
             near(c[10].toDouble(), p.myX, 0.01, "$at my x"); near(c[11].toDouble(), p.myY, 0.01, "$at my y")
             if (c.size > 12) assertEquals(c[12], if (p.trk) "1" else "0", "$at named by the track")
+            if (c.size > 13) assertEquals(c[13].toInt(), p.src, "$at target source (1 tag, 2 fan alone)")
             n++; if (p.src > 0) withTarget++; if (p.src == 2) fanTargets++; if (p.myX >= 0) withMe++; if (p.trk) trk++
         }
         return intArrayOf(n, withTarget, fanTargets, withMe, trk)
@@ -92,5 +94,12 @@ class MatchupTest {
     @Test fun trackMatchesPythonOnPhoneMatch() {
         val r = replay("picks_p_trk.csv", track = true)     // the app's own matchup.csv (vc1092 match, 133-240 s)
         assertTrue(r[0] == 918 && r[1] == 300 && r[4] == 151, r.joinToString())
+    }
+
+    /** strict = true against tools/analysis/mstrict.py -fixture on the vc1100 match (my SF vs Curry = PG, team mate
+     *  LaMelo = PG), 88-262 s: holds the scenes where the old picker chased LaMelo (132, 144, 241 s). */
+    @Test fun strictMatchesPythonOnPhoneMatch() {
+        val r = replay("picks_p_strict.csv", track = true, strict = true)
+        assertTrue(r[0] == 1508 && r[1] == 295 && r[2] == 30 && r[3] == 1141 && r[4] == 205, r.joinToString())
     }
 }
