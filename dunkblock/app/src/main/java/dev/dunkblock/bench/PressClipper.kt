@@ -113,7 +113,10 @@ class PressClipper(
             lastPressNs = tNs
             presses++
             // The slot also flips 전면 블록 <-> 슛 on every change of possession; tag the side so those can be told apart.
-            request("press_" + ShotWatcher.sideName(Bench.shotSide), tNs, 1.5, 0.5)
+            // Defence presses keep 1 s after the press: the game's verdict ('블록 타이밍 늦음' …) shows +0.3..+0.6 s
+            // (HANDOFF 0-4z48, needed to measure the match block window from the user's own presses).
+            val side = ShotWatcher.sideName(Bench.shotSide)
+            request("press_$side", tNs, 1.5, if (side == "def") 1.0 else 0.5)
             pressLog.append(tNs).append(',').append(String.format(Locale.ROOT, "%.3f,%.1f,%.1f,%.1f\n", (tNs - startedNs) / 1e9, l, base, d))
         } else if (pressed && abs(d) < PRESS_THR / 2) {
             pressed = false
@@ -178,15 +181,17 @@ class PressClipper(
 
     companion object {
         const val PRESS_THR = 12f
-        const val MAX_CLIPS = 140
-        /** Each kind has its own share of [MAX_CLIPS] so one kind cannot use up the rest (vc1035: mark clips at 4 MB). */
+        const val MAX_CLIPS = 170
+        /** Each kind has its own share of [MAX_CLIPS] so one kind cannot use up the rest (vc1035: mark clips at 4 MB).
+         *  press_def has its own 30 (0-4z48: the 6 press clips were used up in the lobby, so match hand blocks had no frames). */
         fun clipGroup(tag: String): String = when {
             tag.startsWith("ult") -> "ult"
+            tag.startsWith("press_def") -> "press_def"
             tag.startsWith("press") -> "press"
             tag.startsWith("trig") -> "trig"
             tag.startsWith("mark") -> "mark"
             else -> "other"
         }
-        fun groupCap(g: String): Int = when (g) { "ult" -> 6; "press" -> 6; "trig" -> 70; "mark" -> 40; else -> 8 }
+        fun groupCap(g: String): Int = when (g) { "ult" -> 6; "press_def" -> 30; "press" -> 6; "trig" -> 70; "mark" -> 40; else -> 8 }
     }
 }
