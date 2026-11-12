@@ -1192,7 +1192,7 @@
   - **해석(가설, 표본 5)**: |dx| 15 이하 = 강화 컨테스트, 47~96 = 컨테스트 실패, 247 = 위치 부족. 순서는 한 줄로 선다. 블록이 되는 조건은 여전히 모른다.
 - **받침판이 이름표를 가린다(코드 확인)**: 우리 받침판은 파란색으로 채워 그리고(`BlockAccessibilityService.showPad`, `argb(150,40,110,255)`), 그 파랑이 고리·PG 색 검사에 걸려서 `MatchupShadow`가 그 네모를 검게 칠한 뒤 찾는다 → 그 밑의 이름표는 못 찾는다. 오른쪽 버튼 타일(`InGameProxy.showButtonTiles`)은 테두리만 그리고도 터치를 받는다(이 판 손가락 76번). **받침판을 테두리만으로 바꾸고 검은 칠을 빼는 것이 가능**하다(안 함, 폰에서 봐야 함).
 - **받침판이 실제로 얼마나 가렸나(실측, 11-12 09:43)**: 받침판 자리 = 화면 3120×1440에서 438~956 × 861~1379(묶음 `pad_shown`), 1170 좌표로 164~358 × 323~517. 받침판이 없는 녹화 5판에서 이름표로 대상을 찾은 스캔 중 그 이름표가 이 네모 안·가장자리에 있던 비율 **14 %**(479/3,327, 판별 9~31 %). 폰 묶음에서는 0.9 %(5/548) = 그만큼을 받침판이 지웠다(추정: 녹화와 경기의 자리 분포가 같다면). 공 표시 쪽은 작다: vc1096 새 인식기가 조이스틱 가리개 밑에서 새로 본 358프레임 중 받침판 네모 안은 21프레임(슛 44개 중 c10 하나만 100 → 75 %).
-- **앱에 넣음(vc1100, 11-12 09:43, 자동 블록 누름은 그대로)**:
+- **앱 코드에 넣음(커밋 45e53d628, 11-12 09:43, 자동 블록 누름은 그대로). APK는 아직 없다: GitHub가 이 저장소의 Actions를 막았다(0-6 맨 위). 최신 APK는 여전히 vc1096.**
   - ① **받침판을 테두리만 그린다**(`BlockAccessibilityService.showPad(outline = true)`, 흰색 반투명 선 4px. 터치는 창이 받으므로 그대로). `MatchupShadow`는 테두리 받침판이면 검은 칠을 하지 않는다(`padFilled`, matchup.csv `pad` 열: 0 없음 / 1 채움+칠함 / 2 테두리). 기본 누름을 정하는 인식기 A는 조이스틱 구역(x<0.32, y>0.50)을 원래 안 보므로 입력이 바뀌지 않는다(이 사용자의 받침판은 x 0.140~0.306, y 0.598~0.958로 그 안). 벤치 시험 화면(`ProxyProbeActivity`)의 받침판은 파란 채움 그대로.
   - ② **이어 가기 규칙을 `MatchupPicker(track = true)`로 옮김**(`core/Matchup.kt`, `MatchupShadow`가 켜서 씀 → 바뀌는 것은 기록(matchup.csv, 새 열 `trk`)과 선택형 따라가기 실험뿐). `track = false` 경로는 한 글자도 안 바뀜(기존 시험 `picks_c.csv`·`picks_e.csv` 그대로, `mfixture.py`가 예전 파일을 바이트 단위로 다시 만든다).
   - ③ 시험: `MatchupTest`에 `trackMatchesPythonOnMatchC`(녹화 C 100~185초 790스캔, 대상 161, 이어 가기 부름 69)와 `trackMatchesPythonOnPhoneMatch`(폰 묶음 133~240초 918스캔, 대상 300, 부름 151). 답은 `mfixture.py picks … -track`(= `mtrack.py -track`). 올리기 전에 Kotlin의 float 계산을 numpy float32로 흉내 낸 사본(`scratchpad\mtrack_f32.py`)으로 두 자료 모두 차이 0을 확인. `mtrack.py`(이어 가기 끔)는 기존 `mpick.py` 답과 1,908줄 차이 0.
@@ -1215,8 +1215,9 @@
 
 ### 0-6. 다음에 할 일 (순서대로)
 
-0-낮9(11-12 09:05, 근거 0-4z3·0-4z4). **기본 자동 블록 동작은 그대로 둔다. 다음 push = run 101.**
-1. (사용자) **vc1100**(vc1096 + 테두리 받침판 + 이어 가기 기록, 0-4z6)으로 경기 1~2판, **"공이 솟을 때 누르기 (시험)"을 켜고**, 상대가 슛할 때마다 기록 버튼. 묶음이 오면: 기록 버튼 표시와 대조한 손 떠남 목록 → `sessrel.py <세션> -rel <목록> -ev rise2`, `mvel.py -bundle2 <shot.csv> <목록> 0.12 4.0`(= W 0.12 D 4.0의 독립 시험), `discseen.py`(low2 열과 함께 B가 가리개 밑에서 더 봤는지), 검사 평균 us(2207 대비), 앱 누름마다 `verdict.py`로 판정 글자.
+0-낮10(11-12 09:47). **CI가 막혔다(실측)**: 11-12 09:16(KST)에 run 98이 빌드 도중 취소됐고 주석이 `repository invocation blocked`. 그 뒤 push 두 번(e37aadfda, 45e53d628 `[ship-blocker]`)은 실행이 아예 안 생겼고, `gh workflow run`은 `HTTP 422: Actions has been disabled for this repository`. 저장소 설정 API(`actions/permissions`)는 `enabled: true` → **GitHub 쪽에서 막은 것**으로 보인다(원인 미확인. BitChord 쪽 빌드도 같은 저장소라 같이 막혔을 것: 추정). **돌아가지 않는다**(다른 계정·다른 저장소·로컬 빌드로 우회 금지). 계정 주인(사용자)만 풀 수 있다: GitHub에서 온 메일과 저장소 Actions 화면의 안내를 보고, 필요하면 GitHub 지원에 문의. 풀리면: `gh workflow run dunkblock-apk.yml --repo kkorii03/BitChord --ref ccr-8af48de0-9efnr2`는 배포 단계가 커밋 글의 `[ship-blocker]`를 보므로, **빈 커밋이 아니라 작은 문서 커밋에 `[ship-blocker]`를 붙여 push**한다(그 실행이 run 99 → vc1099). 그 전까지 Kotlin 변경(0-4z6 ①②③)은 **컴파일도 시험도 안 된 상태**다.
+0-낮9(11-12 09:05, 근거 0-4z3·0-4z4). **기본 자동 블록 동작은 그대로 둔다. 다음 실행 = run 99(Actions가 풀린 뒤).**
+1. (사용자) **vc1096**(CI가 풀려 테두리 받침판 판이 나오면 그것)으로 경기 1~2판, **"공이 솟을 때 누르기 (시험)"을 켜고**, 상대가 슛할 때마다 기록 버튼. 묶음이 오면: 기록 버튼 표시와 대조한 손 떠남 목록 → `sessrel.py <세션> -rel <목록> -ev rise2`, `mvel.py -bundle2 <shot.csv> <목록> 0.12 4.0`(= W 0.12 D 4.0의 독립 시험), `discseen.py`(low2 열과 함께 B가 가리개 밑에서 더 봤는지), 검사 평균 us(2207 대비), 앱 누름마다 `verdict.py`로 판정 글자.
 2. **자리 가설(0-4z5, 표본 4: 좌우 간격 11 이하 = 강화 컨테스트, 73 이상 = 실패)**: 묶음마다 `presspos.py` + `verdict.py`로 표를 늘린다. 맞다면 다음 일은 박자가 아니라 **자리(따라가기, 0-4v ⑤)**다: 폰이 붙는 밤에 연습장에서 조이스틱 축과 따라가기를 먼저 시험한다. **표는 `mtrack.py <matchup.csv> -t0 <경기 시작> -track -out picks.csv` → `presspos.py <세션> -rel <목록> -picks picks.csv`로 만든다(0-4z6, 표본 5: 15 이하 강화 / 47~96 실패 / 247 위치 부족).** 다음 묶음이 같은 포지션 경기면 `mtrack.py -track -blind -sum`이 이어 가기 규칙의 첫 독립 시험이다.
 3. 강화 컨테스트 → 블록의 조건은 모른다. 사용자 경험을 물어볼 것(손으로 할 때 어떤 때 블록이 뜨는지: 더 일찍? 점프 방향? 선수 능력치?).
 4. 떠남 자동 검출(`sessrel.py`)은 밝기가 천천히 변하는 판에서 슛을 놓친다 → 기록 버튼 표시를 같이 써서 목록을 만드는 옵션을 넣는다.
@@ -1618,7 +1619,9 @@
 
 - 11-12 09:45 **매치업 찾기 폰 화면 검사 + 이어 가기 규칙(0-4z6)**: 좌표는 1170 폭(0-4z5 단위 정정), 대상 맞음 11/12(눈), 경기 중 찾는 비율 49 %, 같은 포지션 이어 가기로 60 %(오프라인, 독립 시험 전). 새 도구 `mtrack.py`, `presspos.py -picks`. 좌우 간격 표 5줄(15 이하 강화, 47~96 실패, 247 위치 부족). 앱 코드 변경 없음, 새 APK 없음.
 
-- 11-12 09:43 **테두리 받침판 + 이어 가기 규칙 앱 이식(0-4z6 끝, vc1100 = run 100)**: `BlockAccessibilityService.kt`(`showPad` outline, `padFilled`), `InGameProxy.kt`(outline = true), `MatchupShadow.kt`(검은 칠은 채운 받침판만, `track = true`, `trk` 열), `core/Matchup.kt`(`track`), `MatchupTest.kt` + `picks_c_trk.csv`·`picks_p_trk.csv`, `mfixture.py -track`, `mtrack.py`(`class`·`trk` 열, 소수 3자리). 자동 블록 누름 변경 없음. Kotlin은 눈으로만 검토(CI가 컴파일·시험).
+- 11-12 09:43 **테두리 받침판 + 이어 가기 규칙 앱 이식(0-4z6 끝, 커밋 45e53d628, **APK 미빌드**)**: `BlockAccessibilityService.kt`(`showPad` outline, `padFilled`), `InGameProxy.kt`(outline = true), `MatchupShadow.kt`(검은 칠은 채운 받침판만, `track = true`, `trk` 열), `core/Matchup.kt`(`track`), `MatchupTest.kt` + `picks_c_trk.csv`·`picks_p_trk.csv`, `mfixture.py -track`, `mtrack.py`(`class`·`trk` 열, 소수 3자리). 자동 블록 누름 변경 없음. Kotlin은 눈으로만 검토(CI가 컴파일·시험).
+
+- 11-12 09:47 **GitHub Actions 막힘 확인**(0-6 맨 위 0-낮10). run 98 취소 주석 `repository invocation blocked`, dispatch 422 `Actions has been disabled for this repository`. 우회하지 않음. 사용자에게 알림.
 
 ## 7. 정직성 규칙 (이 프로젝트의 약속)
 

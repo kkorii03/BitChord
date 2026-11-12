@@ -18,7 +18,7 @@ import kotlin.math.hypot
  * The finder was designed on 2340 x 1080 screen recordings scaled to 1170 x 540. Here the picture comes from the app's
  * own capture (about 1560 x 720) by nearest sampling. A FILLED blue joystick pad (the bench probe) is painted black
  * before the scan (its blue passes the "my ring" and the PG tag colour tests); the in-game pad is a thin frame only
- * since vc1100 and is left alone (csv column pad: 0 none, 1 filled and painted, 2 frame only). Whether the colours hold
+ * since 11-12 (HANDOFF 0-4z6) and is left alone (csv column pad: 0 none, 1 filled and painted, 2 frame only). Whether the colours hold
  * on this capture is NOT known; this log plus the colour screens it asks for (snapNow) are how to find out.
  *
  * Cost: one copy of the frame on the capture thread (about 4.5 MB, every [PERIOD_NS]); the scan runs on its own
