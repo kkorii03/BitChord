@@ -7,6 +7,9 @@ mfixture.py frames <out folder> <mp4> <name> <t1,t2,...> [<mp4> <name> <t,...> .
 mfixture.py picks <out csv> <mfollow.csv> <t0> <t1>
     a slice of an mfollow csv (only the columns the picker reads) with mpick.py's answer for every scan appended:
     t_s,me_x,me_y,me_conf,tags,fans,btn_label,class,tgt_x,tgt_y,my_x,my_y   (mpick -fantgt -autome, started at t0)
+mfixture.py picks <out csv> <scan csv> <t0> <t1> -track
+    the same with mtrack.py -track's answers (= MatchupPicker(track = true)) and a 13th column trk (1 = the identity
+    track named my tag or his in that scan). The scan csv may be the app's matchup.csv.
 """
 import sys, os, csv, subprocess
 import numpy as np, cv2
@@ -30,17 +33,20 @@ if a[0] == "frames":
                 f.write("%s|%s|%s|%s\n" % (fn, "%.1f %.1f %.4f" % (me[1], me[2], me[0]) if me else "-1 -1 0", tg, ";".join(fans)))
                 print(fn, os.path.getsize(os.path.join(out, fn)) // 1024, "KB")
 else:
-    out, src, t0, t1 = a[1], a[2], float(a[3]), float(a[4])
-    rows = [r for r in csv.DictReader(open(src)) if t0 <= float(r["t_s"]) <= t1]
+    out, src, t0, t1 = a[1], a[2], float(a[3]), float(a[4]); track = "-track" in a
+    COLS = ["t_s", "me_x", "me_y", "me_conf", "tags", "fans", "btn_label"]     # the test derives "defence" from btn_label, so must the picker
+    rows = [{k: r[k] for k in COLS} for r in csv.DictReader(open(src, encoding="utf-8")) if t0 <= float(r["t_s"]) <= t1]
     tmp = out + ".in.csv"; pk = out + ".pk.csv"
     with open(tmp, "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=list(rows[0].keys())); w.writeheader(); w.writerows(rows)
-    subprocess.check_call([sys.executable, "-I", os.path.join(HERE, "mpick.py"), tmp, "XX", "-fantgt", "-autome", "-out", pk], stdout=subprocess.DEVNULL)
+        w = csv.DictWriter(f, fieldnames=COLS); w.writeheader(); w.writerows(rows)
+    if track: subprocess.check_call([sys.executable, "-I", os.path.join(HERE, "mtrack.py"), tmp, "-track", "-out", pk], stdout=subprocess.DEVNULL)
+    else: subprocess.check_call([sys.executable, "-I", os.path.join(HERE, "mpick.py"), tmp, "XX", "-fantgt", "-autome", "-out", pk], stdout=subprocess.DEVNULL)
     P = list(csv.DictReader(open(pk))); assert len(P) == len(rows)
     with open(out, "w", newline="\n") as f:
-        f.write("t_s,me_x,me_y,me_conf,tags,fans,btn_label,class,tgt_x,tgt_y,my_x,my_y\n")
+        f.write("t_s,me_x,me_y,me_conf,tags,fans,btn_label,class,tgt_x,tgt_y,my_x,my_y" + (",trk" if track else "") + "\n")
         for r, p in zip(rows, P):
             tg = ";".join(":".join(q.split(":")[:4]) for q in r["tags"].split(";") if q)
-            f.write(",".join([r["t_s"], r["me_x"], r["me_y"], r["me_conf"], tg, r["fans"], r["btn_label"], p["class"], p["tgt_x"], p["tgt_y"], p["my_x"], p["my_y"]]) + "\n")
+            f.write(",".join([r["t_s"], r["me_x"], r["me_y"], r["me_conf"], tg, r["fans"], r["btn_label"], p["class"], p["tgt_x"], p["tgt_y"], p["my_x"], p["my_y"]] + ([p["trk"]] if track else [])) + "\n")
     os.remove(tmp); os.remove(pk)
-    print("%d scans, %d with a target, %d with my position" % (len(P), sum(float(p["tgt_x"]) >= 0 for p in P), sum(float(p["my_x"]) >= 0 for p in P)))
+    print("%d scans, %d with a target, %d with my position%s" % (len(P), sum(float(p["tgt_x"]) >= 0 for p in P), sum(float(p["my_x"]) >= 0 for p in P),
+                                                                   ", %d named by the track" % sum(p["trk"] == "1" for p in P) if track else ""))

@@ -403,7 +403,7 @@ class InGameProxy(private val svc: BlockAccessibilityService, private val autoMo
         val side = (0.36f * min(dm.widthPixels, dm.heightPixels)).toInt()
         val left = (joy.x - side / 2f).toInt()
         val top = (joy.y - side / 2f).toInt()
-        val ok = svc.showPad(left, top, side, side, "") { e, _ -> onPad(e) }
+        val ok = svc.showPad(left, top, side, side, "", outline = true) { e, _ -> onPad(e) }
         if (!ok) { finish("패드를 띄우지 못함"); return }
         padShown = true
         hand = svc.newProxyHand(16) { what -> rec("proxy", what, 0f, 0f, 0) }

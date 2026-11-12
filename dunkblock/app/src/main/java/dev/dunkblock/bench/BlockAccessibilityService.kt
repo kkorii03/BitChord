@@ -35,6 +35,8 @@ class BlockAccessibilityService : AccessibilityService() {
     @Volatile var inGame: InGameProxy? = null
     /** The joystick pad as fractions of the screen (left, top, right, bottom) while it is shown: it is in our own capture. */
     @Volatile var padFrac: FloatArray? = null
+    /** false = the pad is drawn as a thin frame only (nothing to hide from the matchup finder). */
+    @Volatile var padFilled = true
     private var proxyThread: HandlerThread? = null
 
     override fun onServiceConnected() { instance = this }
@@ -63,15 +65,21 @@ class BlockAccessibilityService : AccessibilityService() {
     /** Shows a touchable overlay window at the given SCREEN rectangle. [onTouch] gets every event + System.nanoTime(). */
     @Suppress("DEPRECATION")
     @SuppressLint("ClickableViewAccessibility")
-    fun showPad(left: Int, top: Int, width: Int, height: Int, label: String, onTouch: (MotionEvent, Long) -> Unit): Boolean {
+    fun showPad(left: Int, top: Int, width: Int, height: Int, label: String, outline: Boolean = false, onTouch: (MotionEvent, Long) -> Unit): Boolean {
         hidePad()
         return try {
             val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
             val v = object : View(this) {
-                private val fill = Paint().apply { color = Color.argb(150, 40, 110, 255) }
+                // outline = only a thin frame, so the screen capture sees the game through the pad (HANDOFF 0-4z6: the blue
+                // fill hid the matchup's name tag in about 14 % of the scans that found it on recordings without a pad).
+                private val fill = Paint().apply {
+                    if (outline) { color = Color.argb(110, 255, 255, 255); style = Paint.Style.STROKE; strokeWidth = 4f; isAntiAlias = true }
+                    else color = Color.argb(150, 40, 110, 255)
+                }
                 private val text = Paint().apply { color = Color.WHITE; textSize = 34f; isAntiAlias = true }
                 override fun onDraw(canvas: Canvas) {
-                    canvas.drawRoundRect(0f, 0f, width.toFloat(), height.toFloat(), 28f, 28f, fill)
+                    val o = if (outline) 3f else 0f
+                    canvas.drawRoundRect(o, o, width - o, height - o, 28f, 28f, fill)
                     canvas.drawText(label, 24f, 56f, text)
                 }
             }
@@ -91,6 +99,7 @@ class BlockAccessibilityService : AccessibilityService() {
             pad = v
             padLp = lp
             val dm = android.util.DisplayMetrics().also { wm.defaultDisplay.getRealMetrics(it) }
+            padFilled = !outline
             padFrac = floatArrayOf(left / dm.widthPixels.toFloat(), top / dm.heightPixels.toFloat(), (left + width) / dm.widthPixels.toFloat(), (top + height) / dm.heightPixels.toFloat())
             true
         } catch (t: Throwable) {

@@ -16,8 +16,9 @@ import kotlin.math.hypot
  * (default 0 = the follow rule's answer is logged and nothing else happens).
  *
  * The finder was designed on 2340 x 1080 screen recordings scaled to 1170 x 540. Here the picture comes from the app's
- * own capture (about 1560 x 720) by nearest sampling, and our own blue joystick pad is in it: the pad rectangle is
- * painted black before the scan (its blue passes the "my ring" and the PG tag colour tests). Whether the colours hold
+ * own capture (about 1560 x 720) by nearest sampling. A FILLED blue joystick pad (the bench probe) is painted black
+ * before the scan (its blue passes the "my ring" and the PG tag colour tests); the in-game pad is a thin frame only
+ * since vc1100 and is left alone (csv column pad: 0 none, 1 filled and painted, 2 frame only). Whether the colours hold
  * on this capture is NOT known; this log plus the colour screens it asks for (snapNow) are how to find out.
  *
  * Cost: one copy of the frame on the capture thread (about 4.5 MB, every [PERIOD_NS]); the scan runs on its own
@@ -29,7 +30,9 @@ class MatchupShadow(private val startedNs: Long, private val follow: Int = 0) {
     class Last(val tNs: Long, val src: Int, val dx: Float, val dy: Float, val d: Float)
 
     private val finder = MatchupFinder()
-    private val picker = MatchupPicker()
+    // track = true: the identity track for a matchup of my position (HANDOFF 0-4z6). It changes this record and the
+    // opt-in follow experiment only; nothing that presses reads the picker.
+    private val picker = MatchupPicker(track = true)
     // The ONE thing here that is not record-only, and only with the opt-in experiment [Bench.Config.follow] (default 0).
     private val rule = dev.dunkblock.core.FollowRule()
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
@@ -44,7 +47,7 @@ class MatchupShadow(private val startedNs: Long, private val follow: Int = 0) {
     private var lastSnapNs = 0L
     private var snaps = 0
     private var lines = 0
-    private val log = StringBuilder(1 shl 16).append("t_s,side,def,me_x,me_y,me_conf,tags,fans,btn_label,my_cls,cls,src,tgt_x,tgt_y,my_x,my_y,why,us,pad,push_deg,push_why\n")
+    private val log = StringBuilder(1 shl 16).append("t_s,side,def,me_x,me_y,me_conf,tags,fans,btn_label,my_cls,cls,src,tgt_x,tgt_y,my_x,my_y,why,us,pad,push_deg,push_why,trk\n")
 
     @Volatile var last: Last? = null; private set
     /** Set by the scan thread when a colour screen of this moment would help; the capture thread clears it. */
@@ -81,15 +84,17 @@ class MatchupShadow(private val startedNs: Long, private val follow: Int = 0) {
             n = minOf(d.remaining(), rowStride * h)
             d.get(rows, 0, n)
         } catch (t: Throwable) { busy.set(false); return }
-        val pad = BlockAccessibilityService.instance?.padFrac
+        val svc = BlockAccessibilityService.instance
+        val pad = svc?.padFrac
+        val padFilled = svc?.padFilled ?: true
         try {
             worker.execute {
-                try { scan(w, h, rowStride, n, tNs, side, def, pad) } catch (t: Throwable) { android.util.Log.e("DunkBlockMatchup", "scan", t) } finally { busy.set(false) }
+                try { scan(w, h, rowStride, n, tNs, side, def, pad, padFilled) } catch (t: Throwable) { android.util.Log.e("DunkBlockMatchup", "scan", t) } finally { busy.set(false) }
             }
         } catch (t: Throwable) { busy.set(false) }
     }
 
-    private fun scan(w: Int, h: Int, rowStride: Int, n: Int, tNs: Long, side: Int, def: Boolean, pad: FloatArray?) {
+    private fun scan(w: Int, h: Int, rowStride: Int, n: Int, tNs: Long, side: Int, def: Boolean, pad: FloatArray?, padFilled: Boolean) {
         val t0 = System.nanoTime()
         val W = MatchupFinder.W; val H = MatchupFinder.H
         if (mapW != w) { mapW = w; for (x in 0 until W) xmap[x] = minOf(w - 1, ((x + 0.5) * w / W).toInt()) * 4 }
@@ -102,7 +107,7 @@ class MatchupShadow(private val startedNs: Long, private val follow: Int = 0) {
                 o += 3
             }
         }
-        if (pad != null) {
+        if (pad != null && padFilled) {
             val x0 = ((pad[0] * W).toInt() - 4).coerceIn(0, W); val x1 = ((pad[2] * W).toInt() + 5).coerceIn(0, W)
             val y0 = ((pad[1] * H).toInt() - 4).coerceIn(0, H); val y1 = ((pad[3] * H).toInt() + 5).coerceIn(0, H)
             for (y in y0 until y1) java.util.Arrays.fill(rgb, (y * W + x0) * 3, (y * W + x1) * 3, 0.toByte())
@@ -134,10 +139,10 @@ class MatchupShadow(private val startedNs: Long, private val follow: Int = 0) {
         sb.append(',')
         for ((i, q) in s.fans.withIndex()) { if (i > 0) sb.append(';'); sb.append(String.format(Locale.ROOT, "%.1f:%.1f:%d:%.2f", q.x, q.y, q.area, q.rim)) }
         // btn_label: mpick.py reads "defence" from this column (0.20-0.27 = the block label); here it carries [def].
-        sb.append(String.format(Locale.ROOT, ",%s,%s,%s,%d,%.1f,%.1f,%.1f,%.1f,%s,%d,%d,%s,%s\n", if (def) "0.23" else "0.00",
+        sb.append(String.format(Locale.ROOT, ",%s,%s,%s,%d,%.1f,%.1f,%.1f,%.1f,%s,%d,%d,%s,%s,%d\n", if (def) "0.23" else "0.00",
             if (p.myCls >= 0) MatchupFinder.CLASSES[p.myCls] else "", if (p.cls >= 0) MatchupFinder.CLASSES[p.cls] else "", p.src,
-            if (p.src > 0) p.x else -1f, if (p.src > 0) p.y else -1f, p.myX, p.myY, p.why, us, if (pad != null) 1 else 0,
-            if (deg.isNaN()) "" else String.format(Locale.ROOT, "%.0f", deg), rule.why))
+            if (p.src > 0) p.x else -1f, if (p.src > 0) p.y else -1f, p.myX, p.myY, p.why, us, if (pad == null) 0 else if (padFilled) 1 else 2,
+            if (deg.isNaN()) "" else String.format(Locale.ROOT, "%.0f", deg), rule.why, if (p.trk) 1 else 0))
         synchronized(log) { log.append(sb) }
     }
 

@@ -9,6 +9,8 @@ import kotlin.test.assertTrue
 /**
  * The Kotlin port must give the Python answers (tools/analysis/mfixture.py wrote them next to the pictures):
  * five frames of the user's colour match recordings and two slices of scan logs with mpick.py's decisions.
+ * The identity track (MatchupPicker(track = true)) is pinned to tools/analysis/mtrack.py -track the same way, on a slice
+ * of recording C and one of the first phone match (bundle b1112_083909), both SF against SF.
  */
 class MatchupTest {
     private fun res(name: String) = checkNotNull(javaClass.getResourceAsStream("/matchup/$name")) { "missing test resource $name" }
@@ -50,9 +52,9 @@ class MatchupTest {
     }
 
     /** Replays a scan log through the picker; the log holds mpick.py's answer for every scan. */
-    private fun replay(name: String): IntArray {
-        val pk = MatchupPicker()
-        var lastDef = -9.0; var n = 0; var withTarget = 0; var withMe = 0; var fanTargets = 0
+    private fun replay(name: String, track: Boolean = false): IntArray {
+        val pk = MatchupPicker(track = track)
+        var lastDef = -9.0; var n = 0; var withTarget = 0; var withMe = 0; var fanTargets = 0; var trk = 0
         for (line in res(name).bufferedReader().readLines().drop(1).filter { it.isNotBlank() }) {
             val c = line.split(","); val t = c[0].toDouble()
             val tags = c[4].split(";").filter { it.isNotEmpty() }.map { it.split(":") }
@@ -66,9 +68,10 @@ class MatchupTest {
             assertEquals(c[7], if (p.cls >= 0) MatchupFinder.CLASSES[p.cls] else "", "$at matchup class")
             near(c[8].toDouble(), if (p.src > 0) p.x else -1f, 0.01, "$at target x"); near(c[9].toDouble(), if (p.src > 0) p.y else -1f, 0.01, "$at target y")
             near(c[10].toDouble(), p.myX, 0.01, "$at my x"); near(c[11].toDouble(), p.myY, 0.01, "$at my y")
-            n++; if (p.src > 0) withTarget++; if (p.src == 2) fanTargets++; if (p.myX >= 0) withMe++
+            if (c.size > 12) assertEquals(c[12], if (p.trk) "1" else "0", "$at named by the track")
+            n++; if (p.src > 0) withTarget++; if (p.src == 2) fanTargets++; if (p.myX >= 0) withMe++; if (p.trk) trk++
         }
-        return intArrayOf(n, withTarget, fanTargets, withMe)
+        return intArrayOf(n, withTarget, fanTargets, withMe, trk)
     }
 
     @Test fun pickerMatchesPythonOnMatchE() {
@@ -79,5 +82,15 @@ class MatchupTest {
     @Test fun pickerMatchesPythonOnMatchC() {
         val r = replay("picks_c.csv")      // my SF against an SF: my own tag must never be the target
         assertTrue(r[0] > 700 && r[1] > 100, r.joinToString())
+    }
+
+    @Test fun trackMatchesPythonOnMatchC() {
+        val r = replay("picks_c_trk.csv", track = true)     // recording C again, with the identity track
+        assertTrue(r[0] == 790 && r[1] == 161 && r[4] == 69, r.joinToString())
+    }
+
+    @Test fun trackMatchesPythonOnPhoneMatch() {
+        val r = replay("picks_p_trk.csv", track = true)     // the app's own matchup.csv (vc1092 match, 133-240 s)
+        assertTrue(r[0] == 918 && r[1] == 300 && r[4] == 151, r.joinToString())
     }
 }

@@ -9,7 +9,7 @@ All positions are in the finder's 1170 x 540 space (NOT capture pixels; x 960/11
            within reach (12 + 250 px/s x age), mine is not the greyer one (0.08) and the swap is 25 px worse.
  -blind  : self-test: the ring is hidden in every second 2-s block; the track's answer there is compared with the
            ring's. -sum prints one line.
- -out    : one row per scan: t_s,def,src,tgt_x,tgt_y,my_x,my_y,why,mhow,thow (mhow ring|trk, thow ring|trk|plain;
+ -out    : one row per scan: t_s,def,src,tgt_x,tgt_y,my_x,my_y,why,mhow,thow,class,trk (mhow ring|trk, thow ring|trk|plain;
            my_x/my_y and tgt = tag + (45,-52), i.e. both body places, so tgt - my has no offset). Feed to
            presspos.py -picks.
 Other switches (-age -cap -margin -g0 -gv -gveto) are the rule's numbers; defaults are the ones measured.
@@ -17,7 +17,8 @@ DESIGNED ON bundle b1112_083909 (vc1092 match, SF vs SF) and recording C (SF vs 
 tuning, so there is NO independent test yet: the next same-position match is the test, numbers untouched.
 Measured (HANDOFF 0-4z6): bundle target 49 -> 60 % of defence scans, target+me 36 -> 46 %; C 34 -> 39 %;
 A B D E unchanged; blind wrong calls 1.9 % (bundle), 1.4 % (C); 12 changed frames by eye: 0 new errors.
-Not in the app: the Kotlin picker is unchanged (MatchupTest pins it to mpick.py)."""
+The same rule is MatchupPicker(track = true) in core/Matchup.kt; MatchupTest pins the two together
+(fixtures picks_c_trk.csv, picks_p_trk.csv written by mfixture.py picks ... -track)."""
 import sys, csv, math, collections
 a = sys.argv[1:]
 def opt(k, d): return float(a[a.index(k) + 1]) if k in a else d
@@ -47,7 +48,7 @@ class Picker:
         return l is not None and t - l[2] <= AGE and dt(q, l) <= G0 + GV * (t - l[2])
 
     def step(s, t, de, T, F, me):
-        p = dict(src=0, x=-1, y=-1, myx=-1, myy=-1, cls=None, why="", mhow="", thow="")
+        p = dict(src=0, x=-1, y=-1, myx=-1, myy=-1, cls=None, why="", mhow="", thow="", trk=0)
         ME = s.fixed
         if ME is None:
             if me and T:
@@ -78,6 +79,7 @@ class Picker:
                 cand.sort(key=lambda z: z[0])
                 if cand[0][1] and cand[0][0] + MARGIN <= cand[1][0]: mine, his = cand[0][2], cand[0][3]
             if mine is not None: p["mhow"] = "trk"
+            if mine is not None or his is not None: p["trk"] = 1
         ring = me is not None
         opp = [q for q in T if q is not mine and (q["c"] != ME or ring or q is his or (mine is not None and p["mhow"] == "trk"))]
         o = None
@@ -97,7 +99,7 @@ class Picker:
             cnt = collections.Counter(c for _, c in s.votes); c, k = cnt.most_common(1)[0]
             if k >= SHARE * len(s.votes): cls = c
         p["cls"] = cls
-        my = mine or (mt[0] if cls and cls != ME and len(mt) == 1 else None)
+        my = mine or (mt[0] if cls and cls != ME and len(mt) == 1 and mt[0] is not his else None)
         if my: p["myx"], p["myy"] = my["x"] + 45, my["y"] - 52; s.lm = (my["x"], my["y"], t)
         if not de: p["why"] = "not defence"; return p
         if cls is None: p["why"] = "no class"; return p
@@ -149,7 +151,7 @@ for r in rows:
             if prev and t - prev[0] < 0.25 and math.hypot(p["x"] - prev[1], p["y"] - prev[2]) > 120: jumps += 1
             prev = (t, p["x"], p["y"])
         else: why[p["why"]] += 1
-    out.append([r["t_s"], 1 if de else 0, p["src"], "%.1f" % p["x"], "%.1f" % p["y"], "%.1f" % p["myx"], "%.1f" % p["myy"], p["why"], p["mhow"], p["thow"]])
+    out.append([r["t_s"], 1 if de else 0, p["src"], "%.3f" % p["x"], "%.3f" % p["y"], "%.3f" % p["myx"], "%.3f" % p["myy"], p["why"], p["mhow"], p["thow"], p["cls"] or "", p["trk"]])
 print("%s%s | defence %d | target %d (%.0f%%) | target+me %d (%.0f%%) | target jumps>120px %d" % ("TRACK" if TRACK else "old", " BLIND" if BLIND else "", n["def"], n["tgt"], 100.0 * n["tgt"] / max(1, n["def"]), n["both"], 100.0 * n["both"] / max(1, n["def"]), jumps))
 print("  target by:", dict(how), "| none:", dict(why))
 if SUM:
@@ -160,4 +162,4 @@ elif BLIND:
     print("  wrong at:", " ".join(WR))
     for k in sorted(bl): print("  blind %-28s %-5s %-13s %d" % (k + (bl[k],)))
 if OUT:
-    with open(OUT, "w", newline="") as f: w = csv.writer(f); w.writerow(["t_s", "def", "src", "tgt_x", "tgt_y", "my_x", "my_y", "why", "mhow", "thow"]); w.writerows(out)
+    with open(OUT, "w", newline="") as f: w = csv.writer(f); w.writerow(["t_s", "def", "src", "tgt_x", "tgt_y", "my_x", "my_y", "why", "mhow", "thow", "class", "trk"]); w.writerows(out)

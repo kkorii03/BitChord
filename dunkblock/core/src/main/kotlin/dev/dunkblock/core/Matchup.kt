@@ -241,9 +241,16 @@ class MatchupFinder {
  *             screen but a fan visible away from me and under no other tag -> the fan itself (designed on the five
  *             recordings, 24 of 24 by eye; needs new recordings to count as tested).
  *  my feet  = the tag under my ring, or - when the matchup has another position - the only tag of my class.
+ *  [track]  = identity track for a matchup of MY position (two tags of one colour; tools/analysis/mtrack.py -track is
+ *             the twin). When no tag of my class sits under my ring, the 1-2 tags of my class are told apart by where
+ *             "mine" and "his" were at most [AGE] s ago, and only within [CAP] s of the last ring-confirmed "mine".
+ *             One tag: mine if within reach of my last place and [MARGIN] px closer to it than to his; his only when
+ *             my own place is also known. Two tags: the cheaper pairing, if each is within reach, "mine" is not the
+ *             greyer one ([GVETO]) and the swapped pairing is [MARGIN] px worse. Designed on one phone match and
+ *             recording C (both SF v SF, both looked at): HANDOFF 0-4z6; no independent test yet.
  * All positions are feet positions in px of the 1170 x 540 picture.
  */
-class MatchupPicker(private val fixedMyCls: Int = -1) {
+class MatchupPicker(private val fixedMyCls: Int = -1, private val track: Boolean = false) {
     class Pick {
         var defence = false
         /** 0 none, 1 the matchup's tag, 2 the matchup's fan (tag not on screen). */
@@ -253,11 +260,20 @@ class MatchupPicker(private val fixedMyCls: Int = -1) {
         var cls = -1; var myCls = -1
         var owner = -1
         var why = ""
+        /** The identity track named my tag or his in this scan (no ring on a tag of my class). */
+        var trk = false
     }
 
     private val voteT = ArrayList<Double>(); private val voteC = ArrayList<Int>()
     private val meVotes = IntArray(ME_KEEP) { -1 }; private var mePos = 0; private var meN = 0
     var myCls = fixedMyCls; private set
+    // identity track: the last place of my tag and of the matchup's tag when it has my class, and the last ring-confirmed time
+    private var lmX = 0f; private var lmY = 0f; private var lmT = -1e9
+    private var lhX = 0f; private var lhY = 0f; private var lhT = -1e9
+    private var ringT = -1e9
+
+    private fun dist(q: MatchupFinder.Tag, x: Float, y: Float) = hypot((q.x - x).toDouble(), (q.y - y) * 1.6)
+    private fun reach(q: MatchupFinder.Tag, x: Float, y: Float, age: Double) = age <= AGE && dist(q, x, y) <= G0 + GV * age
 
     fun step(t: Double, defence: Boolean, s: MatchupFinder.Scan): Pick {
         val p = Pick(); p.defence = defence
@@ -283,7 +299,29 @@ class MatchupPicker(private val fixedMyCls: Int = -1) {
             for (q in s.tags) if (q.cls == me) { val d = hypot((q.x + 31 - s.meX).toDouble(), (q.y - 24 - s.meY) * 1.6); if (d < bd) { bd = d; mine = q } }
             if (bd > 45) mine = null
         }
-        val opp = s.tags.filter { it !== mine && (it.cls != me || ring) }
+        val mt = s.tags.filter { it.cls == me }
+        var his: MatchupFinder.Tag? = null
+        var mineByTrack = false
+        if (mine != null) ringT = t
+        else if (track && t - ringT <= CAP && (mt.size == 1 || mt.size == 2)) {
+            val rm = t - lmT <= AGE; val rh = t - lhT <= AGE
+            if (mt.size == 1) {
+                val q = mt[0]
+                val dm = if (rm) dist(q, lmX, lmY) else 1e9; val dh = if (rh) dist(q, lhX, lhY) else 1e9
+                if (rm && reach(q, lmX, lmY, t - lmT) && dm + MARGIN <= dh) mine = q
+                else if (rh && rm && reach(q, lhX, lhY, t - lhT) && dh + MARGIN <= dm) his = q
+            } else if (rm || rh) {
+                fun cost(m: MatchupFinder.Tag, h: MatchupFinder.Tag) = (if (rm) dist(m, lmX, lmY) else 0.0) + (if (rh) dist(h, lhX, lhY) else 0.0)
+                fun ok(m: MatchupFinder.Tag, h: MatchupFinder.Tag) =
+                    (!rm || reach(m, lmX, lmY, t - lmT)) && (!rh || reach(h, lhX, lhY, t - lhT)) && m.grey - h.grey < GVETO
+                val c0 = cost(mt[0], mt[1]); val c1 = cost(mt[1], mt[0])
+                val m = if (c0 <= c1) mt[0] else mt[1]; val h = if (c0 <= c1) mt[1] else mt[0]
+                if (ok(m, h) && minOf(c0, c1) + MARGIN <= maxOf(c0, c1)) { mine = m; his = h }
+            }
+            mineByTrack = mine != null
+            p.trk = mine != null || his != null
+        }
+        val opp = s.tags.filter { it !== mine && (it.cls != me || ring || it === his || mineByTrack) }
         var o: MatchupFinder.Tag? = null
         if (defence) {
             var best = -1.0
@@ -305,9 +343,8 @@ class MatchupPicker(private val fixedMyCls: Int = -1) {
             if (cnt[c] >= SHARE * voteC.size) cls = c
         }
         p.cls = cls
-        val mt = s.tags.filter { it.cls == me }
-        val my = mine ?: if (cls >= 0 && cls != me && mt.size == 1) mt[0] else null
-        if (my != null) { p.myX = my.x + 45; p.myY = my.y - 52 }
+        val my = mine ?: if (cls >= 0 && cls != me && mt.size == 1 && mt[0] !== his) mt[0] else null
+        if (my != null) { p.myX = my.x + 45; p.myY = my.y - 52; lmX = my.x; lmY = my.y; lmT = t }
         if (!defence) { p.why = "not defence"; return p }
         if (cls < 0) { p.why = "no class"; return p }
         var c = opp.filter { it.cls == cls }
@@ -323,7 +360,10 @@ class MatchupPicker(private val fixedMyCls: Int = -1) {
                 if (bf != null) { p.src = 2; p.x = bf.x; p.y = bf.y } else p.why = "class not on screen"
             }
             c.size > 1 -> p.why = "two of the class"
-            else -> { p.src = 1; p.x = c[0].x + 45; p.y = c[0].y - 52 }
+            else -> {
+                p.src = 1; p.x = c[0].x + 45; p.y = c[0].y - 52
+                if (c[0].cls == me) { lhX = c[0].x; lhY = c[0].y; lhT = t }
+            }
         }
         return p
     }
@@ -335,5 +375,11 @@ class MatchupPicker(private val fixedMyCls: Int = -1) {
         const val GREY = 0.15f
         const val ME_KEEP = 200
         const val ME_MIN = 15
+        const val AGE = 0.6
+        const val CAP = 2.0
+        const val MARGIN = 25.0
+        const val G0 = 12.0
+        const val GV = 250.0
+        const val GVETO = 0.08f
     }
 }
