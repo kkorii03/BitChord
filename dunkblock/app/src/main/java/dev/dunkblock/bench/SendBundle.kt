@@ -64,7 +64,10 @@ object SendBundle {
         listOf(File(ctx.filesDir, "last_crash.txt"), File(ctx.filesDir, "last_crash_seen.txt")).filter { it.isFile }.forEach { files.add(it) }
         if (files.isEmpty()) return "보낼 결과가 없습니다. 먼저 시험을 하나 실행하세요."
         // Newest sessions first inside each priority; at most 12 evidence images overall.
-        val ordered = files.sortedWith(compareBy<File>({ priority(it) }, { -(it.parentFile?.lastModified() ?: 0L) }, { it.path }))
+        // vc1138: one lastModified() per folder, not one per comparison (2,000+ files made the sort itself slow).
+        val dirTime = HashMap<File?, Long>()
+        fun dirMs(f: File): Long = dirTime.getOrPut(f.parentFile) { f.parentFile?.lastModified() ?: 0L }
+        val ordered = files.sortedWith(compareBy<File>({ priority(it) }, { -dirMs(it) }, { it.path }))
         var images = 0
         // Colour screen samples: keep 60 evenly spaced per session so clips still fit.
         val thin = HashSet<File>()
@@ -84,7 +87,7 @@ object SendBundle {
             val rel = if (f.startsWith(root)) f.relativeTo(root).path else "app/${f.name}"
             if (f in thin) continue
             if (f.name.endsWith(".png") && images >= 12) { skipped.add("$rel (증거 이미지 12장 초과)"); continue }
-            val est = if (f.name.endsWith(".png") || f.name.endsWith(".jpg")) f.length() else compressedSize(f.readBytes(), false)
+            val est = if (isImage(f)) f.length() else compressedSize(f.readBytes(), false)
             var p = partUsed.indexOfFirst { it + est + 4096 <= BUDGET - MANIFEST_RESERVE }
             if (p < 0 && parts.size < MAX_PARTS && est + 4096 <= BUDGET - MANIFEST_RESERVE) {
                 parts.add(ArrayList()); partUsed.add(0L); p = parts.size - 1
@@ -123,15 +126,20 @@ object SendBundle {
             }
             val uri = ctx.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
                 ?: return "전송용 묶음 저장 실패 (${i + 1}/$n)"
-            val counter = CountingStream(ctx.contentResolver.openOutputStream(uri) ?: return "전송용 묶음 저장 실패 (${i + 1}/$n)")
+            // vc1138: buffered (the zip stream writes 512-byte pieces, each one a call into MediaStore's file descriptor).
+            val raw = ctx.contentResolver.openOutputStream(uri) ?: return "전송용 묶음 저장 실패 (${i + 1}/$n)"
+            val counter = CountingStream(raw.buffered(1 shl 20))
             ZipOutputStream(counter).use { zip ->
-                zip.setLevel(Deflater.BEST_COMPRESSION)
                 for ((f, rel) in list) {
+                    // vc1138: JPG/PNG are already compressed; BEST_COMPRESSION on 2,000+ of them made the bundle take
+                    // minutes for ~0% gain. Text keeps the level the size estimate used.
+                    zip.setLevel(if (isImage(f)) Deflater.NO_COMPRESSION else TEXT_LEVEL)
                     zip.putNextEntry(ZipEntry(rel))
-                    f.inputStream().use { it.copyTo(zip) }
+                    f.inputStream().use { it.copyTo(zip, 1 shl 16) }
                     zip.closeEntry()
                     written++
                 }
+                zip.setLevel(TEXT_LEVEL)
                 zip.putNextEntry(ZipEntry(if (i == 0) "MANIFEST.txt" else "MANIFEST_${i + 1}of$n.txt"))
                 zip.write(manifest)
                 zip.closeEntry()
@@ -151,9 +159,14 @@ object SendBundle {
         override fun close() = out.close()
     }
 
+    /** Same level for the size estimate and the real write, so the estimate stays exact. */
+    private const val TEXT_LEVEL = Deflater.DEFAULT_COMPRESSION
+
+    private fun isImage(f: File) = f.name.endsWith(".jpg") || f.name.endsWith(".png")
+
     private fun compressedSize(raw: ByteArray, alreadyCompressed: Boolean): Long {
         if (alreadyCompressed) return raw.size.toLong()
-        val d = Deflater(Deflater.BEST_COMPRESSION)
+        val d = Deflater(TEXT_LEVEL)
         d.setInput(raw); d.finish()
         val buf = ByteArray(64 * 1024)
         var total = 0L
