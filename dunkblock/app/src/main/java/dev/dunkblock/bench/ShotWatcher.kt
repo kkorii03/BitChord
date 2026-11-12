@@ -445,7 +445,10 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
             for (c in crops) c.px = ByteArray(cw * ch * 4)
             cropPos = 0; cropFilled = 0
         }
-        if (found) { lastCx = (discX * w).toInt(); lastCy = (discY * h).toInt(); lastSeenNs = tNs }
+        // vc1136: on defence follow the second finder (d2) when it has the handler: the first finder sat on the wrong
+        // target in 30-60% of the 11-12 match colour frames (HANDOFF 0-4z35); d2 saw 15 of 20 releases vs 9.
+        if (side == SIDE_DEF && d2) { lastCx = (d2X * w).toInt(); lastCy = (d2Y * h).toInt(); lastSeenNs = tNs }
+        else if (found) { lastCx = (discX * w).toInt(); lastCy = (discY * h).toInt(); lastSeenNs = tNs }
         if (scans % 2 == 0) {
             val useDisc = lastCx >= 0 && tNs - lastSeenNs < 1_000_000_000L
             val cx = if (useDisc) lastCx else w / 2

@@ -39,7 +39,10 @@ object SendBundle {
         // 기록-button clips are the only record of real shots the trigger missed (vc1044 match: none arrived).
         f.name.endsWith(".jpg") && f.parentFile?.name?.contains("_mark_") == true -> 5
         f.name.endsWith("_trig.jpg") -> 5                                 // colour screen at a trigger: where my player stood
-        f.name.endsWith(".jpg") && f.parentFile?.name?.startsWith("colour_") == true -> 6   // full-res colour around the ball
+        // vc1136: full-res colour around the ball goes before grey clip frames. 11-12 18:12 match: all 14 up_def/crouch
+        // colour clips were left out as '용량 초과' while 20 grey trig_dark clips (dark detector, press off) went in.
+        f.name.endsWith(".jpg") && f.parentFile?.name?.startsWith("colour_") == true -> 5
+        f.name.endsWith(".jpg") && f.parentFile?.name?.contains("_trig_dark_") == true -> 7
         f.name.endsWith(".jpg") && f.parentFile?.name == "frames" -> 6   // colour game screens (thinned to 60 per session)
         f.name.endsWith(".jpg") -> 6                                      // clip frames
         f.name.endsWith(".png") -> 7
