@@ -71,7 +71,7 @@ class MatchupShadow(private val startedNs: Long, private val follow: Int = 0) {
         fun name(c: Int) = if (c >= 0) MatchupFinder.CLASSES[c] else "모름"
         return String.format(Locale.ROOT, "매치업 찾기(기록만): 훑기 %d회(수비 %d회, 그중 대상 찾음 %d회), 내 포지션 %s, 매치업 포지션 %s, 평균 %.1f ms, 최대 %.1f ms, 건너뜀 %d회\n  따라가기 규칙이 밀라고 한 훑기 %d회(%s)",
             scans, defScans, withTarget, name(myCls), name(cls), if (scans > 0) usTotal / scans / 1000.0 else 0.0, usMax / 1000.0, skipped,
-            pushes, when (follow) { 1 -> "연습장 시험 켬: 엄지를 올려 둔 동안 실제로 밂"; 2 -> "연습장 시험 켬: 손 없이 실제로 밂"; 3 -> "연습장 시험 켬: 엄지를 뗀 동안 실제로 밂"; else -> "기록만, 조이스틱은 건드리지 않음" })
+            pushes, when (follow) { 1 -> "연습장 시험 켬: 엄지를 올려 둔 동안 실제로 밂"; 2 -> "연습장 시험 켬: 손 없이 실제로 밂"; 3 -> "연습장 시험 켬: 엄지를 뗀 동안 실제로 밂"; 4 -> "연습장 시험 켬: 엄지 방향에 매치업 쪽을 섞음 + 뗀 동안 밂"; else -> "기록만, 조이스틱은 건드리지 않음" })
     }
 
     /** Capture thread. [side] = ShotWatcher's reading (the block button: 1 defence, 2 offence), [def] = on defence now. */

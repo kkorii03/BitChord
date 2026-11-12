@@ -127,7 +127,33 @@ class InGameProxy(private val svc: BlockAccessibilityService, private val autoMo
     private var liftSteers = 0             // mode 3: pushes started while the thumb was off the pad
     private var liftTakeovers = 0          // mode 3: the thumb landed on the pad during such a push and took over
     private var liftLost = 0               // mode 3: our own re-put-down landed on the pad (the game lost the push)
+    private var followDeg = Float.NaN      // mode 4: the follow rule's latest direction while the thumb steers
+    private var bendState = 0              // mode 4: 0 = no direction, 1 = bending the thumb, 2 = thumb points away (left alone)
+    private var bends = 0                  // mode 4: stretches in which the thumb's direction was bent
+    private var bendAway = 0               // mode 4: stretches in which the thumb pointed away from the matchup (left alone)
     private val steerWatch = Runnable { steerEnd("stale") }
+
+    /**
+     * Mode 4: the thumb's own direction (from where it landed), turned by at most [MAX_BEND_DEG] towards [followDeg].
+     * A thumb more than [BEND_KEEP_DEG] away from the matchup's direction means the user goes elsewhere on purpose:
+     * left alone. Length kept, so the user's speed is his. Main thread.
+     */
+    private fun bent(p: PointF): PointF {
+        val d = followDeg
+        if (d.isNaN()) return p
+        val vx = (p.x - thumbLanded.x).toDouble(); val vy = (p.y - thumbLanded.y).toDouble()
+        val mag = Math.hypot(vx, vy)
+        if (mag < deadZone) return p
+        val a1 = Math.toDegrees(Math.atan2(-vy, vx))          // screen y grows downwards
+        val diff = ((d - a1) % 360.0 + 540.0) % 360.0 - 180.0
+        if (Math.abs(diff) > BEND_KEEP_DEG) {
+            if (bendState != 2) { bendState = 2; bendAway++; rec("auto", "bend_away", p.x, p.y, diff.toInt()) }
+            return p
+        }
+        if (bendState != 1) { bendState = 1; bends++; rec("auto", "bend_on", p.x, p.y, diff.toInt()) }
+        val a = Math.toRadians(a1 + diff.coerceIn(-MAX_BEND_DEG, MAX_BEND_DEG))
+        return PointF(thumbLanded.x + (mag * Math.cos(a)).toFloat(), thumbLanded.y - (mag * Math.sin(a)).toFloat())
+    }
 
     /**
      * [Bench.Config.follow], PRACTICE COURT ONLY, never tried on the phone (written 11-12 without one). Main thread,
@@ -147,6 +173,10 @@ class InGameProxy(private val svc: BlockAccessibilityService, private val autoMo
      *   window it went down on (the right-hand tiles rely on the same rule), and a real thumb lands on the pad,
      *   whose ACTION_DOWN ends the push before the normal proxy starts. A blind window of about 2 x
      *   [PASS_THROUGH_MS] per push start remains, when a thumb would land on the game directly.
+     * mode 4 (11-12, "bend", the user asked for it after 0-4z20: the thumb was on the pad at 112 of 120 releases):
+     *   modes 1 and 3, plus while the thumb steers its direction is turned towards the matchup ([bent]). This breaks
+     *   "the thumb always wins" a little, on purpose; never more than [MAX_BEND_DEG], never against a thumb that
+     *   points away.
      * Unknown: whether the game's joystick centre is where the finger lands (assumed here) or fixed.
      */
     fun steer(deg: Float, mode: Int) {
@@ -159,26 +189,30 @@ class InGameProxy(private val svc: BlockAccessibilityService, private val autoMo
         val a = Math.toRadians(deg.toDouble())
         val ox = r * Math.cos(a).toFloat(); val oy = -r * Math.sin(a).toFloat()
         if (thumbDown) {
-            if (mode == 1 && joyStarted && !thumbTookOver) {
+            if ((mode == 1 || mode == 4) && joyStarted && !thumbTookOver) {
                 if (!assisting) { assisting = true; assists++; rec("auto", "assist_on", thumbLanded.x, thumbLanded.y, deg.toInt()) }
                 h.move(JOY, PointF(thumbLanded.x + ox, thumbLanded.y + oy))
+            } else if (mode == 4 && joyStarted && thumbTookOver) {
+                followDeg = deg
+                h.move(JOY, bent(thumbAt))
             }
             return
         }
-        if (mode != 2 && mode != 3) return
+        if (mode < 2) return
         steerTo = PointF(joy.x + ox, joy.y + oy)
         if (steerOwn) { if (steerDown) h.move(JOY, steerTo); return }
         val now = System.nanoTime()
-        if (mode == 3 && (downs == 0 || now - thumbUpNs < LIFT_IDLE_NS || now - lastTouchNs > RECENT_TOUCH_NS)) return
+        val lift = mode >= 3
+        if (lift && (downs == 0 || now - thumbUpNs < LIFT_IDLE_NS || now - lastTouchNs > RECENT_TOUCH_NS)) return
         steerOwn = true; steerDown = false
-        if (mode == 3) liftSteers++ else ownSteers++
+        if (lift) liftSteers++ else ownSteers++
         svc.setPadTouchable(false)
-        rec("auto", if (mode == 3) "lift_steer_on" else "steer_on", steerTo.x, steerTo.y, deg.toInt())
+        rec("auto", if (lift) "lift_steer_on" else "steer_on", steerTo.x, steerTo.y, deg.toInt())
         main.postDelayed({
             if (steerOwn && !steerDown && !thumbDown) {
                 steerDown = true; h.down(JOY, steerTo, anchor = PointF(joy.x, joy.y))
                 // mode 3: the stroke is with the game now; let a real thumb land on the pad again (it ends the push).
-                if (mode == 3) main.postDelayed({ if (steerOwn && !thumbDown) svc.setPadTouchable(true) }, PASS_THROUGH_MS)
+                if (lift) main.postDelayed({ if (steerOwn && !thumbDown) svc.setPadTouchable(true) }, PASS_THROUGH_MS)
             }
         }, PASS_THROUGH_MS)
     }
@@ -186,6 +220,12 @@ class InGameProxy(private val svc: BlockAccessibilityService, private val autoMo
     private fun steerEnd(why: String) {
         main.removeCallbacks(steerWatch)
         val h = hand
+        followDeg = Float.NaN
+        if (bendState != 0) {
+            val was = bendState; bendState = 0
+            rec("auto", "bend_off_$why", thumbAt.x, thumbAt.y, was)
+            if (was == 1 && h != null && thumbDown && joyStarted) h.move(JOY, thumbAt)
+        }
         if (assisting) {
             assisting = false
             rec("auto", "assist_off_$why", thumbAt.x, thumbAt.y, 0)
@@ -332,6 +372,10 @@ class InGameProxy(private val svc: BlockAccessibilityService, private val autoMo
         const val STEER_STALE_MS = 400L
         /** Follow mode 3 starts a push only this long after the thumb left the pad (a quick re-grip is not a lift). Guess. */
         const val LIFT_IDLE_NS = 400_000_000L
+        /** Follow mode 4: at most this much turn of the thumb's direction towards the matchup. Guess, not measured. */
+        const val MAX_BEND_DEG = 30.0
+        /** Follow mode 4: a thumb further than this from the matchup's direction is left alone (the user goes elsewhere). */
+        const val BEND_KEEP_DEG = 120.0
     }
 
     private val autoTap = object : Runnable {
@@ -464,7 +508,7 @@ class InGameProxy(private val svc: BlockAccessibilityService, private val autoMo
                     if (assisting) { assisting = false; assistTakeovers++; rec("auto", "assist_off_thumb", thumbAt.x, thumbAt.y, 0) }
                 }
                 // Without the follow experiment [assisting] is never set: the stroke copies the thumb as before.
-                if (!assisting) s.move(JOY, thumbAt)
+                if (!assisting) s.move(JOY, bent(thumbAt))   // bent() is the identity unless follow mode 4 has a direction
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 if (e.actionMasked == MotionEvent.ACTION_CANCEL) padCancels++
@@ -503,7 +547,8 @@ class InGameProxy(private val svc: BlockAccessibilityService, private val autoMo
             appendLine("자동 블록 요청 ${autoTaps}회, 시스템 응답 완료 ${o?.get(1) ?: 0} / 취소 ${o?.get(2) ?: 0}" +
                 if (autoMode) ", 화면을 ${RECENT_TOUCH_NS / 1_000_000_000L}초 넘게 안 만져서 건너뜀 ${skippedFires}회, 사용자 기록 버튼 ${marks}회" else "")
             if (Bench.config.follow > 0) appendLine("매치업 따라가기(연습장 시험, 방식 ${Bench.config.follow}): 엄지를 올려 둔 동안 대신 밀기 ${assists}회(엄지를 움직여 사용자 조작으로 돌아감 ${assistTakeovers}회), 손 없이 밀기 ${ownSteers}회, " +
-                "엄지를 뗀 동안 밀기 ${liftSteers}회(엄지를 대서 사용자 조작으로 돌아감 ${liftTakeovers}회, 앱 손가락이 패드에 떨어져 끊김 ${liftLost}회)")
+                "엄지를 뗀 동안 밀기 ${liftSteers}회(엄지를 대서 사용자 조작으로 돌아감 ${liftTakeovers}회, 앱 손가락이 패드에 떨어져 끊김 ${liftLost}회), " +
+                "엄지 방향 섞기 ${bends}번(엄지가 반대쪽이라 안 섞음 ${bendAway}번)")
             appendLine("※ 게임 캐릭터가 실제로 움직이고 블록했는지는 앱이 볼 수 없습니다. 관찰 내용을 알려 주세요.")
         }
         if (autoMode) Bench.autoReport = report

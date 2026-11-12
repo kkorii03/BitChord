@@ -192,9 +192,9 @@ class BlockerActivity : Activity() {
         // Not saved: off again at every launch (never tried on the phone, practice court only).
         // 3 = "lift to follow" (11-12, HANDOFF 0-4z19): 1 never acted in a real match (the thumb moves at once, 0-4z17).
         shotCard.addView(text("매치업 따라가기 (연습장 시험)", 17f, label), rowLp(top = 12f))
-        shotCard.addView(text("엄지 뗌: 수비 중 엄지를 조이스틱에서 떼고 있으면 앱이 내 매치업 쪽으로 밉니다. 엄지를 대는 순간 바로 내 조작", 13f, secondary), rowLp(top = 2f))
-        val follows = listOf(0, 3, 1)
-        shotCard.addView(segmented(listOf("끔", "엄지 뗌", "엄지 올려 둠"), follows.indexOf(Bench.config.follow).coerceAtLeast(0)) { i ->
+        shotCard.addView(text("엄지 뗌: 수비 중 엄지를 떼고 있으면 앱이 매치업 쪽으로 밉니다. 엄지를 대면 바로 내 조작. 방향 섞기: 엄지 뗌에 더해, 내가 미는 방향을 매치업 쪽으로 최대 30도 꺾습니다(반대쪽으로 밀면 안 꺾음)", 13f, secondary), rowLp(top = 2f))
+        val follows = listOf(0, 3, 4, 1)
+        shotCard.addView(segmented(listOf("끔", "엄지 뗌", "방향 섞기", "올려 둠"), follows.indexOf(Bench.config.follow).coerceAtLeast(0)) { i ->
             Bench.config = Bench.config.copy(follow = follows[i])
         }, rowLp(top = 10f, bottom = 14f))
         col.addView(shotCard, lp(top = 8f))
