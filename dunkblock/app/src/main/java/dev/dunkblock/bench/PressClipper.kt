@@ -118,7 +118,11 @@ class PressClipper(
             val side = ShotWatcher.sideName(Bench.shotSide)
             request("press_$side", tNs, 1.5, if (side == "def") 1.0 else 0.5)
             pressLog.append(tNs).append(',').append(String.format(Locale.ROOT, "%.3f,%.1f,%.1f,%.1f\n", (tNs - startedNs) / 1e9, l, base, d))
-        } else if (pressed && abs(d) < PRESS_THR / 2) {
+        } else if (pressed && (abs(d) < PRESS_THR / 2 || tNs - lastPressNs > 1_000_000_000L)) {
+            // 0-4z52: a press lasts ~0.15-0.25 s. Still 'pressed' after 1 s = a new resting level (the slot icon changed
+            // with possession, or the first frame was black): take it as the baseline. Before, the baseline froze and
+            // the detector stayed stuck, so match hand presses (luma -20 at +75..+100 ms) got no clips.
+            if (abs(d) >= PRESS_THR / 2) base = l
             pressed = false
         }
         if (!pressed) base += 0.05f * (l - base)

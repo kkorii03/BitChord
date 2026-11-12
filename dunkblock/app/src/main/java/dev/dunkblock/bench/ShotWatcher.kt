@@ -32,6 +32,8 @@ import java.util.concurrent.ExecutorService
  */
 class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, private val io: ExecutorService, private val colourDir: File) {
     private val main = Handler(Looper.getMainLooper())
+    private var blockOpen = false   // 0-4z52: block tile held open for the user's finger (defence, follow + fast press)
+    private var sideRun = 0
     @Volatile var side = SIDE_UNKNOWN; private set
     private var frameNo = 0
     private var mapKey = 0L
@@ -79,6 +81,17 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         curBuf = buf; curW = w; curH = h; curStride = rowStride
         side = readSide(buf, w, h, rowStride, blockFx, blockFy)
         Bench.shotSide = side
+        // 0-4z52: follow + fast press: the block button stays open to the user's own finger for the whole defence.
+        // Through the tile a hand press reached the game ~85 ms after the touch (3 matches, 30 presses), an app tap ~50;
+        // practice: presses 40-60 ms late never blocked. Switched only after 6 analysed frames (~120 ms) on the new side.
+        if (cfg.follow > 0 && cfg.fastPress > 0) {
+            val def = side == SIDE_DEF
+            if (def == blockOpen) sideRun = 0
+            else if (++sideRun >= 6) {
+                blockOpen = def; sideRun = 0
+                main.post { BlockAccessibilityService.instance?.inGame?.holdBlockOpen(def) }
+            }
+        }
         val found = findDisc(buf, w, h, rowStride)
         findDisc2(buf, w, h, rowStride)
         kin(tNs)

@@ -187,7 +187,7 @@ class BlockerActivity : Activity() {
             setChecked(Bench.config.fastPress > 0, false)
             onChange = { v -> Bench.config = Bench.config.copy(fastPress = if (v) 1 else 0); getSharedPreferences("blocker", 0).edit().putBoolean("fast", v).apply() }
         }
-        shotCard.addView(row("빨리 누르기 (시험)", "누르는 때는 그대로 정하고, 터치만 약 0.04초 빨리 보냅니다", fastSwitch, null))
+        shotCard.addView(row("빨리 누르기 (시험)", "누르는 때는 그대로 정하고, 터치만 약 0.04초 빨리 보냅니다. 따라가기와 같이 켜면 수비 동안 블록 버튼을 열어 두어, 손으로 누른 블록이 게임에 바로 닿습니다(그 순간 이동은 잠깐 멈출 수 있음)", fastSwitch, null))
         shotCard.addView(divider())
         // Not saved: practice court only (no rep clock in a match). Fixed lead 240 ms, HANDOFF 0-4z27.
         val beatSwitch = IosSwitch(this, green, fill).apply {
@@ -200,7 +200,7 @@ class BlockerActivity : Activity() {
         // match (the thumb moves at once, 0-4z17). 11-12 20:40 (0-4z42): offered for matches too (user said "해") - the
         // only on-time app press of the 19:55 match and 9 of 10 hand-block failures were "블록 위치 부족".
         shotCard.addView(text("매치업 따라가기 (경기 시험)", 17f, label), rowLp(top = 12f))
-        shotCard.addView(text("경기에서 쓸 때: 블록은 손으로 누르세요. 따라가기를 켜면 일반 슛·박자·선수 스킬 자동 누름(경기에서 헛점프만 나던 것)은 기록만 하고 누르지 않습니다. 궁극기 블록은 그대로입니다. 앱은 내 선수를 매치업 쪽으로 붙이는 일만 합니다. 방향 섞기를 권합니다(일반 경기 2판에서 슛 때 상대와의 거리가 줄었음). 엄지 뗌: 수비 중 엄지를 떼고 있으면 앱이 매치업 쪽으로 밉니다. 엄지를 대면 바로 내 조작. 방향 섞기: 엄지 뗌에 더해, 내가 미는 방향을 매치업 쪽으로 최대 30도 꺾습니다(반대쪽으로 밀면 안 꺾음). 수비 누름: 선수를 찾지 않고, 수비하는 동안 게임의 '수비' 버튼을 앱이 누르고 있습니다(조이스틱은 안 건드림, 내가 오른쪽 버튼을 누르면 바로 뗌)", 13f, secondary), rowLp(top = 2f))
+        shotCard.addView(text("경기에서 쓸 때: 블록은 손으로 누르고, '빨리 누르기'도 켜 두세요(켜지 않으면 손 블록이 앱을 거쳐 약 0.05초 늦게 들어가 '타이밍 늦음'이 납니다). 따라가기를 켜면 일반 슛·박자·선수 스킬 자동 누름(경기에서 헛점프만 나던 것)은 기록만 하고 누르지 않습니다. 궁극기 블록은 그대로입니다. 앱은 내 선수를 매치업 쪽으로 붙이는 일만 합니다. 방향 섞기를 권합니다(일반 경기 2판에서 슛 때 상대와의 거리가 줄었음). 엄지 뗌: 수비 중 엄지를 떼고 있으면 앱이 매치업 쪽으로 밉니다. 엄지를 대면 바로 내 조작. 방향 섞기: 엄지 뗌에 더해, 내가 미는 방향을 매치업 쪽으로 최대 30도 꺾습니다(반대쪽으로 밀면 안 꺾음). 수비 누름: 선수를 찾지 않고, 수비하는 동안 게임의 '수비' 버튼을 앱이 누르고 있습니다(조이스틱은 안 건드림, 내가 오른쪽 버튼을 누르면 바로 뗌)", 13f, secondary), rowLp(top = 2f))
         val follows = listOf(0, 3, 4, 5)
         shotCard.addView(segmented(listOf("끔", "엄지 뗌", "방향 섞기", "수비 누름"), follows.indexOf(Bench.config.follow).coerceAtLeast(0)) { i ->
             Bench.config = Bench.config.copy(follow = follows[i])

@@ -85,9 +85,28 @@ class InGameProxy(private val svc: BlockAccessibilityService, private val autoMo
     /** ⑧: an ultimate was seen; the press follows in [ms]. Opens the block button to injection now so the press is not late. */
     fun armBlock(ms: Long) {
         val t = tileAt(block) ?: return
+        if (blockHeld) return   // already open for the whole defence
         t.armedUntilNs = System.nanoTime() + ms * 1_000_000L
         if (t.touchable) setTileTouchable(t, false)
         main.postDelayed({ if (t.fingerId < 0 && System.nanoTime() >= t.armedUntilNs) setTileTouchable(t, true) }, ms + 10)
+    }
+
+    private var blockHeld = false
+    private var blockOpens = 0
+
+    /**
+     * 0-4z52 (ShotWatcher, follow + fast press): keep the block button's tile open for the whole defence, so the user's
+     * own block finger lands on the game directly. Through the tile it reached the game ~85 ms after the touch
+     * (40 ms pass-through + injection); in practice 40-60 ms late presses never blocked. Cost: while that finger is
+     * on the game the injected joystick is cancelled and comes back as a new touch (ProxyHand.onCancelled).
+     */
+    fun holdBlockOpen(on: Boolean) {
+        if (finished || on == blockHeld) return
+        val t = tileAt(block) ?: return
+        blockHeld = on
+        rec("auto", if (on) "block_open" else "block_close", block.x, block.y, t.id)
+        if (on) { blockOpens++; t.armedUntilNs = Long.MAX_VALUE; if (t.touchable) setTileTouchable(t, false) }
+        else { t.armedUntilNs = 0L; if (t.fingerId < 0) setTileTouchable(t, true) }
     }
 
     private var nudging = false
@@ -611,7 +630,7 @@ class InGameProxy(private val svc: BlockAccessibilityService, private val autoMo
                 if (autoMode) ", 화면을 ${RECENT_TOUCH_NS / 1_000_000_000L}초 넘게 안 만져서 건너뜀 ${skippedFires}회, 사용자 기록 버튼 ${marks}회" else "")
             if (Bench.config.follow > 0) appendLine("매치업 따라가기(시험, 방식 ${Bench.config.follow}): 엄지를 올려 둔 동안 대신 밀기 ${assists}회(엄지를 움직여 사용자 조작으로 돌아감 ${assistTakeovers}회), 손 없이 밀기 ${ownSteers}회, " +
                 "엄지를 뗀 동안 밀기 ${liftSteers}회(엄지를 대서 사용자 조작으로 돌아감 ${liftTakeovers}회, 앱 손가락이 패드에 떨어져 끊김 ${liftLost}회), " +
-                "엄지 방향 섞기 ${bends}번(엄지가 반대쪽이라 안 섞음 ${bendAway}번), '수비' 버튼 누르고 있기 ${defHolds}번")
+                "엄지 방향 섞기 ${bends}번(엄지가 반대쪽이라 안 섞음 ${bendAway}번), '수비' 버튼 누르고 있기 ${defHolds}번, 수비 동안 블록 버튼 열어 둠 ${blockOpens}번")
             appendLine("※ 게임 캐릭터가 실제로 움직이고 블록했는지는 앱이 볼 수 없습니다. 관찰 내용을 알려 주세요.")
         }
         if (autoMode) Bench.autoReport = report
