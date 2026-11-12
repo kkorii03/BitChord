@@ -756,8 +756,26 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         j = r2Ago(tNs, i, rad, R2_PRESS_W_NS)
         if (j < 0) return
         val rise = (r2Y[j] - r2Y[i]) / rad
-        if (rise >= R2_PRESS_D && Math.abs(r2X[i] - r2X[j]) / rad <= 1.5f * rise)
+        if (rise < R2_PRE_D || Math.abs(r2X[i] - r2X[j]) / rad > 1.5f * rise) return
+        rise2PreArm(tNs)
+        if (rise >= R2_PRESS_D)
             rise2Press(tNs, String.format(Locale.ROOT, "rise=%.2f w=%d R=%.1f x2=%.4f y2=%.4f ring2=%.2f", rise, R2_PRESS_W_NS / 1_000_000L, rad, d2X, d2Y, d2Ring))
+    }
+
+    /**
+     * [Bench.Config.rise2Press] with [Bench.Config.fastPress] only (both off by default): open the block tile when the
+     * rise is at [R2_PRE_D] of the [R2_PRESS_D] that presses, so the press does not wait for the tile's 40 ms
+     * pass-through ([preArm] works on the gap track, which the rise press does not need). Replay on the d2 tracks of
+     * the two phone matches of 11-12 (tools/analysis/risearm.py; the 1.5 was picked on them, so not independent): the
+     * tile would have been open >= 40 ms before 12 of 22 and 10 of 13 rise presses, and is opened in about 5 % of
+     * defence scans (111 and 79 openings). Never run on the phone. HANDOFF 0-4z12.
+     */
+    private fun rise2PreArm(tNs: Long) {
+        if (!cfg.shotBlock || !cfg.autoBlockLive || !cfg.rise2Press || cfg.fastPress <= 0) return
+        if (tNs - lastPreArmNs < 150_000_000L || pendNs != 0L || tNs - lastPressNs < 1_500_000_000L || tNs - lastShotFireNs < 1_500_000_000L) return
+        lastPreArmNs = tNs; preArms++
+        main.post { BlockAccessibilityService.instance?.inGame?.armBlock(PRE_ARM_MS) }
+        event(tNs, "arm", 0f, 0f, 0f, "pre_rise2")
     }
 
     /** The sample of the rise2 track taken [wNs] ago (the oldest one not older; within 20 ms of it, the track unbroken
@@ -1621,6 +1639,8 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         const val R2_D = 1.6f
         const val R2_PRESS_W_NS = 120_000_000L
         const val R2_PRESS_D = 4.0f
+        /** [rise2PreArm]: the rise (in disc radii over [R2_PRESS_W_NS]) that opens the block tile ahead of the rise press. */
+        const val R2_PRE_D = 1.5f
         private val COS24 = FloatArray(24) { Math.cos(it * Math.PI / 12).toFloat() }
         private val SIN24 = FloatArray(24) { Math.sin(it * Math.PI / 12).toFloat() }
         /** screen-heights per second; set from data later. */

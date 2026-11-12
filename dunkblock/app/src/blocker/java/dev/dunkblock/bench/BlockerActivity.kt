@@ -64,14 +64,14 @@ class BlockerActivity : Activity() {
         if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf("android.permission.POST_NOTIFICATIONS"), 7)
         loadSettings()
         // Unattended practice-court tests over adb: `am start --activity-clear-task -n dev.dunkblock.blocker/dev.dunkblock.bench.BlockerActivity
-        // --ez sweepPress true --ez auto true`. Without the extras every experiment switch is off again (a normal launch never keeps them).
+        // --ez sweepPress true --ez auto true`. Without the extras every experiment switch is off again, except dark, near, rise and fast (saved).
         if (!Bench.running) {
             Bench.config = Bench.config.copy(sweepPress = intent.getBooleanExtra("sweepPress", false),
                 crouchPress = intent.getBooleanExtra("crouchPress", false), upPress = intent.getBooleanExtra("upPress", false),
                 darkSweep = intent.getBooleanExtra("darkSweep", false), darkNth = intent.getIntExtra("darkNth", 1), darkAddMs = intent.getIntExtra("darkAdd", 0),
                 darkJoyDeg = intent.getIntExtra("darkJoy", -1), darkJoyMs = intent.getIntExtra("darkJoyMs", 0),
-                follow = intent.getIntExtra("follow", 0), rise2Press = intent.getBooleanExtra("rise2Press", false),
-                fastPress = intent.getIntExtra("fastPress", 0),
+                follow = intent.getIntExtra("follow", 0), rise2Press = intent.getBooleanExtra("rise2Press", getSharedPreferences("blocker", 0).getBoolean("rise", false)),
+                fastPress = intent.getIntExtra("fastPress", if (getSharedPreferences("blocker", 0).getBoolean("fast", false)) 1 else 0),
                 nearOnly = intent.getBooleanExtra("nearOnly", getSharedPreferences("blocker", 0).getBoolean("near", false)),
                 darkPress = intent.getBooleanExtra("darkPress", getSharedPreferences("blocker", 0).getBoolean("dark", false)),
                 darkDelayMs = intent.getIntExtra("darkDelay", Bench.Config().darkDelayMs), dark2DelayMs = intent.getIntExtra("dark2Delay", Bench.Config().dark2DelayMs), darkJumpDelayMs = intent.getIntExtra("darkJumpDelay", Bench.Config().darkJumpDelayMs))
@@ -175,17 +175,17 @@ class BlockerActivity : Activity() {
         }
         shotCard.addView(row("내 선수 근처 슛만 누르기 (시험)", "멀리 있는 다른 선수의 덩크·골밑 슛에는 뛰지 않습니다", nearSwitch, null))
         shotCard.addView(divider())
-        // Not saved: off again at every launch (chosen on recorded matches only, never run on the phone; HANDOFF 0-4z2).
+        // Saved since vc1107 (the user has to turn on three switches for a match test; HANDOFF 0-4z12). Off until he does.
         val riseSwitch = IosSwitch(this, green, fill).apply {
             setChecked(Bench.config.rise2Press, false)
-            onChange = { v -> Bench.config = Bench.config.copy(rise2Press = v) }
+            onChange = { v -> Bench.config = Bench.config.copy(rise2Press = v); getSharedPreferences("blocker", 0).edit().putBoolean("rise", v).apply() }
         }
         shotCard.addView(row("공이 솟을 때 누르기 (시험)", "상대 공 표시가 빠르게 위로 솟으면 기존 규칙보다 먼저 누릅니다", riseSwitch, null))
         shotCard.addView(divider())
-        // Not saved: off again at every launch (replayed on recorded bundles only, never run on the phone; HANDOFF 0-4z8).
+        // Saved since vc1107, as rise (HANDOFF 0-4z12). With rise on it also opens the tile on the way up (ShotWatcher.rise2PreArm).
         val fastSwitch = IosSwitch(this, green, fill).apply {
             setChecked(Bench.config.fastPress > 0, false)
-            onChange = { v -> Bench.config = Bench.config.copy(fastPress = if (v) 1 else 0) }
+            onChange = { v -> Bench.config = Bench.config.copy(fastPress = if (v) 1 else 0); getSharedPreferences("blocker", 0).edit().putBoolean("fast", v).apply() }
         }
         shotCard.addView(row("빨리 누르기 (시험)", "누르는 때는 그대로 정하고, 터치만 약 0.04초 빨리 보냅니다", fastSwitch, null))
         shotCard.addView(divider())
@@ -196,7 +196,7 @@ class BlockerActivity : Activity() {
         }
         shotCard.addView(row("매치업 따라가기 (연습장 시험)", "엄지를 조이스틱에 가만히 올려 두면 내 매치업 쪽으로 밉니다. 엄지를 움직이면 바로 내 조작", followSwitch, null))
         col.addView(shotCard, lp(top = 8f))
-        col.addView(footnote("아직 측정 전인 첫 규칙입니다. 상대 슛이 아닌데 자꾸 뛰면 민감도를 낮추고, 슛을 놓치면 높이세요. 블록이 늦으면 지연 0, 이르면 지연을 늘리세요. '선수 스킬 블록'은 노비츠키 위닝 슛 하나로만 맞춘 값입니다(연습장 25번 중 22번 블록). 다른 선수 스킬은 아직 측정 전입니다. '내 선수 근처 슛만 누르기'는 폰에서 아직 시험하지 않았습니다. 11월 12일 경기 기록에서 자동 블록 12번 중 6번이 내 선수와 먼 골밑 슛(다른 선수의 덩크 등)이었고, 이 스위치의 규칙을 기록에 다시 돌리면 두 경기 누름 20번 중 그런 8번만 걸러집니다. 표본이 작아서 내 매치업 슛을 거를 수도 있습니다. 블록 성공률을 올리는 기능이 아니라 매치업을 버리고 뛰는 것을 줄이는 기능이며, 내 매치업이 골밑으로 파고들 때 내 선수가 뒤처져 있으면 그 슛에도 뛰지 않습니다. 한 번 켜면 계속 켜져 있습니다. '공이 솟을 때 누르기'는 폰에서 실제로 눌러 본 적이 없는 규칙입니다. 기록만으로 다시 돌려 본 결과: 녹화 5경기 슛 44번 중 15번 제때, 11월 12일 경기 기록 슛 15번 중 7번 제때·슛 없는 데서 3번(이 경기를 보고 기준을 고쳤으므로 다음 경기가 진짜 시험). 제때 눌러도 블록이 되는 것은 아니고, 느리게 올리는 슛은 못 잡습니다. 앱을 다시 열면 꺼집니다. '빨리 누르기'는 폰에서 아직 시험하지 않았습니다. 연습장 기록에서 앱이 누르기로 정한 뒤 실제 터치까지 0.04~0.06초가 걸렸고, 그만큼 늦은 누름은 한 번도 블록이 안 됐습니다(공이 떠나기 0.18초 전보다 늦으면 16번 중 0번, 0.21~0.27초 전이면 13번 중 12번). 켜면 블록 버튼 쪽 칸을 미리 열어 두어 그 기다림을 없앱니다. 그동안 그 칸에 올린 손가락은 게임에 바로 닿습니다. 연습장에서 먼저 켜 보세요(앱을 다시 열면 꺼집니다). '매치업 따라가기'는 폰에서 한 번도 시험하지 않은 기능입니다. 연습장에서만 켜세요(앱을 다시 열면 꺼집니다). 사람과 하는 경기에서는 제재 위험이 있으니 연습 모드에서 먼저 쓰세요."), lp(top = 8f))
+        col.addView(footnote("아직 측정 전인 첫 규칙입니다. 상대 슛이 아닌데 자꾸 뛰면 민감도를 낮추고, 슛을 놓치면 높이세요. 블록이 늦으면 지연 0, 이르면 지연을 늘리세요. '선수 스킬 블록'은 노비츠키 위닝 슛 하나로만 맞춘 값입니다(연습장 25번 중 22번 블록). 다른 선수 스킬은 아직 측정 전입니다. '내 선수 근처 슛만 누르기'는 폰에서 아직 시험하지 않았습니다. 11월 12일 경기 기록에서 자동 블록 12번 중 6번이 내 선수와 먼 골밑 슛(다른 선수의 덩크 등)이었고, 이 스위치의 규칙을 기록에 다시 돌리면 두 경기 누름 20번 중 그런 8번만 걸러집니다. 표본이 작아서 내 매치업 슛을 거를 수도 있습니다. 블록 성공률을 올리는 기능이 아니라 매치업을 버리고 뛰는 것을 줄이는 기능이며, 내 매치업이 골밑으로 파고들 때 내 선수가 뒤처져 있으면 그 슛에도 뛰지 않습니다. 한 번 켜면 계속 켜져 있습니다. '공이 솟을 때 누르기'는 폰에서 실제로 눌러 본 적이 없는 규칙입니다. 11월 12일 두 경기 기록에 '내 선수 근처 슛만 누르기'와 같이 켠 것으로 다시 돌려 본 결과(연습장에서 블록이 실제로 나온 박자 = 공이 떠나기 0.22~0.31초 전 기준): 슛 22번 경기에서 그 박자 1번·조금 늦은 박자 2번·슛 없는 데서 6번, 슛 11번 경기에서 그 박자 2번·조금 늦음 1번·이름 1번·슛 없는 데서 3번. 기존 규칙은 두 경기 슛 33번 중 그 박자에 누른 것이 0번이었습니다. 박자가 맞아도 블록이 되는 것은 아니고(위치가 멀면 안 됨), 느리게 올리는 슛은 못 잡습니다. 한 번 켜면 계속 켜져 있습니다. '빨리 누르기'는 폰에서 아직 시험하지 않았습니다. 연습장 기록에서 앱이 누르기로 정한 뒤 실제 터치까지 0.04~0.06초가 걸렸고, 그만큼 늦은 누름은 한 번도 블록이 안 됐습니다(공이 떠나기 0.18초 전보다 늦으면 16번 중 0번, 0.21~0.27초 전이면 13번 중 12번). 켜면 블록 버튼 쪽 칸을 미리 열어 두어 그 기다림을 없앱니다. 그동안 그 칸에 올린 손가락은 게임에 바로 닿습니다. '공이 솟을 때 누르기'와 같이 켜면 공이 솟기 시작할 때 그 칸을 미리 엽니다(기록에서 수비 시간의 약 5%). 한 번 켜면 계속 켜져 있습니다. '매치업 따라가기'는 폰에서 한 번도 시험하지 않은 기능입니다. 연습장에서만 켜세요(앱을 다시 열면 꺼집니다). 사람과 하는 경기에서는 제재 위험이 있으니 연습 모드에서 먼저 쓰세요."), lp(top = 8f))
 
         // Result
         col.addView(header("최근 결과"), lp(top = 24f))
