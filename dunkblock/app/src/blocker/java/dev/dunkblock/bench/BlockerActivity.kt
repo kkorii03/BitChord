@@ -190,11 +190,13 @@ class BlockerActivity : Activity() {
         shotCard.addView(row("빨리 누르기 (시험)", "누르는 때는 그대로 정하고, 터치만 약 0.04초 빨리 보냅니다", fastSwitch, null))
         shotCard.addView(divider())
         // Not saved: off again at every launch (never tried on the phone, practice court only).
-        val followSwitch = IosSwitch(this, green, fill).apply {
-            setChecked(Bench.config.follow == 1, false)
-            onChange = { v -> Bench.config = Bench.config.copy(follow = if (v) 1 else 0) }
-        }
-        shotCard.addView(row("매치업 따라가기 (연습장 시험)", "엄지를 조이스틱에 가만히 올려 두면 내 매치업 쪽으로 밉니다. 엄지를 움직이면 바로 내 조작", followSwitch, null))
+        // 3 = "lift to follow" (11-12, HANDOFF 0-4z19): 1 never acted in a real match (the thumb moves at once, 0-4z17).
+        shotCard.addView(text("매치업 따라가기 (연습장 시험)", 17f, label), rowLp(top = 12f))
+        shotCard.addView(text("엄지 뗌: 수비 중 엄지를 조이스틱에서 떼고 있으면 앱이 내 매치업 쪽으로 밉니다. 엄지를 대는 순간 바로 내 조작", 13f, secondary), rowLp(top = 2f))
+        val follows = listOf(0, 3, 1)
+        shotCard.addView(segmented(listOf("끔", "엄지 뗌", "엄지 올려 둠"), follows.indexOf(Bench.config.follow).coerceAtLeast(0)) { i ->
+            Bench.config = Bench.config.copy(follow = follows[i])
+        }, rowLp(top = 10f, bottom = 14f))
         col.addView(shotCard, lp(top = 8f))
         col.addView(footnote("아직 측정 전인 첫 규칙입니다. 상대 슛이 아닌데 자꾸 뛰면 민감도를 낮추고, 슛을 놓치면 높이세요. 블록이 늦으면 지연 0, 이르면 지연을 늘리세요. '선수 스킬 블록'은 노비츠키 위닝 슛 하나로만 맞춘 값입니다(연습장 25번 중 22번 블록). 다른 선수 스킬은 아직 측정 전입니다. '내 선수 근처 슛만 누르기'는 폰에서 아직 시험하지 않았습니다. 11월 12일 경기 기록에서 자동 블록 12번 중 6번이 내 선수와 먼 골밑 슛(다른 선수의 덩크 등)이었고, 이 스위치의 규칙을 기록에 다시 돌리면 두 경기 누름 20번 중 그런 8번만 걸러집니다. 표본이 작아서 내 매치업 슛을 거를 수도 있습니다. 블록 성공률을 올리는 기능이 아니라 매치업을 버리고 뛰는 것을 줄이는 기능이며, 내 매치업이 골밑으로 파고들 때 내 선수가 뒤처져 있으면 그 슛에도 뛰지 않습니다. 한 번 켜면 계속 켜져 있습니다. '공이 솟을 때 누르기'는 꺼 두기를 권합니다(폰에서 눌러 본 적도 없습니다). 손으로 한 경기 녹화 6판 전체에 '내 선수 근처 슛만 누르기'와 같이 켠 것으로 돌려 보니, 슛 58번 중 블록이 나오는 박자(공이 떠나기 0.22~0.31초 전)에 누른 것은 2번뿐이고 슛이 없는 데서 14번 뛰었습니다(수비 1분에 약 1.2번). 내 선수 근처에서 쏘는 점프슛은 공 표시가 떠나기 0.2초 전쯤에야 솟아서 이 규칙은 늦습니다. 한 번 켜면 계속 켜져 있으니 켰다면 꺼 주세요. '빨리 누르기'는 폰에서 아직 시험하지 않았습니다. 연습장 기록에서 앱이 누르기로 정한 뒤 실제 터치까지 0.04~0.06초가 걸렸고, 그만큼 늦은 누름은 한 번도 블록이 안 됐습니다(공이 떠나기 0.18초 전보다 늦으면 16번 중 0번, 0.21~0.27초 전이면 13번 중 12번). 켜면 블록 버튼 쪽 칸을 미리 열어 두어 그 기다림을 없앱니다. 그동안 그 칸에 올린 손가락은 게임에 바로 닿습니다. 한 번 켜면 계속 켜져 있습니다. '매치업 따라가기'는 폰에서 한 번도 시험하지 않은 기능입니다. 연습장에서만 켜세요(앱을 다시 열면 꺼집니다). 사람과 하는 경기에서는 제재 위험이 있으니 연습 모드에서 먼저 쓰세요."), lp(top = 8f))
 

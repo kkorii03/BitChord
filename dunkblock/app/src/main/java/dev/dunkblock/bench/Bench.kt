@@ -91,7 +91,8 @@ object Bench {
         /**
          * Experiment, PRACTICE COURT ONLY, never tried on the phone (11-12): push the joystick towards my matchup
          * (core FollowRule on the record-only matchup scan). 0 = off, 1 = only while the user's thumb rests on the
-         * joystick pad (moving the thumb takes over), 2 = nobody holds the phone (adb self-test). InGameProxy.steer.
+         * joystick pad (moving the thumb takes over), 2 = nobody holds the phone (adb self-test), 3 = only while the
+         * thumb is OFF the pad (putting it down takes over). InGameProxy.steer.
          */
         val follow: Int = 0,
         val recalibrate: Boolean = false,
