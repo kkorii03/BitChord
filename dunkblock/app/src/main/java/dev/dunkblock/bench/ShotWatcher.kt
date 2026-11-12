@@ -49,7 +49,9 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
     /** Set when a colour screen of this moment would help; FramePipeline clears it after saving one. */
     @Volatile var snapNow = false
     /** Record-only matchup log (matchup.csv); never read by the press rules. */
-    val matchup = MatchupShadow(startedNs, cfg.follow)
+    // Holding '수비' (follow 5) changes the look of that slot, which is the beat block's own clock (rep start and
+    // release = slot2 luma): 16:36 practice found 2 releases in 10 reps while held (plus one fake at the let-go), 4 in 4 before. Beat block wins.
+    val matchup = MatchupShadow(startedNs, if (cfg.follow == 5 && cfg.sweepPress) 0 else cfg.follow)
 
     @Volatile var scans = 0; private set
     @Volatile var defScans = 0; private set
@@ -1476,7 +1478,9 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
     private fun notMine(tNs: Long, d: String): Boolean {
         if (lastNear == 1) return false
         if (lastNear == 0) nearNo++ else nearUnknown++
-        if (!cfg.nearOnly) return false
+        // Practice-court tests (follow modes, beat block): the only shooter is my matchup; 16:13 and 16:36 practice
+        // dropped 19/31 and 17/24 triggers here with the switch left on (HANDOFF 0-4z26, 0-4z28).
+        if (!cfg.nearOnly || cfg.follow > 0 || cfg.sweepPress) return false
         shotNotMine++; reject(tNs, "rejected_notmine", d); return true
     }
 
