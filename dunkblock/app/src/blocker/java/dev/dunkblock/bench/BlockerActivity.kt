@@ -66,7 +66,7 @@ class BlockerActivity : Activity() {
         // Unattended practice-court tests over adb: `am start --activity-clear-task -n dev.dunkblock.blocker/dev.dunkblock.bench.BlockerActivity
         // --ez sweepPress true --ez auto true`. Without the extras every experiment switch is off again, except dark, near, rise and fast (saved).
         if (!Bench.running) {
-            Bench.config = Bench.config.copy(sweepPress = intent.getBooleanExtra("sweepPress", false),
+            Bench.config = Bench.config.copy(sweepPress = intent.getBooleanExtra("sweepPress", false), sweepLeadMs = intent.getIntExtra("sweepLead", 0),
                 crouchPress = intent.getBooleanExtra("crouchPress", false), upPress = intent.getBooleanExtra("upPress", false),
                 darkSweep = intent.getBooleanExtra("darkSweep", false), darkNth = intent.getIntExtra("darkNth", 1), darkAddMs = intent.getIntExtra("darkAdd", 0),
                 darkJoyDeg = intent.getIntExtra("darkJoy", -1), darkJoyMs = intent.getIntExtra("darkJoyMs", 0),
@@ -188,6 +188,13 @@ class BlockerActivity : Activity() {
             onChange = { v -> Bench.config = Bench.config.copy(fastPress = if (v) 1 else 0); getSharedPreferences("blocker", 0).edit().putBoolean("fast", v).apply() }
         }
         shotCard.addView(row("빨리 누르기 (시험)", "누르는 때는 그대로 정하고, 터치만 약 0.04초 빨리 보냅니다", fastSwitch, null))
+        shotCard.addView(divider())
+        // Not saved: practice court only (no rep clock in a match). Fixed lead 240 ms, HANDOFF 0-4z27.
+        val beatSwitch = IosSwitch(this, green, fill).apply {
+            setChecked(Bench.config.sweepPress && Bench.config.sweepLeadMs > 0, false)
+            onChange = { v -> Bench.config = Bench.config.copy(sweepPress = v, sweepLeadMs = if (v) 240 else 0) }
+        }
+        shotCard.addView(row("연습장 박자 블록 (연습장 전용)", "같은 슛을 되풀이하는 수비 연습에서, 앞 슛의 박자로 다음 슛을 누릅니다. 켜면 다른 자동 누름은 쉽니다", beatSwitch, null))
         shotCard.addView(divider())
         // Not saved: off again at every launch (never tried on the phone, practice court only).
         // 3 = "lift to follow" (11-12, HANDOFF 0-4z19): 1 never acted in a real match (the thumb moves at once, 0-4z17).

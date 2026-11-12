@@ -67,6 +67,13 @@ object Bench {
         /** Calibration, PRACTICE COURT ONLY: press on the practice rep's own clock at stepped leads before the release (ShotWatcher.sweep). */
         val sweepPress: Boolean = false,
         /**
+         * With [sweepPress]: one fixed lead (ms before the predicted release) instead of stepping SWEEP_LEADS; 0 = step.
+         * 240 = middle of the measured practice block window 211-265 ms (tap clock, vc1056/vc1035 sweeps, HANDOFF 0-4f).
+         * Replayed on the 11-12 16:13 practice bundle (not used to set it): 14/21 shots inside 190-290 ms, the gap
+         * trigger 0/21. Practice court only: a match has no rep clock (3/78 on the six other bundles, whose repT is not constant). HANDOFF 0-4z27.
+         */
+        val sweepLeadMs: Int = 0,
+        /**
          * Experimental (vc1067): press darkDelayMs after a signature skill starts to darken the screen (dark2DelayMs for the
          * dark after a fake). ShotWatcher.skillDark. 215: measured 11-11 on Nowitzki "위닝 슛" only (practice court, ~60
          * presses at 0-500 ms): blocked at 150-300 ms (22 of 25), never at <= 100 or >= 325. Other skills differ (his

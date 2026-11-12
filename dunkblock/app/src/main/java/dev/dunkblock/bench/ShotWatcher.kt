@@ -220,7 +220,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
                     swRepNs = swFirstNs; sweepReps++
                     val plan = cfg.sweepPress && cfg.shotBlock && swRepT > 0L && side == SIDE_DEF
                     if (plan) {
-                        swLeadMs = SWEEP_LEADS[swSeq++ % SWEEP_LEADS.size]
+                        swLeadMs = if (cfg.sweepLeadMs > 0) cfg.sweepLeadMs else SWEEP_LEADS[swSeq++ % SWEEP_LEADS.size]
                         swDueNs = swRepNs + swRepT - swLeadMs * 1_000_000L; swArmed = false
                     }
                     event(tNs, "sweep_rep", 0f, 0f, 0f, String.format(Locale.ROOT, "repT=%d lead=%d", swRepT / 1_000_000L, if (plan) swLeadMs else -1))
@@ -1614,7 +1614,7 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
             "  공 솟음으로 누르기 ${if (cfg.rise2Press) "켬" else "끔"}, 그걸로 발동 ${rise2Triggers}회\n" +
             "  빨리 누르기 ${if (cfg.fastPress > 0) "켬(${cfg.fastPress})" else "끔"}, 버튼 더 미리 열기 ${preArms}회\n" +
             "  내 선수 근처 슛만 누르기 ${if (cfg.nearOnly) "켬" else "끔"}, 그걸로 거름 ${shotNotMine}회(꺼져 있어도 셈: 내 선수와 먼 슛 ${nearNo}회, 내 선수 못 찾음 ${nearUnknown}회)\n" +
-            "  연습장 박자: 반복 시작 ${sweepReps}회, 공 떠남 ${sweepReleases}회(박자 훑기 ${if (cfg.sweepPress) "켬" else "끔"}, 그걸로 누름 ${sweepPresses}회)\n" +
+            "  연습장 박자: 반복 시작 ${sweepReps}회, 공 떠남 ${sweepReleases}회(박자 ${if (!cfg.sweepPress) "끔" else if (cfg.sweepLeadMs > 0) "블록 켬 ${cfg.sweepLeadMs}ms 전" else "훑기 켬"}, 그걸로 누름 ${sweepPresses}회)\n" +
             "  선수 스킬 어두워짐 ${darkOnsets}회(그걸로 누름 ${darkPresses}회, 누르기 ${if (cfg.darkSweep) "훑기" else if (cfg.darkPress) "켬" else "끔(기록만)"})\n" +
             "  모으기 감지 뒤 공이 떠남 ${leads.size}회(앞섬 중앙값 $med, 전체 ${leads.joinToString(" ")}) · 감지했는데 공이 안 떠남(오발 추정) ${triggersWithoutRelease}회 · 공이 떠났는데 미리 감지 못함 ${releasesWithoutTrigger}회"
     }
