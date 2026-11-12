@@ -20,7 +20,7 @@ import java.util.zip.ZipOutputStream
 object SendBundle {
     private const val BUDGET = 25L * 1024 * 1024
     /** Up to this many zips, each under [BUDGET], attached one by one. */
-    private const val MAX_PARTS = 4
+    private const val MAX_PARTS = 10   // vc1137: 4 parts left 52.5 MB out of the 11-12 18:12 match (user: 10 is fine)
     private const val MANIFEST_RESERVE = 256L * 1024
 
     private fun priority(f: File): Int = when {
