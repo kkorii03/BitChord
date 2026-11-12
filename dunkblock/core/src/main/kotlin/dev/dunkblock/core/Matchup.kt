@@ -282,7 +282,20 @@ object NearGate {
  *             45 -> 36 % and 42 -> 32 %. Never run on the phone.
  * All positions are feet positions in px of the 1170 x 540 picture.
  */
-class MatchupPicker(private val fixedMyCls: Int = -1, private val track: Boolean = false, private val strict: Boolean = false) {
+class MatchupPicker(
+    private val fixedMyCls: Int = -1, private val track: Boolean = false, private val strict: Boolean = false,
+    /** strict only: three more rules for scans without a fan (tools/analysis/mstrict.py relax; false = strict as before):
+     *  unique   : no fan in view and no track -> the ONLY tag of the matchup's position, when that position was
+     *             fan-confirmed within [FRESH_S], was on screen in >= [SEEN_MIN] scans of the last [UNIQ_S] s and never
+     *             as two tags more than [SEP] px apart there (three when it is my position, and then only with my own tag
+     *             known), and the tag is grey >= [GMIN] (my own tag is near 0).
+     *  fan cont : a fan under no tag also counts when it stands within [FAN_NEAR] + [GV] * age of the last target's feet
+     *             (age <= [AGE]).
+     *  ambiguous: a fan in the feet window of two tags of the matchup's position confirms neither.
+     *  13 phone matches of 11-12 (vc1100+), live defence scans with a target: fit half 42.1 -> 47.6 %, held-out half
+     *  41.0 -> 47.1 %; 25 colour frames of new targets looked at, none on a wrong player. */
+    private val relax: Boolean = true,
+) {
     class Pick {
         var defence = false
         /** 0 none, 1 the matchup's tag, 2 the matchup's fan (tag not on screen). */
@@ -306,6 +319,16 @@ class MatchupPicker(private val fixedMyCls: Int = -1, private val track: Boolean
     // strict: the last place of the fan-confirmed target (tag coordinates), when it was seen, when a fan last confirmed it
     private var aX = 0f; private var aY = 0f; private var aT = -1e9; private var aConf = -1e9
     private var prevFans: List<MatchupFinder.Fan> = emptyList(); private var prevT = -1e9
+    // relax: when each position was on screen (last UNIQ_S s), last time two / three far-apart tags of it were, last fan confirmation
+    private val seen = Array(5) { ArrayDeque<Double>() }
+    private val two = DoubleArray(5) { -1e9 }; private val three = DoubleArray(5) { -1e9 }; private val lastFan = DoubleArray(5) { -1e9 }
+
+    /** Tags of position [c] standing more than [SEP] px apart (greedy, in tag order). */
+    private fun apart(tags: List<MatchupFinder.Tag>, c: Int): Int {
+        val out = ArrayList<MatchupFinder.Tag>(3)
+        for (q in tags) if (q.cls == c && out.all { dist(q, it.x, it.y) > SEP }) out.add(q)
+        return out.size
+    }
 
     private fun dist(q: MatchupFinder.Tag, x: Float, y: Float) = hypot((q.x - x).toDouble(), (q.y - y) * 1.6)
     private fun reach(q: MatchupFinder.Tag, x: Float, y: Float, age: Double) = age <= AGE && dist(q, x, y) <= G0 + GV * age
@@ -314,6 +337,12 @@ class MatchupPicker(private val fixedMyCls: Int = -1, private val track: Boolean
 
     fun step(t: Double, defence: Boolean, s: MatchupFinder.Scan): Pick {
         val p = Pick(); p.defence = defence
+        if (strict && relax) for (c in 0 until 5) {
+            val n = apart(s.tags, c)
+            if (n >= 1) { seen[c].addLast(t); while (t - seen[c].first() > UNIQ_S) seen[c].removeFirst() }
+            if (n >= 2) two[c] = t
+            if (n >= 3) three[c] = t
+        }
         val ring = s.meConf >= 0.2f && s.meConf < 0.38f
         if (fixedMyCls < 0) {
             if (ring) {
@@ -397,12 +426,21 @@ class MatchupPicker(private val fixedMyCls: Int = -1, private val track: Boolean
                     !(my != null && hypot((f.x - my.x - 45).toDouble(), (f.y - my.y + 52) * 1.6) < 70)
             }
             var tgt: MatchupFinder.Tag? = null; var best = -1.0
-            for (q in c) for (f in fs) if (owns(q, f) && f.area * f.rim.toDouble() > best) { best = f.area * f.rim.toDouble(); tgt = q }
-            if (tgt != null) { aConf = t; p.why = "fan" }
+            for (q in c) for (f in fs) {
+                if (relax && c.any { it !== q && owns(it, f) }) continue   // ambiguous fan
+                if (owns(q, f) && f.area * f.rim.toDouble() > best) { best = f.area * f.rim.toDouble(); tgt = q }
+            }
+            if (tgt != null) { aConf = t; p.why = "fan"; lastFan[cls] = t }
             else if (t - aConf <= CONF_S && t - aT <= AGE) {
                 var d0 = 1e9; var d1 = 1e9; var q0: MatchupFinder.Tag? = null
                 for (q in c) if (reach(q, aX, aY, t - aT)) { val d = dist(q, aX, aY); if (d < d0) { d1 = d0; d0 = d; q0 = q } else if (d < d1) d1 = d }
                 if (q0 != null && d0 + MARGIN <= d1) { tgt = q0; p.why = "track" }
+            }
+            if (tgt == null && relax && c.size == 1 && fs.isEmpty()) {
+                val q = c[0]; val last = if (cls == me) three[cls] else two[cls]
+                if (t - lastFan[cls] <= FRESH_S && t - last > UNIQ_S && seen[cls].size >= SEEN_MIN && (cls != me || mine != null) && q.grey >= GMIN) {
+                    tgt = q; p.why = "unique"
+                }
             }
             if (tgt != null) {
                 p.src = 1; p.x = tgt.x + 45; p.y = tgt.y - 52; aX = tgt.x; aY = tgt.y; aT = t
@@ -412,7 +450,8 @@ class MatchupPicker(private val fixedMyCls: Int = -1, private val track: Boolean
             var bf: MatchupFinder.Fan? = null; best = -1.0
             for (f in fs) {
                 if (s.tags.any { owns(it, f) }) continue
-                if (pf.none { hypot((f.x - it.x).toDouble(), (f.y - it.y) * 1.6) <= FAN_NEAR }) continue
+                val nearTarget = relax && t - aT <= AGE && hypot((f.x - aX - 45).toDouble(), (f.y - aY + 52) * 1.6) <= FAN_NEAR + GV * (t - aT)
+                if (!nearTarget && pf.none { hypot((f.x - it.x).toDouble(), (f.y - it.y) * 1.6) <= FAN_NEAR }) continue
                 if (f.area * f.rim.toDouble() > best) { best = f.area * f.rim.toDouble(); bf = f }
             }
             if (bf != null) { p.src = 2; p.x = bf.x; p.y = bf.y; p.why = "fan alone"; aX = bf.x - 45; aY = bf.y + 52; aT = t; aConf = t }
@@ -456,5 +495,10 @@ class MatchupPicker(private val fixedMyCls: Int = -1, private val track: Boolean
         const val FAN_NEAR = 40.0
         const val FAN_GAP = 0.35
         const val ROW = 8f
+        const val UNIQ_S = 60.0
+        const val SEEN_MIN = 30
+        const val FRESH_S = 20.0
+        const val GMIN = 0.08f
+        const val SEP = 60.0
     }
 }

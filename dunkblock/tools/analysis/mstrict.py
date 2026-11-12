@@ -14,9 +14,17 @@ mstrict.py <game folder> [-v t0 t1]
     jumps (> 150 px between two scans <= 0.25 s apart: no player runs that fast, the picker changed bodies), jumps of
     my own place, push direction flips (> 90 deg between two consecutive pushes), tag targets standing away from a
     fan that is in view.
-mstrict.py -fixture <out csv> <matchup.csv> <t0> <t1>
-    scan log + the strict picker's answers for core MatchupTest (defence as in that test: 0.3 s after the last block
-    label).
+    relax  = strict + three rules (core MatchupPicker(relax = true), the default since 11-12):
+       unique : no fan in view, track lost, ONE tag of the matchup's position on screen -> that tag, when the position
+                was fan-confirmed within FRESH_S, seen in >= SEEN_MIN scans of the last UNIQ_S s and never there as two
+                tags more than SEP px apart (three if it is my position, and then only with my own tag known), and the
+                tag is grey >= GMIN (my own tag is near 0).
+       fan continuation : a fan under no tag is also taken when it stands within FAN_NEAR + GV * age of the last
+                target's feet (age <= AGE).
+       ambiguous fan : a fan in the feet window of two tags of the matchup's position confirms neither.
+mstrict.py -fixture <out csv> <matchup.csv> <t0> <t1> [-relax]
+    scan log + the strict (or relaxed) picker's answers for core MatchupTest (defence as in that test: 0.3 s after
+    the last block label).
 
 Why: phone match of 11-12 11:13 (vc1100, my SF against Curry = PG, my team mate LaMelo Ball = PG too). The shipped
 picker takes "the tag of the matchup's position"; with Curry's tag hidden it took LaMelo's and the follow rule would
@@ -26,6 +34,7 @@ import sys, os, csv, math, collections, struct
 
 KEEP_S = 60.0; MIN_VOTES = 6; SHARE = 0.7; GREY = 0.15; ME_KEEP = 200; ME_MIN = 15; AGE = 0.6; CAP = 2.0; MARGIN = 25.0; G0 = 12.0; GV = 250.0; GVETO = 0.08
 CONF_S = 2.0; FAN_NEAR = 40.0; FAN_GAP = 0.35; ROW = 8.0
+UNIQ_S = 60.0; SEEN_MIN = 30; FRESH_S = 20.0; GMIN = 0.08; SEP = 60.0
 CL = ["SF", "C", "PF", "SG", "PG"]
 
 
@@ -40,8 +49,19 @@ def dist(q, x, y): return math.hypot(q.x - x, (q.y - y) * 1.6)
 def inwin(f, q): return -30 <= f[0] - q.x <= 150 and -92 <= f[1] - q.y <= -28
 
 
+def apart(tags, c):
+    """number of tags of class c that stand more than SEP px apart (greedy, in tag order)"""
+    out = []
+    for q in tags:
+        if q.cls == c and all(dist(q, o.x, o.y) > SEP for o in out): out.append(q)
+    return len(out)
+
+
 class Picker:
-    def __init__(s, strict):
+    def __init__(s, strict, relax=False):
+        s.relax = strict and relax
+        # relax: when each class was on screen (last UNIQ_S s), last time 2 / 3 far-apart tags of it were, last fan confirmation
+        s.seen = [collections.deque() for _ in range(5)]; s.two = [-1e9] * 5; s.three = [-1e9] * 5; s.lastFan = [-1e9] * 5
         s.strict = strict; s.voteT = []; s.voteC = []; s.meV = [-1] * ME_KEEP; s.mePos = 0; s.meN = 0; s.myCls = -1
         s.lmX = s.lmY = 0.0; s.lmT = -1e9; s.lhX = s.lhY = 0.0; s.lhT = -1e9; s.ringT = -1e9
         s.aX = s.aY = 0.0; s.aT = -1e9; s.aConf = -1e9; s.prevFans = []; s.prevT = -1e9
@@ -50,6 +70,14 @@ class Picker:
 
     def step(s, t, defence, tags, fans, meX, meY, meConf):
         p = dict(src=0, x=-1.0, y=-1.0, myX=-1.0, myY=-1.0, cls=-1, why="", trk=0, defence=defence)
+        if s.relax:
+            for c in range(5):
+                n = apart(tags, c)
+                if n >= 1:
+                    s.seen[c].append(t)
+                    while t - s.seen[c][0] > UNIQ_S: s.seen[c].popleft()
+                if n >= 2: s.two[c] = t
+                if n >= 3: s.three[c] = t
         ring = 0.2 <= meConf < 0.38
         if ring:
             bd = 1e9; bc = -1
@@ -152,13 +180,23 @@ class Picker:
         conf = None; best = -1.0
         for q in c:
             for f in F:
+                # relax: a fan that also lies in the feet window of another tag of the class confirms neither
+                if s.relax and any(inwin(f, z) for z in c if z is not q): continue
                 if inwin(f, q) and f[2] * f[3] > best: best = f[2] * f[3]; conf = q
         tgt = None
         if conf is not None:
-            tgt = conf; s.aConf = t; p["why"] = "fan"
+            tgt = conf; s.aConf = t; p["why"] = "fan"; s.lastFan[cls] = t
         elif t - s.aConf <= CONF_S and t - s.aT <= AGE:
             r = sorted((dist(q, s.aX, s.aY), i) for i, q in enumerate(c) if s.reach(q, s.aX, s.aY, t - s.aT))
             if r and (len(r) == 1 or r[0][0] + MARGIN <= r[1][0]): tgt = c[r[0][1]]; p["why"] = "track"
+        if tgt is None and s.relax and len(c) == 1 and not F:
+            # relax "unique": the only tag of the class, no fan in view, the class fan-confirmed within FRESH_S, seen in
+            # >= SEEN_MIN scans of the last UNIQ_S s and never as two far-apart tags there (three when it is my class:
+            # mine is the second, and then only with my own tag known)
+            q = c[0]; last = s.three[cls] if cls == me else s.two[cls]
+            if t - s.lastFan[cls] <= FRESH_S and t - last > UNIQ_S and len(s.seen[cls]) >= SEEN_MIN \
+                    and (cls != me or mine is not None) and q.grey >= GMIN:
+                tgt = q; p["why"] = "unique"
         if tgt is not None:
             p["src"] = 1; p["x"] = tgt.x + 45; p["y"] = tgt.y - 52; s.aX = tgt.x; s.aY = tgt.y; s.aT = t
             if tgt.cls == me: s.lhX = tgt.x; s.lhY = tgt.y; s.lhT = t
@@ -166,7 +204,10 @@ class Picker:
         best = -1.0; bf = None
         for f in F:
             if any(inwin(f, q) for q in tags): continue
-            if not any(math.hypot(f[0] - g[0], (f[1] - g[1]) * 1.6) <= FAN_NEAR for g in pf): continue
+            near_prev = any(math.hypot(f[0] - g[0], (f[1] - g[1]) * 1.6) <= FAN_NEAR for g in pf)
+            # relax: or the fan stands where the last target's feet could have moved (FAN_NEAR + GV px/s, <= AGE s)
+            near_tgt = s.relax and t - s.aT <= AGE and math.hypot(f[0] - s.aX - 45, (f[1] - s.aY + 52) * 1.6) <= FAN_NEAR + GV * (t - s.aT)
+            if not (near_prev or near_tgt): continue
             if f[2] * f[3] > best: best = f[2] * f[3]; bf = f
         if bf is not None:
             p["src"] = 2; p["x"] = bf[0]; p["y"] = bf[1]; p["why"] = "fan alone"
@@ -208,8 +249,8 @@ def load(g):
     return R
 
 
-def run(R, strict):
-    pk = Picker(strict); fr = Follow(); out = []
+def run(R, strict, relax=False):
+    pk = Picker(strict, relax); fr = Follow(); out = []
     for t, d, tags, fans, mx, my, mc, r in R:
         p = pk.step(t, d, tags, fans, mx, my, mc); deg = fr.step(t, p); p["deg"] = deg; p["pw"] = fr.why; p["t"] = t; p["fans"] = fans; p["tags"] = tags; p["me"] = (mx, my, mc)
         out.append(p)
@@ -247,7 +288,7 @@ def stats(name, O):
 if __name__ == "__main__":
     if sys.argv[1] == "-fixture":
         out, src, t0, t1 = sys.argv[2], sys.argv[3], float(sys.argv[4]), float(sys.argv[5])
-        pk = Picker(True); lastDef = -9.0; n = 0
+        pk = Picker(True, "-relax" in sys.argv); lastDef = -9.0; n = 0
         with open(out, "w", encoding="utf-8", newline="\n") as f:
             f.write("t_s,me_x,me_y,me_conf,tags,fans,btn_label,class,tgt_x,tgt_y,my_x,my_y,trk,src\n")
             for r in csv.DictReader(open(src, encoding="utf-8")):
@@ -262,12 +303,12 @@ if __name__ == "__main__":
         print("wrote", n, "scans")
         sys.exit(0)
     g = sys.argv[1]; R = load(g)
-    old = run(R, False); new = run(R, True)
+    old = run(R, False); new = run(R, True); rel = run(R, True, True)
     bad = 0
     for p, (t, d, tags, fans, mx, my, mc, r) in zip(old, R):
         if str(p["src"]) != r["src"] or (p["src"] and abs(p["x"] - float(r["tgt_x"])) > 0.2) or abs(p["myX"] - float(r["my_x"])) > 0.2 or (p["pw"] != r["push_why"]): bad += 1
     print("%s: scans %d, defence %d | replay of the old picker differs from the logged columns in %d scans (0 = the log was made by this picker)" % (os.path.basename(g), len(R), sum(1 for x in R if x[1]), bad))
-    stats("old", old); stats("strict", new)
+    stats("old", old); stats("strict", new); stats("relax", rel)
     if "-v" in sys.argv:
         i = sys.argv.index("-v"); t0, t1 = float(sys.argv[i + 1]), float(sys.argv[i + 2])
         for a, b in zip(old, new):

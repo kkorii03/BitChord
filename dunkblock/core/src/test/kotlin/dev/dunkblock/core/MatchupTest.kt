@@ -53,8 +53,8 @@ class MatchupTest {
     }
 
     /** Replays a scan log through the picker; the log holds mpick.py's answer for every scan. */
-    private fun replay(name: String, track: Boolean = false, strict: Boolean = false): IntArray {
-        val pk = MatchupPicker(track = track, strict = strict)
+    private fun replay(name: String, track: Boolean = false, strict: Boolean = false, relax: Boolean = false): IntArray {
+        val pk = MatchupPicker(track = track, strict = strict, relax = relax)
         var lastDef = -9.0; var n = 0; var withTarget = 0; var withMe = 0; var fanTargets = 0; var trk = 0
         for (line in res(name).bufferedReader().readLines().drop(1).filter { it.isNotBlank() }) {
             val c = line.split(","); val t = c[0].toDouble()
@@ -101,5 +101,70 @@ class MatchupTest {
     @Test fun strictMatchesPythonOnPhoneMatch() {
         val r = replay("picks_p_strict.csv", track = true, strict = true)
         assertTrue(r[0] == 1508 && r[1] == 295 && r[2] == 30 && r[3] == 1141 && r[4] == 205, r.joinToString())
+    }
+
+    /** relax = true (the default) against mstrict.py -fixture -relax on the match of 11-12 19:55 (my SF vs an SF), 90-290 s:
+     *  53 "unique" and 12 more "fan alone" targets than strict alone. */
+    @Test fun relaxMatchesPythonOnPhoneMatch() {
+        val r = replay("picks_p_relax.csv", track = true, strict = true, relax = true)
+        assertTrue(r[0] == 1720 && r[1] == 371 && r[2] == 86 && r[3] == 1159 && r[4] == 306, r.joinToString())
+    }
+
+    // ---- relax rules on made-up scans: my position SF (fixed), the matchup a PG, no ring ----
+    private fun pg(x: Float, grey: Float = 0.2f) = MatchupFinder.Tag(4, x, 300f, grey)
+    private fun fanAt(q: MatchupFinder.Tag) = MatchupFinder.Fan(q.x + 45, q.y - 52, 100, 0.5f)
+    private fun scan(tags: List<MatchupFinder.Tag>, fans: List<MatchupFinder.Fan> = emptyList()) = MatchupFinder.Scan(tags, fans, 0f, 0f, 0f)
+    private fun at(pk: MatchupPicker, t: Double, tags: List<MatchupFinder.Tag>, fans: List<MatchupFinder.Fan> = emptyList()) = pk.step(t, true, scan(tags, fans))
+
+    /** 4 s of defence with the fan at the PG's feet (class learned, 41 scans of the PG); [also] = more tags in every scan. */
+    private fun learned(relax: Boolean = true, also: List<MatchupFinder.Tag> = emptyList()): MatchupPicker {
+        val pk = MatchupPicker(fixedMyCls = 0, track = true, strict = true, relax = relax)
+        var p = at(pk, 0.0, listOf(pg(500f)) + also, listOf(fanAt(pg(500f))))
+        for (i in 1..40) p = at(pk, i * 0.1, listOf(pg(500f)) + also, listOf(fanAt(pg(500f))))
+        assertEquals("fan", p.why); assertEquals(4, p.cls)
+        return pk
+    }
+
+    @Test fun uniqueTakesTheOnlyTagOfTheClass() {
+        val p = at(learned(), 10.0, listOf(pg(700f)))      // no fan, track long expired (CONF_S)
+        assertEquals("unique", p.why); assertEquals(1, p.src); assertEquals(745f, p.x); assertEquals(248f, p.y)
+        assertEquals(0, at(learned(relax = false), 10.0, listOf(pg(700f))).src, "strict alone has no target here")
+    }
+
+    @Test fun uniqueRefusesWhenItCannotBeSure() {
+        // two far-apart PGs on screen in the last 60 s (team mate or second opponent): never "the only one"
+        assertEquals(0, at(learned(also = listOf(pg(900f))), 10.0, listOf(pg(700f))).src)
+        assertEquals(0, at(learned(), 10.0, listOf(pg(700f, grey = 0.02f))).src, "too dark: looks like my own tag")
+        assertEquals(0, at(learned(), 4.0 + 20.5, listOf(pg(700f))).src, "last fan of the class older than FRESH_S")
+        assertEquals(0, at(learned(), 10.0, listOf(pg(700f)), listOf(MatchupFinder.Fan(300f, 400f, 100, 0.5f))).src, "a fan in view")
+    }
+
+    @Test fun fanContinuesTheLastTarget() {
+        // 0.5 s after the last scan (no fan "in the scan before"), tag hidden, a fan 55 px from the target's last feet
+        val near = MatchupFinder.Fan(600f, 248f, 100, 0.5f)
+        val p = at(learned(), 4.5, emptyList(), listOf(near))
+        assertEquals("fan alone", p.why); assertEquals(2, p.src); assertEquals(600f, p.x)
+        assertEquals(0, at(learned(relax = false), 4.5, emptyList(), listOf(near)).src, "strict alone: no fan the scan before")
+        assertEquals(0, at(learned(), 4.7, emptyList(), listOf(near)).src, "target older than AGE")
+        assertEquals(0, at(learned(), 4.5, emptyList(), listOf(MatchupFinder.Fan(800f, 248f, 100, 0.5f))).src, "beyond FAN_NEAR + GV * age")
+    }
+
+    @Test fun carriedTargetExpiresAndDoesNotJump() {
+        val mate = pg(900f)                                 // a second PG (team mate) stands far away all along
+        val pk = learned(also = listOf(mate))
+        val a = at(pk, 4.1, listOf(pg(520f), mate))
+        assertEquals("track", a.why); assertEquals(565f, a.x)
+        val b = at(pk, 4.2, listOf(mate))                   // the matchup's tag hidden: never the other PG
+        assertEquals(0, b.src, b.why)
+        assertEquals("track", at(pk, 4.3, listOf(pg(540f), mate)).why)
+        val c = at(pk, 6.5, listOf(pg(545f)))               // 2.5 s after the last fan: the carried target has expired
+        assertEquals(0, c.src, c.why)
+    }
+
+    @Test fun fanUnderTwoTagsOfTheClassConfirmsNeither() {
+        val two = listOf(pg(500f), pg(560f)); val fan = listOf(MatchupFinder.Fan(580f, 248f, 100, 0.5f))
+        val p = at(learned(), 10.0, two, fan)
+        assertEquals(0, p.src, p.why)
+        assertEquals("fan", at(learned(relax = false), 10.0, two, fan).why, "strict alone takes one of them")
     }
 }
