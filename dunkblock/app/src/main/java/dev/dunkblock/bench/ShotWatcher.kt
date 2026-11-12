@@ -83,13 +83,16 @@ class ShotWatcher(private val cfg: Bench.Config, private val startedNs: Long, pr
         Bench.shotSide = side
         // 0-4z52: follow + fast press: the block button stays open to the user's own finger for the whole defence.
         // Through the tile a hand press reached the game ~85 ms after the touch (3 matches, 30 presses), an app tap ~50;
-        // practice: presses 40-60 ms late never blocked. Switched only after 6 analysed frames (~120 ms) on the new side.
+        // practice: presses 40-60 ms late never blocked. Opens after 6 analysed frames (~100 ms) of defence.
+        // 0-4z53: closes only after ~1 s of OFFENCE, not on 'unknown': in the 11-13 practice drill all 11 closes came
+        // from 'unk' (the slot shows 리바운드/자리 선점 right after each shot) and reopened 0.1-2.3 s later, so a
+        // press then went through the tile again (late).
         if (cfg.follow > 0 && cfg.fastPress > 0) {
-            val def = side == SIDE_DEF
-            if (def == blockOpen) sideRun = 0
-            else if (++sideRun >= 6) {
-                blockOpen = def; sideRun = 0
-                main.post { BlockAccessibilityService.instance?.inGame?.holdBlockOpen(def) }
+            val want = if (side == SIDE_DEF) true else if (side == SIDE_OFF) false else blockOpen
+            if (want == blockOpen) sideRun = 0
+            else if (++sideRun >= (if (want) 6 else 60)) {
+                blockOpen = want; sideRun = 0
+                main.post { BlockAccessibilityService.instance?.inGame?.holdBlockOpen(want) }
             }
         }
         val found = findDisc(buf, w, h, rowStride)
