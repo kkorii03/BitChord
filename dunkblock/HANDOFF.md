@@ -1585,7 +1585,7 @@
 
 - 11-12 09:05 **vc1092 첫 경기 묶음 분석 + vc1096**(0-4z3, 0-4z4). 바꾼 파일: `ShotWatcher.kt`(`sat2`·`lowRed`·`isHudTop`/`isHudLow`, `findDisc2` 후보, shot.csv `low2` 열, `rise2`·`r2Ago`, `R2_PRESS_W_NS`, `R2_PRESS_D` 4.0), `BlockerActivity.kt`(각주). vc1095(run 95)는 CI 통과·dex 문자열 확인까지 했고 사용자에게는 안 알렸다(기준이 나빠 vc1096으로 대체). Kotlin은 눈으로만 검토.
 
-- 11-12 09:08 **`presspos.py`**(누를 때 매치업과의 좌우 간격) 추가, 0-4z5. vc1096 CI 결과는 이 줄 아래에 적는다.
+- 11-12 09:08 **`presspos.py`**(누를 때 매치업과의 좌우 간격) 추가, 0-4z5. **vc1096 = CI run 96 통과**(09:09), `dist/DunkBlock-vc1096.apk` 28,025,530바이트, sha256 앞 `ce39c513af1e652f`, dex에 `cand2,low2`·`w=%d R=` 문자열 확인. 폰 미설치·미시험.
 
 ## 7. 정직성 규칙 (이 프로젝트의 약속)
 
