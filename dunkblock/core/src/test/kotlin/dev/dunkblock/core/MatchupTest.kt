@@ -97,10 +97,11 @@ class MatchupTest {
     }
 
     /** strict = true against tools/analysis/mstrict.py -fixture on the vc1100 match (my SF vs Curry = PG, team mate
-     *  LaMelo = PG), 88-262 s: holds the scenes where the old picker chased LaMelo (132, 144, 241 s). */
+     *  LaMelo = PG), 88-262 s: holds the scenes where the old picker chased LaMelo (132, 144, 241 s).
+     *  11-13 RUN: the class switches SF -> PG at 119.9 s, 19 more fan targets there (295 -> 314). */
     @Test fun strictMatchesPythonOnPhoneMatch() {
         val r = replay("picks_p_strict.csv", track = true, strict = true)
-        assertTrue(r[0] == 1508 && r[1] == 295 && r[2] == 30 && r[3] == 1141 && r[4] == 205, r.joinToString())
+        assertTrue(r[0] == 1508 && r[1] == 314 && r[2] == 31 && r[3] == 1141 && r[4] == 205, r.joinToString())
     }
 
     /** relax = true (the default) against mstrict.py -fixture -relax on the match of 11-12 19:55 (my SF vs an SF), 90-290 s:
@@ -159,6 +160,29 @@ class MatchupTest {
         assertEquals("track", at(pk, 4.3, listOf(pg(540f), mate)).why)
         val c = at(pk, 6.5, listOf(pg(545f)))               // 2.5 s after the last fan: the carried target has expired
         assertEquals(0, c.src, c.why)
+    }
+
+    /** RUN: 30 s of PG votes, then the fan sits at an SG's feet. 7 SG votes in a row keep PG (a stray run); the 8th
+     *  switches the class to SG at once (the 60 s share alone would need 70 SG votes); the next PG fan does not switch back. */
+    @Test fun eightVotesInARowSwitchTheMatchup() {
+        val pk = MatchupPicker(fixedMyCls = 0, track = true, strict = true)
+        val sg = MatchupFinder.Tag(3, 300f, 300f, 0.2f)
+        var t = 0.0
+        repeat(300) { at(pk, t, listOf(pg(500f), sg), listOf(fanAt(pg(500f)))); t += 0.1 }
+        for (i in 1..7) {
+            val p = at(pk, t, listOf(pg(500f), sg), listOf(fanAt(sg))); t += 0.1
+            assertEquals(4, p.cls, "after $i SG votes"); assertEquals(3, p.owner)
+        }
+        val p = at(pk, t, listOf(pg(500f), sg), listOf(fanAt(sg))); t += 0.1
+        assertEquals(3, p.cls); assertEquals("fan", p.why); assertEquals(345f, p.x)
+        assertEquals(3, at(pk, t, listOf(pg(500f), sg), listOf(fanAt(pg(500f)))).cls, "one PG vote does not switch back")
+        // the old picker keeps the 60 s share: 8 SG votes after 300 PG votes leave it on PG
+        val old = MatchupPicker(fixedMyCls = 0, track = true)
+        t = 0.0
+        repeat(300) { old.step(t, true, scan(listOf(pg(500f), sg), listOf(fanAt(pg(500f))))); t += 0.1 }
+        var q = old.step(t, true, scan(listOf(pg(500f), sg), listOf(fanAt(sg))))
+        repeat(7) { t += 0.1; q = old.step(t, true, scan(listOf(pg(500f), sg), listOf(fanAt(sg)))) }
+        assertEquals(4, q.cls)
     }
 
     @Test fun fanUnderTwoTagsOfTheClassConfirmsNeither() {

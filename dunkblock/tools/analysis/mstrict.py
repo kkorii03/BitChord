@@ -22,6 +22,8 @@ mstrict.py <game folder> [-v t0 t1]
        fan continuation : a fan under no tag is also taken when it stands within FAN_NEAR + GV * age of the last
                 target's feet (age <= AGE).
        ambiguous fan : a fan in the feet window of two tags of the matchup's position confirms neither.
+    strict class votes (11-13): RUN = 8 fan votes in a row for one position, after votes for another, drop the older
+       votes: the matchup switched (11-13 12:49 match: SF -> PG at 255 s, the 60 s window needed 31 s to reach SHARE).
 mstrict.py -fixture <out csv> <matchup.csv> <t0> <t1> [-relax]
     scan log + the strict (or relaxed) picker's answers for core MatchupTest (defence as in that test: 0.3 s after
     the last block label).
@@ -35,6 +37,7 @@ import sys, os, csv, math, collections, struct
 KEEP_S = 60.0; MIN_VOTES = 6; SHARE = 0.7; GREY = 0.15; ME_KEEP = 200; ME_MIN = 15; AGE = 0.6; CAP = 2.0; MARGIN = 25.0; G0 = 12.0; GV = 250.0; GVETO = 0.08
 CONF_S = 2.0; FAN_NEAR = 40.0; FAN_GAP = 0.35; ROW = 8.0
 UNIQ_S = 60.0; SEEN_MIN = 30; FRESH_S = 20.0; GMIN = 0.08; SEP = 60.0
+RUN = 8   # strict: matchup switch after RUN fan votes in a row for one position (core MatchupPicker.RUN)
 CL = ["SF", "C", "PF", "SG", "PG"]
 
 
@@ -135,7 +138,11 @@ class Picker:
                         d = math.hypot(q.x + 45 - f[0], (q.y - 52 - f[1]) * 1.6)
                         if d < bd: bd = d; bq = q
                 if bq is not None and f[2] * f[3] > best: best = f[2] * f[3]; o = bq
-        if o is not None: s.voteT.append(t); s.voteC.append(o.cls)
+        if o is not None:
+            s.voteT.append(t); s.voteC.append(o.cls)
+            # strict: RUN votes in a row for one position after a vote for another -> the matchup changed, drop the older votes
+            if s.strict and len(s.voteC) > RUN and s.voteC[-RUN - 1] != o.cls and all(v == o.cls for v in s.voteC[-RUN:]):
+                del s.voteT[:-RUN]; del s.voteC[:-RUN]
         while s.voteT and t - s.voteT[0] > KEEP_S: s.voteT.pop(0); s.voteC.pop(0)
         cls = -1
         if len(s.voteC) >= MIN_VOTES:

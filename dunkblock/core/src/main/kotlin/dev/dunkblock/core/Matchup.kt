@@ -402,7 +402,15 @@ class MatchupPicker(
                 if (bq != null && f.area * f.rim.toDouble() > best) { best = f.area * f.rim.toDouble(); o = bq }
             }
         }
-        if (o != null) { voteT.add(t); voteC.add(o.cls); p.owner = o.cls }
+        if (o != null) {
+            voteT.add(t); voteC.add(o.cls); p.owner = o.cls
+            // strict: RUN votes in a row for one position after a vote for another -> the matchup changed, drop the older
+            // votes (the run is cut the scan it reaches RUN, so checking the vote just before it is enough: <= RUN + 1 reads)
+            val n = voteC.size; val oc = o.cls
+            if (strict && n > RUN && voteC[n - RUN - 1] != oc && (n - RUN until n).all { voteC[it] == oc }) {
+                voteT.subList(0, n - RUN).clear(); voteC.subList(0, n - RUN).clear()
+            }
+        }
         while (voteT.isNotEmpty() && t - voteT[0] > KEEP_S) { voteT.removeAt(0); voteC.removeAt(0) }
         var cls = -1
         if (voteC.size >= MIN_VOTES) {
@@ -500,5 +508,10 @@ class MatchupPicker(
         const val FRESH_S = 20.0
         const val GMIN = 0.08f
         const val SEP = 60.0
+        /** strict: [RUN] fan votes in a row for one position, after votes for another, drop the older votes (matchup
+         *  switched). 11-13 12:49 match (SF -> PG at 255 s): the 60 s window held SF for 31 s more; with RUN the class
+         *  follows in 1 s, shot windows without a target 48 -> 33 %. Longest stray run of another position on the 10
+         *  design matches: 3 votes; held-out: 5 (010250, a C). */
+        const val RUN = 8
     }
 }
