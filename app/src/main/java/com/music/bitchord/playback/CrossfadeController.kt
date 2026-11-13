@@ -16,6 +16,7 @@ import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.ko.KoCrossfadeGain
 import com.music.bitchord.ko.KoCrossfadeLog
 import com.music.bitchord.ko.KoCrossfadeState
+import com.music.bitchord.ko.KoLoopMix
 import com.music.bitchord.ko.koFadeGainsAt
 import com.music.bitchord.ko.koArmOutgoingMoved
 import com.music.bitchord.ko.koArmPauseOrRestore
@@ -2764,6 +2765,7 @@ class CrossfadeController(
         nextDurationMs: Long,
         state: SmartAnalysis,
     ): LoopMix.Plan? {
+        if (KoLoopMix.off) return null.also { loopRefusal = null } // [KO] no-loop-mix
         val pair = "${current.mediaId}->${next.mediaId}"
         loopRefusalFor(player, current, next, state)?.let { why ->
             noteLoopVerdict(pair, null, why)
