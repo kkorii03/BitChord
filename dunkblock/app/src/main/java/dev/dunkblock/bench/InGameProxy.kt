@@ -440,8 +440,16 @@ class InGameProxy(private val svc: BlockAccessibilityService, private val autoMo
         const val STEER_STALE_MS = 400L
         /** Follow mode 3 starts a push only this long after the thumb left the pad (a quick re-grip is not a lift). Guess. */
         const val LIFT_IDLE_NS = 400_000_000L
-        /** Follow mode 4: at most this much turn of the thumb's direction towards the matchup. Guess, not measured. */
-        const val MAX_BEND_DEG = 30.0
+        /**
+         * Follow mode 4: at most this much turn of the thumb's direction towards the matchup. Was 30 (a guess). Measured
+         * on six follow-4 matches (11-12/13, scratchpad follow\s4.py): far from the matchup (> 85 px) my approach speed
+         * was 131 px/s with the thumb within 30 deg of the matchup but 97 px/s with a thumb 30-120 deg off that got
+         * only 30 deg of turn; direction mapping right (stick angle = ground angle, bias 0). Replay (follow\sim.py,
+         * my recorded motion rotated by the change of stick angle): closing rate -8.2 -> -16.6 px/s on the 3 matches
+         * it was chosen on, -12.5 -> -20.3 on the 3 held-out ones, -28 -> -33 on 7 follow-off matches. 90: a thumb
+         * up to 90 deg off now points straight at the matchup; [BEND_KEEP_DEG] still leaves an away thumb alone.
+         */
+        const val MAX_BEND_DEG = 90.0
         /** Follow mode 4: a thumb further than this from the matchup's direction is left alone (the user goes elsewhere). */
         const val BEND_KEEP_DEG = 120.0
         /** Follow mode 5: the hand's finger id for the "수비" button (tiles use 101-104). */

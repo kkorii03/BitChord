@@ -110,7 +110,7 @@ object Bench {
          * (core FollowRule on the record-only matchup scan). 0 = off, 1 = only while the user's thumb rests on the
          * joystick pad (moving the thumb takes over), 2 = nobody holds the phone (adb self-test), 3 = only while the
          * thumb is OFF the pad (putting it down takes over), 4 = 1 + 3 + the steering thumb's direction turned up to
-         * 30 degrees towards the matchup, 5 = hold the game's "수비" button through the defence (joystick
+         * 90 degrees towards the matchup (InGameProxy.MAX_BEND_DEG), 5 = hold the game's "수비" button through the defence (joystick
          * untouched, no player recognition). InGameProxy.steer / defHold.
          */
         val follow: Int = 0,
