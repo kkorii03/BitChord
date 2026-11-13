@@ -1873,6 +1873,7 @@ object SourceResolver {
             // [strictLength] — so with nothing to measure by, it is not strict.
             val strict = strictLength && matchOn.durationSec != null
             val ranked = TrackMatcher.ranked(candidates, matchOn)
+            com.music.bitchord.ko.KoVersionGuard.noteSearch(source.configId, matchOn.title, matchOn.artist, candidates) { SourceRegistry.parseTrackKey(it.videoId)?.second ?: it.videoId } // [KO] version risk
             // Rows whose only disagreement is an artist credit in another
             // script are kept apart so the ordinary match order still wins.
             // Judged over every result, not just the top row: the localised

@@ -8,7 +8,11 @@ import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.net.HqRetryPolicy
 import com.music.bitchord.data.net.ProxyPlayback
 import com.music.bitchord.download.HqLibraryUpgrade
+import com.music.bitchord.ko.KoOpeningClip
+import com.music.bitchord.ko.KoVersionGuard
 import com.music.bitchord.data.lyrics.ChromaAlignment
+import com.music.bitchord.data.lyrics.GroqWhisper
+import com.music.bitchord.data.lyrics.LyricsWordAlign
 import com.music.bitchord.data.lyrics.WavAudio
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.AddonSource
@@ -99,6 +103,9 @@ object HqAudioVerify {
      * second of audio the comparison never read.
      */
     const val FETCH_SECONDS = COMPARE_SECONDS + 1.0
+
+    /** [KO] How much of a risky candidate's opening Groq hears (about 1.9 MB of 16 kHz WAV). */
+    private const val WORDS_SECONDS = 60.0
 
     /** One verification per pair at a time while that verification is running. */
     private val locks = ConcurrentHashMap<String, Mutex>()
@@ -249,6 +256,8 @@ object HqAudioVerify {
         val headMs: Long = -1L,
         /** How the profile was read, for the timing line — see [readLabel]. */
         val read: String = "-",
+        /** The opening kept for the words check; only when one was asked for. */
+        val opening: KoOpeningClip? = null,
     )
 
     /** Chroma construction time inside one decode, so it can be told apart from the codec. */
@@ -272,6 +281,8 @@ object HqAudioVerify {
         var onDiskAtEnd: Long = -1L
         @Volatile
         var expected: Long = -1L
+        @Volatile
+        var opening: KoOpeningClip? = null
     }
 
     /**
@@ -495,7 +506,11 @@ object HqAudioVerify {
             logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId)
             return@withContext Outcome.Mismatch
         }
-        HqVerificationStore.get(context, youtubeId, sourceId, trackId)?.let {
+        // [KO] The search that found this row also held another version of the song
+        // (11-13 Despacito: the Bieber remix, mislabelled, scored 96% on chroma). Its
+        // words decide; a verdict stored before they were heard is measured again.
+        val needsWords = KoVersionGuard.risky(sourceId, trackId)
+        HqVerificationStore.get(context, youtubeId, sourceId, trackId)?.takeIf { !needsWords || it.wordsChecked }?.let {
             pendingRateLimits.remove(youtubeId)
             return@withContext Outcome.Verified(it)
         }
@@ -536,9 +551,29 @@ object HqAudioVerify {
             return@withContext lock.withLock {
                 coroutineScope {
                     HqVerificationStore.get(context, youtubeId, sourceId, trackId)
+                        ?.takeIf { !needsWords || it.wordsChecked }
                         ?.let { return@coroutineScope Outcome.Verified(it) }
                     if (HqVerificationStore.isRejected(context, youtubeId, sourceId, trackId)) {
                         return@coroutineScope Outcome.Mismatch
+                    }
+                    // [KO] The words check needs the YouTube copy's words, which the song
+                    // check keeps once it has heard them, and an engine to hear the
+                    // candidate. Without either nothing is fetched: the YouTube copy plays
+                    // on, nothing is stored, and a later event asks again.
+                    val youtubeWords = if (needsWords) {
+                        SongHearing.keptYouTubeWords(context, youtubeId)
+                            ?.takeIf { GroqWhisper.apiKey.isNotBlank() }
+                            ?: run {
+                                TrackLog.d(
+                                    TAG,
+                                    "hq-verify: '${target.title}' $sourceName another version in the search; " +
+                                        "words check waits for the YouTube copy's words",
+                                    youtubeId,
+                                )
+                                return@coroutineScope Outcome.Unavailable(transient = true)
+                            }
+                    } else {
+                        null
                     }
                     // The two ninety-second reads do not depend on each other:
                     // the reference comes from the WAV the song check already
@@ -548,7 +583,7 @@ object HqAudioVerify {
                     // verification in front of the reported 2.2–8.4 s prove
                     // times had the same sequential shape. A missing reference
                     // cancels the candidate read before anything waits on it.
-                    val candidateDeferred = async { candidateFetch(context, stream, epoch) }
+                    val candidateDeferred = async { candidateFetch(context, stream, epoch, keepOpening = needsWords) }
                     val reference = referenceFeatures(
                         context,
                         youtubeId,
@@ -630,24 +665,36 @@ object HqAudioVerify {
                     val offset = result.map.map(0L)
                     val rate = result.rate
                     val verdict = HqMatchPolicy.verdict(match, offset, rate)
+                    // [KO] Only a chroma match is worth hearing; a refusal stands without it.
+                    val words = if (youtubeWords != null && verdict.accepted) {
+                        heardWords(youtubeId, youtubeWords, candidate.opening, offset, rate)
+                    } else {
+                        null
+                    }
+                    val decision = KoVersionGuard.decide(verdict.accepted, needsWords, words)
                     logVerdict(
                         target.title,
                         sourceName,
                         match,
                         offset,
-                        verdict.accepted,
+                        decision == KoVersionGuard.Decision.ACCEPT,
                         about = youtubeId,
                         reference = "wav",
                         candidate = "file",
                         bytes = candidate.bytes,
+                        measured = decision != KoVersionGuard.Decision.UNMEASURED,
                     )
                     logTiming(youtubeId, candidate, alignMs)
                     // Downloaded and compared: the source is measurable, whatever the verdict.
                     sourceId?.let(SourceResolver.SourceCooldown::measured)
-                    if (!verdict.accepted) {
+                    // The words could not be heard this time: says nothing about the candidate.
+                    if (decision == KoVersionGuard.Decision.UNMEASURED) {
+                        return@coroutineScope Outcome.Unavailable(transient = true)
+                    }
+                    if (decision == KoVersionGuard.Decision.REJECT) {
                         if (HqVerifyPolicy.shouldPersistRejection(
                                 referenceAvailable = referenceComplete && candidateComplete,
-                                accepted = verdict.accepted,
+                                accepted = false,
                             )
                         ) {
                             reject(context, youtubeId, sourceId, trackId)
@@ -662,6 +709,7 @@ object HqAudioVerify {
                         tier = tier,
                         sourceTitle = stream.trackTitle,
                         sourceArtist = stream.trackArtist,
+                        wordsChecked = words != null,
                     )
                     HqVerificationStore.put(context, youtubeId, sourceId, trackId, verified)
                     pendingRateLimits.remove(youtubeId)
@@ -1018,6 +1066,52 @@ object HqAudioVerify {
         }
     }
 
+    /**
+     * [KO] The candidate's opening heard once by Groq, in the language the YouTube
+     * copy was heard in, and compared word for word with it ([KoVersionGuard.compareWords]).
+     * Null when nothing usable came back: the caller then leaves the pair unmeasured.
+     * Counts only on the log line, never the words.
+     */
+    private suspend fun heardWords(
+        youtubeId: String,
+        youtube: SongHearing.Saved,
+        opening: KoOpeningClip?,
+        offsetMs: Long,
+        rate: Double,
+    ): KoVersionGuard.WordsCheck? {
+        val clip = opening ?: return null
+        val wav = clip.wav() ?: return null
+        val asked = System.currentTimeMillis()
+        val answer = SongHearing.groqWithResend { GroqWhisper.listen(wav, youtube.language, "audio/wav") }
+        val heard = answer.words
+        val http = answer.httpCode
+        if (heard == null || http == null || http !in 200..299) {
+            TrackLog.i(
+                TAG,
+                "hq-verify words: no answer http=${http ?: "-"} kb=${wav.size / 1024} " +
+                    "send=${System.currentTimeMillis() - asked}ms",
+                youtubeId,
+            )
+            return null
+        }
+        val check = KoVersionGuard.compareWords(
+            reference = youtube.words.map { LyricsWordAlign.Heard(it.t, it.s, it.e) },
+            referenceUntilMs = (youtube.seconds * 1000).toLong(),
+            candidate = heard,
+            candidateUntilMs = clip.durationMs,
+            offsetMs = offsetMs,
+            rate = rate,
+        )
+        TrackLog.i(
+            TAG,
+            "hq-verify words: ${check.verdict.name.lowercase()} youtube=${check.referenceWords} " +
+                "candidate=${check.candidateWords} shared=${check.shared} window=${check.windowMs}ms " +
+                "lang=${youtube.language} kb=${wav.size / 1024} send=${System.currentTimeMillis() - asked}ms",
+            youtubeId,
+        )
+        return check
+    }
+
     /** The one line a verification leaves: the figure and the verdict, never lyrics text. */
     private fun logVerdict(
         title: String,
@@ -1290,12 +1384,14 @@ object HqAudioVerify {
         context: Context,
         stream: SourceStream,
         epoch: PlaybackEpoch,
+        keepOpening: Boolean = false,
     ): CandidateFetch = candidateFetch(
         File(context.cacheDir, CANDIDATE_DIR),
         stream,
         ProxyPlayback.mediaClientFor(stream.url),
         epoch,
         ::freshStream,
+        keepOpening,
     )
 
     internal suspend fun candidateFeatures(
@@ -1314,6 +1410,8 @@ object HqAudioVerify {
         client: OkHttpClient,
         epoch: PlaybackEpoch,
         refreshStream: (suspend (SourceStream) -> SourceStream?)?,
+        /** [KO] Also keep the opening for the words check; see [KoOpeningClip]. */
+        keepOpening: Boolean = false,
     ): CandidateFetch {
         // The comparison only needs the recording, not its resolution: the
         // same source row at a lossy tier is a fraction of a 24-bit head, and
@@ -1346,16 +1444,19 @@ object HqAudioVerify {
                 val started = System.nanoTime()
                 val timing = DecodeTiming()
                 val coroutine = currentCoroutineContext()
+                val clip = if (keepOpening) KoOpeningClip(WORDS_SECONDS) else null
                 val features = featuresOfGrowing(
                     source,
                     expected,
                     progress,
                     { !coroutine.isActive },
                     timing,
+                    clip,
                 )
                 coroutine.ensureActive()
                 if (features != null) {
                     slot.onDiskAtEnd = source.length()
+                    slot.opening = clip
                     slot.features = features
                     slot.decodeMs = millisSince(started)
                     slot.chromaMs = timing.chromaNanos / 1_000_000L
@@ -1392,12 +1493,14 @@ object HqAudioVerify {
                 // abort answers "stop now?", so it is the inverse of isActive. Passing
                 // isActive itself stopped every decode on its first pass, which is why
                 // no candidate ever reached the comparison.
-                val decoded = featuresOf(file, { !coroutine.isActive }, timing)
+                val clip = if (keepOpening) KoOpeningClip(WORDS_SECONDS) else null
+                val decoded = featuresOf(file, { !coroutine.isActive }, timing, clip)
                 // The decoder stops on abort without throwing; confirm here that
                 // the verification itself was not abandoned while it ran, before a
                 // null is reported as a decode failure.
                 coroutine.ensureActive()
                 if (decoded != null) {
+                    slot.opening = clip
                     slot.decodeMs = millisSince(started)
                     slot.chromaMs = timing.chromaNanos / 1_000_000L
                 }
@@ -1420,6 +1523,7 @@ object HqAudioVerify {
                     chromaMs = slot.chromaMs,
                     headMs = slot.progress?.headMs ?: -1L,
                     read = readLabel(streamed, slot.onDiskAtEnd, slot.expected),
+                    opening = slot.opening,
                 ),
             )
         } catch (cancelled: CancellationException) {
@@ -2048,7 +2152,8 @@ object HqAudioVerify {
         file: File,
         abort: () -> Boolean = { false },
         timing: DecodeTiming? = null,
-    ): ChromaAlignment.Features? = featuresFrom(timing) { onChunk ->
+        clip: KoOpeningClip? = null,
+    ): ChromaAlignment.Features? = featuresFrom(timing, clip) { onChunk ->
         AudioDecoder.decodeMonoStream(file, 0.0, FETCH_SECONDS, abort = abort, label = "hq-verify", onChunk = onChunk)
     }
 
@@ -2057,7 +2162,8 @@ object HqAudioVerify {
         source: MediaDataSource,
         abort: () -> Boolean = { false },
         timing: DecodeTiming? = null,
-    ): ChromaAlignment.Features? = featuresFrom(timing) { onChunk ->
+        clip: KoOpeningClip? = null,
+    ): ChromaAlignment.Features? = featuresFrom(timing, clip) { onChunk ->
         AudioDecoder.decodeMonoStream(source, 0.0, FETCH_SECONDS, abort = abort, label = "hq-verify", onChunk = onChunk)
     }
 
@@ -2075,13 +2181,14 @@ object HqAudioVerify {
         progress: DownloadProgress,
         abort: () -> Boolean,
         timing: DecodeTiming?,
+        clip: KoOpeningClip? = null,
     ): ChromaAlignment.Features? {
         val reader = runCatching {
             GrowingFileReader(file, expectedSize, progress, abandoned = abort)
         }.getOrNull() ?: return null
         val source = GrowingFileDataSource(reader)
         return try {
-            featuresOf(source, abort, timing)
+            featuresOf(source, abort, timing, clip)
         } finally {
             runCatching { source.close() }
         }
@@ -2089,6 +2196,8 @@ object HqAudioVerify {
 
     private fun featuresFrom(
         timing: DecodeTiming? = null,
+        /** [KO] Fed the same samples, for the words check; null for every other candidate. */
+        clip: KoOpeningClip? = null,
         decode: ((FloatArray, Int, Double) -> Unit) -> Double?,
     ): ChromaAlignment.Features? {
         val started = System.nanoTime()
@@ -2107,6 +2216,7 @@ object HqAudioVerify {
                     } else if (rate == sampleRate) {
                         current.push(samples)
                     }
+                    if (rate == sampleRate) clip?.push(samples, rate)
                 } finally {
                     timing?.let { it.chromaNanos += System.nanoTime() - pushStarted }
                 }

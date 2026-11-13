@@ -63,6 +63,23 @@ class HqVerificationStoreFormatTest {
     }
 
     @Test
+    fun `a words checked verdict keeps its mark across a reload and plain lines stay unmarked`() {
+        val checked = verified().copy(wordsChecked = true)
+        HqVerificationStore.put(context, "yt1", "src1", "track1", checked)
+        assertEquals(
+            "yt1\u0001src1\u0001track1\t1234\t1.001\t87\tLOSSLESS_16\t\t\twords",
+            prefs.values["verified"],
+        )
+
+        cachedField.set(HqVerificationStore, null)
+
+        assertEquals(checked, HqVerificationStore.get(context, "yt1", "src1", "track1"))
+        prefs.values["verified"] = "yt2\u0001src1\u0001track1\t1234\t1.001\t87\tLOSSLESS_16\tTitle\tArtist"
+        cachedField.set(HqVerificationStore, null)
+        assertFalse(HqVerificationStore.get(context, "yt2", "src1", "track1")!!.wordsChecked)
+    }
+
+    @Test
     fun `the cache is reloaded from disk after the in memory copy is dropped`() {
         val value = verified()
         HqVerificationStore.put(context, "yt1", "src1", "track1", value)

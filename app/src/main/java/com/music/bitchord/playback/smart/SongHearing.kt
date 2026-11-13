@@ -290,6 +290,17 @@ internal object SongHearing {
         return saved?.let(::heardFrom)
     }
 
+    /**
+     * The longest transcript kept of [videoId]'s YouTube stream, in whatever language it
+     * was asked in; never a request. The version check in [HqAudioVerify] compares a
+     * candidate's words with these, so it only runs once the song check has heard them.
+     */
+    internal suspend fun keptYouTubeWords(context: Context, videoId: String): Saved? =
+        withContext(Dispatchers.IO) { load(context.applicationContext, videoId) }
+            .filter { it.recording.startsWith(STREAM_PREFIX) && it.words.isNotEmpty() }
+            .filter { LyricsTiming.clockFromKey(it.clock) == LyricsTiming.Clock.YouTube }
+            .maxByOrNull { it.seconds }
+
     private suspend fun longestSaved(app: Context, song: Song, recording: String, language: String): Saved? {
         val kept = withContext(Dispatchers.IO) { load(app, song.videoId) }
         return covering(kept, recording, language, 0.0)
