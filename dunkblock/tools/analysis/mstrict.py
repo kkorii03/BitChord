@@ -217,20 +217,24 @@ class Picker:
 
 
 class Follow:
-    NEAR = 55.0; FAR = 85.0; HOLD = 0.3
-    def __init__(s): s.moving = False; s.lastDeg = None; s.lastSeen = -9.0; s.why = ""; s.dist = -1.0
+    # COAST = core FollowRule.COAST_S: the picker's last target / own place stands in for this long (0 = the old rule)
+    NEAR = 55.0; FAR = 85.0; HOLD = 0.3; COAST = 0.6
+    def __init__(s): s.moving = False; s.lastDeg = None; s.lastSeen = -9.0; s.why = ""; s.dist = -1.0; s.tT = s.mT = -9.0; s.tx = s.ty = s.mx = s.my = 0.0
     def step(s, t, p):
-        if not p["defence"]: s.moving = False; s.why = "not defence"; return None
-        if p["src"] == 0 or p["myX"] < 0:
+        if not p["defence"]: s.moving = False; s.tT = s.mT = -9.0; s.why = "not defence"; return None
+        if p["src"] > 0: s.tx = p["x"]; s.ty = p["y"]; s.tT = t
+        if p["myX"] >= 0: s.mx = p["myX"]; s.my = p["myY"]; s.mT = t
+        if t - s.tT > s.COAST or t - s.mT > s.COAST:
             if s.moving and t - s.lastSeen <= s.HOLD: s.why = "hold"; return s.lastDeg
-            s.moving = False; s.why = "no target" if p["src"] == 0 else "no me"; return None
-        dx = p["x"] - p["myX"]; up = (p["myY"] - p["y"]) * 1.6
-        s.dist = math.hypot(dx, up); s.lastSeen = t
+            s.moving = False; s.why = "no target" if t - s.tT > s.COAST else "no me"; return None
+        dx = s.tx - s.mx; up = (s.my - s.ty) * 1.6
+        s.dist = math.hypot(dx, up); fresh = s.tT == t and s.mT == t
+        if fresh: s.lastSeen = t
         if s.moving:
             if s.dist < s.NEAR: s.moving = False
         elif s.dist > s.FAR: s.moving = True
         if not s.moving: s.why = "close"; return None
-        s.lastDeg = math.degrees(math.atan2(up, dx)); s.why = "push"; return s.lastDeg
+        s.lastDeg = math.degrees(math.atan2(up, dx)); s.why = "push" if fresh else "coast"; return s.lastDeg
 
 
 def parse(r):

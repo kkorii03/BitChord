@@ -26,7 +26,8 @@ class FollowTest {
         val f = FollowRule()
         assertTrue(f.step(1.0, pick(false, 700f, 300f, 500f, 300f)).isNaN()); assertEquals("not defence", f.why)
         assertTrue(f.step(1.1, pick(true, 0f, 0f, 500f, 300f, src = 0)).isNaN()); assertEquals("no target", f.why)
-        assertTrue(f.step(1.2, pick(true, 700f, 300f, -1f, -1f)).isNaN()); assertEquals("no me", f.why)
+        // 0.7 s after my last place (1.1 s), past COAST_S
+        assertTrue(f.step(1.8, pick(true, 700f, 300f, -1f, -1f)).isNaN()); assertEquals("no me", f.why)
     }
 
     @Test fun startsFarStopsNear() {
@@ -40,7 +41,7 @@ class FollowTest {
     }
 
     @Test fun holdsBrieflyWhenTheTargetFlickersThenLetsGo() {
-        val f = FollowRule()
+        val f = FollowRule(coastS = 0.0)                                              // the old rule: hold only
         deg(0f, f.step(1.0, pick(true, 700f, 300f, 500f, 300f)))
         deg(0f, f.step(1.2, pick(true, 0f, 0f, 500f, 300f, src = 0))); assertEquals("hold", f.why)
         assertTrue(f.step(1.4, pick(true, 0f, 0f, 500f, 300f, src = 0)).isNaN())    // 0.4 s without a target
@@ -48,5 +49,22 @@ class FollowTest {
         deg(0f, f.step(2.0, pick(true, 700f, 300f, 500f, 300f)))
         assertTrue(f.step(2.1, pick(false, 700f, 300f, 500f, 300f)).isNaN())
         assertTrue(f.step(2.2, pick(true, 0f, 0f, 500f, 300f, src = 0)).isNaN())
+    }
+
+    @Test fun coastsOnTheLastPlacesForCoastSThenLetsGo() {
+        val f = FollowRule()
+        deg(0f, f.step(1.0, pick(true, 700f, 300f, 500f, 300f))); assertEquals("push", f.why)
+        // Target lost, me moved up: the push turns towards the target's last place (right and down), not the old angle.
+        deg(Math.toDegrees(Math.atan2(-160.0, 200.0)).toFloat(), f.step(1.3, pick(true, 0f, 0f, 500f, 200f, src = 0)))
+        assertEquals("coast", f.why)
+        // Me lost, target fresh: my last place stands in.
+        deg(Math.toDegrees(Math.atan2(-160.0, 300.0)).toFloat(), f.step(1.5, pick(true, 800f, 300f, -1f, -1f)))
+        assertEquals("coast", f.why)
+        // My last place is now 0.7 s old: let go, and the hold does not add to the coast.
+        assertTrue(f.step(2.0, pick(true, 800f, 300f, -1f, -1f)).isNaN()); assertEquals("no me", f.why)
+        // Offence forgets both places.
+        deg(0f, f.step(3.0, pick(true, 700f, 300f, 500f, 300f)))
+        assertTrue(f.step(3.1, pick(false, 700f, 300f, 500f, 300f)).isNaN())
+        assertTrue(f.step(3.2, pick(true, 0f, 0f, 500f, 300f, src = 0)).isNaN()); assertEquals("no target", f.why)
     }
 }
