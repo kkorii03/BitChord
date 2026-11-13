@@ -118,7 +118,7 @@ class KoVersionHeardWordsTest {
     }
 
     @Test
-    fun `no words answer is unmeasured, never accepted; chroma refusal still rejects`() {
+    fun `no words answer is unmeasured and never accepted, a chroma refusal still rejects`() {
         assertEquals(
             KoVersionGuard.Decision.UNMEASURED,
             KoVersionGuard.decide(chromaAccepted = true, needsWords = true, words = null),
