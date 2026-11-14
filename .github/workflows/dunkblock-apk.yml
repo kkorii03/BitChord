@@ -1,0 +1,97 @@
+name: DunkBlock Benchmark APK
+
+# Builds the standalone DunkBlock Benchmark project in dunkblock/ (independent of the BitChord build).
+on:
+  push:
+    branches: ['ccr-8af48de0-9efnr2', 'dunkblock/**']
+    paths: ['dunkblock/**', '.github/workflows/dunkblock-apk.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: dunkblock-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write   # only for the optional "[ship-apk]" commit below
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dunkblock
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - run: chmod +x gradlew
+
+      - name: Core unit tests (pure Kotlin)
+        run: ./gradlew --no-daemon :core:test
+
+      - name: Analyzer self-test (Python, stdlib only)
+        run: python3 tools/analyze.py --self-test
+
+      - name: Video pipeline selftest (synthetic video with known timings)
+        run: |
+          sudo apt-get install -y -qq ffmpeg > /dev/null
+          python3 -m pip install -q opencv-python-headless numpy
+          cd tools/video && python3 -m dunkvideo selftest --dir /tmp/dv_selftest
+
+      - name: Cross-check Kotlin summary vs Python recomputation (same synthetic CSVs)
+        run: |
+          grep -E "캡처 비율|예상 프레젠테이션|색상 전환" core/build/crosscheck/session/summary.txt
+          python3 tools/analyze.py core/build/crosscheck/session --warmup 1.0 | grep -E "캡처 비율|예상 표시|색상 전환"
+
+      - name: Build benchmark APK (release = non-debuggable, debug-signed)
+        run: ./gradlew --no-daemon :app:assembleRelease --stacktrace
+
+      - name: Collect
+        run: |
+          mkdir -p out
+          vc=$((1000 + GITHUB_RUN_NUMBER))
+          cp app/build/outputs/apk/bench/release/app-bench-release.apk out/DunkBlockBench-vc${vc}.apk
+          cp app/build/outputs/apk/blocker/release/app-blocker-release.apk out/DunkBlock-vc${vc}.apk
+          cp -r tools docs README.md out/
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DunkBlockBench-apk
+          path: dunkblock/out
+          retention-days: 30
+
+      # Puts APKs on this same working branch so the development session can fetch them with git
+      # (its network cannot reach the artifact storage). Only when the commit message asks for it:
+      #   [ship-blocker] = DunkBlock (auto-block app), [ship-bench] = DunkBlock Bench, [ship-apk] = both.
+      - name: Commit APK to the working branch
+        if: contains(github.event.head_commit.message, '[ship-')
+        env:
+          MSG: ${{ github.event.head_commit.message }}
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          vc=$((1000 + GITHUB_RUN_NUMBER))
+          mkdir -p dunkblock/dist
+          case "$MSG" in *"[ship-apk]"*|*"[ship-bench]"*)
+            rm -f dunkblock/dist/DunkBlockBench-*.apk; cp dunkblock/out/DunkBlockBench-vc${vc}.apk dunkblock/dist/ ;; esac
+          case "$MSG" in *"[ship-apk]"*|*"[ship-blocker]"*)
+            rm -f dunkblock/dist/DunkBlock-vc*.apk; cp dunkblock/out/DunkBlock-vc${vc}.apk dunkblock/dist/ ;; esac
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A dunkblock/dist
+          git commit -m "dist: DunkBlock vc${vc} (${GITHUB_SHA::7})"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+      - name: Test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-test-reports
+          path: dunkblock/core/build/reports/tests
