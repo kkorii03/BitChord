@@ -590,6 +590,33 @@ object SongVersionPolicy {
         mediaId != null && audibleMediaId == mediaId
 
     /**
+     * Whether the playing row is the one that stands in for the video
+     * [sourceVideoId], rather than the same song reached as its own row.
+     *
+     * [UnprovenVersions] is keyed by the adopted song's id alone, so the
+     * first-sound check used to act on any row carrying that id: a song the
+     * listener picked from its album was measured against a video they never
+     * asked for and, when the two were different songs, replaced by that
+     * video from its start. Only a row converted from a video carries one of
+     * the two marks the install paths leave: the row's own video origin, or
+     * the video remembered for switching back.
+     */
+    fun standsInForVideo(
+        rowIsVideoOrigin: Boolean,
+        rememberedVideoId: String?,
+        sourceVideoId: String,
+    ): Boolean = rowIsVideoOrigin || (rememberedVideoId != null && rememberedVideoId == sourceVideoId)
+
+    /**
+     * Whether a before-audio lookup that answered for [lookupMediaId] may
+     * still move the player (skip an official MV that has no release). The
+     * lookup can outlive its row: a listener who jumped elsewhere during the
+     * wait must not be thrown off the row they chose by the old row's answer.
+     */
+    fun lookupStillOwnsRow(lookupMediaId: String, currentMediaId: String?, samePlayer: Boolean): Boolean =
+        samePlayer && currentMediaId == lookupMediaId
+
+    /**
      * What the row after the current one is, as far as its pre-playback version
      * lookup goes.
      *

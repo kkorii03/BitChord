@@ -209,4 +209,22 @@ class HqVerificationStoreFormatTest {
         assertFalse(HqVerificationStore.isRejected(context, "yt2", "src1", "track2"))
         assertEquals(verified(), HqVerificationStore.get(context, "yt3", "src2", "track3"))
     }
+
+    // Review 11-15 (H draft-3): the cache asks which rows were refused for a
+    // song, to stop opening a copy one of them wrote before the refusal.
+    @Test
+    fun `refused rows are listed for their own song only`() {
+        HqVerificationStore.reject(context, "yt1", "telegram", "4411")
+        HqVerificationStore.reject(context, "yt1", "qobuz", "77")
+        HqVerificationStore.reject(context, "yt10", "telegram", "9000")
+        HqVerificationStore.put(context, "yt1", "telegram", "5000", verified())
+
+        assertEquals(
+            setOf("telegram" to "4411", "qobuz" to "77"),
+            HqVerificationStore.rejectedRows(context, "yt1").toSet(),
+        )
+        assertEquals(listOf("telegram" to "9000"), HqVerificationStore.rejectedRows(context, "yt10"))
+        assertTrue(HqVerificationStore.rejectedRows(context, "yt2").isEmpty())
+        assertTrue(HqVerificationStore.rejectedRows(context, "").isEmpty())
+    }
 }

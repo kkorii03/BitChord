@@ -1046,6 +1046,31 @@ class SongVersionPolicyTest {
         assertNull(UnprovenVersions.sourceOf("unproven-adopted"))
     }
 
+    // Review 11-15 (R2): the unproven table is keyed by the adopted song alone,
+    // so the song reached as its own row (an album, a playlist) was measured
+    // against a video the listener never asked for and replaced by it.
+    @Test
+    fun `only the row standing in for the video is measured against it`() {
+        // Converted from the video in the queue: carries the video origin.
+        assertTrue(SongVersionPolicy.standsInForVideo(true, null, "mv"))
+        // Music-only's own conversion: remembered as that video's song.
+        assertTrue(SongVersionPolicy.standsInForVideo(false, "mv", "mv"))
+        // The song as its own row.
+        assertFalse(SongVersionPolicy.standsInForVideo(false, null, "mv"))
+        // The song standing in for some other video.
+        assertFalse(SongVersionPolicy.standsInForVideo(false, "other-mv", "mv"))
+    }
+
+    // Review 11-15 (R1): a lookup that answers after the listener moved on
+    // skipped whatever row was current by then.
+    @Test
+    fun `a lookup that answers late does not move another row`() {
+        assertTrue(SongVersionPolicy.lookupStillOwnsRow("mv", "mv", samePlayer = true))
+        assertFalse(SongVersionPolicy.lookupStillOwnsRow("mv", "next", samePlayer = true))
+        assertFalse(SongVersionPolicy.lookupStillOwnsRow("mv", null, samePlayer = true))
+        assertFalse(SongVersionPolicy.lookupStillOwnsRow("mv", "mv", samePlayer = false))
+    }
+
     @Test
     fun `a refused version is gone and no retry reopens it`() {
         val store = SongVersionVerdictStore()

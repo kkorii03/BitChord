@@ -1703,11 +1703,60 @@ object AudioCache {
         isComplete = ::isComplete,
         isLosslessRendition = ::isLosslessRendition,
         isKeptOrigin = ::isKeptOrigin,
+        isRefused = ::isRefusedCopy,
         containerOf = ::containerOf,
         forgetPurgeCandidate = ::forgetPurgeCandidate,
         discardRendition = { discardRendition(it) },
         tracker = koTracker, // [KO] reader-lock
     )
+
+    /**
+     * [KO] Whether the source row recorded on [key] has been refused for this
+     * song since the copy was written (sound or words check).
+     *
+     * The entry's own [META_SERVED_SOURCE] tag is the only evidence; a copy
+     * without one is not guessed at. Reads the cache index and the verdict
+     * store's loaded copy, nothing on the network.
+     */
+    private fun isRefusedCopy(key: String): Boolean = runCatching {
+        val context = appContext ?: return@runCatching false
+        val meta = cache.getContentMetadata(key)
+        val served = meta.get(META_SERVED_SOURCE, null as String?) ?: return@runCatching false
+        val mediaId = meta.get(META_MEDIA_ID, null as String?) ?: key.substringBefore('#')
+        com.music.bitchord.playback.smart.HqVerificationStore.rejectedRows(context, mediaId)
+            .any { (source, track) -> CachedRenditionBar.servedBy(served, source, track) }
+    }.getOrDefault(false)
+
+    /**
+     * [KO] Removes every cached copy of [mediaId] that the source row
+     * [sourceConfigId]/[trackId] wrote, because that row was just refused as
+     * another recording of the song.
+     *
+     * A copy the player is reading right now cannot be removed; it stops being
+     * chosen all the same ([isRefusedCopy]) and goes with the next cleanup.
+     * Runs on the caller's thread; call it off the main one.
+     */
+    fun dropRefusedRenditions(mediaId: String, sourceConfigId: String, trackId: String) {
+        if (openedCache == null || mediaId.isBlank()) return
+        renditionKeys.remove(mediaId)
+        renditionKeysFor(mediaId).forEach { key ->
+            if (key.endsWith("#watch")) return@forEach
+            val meta = runCatching { cache.getContentMetadata(key) }.getOrNull() ?: return@forEach
+            val served = meta.get(META_SERVED_SOURCE, null as String?)
+            if (!CachedRenditionBar.servedBy(served, sourceConfigId, trackId)) return@forEach
+            runCatching { cache.removeResource(key) }
+                .onSuccess {
+                    forgetPurgeCandidate(key)
+                    TrackLog.w(
+                        TAG,
+                        "dropped cached rendition $key: its source row was refused as another recording",
+                        about = mediaId,
+                    )
+                }
+                .onFailure { TrackLog.d(TAG, "rendition $key still in use: ${it.message}", about = mediaId) }
+        }
+        renditionKeys.remove(mediaId)
+    }
 
     /** [KO] reader-lock */
     private fun playerHoldsKey(cacheKey: String): Boolean = koTracker.playerHoldsKey(cacheKey) // [KO] reader-lock

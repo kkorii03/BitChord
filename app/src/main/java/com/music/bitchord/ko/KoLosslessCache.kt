@@ -47,6 +47,7 @@ class KoLosslessCache(
     private val isComplete: (String) -> Boolean,
     private val isLosslessRendition: (String) -> Boolean,
     private val isKeptOrigin: (String) -> Boolean,
+    private val isRefused: (String) -> Boolean,
     private val containerOf: (String) -> Pair<String, String>?,
     private val forgetPurgeCandidate: (String) -> Unit,
     private val discardRendition: (Uri) -> Unit,
@@ -109,6 +110,7 @@ class KoLosslessCache(
             markedLossless = isLosslessRendition,
             keptOrigin = isKeptOrigin,
             containerOf = ::containerForCompleteCopy,
+            refused = isRefused,
         )
 
     /** Whether [key] is lossless by its marker or by the container it holds. */

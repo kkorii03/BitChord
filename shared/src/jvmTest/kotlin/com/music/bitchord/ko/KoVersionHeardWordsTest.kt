@@ -154,6 +154,81 @@ class KoVersionHeardWordsTest {
         assertFalse(KoVersionGuard.risky(null, "1"))
     }
 
+    // Review 11-15 (H draft-4): the table used to be emptied when it filled, so a
+    // long evening of searches dropped the mark of the song playing right now.
+    @Test
+    fun `a full table drops its oldest marks, not every mark`() {
+        fun search(prefix: String, count: Int) {
+            val rows = (1..count).map { row("src::$prefix$it", "Despacito", "Luis Fonsi") } +
+                row("src::${prefix}x", "Despacito", "Luis Fonsi, Daddy Yankee, Justin Bieber")
+            KoVersionGuard.noteSearch("telegram", "Despacito", "Luis Fonsi, Daddy Yankee", rows) {
+                it.videoId.substringAfter("::")
+            }
+        }
+        search("old", 9)
+        repeat(10) { search("mid$it-", 99) }
+        search("new", 29)
+        // 10 + 1000 + 30 rows went in; the newest 1024 are still marked.
+        assertTrue(KoVersionGuard.risky("telegram", "new1"))
+        assertTrue(KoVersionGuard.risky("telegram", "mid9-1"))
+        assertTrue(KoVersionGuard.risky("telegram", "mid0-99"))
+        assertFalse(KoVersionGuard.risky("telegram", "old1"))
+    }
+
+    // Review 11-15 (H draft-2): a words check over a few seconds was stored as
+    // "words checked" and the risky row was never heard again.
+    @Test
+    fun `a short stretch does not close the question, a long empty one does`() {
+        val short = KoVersionGuard.compareWords(
+            reference = heard(firstSinger),
+            referenceUntilMs = 12_000L,
+            candidate = heard(otherSinger),
+            candidateUntilMs = 60_000L,
+            offsetMs = 0L,
+            rate = 1.0,
+        )
+        assertEquals(KoVersionGuard.Words.UNDECIDED, short.verdict)
+        assertFalse(KoVersionGuard.settles(short))
+
+        val instrumental = KoVersionGuard.compareWords(
+            reference = heard(firstSinger.take(3)),
+            referenceUntilMs = 90_000L,
+            candidate = emptyList(),
+            candidateUntilMs = 60_000L,
+            offsetMs = 0L,
+            rate = 1.0,
+        )
+        assertEquals(KoVersionGuard.Words.UNDECIDED, instrumental.verdict)
+        assertTrue(KoVersionGuard.settles(instrumental))
+
+        val same = KoVersionGuard.compareWords(
+            reference = heard(firstSinger),
+            referenceUntilMs = 90_000L,
+            candidate = heard(firstSinger),
+            candidateUntilMs = 60_000L,
+            offsetMs = 0L,
+            rate = 1.0,
+        )
+        assertTrue(KoVersionGuard.settles(same))
+        assertFalse(KoVersionGuard.settles(null))
+    }
+
+    @Test
+    fun `words that disagree reject even when the search did not ask for them`() {
+        val words = KoVersionGuard.compareWords(
+            reference = heard(firstSinger),
+            referenceUntilMs = 90_000L,
+            candidate = heard(otherSinger),
+            candidateUntilMs = 60_000L,
+            offsetMs = 0L,
+            rate = 1.0,
+        )
+        assertEquals(
+            KoVersionGuard.Decision.REJECT,
+            KoVersionGuard.decide(chromaAccepted = true, needsWords = false, words = words),
+        )
+    }
+
     @Test
     fun `a featured credit in the title also counts as another version`() {
         assertTrue(

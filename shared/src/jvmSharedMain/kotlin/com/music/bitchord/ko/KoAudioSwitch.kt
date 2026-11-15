@@ -162,6 +162,12 @@ internal object KoAudioSwitch {
                 "audio switch: '${song.title}' -> '${match.title}' (queryLength=$queryLength)",
             )
             YtMusicRepository.audioVersionCache[song.videoId] = match
+            // Review 11-15 (R3, R4): a title that only contains the wanted one,
+            // or a soundtrack upload with no performer to compare, is adopted
+            // as before but its first sound is measured against the video.
+            if (KoTrackMatcher.restsOnLooseEvidence(match, target)) {
+                UnprovenVersions.note(song, match.videoId)
+            }
             return match
         }
         // Music-video timing is visual timing, not the audio release's timing.

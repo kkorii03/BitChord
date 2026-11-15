@@ -178,4 +178,19 @@ class CachedRenditionBarTest {
         assertNull(gone.playingMime)
         assertNull(gone.playing)
     }
+
+    // Review 11-15 (H draft-3): a row refused as another recording (11-13
+    // Despacito, the remix) left the copy it had already written on disk.
+    @Test
+    fun `a cached copy is traced to the row that wrote it, whatever the codec`() {
+        assertTrue(CachedRenditionBar.servedBy("telegram|4411|flac", "telegram", "4411"))
+        assertTrue(CachedRenditionBar.servedBy("telegram|4411", "telegram", "4411"))
+        // Another row of the same source, and a track id that only starts the same.
+        assertFalse(CachedRenditionBar.servedBy("telegram|44110|flac", "telegram", "4411"))
+        assertFalse(CachedRenditionBar.servedBy("telegram|9000|flac", "telegram", "4411"))
+        assertFalse(CachedRenditionBar.servedBy("qobuz|4411|flac", "telegram", "4411"))
+        // No record on the entry, or a row without a track id, is not evidence.
+        assertFalse(CachedRenditionBar.servedBy(null, "telegram", "4411"))
+        assertFalse(CachedRenditionBar.servedBy("telegram|4411|flac", "telegram", ""))
+    }
 }

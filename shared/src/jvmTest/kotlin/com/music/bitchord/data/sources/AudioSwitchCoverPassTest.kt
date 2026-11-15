@@ -163,6 +163,33 @@ class AudioSwitchCoverPassTest {
         )
     }
 
+    // Review 11-15 (R3, R4): the same-artist gate passes a title that only
+    // contains the wanted one, and any credit for a soundtrack upload with no
+    // performer. Those answers are still taken, but the first sound checks them.
+    @Test
+    fun `an answer resting on a partial title or no performer is left for the sound to prove`() {
+        val dream = TrackMatcher.Target(title = "Dream", artist = "ACT", durationSec = 200, isVideo = true)
+        val exact = Song(videoId = "exact", title = "Dream", artist = "ACT", thumbnailUrl = null, durationText = "3:20")
+        val partial = exact.copy(videoId = "partial", title = "Daydream")
+        assertTrue(!KoTrackMatcher.restsOnLooseEvidence(exact, dream))
+        assertTrue(KoTrackMatcher.restsOnLooseEvidence(partial, dream))
+        assertTrue(KoTrackMatcher.restsOnLooseEvidence(exact, dream.copy(artist = "", noPerformer = true)))
+
+        val video = mv("loose-mv", "Dream", "ACT", "3:20")
+        val adopted = KoAudioSwitch.adoptBest(listOf(partial), listOf(partial), dream, video, 5)
+        // Whether the gate takes the partial title is the matcher's business;
+        // what it takes on that ground must be registered for the check.
+        assertEquals(
+            adopted?.videoId == "partial",
+            com.music.bitchord.data.net.UnprovenVersions.sourceOf("partial") == video,
+        )
+        com.music.bitchord.data.net.UnprovenVersions.settle("partial")
+
+        val sure = KoAudioSwitch.adoptBest(listOf(exact), listOf(exact), dream, video, 5)
+        assertEquals("exact", sure?.videoId)
+        assertEquals(null, com.music.bitchord.data.net.UnprovenVersions.sourceOf("exact"))
+    }
+
     /**
      * NPZtKA6343o: the bridge is a video row printing both names. A cover pass
      * that files it under the store's one name would take that evidence away;

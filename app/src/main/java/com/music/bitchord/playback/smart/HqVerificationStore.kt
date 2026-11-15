@@ -175,6 +175,26 @@ object HqVerificationStore {
         keyOf(youtubeId, sourceConfigId, trackId) in data(context).rejected
     }
 
+    /**
+     * The source rows (config id, track id) refused for [youtubeId], so a
+     * cached copy one of them wrote earlier can be told from a good one.
+     */
+    fun rejectedRows(context: Context, youtubeId: String): List<Pair<String, String>> = synchronized(lock) {
+        rowsOf(data(context).rejected, youtubeId)
+    }
+
+    internal fun rowsOf(keys: Collection<String>, youtubeId: String): List<Pair<String, String>> {
+        if (youtubeId.isBlank()) return emptyList()
+        val prefix = "$youtubeId\u0001"
+        return keys.mapNotNull { key ->
+            if (!key.startsWith(prefix)) return@mapNotNull null
+            val parts = key.split('\u0001')
+            val source = parts.getOrNull(1)?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val track = parts.getOrNull(2)?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            source to track
+        }
+    }
+
     fun reject(
         context: Context,
         youtubeId: String,
@@ -294,8 +314,7 @@ object HqVerificationStore {
     private fun keyOf(youtubeId: String, sourceConfigId: String?, trackId: String?): String =
         listOf(youtubeId, sourceConfigId.orEmpty(), trackId.orEmpty())
             .joinToString("\u0001")
-            .replace('\n', ' ')
-            .replace('\t', ' ')
+            .sanitized()
 
     private fun String.sanitized(): String =
         replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')

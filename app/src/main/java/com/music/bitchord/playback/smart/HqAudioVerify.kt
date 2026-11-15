@@ -709,7 +709,9 @@ object HqAudioVerify {
                         tier = tier,
                         sourceTitle = stream.trackTitle,
                         sourceArtist = stream.trackArtist,
-                        wordsChecked = words != null,
+                        // Only a comparison that settled it; a few seconds of
+                        // words accept this play and are asked again.
+                        wordsChecked = KoVersionGuard.settles(words),
                     )
                     HqVerificationStore.put(context, youtubeId, sourceId, trackId, verified)
                     pendingRateLimits.remove(youtubeId)
@@ -1162,6 +1164,11 @@ object HqAudioVerify {
     ) {
         if (trackId.isNullOrBlank()) return
         HqVerificationStore.reject(context, youtubeId, sourceId, trackId)
+        // [KO] The refusal used to be a line in the store only. A copy this row
+        // had already filled (a swap made before the words were heard) stayed
+        // whole under its upgrade key and was opened by every later play
+        // without a resolve: the refused recording kept playing.
+        runCatching { com.music.bitchord.playback.AudioCache.dropRefusedRenditions(youtubeId, sourceId, trackId) }
     }
 
     /** Remembers a missing reference for the rest of this playback, with its cause. */

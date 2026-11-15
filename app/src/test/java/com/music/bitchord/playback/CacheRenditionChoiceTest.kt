@@ -21,6 +21,22 @@ class CacheRenditionChoiceTest {
         upgradeOrder: Int = 0,
     ) = CachedRendition(key, complete, lossless, upgradeOrder)
 
+    // Review 11-15 (H draft-3): 11-13 Despacito. The remix had been swapped in
+    // and cached whole before the words check existed; once refused it must not
+    // be the copy a plain play opens.
+    @Test
+    fun `a complete lossless upgrade from a refused row is not opened`() {
+        val chosen = CacheRenditionChoice.choose(
+            preferred = videoId,
+            candidates = listOf(
+                copy(videoId, complete = true),
+                copy("$videoId#hifi", complete = true, lossless = true, upgradeOrder = 1).copy(refused = true),
+            ),
+        )
+
+        assertEquals(videoId, chosen)
+    }
+
     @Test
     fun `low quality only stays on the low quality copy`() {
         val chosen = CacheRenditionChoice.choose(

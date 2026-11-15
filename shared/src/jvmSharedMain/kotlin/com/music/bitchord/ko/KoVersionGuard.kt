@@ -4,8 +4,8 @@ import com.music.bitchord.data.lyrics.LyricsWordAlign
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.TrackMatcher
 import java.text.Normalizer
+import java.util.Collections
 import java.util.Locale
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Another recording over the same backing track: a remix that hands the first
@@ -60,11 +60,33 @@ object KoVersionGuard {
      */
     fun decide(chromaAccepted: Boolean, needsWords: Boolean, words: WordsCheck?): Decision = when {
         !chromaAccepted -> Decision.REJECT
+        // Words that were heard and disagree reject whether or not the search asked for them.
+        words?.verdict == Words.DIFFERENT -> Decision.REJECT
         !needsWords -> Decision.ACCEPT
         words == null -> Decision.UNMEASURED
-        words.verdict == Words.DIFFERENT -> Decision.REJECT
         else -> Decision.ACCEPT
     }
+
+    /**
+     * Whether [words] closes the question for a stored verdict, so later plays
+     * need not hear the candidate again.
+     *
+     * The same words do. Too few words do only when both copies were heard
+     * over a long stretch — an instrumental opening, which a second hearing
+     * would find just as empty. A short stretch (the YouTube copy's words
+     * were kept for a few seconds only) accepts this play on the sound alone
+     * and is asked again: stored as checked, it left a risky row accepted for
+     * good on a comparison that never took place.
+     */
+    fun settles(words: WordsCheck?): Boolean = when {
+        words == null -> false
+        words.verdict == Words.SAME -> true
+        words.verdict == Words.UNDECIDED -> words.windowMs >= SETTLED_WINDOW_MS
+        else -> false
+    }
+
+    /** The shared stretch from which "too few words" is a finding rather than a gap. */
+    const val SETTLED_WINDOW_MS = 30_000L
 
     // ── Which candidates need the words check ───────────────────────────────
 
@@ -115,10 +137,18 @@ object KoVersionGuard {
     private val BRACKETS = Regex("""[()\[\]{}]""")
 
     /** Source rows whose search also offered another version of their song, by `source\u0001track`. */
-    private val riskyRows = ConcurrentHashMap<String, Boolean>()
+    private val riskyRows: MutableMap<String, Boolean> = Collections.synchronizedMap(
+        object : LinkedHashMap<String, Boolean>() {
+            // The oldest mark goes, one at a time. Emptying the table when it
+            // filled dropped every mark at once, the current song's included,
+            // and its stored chroma-only verdict then answered as if no other
+            // version had ever been seen.
+            override fun removeEldestEntry(eldest: Map.Entry<String, Boolean>) = size > MAX_RISKY_ROWS
+        },
+    )
 
     /** One evening's searches; an old mark is worth no more than a fresh search. */
-    private const val MAX_RISKY_ROWS = 1024
+    internal const val MAX_RISKY_ROWS = 1024
 
     /**
      * Marks every row [rows] of one search for the words check when any of
@@ -134,10 +164,14 @@ object KoVersionGuard {
     ) {
         if (rows.isEmpty()) return
         if (rows.none { namesOtherVersion(targetTitle, targetArtist, it.title, it.artist) }) return
-        if (riskyRows.size + rows.size > MAX_RISKY_ROWS) riskyRows.clear()
         rows.forEach { row ->
             val track = trackIdOf(row).takeIf { it.isNotBlank() } ?: return@forEach
-            riskyRows[key(sourceId, track)] = true
+            val key = key(sourceId, track)
+            // Re-inserted so a row searched again counts as fresh.
+            synchronized(riskyRows) {
+                riskyRows.remove(key)
+                riskyRows[key] = true
+            }
         }
     }
 

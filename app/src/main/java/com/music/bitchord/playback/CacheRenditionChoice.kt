@@ -14,6 +14,12 @@ internal data class CachedRendition(
     val lossless: Boolean,
     val upgradeOrder: Int,
     val keptOrigin: Boolean = true,
+    /**
+     * [KO] The source row that filled this copy has since been refused for
+     * the song (sound or words check). Its bytes are whole and may even be
+     * lossless, and they are another recording.
+     */
+    val refused: Boolean = false,
 )
 
 /**
@@ -48,7 +54,7 @@ internal object CacheRenditionChoice {
     fun choose(preferred: String, candidates: List<CachedRendition>): String =
         candidates
             .filter {
-                it.complete &&
+                it.complete && !it.refused && // [KO]
                     (it.upgradeOrder > 0 || (it.lossless && it.keptOrigin))
             }
             .maxWithOrNull(

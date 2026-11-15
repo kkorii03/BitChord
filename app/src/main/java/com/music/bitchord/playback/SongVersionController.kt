@@ -675,7 +675,13 @@ internal class SongVersionController(
         // An accepted upgrade is a stream already chosen for this recording.
         // The version paths rebuild the item from the song, which would take
         // the swap away; leave the playing rendition alone.
-        if (QualityUpgrade.isUpgradedRendition(item?.localConfiguration?.uri?.toString())) return
+        if (QualityUpgrade.isUpgradedRendition(item?.localConfiguration?.uri?.toString())) {
+            // [KO] The hold the previous row's lookup took is given back, as on
+            // every other way out of here. Returning with it left that lookup
+            // running and the player paused on this row until play was pressed.
+            releaseVersionHold(exoPlayer)
+            return
+        }
         val song = item?.toSong()
         val localFile = song?.localUri != null
         val offline = AudioCache.isOffline()
@@ -729,6 +735,9 @@ internal class SongVersionController(
             val playerDuration = exoPlayer.duration
                 .takeIf { exoPlayer.playbackState == Player.STATE_READY && it > 0L }
             if (streamLongDownloadedSong(exoPlayer, item.mediaId, song, offline, playerDuration)) {
+                // [KO] Offline the file plays as it is and nothing was installed,
+                // so a hold left by the previous row's lookup is given back here.
+                if (offline) releaseVersionHold(exoPlayer)
                 return
             }
             if (!verifyUnknownDownload &&
@@ -992,7 +1001,14 @@ internal class SongVersionController(
                     // search failed, and a legacy MV must not be filed as a
                     // verified song on a network error. Only a lookup that
                     // positively named this very id (above) records that.
-                    skipped = skipOfficialMv(
+                    // [KO] Only while this row is still the current one: the
+                    // skip moves the player, and an answer that outlived its row
+                    // would move it off the row the listener jumped to.
+                    skipped = SongVersionPolicy.lookupStillOwnsRow(
+                        lookupMediaId = mediaId,
+                        currentMediaId = exoPlayer.currentMediaItem?.mediaId,
+                        samePlayer = currentPlayer() === exoPlayer,
+                    ) && skipOfficialMv(
                         exoPlayer,
                         lookupSong,
                         audioReleaseMissing =
@@ -1109,6 +1125,14 @@ internal class SongVersionController(
         val adoptedId = item.mediaId
         if (adoptedId != currentAudibleMediaId()) return
         val source = UnprovenVersions.sourceOf(adoptedId) ?: return
+        // [KO] Only the row standing in for that video; the same song reached
+        // as its own row is what the listener asked for and stays.
+        if (!SongVersionPolicy.standsInForVideo(
+                rowIsVideoOrigin = item.isVideoOrigin,
+                rememberedVideoId = YtMusicRepository.cachedVideoVersion(adoptedId)?.videoId,
+                sourceVideoId = source.videoId,
+            )
+        ) return
         if (VersionAudioAligner.isRejected(source.videoId, adoptedId)) {
             // Already measured wrong; this is another row carrying the same id.
             takeOffRefutedVersion(exoPlayer, adoptedId, source)
@@ -1162,6 +1186,10 @@ internal class SongVersionController(
      */
     private fun takeOffRefutedVersion(exoPlayer: ExoPlayer, adoptedId: String, source: Song) {
         YtMusicRepository.refuseSongVersion(source)
+        // [KO] The song is not that video's: its own rows must not be sent
+        // back to the video on a later play. A row already converted from the
+        // video still carries its video origin and is taken off as before.
+        YtMusicRepository.forgetVideoVersion(adoptedId, source.videoId)
         if (currentPlayer() !== exoPlayer || exoPlayer.currentMediaItem?.mediaId != adoptedId) return
         val index = exoPlayer.currentMediaItemIndex
         if (index !in 0 until exoPlayer.mediaItemCount) return

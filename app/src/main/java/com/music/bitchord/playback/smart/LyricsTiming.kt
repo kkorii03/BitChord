@@ -1043,7 +1043,16 @@ object LyricsTiming {
         // weaker decision must not land last just because it read [] before the other
         // caller wrote. The log stays outside, off the map's bin lock.
         val winner = baseDecisions.compute(key) { _, previous ->
-            if (BaseChoicePolicy.replaces(previous?.evidence, next.evidence)) next else previous
+            when {
+                previous == null || BaseChoicePolicy.replaces(previous.evidence, next.evidence) -> next
+                // The same base read again: what is kept is WHICH base won and
+                // on what evidence, not the map object. The entry's newest map
+                // for that base is shown, so a re-measurement that scores the
+                // same on the opening words (a whole-record pass that now
+                // follows a cut at 2:40) is not masked until the app restarts.
+                previous.name == next.name -> previous.copy(adjustment = next.adjustment, rule = next.rule)
+                else -> previous
+            }
         } ?: next
         if (winner !== next && winner.evidence != next.evidence &&
             loggedBaseKept.add("$key|${next.name}|${next.evidence.matched}")
@@ -2245,7 +2254,15 @@ object LyricsTiming {
                 autoOriginal = if (keepEarlier) it.autoOriginal else done.originalId,
                 autoComplete = done.complete,
                 autoRecordPartial = done.recordPartial,
-                autoNoChange = done.noChange,
+                // An empty pass says nothing against an earlier "the video keeps
+                // the record's time" finding either (auto is null for that one,
+                // so only this flag carries it).
+                autoNoChange = noChangeAfter(
+                    previous = it.autoNoChange,
+                    previousCurrent = it.autoVersion == AUTO_VERSION,
+                    hasFresh = done.result != null,
+                    noChange = done.noChange,
+                ),
                 autoVideoBytes = done.videoBytes,
                 autoVideoSeconds = done.videoSeconds,
                 autoNote = done.note,
@@ -2269,6 +2286,14 @@ object LyricsTiming {
      */
     internal fun <T> autoAfter(previous: T?, previousCurrent: Boolean, fresh: T?, noChange: Boolean): T? =
         fresh ?: previous.takeIf { previousCurrent && !noChange }
+
+    /**
+     * The "video keeps the record's time" flag after a pass, by the same rule
+     * as [autoAfter]: a pass with no answer at all leaves an earlier finding
+     * standing; a new result or a new finding replaces it.
+     */
+    internal fun noChangeAfter(previous: Boolean, previousCurrent: Boolean, hasFresh: Boolean, noChange: Boolean): Boolean =
+        noChange || (!hasFresh && previousCurrent && previous)
 
     internal sealed interface Measured {
         data class Done(
@@ -3251,6 +3276,7 @@ object LyricsTiming {
         // Words heard for a sheet they did not fit: kept as evidence that the
         // sheet is not this video's song, without becoming a timing answer.
         var rejectedHeard: List<LyricsWordAlign.Heard>? = null
+        var rejectedClock: Clock = Clock.YouTube
         // Kept before the call, not after: a request that fails, times out or
         // is cancelled has still been paid for, and must not be made again for
         // these lyrics. [AiTimingPolicy] reads this to pick the next engine.
@@ -3405,7 +3431,12 @@ object LyricsTiming {
                     acceptedHeard = heard
                     break
                 }
-                if (heard != null) rejectedHeard = heard
+                if (heard != null) {
+                    rejectedHeard = heard
+                    // The clock these words were heard on; Gemini below may
+                    // listen to another copy and overwrite [listenedClock].
+                    rejectedClock = listenedClock
+                }
                 // A key Deepgram turned away is turned away for Whisper too.
                 if (!com.music.bitchord.data.lyrics.Deepgram.usable) break
             }
@@ -3479,7 +3510,7 @@ object LyricsTiming {
                         heardCheckKey = key,
                         heardCheckWords = heard.take(MAX_HEARD_WORDS)
                             .map { word -> SavedWord(t = word.text, s = word.startMs, e = word.endMs) },
-                        heardCheckClock = listenedClock.saved(),
+                        heardCheckClock = rejectedClock.saved(),
                         heardCheckRough = false,
                     )
                 }
@@ -4026,6 +4057,10 @@ object LyricsTiming {
                 hearingFreed(song.videoId)
             }
             fresh.start()
+        } else {
+            // Never started: an unstarted lazy child would stay on aiScope for
+            // the life of the process, holding the sheet and the probe.
+            fresh.cancel()
         }
         val result = running.await()
         if (newestSongKey[song.videoId] != key) {

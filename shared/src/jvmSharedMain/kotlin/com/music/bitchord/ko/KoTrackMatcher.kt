@@ -186,6 +186,23 @@ internal object KoTrackMatcher {
                 !isCoverOf(candidate, target)
         }
 
+    /**
+     * Whether a [bestSameArtist] answer rests on less than the song's own name
+     * and performer, so the sound has to prove it (see UnprovenVersions).
+     *
+     * [score] passes a title that merely contains the wanted one ("Daydream"
+     * for "Dream") and, for a soundtrack upload that names no performer, any
+     * credit at all. Both are right far more often than wrong, which is why
+     * they are still adopted; neither is evidence enough to keep a wrong song
+     * for the whole run without one measurement.
+     */
+    internal fun restsOnLooseEvidence(candidate: Song, target: Target): Boolean {
+        if (target.noPerformer) return true
+        val wanted = parseTitle(target.title, target.artist)
+        val got = parseTitle(candidate.title, candidate.artist)
+        return !coresEqual(wanted.cores(), got.cores())
+    }
+
     /** True when one credited artist of [wanted] is exactly one credited artist of [got]. */
     internal fun namesTheSameArtist(wanted: String, got: String): Boolean {
         val want = artistNames(wanted)

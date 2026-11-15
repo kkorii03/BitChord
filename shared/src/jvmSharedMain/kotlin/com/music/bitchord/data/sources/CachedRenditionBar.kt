@@ -81,6 +81,21 @@ object CachedRenditionBar {
         refusedSource: String?,
     ): Boolean = entryIsAddon && entrySource != null && entrySource == refusedSource
 
+    /**
+     * Whether the source recorded on a cached entry ([entrySource], written as
+     * `config|track` or `config|track|codec`) is the row [sourceConfigId] /
+     * [trackId], whatever codec that row was served in.
+     *
+     * A verdict about a row is about the recording, so the stereo and the
+     * Atmos copy of a refused row are both that recording. An entry with no
+     * record, or a row with no track id, matches nothing.
+     */
+    fun servedBy(entrySource: String?, sourceConfigId: String, trackId: String): Boolean {
+        if (entrySource.isNullOrBlank() || sourceConfigId.isBlank() || trackId.isBlank()) return false
+        val row = "$sourceConfigId|$trackId"
+        return entrySource == row || entrySource.startsWith("$row|")
+    }
+
     /** What [adoptCachedTrack] should tell the upgrade path after a refusal. */
     data class CachedAdoption(val playingMime: String?, val playing: StreamFormat?)
 

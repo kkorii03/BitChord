@@ -131,6 +131,11 @@ object YtMusicRepository {
         videoVersionCache[audioId] = video
     }
 
+    /** [KO] The sound proved [audioId] is not [videoId]'s song: the pairing is forgotten. */
+    fun forgetVideoVersion(audioId: String, videoId: String) {
+        if (videoVersionCache[audioId]?.videoId == videoId) videoVersionCache.remove(audioId)
+    }
+
     /**
      * How a position in [fromId] maps into [toId], when YouTube Music paired
      * the two itself and said how they line up. Null for a pair found by

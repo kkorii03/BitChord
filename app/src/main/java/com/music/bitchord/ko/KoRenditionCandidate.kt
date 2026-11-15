@@ -28,12 +28,14 @@ internal fun losslessCacheCandidate(
     container: String?,
     keptOrigin: Boolean,
     upgradeOrder: Int,
+    refused: Boolean = false,
 ): CachedRendition = CachedRendition(
     key = key,
     complete = complete,
     lossless = markedLossless || container in KO_LOSSLESS_CONTAINERS,
     upgradeOrder = upgradeOrder,
     keptOrigin = keptOrigin,
+    refused = refused,
 )
 
 /**
@@ -52,6 +54,7 @@ internal fun losslessRenditionCandidates(
     markedLossless: (String) -> Boolean,
     keptOrigin: (String) -> Boolean,
     containerOf: (String) -> Pair<String, String>?,
+    refused: (String) -> Boolean = { false },
 ): List<CachedRendition> = keys.mapNotNull { key ->
     if (key.endsWith("#watch")) return@mapNotNull null
     val suffix = key.removePrefix("$videoId#")
@@ -71,5 +74,7 @@ internal fun losslessRenditionCandidates(
         // configured copy, as completeSibling requires.
         keptOrigin = upgradeOrder > 0 || keptOrigin(key),
         upgradeOrder = upgradeOrder,
+        // Asked only of a copy that could be chosen at all.
+        refused = complete && refused(key),
     )
 }
