@@ -50,6 +50,33 @@ class BiniLyricsPickTest {
     }
 
     @Test
+    fun `a refused row in the same script is not taken as a fallback`() {
+        // L12: another song near the length used to come back as the API's first row,
+        // and its ISRC fed the sources that ask by recording.
+        val answered = listOf(hit("Other Tune", "Somebody", 212, "XX0000000001"))
+        assertNull(BiniLyrics.rowFor(answered, "Wanted Song", "Artist", 210_000))
+    }
+
+    @Test
+    fun `a remix the rules refused is not taken as a fallback`() {
+        assertNull(BiniLyrics.rowFor(stayWithMe.take(1), "Stay With Me", "Sam Smith", 210_000))
+    }
+
+    @Test
+    fun `another spelling far off in length is not taken`() {
+        val answered = listOf(hit("Good Day", "IU", 300, "KRA381001057"))
+        assertNull(BiniLyrics.rowFor(answered, "좋은 날", "아이유", 233_000))
+    }
+
+    @Test
+    fun `an artist spelled in another script still needs the title`() {
+        val answered = listOf(hit("Other Tune", "Somebody", 210, "XX0000000002"))
+        assertNull(BiniLyrics.rowFor(answered, "Stay With Me", "샘 스미스", 210_000))
+        val right = listOf(hit("Stay With Me", "Sam Smith", 173, "GBUM71308833"))
+        assertEquals("GBUM71308833", BiniLyrics.rowFor(right, "Stay With Me", "샘 스미스", 210_000)?.isrc)
+    }
+
+    @Test
     fun `a 37 s music-video overhang is the same recording`() {
         // 210 s video, 173 s track: the pB-5XG-DbAA case. The old 30 s limit
         // refused it, so the Apple hosts had no sheet for the song at all.

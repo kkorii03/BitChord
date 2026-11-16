@@ -1,5 +1,6 @@
 package com.music.bitchord.data.lyrics
 
+import com.music.bitchord.data.cover.CoverTitles
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
@@ -89,7 +90,26 @@ object BiniLyrics {
      * such row would lose the song's sheet from all the sources this ISRC feeds.
      */
     internal fun rowFor(results: List<Hit>, title: String, artist: String, durationMs: Long): Hit? =
-        pick(results, title, artist, durationMs) ?: results.firstOrNull()
+        pick(results, title, artist, durationMs)
+            ?: results.firstOrNull { spelledOtherwise(it, title, artist, durationMs) } // [KO] L12
+
+    /**
+     * [KO] The first-row fallback is for a spelling the rules cannot compare (아이유 /
+     * IU, 좋은 날 / Good Day). It used to fire for every refusal — another title, a
+     * live or remix row, a length far off — and that row's ISRC then fed lrc.red and
+     * LyricsPlus, which agreed with each other on the wrong recording (review L12).
+     * Now the row must be written in another script on the title or the artist, its
+     * title must still name the song where the scripts allow a comparison, and its
+     * length must fit as for any other row.
+     */
+    private fun spelledOtherwise(hit: Hit, title: String, artist: String, durationMs: Long): Boolean {
+        val rowTitle = hit.trackName.orEmpty()
+        val otherScript = CoverTitles.hasCjk(rowTitle) != CoverTitles.hasCjk(title) ||
+            CoverTitles.hasCjk(hit.artistName.orEmpty()) != CoverTitles.hasCjk(artist)
+        return otherScript &&
+            RecordingMatch.namesTheSong(rowTitle, title) &&
+            RecordingMatch.lengthFits(hit.duration?.toDouble(), durationMs)
+    }
 
     /** The row that is this recording, or null when none of them is sure to be. */
     internal fun pick(results: List<Hit>, title: String, artist: String, durationMs: Long): Hit? =

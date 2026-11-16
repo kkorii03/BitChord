@@ -1,5 +1,6 @@
 package com.music.bitchord.data.lyrics
 
+import com.music.bitchord.data.cover.CoverTitles
 import java.text.Normalizer
 import java.util.Locale
 import kotlin.math.abs
@@ -87,6 +88,25 @@ internal object RecordingMatch {
         return "no-match count=${candidates.size} closest=$failed"
     }
 
+    /**
+     * The floor for the sources that still pick by score ([PaxSenix], [Musixmatch]):
+     * a row must name the asked song — one title runs inside the other, case aside.
+     * Their scores were reachable on length or artist alone, so the nearest row of
+     * an unrelated search answer won with its word-timed sheet (review L15, L18).
+     *
+     * The exception is a row written in another script than the asked title ("좋은
+     * 날" filed as "Good Day"): the names cannot be compared, the search engine made
+     * the match, and the source's own score still decides.
+     */
+    fun namesTheSong(rowTitle: String, wantedTitle: String): Boolean {
+        val wanted = wantedTitle.trim()
+        val row = rowTitle.trim()
+        if (wanted.isEmpty()) return true
+        if (row.isEmpty()) return false
+        if (row.contains(wanted, ignoreCase = true) || wanted.contains(row, ignoreCase = true)) return true
+        return CoverTitles.hasCjk(row) != CoverTitles.hasCjk(wanted)
+    }
+
     /** The tests as one set of wanted values, so [best] and [missReason] cannot drift. */
     private class Rules(title: String, artist: String, durationMs: Long) {
         private val wantedTitle = RecordingMatch.coreOf(title)
@@ -120,6 +140,15 @@ internal object RecordingMatch {
             }
             return out
         }
+    }
+
+    /** The length test of [best] alone, for a fallback that cannot compare names. */
+    fun lengthFits(rowSeconds: Double?, durationMs: Long): Boolean {
+        if (durationMs <= 0L) return true
+        val seconds = durationMs / 1000.0
+        return rowSeconds != null &&
+            rowSeconds <= seconds + DURATION_TOLERANCE_SECONDS &&
+            rowSeconds >= seconds - VIDEO_OVERHANG_SECONDS
     }
 
     /** "Song (Live) - 2011 Remaster" → "song". */

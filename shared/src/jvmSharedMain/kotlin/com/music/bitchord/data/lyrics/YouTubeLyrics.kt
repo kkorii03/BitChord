@@ -15,13 +15,7 @@ object YouTubeMusicLyrics {
     suspend fun lyrics(videoId: String): List<LyricLine>? = withContext(Dispatchers.IO) {
         if (!YOUTUBE_ID.matches(videoId)) return@withContext null
         val next = runCatching { Innertube.next(videoId) }.getOrNull() ?: return@withContext null
-        val endpoint = next.objectsNamed("tabRenderer")
-            .firstOrNull { it.youtubeStrings().any { text -> text.equals("Lyrics", ignoreCase = true) } }
-            ?.objectsNamed("browseEndpoint")?.firstOrNull()
-            ?: next.objectsNamed("tabRenderer").drop(1).firstNotNullOfOrNull {
-                it.objectsNamed("browseEndpoint").firstOrNull()
-            }
-            ?: return@withContext null
+        val endpoint = lyricsEndpoint(next) ?: return@withContext null // [KO] lyrics page only
         val browseId = (endpoint["browseId"] as? JsonPrimitive)?.contentOrNull
             ?: return@withContext null
         val params = (endpoint["params"] as? JsonPrimitive)?.contentOrNull
@@ -49,6 +43,24 @@ object YouTubeTranscriptLyrics {
         }.sortedBy { it.timeMs }.toList().takeIf { it.isNotEmpty() }
     }
 }
+
+/**
+ * [KO] The browse endpoint of the Lyrics tab. A song with no lyrics shows that tab without an
+ * endpoint; the fallback (localized tab names) used to take the next tab that had one, "Related",
+ * whose "About the artist" description was then shown as the song's lyrics and stopped the AI
+ * lyrics fallback. Only a lyrics page (browseId "MPLYt…") is accepted now.
+ */
+internal fun lyricsEndpoint(next: JsonElement): JsonObject? {
+    val tabs = next.objectsNamed("tabRenderer")
+    return tabs.firstOrNull { it.youtubeStrings().any { text -> text.equals("Lyrics", ignoreCase = true) } }
+        ?.objectsNamed("browseEndpoint")?.firstOrNull(::isLyricsPage)
+        ?: tabs.drop(1).firstNotNullOfOrNull { it.objectsNamed("browseEndpoint").firstOrNull(::isLyricsPage) }
+}
+
+private fun isLyricsPage(endpoint: JsonObject): Boolean =
+    (endpoint["browseId"] as? JsonPrimitive)?.contentOrNull?.startsWith(LYRICS_PAGE_PREFIX) == true
+
+private const val LYRICS_PAGE_PREFIX = "MPLYt"
 
 private val YOUTUBE_ID = Regex("""[A-Za-z0-9_-]{11}""")
 

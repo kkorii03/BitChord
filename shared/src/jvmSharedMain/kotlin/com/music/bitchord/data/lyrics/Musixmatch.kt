@@ -71,8 +71,17 @@ object Musixmatch {
 
     private suspend fun bestTrack(title: String, artist: String, seconds: Int): Track? {
         val tracks = searchTrack(title, artist) ?: return null
-        return tracks.maxByOrNull { score(it, title, artist, seconds) }
+        return pick(tracks, title, artist, seconds) // [KO] a row must name the song (L15)
     }
+
+    private fun pick(tracks: List<Track>, title: String, artist: String, seconds: Int): Track? =
+        tracks.filter { RecordingMatch.namesTheSong(it.trackName, title) }
+            .maxByOrNull { score(it, title, artist, seconds) }
+
+    /** [KO] Test seam: index of the (name, artist, seconds) row [bestTrack] would take. */
+    internal fun pickIndex(rows: List<Triple<String, String, Int?>>, title: String, artist: String, seconds: Int): Int? =
+        pick(rows.mapIndexed { i, (name, by, length) -> Track(i.toLong(), name, by, length) }, title, artist, seconds)
+            ?.trackId?.toInt()
 
     private fun score(track: Track, title: String, artist: String, seconds: Int): Double {
         var score = 0.0

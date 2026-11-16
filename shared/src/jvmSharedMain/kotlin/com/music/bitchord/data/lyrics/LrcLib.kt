@@ -11,7 +11,6 @@ import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
-import kotlin.math.abs
 
 /**
  * Lyrics from LRCLIB — a free, key-less, community lyrics database.
@@ -71,30 +70,34 @@ object LrcLib {
             .build()
         val body = get(url.toString()) ?: return null
         val hits = json.parseToJsonElement(body) as? JsonArray ?: return null
-        val candidates = hits.mapNotNull { it as? JsonObject }
-            .filter { it["syncedLyrics"]?.jsonPrimitive?.contentOrNull?.isNotBlank() == true }
-            .map {
-                (it["duration"]?.jsonPrimitive?.doubleOrNull) to
-                    it["syncedLyrics"]!!.jsonPrimitive.contentOrNull.orEmpty()
-            }
-        return pickByDuration(candidates, seconds)
+        return pickHit(hits.mapNotNull { it as? JsonObject }, title, seconds)
     }
 
     /**
-     * The hit closest in length to what is playing, or the API's own order
-     * when there is no length to compare against.
+     * [KO] The search hit that is this recording, or null (review L10).
      *
-     * The old code subtracted an unknown length (0) from every hit's length,
-     * which is the same as sorting shortest-first — the interlude or the
-     * thirty-second radio edit wins. With no length, relevance order is the
-     * only signal the provider gave us.
+     * The search is fuzzy: its rows are other songs of the artist, live cuts,
+     * remixes. Taking the nearest length with no bound and never reading the
+     * hit's title showed another song's sheet. Each hit now passes
+     * [RecordingMatch] (same title outside brackets, same version words, length
+     * window) like the other name-matched sources. The artist test is left out:
+     * the search was already made with the artist name, and LRCLIB's spelling of
+     * it (IU / 아이유) cannot be compared. With no length known the API's own
+     * order decides, as before.
      */
-    internal fun <T> pickByDuration(candidates: List<Pair<Double?, T>>, seconds: Int): T? =
-        if (seconds <= 0) {
-            candidates.firstOrNull()?.second
-        } else {
-            candidates.minByOrNull { abs((it.first ?: 0.0) - seconds) }?.second
+    internal fun pickHit(hits: List<JsonObject>, title: String, seconds: Int): String? {
+        val synced = hits.filter { it["syncedLyrics"]?.jsonPrimitive?.contentOrNull?.isNotBlank() == true }
+        val candidates = synced.map {
+            RecordingMatch.Candidate(
+                value = it,
+                title = it["trackName"]?.jsonPrimitive?.contentOrNull,
+                artist = null,
+                seconds = it["duration"]?.jsonPrimitive?.doubleOrNull,
+            )
         }
+        return RecordingMatch.best(candidates, title, "", seconds.coerceAtLeast(0) * 1000L)
+            ?.get("syncedLyrics")?.jsonPrimitive?.contentOrNull
+    }
 
     private fun get(url: String): String? {
         val request = Request.Builder().url(url).header("User-Agent", AGENT).build()

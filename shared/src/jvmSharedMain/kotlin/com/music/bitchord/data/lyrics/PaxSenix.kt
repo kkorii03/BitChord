@@ -190,6 +190,10 @@ object PaxSenix {
         return candidate.score(title, artist, durationMs)
     }
 
+    /** [KO] Test seam: the Apple search row [bestCandidate] would ask lyrics for. */
+    internal fun bestCandidateId(root: JsonElement, title: String, artist: String, durationMs: Long): String? =
+        bestCandidate(root, title, artist, durationMs)?.id
+
     private fun bestCandidate(
         root: JsonElement,
         title: String,
@@ -197,6 +201,7 @@ object PaxSenix {
         durationMs: Long,
     ): Candidate? {
         val candidates = buildList { root.collectCandidates(this) }
+            .filter { RecordingMatch.namesTheSong(it.title, title) } // [KO] no title, no pick (L18)
         return candidates.map { it to it.score(title, artist, durationMs) }
             .maxByOrNull { it.second }
             ?.takeIf { it.second >= MINIMUM_MATCH_SCORE }
