@@ -136,6 +136,38 @@ class StreamChoiceTest {
      * the playback open that has to clear the old prefix. That must not hide the
      * marker, or the next rendition is served into the middle of the old bytes.
      */
+    // Review 11-15 (T5): paused for more than fifteen minutes on a verified
+    // lossless copy, the first read after the resume dropped the choice and
+    // every lyric line moved by that copy's offset for the rest of the song.
+    @Test
+    fun `a lapsed URL does not move the lyrics off the copy still sounding`() {
+        val copy = stream("tidal.example").copy(sourceConfigId = "src", trackId = "trk")
+        StreamChoice.remember("track-9", copy, substituted = true)
+        val substitute = com.music.bitchord.playback.smart.LyricsTiming.Clock.Substitute("src", "trk")
+        assertEquals(substitute, com.music.bitchord.playback.smart.LyricsTiming.playingClock("track-9"))
+
+        val staleAfter = SystemClock.elapsedRealtime() + 16 * 60 * 1000L
+        // The resolver is still told to ask again, and to clear its partial entry.
+        assertNull(StreamChoice.of("track-9", nowMs = staleAfter))
+        assertTrue(StreamChoice.hasExpired("track-9"))
+        assertFalse(StreamChoice.isSubstitute("track-9"))
+        // The copy sounding has not changed, so neither has the clock.
+        assertTrue(StreamChoice.soundsSubstitute("track-9"))
+        assertEquals(substitute, com.music.bitchord.playback.smart.LyricsTiming.playingClock("track-9"))
+
+        // A fresh resolve is the copy sounding from then on.
+        StreamChoice.remember("track-9", stream("googlevideo.com"), substituted = false)
+        assertFalse(StreamChoice.soundsSubstitute("track-9"))
+        assertTrue(StreamChoice.soundsYouTube("track-9"))
+
+        // Letting go of a lapsed choice lets go of its clock too.
+        assertNull(StreamChoice.of("track-9", nowMs = staleAfter))
+        assertTrue(StreamChoice.soundsYouTube("track-9"))
+        StreamChoice.forget("track-9")
+        assertFalse(StreamChoice.soundsYouTube("track-9"))
+        assertNull(StreamChoice.sounding("track-9"))
+    }
+
     @Test
     fun `an intervening remember does not hide an expired choice`() {
         StreamChoice.remember("track-8", stream("old.example"), substituted = false)

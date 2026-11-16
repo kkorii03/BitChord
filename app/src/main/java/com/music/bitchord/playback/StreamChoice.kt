@@ -72,6 +72,37 @@ object StreamChoice {
     private val expired = ConcurrentHashMap.newKeySet<String>()
 
     /**
+     * [KO] Choices whose URL outlived [TTL_MS], kept for the one thing that did
+     * not lapse with it: which copy is sounding (review 11-15, T5).
+     *
+     * The player goes on reading a copy it already holds whole, in its buffer
+     * or in the cache, long after that copy's URL stopped being worth a new
+     * request. Dropping the choice outright made the lyrics forget they were on
+     * a substitute's clock: after a pause of more than fifteen minutes the
+     * first read of [of] moved every line by that copy's offset for the rest
+     * of the song. [of] still answers null for these, so the resolver resolves
+     * afresh exactly as before; only [sounding] and its two questions read
+     * them. [remember] replaces one, [forget] and [forgetWhere] let it go.
+     */
+    private val lapsed = ConcurrentHashMap<String, Choice>()
+
+    private fun keepLapsed(videoId: String, choice: Choice) {
+        if (lapsed.size >= MAX_REMEMBERED) {
+            lapsed.minByOrNull { it.value.at }?.let { lapsed.remove(it.key) }
+        }
+        lapsed[videoId] = choice
+    }
+
+    /** [KO] The copy [videoId] is sounding from, its URL lapsed or not; never a reason to request it again. */
+    fun sounding(videoId: String): SourceStream? = (chosen[videoId] ?: lapsed[videoId])?.stream
+
+    /** [KO] [isSubstitute] for the lyric clock: a lapsed URL does not change the copy sounding. */
+    fun soundsSubstitute(videoId: String): Boolean = (chosen[videoId] ?: lapsed[videoId])?.substituted == true
+
+    /** [KO] [isYouTube] for the lyric clock: a lapsed URL does not change the copy sounding. */
+    fun soundsYouTube(videoId: String): Boolean = (chosen[videoId] ?: lapsed[videoId])?.substituted == false
+
+    /**
      * Bumped whenever a choice is recorded, so a player that is already
      * preparing the next track can be re-armed on the event rather than by a
      * timer. The value is a revision, not the stream itself: collectors read
@@ -100,6 +131,7 @@ object StreamChoice {
         if (nowMs - choice.at > TTL_MS) {
             chosen.remove(videoId)
             expired.add(videoId)
+            keepLapsed(videoId, choice) // [KO] the URL lapsed, not the copy sounding
             if (LyricsTiming.playingClock(videoId) != clockOf(choice)) {
                 LyricsTiming.notifyStreamChoice(videoId)
             }
@@ -148,6 +180,7 @@ object StreamChoice {
             // pin, so a promise can outlive several other tracks' worth of
             // entries, and the blunt version became reachable.
             val now = SystemClock.elapsedRealtime()
+            for ((id, choice) in chosen) if (now - choice.at > TTL_MS) keepLapsed(id, choice) // [KO]
             chosen.entries.removeIf { now - it.value.at > TTL_MS }
             if (chosen.size >= MAX_REMEMBERED) {
                 chosen.minByOrNull { it.value.at }?.let { chosen.remove(it.key) }
@@ -155,6 +188,7 @@ object StreamChoice {
         }
         val after = Choice(stream, SystemClock.elapsedRealtime(), substituted)
         chosen[videoId] = after
+        lapsed.remove(videoId) // [KO] a fresh choice is the copy sounding from here on
         _revisions.update { it + 1L }
         // A change of the audio clock changes which one the lyrics must be
         // shown on, whether it swaps to a substitute or falls back to YouTube.
@@ -200,7 +234,8 @@ object StreamChoice {
      * one.
      */
     fun forget(videoId: String) {
-        val removed = chosen.remove(videoId) ?: return
+        val lapsedChoice = lapsed.remove(videoId) // [KO]
+        val removed = chosen.remove(videoId) ?: lapsedChoice ?: return
         if (LyricsTiming.playingClock(videoId) != clockOf(removed)) {
             LyricsTiming.notifyStreamChoice(videoId)
         }
@@ -218,6 +253,7 @@ object StreamChoice {
         val released = chosen.entries.filter { (videoId, choice) ->
             videoId !in keep && drop(choice.stream)
         }
+        lapsed.entries.removeIf { (videoId, choice) -> videoId !in keep && drop(choice.stream) } // [KO]
         released.forEach { (videoId, choice) ->
             chosen.remove(videoId)
             if (LyricsTiming.playingClock(videoId) != clockOf(choice)) {

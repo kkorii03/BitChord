@@ -485,7 +485,7 @@ object VersionAudioAligner {
     /** The copy of [videoId] that [openDataSource] reads — see there for the order. */
     internal fun renditionToMeasure(videoId: String): AudioCache.Rendition? {
         val watch = Uri.parse("bitchord://watch?v=$videoId")
-        return chooseMeasurementCopy(AudioCache.renditionsOf(watch), StreamChoice.isYouTube(videoId))
+        return chooseMeasurementCopy(AudioCache.renditionsOf(watch), StreamChoice.soundsYouTube(videoId))
     }
 
     /**

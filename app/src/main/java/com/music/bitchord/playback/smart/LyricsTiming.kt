@@ -743,7 +743,8 @@ object LyricsTiming {
 
     /** The substitute [StreamChoice] recorded for [videoId], or unknown when it named no source row. */
     private fun substituteClock(videoId: String): Clock {
-        val choice = StreamChoice.of(videoId) ?: return Clock.Unknown
+        // [KO] Not StreamChoice.of: that read drops a choice whose URL lapsed, and the copy goes on sounding.
+        val choice = StreamChoice.sounding(videoId) ?: return Clock.Unknown
         val source = choice.sourceConfigId ?: return Clock.Unknown
         val track = choice.trackId ?: return Clock.Unknown
         return Clock.Substitute(source, track)
@@ -751,10 +752,10 @@ object LyricsTiming {
 
     /** The copy actually serving [videoId] — not the copy it may swap to later. */
     internal fun playingClock(videoId: String): Clock = when {
-        StreamChoice.isSubstitute(videoId) -> substituteClock(videoId)
+        StreamChoice.soundsSubstitute(videoId) -> substituteClock(videoId)
         // An explicit YouTube choice is the stream; a saved file only answers
         // when nothing has been chosen yet.
-        StreamChoice.isYouTube(videoId) -> Clock.YouTube
+        StreamChoice.soundsYouTube(videoId) -> Clock.YouTube
         else -> {
             val meta = KoDownloadRecords.savedMetadataFor(videoId)
             clockForLocalCopy(meta?.hqSourceConfigId, meta?.hqTrackId)
@@ -771,8 +772,8 @@ object LyricsTiming {
             // A substitute settled on outranks the record: a stale tag must not put YouTube's clock on it.
             !VersionAudioAligner.isYouTubeUnderAltKey(
                 key,
-                StreamChoice.isYouTube(videoId),
-                recordedYouTube && !StreamChoice.isSubstitute(videoId),
+                StreamChoice.soundsYouTube(videoId),
+                recordedYouTube && !StreamChoice.soundsSubstitute(videoId),
             )
         ) {
             substituteClock(videoId)
@@ -903,7 +904,7 @@ object LyricsTiming {
      * recording. A chosen stream or a file proved wrong plays the stream instead.
      */
     internal fun fileOfAnotherUpload(videoId: String): String? {
-        if (StreamChoice.isSubstitute(videoId) || StreamChoice.isYouTube(videoId)) return null
+        if (StreamChoice.soundsSubstitute(videoId) || StreamChoice.soundsYouTube(videoId)) return null
         val meta = KoDownloadRecords.savedMetadataFor(videoId) ?: return null
         val source = meta.soundSourceVideoId ?: return null
         if (source == videoId || meta.wrongRecording) return null
@@ -1393,8 +1394,8 @@ object LyricsTiming {
             if (!SyncSafetyPolicy.hqAdjustmentAllowed(AppSettings.syncSafetySwitches)) {
                 return@withContext null
             }
-            val choice = StreamChoice.of(videoId) ?: return@withContext null
-            if (!StreamChoice.isSubstitute(videoId)) return@withContext null
+            val choice = StreamChoice.sounding(videoId) ?: return@withContext null
+            if (!StreamChoice.soundsSubstitute(videoId)) return@withContext null
             val sourceId = choice.sourceConfigId ?: return@withContext null
             val trackId = choice.trackId ?: return@withContext null
             val verified = HqVerificationStore.get(

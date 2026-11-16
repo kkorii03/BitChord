@@ -170,7 +170,7 @@ object VideoAudio {
             recentCached = false,
             screenOn = screenOn,
             onDisk = AudioCache.renditionsOf(watch),
-            youTubeChosen = StreamChoice.isYouTube(videoId),
+            youTubeChosen = StreamChoice.soundsYouTube(videoId),
         )
     }
 
@@ -434,10 +434,10 @@ object VideoAudio {
         // hold more bytes than the row's own stream, and its words would be for
         // another file (11-06 rlYOsUfpi3M: a first answer on an unknown clock).
         fun ownCopy(): AudioCache.Rendition? = VersionAudioAligner.renditionToMeasure(videoId)?.takeUnless {
-            AutomixAnalysisSource.isSubstituteRendition(videoId, it.key) && !StreamChoice.isSubstitute(videoId) &&
+            AutomixAnalysisSource.isSubstituteRendition(videoId, it.key) && !StreamChoice.soundsSubstitute(videoId) &&
                 !VersionAudioAligner.isYouTubeUnderAltKey(
                     it.key,
-                    StreamChoice.isYouTube(videoId),
+                    StreamChoice.soundsYouTube(videoId),
                     it.origin == AudioCache.Origin.YOUTUBE,
                 )
         }
