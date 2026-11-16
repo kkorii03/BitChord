@@ -105,6 +105,28 @@ class TelegramAudioReaderTest {
         }
     }
 
+    // Review 11-15 (H draft-8): the loader cancels a read by interrupting its
+    // thread. That was taken for a failed download: the reader asked for the
+    // window a second time and nothing told TDLib to stop the first.
+    @Test
+    fun `an interrupted read is not retried and stops its download`() {
+        val transport = FakeTransport()
+        transport.downloadAction = { throw InterruptedException("cancelled") }
+        try {
+            val reader = open(transport)
+            assertThrows(java.io.InterruptedIOException::class.java) {
+                reader.read(ByteArray(64), 0, 64)
+            }
+            assertTrue("the loader must still see the interrupt", Thread.interrupted())
+            assertEquals(1, transport.downloadCalls.get())
+            assertTrue(transport.cancelCalls.get() >= 1)
+            reader.close()
+        } finally {
+            Thread.interrupted()
+            transport.cleanup()
+        }
+    }
+
     @Test
     fun `verification and playback on the same file do not cancel each other`() {
         val transport = FakeTransport()

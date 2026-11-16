@@ -128,6 +128,12 @@ class TelegramAudioReader internal constructor(
                 try {
                     return downloadRange(at, currentWanted)
                 } catch (failure: Exception) {
+                    // [KO] The loader cancelled this read by interrupting its thread. Trying
+                    // again asked for another window and held the thread up to 40 s more.
+                    if (failure is InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        throw InterruptedIOException("Telegram read interrupted")
+                    }
                     if (closed) throw InterruptedIOException("Telegram read cancelled")
                     if (failure is InterruptedIOException) throw failure
                     if (attempt >= MAX_DOWNLOAD_ATTEMPTS - 1) throw failure
@@ -154,14 +160,18 @@ class TelegramAudioReader internal constructor(
             val started = transport.nowMillis()
             val before = available
             downloading.set(true)
+            var finished = false // [KO]
             try {
                 checkOpen()
                 transport.download(fileId, priority(reason), at, window)
+                finished = true
             } finally {
                 downloading.set(false)
                 // close() may have sent its cancel before TDLib registered this
                 // DownloadFile; cancel again so the window stops with the reader.
-                if (closed) runCatching { transport.cancelDownload(fileId) }
+                // [KO] A wait that ended without the window (interrupted, timed out)
+                // leaves TDLib fetching it for nobody; stop that one too.
+                if (closed || !finished) runCatching { transport.cancelDownload(fileId) }
             }
             checkOpen()
             available = transport.downloadedPrefixSize(fileId, at)

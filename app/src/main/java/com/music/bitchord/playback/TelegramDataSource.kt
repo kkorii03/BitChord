@@ -25,6 +25,14 @@ class TelegramDataSource : BaseDataSource(/* isNetwork = */ true) {
     private var trackId: String? = null
     private var streamStarted = false
 
+    /**
+     * [KO] Whether transferStarted was reported and not yet ended. An open that
+     * failed before it, or a second close, used to report an end with no data
+     * spec: the listeners threw on the null and that exception replaced the
+     * IOException the player knows how to retry (review 11-15, H draft-7).
+     */
+    private var transferOpen = false
+
     override fun open(dataSpec: DataSpec): Long {
         if (reader != null) throw IOException("Telegram data source is already open")
         val id = TelegramStreamUri.trackId(dataSpec.uri)
@@ -38,6 +46,7 @@ class TelegramDataSource : BaseDataSource(/* isNetwork = */ true) {
             reader = opened
             openedUri = dataSpec.uri
             transferStarted(dataSpec)
+            transferOpen = true
             return opened.remaining()
         } catch (failure: Throwable) {
             close()
@@ -49,7 +58,14 @@ class TelegramDataSource : BaseDataSource(/* isNetwork = */ true) {
     override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
         if (length == 0) return 0
         val current = reader ?: throw IOException("Telegram data source is not open")
-        val read = current.read(buffer, offset, length)
+        val read = try {
+            current.read(buffer, offset, length)
+        } catch (failure: IOException) {
+            throw failure
+        } catch (failure: RuntimeException) {
+            // [KO] A TDLib request that timed out is not an IOException; unwrapped it ends the play instead of a retry.
+            throw IOException("Telegram audio unavailable: ${failure.message}", failure)
+        }
         if (read > 0) bytesTransferred(read)
         return read
     }
@@ -76,7 +92,10 @@ class TelegramDataSource : BaseDataSource(/* isNetwork = */ true) {
                 streamStarted = false
                 id?.let(TelegramClientManager::endStream)
             }
-            transferEnded()
+            if (transferOpen) {
+                transferOpen = false
+                transferEnded()
+            }
         }
     }
 
