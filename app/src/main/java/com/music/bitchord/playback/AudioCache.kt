@@ -1744,6 +1744,14 @@ object AudioCache {
             val meta = runCatching { cache.getContentMetadata(key) }.getOrNull() ?: return@forEach
             val served = meta.get(META_SERVED_SOURCE, null as String?)
             if (!CachedRenditionBar.servedBy(served, sourceConfigId, trackId)) return@forEach
+            // The play that proved the refusal is usually the one reading this copy
+            // (HqAudioVerify.auditCachedCopy). A whole copy read off the disk holds no
+            // cache lock, so asking would delete the bytes under the player; they
+            // stay for this play and go on the next one that finds them refused.
+            if (playerHoldsKey(key)) {
+                TrackLog.d(TAG, "refused rendition $key is the one playing; kept until it is let go", about = mediaId)
+                return@forEach
+            }
             runCatching { cache.removeResource(key) }
                 .onSuccess {
                     forgetPurgeCandidate(key)
@@ -1756,6 +1764,22 @@ object AudioCache {
                 .onFailure { TrackLog.d(TAG, "rendition $key still in use: ${it.message}", about = mediaId) }
         }
         renditionKeys.remove(mediaId)
+    }
+
+    /**
+     * [KO] The copy [uri] opens from the cache, when the source row
+     * [sourceConfigId]/[trackId] wrote it; null for any other copy or none.
+     *
+     * For the words check a copy swapped in before that check existed still
+     * owes ([com.music.bitchord.playback.smart.HqAudioVerify.auditCachedCopy]).
+     * Reads the cache index only; call it off the main thread.
+     */
+    fun playedCopyWrittenBy(uri: Uri, sourceConfigId: String, trackId: String): Rendition? {
+        if (openedCache == null || uri.scheme != "bitchord") return null
+        val key = keyFactory.buildCacheKey(DataSpec(uri))
+        val served = runCatching { cache.getContentMetadata(key).get(META_SERVED_SOURCE, null as String?) }.getOrNull()
+        if (!CachedRenditionBar.servedBy(served, sourceConfigId, trackId)) return null
+        return runCatching { renditionFor(key) }.getOrNull()
     }
 
     /** [KO] reader-lock */

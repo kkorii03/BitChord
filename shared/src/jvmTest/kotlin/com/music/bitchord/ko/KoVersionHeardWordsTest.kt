@@ -229,6 +229,43 @@ class KoVersionHeardWordsTest {
         )
     }
 
+    // Review 11-15 (H3): the remix swapped in before the words check sat whole in
+    // the cache and every plain play opened it with no search and no check.
+    @Test
+    fun `a cached copy whose verdict never met the guard owes one hearing, a marked one none`() {
+        fun owes(words: Boolean, seen: Boolean, attempts: Int) =
+            KoVersionGuard.cachedCopyOwesWords(words, seen, attempts, maxAttempts = 3)
+        // A verdict stored before the guard: neither mark.
+        assertTrue(owes(words = false, seen = false, attempts = 0))
+        // Words compared, or a search with no other version: plays straight from the cache.
+        assertFalse(owes(words = true, seen = false, attempts = 0))
+        assertFalse(owes(words = false, seen = true, attempts = 0))
+        // Hearings that brought no answer are bounded.
+        assertTrue(owes(words = false, seen = false, attempts = 2))
+        assertFalse(owes(words = false, seen = false, attempts = 3))
+    }
+
+    @Test
+    fun `the cached remix is refused, the same recording settled, no answer asks again`() {
+        val remix = KoVersionGuard.compareWords(
+            reference = heard(firstSinger),
+            referenceUntilMs = 90_000L,
+            candidate = heard(otherSinger),
+            candidateUntilMs = 60_000L,
+            offsetMs = 0L,
+            rate = 1.0,
+        )
+        assertEquals(KoVersionGuard.CachedCopy.REFUSE, KoVersionGuard.cachedCopyVerdict(remix))
+        val same = KoVersionGuard.WordsCheck(KoVersionGuard.Words.SAME, 20, 20, 18, 50_000L)
+        assertEquals(KoVersionGuard.CachedCopy.SETTLED, KoVersionGuard.cachedCopyVerdict(same))
+        val instrumental = KoVersionGuard.WordsCheck(KoVersionGuard.Words.UNDECIDED, 2, 3, 1, 50_000L)
+        assertEquals(KoVersionGuard.CachedCopy.SETTLED, KoVersionGuard.cachedCopyVerdict(instrumental))
+        // No reply, or the YouTube copy's words kept for a few seconds only: nothing is refused.
+        assertEquals(KoVersionGuard.CachedCopy.ASK_AGAIN, KoVersionGuard.cachedCopyVerdict(null))
+        val short = KoVersionGuard.WordsCheck(KoVersionGuard.Words.UNDECIDED, 3, 3, 3, 6_000L)
+        assertEquals(KoVersionGuard.CachedCopy.ASK_AGAIN, KoVersionGuard.cachedCopyVerdict(short))
+    }
+
     @Test
     fun `a featured credit in the title also counts as another version`() {
         assertTrue(

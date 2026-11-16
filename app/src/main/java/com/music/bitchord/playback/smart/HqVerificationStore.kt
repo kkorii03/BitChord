@@ -42,6 +42,13 @@ object HqVerificationStore {
          * again until this is true; false for every verdict stored before it.
          */
         val wordsChecked: Boolean = false,
+        /**
+         * [KO] Whether the version guard looked at this pair and found nothing
+         * to hear: its search held no other version of the song. A verdict
+         * with neither mark predates the guard, and a cached copy playing
+         * under it is heard once ([HqAudioVerify.auditCachedCopy]).
+         */
+        val guardSeen: Boolean = false,
     )
 
     /** One accepted pair, with the ids needed to ask for the very same stream again. */
@@ -108,6 +115,12 @@ object HqVerificationStore {
 
     /** The eighth field of a verified line whose candidate words were compared. */
     private const val WORDS_CHECKED = "words"
+
+    /**
+     * [KO] The same field for a pair the guard saw and had nothing to hear on.
+     * A build that only knows [WORDS_CHECKED] reads it as "not words-checked".
+     */
+    private const val GUARD_SEEN = "seen"
 
     /**
      * Format 1 stored a rejection whenever a comparison did not accept, even
@@ -333,7 +346,9 @@ object HqVerificationStore {
             val sourceTitle = parts.getOrNull(5)?.takeIf { it.isNotBlank() }
             val sourceArtist = parts.getOrNull(6)?.takeIf { it.isNotBlank() }
             val wordsChecked = parts.getOrNull(7) == WORDS_CHECKED
-            data.verified[parts[0]] = Verified(offset, rate, match, tier, sourceTitle, sourceArtist, wordsChecked)
+            val guardSeen = parts.getOrNull(7) == GUARD_SEEN // [KO]
+            data.verified[parts[0]] =
+                Verified(offset, rate, match, tier, sourceTitle, sourceArtist, wordsChecked, guardSeen)
         }
         val version = prefs.getInt(KEY_VERSION, 1)
         if (version < STORE_VERSION) {
@@ -380,14 +395,19 @@ object HqVerificationStore {
         val verified = data.verified.entries.joinToString("\n") { (key, value) ->
             // The source names are appended only when known, so a verdict
             // without them keeps the five-field line older builds wrote.
-            val names = if (value.sourceTitle == null && value.sourceArtist == null && !value.wordsChecked) {
+            val marked = value.wordsChecked || value.guardSeen
+            val names = if (value.sourceTitle == null && value.sourceArtist == null && !marked) {
                 emptyList()
             } else {
                 listOf(value.sourceTitle.orEmpty().sanitized(), value.sourceArtist.orEmpty().sanitized())
             }
             // The words mark is an eighth field after the (possibly empty) names,
             // so a line without it reads exactly as older builds wrote it.
-            val words = if (value.wordsChecked) listOf(WORDS_CHECKED) else emptyList()
+            val words = when {
+                value.wordsChecked -> listOf(WORDS_CHECKED)
+                value.guardSeen -> listOf(GUARD_SEEN) // [KO]
+                else -> emptyList()
+            }
             (listOf(key, value.offsetMs, value.rate, value.matchPercent, value.tier.name) + names + words)
                 .joinToString("\t")
         }

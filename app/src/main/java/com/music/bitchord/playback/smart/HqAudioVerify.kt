@@ -712,6 +712,8 @@ object HqAudioVerify {
                         // Only a comparison that settled it; a few seconds of
                         // words accept this play and are asked again.
                         wordsChecked = KoVersionGuard.settles(words),
+                        // [KO] No other version in this row's search: a cached copy of it owes no hearing.
+                        guardSeen = !needsWords,
                     )
                     HqVerificationStore.put(context, youtubeId, sourceId, trackId, verified)
                     pendingRateLimits.remove(youtubeId)
@@ -1112,6 +1114,146 @@ object HqAudioVerify {
             youtubeId,
         )
         return check
+    }
+
+    /** [KO] Hearings of one cached copy spent in this run without an answer, by pair key. */
+    private val cachedCopyAttempts = ConcurrentHashMap<String, Int>()
+
+    /** [KO] The row [auditCachedCopy] was last asked about: one play asks once, however often it is called. */
+    @Volatile
+    private var auditedCopyOf: String? = null
+
+    private fun owesCachedWords(verified: HqVerificationStore.Verified, key: String): Boolean =
+        KoVersionGuard.cachedCopyOwesWords(
+            wordsChecked = verified.wordsChecked,
+            guardSeen = verified.guardSeen,
+            attempts = cachedCopyAttempts[key] ?: 0,
+            maxAttempts = MAX_PENDING_TRANSIENT_ATTEMPTS,
+        )
+
+    /**
+     * [KO] The words check a copy already in the cache still owes.
+     *
+     * A swap made before the words were compared (11-13 Despacito, the remix at
+     * match=96%) left a whole copy under the upgrade key and a stored verdict
+     * nothing questions: a plain play opens the copy with no search, so its row
+     * is never marked risky and [verifyOutcome] is never asked. Called for the
+     * sounding row every time a better copy is looked for (first sound, every
+     * progress sample); only the first call of a play does anything, and it
+     * returns at once. Off the
+     * caller's thread it finds the stored pair that wrote the copy; a pair with
+     * either mark ends there. Otherwise the copy's own opening is read off the
+     * disk, heard once and compared with the words kept of the YouTube copy
+     * through the stored offset and rate. Other words refuse the row ([reject]
+     * drops the copy, so the next open is YouTube's); settled words mark the
+     * verdict and no later play asks. Without an engine key or kept words
+     * nothing is read; a hearing that brought no answer is repeated on a later
+     * play, [MAX_PENDING_TRANSIENT_ATTEMPTS] times a run at most.
+     */
+    fun auditCachedCopy(context: Context, youtubeId: String, uri: android.net.Uri) {
+        if (youtubeId.isBlank() || auditedCopyOf == youtubeId) return
+        auditedCopyOf = youtubeId
+        if (uri.scheme != "bitchord" || SourceTrackKeys.parse(youtubeId) != null) return
+        val app = context.applicationContext ?: context
+        pendingRetryScope.launch {
+            try {
+                hearCachedCopy(app, youtubeId, uri)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failed: Exception) {
+                TrackLog.d(TAG, "hq-verify cached copy: check failed for $youtubeId: ${failed.message}", youtubeId)
+            }
+        }
+    }
+
+    private suspend fun hearCachedCopy(context: Context, youtubeId: String, uri: android.net.Uri) {
+        // A copy refused while it was the one playing could not be dropped then; this play no longer holds it.
+        HqVerificationStore.rejectedRows(context, youtubeId).forEach { (source, track) ->
+            runCatching { com.music.bitchord.playback.AudioCache.dropRefusedRenditions(youtubeId, source, track) }
+        }
+        for (entry in HqVerificationStore.entries(context)) {
+            if (entry.youtubeId != youtubeId) continue
+            val key = "$youtubeId\u0001${entry.sourceConfigId}\u0001${entry.trackId}"
+            if (!owesCachedWords(entry.verified, key)) continue
+            val rendition = com.music.bitchord.playback.AudioCache
+                .playedCopyWrittenBy(uri, entry.sourceConfigId, entry.trackId) ?: continue
+            // A saved download is what sounds, not this copy; its own check is the download's.
+            if (com.music.bitchord.download.Downloads.savedUri(context, youtubeId) != null) return
+            // Neither costs anything to find missing, so neither spends a hearing.
+            if (GroqWhisper.apiKey.isBlank()) return
+            val youtubeWords = SongHearing.keptYouTubeWords(context, youtubeId) ?: return
+            // The verification's own lock for this pair: the two never write over each other.
+            val lock = locks.getOrPut(key) { Mutex() }
+            try {
+                lock.withLock { hearCachedCopyLocked(context, youtubeId, entry, key, uri, rendition, youtubeWords) }
+            } finally {
+                locks.remove(key, lock)
+            }
+            return
+        }
+    }
+
+    private suspend fun hearCachedCopyLocked(
+        context: Context,
+        youtubeId: String,
+        entry: HqVerificationStore.Entry,
+        key: String,
+        uri: android.net.Uri,
+        rendition: com.music.bitchord.playback.AudioCache.Rendition,
+        youtubeWords: SongHearing.Saved,
+    ) {
+        // Read again under the lock: a verification of this pair may have just answered.
+        val stored = HqVerificationStore.get(context, youtubeId, entry.sourceConfigId, entry.trackId) ?: return
+        if (!owesCachedWords(stored, key)) return
+        cachedCopyAttempts[key] = (cachedCopyAttempts[key] ?: 0) + 1
+        val clip = KoOpeningClip(WORDS_SECONDS)
+        val source = com.music.bitchord.playback.AudioCache.renditionDataSource(uri, rendition)
+        val decoded = try {
+            val coroutine = currentCoroutineContext()
+            AudioDecoder.decodeMonoStream(
+                source,
+                0.0,
+                WORDS_SECONDS,
+                abort = { !coroutine.isActive },
+                label = "hq-verify",
+            ) { samples, rate, _ -> clip.push(samples, rate) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (e: Exception) {
+            TrackLog.d(TAG, "hq-verify cached copy: could not read it: ${e.message}", youtubeId)
+            null
+        } finally {
+            runCatching { source.close() }
+        }
+        val words = if (decoded != null) {
+            heardWords(youtubeId, youtubeWords, clip, stored.offsetMs, stored.rate)
+        } else {
+            null
+        }
+        when (KoVersionGuard.cachedCopyVerdict(words)) {
+            KoVersionGuard.CachedCopy.REFUSE -> {
+                cachedCopyAttempts.remove(key)
+                reject(context, youtubeId, entry.sourceConfigId, entry.trackId)
+                TrackLog.i(
+                    TAG,
+                    "hq-verify cached copy: other words than the YouTube copy; row refused, copy dropped",
+                    youtubeId,
+                )
+            }
+            KoVersionGuard.CachedCopy.SETTLED -> {
+                cachedCopyAttempts.remove(key)
+                HqVerificationStore.put(
+                    context,
+                    youtubeId,
+                    entry.sourceConfigId,
+                    entry.trackId,
+                    stored.copy(wordsChecked = true),
+                )
+                TrackLog.i(TAG, "hq-verify cached copy: words settled; not asked again", youtubeId)
+            }
+            KoVersionGuard.CachedCopy.ASK_AGAIN ->
+                TrackLog.d(TAG, "hq-verify cached copy: no words verdict; a later play asks again", youtubeId)
+        }
     }
 
     /** The one line a verification leaves: the figure and the verdict, never lyrics text. */

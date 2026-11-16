@@ -88,6 +88,43 @@ object KoVersionGuard {
     /** The shared stretch from which "too few words" is a finding rather than a gap. */
     const val SETTLED_WINDOW_MS = 30_000L
 
+    // ── A copy already in the cache ─────────────────────────────────────────
+
+    /** What one hearing of a cached copy does to its stored pair. */
+    enum class CachedCopy { REFUSE, SETTLED, ASK_AGAIN }
+
+    /**
+     * Whether a cached copy playing under a stored verdict still owes the
+     * words check.
+     *
+     * A swap made before the words were compared left a whole copy in the
+     * cache, and a plain play opens it with no search: the row is never
+     * marked [risky] and the verification is never asked, so the 11-13
+     * Despacito remix went on playing from the disk after the check existed.
+     * Such a verdict carries neither mark. One whose words were compared
+     * ([wordsChecked]) or whose search held no other version ([guardSeen],
+     * written with every verdict since) owes nothing, so a good copy is
+     * heard at most once. [attempts] are the hearings already spent on it in
+     * this run without an answer.
+     */
+    fun cachedCopyOwesWords(
+        wordsChecked: Boolean,
+        guardSeen: Boolean,
+        attempts: Int,
+        maxAttempts: Int,
+    ): Boolean = !wordsChecked && !guardSeen && attempts < maxAttempts
+
+    /**
+     * Words that disagree refuse the row; words that [settles] accepts close
+     * the question for good; anything else (no reply, a few seconds only)
+     * says nothing about the copy and a later play asks again.
+     */
+    fun cachedCopyVerdict(words: WordsCheck?): CachedCopy = when {
+        words?.verdict == Words.DIFFERENT -> CachedCopy.REFUSE
+        settles(words) -> CachedCopy.SETTLED
+        else -> CachedCopy.ASK_AGAIN
+    }
+
     // ── Which candidates need the words check ───────────────────────────────
 
     /**

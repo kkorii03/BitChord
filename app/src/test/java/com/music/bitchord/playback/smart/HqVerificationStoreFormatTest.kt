@@ -79,6 +79,42 @@ class HqVerificationStoreFormatTest {
         assertFalse(HqVerificationStore.get(context, "yt2", "src1", "track1")!!.wordsChecked)
     }
 
+    // Review 11-15 (H3): a cached copy swapped in before the words guard plays
+    // with no search. Its verdict has to be told from one the guard has seen,
+    // or every good copy would be heard again on every play.
+    @Test
+    fun `a guard seen verdict keeps its own mark and is never read as words checked`() {
+        val seen = verified().copy(guardSeen = true)
+        HqVerificationStore.put(context, "yt1", "src1", "track1", seen)
+        assertEquals(
+            "yt1\u0001src1\u0001track1\t1234\t1.001\t87\tLOSSLESS_16\t\t\tseen",
+            prefs.values["verified"],
+        )
+
+        cachedField.set(HqVerificationStore, null)
+
+        val back = HqVerificationStore.get(context, "yt1", "src1", "track1")!!
+        assertTrue(back.guardSeen)
+        assertFalse(back.wordsChecked)
+
+        // A line from before the guard carries neither mark: that copy is still owed a hearing.
+        prefs.values["verified"] = listOf(
+            "yt2\u0001src1\u0001track1\t1234\t1.001\t87\tLOSSLESS_16\tTitle\tArtist",
+            "yt3\u0001src1\u0001track1\t1234\t1.001\t87\tLOSSLESS_16\tTitle\tArtist\twords",
+        ).joinToString("\n")
+        cachedField.set(HqVerificationStore, null)
+        val legacy = HqVerificationStore.get(context, "yt2", "src1", "track1")!!
+        assertFalse(legacy.guardSeen)
+        assertFalse(legacy.wordsChecked)
+        val checked = HqVerificationStore.get(context, "yt3", "src1", "track1")!!
+        assertTrue(checked.wordsChecked)
+        assertFalse(checked.guardSeen)
+
+        // Both marks at once still write the stronger one.
+        HqVerificationStore.put(context, "yt3", "src1", "track1", checked.copy(guardSeen = true))
+        assertTrue(prefs.values["verified"].toString().endsWith("\tTitle\tArtist\twords"))
+    }
+
     @Test
     fun `the cache is reloaded from disk after the in memory copy is dropped`() {
         val value = verified()
