@@ -156,6 +156,14 @@ class KoAnalysisHeadEngine(
                         requestAnalysisHead(videoId)
                         waitedForWriter = false
                         rounds++
+                    } else {
+                        // Enough to measure but not the whole head, and no round
+                        // running: only another writer's bytes can finish it, and
+                        // those raise the span event. Re-arming askedAt here woke
+                        // this wait twice a second until the deadline (review
+                        // 11-15, T7: ~90 wake-ups in 45 s for one row).
+                        awaitWake(wake, deadline)
+                        continue
                     }
                     askedAt = current
                 } else {

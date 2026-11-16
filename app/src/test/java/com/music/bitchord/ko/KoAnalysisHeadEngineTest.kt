@@ -52,6 +52,7 @@ class KoAnalysisHeadEngineTest {
         inFlight: MutableSet<String> = mutableSetOf(),
         analysisHeads: MutableMap<String, Boolean> = mutableMapOf(),
         onWanted: (String) -> Unit = {},
+        prefixBytes: (String) -> Long = { 0L },
     ) = KoAnalysisHeadEngine(
         cache = { cache },
         scope = scope,
@@ -64,7 +65,7 @@ class KoAnalysisHeadEngineTest {
         stalled = mutableSetOf(),
         wantMap = mutableMapOf(),
         anotherWriterHas = anotherWriter,
-        alignmentPrefixBytes = { 0L },
+        alignmentPrefixBytes = prefixBytes,
         alignmentHeadComplete = { headComplete() },
         analysisHeadSize = { it },
         fetchRange = { _, _, _, _, _ -> },
@@ -117,6 +118,28 @@ class KoAnalysisHeadEngineTest {
         engine.retryAnalysisHeadIfReaderReleased("abc")
 
         assertTrue(withTimeout(2_000L) { result.await() })
+    }
+
+    // Review 11-15 (T7): a head with enough to measure but not all of it, and
+    // no round running, re-armed its own settle wait and woke twice a second
+    // until the deadline (~90 wake-ups in 45 s for one row).
+    @Test
+    fun `a head that is enough but not whole parks on the event instead of waking twice a second`() = runBlocking {
+        val asked = java.util.concurrent.atomic.AtomicInteger()
+        val engine = engine(
+            RecordingCache().cache,
+            now = { System.nanoTime() / 1_000_000L },
+            prefixBytes = {
+                asked.incrementAndGet()
+                KoAnalysisHeadEngine.MIN_ALIGNMENT_PREFIX_BYTES + 100L * 1024
+            },
+        )
+
+        assertFalse(engine.awaitAnalysisHeadFor("abc", 2_600L))
+
+        // One read before the round is asked for, one once it has settled. The
+        // old loop read it again every 500 ms: six times in this wait.
+        assertTrue("prefix read ${asked.get()} times", asked.get() <= 3)
     }
 
     @Test

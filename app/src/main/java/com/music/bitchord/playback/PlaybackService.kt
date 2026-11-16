@@ -12315,6 +12315,8 @@ class PlaybackService : MediaLibraryService() {
                             baseAllowed = timeable,
                             measuredAllowed = recordTimed,
                             deniedBy = "file-own-timing@player",
+                            // [KO] As the lyrics screen and next-prep pass it: a heard sheet is not re-placed on its own words.
+                            ownTranscript = foundSource == com.music.bitchord.data.lyrics.LyricsSource.GEMINI_TRANSCRIPT,
                             isVideo = coverQuery.isVideo,
                             audioSource = if (coverQuery.isVideo) {
                                 null
