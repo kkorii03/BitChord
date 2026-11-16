@@ -112,7 +112,9 @@ class KoCacheRetention {
                 val origin = meta.get(META_ORIGIN, null as String?)
                 val keptByQueueOrTiming = mediaId != null &&
                     (mediaId in keep || keptForTiming(mediaId))
-                if (cacheEntryShouldDrop(
+                // P2-0: skip what must stay. dd5380b6b had this inverted, so the
+                // pass removed the playing/next addon copies and kept the partials.
+                if (!cacheEntryShouldDrop(
                         origin = origin,
                         foreignOrigin = AudioCache.Origin.OTHER.name,
                         hasAnalysis = meta.get(META_ANALYSIS, null as String?) != null,

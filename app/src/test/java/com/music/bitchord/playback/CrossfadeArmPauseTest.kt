@@ -17,6 +17,22 @@ class CrossfadeArmPauseTest {
         assertEquals(CrossfadeArmPolicy.ARM_STEP_MS, CrossfadeArmPolicy.armingStepMs(playWhenReady = true))
     }
 
+    // P2-1: a blend or sleep fade paused midway kept the loop at 30 ms until resume.
+    @Test
+    fun `a paused blend or sleep fade waits for the resume event`() {
+        assertEquals(0L, com.music.bitchord.ko.koFadeStepMs(outgoing = false, incoming = false))
+        assertEquals(0L, com.music.bitchord.ko.koFadeStepMs(outgoing = false, incoming = null))
+    }
+
+    @Test
+    fun `a blend keeps stepping while either deck plays or one is missing`() {
+        val step = CrossfadeController.FADE_STEP_MS
+        assertEquals(step, com.music.bitchord.ko.koFadeStepMs(outgoing = true, incoming = false))
+        assertEquals(step, com.music.bitchord.ko.koFadeStepMs(outgoing = false, incoming = true))
+        assertEquals(step, com.music.bitchord.ko.koFadeStepMs(outgoing = null, incoming = false))
+        assertEquals(step, com.music.bitchord.ko.koFadeStepMs(outgoing = true, incoming = null))
+    }
+
     @Test
     fun `time spent paused does not consume the readiness grace`() {
         assertEquals(6_000L, CrossfadeArmPolicy.armDeadlineAfterPause(deadlineMs = 1_000L, pausedForMs = 5_000L))

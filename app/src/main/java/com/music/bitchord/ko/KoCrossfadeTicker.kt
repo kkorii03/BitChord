@@ -69,10 +69,24 @@ internal fun CrossfadeController.koTickStepMs(): Long = when (phase) {
     }
     CrossfadeController.Phase.ARMING ->
         CrossfadeArmPolicy.armingStepMs(outgoing?.playWhenReady != false)
-    CrossfadeController.Phase.FADING -> CrossfadeController.FADE_STEP_MS
-    CrossfadeController.Phase.SLEEP_FADE -> CrossfadeController.FADE_STEP_MS
+    CrossfadeController.Phase.FADING ->
+        koFadeStepMs(outgoing?.playWhenReady, incoming?.playWhenReady)
+    CrossfadeController.Phase.SLEEP_FADE ->
+        koFadeStepMs(outgoing?.playWhenReady, null)
     CrossfadeController.Phase.BAILING -> CrossfadeController.BAIL_STEP_MS
     CrossfadeController.Phase.LOOP_ARMING ->
         CrossfadeArmPolicy.armingStepMs(outgoing?.playWhenReady != false)
     CrossfadeController.Phase.LOOP_RUNNING -> CrossfadeController.LOOP_STEP_MS
+}
+
+/**
+ * P2-1: a blend or sleep fade is driven by playback position, so while every
+ * player in it is paused nothing moves; park (0) and let the resume's
+ * onPlayWhenReadyChanged wake the loop, instead of ticking every 30 ms through
+ * the pause. A missing player (null) keeps ticking so the fade can bail.
+ * [incoming] is null for the sleep fade, which has only the outgoing track.
+ */
+internal fun koFadeStepMs(outgoing: Boolean?, incoming: Boolean?): Long {
+    val parked = outgoing == false && (incoming == null || incoming == false)
+    return if (parked) 0L else CrossfadeController.FADE_STEP_MS
 }

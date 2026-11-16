@@ -1,5 +1,12 @@
 package com.music.bitchord.ko
 
+import androidx.media3.datasource.cache.Cache
+import androidx.media3.datasource.cache.ContentMetadata
+import java.lang.reflect.Proxy
+import java.util.TreeSet
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -94,6 +101,57 @@ class KoCacheRetentionTest {
     fun `the playhead window or a timing keep spares every candidate`() {
         assertFalse(drop(origin = "OTHER", keepsAddonCopy = false, keptByQueueOrTiming = true))
         assertFalse(drop(origin = "YOUTUBE", hasAnalysis = true, keptByQueueOrTiming = true))
+    }
+
+    /** A cache of one addon entry "id1" that records what the drop pass removes. */
+    private fun addonCache(removed: MutableList<String>): Cache {
+        val values = mapOf("bc_origin" to "OTHER", "bc_media_id" to "id1")
+        val meta = Proxy.newProxyInstance(
+            ContentMetadata::class.java.classLoader,
+            arrayOf(ContentMetadata::class.java),
+        ) { _, method, args ->
+            when {
+                method.name == "get" && method.returnType == String::class.java -> values[args!![0] as String] ?: args[1]
+                method.name == "contains" -> (args!![0] as String) in values
+                else -> args?.getOrNull(1)
+            }
+        } as ContentMetadata
+        return Proxy.newProxyInstance(
+            Cache::class.java.classLoader,
+            arrayOf(Cache::class.java),
+        ) { _, method, args ->
+            when (method.name) {
+                "getKeys" -> TreeSet(listOf("id1"))
+                "getContentMetadata" -> meta
+                "removeResource" -> { removed += args!![0] as String; null }
+                else -> null
+            }
+        } as Cache
+    }
+
+    private fun dropPass(keep: Set<String>, keepsAddonCopy: Boolean): List<String> {
+        val removed = mutableListOf<String>()
+        KoCacheRetention().dropForeignEntries(
+            cache = addonCache(removed),
+            keep = keep,
+            keepAnalysis = false,
+            keepsAddonCopy = { keepsAddonCopy },
+            scope = CoroutineScope(Dispatchers.Unconfined),
+            onDropped = {},
+        )
+        return removed
+    }
+
+    // P2-0: the pass removed exactly what the rule says to keep, and kept the rest.
+    @Test
+    fun `the drop pass leaves the playing track's addon copy alone`() {
+        assertEquals(emptyList<String>(), dropPass(keep = setOf("id1"), keepsAddonCopy = false))
+        assertEquals(emptyList<String>(), dropPass(keep = emptySet(), keepsAddonCopy = true))
+    }
+
+    @Test
+    fun `the drop pass removes a partial addon copy nobody keeps`() {
+        assertEquals(listOf("id1"), dropPass(keep = emptySet(), keepsAddonCopy = false))
     }
 
     @Test
