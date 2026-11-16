@@ -160,11 +160,21 @@ class StreamChoiceTest {
         assertFalse(StreamChoice.soundsSubstitute("track-9"))
         assertTrue(StreamChoice.soundsYouTube("track-9"))
 
-        // Letting go of a lapsed choice lets go of its clock too.
+        // A lapsed YouTube choice is not kept: a saved file may be what plays next,
+        // and the file's clock must answer then (StreamClockChangeSignalTest).
         assertNull(StreamChoice.of("track-9", nowMs = staleAfter))
-        assertTrue(StreamChoice.soundsYouTube("track-9"))
-        StreamChoice.forget("track-9")
         assertFalse(StreamChoice.soundsYouTube("track-9"))
+        assertNull(StreamChoice.sounding("track-9"))
+
+        // A replay on a saved file lets go of a lapsed substitute; so does forget.
+        StreamChoice.remember("track-9", copy, substituted = true)
+        assertNull(StreamChoice.of("track-9", nowMs = staleAfter))
+        assertTrue(StreamChoice.soundsSubstitute("track-9"))
+        StreamChoice.forgetLapsed("track-9")
+        assertFalse(StreamChoice.soundsSubstitute("track-9"))
+        StreamChoice.remember("track-9", copy, substituted = true)
+        assertNull(StreamChoice.of("track-9", nowMs = staleAfter))
+        StreamChoice.forget("track-9")
         assertNull(StreamChoice.sounding("track-9"))
     }
 

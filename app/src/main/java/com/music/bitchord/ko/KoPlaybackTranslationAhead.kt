@@ -386,6 +386,8 @@ internal fun PlaybackService.koScheduleDownloadHealthCheck(song: Song?, player: 
     if (song == null || song.videoId.isBlank()) return
     // A replay on the file finds the stream's choice from the play before, for fifteen minutes.
     if (song.localUri != null && StreamChoice.isYouTube(song.videoId)) StreamChoice.forget(song.videoId)
+    // Past those fifteen minutes a substitute's clock is still remembered (review 11-15, T5); the file is not it.
+    if (song.localUri != null) StreamChoice.forgetLapsed(song.videoId)
     downloadHealthJob?.cancel()
     downloadHealthJob = scope.launch(TrackLog.about(song.videoId)) {
         val outcome = DownloadHealth.onPlayback(service, song) ?: return@launch

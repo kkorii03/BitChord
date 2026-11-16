@@ -87,6 +87,10 @@ object StreamChoice {
     private val lapsed = ConcurrentHashMap<String, Choice>()
 
     private fun keepLapsed(videoId: String, choice: Choice) {
+        // Only a substitute's clock is worth keeping. A lapsed YouTube choice
+        // must stop answering: a replay on a saved file is on the file's clock,
+        // and "playing=youtube" over that file dropped a 97 % answer (11-06).
+        if (!choice.substituted) return
         if (lapsed.size >= MAX_REMEMBERED) {
             lapsed.minByOrNull { it.value.at }?.let { lapsed.remove(it.key) }
         }
@@ -99,8 +103,16 @@ object StreamChoice {
     /** [KO] [isSubstitute] for the lyric clock: a lapsed URL does not change the copy sounding. */
     fun soundsSubstitute(videoId: String): Boolean = (chosen[videoId] ?: lapsed[videoId])?.substituted == true
 
-    /** [KO] [isYouTube] for the lyric clock: a lapsed URL does not change the copy sounding. */
+    /** [KO] [isYouTube] for the lyric clock; a lapsed YouTube choice is not kept, see [keepLapsed]. */
     fun soundsYouTube(videoId: String): Boolean = (chosen[videoId] ?: lapsed[videoId])?.substituted == false
+
+    /** [KO] A replay on a saved file: the lapsed substitute is not the copy sounding any more. */
+    fun forgetLapsed(videoId: String) {
+        val removed = lapsed.remove(videoId) ?: return
+        if (LyricsTiming.playingClock(videoId) != clockOf(removed)) {
+            LyricsTiming.notifyStreamChoice(videoId)
+        }
+    }
 
     /**
      * Bumped whenever a choice is recorded, so a player that is already
