@@ -112,7 +112,19 @@ object KoVersionGuard {
         guardSeen: Boolean,
         attempts: Int,
         maxAttempts: Int,
-    ): Boolean = !wordsChecked && !guardSeen && attempts < maxAttempts
+    ): Boolean = !closesWordsQuestion(wordsChecked, guardSeen) && attempts < maxAttempts
+
+    /**
+     * Whether a stored verdict may be acted on with no search and no hearing
+     * in between.
+     *
+     * The library takes a stored pair straight to a download, and the file
+     * replaces a good saved copy. A verdict with neither mark (stored before
+     * the guard, or accepted for one play on a few seconds of words) was
+     * never asked the words question: such a pair waits for a check that
+     * closes it, a hearing of its copy or a verification with words.
+     */
+    fun closesWordsQuestion(wordsChecked: Boolean, guardSeen: Boolean): Boolean = wordsChecked || guardSeen
 
     /**
      * Words that disagree refuse the row; words that [settles] accepts close

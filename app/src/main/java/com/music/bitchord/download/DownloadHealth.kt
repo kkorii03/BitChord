@@ -154,6 +154,17 @@ object DownloadHealth {
             val bestTier = HqVerificationStore.bestTier(context, id)
             val online = online(context)
 
+            // [KO] A file saved from a pair whose words were never compared is
+            // heard once, whatever an earlier check of this file recorded: the
+            // 11-13 Despacito remix passed the chroma at 96 %, and a completed
+            // check is never asked again. Free when the pair owes nothing.
+            if (!Downloads.isWrongRecording(id) &&
+                HqAudioVerify.savedCopyHasOtherWords(context, id, meta.uri, meta.hqSourceConfigId, meta.hqTrackId) &&
+                Downloads.markWrongRecording(id, meta.uri, Downloads.fileVersion(context, meta.uri))
+            ) {
+                TrackLog.i(TAG, "download-check: saved copy has other words than the song; condemned", id)
+            }
+
             // Already condemned: keep it out of the player and let the repair
             // run again if the last attempt did not land. No second decode.
             if (Downloads.isWrongRecording(id)) {

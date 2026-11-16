@@ -414,7 +414,7 @@ object HqLibraryUpgrade {
      * restarted forever. A manual pass ignores the park by design.
      */
     private fun hasRetryableWork(context: Context, nowMs: Long): Boolean {
-        val entries = HqVerificationStore.entries(context)
+        val entries = fetchable(HqVerificationStore.entries(context)) // [KO]
         val downloaded = Downloads.savedMetadataSnapshot()
         synchronized(lock) {
             if (activeVideoId != null) return true
@@ -818,7 +818,7 @@ object HqLibraryUpgrade {
         songArtist: String,
         excludeSourceConfigId: String? = null,
     ): HqVerificationStore.Entry? =
-        HqVerificationStore.entries(context)
+        fetchable(HqVerificationStore.entries(context))
             .asSequence()
             .filter { it.youtubeId == videoId }
             .filter { !it.sourceConfigId.isBlank() && !it.trackId.isBlank() }
@@ -836,6 +836,21 @@ object HqLibraryUpgrade {
                     .thenBy { it.sourceConfigId }
                     .thenBy { it.trackId },
             )
+
+    /**
+     * [KO] The stored pairs the library may fetch on the verdict alone.
+     *
+     * A download made here starts from the stored pair with no search and no
+     * hearing, and replaces the saved file. A verdict stored before the words
+     * were compared (11-13 Despacito: the remix at match=96%) carries neither
+     * mark and was fetched like any other. It is left out until a check has
+     * closed the words question; a request for one song then goes to its
+     * search, where the verification asks it.
+     */
+    internal fun fetchable(entries: List<HqVerificationStore.Entry>): List<HqVerificationStore.Entry> =
+        entries.filter {
+            com.music.bitchord.ko.KoVersionGuard.closesWordsQuestion(it.verified.wordsChecked, it.verified.guardSeen)
+        }
 
     /** A setting changed: drop the old plan so the new switches take effect now. */
     fun onSettingsChanged(context: Context) {
@@ -1113,10 +1128,15 @@ object HqLibraryUpgrade {
             pending.target.sourceConfigId,
             pending.target.trackId,
         )
-        if (verified == null) {
+        // [KO] A plan kept from before may still name a pair whose words were never compared.
+        if (verified == null ||
+            !com.music.bitchord.ko.KoVersionGuard.closesWordsQuestion(verified.wordsChecked, verified.guardSeen)
+        ) {
             TrackLog.w(
                 TAG,
-                "hq-library: '${pending.song.title}' has no stored verdict any more; skipping",
+                "hq-library: '${pending.song.title}' " +
+                    (if (verified == null) "has no stored verdict any more" else "waits for the words check") +
+                    "; skipping",
                 pending.target.videoId,
             )
             // No download started for this target, so there is no active id to
@@ -1476,7 +1496,11 @@ object HqLibraryUpgrade {
         context: Context,
         includeParked: Boolean = false,
     ): List<PendingTarget> {
-        val verified = HqVerificationStore.entries(context)
+        val stored = HqVerificationStore.entries(context)
+        val verified = fetchable(stored) // [KO]
+        if (verified.size < stored.size) {
+            TrackLog.d(TAG, "hq-library: ${stored.size - verified.size} pairs wait for the words check")
+        }
         if (verified.isEmpty()) return emptyList()
         val downloaded = Downloads.savedMetadataSnapshot()
         val recent = runCatching { ListeningStats.recentTracks(HISTORY_LIMIT) }
