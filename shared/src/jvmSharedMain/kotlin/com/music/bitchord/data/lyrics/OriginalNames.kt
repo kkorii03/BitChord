@@ -54,7 +54,8 @@ object OriginalNames {
      */
     suspend fun fromYouTubeMusic(title: String, artist: String, durationMs: Long): Name? {
         val key = key(title, artist)
-        entry(key)?.takeIf { it.youtubeChecked }?.let { return it.youtube() }
+        val seconds = (durationMs / 1000).toInt()
+        entry(key)?.takeIf { it.youtubeStands(seconds) }?.let { return it.youtube() } // [KO] L8
         val found = try {
             searchYouTubeMusic(title, artist, durationMs)
         } catch (cancelled: CancellationException) {
@@ -62,7 +63,7 @@ object OriginalNames {
         } catch (_: Exception) {
             return null
         }
-        update(key) { it.copy(youtubeChecked = true, youtubeTitle = found?.title, youtubeArtist = found?.artist) }
+        update(key) { it.checked(found, seconds) }
         return found
     }
 
@@ -75,8 +76,11 @@ object OriginalNames {
      * is playing. Remembered per title, like [fromYouTubeMusic].
      */
     suspend fun fromTitle(title: String, durationMs: Long): Name? {
-        val key = key(title, "")
-        entry(key)?.takeIf { it.youtubeChecked }?.let { return it.youtube() }
+        // [KO] L8: its own key — key(title, "") is also fromYouTubeMusic's key for a
+        // blank artist, and the two different searches read each other's answer.
+        val key = key(title, "") + TITLE_ONLY_KEY
+        val seconds = (durationMs / 1000).toInt()
+        entry(key)?.takeIf { it.youtubeStands(seconds) }?.let { return it.youtube() }
         val found = try {
             searchTitleOnly(title, durationMs)
         } catch (cancelled: CancellationException) {
@@ -84,9 +88,44 @@ object OriginalNames {
         } catch (_: Exception) {
             return null
         }
-        update(key) { it.copy(youtubeChecked = true, youtubeTitle = found?.title, youtubeArtist = found?.artist) }
+        update(key) { it.checked(found, seconds) }
         return found
     }
+
+    private const val TITLE_ONLY_KEY = "\u0000title"
+
+    /**
+     * [KO] L8: how long a remembered "no original name" stands. It used to stand for
+     * good, and it depended on the length asked with (the searches drop rows more
+     * than 15-20 s off): a music video asking first (4:40 with an intro) left the
+     * 3:35 audio track of the same song without its original-name lyric rounds,
+     * for good. A found name is the song's and keeps standing.
+     */
+    private const val NEGATIVE_STANDS_MS = 7L * 24 * 60 * 60 * 1000
+
+    /** A remembered "none" asked with a length this close is the same question. */
+    private const val SAME_LENGTH_SECONDS = 3
+
+    /**
+     * Whether a remembered YouTube Music answer still answers this ask: a name
+     * always; a "none" only while fresh and only for the length it was found
+     * with (a "none" found with no length known filtered nothing by length, so it
+     * answers every length).
+     */
+    internal fun answerStands(
+        foundName: Boolean,
+        checkedAtMs: Long,
+        missSeconds: Int,
+        seconds: Int,
+        nowMs: Long,
+    ): Boolean {
+        if (foundName) return true
+        if (checkedAtMs <= 0L || nowMs - checkedAtMs >= NEGATIVE_STANDS_MS) return false
+        return missSeconds <= 0 || (seconds > 0 && abs(seconds - missSeconds) <= SAME_LENGTH_SECONDS)
+    }
+
+    /** A search page with no song row at all is no answer (an IP hiccup, a consent page). */
+    private class NoRows : Exception()
 
     /** Gemini's answer for the original's name; null when it has none or isn't set up. */
     suspend fun fromGemini(title: String, artist: String): Name? {
@@ -128,6 +167,7 @@ object OriginalNames {
             .filterIsInstance<SearchResult.Track>()
             .map { it.song }
             .take(TOP_ROWS)
+        if (songs.isEmpty()) throw NoRows() // [KO] L8: not remembered as "none"
         val seconds = (durationMs / 1000).toInt()
         for (song in songs) {
             if (hasHangul(song.title)) {
@@ -172,6 +212,7 @@ object OriginalNames {
             .filterIsInstance<SearchResult.Track>()
             .map { it.song }
             .take(TITLE_ONLY_ROWS)
+        if (songs.isEmpty()) throw NoRows() // [KO] L8: not remembered as "none"
         val seconds = (durationMs / 1000).toInt()
         val wanted = RecordingPick.readings(title)
         songs.forEachIndexed { index, song ->
@@ -202,7 +243,22 @@ object OriginalNames {
         val geminiChecked: Boolean = false,
         val geminiTitle: String? = null,
         val geminiArtist: String? = null,
+        /** [KO] L8: when the YouTube Music answer was found; 0 in entries written before. */
+        val youtubeCheckedAtMs: Long = 0L,
+        /** [KO] L8: the length (s) a "none" was found with; 0 = no length known. */
+        val youtubeMissSeconds: Int = 0,
     ) {
+        fun youtubeStands(seconds: Int): Boolean = youtubeChecked &&
+            answerStands(youtubeTitle != null, youtubeCheckedAtMs, youtubeMissSeconds, seconds, System.currentTimeMillis())
+
+        fun checked(found: Name?, seconds: Int): Entry = copy(
+            youtubeChecked = true,
+            youtubeTitle = found?.title,
+            youtubeArtist = found?.artist,
+            youtubeCheckedAtMs = System.currentTimeMillis(),
+            youtubeMissSeconds = if (found == null) seconds.coerceAtLeast(0) else 0,
+        )
+
         fun youtube(): Name? = youtubeTitle?.let { Name(it, youtubeArtist.orEmpty()) }
         fun gemini(): Name? = geminiTitle?.let { Name(it, geminiArtist.orEmpty()) }
     }

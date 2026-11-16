@@ -158,7 +158,7 @@ object TtmlLyrics {
             // textContent is the whole paragraph, backing vocal included, so
             // there is nothing here to hang underneath — the bracket in the
             // text is all the separation the document gave.
-            val text = paragraph.textContent?.trim().orEmpty()
+            val text = sungText(paragraph).trim() // [KO] L17: not the translation/roman spans
             val begin = time(paragraph.getAttribute("begin")) ?: return null
             if (text.isEmpty()) return null
             // The paragraph's own end is the only thing that says when the
@@ -213,6 +213,19 @@ object TtmlLyrics {
                 }
             }
         }
+    }
+
+    /** [KO] L17: a node's text in document order, without the [SKIPPED_ROLES] spans. */
+    private fun sungText(node: Node): String {
+        val children = node.childNodes
+        val text = StringBuilder()
+        for (i in 0 until children.length) {
+            when (val child = children.item(i)) {
+                is Element -> if (child.qualified("ttm:role") !in SKIPPED_ROLES) text.append(sungText(child))
+                else -> if (child.nodeType == Node.TEXT_NODE) text.append(child.textContent.orEmpty())
+            }
+        }
+        return text.toString()
     }
 
     private fun hasTimedChild(element: Element): Boolean {

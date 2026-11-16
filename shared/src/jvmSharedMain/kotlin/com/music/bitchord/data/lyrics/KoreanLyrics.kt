@@ -181,7 +181,12 @@ internal object KoreanMatch {
         return hits
             .filter { sameTitle(it.title, title) && sameArtist(it.artist, artist) }
             .filter { wanted <= 0 || it.seconds == null || abs(it.seconds - wanted) <= MAX_DRIFT_SECONDS }
-            .minByOrNull { if (wanted <= 0 || it.seconds == null) Int.MAX_VALUE / 2 else abs(it.seconds - wanted) }
+            // [KO] L11: the exact title first. A prefix title ("사랑했나봐" for "사랑") only
+            // when no exact one passed — nearer in length, it used to win outright.
+            .minWithOrNull(
+                compareBy<Hit> { key(it.title) != key(title) }
+                    .thenBy { if (wanted <= 0 || it.seconds == null) Int.MAX_VALUE / 2 else abs(it.seconds - wanted) },
+            )
     }
 
     /** "회전목마 (Vocal 손주희)" is "회전목마"; a bracket never makes or breaks the match. */

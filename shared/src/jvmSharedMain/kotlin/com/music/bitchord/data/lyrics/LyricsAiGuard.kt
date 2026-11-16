@@ -200,9 +200,16 @@ object LyricsAiGuard {
         return named.singleOrNull()
     }
 
-    private val ENGLISH_TAG = Regex("""(?i)(?<![a-z])(eng|english)(?![a-z])""")
-    private val JAPANESE_TAG = Regex("""(?i)(?<![a-z])(jp|jpn|japanese)(?![a-z])|日本語|日語|日本语""")
-    private val KOREAN_TAG = Regex("""(?i)(?<![a-z])(kr|kor|korean)(?![a-z])|한국어|한국말|韓国語|韓語|국어""")
+    // [KO] L7: a bare 국어 matched inside 중국어/외국어/모국어 ("(중국어 버전)" read as
+    // Korean), and 일본어/영어 — how Korean uploaders name the other versions — were
+    // not read at all. 국어/일어/영어 now count only as a word of their own.
+    private val ENGLISH_TAG = Regex("""(?i)(?<![a-z])(eng|english)(?![a-z])|(?<![가-힣])영어(?![가-힣])""")
+    private val JAPANESE_TAG = Regex(
+        """(?i)(?<![a-z])(jp|jpn|japanese)(?![a-z])|日本語|日語|日本语|일본어|(?<![가-힣])일어(?![가-힣])""",
+    )
+    private val KOREAN_TAG = Regex(
+        """(?i)(?<![a-z])(kr|kor|korean)(?![a-z])|한국어|한국말|韓国語|韓語|(?<![가-힣])국어(?![가-힣])""",
+    )
 
     /**
      * The script most of a sheet is written in. Latin wins English, Hangul
@@ -278,5 +285,7 @@ object LyricsAiGuard {
      * "MR" in capitals (MR, (MR), MR ver., MR제거). Deliberately
      * case-sensitive: "Mr. Brightside" is a song title, not an instrumental.
      */
-    private val MR = Regex("""(^|[^A-Za-z])MR([^A-Za-z]|$)""")
+    // [KO] L7: "MR. BRIGHTSIDE", "MR. BLUE SKY" in capitals are titles too: an MR
+    // followed by a period and a word is a name, not the karaoke tag.
+    private val MR = Regex("""(^|[^A-Za-z])MR(?!\.\s*[A-Za-z])([^A-Za-z]|$)""")
 }

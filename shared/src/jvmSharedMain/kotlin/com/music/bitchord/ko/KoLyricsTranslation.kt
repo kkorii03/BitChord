@@ -81,6 +81,9 @@ object KoLyricsTranslation {
     var geminiApiKey: String = ""
         set(value) {
             field = value
+            // L19: the flag and the block clear together, so a key entered again
+            // is asked once more instead of staying blocked behind a cleared warning.
+            rejectedGeminiKey = null
             geminiKeyRejected.value = false
         }
 
@@ -119,7 +122,7 @@ object KoLyricsTranslation {
 
     /** A key Gemini refused (400/401/403). Not retried until the key changes. */
     @Volatile
-    private var rejectedGeminiKey: String? = null
+    internal var rejectedGeminiKey: String? = null
 
     /** After every model reported its quota used up, Gemini rests until then. */
     @Volatile
@@ -401,6 +404,7 @@ object KoLyricsTranslation {
         }
         var quotaRefusals = 0
         var networkFailures = 0
+        var serverErrors = 0
         var dailyRefusals = 0
         val requestBody = geminiRequestBody(body, audioWav)
         val tried = models.filter { it !in missingGeminiModels }
@@ -437,7 +441,7 @@ object KoLyricsTranslation {
                 }
                 // Unknown model: never asked again this process. A transient server error: try the next one.
                 code == 404 -> missingGeminiModels.add(model)
-                code >= 500 -> Unit
+                code >= 500 -> serverErrors++
                 // A bad or restricted key fails the same everywhere, so stop
                 // asking with it rather than delay every translation.
                 code == 401 || code == 403 ||
@@ -451,12 +455,22 @@ object KoLyricsTranslation {
                 else -> return null
             }
         }
-        if (tried.isNotEmpty() && quotaRefusals == tried.size) {
+        if (geminiShouldRest(quotaRefusals, serverErrors + networkFailures, tried.size)) {
             val now = System.currentTimeMillis()
-            geminiCooldownUntil = now + geminiRestMs(dailyRefusals == quotaRefusals, now)
+            // The long rest only when every model said its day is used up.
+            val allDaily = quotaRefusals == tried.size && dailyRefusals == quotaRefusals
+            geminiCooldownUntil = now + geminiRestMs(allDaily, now)
         }
         return null
     }
+
+    /**
+     * L20: rest when no model answered and at least one said its quota is used
+     * up — a 503 or a timeout among the refusals used to mean no rest at all,
+     * so every later ask sent the whole model list again for the rest of the day.
+     */
+    internal fun geminiShouldRest(quota: Int, unavailable: Int, tried: Int): Boolean =
+        tried > 0 && quota > 0 && quota + unavailable == tried
 
     private const val GEMINI_TAG = "GeminiAsk"
 
