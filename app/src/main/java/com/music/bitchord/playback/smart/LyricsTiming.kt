@@ -5593,6 +5593,22 @@ private const val FIRM_FIT_LINES = 15
     }
 
     /**
+     * What the kept timing answer measured [lines] at for [videoId], in percent, or null
+     * when it is for another sheet or proves nothing ([evidenceWords]: rough and Gemini
+     * answers). The lookup's own wrong-sheet check asks this, so the sheet the screen keeps
+     * through `judgeSheet(knownFit)` is not thrown away on the next lookup (review L2).
+     */
+    suspend fun measuredFitFor(context: Context, videoId: String, lines: List<LyricLine>): Int? {
+        val entry = store(context).get(videoId) ?: return null
+        val key = entry.aiTextKey ?: return null
+        if (entry.aiRough || entry.aiEngine == null || entry.aiEngine == ENGINE_GEMINI) return null
+        val sameSheet = key == textKey(lines) ||
+            key == textKey(lines, audioSourceKey(videoId, localFile = false)) ||
+            key == textKey(lines, audioSourceKey(videoId, localFile = true))
+        return entry.ai?.match?.takeIf { sameSheet }
+    }
+
+    /**
      * [heardWordsFor]'s pick. Once Deepgram's own words fitted a sheet of this video at
      * [LyricsMismatch.MEASURED_KEEPS_PERCENT] or more, those words are what it sings: a
      * longer list that did not fit that sheet is a thin listen, not proof. 11-10

@@ -93,11 +93,47 @@ object KuGou {
         val a = letters(wanted)
         val b = letters(got)
         if (a.isEmpty() || b.isEmpty()) return false
+        // An alphabet has so few letters that almost any two titles share them
+        // ("Hello" / "Someone Like You": 3 of 4). Distinct letters only tell
+        // Hangul, kana and Han titles apart; the rest are compared by word.
+        if (a.none(::isSyllabicOrHan) && b.none(::isSyllabicOrHan)) return wordsOverlap(wanted, got)
         val shorter = if (a.size <= b.size) a else b
         val longer = if (shorter === a) b else a
         val shared = shorter.count { it in longer }
         return shared >= shorter.size * MIN_OVERLAP
     }
+
+    /** Hangul, kana or Han: scripts where a couple of letters already name a song. */
+    private fun isSyllabicOrHan(codePoint: Int): Boolean =
+        codePoint in 0x1100..0x11FF || codePoint in 0x2E80..0x9FFF ||
+            codePoint in 0xAC00..0xD7AF || codePoint in 0xF900..0xFAFF ||
+            codePoint in 0xFF66..0xFF9F || codePoint >= 0x20000
+
+    /**
+     * Two alphabetic titles name the same song when one is the other (spacing and
+     * punctuation aside), one's words run inside the other's, or they share a word
+     * of at least [MIN_SHARED_WORD] letters.
+     */
+    private fun wordsOverlap(wanted: String, got: String): Boolean {
+        val a = titleWords(wanted)
+        val b = titleWords(got)
+        if (a.isEmpty() || b.isEmpty()) return false
+        if (a.joinToString("") == b.joinToString("")) return true
+        val shorter = if (a.size <= b.size) a else b
+        val longer = if (shorter === a) b else a
+        if (java.util.Collections.indexOfSubList(longer, shorter) >= 0) return true
+        return shorter.any { it.length >= MIN_SHARED_WORD && it in longer }
+    }
+
+    private fun titleWords(text: String): List<String> =
+        java.text.Normalizer.normalize(text.stripParenthetical().lowercase(), java.text.Normalizer.Form.NFD)
+            .replace(ACCENTS, "")
+            .split(NOT_A_WORD)
+            .filter { it.isNotEmpty() }
+
+    private const val MIN_SHARED_WORD = 3
+    private val ACCENTS = Regex("""\p{M}+""")
+    private val NOT_A_WORD = Regex("""[^\p{L}\p{N}]+""")
 
     private fun letters(text: String): Set<Int> =
         text.stripParenthetical().lowercase().codePoints()

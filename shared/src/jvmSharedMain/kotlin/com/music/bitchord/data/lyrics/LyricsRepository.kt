@@ -374,7 +374,7 @@ object LyricsRepository {
                 answers.put(key, Answer(keptResult))
                 onSourceResult?.invoke(keptResult.source, keptResult, null)
                 if (LyricsDiskCache.worthCheckingAgain(kept)) {
-                    checkAgain(keptEntry.first, videoId, keptResult) {
+                    checkAgain(keptEntry.first, key, videoId, keptResult) {
                         search(
                             videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
                             null, null, null, isVideo, alternatives, artistKnown, artistAliases, language,
@@ -440,7 +440,17 @@ object LyricsRepository {
     /** Keys checked again this session: once is enough. */
     private val checkedAgain = Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
 
-    private fun checkAgain(key: String, videoId: String, kept: Result, search: suspend () -> Result?) {
+    /**
+     * [key] is where the kept answer lives on disk, which may be a neighbouring
+     * length bucket; [memoryKey] is the canonical key the lookup answered under.
+     */
+    internal fun checkAgain(
+        key: String,
+        memoryKey: String,
+        videoId: String,
+        kept: Result,
+        search: suspend () -> Result?,
+    ) {
         if (!checkedAgain.add(key)) return
         background.launch {
             val found = try {
@@ -455,6 +465,9 @@ object LyricsRepository {
                 found != null && found.source != LyricsSource.GEMINI_TRANSCRIPT
             if (found != null && (replacesHeard || LyricsDiskCache.rank(found) > LyricsDiskCache.rank(kept))) {
                 answers.put(key, Answer(found))
+                // The canonical key is probed before a later neighbour and still
+                // held the old sheet for the rest of the session.
+                if (memoryKey != key) answers.put(memoryKey, Answer(found))
                 LyricsDiskCache.write(key, found)
                 _upgrades.tryEmit(videoId to found)
             } else {
@@ -594,6 +607,15 @@ object LyricsRepository {
      */
     @Volatile
     var heardWordsFor: (suspend (videoId: String) -> List<LyricsWordAlign.Heard>)? = null
+
+    /**
+     * What the app itself measured [lines] at against a video's sound on an
+     * earlier playback, in percent, or null when it measured no such sheet. A
+     * sheet fitted at [LyricsMismatch.MEASURED_KEEPS_PERCENT] or more is not
+     * thrown away by a later, thinner listen — see [LyricsMismatch.judgeSheet].
+     */
+    @Volatile
+    var measuredFitFor: (suspend (videoId: String, lines: List<LyricLine>) -> Int?)? = null
 
     /**
      * Videos the app is having lyrics written down for right now — filled in
@@ -970,8 +992,17 @@ object LyricsRepository {
         }
         // The alignment is a full DP table; keep it off the main thread even
         // for an in-memory answer the caller asked for on Main.
+        val knownFit = measuredFitFor?.let { provider ->
+            try {
+                provider(videoId, result.lines)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                null
+            }
+        }
         val verdict = withContext(Dispatchers.Default) {
-            LyricsMismatch.judgeSheet(result.lines, heard)
+            LyricsMismatch.judgeSheet(result.lines, heard, knownFit = knownFit)
         }
         if (!verdict.rejected) return false
         LyricsMismatch.rememberRejected(videoId, result.source, result.lines, verdict)

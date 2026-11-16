@@ -105,4 +105,25 @@ class LyricsMismatchCoverageTest {
         assertTrue(verdict.matchedLines >= 1)
         assertFalse(verdict.rejected)
     }
+
+    /**
+     * Review L4: a spoken intro. The song check heard a minute of talk and the
+     * sheet opens after it; with no line inside the span the whole sheet used to
+     * be judged against the talk and rejected.
+     */
+    @Test
+    fun aSheetThatOpensAfterEverythingHeardIsNotJudged() {
+        val lines = (0 until 20).map { index ->
+            LyricLine(
+                timeMs = 65_000L + index * 5_000L,
+                text = "line${index}alpha line${index}bravo line${index}charlie",
+            )
+        }
+        val words = (0 until 50).map { index -> heard("zzzz", 1_000L + index * 1_000L) }
+
+        val verdict = LyricsMismatch.judgeSheet(lines, words)
+
+        assertEquals(0, verdict.totalLines)
+        assertFalse(verdict.rejected)
+    }
 }

@@ -35,6 +35,22 @@ class LyricsMatchingTest {
         assertTrue(KuGou.titlesOverlap("밤편지", "밤편지"))
     }
 
+    /**
+     * Review L5: distinct letters say nothing about two alphabetic titles (any
+     * pair shares most of e, l, o...), so an unrelated row of the same length
+     * passed. They need a word in common; Hangul keeps the letter rule.
+     */
+    @Test
+    fun kugouAlphabeticTitlesNeedAWordInCommon() {
+        assertFalse(KuGou.titlesOverlap("Hello", "Someone Like You"))
+        assertFalse(KuGou.titlesOverlap("Up", "Uptown Funk"))
+        assertTrue(KuGou.titlesOverlap("Up", "Up (Live)"))
+        assertTrue(KuGou.titlesOverlap("Don't Stop Me Now", "Dont Stop Me Now - Remastered"))
+        assertTrue(KuGou.titlesOverlap("Déjà Vu", "Deja Vu"))
+        assertTrue(KuGou.titlesOverlap("ShapeOfYou", "Shape of You"))
+        assertTrue(KuGou.titlesOverlap("동거", "동거 (Live)"))
+    }
+
     @Test
     fun hangulNamesAreWorthARetry() {
         assertTrue(OriginalNames.worthTrying("발묘", "나나호시 관현악단"))

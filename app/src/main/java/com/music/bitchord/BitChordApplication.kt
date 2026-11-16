@@ -189,6 +189,10 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory, Configu
         com.music.bitchord.data.lyrics.LyricsRepository.heardWordsFor = { videoId ->
             com.music.bitchord.playback.smart.LyricsTiming.heardWordsFor(this, videoId)
         }
+        // A sheet the app already fitted to the sound is kept against a thinner listen.
+        com.music.bitchord.data.lyrics.LyricsRepository.measuredFitFor = { videoId, lines ->
+            com.music.bitchord.playback.smart.LyricsTiming.measuredFitFor(this, videoId, lines)
+        }
         LyricsTranslation.cacheDir = cacheDir
         LyricsTranslation.keepDir = filesDir
         // PlaybackService shares this process, so seeding the cookie here means

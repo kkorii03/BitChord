@@ -114,7 +114,10 @@ object LyricsMismatch {
         if (last <= first || last <= 0L) return texts
         val from = heard.minOf { it.startMs }
         val to = heard.maxOf { it.endMs }
-        return texts.filter { it.timeMs in from..to }.ifEmpty { texts }
+        // No line inside the span (a spoken intro heard, the sheet opening after
+        // it) is nothing to judge, not the whole sheet against words that cannot
+        // hold it: [judgeTexts] keeps an empty list.
+        return texts.filter { it.timeMs in from..to }
     }
 
     private fun judgeTexts(texts: List<String>, heard: List<LyricsWordAlign.Heard>): Verdict {
@@ -318,13 +321,22 @@ object LyricsMismatch {
             }
         }
         if (fresh) {
-            shape(lines)?.let { found ->
+            // Two catalogues answering in one round are both judged before either is
+            // remembered, so [sameWordsRejected] cannot stop the second. A copy of a
+            // text already rejected for this video is marked above and counted once.
+            val copy = shape(lines)?.let { found ->
                 synchronized(rejectedShapes) {
                     val shapes = rejectedShapes.getOrPut(videoId) { ArrayList() }
-                    shapes += found
-                    if (shapes.size > SHAPES_PER_VIDEO) shapes.removeAt(0)
+                    if (shapes.any { it.sameSheetAs(found) }) {
+                        true
+                    } else {
+                        shapes += found
+                        if (shapes.size > SHAPES_PER_VIDEO) shapes.removeAt(0)
+                        false
+                    }
                 }
-            }
+            } ?: false
+            if (copy) return
         }
         // The same sheet judged twice — the screen and a refresh both asked — is
         // still one wrong sheet, not two providers failing to describe the sound.

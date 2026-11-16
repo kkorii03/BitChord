@@ -37,6 +37,25 @@ class LyricsMismatchSameWordsTest {
         assertNull(LyricsMismatch.wrongSound(id))
     }
 
+    /**
+     * Review L3: the providers of one round answer together, so both copies were
+     * judged before either was remembered, counted as two wrong sheets and blamed
+     * the sound (the audio switch was reverted for a wrong lyric name).
+     */
+    @Test
+    fun twoCataloguesAnsweringTogetherWithOneWrongTextAreOneWrongSheet() {
+        val id = "same-words-together"
+        LyricsMismatch.rememberRejected(id, LyricsSource.VIBE, merged(words(0)), verdict)
+        LyricsMismatch.rememberRejected(id, LyricsSource.KUGOU, split(words(0)), verdict)
+
+        assertTrue(LyricsMismatch.isRejected(id, LyricsSource.KUGOU, split(words(0))), "the copy is still refused")
+        assertNull(LyricsMismatch.wrongSound(id))
+
+        // Another text failing as well is a second wrong sheet, as before.
+        LyricsMismatch.rememberRejected(id, LyricsSource.LRCLIB, split(words(1_000)), verdict)
+        kotlin.test.assertNotNull(LyricsMismatch.wrongSound(id))
+    }
+
     @Test
     fun otherTextClockOrVideoIsJudgedOnItsOwn() {
         val id = "same-words-other"
