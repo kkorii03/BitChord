@@ -53,6 +53,25 @@ internal fun lyricsGet(url: String): String? = runCatching {
     }
 }.getOrNull()
 
+/**
+ * [KO] [lyricsGet], except that a definite "not there" (404, 410) is an empty
+ * body instead of null. A caller that remembers misses may remember that one;
+ * a timeout or an offline radio says nothing about the document.
+ */
+internal fun lyricsGetOrAbsent(url: String): String? = runCatching {
+    val request = Request.Builder().url(url)
+        .header("User-Agent", LYRICS_AGENT)
+        .header("Accept", "application/json")
+        .build()
+    client.newCall(request).execute().use { response ->
+        when {
+            response.isSuccessful -> response.body?.string()
+            response.code == 404 || response.code == 410 -> ""
+            else -> null
+        }
+    }
+}.getOrNull()
+
 /** Body of a successful form POST, or null for any failure at all. */
 internal fun lyricsPostForm(url: String, form: String): String? = runCatching {
     val request = Request.Builder().url(url)

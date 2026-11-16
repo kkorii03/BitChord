@@ -1333,8 +1333,12 @@ object LyricsRepository {
         /** Fetches a document once per lookup, however many sources want it. */
         get: suspend (String) -> String?,
     ): List<LyricLine>? {
+        // [KO] Only AMLL tells a 404 (an empty body) from a failure; the others get null for both, as before.
+        val amllGet = get
+        @Suppress("NAME_SHADOWING")
+        val get: suspend (String) -> String? = { url -> amllGet(url)?.ifEmpty { null } }
         val found = when (source) {
-            LyricsSource.AMLL_TTML -> AmllTtml.lyrics(title, artist, durationMs, videoId, get)
+            LyricsSource.AMLL_TTML -> AmllTtml.lyrics(title, artist, durationMs, videoId, amllGet)
             LyricsSource.LRC_RED -> LrcRed.lyrics(title, artist, durationMs, isrc, get)
             LyricsSource.BETTER_LYRICS -> BetterLyrics.lyrics(title, artist, durationMs, album)
             LyricsSource.BETTER_LYRICS_PORTATO -> BetterLyrics.portato(title, artist, durationMs, album)
@@ -1365,8 +1369,11 @@ object LyricsRepository {
             LyricsSource.GEMINI_TRANSCRIPT -> null
         }
         if (found == null) return null
-        if (scriptRejects(videoId, language, source, found)) return null
-        if (soundRejects(videoId, result(source, found), heard)) return null
+        if (scriptRejects(videoId, language, source, found) || soundRejects(videoId, result(source, found), heard)) {
+            // [KO] The id behind a refused sheet must not answer the later names of this song.
+            if (source == LyricsSource.AMLL_TTML) AmllTtml.refuse(videoId, title, artist, durationMs)
+            return null
+        }
         return found
     }
 
@@ -1450,8 +1457,9 @@ object LyricsRepository {
     private class SharedDocuments(private val scope: CoroutineScope) {
         private val inFlight = ConcurrentHashMap<String, Deferred<String?>>()
 
+        /** [KO] An empty body is a definite 404 ([lyricsGetOrAbsent]); null is a failure. */
         suspend fun get(url: String): String? =
-            inFlight.computeIfAbsent(url) { scope.async(Dispatchers.IO) { lyricsGet(url) } }.await()
+            inFlight.computeIfAbsent(url) { scope.async(Dispatchers.IO) { lyricsGetOrAbsent(url) } }.await()
 
         fun cancel() = inFlight.values.forEach { it.cancel() }
     }

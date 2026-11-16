@@ -107,7 +107,7 @@ class AmllTtmlTest {
                 searches++
                 searchJson
             } else {
-                null // the DB has no document for the recording iTunes matched
+                "" // a 404: the DB has no document for the recording iTunes matched
             }
         }
         assertEquals(null, AmllTtml.lyrics("Shape of You", "Ed Sheeran", 233_000, "video-dead", get))
@@ -116,6 +116,71 @@ class AmllTtmlTest {
         assertEquals(2, searches)
         // ...but the same query is not searched twice.
         assertEquals(null, AmllTtml.lyrics("Shape of You", "Ed Sheeran", 233_000, "video-dead", get))
+        assertEquals(2, searches)
+    }
+
+    @Test
+    fun `a document request that got no answer is asked again`() = runBlocking {
+        var searches = 0
+        var documents = 0
+        // Its own song: hits and misses live in the object, across tests.
+        val json = """
+            {"resultCount":1,"results":[
+              {"trackId":777,"artistName":"Slow Artist","trackName":"Slow Song",
+               "trackTimeMillis":200000}
+            ]}
+        """.trimIndent()
+        val ttml = """
+            <tt xmlns="http://www.w3.org/ns/ttml"><body><div>
+            <p begin="1.0" end="2.0">Hi</p>
+            </div></body></tt>
+        """.trimIndent()
+        val get: suspend (String) -> String? = { url ->
+            if (url.startsWith("https://itunes.apple.com/")) {
+                searches++
+                json
+            } else {
+                // The first request times out; the document was there all along.
+                if (documents++ == 0) null else ttml
+            }
+        }
+        assertNull(AmllTtml.lyrics("Slow Song", "Slow Artist", 200_000, "video-slow", get))
+        // The same song under the same name, later: the id is kept and the document asked for again.
+        assertTrue(AmllTtml.lyrics("Slow Song", "Slow Artist", 200_000, "video-slow", get)!!.isNotEmpty())
+        assertEquals(1, searches)
+        assertEquals(2, documents)
+    }
+
+    @Test
+    fun `a refused document is not handed to the next name of the song`() = runBlocking {
+        var searches = 0
+        val json = """
+            {"resultCount":1,"results":[
+              {"trackId":888,"artistName":"Refused Artist","trackName":"Refused Song",
+               "trackTimeMillis":200000}
+            ]}
+        """.trimIndent()
+        val ttml = """
+            <tt xmlns="http://www.w3.org/ns/ttml"><body><div>
+            <p begin="1.0" end="2.0">Hi</p>
+            </div></body></tt>
+        """.trimIndent()
+        val get: suspend (String) -> String? = { url ->
+            if (url.startsWith("https://itunes.apple.com/")) {
+                searches++
+                json
+            } else {
+                ttml
+            }
+        }
+        assertTrue(AmllTtml.lyrics("Refused Song", "Refused Artist", 200_000, "video-refused", get)!!.isNotEmpty())
+        // The repository's sound guard said these are not the words being sung.
+        AmllTtml.refuse("video-refused", "Refused Song", "Refused Artist", 200_000)
+        // The name that found the id is a miss now: no second search, no document.
+        assertNull(AmllTtml.lyrics("Refused Song", "Refused Artist", 200_000, "video-refused", get))
+        assertEquals(1, searches)
+        // Another name for the song asks iTunes itself instead of reusing the refused id.
+        AmllTtml.lyrics("Refused Song (Live)", "Refused Artist", 200_000, "video-refused", get)
         assertEquals(2, searches)
     }
 

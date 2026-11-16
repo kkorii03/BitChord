@@ -51,7 +51,8 @@ object AmllTtml {
         artist: String,
         durationMs: Long,
         songKey: String? = null,
-        get: suspend (String) -> String? = { lyricsGet(it) },
+        /** An empty body means "no such document"; null means the request got no answer. */
+        get: suspend (String) -> String? = { lyricsGetOrAbsent(it) },
     ): List<LyricLine>? = withContext(Dispatchers.IO) {
         val lookup = appleId(title, artist, durationMs, songKey, get)
         val id = lookup.id ?: run {
@@ -60,14 +61,23 @@ object AmllTtml {
             }
             return@withContext null
         }
-        val lines = get(documentUrl(id))?.let(TtmlLyrics::parse)?.takeIf { it.isNotEmpty() }
+        val document = get(documentUrl(id))
+        val lines = document?.let(TtmlLyrics::parse)?.takeIf { it.isNotEmpty() }
         if (lines == null) {
             // The recording iTunes matched has no document (a cover, an edit the
             // DB lacks): drop it for the song and mark this query a miss, so the
             // repository's later name variants search again instead of reusing
             // a dead id.
-            forgetDeadId(lookup)
-            if (lookup.fresh) TrackLog.i(TAG, "lyrics source ttml: miss id=$id lines=0")
+            //
+            // [KO] Only when the request was answered (an empty body is a 404,
+            // see [lyricsGetOrAbsent]). No answer at all is no verdict on the
+            // id, the rule the search follows below: one slow GitHub reply used
+            // to keep the word-timed source from being asked again until the
+            // app restarted.
+            if (document != null) forgetDeadId(lookup)
+            if (lookup.fresh) {
+                TrackLog.i(TAG, "lyrics source ttml: miss id=$id lines=0" + if (document == null) " reason=http" else "")
+            }
             return@withContext null
         }
         if (lookup.fresh) TrackLog.i(TAG, "lyrics source ttml: hit id=$id lines=${lines.size}")
@@ -84,9 +94,8 @@ object AmllTtml {
     ): AppleLookup {
         // One id per song across the query variants, but a lookup made without
         // a length stays apart: it may have settled on a different edit.
-        val length = if (durationMs <= 0L) "unknown" else ((durationMs + 5_000L) / 10_000L).toString()
-        val song = songKey?.takeIf { it.isNotBlank() } ?: "${title}\u0000$artist"
-        val hitKey = "$song\u0000$length"
+        val length = lengthBucket(durationMs)
+        val hitKey = hitKey(songKey, title, artist, durationMs)
         val missKey = "${normalized(title)}\u0000${normalized(artist)}\u0000$length"
 
         synchronized(hits) { hits[hitKey] }?.let { return AppleLookup(it.id, false, hitKey, missKey) }
@@ -129,7 +138,7 @@ object AmllTtml {
                 // offline is no verdict on the song, and must be retried by a
                 // later name.
                 if (found != null) {
-                    synchronized(hits) { hits[hitKey] = AppleId(found) }
+                    synchronized(hits) { hits[hitKey] = AppleId(found, missKey) }
                 } else {
                     synchronized(misses) { misses.add(missKey) }
                 }
@@ -188,7 +197,28 @@ object AmllTtml {
             )
         }
 
-    private class AppleId(val id: Long?)
+    /** [missKey] is the query that found [id], for [refuse]. */
+    private class AppleId(val id: Long?, val missKey: String)
+
+    private fun lengthBucket(durationMs: Long): String =
+        if (durationMs <= 0L) "unknown" else ((durationMs + 5_000L) / 10_000L).toString()
+
+    private fun hitKey(songKey: String?, title: String, artist: String, durationMs: Long): String {
+        val song = songKey?.takeIf { it.isNotBlank() } ?: "${title}\u0000$artist"
+        return "$song\u0000${lengthBucket(durationMs)}"
+    }
+
+    /**
+     * The caller refused the document this song's id named (the sound sings
+     * other words, or the sheet is in the wrong script): the id iTunes gave a
+     * noisy name is the wrong recording. Forget it for the song and mark the
+     * query that found it a miss, so the repository's later names ask iTunes
+     * again instead of being handed the same refused document all session.
+     */
+    fun refuse(songKey: String?, title: String, artist: String, durationMs: Long) {
+        val refused = synchronized(hits) { hits.remove(hitKey(songKey, title, artist, durationMs)) } ?: return
+        synchronized(misses) { misses.add(refused.missKey) }
+    }
 
     private data class AppleLookup(
         val id: Long?,
