@@ -88,6 +88,20 @@ object KoVersionGuard {
     /** The shared stretch from which "too few words" is a finding rather than a gap. */
     const val SETTLED_WINDOW_MS = 30_000L
 
+    /**
+     * Whether a candidate nobody asked the words of is heard anyway.
+     *
+     * A search that showed no other version asks for no words check, and a
+     * remix filed alone under the original's name shows none either: it
+     * passed on its sound. So a candidate is heard whenever the YouTube
+     * copy's words are already kept, [keptSeconds] of them, and they are long
+     * enough for [compareWords] to call it either way. A few seconds of kept
+     * words can only come back undecided, and that hearing is not spent.
+     * Nothing waits for words here; without them the sound decides alone.
+     */
+    fun worthHearingUnasked(keptSeconds: Double): Boolean =
+        keptSeconds * 1000 >= MIN_WINDOW_MS + 2 * EDGE_MS
+
     // ── A copy already in the cache ─────────────────────────────────────────
 
     /** What one hearing of a cached copy does to its stored pair. */

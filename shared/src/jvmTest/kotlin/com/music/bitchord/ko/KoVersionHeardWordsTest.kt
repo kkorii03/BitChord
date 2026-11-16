@@ -229,6 +229,26 @@ class KoVersionHeardWordsTest {
         )
     }
 
+    // Review 11-15 (H draft-6): a remix filed alone shows no other version in its
+    // search, so nobody asked for its words and the sound alone accepted it.
+    @Test
+    fun `a candidate nobody asked about is heard once the kept words can decide`() {
+        // A few seconds of kept words can only come back undecided: not worth a hearing.
+        assertEquals(false, KoVersionGuard.worthHearingUnasked(keptSeconds = 8.0))
+        val short = KoVersionGuard.compareWords(
+            reference = heard(firstSinger),
+            referenceUntilMs = 8_000L,
+            candidate = heard(otherSinger),
+            candidateUntilMs = 60_000L,
+            offsetMs = 0L,
+            rate = 1.0,
+        )
+        assertEquals(KoVersionGuard.Words.UNDECIDED, short.verdict)
+        // The shortest stretch the comparison calls either way, edges trimmed.
+        assertEquals(true, KoVersionGuard.worthHearingUnasked(keptSeconds = 14.0))
+        assertEquals(true, KoVersionGuard.worthHearingUnasked(keptSeconds = 90.0))
+    }
+
     // Review 11-15 (H3): the remix swapped in before the words check sat whole in
     // the cache and every plain play opened it with no search and no check.
     @Test

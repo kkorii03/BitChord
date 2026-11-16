@@ -560,20 +560,26 @@ object HqAudioVerify {
                     // check keeps once it has heard them, and an engine to hear the
                     // candidate. Without either nothing is fetched: the YouTube copy plays
                     // on, nothing is stored, and a later event asks again.
+                    //
+                    // A search that showed no other version asks for no words, but a
+                    // remix filed alone under the original's name shows none either
+                    // and passes on its sound. When the words and the engine are
+                    // already at hand the candidate is heard all the same; when they
+                    // are not, the sound decides alone, as it always did.
+                    val keptWords = SongHearing.keptYouTubeWords(context, youtubeId)
+                        ?.takeIf { GroqWhisper.apiKey.isNotBlank() }
                     val youtubeWords = if (needsWords) {
-                        SongHearing.keptYouTubeWords(context, youtubeId)
-                            ?.takeIf { GroqWhisper.apiKey.isNotBlank() }
-                            ?: run {
-                                TrackLog.d(
-                                    TAG,
-                                    "hq-verify: '${target.title}' $sourceName another version in the search; " +
-                                        "words check waits for the YouTube copy's words",
-                                    youtubeId,
-                                )
-                                return@coroutineScope Outcome.Unavailable(transient = true)
-                            }
+                        keptWords ?: run {
+                            TrackLog.d(
+                                TAG,
+                                "hq-verify: '${target.title}' $sourceName another version in the search; " +
+                                    "words check waits for the YouTube copy's words",
+                                youtubeId,
+                            )
+                            return@coroutineScope Outcome.Unavailable(transient = true)
+                        }
                     } else {
-                        null
+                        keptWords?.takeIf { KoVersionGuard.worthHearingUnasked(it.seconds) }
                     }
                     // The two ninety-second reads do not depend on each other:
                     // the reference comes from the WAV the song check already
@@ -583,7 +589,7 @@ object HqAudioVerify {
                     // verification in front of the reported 2.2–8.4 s prove
                     // times had the same sequential shape. A missing reference
                     // cancels the candidate read before anything waits on it.
-                    val candidateDeferred = async { candidateFetch(context, stream, epoch, keepOpening = needsWords) }
+                    val candidateDeferred = async { candidateFetch(context, stream, epoch, keepOpening = youtubeWords != null) }
                     val reference = referenceFeatures(
                         context,
                         youtubeId,
