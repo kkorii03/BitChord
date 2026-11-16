@@ -23,7 +23,9 @@ object ProviderLyrics {
     }
 
     private fun plain(content: String): List<LyricLine> {
-        if (content.contains(Regex("""(?i)\b(?:lyrics? (?:not found|unavailable)|error)\b"""))) return emptyList()
+        // [KO] an error answer says so up front; "trial and error" deep in a sheet is a lyric.
+        val head = content.lineSequence().filter(String::isNotBlank).take(2).joinToString("\n")
+        if (head.contains(Regex("""(?i)\b(?:lyrics? (?:not found|unavailable)|error)\b"""))) return emptyList()
         return content.lineSequence().map(String::trim).filter(String::isNotEmpty)
             .filterNot { it.matches(Regex("""\[[A-Za-z]+:.*]""")) }
             .map { LyricLine(0L, it) }.toList()

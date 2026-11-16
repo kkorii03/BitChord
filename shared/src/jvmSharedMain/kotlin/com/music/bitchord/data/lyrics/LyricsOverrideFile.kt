@@ -80,7 +80,7 @@ object LyricsOverrideFile {
     ): Boolean = synchronized(lock) {
         if (videoId.isBlank() || lines.none { it.text.isNotBlank() }) return@synchronized false
         runCatching {
-            val current = readFile(file)
+            val current = readForWrite(file)
             val songs = current.songs.toMutableMap()
             songs[videoId] = Entry(
                 source = source?.name,
@@ -122,8 +122,8 @@ object LyricsOverrideFile {
 
     /** Whether [text] is a readable override file, without touching any file. */
     fun readText(text: String): Boolean = runCatching {
-        json.decodeFromString(Data.serializer(), text)
-        true
+        // L9: another version would be invisible to [read] and erased by the next write.
+        json.decodeFromString(Data.serializer(), text).version == VERSION
     }.getOrDefault(false)
 
     /**
@@ -153,11 +153,26 @@ object LyricsOverrideFile {
         }.getOrDefault(false)
     }
 
-    private fun readFile(file: File): Data = runCatching {
+    private fun readFile(file: File): Data = readable(file) ?: Data()
+
+    /** The file's contents, or null when it exists but cannot be read as this version. */
+    private fun readable(file: File): Data? = runCatching {
         if (!file.isFile) return Data()
         val data = json.decodeFromString(Data.serializer(), file.readText())
-        if (data.version != VERSION) Data() else data
-    }.getOrDefault(Data())
+        if (data.version != VERSION) null else data
+    }.getOrNull()
+
+    /**
+     * L9: what a write starts from. An unreadable file used to read as empty and
+     * the write then replaced it, so one bad byte silently erased every stored
+     * sheet, the listener's own picks included. It is set aside first (one copy,
+     * replaced each time) so nothing is lost without a trace.
+     */
+    private fun readForWrite(file: File): Data {
+        readable(file)?.let { return it }
+        runCatching { file.copyTo(File(file.parentFile, "${file.name}.bad"), overwrite = true) }
+        return Data()
+    }
 
     private val json = Json {
         ignoreUnknownKeys = true

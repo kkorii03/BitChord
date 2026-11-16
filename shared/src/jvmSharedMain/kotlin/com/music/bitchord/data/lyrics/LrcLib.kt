@@ -116,28 +116,33 @@ object LrcLib {
      */
     fun parseLrc(lrc: String): List<LyricLine> {
         val offset = EnhancedLrc.sheetOffsetMs(lrc)
-        val all = lrc.lineSequence().mapNotNull { line ->
-            val match = STAMP.find(line) ?: return@mapNotNull null
-            val (minutes, seconds, fraction) = match.destructured
-            // Two digits mean centiseconds, three mean milliseconds.
-            val fractionMs = when (fraction.length) {
-                2 -> fraction.toLong() * 10
-                3 -> fraction.toLong()
-                else -> 0L
+        val all = lrc.lineSequence().flatMap { line ->
+            val match = STAMP.find(line) ?: return@flatMap emptySequence()
+            // [KO] a compressed row repeats one line at several times
+            // ("[00:12.00][01:15.00]chorus"): every leading stamp is a line.
+            val stamps = mutableListOf(match)
+            while (true) {
+                val next = STAMP.find(line, stamps.last().range.last + 1)
+                    ?.takeIf { it.range.first == stamps.last().range.last + 1 } ?: break
+                stamps += next
             }
-            val body = line.substring(match.range.last + 1)
+            val body = line.substring(stamps.last().range.last + 1)
             // Detect the RTL marker that was written by [toEnhancedLrc].
             val (text, alignment) = stripAlignmentMarker(body)
-            LyricLine(
-                timeMs = minutes.toLong() * 60_000 + seconds.toLong() * 1_000 + fractionMs,
-                // Stripped rather than rebuilt from the runs below: the spacing
-                // and punctuation between two words belong to the line, and
-                // re-joining the words with single spaces would quietly rewrite
-                // a line that never had them.
-                text = text.replace(WORD_STAMP, "").trim(),
-                words = parseWordRuns(text),
-                alignment = alignment,
-            )
+            // Word stamps are absolute, so they belong to the first time only.
+            val words = parseWordRuns(text)
+            stamps.take(if (words.isEmpty()) stamps.size else 1).asSequence().map { stamp ->
+                LyricLine(
+                    timeMs = stampMs(stamp),
+                    // Stripped rather than rebuilt from the runs below: the spacing
+                    // and punctuation between two words belong to the line, and
+                    // re-joining the words with single spaces would quietly rewrite
+                    // a line that never had them.
+                    text = text.replace(WORD_STAMP, "").trim(),
+                    words = words,
+                    alignment = alignment,
+                )
+            }
         }.sortedBy { it.timeMs }.toList().let { rows -> if (offset == 0L) rows else rows.timedBy(null, offset) }
 
         val kept = all.filterIndexed { index, line ->
@@ -226,7 +231,20 @@ object LrcLib {
         return minutes.toLong() * 60_000 + seconds.toLong() * 1_000 + fractionMs
     }
 
-    private val STAMP = Regex("""\[(\d{1,2}):(\d{2})[.:](\d{2,3})]""")
+    /** A line stamp; one fraction digit is tenths, two centiseconds, three milliseconds. */
+    private fun stampMs(stamp: MatchResult): Long {
+        val (minutes, seconds, fraction) = stamp.destructured
+        val fractionMs = when (fraction.length) {
+            1 -> fraction.toLong() * 100
+            2 -> fraction.toLong() * 10
+            3 -> fraction.toLong()
+            else -> 0L
+        }
+        return minutes.toLong() * 60_000 + seconds.toLong() * 1_000 + fractionMs
+    }
+
+    // [KO] fraction optional and 1-3 digits: "[01:23]" and "[01:23.4]" rows are lines too.
+    private val STAMP = Regex("""\[(\d{1,2}):(\d{2})(?:[.:](\d{1,3}))?]""")
     private val WORD_STAMP = Regex("""<(\d{1,3}):(\d{2})[.:](\d{2,3})>""")
     private val NOISE = Regex(
         """\((?:from|feat\.?|official|lyrical|video|audio|remix)[^)]*\)|\[[^]]*]|""" +
