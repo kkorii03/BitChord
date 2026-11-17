@@ -165,7 +165,7 @@ class BluetoothAudioTrackerTest {
 
         assertTrue(nonAuthoritativeTelemetry.isConnected)
         assertEquals("시스템 관리", nonAuthoritativeTelemetry.codecName)
-        assertEquals("System Managed / 32-bit / 96000 Hz", nonAuthoritativeTelemetry.formattedSummary())
+        assertEquals("시스템 관리 / 32-bit / 96000 Hz", nonAuthoritativeTelemetry.formattedSummary())
     }
 
     @Test

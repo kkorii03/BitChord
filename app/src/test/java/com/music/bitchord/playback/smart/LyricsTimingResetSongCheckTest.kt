@@ -209,6 +209,14 @@ class LyricsTimingResetSongCheckTest {
     fun `a check that waited through a reset does not write the old file answer`() = runBlocking {
         // A stored low-match answer makes the pending check say WHY it runs;
         // after the reset the token must be gone, not the old reason.
+        //
+        // The same words, timed past the 90 s song-check window: since 173dfa2cd
+        // the re-check listens BEFORE it takes the gate, and listening resolves
+        // the recording through android.net.Uri, a null-returning stub in JVM
+        // tests (NPE in VersionAudioAligner.renditionToMeasure). Out of the
+        // window the listen ends at once with nothing heard; the text key, the
+        // stored reason and the gate order this test is about are unchanged.
+        val lines = lines.mapIndexed { i, line -> line.copy(timeMs = 100_000L + i * 1_000L) }
         val audioSource = LyricsTiming.audioSourceKey("video", localFile = true)
         val key = 31 * audioSource.hashCode() + lines.joinToString("\n") { it.text }.hashCode()
         File(directory, "lyrics_timing_v1.json").writeText(

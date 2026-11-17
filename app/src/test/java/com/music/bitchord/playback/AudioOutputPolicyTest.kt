@@ -79,7 +79,7 @@ class AudioOutputPolicyTest {
                 advertisesPcmFloat = true,
             ),
         )
-        assertTrue(
+        assertFalse(
             AudioOutputPolicy.shouldUseFloatOutput(
                 OutputPcmMode.FLOAT_32,
                 routeKind = AudioRouting.Kind.USB,
@@ -89,7 +89,7 @@ class AudioOutputPolicyTest {
     }
 
     @Test
-    fun routeAwareBluetoothTakesFloatEvenWhenOnlyPcm16IsAdvertised() {
+    fun routeAwareBluetoothAllowsFloatOnlyWhenAdvertised() {
         assertTrue(
             AudioOutputPolicy.shouldUseFloatOutput(
                 OutputPcmMode.FLOAT_32,
@@ -97,7 +97,7 @@ class AudioOutputPolicyTest {
                 advertisesPcmFloat = true,
             ),
         )
-        assertTrue(
+        assertFalse(
             AudioOutputPolicy.shouldUseFloatOutput(
                 OutputPcmMode.FLOAT_32,
                 routeKind = AudioRouting.Kind.BLUETOOTH,

@@ -71,7 +71,7 @@ class OutputNegotiatorTest {
     }
 
     @Test
-    fun bluetoothMixerTakesFloatEvenWhenOnlyPcm16IsAdvertised() {
+    fun bluetoothNegotiatesFloatOnlyWhenAdvertised() {
         val btWithFloat = OutputNegotiator.negotiate(
             source = flac96kHz24BitSource,
             decoderName = "c2.android.flac.decoder",
@@ -97,8 +97,8 @@ class OutputNegotiatorTest {
             advertisedSampleRates = listOf(44100, 48000),
             requestedMode = OutputPcmMode.FLOAT_32,
         )
-        assertEquals(PcmEncoding.PCM_FLOAT, btPcm16Only.output.encoding)
-        assertEquals(FallbackReason.NONE, btPcm16Only.output.fallbackReason)
+        assertEquals(PcmEncoding.PCM_16BIT, btPcm16Only.output.encoding)
+        assertEquals(FallbackReason.ROUTE_LIMITATION, btPcm16Only.output.fallbackReason)
     }
 
     @Test
@@ -257,8 +257,8 @@ class OutputNegotiatorTest {
         )
 
         assertEquals(TransportType.AUDIO_TRACK, result.output.transport)
-        assertEquals(PcmEncoding.PCM_FLOAT, result.output.encoding)
-        assertEquals(FallbackReason.NONE, result.output.fallbackReason)
+        assertEquals(PcmEncoding.PCM_24BIT_PACKED, result.output.encoding)
+        assertEquals(FallbackReason.ROUTE_LIMITATION, result.output.fallbackReason)
     }
 
     @Test

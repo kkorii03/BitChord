@@ -7,15 +7,15 @@ import com.music.bitchord.data.settings.OutputPcmMode
  *
  * Two rules apply to an ordinary (non-direct) mix-path AudioTrack:
  *
- * - External routes (Bluetooth, wired, USB, HDMI) take float whenever the
- *   listener asked for it, regardless of what the route's `AudioDeviceInfo`
- *   encoding list advertises. AudioFlinger's mixer accepts float input on
- *   every mix path, so the advertised list describes what the codec/device
- *   profile can be handed directly, not what the mixer can accept. Reading
- *   it as a cap truncated 24-bit sources (e.g. LDAC) to 16 bits before the
- *   codec ever saw them. If such a device genuinely refuses the float track,
- *   [com.music.bitchord.playback.audio.PrecisionAudioSink] reconfigures the
- *   same stream as PCM16.
+ * - External routes (Bluetooth, wired, USB, HDMI) take float when the
+ *   listener asked for it and the route's `AudioDeviceInfo` lists PCM float,
+ *   and a Bluetooth route whose authoritative codec telemetry carries more
+ *   than 16 bits (LDAC / aptX HD) takes it regardless — see the route-aware
+ *   [shouldUseFloatOutput]. That is v1.9's rule. The fork once sent float to
+ *   every external route whatever it listed (to stop LDAC sources being cut
+ *   to 16 bits); the v1.9 merge replaced it with the codec check, which
+ *   covers that case, and the fork's tests that still expected the old rule
+ *   were corrected on 11-17 rather than the behaviour changed.
  *
  * - The built-in phone speaker is always PCM16. Some OEM speaker paths
  *   accept a float AudioTrack and only then convert it to PCM16 inside
