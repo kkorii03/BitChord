@@ -206,6 +206,8 @@ object PlaybackTracker {
     fun onVersionSwapped(fromVideoId: String, toVideoId: String) {
         session?.takeIf { it.videoId == fromVideoId }?.videoId = toVideoId
         if (opening == fromVideoId) opening = toVideoId
+        // [KO] F1: a playthrough private mode interrupted stays suppressed on its other version.
+        if (suppressedVideoId == fromVideoId) suppressedVideoId = toVideoId
     }
 
     /**

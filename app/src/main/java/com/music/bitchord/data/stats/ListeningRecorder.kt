@@ -241,6 +241,33 @@ object ListeningRecorder {
     }
 
     /**
+     * [KO] F1: the playing track became its other video/audio version mid-play
+     * (a music-video or cover-video row handing over to its song version, or
+     * back). It is the same listen under a new id, so the playthrough carries
+     * over: the next tick for [to] continues the clock instead of starting a new
+     * track, Recents is not told about a second start, and the time already
+     * filed under [fromVideoId] moves to [to]'s row. Posted on the sampler's
+     * thread like every tick, so ticks queued for the old id are filed first.
+     */
+    @Synchronized
+    fun onVersionSwapped(fromVideoId: String, to: Song) {
+        val toVideoId = to.videoId
+        if (fromVideoId == toVideoId) return
+        if (privatePlaythroughId == fromVideoId) privatePlaythroughId = toVideoId
+        if (startReportedId == fromVideoId) startReportedId = toVideoId
+        val live = currentId == fromVideoId
+        val paused = pausedId == fromVideoId
+        if (!live && !paused) return
+        if (live) currentId = toVideoId
+        if (paused) pausedId = toVideoId
+        if ((playedThisTrack > 0L || playCounted) &&
+            ListeningStats.koMoveListen(fromVideoId, to, playedThisTrack, playCounted)
+        ) {
+            Debug.i(TAG, "recents: version swap $fromVideoId -> $toVideoId carried ${playedThisTrack}ms")
+        }
+    }
+
+    /**
      * The toggle turned private listening on.
      *
      * Closes the ordinary part of the current playthrough straight away rather

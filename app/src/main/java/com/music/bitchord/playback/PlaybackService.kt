@@ -3308,6 +3308,9 @@ class PlaybackService : MediaLibraryService() {
                 if (!canCrossfade || standbyPlayer == null) {
                     val pos = alignedPosition(activePlayer.currentPosition)
                     val wasPlaying = activePlayer.playWhenReady
+                    // [KO] F1: the transition below is skipped as a swap, so nothing
+                    // else books it; as [swapCurrentToVersion], one listen carried over.
+                    koCarryListenAcrossVersionSwap(sourceSong.videoId, targetSong, durationMs = null)
                     activePlayer.replaceMediaItem(currentIndex, targetMediaItem)
                     activePlayer.seekTo(currentIndex, pos)
                     if (wasPlaying) activePlayer.play()
@@ -3386,6 +3389,10 @@ class PlaybackService : MediaLibraryService() {
                     return@launch
                 }
                 val pos = alignedPosition(activePlayer.currentPosition)
+                // [KO] F1: as [swapCurrentToVersion]: the replace's own transition is
+                // this same listen, booked once by the call below as a version swap.
+                val swappedFrom = currentItem.mediaId.takeIf { it != mediaId }
+                if (swappedFrom != null) swappingMediaId = mediaId
                 activePlayer.replaceMediaItem(currentIndex, targetMediaItem)
                 activePlayer.seekTo(currentIndex, pos)
                 if (wasPlaying) activePlayer.play()
@@ -3395,6 +3402,7 @@ class PlaybackService : MediaLibraryService() {
                     previousEnded = false,
                     reason = Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED,
                     alreadyAudible = true,
+                    versionSwapFrom = swappedFrom, // [KO] F1
                 )
                 refreshCustomLayouts()
                 return@launch
@@ -3718,6 +3726,7 @@ class PlaybackService : MediaLibraryService() {
         audioFormatFor = incoming.currentMediaItem?.mediaId
     }
     internal fun adoptPlayerForVersionSwap(outgoing: ExoPlayer, incoming: ExoPlayer) {
+        val swappedFrom = outgoing.currentMediaItem?.mediaId // [KO] F1: read before the outgoing item is cleared
         setSessionOwner(outgoing, owns = false)
         setSessionOwner(incoming, owns = true)
 
@@ -3756,6 +3765,7 @@ class PlaybackService : MediaLibraryService() {
             previousEnded = false,
             reason = Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED,
             alreadyAudible = true,
+            versionSwapFrom = swappedFrom, // [KO] F1
         )
     }
 
@@ -3823,7 +3833,6 @@ class PlaybackService : MediaLibraryService() {
         // The new item has a different id, so the transition callback must be
         // told to treat it as the same listen, not a new track to record.
         swappingMediaId = targetVideoId
-        PlaybackTracker.onVersionSwapped(song.videoId, targetVideoId)
 
         // Create the target song with the appropriate flags
         val targetSong = song.copy(
@@ -3831,6 +3840,9 @@ class PlaybackService : MediaLibraryService() {
             isVideo = targetIsVideo,
             isVideoOrigin = if (targetIsVideo) false else song.isVideoOrigin,
         )
+        // Also tells PlaybackTracker, as the line here did; before the replace,
+        // so the local record's rename is queued ahead of the new id's ticks.
+        koCarryListenAcrossVersionSwap(song.videoId, targetSong, durationMs = null) // [KO] F1
 
         activePlayer.replaceMediaItem(index, targetSong.toMediaItem())
         activePlayer.seekTo(index, position)
@@ -5358,6 +5370,30 @@ class PlaybackService : MediaLibraryService() {
         player?.currentMediaItem?.mediaId?.let(PlaybackTracker::onPlaying)
     }
 
+    /**
+     * [KO] F1: a song-version swap (an MV or cover-video row handing over to its
+     * song version mid-play, or back) is the same listen under a new id. The
+     * open YouTube history entry, the local record, the pending scrobble and
+     * ListenBrainz's listen move to [to] rather than one listen being closed and
+     * a second started. Last.fm and ListenBrainz are re-told "now playing" so
+     * they name the version now heard. False when this is not such a swap.
+     */
+    private fun koCarryListenAcrossVersionSwap(fromVideoId: String?, to: Song?, durationMs: Long?): Boolean {
+        if (fromVideoId == null || to == null || fromVideoId == to.videoId) return false
+        PlaybackTracker.onVersionSwapped(fromVideoId, to.videoId)
+        // On the sampler's thread, after the ticks already queued for the old id.
+        postProgressWork { ListeningRecorder.onVersionSwapped(fromVideoId, to) }
+        scrobbleManager?.onVersionSwapped(to)
+        // Null while scrobbling is not allowed, as the new-track path leaves it.
+        if (listenBrainzSong != null) {
+            listenBrainzSong = to
+            if (durationMs != null) listenBrainzDurationMs = durationMs
+            if (listenBrainzStartMs > 0L) submitListenBrainzPlayingNow(to, 0L, listenBrainzDurationMs)
+        }
+        TrackLog.d("BitChord", "listen: version swap $fromVideoId -> ${to.videoId} kept as one listen", about = to.videoId)
+        return true
+    }
+
     /** Remembers the facts the one-line summary will need when this track ends. */
     private fun startTrackSummary(
         song: Song?,
@@ -5459,6 +5495,7 @@ class PlaybackService : MediaLibraryService() {
         previousEnded: Boolean,
         reason: Int,
         alreadyAudible: Boolean = false,
+        versionSwapFrom: String? = null, // [KO] F1: the id a song-version swap replaced; same listen
     ) {
         val exoPlayer = player ?: return
         // Also reached by an Automix blend's player handover, which the
@@ -5735,7 +5772,8 @@ class PlaybackService : MediaLibraryService() {
         // The tracker closes the outgoing track out on the time it actually
         // heard, which it accumulates from the sampler, so nothing about the
         // new item's position can leak into the old play's watchtime.
-        if (!sameTrackSwap) {
+        // [KO] F1: a song-version swap carries the listen to the new id instead.
+        if (!sameTrackSwap && !koCarryListenAcrossVersionSwap(versionSwapFrom, mediaItem?.toSong(), exoPlayer.duration.takeIf { it > 0 })) {
             PlaybackTracker.onTrackChanged()
             lastPositionSeconds = 0
 
