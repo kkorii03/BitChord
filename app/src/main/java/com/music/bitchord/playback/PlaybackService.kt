@@ -7391,7 +7391,7 @@ class PlaybackService : MediaLibraryService() {
                         about = mediaId,
                     )
                     val message = noBetterUpgradeMessage(mediaId, upgradeReport)
-                    if (!manual && !upgradeReport.allConclusive) koArmInconclusiveRetry(mediaId) // [KO] hq-tier
+                    if (!manual && !upgradeReport.allConclusive && !upgradeReport.retryOnlyMeetsRests(mediaId)) koArmInconclusiveRetry(mediaId) // [KO] hq-tier
                     if (deferManualAnswer()) {
                         TrackLog.d(
                             "BitChord",

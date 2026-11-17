@@ -1,5 +1,6 @@
 package com.music.bitchord.ko
 
+import com.music.bitchord.data.sources.SourceResolver
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -97,5 +98,53 @@ class KoSourceRestEscalationTest {
         assertEquals(6 * 60 * minute, KoSourceCooldown.restLengthMs(cooldown, 40))
         assertEquals("a host's short rest grows from its own length", 4 * minute, KoSourceCooldown.restLengthMs(minute, 3))
         assertEquals("a host asking for longer than the cap is obeyed", 8 * 60 * minute, KoSourceCooldown.restLengthMs(8 * 60 * minute, 3))
+    }
+
+    /**
+     * OPT1 battery-retry-only-when-new: 33 "looking once more" retries in 3.5
+     * days, 29 ending "no better copy", re-walking sources that were still
+     * resting with their probe turn spent.
+     */
+    @Test
+    fun `a later walk is known to skip a source only while its rest and probe spacing last`() {
+        firstRest()
+        assertFalse("never probed: the retry may take the turn", KoSourceCooldown.skippedAt(id, t0 + minute))
+        assertTrue(KoSourceCooldown.takeRestProbe(id, nowMs = t0))
+        assertTrue("probe spent, rest running", KoSourceCooldown.skippedAt(id, t0 + minute))
+        assertFalse("the probe turn opens again", KoSourceCooldown.skippedAt(id, t0 + 10 * minute))
+        assertFalse("the rest is over", KoSourceCooldown.skippedAt(id, t0 + 31 * minute))
+        assertFalse("a healthy source is never skipped", KoSourceCooldown.skippedAt("healthy", t0))
+        assertTrue("asking about later does not end the rest", KoSourceCooldown.isResting(id, t0 + 29 * minute))
+    }
+
+    @Test
+    fun `the inconclusive retry is skipped only when resting sources alone left the walk open`() {
+        val resting = SourceResolver.SearchOutcome(verdict = "resting", conclusive = false)
+        val skippedAgain: (String, Long) -> Boolean = { _, _ -> true }
+
+        val onlyResting = KoSearchReport().apply {
+            record(SourceResolver.SearchOutcome(verdict = "title"), "Qobuz")
+            record(resting, "Eljohnzc", restingId = "eljohnzc")
+        }
+        assertTrue(onlyResting.retryOnlyMeetsRests("vid", t0, skippedAgain))
+        assertFalse(
+            "a resting source that can be asked by then earns the retry",
+            onlyResting.retryOnlyMeetsRests("vid", t0) { _, _ -> false },
+        )
+
+        val timedOut = KoSearchReport().apply {
+            record(resting, "Eljohnzc", restingId = "eljohnzc")
+            record(SourceResolver.SearchOutcome(verdict = "timeout", conclusive = false), "Trial")
+        }
+        assertFalse("a timeout earns the retry", timedOut.retryOnlyMeetsRests("vid", t0, skippedAgain))
+
+        val endedEarly = KoSearchReport().apply {
+            record(resting, "Eljohnzc", restingId = "eljohnzc")
+            markEndedEarly()
+        }
+        assertFalse("sources left running earn the retry", endedEarly.retryOnlyMeetsRests("vid", t0, skippedAgain))
+
+        val conclusive = KoSearchReport().apply { record(SourceResolver.SearchOutcome(verdict = "title"), "Qobuz") }
+        assertFalse(conclusive.retryOnlyMeetsRests("vid", t0, skippedAgain))
     }
 }

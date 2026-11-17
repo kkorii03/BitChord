@@ -1484,7 +1484,7 @@ object SourceResolver {
                 )
             if (alreadyProbed) {
                 val skipped = SearchOutcome(verdict = "resting", conclusive = false)
-                report?.record(skipped, source.displayName)
+                report?.record(skipped, source.displayName, restingId = source.configId) // [KO] OPT1
                 TrackLog.d(TAG, hqSearchLine(target, source, skipped))
                 true
             } else if (resting && !probesResting) {
@@ -1493,7 +1493,7 @@ object SourceResolver {
                     "${source.displayName} is resting after repeated failures; skipping for this track",
                 )
                 val skipped = SearchOutcome(verdict = "resting", conclusive = false)
-                report?.record(skipped, source.displayName)
+                report?.record(skipped, source.displayName, restingId = source.configId) // [KO] OPT1
                 TrackLog.d(TAG, hqSearchLine(target, source, skipped))
                 true
             } else {

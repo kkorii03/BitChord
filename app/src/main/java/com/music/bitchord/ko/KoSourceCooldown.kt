@@ -309,6 +309,19 @@ internal object KoSourceCooldown {
         return taken
     }
 
+    /**
+     * [KO] OPT1: whether an automatic walk at [atMs] would skip [configId] as resting
+     * again: its rest runs past [atMs] and no probe turn ([takeRestProbe]) opens by
+     * then. Reads only, so asking about a later moment ends no rest early.
+     */
+    internal fun skippedAt(configId: String, atMs: Long): Boolean {
+        if (unmeasurable[configId]?.let { synchronized(it) { it.untilMs > atMs } } == true) return true
+        val state = states[configId] ?: return false
+        if (state.untilMs <= atMs) return false
+        val last = restProbes[configId] ?: return false
+        return atMs - last < restLengthMs(REST_PROBE_EVERY_MS, state.rests)
+    }
+
     internal fun resetForTest() {
         states.clear()
         failureMarks.clear()
