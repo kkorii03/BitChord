@@ -62,6 +62,7 @@ import org.schabi.newpipe.extractor.stream.DeliveryMethod
 import org.schabi.newpipe.extractor.stream.StreamType
 import java.io.IOException
 import java.io.InterruptedIOException
+import java.net.SocketTimeoutException
 import java.util.Collections
 import java.util.IdentityHashMap
 import java.util.concurrent.ConcurrentHashMap
@@ -1717,6 +1718,20 @@ object StreamResolver {
         // whether anything on the route answered, and the first fault if not.
         var heardAnswer = false
         var routeFault: Throwable? = null
+        // [KO] review T1: a plain player answer settles the walk only when the
+        // media probe behind it did not stall. A probe that timed out or got
+        // the proxy's own 502/504 (Probe.UNREACHABLE) is the route failing on
+        // the bytes leg, not the track being refused; a refused probe is an answer.
+        var playerAnswered = false // [KO] review T1
+        var mediaStalled = false // [KO] review T1
+        val onProbe: (Probe) -> Unit = { verdict -> // [KO] review T1
+            if (verdict == Probe.REFUSED) {
+                heardAnswer = true
+            } else if (verdict == Probe.UNREACHABLE) {
+                mediaStalled = true
+                if (routeFault == null) routeFault = SocketTimeoutException("proxy media probe stalled")
+            }
+        }
         val found = try {
             val stream = timed("$videoId proxy InnerTubeX") {
                 innerTubeXStreamAllowingUploads(
@@ -1726,6 +1741,7 @@ object StreamResolver {
                     viaProxy = true,
                     onFailure = { message -> if (UnplayableReason.isDefinitive(message)) heardAnswer = true },
                     onBlocked = { heardAnswer = true },
+                    onProbe = onProbe, // [KO] review T1
                 )
             } ?: timed("$videoId proxy direct") {
                 directStream(
@@ -1734,14 +1750,17 @@ object StreamResolver {
                     viaProxy = true,
                     onUnplayable = { heardAnswer = true },
                     onAsked = { failure ->
-                        if (failure == null) heardAnswer = true else if (routeFault == null) routeFault = failure
+                        // [KO] review T1: was heardAnswer; judged with the probe below.
+                        if (failure == null) playerAnswered = true else if (routeFault == null) routeFault = failure
                     },
+                    onProbe = onProbe, // [KO] review T1
                 )
             }
             // Thrown here so the proxy-down branch below (health monitor,
             // backup retry) handles it exactly like a fault that escaped.
             if (stream == null) {
-                ProxyPlaybackPolicy.unansweredFailure(videoId, heardAnswer, routeFault)?.let { throw it }
+                val answered = ProxyPlaybackPolicy.routeAnswered(heardAnswer, playerAnswered, mediaStalled) // [KO] review T1
+                ProxyPlaybackPolicy.unansweredFailure(videoId, answered, routeFault)?.let { throw it }
             }
             stream
         } catch (e: CancellationException) {
@@ -1850,6 +1869,7 @@ object StreamResolver {
         onFailure: (String?) -> Unit = {},
         onBlocked: () -> Unit = {},
         abortAfterFirstRefusal: Boolean = false,
+        onProbe: (Probe) -> Unit = {}, // [KO] review T1: each probe verdict, for the proxy walk
     ): Stream? {
         val skip = mutableSetOf<String>()
         // In a gated region WEB_REMIX is the identity that answers UNPLAYABLE
@@ -1890,6 +1910,7 @@ object StreamResolver {
             }
             if (found != null) {
                 val verdict = timed("$videoId InnerTubeX ${found.profileId} probe") { probe(found.url, viaProxy) }
+                onProbe(verdict) // [KO] review T1
                 if (verdict == Probe.OK) {
                     TrackLog.d(TAG, "resolved $videoId via InnerTubeX ${found.profileId} @ ${found.kbps}kbps")
                     onServed(ResolutionOrder.itx(preferredManifest), "InnerTubeX ${found.profileId}")
@@ -1955,6 +1976,7 @@ object StreamResolver {
                 return null
             } ?: return null
             val verdict = timed("$videoId InnerTubeX ${found.profileId} probe") { probe(found.url, viaProxy) }
+            onProbe(verdict) // [KO] review T1
             if (verdict == Probe.OK) {
                 TrackLog.d(TAG, "resolved $videoId via InnerTubeX ${found.profileId} @ ${found.kbps}kbps")
                 val manifest = InnerTubeXResolver.manifestIdForProfile(found.profileId)
@@ -1999,7 +2021,8 @@ object StreamResolver {
         onUnplayable: (String?) -> Unit = {},
         onServed: (client: String) -> Unit = {},
         onAsked: (failure: Throwable?) -> Unit = {}, // [KO] SX-1
-    ): Stream? = when (val probe = directProbe(videoId, maxKbps, viaProxy, onAsked = onAsked)) {
+        onProbe: (Probe) -> Unit = {}, // [KO] review T1
+    ): Stream? = when (val probe = directProbe(videoId, maxKbps, viaProxy, onAsked = onAsked, onProbe = onProbe)) {
         is DirectProbe.Stream -> {
             onServed(probe.value.client.orEmpty())
             probe.value.stream
@@ -2025,6 +2048,7 @@ object StreamResolver {
         viaProxy: Boolean = false,
         checkActive: () -> Unit = {},
         onAsked: (failure: Throwable?) -> Unit = {}, // [KO] SX-1
+        onProbe: (Probe) -> Unit = {}, // [KO] review T1
     ): DirectProbe<DirectRun> {
         var refused = false
         var refusedReason: String? = null
@@ -2040,7 +2064,9 @@ object StreamResolver {
             onAsked = onAsked,
         )) {
             checkActive()
-            if (probe(found.url, viaProxy) == Probe.OK) {
+            val verdict = probe(found.url, viaProxy) // [KO] review T1
+            onProbe(verdict) // [KO] review T1
+            if (verdict == Probe.OK) {
                 TrackLog.d(TAG, "resolved $videoId via direct ${found.client} @ ${found.kbps}kbps")
                 return DirectProbe.Stream(
                     DirectRun(
@@ -2126,6 +2152,7 @@ object StreamResolver {
         onFailure: (String?) -> Unit = {},
         onBlocked: () -> Unit = {},
         abortAfterFirstRefusal: Boolean = false,
+        onProbe: (Probe) -> Unit = {}, // [KO] review T1
     ): Stream? {
         val known = UploadedTracks.contains(videoId)
         if (known) {
@@ -2141,6 +2168,7 @@ object StreamResolver {
                 onFailure = onFailure,
                 onBlocked = onBlocked,
                 abortAfterFirstRefusal = abortAfterFirstRefusal,
+                onProbe = onProbe, // [KO] review T1
             )
                 ?.let { return it }
             TrackLog.w(TAG, "$videoId is marked as an upload but did not resolve as one; trying an ordinary ask")
@@ -2156,6 +2184,7 @@ object StreamResolver {
                 onFailure = onFailure,
                 onBlocked = onBlocked,
                 abortAfterFirstRefusal = abortAfterFirstRefusal,
+                onProbe = onProbe, // [KO] review T1
             )
         }
         return innerTubeXStream(
@@ -2168,6 +2197,7 @@ object StreamResolver {
             onFailure = onFailure,
             onBlocked = onBlocked,
             abortAfterFirstRefusal = abortAfterFirstRefusal,
+            onProbe = onProbe, // [KO] review T1
         )
     }
 

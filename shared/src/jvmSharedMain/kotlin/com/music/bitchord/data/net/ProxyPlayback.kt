@@ -61,7 +61,7 @@ object ProxyPlaybackPolicy {
      * [KO] SX-1: the failure for a proxy walk that found no stream although
      * nothing on the route answered, or null to keep the caller's ordinary
      * "found no stream" (the proxy did answer: a refusal, an HTTP reply, a
-     * URL that failed its probe).
+     * URL its probe refused). See [routeAnswered] for a stalled probe.
      *
      * Only a network fault counts as "never heard": a refused, unreachable or
      * timed-out connection ([ProxyFailure.isProxyDown]) or OkHttp's call
@@ -81,6 +81,19 @@ object ProxyPlaybackPolicy {
     }
 
     private const val MAX_CAUSE_DEPTH = 8
+
+    /**
+     * [KO] review T1: whether a proxy walk heard its route answer, the
+     * `heardAnswer` input of [unansweredFailure].
+     *
+     * A refusal (blocked, unplayable, a definitive failure, a refused probe)
+     * always counts. A plain player answer counts only when no media probe
+     * stalled: a probe that timed out or got the proxy's own 502/504 means the
+     * bytes leg of the route failed, and storing "no stream" for it would turn
+     * a dead proxy into a ten-minute verdict about the recording.
+     */
+    fun routeAnswered(refusalHeard: Boolean, playerAnswered: Boolean, mediaStalled: Boolean): Boolean =
+        refusalHeard || (playerAnswered && !mediaStalled)
 
     fun route(remembered: Boolean, refused: Boolean, canProxy: Boolean): ProxyPlaybackRoute = when {
         !canProxy -> ProxyPlaybackRoute.DIRECT
