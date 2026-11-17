@@ -10,12 +10,15 @@ import com.music.bitchord.data.lyrics.LyricsTranslation.TextSlot
 import com.music.bitchord.data.lyrics.LyricsTranslation.TranslationDeadlines
 import java.io.File
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -282,12 +285,7 @@ object KoLyricsTranslation {
             { s, t, onAllUnusable -> requestGemini(s, t, onAllUnusable) },
     ): CachedTranslation? {
         val cacheKey = LyricsTranslation.cacheKey("gemini\u0000$trackId", target, slots)
-        val cached = LyricsTranslation.rememberedTranslation(cacheKey)
-            ?: LyricsTranslation.readCache(cacheKey)?.also { LyricsTranslation.rememberTranslation(cacheKey, it) }
-        if (cached != null && cached.version == LyricsTranslation.CACHE_VERSION && cached.texts.size == slots.size) {
-            // Entries written before engines were recorded carry the default.
-            return cached.copy(engine = LyricsTranslation.ENGINE_GEMINI)
-        }
+        savedGemini(cacheKey, slots)?.let { return it }
         // Review X2: a sheet every model answered without a usable translation
         // (one line short, a safety stop) is not sent again this process — it
         // cost up to every model's whole-song generation on each play, and the
@@ -296,6 +294,40 @@ object KoLyricsTranslation {
             TrackLog.d(GEMINI_TAG, "ask skipped: this sheet came back unusable from every model")
             return null
         }
+        // Review X7: the player's auto-translate, the ahead pass (12 s into the
+        // track) and the lock screen can ask for the same sheet while the first
+        // whole-song generation is still running; each missed the cache and
+        // sent its own, doubling the free key's per-minute quota. A caller that
+        // waited behind the same sheet reads what the first one saved, and asks
+        // itself only when that one came back with nothing.
+        val gate = askGates.computeIfAbsent(cacheKey) { Mutex() }
+        try {
+            return gate.withLock {
+                savedGemini(cacheKey, slots) ?: if (knownUnusable(cacheKey)) null else askOnce(cacheKey, slots, target, request)
+            }
+        } finally {
+            if (!gate.isLocked) askGates.remove(cacheKey, gate)
+        }
+    }
+
+    /** Per-sheet gates for [geminiEntry]; an entry lives only while a request for that sheet runs. */
+    private val askGates = ConcurrentHashMap<String, Mutex>()
+
+    /** Gemini's saved answer for [cacheKey], when it still fits [slots]. */
+    private fun savedGemini(cacheKey: String, slots: List<TextSlot>): CachedTranslation? {
+        val cached = LyricsTranslation.rememberedTranslation(cacheKey)
+            ?: LyricsTranslation.readCache(cacheKey)?.also { LyricsTranslation.rememberTranslation(cacheKey, it) }
+        if (cached == null || cached.version != LyricsTranslation.CACHE_VERSION || cached.texts.size != slots.size) return null
+        // Entries written before engines were recorded carry the default.
+        return cached.copy(engine = LyricsTranslation.ENGINE_GEMINI)
+    }
+
+    private suspend fun askOnce(
+        cacheKey: String,
+        slots: List<TextSlot>,
+        target: String,
+        request: suspend (List<TextSlot>, String, () -> Unit) -> LyricsTranslation.BatchAnswer?,
+    ): CachedTranslation? {
         var unusable = false
         val fresh = request(slots, target) { unusable = true }
         if (fresh == null || fresh.translations.size != slots.size) {
