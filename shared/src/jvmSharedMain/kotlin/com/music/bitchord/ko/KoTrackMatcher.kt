@@ -633,9 +633,26 @@ internal object KoTrackMatcher {
      * all-caps title read raw counted as carrying no Latin at all. That made
      * every mixed-case song by the same act an "other-script" name for it (phone
      * 11-06: 'Camouflage' offered as 'LEMONADE', 'Blue Moon' as 'FOCUS').
+     *
+     * Digits are no script (SKIP7, phone 11-17): [hasFilingLatin] counts 0-9 as
+     * Latin, so the covers '8282' and '타비,히나-붉은노을(07.22)' (a date stamp)
+     * read as Latin-filed against the same singer's Hangul '여로', and that other
+     * song played in their place until the sound check took it off mid-play.
+     * The Latin side must now file in a word that carries a Latin letter. This
+     * only narrows: a pair that was not Latin-against-other-script before is
+     * still not one, so a date-stamped Hangul title gains no Latin "name".
      */
-    internal fun latinAgainstOtherScript(wanted: String, got: String): Boolean =
-        hasFilingLatin(normalize(wanted)) != hasFilingLatin(normalize(got))
+    internal fun latinAgainstOtherScript(wanted: String, got: String): Boolean {
+        val wantedLatin = hasFilingLatin(normalize(wanted))
+        if (wantedLatin == hasFilingLatin(normalize(got))) return false
+        return filesInLatinLetters(if (wantedLatin) wanted else got)
+    }
+
+    /** [hasFilingLatin] word by word, with a word of digits alone filing nothing. */
+    private fun filesInLatinLetters(text: String): Boolean =
+        normalize(text).split(WORD_SPLIT)
+            .map { it.replace(NON_ALNUM, "") }
+            .any { word -> word.any { it in 'a'..'z' } && hasFilingLatin(word) }
 
     /**
      * Whether [candidate] may be adopted as the audio of music video [target]
