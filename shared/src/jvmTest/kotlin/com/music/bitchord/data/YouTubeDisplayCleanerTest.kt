@@ -452,6 +452,36 @@ class YouTubeDisplayCleanerTest {
     }
 
     /**
+     * Review F3: the cross-script rule only looked at the left side, so a
+     * "Song - Artist" upload on a channel named in the other script was titled
+     * with the singer. Both sides in one script is "Song - Artist", not the
+     * channel's act repeated in another script.
+     */
+    @Test
+    fun `a song artist title in one script keeps its title on a channel in the other script`() {
+        val shape = YouTubeDisplayCleaner.clean("Shape of You - Ed Sheeran", "한국채널")
+        assertEquals("Shape of You - Ed Sheeran", shape.title)
+        assertEquals("한국채널", shape.artist)
+
+        val goodDay = YouTubeDisplayCleaner.clean("좋은 날 - 아이유", "Music Lover")
+        assertEquals("좋은 날 - 아이유", goodDay.title)
+        assertEquals("Music Lover", goodDay.artist)
+    }
+
+    /** Review F3: a known act after the dash says "Song - Artist" even across scripts. */
+    @Test
+    fun `a known act after the dash keeps the title whole across scripts`() {
+        ArtistNameIndex.record(listOf(ArtistRef("IU", "UC_iu_f3")))
+        try {
+            val cleaned = YouTubeDisplayCleaner.clean("좋은 날 - IU", "Music Lover")
+            assertEquals("좋은 날 - IU", cleaned.title)
+            assertEquals("Music Lover", cleaned.artist)
+        } finally {
+            ArtistNameIndex.forget()
+        }
+    }
+
+    /**
      * Emulator 134d/135c (2026-11-07): the catalogue lookup was handed
      * 'Sabrina Carpenter - Feather' / 'Miley Cyrus - Flowers' and searched the
      * albums for those whole lines (`catalogue mapping: no matching track`).

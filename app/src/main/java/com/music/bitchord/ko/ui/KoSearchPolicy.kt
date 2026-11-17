@@ -33,17 +33,19 @@ internal fun retrySearchAllowed(source: SearchSource, query: String): Boolean =
  * Whether the cached page for a query may answer a request without a network
  * round trip.
  *
- * Anonymous lookups reuse the cache — that is what keeps a filter tab and a
- * suggestion tap instant — while a submitted search must reach the server
- * because that call is what records it in the account's history. A retry never
- * reuses the cache: the cached page is exactly the answer the listener asked to
- * replace, and reusing an empty one made the "no results" retry do nothing.
+ * Any lookup reuses the cache — that keeps a filter tab, a suggestion tap and
+ * a submit instant. A submit used to bypass it so the call reached the
+ * account's history, but every search now leaves without the account
+ * ([com.music.bitchord.ko.KoInnertube.musicRequestIsAnonymous], checked in
+ * `Innertube.postMusic`), so that bypass only cost a request and a flicker
+ * (review F2). A retry never reuses the cache: the cached page is exactly the
+ * answer the listener asked to replace, and reusing an empty one made the
+ * "no results" retry do nothing.
  */
 internal fun reuseCachedSearchPage(
-    anonymous: Boolean,
     forceNetwork: Boolean,
     hasCachedPage: Boolean,
-): Boolean = hasCachedPage && anonymous && !forceNetwork
+): Boolean = hasCachedPage && !forceNetwork
 
 /**
  * A completed YouTube search page. An empty page is still a completed answer:
