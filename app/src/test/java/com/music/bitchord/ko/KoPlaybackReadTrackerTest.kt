@@ -1,5 +1,7 @@
 package com.music.bitchord.ko
 
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Assert.assertFalse
@@ -54,8 +56,8 @@ class KoPlaybackReadTrackerTest {
         tracker.retainKey("k")
         val woke = runBlocking {
             withTimeoutOrNull(2_000) {
-                kotlinx.coroutines.coroutineScope {
-                    val wait = kotlinx.coroutines.async { tracker.awaitRelease("k") }
+                coroutineScope {
+                    val wait = async { tracker.awaitRelease("k") }
                     kotlinx.coroutines.yield()
                     tracker.releaseKey("k")
                     tracker.readerReleased("k")
