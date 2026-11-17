@@ -2566,6 +2566,12 @@ object AppSettings {
         KEY_ONBOARDING_COMPLETE,
         // [KO] Records this install's OS permission dialog, not a setting.
         KEY_NOTIFICATION_PERMISSION_ASKED,
+        // [KO] review S1: ids and retry counts of this phone's downloads.
+        KoDeferredDownloadTranslation.KEY,
+        "liked_download_failures",
+        // [KO] review S2: kept like the secrets they stand for (SECRETS survive an import).
+        KEY_DEEPGRAM_API_KEY_REMOVED,
+        KEY_GEMINI_API_KEY_REMOVED,
     )
 
     const val DEFAULT_CACHE_LIMIT_BYTES = 512L * 1024 * 1024

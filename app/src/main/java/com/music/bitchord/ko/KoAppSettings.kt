@@ -551,8 +551,24 @@ internal object KoAppSettings {
         get() = bundledDeepgramApiKey.isNotBlank() && deepgramApiKey.value == bundledDeepgramApiKey
 
     fun readBundledKeys() {
-        deepgramApiKey.value = AppSettings.authStore.secret(KEY_DEEPGRAM_API_KEY) ?: bundledDeepgramApiKey
+        deepgramApiKey.value = AppSettings.authStore.secret(KEY_DEEPGRAM_API_KEY)
+            ?: bundledUnlessRemoved(bundledDeepgramApiKey, KEY_DEEPGRAM_API_KEY_REMOVED)
         com.music.bitchord.data.lyrics.Deepgram.apiKey = deepgramApiKey.value
+    }
+
+    /**
+     * [bundled], or "" once the listener removed the key in Settings (review S2):
+     * the encrypted store drops a blank secret, so without this flag a removed key
+     * read as "never set" and the bundled one came back on the next start.
+     */
+    private fun bundledUnlessRemoved(bundled: String, removedFlag: String): String =
+        if (AppSettings.prefs.getBoolean(removedFlag, false)) "" else bundled
+
+    /** Remembers a removal over a bundled key; a typed key (or no bundled key) clears it. */
+    private fun noteKeyRemoved(removedFlag: String, removed: Boolean) {
+        AppSettings.prefs.edit().apply {
+            if (removed) putBoolean(removedFlag, true) else remove(removedFlag)
+        }.apply()
     }
 
     fun readLyricsAndAiSettings() {
@@ -579,8 +595,9 @@ internal object KoAppSettings {
         syncSafetyPerLine.value = prefs.getBoolean(KEY_SYNC_SAFETY_PER_LINE, true)
         AppSettings.paxSenixApiKey.value = authStore.secret(AppSettings.KEY_PAXSENIX_API_KEY).orEmpty()
         com.music.bitchord.data.lyrics.PaxSenix.setApiKey(AppSettings.paxSenixApiKey.value)
-        geminiApiKey.value = authStore.secret(KEY_GEMINI_API_KEY) ?: bundledGeminiApiKey
-        geminiTranslation.value = prefs.getBoolean(KEY_GEMINI_TRANSLATION, bundledGeminiApiKey.isNotBlank())
+        val bundledGemini = bundledUnlessRemoved(bundledGeminiApiKey, KEY_GEMINI_API_KEY_REMOVED)
+        geminiApiKey.value = authStore.secret(KEY_GEMINI_API_KEY) ?: bundledGemini
+        geminiTranslation.value = prefs.getBoolean(KEY_GEMINI_TRANSLATION, bundledGemini.isNotBlank())
         com.music.bitchord.data.lyrics.LyricsTranslation.geminiApiKey = geminiApiKey.value
         com.music.bitchord.data.lyrics.LyricsTranslation.geminiEnabled = geminiTranslation.value
         prefetchTranslation.value = prefs.getBoolean(KEY_PREFETCH_TRANSLATION, true)
@@ -639,6 +656,7 @@ internal object KoAppSettings {
         val normalized = value.trim()
         deepgramApiKey.value = normalized
         putSecret(KEY_DEEPGRAM_API_KEY, normalized)
+        noteKeyRemoved(KEY_DEEPGRAM_API_KEY_REMOVED, normalized.isEmpty() && bundledDeepgramApiKey.isNotBlank())
         com.music.bitchord.data.lyrics.Deepgram.apiKey = normalized
     }
 
@@ -646,6 +664,7 @@ internal object KoAppSettings {
         val normalized = value.trim()
         geminiApiKey.value = normalized
         putSecret(KEY_GEMINI_API_KEY, normalized)
+        noteKeyRemoved(KEY_GEMINI_API_KEY_REMOVED, normalized.isEmpty() && bundledGeminiApiKey.isNotBlank())
         com.music.bitchord.data.lyrics.LyricsTranslation.geminiApiKey = normalized
     }
 

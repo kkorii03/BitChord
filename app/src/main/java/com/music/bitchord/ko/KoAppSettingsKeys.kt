@@ -59,6 +59,11 @@ internal const val KEY_PROXY_USERNAME = "proxy_username"
 internal const val KEY_PROXY_SCOPE = "proxy_scope"
 internal const val KEY_DEEPGRAM_API_KEY = "deepgram_api_key"
 
+// [KO] review S2: "Remove" on a key must outlive a restart. An absent secret
+// means "never set" (use the bundled key); these flags mean "removed on purpose".
+internal const val KEY_DEEPGRAM_API_KEY_REMOVED = "deepgram_api_key_removed"
+internal const val KEY_GEMINI_API_KEY_REMOVED = "gemini_api_key_removed"
+
 /**
  * The cellular ceiling an install gets when it has never stored one.
  *
