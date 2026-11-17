@@ -353,6 +353,12 @@ internal object KoSongVersion {
             songVersionVerdicts.markMissing(song.videoId)
             return null
         }
+        if (songVersionVerdicts.isRefused(song.videoId)) {
+            // The sound proved this run's found version wrong; a post-audio
+            // retry must not search again and re-adopt it (SW7-1).
+            logSongVersion(song.videoId, null, "cache", beforeAudio)
+            return null
+        }
         songVersionVerdicts.cached(song.videoId)?.let {
             logSongVersion(song.videoId, it, "cache", beforeAudio)
             return it.withQueueFieldsOf(song)
@@ -494,6 +500,12 @@ internal object KoSongVersion {
         // through its own cache, drop it so the post-audio retry really
         // searches again.
         val provisional = songVersionVerdicts.store(song.videoId, found, definitive)
+        if (songVersionVerdicts.isRefused(song.videoId)) {
+            // Refused while this search ran: its answer is the version the
+            // sound proved wrong, or another guess. Keep the refusal's marker.
+            YtMusicRepository.audioVersionCache[song.videoId] = song
+            return SongVersionAnswer(null, "none", true)
+        }
         if (provisional && SongVersionPolicy.cachedSongVersionIsMiss(
                 song,
                 YtMusicRepository.audioVersionCache[song.videoId],

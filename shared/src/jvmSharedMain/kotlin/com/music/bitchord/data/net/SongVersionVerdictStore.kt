@@ -32,6 +32,9 @@ internal class SongVersionVerdictStore {
     private val missing: MutableSet<String> = ConcurrentHashMap.newKeySet()
     private val waived: MutableSet<String> = ConcurrentHashMap.newKeySet()
     private val retrySuggested: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    /** Ids whose found version the sound proved wrong; nothing reopens them this run. */
+    private val refused: MutableSet<String> = ConcurrentHashMap.newKeySet()
     private val lock = Any()
 
     fun cached(videoId: String): Song? = cache[videoId]
@@ -42,6 +45,7 @@ internal class SongVersionVerdictStore {
      */
     fun refuse(videoId: String) {
         synchronized(lock) {
+            refused.add(videoId)
             cache.remove(videoId)
             waived.remove(videoId)
             retrySuggested.remove(videoId)
@@ -51,7 +55,10 @@ internal class SongVersionVerdictStore {
 
     /** True when this run has a settled "no song version" verdict. */
     fun isMissing(videoId: String): Boolean =
-        videoId in missing && videoId !in waived
+        videoId in refused || (videoId in missing && videoId !in waived)
+
+    /** True when [refuse] ran for [videoId]: no retry or search may reopen it. */
+    fun isRefused(videoId: String): Boolean = videoId in refused
 
     /** True when a cut-short lookup still owes its one post-audio retry. */
     fun isRetrySuggested(videoId: String): Boolean = videoId in retrySuggested
@@ -64,7 +71,7 @@ internal class SongVersionVerdictStore {
     /** Forgets the provisional miss left by the lookup a retry replaces. */
     fun beginRetry(videoId: String) {
         synchronized(lock) {
-            missing.remove(videoId)
+            if (videoId !in refused) missing.remove(videoId)
             retrySuggested.remove(videoId)
         }
     }
@@ -76,7 +83,7 @@ internal class SongVersionVerdictStore {
      */
     fun beginFreshSearch(videoId: String) {
         synchronized(lock) {
-            missing.remove(videoId)
+            if (videoId !in refused) missing.remove(videoId)
             waived.remove(videoId)
             retrySuggested.remove(videoId)
         }
@@ -92,7 +99,7 @@ internal class SongVersionVerdictStore {
     fun settleMiss(videoId: String): Miss {
         if (videoId !in missing) return Miss.NONE
         synchronized(lock) {
-            if (videoId in waived) {
+            if (videoId in waived && videoId !in refused) {
                 missing.remove(videoId)
                 waived.remove(videoId)
                 return Miss.RETRY
@@ -117,7 +124,7 @@ internal class SongVersionVerdictStore {
     fun onWaiterCancelled(videoId: String, answerCompleted: Boolean): Boolean {
         synchronized(lock) {
             if (answerCompleted) {
-                if (cache[videoId] == null && missing.remove(videoId)) return true
+                if (cache[videoId] == null && videoId !in refused && missing.remove(videoId)) return true
             } else {
                 waived.add(videoId)
             }
@@ -150,6 +157,10 @@ internal class SongVersionVerdictStore {
             // between the caller's own check and this call has still made the
             // miss provisional, and a miss written here would never be retried.
             val waivedNow = waived.remove(videoId)
+            // A refused id keeps its "none": a search that lands after the
+            // refusal, or a retry that ran anyway, must not put the version
+            // the sound already proved wrong back in place (SW7-1).
+            if (videoId in refused) return false
             if (definitive && !(song == null && waivedNow)) {
                 if (song == null) missing.add(videoId) else cache[videoId] = song
                 return false

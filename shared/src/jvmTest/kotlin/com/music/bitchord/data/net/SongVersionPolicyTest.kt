@@ -1123,6 +1123,33 @@ class SongVersionPolicyTest {
         assertFalse(store.isRetrySuggested("mv"))
     }
 
+    // Sweep 11-18 (SW7-1): the post-audio retry of a timed-out lookup called
+    // beginRetry/beginFreshSearch, which dropped the refusal, and the repeated
+    // search stored the proved-wrong version as the song again.
+    @Test
+    fun `a refused version stays refused through the post-audio retry`() {
+        val store = SongVersionVerdictStore()
+        store.store("mv", video("found", "MUSIC_VIDEO_TYPE_ATV"), definitive = true)
+        store.refuse("mv")
+        store.beginRetry("mv")
+        store.beginFreshSearch("mv")
+        assertTrue(store.isMissing("mv"))
+        assertEquals(SongVersionVerdictStore.Miss.SETTLED, store.settleMiss("mv"))
+        assertFalse(store.store("mv", video("found", "MUSIC_VIDEO_TYPE_ATV"), definitive = true))
+        assertNull(store.cached("mv"))
+        assertTrue(store.isRefused("mv"))
+    }
+
+    @Test
+    fun `a refused version survives a cut-short waiter`() {
+        val store = SongVersionVerdictStore()
+        store.refuse("mv")
+        assertFalse(store.onWaiterCancelled("mv", answerCompleted = true))
+        store.onWaiterCancelled("mv", answerCompleted = false)
+        assertTrue(store.isMissing("mv"))
+        assertEquals(SongVersionVerdictStore.Miss.SETTLED, store.settleMiss("mv"))
+    }
+
     @Test
     fun `a tap on an official video with no release plays its own audio`() {
         // Silence is never the answer to a deliberate tap, and refusing it made
