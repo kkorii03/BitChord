@@ -44,12 +44,23 @@ internal fun mvRepairShouldReschedule(wasAllowed: Boolean, allowedNow: Boolean):
     allowedNow && !wasAllowed
 
 /**
+ * When WorkManager may run the automatic repair: on the allowed network, and
+ * not while the battery is low. Whole-song re-downloads are deferred, never
+ * dropped — WorkManager starts the queued work once the battery recovers.
+ */
+internal fun mvRepairConstraints(network: NetworkType): Constraints =
+    Constraints.Builder()
+        .setRequiredNetworkType(network)
+        .setRequiresBatteryNotLow(true)
+        .build()
+
+/**
  * Fetches the song versions of downloads that turned out to hold a music
  * video's sound, when the listener has left the repair to the app.
  *
  * One one-shot piece of work, not a poll: it is scheduled when a verdict is
  * first remembered, on app start and on playback. It runs as soon as a network
- * is available, whatever the charger is doing. The Wi-Fi-only download setting
+ * is available and the battery is not low, whatever the charger is doing. The Wi-Fi-only download setting
  * still applies to this automatic pass; a banner tap is the listener asking and
  * may use the connection in hand. The download itself goes through the ordinary
  * [Downloads] queue and [DownloadService], so it is the same work a tap would
@@ -192,11 +203,7 @@ object MvSoundRedownload {
             NetworkType.CONNECTED
         }
         val request = OneTimeWorkRequestBuilder<MvSoundRedownloadWorker>()
-            .setConstraints(
-                Constraints.Builder()
-                    .setRequiredNetworkType(network)
-                    .build(),
-            )
+            .setConstraints(mvRepairConstraints(network))
             .build()
         // Invalidate any pause still querying: this work is for the window that
         // is on screen now, not for the background it was queued in.

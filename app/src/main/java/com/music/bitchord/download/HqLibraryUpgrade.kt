@@ -66,6 +66,18 @@ internal fun hqPassAllowsLowPower(manualPass: Boolean, lowPower: Boolean): Boole
     manualPass || !lowPower
 
 /**
+ * Whether the playing track may look for a better copy now.
+ *
+ * The same rule as [hqPassAllowsLowPower]: the automatic look searches,
+ * auditions, may send audio to be heard and downloads a whole lossless file,
+ * so it waits out low power. A listener's manual request still runs. The
+ * track stays pending, so a later look (resume, next play) picks it up once
+ * power saving is off.
+ */
+internal fun automaticHqLookAllowed(manual: Boolean, heavyWorkAllowed: Boolean): Boolean =
+    hqPassAllowsLowPower(manualPass = manual, lowPower = !heavyWorkAllowed)
+
+/**
  * Whether an upgrade requested through [HqLibraryUpgrade.requestUpgrade] may
  * use the connection in hand.
  *

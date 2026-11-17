@@ -272,7 +272,7 @@ object DiagnosticsExport {
     /** Keys whose value is a credential, a session, or a person. */
     private val SECRET_SETTING = Regex(
         """(?i)(secret|token|password|passwd|pwd|cookie|session|auth|credential|""" +
-            """api[_-]?key|sapisid|hsid|ssid|(?:^|_)sid(?:_|$)|login|username|email|account)""",
+            """api[_-]?key|sapisid|hsid|ssid|(?:^|_)sid(?:_|$)|login|username|email|account|search_history)""",
     )
 
     private const val MAX_SETTING_CHARS = 300

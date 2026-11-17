@@ -30,6 +30,22 @@ class DiagnosticsExportSettingsTest {
     }
 
     @Test
+    fun `search history queries are masked`() {
+        val text = DiagnosticsExport.settingsSnapshotLines(
+            mapOf(
+                "search_history" to "[{\"query\":\"private query\"}]",
+                "addon_search_history" to "[{\"query\":\"other query\"}]",
+                "show_queue_history" to true,
+            ),
+        ).joinToString("\n")
+        assertFalse(text.contains("private query"))
+        assertFalse(text.contains("other query"))
+        assertTrue(text.contains("setting: search_history=[redacted]"))
+        assertTrue(text.contains("setting: addon_search_history=[redacted]"))
+        assertTrue(text.contains("setting: show_queue_history=true"))
+    }
+
+    @Test
     fun `a secret-looking value is redacted even under an ordinary key`() {
         val lines = DiagnosticsExport.settingsSnapshotLines(
             mapOf("some_url" to "https://example.test/x?token=secret"),

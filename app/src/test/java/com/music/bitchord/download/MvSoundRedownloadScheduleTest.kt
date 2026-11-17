@@ -1,5 +1,7 @@
 package com.music.bitchord.download
 
+import androidx.work.NetworkType
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -53,6 +55,20 @@ class MvSoundRedownloadScheduleTest {
             ),
         )
         assertFalse(scanned)
+    }
+
+    @Test
+    fun `the automatic repair waits while the battery is low`() {
+        val constraints = mvRepairConstraints(NetworkType.UNMETERED)
+        assertTrue(constraints.requiresBatteryNotLow())
+        assertEquals(NetworkType.UNMETERED, constraints.requiredNetworkType)
+    }
+
+    @Test
+    fun `the battery rule also applies on any connection`() {
+        val constraints = mvRepairConstraints(NetworkType.CONNECTED)
+        assertTrue(constraints.requiresBatteryNotLow())
+        assertEquals(NetworkType.CONNECTED, constraints.requiredNetworkType)
     }
 
     @Test

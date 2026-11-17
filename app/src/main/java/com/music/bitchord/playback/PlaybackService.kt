@@ -7113,6 +7113,7 @@ class PlaybackService : MediaLibraryService() {
         }
         // [KO] Before the gates below: they close for a row with nothing better to find, and that row's cached copy is the one owed.
         if (uri != null) HqAudioVerify.auditCachedCopy(this, mediaId, uri)
+        if (!com.music.bitchord.download.automaticHqLookAllowed(manual, AppSettings.heavyWorkAllowed)) { TrackLog.d("BitChord", "hq-look: $mediaId skipped low-power", about = mediaId); return false } // [KO] low power
         val alreadyPending = QualityUpgrade.isPending(mediaId)
         val shelved = QualityUpgrade.shelvedFor(mediaId)
         if (shelved == null && !alreadyPending && !QualityUpgrade.couldStillUpgrade(mediaId, uri)) {
