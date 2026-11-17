@@ -3068,6 +3068,9 @@ fun NowPlayingScreen(
                     // controls at the foot of the screen. Filled in from inside the box,
                     // where the sleeve's real size is known; see [lastControlSpread].
                     var controlSpread by remember { mutableStateOf(lastControlSpread) }
+                    // Hoisted: the sleeve's stats tap comes and goes with the
+                    // Canvas deck, and a remember inside that branch would not.
+                    val sleeveStatsTapSource = remember { MutableInteractionSource() }
                     BoxWithConstraints(
                         modifier = Modifier
                             .weight(1f)
@@ -3728,16 +3731,21 @@ fun NowPlayingScreen(
                                 // Collapsed, the sleeve is the way back: tapping the
                                 // thumbnail puts the queue or the lyrics away again.
                                 // Otherwise a tap asks for the stats for a few
-                                // seconds without disturbing playback.
+                                // seconds without disturbing playback. On a
+                                // Spotify Canvas the tap belongs to the control
+                                // deck instead: a consumed tap here would keep a
+                                // hidden deck hidden (SW7-1).
                                 .then(
                                     if (queueOpen || lyricsOpen) {
                                         Modifier.clickable {
                                             queueOpen = false
                                             closeLyrics()
                                         }
+                                    } else if (spotifyCanvasPresentation && !mixing) {
+                                        Modifier
                                     } else {
                                         Modifier.clickable(
-                                            interactionSource = remember { MutableInteractionSource() },
+                                            interactionSource = sleeveStatsTapSource,
                                             indication = null,
                                         ) {
                                             nerdStatsRevealTick++

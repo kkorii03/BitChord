@@ -24,6 +24,20 @@ class PlayerMergeWiringTest {
         assertTrue("low power must keep the cheap mesh path", "!lowPower" in prepare)
     }
 
+    // Sweep 11-18 (SW7-1): the sleeve's stats tap consumed every tap on the
+    // clip's centre, so a hidden Spotify Canvas deck never came back from there.
+    @Test
+    fun `a canvas tap on the sleeve reaches the control deck`() {
+        val source = source("sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/NowPlayingScreen.kt")
+        val slot = Regex("""if \(queueOpen \|\| lyricsOpen\) \{\s*Modifier\.clickable \{[\s\S]*?nerdStatsRevealTick\+\+""")
+            .find(source)?.value
+            ?: error("portrait sleeve tap not found")
+        assertTrue(
+            "the stats tap must step aside while the Canvas deck owns the tap",
+            "spotifyCanvasPresentation && !mixing" in slot,
+        )
+    }
+
     @Test
     fun `canvas clips keep their loop window`() {
         val source = source("app/src/main/java/com/music/bitchord/ui/player/CanvasArtworkPlayer.kt")
