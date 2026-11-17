@@ -58,6 +58,48 @@ class VideoRadioAutoplayTest {
         )
     }
 
+    private fun typed(
+        title: String,
+        artist: String,
+        type: String,
+        videoRadio: Boolean = false,
+    ) = Song(
+        videoId = "aaaaaaaaaaa",
+        title = title,
+        artist = artist,
+        thumbnailUrl = null,
+        durationText = "3:14",
+        isVideo = true,
+        videoRadio = videoRadio,
+        musicVideoType = type,
+    )
+
+    @Test
+    fun `an official MV typed OMV selects normal mode without an official word in its title`() {
+        assertEquals(
+            AutoplayMode.NORMAL,
+            videoRadioModeFor(typed("Billie Eilish - bad guy", "Billie Eilish", "MUSIC_VIDEO_TYPE_OMV")),
+        )
+    }
+
+    @Test
+    fun `a fan live upload, a station row and an OMV-typed cover stay video songs`() {
+        assertEquals(
+            AutoplayMode.VIDEO_RADIO,
+            videoRadioModeFor(typed("bad guy (Live at X)", "Billie Eilish", "MUSIC_VIDEO_TYPE_UGC")),
+        )
+        assertEquals(
+            AutoplayMode.VIDEO_RADIO,
+            videoRadioModeFor(
+                typed("Billie Eilish - bad guy", "Billie Eilish", "MUSIC_VIDEO_TYPE_OMV", videoRadio = true),
+            ),
+        )
+        assertEquals(
+            AutoplayMode.VIDEO_RADIO,
+            videoRadioModeFor(typed("Dance Monkey (Cover)", "오화요", "MUSIC_VIDEO_TYPE_OMV")),
+        )
+    }
+
     @Test
     fun `video picking keeps covers and does not drift to catalogue rows`() {
         val seed = song("seed", "Dance Monkey (Cover)", "오화요")

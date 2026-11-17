@@ -38,9 +38,19 @@ fun videoRadioSeedInfo(song: Song): SeedVideoInfo {
         isVideo = song.isVideo || song.videoRadio,
         // A YouTube Music row that already names a release is the catalogue
         // side of the video, not a fan upload. Cover rows never carry one.
+        // [KO] An official MV (YouTube's own OMV type) is the artist's release
+        // too, even when its title has no "Official/MV" word and the video row
+        // names no album. A cover typed OMV stays a video song; the type is
+        // checked first so the cover parse runs only for OMV rows.
         isOfficialArtistChannel = !song.videoRadio &&
-            song.albumId != null &&
-            song.originalTitle == null,
+            song.originalTitle == null &&
+            (
+                song.albumId != null ||
+                    (
+                        song.musicVideoType?.contains("OMV", ignoreCase = true) == true &&
+                            !CoverTitles.isCover(song)
+                        )
+                ),
     )
 }
 

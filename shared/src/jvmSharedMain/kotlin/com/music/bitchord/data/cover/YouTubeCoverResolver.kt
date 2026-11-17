@@ -14,6 +14,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
@@ -149,11 +151,15 @@ internal object YouTubeCoverResolver {
             return try {
                 pending.await()
             } catch (cancelled: CancellationException) {
-                throw cancelled
+                // [KO] The owner's cancellation (its page closed, its own
+                // timeout fired) is not this caller's. Rethrow only when this
+                // coroutine itself was cancelled; otherwise look it up here.
+                currentCoroutineContext().ensureActive()
+                lookup(target, artist, key)
             }
         }
         try {
-            val match = matchForUncached(target, artist, key)
+            val match = lookup(target, artist, key)
             mine.complete(match)
             return match
         } catch (failure: Throwable) {
@@ -162,6 +168,15 @@ internal object YouTubeCoverResolver {
         } finally {
             inFlight.remove(key, mine)
         }
+    }
+
+    /** Test seam for the network lookup; null in the app. */
+    @Volatile
+    internal var uncachedForTest: (suspend (TrackMatcher.Target, String, String) -> Match?)? = null
+
+    private suspend fun lookup(target: TrackMatcher.Target, artist: String, key: String): Match? {
+        val seam = uncachedForTest
+        return if (seam != null) seam(target, artist, key) else matchForUncached(target, artist, key)
     }
 
     private suspend fun matchForUncached(

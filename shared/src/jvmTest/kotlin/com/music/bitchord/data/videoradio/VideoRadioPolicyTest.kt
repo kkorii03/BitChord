@@ -354,6 +354,19 @@ class VideoRadioPolicyTest {
             ordered.map { it.videoId },
         )
     }
+
+    @Test
+    fun `ordering prefers the same singer's other song over a second cover of the same song`() {
+        val ordered = orderVideoCandidates(
+            candidates = listOf(
+                candidate("a", title = "Dance Monkey (Cover)", singer = "X"),
+                candidate("b", title = "Dance Monkey (Live)", singer = "Y"),
+                candidate("c", title = "Other Song (Cover)", singer = "X"),
+            ),
+            seedSinger = "Oohyo",
+        )
+        assertEquals(listOf("a", "c", "b"), ordered.map { it.videoId })
+    }
     @Test
     fun `video radio keeps covers but drops official catalogue rows`() {
         val result = filter(

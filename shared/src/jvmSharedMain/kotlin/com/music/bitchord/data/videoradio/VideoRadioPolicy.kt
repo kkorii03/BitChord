@@ -522,7 +522,9 @@ const val VIDEO_RADIO_MAX_SAME_SINGER_RUN = 2
  * a station that ignores the seed's channel is not a continuation of what the
  * listener chose. The ratio keeps both present. The run cap is separate: the
  * two "other" slots may still name the same act, so [takeCandidate] prefers a
- * different singer before it reuses the previous one.
+ * different singer before it reuses the previous one. Repeating the song that
+ * just played is worse than reusing the singer: a different song by the same
+ * singer (within the run cap) wins over another cover of the same song.
  *
  * The function is deterministic and source-order preserving within each group.
  * When one group runs out the other fills the remainder; when the run cap
@@ -599,8 +601,10 @@ private fun takeCandidate(
         { candidate ->
             singerKeyOf(candidate) != lastSinger && songDiffers(candidate, lastSongKey)
         },
-        { candidate -> singerKeyOf(candidate) != lastSinger },
+        // A different song by the same singer (within the run cap) beats a second
+        // cover of the song that just played.
         { candidate -> songDiffers(candidate, lastSongKey) && run < maxRun },
+        { candidate -> singerKeyOf(candidate) != lastSinger },
         { _ -> run < maxRun },
     )
     for (predicate in predicates) {
