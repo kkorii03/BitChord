@@ -996,7 +996,22 @@ object LyricsTiming {
         val adjustment: Adjustment?,
         val evidence: BaseChoicePolicy.Evidence,
         val rule: String,
+        /** [KO] TR7 T5: what the entry held for [name] when it was read, see [baseSource]. */
+        val source: Any? = null,
     )
+
+    /**
+     * [KO] TR7 T5: what the entry holds for the base named [name], whichever
+     * text key asks. A caller without the AI answer under its own key reads the
+     * same value and keeps the decision; a kept decision whose answer refit's
+     * dropStale or forgetSavedSheetCheck removed (or a newer one replaced) no
+     * longer matches, and its old map must not keep moving the lines.
+     */
+    private fun baseSource(entry: Entry, name: String): Any? = when (name) {
+        BaseChoicePolicy.AI -> listOf(entry.aiTextKey, entry.ai, entry.aiShiftMs, entry.aiStarts)
+        BaseChoicePolicy.MEASURED -> listOf(entry.autoVersion, entry.auto, entry.autoNoChange)
+        else -> null
+    }
 
     private val baseDecisions = ConcurrentHashMap<String, BaseDecision>()
 
@@ -1043,7 +1058,7 @@ object LyricsTiming {
     // generation bumps; a re-measure for the same (song, source) that hears fewer
     // lines cannot replace it. Upgrade when a song check has to re-open a base on
     // the same key without a generation bump.
-    private fun settleBase(key: String?, next: BaseDecision, videoId: String?): BaseDecision {
+    private fun settleBase(key: String?, next: BaseDecision, videoId: String?, entry: Entry): BaseDecision {
         if (key == null) return next
         if (baseDecisions.size > 3_000) baseDecisions.clear()
         // compute: the screen and the next-song bundle ask at the same moment, and a
@@ -1057,7 +1072,10 @@ object LyricsTiming {
                 // for that base is shown, so a re-measurement that scores the
                 // same on the opening words (a whole-record pass that now
                 // follows a cut at 2:40) is not masked until the app restarts.
-                previous.name == next.name -> previous.copy(adjustment = next.adjustment, rule = next.rule)
+                previous.name == next.name ->
+                    previous.copy(adjustment = next.adjustment, rule = next.rule, source = next.source)
+                // [KO] TR7 T5: the answer it was kept for is no longer the entry's.
+                previous.source != baseSource(entry, previous.name) -> next
                 else -> previous
             }
         } ?: next
@@ -1168,8 +1186,10 @@ object LyricsTiming {
                     adjustment = fixed,
                     evidence = BaseChoicePolicy.Evidence(defaultName, 0, 0.0, 0L),
                     rule = if (fixed == null) "buried" else "fixed-order",
+                    source = baseSource(entry, defaultName),
                 ),
                 videoId,
+                entry,
             )
             onRule(decision.rule)
             return decision.adjustment
@@ -1219,8 +1239,10 @@ object LyricsTiming {
                     score?.medianAbsMs ?: 0L,
                 ),
                 rule = if (fixed == null && chosen != null) "buried" else "base-choice",
+                source = baseSource(entry, choice.name),
             ),
             videoId,
+            entry,
         )
         onRule(decision.rule)
         return decision.adjustment
