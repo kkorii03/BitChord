@@ -147,6 +147,81 @@ class NextHqDirectSourceGateTest {
         assertTrue(telegram.cancelled)
     }
 
+    /**
+     * Review OPT1 (next-prep-direct-hq-proof-late): the standby arms about 10 s
+     * after the window opens, and that drop threw the proof's download away; the
+     * second look then proved the same row from zero mid-song. The old lookup
+     * cancelled the proof here, so [aProofInFlightWhenTheSongStartsRunsOn] fails on it.
+     */
+    private inner class HeldProof {
+        val proving = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        /** true: ran to its verdict; false: stopped. */
+        val finished = CompletableDeferred<Boolean>()
+
+        init {
+            KoDirectHqAhead.proofForTest = {
+                proving.complete(Unit)
+                try {
+                    release.await()
+                    finished.complete(true)
+                    true
+                } catch (e: CancellationException) {
+                    finished.complete(false)
+                    throw e
+                }
+            }
+        }
+
+        fun pendingLookup(scope: kotlinx.coroutines.CoroutineScope, id: String, title: String) = run {
+            install(
+                listOf(
+                    FakeSource("Addon"),
+                    FakeSource("Telegram", listOf(row("tg-$id", title)), flac, SourceKind.TELEGRAM),
+                    FakeSource("YouTube", kind = SourceKind.YOUTUBE),
+                ),
+            )
+            DirectSourceGate.openNext(id)
+            scope.async(Dispatchers.Default) { DirectSourceGate.lookup(id, target(title)) }
+        }
+    }
+
+    @Test
+    fun aProofInFlightWhenTheSongStartsRunsOn() = runBlocking {
+        val held = HeldProof()
+        val pending = held.pendingLookup(this, "hq-next-13", "Ahead Thirteen")
+        withTimeout(3_000) { held.proving.await() }
+        DirectSourceGate.onPlaying(setOf("hq-next-13"))
+
+        assertNull("the first note is still not held", withTimeout(3_000) { pending.await() })
+        assertFalse("the proof in flight must not be thrown away", held.finished.isCompleted)
+        held.release.complete(Unit)
+        assertTrue("it runs to the verdict the second look reads", withTimeout(3_000) { held.finished.await() })
+    }
+
+    @Test
+    fun aProofForARowNoLongerNextIsStillStopped() = runBlocking {
+        val held = HeldProof()
+        val pending = held.pendingLookup(this, "hq-next-14", "Ahead Fourteen")
+        withTimeout(3_000) { held.proving.await() }
+        DirectSourceGate.openNext("hq-other-14")
+
+        assertNull(withTimeout(3_000) { pending.await() })
+        assertFalse("a skipped row's head is not downloaded on", withTimeout(3_000) { held.finished.await() })
+    }
+
+    @Test
+    fun aKeptProofStopsWhenItsSongStopsSounding() = runBlocking {
+        val held = HeldProof()
+        val pending = held.pendingLookup(this, "hq-next-15", "Ahead Fifteen")
+        withTimeout(3_000) { held.proving.await() }
+        DirectSourceGate.onPlaying(setOf("hq-next-15"))
+        assertNull(withTimeout(3_000) { pending.await() })
+        DirectSourceGate.onPlaying(setOf("hq-after-15"))
+
+        assertFalse("a song skipped after it started stops its kept proof", withTimeout(3_000) { held.finished.await() })
+    }
+
     /** A row that streams another upload: a copy proved for its media id would carry the wrong clock. */
     @Test
     fun aRowStreamingAnotherUploadIsLeftOut() = runBlocking {

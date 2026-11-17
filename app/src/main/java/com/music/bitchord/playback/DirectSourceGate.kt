@@ -130,6 +130,7 @@ object DirectSourceGate {
         lookups.forEach { (id, lookup) ->
             if (now.next != id || id in now.playing) lookup.ahead?.cancel()
         }
+        KoDirectHqAhead.stopKeptProofsExcept(now.playing) // OPT1: a proof kept for a song no longer audible stops
     }
 
     private fun Open.admits(mediaId: String) = mediaId in playing || mediaId == next
@@ -266,7 +267,11 @@ object DirectSourceGate {
                             lengthOf = { youTubeLength(videoId) },
                         )
                     },
-                    hq = proof?.takeIf { ahead }?.let { verify -> suspend { KoDirectHqAhead.stream(target, verify) } },
+                    hq = proof?.takeIf { ahead }?.let { verify ->
+                        // OPT1: a proof in flight when the song starts runs on for the second look.
+                        val kept = KoDirectHqAhead.keptOnStart(videoId, scope, { isPlaying(videoId) }, verify)
+                        suspend { KoDirectHqAhead.stream(target, kept) }
+                    },
                 )
             },
             startedAtMs = android.os.SystemClock.elapsedRealtime(),

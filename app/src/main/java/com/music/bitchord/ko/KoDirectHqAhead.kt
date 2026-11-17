@@ -15,12 +15,16 @@ import com.music.bitchord.playback.BatteryPolicy
 import com.music.bitchord.playback.OriginalVersion
 import com.music.bitchord.playback.QualityUpgrade
 import com.music.bitchord.playback.StreamChoice
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.job
 
 /**
  * [KO] hq-ahead
@@ -209,6 +213,71 @@ internal object KoDirectHqAhead {
             return null
         }
         return stream
+    }
+
+    /** Proofs running on past their dropped lookup, with the song each is for. */
+    private val keptProofs = ConcurrentHashMap<Job, String>()
+
+    /**
+     * Review OPT1 (next-prep-direct-hq-proof-late): [proof] runs on [scope], the
+     * gate's own, and its waiter only awaits it.
+     *
+     * The standby arms about 10 s after the window opens, and that drop cut the
+     * proof's download and threw it away; the second look then proved the same row
+     * from zero mid-song. When the waiter is stopped because the song became
+     * [audible], the proof runs on to its verdict, which HqAudioVerify stores under
+     * the pair, so the second look reads it (or waits on the pair's lock) instead of
+     * downloading again. Nothing is pinned from it: the lookup has already answered
+     * null, and only the second look's own proof and swap checks can use the copy.
+     * Any other stop (the queue moved, the race ended) still stops the proof, and a
+     * kept proof stops once its song is no longer audible; see [stopKeptProofsExcept].
+     */
+    fun keptOnStart(
+        videoId: String,
+        scope: CoroutineScope,
+        audible: () -> Boolean,
+        proof: suspend (SourceStream) -> Boolean,
+    ): suspend (SourceStream) -> Boolean = { stream ->
+        val startedAt = System.nanoTime()
+        val kept = AtomicBoolean(false)
+        val running = scope.async(TrackLog.about(videoId)) {
+            var verdict = "failed"
+            try {
+                proof(stream).also { verdict = if (it) "accepted" else "none" }
+            } catch (cancelled: CancellationException) {
+                verdict = "stopped"
+                throw cancelled
+            } finally {
+                if (kept.get()) {
+                    keptProofs.remove(coroutineContext.job)
+                    TrackLog.d(
+                        TAG,
+                        "hq-ahead: $videoId proof kept after drop verdict=$verdict " +
+                            "ms=${(System.nanoTime() - startedAt) / 1_000_000}",
+                        about = videoId,
+                    )
+                }
+            }
+        }
+        try {
+            running.await()
+        } catch (cancelled: CancellationException) {
+            if (running.isActive && audible()) {
+                keptProofs[running] = videoId
+                kept.set(true)
+                // It may have finished, or the song stopped sounding, while this was decided.
+                if (!running.isActive) keptProofs.remove(running)
+                if (!audible()) running.cancel()
+            } else {
+                running.cancel()
+            }
+            throw cancelled
+        }
+    }
+
+    /** A kept proof stops once its song is no longer in [playing]; see [keptOnStart]. */
+    fun stopKeptProofsExcept(playing: Set<String>) {
+        keptProofs.forEach { (running, id) -> if (id !in playing) running.cancel() }
     }
 
     /**
