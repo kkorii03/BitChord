@@ -35,8 +35,19 @@ object PlayerExpandGuard {
     /** The tag the phone routes into its exportable log. */
     private const val TAG = "BitChord"
 
-    fun allow(source: PlayerExpandSource, touchedSinceResume: Boolean): Boolean =
-        source == PlayerExpandSource.DEEPLINK || touchedSinceResume
+    /**
+     * [accessibilityActive]: TalkBack's double-tap and Switch Access click the
+     * mini player through its semantics node, which never produces an
+     * `ACTION_DOWN`. With an accessibility service on, a [PlayerExpandSource.TAP]
+     * — which only the mini player's own click handler sends — counts as asked.
+     */
+    fun allow(
+        source: PlayerExpandSource,
+        touchedSinceResume: Boolean,
+        accessibilityActive: Boolean = false,
+    ): Boolean =
+        source == PlayerExpandSource.DEEPLINK || touchedSinceResume ||
+            (accessibilityActive && source == PlayerExpandSource.TAP)
 
     /** One line per raise of the player, with the app frames that asked for it. */
     fun logExpand(source: PlayerExpandSource, msSinceResume: Long, msSinceTouch: Long) {

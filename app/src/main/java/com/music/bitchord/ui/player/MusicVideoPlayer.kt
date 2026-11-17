@@ -183,6 +183,7 @@ object MusicVideoEngine {
         scope.launch {
             AppSettings.preferMusicOnly.drop(1).collect { refresh() }
         }
+        scope.launch { AppSettings.mvVideo.drop(1).collect { refresh() } } // [KO] mv-video: switch off unloads the picture at once
     }
 
     private val _shownVideoId = MutableStateFlow<String?>(null)
@@ -360,7 +361,12 @@ object MusicVideoEngine {
     private fun wanted(): Song? {
         val song = controller?.currentMediaItem?.toSong() ?: return null
         return song.takeIf {
-            it.isVideo && it.videoId !in noPicture && MusicOnlyPlayback.showsPicture(it.videoId)
+            com.music.bitchord.ko.KoMusicVideoPicture.pictureWanted( // [KO] mv-video: was isVideo && !noPicture && showsPicture
+                isVideo = it.isVideo,
+                pictureless = it.videoId in noPicture,
+                showsPicture = MusicOnlyPlayback.showsPicture(it.videoId),
+                mvVideoOn = AppSettings.mvVideo.value,
+            )
         }
     }
 

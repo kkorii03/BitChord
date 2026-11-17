@@ -69,6 +69,8 @@ import com.music.bitchord.ui.player.PlayerDock
 import com.music.bitchord.ui.player.AndroidMusicVideo
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.lifecycle.compose.collectAsStateWithLifecycle // [KO] mv-video
+import com.music.bitchord.data.settings.AppSettings // [KO] mv-video
 
 /**
  * The liquid glass navigation bar: the iOS 26 shape where the now playing
@@ -387,7 +389,8 @@ private fun GlassNowPlaying(
         ) {
             // A music video plays in the cover's place at its own 16:9, as in
             // the floating mini player; the full player takes it over when up.
-            val showsPicture = song.isVideo && MusicOnlyPlayback.showsPicture(song.videoId)
+            val mvVideo by AppSettings.mvVideo.collectAsStateWithLifecycle() // [KO] mv-video
+            val showsPicture = mvVideo && song.isVideo && MusicOnlyPlayback.showsPicture(song.videoId) // [KO] mv-video: was without mvVideo
             val artWidth by animateDpAsState(
                 targetValue = if (showsPicture && !VideoThumbnails.square) ACCESSORY_ART_SIZE * (16f / 9f) else ACCESSORY_ART_SIZE,
                 label = "glassMiniArtWidth",

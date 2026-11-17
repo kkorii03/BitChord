@@ -56,6 +56,7 @@ class KoPlaybackReadTracker {
         while (true) {
             val signal = synchronized(keyIdleSignals) {
                 if (playerHoldsKey(key)) {
+                    beforeInstall()
                     keyIdleSignals.getOrPut(key) { CompletableDeferred() }
                 } else {
                     null
@@ -65,9 +66,20 @@ class KoPlaybackReadTracker {
         }
     }
 
+    /**
+     * Under the same lock [awaitRelease] checks and installs its signal with:
+     * unlocked, a release landing between that check and the install found no
+     * signal to complete, and the waiter then installed one nobody ever would.
+     */
     fun readerReleased(key: String) {
-        if (!playerHoldsKey(key)) keyIdleSignals.remove(key)?.complete(Unit)
+        synchronized(keyIdleSignals) {
+            if (!playerHoldsKey(key)) keyIdleSignals.remove(key)?.complete(Unit)
+        }
     }
+
+    /** Test seam: runs inside [awaitRelease]'s lock, between its check and its install. */
+    @Volatile
+    internal var beforeInstall: () -> Unit = {}
 
     private fun retain(counts: ConcurrentHashMap<String, Int>, key: String) {
         counts.merge(key, 1) { open, added -> open + added }

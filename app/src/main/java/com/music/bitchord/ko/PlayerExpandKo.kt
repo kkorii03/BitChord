@@ -17,6 +17,7 @@ internal fun koSetPlayerShown(
     touchedSinceResume: Boolean,
     msSinceResume: Long,
     msSinceTouch: Long,
+    accessibilityActive: Boolean = false,
     onShownChange: (Boolean) -> Unit,
 ) {
     if (!shown) {
@@ -25,7 +26,7 @@ internal fun koSetPlayerShown(
             TrackLog.i("BitChord", "nav: Player close source=${source.logName}")
         }
     } else if (!currentlyShown) {
-        if (PlayerExpandGuard.allow(source, touchedSinceResume)) {
+        if (PlayerExpandGuard.allow(source, touchedSinceResume, accessibilityActive)) {
             onShownChange(true)
             TrackLog.i("BitChord", "nav: Player open source=${source.logName}")
             PlayerExpandGuard.logExpand(source, msSinceResume, msSinceTouch)
@@ -41,6 +42,7 @@ internal fun koPlayerShownSetter(
     touchedSinceResume: () -> Boolean,
     msSinceResume: () -> Long,
     msSinceTouch: () -> Long,
+    accessibilityActive: () -> Boolean = { false },
     onShownChange: (Boolean) -> Unit,
 ): (Boolean, PlayerExpandSource) -> Unit = { shown, source ->
     koSetPlayerShown(
@@ -50,6 +52,8 @@ internal fun koPlayerShownSetter(
         touchedSinceResume = touchedSinceResume(),
         msSinceResume = msSinceResume(),
         msSinceTouch = msSinceTouch(),
+        // Read at decision time: TalkBack can be switched on mid-session.
+        accessibilityActive = accessibilityActive(),
         onShownChange = onShownChange,
     )
 }

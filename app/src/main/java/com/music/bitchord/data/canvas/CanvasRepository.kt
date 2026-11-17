@@ -226,8 +226,9 @@ object CanvasRepository {
     }
 
     /** Priority is part of the question, so a toggle never reuses the other order's answer. */
-    private fun cacheKey(base: String, spotifyFirst: Boolean): String =
-        "$base|spotifyFirst=$spotifyFirst"
+    internal fun cacheKey(base: String, spotifyFirst: Boolean): String = // [KO] video canvas: internal for its test
+        "$base|spotifyFirst=$spotifyFirst" +
+            "|video=${AppSettings.videoCanvas.value}" // [KO] video canvas: a cached MV loop must not outlive the switch
 
     private suspend fun resolve(
         key: String,

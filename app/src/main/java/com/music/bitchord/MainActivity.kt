@@ -447,6 +447,8 @@ class MainActivity : AppCompatActivity() {
 
     internal fun touchedSinceResume(): Boolean = koState.touchedSinceResume()
 
+    internal fun accessibilityActive(): Boolean = koState.accessibilityActive(this) // [KO] player-expand-guard
+
     internal fun msSinceResume(): Long = koState.msSinceResume()
 
     internal fun msSinceTouch(): Long = koState.msSinceTouch()
@@ -564,8 +566,10 @@ class MainActivity : AppCompatActivity() {
         super.onSaveInstanceState(outState)
         KoMainActivity.saveState(koState, outState) // [KO] launch-replay
     }
-    override fun dispatchKeyEvent(event: KeyEvent): Boolean =
-        handleDacVolumeKey(event) || super.dispatchKeyEvent(event)
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        koState.noteKey(event) // [KO] player-expand-guard: a keyboard click counts as a touch
+        return handleDacVolumeKey(event) || super.dispatchKeyEvent(event)
+    }
 
     /**
      * Requests a window refresh rate without forcing a display mode or
@@ -664,7 +668,7 @@ private fun BitChordApp(
      * permanent pane.
      */
     var showNowPlaying by remember { mutableStateOf(false) }
-    val setPlayerShown = koPlayerShownSetter({ showNowPlaying }, activity::touchedSinceResume, activity::msSinceResume, activity::msSinceTouch) { showNowPlaying = it } // [KO] player-expand-guard
+    val setPlayerShown = koPlayerShownSetter({ showNowPlaying }, activity::touchedSinceResume, activity::msSinceResume, activity::msSinceTouch, accessibilityActive = activity::accessibilityActive) { showNowPlaying = it } // [KO] player-expand-guard
     // [KO] player-expand-guard
     // The one way the player is raised, whoever asks: M3 moving it, the app
     // moving it, or a widget's deep link. A raise has to follow a touch the

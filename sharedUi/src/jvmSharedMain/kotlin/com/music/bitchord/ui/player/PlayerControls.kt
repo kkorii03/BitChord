@@ -431,8 +431,48 @@ internal fun automixStatusLine(
     else -> AutomixStatusLine.Analysis(current, next)
 }
 
+/**
+ * [KO] nerd-stats: one piece of the sleeve's measured-stream line. [Plain] is
+ * final; the others need a localized word the composable fills in.
+ */
+internal sealed interface StreamLinePart {
+    data class Plain(val text: String) : StreamLinePart
+    data class BitDepth(val bits: Int) : StreamLinePart
+    data class Channels(val count: Int) : StreamLinePart
+}
+
+/**
+ * [KO] nerd-stats: "FLAC · 24-bit · 96.0 kHz · 4608 kbps · Stereo" as pieces —
+ * whichever of those the player has actually reported. A figure it hasn't is
+ * dropped rather than filled in. Empty when nothing is known.
+ */
+internal fun streamLineParts(stats: NerdStats.Snapshot?): List<StreamLinePart> {
+    if (stats == null) return emptyList()
+    return buildList<StreamLinePart> {
+        NerdStats.codecLabel(stats.mimeType)?.let { add(StreamLinePart.Plain(it)) }
+        stats.bitDepth?.let { add(StreamLinePart.BitDepth(it)) }
+        stats.sampleRateHz?.let {
+            add(StreamLinePart.Plain(NerdStats.megahertzLabel(it) ?: "%.1f kHz".format(Locale.ROOT, it / 1000f)))
+        }
+        stats.bitrateKbps?.let { add(StreamLinePart.Plain("$it kbps")) }
+        stats.channels?.let { add(StreamLinePart.Channels(it)) }
+    }
+}
+
+@Composable
+private fun StreamLinePart.localized(): String = when (this) {
+    is StreamLinePart.Plain -> text
+    is StreamLinePart.BitDepth -> stringResource(Res.string.bit_depth, bits)
+    is StreamLinePart.Channels -> when (count) {
+        1 -> stringResource(Res.string.mono)
+        2 -> stringResource(Res.string.stereo)
+        else -> stringResource(Res.string.channel_count, count)
+    }
+}
+
 @Composable
 internal fun SleeveNerdStats(
+    song: Song, // [KO] nerd-stats: the measured stream is this track's only
     modifier: Modifier = Modifier,
     revealed: Boolean = false,
 ) {
@@ -478,10 +518,22 @@ internal fun SleeveNerdStats(
             blurRadius = 4f,
         ),
     )
+    // [KO] nerd-stats: the measured stream for this track only; see [PlaybackQualityLabel].
+    val streamParts = streamLineParts(PlayingAudioFormat.forTrack(song.videoId, nerdStats))
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = modifier,
     ) {
+        if (streamParts.isNotEmpty()) { // [KO] nerd-stats
+            Text(
+                text = streamParts.map { it.localized() }.joinToString(" · "),
+                style = nerdStyle,
+                color = Color.White.copy(alpha = 0.65f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+            )
+        }
         val statusText = when (statusLine) {
             AutomixStatusLine.Hidden -> null
             AutomixStatusLine.StoppedInParty -> stringResource(Res.string.automix_stopped_in_party)

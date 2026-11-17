@@ -430,7 +430,8 @@ fun MiniPlayer(
         ) {
             // A music video plays here at its own 16:9, as the web player's
             // mini player does, rather than cropped into the square cover.
-            val showsPicture = song.isVideo && MusicOnlyPlayback.showsPicture(song.videoId)
+            val mvVideo by AppSettings.mvVideo.collectAsStateWithLifecycle() // [KO] mv-video
+            val showsPicture = mvVideo && song.isVideo && MusicOnlyPlayback.showsPicture(song.videoId) // [KO] mv-video: was without mvVideo
             val artWidth by animateDpAsState(
                 targetValue = if (showsPicture && !VideoThumbnails.square) VIDEO_ART_WIDTH else 40.dp,
                 label = "miniArtWidth",

@@ -33,6 +33,31 @@ class PlayerExpandGuardTest {
     }
 
     @Test
+    fun `an accessibility click on the mini player opens it without a touch`() {
+        // Review FX2 C2b-1: TalkBack and Switch Access never send ACTION_DOWN.
+        assertTrue(
+            PlayerExpandGuard.allow(
+                PlayerExpandSource.TAP,
+                touchedSinceResume = false,
+                accessibilityActive = true,
+            ),
+        )
+        assertFalse(
+            PlayerExpandGuard.allow(
+                PlayerExpandSource.TAP,
+                touchedSinceResume = false,
+                accessibilityActive = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `accessibility on does not let the sheet raise itself`() {
+        assertFalse(PlayerExpandGuard.allow(PlayerExpandSource.MOTION, touchedSinceResume = false, accessibilityActive = true))
+        assertFalse(PlayerExpandGuard.allow(PlayerExpandSource.PULL, touchedSinceResume = false, accessibilityActive = true))
+    }
+
+    @Test
     fun `a widget deep link is allowed with or without a touch`() {
         assertTrue(PlayerExpandGuard.allow(PlayerExpandSource.DEEPLINK, touchedSinceResume = true))
         assertTrue(PlayerExpandGuard.allow(PlayerExpandSource.DEEPLINK, touchedSinceResume = false))

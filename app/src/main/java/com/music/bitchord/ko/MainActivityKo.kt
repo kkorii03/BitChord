@@ -1,11 +1,14 @@
 package com.music.bitchord.ko
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.util.Log
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.ViewTreeObserver
+import android.view.accessibility.AccessibilityManager
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import com.music.bitchord.BuildConfig
@@ -44,7 +47,30 @@ internal class KoMainActivityState {
         if (ev.actionMasked == MotionEvent.ACTION_DOWN) lastTouchDownNanos = System.nanoTime()
     }
 
+    /**
+     * A hardware Enter / D-pad centre / Space press is the keyboard's tap: it
+     * clicks the mini player without any `ACTION_DOWN` MotionEvent.
+     */
+    fun noteKey(event: KeyEvent) {
+        if (event.action == KeyEvent.ACTION_DOWN && event.keyCode in CLICK_KEYS) {
+            lastTouchDownNanos = System.nanoTime()
+        }
+    }
+
     fun touchedSinceResume(): Boolean = lastTouchDownNanos != 0L
+
+    /** TalkBack or Switch Access on: their clicks never send a touch down. */
+    fun accessibilityActive(context: Context): Boolean =
+        context.getSystemService(AccessibilityManager::class.java)?.isEnabled == true
+
+    private companion object {
+        val CLICK_KEYS = setOf(
+            KeyEvent.KEYCODE_ENTER,
+            KeyEvent.KEYCODE_DPAD_CENTER,
+            KeyEvent.KEYCODE_NUMPAD_ENTER,
+            KeyEvent.KEYCODE_SPACE,
+        )
+    }
 
     fun msSinceResume(): Long = (System.nanoTime() - resumedAtNanos) / 1_000_000L
 
