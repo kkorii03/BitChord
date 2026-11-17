@@ -112,9 +112,10 @@ data class OutputNegotiationResult(
  * - Built-in phone speaker is strictly capped at 16-bit PCM: some OEM speaker
  *   paths accept a float track and then distort it inside AudioFlinger, which
  *   the sink's rejection fallback cannot catch.
- * - External routes (Bluetooth, wired, USB, HDMI) take Float32 whenever float
- *   was requested, regardless of advertised encodings, because the framework
- *   mixer accepts float; the sink falls back to PCM16 only if rejected.
+ * - External routes (Bluetooth, wired, USB, HDMI) take Float32 when float was
+ *   requested and the route advertises it (or a Bluetooth codec carries more
+ *   than 16 bits); otherwise 24-bit packed when advertised, else 16-bit. See
+ *   [AudioOutputPolicy.shouldUseFloatOutput].
  * - Native source sample rate is prioritized to eliminate unnecessary SRC.
  * - Zero marketing claims: only factual, runtime-verified capabilities are reported.
  */

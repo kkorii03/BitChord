@@ -5,11 +5,13 @@ import com.music.bitchord.data.HomeFallbackRules
 import com.music.bitchord.data.LocalArtist
 import com.music.bitchord.data.LocalPlay
 import com.music.bitchord.data.model.normalizedArtistName
+import com.music.bitchord.data.stats.DayStats
 import com.music.bitchord.data.stats.ListeningStats
 import com.music.bitchord.data.stats.NameEntry
 import com.music.bitchord.data.stats.TrackEntry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.time.LocalDate
 import java.time.YearMonth
 
@@ -62,10 +64,15 @@ internal object KoListeningStatsRecent {
             if (!ListeningStats.koReady()) return@withContext emptyList()
             ListeningStats.koAwaitLastWrite()
             val (openKey, openTracks) = ListeningStats.koOpenTracks()
-            val fileTracks = ListeningStats.months()
-                .filter { it.toString() != openKey }
-                .flatMap { month -> ListeningStats.koRead(month.toString())?.tracks.orEmpty() }
-            mergeRecentTracks(fileTracks, openTracks, limit).also { tracks ->
+            val closedKeys = ListeningStats.months()
+                .map { it.toString() }
+                .filter { it != openKey }
+            // Months that are gone (pruned, replaced by a restore) leave the memo.
+            synchronized(closedMemo) { closedMemo.keys.retainAll(closedKeys.toSet()) }
+            val fileTracks = closedKeys.flatMap { key -> closedMonthTracks(key, limit) }
+            val merged = mergeRecentTracks(fileTracks, openTracks, limit)
+            // Only a memo-sized answer can hold memo rows; a larger one was decoded fresh.
+            (if (limit > CLOSED_MEMO_ROWS) merged else merged.map(::detached)).also { tracks ->
                 Debug.i(
                     RECENTS_TAG,
                     "recents: local read n=${tracks.size} top=" +
@@ -96,6 +103,59 @@ internal object KoListeningStatsRecent {
             .take(limit)
             .toList()
     }
+
+    /**
+     * A closed month's newest rows, and the file they were read from.
+     *
+     * Recents is rebuilt twice per track (start and counted play), also with
+     * the screen off. Before this memo every rebuild read and decoded every
+     * closed month file (up to 36) to find twenty rows, and the cost grew with
+     * each month of history. A closed month only changes through [ListeningStats]
+     * `write` (rollover, seed) or a restore, and both forget it here; the file's
+     * modified time and length catch any other writer.
+     *
+     * Keeping only the newest [CLOSED_MEMO_ROWS] per month gives the same
+     * answer for any limit up to that: every row dropped from a month sorts
+     * after that many distinct ids kept from the same month, so it can never
+     * reach the top [limit] of the merge.
+     */
+    private class ClosedMonth(val modified: Long, val length: Long, val newest: List<TrackEntry>)
+
+    private const val CLOSED_MEMO_ROWS = RECENT_LIMIT
+
+    /** Bounded by the month files on disk; guarded by itself. */
+    private val closedMemo = HashMap<String, ClosedMonth>()
+
+    /** Called after [ListeningStats] rewrote month [key]. */
+    internal fun forgetClosedMonth(key: String) {
+        synchronized(closedMemo) { closedMemo.remove(key) }
+    }
+
+    /** Called when a restore replaced the folder (committed or rolled back). */
+    internal fun forgetClosedMonths() {
+        synchronized(closedMemo) { closedMemo.clear() }
+    }
+
+    /** The rows of closed month [key] that can matter to a merge of [limit]. */
+    private fun closedMonthTracks(key: String, limit: Int): List<TrackEntry> {
+        // A larger ask (HQ library, autoplay metadata) reads the month whole, as before.
+        if (limit > CLOSED_MEMO_ROWS) return ListeningStats.koRead(key)?.tracks.orEmpty()
+        val file = File(ListeningStats.koDirectory(), "$key.json")
+        val modified = file.lastModified()
+        val length = file.length()
+        synchronized(closedMemo) { closedMemo[key] }
+            ?.takeIf { it.modified == modified && it.length == length }
+            ?.let { return it.newest }
+        // An unreadable or vanished month is not memoised, so it is asked again.
+        val bucket = ListeningStats.koRead(key) ?: return emptyList()
+        val newest = mergeRecentTracks(bucket.tracks, emptyList(), CLOSED_MEMO_ROWS)
+        synchronized(closedMemo) { closedMemo[key] = ClosedMonth(modified, length, newest) }
+        return newest
+    }
+
+    /** A copy a caller may change without touching the memo. */
+    private fun detached(track: TrackEntry): TrackEntry =
+        track.copy(days = track.days.mapValuesTo(LinkedHashMap<String, DayStats>()) { (_, day) -> day.copy() })
 
     /**
      * The artists with at least [minPlays] whole plays in the last [days] days,

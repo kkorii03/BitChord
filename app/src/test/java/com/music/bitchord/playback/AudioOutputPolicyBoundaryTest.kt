@@ -18,11 +18,16 @@ class AudioOutputPolicyBoundaryTest {
     )
 
     @Test
-    fun everyExternalRouteTakesFloatWhenRequested() {
+    fun everyExternalRouteTakesFloatOnlyWhenRequestedAndAdvertised() {
+        // v1.9's rule (kept over the fork's older "float on every external
+        // route"): a route that does not list PCM float stays PCM16, except a
+        // Bluetooth codec known to carry more than 16 bits (tested in
+        // AudioOutputPolicyTest).
         for (route in externalRoutes) {
             for (advertises in listOf(true, false)) {
-                assertTrue(
+                assertEquals(
                     "route=$route advertises=$advertises",
+                    advertises,
                     AudioOutputPolicy.shouldUseFloatOutput(
                         OutputPcmMode.FLOAT_32,
                         route,

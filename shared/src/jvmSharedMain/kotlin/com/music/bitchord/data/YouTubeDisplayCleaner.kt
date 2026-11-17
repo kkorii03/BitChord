@@ -281,7 +281,10 @@ internal object YouTubeDisplayCleaner {
         // so "Tokyo Dome - Song" keeps its whole title but a venue written
         // some other way ("Shinjuku Pit Inn - Song") still loses its prefix,
         // <widen when a transliteration table exists>.
-        if (split != null && !labelChannel && dropsCrossScriptCredit(split.first, rawChannel)) {
+        if (split != null &&
+            !labelChannel &&
+            dropsCrossScriptCredit(split.first, split.second, rawChannel, knownArtists)
+        ) {
             val songTitle = split.second.trim().trim(' ', '-', '_', '|', '·', '/')
             val byline = channelArtist.ifBlank { rawChannel }
             if (songTitle.isNotBlank() && !TrackMatcher.isSoundtrackCredit(byline)) {
@@ -423,8 +426,19 @@ internal object YouTubeDisplayCleaner {
      * Latin and the other not, and no packaging or venue word on the left —
      * "Live at Budokan - Song" and "Tokyo Dome - Song" are places, "King Gnu
      * - 一途" is a band.
+     *
+     * The song after the dash must be in the channel's script too, the left
+     * side must not read as a phrase, and the right side must not be a known
+     * act: "Shape of You - Ed Sheeran" on a Korean channel or "좋은 날 - 아이유"
+     * on a Latin-named one is "Song - Artist", and dropping the left side would
+     * title the row with the singer (review F3).
      */
-    private fun dropsCrossScriptCredit(left: String, channel: String): Boolean {
+    private fun dropsCrossScriptCredit(
+        left: String,
+        right: String,
+        channel: String,
+        knownArtists: Set<String>,
+    ): Boolean {
         val name = collapseAliases(left)
         val byline = cleanChannel(channel)
         if (name.isBlank() || byline.isBlank()) return false
@@ -432,7 +446,14 @@ internal object YouTubeDisplayCleaner {
         if (nameWords.size !in 2..4) return false
         if (byline.split(WHITESPACE).size > 4) return false
         if (nameWords.any { it.lowercase().trim(*PACKAGING_TRIM) in PACKAGING_CREDIT || isVenueWord(it) }) return false
-        return LATIN.containsMatchIn(name) != LATIN.containsMatchIn(byline)
+        if (readsAsAPhrase(nameWords)) return false
+        // Trailing tags ("[가사/Lyrics]") go first, so only the song is read.
+        val song = collapseAliases(right)
+        if (song.isBlank()) return false
+        val leftLatin = LATIN.containsMatchIn(name)
+        if (leftLatin == LATIN.containsMatchIn(song)) return false
+        if (isKnownCredit(song, channel, knownArtists)) return false
+        return leftLatin != LATIN.containsMatchIn(byline)
     }
 
     /**

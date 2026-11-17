@@ -338,6 +338,14 @@ object ListeningStats {
         com.music.bitchord.ko.KoListeningStatsChanges.emit() // [KO] listening-changes
     }
 
+    /** [KO] F1: a version swap's playthrough moves to the new id's row — see [com.music.bitchord.ko.KoListenVersionSwap]. */
+    internal fun koMoveListen(fromId: String, to: Song, playedMs: Long, countedPlay: Boolean): Boolean =
+        synchronized(lock) {
+            val bucket = open ?: return@synchronized false
+            com.music.bitchord.ko.KoListenVersionSwap.move(bucket.tracks, fromId, to, playedMs, countedPlay, System.currentTimeMillis())
+                .also { if (it) dirty = true }
+        }.also { if (it) com.music.bitchord.ko.KoListeningStatsChanges.emit() }
+
     internal suspend fun seedHistorical(plays: List<SeedPlay>): Int =
         com.music.bitchord.ko.KoListeningStatsSeed.seedHistorical(plays) // [KO] listening-seed
 
@@ -427,6 +435,7 @@ object ListeningStats {
                     // the only thing standing between that and a .tmp per flush.
                     if (file.delete() && temporary.renameTo(file)) Unit else temporary.delete()
                 }
+                com.music.bitchord.ko.KoListeningStatsRecent.forgetClosedMonth(key) // [KO] listening-recents
                 version++
             }.onFailure { Log.w(TAG, "Could not write listening bucket $key", it) }
         }
