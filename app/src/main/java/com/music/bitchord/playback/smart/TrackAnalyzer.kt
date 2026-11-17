@@ -127,6 +127,86 @@ internal fun persistableMerge(head: TrackAnalysis?, tail: TrackAnalysis?): Boole
     head != null && tail != null
 
 /**
+ * [KO] One downbeat list for the whole track from the two window passes: the
+ * head's bars, then the tail's. Taking the tail's alone left the incoming
+ * track's opening with no downbeat, so its cue could not snap to the grid and
+ * the pickup fallback landed on a tail bar, capped at a quarter of the song.
+ *
+ * Head bars within half a beat of the tail's first one or later are dropped,
+ * so a short track whose two windows overlap does not carry the same bar
+ * twice from two slightly different model readings. The result is ascending,
+ * which every reader (nearest lookups, binarySearch in beatAt) relies on.
+ */
+internal fun mergeWindowDownbeats(head: List<Double>, tail: List<Double>, beatInterval: Double): List<Double> {
+    val headBeats = head.filter { it.isFinite() }
+    val tailBeats = tail.filter { it.isFinite() }
+    val firstTail = tailBeats.minOrNull() ?: return headBeats.sorted()
+    val guard = if (beatInterval.isFinite() && beatInterval > 0) beatInterval / 2 else 0.25
+    return (headBeats.filter { it < firstTail - guard } + tailBeats).sorted().distinct()
+}
+
+/**
+ * [KO] [TrackAnalyzer.mergeWindows] for two real window results: the opening
+ * fields from [head], the outgoing ones from [tail]. A top-level function so
+ * the merge can be tested without a decoder.
+ */
+internal fun mergeWindowResults(
+    trackId: String,
+    head: TrackAnalysis,
+    tail: TrackAnalysis,
+    durationSeconds: Double,
+): TrackAnalysis {
+    // Both ends can report a key; keep the more confident reading rather
+    // than letting the tail's lower-confidence one win by default.
+    val keySource = when {
+        tail.key.isBlank() -> head
+        head.key.isBlank() -> tail
+        tail.keyConfidence >= head.keyConfidence -> tail
+        else -> head
+    }
+    val mergeBeatInterval = head.beatInterval.takeIf { it > 0 } ?: tail.beatInterval
+    // [KO] Both windows' bars (c2-analyzer-crossfade-3). The energy and
+    // low-energy curves and the vocal mask stay the tail's: readers assume
+    // one evenly sampled curve (audibleSecondsBetween divides its span by
+    // the sample count, the 85th-percentile reference is taken over the
+    // whole curve), and a head+tail curve with a gap breaks both.
+    val mergedDownbeats = mergeWindowDownbeats(head.downbeats, tail.downbeats, mergeBeatInterval)
+    // The tail window opens on whatever bar the last 45 s happens to start
+    // on, so its phrase list cannot be indexed from zero. Re-derive it on
+    // the head's absolute eight-bar grid before publishing.
+    val phraseAnchor = head.downbeats.firstOrNull() ?: mergedDownbeats.firstOrNull()
+    val mergedPhrases = phraseAnchor
+        ?.let { BeatTracker.phraseBoundaries(mergedDownbeats, it, mergeBeatInterval) }
+        .orEmpty()
+        .ifEmpty { tail.phraseBoundaries.ifEmpty { head.phraseBoundaries } }
+    return tail.copy(
+        trackId = trackId,
+        duration = maxOf(head.duration, tail.duration, durationSeconds),
+        bpm = tail.bpm.takeIf { it > 0 } ?: head.bpm,
+        beatInterval = tail.beatInterval.takeIf { it > 0 } ?: head.beatInterval,
+        beatConfidence = maxOf(tail.beatConfidence, head.beatConfidence),
+        downbeats = mergedDownbeats,
+        phraseBoundaries = mergedPhrases,
+        // [KO] The track's first beat is the head's; the tail's sits minutes
+        // in and was read as the incoming start when the head had no
+        // audible-start reading (incomingStartPoint).
+        firstBeat = head.firstBeat.takeIf { it != 0.0 } ?: tail.firstBeat,
+        key = keySource.key,
+        keyConfidence = keySource.keyConfidence,
+        loudnessLufs = tail.loudnessLufs.takeIf { it != 0.0 } ?: head.loudnessLufs,
+        audibleStartTime = head.audibleStartTime ?: tail.audibleStartTime,
+        pickupTime = head.pickupTime ?: tail.pickupTime,
+        introEndTime = head.introEndTime.takeIf { it > 0 } ?: tail.introEndTime,
+        mixInTime = head.mixInTime.takeIf { it > 0 } ?: tail.mixInTime,
+        mixInCandidates = head.mixInCandidates.ifEmpty { tail.mixInCandidates },
+        energyCurve = tail.energyCurve.ifEmpty { head.energyCurve },
+        lowEnergyCurve = tail.lowEnergyCurve.ifEmpty { head.lowEnergyCurve },
+        vocalActivityMask = tail.vocalActivityMask.ifEmpty { head.vocalActivityMask },
+        vocalProbability = tail.vocalProbability.takeIf { it > 0.0 } ?: head.vocalProbability,
+    )
+}
+
+/**
  * Stops the analysis a next-prep bundle started for a row that is no longer
  * next. A running pass is aborted at its next decode check; a queued one is
  * dropped when it reaches the front, and the next request for the same track
@@ -781,46 +861,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         }
         if (head == null) return tail!!
         if (tail == null) return head
-        // Both ends can report a key; keep the more confident reading rather
-        // than letting the tail's lower-confidence one win by default.
-        val keySource = when {
-            tail.key.isBlank() -> head
-            head.key.isBlank() -> tail
-            tail.keyConfidence >= head.keyConfidence -> tail
-            else -> head
-        }
-        val mergedDownbeats = tail.downbeats.ifEmpty { head.downbeats }
-        // The tail window opens on whatever bar the last 45 s happens to start
-        // on, so its phrase list cannot be indexed from zero. Re-derive it on
-        // the head's absolute eight-bar grid before publishing.
-        val phraseAnchor = head.downbeats.firstOrNull() ?: mergedDownbeats.firstOrNull()
-        val mergeBeatInterval = head.beatInterval.takeIf { it > 0 } ?: tail.beatInterval
-        val mergedPhrases = phraseAnchor
-            ?.let { BeatTracker.phraseBoundaries(mergedDownbeats, it, mergeBeatInterval) }
-            .orEmpty()
-            .ifEmpty { tail.phraseBoundaries.ifEmpty { head.phraseBoundaries } }
-        return tail.copy(
-            trackId = trackId,
-            duration = maxOf(head.duration, tail.duration, durationSeconds),
-            bpm = tail.bpm.takeIf { it > 0 } ?: head.bpm,
-            beatInterval = tail.beatInterval.takeIf { it > 0 } ?: head.beatInterval,
-            beatConfidence = maxOf(tail.beatConfidence, head.beatConfidence),
-            downbeats = mergedDownbeats,
-            phraseBoundaries = mergedPhrases,
-            firstBeat = tail.firstBeat.takeIf { it != 0.0 } ?: head.firstBeat,
-            key = keySource.key,
-            keyConfidence = keySource.keyConfidence,
-            loudnessLufs = tail.loudnessLufs.takeIf { it != 0.0 } ?: head.loudnessLufs,
-            audibleStartTime = head.audibleStartTime ?: tail.audibleStartTime,
-            pickupTime = head.pickupTime ?: tail.pickupTime,
-            introEndTime = head.introEndTime.takeIf { it > 0 } ?: tail.introEndTime,
-            mixInTime = head.mixInTime.takeIf { it > 0 } ?: tail.mixInTime,
-            mixInCandidates = head.mixInCandidates.ifEmpty { tail.mixInCandidates },
-            energyCurve = tail.energyCurve.ifEmpty { head.energyCurve },
-            lowEnergyCurve = tail.lowEnergyCurve.ifEmpty { head.lowEnergyCurve },
-            vocalActivityMask = tail.vocalActivityMask.ifEmpty { head.vocalActivityMask },
-            vocalProbability = tail.vocalProbability.takeIf { it > 0.0 } ?: head.vocalProbability,
-        )
+        return mergeWindowResults(trackId, head, tail, durationSeconds)
     }
 
     /**

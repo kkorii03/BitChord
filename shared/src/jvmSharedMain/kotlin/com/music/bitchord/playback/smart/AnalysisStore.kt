@@ -342,8 +342,12 @@ class AnalysisStore(
          * correlation floor, and tail phrase boundaries follow the head's
          * downbeat grid. The phone showed keyConf <= 0.09 and phrase=n on every
          * transition, so entries written before are dropped and re-earned.
+         * 5 (11-18, [KO]): the merged downbeats and first beat include the
+         * head window (they were the tail's only, so a stored track had no
+         * bar near its start), and a window written off after failures is no
+         * longer stored as if measured. Entries written before are dropped.
          */
-        const val SCHEMA_VERSION = 4
+        const val SCHEMA_VERSION = 5
 
         /** A few thousand tracks' worth, at tens of kilobytes each. */
         const val MAX_ENTRIES = 2_000

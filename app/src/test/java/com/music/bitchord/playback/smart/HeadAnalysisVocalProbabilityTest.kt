@@ -90,4 +90,38 @@ class HeadAnalysisVocalProbabilityTest {
         assertFalse(persistableMerge(head = head, tail = null))
         assertTrue(persistableMerge(head = head, tail = tail))
     }
+
+    // c2-analyzer-crossfade-3: the merge kept the tail's downbeats only, so the
+    // incoming track's opening had no bar to snap its cue to.
+    @Test
+    fun `the merged analysis keeps the opening's downbeats and first beat`() {
+        val head = TrackAnalysis(
+            status = TrackAnalysis.STATUS_READY,
+            trackId = "track",
+            duration = 240.0,
+            bpm = 120.0,
+            beatInterval = 0.5,
+            downbeats = listOf(1.0, 3.0),
+            firstBeat = 1.0,
+            audibleStartTime = 0.4,
+        )
+        val tail = head.copy(downbeats = listOf(200.0, 202.0), firstBeat = 199.5, audibleStartTime = null)
+
+        val merged = mergeWindowResults("track", head, tail, 240.0)
+
+        assertEquals(listOf(1.0, 3.0, 200.0, 202.0), merged.downbeats)
+        assertEquals(1.0, merged.firstBeat, 0.0)
+        assertTrue(1.0 in merged.phraseBoundaries)
+    }
+
+    @Test
+    fun `overlapping windows of a short track do not repeat a bar`() {
+        val merged = mergeWindowDownbeats(
+            head = listOf(1.0, 3.0, 5.0, 7.0),
+            tail = listOf(4.98, 7.01),
+            beatInterval = 0.5,
+        )
+
+        assertEquals(listOf(1.0, 3.0, 4.98, 7.01), merged)
+    }
 }
