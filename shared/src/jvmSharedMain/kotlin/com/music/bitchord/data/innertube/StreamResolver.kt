@@ -2304,7 +2304,8 @@ object StreamResolver {
      * returns what is needed to ask for the same track again.
      *
      * The URL is forgotten and, when InnerTubeX minted it, that client is
-     * excluded for this track — exactly as [onPlaybackRefused] always did. The
+     * excluded for this track — exactly as [onPlaybackRefused] always did,
+     * except for a URL minted on an older proxy route ([KO] review R1). The
      * difference is the returned record: the caller can now re-resolve the same
      * videoId instead of being left with only a dead URL.
      */
@@ -2323,12 +2324,21 @@ object StreamResolver {
         // them. A module's stream URL answering 404 is that server's business,
         // and must not bench a YouTube client.
         if (url.toHttpUrlOrNull()?.host?.endsWith("googlevideo.com") != true) return null
-        val extracted = InnerTubeXResolver.onRefused(url)
         // The stamp belongs to the exact URL that was refused, not to whatever
         // is currently cached for the same track: a re-resolve can have left a
         // different URL under this videoId, and inheriting its generation would
         // fetch the retried URL over a route that never minted it (403).
         val matched = recent.entries.firstOrNull { it.value.url == url }
+        // [KO] review R1: a URL minted on a proxy route that is no longer in
+        // force has its bytes fetched over the wrong route (see
+        // ProxyPlayback.usesProxyFor), so its 403 is about the route, not the
+        // client. Forget the URL but do not bench the client for ten minutes.
+        val routeStamp = ProxyPlayback.registeredGenerationFor(url) ?: matched?.value?.proxyGeneration // [KO] review R1
+        val staleRoute = routeStamp != null && !ProxyPlayback.isCurrentRoute(routeStamp) // [KO] review R1
+        val extracted = InnerTubeXResolver.onRefused(url, bench = !staleRoute) // [KO] review R1
+        if (staleRoute && extracted != null) {
+            TrackLog.w(TAG, "refused ${extracted.videoId} on an older proxy route; keeping ${extracted.profileId}") // [KO] review R1
+        }
         val videoId = extracted?.videoId
             ?: matched?.key
             ?: return null

@@ -634,9 +634,14 @@ object InnerTubeXResolver {
      * @return what the URL was minted from, or null when InnerTubeX did not
      *   mint it. The caller needs the videoId to re-resolve the same track and
      *   the format hints to ask for the same rendition.
+     * @param bench false when the refusal is about the route, not the client
+     *   (the URL was minted on a proxy route that is no longer in force): the
+     *   URL is forgotten, but the client is not skipped for the track.
      */
-    fun onRefused(url: String): Extracted? {
+    fun onRefused(url: String, bench: Boolean = true): Extracted? {
         val refused = minted.remove(url) ?: return null
+        // [KO] review R1: a route-change 403 says nothing about the client or its cipher.
+        if (!bench) return refused
         exclude(refused.videoId, refused.profileId)
         // A refused ciphered URL is the signal the remote cipher config may be stale; it has its own cooldown.
         scope.launch { runCatching { cipherService.refreshAfterStreamRejection() } }
@@ -666,6 +671,9 @@ object InnerTubeXResolver {
         entries.entries.removeAll { it.value <= now }
         return entries.keys.toSet()
     }
+
+    /** [KO] review R1 test seam: the clients skipped for [videoId] now. */
+    internal fun excludedForTest(videoId: String): Set<String> = excludedFor(videoId)
 
     private const val PLAYER_CONFIG_URL =
         "https://raw.githubusercontent.com/ZemerTeam/zemer-cipher/master/library/src/main/assets/player_configs.json"
