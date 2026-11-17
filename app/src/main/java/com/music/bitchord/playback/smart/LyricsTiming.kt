@@ -3088,7 +3088,7 @@ object LyricsTiming {
         // longer part of the key: two callers that read the cache a moment
         // apart could ask for different sets and both decode the audio. A
         // manual tap is kept apart so it can still force a fresh answer.
-        val flight = if (automatic) "$videoId:$key" else "$videoId:$key:manual"
+        val flight = aiFlightKey(videoId, key, automatic)
         var fresh: kotlinx.coroutines.Deferred<Adjustment.Mapped?>? = null
         val running = synchronized(aiInFlight) {
             aiInFlight[flight] ?: run {
@@ -3124,8 +3124,19 @@ object LyricsTiming {
         return adjustment
     }
 
+    /**
+     * [placeWithAi]'s flight for these lyrics and sound. [KO] TR7 T2: carries
+     * the song check's generation, because a flight started before
+     * [resetSongCheck] replaced the file has its writes dropped as stale; an
+     * ask for the new file that joined it got no answer for the rest of the play.
+     */
+    internal fun aiFlightKey(videoId: String, key: Int, automatic: Boolean): String {
+        val flight = "$videoId:$key:g${songSyncGenerationOf(videoId)}"
+        return if (automatic) flight else "$flight:manual"
+    }
+
     private val aiScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val aiInFlight = ConcurrentHashMap<String, kotlinx.coroutines.Deferred<Adjustment.Mapped?>>()
+    private val aiInFlight =ConcurrentHashMap<String, kotlinx.coroutines.Deferred<Adjustment.Mapped?>>()
 
     /**
      * Videos whose automatic request was turned away because

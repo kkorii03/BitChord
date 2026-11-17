@@ -82,6 +82,24 @@ class LyricsTimingStaleAiAnswerTest {
         assertTrue(LyricsTiming.heardWordsFor(context, "video").isEmpty())
     }
 
+    // Review 11-18: the automatic flight key had no generation, so an ask for
+    // the new file joined the old file's flight, whose write is dropped.
+    @Test
+    fun `an ask after the file is replaced does not join the old file's flight`() = runBlocking {
+        val before = LyricsTiming.aiFlightKey("video", key, automatic = true)
+        assertEquals(before, LyricsTiming.aiFlightKey("video", key, automatic = true))
+        LyricsTiming.resetSongCheck(context, "video")
+        val after = LyricsTiming.aiFlightKey("video", key, automatic = true)
+        assertFalse(before == after)
+        assertFalse(after == LyricsTiming.aiFlightKey("video", key, automatic = false))
+        // The busy check still finds the flight by its video prefix.
+        assertTrue(after.startsWith("video:"))
+        var root = File(System.getProperty("user.dir")).absoluteFile
+        while (!File(root, "settings.gradle.kts").isFile) root = root.parentFile ?: error("repo root not found")
+        val source = File(root, "app/src/main/java/com/music/bitchord/playback/smart/LyricsTiming.kt").readText()
+        assertTrue("placeWithAi keys its flight by generation", "val flight = aiFlightKey(videoId, key, automatic)" in source)
+    }
+
     @Test
     fun `a quick answer from the file still there is kept`() = runBlocking {
         LyricsTiming.resetSongCheck(context, "video")
