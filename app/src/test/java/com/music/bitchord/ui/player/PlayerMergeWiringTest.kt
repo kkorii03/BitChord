@@ -38,6 +38,29 @@ class PlayerMergeWiringTest {
         )
     }
 
+    // Sweep 11-18 (SW7-3): the lyrics retry hook ran only from openLyrics, so a
+    // player restored onto lyrics never retried a transient miss.
+    @Test
+    fun `a player restored onto lyrics asks the lyrics retry once`() {
+        val source = source("sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/player/NowPlayingScreen.kt")
+        assertTrue(
+            "the restored lyrics panel must run the open hook",
+            Regex("""LaunchedEffect\(Unit\) \{\s*if \(lyricsOpen\) onLyricsOpen\?\.invoke\(\)""").containsMatchIn(source),
+        )
+    }
+
+    // Sweep 11-18 (SW7-4): the downloaded-artwork key stat'ed the file on the
+    // main thread for every downloaded row in a list.
+    @Test
+    fun `downloaded artwork keys are read off the main thread`() {
+        val source = source("app/src/main/java/com/music/bitchord/ui/components/RemoteArtwork.kt")
+        assertTrue(
+            "the file stat must run on IO",
+            "withContext(Dispatchers.IO) { versionedFileArtworkNow(value) }" in source,
+        )
+        assertTrue("the stat helper must be the IO wrapper", "private suspend fun versionedFileArtwork(" in source)
+    }
+
     @Test
     fun `canvas clips keep their loop window`() {
         val source = source("app/src/main/java/com/music/bitchord/ui/player/CanvasArtworkPlayer.kt")

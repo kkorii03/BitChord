@@ -1219,6 +1219,13 @@ fun NowPlayingScreen(
         lyricsOpen = true
         queueOpen = false
     }
+    // [KO] SW7-3: a player restored straight onto lyrics never ran openLyrics,
+    // so the retry after a transient miss never fired for listeners who keep
+    // the panel open. Once per player instance; not keyed on the song, whose
+    // lyrics request may still be the previous one for a moment.
+    LaunchedEffect(Unit) {
+        if (lyricsOpen) onLyricsOpen?.invoke()
+    }
     val closeLyrics: () -> Unit = {
         if (lyricsOpen) TrackLog.d("BitChord", "cmd: lyrics close from ui", about = song.videoId)
         lyricsControlsOpen = false

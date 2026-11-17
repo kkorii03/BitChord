@@ -15,8 +15,10 @@ import com.music.bitchord.data.remote.DownloadedArtworkEvents
 import com.music.bitchord.data.remote.DownloadedArtworkResolver
 import com.music.bitchord.data.remote.RemoteArtworkStore
 import java.io.File
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * A drawable art URL for [song]: its own thumbnail when it has one, else the
@@ -94,7 +96,15 @@ fun rememberRemoteArtworkUrl(song: Song?): String? {
  * A sidecar rewritten at the same path needs a different key to be read again;
  * the query is stripped by the file reader, so only the cache sees it.
  */
-private fun versionedFileArtwork(value: String?): String? {
+private suspend fun versionedFileArtwork(value: String?): String? =
+    // [KO] SW7-4: three stat calls per downloaded row; off the main thread.
+    if (value == null || !value.startsWith("file:", ignoreCase = true)) {
+        value
+    } else {
+        withContext(Dispatchers.IO) { versionedFileArtworkNow(value) }
+    }
+
+private fun versionedFileArtworkNow(value: String?): String? {
     value ?: return null
     if (!value.startsWith("file:", ignoreCase = true)) return value
     val file = runCatching { Uri.parse(value).path?.let(::File) }.getOrNull() ?: return value
