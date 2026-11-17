@@ -3347,7 +3347,7 @@ private fun BitChordApp(
                                         null
                                     },
                                     contentPadding = listPadding,
-                                    isPlaying = player.isPlaying,
+                                    isPlaying = player.isPlaying && artworkMotion, // [KO] F3-1: still under Now Playing
                                 )
                             }
                         } else if (pageRoute == AppRoute.Moods) {
@@ -4218,7 +4218,7 @@ private fun BitChordApp(
                                 contentPadding = listPadding,
                                 links = libraryLinks(),
                                 deviceItems = libraryDeviceItems(downloadedReleases) + localPlaylistItems,
-                                isPlaying = player.isPlaying,
+                                isPlaying = player.isPlaying && artworkMotion, // [KO] F3-1: still under Now Playing
                             )
                             }
                         }
