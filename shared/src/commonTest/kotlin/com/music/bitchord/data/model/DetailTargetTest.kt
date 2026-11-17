@@ -71,6 +71,14 @@ class DetailTargetTest {
     }
 
     @Test
+    fun `a hidden-only page does not replace the downloaded tracks`() {
+        val hiddenOnly = detailListingState(emptyList(), listOf(song("video")), "No tracks here")
+        assertFalse(hiddenOnly.replacesDownloadedPreview())
+        assertFalse(detailListingState(emptyList(), emptyList(), "No tracks here").replacesDownloadedPreview())
+        assertTrue(detailListingState(listOf(song("song")), emptyList(), "No tracks here").replacesDownloadedPreview())
+    }
+
+    @Test
     fun `tracks keep precedence over hidden videos`() {
         val songs = listOf(song("song"))
         val state = detailListingState(songs, listOf(song("video")), "No tracks here")

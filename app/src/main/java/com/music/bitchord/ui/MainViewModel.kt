@@ -57,6 +57,7 @@ import com.music.bitchord.data.model.mergeAccountIdentity
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.DetailPage
 import com.music.bitchord.data.model.detailListingState
+import com.music.bitchord.data.model.replacesDownloadedPreview
 import com.music.bitchord.data.model.firstArtworkOrStill
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.HomeSource
@@ -3085,7 +3086,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // failed or empty fetch leaves the downloaded tracks up.
             _detailStack.value = _detailStack.value.map {
                 if (it.browseId == browseId &&
-                    (it.songs is UiState.Loading || (onDevice.isNotEmpty() && state is UiState.Success))
+                    (it.songs is UiState.Loading || (onDevice.isNotEmpty() && state.replacesDownloadedPreview()))
                 ) {
                     it.copy(
                         songs = state,

@@ -42,3 +42,11 @@ fun detailListingState(
 ): UiState<List<Song>> =
     if (songs.isEmpty() && hiddenSongs.isEmpty() && !hasShelves) UiState.Error(emptyMessage)
     else UiState.Success(songs)
+
+/**
+ * Whether a fetched listing may replace the downloaded copy already on screen.
+ * Only one with tracks of its own: a page of hidden videos alone is
+ * [detailListingState]'s Success(empty), and must not blank the downloaded tracks.
+ */
+fun UiState<List<Song>>.replacesDownloadedPreview(): Boolean =
+    this is UiState.Success && data.isNotEmpty()
