@@ -2,6 +2,7 @@ package com.music.bitchord.ui
 
 import android.app.Application
 import android.content.Context
+import com.music.bitchord.data.lyrics.EmbeddedLyrics
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsOverrideFile
 import com.music.bitchord.data.lyrics.LyricsOverrideStore
@@ -15,6 +16,7 @@ import com.music.bitchord.testutil.FakePreferences
 import java.io.File
 import java.nio.file.Files
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExecutorCoroutineDispatcher
@@ -32,6 +34,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -120,8 +123,8 @@ class LyricsControllerSavedSheetTest {
         }
     }
 
-    private suspend fun loadDownloaded() = withContext(mainDispatcher) {
-        controller.loadLyrics("video", "Song", "Someone", 200_000L, localUri = file)
+    private suspend fun loadDownloaded(id: String = "video") = withContext(mainDispatcher) {
+        controller.loadLyrics(id, "Song", "Someone", 200_000L, localUri = file)
     }
 
     private suspend fun waitForSaved(check: (LyricsOverrideFile.Stored) -> Boolean): LyricsOverrideFile.Stored =
@@ -229,18 +232,132 @@ class LyricsControllerSavedSheetTest {
         )
     }
 
+    /** LYR7-C: a provider sheet other than the saved one makes the saved sheet's check stale (guard). */
     @Test
-    fun `online a downloaded song forgets its saved sheet's check before the lookup`() = runBlocking {
+    fun `online another provider sheet settling forgets the saved sheet's check`() = runBlocking {
+        LyricsOverrideStore.write(context, "video", saved, LyricsSource.KUGOU)
+        seedChecked(key(saved, "video|file"))
+        answer(LyricsSource.KUGOU, fresh, LyricsSource.VIBE, other)
+
+        loadDownloaded()
+
+        // Set once the provider sheet is published, after the check was dropped.
+        withTimeout(10_000L) { controller.lyricsChecked.first { it } }
+        assertEquals(LyricsSource.KUGOU, controller.lyricsSource.value)
+        assertEquals(
+            KoSavedLyrics.SavedCheck.KEEP,
+            LyricsTiming.forgetSavedSheetCheck(context, "video", saved, isVideo = false),
+        )
+    }
+
+    /**
+     * LYR7-C (RG6 LYR6-C): the check used to be dropped before the lookup, so a song every provider
+     * misses lost its saved sheet's answer on every online play and bought a new paid re-check.
+     */
+    @Test
+    fun `every provider missing online keeps the check the saved sheet bought`() = runBlocking {
+        LyricsOverrideStore.write(context, "video", saved, LyricsSource.KUGOU)
+        seedChecked(key(saved, "video|file"))
+        controller.lyricsLookup = { _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ -> null }
+
+        loadDownloaded()
+
+        withTimeout(10_000L) { controller.lyricsChecked.first { it } }
+        assertEquals(saved.map { it.text }, controller.lyrics.value!!.map { it.text })
+        // Before LYR7: KEEP, the answer already gone.
+        assertEquals(
+            KoSavedLyrics.SavedCheck.FORGET_ANSWER,
+            LyricsTiming.forgetSavedSheetCheck(context, "video", saved, isVideo = false),
+        )
+    }
+
+    /**
+     * LYR7-C: the provider answering the very lines the saved sheet holds (start and words) is the
+     * sheet that check measured on this file; its answer still holds and is not bought again.
+     */
+    @Test
+    fun `the saved sheet coming back from a provider keeps its check`() = runBlocking {
         LyricsOverrideStore.write(context, "video", saved, LyricsSource.KUGOU)
         seedChecked(key(saved, "video|file"))
         answer(LyricsSource.KUGOU, saved, LyricsSource.VIBE, other)
 
         loadDownloaded()
 
-        withTimeout(10_000L) { controller.lyricsSource.first { it == LyricsSource.KUGOU } }
+        withTimeout(10_000L) { controller.lyricsChecked.first { it } }
+        assertEquals(LyricsSource.KUGOU, controller.lyricsSource.value)
+        // Before LYR7: KEEP, dropped before the lookup whatever it answered.
         assertEquals(
-            KoSavedLyrics.SavedCheck.KEEP,
+            KoSavedLyrics.SavedCheck.FORGET_ANSWER,
             LyricsTiming.forgetSavedSheetCheck(context, "video", saved, isVideo = false),
         )
+    }
+
+    /**
+     * LYR7-B (RG6 LYR6-B): with the listener's own pick saved, the picked provider missing let the
+     * lookup's best (another provider) replace it, forced, and kept the words from judging it.
+     */
+    @Test
+    fun `the listener's picked provider missing online keeps their saved pick on screen`() = runBlocking {
+        LyricsOverrideStore.write(context, "video", other, LyricsSource.VIBE, LyricsOverrideFile.Kind.USER)
+        controller.lyricsLookup = { _, _, _, _, _, _, _, _, _, _, onResult, _, _, _, _, _, _ ->
+            LyricsRepository.Result(LyricsSource.KUGOU, fresh).also { onResult?.invoke(LyricsSource.KUGOU, it, null) }
+        }
+
+        loadDownloaded()
+
+        withTimeout(10_000L) { controller.lyricsChecked.first { it } }
+        delay(300L)
+        // Before LYR7: KuGou's sheet, credited to KuGou.
+        assertEquals(other.map { it.text }, controller.lyrics.value!!.map { it.text })
+        assertNull(controller.lyricsSource.value)
+        val copy = LyricsOverrideStore.read(context, "video")!!
+        assertEquals(LyricsOverrideFile.Kind.USER, copy.kind)
+        assertEquals(LyricsSource.VIBE, copy.source)
+        assertEquals(other.map { it.text }, copy.lines.map { it.text })
+    }
+
+    /** Sixteen lines of four words: enough heard words and lines for the words' judge. Made-up tokens. */
+    private fun wordy(tag: String): List<LyricLine> =
+        List(16) { i -> LyricLine(5_000L + i * 4_000L, "${tag}a$i ${tag}b$i ${tag}c$i ${tag}d$i") }
+
+    /** Words already heard from this recording: [lines]' own, at their starts (as LyricsControllerSheetChoiceTest). */
+    private fun seedHeard(lines: List<LyricLine>, videoId: String) {
+        val words = lines.flatMap { line ->
+            line.text.split(' ').mapIndexed { i, word ->
+                val at = line.timeMs + i * 500L
+                """{"t":"$word","s":$at,"e":${at + 400L}}"""
+            }
+        }.joinToString(",")
+        openStore("""{"entries":{"$videoId":{"heardCheckKey":1,"heardCheckWords":[$words]}}}""")
+    }
+
+    /**
+     * LYR7-A (RG6 LYR6-A): online, a provider's sheet of another song was saved as the downloaded
+     * song's copy before any words were heard. The words then rejected it, but the reload found the
+     * saved copy and showed it again as the fallback, over the file's own right sheet.
+     */
+    @Test
+    fun `a provider sheet the words reject is not kept, and the file's own sheet comes back`() = runBlocking {
+        val id = "lyr7-rejected"
+        val own = wordy("ow")
+        val wrong = wordy("wr")
+        seedHeard(own, id)
+        controller.fileLyrics = { _, _ -> EmbeddedLyrics.Embedded(own, LyricsSource.VIBE, id) }
+        val looks = AtomicInteger()
+        controller.lyricsLookup = { _, _, _, _, _, _, _, _, _, _, onResult, _, _, _, _, _, _ ->
+            if (looks.incrementAndGet() == 1) {
+                LyricsRepository.Result(LyricsSource.KUGOU, wrong).also { onResult?.invoke(LyricsSource.KUGOU, it, null) }
+            } else {
+                null
+            }
+        }
+
+        loadDownloaded(id)
+
+        withTimeout(10_000L) { while (looks.get() < 2) delay(50L) }
+        // Before LYR7 the reload put the rejected sheet back from its saved copy, and this timed out.
+        withTimeout(10_000L) { controller.lyrics.first { shown -> shown?.map { it.text } == own.map { it.text } } }
+        val copy = LyricsOverrideStore.read(context, id)
+        assertTrue(copy == null || copy.lines.map { it.text } != wrong.map { it.text })
     }
 }

@@ -12377,6 +12377,7 @@ class PlaybackService : MediaLibraryService() {
             // every provider, and is what a re-check writes instead of touching
             // the audio file. See LyricsOverrideFile.
             val override = LyricsOverrideStore.read(this@PlaybackService, currentSong.videoId)
+                ?.takeUnless { com.music.bitchord.ko.KoSavedLyrics.rejectedCopy(currentSong.videoId, it) } // [KO] LYR7-A
             suspend fun readSaved() {
                 if (override != null) {
                     lines = override.lines

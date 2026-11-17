@@ -80,6 +80,9 @@ class LyricsController(
     /** The repository call; a seam for tests, as [LyricsRepository.transcriber] is there. */
     internal var lyricsLookup: LyricsLookup = LyricsRepository::lyrics
 
+    /** [KO] LYR7: a downloaded file's own sheet; a seam for tests, as [lyricsLookup] is. */
+    internal var fileLyrics: suspend (android.content.Context, String) -> EmbeddedLyrics.Embedded? = EmbeddedLyrics::withSource
+
     /**
      * The controller's own backstop on the whole lookup, a beat past the
      * repository's deadline so the repository's best-so-far answer still wins.
@@ -489,7 +492,7 @@ class LyricsController(
             // downloaded file's tags or `lyrics.lrc`, and before any provider
             // lookup. It also keeps a re-checked sheet out of the audio file,
             // which may be the one playing — see LyricsOverrideFile.
-            val override = LyricsOverrideStore.read(app, videoId)
+            val override = LyricsOverrideStore.read(app, videoId)?.takeUnless { com.music.bitchord.ko.KoSavedLyrics.rejectedCopy(videoId, it) } // [KO] LYR7-A
             sheetByHand = override?.kind == LyricsOverrideFile.Kind.USER
             // [KO] LYR6: online, a downloaded song's saved sheet is only the fallback when every provider misses.
             val providersFirst = com.music.bitchord.ko.KoSavedLyrics.providersFirst(localUri != null, com.music.bitchord.ko.KoNetworkPolicy.isOffline(app), previewOnly)
@@ -555,7 +558,7 @@ class LyricsController(
             // recording. The caller has already had the player's length for
             // every track before this job starts.
             if (localUri != null) {
-                EmbeddedLyrics.withSource(app, localUri)?.takeUnless {
+                fileLyrics(app, localUri)?.takeUnless {
                     mismatchReloadedFor == "$videoId|${it.lines.hashCode()}"
                 }?.let { file ->
                     val embedded = file.lines
@@ -1770,8 +1773,11 @@ class LyricsController(
         file: EmbeddedLyrics.Embedded?,
         localUri: String?,
     ) {
+        // [KO] LYR7-A: a sheet the words already proved another song's is never kept as the copy. Inside
+        // the lock, so a rejection landing while this waited is seen (see dropRejectedCopy).
+        if (!byHand && com.music.bitchord.data.lyrics.LyricsMismatch.isRejected(videoId, sheet.source, sheet.lines)) return
         val override = LyricsOverrideStore.read(app, videoId)
-        val own = if (override == null && localUri != null) file ?: EmbeddedLyrics.withSource(app, localUri) else null
+        val own = if (override == null && localUri != null) file ?: fileLyrics(app, localUri) else null
         val kind = com.music.bitchord.ko.KoSavedLyrics.kindToSave(
             savedLines = override?.lines ?: own?.lines,
             savedSource = override?.source ?: own?.source,
@@ -1789,9 +1795,10 @@ class LyricsController(
 
     /**
      * [KO] LYR6: a downloaded song online. The providers are asked before its saved sheet; the
-     * listener's own pick is asked for by name. The check the saved sheet bought is forgotten so
-     * it cannot land on the provider's sheet, and what settles on screen becomes the saved copy.
-     * False when every provider missed: the caller then shows the saved sheet as the last fallback.
+     * listener's own pick is asked for by name. The check the saved sheet bought is forgotten once
+     * another sheet settles, so it cannot land on it, and what settles on screen becomes the saved copy.
+     * False when every provider missed, or the listener's picked one did: the caller then shows the
+     * saved sheet as the last fallback.
      */
     private suspend fun showProvidersFirst(
         videoId: String,
@@ -1800,13 +1807,24 @@ class LyricsController(
         override: LyricsOverrideFile.Stored?,
         lookUp: suspend () -> LyricsRepository.Result?,
     ): Boolean {
-        com.music.bitchord.ko.KoSavedLyrics.preselected(override?.kind, override?.source)?.let { selectedLyricsSource = it }
-        val file = if (override == null) EmbeddedLyrics.withSource(app, localUri) else null
-        (override?.lines ?: file?.lines)?.let { saved -> LyricsTiming.forgetSavedSheetCheck(app, videoId, saved, isVideo) }
+        val preselected = com.music.bitchord.ko.KoSavedLyrics.preselected(override?.kind, override?.source)
+        preselected?.let { selectedLyricsSource = it }
+        val file = if (override == null) fileLyrics(app, localUri) else null
         val selected = lookUp() ?: run {
             TrackLog.i("BitChord", "lyrics: providers missed, saved sheet is the fallback saved=${override != null || file != null}", about = videoId)
             return false
         }
+        // [KO] LYR7-B: the picked provider missed and the lookup's best is another's: the pick's saved copy, not that.
+        if (com.music.bitchord.ko.KoSavedLyrics.pickMissed(preselected, selectedLyricsSource, selected.source)) {
+            TrackLog.i("BitChord", "lyrics: picked ${preselected?.label} missed, saved pick kept over ${selected.source.label}", about = videoId)
+            return false
+        }
+        // [KO] LYR7-C: only now that a provider sheet settles on screen, and only when it is not the saved
+        // sheet itself. Unforced, publishLyrics keeps a sheet already up (an early answer) over this one.
+        val settles = rawLyricsResult?.takeIf { selectedLyricsSource == null && _lyrics.value != null } ?: selected
+        (override?.lines ?: file?.lines)
+            ?.takeIf { com.music.bitchord.ko.KoSavedLyrics.savedCheckStale(it, settles.lines) }
+            ?.let { LyricsTiming.forgetSavedSheetCheck(app, videoId, it, isVideo) }
         publishLyrics(selected, force = selectedLyricsSource != null)
         _lyricsChecked.value = true
         // What settled on screen: a late answer may have stayed a candidate (publishLyrics).
@@ -1814,6 +1832,19 @@ class LyricsController(
         keepSheet(videoId, shown, byHand = shown.source == selectedLyricsSource, reason = "online-refresh", file = file)
         return true
     }
+
+    /**
+     * [KO] LYR7-A: drops the automatic copy ([LyricsOverrideStore.removeRecheck]) of a sheet the words
+     * just rejected: the one on screen when it came from the store ([fromStore]), or the copy holding
+     * these very lines, which the online refresh ([showProvidersFirst]) saved before any words were
+     * heard. Under [keepSheetLock] and after the rejection is remembered, so a save of it still
+     * running lands first and is dropped here, and one waiting sees the rejection and writes nothing.
+     */
+    private suspend fun dropRejectedCopy(videoId: String, lines: List<LyricLine>, fromStore: Boolean): Boolean =
+        keepSheetLock.withLock {
+            (fromStore || com.music.bitchord.ko.KoSavedLyrics.sameLines(LyricsOverrideStore.read(app, videoId)?.lines, lines)) &&
+                LyricsOverrideStore.removeRecheck(app, videoId)
+        }
 
     /** [KO] LYR6: a sheet picked in the chooser becomes the song's saved copy. */
     private fun keepPicked(result: LyricsRepository.Result) {
@@ -1894,7 +1925,8 @@ class LyricsController(
             )
             // A file's or a re-check's sheet came through no lookup, so nothing judged it and it
             // stayed wrong on every play. The reload passes a file's sheet over (mismatchReloadedFor).
-            if (result == null && LyricsOverrideStore.removeRecheck(app, request.videoId)) {
+            // [KO] LYR7-A: so is the copy the online refresh saved of a provider's sheet now rejected.
+            if (dropRejectedCopy(request.videoId, lines, fromStore = result == null)) {
                 TrackLog.i("BitChord", "lyrics-fix: ${request.videoId} saved=recheck -> none reason=bad-align", about = request.videoId) // [KO] LYR6
             }
             // [KO] U3: the lock screen drops the rejected sheet too, until the reload shows the next.

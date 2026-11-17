@@ -1,6 +1,7 @@
 package com.music.bitchord.ko
 
 import com.music.bitchord.data.lyrics.LyricLine
+import com.music.bitchord.data.lyrics.LyricsMismatch
 import com.music.bitchord.data.lyrics.LyricsOverrideFile
 import com.music.bitchord.data.lyrics.LyricsSource
 
@@ -97,4 +98,41 @@ object KoSavedLyrics {
         answerForSavedSheet -> SavedCheck.FORGET_ANSWER
         else -> SavedCheck.FORGET_VERSION
     }
+
+    /**
+     * [KO] LYR7-C: whether a provider sheet about to be shown online makes the saved sheet's check
+     * stale. Only a sheet that will be shown can (a miss shows the saved sheet, whose check then
+     * stays). The same lines, by start time and words, are the sheet that check measured on this
+     * file, so its answer and version still hold; dropping them bought a new paid check on every
+     * online play. Other words, or the same words on other times (their answer key is the text, so
+     * it would land on the wrong times), make it stale.
+     */
+    fun savedCheckStale(savedLines: List<LyricLine>?, shownLines: List<LyricLine>): Boolean =
+        savedLines != null && !sameLines(savedLines, shownLines)
+
+    /**
+     * [KO] LYR7-B: the listener's own pick ([preselected]) is still the pick in force and the
+     * lookup's answer came from another provider: the picked provider missed (a timeout, a lost
+     * race, switched off). That answer must not stand in for the pick; the saved copy is shown.
+     */
+    fun pickMissed(preselected: LyricsSource?, selectedNow: LyricsSource?, answered: LyricsSource): Boolean =
+        preselected != null && selectedNow == preselected && answered != preselected
+
+    /**
+     * [KO] LYR7-A: an automatic copy the words heard have already proved is another song's. The
+     * online refresh saves a provider's sheet before any words are heard; once they reject it,
+     * it must not come back as the saved fallback, here or on the lock screen. A listener's own
+     * pick is theirs, whatever was heard.
+     */
+    fun rejectedCopy(videoId: String, stored: LyricsOverrideFile.Stored): Boolean =
+        stored.kind == LyricsOverrideFile.Kind.RECHECK &&
+            stored.source?.let { LyricsMismatch.isRejected(videoId, it, stored.lines) } == true
+
+    /**
+     * The same sheet by what a copy keeps and a rejection is keyed on: each line's start and words.
+     * Display-only fields and word stamps aside, so a copy read back from the file compares equal.
+     */
+    fun sameLines(a: List<LyricLine>?, b: List<LyricLine>?): Boolean =
+        a != null && b != null && a.size == b.size &&
+            a.indices.all { a[it].timeMs == b[it].timeMs && a[it].text == b[it].text }
 }

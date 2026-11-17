@@ -1,7 +1,9 @@
 package com.music.bitchord.ko
 
 import com.music.bitchord.data.lyrics.LyricLine
+import com.music.bitchord.data.lyrics.LyricsMismatch
 import com.music.bitchord.data.lyrics.LyricsOverrideFile.Kind
+import com.music.bitchord.data.lyrics.LyricsOverrideFile.Stored
 import com.music.bitchord.data.lyrics.LyricsSource
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -93,5 +95,42 @@ class KoSavedLyricsTest {
         assertEquals(KoSavedLyrics.SavedCheck.KEEP, KoSavedLyrics.savedCheck(0, answerForSavedSheet = true))
         assertEquals(KoSavedLyrics.SavedCheck.FORGET_ANSWER, KoSavedLyrics.savedCheck(1, answerForSavedSheet = true))
         assertEquals(KoSavedLyrics.SavedCheck.FORGET_VERSION, KoSavedLyrics.savedCheck(1, answerForSavedSheet = false))
+    }
+
+    /** LYR7-B: the listener's picked provider missed; another's answer does not stand in for it. */
+    @Test
+    fun `a picked provider that missed is not stood in for by another`() {
+        assertTrue(KoSavedLyrics.pickMissed(LyricsSource.VIBE, LyricsSource.VIBE, LyricsSource.KUGOU))
+        assertFalse(KoSavedLyrics.pickMissed(LyricsSource.VIBE, LyricsSource.VIBE, LyricsSource.VIBE))
+        // Picked again by hand while the lookup ran: that pick decides, as on a streamed song.
+        assertFalse(KoSavedLyrics.pickMissed(LyricsSource.VIBE, LyricsSource.KUGOU, LyricsSource.KUGOU))
+        assertFalse(KoSavedLyrics.pickMissed(null, null, LyricsSource.KUGOU))
+    }
+
+    /** LYR7-C: only other lines make the saved sheet's check stale. */
+    @Test
+    fun `the saved sheet's check is stale only for other lines`() {
+        // Display-only fields are the same sheet.
+        assertFalse(KoSavedLyrics.savedCheckStale(old, old.map { it.copy(timingSource = it, wordsEstimated = true) }))
+        assertTrue(KoSavedLyrics.savedCheckStale(old, new))
+        // The same words on other times: the answer, keyed by the words, would land on the wrong times.
+        assertTrue(KoSavedLyrics.savedCheckStale(old, old.map { it.copy(timeMs = it.timeMs + 500L) }))
+        assertTrue(KoSavedLyrics.savedCheckStale(old, old.dropLast(1)))
+        assertFalse(KoSavedLyrics.savedCheckStale(null, new))
+    }
+
+    /** LYR7-A: an automatic copy of a sheet the words rejected is passed over; the listener's own pick never. */
+    @Test
+    fun `an automatic copy the words rejected is passed over, the listener's own pick is not`() {
+        val id = "lyr7-copy"
+        val verdict = LyricsMismatch.Verdict(heardWords = 60, matchedLines = 0, totalLines = new.size, rejected = true)
+        LyricsMismatch.rememberRejected(id, LyricsSource.KUGOU, new, verdict)
+        // A copy read back from the file is another list holding the same lines.
+        val readBack = new.map { it.copy() }
+        assertTrue(KoSavedLyrics.rejectedCopy(id, Stored(readBack, LyricsSource.KUGOU, 0L, Kind.RECHECK)))
+        assertFalse(KoSavedLyrics.rejectedCopy(id, Stored(readBack, LyricsSource.KUGOU, 0L, Kind.USER)))
+        assertFalse(KoSavedLyrics.rejectedCopy(id, Stored(old, LyricsSource.KUGOU, 0L, Kind.RECHECK)))
+        assertFalse(KoSavedLyrics.rejectedCopy(id, Stored(readBack, LyricsSource.VIBE, 0L, Kind.RECHECK)))
+        assertFalse(KoSavedLyrics.rejectedCopy("lyr7-other", Stored(readBack, LyricsSource.KUGOU, 0L, Kind.RECHECK)))
     }
 }
