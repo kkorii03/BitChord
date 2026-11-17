@@ -639,7 +639,10 @@ object HqAudioVerify {
                     // verification in front of the reported 2.2–8.4 s prove
                     // times had the same sequential shape. A missing reference
                     // cancels the candidate read before anything waits on it.
-                    val candidateDeferred = async { candidateFetch(context, stream, epoch, keepOpening = youtubeWords != null) }
+                    // [KO] OPT1: a read-ahead with no opening, profile or kept reference in hand can only
+                    // learn NO_WAV; its candidate (a source API call and a head request) is not started for it.
+                    val referenceFirst = !waitForOpening && !referenceInHand(context, youtubeId, target.title)
+                    val candidateDeferred = if (referenceFirst) null else async { candidateFetch(context, stream, epoch, keepOpening = youtubeWords != null) }
                     val reference = referenceFeatures(
                         context,
                         youtubeId,
@@ -648,10 +651,11 @@ object HqAudioVerify {
                         waitForOpening,
                     )
                     if (reference is Reference.Missing) {
-                        candidateDeferred.cancel()
+                        candidateDeferred?.cancel()
+                        if (referenceFirst) TrackLog.d(TAG, "hq-verify: $youtubeId skipped fetch, no reference yet", youtubeId)
                         return@coroutineScope Outcome.NoReference(reference.reason)
                     }
-                    val candidate = when (val fetched = candidateDeferred.await()) {
+                    val candidate = when (val fetched = (candidateDeferred ?: async { candidateFetch(context, stream, epoch, keepOpening = youtubeWords != null) }).await()) {
                         is CandidateFetch.Ready -> fetched.value
                         is CandidateFetch.RateLimited -> {
                             if (recordRateLimit) {
@@ -1552,6 +1556,20 @@ object HqAudioVerify {
             "$safe-${youtubeId.hashCode().toUInt()}.bin",
         )
     }
+
+    /**
+     * [KO] OPT1: whether [referenceFeatures] could answer without waiting for an opening:
+     * a profile in memory or on disk, or a decoded opening at hand (the same test as
+     * [referenceFeaturesUncached]'s no-wait refusal). Only a cheap pre-check; the
+     * locked read still decides.
+     */
+    private fun referenceInHand(context: Context, youtubeId: String, title: String): Boolean =
+        referenceCache.get(youtubeId) != null ||
+            referenceFile(context, youtubeId).exists() ||
+            VideoAudio.referenceReady(
+                Song(videoId = youtubeId, title = title, artist = "", thumbnailUrl = null, isVideo = false),
+                COMPARE_SECONDS,
+            )
 
     /**
      * The YouTube song version's opening, from memory, disk or a local file.
