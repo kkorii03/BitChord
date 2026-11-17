@@ -386,7 +386,9 @@ object LyricsTiming {
         var siblingWhy: String? = null
         if (originalBase == null && rule == RULE_NOTHING && baseAllowed && !isVideo && sibling != null) {
             val aiClock = clockOf(entry.aiClock)
-            if (aiClock !is Clock.Unknown && (aiClock is Clock.Substitute || playing is Clock.Substitute)) {
+            if (aiClock !is Clock.Unknown && (aiClock is Clock.Substitute || playing is Clock.Substitute ||
+                    com.music.bitchord.ko.KoFileSameAsStream.carries(context, videoId, audioSource, aiClock, playing)) // [KO] LOG6 R2
+            ) {
                 var siblingRule = RULE_NOTHING
                 baseOf(entry, lines, false, false, sibling, textKey(lines, sibling), videoId) {
                     siblingRule = it

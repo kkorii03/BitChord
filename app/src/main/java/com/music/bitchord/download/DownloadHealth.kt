@@ -328,6 +328,7 @@ object DownloadHealth {
             if (freshlyAccepted) {
                 Downloads.markRecordingVerified(id, meta.uri, version)
             }
+            (sound as? HqAudioVerify.DownloadedSound.Accepted)?.verified.let { com.music.bitchord.ko.KoFileSameAsStream.measured(id, meta.uri, version, freshlyAccepted, decision.verdict == DownloadHealthPolicy.Verdict.OK, it?.offsetMs, it?.rate) } // [KO] LOG6 R2
             // A verdict that could not hear the file is not a completed check:
             // leave it unchecked so a later play with the screen on can still
             // answer. A decision made from length or names is complete.
