@@ -930,7 +930,8 @@ internal object KoTrackMatcher {
     private val COVER_MARKERS = KARAOKE_TRIBUTE_MARKERS + listOf(
         Regex("""\bcover\b"""),
         Regex("""\bcovers\b"""),
-        Regex("""커버"""),
+        // Not "디스커버리", "커버리지", "리커버리" (review RR F5); "아이유커버" still counts.
+        Regex("""커버(?!리)"""),
     )
 
     /**
@@ -2179,7 +2180,9 @@ internal object KoTrackMatcher {
         // "David Guetta ft. Sia - Titanium" credits the artist and a featured
         // act before the dash; the featuring tail is a credit, not part of the
         // act's own name, so it must not keep the head from matching (M9).
-        val words = text.replace(FEATURING, " ")
+        // Review RR F3: normalised like the credit below — soundtrackIdentity
+        // passes the upload's own casing ("Justin Bieber").
+        val words = normalize(text).replace(FEATURING, " ")
             .split(WORD_SPLIT).map { it.replace(NON_ALNUM, "") }.filter { it.isNotEmpty() }
         if (words.isEmpty()) return false
         // Use the same credit expansion as matching: it drops the Topic/VEVO
@@ -2194,7 +2197,8 @@ internal object KoTrackMatcher {
             .map { it.replace(NON_ALNUM, "") }
             .filter { it.isNotEmpty() }
             .toSet()
-        return words.all { it in credited }
+        // "Justin Bieber" on "JustinBieberVEVO": the channel runs the words together.
+        return words.all { it in credited } || (words.size > 1 && words.joinToString("") in credited)
     }
 
     /**

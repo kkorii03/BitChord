@@ -676,6 +676,10 @@ object CoverTitles {
             // the song after it, with no cover word anywhere. On the singer's
             // own channel the same title is their own song.
             if (isChannelName(singer, channel)) return null
+            // Review RR F1: "[Special Clip] 아이유 - 밤편지" on 1theK, "[STATION]",
+            // "[뮤뱅]": with no cover word the bracket is a clip tag unless a
+            // fan/clip channel posted it or the name is a singer already seen.
+            if (!isFanClipChannel(channel) && compactName(singer) !in knownSingerKeys()) return null
             val cover = songCover(rest, singer) ?: return null
             // No cover word: the bracket may be a clip tag, not a name worth learning.
             return Read(cover, learn = false)
@@ -1497,6 +1501,9 @@ object CoverTitles {
             if ((hasHangul(credit) || hasKanaOrHan(credit)) && !hasHangul(title) && !hasKanaOrHan(title)) return null
             if (FEATURING_CREDIT.containsMatchIn(credit)) return null
             if (KNOWN_PROGRAMS.any { it in compactName(credit) }) return null
+            // Review RR F2: "(From \"Frozen\")", "(2011 Remaster)", "(Performance
+            // Video)" package the release, as KoTrackMatcher and CoverOriginals read them.
+            if (PACKAGING_CREDIT.containsMatchIn(credit)) return null
             // "쩔어 (Dope)": one romanised word is a translation or a name; only
             // all caps ("IU") or a singer already seen is the original here.
             if (!isPlausibleUnmarkedCredit(credit)) return null
@@ -1509,6 +1516,11 @@ object CoverTitles {
         }
         return Cover(title = title, originalArtist = credit, singer = singer)
     }
+
+    /** "From …", "Sung by …", a remaster, the vault, or a "… Video"/"… Clip" note: the release's packaging, not a name. */
+    private val PACKAGING_CREDIT = Regex(
+        """(?i)^\s*(?:from|sung\s+by)\s|(?<![a-z])(?:remaster(?:ed)?|vault)(?![a-z])|(?<![a-z])(?:video|clip)\s*$""",
+    )
 
     /** "with Justin Bieber", "feat. X": a guest, not the original's artist. */
     private val FEATURING_CREDIT = Regex("""(?i)^(?:with|feat\.?|ft\.?|featuring)\s+""")
