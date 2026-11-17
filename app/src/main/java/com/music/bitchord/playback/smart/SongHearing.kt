@@ -256,7 +256,7 @@ internal object SongHearing {
             // Each window flying on its own paid for the same opening
             // twice over (11-06: 4.25 requests a song against the 2 this design needs).
             val fileGeneration = fileGenerationOf(song.videoId) // [KO] TR7 F2
-            val base = "${song.videoId}|$recording|$language|$wantExact|$fileGeneration"
+            val base = flightBase(song.videoId, recording, language, wantExact, fileGeneration)
             // A whole-song ask that may settle for the opening reads it rather than buying the song beside it.
             if (!waitedOpening && readsOpening(untilSeconds, reuseFrom)) {
                 val opening = inFlight[flightSlot(base, reuseFrom)]
@@ -286,6 +286,23 @@ internal object SongHearing {
     }
 
     internal fun streamRecording(clock: String) = STREAM_PREFIX + clock
+
+    /**
+     * [hear]'s flight for one recording, language and kind. [KO] TR7 F2: only a
+     * file's flight carries [fileGeneration], so a replaced file is heard anew;
+     * a stream's audio is the same after the file is replaced, and keying it by
+     * the file's generation paid Deepgram twice for it.
+     */
+    internal fun flightBase(
+        videoId: String,
+        recording: String?,
+        language: String,
+        wantExact: Boolean,
+        fileGeneration: Long,
+    ): String {
+        val base = "$videoId|$recording|$language|$wantExact"
+        return if (recording?.startsWith(FILE_PREFIX) == true) "$base|$fileGeneration" else base
+    }
 
     /** Words a runner already worked out replace a shorter transcript and spare the request. */
     private suspend fun keepFromFarm(app: Context, song: Song, language: String): Boolean {

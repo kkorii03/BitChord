@@ -10,7 +10,9 @@ import java.io.File
 import java.nio.file.Files
 import kotlinx.coroutines.runBlocking
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -80,6 +82,26 @@ class SongHearingForgetFileTest {
         SongHearing.forgetFile(context, videoId)
 
         assertFalse(fileWordsKept())
+    }
+
+    // Review 11-18: the flight base carried the file's generation for a stream
+    // recording too, so a replaced file made a second paid request for the
+    // same stream audio.
+    @Test
+    fun `a replaced file starts a new flight for the file only`() {
+        val stream = SongHearing.streamRecording("yt")
+        assertEquals(
+            SongHearing.flightBase(videoId, stream, "en", false, 0L),
+            SongHearing.flightBase(videoId, stream, "en", false, 1L),
+        )
+        assertNotEquals(
+            SongHearing.flightBase(videoId, "file|yt", "en", false, 0L),
+            SongHearing.flightBase(videoId, "file|yt", "en", false, 1L),
+        )
+        assertNotEquals(
+            SongHearing.flightBase(videoId, stream, "en", false, 0L),
+            SongHearing.flightBase(videoId, "file|yt", "en", false, 0L),
+        )
     }
 
     @Test
