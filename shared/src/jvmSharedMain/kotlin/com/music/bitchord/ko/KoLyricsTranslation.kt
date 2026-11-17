@@ -126,7 +126,7 @@ object KoLyricsTranslation {
 
     /** After every model reported its quota used up, Gemini rests until then. */
     @Volatile
-    private var geminiCooldownUntil = 0L
+    internal var geminiCooldownUntil = 0L
     private const val GEMINI_COOLDOWN_MS = 5L * 60L * 1000L
 
     /** Models Gemini answered 404 for: skipped for the rest of the process. */
@@ -242,7 +242,11 @@ object KoLyricsTranslation {
         gemini: suspend (String, List<TextSlot>, String) -> CachedTranslation?,
         google: suspend (String, List<TextSlot>, String) -> CachedTranslation?,
     ): CachedTranslation? {
-        if (geminiReady) {
+        // Asked while Gemini rests too (review X1): its saved answer is read
+        // from the cache, and askGemini skips the network itself while resting.
+        // Gated on geminiReady alone, a song translated yesterday turned into
+        // Google's different wording (and a request) once today's quota ran out.
+        if (geminiEnabled && geminiKeyUsable) {
             val viaGemini = try {
                 withinTranslationDeadline(deadlines.geminiMs) {
                     gemini(trackId, slots, target)
