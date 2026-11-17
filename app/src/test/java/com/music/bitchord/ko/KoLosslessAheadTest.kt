@@ -41,6 +41,48 @@ class KoLosslessAheadTest {
         assertFalse(KoLosslessAhead.cueSafe(null))
     }
 
+    // Review SW7A-1: the standby refusal left the FLAC pinned, and the plain
+    // key served it anyway at the YouTube cue.
+    @Test
+    fun `automix never pins an off-clock lossless copy as the next row`() {
+        assertFalse(KoLosslessAhead.mayPinAhead(automix = true, lossless = true, verified(450L)))
+        assertFalse(KoLosslessAhead.mayPinAhead(automix = true, lossless = true, null))
+        assertTrue(KoLosslessAhead.mayPinAhead(automix = true, lossless = true, verified(0L)))
+        assertTrue(KoLosslessAhead.mayPinAhead(automix = false, lossless = true, verified(450L)))
+        assertTrue(KoLosslessAhead.mayPinAhead(automix = true, lossless = false, verified(450L)))
+    }
+
+    // Review SW7A-2: a complete #hifi copy from an earlier play.
+    @Test
+    fun `a song with any off-clock verdict is not all cue safe`() {
+        assertTrue(KoLosslessAhead.allCueSafe(listOf(verified(0L), verified(10L))))
+        assertFalse(KoLosslessAhead.allCueSafe(listOf(verified(0L), verified(450L))))
+        assertFalse(KoLosslessAhead.allCueSafe(emptyList()))
+    }
+
+    @Test
+    fun `both pin sites and the standby path ask the clock first`() {
+        val prefetch = source("src/main/java/com/music/bitchord/ko/KoPrefetchQueue.kt")
+        val pin = prefetch.indexOf("koMayPinAhead(context, next, candidate)")
+        assertTrue("read-ahead pin must ask the clock", pin >= 0)
+        assertTrue(pin < prefetch.indexOf("StreamChoice.remember(next, candidate, substituted = true)"))
+        val prep = source("src/main/java/com/music/bitchord/playback/NextTrackPreparation.kt")
+        assertTrue("next-prep re-pin must ask the clock", "koMayPinAhead(context, song.videoId, found)" in prep)
+        val body = source("src/main/java/com/music/bitchord/ko/KoPlaybackLosslessSwap.kt")
+            .substringAfter("internal fun MediaItem.koLosslessAheadItem(context: Context): MediaItem? {")
+        val defer = body.indexOf("koDeferOffClockUpgradeKey(context, id)")
+        assertTrue("the standby must defer an off-clock complete copy", defer >= 0)
+        assertTrue("before the no-pin early return", defer < body.indexOf("StreamChoice.of(id) ?: return null"))
+        val cache = source("src/main/java/com/music/bitchord/ko/KoLosslessCache.kt")
+        assertTrue("upgradeKeyDeferred += videoId\n    }\n\n    fun onTrackBecameCurrent" in cache)
+    }
+
+    private fun source(path: String): String {
+        val root = File(".").canonicalFile
+        return listOf("app/", "").map { File(root, "$it$path") }.first { it.exists() }
+            .readText().replace("\r\n", "\n")
+    }
+
     @Test
     fun `the lossless-ahead item asks the gate before forcing the copy`() {
         val root = File(".").canonicalFile

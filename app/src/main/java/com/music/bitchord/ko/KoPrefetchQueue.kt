@@ -272,7 +272,7 @@ class KoPrefetchQueue(
                         TrackLog.d(tag, "warm-up substitute failed for $next: ${failed.message}", about = next)
                         null
                     }
-                    found?.also { candidate ->
+                    found?.takeIf { candidate -> koMayPinAhead(context, next, candidate) }?.also { candidate ->
                         SourceResolver.rememberOriginal(target, candidate)
                         StreamChoice.remember(next, candidate, substituted = true)
                         logHqTier(next, target.title, candidate, currentTier)

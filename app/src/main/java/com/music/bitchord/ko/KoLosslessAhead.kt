@@ -1,5 +1,13 @@
 package com.music.bitchord.ko
 
+import android.content.Context
+import com.music.bitchord.data.TrackLog
+import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.sources.HqQuality
+import com.music.bitchord.data.sources.SourceKind
+import com.music.bitchord.data.sources.SourceRegistry
+import com.music.bitchord.data.sources.SourceStream
+import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.smart.HqVerificationStore
 import kotlin.math.abs
 
@@ -35,5 +43,56 @@ internal object KoLosslessAhead {
         val v = verified ?: return false
         if (!v.rate.isFinite()) return false
         return abs(v.offsetMs) <= MAX_OFFSET_MS && abs(v.rate - 1.0) <= MAX_RATE_ERROR
+    }
+
+    /**
+     * Review SW7A-1: whether read-ahead may pin a verified copy as the next
+     * row's first sound. Every open of the plain key is served by the pin, so
+     * refusing only in the standby ([cueSafe] above) still played the pinned
+     * copy at the YouTube cue. Under Automix ([automix]: the only mode that
+     * cues the incoming side off zero) an off-clock lossless copy is not
+     * pinned at all; the mid-song upgrade maps it after the blend.
+     */
+    fun mayPinAhead(automix: Boolean, lossless: Boolean, verified: HqVerificationStore.Verified?): Boolean =
+        !automix || !lossless || cueSafe(verified)
+
+    /**
+     * Review SW7A-2: whether every stored verdict for a song is on YouTube's
+     * clock. None stored is no known clock, the same as [cueSafe] of null.
+     */
+    fun allCueSafe(verdicts: List<HqVerificationStore.Verified>): Boolean =
+        verdicts.isNotEmpty() && verdicts.all(::cueSafe)
+}
+
+/** [KoLosslessAhead.mayPinAhead] for [stream] as [videoId]'s next-row pin, logged when refused. */
+internal fun koMayPinAhead(context: Context, videoId: String, stream: SourceStream): Boolean {
+    val sourceId = stream.sourceConfigId
+    val lossless = sourceId != null &&
+        SourceRegistry.config(sourceId)?.kind != SourceKind.YOUTUBE &&
+        HqQuality.isLosslessTier(stream.format)
+    if (!lossless) return true
+    val verified = HqVerificationStore.get(context, videoId, sourceId, stream.trackId)
+    if (KoLosslessAhead.mayPinAhead(AppSettings.smartFadeEnabled.value, lossless = true, verified)) return true
+    TrackLog.d(
+        "BitChord",
+        "hq-ahead: $videoId not pinned for Automix (offset=${verified?.offsetMs} rate=${verified?.rate})",
+        about = videoId,
+    )
+    return false
+}
+
+/**
+ * Review SW7A-2: a complete lossless copy from an earlier play takes the plain
+ * key ([com.music.bitchord.ko.KoLosslessCache.completeUpgradeRendition]) with
+ * no pin and no clock check, so the standby opened it at the YouTube cue.
+ * Under Automix, a song whose verdicts are not all on YouTube's clock keeps
+ * its plain key until the queue moves on, the prefetch deferral's lifecycle.
+ */
+internal fun koDeferOffClockUpgradeKey(context: Context, videoId: String) {
+    if (!AppSettings.smartFadeEnabled.value) return
+    AudioCache.deferUpgradeKeyIf(videoId) {
+        !KoLosslessAhead.allCueSafe(
+            HqVerificationStore.entries(context).filter { it.youtubeId == videoId }.map { it.verified },
+        )
     }
 }

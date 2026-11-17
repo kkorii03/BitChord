@@ -911,6 +911,7 @@ internal suspend fun PlaybackService.koAwaitPlayerCondition(
  */
 internal fun MediaItem.koLosslessAheadItem(context: Context): MediaItem? {
     val id = mediaId
+    koDeferOffClockUpgradeKey(context, id) // Review SW7A-2: before any early return
     val choice = StreamChoice.of(id) ?: return null
     val sourceId = choice.sourceConfigId ?: return null
     if (SourceRegistry.config(sourceId)?.kind == SourceKind.YOUTUBE) return null

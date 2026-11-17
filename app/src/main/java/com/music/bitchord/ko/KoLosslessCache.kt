@@ -371,6 +371,11 @@ class KoLosslessCache(
         }
     }
 
+    /** Review SW7A-2: [completeUpgradeRendition] answers null for [videoId] until the queue moves on. */
+    fun deferUpgradeKey(videoId: String) {
+        upgradeKeyDeferred += videoId
+    }
+
     fun onTrackBecameCurrent(mediaId: String?) {
         currentMediaId = mediaId
         upgradeKeyDeferred.removeAll { it != mediaId }

@@ -627,6 +627,11 @@ object AudioCache {
     private fun completeUpgradeRendition(videoId: String): String? =
         koLossless.completeUpgradeRendition(videoId) // [KO] hq-lossless
 
+    /** [KO] Review SW7A-2: keeps [videoId]'s plain key off a complete upgrade copy when [offClock]. */
+    fun deferUpgradeKeyIf(videoId: String, offClock: () -> Boolean) {
+        if (completeUpgradeRendition(videoId) != null && offClock()) koLossless.deferUpgradeKey(videoId)
+    }
+
     /** Whether [key] was written from a stream the quality ladder calls lossless. */
     private fun isLosslessRendition(key: String): Boolean = runCatching {
         cache.getContentMetadata(key).get(META_HQ_LOSSLESS, null as String?) == "1"

@@ -1033,7 +1033,9 @@ internal class NextTrackPreparation(
                 null
             }
         }
-        if (found != null && tier != null && HqQuality.isLosslessTier(found.format)) {
+        if (found != null && tier != null && HqQuality.isLosslessTier(found.format) &&
+            com.music.bitchord.ko.koMayPinAhead(context, song.videoId, found) // [KO] Review SW7A-1
+        ) {
             // The same hq-prefetch path a mid-song swap uses: pin the verified
             // copy so the standby's losslessAheadItem() opens it. The download
             // itself starts after the sync step, so it never competes with the
