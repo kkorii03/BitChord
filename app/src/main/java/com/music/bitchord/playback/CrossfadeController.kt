@@ -955,10 +955,16 @@ class CrossfadeController(
         // which flips at the handoff, halfway through the blend: before it the
         // incoming track shadows the session, after it the outgoing tail does.
         if (phase == Phase.FADING || phase == Phase.BAILING) {
+            // [KO] review X2-1: a session silenced by a call silences the follower too.
             if (handedOff) {
-                outgoing?.playWhenReady = incoming?.playWhenReady ?: true
+                outgoing?.playWhenReady = incoming?.let {
+                    com.music.bitchord.ko.koFollowerPlays(it.playWhenReady, it.playbackSuppressionReason)
+                } ?: true
             } else {
-                outgoing?.playWhenReady?.let { incoming?.playWhenReady = it }
+                outgoing?.let {
+                    incoming?.playWhenReady =
+                        com.music.bitchord.ko.koFollowerPlays(it.playWhenReady, it.playbackSuppressionReason)
+                }
             }
         }
 

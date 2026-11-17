@@ -86,6 +86,16 @@ internal fun CrossfadeController.koTickStepMs(): Long = when (phase) {
  * the pause. A missing player (null) keeps ticking so the fade can bail.
  * [incoming] is null for the sleep fade, which has only the outgoing track.
  */
+/**
+ * Review X2-1: whether the blend's other player should sound. Only the session
+ * player owns audio focus, and a call or a navigation prompt does not clear its
+ * playWhenReady, it suppresses it. Copying playWhenReady alone left the other
+ * song playing under the call. The session's onIsPlayingChanged wakes the
+ * ticker when the call ends, so the resume needs no timer.
+ */
+internal fun koFollowerPlays(sessionPlayWhenReady: Boolean, sessionSuppression: Int): Boolean =
+    sessionPlayWhenReady && sessionSuppression == androidx.media3.common.Player.PLAYBACK_SUPPRESSION_REASON_NONE
+
 internal fun koFadeStepMs(outgoing: Boolean?, incoming: Boolean?): Long {
     val parked = outgoing == false && (incoming == null || incoming == false)
     return if (parked) 0L else CrossfadeController.FADE_STEP_MS
