@@ -159,6 +159,25 @@ class StreamResolverProxySilenceTest {
         assertTrue("proxyVerdictFinal()" in before)
     }
 
+    // --- SW7B-1 -----------------------------------------------------------
+
+    @Test
+    fun `a remembered proxy ask that is refused counts as the proxy's refusal`() {
+        val body = source("shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/innertube/StreamResolver.kt")
+            .substringAfter("if (ProxyPlayback.canResolveViaProxy() && ProxyPlayback.isRemembered(videoId)) {")
+            .substringBefore("// In Korea without Premium")
+        assertTrue("proxyLegRefusal = e" in body, "a refusal on the remembered ask must make the verdict final")
+        assertTrue("ProxyFailure.isProxyDown(e)" in body, "a dead proxy on that ask must stay non-final")
+        assertTrue("KoMediaProbe.isTransient(e)" in body, "back-pressure on that ask must stay non-final")
+        assertTrue(
+            BlockedStartPolicy.storeVerdict(
+                chainFinal = true,
+                gateRefusal = true,
+                proxyVerdictFinal = BlockedStartPolicy.verdictIsFinal(proxyConfigured = true, proxyRefused = true),
+            ),
+        )
+    }
+
     private fun source(relative: String): String {
         var directory = File(System.getProperty("user.dir")).absoluteFile
         while (!File(directory, "settings.gradle.kts").isFile) {

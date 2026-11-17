@@ -707,6 +707,11 @@ object StreamResolver {
         // eleven seconds this memory exists to save. A proxy miss falls
         // through to the ordinary ladder rather than failing the track.
         var proxyAttempted = false
+        // [KO] C4c-1: the proxy's own refusal (it walked and said no, or found
+        // nothing). A leg that only timed out, ran out of budget or could not
+        // reach the proxy leaves this null, and its blocked-start verdict is
+        // not remembered for ten minutes.
+        var proxyLegRefusal: Throwable? = null
         if (ProxyPlayback.canResolveViaProxy() && ProxyPlayback.isRemembered(videoId)) {
             proxyAttempted = true
             TrackLog.d(TAG, "proxy-playback: $videoId remembered")
@@ -715,7 +720,15 @@ object StreamResolver {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                // resolveViaProxy has already logged the reason.
+                // resolveViaProxy has already logged the reason. [KO] SW7B-1: a
+                // real refusal here is the proxy's verdict too; proxyAttempted
+                // keeps every later leg from asking, so dropping it left the
+                // blocked start unstorable and re-walked on every stacked retry.
+                if (!ProxyFailure.isProxyDown(e) && !e.isSignInConfirmNotBot() &&
+                    !KoMediaProbe.isTransient(e)
+                ) {
+                    proxyLegRefusal = e
+                }
             }
         }
 
@@ -795,12 +808,6 @@ object StreamResolver {
         var lateProxy: Deferred<Stream?>? = null
         // When the leg's ceiling runs out; only a wait on the leg alone reads it.
         var proxyLegDeadline = Long.MAX_VALUE
-
-        // [KO] C4c-1: the proxy's own refusal (it walked and said no, or found
-        // nothing). A leg that only timed out, ran out of budget or could not
-        // reach the proxy leaves this null, and its blocked-start verdict is
-        // not remembered for ten minutes.
-        var proxyLegRefusal: Throwable? = null
 
         /** [KO] C4c-1: whether this blocked start's verdict may be remembered. */
         fun proxyVerdictFinal(): Boolean = BlockedStartPolicy.verdictIsFinal(
