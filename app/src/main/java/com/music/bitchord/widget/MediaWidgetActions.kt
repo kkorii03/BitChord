@@ -10,6 +10,7 @@ import android.os.Handler
 import android.os.Looper
 import androidx.core.content.ContextCompat
 import androidx.media3.common.Player
+import androidx.media3.common.Timeline
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionToken
@@ -28,9 +29,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  * restricted, and a `MediaController` binds. Same handshake the app itself uses,
  * from [rememberMediaController][com.music.bitchord.playback.rememberMediaController].
  *
- * Binding also creates [PlaybackService] when needed; its bounded persisted
- * queue is restored before the controller connects, so widget playback works
- * after process death without serializing the full live queue on progress ticks.
+ * Binding also creates [PlaybackService] when needed. Its bounded persisted
+ * queue is restored off the main thread and usually lands after the controller
+ * has connected, so a command waits for it ([WidgetQueueWaiter]); that is what
+ * makes widget playback work after process death.
  */
 class MediaWidgetActions : BroadcastReceiver() {
 
@@ -54,15 +56,34 @@ class MediaWidgetActions : BroadcastReceiver() {
 
         future.addListener(
             {
-                runCatching { future.get() }.getOrNull()?.let { controller ->
-                    runCatching { controller.execute(action) }
+                val controller = runCatching { future.get() }.getOrNull()
+                if (controller == null) {
+                    handler.postDelayed(::release, SETTLE_MS)
+                } else {
+                    // [KO] A service this tap created restores its queue off the
+                    // main thread, so the controller usually connects to an empty
+                    // player and the queue lands a moment later as a timeline
+                    // change (phone 11-17: every widget tap after a cold start did
+                    // nothing). The command waits for that queue instead of being
+                    // dropped; a service with nothing saved is left to the
+                    // GIVE_UP_MS backstop. Both run on the main thread, so no
+                    // change slips in between the check and the listener.
+                    lateinit var waiter: WidgetQueueWaiter
+                    waiter = WidgetQueueWaiter({ controller.mediaItemCount }) {
+                        controller.removeListener(waiter)
+                        if (!done.get()) {
+                            runCatching { controller.execute(action) }
+                            // Not released on the spot. The command has been sent,
+                            // but the service still has a stream to resolve before
+                            // it goes foreground and can hold itself up; dropping
+                            // the last binding inside that window is how a tap on
+                            // play ends with a service that shut down instead of
+                            // one that started playing.
+                            handler.postDelayed(::release, SETTLE_MS)
+                        }
+                    }
+                    if (!waiter.runIfQueued()) controller.addListener(waiter)
                 }
-                // Not released on the spot. The command has been sent, but the
-                // service still has a stream to resolve before it goes foreground
-                // and can hold itself up; dropping the last binding inside that
-                // window is how a tap on play ends with a service that shut down
-                // instead of one that started playing.
-                handler.postDelayed(::release, SETTLE_MS)
             },
             ContextCompat.getMainExecutor(app),
         )
@@ -73,7 +94,7 @@ class MediaWidgetActions : BroadcastReceiver() {
     }
 
     private fun MediaController.execute(action: String) {
-        // No live or restored queue means the buttons have nothing to control.
+        // Only reached with a queue ([WidgetQueueWaiter]); kept as the guard.
         if (mediaItemCount == 0) return
         when (action) {
             ACTION_TOGGLE -> if (playWhenReady) {
@@ -144,7 +165,34 @@ class MediaWidgetActions : BroadcastReceiver() {
         /** How long the binding is kept after the command, so the service can settle. */
         private const val SETTLE_MS = 2_000L
 
-        /** Backstop for a session that never connects. Inside the broadcast window. */
+        /**
+         * Backstop for a session that never connects, or never gets a queue
+         * because nothing was saved. Inside the broadcast window.
+         */
         private const val GIVE_UP_MS = 7_000L
+    }
+}
+
+/**
+ * Runs a widget command once the player has a queue: at once when it already
+ * has one, otherwise on the first timeline change that brings one. At most once.
+ */
+internal class WidgetQueueWaiter(
+    private val queueSize: () -> Int,
+    private val command: () -> Unit,
+) : Player.Listener {
+
+    private val ran = AtomicBoolean(false)
+
+    /** True when the command has run, now or before; false while there is no queue. */
+    fun runIfQueued(): Boolean {
+        if (ran.get()) return true
+        if (queueSize() == 0) return false
+        if (ran.compareAndSet(false, true)) command()
+        return true
+    }
+
+    override fun onTimelineChanged(timeline: Timeline, reason: Int) {
+        runIfQueued()
     }
 }
