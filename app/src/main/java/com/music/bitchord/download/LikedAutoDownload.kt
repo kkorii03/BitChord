@@ -36,6 +36,12 @@ internal object LikedAutoDownload {
     private const val TAG = "BitChord"
     private const val KEY_PENDING = "liked_download_pending"
 
+    /** [KO] RG3-4: "id:count" lines, failed downloads per parked like. */
+    private const val KEY_FAILURES = "liked_download_failures"
+
+    /** [KO] RG3-4: a parked like leaves the list after this many failed downloads, not one blip. */
+    internal const val MAX_FAILURES = 3
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val drainLock = Mutex()
     private val lock = Any()
@@ -155,6 +161,7 @@ internal object LikedAutoDownload {
             if (left.size != ids.size) {
                 prefs.edit().putString(KEY_PENDING, left.joinToString("\n")).apply()
             }
+            forgetFailures(saved) // [KO] RG3-4
         }
     }
 
@@ -171,15 +178,55 @@ internal object LikedAutoDownload {
                 !com.music.bitchord.ko.downloads.KoDownloadQueue.keepsVerifiedPairAfterRefusal(state.reason)
         }.keys
 
+    /**
+     * [KO] RG3-4: counts one more failure for each parked id in [failed]; an id
+     * that reached [MAX_FAILURES] leaves the list. A brief network blip keeps
+     * the like for the next connection.
+     */
     private fun unparkFailed(failed: Set<String>) {
         if (failed.isEmpty() || !this::prefs.isInitialized) return
         synchronized(lock) {
             val ids = parked()
-            val left = ids.filterNot { it in failed }
-            if (left.size != ids.size) {
-                Log.d(TAG, "liked download: failed, no longer parked: ${(ids - left.toSet()).joinToString()}")
-                prefs.edit().putString(KEY_PENDING, left.joinToString("\n")).apply()
+            val hit = failed.filter { it in ids }
+            if (hit.isEmpty()) return
+            val counts = failures().toMutableMap()
+            hit.forEach { counts[it] = (counts[it] ?: 0) + 1 }
+            val dropped = hit.filter { (counts[it] ?: 0) >= MAX_FAILURES }.toSet()
+            dropped.forEach { counts.remove(it) }
+            val left = ids.filterNot { it in dropped }
+            val edit = prefs.edit().putString(KEY_FAILURES, encodeFailures(counts.filterKeys { it in left }))
+            if (dropped.isNotEmpty()) {
+                Log.d(TAG, "liked download: failed $MAX_FAILURES times, no longer parked: ${dropped.joinToString()}")
+                edit.putString(KEY_PENDING, left.joinToString("\n"))
+            } else {
+                Log.d(TAG, "liked download: failed, still parked: ${hit.joinToString { "$it (${counts[it]})" }}")
             }
+            edit.apply()
+        }
+    }
+
+    /** [KO] RG3-4: failure counts per parked id; a missing or damaged value reads as none. */
+    private fun failures(): Map<String, Int> = synchronized(lock) {
+        decodeFailures(prefs.getString(KEY_FAILURES, null))
+    }
+
+    internal fun decodeFailures(raw: String?): Map<String, Int> =
+        raw.orEmpty().split('\n').mapNotNull { line ->
+            val cut = line.lastIndexOf(':')
+            if (cut <= 0) return@mapNotNull null
+            val count = line.substring(cut + 1).toIntOrNull()?.takeIf { it > 0 } ?: return@mapNotNull null
+            line.substring(0, cut) to count
+        }.toMap()
+
+    internal fun encodeFailures(counts: Map<String, Int>): String =
+        counts.entries.joinToString("\n") { "${it.key}:${it.value}" }
+
+    /** [KO] RG3-4: drops the failure counts of [ids] (saved, unliked or unparked). */
+    private fun forgetFailures(ids: Collection<String>) {
+        synchronized(lock) {
+            val counts = failures()
+            if (counts.keys.none { it in ids }) return
+            prefs.edit().putString(KEY_FAILURES, encodeFailures(counts.filterKeys { it !in ids })).apply()
         }
     }
 
@@ -211,6 +258,7 @@ internal object LikedAutoDownload {
             if (videoId in ids) {
                 prefs.edit().putString(KEY_PENDING, (ids - videoId).joinToString("\n")).apply()
             }
+            forgetFailures(listOf(videoId)) // [KO] RG3-4
         }
     }
 }
