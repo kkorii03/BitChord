@@ -608,9 +608,10 @@ object AudioCache {
         if (cache.getCachedSpans(preferred).isNotEmpty()) return null
         val siblings = listOf(videoId, "$videoId$ALT_SUFFIX", "$videoId$ALT_SUFFIX-noatmos")
             .filter { it != preferred }
-        if (isOffline()) return siblings.firstOrNull(::isComplete)
+        // [KO] A copy whose source row was refused since (another recording) is no sibling.
+        if (isOffline()) return siblings.firstOrNull { key -> isComplete(key) && !isRefusedCopy(key) }
         if (preferred != videoId) return null
-        return siblings.firstOrNull { key -> isComplete(key) && isKeptOrigin(key) }
+        return siblings.firstOrNull { key -> isComplete(key) && isKeptOrigin(key) && !isRefusedCopy(key) }
     }
 
     /**
@@ -1450,7 +1451,9 @@ object AudioCache {
      *    song. WebM, MP4 and FLAC pass, as [cachedContainerOf] reads them.
      */
     private fun keepsAddonCopy(key: String): Boolean =
-        !key.contains("#hifi") && isComplete(key) && containerOf(key) != null
+        !key.contains("#hifi") && isComplete(key) && containerOf(key) != null &&
+            // [KO] A refused row's whole copy is another recording: once the queue lets go of it, it goes.
+            !isRefusedCopy(key)
 
     private val koRetention = KoCacheRetention() // [KO] purge-index
 

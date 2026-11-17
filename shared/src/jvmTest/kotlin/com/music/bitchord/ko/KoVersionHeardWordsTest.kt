@@ -337,4 +337,17 @@ class KoVersionHeardWordsTest {
         assertEquals(16_000 * 2 * 2, int(40))
         assertEquals(44 + 16_000 * 2 * 2, wav.size)
     }
+
+    // Review 11-17 (H draft-5): with no Groq key the candidate was never heard, so a
+    // Deepgram-only listener's risky row stayed on YouTube on every play.
+    @Test
+    fun `Groq hears when it has a key, Deepgram without it, nobody with neither`() {
+        assertEquals(KoVersionGuard.Hearer.GROQ, KoVersionGuard.hearer("fake-groq-key", deepgramUsable = true))
+        assertEquals(KoVersionGuard.Hearer.GROQ, KoVersionGuard.hearer("fake-groq-key", deepgramUsable = false))
+        assertEquals(KoVersionGuard.Hearer.DEEPGRAM, KoVersionGuard.hearer("", deepgramUsable = true))
+        assertEquals(KoVersionGuard.Hearer.DEEPGRAM, KoVersionGuard.hearer("   ", deepgramUsable = true))
+        assertEquals(KoVersionGuard.Hearer.NONE, KoVersionGuard.hearer("", deepgramUsable = false))
+        // No engine still never accepts a row that needs the words.
+        assertEquals(KoVersionGuard.Decision.UNMEASURED, KoVersionGuard.decide(chromaAccepted = true, needsWords = true, words = null))
+    }
 }

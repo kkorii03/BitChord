@@ -11,6 +11,7 @@ import com.music.bitchord.download.HqLibraryUpgrade
 import com.music.bitchord.ko.KoOpeningClip
 import com.music.bitchord.ko.KoVersionGuard
 import com.music.bitchord.data.lyrics.ChromaAlignment
+import com.music.bitchord.data.lyrics.Deepgram
 import com.music.bitchord.data.lyrics.GroqWhisper
 import com.music.bitchord.data.lyrics.LyricsWordAlign
 import com.music.bitchord.data.lyrics.WavAudio
@@ -509,7 +510,14 @@ object HqAudioVerify {
         // [KO] The search that found this row also held another version of the song
         // (11-13 Despacito: the Bieber remix, mislabelled, scored 96% on chroma). Its
         // words decide; a verdict stored before they were heard is measured again.
-        val needsWords = KoVersionGuard.risky(sourceId, trackId)
+        // The search's mark lives in memory; it is kept with the pair so a play after a
+        // restart that reaches here without a search still asks for the words.
+        val needsWords = if (KoVersionGuard.risky(sourceId, trackId)) {
+            HqVerificationStore.markRisky(context, youtubeId, sourceId, trackId)
+            true
+        } else {
+            HqVerificationStore.isRisky(context, youtubeId, sourceId, trackId)
+        }
         HqVerificationStore.get(context, youtubeId, sourceId, trackId)?.takeIf { !needsWords || it.wordsChecked }?.let {
             pendingRateLimits.remove(youtubeId)
             return@withContext Outcome.Verified(it)
@@ -566,10 +574,23 @@ object HqAudioVerify {
                     // and passes on its sound. When the words and the engine are
                     // already at hand the candidate is heard all the same; when they
                     // are not, the sound decides alone, as it always did.
+                    val hearer = wordsHearer()
                     val keptWords = SongHearing.keptYouTubeWords(context, youtubeId)
-                        ?.takeIf { GroqWhisper.apiKey.isNotBlank() }
+                        ?.takeIf { hearer != KoVersionGuard.Hearer.NONE }
                     val youtubeWords = if (needsWords) {
                         keptWords ?: run {
+                            if (hearer == KoVersionGuard.Hearer.NONE) {
+                                // Not the words' absence: no key can hear the candidate. Once per song.
+                                if (noHearerLogged.add(youtubeId)) {
+                                    TrackLog.i(
+                                        TAG,
+                                        "hq-verify: '${target.title}' $sourceName another version in the search; " +
+                                            "no Groq or Deepgram key to hear it, stays on YouTube",
+                                        youtubeId,
+                                    )
+                                }
+                                return@coroutineScope Outcome.Unavailable(transient = true)
+                            }
                             TrackLog.d(
                                 TAG,
                                 "hq-verify: '${target.title}' $sourceName another version in the search; " +
@@ -579,7 +600,11 @@ object HqAudioVerify {
                             return@coroutineScope Outcome.Unavailable(transient = true)
                         }
                     } else {
-                        keptWords?.takeIf { KoVersionGuard.worthHearingUnasked(it.seconds) }
+                        // Unasked hearings stay Groq's: Deepgram may sit on a request for a
+                        // minute, and an upgrade nobody doubted would wait behind it.
+                        keptWords?.takeIf {
+                            hearer == KoVersionGuard.Hearer.GROQ && KoVersionGuard.worthHearingUnasked(it.seconds)
+                        }
                     }
                     // The two ninety-second reads do not depend on each other:
                     // the reference comes from the WAV the song check already
@@ -1077,7 +1102,7 @@ object HqAudioVerify {
     }
 
     /**
-     * [KO] The candidate's opening heard once by Groq, in the language the YouTube
+     * [KO] The candidate's opening heard once by Groq (Deepgram's Whisper when Groq has no key), in the language the YouTube
      * copy was heard in, and compared word for word with it ([KoVersionGuard.compareWords]).
      * Null when nothing usable came back: the caller then leaves the pair unmeasured.
      * Counts only on the log line, never the words.
@@ -1092,14 +1117,22 @@ object HqAudioVerify {
         val clip = opening ?: return null
         val wav = clip.wav() ?: return null
         val asked = System.currentTimeMillis()
-        val answer = SongHearing.groqWithResend { GroqWhisper.listen(wav, youtube.language, "audio/wav") }
+        val engine = wordsHearer()
+        val answer = when (engine) {
+            KoVersionGuard.Hearer.GROQ ->
+                SongHearing.groqWithResend { GroqWhisper.listen(wav, youtube.language, "audio/wav") }
+            // The model and language the song check heard the YouTube copy with.
+            KoVersionGuard.Hearer.DEEPGRAM ->
+                Deepgram.listen(wav, youtube.language, Deepgram.MODEL_WHISPER, "audio/wav")
+            KoVersionGuard.Hearer.NONE -> return null
+        }
         val heard = answer.words
         val http = answer.httpCode
         if (heard == null || http == null || http !in 200..299) {
             TrackLog.i(
                 TAG,
                 "hq-verify words: no answer http=${http ?: "-"} kb=${wav.size / 1024} " +
-                    "send=${System.currentTimeMillis() - asked}ms",
+                    "send=${System.currentTimeMillis() - asked}ms engine=${engine.name.lowercase()}",
                 youtubeId,
             )
             return null
@@ -1116,11 +1149,19 @@ object HqAudioVerify {
             TAG,
             "hq-verify words: ${check.verdict.name.lowercase()} youtube=${check.referenceWords} " +
                 "candidate=${check.candidateWords} shared=${check.shared} window=${check.windowMs}ms " +
-                "lang=${youtube.language} kb=${wav.size / 1024} send=${System.currentTimeMillis() - asked}ms",
+                "lang=${youtube.language} kb=${wav.size / 1024} send=${System.currentTimeMillis() - asked}ms " +
+                "engine=${engine.name.lowercase()}",
             youtubeId,
         )
         return check
     }
+
+    /** [KO] Who hears a candidate for the words check right now (keys can change in settings). */
+    private fun wordsHearer(): KoVersionGuard.Hearer =
+        KoVersionGuard.hearer(GroqWhisper.apiKey, Deepgram.usable)
+
+    /** [KO] Songs whose "no engine to hear the candidate" line was written in this run: once each. */
+    private val noHearerLogged = ConcurrentHashMap.newKeySet<String>()
 
     /** [KO] Hearings of one cached copy spent in this run without an answer, by pair key. */
     private val cachedCopyAttempts = ConcurrentHashMap<String, Int>()
@@ -1186,7 +1227,7 @@ object HqAudioVerify {
             // A saved download is what sounds, not this copy; its own check is the download's.
             if (com.music.bitchord.download.Downloads.savedUri(context, youtubeId) != null) return
             // Neither costs anything to find missing, so neither spends a hearing.
-            if (GroqWhisper.apiKey.isBlank()) return
+            if (wordsHearer() == KoVersionGuard.Hearer.NONE) return
             val youtubeWords = SongHearing.keptYouTubeWords(context, youtubeId) ?: return
             // The verification's own lock for this pair: the two never write over each other.
             val lock = locks.getOrPut(key) { Mutex() }
@@ -1228,7 +1269,7 @@ object HqAudioVerify {
         val stored = HqVerificationStore.get(context, youtubeId, sourceConfigId, trackId) ?: return false
         if (!owesCachedWords(stored, key)) return false
         // Neither costs anything to find missing, so neither spends a hearing.
-        if (GroqWhisper.apiKey.isBlank()) return false
+        if (wordsHearer() == KoVersionGuard.Hearer.NONE) return false
         val youtubeWords = SongHearing.keptYouTubeWords(context, youtubeId) ?: return false
         val file = Song(videoId = "", title = "", artist = "", thumbnailUrl = null, localUri = uri)
         val lock = locks.getOrPut(key) { Mutex() }

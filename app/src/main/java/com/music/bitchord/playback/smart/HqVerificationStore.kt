@@ -113,6 +113,17 @@ object HqVerificationStore {
     private const val MAX_VERIFIED = 2_000
     private const val MAX_REJECTED = 2_000
 
+    /**
+     * [KO] Pairs whose search also held another version of the song
+     * ([com.music.bitchord.ko.KoVersionGuard.risky]), one key per line. That mark
+     * lives in memory and is lost on a restart; kept here, a play that reaches
+     * the verification without a search still asks for the words. A build that
+     * does not know this key ignores it; a pair missing from it is "not known
+     * risky", never "safe": its stored marks decide as before.
+     */
+    private const val KEY_RISKY = "risky"
+    private const val MAX_RISKY = 2_000
+
     /** The eighth field of a verified line whose candidate words were compared. */
     private const val WORDS_CHECKED = "words"
 
@@ -134,6 +145,7 @@ object HqVerificationStore {
     private class Data(
         val verified: LinkedHashMap<String, Verified> = LinkedHashMap(),
         val rejected: LinkedHashSet<String> = LinkedHashSet(),
+        val risky: LinkedHashSet<String> = LinkedHashSet(), // [KO]
     )
 
     private val lock = Any()
@@ -186,6 +198,45 @@ object HqVerificationStore {
         trackId: String?,
     ): Boolean = synchronized(lock) {
         keyOf(youtubeId, sourceConfigId, trackId) in data(context).rejected
+    }
+
+    /** [KO] Whether this pair was once found in a search that also held another version of the song. */
+    fun isRisky(
+        context: Context,
+        youtubeId: String,
+        sourceConfigId: String?,
+        trackId: String?,
+    ): Boolean = synchronized(lock) {
+        keyOf(youtubeId, sourceConfigId, trackId) in data(context).risky
+    }
+
+    /**
+     * [KO] Keeps the risky mark of this pair across restarts. Written once per
+     * pair: a pair already marked costs one set lookup and no disk write.
+     *
+     * A stored verdict that says the guard found nothing to hear ([Verified.guardSeen])
+     * is contradicted by the mark and loses that claim, so the library and the
+     * cached-copy audit wait for the words as they do for any unchecked pair.
+     */
+    fun markRisky(
+        context: Context,
+        youtubeId: String,
+        sourceConfigId: String?,
+        trackId: String?,
+    ) {
+        if (youtubeId.isBlank() || sourceConfigId.isNullOrBlank() || trackId.isNullOrBlank()) return
+        synchronized(lock) {
+            val data = data(context)
+            val key = keyOf(youtubeId, sourceConfigId, trackId)
+            if (!data.risky.add(key)) return
+            while (data.risky.size > MAX_RISKY) {
+                data.risky.remove(data.risky.first())
+            }
+            data.verified[key]?.takeIf { it.guardSeen && !it.wordsChecked }?.let {
+                data.verified[key] = it.copy(guardSeen = false)
+            }
+            save(context, data)
+        }
     }
 
     /**
@@ -249,7 +300,8 @@ object HqVerificationStore {
                 key.sourceConfigIdOf() in sourceConfigIds
             }
             data.rejected.removeAll { key -> key.sourceConfigIdOf() in sourceConfigIds }
-            if (data.verified.size != verifiedBefore || data.rejected.size != rejectedBefore) {
+            val riskyChanged = data.risky.removeAll { key -> key.sourceConfigIdOf() in sourceConfigIds } // [KO]
+            if (data.verified.size != verifiedBefore || data.rejected.size != rejectedBefore || riskyChanged) {
                 save(context, data)
             }
         }
@@ -304,9 +356,11 @@ object HqVerificationStore {
             val suffix = "\u0001$sourceConfigId\u0001"
             val verified = data.verified.keys.filter { it.contains(suffix) }
             val rejected = data.rejected.filter { it.contains(suffix) }
-            if (verified.isEmpty() && rejected.isEmpty()) return
+            val risky = data.risky.filter { it.contains(suffix) } // [KO]
+            if (verified.isEmpty() && rejected.isEmpty() && risky.isEmpty()) return
             verified.forEach { data.verified.remove(it) }
             rejected.forEach { data.rejected.remove(it) }
+            risky.forEach { data.risky.remove(it) } // [KO]
             save(context, data)
         }
     }
@@ -320,6 +374,7 @@ object HqVerificationStore {
                 .putInt(KEY_VERSION, STORE_VERSION)
                 .remove(KEY_VERIFIED)
                 .remove(KEY_REJECTED)
+                .remove(KEY_RISKY) // [KO]
                 .apply()
         }
     }
@@ -363,6 +418,10 @@ object HqVerificationStore {
             prefs.getString(KEY_REJECTED, null)?.lineSequence()?.forEach { line ->
                 if (line.isNotBlank()) data.rejected += line
             }
+        }
+        // [KO] Read whatever the store version: an older build never wrote this key.
+        prefs.getString(KEY_RISKY, null)?.lineSequence()?.forEach { line ->
+            if (line.isNotBlank()) data.risky += line
         }
         cached = data
         return data
@@ -417,6 +476,7 @@ object HqVerificationStore {
             .putInt(KEY_VERSION, STORE_VERSION)
             .putString(KEY_VERIFIED, verified)
             .putString(KEY_REJECTED, rejected)
+            .putString(KEY_RISKY, data.risky.joinToString("\n")) // [KO]
             .apply()
     }
 }

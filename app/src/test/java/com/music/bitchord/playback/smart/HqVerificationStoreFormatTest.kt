@@ -263,4 +263,62 @@ class HqVerificationStoreFormatTest {
         assertTrue(HqVerificationStore.rejectedRows(context, "yt2").isEmpty())
         assertTrue(HqVerificationStore.rejectedRows(context, "").isEmpty())
     }
+
+    // Review 11-17 (guard leftover): the search's risky mark lived in memory only,
+    // so after a restart a play that verified without a search took a same-backing
+    // remix on its sound and stored it as "guard seen", closing the words question.
+    @Test
+    fun `a risky mark survives a restart and a store written before it reads as not risky`() {
+        HqVerificationStore.markRisky(context, "yt1", "telegram", "4411")
+        assertEquals("yt1\u0001telegram\u00014411", prefs.values["risky"])
+
+        cachedField.set(HqVerificationStore, null)
+
+        assertTrue(HqVerificationStore.isRisky(context, "yt1", "telegram", "4411"))
+        assertFalse(HqVerificationStore.isRisky(context, "yt1", "telegram", "5000"))
+        assertFalse(HqVerificationStore.isRisky(context, "yt2", "telegram", "4411"))
+
+        // An older build's store: no risky key at all, its verdict lines unchanged.
+        prefs.values.remove("risky")
+        prefs.values["verified"] = "yt3\u0001src1\u0001track1\t1234\t1.001\t87\tLOSSLESS_16\tTitle\tArtist\tseen"
+        cachedField.set(HqVerificationStore, null)
+        assertFalse(HqVerificationStore.isRisky(context, "yt3", "src1", "track1"))
+        assertTrue(HqVerificationStore.get(context, "yt3", "src1", "track1")!!.guardSeen)
+    }
+
+    @Test
+    fun `a risky mark takes back a guard seen verdict and leaves a words checked one`() {
+        HqVerificationStore.put(context, "yt1", "src1", "track1", verified().copy(guardSeen = true))
+        HqVerificationStore.put(context, "yt2", "src1", "track1", verified().copy(wordsChecked = true))
+
+        HqVerificationStore.markRisky(context, "yt1", "src1", "track1")
+        HqVerificationStore.markRisky(context, "yt2", "src1", "track1")
+        cachedField.set(HqVerificationStore, null)
+
+        val seen = HqVerificationStore.get(context, "yt1", "src1", "track1")!!
+        assertFalse(seen.guardSeen)
+        assertFalse(seen.wordsChecked)
+        assertTrue(HqVerificationStore.get(context, "yt2", "src1", "track1")!!.wordsChecked)
+    }
+
+    @Test
+    fun `risky marks need both ids and go with their source`() {
+        HqVerificationStore.markRisky(context, "yt1", null, "track1")
+        HqVerificationStore.markRisky(context, "yt1", "src1", "")
+        assertNull(prefs.values["risky"])
+
+        HqVerificationStore.markRisky(context, "yt1", "src1", "track1")
+        HqVerificationStore.markRisky(context, "yt2", "src2", "track2")
+        HqVerificationStore.invalidateSources(context, setOf("src1"))
+        assertFalse(HqVerificationStore.isRisky(context, "yt1", "src1", "track1"))
+        assertTrue(HqVerificationStore.isRisky(context, "yt2", "src2", "track2"))
+
+        HqVerificationStore.invalidate(context, "src2")
+        assertFalse(HqVerificationStore.isRisky(context, "yt2", "src2", "track2"))
+
+        HqVerificationStore.markRisky(context, "yt3", "src3", "track3")
+        HqVerificationStore.clear(context)
+        cachedField.set(HqVerificationStore, null)
+        assertFalse(HqVerificationStore.isRisky(context, "yt3", "src3", "track3"))
+    }
 }

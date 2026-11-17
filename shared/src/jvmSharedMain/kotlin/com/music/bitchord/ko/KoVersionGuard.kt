@@ -102,6 +102,22 @@ object KoVersionGuard {
     fun worthHearingUnasked(keptSeconds: Double): Boolean =
         keptSeconds * 1000 >= MIN_WINDOW_MS + 2 * EDGE_MS
 
+    /** The engine that hears a candidate's opening for [compareWords]. */
+    enum class Hearer { GROQ, DEEPGRAM, NONE }
+
+    /**
+     * Groq when it has a key, as before. Without one, Deepgram's Whisper: the
+     * engine the song check heard the YouTube copy with for that listener, so
+     * a Deepgram-only listener's risky rows are measured instead of waiting
+     * forever. With neither key nothing is heard, and a row that needs the
+     * words stays unmeasured ([decide]), never accepted on its sound.
+     */
+    fun hearer(groqKey: String, deepgramUsable: Boolean): Hearer = when {
+        groqKey.isNotBlank() -> Hearer.GROQ
+        deepgramUsable -> Hearer.DEEPGRAM
+        else -> Hearer.NONE
+    }
+
     // ── A copy already in the cache ─────────────────────────────────────────
 
     /** What one hearing of a cached copy does to its stored pair. */
