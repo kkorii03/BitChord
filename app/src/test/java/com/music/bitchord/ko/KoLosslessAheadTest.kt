@@ -94,6 +94,26 @@ class KoLosslessAheadTest {
         assertFalse("the cache-reading defer is gone", "fun deferUpgradeKeyIf(" in audioCache)
     }
 
+    // Review OPT1 (hq-path-join-foreign-prefetch): the playing song's swap
+    // download waited for the next row's whole-FLAC prefetch from any host.
+    @Test
+    fun `a swap waits only for its own row's or its host's prefetch`() {
+        assertTrue(koSwapWaitsForPrefetch("cur", "a.example", "cur", "b.example"))
+        assertTrue(koSwapWaitsForPrefetch("next", "a.example", "cur", "a.example"))
+        assertTrue(koSwapWaitsForPrefetch("next", null, "cur", "a.example"))
+        assertTrue(koSwapWaitsForPrefetch("next", "a.example", "cur", null))
+        assertTrue(koSwapWaitsForPrefetch(null, "a.example", "cur", "b.example"))
+        assertFalse(koSwapWaitsForPrefetch("next", "a.example", "cur", "b.example"))
+        val download = source("src/main/java/com/music/bitchord/ko/KoLosslessCache.kt")
+            .substringAfter("suspend fun downloadVerifiedRendition(")
+            .substringBefore("private suspend fun fetchLosslessRendition(")
+        val asked = download.indexOf("koSwapWaitsForPrefetch(prefetchFor, losslessPrefetchHost, mediaId, streamHost)")
+        assertTrue("the join asks whose prefetch it is", asked >= 0)
+        assertTrue(asked < download.indexOf("running.join()"))
+        assertFalse("no unconditional join", "?.join()" in download)
+        assertTrue("for prefetch of \$prefetchFor" in download)
+    }
+
     private fun source(path: String): String {
         val root = File(".").canonicalFile
         return listOf("app/", "").map { File(root, "$it$path") }.first { it.exists() }

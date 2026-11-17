@@ -65,6 +65,10 @@ class KoLosslessCache(
     @Volatile
     private var losslessPrefetchFor: String? = null
 
+    /** The host [losslessPrefetchJob] downloads from; see [koSwapWaitsForPrefetch]. */
+    @Volatile
+    private var losslessPrefetchHost: String? = null
+
     private val pendingLowQualityDrops = ConcurrentHashMap<String, String>()
 
     private val upgradeKeyDeferred = ConcurrentHashMap.newKeySet<String>()
@@ -256,6 +260,7 @@ class KoLosslessCache(
         val key = keyFactory.buildCacheKey(DataSpec(uri))
         val host = HqHostTracker.hostOf(stream.url)
         losslessPrefetchFor = mediaId
+        losslessPrefetchHost = host
         losslessPrefetchJob = scope.launch(TrackLog.about(mediaId)) {
             val complete = fetchLosslessRendition(uri, title, stream, mediaId, host)
             if (!complete) return@launch
@@ -280,6 +285,7 @@ class KoLosslessCache(
         if (active) losslessPrefetchJob?.cancel()
         losslessPrefetchJob = null
         losslessPrefetchFor = null
+        losslessPrefetchHost = null
         if (active) losslessPrefetchAttempted.remove(mediaId)
     }
 
@@ -299,7 +305,20 @@ class KoLosslessCache(
         }
         if (!wanted) return false
         val key = keyFactory.buildCacheKey(DataSpec(uri))
-        losslessPrefetchJob?.takeIf { it.isActive }?.join()
+        losslessPrefetchJob?.takeIf { it.isActive }?.let { running ->
+            val prefetchFor = losslessPrefetchFor
+            val streamHost = HqHostTracker.hostOf(stream.url)
+            if (koSwapWaitsForPrefetch(prefetchFor, losslessPrefetchHost, mediaId, streamHost)) {
+                val started = android.os.SystemClock.elapsedRealtime()
+                running.join()
+                TrackLog.d(
+                    tag,
+                    "hq-swap: $mediaId waited ${android.os.SystemClock.elapsedRealtime() - started}ms " +
+                        "for prefetch of $prefetchFor",
+                    about = mediaId,
+                )
+            }
+        }
         // Whether the `#hifi` entry already holds *this* stream's bytes, asked
         // before [force] overwrites the record of what filled it. The key names
         // a slot, not a file: a partial left by another candidate must be
@@ -440,3 +459,19 @@ class KoLosslessCache(
         private const val META_HQ_LOSSLESS = "bc_hq_lossless"
     }
 }
+
+/**
+ * Review OPT1 (hq-path-join-foreign-prefetch): whether a swap download for
+ * [mediaId] waits for the running prefetch. The same row keeps one writer on
+ * its entry, and the same host (or one not known) keeps the old queueing in
+ * front of a 429. Only another row's fetch from another host no longer holds
+ * the playing song's swap for a whole next-song FLAC.
+ */
+internal fun koSwapWaitsForPrefetch(
+    prefetchFor: String?,
+    prefetchHost: String?,
+    mediaId: String,
+    streamHost: String?,
+): Boolean =
+    prefetchFor == null || prefetchFor == mediaId ||
+        prefetchHost == null || streamHost == null || prefetchHost == streamHost
