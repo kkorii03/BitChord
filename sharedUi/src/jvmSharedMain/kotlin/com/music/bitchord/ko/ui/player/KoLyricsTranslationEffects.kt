@@ -19,7 +19,10 @@ internal fun koRetimedLyricsEffect(
     // Same words, new timings: what is on screen is made again for the moved
     // lines — from the cache, at once — and swapped in quietly, without
     // folding the small lines away and back or a haptic for a tap nobody made.
-    LaunchedEffect(lyrics) {
+    // Also re-checked when a translation finishes loading: it was built from
+    // the list the tap saw, and a re-timing that landed meanwhile would
+    // otherwise leave it on the old clock for the rest of the song.
+    LaunchedEffect(koRetimeKey(lyrics, translationState)) {
         val source = lyrics
         if (source.isNullOrEmpty()) return@LaunchedEffect
         val translated = translationState as? LyricsTranslationUiState.Ready
@@ -35,6 +38,16 @@ internal fun koRetimedLyricsEffect(
         }
     }
 }
+
+/**
+ * What re-runs the re-time check: a new list, or a translation that became
+ * Ready. Loading and the other states share one key, so they do not re-run it.
+ */
+internal fun koRetimeKey(
+    lyrics: List<LyricLine>?,
+    state: LyricsTranslationUiState,
+): Pair<List<LyricLine>?, LyricsTranslationUiState.Ready?> =
+    lyrics to (state as? LyricsTranslationUiState.Ready)
 
 @Composable
 internal fun koAutoTranslateEffect(
