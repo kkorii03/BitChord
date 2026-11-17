@@ -787,7 +787,7 @@ object Downloads {
         // so playlist sync and liked auto-download never fetched it again.
         val ids = idsSharingFile(_saved.value, videoId)
         val suspects = ids.filter { mvSoundSuspectMs(it) != null }
-        val forgetAll = {
+        suspend fun forgetAll() {
             ids.forEach(::forget)
             suspects.forEach { id ->
                 runCatching {
