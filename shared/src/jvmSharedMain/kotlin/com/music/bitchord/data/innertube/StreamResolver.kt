@@ -3047,7 +3047,7 @@ object StreamResolver {
             // the Korea/no-Premium gate. Remembering it lets the rest of the
             // session use the youtube.com fallback instead of retrying a
             // refusal that will read the same on every track.
-            MusicGateFallback.observePremiumFailure("YoutubeMusicPremiumContentException")
+            MusicGateFallback.observePremiumFailure("YoutubeMusicPremiumContentException", MusicGateFallback.extractorRouteProxied()) // [KO] RG3-3
             "YouTube Music Premium이 필요한 노래입니다"
         }
         is PrivateContentException -> "비공개 노래입니다"

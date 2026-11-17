@@ -871,7 +871,8 @@ object Innertube {
             videoId,
             signatureTimestamp,
         )
-        val response = postMusic("player") {
+        var playerViaProxy = false // [KO] RG3-3
+        val response = postMusic("player", onRoute = { playerViaProxy = it }) {
             put("videoId", videoId)
             put("contentCheckOk", true)
             put("racyCheckOk", true)
@@ -885,7 +886,7 @@ object Innertube {
                 }
             }
         }
-        MusicGateFallback.observePlayer(response)
+        MusicGateFallback.observePlayer(response, playerViaProxy) // [KO] RG3-3
         if (MusicGateFallback.isActive()) return KoInnertube.youtubePlaybackTracking( // [KO] youtube-fallback
             videoId,
             signatureTimestamp,
@@ -1325,6 +1326,7 @@ object Innertube {
         directRetryOnProxyFailure: Boolean = true,
         searchKind: SearchKind? = null,
         searchQueryLength: Int? = null,
+        onRoute: ((viaProxy: Boolean) -> Unit)? = null, // [KO] RG3-3 route of the answer
         bodyExtras: JsonObjectBuilder.() -> Unit,
     ): JsonObject {
         val anonymous = KoInnertube.musicRequestIsAnonymous( // [KO] korea-gate
@@ -1367,7 +1369,8 @@ object Innertube {
             endpoint = endpoint,
             musicUrl = musicUrl,
             directRetryOnProxyFailure = directRetryOnProxyFailure,
-        ) { http, _ ->
+        ) { http, viaProxy ->
+            onRoute?.invoke(viaProxy) // [KO] RG3-3: the last attempt's route is the answer's
             http.post(musicUrl) {
                 contentType(ContentType.Application.Json)
                 parameter("prettyPrint", "false")

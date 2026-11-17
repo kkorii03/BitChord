@@ -12,6 +12,7 @@ import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.innertube.YouTubeWebSearch
 import com.music.bitchord.ko.KoAudioSwitch
 import com.music.bitchord.ko.KoCharts
+import com.music.bitchord.ko.KoConvertedRows
 import com.music.bitchord.ko.KoHomeFeed
 import com.music.bitchord.ko.KoLibrary
 import com.music.bitchord.ko.KoSearch
@@ -129,6 +130,7 @@ object YtMusicRepository {
     /** Switching [audioId] back to video returns to [video], the row it was converted from. */
     fun rememberVideoVersion(audioId: String, video: Song) {
         videoVersionCache[audioId] = video
+        KoConvertedRows.note(video) // [KO] RG1-3 the converted row's own mark
     }
 
     /** [KO] The sound proved [audioId] is not [videoId]'s song: the pairing is forgotten. */

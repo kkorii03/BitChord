@@ -1,6 +1,8 @@
 package com.music.bitchord.data.net
 
+import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.ko.KoConvertedRows
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -1059,6 +1061,46 @@ class SongVersionPolicyTest {
         assertFalse(SongVersionPolicy.standsInForVideo(false, null, "mv"))
         // The song standing in for some other video.
         assertFalse(SongVersionPolicy.standsInForVideo(false, "other-mv", "mv"))
+    }
+
+    // Review RG1-3: the first refutation forgets the switch-back pairing, which
+    // was the only mark of the other rows music-only converted from the same
+    // video, so they kept playing the wrong song.
+    @Test
+    fun `RG1-3 a row converted from the video still stands in for it after a refutation`() {
+        KoConvertedRows.clearForTest()
+        val mv = Song(
+            videoId = "rg13-mv",
+            title = "Song (Official Video)",
+            artist = "Act",
+            thumbnailUrl = null,
+            isVideo = true,
+            queueEntryId = "rg13-entry-converted",
+        )
+        // What music-only's conversion does for the row in mv's queue entry.
+        YtMusicRepository.rememberVideoVersion("rg13-audio", mv)
+        // What the first refutation of the pair does.
+        YtMusicRepository.forgetVideoVersion("rg13-audio", "rg13-mv")
+        val remembered = YtMusicRepository.cachedVideoVersion("rg13-audio")?.videoId
+
+        assertTrue(
+            SongVersionPolicy.standsInForVideo(
+                rowIsVideoOrigin = false,
+                rememberedVideoId = remembered,
+                sourceVideoId = "rg13-mv",
+                entryVideoId = KoConvertedRows.videoOf("rg13-entry-converted"),
+            ),
+        )
+        // The same song as the listener's own row (another queue entry) stays.
+        assertFalse(
+            SongVersionPolicy.standsInForVideo(
+                rowIsVideoOrigin = false,
+                rememberedVideoId = remembered,
+                sourceVideoId = "rg13-mv",
+                entryVideoId = KoConvertedRows.videoOf("rg13-entry-own"),
+            ),
+        )
+        KoConvertedRows.clearForTest()
     }
 
     // Review 11-15 (R1): a lookup that answers after the listener moved on

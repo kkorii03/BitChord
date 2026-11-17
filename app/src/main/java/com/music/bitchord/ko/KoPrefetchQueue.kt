@@ -70,6 +70,24 @@ internal fun keepRunningReadAhead(
 }
 
 /**
+ * [KO] RG3-1: rows behind the next track whose stream URL the kept job will
+ * not warm, because it walks the list it started with.
+ *
+ * [lookaheadCount] is [BatteryPolicy.cacheUrlLookaheadCount] (the next track
+ * included), so power saving or a metered connection, where only the next
+ * track is warmed, gives an empty answer. The next track itself is the kept
+ * job's own and is never returned.
+ */
+internal fun readAheadWarmupDelta(
+    oldQueue: List<String>,
+    newQueue: List<String>,
+    lookaheadCount: Int,
+): List<String> {
+    val oldWindow = oldQueue.take(lookaheadCount).toSet()
+    return newQueue.take(lookaheadCount).drop(1).filterNot { it in oldWindow }.distinct()
+}
+
+/**
  * [KO] prefetch-queue
  *
  * The fork's read-ahead scheduling: verify the next source candidate, honour
@@ -116,7 +134,9 @@ class KoPrefetchQueue(
         // [KO] P1-3: same next track, its job still running — only later rows
         // changed. Keep its lookup and its waiter; just remember the new list.
         if (keepRunningReadAhead(pendingQueue(), mediaIds, jobTarget, job()?.isActive == true)) {
+            val oldQueue = pendingQueue()
             setPendingQueue(mediaIds)
+            warmChangedRows(oldQueue, mediaIds) // [KO] RG3-1
             return
         }
         android.util.Log.d("BCFetchDebug", "prefetchQueue: head ${pendingQueue().firstOrNull()} -> ${mediaIds.firstOrNull()}")
@@ -363,6 +383,43 @@ class KoPrefetchQueue(
                 warm.invokeOnCompletion { nextFlight?.complete(null) }
             }
         })
+    }
+
+    /**
+     * [KO] RG3-1: the URL-only warm-up for rows that changed behind a kept
+     * next track. A child of the kept job, so a real restart or [cancel]
+     * stops it too; the same grace delay and the same power and metering gate
+     * as the job's own warm-up, re-read after the delay. Writes no bytes.
+     */
+    private fun warmChangedRows(oldQueue: List<String>, newQueue: List<String>) {
+        val running = job()?.takeIf { it.isActive } ?: return
+        val ids = readAheadWarmupDelta(
+            oldQueue,
+            newQueue,
+            BatteryPolicy.cacheUrlLookaheadCount(
+                metered = AppSettings.meteredConnection.value == true,
+                lowPower = AppSettings.lowPower.value,
+                queueLookahead = QUEUE_LOOKAHEAD,
+            ),
+        ).filter {
+            SourceRegistry.parseTrackKey(it) == null &&
+                it !in Downloads.saved.value &&
+                !tracker.playerHoldsVideo(it)
+        }
+        if (ids.isEmpty()) return
+        scope.launch(running) {
+            delay(PREFETCH_DELAY_MS)
+            val allowed = BatteryPolicy.cacheUrlLookaheadCount(
+                metered = AppSettings.meteredConnection.value == true,
+                lowPower = AppSettings.lowPower.value,
+                queueLookahead = QUEUE_LOOKAHEAD,
+            ) - 1
+            for (id in ids.take(allowed.coerceAtLeast(0))) {
+                runCatching { StreamResolver.resolve(id) }
+                    .onFailure { TrackLog.d(tag, "queue warm-up skipped $id: ${it.message}", about = id) }
+                delay(QUEUE_RESOLVE_STAGGER_MS)
+            }
+        }
     }
 
     fun cancel() {

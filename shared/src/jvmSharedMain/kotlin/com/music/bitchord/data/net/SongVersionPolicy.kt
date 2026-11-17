@@ -598,14 +598,19 @@ object SongVersionPolicy {
      * listener picked from its album was measured against a video they never
      * asked for and, when the two were different songs, replaced by that
      * video from its start. Only a row converted from a video carries one of
-     * the two marks the install paths leave: the row's own video origin, or
-     * the video remembered for switching back.
+     * the marks the install paths leave: the row's own video origin, the
+     * video remembered for switching back, or (RG1-3) the video its queue
+     * entry was converted from, [entryVideoId], which outlives the first
+     * refutation's forgetting of the switch-back pairing.
      */
     fun standsInForVideo(
         rowIsVideoOrigin: Boolean,
         rememberedVideoId: String?,
         sourceVideoId: String,
-    ): Boolean = rowIsVideoOrigin || (rememberedVideoId != null && rememberedVideoId == sourceVideoId)
+        entryVideoId: String? = null, // [KO] RG1-3
+    ): Boolean = rowIsVideoOrigin ||
+        (rememberedVideoId != null && rememberedVideoId == sourceVideoId) ||
+        (entryVideoId != null && entryVideoId == sourceVideoId)
 
     /**
      * Whether a before-audio lookup that answered for [lookupMediaId] may

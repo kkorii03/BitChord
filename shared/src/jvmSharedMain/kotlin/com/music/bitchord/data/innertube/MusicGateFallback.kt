@@ -1,6 +1,7 @@
 package com.music.bitchord.data.innertube
 
 import com.music.bitchord.data.DebugLog as Log
+import com.music.bitchord.data.net.ProxyHealthMonitor
 import com.music.bitchord.data.net.YouTubeProxy
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -70,6 +71,10 @@ object MusicGateFallback {
         var state: State,
         var checkedAt: Long,
         var fromThisProcess: Boolean,
+        // [KO] RG3-2: when a re-check of a GATED verdict last failed. Memory
+        // only, never a verdict: it only stops [needsRecheck] repeating the
+        // failing browse at every entry point until the window passes.
+        var failedCheckAt: Long? = null,
     )
 
     private val entries = ConcurrentHashMap<String, Entry>()
@@ -243,7 +248,7 @@ object MusicGateFallback {
         if (forced) return false
         val entry = entries[key] ?: return true
         return when (entry.state) {
-            State.GATED -> gatedNeedsRecheck(entry, now)
+            State.GATED -> gatedNeedsRecheck(entry, now) && !failedCheckBacksOff(entry, now) // [KO] RG3-2
             State.UNKNOWN -> now - entry.checkedAt >= recheckWindow()
             State.OPEN -> false
         }
@@ -251,6 +256,18 @@ object MusicGateFallback {
 
     private fun recheckWindow(): Long =
         if (YouTubeProxy.config.usable) PROXY_RECHECK_MS else RECHECK_MS
+
+    /**
+     * [KO] RG3-2: a GATED re-check that failed within the window is not
+     * repeated by every entry point ([KoRepoGate.ensureGateKnown] runs before
+     * each library, search, artist and playlist call). Home's own re-check
+     * ([shouldTryMusic]) is not held back, so a recovered network or proxy is
+     * still noticed on the next Home load. A time-stamp read at call time.
+     */
+    private fun failedCheckBacksOff(entry: Entry, now: Long): Boolean {
+        val failedAt = entry.failedCheckAt ?: return false
+        return now - failedAt < recheckWindow()
+    }
 
     /**
      * Forgets every identity's verdict after the network they were made on
@@ -300,12 +317,16 @@ object MusicGateFallback {
      *
      * A GATED entry is left exactly as it was (N2): a failed check is not a
      * verdict, so it must neither make a verdict loaded from disk trusted
-     * ([Entry.fromThisProcess]) nor restart a stale verdict's window.
+     * ([Entry.fromThisProcess]) nor restart a stale verdict's window. Only
+     * the in-memory failure time moves, so [needsRecheck] backs off (RG3-2).
      */
     @Synchronized
     fun touch(key: String = currentKey(), now: Long = System.currentTimeMillis()) {
         val entry = entries.computeIfAbsent(key) { Entry(State.UNKNOWN, now, fromThisProcess = true) }
-        if (entry.state == State.GATED) return
+        if (entry.state == State.GATED) {
+            entry.failedCheckAt = now // [KO] RG3-2
+            return
+        }
         entry.checkedAt = now
         entry.fromThisProcess = true
         persist()
@@ -362,6 +383,17 @@ object MusicGateFallback {
         if (offRouteWhileProxied(viaProxy, "stream resolver")) return
         markGated("stream resolver: ${reason.take(120)}")
     }
+
+    /**
+     * [KO] RG3-3: whether the stream extractor's player request leaves through
+     * the proxy now, read from the same scope and health the shared client's
+     * selector uses. MUSIC_ONLY keeps `/player` direct (false); ALL_YOUTUBE
+     * sends it through the proxy unless the proxy is being bypassed.
+     */
+    fun extractorRouteProxied(): Boolean =
+        YouTubeProxy.matches(EXTRACTOR_PLAYER_URL) && !ProxyHealthMonitor.shouldBypassProxy()
+
+    private const val EXTRACTOR_PLAYER_URL = "https://www.youtube.com/youtubei/v1/player"
 
     /** True (and logged) when a usable proxy is set but this signal did not travel it. */
     private fun offRouteWhileProxied(viaProxy: Boolean, source: String): Boolean {

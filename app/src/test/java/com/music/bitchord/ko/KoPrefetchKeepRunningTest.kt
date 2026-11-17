@@ -1,5 +1,6 @@
 package com.music.bitchord.ko
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -33,5 +34,20 @@ class KoPrefetchKeepRunningTest {
     @Test
     fun `an emptied queue restarts`() {
         assertFalse(keepRunningReadAhead(listOf("A"), emptyList(), jobTarget = "A", jobActive = true))
+    }
+
+    // ---- RG3-1: a kept job still warms the URL of a changed row behind next
+
+    @Test
+    fun `RG3-1 a swapped row behind the kept next track is warmed`() {
+        assertEquals(listOf("X"), readAheadWarmupDelta(listOf("A", "B", "C"), listOf("A", "X", "C"), lookaheadCount = 2))
+        assertEquals(listOf("B"), readAheadWarmupDelta(listOf("A"), listOf("A", "B"), lookaheadCount = 2))
+    }
+
+    @Test
+    fun `RG3-1 nothing new behind next means nothing to warm`() {
+        assertEquals(emptyList<String>(), readAheadWarmupDelta(listOf("A", "B"), listOf("A", "B", "C"), lookaheadCount = 2))
+        // Power saving or metered: only the next track, which is the job's own.
+        assertEquals(emptyList<String>(), readAheadWarmupDelta(listOf("A", "B"), listOf("A", "X"), lookaheadCount = 1))
     }
 }

@@ -16,6 +16,7 @@ import com.music.bitchord.data.net.LateVersionSwapPolicy
 import com.music.bitchord.data.net.SongVersionPolicy
 import com.music.bitchord.data.net.UnprovenVersions
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.ko.KoConvertedRows
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.download.MvSoundRedownload
 import com.music.bitchord.playback.smart.AutomixAnalysisSource
@@ -1129,6 +1130,7 @@ internal class SongVersionController(
                 rowIsVideoOrigin = item.isVideoOrigin,
                 rememberedVideoId = YtMusicRepository.cachedVideoVersion(adoptedId)?.videoId,
                 sourceVideoId = source.videoId,
+                entryVideoId = KoConvertedRows.videoOf(item.queueEntryId), // [KO] RG1-3
             )
         ) return
         if (VersionAudioAligner.isRejected(source.videoId, adoptedId)) {

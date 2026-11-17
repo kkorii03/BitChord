@@ -174,8 +174,9 @@ class MusicGateFallbackProxyRecheckTest {
 
         assertEquals(MusicGateFallback.State.GATED, MusicGateFallback.state("u:k"))
         assertFalse(MusicGateFallback.isActive("u:k"), "a failed check is not a verdict")
+        // Home still re-checks; only the entry points back off (RG3-2).
         assertTrue(MusicGateFallback.shouldTryMusic("u:k", now = 7_000_001L))
-        assertTrue(MusicGateFallback.needsRecheck("u:k", now = 7_000_001L))
+        assertFalse(MusicGateFallback.needsRecheck("u:k", now = 7_000_001L))
     }
 
     @Test
@@ -188,9 +189,83 @@ class MusicGateFallbackProxyRecheckTest {
 
         MusicGateFallback.touch(key, now = late)
 
-        assertTrue(MusicGateFallback.needsRecheck(key, now = late + 1L))
+        // The verdict's own window is not restarted: Home still re-checks it.
         assertTrue(MusicGateFallback.shouldTryMusic(key, now = late + 1L))
         assertTrue(MusicGateFallback.isActive(key), "the verdict itself is unchanged")
+    }
+
+    // ---- RG3-2: a failed re-check of a GATED verdict backs the entry points off
+
+    @Test
+    fun `RG3-2 a failed gated re-check is not repeated by every entry point`() {
+        val key = "u:rg32"
+        val at = 8_500_000L
+        MusicGateFallback.markGated("test", key = key, now = at)
+        val late = at + MusicGateFallback.RECHECK_MS
+        assertTrue(MusicGateFallback.needsRecheck(key, now = late))
+
+        MusicGateFallback.touch(key, now = late)
+
+        assertFalse(MusicGateFallback.needsRecheck(key, now = late + 1L))
+        assertFalse(MusicGateFallback.needsRecheck(key, now = late + MusicGateFallback.RECHECK_MS - 1))
+        assertTrue(MusicGateFallback.needsRecheck(key, now = late + MusicGateFallback.RECHECK_MS))
+    }
+
+    @Test
+    fun `RG3-2 with a proxy a stored verdict backs off for ten minutes and stays untrusted`() {
+        val store = MemoryStore()
+        store.values["music_gate_fallback_v1"] =
+            """{"version":1,"entries":{"u:rg32p":{"state":"GATED","at":"1"}}}"""
+        MusicGateFallback.init(store)
+        YouTubeProxy.update(proxy)
+        val at = 9_500_000L
+        assertTrue(MusicGateFallback.needsRecheck("u:rg32p", now = at))
+
+        MusicGateFallback.touch("u:rg32p", now = at)
+
+        assertFalse(MusicGateFallback.needsRecheck("u:rg32p", now = at + MusicGateFallback.PROXY_RECHECK_MS - 1))
+        assertTrue(MusicGateFallback.needsRecheck("u:rg32p", now = at + MusicGateFallback.PROXY_RECHECK_MS))
+        assertFalse(MusicGateFallback.isActive("u:rg32p"), "a failed check is not a verdict")
+        assertTrue(MusicGateFallback.shouldTryMusic("u:rg32p", now = at + 1L))
+    }
+
+    @Test
+    fun `RG3-2 a real verdict during the back-off is still recorded`() {
+        val store = MemoryStore()
+        store.values["music_gate_fallback_v1"] =
+            """{"version":1,"entries":{"u:rg32v":{"state":"GATED","at":"1"}}}"""
+        MusicGateFallback.init(store)
+        YouTubeProxy.update(proxy)
+        val at = 9_700_000L
+        MusicGateFallback.touch("u:rg32v", now = at)
+
+        MusicGateFallback.markGated("home upsell", key = "u:rg32v", now = at + 1L)
+
+        assertTrue(MusicGateFallback.isActive("u:rg32v"), "a proved verdict is trusted")
+        assertFalse(MusicGateFallback.needsRecheck("u:rg32v", now = at + 2L))
+    }
+
+    // ---- RG3-3: the stream extractor's own route ---------------------------
+
+    @Test
+    fun `RG3-3 an extractor refusal on an all-YouTube proxy route gates`() {
+        YouTubeProxy.update(proxy.copy(scope = ProxyScope.ALL_YOUTUBE))
+        assertTrue(MusicGateFallback.extractorRouteProxied())
+
+        MusicGateFallback.observePremiumFailure(
+            "YoutubeMusicPremiumContentException",
+            MusicGateFallback.extractorRouteProxied(),
+        )
+
+        assertEquals(MusicGateFallback.State.GATED, MusicGateFallback.state())
+    }
+
+    @Test
+    fun `RG3-3 a music-only proxy keeps the extractor's player direct`() {
+        YouTubeProxy.update(proxy)
+        assertFalse(MusicGateFallback.extractorRouteProxied())
+        YouTubeProxy.update(ProxyConfig())
+        assertFalse(MusicGateFallback.extractorRouteProxied())
     }
 
     @Test
