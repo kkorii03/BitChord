@@ -77,6 +77,23 @@ class KoLosslessAheadTest {
         assertTrue("upgradeKeyDeferred += videoId\n    }\n\n    fun onTrackBecameCurrent" in cache)
     }
 
+    // Review 11-18: the arming defer asked the cache for the complete copy on
+    // the player thread (SimpleCache lock a loader may hold, a file head read).
+    @Test
+    fun `the arming defer decides on the verdicts alone`() {
+        assertTrue(KoLosslessAhead.defersPlainKey(automix = true, listOf(verified(0L), verified(450L))))
+        assertTrue(KoLosslessAhead.defersPlainKey(automix = true, emptyList()))
+        assertFalse(KoLosslessAhead.defersPlainKey(automix = true, listOf(verified(0L))))
+        assertFalse(KoLosslessAhead.defersPlainKey(automix = false, listOf(verified(450L))))
+        val defer = source("src/main/java/com/music/bitchord/ko/KoLosslessAhead.kt")
+            .substringAfter("internal fun koDeferOffClockUpgradeKey(context: Context, videoId: String) {")
+        val body = defer.substringBefore("\n}\n")
+        assertTrue("defers through the plain set", "AudioCache.deferUpgradeKey(videoId)" in body)
+        assertFalse("no cache lookup at arming", "deferUpgradeKeyIf" in body || "completeUpgradeRendition" in body)
+        val audioCache = source("src/main/java/com/music/bitchord/playback/AudioCache.kt")
+        assertFalse("the cache-reading defer is gone", "fun deferUpgradeKeyIf(" in audioCache)
+    }
+
     private fun source(path: String): String {
         val root = File(".").canonicalFile
         return listOf("app/", "").map { File(root, "$it$path") }.first { it.exists() }

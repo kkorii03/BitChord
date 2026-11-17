@@ -62,6 +62,17 @@ internal object KoLosslessAhead {
      */
     fun allCueSafe(verdicts: List<HqVerificationStore.Verified>): Boolean =
         verdicts.isNotEmpty() && verdicts.all(::cueSafe)
+
+    /**
+     * Review SW7A-2: whether arming the standby defers the song's plain key.
+     * Decided on the verdicts alone, with no look at the cache: deferring a key
+     * that has no complete copy behind it changes nothing, because a copy
+     * completed later in this play is deferred by its own fetch
+     * ([com.music.bitchord.ko.KoLosslessCache.prefetchVerifiedRendition],
+     * [com.music.bitchord.ko.KoLosslessCache.downloadVerifiedRendition]).
+     */
+    fun defersPlainKey(automix: Boolean, verdicts: List<HqVerificationStore.Verified>): Boolean =
+        automix && !allCueSafe(verdicts)
 }
 
 /** [KoLosslessAhead.mayPinAhead] for [stream] as [videoId]'s next-row pin, logged when refused. */
@@ -87,12 +98,14 @@ internal fun koMayPinAhead(context: Context, videoId: String, stream: SourceStre
  * no pin and no clock check, so the standby opened it at the YouTube cue.
  * Under Automix, a song whose verdicts are not all on YouTube's clock keeps
  * its plain key until the queue moves on, the prefetch deferral's lifecycle.
+ *
+ * Runs on the player thread when the standby arms, so it reads only the
+ * in-memory verdicts ([KoLosslessAhead.defersPlainKey]); asking the cache for
+ * the complete copy took the SimpleCache lock a loader may hold and read a
+ * file head (review 11-18).
  */
 internal fun koDeferOffClockUpgradeKey(context: Context, videoId: String) {
     if (!AppSettings.smartFadeEnabled.value) return
-    AudioCache.deferUpgradeKeyIf(videoId) {
-        !KoLosslessAhead.allCueSafe(
-            HqVerificationStore.entries(context).filter { it.youtubeId == videoId }.map { it.verified },
-        )
-    }
+    val verdicts = HqVerificationStore.entries(context).filter { it.youtubeId == videoId }.map { it.verified }
+    if (KoLosslessAhead.defersPlainKey(automix = true, verdicts)) AudioCache.deferUpgradeKey(videoId)
 }
