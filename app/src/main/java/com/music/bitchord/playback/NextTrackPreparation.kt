@@ -288,14 +288,19 @@ internal class NextTrackPreparation(
         // (a) Which recording will play.
         if (versionWanted(song) && Step.VERSION !in steps && !versionAnswered(song)) {
             steps += Step.VERSION
-            val resolved = resolveVersion(song, snapshot.rowId) { expected ->
-                expectedQueueKey = NextPrepPolicy.soundKey(
-                    snapshot.rowId,
-                    expected.videoId,
-                    expected.localUri != null,
-                    snapshot.lyricsSettings,
-                )
-                queueKey = expectedQueueKey
+            val resolved = try {
+                resolveVersion(song, snapshot.rowId) { expected ->
+                    expectedQueueKey = NextPrepPolicy.soundKey(
+                        snapshot.rowId,
+                        expected.videoId,
+                        expected.localUri != null,
+                        snapshot.lyricsSettings,
+                    )
+                    queueKey = expectedQueueKey
+                }
+            } catch (cancelled: CancellationException) {
+                com.music.bitchord.ko.KoNextPrepAttempts.forgetIfCancelled(steps, attempted, Step.VERSION, bundleJob) // [KO] TR7 F3
+                throw cancelled
             }
             if (resolved != null) {
                 song = resolved
@@ -482,6 +487,7 @@ internal class NextTrackPreparation(
                     true
                 }
             } catch (cancelled: CancellationException) {
+                com.music.bitchord.ko.KoNextPrepAttempts.forgetIfCancelled(steps, attempted, step, bundleJob) // [KO] TR7 F3
                 throw cancelled
             } catch (failure: Throwable) {
                 // A failed step is skipped, never fatal: the post-start path
@@ -626,6 +632,7 @@ internal class NextTrackPreparation(
                         true
                     }
                 } catch (cancelled: CancellationException) {
+                    com.music.bitchord.ko.KoNextPrepAttempts.forgetIfCancelled(steps, attempted, Step.MIX, bundleJob) // [KO] TR7 F3
                     throw cancelled
                 } catch (failure: Throwable) {
                     TrackLog.d(
