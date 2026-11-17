@@ -615,11 +615,7 @@ internal suspend fun PlaybackService.koSmoothSwapToLossless(
         if (i == index) upgradedItem else activePlayer.getMediaItemAt(i)
     }
     val wasPlaying = activePlayer.playWhenReady
-    val startAt = HqSwapPolicy.targetPositionMs(
-        HqSwapPolicy.toYoutubeMs(activePlayer.currentPosition, currentOffsetMs, currentRate),
-        verified.offsetMs,
-        verified.rate,
-    )
+    val startAt = liveTargetMs()
     // What the replacement has to prove itself against, captured before the
     // swap overwrites the claims for this track. The candidate's own length
     // is the old track's YouTube length carried through its verified
@@ -670,14 +666,7 @@ internal suspend fun PlaybackService.koSmoothSwapToLossless(
         unfitReason()?.let { return@withContext refuse(it) }
 
         if (wasPlaying) {
-            standbyPlayer.seekTo(
-                index,
-                HqSwapPolicy.targetPositionMs(
-                    HqSwapPolicy.toYoutubeMs(activePlayer.currentPosition, currentOffsetMs, currentRate),
-                    verified.offsetMs,
-                    verified.rate,
-                ),
-            )
+            standbyPlayer.seekTo(index, liveTargetMs())
             standbyPlayer.play()
             val started = koAwaitPlayerCondition(
                 HqSwapPolicy.START_TIMEOUT_MS,
@@ -696,14 +685,7 @@ internal suspend fun PlaybackService.koSmoothSwapToLossless(
                 // Asked before the seek, which would put a standby that has
                 // run on to the next row back on this one and hide that.
                 unfitReason()?.let { return@withContext refuse(it) }
-                standbyPlayer.seekTo(
-                    index,
-                    HqSwapPolicy.targetPositionMs(
-                        HqSwapPolicy.toYoutubeMs(activePlayer.currentPosition, currentOffsetMs, currentRate),
-                        verified.offsetMs,
-                        verified.rate,
-                    ),
-                )
+                standbyPlayer.seekTo(index, liveTargetMs())
             } else {
                 releaseStandby()
                 return@withContext false

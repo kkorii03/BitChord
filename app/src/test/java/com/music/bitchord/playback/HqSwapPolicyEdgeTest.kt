@@ -366,6 +366,20 @@ class HqSwapPolicyEdgeTest {
         )
     }
 
+    // OPT1 structure-4: the seeks and the off-target check map the live position
+    // through one function, so an edit to one cannot leave the other behind.
+    @Test
+    fun `the swap seeks and checks against one live target`() {
+        val swap = swapBody()
+        assertEquals(
+            "only liveTargetMs() maps the live position onto the HQ clock",
+            1,
+            Regex("""HqSwapPolicy\.toYoutubeMs\(activePlayer\.currentPosition""").findAll(swap).count(),
+        )
+        assertTrue("val startAt = liveTargetMs()" in swap)
+        assertEquals(2, Regex("""standbyPlayer\.seekTo\(index, liveTargetMs\(\)\)""").findAll(swap).count())
+    }
+
     private fun swapBody(): String = source(SWAP_FILE)
         .substringAfter("fun PlaybackService.koSmoothSwapToLossless(")
         .substringBefore("fun PlaybackService.koIsStillSwapping(")
