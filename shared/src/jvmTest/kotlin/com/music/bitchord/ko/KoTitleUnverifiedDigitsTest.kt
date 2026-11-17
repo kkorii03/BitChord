@@ -88,4 +88,44 @@ class KoTitleUnverifiedDigitsTest {
         assertFalse(KoTrackMatcher.latinAgainstOtherScript("붉은노을(07.22)", "Red Sunset"))
         assertFalse(KoTrackMatcher.latinAgainstOtherScript("Red Sunset", "붉은노을(07.22)"))
     }
+
+    // Review round: digits were only one way in. One Latin word in the upload's
+    // packaging (an agency name, a joining 'x', 'ver', '#shorts', '1080p') still
+    // made the same singer's Hangul covers the "English filing" of '여로'. The
+    // song's own name, the parsed core, is Hangul or Hangul and Latin together.
+
+    private val packagedCovers = listOf(
+        "8282 - StelLive 2기생",
+        "타비 x 히나-붉은노을(07.22)",
+        "붉은노을 (Full ver.)",
+        "붉은노을 #shorts",
+        "붉은노을 1080p",
+    )
+
+    @Test
+    fun `a latin packaging word does not make a hangul cover another song's latin name`() {
+        for (title in packagedCovers) {
+            // The audio switch of a video row (-30/+3 s window).
+            val video = videoTarget(title)
+            assertFalse(TrackMatcher.isAudioSwitchTitleUnverified(yeoro, video), title)
+            assertNull(TrackMatcher.titleUnverifiedAdoption(listOf(yeoro), video), title)
+            // The quality upgrade grade (3 s window).
+            val row = TrackMatcher.Target(title = title, artist = singer, durationSec = 204)
+            assertFalse(TrackMatcher.isTitleUnverifiedOriginal(yeoro, row), title)
+        }
+    }
+
+    @Test
+    fun `the core test reads the letters of the song's name`() {
+        // The catalogue filing shape: Latin letters only against another script only.
+        assertTrue(KoTrackMatcher.coresLatinAgainstOtherScript("youreunderarrest", "체포하겠어"))
+        assertTrue(KoTrackMatcher.coresLatinAgainstOtherScript("체포하겠어", "youreunderarrest"))
+        // Hangul and Latin in one core, digits alone, a packaging word alone,
+        // and two Latin names are no such pair.
+        assertFalse(KoTrackMatcher.coresLatinAgainstOtherScript("stellive2기생", "여로"))
+        assertFalse(KoTrackMatcher.coresLatinAgainstOtherScript("타비x히나붉은노을", "여로"))
+        assertFalse(KoTrackMatcher.coresLatinAgainstOtherScript("8282", "여로"))
+        assertFalse(KoTrackMatcher.coresLatinAgainstOtherScript("4k", "여로"))
+        assertFalse(KoTrackMatcher.coresLatinAgainstOtherScript("lemonade", "camouflage"))
+    }
 }

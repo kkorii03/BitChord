@@ -610,6 +610,7 @@ internal object KoTrackMatcher {
         val wanted = parseTitle(target.title, target.artist)
         val got = parseTitle(candidate.title, candidate.artist)
         if (wanted.core.isBlank() || got.core.isBlank()) return false
+        if (!coresLatinAgainstOtherScript(wanted.core, got.core)) return false // [KO] SKIP7 review
         val albumMarks = albumVersionMarkers(candidate.albumName)
         val effectiveVersions = got.versions + (albumMarks intersect NOVOCAL_TAKES) +
             (albumMarks intersect wanted.versions)
@@ -653,6 +654,31 @@ internal object KoTrackMatcher {
         normalize(text).split(WORD_SPLIT)
             .map { it.replace(NON_ALNUM, "") }
             .any { word -> word.any { it in 'a'..'z' } && hasFilingLatin(word) }
+
+    /**
+     * [latinAgainstOtherScript] read on the two parsed cores: one written in
+     * Latin letters only, the other only in letters of another script.
+     *
+     * The raw titles still carry what the parse drops or keeps beside the
+     * song's name, and one Latin word there was enough (SKIP7 review): an
+     * agency name ('8282 - StelLive 2기생'), a joining 'x' ('타비 x 히나-붉은노을'),
+     * a '#shorts' or '1080p' tag. Each made a Hangul cover the "English
+     * filing" of the same singer's Hangul song. A core holding Hangul and Latin
+     * together is a filing in neither script, and a core of digits alone is in
+     * no script. [isTitleUnverifiedOriginal] asks this after the raw test, never
+     * instead of it, so it only narrows.
+     */
+    internal fun coresLatinAgainstOtherScript(wanted: String, got: String): Boolean =
+        (isLatinCore(wanted) && isOtherScriptCore(got)) ||
+            (isOtherScriptCore(wanted) && isLatinCore(got))
+
+    private fun isLatinCore(core: String): Boolean =
+        scriptsOf(core) == setOf(Character.UnicodeScript.LATIN) && hasFilingLatin(core)
+
+    private fun isOtherScriptCore(core: String): Boolean {
+        val scripts = scriptsOf(core)
+        return scripts.isNotEmpty() && Character.UnicodeScript.LATIN !in scripts
+    }
 
     /**
      * Whether [candidate] may be adopted as the audio of music video [target]
