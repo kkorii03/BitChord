@@ -277,6 +277,9 @@ object KoLyricsTranslation {
         trackId: String,
         slots: List<TextSlot>,
         target: String,
+        /** The request; the callback runs when every model answered 200 with nothing usable. */
+        request: suspend (List<TextSlot>, String, () -> Unit) -> LyricsTranslation.BatchAnswer? =
+            { s, t, onAllUnusable -> requestGemini(s, t, onAllUnusable) },
     ): CachedTranslation? {
         val cacheKey = LyricsTranslation.cacheKey("gemini\u0000$trackId", target, slots)
         val cached = LyricsTranslation.rememberedTranslation(cacheKey)
@@ -285,8 +288,20 @@ object KoLyricsTranslation {
             // Entries written before engines were recorded carry the default.
             return cached.copy(engine = LyricsTranslation.ENGINE_GEMINI)
         }
-        val fresh = requestGemini(slots, target) ?: return null
-        if (fresh.translations.size != slots.size) return null
+        // Review X2: a sheet every model answered without a usable translation
+        // (one line short, a safety stop) is not sent again this process — it
+        // cost up to every model's whole-song generation on each play, and the
+        // Google text waited behind it. A new launch tries again.
+        if (knownUnusable(cacheKey)) {
+            TrackLog.d(GEMINI_TAG, "ask skipped: this sheet came back unusable from every model")
+            return null
+        }
+        var unusable = false
+        val fresh = request(slots, target) { unusable = true }
+        if (fresh == null || fresh.translations.size != slots.size) {
+            if (unusable) rememberUnusable(cacheKey)
+            return null
+        }
         return CachedTranslation(
             sourceLanguage = fresh.sourceLanguage,
             targetLanguage = target,
@@ -324,7 +339,29 @@ object KoLyricsTranslation {
         }
     }
 
-    private suspend fun requestGemini(slots: List<TextSlot>, target: String): LyricsTranslation.BatchAnswer? {
+    /** Sheets (by Gemini cache key) every model answered unusably; bounded, process-lifetime. */
+    private val unusableSheets = object : LinkedHashMap<String, Unit>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Unit>?): Boolean =
+            size > MAX_UNUSABLE_SHEETS
+    }
+    private const val MAX_UNUSABLE_SHEETS = 64
+
+    internal fun knownUnusable(cacheKey: String): Boolean =
+        synchronized(unusableSheets) { unusableSheets.containsKey(cacheKey) }
+
+    internal fun rememberUnusable(cacheKey: String) {
+        synchronized(unusableSheets) { unusableSheets[cacheKey] = Unit }
+    }
+
+    internal fun forgetUnusableForTest() {
+        synchronized(unusableSheets) { unusableSheets.clear() }
+    }
+
+    private suspend fun requestGemini(
+        slots: List<TextSlot>,
+        target: String,
+        onAllUnusable: (() -> Unit)? = null,
+    ): LyricsTranslation.BatchAnswer? {
         val key = cleanGeminiKey()
         if (key.isEmpty()) return null
         val input = buildJsonObject {
@@ -380,7 +417,7 @@ object KoLyricsTranslation {
             }
         }.toString()
 
-        return askGemini(body) { parseGemini(it, slots.size) }
+        return askGemini(body, onAllUnusable = onAllUnusable) { parseGemini(it, slots.size) }
     }
 
     /**
@@ -395,6 +432,8 @@ object KoLyricsTranslation {
         codes: MutableList<Int>? = null,
         /** Audio inlined as a stream; the request body encodes it while sending. */
         audioWav: ByteArray? = null,
+        /** Runs when every model asked answered 2xx and [parse] took none of them. */
+        onAllUnusable: (() -> Unit)? = null,
         parse: (String) -> T?,
     ): T? {
         val key = cleanGeminiKey()
@@ -410,6 +449,7 @@ object KoLyricsTranslation {
         var networkFailures = 0
         var serverErrors = 0
         var dailyRefusals = 0
+        var unusableAnswers = 0
         val requestBody = geminiRequestBody(body, audioWav)
         val tried = models.filter { it !in missingGeminiModels }
         for (model in tried) {
@@ -435,6 +475,7 @@ object KoLyricsTranslation {
                     val parsed = parse(text)
                     if (parsed != null) return parsed
                     TrackLog.w(GEMINI_TAG, "$model: HTTP $code but unusable: ${emptySummary(text)}")
+                    unusableAnswers++
                     // A malformed answer from one model is worth one more try
                     // on the other before giving up on Gemini for this song.
                 }
@@ -465,6 +506,7 @@ object KoLyricsTranslation {
             val allDaily = quotaRefusals == tried.size && dailyRefusals == quotaRefusals
             geminiCooldownUntil = now + geminiRestMs(allDaily, now)
         }
+        if (tried.isNotEmpty() && unusableAnswers == tried.size) onAllUnusable?.invoke()
         return null
     }
 
