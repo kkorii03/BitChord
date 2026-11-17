@@ -802,7 +802,9 @@ object StreamResolver {
 
         /** [KO] C4c-1: whether this blocked start's verdict may be remembered. */
         fun proxyVerdictFinal(): Boolean = BlockedStartPolicy.verdictIsFinal(
-            proxyConfigured = proxyAttempted || ProxyPlayback.canResolveViaProxy(),
+            // [KO] SX-2: configured by the settings, not health-gated: a proxy
+            // in its unreachable window was simply not asked.
+            proxyConfigured = proxyAttempted || ProxyPlayback.isConfiguredForPlayback(),
             proxyRefused = proxyLegRefusal != null,
         )
 
@@ -1637,7 +1639,14 @@ object StreamResolver {
             permanentReason(e)?.let { reason ->
                 // [KO] C4c-1: a slow proxy's budget exit skips this start like
                 // any verdict, but is not remembered: the next tap asks again.
-                if (!isFinalVerdict(e)) {
+                // [KO] SX-3: so does a gate refusal from extraction while a
+                // configured proxy has not itself refused (its leg was cut).
+                if (!BlockedStartPolicy.storeVerdict(
+                        chainFinal = isFinalVerdict(e),
+                        gateRefusal = e.isProxyWorthyRefusal(),
+                        proxyVerdictFinal = proxyVerdictFinal(),
+                    )
+                ) {
                     TrackLog.w(TAG, "$videoId is not playable now: $reason; the proxy did not answer, not remembered")
                     throw PermanentlyUnplayableException(reason, verdictFinal = false)
                 }
@@ -1701,12 +1710,40 @@ object StreamResolver {
         // is in flight, and stamping at the end would label the URL with a
         // server that never minted it.
         val requestGeneration = ProxyPlayback.currentRouteGeneration
+        // [KO] SX-1: every network fault on this walk is swallowed below it
+        // (InnerTubeX returns null, the direct asks run in runCatching), so a
+        // dead or stalled proxy used to end as the plain "found no stream" a
+        // real refusal ends with, and was stored as a verdict. These record
+        // whether anything on the route answered, and the first fault if not.
+        var heardAnswer = false
+        var routeFault: Throwable? = null
         val found = try {
-            timed("$videoId proxy InnerTubeX") {
-                innerTubeXStreamAllowingUploads(videoId, maxKbps, requireM4a, viaProxy = true)
+            val stream = timed("$videoId proxy InnerTubeX") {
+                innerTubeXStreamAllowingUploads(
+                    videoId,
+                    maxKbps,
+                    requireM4a,
+                    viaProxy = true,
+                    onFailure = { message -> if (UnplayableReason.isDefinitive(message)) heardAnswer = true },
+                    onBlocked = { heardAnswer = true },
+                )
             } ?: timed("$videoId proxy direct") {
-                directStream(videoId, maxKbps, viaProxy = true)
+                directStream(
+                    videoId,
+                    maxKbps,
+                    viaProxy = true,
+                    onUnplayable = { heardAnswer = true },
+                    onAsked = { failure ->
+                        if (failure == null) heardAnswer = true else if (routeFault == null) routeFault = failure
+                    },
+                )
             }
+            // Thrown here so the proxy-down branch below (health monitor,
+            // backup retry) handles it exactly like a fault that escaped.
+            if (stream == null) {
+                ProxyPlaybackPolicy.unansweredFailure(videoId, heardAnswer, routeFault)?.let { throw it }
+            }
+            stream
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -1961,7 +1998,8 @@ object StreamResolver {
         viaProxy: Boolean = false,
         onUnplayable: (String?) -> Unit = {},
         onServed: (client: String) -> Unit = {},
-    ): Stream? = when (val probe = directProbe(videoId, maxKbps, viaProxy)) {
+        onAsked: (failure: Throwable?) -> Unit = {}, // [KO] SX-1
+    ): Stream? = when (val probe = directProbe(videoId, maxKbps, viaProxy, onAsked = onAsked)) {
         is DirectProbe.Stream -> {
             onServed(probe.value.client.orEmpty())
             probe.value.stream
@@ -1986,6 +2024,7 @@ object StreamResolver {
         maxKbps: Int = maxKbps(),
         viaProxy: Boolean = false,
         checkActive: () -> Unit = {},
+        onAsked: (failure: Throwable?) -> Unit = {}, // [KO] SX-1
     ): DirectProbe<DirectRun> {
         var refused = false
         var refusedReason: String? = null
@@ -1998,6 +2037,7 @@ object StreamResolver {
                 refusedReason = UnplayableReason.keepTrackSpecific(refusedReason, reason)
             },
             checkActive = checkActive,
+            onAsked = onAsked,
         )) {
             checkActive()
             if (probe(found.url, viaProxy) == Probe.OK) {

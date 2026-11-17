@@ -107,6 +107,10 @@ internal object DirectClientResolver {
      * first usable URL and the failure still has to be visible to the caller.
      * The playability reason travels with it so the caller can tell a takedown
      * from a region or Premium gate.
+     *
+     * [onAsked] ([KO] SX-1) fires once per client ask: null when an HTTP
+     * answer came back, or the failure the ask was swallowed with, so a proxy
+     * walk can tell "the route answered" from "the route never answered".
      */
     fun candidates(
         videoId: String,
@@ -114,6 +118,7 @@ internal object DirectClientResolver {
         viaProxy: Boolean = false,
         onRefused: (String?) -> Unit = {},
         checkActive: () -> Unit = {},
+        onAsked: (failure: Throwable?) -> Unit = {},
     ): Sequence<Found> = sequence {
         for (spec in SPECS) {
             checkActive()
@@ -122,6 +127,7 @@ internal object DirectClientResolver {
                     if (it is CancellationException) throw it
                     TrackLog.w(TAG, "direct ${spec.name} failed for $videoId: ${it.message}")
                 }
+                .also { onAsked(it.exceptionOrNull()) } // [KO] SX-1
                 .getOrNull()
             if (found != null) yield(found)
         }

@@ -374,6 +374,19 @@ object BlockedStartPolicy {
      */
     fun verdictIsFinal(proxyConfigured: Boolean, proxyRefused: Boolean): Boolean =
         !proxyConfigured || proxyRefused
+
+    /**
+     * [KO] SX-3: whether a resolve's permanent-looking failure may be stored
+     * as an unplayable verdict.
+     *
+     * [chainFinal] is [com.music.bitchord.data.innertube.StreamResolver.isFinalVerdict]
+     * of the failure. A country/Premium gate ([gateRefusal]) is what the proxy
+     * exists to answer, so on the extraction exit it is only a verdict when
+     * [proxyVerdictFinal] says so (no proxy configured, or the proxy itself
+     * refused). A takedown, an age gate or paid content is stored as before.
+     */
+    fun storeVerdict(chainFinal: Boolean, gateRefusal: Boolean, proxyVerdictFinal: Boolean): Boolean =
+        chainFinal && (!gateRefusal || proxyVerdictFinal)
 }
 
 /** The path a resolve takes when nothing in the ladder produced a stream. */

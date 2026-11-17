@@ -9,6 +9,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
+import java.io.IOException
+import java.io.InterruptedIOException
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -54,6 +56,31 @@ object ProxyPlaybackPolicy {
      */
     fun isRegionRefusal(signInConfirmNotBot: Boolean, directUnplayable: Boolean): Boolean =
         signInConfirmNotBot || directUnplayable
+
+    /**
+     * [KO] SX-1: the failure for a proxy walk that found no stream although
+     * nothing on the route answered, or null to keep the caller's ordinary
+     * "found no stream" (the proxy did answer: a refusal, an HTTP reply, a
+     * URL that failed its probe).
+     *
+     * Only a network fault counts as "never heard": a refused, unreachable or
+     * timed-out connection ([ProxyFailure.isProxyDown]) or OkHttp's call
+     * timeout, an [InterruptedIOException] that [ProxyFailure.isProxyDown]
+     * does not match by itself. The returned failure names the proxy, so
+     * [ProxyFailure.isProxyDown] matches it: the start stays transient (no
+     * ten-minute verdict) and the health monitor hears of the dead route.
+     */
+    fun unansweredFailure(videoId: String, heardAnswer: Boolean, fault: Throwable?): IOException? {
+        if (heardAnswer || fault == null) return null
+        val networkFault = ProxyFailure.isProxyDown(fault) ||
+            generateSequence(fault) { it.cause?.takeIf { cause -> cause !== it } }
+                .take(MAX_CAUSE_DEPTH)
+                .any { it is InterruptedIOException }
+        if (!networkFault) return null
+        return IOException("proxy route gave no answer for $videoId", fault)
+    }
+
+    private const val MAX_CAUSE_DEPTH = 8
 
     fun route(remembered: Boolean, refused: Boolean, canProxy: Boolean): ProxyPlaybackRoute = when {
         !canProxy -> ProxyPlaybackRoute.DIRECT
@@ -335,6 +362,17 @@ object ProxyPlayback {
 
     /** Whether [generation] is still the route in force. */
     fun isCurrentRoute(generation: Long): Boolean = generation == YouTubeProxy.routeGeneration
+
+    /**
+     * [KO] SX-2: whether the settings give playback a proxy to ask, healthy
+     * or not. [canResolveViaProxy] without its health term: a proxy in its
+     * unreachable window is still configured, and a gated start it could not
+     * ask is a network fault, not a verdict about the recording.
+     */
+    fun isConfiguredForPlayback(): Boolean {
+        val config = YouTubeProxy.config
+        return config.usable && config.scope == ProxyScope.MUSIC_ONLY
+    }
 
     /** Whether a proxy is configured and healthy enough for a new player request. */
     fun canResolveViaProxy(): Boolean {
