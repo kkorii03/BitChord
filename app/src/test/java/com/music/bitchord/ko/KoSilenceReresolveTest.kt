@@ -42,6 +42,19 @@ class KoSilenceReresolveTest {
         assertTrue("the pin must be guarded by mayPin", rule in 0 until pin)
     }
 
+    @Test
+    fun `a track picked from a source is re-prepared, not re-resolved as YouTube`() {
+        assertTrue(KoSilenceReresolve.pickedFromSource("source"))
+        assertFalse(KoSilenceReresolve.pickedFromSource("youtube"))
+        assertFalse(KoSilenceReresolve.pickedFromSource(null))
+        val body = source("app/src/main/java/com/music/bitchord/playback/PlaybackService.kt")
+            .substringAfter("private fun reresolveCurrentStreamForSilence()")
+            .substringBefore("private fun recoverAudibleGains()")
+        val check = body.indexOf("KoSilenceReresolve.pickedFromSource(uri?.authority)")
+        val resolve = body.indexOf("StreamResolver.reResolveTrack(")
+        assertTrue("the source check must come before the YouTube re-resolve", check in 0 until resolve)
+    }
+
     private fun source(relative: String): String {
         var directory = File(System.getProperty("user.dir")).absoluteFile
         while (!File(directory, "settings.gradle.kts").isFile) {

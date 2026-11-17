@@ -17,6 +17,15 @@ internal object KoSilenceReresolve {
     /** Whether the rung may ask for a new stream at all; otherwise it only re-prepares. */
     fun asks(substituted: Boolean, upgraded: Boolean): Boolean = !substituted && !upgraded
 
+    /**
+     * c3-service-paths-2: whether the playing URI is a track picked from an
+     * addon/module/JioSaavn/Telegram source (`bitchord://source?...`). Its
+     * media id is the source's track key, so re-resolving it as a YouTube id
+     * fails twice (direct, then the proxy) and only delays the re-prepare.
+     * Same test as the error path and the substitute-length check.
+     */
+    fun pickedFromSource(uriAuthority: String?): Boolean = uriAuthority == "source"
+
     /** Whether [candidate] may replace [previous] as the pinned stream. */
     fun mayPin(previous: String?, candidate: String, substituted: Boolean, upgraded: Boolean): Boolean =
         asks(substituted, upgraded) &&

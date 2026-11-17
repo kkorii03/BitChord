@@ -10794,6 +10794,16 @@ class PlaybackService : MediaLibraryService() {
             live.prepare()
             return
         }
+        // [KO] c3-service-paths-2: a track picked from an addon, module,
+        // JioSaavn or Telegram source has a source track key, not a YouTube
+        // id, so a YouTube re-resolve only fails and delays the re-prepare.
+        if (KoSilenceReresolve.pickedFromSource(uri?.authority)) {
+            TrackLog.w("AUDIO_OUT", "silence recover: $mediaId step=reresolve kept source", about = mediaId)
+            retryingMediaId = mediaId
+            live.seekTo(index, live.currentPosition.coerceAtLeast(0L))
+            live.prepare()
+            return
+        }
         // [KO] SW7ps-1: a substitute or an upgraded copy is the sound; a
         // YouTube URL pinned over it moves the lyric clock and corrupts the
         // cache entry. Re-preparing is all this rung may do for it.
