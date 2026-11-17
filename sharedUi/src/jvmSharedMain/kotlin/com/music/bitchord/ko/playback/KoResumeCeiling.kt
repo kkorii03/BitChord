@@ -55,6 +55,7 @@ class KoResumeCeiling(private val log: (String) -> Unit = {}) {
     fun pause(nowNanos: Long) {
         finishRun(nowNanos, "paused")
         armed = false
+        holdUs = 0L // a hold ends with its run; the next resume is judged on its own
         if (stopped) return
         stopped = true
         stoppedNanos = nowNanos
@@ -106,13 +107,18 @@ class KoResumeCeiling(private val log: (String) -> Unit = {}) {
         val rate = if (speed.isFinite() && speed > 0f) speed.toDouble().coerceIn(MIN_SPEED, MAX_SPEED) else lastSpeed
         lastSpeed = rate
         val out = if (armed) held(rawUs, nowNanos, rate) else rawUs
-        // The line follows what is reported, so a reading held back here never becomes the next
-        // resume's starting point. It is not carried while the song stands still.
+        // The line follows the sink's own readings, not what this class reported: a hold belongs
+        // to one resume. Started from the held value instead, the next resume met a reading that
+        // still carried the old lead, re-applied the whole hold at once and added any new step to
+        // it (phone 11-12 22:31-22:32: -3.9, -7.7, -11.4, -15.2 s over five pauses in 30 s). Media3
+        // caps the reading at the frames written, at most one AudioTrack buffer (~4 s here) ahead
+        // of the sound, so a 15 s hold was at least 11 s behind what was heard.
+        // It is not carried while the song stands still.
         val moving = !stopped && !(armed && waitingForMove)
         lineUs = when {
-            lineUs == UNSET -> out
-            moving -> maxOf(out, minOf(lineUs + scaled(nowNanos - lineNanos, rate), out + MAX_LINE_LEAD_US))
-            else -> maxOf(out, minOf(lineUs, out + MAX_LINE_LEAD_US))
+            lineUs == UNSET -> rawUs
+            moving -> maxOf(rawUs, minOf(lineUs + scaled(nowNanos - lineNanos, rate), rawUs + MAX_LINE_LEAD_US))
+            else -> maxOf(rawUs, minOf(lineUs, rawUs + MAX_LINE_LEAD_US))
         }
         lineNanos = nowNanos
         return out
