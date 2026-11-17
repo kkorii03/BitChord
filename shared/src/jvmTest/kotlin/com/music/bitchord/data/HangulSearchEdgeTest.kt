@@ -108,6 +108,20 @@ class HangulSearchEdgeTest {
         assertFalse(HangulSearch.matches("rkqt", "가"))
     }
 
+    // c5-ui-small-1: short Latin consonant queries read as keyboard initials
+    // pulled unrelated Korean songs into the filtered list and the play queue.
+    @Test
+    fun shortLatinConsonantQueriesDoNotMatchUnrelatedKoreanTitles() {
+        assertFalse(HangulSearch.matches("st", "너의 모든 순간"))
+        assertFalse(HangulSearch.matches("tv", "슬픈 인연"))
+        assertTrue(HangulSearch.matches("st", "Stray Kids"))
+        // Three or more consonant keys still find their initials, but only
+        // when they sit together.
+        assertTrue(HangulSearch.matches("rdr", "시간을 거슬러"))
+        assertFalse(HangulSearch.matches("rdr", "가나 오다 가"))
+        assertTrue(HangulSearch.matches("dkdlbm", "아이유"))
+    }
+
     @Test
     fun scoreConstantsStayStable() {
         val target = HangulSearch.prepared("눈이 오잖아")

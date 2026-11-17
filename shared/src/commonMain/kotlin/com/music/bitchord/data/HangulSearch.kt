@@ -4,6 +4,7 @@ object HangulSearch {
     private const val SYLLABLE_BASE = 0xAC00
     private const val SYLLABLE_LAST = 0xD7A3
     private const val CACHE_LIMIT = 4096
+    private const val MIN_KEYBOARD_INITIALS = 3
 
     private val CHO = charArrayOf(
         'ㄱ', 'ㄲ', 'ㄴ', 'ㄷ', 'ㄸ', 'ㄹ', 'ㅁ', 'ㅂ', 'ㅃ', 'ㅅ',
@@ -137,15 +138,16 @@ object HangulSearch {
             }
         }
 
+        // [KO] Latin consonant keys read as Hangul initials ("tws" -> ㅅㅈㄴ).
+        // Contiguous only, and from three initials up: one or two consonant
+        // keys are far more often the start of a Latin word ("st" on the way
+        // to "Stray Kids"), and the old subsequence fallback let "st" (ㄴㅅ)
+        // match any title whose initials hold ㄴ…ㅅ, such as 너의 모든 순간.
         if (q.keyboardCompact != q.compact && isInitialQuery(q.keyboardCompact) &&
-            q.keyboardInitials.isNotEmpty() && target.initials.isNotEmpty()
+            q.keyboardInitials.length >= MIN_KEYBOARD_INITIALS && target.initials.isNotEmpty()
         ) {
             val at = target.initials.indexOf(q.keyboardInitials)
-            best = maxOf(
-                best,
-                if (at >= 0) 650 + if (at == 0) 80 else 0
-                else subsequenceScore(target.initials, q.keyboardInitials) - 50,
-            )
+            if (at >= 0) best = maxOf(best, 650 + if (at == 0) 80 else 0)
         }
 
         return best
