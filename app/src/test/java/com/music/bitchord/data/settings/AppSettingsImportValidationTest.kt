@@ -30,6 +30,17 @@ class AppSettingsImportValidationTest {
     private val appContextField = field("appContext")
     private val authStoreField = field("authStore")
 
+    // The key setters below also copy into the process-wide hearers and the
+    // Gemini client, which every later test class in the same JVM sees: a
+    // leaked Deepgram key sent the LyricsController tests down the AI timing
+    // path and they all timed out (CI 43993585345, review FLAKE-1).
+    private val originalPrefs = runCatching { prefsField.get(AppSettings) }.getOrNull()
+    private val originalContext = runCatching { appContextField.get(AppSettings) }.getOrNull()
+    private val originalAuth = runCatching { authStoreField.get(AppSettings) }.getOrNull()
+    private val savedDeepgram = com.music.bitchord.data.lyrics.Deepgram.apiKey
+    private val savedGroq = com.music.bitchord.data.lyrics.GroqWhisper.apiKey
+    private val savedGemini = com.music.bitchord.data.lyrics.LyricsTranslation.geminiApiKey
+
     @Before
     fun setUp() {
         directory = Files.createTempDirectory("bitchord-app-settings").toFile()
@@ -43,6 +54,15 @@ class AppSettingsImportValidationTest {
 
     @After
     fun tearDown() {
+        com.music.bitchord.data.lyrics.Deepgram.apiKey = savedDeepgram
+        com.music.bitchord.data.lyrics.GroqWhisper.apiKey = savedGroq
+        com.music.bitchord.data.lyrics.LyricsTranslation.geminiApiKey = savedGemini
+        // A store left behind (no original to put back) must not keep the
+        // secrets a later reload() would read in again.
+        authPreferences.values.clear()
+        if (originalPrefs != null) prefsField.set(AppSettings, originalPrefs)
+        if (originalContext != null) appContextField.set(AppSettings, originalContext)
+        if (originalAuth != null) authStoreField.set(AppSettings, originalAuth)
         directory.deleteRecursively()
     }
 
