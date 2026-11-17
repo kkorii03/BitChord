@@ -427,6 +427,7 @@ object ListeningStats {
                     // the only thing standing between that and a .tmp per flush.
                     if (file.delete() && temporary.renameTo(file)) Unit else temporary.delete()
                 }
+                com.music.bitchord.ko.KoListeningStatsRecent.forgetClosedMonth(key) // [KO] listening-recents
                 version++
             }.onFailure { Log.w(TAG, "Could not write listening bucket $key", it) }
         }
