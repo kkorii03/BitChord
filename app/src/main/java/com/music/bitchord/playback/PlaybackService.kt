@@ -7064,7 +7064,7 @@ class PlaybackService : MediaLibraryService() {
     ): Boolean = koAwaitPlayerCondition(timeoutMs, *players, condition = condition) // [KO] hq-lossless
 
     private fun losslessAheadItem(item: MediaItem): MediaItem? =
-        item.koLosslessAheadItem() // [KO] hq-lossless
+        item.koLosslessAheadItem(this) // [KO] hq-lossless
 
     private fun logHqAhead(mediaId: String) =
         koLogHqAhead(mediaId) // [KO] hq-lossless

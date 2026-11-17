@@ -932,8 +932,12 @@ internal suspend fun PlaybackService.koAwaitPlayerCondition(
  * The queue item for [item]'s verified lossless copy, or null when there is
  * nothing better to prepare. Called when the standby arms and again when a
  * verification lands during ARMING.
+ *
+ * Review NR-2: the standby opens at a cue measured on the YouTube copy, so a
+ * copy whose verified clock is off YouTube's stays YouTube here
+ * ([KoLosslessAhead.cueSafe]); the mid-song upgrade maps it later.
  */
-internal fun MediaItem.koLosslessAheadItem(): MediaItem? {
+internal fun MediaItem.koLosslessAheadItem(context: Context): MediaItem? {
     val id = mediaId
     val choice = StreamChoice.of(id) ?: return null
     val sourceId = choice.sourceConfigId ?: return null
@@ -941,6 +945,15 @@ internal fun MediaItem.koLosslessAheadItem(): MediaItem? {
     if (!HqQuality.isLosslessTier(choice.format)) return null
     val uri = localConfiguration?.uri ?: return null
     if (uri.getQueryParameter(QualityUpgrade.MARKER) != null) return null
+    val verified = HqVerificationStore.get(context, id, sourceId, choice.trackId)
+    if (!KoLosslessAhead.cueSafe(verified)) {
+        TrackLog.d(
+            "BitChord",
+            "hq-ahead: $id kept YouTube in the standby (offset=${verified?.offsetMs} rate=${verified?.rate})",
+            about = id,
+        )
+        return null
+    }
     QualityUpgrade.force(id, choice)
     return buildUpon()
         .setUri(QualityUpgrade.upgradedUri(uri.toString()))
@@ -966,6 +979,6 @@ internal fun PlaybackService.koRefreshArmedIncomingLossless() {
     val controller = crossfade ?: return
     if (!controller.isArming()) return
     val next = exoPlayer.getMediaItemAt(nextIndex)
-    val prepared = next.koLosslessAheadItem() ?: return
+    val prepared = next.koLosslessAheadItem(service) ?: return
     if (controller.rearmIncoming(prepared)) koLogHqAhead(next.mediaId)
 }
