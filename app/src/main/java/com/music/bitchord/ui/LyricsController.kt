@@ -1929,6 +1929,9 @@ class LyricsController(
             if (dropRejectedCopy(request.videoId, lines, fromStore = result == null)) {
                 TrackLog.i("BitChord", "lyrics-fix: ${request.videoId} saved=recheck -> none reason=bad-align", about = request.videoId) // [KO] LYR6
             }
+            // [KO] LYR7-A: the drop waited on keepSheetLock and the file. A skip, another sheet or a pick by hand
+            // landing meanwhile owns the screen now; reloading this request would put the old song back over it.
+            if (generation != lyricsGeneration || timingLines !== lines || selectedLyricsSource != null) return@launch
             // [KO] U3: the lock screen drops the rejected sheet too, until the reload shows the next.
             com.music.bitchord.ko.KoLockSheet.rejected(request.videoId, lines)
             requestGate.release()

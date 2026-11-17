@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import com.music.bitchord.data.lyrics.EmbeddedLyrics
 import com.music.bitchord.data.lyrics.LyricLine
+import com.music.bitchord.data.lyrics.LyricsMismatch
 import com.music.bitchord.data.lyrics.LyricsOverrideFile
 import com.music.bitchord.data.lyrics.LyricsOverrideStore
 import com.music.bitchord.data.lyrics.LyricsRepository
@@ -27,10 +28,12 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -105,12 +108,13 @@ class LyricsControllerSavedSheetTest {
         directory.deleteRecursively()
     }
 
-    private fun openStore(json: String) {
-        File(directory, "lyrics_timing_v1.json").writeText(json)
+    /** [name]: another file for a store swapped in mid-play, so a save the old one still has pending cannot touch it. */
+    private fun openStore(json: String, name: String = "lyrics_timing_v1.json") {
+        File(directory, name).writeText(json)
         val storeClass = Class.forName("com.music.bitchord.playback.smart.LyricsTiming\$Store")
         val ctor = storeClass.declaredConstructors.first { it.parameterCount == 1 }
         ctor.isAccessible = true
-        storeField.set(LyricsTiming, ctor.newInstance(File(directory, "lyrics_timing_v1.json")))
+        storeField.set(LyricsTiming, ctor.newInstance(File(directory, name)))
     }
 
     /** Both providers answer; [winner] is the lookup's own pick. */
@@ -127,12 +131,15 @@ class LyricsControllerSavedSheetTest {
         controller.loadLyrics(id, "Song", "Someone", 200_000L, localUri = file)
     }
 
-    private suspend fun waitForSaved(check: (LyricsOverrideFile.Stored) -> Boolean): LyricsOverrideFile.Stored =
+    private suspend fun waitForSaved(
+        id: String = "video",
+        check: (LyricsOverrideFile.Stored) -> Boolean,
+    ): LyricsOverrideFile.Stored =
         withTimeout(10_000L) {
-            var stored = LyricsOverrideStore.read(context, "video")
+            var stored = LyricsOverrideStore.read(context, id)
             while (stored == null || !check(stored)) {
                 delay(50L)
-                stored = LyricsOverrideStore.read(context, "video")
+                stored = LyricsOverrideStore.read(context, id)
             }
             stored!!
         }
@@ -316,19 +323,33 @@ class LyricsControllerSavedSheetTest {
         assertEquals(other.map { it.text }, copy.lines.map { it.text })
     }
 
-    /** Sixteen lines of four words: enough heard words and lines for the words' judge. Made-up tokens. */
-    private fun wordy(tag: String): List<LyricLine> =
-        List(16) { i -> LyricLine(5_000L + i * 4_000L, "${tag}a$i ${tag}b$i ${tag}c$i ${tag}d$i") }
+    /**
+     * Sixteen timed lines of four words, letters only: 64 heard words, enough for the words' judge.
+     * Made-up tokens, no lyric text.
+     */
+    private fun lettered(tag: Char): List<LyricLine> =
+        List(16) { i ->
+            val line = 'a' + i
+            LyricLine(5_000L + i * 4_000L, "$tag${line}a $tag${line}b $tag${line}c $tag${line}d")
+        }
+
+    /**
+     * The same shape in digits only. No character in common with [lettered], so against its words not
+     * one line opening is heard and the judge rejects it (as LyricsControllerSheetChoiceTest's
+     * "901 902 …" sheet). Two letter sheets share letters, and the letter alignment places them.
+     */
+    private fun numbered(): List<LyricLine> =
+        List(16) { i -> LyricLine(5_000L + i * 4_000L, (1..4).joinToString(" ") { k -> "${9_000 + i * 10 + k}" }) }
 
     /** Words already heard from this recording: [lines]' own, at their starts (as LyricsControllerSheetChoiceTest). */
-    private fun seedHeard(lines: List<LyricLine>, videoId: String) {
+    private fun seedHeard(lines: List<LyricLine>, videoId: String, storeName: String = "lyrics_timing_v1.json") {
         val words = lines.flatMap { line ->
             line.text.split(' ').mapIndexed { i, word ->
                 val at = line.timeMs + i * 500L
                 """{"t":"$word","s":$at,"e":${at + 400L}}"""
             }
         }.joinToString(",")
-        openStore("""{"entries":{"$videoId":{"heardCheckKey":1,"heardCheckWords":[$words]}}}""")
+        openStore("""{"entries":{"$videoId":{"heardCheckKey":1,"heardCheckWords":[$words]}}}""", storeName)
     }
 
     /**
@@ -339,9 +360,8 @@ class LyricsControllerSavedSheetTest {
     @Test
     fun `a provider sheet the words reject is not kept, and the file's own sheet comes back`() = runBlocking {
         val id = "lyr7-rejected"
-        val own = wordy("ow")
-        val wrong = wordy("wr")
-        seedHeard(own, id)
+        val own = lettered('o')
+        val wrong = numbered()
         controller.fileLyrics = { _, _ -> EmbeddedLyrics.Embedded(own, LyricsSource.VIBE, id) }
         val looks = AtomicInteger()
         controller.lyricsLookup = { _, _, _, _, _, _, _, _, _, _, onResult, _, _, _, _, _, _ ->
@@ -354,10 +374,63 @@ class LyricsControllerSavedSheetTest {
 
         loadDownloaded(id)
 
+        // No words heard yet: the online refresh saves the provider's sheet as the copy, unjudged.
+        waitForSaved(id) { stored -> stored.lines.map { it.text } == wrong.map { it.text } }
+        // Then the recording's words land (own's) and the timing change asks the judge again.
+        seedHeard(own, id, storeName = "lyrics_timing_heard.json")
+        LyricsTiming.notifyStreamChoice(id)
+
         withTimeout(10_000L) { while (looks.get() < 2) delay(50L) }
         // Before LYR7 the reload put the rejected sheet back from its saved copy, and this timed out.
         withTimeout(10_000L) { controller.lyrics.first { shown -> shown?.map { it.text } == own.map { it.text } } }
         val copy = LyricsOverrideStore.read(context, id)
         assertTrue(copy == null || copy.lines.map { it.text } != wrong.map { it.text })
+    }
+
+    /**
+     * LYR7 review: dropping a rejected sheet's copy waits on keepSheetLock and the file. A track
+     * change landing in that wait was undone: the reload of the old request released the new
+     * track's claim and put the old song's lookup (and sheet) on screen for the new one.
+     */
+    @Test
+    fun `a rejection waiting to drop its copy does not reload the old song over the next one`() = runBlocking {
+        val first = "lyr7-race-a"
+        val next = "lyr7-race-b"
+        val wrong = numbered()
+        val nextSheet = lettered('n')
+        seedHeard(lettered('h'), first)
+        val firstLooks = AtomicInteger()
+        controller.lyricsLookup = { videoId, _, _, _, _, _, _, _, _, _, onResult, _, _, _, _, _, _ ->
+            val answer = if (videoId == first) {
+                firstLooks.incrementAndGet()
+                LyricsRepository.Result(LyricsSource.KUGOU, wrong)
+            } else {
+                LyricsRepository.Result(LyricsSource.KUGOU, nextSheet)
+            }
+            onResult?.invoke(LyricsSource.KUGOU, answer, null)
+            answer
+        }
+        val lock = LyricsController::class.java.getDeclaredField("keepSheetLock")
+            .apply { isAccessible = true }
+            .get(controller) as Mutex
+        lock.lock()
+        val looked = try {
+            withContext(mainDispatcher) { controller.loadLyrics(first, "Song", "Someone", 200_000L) }
+            // The words reject the first song's sheet; the drop of its copy then waits on the lock held here.
+            withTimeout(10_000L) { while (!LyricsMismatch.isRejected(first, LyricsSource.KUGOU, wrong)) delay(20L) }
+            // Read on the main thread, as the skip lands: a reload already run (no wait) is counted.
+            val count = withContext(mainDispatcher) {
+                firstLooks.get().also { controller.loadLyrics(next, "Next", "Someone", 200_000L) }
+            }
+            withTimeout(10_000L) { controller.lyrics.first { shown -> shown?.map { it.text } == nextSheet.map { it.text } } }
+            count
+        } finally {
+            lock.unlock()
+        }
+
+        // Before the fix the first song's reload ran here: its lookup again, its sheet over the next song's.
+        withTimeoutOrNull(2_000L) { while (firstLooks.get() <= looked) delay(20L) }
+        assertEquals(looked, firstLooks.get())
+        assertEquals(nextSheet.map { it.text }, controller.lyrics.value?.map { it.text })
     }
 }
