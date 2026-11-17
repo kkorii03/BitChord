@@ -2876,7 +2876,7 @@ class PlaybackService : MediaLibraryService() {
                 recoverAudibleGains()
                 // A route or PCM-mode change that arrived mid-blend was parked
                 // instead of polling; this settled event is its wake-up.
-                if (outputReconfigureGate.settled()) requestOutputReconfiguration()
+                outputReconfigureGate.settledRequest()?.let { requestOutputReconfiguration(rebuild = it) } // [KO] C5a-1
                 if (boundedEditState.hasPendingEdits) {
                     scope.launch {
                         applyDeferredBoundedQueueEdit()
@@ -6337,7 +6337,8 @@ class PlaybackService : MediaLibraryService() {
         // uploads were playable all along. Look for another version of the same
         // recording instead; only skip when there is none.
         if (UnplayableRecovery.isDefinitive(verdict, StreamResolver.isUnplayable(mediaId))) {
-            verdict?.let { StreamResolver.markUnplayable(mediaId, it) }
+            // [KO] C4c-1: a slow proxy's budget exit still switches or skips, but is not stored.
+            verdict?.takeIf { StreamResolver.isFinalVerdict(error) }?.let { StreamResolver.markUnplayable(mediaId, it) }
             switchToAlternateOrSkip(
                 mediaId = mediaId,
                 song = item.toSong(),
@@ -6447,6 +6448,7 @@ class PlaybackService : MediaLibraryService() {
             failedSource?.let(sources::add)
             failedHost?.let(hosts::add)
             var chosen: SourceStream? = null
+            var chosenVerified: HqVerificationStore.Verified? = null // [KO] NR-1
             for (attempt in 0 until MAX_UPGRADE_CANDIDATES) {
                 val candidate = withContext(Dispatchers.IO) {
                     SourceResolver.upgradeFor(
@@ -6476,6 +6478,7 @@ class PlaybackService : MediaLibraryService() {
                     HqResumePolicy.sameOrBetterRendition(failed?.format, candidate.format)
                 ) {
                     chosen = candidate
+                    chosenVerified = verified // [KO] NR-1
                     break
                 }
                 candidate.sourceConfigId?.let(sources::add)
@@ -6484,6 +6487,14 @@ class PlaybackService : MediaLibraryService() {
 
             val alternate = chosen
             if (alternate != null) {
+                // [KO] NR-1: from the failed copy's clock onto the new copy's.
+                val resumeMs = HqSwapPolicy.resumeAtMs(
+                    position,
+                    failedVerified?.offsetMs,
+                    failedVerified?.rate,
+                    chosenVerified?.offsetMs,
+                    chosenVerified?.rate,
+                )
                 withContext(Dispatchers.Main) {
                     val live = player ?: return@withContext
                     if (live.currentMediaItem?.mediaId != mediaId) return@withContext
@@ -6498,7 +6509,7 @@ class PlaybackService : MediaLibraryService() {
                             .withResolvedStreamType(alternate.url)
                             .build(),
                     )
-                    live.seekTo(live.currentMediaItemIndex, position)
+                    live.seekTo(live.currentMediaItemIndex, resumeMs) // [KO] NR-1
                     live.prepare()
                     StreamChoice.remember(mediaId, alternate, substituted = true)
                     NerdStats.onSourceStream(
@@ -6520,7 +6531,7 @@ class PlaybackService : MediaLibraryService() {
                 TrackLog.w(
                     "BitChord",
                     "hq-stream: ${failedHost ?: "?"} ${rate.code} " +
-                        "retry-after=${retryAfterSec}s; resumed via $name at ${position}ms",
+                        "retry-after=${retryAfterSec}s; resumed via $name at ${resumeMs}ms (copy ${position}ms)",
                     about = mediaId,
                 )
                 return@launch
@@ -6532,19 +6543,21 @@ class PlaybackService : MediaLibraryService() {
             QualityUpgrade.refuseUpgrades(mediaId)
             QualityUpgrade.forget(mediaId)
             playbackUri.getQueryParameter("v")?.let(StreamChoice::forget)
+            val youtubeSeekMs = HqSwapPolicy.resumeAtMs(position, failedVerified?.offsetMs, failedVerified?.rate, null, null) // [KO] C4c-3 / NR-1
             withContext(Dispatchers.Main) {
                 val live = player ?: return@withContext
                 if (live.currentMediaItem?.mediaId != mediaId) return@withContext
                 val fallback = item.toYouTubeFallbackMediaItem() ?: return@withContext
                 swappingMediaId = mediaId
                 live.replaceMediaItem(live.currentMediaItemIndex, fallback)
-                live.seekTo(live.currentMediaItemIndex, position)
+                // [KO] C4c-3: back onto YouTube's clock through the failing copy's verdict.
+                live.seekTo(live.currentMediaItemIndex, youtubeSeekMs)
                 live.prepare()
             }
             TrackLog.w(
                 "BitChord",
                 "hq-stream: ${failedHost ?: "?"} ${rate.code} " +
-                    "retry-after=${retryAfterSec}s; resumed via youtube at ${position}ms",
+                    "retry-after=${retryAfterSec}s; resumed via youtube at ${youtubeSeekMs}ms (copy ${position}ms)",
                 about = mediaId,
             )
         }
@@ -6597,6 +6610,10 @@ class PlaybackService : MediaLibraryService() {
         val videoId = playbackUri.getQueryParameter("v")
         val fallback = item.toYouTubeFallbackMediaItem() ?: return false
         val mediaId = item.mediaId
+        // [KO] C4c-3: [position] is on the failing copy's clock. Read its verdict
+        // before the forgets below clear what names that copy.
+        val playing = if (position > 0L) currentPlayingVerification(mediaId) else null
+        val youtubeSeekMs = HqSwapPolicy.fallbackSeekMs(position, playing?.offsetMs, playing?.rate)
 
         QualityUpgrade.forget(mediaId)
         QualityUpgrade.refuseUpgrades(mediaId)
@@ -6620,7 +6637,7 @@ class PlaybackService : MediaLibraryService() {
                 if (live.currentMediaItem?.mediaId != mediaId) return@withContext
                 swappingMediaId = mediaId
                 live.replaceMediaItem(live.currentMediaItemIndex, fallback)
-                live.seekTo(live.currentMediaItemIndex, position)
+                live.seekTo(live.currentMediaItemIndex, youtubeSeekMs) // [KO] C4c-3
                 live.prepare()
             }
         }
@@ -11062,6 +11079,10 @@ class PlaybackService : MediaLibraryService() {
     @Volatile
     private var activeRouteKind: AudioRouting.Kind = AudioRouting.Kind.PHONE
 
+    /** [KO] C5b-1: the sample rates the route of the last [applyOutputRoute] listed. */
+    @Volatile
+    private var activeRouteRates: List<Int> = emptyList()
+
     /**
      * Applies the user's USB-DAC preference through the public Android routing
      * API. This does not bypass the system USB driver: it intentionally lets
@@ -11081,14 +11102,24 @@ class PlaybackService : MediaLibraryService() {
         // rather than being refused — see
         // com.music.bitchord.playback.audio.Downmix and the sink's provider.
         val wasBluetooth = activeRouteKind == AudioRouting.Kind.BLUETOOTH
+        val oldRouteKind = activeRouteKind // [KO] C5b-1
+        val oldRouteRates = activeRouteRates // [KO] C5b-1
         activeRouteKind = routeKind
+        activeRouteRates = activeDevice?.sampleRates?.toList().orEmpty() // [KO] C5b-1
         if (com.music.bitchord.playback.audio.Downmix.routeChangeRebuilds(
                 channelCount = currentAudioInputFormat?.channelCount,
                 wasBluetooth = wasBluetooth,
                 isBluetooth = routeKind == AudioRouting.Kind.BLUETOOTH,
+            ) ||
+            AudioOutputPolicy.routeChangeNeedsRateRebuild( // [KO] C5b-1 44.1k hi-res fold
+                sourceRateHz = currentAudioInputFormat?.sampleRate,
+                oldKind = oldRouteKind,
+                oldRates = oldRouteRates,
+                newKind = routeKind,
+                newRates = activeRouteRates,
             )
         ) {
-            TrackLog.i("AUDIO_OUT", "route changed under a 5.1 bed; rebuilding the output", player?.currentMediaItem?.mediaId)
+            TrackLog.i("AUDIO_OUT", "route changed under a 5.1 bed or a 44.1k hi-res rate; rebuilding the output", player?.currentMediaItem?.mediaId)
             requestOutputReconfiguration(rebuild = true)
         }
         val directUsbProbe = if (routeKind == AudioRouting.Kind.USB) UsbDirectManager.probe(this) else null
@@ -11260,10 +11291,10 @@ class PlaybackService : MediaLibraryService() {
         // Replacing two renderers during a blend would cut one half of it. Park
         // the request until [CrossfadeController] reports the transition has
         // settled; that callback is the only thing that has to wake for it.
-        if (!outputReconfigureGate.request(crossfade?.isTransitioning() == true)) return
+        if (!outputReconfigureGate.request(crossfade?.isTransitioning() == true, rebuild)) return // [KO] C5a-1
         outputReconfigureJob = scope.launch {
             if (crossfade?.isTransitioning() == true) {
-                outputReconfigureGate.request(transitioning = true)
+                outputReconfigureGate.request(transitioning = true, rebuild = rebuild) // [KO] C5a-1
                 return@launch
             }
             applyOutputReconfiguration(rebuild)

@@ -360,6 +360,20 @@ object BlockedStartPolicy {
      */
     fun extractionBesideWalk(path: NoStreamPath, walkStillRunning: Boolean): Boolean =
         path == NoStreamPath.EXTRACTION && walkStillRunning
+
+    /**
+     * [KO] C4c-1: whether a blocked start's "unplayable" may be remembered for
+     * the ten-minute verdict window.
+     *
+     *  - no proxy to ask                          -> true (the old verdict)
+     *  - the proxy walked and refused or found none -> true
+     *  - the proxy only ran out of budget, timed out or was never heard -> false
+     *
+     * A slow proxy is a network fault, not a fact about the recording: the
+     * start still skips or switches as before, but the next tap asks again.
+     */
+    fun verdictIsFinal(proxyConfigured: Boolean, proxyRefused: Boolean): Boolean =
+        !proxyConfigured || proxyRefused
 }
 
 /** The path a resolve takes when nothing in the ladder produced a stream. */

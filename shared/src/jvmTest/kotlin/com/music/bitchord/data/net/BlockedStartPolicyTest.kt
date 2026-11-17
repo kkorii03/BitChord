@@ -392,4 +392,15 @@ class BlockedStartPolicyTest {
             "a claim or takedown outranks the gate: the recording itself is gone",
         )
     }
+
+    // C4c-1: a proxy that only ran out of time is not a ten-minute verdict.
+    @Test
+    fun `a blocked start is remembered only when the proxy itself refused or there is none`() {
+        assertFalse(
+            BlockedStartPolicy.verdictIsFinal(proxyConfigured = true, proxyRefused = false),
+            "a slow proxy is a network fault; the next tap asks again",
+        )
+        assertTrue(BlockedStartPolicy.verdictIsFinal(proxyConfigured = true, proxyRefused = true))
+        assertTrue(BlockedStartPolicy.verdictIsFinal(proxyConfigured = false, proxyRefused = false))
+    }
 }

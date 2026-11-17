@@ -197,9 +197,10 @@ class AudioOutputPolicyBoundaryTest {
                 48_000,
                 AudioOutputPolicy.outputSampleRateFor(176_400, route, listOf(44_100, 48_000)) ?: -1,
             )
+            // NR-3: an empty list is Android's "arbitrary rates", so the rate is kept.
             assertEquals(
                 "route=$route",
-                48_000,
+                -1,
                 AudioOutputPolicy.outputSampleRateFor(176_400, route, emptyList()) ?: -1,
             )
         }

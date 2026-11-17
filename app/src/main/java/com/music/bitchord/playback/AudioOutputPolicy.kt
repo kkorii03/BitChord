@@ -86,7 +86,7 @@ internal object AudioOutputPolicy {
      *
      * - The 44.1 kHz hi-res family is folded to 48 kHz on Bluetooth and the
      *   phone mixer even when their descriptors list it. A wired or USB route
-     *   keeps the rate when it lists it.
+     *   keeps the rate when it lists it, or lists nothing (Android's "any rate").
      * - Any other rate is kept (null).
      */
     fun outputSampleRateFor(
@@ -103,8 +103,25 @@ internal object AudioOutputPolicy {
         val wired = routeKind == AudioRouting.Kind.USB ||
             routeKind == AudioRouting.Kind.WIRED ||
             routeKind == AudioRouting.Kind.HDMI
-        return if (wired && source in advertisedSampleRates) null else 48_000
+        // [KO] NR-3: an empty list is Android's "any rate" (AudioDeviceInfo.getSampleRates),
+        // not "none listed"; a DAC that says so keeps 88.2/176.4 kHz.
+        return if (wired && (advertisedSampleRates.isEmpty() || source in advertisedSampleRates)) null else 48_000
     }
+
+    /**
+     * [KO] C5b-1: whether a route change under an open track changes the
+     * [outputSampleRateFor] answer, so the players must be rebuilt. The rule is
+     * read only when a sink configures; a moved 88.2 kHz track from a USB DAC
+     * to Bluetooth would otherwise keep the rate the fold exists to avoid.
+     */
+    fun routeChangeNeedsRateRebuild(
+        sourceRateHz: Int?,
+        oldKind: AudioRouting.Kind,
+        oldRates: List<Int>,
+        newKind: AudioRouting.Kind,
+        newRates: List<Int>,
+    ): Boolean = outputSampleRateFor(sourceRateHz, oldKind, oldRates) !=
+        outputSampleRateFor(sourceRateHz, newKind, newRates)
 }
 
 /**
@@ -118,23 +135,38 @@ internal object AudioOutputPolicy {
  */
 internal class OutputReconfigureGate {
     private var parked = false
+    // [KO] C5a-1: a parked request remembers whether any of the parked calls
+    // asked for a full player rebuild (bit-perfect, USB direct, fixed volume,
+    // limited-DAC, 5.1 route). Replaying it as a route-only change dropped it.
+    private var parkedRebuild = false
 
     /** Whether the caller may rebuild now, or the request was parked until [settled]. */
     @Synchronized
-    fun request(transitioning: Boolean): Boolean {
+    fun request(transitioning: Boolean, rebuild: Boolean = false): Boolean {
         if (transitioning) {
             parked = true
+            parkedRebuild = parkedRebuild || rebuild
             return false
         }
         parked = false
+        parkedRebuild = false
         return true
+    }
+
+    /**
+     * The transition finished: null when nothing was parked, otherwise the
+     * rebuild flag the parked request must be replayed with.
+     */
+    @Synchronized
+    fun settledRequest(): Boolean? {
+        val run = parked
+        val rebuild = parkedRebuild
+        parked = false
+        parkedRebuild = false
+        return if (run) rebuild else null
     }
 
     /** The transition finished; whether a parked rebuild still has to run. */
     @Synchronized
-    fun settled(): Boolean {
-        val run = parked
-        parked = false
-        return run
-    }
+    fun settled(): Boolean = settledRequest() != null
 }

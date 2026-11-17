@@ -373,7 +373,30 @@ object StreamResolver {
      * [PlaybackService][com.music.bitchord.playback.PlaybackService]'s load-error
      * policy and `recoverFrom`.
      */
-    class PermanentlyUnplayableException(reason: String) : IOException(reason)
+    class PermanentlyUnplayableException(
+        reason: String,
+        /**
+         * [KO] C4c-1: false when a blocked start gave up only because the proxy
+         * did not answer inside its budget. The start still skips or switches
+         * like any verdict, but nothing remembers it for ten minutes.
+         */
+        val verdictFinal: Boolean = true,
+    ) : IOException(reason)
+
+    /**
+     * [KO] C4c-1: whether [error] may be stored as an unplayable verdict. False
+     * when any [PermanentlyUnplayableException] in its cause chain is a slow
+     * proxy's non-final one (a coroutine stack-trace copy wraps the original).
+     */
+    fun isFinalVerdict(error: Throwable?): Boolean {
+        val seen = Collections.newSetFromMap(IdentityHashMap<Throwable, Boolean>())
+        var cause = error
+        while (cause != null && seen.add(cause)) {
+            if (cause is PermanentlyUnplayableException && !cause.verdictFinal) return false
+            cause = cause.cause
+        }
+        return true
+    }
 
     /**
      * YouTube's "sign in to prove you are not a bot" challenge.
@@ -771,6 +794,18 @@ object StreamResolver {
         // When the leg's ceiling runs out; only a wait on the leg alone reads it.
         var proxyLegDeadline = Long.MAX_VALUE
 
+        // [KO] C4c-1: the proxy's own refusal (it walked and said no, or found
+        // nothing). A leg that only timed out, ran out of budget or could not
+        // reach the proxy leaves this null, and its blocked-start verdict is
+        // not remembered for ten minutes.
+        var proxyLegRefusal: Throwable? = null
+
+        /** [KO] C4c-1: whether this blocked start's verdict may be remembered. */
+        fun proxyVerdictFinal(): Boolean = BlockedStartPolicy.verdictIsFinal(
+            proxyConfigured = proxyAttempted || ProxyPlayback.canResolveViaProxy(),
+            proxyRefused = proxyLegRefusal != null,
+        )
+
         /** What is left of the leg's ceiling, for [raceLateLeg]'s wait on it alone. */
         fun proxyLegAloneMs(): Long =
             if (proxyLegDeadline == Long.MAX_VALUE) Long.MAX_VALUE
@@ -797,6 +832,9 @@ object StreamResolver {
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (failure: Exception) {
+                    if (!ProxyFailure.isProxyDown(failure) && !failure.isSignInConfirmNotBot()) {
+                        proxyLegRefusal = failure // [KO] C4c-1
+                    }
                     onFailure(failure)
                     null
                 }
@@ -1195,6 +1233,7 @@ object StreamResolver {
                     throw PermanentlyUnplayableException(
                         directUnplayableReason ?: itxUnplayableReason
                             ?: "이 국가에서는 이용할 수 없는 노래입니다",
+                        verdictFinal = proxyVerdictFinal(), // [KO] C4c-1
                     )
                 }
             }
@@ -1425,7 +1464,7 @@ object StreamResolver {
                             "blocked-start: $videoId extraction skipped after the first refusal at " +
                                 "${MonotonicClock.nowMs() - resolveStart}ms",
                         )
-                        throw PermanentlyUnplayableException(blockedReason())
+                        throw PermanentlyUnplayableException(blockedReason(), verdictFinal = proxyVerdictFinal()) // [KO] C4c-1
                     }
                     NoStreamPath.EXTRACTION -> {
                         if (BlockedStartPolicy.extractionBesideWalk(noStreamPath, lateWalk != null)) {
@@ -1548,12 +1587,14 @@ object StreamResolver {
                 TrackLog.i(TAG, "proxy-playback: $videoId refused direct -> via proxy")
                 try {
                     val proxyTimeout = if (blockedSignal) blockedBudget.remainingMs() else 0L
+                    // [KO] C4c-1: the proxy was not heard here (no budget left, or
+                    // no answer inside it), so neither exit is a stored verdict.
                     if (blockedSignal && proxyTimeout <= 0L) {
-                        throw PermanentlyUnplayableException(blockedReason())
+                        throw PermanentlyUnplayableException(blockedReason(), verdictFinal = proxyVerdictFinal())
                     }
                     return if (blockedSignal) {
                         withTimeoutOrNull(proxyTimeout) { resolveViaProxy(videoId) }
-                            ?: throw PermanentlyUnplayableException(blockedReason())
+                            ?: throw PermanentlyUnplayableException(blockedReason(), verdictFinal = proxyVerdictFinal())
                     } else {
                         resolveViaProxy(videoId)
                     }
@@ -1567,6 +1608,11 @@ object StreamResolver {
                     if (proxyFailure.isSignInConfirmNotBot()) {
                         noteBotChallenge(videoId)
                         throw BotChallengeException(BOT_CHALLENGE_REASON)
+                    }
+                    // [KO] C4c-1: a budget exit above is not the proxy's answer.
+                    if (!isFinalVerdict(proxyFailure)) {
+                        TrackLog.w(TAG, "$videoId: the proxy did not answer in the blocked budget; not remembered as unplayable")
+                        throw proxyFailure
                     }
                     val reason = permanentReason(proxyFailure)
                         ?: "이 국가에서는 이용할 수 없는 노래입니다"
@@ -1589,6 +1635,12 @@ object StreamResolver {
             // memory instead of each one asking InnerTubeX and extracting three
             // times against a refusal that is never going to soften.
             permanentReason(e)?.let { reason ->
+                // [KO] C4c-1: a slow proxy's budget exit skips this start like
+                // any verdict, but is not remembered: the next tap asks again.
+                if (!isFinalVerdict(e)) {
+                    TrackLog.w(TAG, "$videoId is not playable now: $reason; the proxy did not answer, not remembered")
+                    throw PermanentlyUnplayableException(reason, verdictFinal = false)
+                }
                 rememberUnplayable(videoId, reason)
                 TrackLog.w(TAG, "$videoId is not playable: $reason; not asking again for 10 minutes")
                 throw PermanentlyUnplayableException(reason)

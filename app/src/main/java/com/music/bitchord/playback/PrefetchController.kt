@@ -223,6 +223,8 @@ internal class PrefetchController(
         alternatePreResolveFor = song.videoId
         alternatePreResolveJob = scope.launch(TrackLog.about(song.videoId)) {
             val startedAt = SystemClock.elapsedRealtime()
+            // [KO] C4c-1: a slow proxy's budget exit is not a verdict to store.
+            var finalVerdict = true
             val reason = StreamResolver.unplayableReason(song.videoId) ?: withContext(Dispatchers.IO) {
                 try {
                     StreamResolver.resolve(song.videoId)
@@ -230,6 +232,7 @@ internal class PrefetchController(
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (failure: Throwable) {
+                    finalVerdict = StreamResolver.isFinalVerdict(failure)
                     permanentReason(failure)
                 }
             } ?: return@launch
@@ -237,7 +240,7 @@ internal class PrefetchController(
             // controller already knows not to arm into this id while the
             // search is still running. A found alternate replaces the row
             // with its own id, which the mark does not cover.
-            StreamResolver.markUnplayable(song.videoId, reason)
+            if (finalVerdict) StreamResolver.markUnplayable(song.videoId, reason)
             // This is read-ahead, not the listener's audible path: the time
             // spent resolving the unplayable id must not consume the budget
             // for finding its replacement, or a slow resolve leaves no time to

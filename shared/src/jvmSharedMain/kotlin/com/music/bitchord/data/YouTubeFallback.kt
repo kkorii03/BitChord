@@ -29,6 +29,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.json.JsonObject
+import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -86,8 +87,20 @@ internal object YouTubeFallback {
     /** Covers resolved for the first page of a category/detail listing. */
     private const val CATEGORY_COVER_LIMIT = 20
 
-    /** Tokens this fallback issued, mapped to whether their next page must be anonymous. */
-    private val continuationTokens = ConcurrentHashMap<String, Boolean>()
+    /**
+     * Tokens this fallback issued, mapped to whether their next page must be anonymous.
+     * C4c-4: bounded by dropping only the oldest token, so a long session never
+     * wipes the tokens of lists that are still on screen.
+     */
+    private val continuationTokens: MutableMap<String, Boolean> = Collections.synchronizedMap(
+        object : java.util.LinkedHashMap<String, Boolean>(16, 0.75f, false) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>?): Boolean =
+                size > CONTINUATION_LIMIT
+        },
+    )
+
+    /** How many continuation tokens are kept; the oldest goes first. */
+    internal const val CONTINUATION_LIMIT = 128
 
     /** Tokens that page Liked Music, whose later rows need the same music filter. */
     private val likedContinuations = ConcurrentHashMap.newKeySet<String>()
@@ -1226,9 +1239,11 @@ internal object YouTubeFallback {
 
     fun isContinuation(token: String): Boolean = continuationTokens.containsKey(token)
 
-    private fun rememberContinuation(token: String?, anonymous: Boolean = false) {
+    /** Internal only as a test seam (C4c-4). */
+    internal fun isAnonymousContinuation(token: String): Boolean = continuationTokens[token] == true
+
+    internal fun rememberContinuation(token: String?, anonymous: Boolean = false) {
         token ?: return
-        if (continuationTokens.size > 128) continuationTokens.clear()
         continuationTokens[token] = anonymous
     }
 

@@ -280,4 +280,38 @@ class AudioOutputPolicyTest {
             ),
         )
     }
+
+    // C5b-1: the fold is read only when a sink configures, so a route change
+    // under an open 44.1k hi-res track must rebuild the players.
+    @Test
+    fun routeChangeRebuildsWhenTheHiResFoldChanges() {
+        val usb = AudioRouting.Kind.USB
+        val bt = AudioRouting.Kind.BLUETOOTH
+        val phone = AudioRouting.Kind.PHONE
+        assertTrue(AudioOutputPolicy.routeChangeNeedsRateRebuild(88_200, usb, listOf(88_200), bt, emptyList()))
+        assertTrue(AudioOutputPolicy.routeChangeNeedsRateRebuild(176_400, usb, listOf(176_400), phone, emptyList()))
+        assertTrue(AudioOutputPolicy.routeChangeNeedsRateRebuild(88_200, bt, emptyList(), usb, listOf(88_200)))
+        assertFalse(AudioOutputPolicy.routeChangeNeedsRateRebuild(48_000, usb, listOf(48_000), bt, emptyList()))
+        assertFalse(AudioOutputPolicy.routeChangeNeedsRateRebuild(88_200, bt, emptyList(), phone, emptyList()))
+        assertFalse(AudioOutputPolicy.routeChangeNeedsRateRebuild(null, usb, listOf(88_200), bt, emptyList()))
+        assertFalse(AudioOutputPolicy.routeChangeNeedsRateRebuild(88_200, usb, listOf(88_200), usb, listOf(88_200)))
+    }
+
+    // NR-3: AudioDeviceInfo.getSampleRates() empty means "arbitrary rates".
+    @Test
+    fun aDacThatReportsNoRateListKeepsTheHiResRate() {
+        assertNull(AudioOutputPolicy.outputSampleRateFor(88_200, AudioRouting.Kind.USB, emptyList()))
+        assertNull(AudioOutputPolicy.outputSampleRateFor(176_400, AudioRouting.Kind.WIRED, emptyList()))
+        // Bluetooth and the phone mixer still fold, whatever they report.
+        assertEquals(48_000, AudioOutputPolicy.outputSampleRateFor(88_200, AudioRouting.Kind.BLUETOOTH, emptyList()) ?: -1)
+        assertEquals(48_000, AudioOutputPolicy.outputSampleRateFor(88_200, AudioRouting.Kind.PHONE, emptyList()) ?: -1)
+        // A list that names other rates only is still "not listed".
+        assertEquals(48_000, AudioOutputPolicy.outputSampleRateFor(88_200, AudioRouting.Kind.USB, listOf(44_100, 48_000)) ?: -1)
+        // Moving such a DAC's 88.2 kHz track to Bluetooth now has to rebuild.
+        assertTrue(
+            AudioOutputPolicy.routeChangeNeedsRateRebuild(
+                88_200, AudioRouting.Kind.USB, emptyList(), AudioRouting.Kind.BLUETOOTH, emptyList(),
+            ),
+        )
+    }
 }

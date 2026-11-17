@@ -1,6 +1,8 @@
 package com.music.bitchord.playback
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -52,5 +54,26 @@ class OutputReconfigureGateTest {
         assertFalse(gate.request(transitioning = true))
         assertTrue("the transition ended before the parked rebuild", gate.request(transitioning = false))
         assertFalse("the idle request already covered it", gate.settled())
+    }
+
+    // C5a-1: a bit-perfect / USB direct toggle during an automix tail parked a
+    // rebuild that was then replayed as a route-only change.
+    @Test
+    fun `a parked rebuild keeps its rebuild flag`() {
+        val gate = OutputReconfigureGate()
+
+        assertFalse(gate.request(transitioning = true, rebuild = true))
+        assertFalse(gate.request(transitioning = true, rebuild = false))
+        assertEquals(true, gate.settledRequest())
+        assertNull(gate.settledRequest())
+    }
+
+    @Test
+    fun `a parked route-only change replays without rebuild`() {
+        val gate = OutputReconfigureGate()
+
+        assertFalse(gate.request(transitioning = true))
+        assertEquals(false, gate.settledRequest())
+        assertNull(gate.settledRequest())
     }
 }

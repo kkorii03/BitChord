@@ -225,6 +225,18 @@ internal object HqSwapPolicy {
     }
 
     /**
+     * [KO] C4c-3: where YouTube opens when the copy playing now fails mid-song
+     * (a 429/503 with no other verified source, or a failed higher-quality
+     * stream). [positionMs] is on the failing copy's clock, so it goes back
+     * through that copy's verdict like [revertPositionMs]; no verdict keeps it
+     * raw, as before. A start from the top stays at the top.
+     */
+    fun fallbackSeekMs(positionMs: Long, offsetMs: Long?, rate: Double?): Long {
+        if (positionMs <= 0L) return 0L
+        return revertPositionMs(positionMs, offsetMs, rate, substitute = false) ?: positionMs
+    }
+
+    /**
      * Why the prepared standby must not be blended in or adopted; null when it
      * still may.
      *
@@ -317,4 +329,29 @@ internal object HqSwapPolicy {
         offsetMs: Long,
         rate: Double,
     ): Long = targetPositionMs(toYoutubeMs(positionMs, currentOffsetMs, currentRate), offsetMs, rate)
+
+    /**
+     * [KO] NR-1 / C4c-3: where a 429/503 resume opens, for [positionMs] on the
+     * failed copy's clock. Another verified copy ([candidateOffsetMs] non-null)
+     * goes through both verdicts like a mid-song swap ([swapStartMs]); YouTube
+     * (no candidate verdict) goes back through the failed one ([fallbackSeekMs]).
+     * A failed copy with no stored verdict is taken as YouTube's clock.
+     */
+    fun resumeAtMs(
+        positionMs: Long,
+        failedOffsetMs: Long?,
+        failedRate: Double?,
+        candidateOffsetMs: Long?,
+        candidateRate: Double?,
+    ): Long = if (candidateOffsetMs == null) {
+        fallbackSeekMs(positionMs, failedOffsetMs, failedRate)
+    } else {
+        swapStartMs(
+            positionMs = positionMs,
+            currentOffsetMs = failedOffsetMs ?: 0L,
+            currentRate = failedRate ?: 1.0,
+            offsetMs = candidateOffsetMs,
+            rate = candidateRate ?: 1.0,
+        )
+    }
 }
