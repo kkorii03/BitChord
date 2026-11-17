@@ -1857,6 +1857,7 @@ object SourceResolver {
                 authRejected = SourceCooldown.authMark(source.configId) != authMark
                 conclusive = SourceCooldown.failureMark(source.configId) == mark
                 if (conclusive) {
+                    SourceCooldown.answered(source.configId) // [KO] rest-escalation
                     if (searchAnswers.size >= SEARCH_MEMO_MAX) searchAnswers.clear()
                     searchAnswers[key] = SearchAnswer(rows, System.currentTimeMillis())
                 }

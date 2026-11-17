@@ -22,7 +22,14 @@ internal object KoSourceRuntime {
  * first request after [COOLDOWN_MS].
  */
 internal object KoSourceCooldown {
-    private class State(var failures: Int = 0, var untilMs: Long = 0L)
+    /**
+     * [rests] counts the rests started since the source last succeeded. An
+     * expired rest keeps its state, so a source that fails again on its first
+     * request back rests again at once, and for longer (see [restLengthMs]).
+     * Phone 11-12..11-17: four addons that never answered once were asked
+     * again after every rest, two failures at a time, for five days.
+     */
+    private class State(var failures: Int = 0, var untilMs: Long = 0L, var rests: Int = 0)
 
     private val states = ConcurrentHashMap<String, State>()
 
@@ -150,9 +157,8 @@ internal object KoSourceCooldown {
     fun isResting(configId: String, nowMs: Long = System.currentTimeMillis()): Boolean {
         if (isUnmeasurable(configId, nowMs)) return true
         val state = states[configId] ?: return false
-        if (state.untilMs > nowMs) return true
-        if (state.untilMs != 0L) states.remove(configId)
-        return false
+        // An expired rest is kept, not forgotten: only a success clears it.
+        return state.untilMs > nowMs
     }
 
     /**
@@ -162,8 +168,8 @@ internal object KoSourceCooldown {
      * transport fault or a plain 5xx still needs: the dead-addon rule
      * exists so one unreachable source cannot cost every track its window.
      */
-    fun failed(configId: String, restUntilMs: Long = 0L) {
-        recordFailure(configId, countForRest = true, restUntilMs = restUntilMs)
+    fun failed(configId: String, restUntilMs: Long = 0L, nowMs: Long = System.currentTimeMillis()) {
+        recordFailure(configId, countForRest = true, restUntilMs = restUntilMs, nowMs = nowMs)
     }
 
     /**
@@ -223,26 +229,57 @@ internal object KoSourceCooldown {
         configId: String,
         countForRest: Boolean,
         restUntilMs: Long = 0L,
+        nowMs: Long = System.currentTimeMillis(),
     ) {
         failureMarks.computeIfAbsent(configId) { java.util.concurrent.atomic.AtomicLong() }
             .incrementAndGet()
         if (!countForRest) return
-        val nowMs = System.currentTimeMillis()
         val state = states.computeIfAbsent(configId) { State() }
-        state.failures += 1
-        if (state.failures >= FAILURES_BEFORE_REST) {
-            val untilMs = if (restUntilMs > nowMs) restUntilMs else nowMs + COOLDOWN_MS
-            state.untilMs = maxOf(state.untilMs, untilMs)
-            TrackLog.w(
-                "BitChord",
-                "source $configId failed ${state.failures} times; resting until $untilMs",
-            )
+        synchronized(state) {
+            state.failures += 1
+            if (state.failures >= FAILURES_BEFORE_REST) {
+                // A failure inside a running rest (an upgrade probe) extends it;
+                // one after it expired starts the next, longer rest.
+                if (state.untilMs <= nowMs) state.rests += 1
+                val baseMs = if (restUntilMs > nowMs) restUntilMs - nowMs else COOLDOWN_MS
+                val untilMs = nowMs + restLengthMs(baseMs, state.rests)
+                state.untilMs = maxOf(state.untilMs, untilMs)
+                TrackLog.w(
+                    "BitChord",
+                    "source $configId failed ${state.failures} times; resting until $untilMs (rest ${state.rests})",
+                )
+            }
         }
+    }
+
+    /**
+     * How long rest number [rests] lasts (1 = the first since a success): the
+     * first is exactly [baseMs] (the host's own expiry, or [COOLDOWN_MS]), each
+     * later one twice the one before, up to 16x and never past [MAX_REST_MS]
+     * unless the host itself asked for longer.
+     */
+    internal fun restLengthMs(baseMs: Long, rests: Int): Long {
+        val doublings = (rests - 1).coerceIn(0, MAX_DOUBLINGS)
+        return maxOf(baseMs, minOf(baseMs shl doublings, MAX_REST_MS))
     }
 
     fun succeeded(configId: String) {
         states.remove(configId)
         restProbes.remove(configId)
+    }
+
+    /**
+     * [configId] gave a complete answer, a match or a miss. After a rest has
+     * run out that is the proof the source is back, so the rest and its count
+     * are forgotten (what the clock alone used to do). A source that keeps
+     * failing never answers, so its rests keep growing. Before any rest this
+     * changes nothing: failures still add up until a stream succeeds.
+     */
+    internal fun answered(configId: String, nowMs: Long = System.currentTimeMillis()) {
+        val state = states[configId] ?: return
+        synchronized(state) {
+            if (state.untilMs != 0L && state.untilMs <= nowMs) states.remove(configId, state)
+        }
     }
 
     /**
@@ -258,8 +295,11 @@ internal object KoSourceCooldown {
      */
     internal fun takeRestProbe(configId: String, nowMs: Long = System.currentTimeMillis()): Boolean {
         var taken = false
+        // Spaced like the rests: a source that has stayed dead through several
+        // rests is probed less often (10 min after the first, 20 after the second ...).
+        val everyMs = restLengthMs(REST_PROBE_EVERY_MS, states[configId]?.rests ?: 1)
         restProbes.compute(configId) { _, last ->
-            if (last == null || nowMs - last >= REST_PROBE_EVERY_MS) {
+            if (last == null || nowMs - last >= everyMs) {
                 taken = true
                 nowMs
             } else {
@@ -285,4 +325,6 @@ internal object KoSourceCooldown {
     private const val UNMEASURABLE_REST_MS = 6 * 60 * 60 * 1000L
     private const val FAILURES_BEFORE_REST = 2
     private const val COOLDOWN_MS = 30 * 60 * 1000L
+    private const val MAX_DOUBLINGS = 4
+    private const val MAX_REST_MS = 6 * 60 * 60 * 1000L
 }
