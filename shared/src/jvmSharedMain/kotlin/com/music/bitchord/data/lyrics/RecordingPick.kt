@@ -288,6 +288,14 @@ object RecordingPick {
             val otherScript = TrackMatcher.hasOtherScript(wanted) && TrackMatcher.hasLatinLetters(row.title) ||
                 TrackMatcher.hasOtherScript(row.title) && TrackMatcher.hasLatinLetters(wanted)
             if (!otherScript) return false
+            // [KO] L note: with no title agreement the artist is the only evidence. An
+            // artist written in the same script as the one asked for can be compared,
+            // so a stranger there is "some English song of that length", not this one.
+            // Across scripts (아이유 / IU, 다비치 / Davichi) it cannot, and stays allowed.
+            val comparable = artists.filter { it.isNotBlank() }
+            if (row.artist.isNotBlank() && comparable.isNotEmpty() && !artistMatchesAny(row) &&
+                comparable.all { TrackMatcher.hasOtherScript(it) == TrackMatcher.hasOtherScript(row.artist) }
+            ) return false
             val ms = row.durationMillis()
             val length = if (ms <= 0L || videoMs <= 0L) 0L else abs(ms - videoMs)
             return videoMs <= 0L || ms <= 0L || length <= 90_000L
@@ -435,7 +443,10 @@ object RecordingPick {
 
     private val BRACKETS = Regex("""[(\[（【「『]([^)\]）】」』]*)[)\]）】」』]""")
     private val FEAT = Regex("""(?i)\b(feat|ft)\.?\s.*$""")
+    // [KO] words, not letters inside titles: "Undercover", "Discover", "Mr. Brightside",
+    // "Live Forever", "Piano Man" are originals. A marker opening the title is its name;
+    // "live" counts in brackets, after a dash, before at/from/session/version, or last.
     private val VERSION = Regex(
-        """(?i)instrumental|\binst\b|karaoke|off\s*vocal|\bmr\b|\blive\b|remix|acoustic|piano|orchestra ver|cover|sped ?up|slowed|nightcore|8d|backing|伴奏|カラオケ|라이브|반주""",
+        """(?i)instrumental|\binst\b|karaoke|off\s*vocal|(?<![a-z])mr(?![a-z.])|[(\[【「\-–—/|~·]\s*live(?![a-z])|(?<![a-z])live\s+(?:at|from|session|version|ver)\b|(?<=.)(?<![a-z])live\s*$|remix|acoustic|(?<=.)(?<![a-z])piano(?![a-z])|orchestra ver|(?<=.)(?<![a-z])cover(?![a-z])|sped ?up|slowed|nightcore|(?<![a-z0-9])8d(?![a-z0-9])|backing|伴奏|カラオケ|라이브|반주""",
     )
 }
