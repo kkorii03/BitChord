@@ -118,6 +118,12 @@ internal object YouTubeFallback {
     @Volatile
     private var homeCache: Triple<String, Long, HomeFeed>? = null
 
+    /** Tests start from empty Home and Liked caches. */
+    internal fun resetHomeCachesForTest() {
+        homeCache = null
+        likedCache = null
+    }
+
     /**
      * Artist names from the listener's own plays, used by the display cleaner
      * to recognise an `Artist - Title` upload on a personal channel. Refreshed
@@ -154,7 +160,10 @@ internal object YouTubeFallback {
      * replaces it with the one just built. First loads, tab switches and
      * returning to the screen keep the cache.
      */
-    suspend fun home(force: Boolean = false): HomeFeed {
+    suspend fun home(force: Boolean = false): HomeFeed = homeWith(force) { buildHome() }
+
+    /** [home] with the build passed in, so the cache rule is tested without a network. */
+    internal suspend fun homeWith(force: Boolean, build: suspend () -> HomeFeed): HomeFeed {
         cachedHome(force = force)?.let {
             logRecentsShelf(cached = true)
             return it
@@ -164,8 +173,17 @@ internal object YouTubeFallback {
                 logRecentsShelf(cached = true)
                 return@withLock it
             }
-            val feed = buildHome()
-            homeCache = Triple(Innertube.sessionKey(), System.currentTimeMillis(), feed)
+            // N4: the build takes seconds of signed requests. Key the cache by
+            // the identity it started under, and only when that identity is
+            // still the current one: a switch mid-build must not hand the old
+            // account's shelves to the new one for the whole window.
+            val key = Innertube.sessionKey()
+            val feed = build()
+            if (Innertube.sessionKey() == key) {
+                homeCache = Triple(key, System.currentTimeMillis(), feed)
+            } else {
+                Log.d(TAG, "fallback home: the session changed during the build; not cached")
+            }
             logRecentsShelf(cached = false)
             feed
         }
@@ -1152,7 +1170,13 @@ internal object YouTubeFallback {
             Innertube.nextYouTube(videoId = videoId, playlistId = "RD$videoId"),
         ).songs
 
-    private suspend fun likedFirstPage(): YouTubeWebParser.PlaylistResult? {
+    private suspend fun likedFirstPage(): YouTubeWebParser.PlaylistResult? =
+        likedFirstPageWith { Innertube.browseYouTube(it) }
+
+    /** [likedFirstPage] with the browse passed in, so the cache rule is tested without a network. */
+    internal suspend fun likedFirstPageWith(
+        browse: suspend (String) -> JsonObject,
+    ): YouTubeWebParser.PlaylistResult? {
         // Liked music is per-account: key the short cache by the session, so a
         // cookie/profile change cannot serve the previous account's rows for
         // the rest of the five-minute window. The session is read again under
@@ -1169,10 +1193,12 @@ internal object YouTubeFallback {
             likedCache?.let { (key, at, page) ->
                 if (key == current && now - at < LIKED_CACHE_MS) return@withLock page
             }
+            var answered = false // N5
             for (id in listOf(LIKED_MUSIC, LIKED_VIDEOS)) {
-                val root = runCatching { Innertube.browseYouTube(id) }
+                val root = runCatching { browse(id) }
                     .onFailure { if (it is CancellationException) throw it }
                     .getOrNull() ?: continue
+                answered = true
                 val page = YouTubeWebParser.parsePlaylist(root)
                 if (page.songs.isEmpty()) continue
                 page.continuation?.let(::rememberContinuation)
@@ -1180,7 +1206,10 @@ internal object YouTubeFallback {
                 likedCache = Triple(current, System.currentTimeMillis(), page)
                 return@withLock page
             }
-            likedCache = Triple(current, System.currentTimeMillis(), null)
+            // N5: "no likes" only when YouTube said so. Two failed lookups (a
+            // timeout, a 429) are not an answer and must not hide the shelf for
+            // the whole window; the next Home build asks again.
+            if (answered) likedCache = Triple(current, System.currentTimeMillis(), null)
             null
         }
     }

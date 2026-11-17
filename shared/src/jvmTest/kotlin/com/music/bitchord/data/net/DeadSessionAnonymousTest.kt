@@ -95,6 +95,22 @@ class DeadSessionAnonymousTest {
     }
 
     @Test
+    fun `N3 a signed success for the same login lifts the mark on both hosts`() = withCookie(deadCookie) {
+        KoInnertube.markSessionRejected(deadCookie)
+        assertTrue(Innertube.isAnonymousYouTubeRequest("next", anonymous = false))
+        assertTrue(Innertube.musicRequestIsAnonymous("browse", "FEmusic_liked_playlists"))
+
+        // Proof about another login says nothing about this one.
+        KoInnertube.noteSignedSuccess("SAPISID=other-test-only")
+        KoInnertube.noteSignedSuccess(null)
+        assertTrue(Innertube.isAnonymousYouTubeRequest("next", anonymous = false))
+
+        KoInnertube.noteSignedSuccess(deadCookie)
+        assertFalse(Innertube.isAnonymousYouTubeRequest("next", anonymous = false))
+        assertFalse(Innertube.musicRequestIsAnonymous("browse", "FEmusic_liked_playlists"))
+    }
+
+    @Test
     fun `a verdict about a login that already left is not recorded`() = withCookie("SAPISID=current-test-only") {
         KoInnertube.markSessionRejected(deadCookie)
         assertFalse(Innertube.isAnonymousYouTubeRequest("next", anonymous = false))

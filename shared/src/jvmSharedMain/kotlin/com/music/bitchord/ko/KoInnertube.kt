@@ -308,6 +308,18 @@ object KoInnertube {
     }
 
     /**
+     * Lifts the dead-session mark once a signed request for the same login
+     * was answered (N3). Only proof from the login itself counts: callers pass
+     * the cookie the successful request actually carried.
+     */
+    internal fun noteSignedSuccess(cookie: String?) {
+        val rejected = rejectedSession ?: return
+        if (rejected != identityOf(cookie)) return
+        rejectedSession = null
+        Log.w(TAG, "a signed request was answered again; public requests go signed again")
+    }
+
+    /**
      * Whether a youtube.com failure is the dead-session answer that a public
      * request may be retried for without the account. Account endpoints and
      * searches never take this path: the first need the account, the second
@@ -645,6 +657,7 @@ object KoInnertube {
             }.body<JsonObject>()
         }
         rememberVisitor(anonymousRequest, response)
+        if (!anonymousRequest) noteSignedSuccess(cookie) // N3
         return response
     }
 

@@ -4,6 +4,8 @@ import com.music.bitchord.data.net.ProxyConfig
 import com.music.bitchord.data.net.ProxyMode
 import com.music.bitchord.data.net.ProxyScope
 import com.music.bitchord.data.net.YouTubeProxy
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -112,5 +114,92 @@ class MusicGateFallbackProxyRecheckTest {
         assertFalse(MusicGateFallback.shouldTryMusic(key, now = at + MusicGateFallback.PROXY_RECHECK_MS))
         assertFalse(MusicGateFallback.needsRecheck(key, now = at + MusicGateFallback.PROXY_RECHECK_MS))
         assertTrue(MusicGateFallback.shouldTryMusic(key, now = at + MusicGateFallback.RECHECK_MS))
+    }
+
+    // ---- N1: player / stream refusals only count on the route they took ----
+
+    private val premiumPlayer = Json.parseToJsonElement(
+        """{"playabilityStatus":{"status":"UNPLAYABLE","reason":"This content requires YouTube Music Premium"}}""",
+    ).jsonObject
+
+    @Test
+    fun `N1 a direct player refusal does not gate a proxy user`() {
+        val key = MusicGateFallback.currentKey()
+        YouTubeProxy.update(proxy)
+
+        assertEquals(MusicGateFallback.Signal.NONE, MusicGateFallback.observePlayer(premiumPlayer))
+        MusicGateFallback.observePremiumFailure("YoutubeMusicPremiumContentException: nope")
+
+        assertEquals(MusicGateFallback.State.UNKNOWN, MusicGateFallback.state(key))
+        assertFalse(MusicGateFallback.isActive(key))
+        assertTrue(MusicGateFallback.shouldTryMusic(key))
+    }
+
+    @Test
+    fun `N1 a refusal that travelled the proxy still gates a proxy user`() {
+        YouTubeProxy.update(proxy)
+        MusicGateFallback.observePremiumFailure("YoutubeMusicPremiumContentException: nope", viaProxy = true)
+        assertEquals(MusicGateFallback.State.GATED, MusicGateFallback.state())
+
+        MusicGateFallback.resetForTest()
+        assertEquals(
+            MusicGateFallback.Signal.GATED,
+            MusicGateFallback.observePlayer(premiumPlayer, viaProxy = true),
+        )
+        assertTrue(MusicGateFallback.isActive())
+    }
+
+    @Test
+    fun `N1 without a proxy a direct refusal still gates`() {
+        assertEquals(MusicGateFallback.Signal.GATED, MusicGateFallback.observePlayer(premiumPlayer))
+        assertTrue(MusicGateFallback.isActive())
+
+        MusicGateFallback.resetForTest()
+        MusicGateFallback.observePremiumFailure("YoutubeMusicPremiumContentException: nope")
+        assertEquals(MusicGateFallback.State.GATED, MusicGateFallback.state())
+    }
+
+    // ---- N2: a failed re-check is not a verdict ----------------------------
+
+    @Test
+    fun `N2 a failed re-check does not make a stored gated verdict trusted with a proxy`() {
+        val store = MemoryStore()
+        store.values["music_gate_fallback_v1"] =
+            """{"version":1,"entries":{"u:k":{"state":"GATED","at":"1"}}}"""
+        MusicGateFallback.init(store)
+        YouTubeProxy.update(proxy)
+        assertFalse(MusicGateFallback.isActive("u:k"))
+
+        MusicGateFallback.touch("u:k", now = 7_000_000L)
+
+        assertEquals(MusicGateFallback.State.GATED, MusicGateFallback.state("u:k"))
+        assertFalse(MusicGateFallback.isActive("u:k"), "a failed check is not a verdict")
+        assertTrue(MusicGateFallback.shouldTryMusic("u:k", now = 7_000_001L))
+        assertTrue(MusicGateFallback.needsRecheck("u:k", now = 7_000_001L))
+    }
+
+    @Test
+    fun `N2 a failed re-check does not extend a stale gated verdict without a proxy`() {
+        val key = "u:stale"
+        val at = 8_000_000L
+        MusicGateFallback.markGated("test", key = key, now = at)
+        val late = at + MusicGateFallback.RECHECK_MS
+        assertTrue(MusicGateFallback.needsRecheck(key, now = late))
+
+        MusicGateFallback.touch(key, now = late)
+
+        assertTrue(MusicGateFallback.needsRecheck(key, now = late + 1L))
+        assertTrue(MusicGateFallback.shouldTryMusic(key, now = late + 1L))
+        assertTrue(MusicGateFallback.isActive(key), "the verdict itself is unchanged")
+    }
+
+    @Test
+    fun `N2 touch still backs an unknown identity off with a proxy`() {
+        val key = "u:unknown-proxy"
+        val at = 9_000_000L
+        YouTubeProxy.update(proxy)
+        MusicGateFallback.touch(key, now = at)
+        assertFalse(MusicGateFallback.needsRecheck(key, now = at + MusicGateFallback.PROXY_RECHECK_MS - 1))
+        assertTrue(MusicGateFallback.needsRecheck(key, now = at + MusicGateFallback.PROXY_RECHECK_MS))
     }
 }

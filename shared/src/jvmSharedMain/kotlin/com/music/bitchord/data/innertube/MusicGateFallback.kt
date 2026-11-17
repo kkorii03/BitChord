@@ -295,10 +295,17 @@ object MusicGateFallback {
         }
     }
 
-    /** Records that a re-check happened even when it could not answer either way. */
+    /**
+     * Records that a re-check happened even when it could not answer either way.
+     *
+     * A GATED entry is left exactly as it was (N2): a failed check is not a
+     * verdict, so it must neither make a verdict loaded from disk trusted
+     * ([Entry.fromThisProcess]) nor restart a stale verdict's window.
+     */
     @Synchronized
     fun touch(key: String = currentKey(), now: Long = System.currentTimeMillis()) {
         val entry = entries.computeIfAbsent(key) { Entry(State.UNKNOWN, now, fromThisProcess = true) }
+        if (entry.state == State.GATED) return
         entry.checkedAt = now
         entry.fromThisProcess = true
         persist()
@@ -332,18 +339,35 @@ object MusicGateFallback {
         }
     }
 
-    /** Reads a music.youtube.com player response, when one is seen. */
-    fun observePlayer(root: JsonObject): Signal {
+    /**
+     * Reads a music.youtube.com player response, when one is seen.
+     *
+     * [viaProxy] says the request is known to have left through the proxy.
+     * With a usable proxy the verdict describes the proxy route that browse
+     * traffic takes, so a refusal from any other route (the phone's own Korean
+     * address) is not evidence about it and is ignored (N1). With no proxy
+     * every route is the direct one and nothing changes.
+     */
+    fun observePlayer(root: JsonObject, viaProxy: Boolean = false): Signal {
         if (!isGatedPlayer(root)) return Signal.NONE
+        if (offRouteWhileProxied(viaProxy, "player")) return Signal.NONE
         markGated("player is UNPLAYABLE for a Premium reason")
         return Signal.GATED
     }
 
-    /** Records a stream resolver refusal that names the Premium gate. */
-    fun observePremiumFailure(message: String?) {
+    /** Records a stream resolver refusal that names the Premium gate; [viaProxy] as in [observePlayer]. */
+    fun observePremiumFailure(message: String?, viaProxy: Boolean = false) {
         val reason = message.orEmpty()
         if (!PREMIUM_FAILURE.containsMatchIn(reason)) return
+        if (offRouteWhileProxied(viaProxy, "stream resolver")) return
         markGated("stream resolver: ${reason.take(120)}")
+    }
+
+    /** True (and logged) when a usable proxy is set but this signal did not travel it. */
+    private fun offRouteWhileProxied(viaProxy: Boolean, source: String): Boolean {
+        if (viaProxy || !YouTubeProxy.config.usable) return false
+        Log.d(TAG, "music gate: ignored a $source Premium refusal that did not use the proxy")
+        return true
     }
 
     /** Recomputes [active] after a sign-in, a profile switch, or a restart. */

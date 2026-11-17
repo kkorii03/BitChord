@@ -1841,7 +1841,7 @@ object StreamResolver {
                 // gated, not that this track is. The fallback decides the rest
                 // of the session from here; the media walk itself keeps the
                 // other clients in its own catalog.
-                MusicGateFallback.observePremiumFailure(e.message)
+                MusicGateFallback.observePremiumFailure(e.message, viaProxy) // [KO] N1 route of this walk
                 // A takedown, a claim or a deleted upload is not something the
                 // extraction failsafe can climb over. Reaching it anyway spent
                 // three watch-page attempts on an answer InnerTubeX had
