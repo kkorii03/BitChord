@@ -591,6 +591,8 @@ object HqAudioVerify {
                         return@coroutineScope Outcome.Mismatch
                     }
                     if (key in unaskedDifferent) return@coroutineScope Outcome.Mismatch // [KO] RG2-1
+                    // [KO] OPT1: a caller queued on this lock while the row was found unmeasurable.
+                    if (UnmeasuredMemory.reason(sourceId, trackId) != null) return@coroutineScope Outcome.Unavailable()
                     // [KO] The words check needs the YouTube copy's words, which the song
                     // check keeps once it has heard them, and an engine to hear the
                     // candidate. Without either nothing is fetched: the YouTube copy plays
@@ -702,6 +704,9 @@ object HqAudioVerify {
                             bytes = candidate.bytes,
                             measured = false,
                         )
+                        // [KO] OPT1: a stall throws before here, so a short head is this row's own
+                        // end; the +61 s retry would download the same bytes again.
+                        UnmeasuredMemory.note(sourceId, trackId, "incomplete head", restSource = false)
                         return@coroutineScope Outcome.Unavailable(transient = true)
                     }
                     val alignStarted = System.nanoTime()
@@ -721,6 +726,11 @@ object HqAudioVerify {
                         // [KO] HQ6: say why the aligner gave no answer (too short, silent, no path, chance).
                         TrackLog.i(TAG, "hq-verify: '${target.title}' $sourceName no alignment (${ChromaAlignment.lastVerdict})", youtubeId)
                         logTiming(youtubeId, candidate, alignMs)
+                        // [KO] OPT1: only two full openings give the same null again; a partial
+                        // reference may still fill in, so that pair is asked again.
+                        if (referenceComplete && candidateComplete) {
+                            UnmeasuredMemory.note(sourceId, trackId, "no alignment", restSource = false)
+                        }
                         return@coroutineScope Outcome.Unavailable(transient = true)
                     }
                     val match = result.matchPercent
