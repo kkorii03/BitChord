@@ -81,6 +81,20 @@ internal fun hqUpgradeAllowedNow(automatic: Boolean, downloadsAllowedNow: Boolea
     !automatic || downloadsAllowedNow
 
 /**
+ * [KO] G9: the lowest rung a repair's YouTube re-fetch may serve.
+ *
+ * A file still marked as the wrong recording is not the song at any rung, so
+ * the YouTube song version (NORMAL, the bottom rung) is a repair, not a
+ * downgrade: 11-13 F50yfwMmAAc (320 kbps) and itBbxKe6Z50 (FLAC) were
+ * condemned and every repair was refused for serving 160 kbps. NORMAL rather
+ * than no floor keeps the song-cache doors in [Downloads.prepare] shut and
+ * still refuses a route of unknown rung. A file that is not (or no longer)
+ * condemned keeps its own rung as the floor.
+ */
+internal fun hqRepairFloor(fileIsWrongRecording: Boolean, currentTier: HqTier): HqTier =
+    if (fileIsWrongRecording) HqTier.NORMAL else currentTier
+
+/**
  * Whether a download's success is also proof that the pass's replacement
  * landed.
  *
@@ -566,7 +580,9 @@ object HqLibraryUpgrade {
      * only, and the candidate must clear the same sound comparison before it is
      * allowed to replace the file. A deliberate upgrade with no proved better
      * pair does nothing; a repair may fall back to a re-fetch only when the
-     * served rendition is at least the rung of the file it replaces.
+     * served rendition is at least the rung of the file it replaces — or, for a
+     * file still condemned as the wrong recording, the YouTube song version at
+     * any known rung ([hqRepairFloor]).
      *
      * @return [UpgradeRequest.QUEUED] when a verified pair was queued at once,
      *   [UpgradeRequest.SEARCHING] when one search for this track was started,
@@ -714,7 +730,11 @@ object HqLibraryUpgrade {
             // The repair could not be proved first, so the download itself has
             // to prove it: the served rendition must be at least the rung of
             // the file being replaced, or [Downloads.prepare] refuses it and
-            // the old file stays.
+            // the old file stays. A file still condemned as the wrong recording
+            // has no rung worth keeping: its floor is the song version's own
+            // (see [hqRepairFloor]). Asked now, after the search, so a file a
+            // replacement already fixed is not dragged down.
+            val repairFloor = hqRepairFloor(Downloads.isWrongRecording(song.videoId), currentTier) // [KO] G9
             val fallbackQuality = if (currentTier == HqTier.DOLBY_ATMOS) {
                 DownloadedQuality.qualityFor(currentTier)
             } else {
@@ -730,6 +750,12 @@ object HqLibraryUpgrade {
                 )
                 return@launch
             }
+            TrackLog.i(
+                TAG,
+                "download-check: ${song.videoId} repair from YouTube floor=${repairFloor.name} " +
+                    "tier=${currentTier.name}",
+                song.videoId,
+            )
             Downloads.enqueue(
                 context = context,
                 song = song,
@@ -738,7 +764,7 @@ object HqLibraryUpgrade {
                 avoidSourceConfigId = wrongSource,
                 forceReplace = true,
                 youtubeOnly = true,
-                minimumTier = currentTier,
+                minimumTier = repairFloor,
                 automatic = automatic,
             )
         }

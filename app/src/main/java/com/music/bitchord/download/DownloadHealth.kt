@@ -356,14 +356,25 @@ object DownloadHealth {
                     // A launched search counts as an accepted attempt and
                     // starts the cooldown; otherwise every playback would run
                     // it again with no pause.
-                    val request = HqLibraryUpgrade.requestUpgrade(
-                        context,
-                        song,
-                        allowEqual = true,
-                        automatic = true,
-                    )
-                    if (downloadHealthCountsAsRequested(request)) {
-                        markRepairRequested(context, id, System.currentTimeMillis())
+                    // [KO] G9: the same cooldown as the condemned branch above. This
+                    // was the one repair request that never asked it, so a verdict
+                    // reached again would spend a search and a download on every
+                    // play (11-13: three refused repairs of F50yfwMmAAc in nine hours
+                    // despite the 24 h cooldown; how the verdict was reached again is
+                    // not proved).
+                    val now = System.currentTimeMillis()
+                    if (DownloadHealthPolicy.mayRequestRepair(lastRepairRequest(context, id), now)) {
+                        val request = HqLibraryUpgrade.requestUpgrade(
+                            context,
+                            song,
+                            allowEqual = true,
+                            automatic = true,
+                        )
+                        if (downloadHealthCountsAsRequested(request)) {
+                            markRepairRequested(context, id, now)
+                        }
+                    } else {
+                        TrackLog.i(TAG, "download-check: repair retry cooling down", id)
                     }
                 }
                 DownloadHealthPolicy.Action.UPGRADE -> {
