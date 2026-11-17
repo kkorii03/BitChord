@@ -65,7 +65,8 @@ object KoStoredVersionFix {
     fun suspicion(row: Song, downloaded: Boolean): String? {
         if (row.isVideo || row.typeUnknown || row.isEpisode || row.videoRadio) return null
         if (row.title.isBlank() || row.artist.isBlank()) return null
-        if (CatalogSongMapper.isCover(row)) return null
+        // A "(Piano Cover)" / karaoke / tribute arrangement is the listener's pick too.
+        if (CatalogSongMapper.isCover(row) || KoTrackMatcher.isCoverArrangement(row)) return null
         val type = row.musicVideoType
         if (type != null) {
             return if (type.contains("OMV", ignoreCase = true) || type.contains("UGC", ignoreCase = true)) {
