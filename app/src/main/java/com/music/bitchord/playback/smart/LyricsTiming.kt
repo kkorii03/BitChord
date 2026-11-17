@@ -696,7 +696,7 @@ object LyricsTiming {
     }
 
     /** A refine's stored words put onto the clock now playing, for a result written after a listen. */
-    private fun refineWordsOnClock(
+    private suspend fun refineWordsOnClock(
         context: Context,
         videoId: String?,
         source: WordSource,
@@ -705,8 +705,14 @@ object LyricsTiming {
         if (source.words.isEmpty()) return emptyList()
         val playing = videoId?.let(::playingClock) ?: Clock.Unknown
         return when {
+            // [KO] T4: untagged words were made on the upload. [timing] drops
+            // its HQ map once a tagged base is on the copy's clock, so take the
+            // upload's map again, as [timingNow] does for the same words.
             source.clock is Clock.Unknown || playing is Clock.Unknown ->
-                onHqClock(source.words, timing)
+                onHqClock(
+                    source.words,
+                    timing.copy(hq = if (videoId != null) hqAdjustment(context, videoId) else timing.hq),
+                )
             source.clock == playing -> source.words
             else -> videoId?.let {
                 conversion(context, it, source.clock, playing)?.words(source.words)

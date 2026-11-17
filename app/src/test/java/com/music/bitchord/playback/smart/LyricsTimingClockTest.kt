@@ -50,7 +50,7 @@ class LyricsTimingClockTest {
         storeField.set(LyricsTiming, null)
         hqCacheField.set(HqVerificationStore, null)
         KoAppSettings.syncSafetyHqSync.value = false
-        listOf("v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9", "vA", "vB", "vC").forEach(StreamChoice::forget)
+        listOf("v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9", "vA", "vB", "vC", "vD").forEach(StreamChoice::forget)
         Downloads.setSavedMetadata(emptyMap())
     }
 
@@ -59,7 +59,7 @@ class LyricsTimingClockTest {
         storeField.set(LyricsTiming, null)
         hqCacheField.set(HqVerificationStore, null)
         KoAppSettings.syncSafetyHqSync.value = false
-        listOf("v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9", "vA", "vB", "vC").forEach(StreamChoice::forget)
+        listOf("v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9", "vA", "vB", "vC", "vD").forEach(StreamChoice::forget)
         Downloads.setSavedMetadata(emptyMap())
         directory.deleteRecursively()
     }
@@ -263,6 +263,38 @@ class LyricsTimingClockTest {
         write("""{"vC":${entry(autoMs = 500L)}}""")
 
         assertEquals(10_500L, shown("vC"))
+    }
+
+    // Review 11-18 (T4 follow-up): refine()/refineHeardKnown placed untagged
+    // refine words with the timing's HQ map, which a tagged base on the copy's
+    // clock had dropped, so words made on the upload were compared on the
+    // wrong clock (-700 ms here instead of +300 ms).
+    @Test
+    fun `refine maps untagged upload words onto the copy after the base drops the hq map`() {
+        val lines = (0 until 8).map { LyricLine(10_000L + it * 10_000L, "alpha$it bravo$it") }
+        val key = lines.joinToString("\n") { it.text }.hashCode()
+        val words = lines.flatMap { line ->
+            listOf(
+                """{"t":"alpha${(line.timeMs - 10_000) / 10_000}","s":${line.timeMs + 300},"e":${line.timeMs + 400}}""",
+                """{"t":"bravo${(line.timeMs - 10_000) / 10_000}","s":${line.timeMs + 700},"e":${line.timeMs + 800}}""",
+            )
+        }.joinToString(",")
+        write(
+            """{"vD":{""" +
+                """"autoVersion":4,"auto":${map(1_000L)},"autoClock":"alt\u0001src\u0001track",""" +
+                """"refineHeardKey":$key,""" +
+                """"refineHeardWords":[$words]}}""",
+        )
+        verified("vD", offsetMs = 1_000L)
+        playing("vD", "src", "track")
+        KoAppSettings.syncSafetyHqSync.value = true
+
+        val result = runBlocking {
+            val timing = LyricsTiming.timing(context, "vD", lines, baseAllowed = true)
+                ?: error("no timing")
+            LyricsTiming.refine(context, "vD", lines, timing)
+        }
+        assertEquals(300L, result.medianMs)
     }
 
     @Test
