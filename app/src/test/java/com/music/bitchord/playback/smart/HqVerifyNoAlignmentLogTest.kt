@@ -1,6 +1,8 @@
 package com.music.bitchord.playback.smart
 
+import com.music.bitchord.ko.KoUnverifiedRows
 import java.io.File
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -85,6 +87,64 @@ class HqVerifyNoAlignmentLogTest {
         assertTrue(
             "a caller queued on the lock must re-read the unmeasured memory",
             locked.contains("UnmeasuredMemory.reason(sourceId, trackId) != null"),
+        )
+    }
+
+    /**
+     * OPT2 unverified-refusal. Phone 11-16..17: all 15 unmeasured check downloads
+     * (189 MB) were rows offered on a doubted name (artist-unverified 11, 124 MB;
+     * title-unverified 4, 65 MB) that were other songs. Nothing was stored, so
+     * each new run fetched the same head again. Only the aligner's figures
+     * refusal of two full openings, on a doubted row, may stand as a refusal.
+     */
+    @Test
+    fun `only a figures refusal of two full openings on a doubted row stands`() {
+        val figures = "refused: matched 12% straight 30% cost 0.91 vs chance 0.99 key +3"
+        assertTrue(KoUnverifiedRows.refusalStands(true, true, true, true, figures))
+        assertFalse("a credited row's null stays unmeasured", KoUnverifiedRows.refusalStands(false, true, true, true, figures))
+        assertFalse("a partial reference may still fill in", KoUnverifiedRows.refusalStands(true, false, true, true, figures))
+        assertFalse("a short head is not an answer", KoUnverifiedRows.refusalStands(true, true, false, true, figures))
+        assertFalse("a thrown aligner leaves an old verdict behind", KoUnverifiedRows.refusalStands(true, true, true, false, figures))
+        for (other in listOf("refused: no coarse path", "refused: no fine path", "refused: record nearly silent",
+            "refused: no contrast (baseline 0.003)", "refused: no map", "", null)) {
+            assertFalse("'$other' says nothing about the row", KoUnverifiedRows.refusalStands(true, true, true, true, other))
+        }
+    }
+
+    @Test
+    fun `doubted rows are kept by source and track`() {
+        KoUnverifiedRows.note("opt2-src", listOf("row-a", "", "row-b")) { it }
+        assertTrue(KoUnverifiedRows.contains("opt2-src", "row-a"))
+        assertTrue(KoUnverifiedRows.contains("opt2-src", "row-b"))
+        assertFalse(KoUnverifiedRows.contains("opt2-other", "row-a"))
+        assertFalse(KoUnverifiedRows.contains("opt2-src", "row-c"))
+        assertFalse(KoUnverifiedRows.contains(null, "row-a"))
+        assertFalse(KoUnverifiedRows.contains("opt2-src", null))
+    }
+
+    @Test
+    fun `a doubted row refused by sound is stored before the unmeasured note`() {
+        val verify = source("playback/smart/HqAudioVerify.kt")
+        val noAlignment = verify.substringAfter("if (result == null) {")
+            .substringBefore("return@coroutineScope Outcome.Unavailable(transient = true)")
+        val stands = noAlignment.substringAfter("KoUnverifiedRows.refusalStands(", "")
+            .substringBefore("UnmeasuredMemory.note(", "")
+        for (part in listOf(
+            "unverified = KoUnverifiedRows.contains(sourceId, trackId)",
+            "referenceComplete = referenceComplete",
+            "candidateComplete = candidateComplete",
+            "alignerRan = aligned.isSuccess",
+            "alignerVerdict = ChromaAlignment.lastVerdict",
+            "reject(context, youtubeId, sourceId, trackId)",
+            "return@coroutineScope Outcome.Mismatch",
+        )) {
+            assertTrue("the doubted-row refusal must carry $part", stands.contains(part))
+        }
+        val resolver = source("data/sources/SourceResolver.kt")
+        assertTrue(
+            "the search must mark the rows it admits on a doubted name",
+            resolver.substringAfter("unverified += localised").substringBefore("verified + localised")
+                .contains("KoUnverifiedRows.note(source.configId, localised)"),
         )
     }
 }

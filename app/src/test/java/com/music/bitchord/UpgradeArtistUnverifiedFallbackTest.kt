@@ -12,6 +12,7 @@ import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.playback.HqHostTracker
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -177,6 +178,21 @@ class UpgradeArtistUnverifiedFallbackTest {
         val source = FakeSource("Qobuz", listOf(flowers("localised", "マイリー・サイラス")))
         val (stream, _) = walk(listOf(source), accept = { _, _ -> false })
         assertNull("unmeasured is not an acceptance", stream)
+    }
+
+    /** OPT2: the sound check can let a refusal stand only for rows the search doubted. */
+    @Test
+    fun `the search marks the localised row as doubted and the credited one not`() {
+        val source = FakeSource(
+            "QobuzOpt2",
+            listOf(
+                flowers("credited-opt2", "Miley Cyrus"),
+                flowers("localised-opt2", "マイリー・サイラス"),
+            ),
+        )
+        walk(listOf(source), accept = { _, _ -> false })
+        assertTrue(com.music.bitchord.ko.KoUnverifiedRows.contains("QobuzOpt2", "localised-opt2"))
+        assertFalse(com.music.bitchord.ko.KoUnverifiedRows.contains("QobuzOpt2", "credited-opt2"))
     }
 
     @Test

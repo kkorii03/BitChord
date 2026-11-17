@@ -1906,6 +1906,7 @@ object SourceResolver {
                             kotlin.math.abs((target.durationSec ?: 0) - got)
                         }
                     unverified += localised
+                    com.music.bitchord.ko.KoUnverifiedRows.note(source.configId, localised) { SourceRegistry.parseTrackKey(it.videoId)?.second ?: it.videoId } // [KO] OPT2
                     verified + localised
                 } else {
                     verified

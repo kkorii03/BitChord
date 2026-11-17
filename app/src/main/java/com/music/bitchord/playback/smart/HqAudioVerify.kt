@@ -10,6 +10,7 @@ import com.music.bitchord.data.net.ProxyPlayback
 import com.music.bitchord.download.HqLibraryUpgrade
 import com.music.bitchord.ko.KoHqWarp
 import com.music.bitchord.ko.KoOpeningClip
+import com.music.bitchord.ko.KoUnverifiedRows
 import com.music.bitchord.ko.KoVersionGuard
 import com.music.bitchord.data.lyrics.ChromaAlignment
 import com.music.bitchord.data.lyrics.Deepgram
@@ -710,13 +711,14 @@ object HqAudioVerify {
                         return@coroutineScope Outcome.Unavailable(transient = true)
                     }
                     val alignStarted = System.nanoTime()
-                    val result = runCatching {
+                    val aligned = runCatching {
                         ChromaAlignment.align(
                             referenceFeatures,
                             candidate.features,
                             videoComplete = false,
                         )
-                    }.getOrNull()
+                    }
+                    val result = aligned.getOrNull()
                     val alignMs = millisSince(alignStarted)
                     if (result == null) {
                         // The aligner failed rather than finding a poor match;
@@ -726,6 +728,20 @@ object HqAudioVerify {
                         // [KO] HQ6: say why the aligner gave no answer (too short, silent, no path, chance).
                         TrackLog.i(TAG, "hq-verify: '${target.title}' $sourceName no alignment (${ChromaAlignment.lastVerdict})", youtubeId)
                         logTiming(youtubeId, candidate, alignMs)
+                        // [KO] OPT2: a row offered on a doubted name, refused on the figures of two
+                        // full openings, is measured as another song: stored so no later run fetches it.
+                        if (KoUnverifiedRows.refusalStands(
+                                unverified = KoUnverifiedRows.contains(sourceId, trackId),
+                                referenceComplete = referenceComplete,
+                                candidateComplete = candidateComplete,
+                                alignerRan = aligned.isSuccess,
+                                alignerVerdict = ChromaAlignment.lastVerdict,
+                            ) && !trackId.isNullOrBlank()
+                        ) {
+                            TrackLog.i(TAG, "hq-verify: '${target.title}' $sourceName doubted row refused by sound; stored", youtubeId)
+                            reject(context, youtubeId, sourceId, trackId)
+                            return@coroutineScope Outcome.Mismatch
+                        }
                         // [KO] OPT1: only two full openings give the same null again; a partial
                         // reference may still fill in, so that pair is asked again.
                         if (referenceComplete && candidateComplete) {
