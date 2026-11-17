@@ -1622,6 +1622,16 @@ private fun BitChordApp(
                 if (stillCurrent && resumeAfterResolution) c.play()
                 return false
             }
+            // [KO] review V-2: a timed-out search also answers null without
+            // throwing; that is not "no song version" either, so no notice and
+            // no musicOnlyTried mark, and the next play asks again.
+            if (audio == null && !YtMusicRepository.isSongVersionMissing(song.videoId) &&
+                SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown)
+            ) {
+                TrackLog.w("Player", "audio switch lookup unsettled for '${song.title}'", song.videoId)
+                if (stillCurrent && resumeAfterResolution) c.play()
+                return false
+            }
             // The original MediaItem was never removed, so failure only needs
             // to release the loading state and resume it immediately.
             if (audio == null || !SongVersionPolicy.isSongVersionOf(song, audio)) {

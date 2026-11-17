@@ -842,6 +842,10 @@ object YtMusicRepository {
     fun isSongVersionMissing(videoId: String): Boolean =
         KoSongVersion.isSongVersionMissing(videoId) // [KO] song-version
 
+    /** [KO] review V-1: true only after a search that ran and found no video. */
+    fun isVideoVersionMissing(videoId: String): Boolean =
+        synchronized(videoVersionMissing) { videoId in videoVersionMissing }
+
     fun refuseSongVersion(song: Song) =
         KoSongVersion.refuseSongVersion(song) // [KO] song-version
 

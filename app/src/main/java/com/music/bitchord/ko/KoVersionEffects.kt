@@ -118,11 +118,21 @@ internal fun KoAlternateVersionEffect(
             if (SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown)) {
                 runCatching {
                     val resolved = YtMusicRepository.songVersion(song)
-                    SongVersionPolicy.isSongVersionOf(song, resolved)
+                    // [KO] review V-1: a null from a timed-out search is not "none".
+                    koAlternateVerdict(
+                        found = resolved != null,
+                        matches = SongVersionPolicy.isSongVersionOf(song, resolved),
+                        definitiveMiss = YtMusicRepository.isSongVersionMissing(song.videoId),
+                    )
                 }.getOrNull()
             } else {
                 runCatching {
-                    YtMusicRepository.resolveVideo(song) != null
+                    val found = YtMusicRepository.resolveVideo(song) != null
+                    koAlternateVerdict(
+                        found = found,
+                        matches = found,
+                        definitiveMiss = YtMusicRepository.isVideoVersionMissing(song.videoId),
+                    )
                 }.getOrNull()
             }
         }
@@ -168,4 +178,15 @@ internal fun KoWrongAudioRevertEffect(
             revert.value(source)
         }
     }
+}
+
+/**
+ * [KO] review V-1: what the alternate-version lookup settled. null = it did not
+ * settle (timeout, failed search), so the switch is asked about again later
+ * instead of staying hidden for the life of the screen.
+ */
+internal fun koAlternateVerdict(found: Boolean, matches: Boolean, definitiveMiss: Boolean): Boolean? = when {
+    found -> matches
+    definitiveMiss -> false
+    else -> null
 }
