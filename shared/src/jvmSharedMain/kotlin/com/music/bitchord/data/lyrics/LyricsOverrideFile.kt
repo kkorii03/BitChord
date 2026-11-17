@@ -1,5 +1,6 @@
 package com.music.bitchord.data.lyrics
 
+import com.music.bitchord.data.TrackLog
 import java.io.File
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -97,7 +98,7 @@ object LyricsOverrideFile {
                 temporary.delete()
             }
             true
-        }.getOrDefault(false)
+        }.getOrDefault(false).also { decoded = null }
     }
 
     fun remove(file: File, videoId: String, kind: Kind? = null): Boolean = synchronized(lock) {
@@ -117,7 +118,7 @@ object LyricsOverrideFile {
                 temporary.delete()
             }
             true
-        }.getOrDefault(false)
+        }.getOrDefault(false).also { decoded = null }
     }
 
     /** Whether [text] is a readable override file, without touching any file. */
@@ -150,16 +151,42 @@ object LyricsOverrideFile {
                 }
             }
             true
-        }.getOrDefault(false)
+        }.getOrDefault(false).also { decoded = null }
     }
 
     private fun readFile(file: File): Data = readable(file) ?: Data()
 
+    /**
+     * [KO] OPT1: the last good decode, by path and file stat. A song change read the
+     * whole file three or four times (screen, service, translation ahead), every
+     * song's word layers included. Every writer here drops it inside [lock]; the
+     * stat check covers a change made outside this object. Only a good decode is
+     * kept, so an unreadable file still reaches [readForWrite]'s `.bad` copy.
+     */
+    private class Decoded(val path: String, val modified: Long, val length: Long, val data: Data)
+
+    private var decoded: Decoded? = null
+
+    /** Test seam: how many times the file was actually decoded. */
+    internal var decodes = 0
+        private set
+
     /** The file's contents, or null when it exists but cannot be read as this version. */
     private fun readable(file: File): Data? = runCatching {
         if (!file.isFile) return Data()
+        val path = file.absolutePath
+        val modified = file.lastModified()
+        val length = file.length()
+        decoded?.takeIf { it.path == path && it.modified == modified && it.length == length }?.let { return it.data }
+        val started = System.nanoTime()
         val data = json.decodeFromString(Data.serializer(), file.readText())
-        if (data.version != VERSION) null else data
+        decodes++
+        TrackLog.d(TAG, "override-file: decoded bytes=$length ms=${(System.nanoTime() - started) / 1_000_000}")
+        if (data.version != VERSION) {
+            null
+        } else {
+            data.also { if (length <= MAX_CACHED_BYTES) decoded = Decoded(path, modified, length, it) }
+        }
     }.getOrNull()
 
     /**
@@ -180,6 +207,11 @@ object LyricsOverrideFile {
     }
 
     private val lock = Any()
+
+    private const val TAG = "BitChord"
+
+    /** Larger files are decoded each time rather than held in memory for the whole run. */
+    private const val MAX_CACHED_BYTES = 2L * 1024 * 1024
 
     @Serializable
     private class Data(

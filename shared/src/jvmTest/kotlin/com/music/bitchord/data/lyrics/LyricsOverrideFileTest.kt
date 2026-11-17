@@ -157,6 +157,32 @@ class LyricsOverrideFileTest {
         assertEquals("kept", LyricsOverrideFile.read(file, "kept")?.lines?.single()?.text)
     }
 
+    /**
+     * OPT1 lyrics-path-override-parse-cache: a song change read the whole file
+     * three or four times. An unchanged file is decoded once; every write here,
+     * and an edit from outside, is seen at once.
+     */
+    @Test
+    fun `an unchanged file is decoded once and every change is read`() {
+        val file = tempFile()
+        LyricsOverrideFile.write(file, "song", LrcLib.parseLrc("[00:01.00]first"), LyricsSource.LRCLIB)
+
+        val before = LyricsOverrideFile.decodes
+        repeat(3) { assertEquals("first", LyricsOverrideFile.read(file, "song")?.lines?.single()?.text) }
+        assertEquals("three reads of an unchanged file decode it once", before + 1, LyricsOverrideFile.decodes)
+
+        LyricsOverrideFile.write(file, "song", LrcLib.parseLrc("[00:01.00]other"), LyricsSource.LRCLIB)
+        assertEquals("a same-length write is read back", "other", LyricsOverrideFile.read(file, "song")?.lines?.single()?.text)
+
+        assertTrue(LyricsOverrideFile.remove(file, "song"))
+        assertNull(LyricsOverrideFile.read(file, "song"))
+
+        LyricsOverrideFile.write(file, "song", LrcLib.parseLrc("[00:01.00]first"), LyricsSource.LRCLIB)
+        assertEquals("first", LyricsOverrideFile.read(file, "song")?.lines?.single()?.text)
+        file.writeText(file.readText().replace("first", "outside edit"))
+        assertEquals("outside edit", LyricsOverrideFile.read(file, "song")?.lines?.single()?.text)
+    }
+
     @Test
     fun `restoring null removes the file`() {
         val file = tempFile()
