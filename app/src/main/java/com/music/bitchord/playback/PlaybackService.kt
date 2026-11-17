@@ -7371,9 +7371,14 @@ class PlaybackService : MediaLibraryService() {
                 }
                 val upgradeReport = SourceResolver.SearchReport()
                 val upgradeStarted = SystemClock.elapsedRealtime()
+                // [KO] OPT1: each race proof by stream identity, so the winner is not proved (and a doubted pair heard) twice.
+                val koRaceProofs = java.util.Collections.synchronizedMap(
+                    java.util.IdentityHashMap<SourceStream, HqVerificationStore.Verified>(),
+                )
                 val better = withContext(Dispatchers.IO) {
                     QualityUpgrade.lookAgain(mediaId, playingSeconds, upgradeReport) { target, stream ->
-                        HqAudioVerify.verify(this@PlaybackService, mediaId, target, stream) != null
+                        HqAudioVerify.verify(this@PlaybackService, mediaId, target, stream)
+                            ?.also { koRaceProofs[stream] = it } != null
                     }
                 }
                 // Search and proof are measured apart by lookAgain; the outer
@@ -7429,7 +7434,8 @@ class PlaybackService : MediaLibraryService() {
                         // returns a lossy copy once no lossless one came, for the swap
                         // below; see [KoQualityUpgrade.LossyReserve].
                         val answer = if (com.music.bitchord.ko.KoQualityUpgrade.automaticSwapTakes(better.format)) { // [KO] hq-tier
-                            HqAudioVerify.verify(this@PlaybackService, mediaId, target, better)
+                            // The live lookup's winner was never proved, so it still is here.
+                            koRaceProofs[better] ?: HqAudioVerify.verify(this@PlaybackService, mediaId, target, better)
                         } else {
                             TrackLog.d(
                                 "BitChord",

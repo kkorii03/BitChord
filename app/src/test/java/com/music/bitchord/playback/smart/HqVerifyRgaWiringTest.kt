@@ -64,6 +64,25 @@ class HqVerifyRgaWiringTest {
         assertTrue(outcome.contains("KoVersionGuard.decide(verdict.accepted, needsWords, words)"))
     }
 
+    // Review OPT1 (hq-path-second-proof): the automatic look proved its winner in
+    // the race, then verified it again; a doubted pair on too few words was
+    // downloaded and heard twice within seconds, spending RG1-4's two hearings in one play.
+    @Test
+    fun `the automatic swap takes the race's own proof of its winner`() {
+        val root = File(".").canonicalFile
+        val look = listOf("app/", "").map { File(root, "${it}src/main/java/com/music/bitchord/playback/PlaybackService.kt") }
+            .first { it.exists() }
+            .readText()
+            .replace("\r\n", "\n")
+            .substringAfter("val upgradeReport = SourceResolver.SearchReport()")
+            .substringBefore("QualityUpgrade.forget(mediaId)")
+        assertTrue(look.contains("java.util.IdentityHashMap<SourceStream, HqVerificationStore.Verified>()"))
+        assertTrue(look.contains("?.also { koRaceProofs[stream] = it } != null"))
+        val answer = look.substringAfter("val answer = if (").substringBefore("} else {")
+        // The race's proof first; an unproved winner (the live lookup's) is still verified.
+        assertTrue(answer.contains("koRaceProofs[better] ?: HqAudioVerify.verify(this@PlaybackService, mediaId, target, better)"))
+    }
+
     @Test
     fun `a saved copy is heard only while its pair owes the words, and refused only on other words`() {
         val root = File(".").canonicalFile
