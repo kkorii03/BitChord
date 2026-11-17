@@ -63,6 +63,21 @@ class ScrobbleManager(
         songStarted = false
     }
 
+    /**
+     * [KO] F1: the playing track became its other video/audio version mid-play.
+     * Same listen: the start time and the time already counted towards the
+     * scrobble are kept, only the track it will be scrobbled as changes. A
+     * paused timer picks the new song up from the resume that restarts it.
+     */
+    fun onVersionSwapped(song: Song?) {
+        if (song == null || !songStarted || !recordingAllowed()) return
+        if (scrobbleJob?.isActive == true) {
+            pauseScrobbleTimer()
+            resumeScrobbleTimer(song)
+        }
+        if (useNowPlaying) updateNowPlaying(song)
+    }
+
     private fun startScrobbleTimer(
         song: Song,
         durationMs: Long? = null,

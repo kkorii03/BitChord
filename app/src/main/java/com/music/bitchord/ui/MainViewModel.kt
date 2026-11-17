@@ -2491,12 +2491,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     if (isCurrent()) {
                         _results.value = cached?.let { UiState.Success(it) } ?: UiState.Loading
                     }
-                    // An explicit submit still has to reach the server even when
-                    // an anonymous lookup cached the same query: that call is what
-                    // records it in the account's history. A retry also bypasses
-                    // the cache, or an empty cached page made it a no-op.
+                    // A retry bypasses the cache, or an empty cached page made it
+                    // a no-op. Every search is anonymous, so a submit reuses it.
                     if (reuseCachedSearchPage(
-                            request.anonymous,
                             request.forceNetwork,
                             exact != null,
                         ) && exact != null

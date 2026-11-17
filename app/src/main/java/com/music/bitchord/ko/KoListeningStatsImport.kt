@@ -173,6 +173,8 @@ internal object KoListeningStatsImport {
                 }
             }
         } finally {
+            // Committed or rolled back, the months on disk may not be the ones Recents memoised.
+            KoListeningStatsRecent.forgetClosedMonths()
             synchronized(ListeningStats.koLock()) { ListeningStats.koSetImporting(false) }
         }
     }
