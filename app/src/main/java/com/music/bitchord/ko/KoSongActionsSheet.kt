@@ -314,12 +314,17 @@ internal fun KoSongActionsSheet(
                     onClick = it,
                 )
             }
+        }
+        // [KO] C6a-1: a device file has device playlists (v1.9), signed in or not.
+        if (KoSongMenuRows.showsAddToPlaylist(signedIn, song)) {
             ActionRow(
                 icon = SfIcons.AddToPlaylist,
                 label = stringResource(R.string.add_to_playlist),
                 accent = palette.accent,
                 onClick = onAddToPlaylist,
             )
+        }
+        if (KoSongMenuRows.showsRemoveFromPlaylist(signedIn, song)) {
             onRemoveFromPlaylist?.let {
                 ActionRow(
                     icon = SfIcons.RemoveFromPlaylist,
@@ -373,7 +378,8 @@ internal fun KoSongActionsSheet(
             }
         }
 
-        if (signedIn && !isLocalFile) {
+        // [KO] C6a-1: the heart also writes a device file's own Liked list.
+        if (KoSongMenuRows.showsLike(signedIn, song)) {
             ActionRow(
                 icon = if (liked) SfIcons.HeartFill else SfIcons.Heart,
                 label = if (liked) stringResource(R.string.remove_from_liked) else stringResource(R.string.like),
@@ -381,6 +387,8 @@ internal fun KoSongActionsSheet(
                 accent = palette.accent,
                 onClick = onToggleLike,
             )
+        }
+        if (signedIn && !isLocalFile) {
             ActionRow(
                 icon = if (disliked) SfIcons.ThumbDown else SfIcons.ThumbDownOffAlt,
                 label = if (disliked) stringResource(R.string.undo_dislike) else stringResource(R.string.dislike),

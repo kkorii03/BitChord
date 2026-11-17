@@ -106,11 +106,18 @@ internal suspend fun koPlayDetailSongs(
     // The page snapshot on screen can be one fill-in behind, or an older visit
     // restored from the saved context. The view model's newest list is what the
     // tap is meant to play.
-    val latestPage = takePlaybackContext(page.browseId)
+    // [KO] C6a-2: only a bounded album/playlist tap swaps in the page's own
+    // order (as upstream). A sorted page, a search filter, revealed hidden
+    // videos or suggested rows play the list as it is on screen.
+    val latestPage = if (useBounded) takePlaybackContext(page.browseId) else null
     val latestSongs = latestPage
         ?.let { (it.songs as? com.music.bitchord.data.model.UiState.Success)?.data.orEmpty() }
         ?.map(withAlbum)
         ?.takeIf { it.isNotEmpty() }
+        // [KO] C6a-2: never reuse the tapped row's index on a list that lacks the row.
+        ?.takeUnless { latest ->
+            selected != null && latest.none { it.contextEntryKey() == selected.contextEntryKey() }
+        }
     val queue = latestSongs ?: songs.map(withAlbum)
     if (queue.isEmpty()) return
     val marked = if (preview) queue.asTypeUnknown() else queue

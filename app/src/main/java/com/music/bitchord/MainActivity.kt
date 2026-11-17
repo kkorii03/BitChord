@@ -5013,7 +5013,12 @@ private fun BitChordApp(
             SongActionsMenu(
                 song = song,
                 signedIn = signedIn,
-                likeStatus = koMenu.likeStatuses[song.videoId] ?: LikeStatus.INDIFFERENT,
+                // [KO] C6a-1: a device file's heart reads the device Liked list it writes.
+                likeStatus = if (songIsLocalFile) {
+                    likeStatusOf(song)
+                } else {
+                    koMenu.likeStatuses[song.videoId] ?: LikeStatus.INDIFFERENT
+                },
                 // The app's library entry for a song is its liked state, so
                 // the menu's first row writes the same answer as the heart
                 // below it — one labelled as the library, one as the rating.

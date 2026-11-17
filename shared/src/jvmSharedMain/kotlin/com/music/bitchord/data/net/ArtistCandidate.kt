@@ -112,7 +112,9 @@ private data class RankedArtist(
     val exact: Boolean,
 )
 
+// [KO] C4a-1: a single-letter unit must stand alone, or the "m" of
+// "73 monthly listeners" reads as million.
 private val AUDIENCE_NUMBER = Regex(
-    """(\d[\d,.]*)\s*(억|만|천|billion|million|thousand|[BMK])?""",
+    """(\d[\d,.]*)\s*(억|만|천|billion|million|thousand|[BMK](?![A-Za-z]))?""",
     RegexOption.IGNORE_CASE,
 )

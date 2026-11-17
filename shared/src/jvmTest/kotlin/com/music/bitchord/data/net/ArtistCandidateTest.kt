@@ -81,4 +81,26 @@ class ArtistCandidateTest {
         assertEquals(1_200L, artistAudienceSize("1.2K subscribers"))
         assertEquals(0L, artistAudienceSize("Artist"))
     }
+
+    // [KO] C4a-1: the "m" of "monthly" is not a million.
+    @Test
+    fun `a bare count before a word is people, not a unit`() {
+        assertEquals(73L, artistAudienceSize("Artist • 73 monthly audience"))
+        assertEquals(1_234L, artistAudienceSize("1,234 monthly listeners"))
+        assertEquals(12L, artistAudienceSize("12 members"))
+        assertEquals(4_100_000L, artistAudienceSize("4.1M monthly listeners"))
+        assertEquals(1_000_000_000L, artistAudienceSize("1B views"))
+    }
+
+    @Test
+    fun `a tiny channel with a bare monthly count loses to the alias`() {
+        val picked = bestArtistCandidate(
+            listOf(
+                artist("UC_TINY", "IVE", "Artist • 73 monthly audience"),
+                artist("UC_REAL", "IVE (아이브)", "Artist • 41M monthly audience"),
+            ),
+            "IVE",
+        )
+        assertEquals("UC_REAL", picked?.browseId)
+    }
 }
