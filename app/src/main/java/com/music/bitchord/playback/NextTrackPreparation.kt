@@ -857,7 +857,7 @@ internal class NextTrackPreparation(
             typeUnknown = song.typeUnknown,
             offline = AudioCache.isOffline(),
         )
-        return if (verify) {
+        return if (verify || com.music.bitchord.ko.KoStoredVersionRows.suspectReason(song) != null) { // [KO] VER6 saved row of another version
             song.copy(typeUnknown = true, localUri = null, localPath = null)
         } else {
             song
@@ -893,6 +893,7 @@ internal class NextTrackPreparation(
             }
         } ?: return null
         if (!SongVersionPolicy.isSongVersionOf(song, resolved)) return null
+        com.music.bitchord.ko.KoStoredVersionRows.suspectReason(song)?.let { why -> if (!com.music.bitchord.ko.KoStoredVersionRows.allows(context, song, resolved, why)) return null } // [KO] VER6
         val player = currentPlayer() ?: return null
         val index = player.nextMediaItemIndex
         if (index == C.INDEX_UNSET || index !in 0 until player.mediaItemCount) return null

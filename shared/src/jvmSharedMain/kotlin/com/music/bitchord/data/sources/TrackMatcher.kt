@@ -299,6 +299,7 @@ object TrackMatcher {
         if (wanted.core.isEmpty()) return null
         return candidates
             .filterNot { isCoverOf(it, target) }
+            .filterNot { KoTrackMatcher.refusedAsVersion(target, it, candidates) } // [KO] VER6 foreign lead / page runtime
             .mapNotNull { candidate ->
                 val got = parseTitle(candidate.title, candidate.artist)
                 if (!coresEqual(wanted.cores(), got.cores()) || wanted.versions != got.versions) {

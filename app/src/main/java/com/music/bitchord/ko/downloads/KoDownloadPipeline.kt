@@ -316,6 +316,14 @@ internal object KoDownloadPipeline {
             // A same-id re-fetch wrote the same bytes again; clearing here is
             // what made the warning disappear while the file stayed wrong.
             if (repairReplacesUpload(asked.videoId, fetched.videoId, previous.origins[asked.videoId])) {
+                // Review VER6: the one line for a saved wrong version whose file was replaced.
+                if (previous.suspects.isNotEmpty()) {
+                    com.music.bitchord.data.TrackLog.i(
+                        TAG,
+                        com.music.bitchord.ko.KoStoredVersionFix.fixLine(asked.videoId, fetched.videoId, "mv", "replaced", "file=new"),
+                        about = asked.videoId,
+                    )
+                }
                 KoDownloadRecords.clearMvSoundSuspects(previous.suspects + ids)
             }
             val context = Downloads.applicationContext()

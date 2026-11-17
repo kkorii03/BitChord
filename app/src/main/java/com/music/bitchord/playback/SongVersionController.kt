@@ -269,6 +269,7 @@ internal class SongVersionController(
      * service folds a second call into the handover already running.
      */
     private suspend fun onLateVersion(exoPlayer: ExoPlayer, mediaId: String, song: Song, late: Song) {
+        if (!com.music.bitchord.ko.KoStoredVersionRows.lateAllowed(context, song, late)) return // [KO] VER6 a saved row keeps itself
         // Past the first-sound budget but still silent (the stream is slow, or
         // music-only's own hold is still waiting): nothing has been heard, so
         // the release simply takes the row, exactly as before audio — under
@@ -710,7 +711,8 @@ internal class SongVersionController(
                 typeUnknown = song.typeUnknown || storedTypeUnknown,
                 offline = offline,
             )
-        val versionSong = if (verifyUnknownDownload) {
+        val storedSuspect = if (song != null && !verifyUnknownDownload) com.music.bitchord.ko.KoStoredVersionRows.suspectReason(song) else null // [KO] VER6 saved row of another version
+        val versionSong = if (verifyUnknownDownload || storedSuspect != null) { // [KO] VER6
             song?.copy(typeUnknown = true, localUri = null, localPath = null)
         } else {
             // What the download recorded about the upload counts even when the
@@ -804,6 +806,7 @@ internal class SongVersionController(
         // it, so the replacement cannot land after audio. Deferring it also
         // keeps the timeline change out of the transition callback.
         val cached = YtMusicRepository.cachedSongVersionFor(lookupSong)
+        if (cached != null && storedSuspect != null && !com.music.bitchord.ko.KoStoredVersionRows.allows(context, song, cached, storedSuspect)) { releaseVersionHold(exoPlayer); return } // [KO] VER6 a saved row keeps itself
         val cachedUse = cached?.let {
             savedFileUse(it.videoId, online = !offline)
         }
@@ -834,6 +837,8 @@ internal class SongVersionController(
             // that id needs no network at all.
             downloadedSongVersionFor(lookupSong, offline)
                 ?.takeIf { SongVersionPolicy.mayInstallSongVersion(lookupSong) }
+                ?.takeIf { com.music.bitchord.ko.KoStoredVersionRows.aliasAllowed(song, it, offline) } // [KO] VER6 another act's saved alias
+                ?.takeIf { storedSuspect == null || com.music.bitchord.ko.KoStoredVersionRows.allows(context, song, it, storedSuspect) } // [KO] VER6
                 ?.let { downloaded ->
                     val streamOnly = downloaded.localUri == null
                     installPreResolvedVersion(
@@ -951,7 +956,8 @@ internal class SongVersionController(
             var skipped = false
             try {
                 if (resolved != null &&
-                    SongVersionPolicy.mayInstallSongVersion(lookupSong)
+                    SongVersionPolicy.mayInstallSongVersion(lookupSong) &&
+                    (storedSuspect == null || com.music.bitchord.ko.KoStoredVersionRows.allows(context, song, resolved, storedSuspect)) // [KO] VER6
                 ) {
                     // Verification of an old download resolved a different
                     // recording: the file is the video's sound even when its

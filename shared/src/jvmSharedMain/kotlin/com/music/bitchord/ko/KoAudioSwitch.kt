@@ -110,7 +110,13 @@ internal object KoAudioSwitch {
         }
         val catalogue =
             (catalogueLookup as? CatalogSongMapper.MapResult.Found)?.song?.toSong(song)
-        if (catalogue != null && SongVersionPolicy.isSongVersionOf(song, catalogue)) {
+        // VER6: the catalogue's album listing can bill another act's version
+        // ("MADJESLA, The Weeknd") as well; the search gates refuse it, so must this.
+        val foreignLead = catalogue != null && KoTrackMatcher.billsForeignLead(target, catalogue)
+        if (foreignLead) {
+            Log.d(TAG, "audio switch: reject ${catalogue?.videoId} ${catalogue?.title} reason=artist(lead) (catalogue)")
+        }
+        if (catalogue != null && !foreignLead && SongVersionPolicy.isSongVersionOf(song, catalogue)) {
             Log.d(TAG, "audio switch: '${song.title}' -> '${catalogue.title}' (catalogue)")
             YtMusicRepository.audioVersionCache[song.videoId] = catalogue
             return catalogue

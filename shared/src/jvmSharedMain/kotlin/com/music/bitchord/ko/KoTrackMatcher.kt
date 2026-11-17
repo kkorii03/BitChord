@@ -183,7 +183,8 @@ internal object KoTrackMatcher {
             // A different printed name is still the same act when the row's
             // own channel or release says so (a solo member and their group).
             (uncredited || sameName || sameArtistIdentity(target, candidate)) &&
-                !isCoverOf(candidate, target)
+                !isCoverOf(candidate, target) &&
+                !refusedAsVersion(target, candidate, candidates)
         }
 
     /**
@@ -292,6 +293,114 @@ internal object KoTrackMatcher {
      */
     internal fun sameArtistIdentity(target: Target, candidate: Song): Boolean =
         sharesArtistChannel(target, candidate) || sharesRelease(target, candidate)
+
+    /**
+     * Review VER6: whether [candidate] is refused as [target]'s recording
+     * although its title and one of its names agree — another act's version
+     * ([billsForeignLead]) or a runtime its own page disagrees with
+     * ([runtimeDisagreesWithPage]). [page] is the list the candidate came from.
+     */
+    internal fun refusedAsVersion(target: Target, candidate: Song, page: List<Song>): Boolean =
+        billsForeignLead(target, candidate) || runtimeDisagreesWithPage(target, candidate, page)
+
+    /**
+     * Whether [candidate] is billed to a different lead artist, with
+     * [target]'s artist only further down its credit.
+     *
+     * [namesTheSameArtist] accepts a credit when any one of its names is the
+     * target's. That is right for the official release with a featured guest
+     * ("Lead, Guest" for a Lead target) and wrong for another act's remix or
+     * re-recording that keeps the original singer in the credit: "Can't Feel
+     * My Face" by "MADJESLA, The Weeknd" passed as The Weeknd's song (phone
+     * 11-17, KEI4qSrkPAs -> VFKrvI6NsjA).
+     *
+     * The lead is the first top-level name. It is still this act when it is
+     * the target's artist, when the target's own title names it (the video of
+     * "Lead & Guest - Song", or a credit the row printed in its title), when
+     * the lead's own channel is one of the target's, or when both rows are
+     * one release. A one-name credit is not judged here: the ordinary credit
+     * check decides it. Refusing keeps the row the listener chose, which is
+     * the safe direction when a guest's own channel posted the video.
+     */
+    internal fun billsForeignLead(target: Target, candidate: Song): Boolean {
+        if (target.noPerformer || target.artist.isBlank()) return false
+        val parts = splitTopLevel(normalize(candidate.artist), ARTIST_SEPARATORS)
+        if (parts.size < 2) return false
+        val lead = parts.first()
+        val leadNames = artistNames(lead)
+        if (leadNames.isEmpty()) return false
+        if (namesTheSameArtist(target.artist, lead)) return false
+        val titleWords = nameWords(target.title)
+        if (leadNames.any { containsRun(titleWords, it) }) return false
+        val targetChannels = (target.artistIds + listOfNotNull(target.artistId))
+            .filter { it.isNotBlank() }
+            .toSet()
+        val leadChannel = candidate.artists
+            .firstOrNull { ref -> ref.name.isNotBlank() && namesTheSameArtist(lead, ref.name) }
+            ?.browseId
+            ?.takeIf { it.isNotBlank() }
+        if (leadChannel != null && leadChannel in targetChannels) return false
+        if (sharesRelease(target, candidate)) return false
+        return true
+    }
+
+    /**
+     * Whether a music video's catalogue candidate runs well away from what the
+     * other rows of its own page agree the song runs.
+     *
+     * A video may run longer than its song by any amount, so the runtime
+     * window alone cannot tell an extended or re-recorded take from the album
+     * cut. The page can: when [CONSENSUS_MIN_ROWS] same-title, same-act rows
+     * agree within [CONSENSUS_AGREE_SEC] and [candidate] lies more than
+     * [CONSENSUS_OUTLIER_SEC] from them, it is another take. A candidate that
+     * is nearer the video's own runtime than that consensus is kept: it may be
+     * the album cut the video uses while the page lists a radio edit twice.
+     * Two equally large groups that disagree are no consensus at all.
+     */
+    internal fun runtimeDisagreesWithPage(target: Target, candidate: Song, page: List<Song>): Boolean {
+        if (!target.isVideo || page.size < CONSENSUS_MIN_ROWS) return false
+        val got = secondsOf(candidate.durationText) ?: return false
+        val gotParts = parseTitle(candidate.title, candidate.artist)
+        val peers = page
+            .filter { peer ->
+                peer.videoId != candidate.videoId && !peer.isVideo &&
+                    !isCoverOf(peer, target) && sameActAs(target, peer) &&
+                    !billsForeignLead(target, peer) &&
+                    parseTitle(peer.title, peer.artist).let { parts ->
+                        coresEqual(gotParts.cores(), parts.cores()) && gotParts.versions == parts.versions
+                    }
+            }
+            .mapNotNull { secondsOf(it.durationText) } + got
+        if (peers.size < CONSENSUS_MIN_ROWS) return false
+        val groups = peers.map { at -> peers.filter { abs(it - at) <= CONSENSUS_AGREE_SEC } }
+        val largest = groups.maxOf { it.size }
+        if (largest < CONSENSUS_MIN_ROWS - 1) return false
+        val centres = groups.filter { it.size == largest }.map { group -> group.sorted()[group.size / 2] }
+        if (centres.maxOf { it } - centres.minOf { it } > CONSENSUS_AGREE_SEC) return false
+        val centre = centres.first()
+        if (abs(got - centre) <= CONSENSUS_OUTLIER_SEC) return false
+        val wanted = target.durationSec ?: return true
+        return abs(wanted - got) >= abs(wanted - centre)
+    }
+
+    /** The comparable words of [text], as [artistNames] cuts a name. */
+    private fun nameWords(text: String): List<String> =
+        normalize(text).split(WORD_SPLIT)
+            .map { it.replace(NON_ALNUM, "") }
+            .filter { it.length > 1 }
+
+    /** Whether [run] appears in [words] as consecutive whole words. */
+    private fun containsRun(words: List<String>, run: List<String>): Boolean =
+        run.isNotEmpty() && run.size <= words.size && words.windowed(run.size).any { it == run }
+
+    /** Rows, the candidate included, that make a runtime consensus. */
+    private const val CONSENSUS_MIN_ROWS = 3
+
+    /** Rows this close agree on one runtime (an album row and its single). */
+    private const val CONSENSUS_AGREE_SEC = 5
+
+    /** Further than this from the consensus is another take. */
+    private const val CONSENSUS_OUTLIER_SEC = 30
 
     /**
      * A cover, karaoke or tribute row the target does not itself describe.
@@ -560,7 +669,9 @@ internal object KoTrackMatcher {
      * its single) are still the one song, and the nearest of them is taken.
      */
     internal fun titleUnverifiedAdoption(candidates: List<Song>, target: Target): Song? {
-        val rows = candidates.filter { isAudioSwitchTitleUnverified(it, target) }
+        val rows = candidates.filter {
+            isAudioSwitchTitleUnverified(it, target) && !refusedAsVersion(target, it, candidates)
+        }
         if (rows.map { parseTitle(it.title, it.artist).core }.distinct().size != 1) return null
         val wanted = target.durationSec ?: return null
         return rows.minByOrNull { abs(wanted - (secondsOf(it.durationText) ?: Int.MAX_VALUE)) }
@@ -901,6 +1012,8 @@ internal object KoTrackMatcher {
         // youtube.com fallback answers every row with a 16:9 still, so this is
         // the line that says whether the page had an audio row at all.
         if (candidate.isVideo) return "type(video)"
+        // VER6: the gates read the whole page for this; one row alone cannot.
+        if (runtimeDisagreesWithPage(target, candidate, page.filterNot { it.isVideo })) return "duration(page)"
         // Ask the real gates first, so a candidate they accept can never be
         // logged as rejected because this diagnostic forgot one of their
         // terms. Only the failing check below is reproduced.
@@ -913,6 +1026,7 @@ internal object KoTrackMatcher {
         // The title bridge is a gate too: a row it accepts is not a title miss.
         if (page.isNotEmpty() && bestTitleBridged(page, listOf(candidate), target) != null) return null
         if (isCoverOf(candidate, target)) return "cover"
+        if (billsForeignLead(target, candidate)) return "artist(lead)"
         val wanted = parseTitle(target.title, target.artist)
         val got = parseTitle(candidate.title, candidate.artist)
         if (wanted.core.isBlank() || got.core.isBlank()) return "title"
@@ -1007,6 +1121,7 @@ internal object KoTrackMatcher {
             for (candidate in candidates) {
                 if (candidate.videoId == bridge.videoId || candidate.isVideo) continue
                 if (isCoverOf(candidate, target)) continue
+                if (refusedAsVersion(target, candidate, candidates)) continue
                 // The same take and act checks songVersionRejectReason reads.
                 val got = parseTitle(candidate.title, candidate.artist)
                 if (takeRejectReason(candidate, wanted, got) != null) continue

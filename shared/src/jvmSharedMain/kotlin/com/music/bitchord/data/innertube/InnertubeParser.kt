@@ -889,6 +889,7 @@ object InnertubeParser {
             // and a "video" is dropped from the All tab's results.
             isVideo = !episode && (rowType == "video" || thumbnails.isNotSquare()),
             isEpisode = episode,
+            musicVideoType = renderer.findString("musicVideoType"), // [KO] VER6 an OMV with square art stays known as one
             isExplicit = renderer.hasExplicitBadge(),
             // Extract the "Remove from history" feedback token from the row's menu, if present.
             feedbackToken = extractFeedbackToken(renderer),
