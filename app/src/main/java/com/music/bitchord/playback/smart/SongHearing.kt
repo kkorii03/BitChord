@@ -12,6 +12,7 @@ import com.music.bitchord.ko.downloads.KoDownloadRecords
 import com.music.bitchord.playback.AudioCache
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
@@ -21,6 +22,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.asContextElement
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Semaphore
@@ -167,10 +170,13 @@ internal object SongHearing {
         hedgeAfterMs: Long,
         ask: suspend () -> T,
         heardSomething: (T) -> Boolean,
+        /** The row has left ([rowGone]): no second copy is bought for it (LOG6 R1). */
+        gone: () -> Boolean = { false },
     ): T = coroutineScope {
         val first = async { ask() }
         val quick = withTimeoutOrNull(hedgeAfterMs) { first.await() }
         if (quick != null) return@coroutineScope quick
+        if (gone()) return@coroutineScope first.await()
         // A slot opens when another request ends; the first may still be the slow one.
         val second = async {
             requests.acquire()
@@ -522,24 +528,17 @@ internal object SongHearing {
         val asked = System.currentTimeMillis()
         // A `sending` with no `sent` after it is an upload still in flight when the row or the log ended.
         TrackLog.d(TAG, "song-hear: sending until=${untilSeconds.toInt()} kb=${bytes.size / 1024} wait=${waitedMs}ms slot=${asked - queuedAt}ms", videoId)
-        var hedgedTo = 0
-        // No reply at all means the connection failed, usually in under a second
-        // (11-06: 7 of 18 requests, none billed). Such a song used to go without
-        // a check for the rest of its playback.
-        var answer: Deepgram.Answer
-        var dropped = 0
-        while (true) {
-            answer = hedged(
-                hedgeAfterMs(untilSeconds, exact),
-                ask = {
-                    hedgedTo++
-                    Deepgram.listen(bytes, language, Deepgram.MODEL_WHISPER, mime)
-                },
-                heardSomething = { it.words != null },
-            )
-            if (!Deepgram.usable || !shouldResend(answer.httpCode, dropped)) break
-            dropped++
-            delay(RESEND_AFTER_MS * dropped)
+        val outcome = askWhileWanted(
+            hedgeAfterMs(untilSeconds, exact),
+            gone = { rowGone(videoId) },
+            moved = com.music.bitchord.data.DiagnosticsState.rows,
+            resendable = { Deepgram.usable },
+            ask = { Deepgram.listen(bytes, language, Deepgram.MODEL_WHISPER, mime) },
+        )
+        val answer = outcome.answer
+        val hedgedTo = outcome.requests
+        if (outcome.left) {
+            TrackLog.d(TAG, "song-hear: the row left; ask dropped after ${System.currentTimeMillis() - asked}ms requests=$hedgedTo", videoId)
         }
         TrackLog.d(
             TAG,
@@ -555,6 +554,65 @@ internal object SongHearing {
     /** Whether a request that got no reply goes again: a server's own answer never does. */
     internal fun shouldResend(httpCode: Int?, dropped: Int): Boolean =
         httpCode == null && dropped < MAX_RESENDS
+
+    /** What [askWhileWanted] got: the [answer], how many [requests] went out, and whether the row [left] first. */
+    internal class Asked(val answer: Deepgram.Answer, val requests: Int, val left: Boolean)
+
+    /**
+     * One Deepgram ask as [sendToDeepgram] makes it: [hedged], and sent again on no reply
+     * ([shouldResend]) while [resendable]. No reply at all means the connection failed,
+     * usually in under a second (11-06: 7 of 18 requests, none billed).
+     *
+     * It ends as soon as [gone] is true, read on each change of [moved] (the rows, so no
+     * poll): the call in flight is cancelled ([Deepgram.listen] cancels its OkHttp call)
+     * and the caller's slot frees at once, with a no-reply answer. Neither the hedge nor a
+     * resend goes out for a row that has left. 11-17 phone (LOG6 R1): asks for rows the
+     * user had left held all 3 [requests] for 240 s each, and the playing To4SWGZkEPk
+     * never got one.
+     */
+    internal suspend fun askWhileWanted(
+        hedgeAfterMs: Long,
+        gone: () -> Boolean,
+        moved: Flow<Any?>,
+        resendable: () -> Boolean,
+        ask: suspend () -> Deepgram.Answer,
+    ): Asked = coroutineScope {
+        if (gone()) return@coroutineScope Asked(Deepgram.Answer(null), 0, left = true)
+        val sent = AtomicInteger()
+        val once: suspend () -> Deepgram.Answer = {
+            hedged(
+                hedgeAfterMs,
+                ask = {
+                    sent.incrementAndGet()
+                    ask()
+                },
+                heardSomething = { it.words != null },
+                gone = gone,
+            )
+        }
+        val work = async {
+            var answer = once()
+            var dropped = 0
+            while (!gone() && resendable() && shouldResend(answer.httpCode, dropped)) {
+                dropped++
+                delay(RESEND_AFTER_MS * dropped)
+                if (gone()) break
+                answer = once()
+            }
+            answer
+        }
+        val left = async { moved.first { gone() } }
+        select<Asked> {
+            work.onAwait { answer ->
+                left.cancel()
+                Asked(answer, sent.get(), left = false)
+            }
+            left.onAwait {
+                work.cancel()
+                Asked(Deepgram.Answer(null), sent.get(), left = true)
+            }
+        }
+    }
 
     private fun kept(
         app: Context,

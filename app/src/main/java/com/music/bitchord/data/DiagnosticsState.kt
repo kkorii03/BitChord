@@ -12,6 +12,18 @@ import androidx.media3.common.Player
  * and the export reads whatever is current.
  */
 object DiagnosticsState {
+    /**
+     * The sounding and next rows, set on every change of either. A Deepgram ask for a row
+     * that has left stops on it ([com.music.bitchord.playback.smart.SongHearing.askWhileWanted]),
+     * with no poll. Declared first: the setters below write it.
+     */
+    private val _rows = kotlinx.coroutines.flow.MutableStateFlow<Pair<String?, String?>>(null to null)
+    val rows: kotlinx.coroutines.flow.StateFlow<Pair<String?, String?>> get() = _rows
+
+    private fun rowsMoved() {
+        _rows.value = soundingTrackId to nextTrackId
+    }
+
     @Volatile
     var screen: String = "unknown"
 
@@ -44,6 +56,10 @@ object DiagnosticsState {
      */
     @Volatile
     var currentSwapId: String? = null
+        set(value) {
+            field = value
+            rowsMoved()
+        }
 
     /** The id whose sound the current row plays: what hearing is for. */
     val soundingTrackId: String? get() = currentSwapId ?: currentTrackId
@@ -51,6 +67,10 @@ object DiagnosticsState {
     /** The row prepared after the current one; a measurement is wanted only for these two. */
     @Volatile
     var nextTrackId: String? = null
+        set(value) {
+            field = value
+            rowsMoved()
+        }
 
     @Volatile
     var currentTitle: String? = null
