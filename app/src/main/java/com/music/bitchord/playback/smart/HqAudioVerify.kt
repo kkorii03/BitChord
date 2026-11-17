@@ -714,6 +714,8 @@ object HqAudioVerify {
                         // that says nothing about the candidate, so it must not
                         // become a stored rejection.
                         logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId, measured = false)
+                        // [KO] HQ6: say why the aligner gave no answer (too short, silent, no path, chance).
+                        TrackLog.i(TAG, "hq-verify: '${target.title}' $sourceName no alignment (${ChromaAlignment.lastVerdict})", youtubeId)
                         logTiming(youtubeId, candidate, alignMs)
                         return@coroutineScope Outcome.Unavailable(transient = true)
                     }
