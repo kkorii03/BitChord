@@ -25,6 +25,7 @@ import com.music.bitchord.data.taste.TasteSignals
 import com.music.bitchord.playback.smart.HqVerificationStore
 import com.music.bitchord.playback.smart.LyricsTiming
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
@@ -302,7 +303,10 @@ internal object KoBackup {
                 "청취 기록을 저장하지 못했습니다"
             }
         } catch (failure: Throwable) {
-            rollback()
+            // Non-cancellable: leaving Settings cancels this import, and every
+            // suspend rollback step would otherwise throw at once and leave the
+            // lyric stores and in-memory playlists holding the backup's copy.
+            withContext(NonCancellable) { rollback() }
             throw failure
         }
         return Summary(

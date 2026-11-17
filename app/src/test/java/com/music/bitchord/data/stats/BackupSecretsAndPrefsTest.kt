@@ -56,6 +56,8 @@ class BackupSecretsAndPrefsTest {
         "local_music_folder_uri",
         "last_version_code",
         "onboarding_complete",
+        // Review Sa2: this install's OS permission dialog, not a setting.
+        "notification_permission_asked",
     )
 
     @Test

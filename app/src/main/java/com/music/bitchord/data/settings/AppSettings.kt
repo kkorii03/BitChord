@@ -2564,6 +2564,8 @@ object AppSettings {
         KEY_LOCAL_MUSIC_FOLDER_URI,
         KEY_LAST_VERSION_CODE,
         KEY_ONBOARDING_COMPLETE,
+        // [KO] Records this install's OS permission dialog, not a setting.
+        KEY_NOTIFICATION_PERMISSION_ASKED,
     )
 
     const val DEFAULT_CACHE_LIMIT_BYTES = 512L * 1024 * 1024
