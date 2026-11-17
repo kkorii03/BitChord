@@ -4,6 +4,7 @@ import android.net.Uri
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.TransferListener
+import com.music.bitchord.playback.QualityUpgrade
 
 /**
  * [KO] reader-lock
@@ -25,6 +26,9 @@ class KoCachingDataSource(
     private var heldKey: String? = null
     private var heldVideoId: String? = null
 
+    /** Review 11-17 (RG1-1): the video and entry this source's last plain open went to. */
+    private var plainOpened: Pair<String, String>? = null
+
     override fun addTransferListener(transferListener: TransferListener) {
         cacheDs.addTransferListener(transferListener)
         upstreamDs.addTransferListener(transferListener)
@@ -44,24 +48,37 @@ class KoCachingDataSource(
         } else {
             cacheDs
         }
-        if (scheme != "file" && scheme != "content") {
-            // Remember that the player — including the item it buffers
-            // ahead in its playlist — owns this cache entry. Read-ahead
-            // and the analysis head ask before touching it; Media3
-            // gives an entry to one writer, so anything else spends the
-            // listener's data writing nowhere.
-            val key = cacheKeyOf(dataSpec.uri)
-            val videoId = dataSpec.uri.getQueryParameter("v")
-            heldKey = key
-            heldVideoId = videoId
-            tracker.retainKey(key)
-            videoId?.let(tracker::retainVideo)
-        }
-        return try {
-            activeDs.open(dataSpec)
-        } catch (failure: Throwable) {
-            releaseHeld()
-            throw failure
+        // Review 11-17 (RG1-1): a reopen of the plain URI this source opened
+        // before (a seek inside the same play) asks for the entry it read then;
+        // the extractor's byte offsets belong to that file. Pinned for this
+        // thread while the key is resolved, here and inside the cache's open.
+        val plainVideoId = dataSpec.uri.getQueryParameter("v")
+            ?.takeIf { scheme != "file" && scheme != "content" && QualityUpgrade.cacheTag(dataSpec.uri) == null }
+        tracker.pinReopen(plainVideoId, plainOpened?.takeIf { it.first == plainVideoId }?.second)
+        try {
+            if (scheme != "file" && scheme != "content") {
+                // Remember that the player — including the item it buffers
+                // ahead in its playlist — owns this cache entry. Read-ahead
+                // and the analysis head ask before touching it; Media3
+                // gives an entry to one writer, so anything else spends the
+                // listener's data writing nowhere.
+                val key = cacheKeyOf(dataSpec.uri)
+                val videoId = dataSpec.uri.getQueryParameter("v")
+                heldKey = key
+                heldVideoId = videoId
+                tracker.retainKey(key)
+                videoId?.let(tracker::retainVideo)
+                // A watch read is its own entry, never the phone player's.
+                plainOpened = plainVideoId?.takeIf { !key.endsWith("#watch") }?.let { it to key }
+            }
+            return try {
+                activeDs.open(dataSpec)
+            } catch (failure: Throwable) {
+                releaseHeld()
+                throw failure
+            }
+        } finally {
+            tracker.pinReopen(null, null)
         }
     }
 

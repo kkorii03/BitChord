@@ -427,17 +427,29 @@ object HqVerificationStore {
         return data
     }
 
-    /** The raw verified/rejected rows, for a device-migration backup. */
-    internal fun exportBackupRows(context: Context): Pair<String?, String?> = synchronized(lock) {
+    /**
+     * The raw verified/rejected rows and (review 11-17, RG5-4) the risky marks,
+     * for a device-migration backup.
+     */
+    internal fun exportBackupRows(context: Context): Triple<String?, String?, String?> = synchronized(lock) {
         val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        prefs.getString(KEY_VERIFIED, null) to prefs.getString(KEY_REJECTED, null)
+        Triple(prefs.getString(KEY_VERIFIED, null), prefs.getString(KEY_REJECTED, null), prefs.getString(KEY_RISKY, null))
     }
 
-    /** Replaces the verdict rows with a backup's copy; a null side is cleared. */
+    /**
+     * Replaces the verdict rows with a backup's copy; a null side is cleared.
+     *
+     * [risky] is the backup's risky marks (RG5-4). A backup written before they
+     * were carried has none (null), and the marks already here are kept: a
+     * mark only asks for the words check, so keeping one costs a hearing,
+     * while losing one let a restored chroma-only verdict answer for a pair
+     * whose search had shown another version.
+     */
     internal fun restoreBackupRows(
         context: Context,
         verified: String?,
         rejected: String?,
+        risky: String? = null,
     ): Boolean = synchronized(lock) {
         val editor = context.applicationContext
             .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -445,6 +457,7 @@ object HqVerificationStore {
             .putInt(KEY_VERSION, STORE_VERSION)
         if (verified == null) editor.remove(KEY_VERIFIED) else editor.putString(KEY_VERIFIED, verified)
         if (rejected == null) editor.remove(KEY_REJECTED) else editor.putString(KEY_REJECTED, rejected)
+        if (risky != null) editor.putString(KEY_RISKY, risky) // [KO] RG5-4
         val ok = editor.commit()
         if (ok) cached = null
         ok

@@ -17,6 +17,22 @@ class KoPlaybackReadTracker {
     private val keyIdleSignals = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
     private val readAheadWrites = ConcurrentHashMap<String, Int>()
 
+    /**
+     * Review 11-17 (RG1-1): while one player data source reopens a plain URI
+     * it already opened (a seek or a retry inside the same play), the video
+     * and the entry its earlier open went to. The key is resolved on the
+     * thread doing the open, so the pin is that thread's alone: another
+     * play's first open of the same song (a repeat, a replay) never sees it.
+     */
+    private val reopenPin = ThreadLocal<Pair<String, String>?>()
+
+    fun pinReopen(videoId: String?, key: String?) {
+        if (videoId == null || key == null) reopenPin.remove() else reopenPin.set(videoId to key)
+    }
+
+    /** The entry this thread's reopen of [videoId] read before, or null on a first open. */
+    fun reopenPinFor(videoId: String): String? = reopenPin.get()?.takeIf { it.first == videoId }?.second
+
     fun retainKey(key: String) = retain(playbackKeysInUse, key)
 
     fun releaseKey(key: String) = release(playbackKeysInUse, key)

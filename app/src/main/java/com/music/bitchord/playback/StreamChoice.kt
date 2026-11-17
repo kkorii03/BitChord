@@ -91,6 +91,8 @@ object StreamChoice {
         // must stop answering: a replay on a saved file is on the file's clock,
         // and "playing=youtube" over that file dropped a 97 % answer (11-06).
         if (!choice.substituted) return
+        // [KO] RG1-2: a refused row's copy sounds no more once its own play is over.
+        if (videoId != current && namesRefusedRow(videoId, choice)) return
         if (lapsed.size >= MAX_REMEMBERED) {
             lapsed.minByOrNull { it.value.at }?.let { lapsed.remove(it.key) }
         }
@@ -105,6 +107,46 @@ object StreamChoice {
 
     /** [KO] [isYouTube] for the lyric clock; a lapsed YouTube choice is not kept, see [keepLapsed]. */
     fun soundsYouTube(videoId: String): Boolean = (chosen[videoId] ?: lapsed[videoId])?.substituted == false
+
+    /**
+     * [KO] Review 11-17 (RG1-2). A lapsed substitute stayed until a fresh
+     * resolve replaced it, and a refused row's copy is never resolved again:
+     * the next play opened YouTube's whole cached copy without a resolve, and
+     * the lyrics stayed on the refused copy's clock for good. A refusal lets
+     * go of the lapsed choice naming that row, once the play that may still be
+     * sounding it (a copy refused while it plays keeps its seeks, see
+     * [com.music.bitchord.ko.koKeepRefusedPlayingCopy]) is no longer current.
+     * Live choices are left alone: each stands behind a half-filled entry.
+     */
+    @Volatile
+    private var current: String? = null
+
+    /** Refused `videoId\u0001source\u0001track` rows, bounded; nothing outside this process reads them. */
+    private val refusedRows: MutableMap<String, Boolean> = java.util.Collections.synchronizedMap(
+        object : LinkedHashMap<String, Boolean>() {
+            override fun removeEldestEntry(eldest: Map.Entry<String, Boolean>) = size > MAX_REFUSED_ROWS
+        },
+    )
+
+    private fun rowKey(videoId: String, sourceConfigId: String?, trackId: String?) =
+        "$videoId\u0001${sourceConfigId.orEmpty()}\u0001${trackId.orEmpty()}"
+
+    private fun namesRefusedRow(videoId: String, choice: Choice): Boolean =
+        choice.stream.sourceConfigId != null &&
+            refusedRows[rowKey(videoId, choice.stream.sourceConfigId, choice.stream.trackId)] == true
+
+    /** [KO] RG1-2: the source row [sourceConfigId]/[trackId] was refused for [videoId]. */
+    fun onRowRefused(videoId: String, sourceConfigId: String, trackId: String?) {
+        refusedRows[rowKey(videoId, sourceConfigId, trackId)] = true
+        if (videoId == current) return
+        lapsed[videoId]?.takeIf { namesRefusedRow(videoId, it) }?.let { forgetLapsed(videoId) }
+    }
+
+    /** [KO] RG1-2: the queue moved (a new play, a repeat included); a refused row's lapsed copy is not sounding. */
+    fun onTrackBecameCurrent(mediaId: String?) {
+        current = mediaId
+        lapsed.entries.filter { namesRefusedRow(it.key, it.value) }.forEach { forgetLapsed(it.key) }
+    }
 
     /** [KO] A replay on a saved file: the lapsed substitute is not the copy sounding any more. */
     fun forgetLapsed(videoId: String) {
@@ -339,6 +381,8 @@ object StreamChoice {
     private const val REFUSAL_MS = 10 * 60 * 1000L
 
     private const val MAX_REMEMBERED = 32
+
+    private const val MAX_REFUSED_ROWS = 256
 
     private const val TAG = "BitChord"
 }

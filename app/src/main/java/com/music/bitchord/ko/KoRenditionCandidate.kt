@@ -39,6 +39,31 @@ internal fun losslessCacheCandidate(
 )
 
 /**
+ * [KO] Review 11-17 (RG1-1)
+ *
+ * The entry a plain open of a video goes to, given the one the cache would
+ * choose now ([chosen], null for "fall through to the plain or sibling key")
+ * and the one the player's last plain open of it went to ([playing]).
+ *
+ * A refusal made while a copy plays (the words audit hears the copy that is
+ * sounding) takes that copy out of the choice at once, but a seek reopens the
+ * same plain URI and the extractor carries on at the old copy's byte offset:
+ * a FLAC offset read from the Opus entry is noise or an error. So a copy the
+ * player went to stays the answer while it is whole and refused; the refusal
+ * acts from the next play, whose first open has no [playing]
+ * ([KoPlaybackReadTracker.reopenPinFor]).
+ */
+internal fun koKeepRefusedPlayingCopy(
+    chosen: String?,
+    playing: String?,
+    isComplete: (String) -> Boolean,
+    isRefused: (String) -> Boolean,
+): String? {
+    if (playing == null || playing == chosen) return chosen
+    return if (isComplete(playing) && isRefused(playing)) playing else chosen
+}
+
+/**
  * [KO] hq-lossless
  *
  * Builds the cache choices for [videoId] from the keys the cache holds.

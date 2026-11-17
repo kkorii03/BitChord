@@ -98,8 +98,14 @@ class KoLosslessCache(
         // FLAC entry at the Opus entry's byte offset breaks the extractor.
         if (videoId in upgradeKeyDeferred) return null
         val candidates = renditionCandidates(videoId)
-        if (candidates.isEmpty()) return null
-        return CacheRenditionChoice.choose(videoId, candidates).takeIf { it != videoId }
+        val chosen = if (candidates.isEmpty()) {
+            null
+        } else {
+            CacheRenditionChoice.choose(videoId, candidates).takeIf { it != videoId }
+        }
+        // Review 11-17 (RG1-1): a copy refused while it plays is not taken away
+        // from this play's seeks, the same reason as the deferral above.
+        return koKeepRefusedPlayingCopy(chosen, tracker.reopenPinFor(videoId), isComplete, isRefused)
     }
 
     private fun renditionCandidates(videoId: String): List<CachedRendition> =

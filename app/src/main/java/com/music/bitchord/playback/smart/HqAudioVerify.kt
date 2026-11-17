@@ -169,6 +169,22 @@ object HqAudioVerify {
     private const val MAX_NO_REFERENCE = 256
 
     /**
+     * [KO] Review 11-17 (RG1-4): by pair, the plays in this run whose words check
+     * accepted a doubted pair without settling it. See [KoVersionGuard.storedVerdictStands].
+     */
+    private val riskyUnsettledHearings = ConcurrentHashMap<String, Int>()
+
+    /** [KO] RG1-4: two such hearings a run; the kept words rarely grow between plays. */
+    private const val MAX_UNSETTLED_HEARINGS = 2
+
+    /**
+     * [KO] Review 11-17 (RG2-1): pairs nobody doubted whose words were heard to
+     * differ, skipped for the rest of this run and stored nowhere
+     * ([KoVersionGuard.persistsRefusal]).
+     */
+    private val unaskedDifferent = ConcurrentHashMap.newKeySet<String>()
+
+    /**
      * The play a verification belongs to.
      *
      * [onPlaybackStarted] replaces this object and completes [changed], which
@@ -518,7 +534,15 @@ object HqAudioVerify {
         } else {
             HqVerificationStore.isRisky(context, youtubeId, sourceId, trackId)
         }
-        HqVerificationStore.get(context, youtubeId, sourceId, trackId)?.takeIf { !needsWords || it.wordsChecked }?.let {
+        val key = "$youtubeId\u0001$sourceId\u0001${trackId.orEmpty()}"
+        // [KO] RG1-4: a doubted pair heard twice this run on too few words is not downloaded a third time.
+        fun storedStands(stored: HqVerificationStore.Verified) = KoVersionGuard.storedVerdictStands(
+            wordsChecked = stored.wordsChecked,
+            needsWords = needsWords,
+            unsettledHearings = riskyUnsettledHearings[key] ?: 0,
+            maxHearings = MAX_UNSETTLED_HEARINGS,
+        )
+        HqVerificationStore.get(context, youtubeId, sourceId, trackId)?.takeIf { storedStands(it) }?.let {
             pendingRateLimits.remove(youtubeId)
             return@withContext Outcome.Verified(it)
         }
@@ -526,6 +550,8 @@ object HqAudioVerify {
         if (HqVerificationStore.isRejected(context, youtubeId, sourceId, trackId)) {
             return@withContext Outcome.Mismatch
         }
+        // [KO] RG2-1: words heard to differ on a row nobody doubted, this run only.
+        if (key in unaskedDifferent) return@withContext Outcome.Mismatch
         // A manifest is a container the decoder here cannot read; it cannot be
         // proved and must not be swapped in blind.
         if (StreamContainer.isManifest(stream.url)) {
@@ -553,17 +579,17 @@ object HqAudioVerify {
             }
         }
 
-        val key = "$youtubeId\u0001$sourceId\u0001${trackId.orEmpty()}"
         val lock = locks.getOrPut(key) { Mutex() }
         try {
             return@withContext lock.withLock {
                 coroutineScope {
                     HqVerificationStore.get(context, youtubeId, sourceId, trackId)
-                        ?.takeIf { !needsWords || it.wordsChecked }
+                        ?.takeIf { storedStands(it) }
                         ?.let { return@coroutineScope Outcome.Verified(it) }
                     if (HqVerificationStore.isRejected(context, youtubeId, sourceId, trackId)) {
                         return@coroutineScope Outcome.Mismatch
                     }
+                    if (key in unaskedDifferent) return@coroutineScope Outcome.Mismatch // [KO] RG2-1
                     // [KO] The words check needs the YouTube copy's words, which the song
                     // check keeps once it has heard them, and an engine to hear the
                     // candidate. Without either nothing is fetched: the YouTube copy plays
@@ -602,9 +628,7 @@ object HqAudioVerify {
                     } else {
                         // Unasked hearings stay Groq's: Deepgram may sit on a request for a
                         // minute, and an upgrade nobody doubted would wait behind it.
-                        keptWords?.takeIf {
-                            hearer == KoVersionGuard.Hearer.GROQ && KoVersionGuard.worthHearingUnasked(it.seconds)
-                        }
+                        keptWords?.takeIf { KoVersionGuard.hearsKeptWords(needsWords = false, it.seconds, hearer) }
                     }
                     // The two ninety-second reads do not depend on each other:
                     // the reference comes from the WAV the song check already
@@ -723,6 +747,20 @@ object HqAudioVerify {
                         return@coroutineScope Outcome.Unavailable(transient = true)
                     }
                     if (decision == KoVersionGuard.Decision.REJECT) {
+                        // [KO] RG2-1: an unasked "different" skips the swap for this run and
+                        // stores nothing; a false one must not delete a good lossless copy.
+                        if (!KoVersionGuard.persistsRefusal(verdict.accepted, needsWords, words)) {
+                            if (unaskedDifferent.size >= MAX_NO_REFERENCE) unaskedDifferent.clear()
+                            unaskedDifferent.add(key)
+                            TrackLog.i(
+                                TAG,
+                                "hq-verify words: different (unasked) '${target.title}' $sourceName " +
+                                    "shared=${words?.shared}/${words?.referenceWords}:${words?.candidateWords} " +
+                                    "window=${words?.windowMs}ms; skipped this run, nothing stored",
+                                youtubeId,
+                            )
+                            return@coroutineScope Outcome.Mismatch
+                        }
                         if (HqVerifyPolicy.shouldPersistRejection(
                                 referenceAvailable = referenceComplete && candidateComplete,
                                 accepted = false,
@@ -747,6 +785,13 @@ object HqAudioVerify {
                         guardSeen = !needsWords,
                     )
                     HqVerificationStore.put(context, youtubeId, sourceId, trackId, verified)
+                    // [KO] RG1-4: count a doubted pair's hearing that did not settle it.
+                    if (needsWords && !verified.wordsChecked) {
+                        if (riskyUnsettledHearings.size >= MAX_NO_REFERENCE) riskyUnsettledHearings.clear()
+                        riskyUnsettledHearings.merge(key, 1) { was, added -> was + added }
+                    } else {
+                        riskyUnsettledHearings.remove(key)
+                    }
                     pendingRateLimits.remove(youtubeId)
                     // A downloaded or pre-saved copy may now be replaceable with
                     // this newly proved rung, even if it was already high quality.
@@ -1406,6 +1451,8 @@ object HqAudioVerify {
         // whole under its upgrade key and was opened by every later play
         // without a resolve: the refused recording kept playing.
         runCatching { com.music.bitchord.playback.AudioCache.dropRefusedRenditions(youtubeId, sourceId, trackId) }
+        // [KO] RG1-2: nor may its lapsed choice keep the lyrics on its clock after this play.
+        runCatching { com.music.bitchord.playback.StreamChoice.onRowRefused(youtubeId, sourceId, trackId) }
     }
 
     /** Remembers a missing reference for the rest of this playback, with its cause. */

@@ -2177,7 +2177,10 @@ object AudioCache {
         koLossless.dropLowerQualityAfterLosslessSwap(mediaId, keepKey) // [KO] hq-lossless
 
     /** [KO] hq-lossless */
-    fun onTrackBecameCurrent(mediaId: String?) = koLossless.onTrackBecameCurrent(mediaId) // [KO] hq-lossless
+    fun onTrackBecameCurrent(mediaId: String?) {
+        koLossless.onTrackBecameCurrent(mediaId) // [KO] hq-lossless
+        StreamChoice.onTrackBecameCurrent(mediaId) // [KO] RG1-2: a refused row's lapsed clock goes with its play
+    }
 
     /** [KO] hq-lossless */
     fun cancelWholeRenditionsExcept(mediaId: String?) = koLossless.cancelWholeRenditionsExcept(mediaId) // [KO] hq-lossless

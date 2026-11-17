@@ -102,6 +102,50 @@ object KoVersionGuard {
     fun worthHearingUnasked(keptSeconds: Double): Boolean =
         keptSeconds * 1000 >= MIN_WINDOW_MS + 2 * EDGE_MS
 
+    /**
+     * Review 11-17 (RG2-5): whether the YouTube copy's kept words, [keptSeconds]
+     * of them (null when none are kept), are heard against the candidate. A
+     * row the search doubted ([needsWords]) is heard by any engine; one nobody
+     * doubted only by Groq (Deepgram may sit on a request for a minute) and
+     * only when the words are long enough to decide ([worthHearingUnasked]).
+     */
+    fun hearsKeptWords(needsWords: Boolean, keptSeconds: Double?, hearer: Hearer): Boolean = when {
+        keptSeconds == null || hearer == Hearer.NONE -> false
+        needsWords -> true
+        else -> hearer == Hearer.GROQ && worthHearingUnasked(keptSeconds)
+    }
+
+    /**
+     * Review 11-17 (RG2-1): whether a [Decision.REJECT] from [decide] is stored
+     * (the row refused for good and its cached copies removed).
+     *
+     * A chroma refusal and a refusal of a row the search doubted are, as
+     * before. Words heard to differ on a row nobody doubted are not: that
+     * hearing is the unproven part (H draft-6, not yet seen on a phone), and a
+     * wrong "different" stored would destroy a good lossless copy. Such a row
+     * is skipped for this run only.
+     */
+    fun persistsRefusal(chromaAccepted: Boolean, needsWords: Boolean, words: WordsCheck?): Boolean =
+        !chromaAccepted || needsWords || words?.verdict != Words.DIFFERENT
+
+    /**
+     * Review 11-17 (RG1-4): whether a stored verdict answers a verification
+     * without measuring the pair again.
+     *
+     * A pair nobody doubted, or whose words settled ([settles]), as before. A
+     * doubted pair accepted on words too short to settle was measured again on
+     * every play, a 90-second download and an engine call each time, while
+     * the kept words stayed as short; after [maxHearings] such hearings in a
+     * run ([unsettledHearings]) its verdict answers for the rest of the run.
+     * Nothing of this is stored, so the library never takes the pair as checked.
+     */
+    fun storedVerdictStands(
+        wordsChecked: Boolean,
+        needsWords: Boolean,
+        unsettledHearings: Int,
+        maxHearings: Int,
+    ): Boolean = !needsWords || wordsChecked || unsettledHearings >= maxHearings
+
     /** The engine that hears a candidate's opening for [compareWords]. */
     enum class Hearer { GROQ, DEEPGRAM, NONE }
 

@@ -121,6 +121,7 @@ internal object KoBackup {
             lyricsTiming = LyricsTiming.exportBackupText(context),
             hqVerified = HqVerificationStore.exportBackupRows(context).first,
             hqRejected = HqVerificationStore.exportBackupRows(context).second,
+            hqRisky = HqVerificationStore.exportBackupRows(context).third, // [KO] RG5-4
         )
         val output = context.contentResolver.openOutputStream(target, "wt")
             ?: error("Couldn't open that file for writing")
@@ -213,7 +214,7 @@ internal object KoBackup {
         val previousHq = if (stores) {
             HqVerificationStore.exportBackupRows(context!!)
         } else {
-            null to null
+            Triple(null, null, null)
         }
 
         suspend fun rollback() {
@@ -239,6 +240,8 @@ internal object KoBackup {
                         context!!,
                         previousHq.first,
                         previousHq.second,
+                        // [KO] RG5-4: none before means none after; an empty value clears them.
+                        previousHq.third.orEmpty(),
                     )
                 }
             }
@@ -289,6 +292,7 @@ internal object KoBackup {
                         context!!,
                         file.hqVerified,
                         file.hqRejected,
+                        file.hqRisky, // [KO] RG5-4: null in an older backup keeps the marks here
                     ),
                 ) {
                     "고음질 검증 기록을 저장하지 못했습니다"
@@ -630,6 +634,11 @@ internal object KoBackup {
         val hqVerified: String? = null,
         /** Schema 3: rejected HQ candidate rows, one per line. */
         val hqRejected: String? = null,
+        /**
+         * [KO] RG5-4: pairs whose search showed another version of the song, one
+         * per line. Absent (null) in backups written before it was carried.
+         */
+        val hqRisky: String? = null,
     )
 
     /** One local playlist, serializable independently of the on-disk format. */
