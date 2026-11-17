@@ -21,6 +21,7 @@ import com.music.bitchord.data.net.raceForFirstSuccess
 import com.music.bitchord.data.net.raceLateLeg
 import com.music.bitchord.data.net.startProxyLeg as launchProxyLeg
 import com.music.bitchord.ko.KoDirectBench
+import com.music.bitchord.ko.KoMediaProbe // [KO] review T1-A
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -835,7 +836,9 @@ object StreamResolver {
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (failure: Exception) {
-                    if (!ProxyFailure.isProxyDown(failure) && !failure.isSignInConfirmNotBot()) {
+                    if (!ProxyFailure.isProxyDown(failure) && !failure.isSignInConfirmNotBot() &&
+                        !KoMediaProbe.isTransient(failure) // [KO] review T1-A: back-pressure is no refusal
+                    ) {
                         proxyLegRefusal = failure // [KO] C4c-1
                     }
                     onFailure(failure)
@@ -1608,6 +1611,7 @@ object StreamResolver {
                     // track: undo the health window and let the usual retry
                     // path try the direct route again once it has cleared.
                     if (ProxyFailure.isProxyDown(proxyFailure)) throw proxyFailure
+                    if (KoMediaProbe.isTransient(proxyFailure)) throw proxyFailure // [KO] review T1-A: googlevideo said wait; no verdict
                     if (proxyFailure.isSignInConfirmNotBot()) {
                         noteBotChallenge(videoId)
                         throw BotChallengeException(BOT_CHALLENGE_REASON)
@@ -1724,12 +1728,15 @@ object StreamResolver {
         // the bytes leg, not the track being refused; a refused probe is an answer.
         var playerAnswered = false // [KO] review T1
         var mediaStalled = false // [KO] review T1
+        var mediaTransient = false // [KO] review T1-A: googlevideo's 429/503/5xx through the route
         val onProbe: (Probe) -> Unit = { verdict -> // [KO] review T1
             if (verdict == Probe.REFUSED) {
                 heardAnswer = true
             } else if (verdict == Probe.UNREACHABLE) {
                 mediaStalled = true
                 if (routeFault == null) routeFault = SocketTimeoutException("proxy media probe stalled")
+            } else if (verdict == Probe.TRANSIENT) {
+                mediaTransient = true // [KO] review T1-A
             }
         }
         val found = try {
@@ -1759,6 +1766,7 @@ object StreamResolver {
             // Thrown here so the proxy-down branch below (health monitor,
             // backup retry) handles it exactly like a fault that escaped.
             if (stream == null) {
+                KoMediaProbe.transientFailure(mediaTransient)?.let { throw it } // [KO] review T1-A: no verdict, proxy not down
                 val answered = ProxyPlaybackPolicy.routeAnswered(heardAnswer, playerAnswered, mediaStalled) // [KO] review T1
                 ProxyPlaybackPolicy.unansweredFailure(videoId, answered, routeFault)?.let { throw it }
             }
@@ -2786,6 +2794,14 @@ object StreamResolver {
 
         /** Never got an answer worth interpreting; blame nothing in particular. */
         UNREACHABLE,
+
+        /**
+         * [KO] review T1-A: googlevideo answered, but not with media for now —
+         * back-pressure ([KoMediaProbe.isTransientCode]) or a complete body
+         * shorter than [PROBE_READ_BYTES]. Every check outside the proxy walk
+         * reads it as it reads UNREACHABLE (only OK and REFUSED are tested).
+         */
+        TRANSIENT,
     }
 
     /**
@@ -2867,6 +2883,7 @@ object StreamResolver {
         val contentType = response.header("Content-Type")
         val verdict = when {
             response.code in REFUSAL_CODES -> Probe.REFUSED
+            KoMediaProbe.isTransientCode(response.code) -> Probe.TRANSIENT // [KO] review T1-A
             response.code !in 200..299 && response.code != 416 -> Probe.UNREACHABLE
             // A refusal dressed as a success: an error page, or the
             // consent/captcha interstitial, rather than audio.
@@ -2875,7 +2892,10 @@ object StreamResolver {
             // exactly the shaping this whole path exists to sidestep.
             // Insisting on the bytes is the point: a trickle that
             // yields its first byte and stalls is a failure too.
-            response.body?.source()?.request(PROBE_READ_BYTES) != true -> Probe.UNREACHABLE
+            // [KO] review T1-A: that stall throws (the call timeout's
+            // InterruptedIOException, judged UNREACHABLE in [probe]); false
+            // here is a complete body that ended short, googlevideo's answer.
+            response.body?.source()?.request(PROBE_READ_BYTES) != true -> Probe.TRANSIENT // [KO] review T1-A: was UNREACHABLE
             else -> Probe.OK
         }
         if (verdict != Probe.OK) {
