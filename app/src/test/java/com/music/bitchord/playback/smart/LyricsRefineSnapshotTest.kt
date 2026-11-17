@@ -156,15 +156,17 @@ class LyricsRefineSnapshotTest {
         before: LyricsTiming.Entry?,
         seconds: Double = 90.0,
         extended: Boolean = false,
-    ) = LyricsTiming.saveRefineHeard(
-        context,
-        "video",
-        before,
-        lyricsKey,
-        heardWords,
-        LyricsTiming.Clock.Unknown,
-        seconds,
-        extended,
+    ) = checkNotNull(
+        LyricsTiming.saveRefineHeard(
+            context,
+            "video",
+            before,
+            lyricsKey,
+            heardWords,
+            LyricsTiming.Clock.Unknown,
+            seconds,
+            extended,
+        ),
     )
 
     private suspend fun refineFrom(snapshot: LyricsTiming.RefineSnapshot) = LyricsTiming.refineWithSnapshot(

@@ -1688,6 +1688,8 @@ object LyricsTiming {
         val lock = refining.getOrPut(videoId) { Mutex() }
         return lock.withLock {
             if (refineHeardKnown(context, videoId, lines, timing, audioSource)) return@withLock false
+            // [KO] TR7 T1: a file replaced during a listen makes its words the old bytes'.
+            val generation = songSyncGenerationOf(videoId)
             val before = store(context).get(videoId)
             val hadWords = before?.refineHeardKey == key && before.refineHeardWords.isNotEmpty()
             var heardAnchor: RefineSnapshot? = null
@@ -1707,7 +1709,8 @@ object LyricsTiming {
                     heard.clock,
                     heard.seconds,
                     extended = false,
-                )
+                    startedGeneration = generation,
+                ) ?: return@withLock false
             }
             // Anchor the refine to the entry from before the listen, with our
             // own words write folded in. A newer correction saved during the
@@ -1734,7 +1737,7 @@ object LyricsTiming {
             if (target <= heardSeconds) {
                 // The song is no longer than the listen already made: nothing
                 // more to hear, but it is not a failure to retry.
-                store(context).update(videoId) { it.copy(refineHeardExtended = true) }
+                updateForGeneration(context, videoId, generation) { it.copy(refineHeardExtended = true) }
                 if (!hadWords) _changes.tryEmit(videoId)
                 return@withLock !hadWords
             }
@@ -1766,7 +1769,8 @@ object LyricsTiming {
                 heard.clock,
                 maxOf(target, heard.seconds),
                 extended = true,
-            )
+                startedGeneration = generation,
+            ) ?: return@withLock !hadWords
             refineWithSnapshot(context, videoId, lines, timing, audioSource, snapshot = extendAnchor)
             _changes.tryEmit(videoId)
             true
@@ -1872,6 +1876,8 @@ object LyricsTiming {
     /**
      * Saves what a refine listen heard and returns the anchor its refine
      * compares the store against: [before] with this same save folded in.
+     * Null when the file was replaced ([resetSongCheck]) since [startedGeneration]:
+     * the words are the old bytes' and must not be kept for the new file.
      */
     internal suspend fun saveRefineHeard(
         context: Context,
@@ -1882,7 +1888,8 @@ object LyricsTiming {
         clock: Clock,
         seconds: Double,
         extended: Boolean,
-    ): RefineSnapshot {
+        startedGeneration: Long = songSyncGenerationOf(videoId),
+    ): RefineSnapshot? {
         val withHeard = { start: Entry ->
             start.copy(
                 clockVersion = CLOCK_VERSION,
@@ -1893,7 +1900,10 @@ object LyricsTiming {
                 refineHeardExtended = extended,
             )
         }
-        store(context).update(videoId, withHeard)
+        if (!updateForGeneration(context, videoId, startedGeneration, withHeard)) { // [KO] TR7 T1
+            TrackLog.i(TAG, "lyrics-refine: listen dropped, file replaced while it listened", videoId)
+            return null
+        }
         return RefineSnapshot(withHeard(before ?: Entry()))
     }
 
@@ -4314,10 +4324,33 @@ object LyricsTiming {
      */
     private val songSyncGenerations = ConcurrentHashMap<String, Long>()
 
-    private fun songSyncGenerationOf(videoId: String): Long = songSyncGenerations[videoId] ?: 0L
+    internal fun songSyncGenerationOf(videoId: String): Long = songSyncGenerations[videoId] ?: 0L
 
     private fun bumpSongSyncGeneration(videoId: String) {
         songSyncGenerations.merge(videoId, 1L, Long::plus)
+    }
+
+    /**
+     * [KO] TR7: [change] written to [videoId]'s entry only while the song check's
+     * generation is still [generation]. Work that listened to a file
+     * [resetSongCheck] has since replaced would otherwise save the old bytes'
+     * words or answer for the new file under the same key. Compared under the
+     * store's lock: the reset bumps the generation before its own clear, so a
+     * write that still sees the old one lands first and is cleared with the
+     * rest. False when it was dropped.
+     */
+    private suspend fun updateForGeneration(
+        context: Context,
+        videoId: String,
+        generation: Long,
+        change: (Entry) -> Entry,
+    ): Boolean {
+        var current = true
+        store(context).update(videoId) { entry ->
+            current = songSyncGenerationOf(videoId) == generation
+            if (current) change(entry) else entry
+        }
+        return current
     }
 
     /** No song check may be sent before this, after a 429; 0 when clear. */
