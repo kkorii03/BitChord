@@ -111,21 +111,24 @@ internal fun KoAlternateVersionEffect(
             return@LaunchedEffect
         }
         onHasAlternateVersion(false)
-        val exists = withContext(Dispatchers.IO) {
+        // [KO] review S2-2b: null = the lookup failed (offline, timeout). It is
+        // not remembered, so the next open of the sheet asks again instead of
+        // hiding the video/audio switch for the rest of the screen's life.
+        val exists: Boolean? = withContext(Dispatchers.IO) {
             if (SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown)) {
                 runCatching {
                     val resolved = YtMusicRepository.songVersion(song)
                     SongVersionPolicy.isSongVersionOf(song, resolved)
-                }.getOrDefault(false)
+                }.getOrNull()
             } else {
                 runCatching {
                     YtMusicRepository.resolveVideo(song) != null
-                }.getOrDefault(false)
+                }.getOrNull()
             }
         }
-        alternateVersionCache[song.videoId] = exists
+        if (exists != null) alternateVersionCache[song.videoId] = exists
         if (player.song?.videoId == song.videoId && songActions?.videoId == song.videoId) {
-            onHasAlternateVersion(exists)
+            onHasAlternateVersion(exists ?: false)
         }
     }
 }

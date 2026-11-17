@@ -1824,7 +1824,13 @@ private fun BitChordApp(
                 // receiver can follow its existing queue semantics. The bounded
                 // service path is local-player-only; the service repeats this
                 // guard for commands that race a newly connected receiver.
-                if (boundedContext && !CastController.state.value.casting) {
+                //
+                // [KO] review S2-1: upstream's long-list rule, lost in the 1.9
+                // merge. Any list too long to fit the window goes this way too: a
+                // whole library in the player is a whole library re-sent to every
+                // media controller on each queue edit.
+                val bounded = boundedContext || queueSongs.size > BoundedQueuePlanner.MAX_PHYSICAL_CONTEXT
+                if (bounded && !CastController.state.value.casting) {
                     c.playBoundedContext(queueSongs, index, source, continuationToken)
                 } else {
                     val result = QueueCoordinator.buildContextQueue(
@@ -2817,8 +2823,11 @@ private fun BitChordApp(
             return@LaunchedEffect
         }
         linksLoading = true
-        val found = YtMusicRepository.trackLinks(current.videoId).getOrNull()
-        trackLinksCache[current.videoId] = found
+        val answer = YtMusicRepository.trackLinks(current.videoId)
+        val found = answer.getOrNull()
+        // [KO] review S2-2: only an answer is remembered; a failed lookup
+        // (offline, timeout) is asked again the next time the player opens.
+        if (answer.isSuccess) trackLinksCache[current.videoId] = found
         links = found
         linksLoading = false
     }
