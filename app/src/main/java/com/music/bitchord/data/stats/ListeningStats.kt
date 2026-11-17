@@ -805,17 +805,8 @@ object ListeningStats {
                     .map { (entry, msPlays) ->
                         val (ms, plays) = msPlays
                         RankedSong(
-                            song = com.music.bitchord.ko.KoListeningStatsDisplay.clean(
-                                Song(
-                                    videoId = entry.id,
-                                    title = entry.title,
-                                    artist = entry.artist,
-                                    thumbnailUrl = entry.art,
-                                    artistId = entry.artistId,
-                                    albumId = entry.albumId,
-                                    albumName = entry.album,
-                                ),
-                            ), // [KO] listening-display
+                            // [KO] review T2: the row keeps its video flag and length, as Recents does.
+                            song = entry.asSong(),
                             ms = ms,
                             plays = plays,
                         )
@@ -825,17 +816,8 @@ object ListeningStats {
                     .sortedWith(compareByDescending<TrackEntry> { it.ms }.thenByDescending { it.plays })
                     .map {
                         RankedSong(
-                            song = com.music.bitchord.ko.KoListeningStatsDisplay.clean(
-                                Song(
-                                    videoId = it.id,
-                                    title = it.title,
-                                    artist = it.artist,
-                                    thumbnailUrl = it.art,
-                                    artistId = it.artistId,
-                                    albumId = it.albumId,
-                                    albumName = it.album,
-                                ),
-                            ), // [KO] listening-display
+                            // [KO] review T2: the row keeps its video flag and length, as Recents does.
+                            song = it.asSong(),
                             ms = it.ms,
                             plays = it.plays,
                         )
