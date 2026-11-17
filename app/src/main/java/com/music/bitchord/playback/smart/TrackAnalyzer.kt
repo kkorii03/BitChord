@@ -117,6 +117,16 @@ internal fun headWindowSeconds(durationSeconds: Double): Double =
 internal fun windowFailureCounts(partialRendition: Boolean): Boolean = !partialRendition
 
 /**
+ * [KO] Whether a merged result may be stored: only when both windows really
+ * produced a result. A window written off after repeated failures is marked
+ * measured for this session, so it is not decoded on every tick, but it has
+ * no result. Storing that one-sided merge let restoreOnce mark both windows
+ * measured in every later session, so the missing end was never measured.
+ */
+internal fun persistableMerge(head: TrackAnalysis?, tail: TrackAnalysis?): Boolean =
+    head != null && tail != null
+
+/**
  * Stops the analysis a next-prep bundle started for a row that is no longer
  * next. A running pass is aborted at its next decode check; a queued one is
  * dropped when it reaches the front, and the next request for the same track
@@ -711,7 +721,8 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // Only a track measured at both ends is persisted. A head-only result
         // is missing the outgoing half, and a tail-only one the incoming half;
         // storing either would freeze a deliberately partial answer in place.
-        if (hasWindow(trackId, AnalysisWindow.HEAD) && hasWindow(trackId, AnalysisWindow.TAIL)) {
+        // [KO] Results, not hasWindow: a written-off window counts as measured.
+        if (persistableMerge(headResults[trackId], tailResults[trackId])) {
             store.save(trackId, merged)
             restoreAttempted.add(trackId)
         }

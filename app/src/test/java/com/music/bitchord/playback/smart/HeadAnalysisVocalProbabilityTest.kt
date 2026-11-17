@@ -79,4 +79,15 @@ class HeadAnalysisVocalProbabilityTest {
         assertFalse(windowFailureCounts(partialRendition = true))
         assertTrue(windowFailureCounts(partialRendition = false))
     }
+
+    // c2-analyzer-crossfade-2: a written-off HEAD counted as measured, so a
+    // tail-only merge was stored and blocked HEAD in every later session.
+    @Test
+    fun `only a merge with both windows really measured is stored`() {
+        val tail = TrackAnalysis(status = TrackAnalysis.STATUS_READY, trackId = "track", bpm = 120.0)
+        val head = tail.copy(audibleStartTime = 0.2)
+        assertFalse(persistableMerge(head = null, tail = tail))
+        assertFalse(persistableMerge(head = head, tail = null))
+        assertTrue(persistableMerge(head = head, tail = tail))
+    }
 }
