@@ -2657,7 +2657,8 @@ object StreamResolver {
             return null
         }
         ProxyHealthMonitor.recordSuccess(allowRouteChange = false)
-        val first = ProxyPlayback.markResolved(videoId, found.url, requestGeneration)
+        // [KO] review D8: beside the player's URL for this id, not in its place.
+        val first = ProxyPlayback.markDownloadUrl(videoId, found.url, requestGeneration)
         ResolutionFacts.note(videoId, "proxy")
         TrackLog.i(TAG, "proxy-playback: $videoId ok in ${MonotonicClock.nowMs() - start}ms")
         if (first) TrackLog.d(TAG, "proxy-playback: $videoId remembered")

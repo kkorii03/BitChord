@@ -208,6 +208,15 @@ object ProxyPlayback {
     /** The URLs a proxy player request minted; their bytes must follow the same route. */
     private val proxiedUrls = ConcurrentHashMap<String, ProxiedUrl>()
 
+    /**
+     * [KO] review D8: URLs a proxied download minted, oldest first. They sit in
+     * [proxiedUrls] beside the player's URL for the same id instead of
+     * replacing it, so a download of the playing song no longer sends the
+     * player's next range direct (403 mid-song) and vice versa.
+     */
+    private val downloadUrls = ArrayDeque<String>()
+    private const val MAX_DOWNLOAD_URLS = 32
+
     /** videoId -> last successful proxy play, the part that survives restarts. */
     private val rememberedTimestamps = ConcurrentHashMap<String, Long>()
 
@@ -256,10 +265,38 @@ object ProxyPlayback {
     ): Boolean {
         val key = canonical(url)
         val first = !remembered.containsKey(videoId)
-        remembered.remove(videoId)?.let { proxiedUrls.remove(it) }
+        remembered.remove(videoId)?.let { if (it !in downloadUrls) proxiedUrls.remove(it) }
         remembered[videoId] = key
         proxiedUrls[key] = ProxiedUrl(videoId, generation)
         rememberedTimestamps[videoId] = System.currentTimeMillis()
+        trimToCap()
+        scheduleSave()
+        return first
+    }
+
+    /**
+     * [KO] review D8: registers a URL a proxied download minted for [videoId]
+     * without dropping the player's URL for the same id (see [downloadUrls]).
+     * The id still counts as remembered, as [markResolved] would make it.
+     *
+     * @return true when the id was not remembered before.
+     */
+    @Synchronized
+    fun markDownloadUrl(
+        videoId: String,
+        url: String,
+        generation: Long = YouTubeProxy.routeGeneration,
+    ): Boolean {
+        val key = canonical(url)
+        val first = !remembered.containsKey(videoId) && !rememberedTimestamps.containsKey(videoId)
+        proxiedUrls[key] = ProxiedUrl(videoId, generation)
+        rememberedTimestamps[videoId] = System.currentTimeMillis()
+        downloadUrls.remove(key)
+        downloadUrls.addLast(key)
+        while (downloadUrls.size > MAX_DOWNLOAD_URLS) {
+            val old = downloadUrls.removeFirst()
+            if (old !in remembered.values) proxiedUrls.remove(old)
+        }
         trimToCap()
         scheduleSave()
         return first
