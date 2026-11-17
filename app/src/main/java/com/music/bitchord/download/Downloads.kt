@@ -1782,6 +1782,10 @@ object Downloads {
                     alreadyThere = alreadyThere,
                     existingIsRecording = existingIsRecording,
                     replacing = plan.hq != null || plan.forceReplace,
+                    existingIsOwn = com.music.bitchord.ko.downloads.KoDownloadPipeline.existingIsOwnFile(
+                        setOf(song.videoId, track.videoId),
+                        alreadyThere,
+                    ), // [KO] SW7-1
                     stageReplacement = stageReplacement,
                 ) // [KO] pipeline
                 reservedName = name

@@ -116,6 +116,12 @@ object DownloadStore {
      * collision that is not this track's own recorded file gets the video id
      * appended instead; a deliberate replacement (or the file the record
      * already names) keeps the plain name so the old file is still replaced.
+     *
+     * A replacement keeps the plain name only when [existingIsOwn] says the
+     * file under it is this track's own recorded file (review SW7-1). A
+     * replacement whose plain name belongs to a different upload would rename
+     * its `.part` over that other song's file, and the other song would then
+     * play these bytes.
      */
     fun downloadFileName(
         song: Song,
@@ -123,8 +129,9 @@ object DownloadStore {
         nameTaken: Boolean,
         existingIsRecording: Boolean,
         replacing: Boolean,
+        existingIsOwn: Boolean,
     ): String = when {
-        !nameTaken || existingIsRecording || replacing -> fileNameFor(song, extension)
+        !nameTaken || existingIsRecording || (replacing && existingIsOwn) -> fileNameFor(song, extension)
         else -> disambiguatedFileName(song, extension)
     }
 

@@ -196,25 +196,73 @@ class DownloadStoreTest {
                 nameTaken = true,
                 existingIsRecording = false,
                 replacing = false,
+                existingIsOwn = false,
             ),
         )
     }
 
     @Test
-    fun `an existing recording or a deliberate replacement keeps the plain name`() {
+    fun `an existing recording or a deliberate replacement of its own file keeps the plain name`() {
         val track = song("Song", "Artist", "abc123")
 
         assertEquals(
             "Artist - Song.flac",
-            DownloadStore.downloadFileName(track, "flac", nameTaken = true, existingIsRecording = true, replacing = false),
+            DownloadStore.downloadFileName(
+                track, "flac", nameTaken = true, existingIsRecording = true, replacing = false, existingIsOwn = true,
+            ),
         )
         assertEquals(
             "Artist - Song.flac",
-            DownloadStore.downloadFileName(track, "flac", nameTaken = true, existingIsRecording = false, replacing = true),
+            DownloadStore.downloadFileName(
+                track, "flac", nameTaken = true, existingIsRecording = false, replacing = true, existingIsOwn = true,
+            ),
         )
         assertEquals(
             "Artist - Song.flac",
-            DownloadStore.downloadFileName(track, "flac", nameTaken = false, existingIsRecording = false, replacing = false),
+            DownloadStore.downloadFileName(
+                track, "flac", nameTaken = false, existingIsRecording = false, replacing = false, existingIsOwn = false,
+            ),
+        )
+    }
+
+    /**
+     * Review SW7-1: song B owns `Artist - Title.webm`; a different upload A,
+     * saved as `Artist - Title (idA).webm`, gets a replacement. The old rule
+     * returned the plain name for any replacement, so A's bytes were renamed
+     * over B's file and B played A's audio.
+     */
+    @Test
+    fun `a replacement whose plain name belongs to another upload keeps its id suffix`() {
+        val a = song("Title", "Artist", "idA")
+
+        assertEquals(
+            "Artist - Title (idA).webm",
+            DownloadStore.downloadFileName(
+                a, "webm", nameTaken = true, existingIsRecording = false, replacing = true, existingIsOwn = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `only a file recorded under one of the transfer's ids is its own`() {
+        val plain = "file:///Music/Artist - Title.webm"
+        val suffixed = "file:///Music/Artist - Title (idA).webm"
+        val records = mapOf("idA" to suffixed, "idB" to plain)
+
+        assertFalse(
+            "B's plain file is not A's",
+            com.music.bitchord.ko.downloads.KoDownloadPipeline.recordsName(setOf("idA"), plain, records::get),
+        )
+        assertTrue(
+            com.music.bitchord.ko.downloads.KoDownloadPipeline.recordsName(setOf("idA"), suffixed, records::get),
+        )
+        assertTrue(
+            "the asked id of a pair may be the one that names it",
+            com.music.bitchord.ko.downloads.KoDownloadPipeline.recordsName(setOf("mvId", "idB"), plain, records::get),
+        )
+        assertFalse(
+            "no record at all",
+            com.music.bitchord.ko.downloads.KoDownloadPipeline.recordsName(setOf("idC"), plain, records::get),
         )
     }
 

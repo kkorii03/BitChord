@@ -231,6 +231,22 @@ internal object KoDownloadPipeline {
     }
 
     /**
+     * Review SW7-1: whether [existing] is the file one of [ids] is recorded
+     * under, read the way [previousStateFor] reads it. Only then may a
+     * replacement write back over the plain name; a same-named file recorded
+     * under a different upload's id is that other song's file.
+     */
+    fun existingIsOwnFile(ids: Set<String>, existing: android.net.Uri?): Boolean {
+        if (existing == null) return false
+        val saved = Downloads.savedValue()
+        val metadata = Downloads.savedMetadataValue()
+        return recordsName(ids, existing.toString()) { id -> metadata[id]?.uri ?: saved[id] }
+    }
+
+    internal fun recordsName(ids: Set<String>, existing: String, recordedUri: (String) -> String?): Boolean =
+        ids.any { id -> id.isNotBlank() && recordedUri(id) == existing }
+
+    /**
      * Whether fetching [fetchedId] for [askedId] replaces the upload the old
      * file was made from — what an MV sound repair must do, and what a
      * finished download must prove before it clears the suspect.
@@ -488,6 +504,7 @@ internal object KoDownloadPipeline {
         alreadyThere: android.net.Uri?,
         existingIsRecording: Boolean,
         replacing: Boolean,
+        existingIsOwn: Boolean,
         stageReplacement: Boolean = false,
     ): String = synchronized(Downloads.lock) {
         var candidate = if (stageReplacement) {
@@ -499,6 +516,7 @@ internal object KoDownloadPipeline {
                 nameTaken = alreadyThere != null,
                 existingIsRecording = existingIsRecording,
                 replacing = replacing,
+                existingIsOwn = existingIsOwn,
             )
         }
         if (!KoDownloadQueue.reserveName(candidate)) {
