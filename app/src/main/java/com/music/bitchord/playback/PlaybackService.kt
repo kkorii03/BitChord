@@ -12196,6 +12196,7 @@ class PlaybackService : MediaLibraryService() {
     internal fun loadLyricsForCurrentTrack() {
         scheduleTranslationAhead()
         val currentSong = player?.currentMediaItem?.toSong() ?: run {
+            serviceLyricsJob?.cancel() // [KO] U3: the last track's job follows its sheet until cancelled
             serviceLyrics = null
             com.music.bitchord.lockscreen.NowPlayingLyrics.publish(null, null)
             stopLyricsTicker()
@@ -12205,6 +12206,7 @@ class PlaybackService : MediaLibraryService() {
 
 
         if (!AppSettings.syncedLyrics.value) {
+            serviceLyricsJob?.cancel() // [KO] U3
             serviceLyrics = null
             com.music.bitchord.lockscreen.NowPlayingLyrics.publish(null, null)
             stopLyricsTicker()
@@ -12262,6 +12264,8 @@ class PlaybackService : MediaLibraryService() {
             ?: currentSong.durationMillis().coerceAtLeast(0L)
 
         serviceLyricsJob?.cancel()
+        // [KO] U3: here, on the track change itself, not in the job: a late job must not drop the next track's choice.
+        com.music.bitchord.ko.KoLockSheet.forgetOtherThan(currentSong.videoId)
         serviceLyricsJob = scope.launch(Dispatchers.IO) {
             val localUri = currentSong.localUri
             var lines: List<LyricLine>? = null
@@ -12309,32 +12313,14 @@ class PlaybackService : MediaLibraryService() {
             // The same timing the lyrics screen applies — see LyricsTiming —
             // and again whenever it changes for this video (a measurement
             // landing, the AI button), for as long as this track is current.
-            val raw = lines
-            val timed = raw != null && raw.any { it.timeMs > 0 }
-            // The same rules the lyrics screen keeps: a song's own file is timed
-            // for it (a correction by hand only); a video's lyrics — streamed,
-            // or carried in its download — take Gemini's answer, and the
-            // measurement when they are known to be the record's. A re-checked
-            // download is timed for that file, so the lock screen, notification
-            // and car subtitle get the same correction as the lyrics screen.
-            val sourceTimedToVideo = com.music.bitchord.playback.smart.LyricsTiming
-                .timedToVideo(foundSource)
-            // A substituted stream is a different recording under the same
-            // video id. Same rule as the lyrics screen since ko-112: the answer
-            // is not refused up front; LyricsTiming.timing places it on the
-            // copy's clock or drops it (11-06 cCfPDrRQp9k: the lock screen said
-            // not-allowed while the screen applied what it could). This path
-            // only reads the store; measuring a substitute stays refused by
-            // syncWanted and the next-prep gate.
-            val timeable = com.music.bitchord.playback.LocalTimingPolicy.downloadedTimingTimeable(
-                timed = timed,
-                fromFile = fromFile,
-                isVideo = coverQuery.isVideo,
-                recheckOverride = recheckOverride,
-                sourceTimedToVideo = sourceTimedToVideo,
-            )
-            val recordTimed = timeable && (!fromFile || foundSource != null) && !sourceTimedToVideo
-            suspend fun publish() {
+            // [KO] U3: the timing rules (timed / timeable / recordTimed) moved to KoLockSheet.Sheet
+            // unchanged, so a sheet the lyrics screen chooses later gets the same ones.
+            val first = com.music.bitchord.ko.KoLockSheet.Sheet(lines, foundSource, fromFile, recheckOverride, coverQuery.isVideo)
+            suspend fun publish(sheet: com.music.bitchord.ko.KoLockSheet.Sheet) {
+                val raw = sheet.raw // [KO] U3
+                val timed = sheet.timed
+                val timeable = sheet.timeable
+                val recordTimed = sheet.recordTimed
                 val shown = if (timed && raw != null) {
                     com.music.bitchord.playback.smart.LyricsTiming
                         .timing(
@@ -12345,7 +12331,7 @@ class PlaybackService : MediaLibraryService() {
                             measuredAllowed = recordTimed,
                             deniedBy = "file-own-timing@player",
                             // [KO] As the lyrics screen and next-prep pass it: a heard sheet is not re-placed on its own words.
-                            ownTranscript = foundSource == com.music.bitchord.data.lyrics.LyricsSource.GEMINI_TRANSCRIPT,
+                            ownTranscript = sheet.source == com.music.bitchord.data.lyrics.LyricsSource.GEMINI_TRANSCRIPT,
                             isVideo = coverQuery.isVideo,
                             audioSource = if (coverQuery.isVideo) {
                                 null
@@ -12368,12 +12354,10 @@ class PlaybackService : MediaLibraryService() {
                     }
                 }
             }
-            publish()
-            if (timed) {
-                com.music.bitchord.playback.smart.LyricsTiming.changes.collect { videoId ->
-                    if (videoId == currentSong.videoId) publish()
-                }
-            }
+            publish(first)
+            // [KO] U3: a timing change re-times the sheet showing (timed only, as before); the
+            // lyrics screen's sheet for this video replaces it. Events only, until the next track.
+            com.music.bitchord.ko.KoLockSheet.follow(currentSong.videoId, coverQuery.isVideo, first) { publish(it) }
         }
     }
 

@@ -327,6 +327,7 @@ class LyricsController(
             order = AppSettings.lyricsSourceOrder.value,
             prioritizeSyllableSync = AppSettings.prioritizeSyllableSync.value,
         )
+        com.music.bitchord.ko.KoLockSheet.forgetOtherThan(videoId) // [KO] U3
         val action = requestGate.begin(key, durationMs, hasLocalFile = localUri != null)
         if (action == LyricsRequestAction.ALREADY_LOADED) return
         if (action == LyricsRequestAction.WAIT_FOR_DURATION) {
@@ -467,6 +468,12 @@ class LyricsController(
                 val lines = override.lines
                 val timed = lines.any { it.timeMs > 0 }
                 _lyrics.value = lines
+                // [KO] U3: as the service reads an override for its own sheet.
+                com.music.bitchord.ko.KoLockSheet.chose(
+                    videoId, lines, override.source,
+                    fromFile = localUri != null,
+                    recheckOverride = override.kind == LyricsOverrideFile.Kind.RECHECK,
+                )
                 _lyricsChecked.value = true
                 currentLyricsRequest = currentLyricsRequest?.copy(
                     fileProviderKnown = override.source != null,
@@ -519,6 +526,10 @@ class LyricsController(
                     val embedded = file.lines
                     sheetFromStore = true // [KO] U2
                     _lyrics.value = embedded
+                    // [KO] U3: as the service reads a file's own sheet.
+                    com.music.bitchord.ko.KoLockSheet.chose(
+                        videoId, embedded, file.source, fromFile = true, recheckOverride = true,
+                    )
                     // No source to name: what the file records is the lyrics,
                     // not which of the eight services they came from months ago.
                     // The download wrote that source and the id it was timed for
@@ -880,6 +891,8 @@ class LyricsController(
         rawLyricsResult = result
         // [KO] U2: a sheet with a result behind it (SheetChoice's pick) is judged as any other.
         if (result != null) sheetFromStore = false
+        // [KO] U3: the lock screen and car subtitle follow the sheet put up here.
+        if (result != null) currentLyricsRequest?.let { com.music.bitchord.ko.KoLockSheet.chose(it.videoId, result.lines, result.source) }
         if (!holdShown) _lyrics.value = result?.lines
         _lyricsSource.value = result?.source
         result?.let { sheetCandidates[it.source] = it }
@@ -1785,6 +1798,8 @@ class LyricsController(
             // A file's or a re-check's sheet came through no lookup, so nothing judged it and it
             // stayed wrong on every play. The reload passes a file's sheet over (mismatchReloadedFor).
             if (result == null) LyricsOverrideStore.removeRecheck(app, request.videoId)
+            // [KO] U3: the lock screen drops the rejected sheet too, until the reload shows the next.
+            com.music.bitchord.ko.KoLockSheet.rejected(request.videoId, lines)
             requestGate.release()
             loadLyrics(
                 videoId = request.videoId,
