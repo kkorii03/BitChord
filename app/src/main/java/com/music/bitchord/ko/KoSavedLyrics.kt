@@ -29,6 +29,14 @@ object KoSavedLyrics {
     fun providersFirst(localFile: Boolean, offline: Boolean, previewOnly: Boolean): Boolean =
         localFile && !offline && !previewOnly
 
+    /**
+     * Whether the saved copy ([kind] null: the file's own sheet) is only the fallback after the
+     * providers: [providersFirst], except the listener's own pick stays first. The lock screen and
+     * the next-song prep share this one rule, so the prepared sheet is the one shown.
+     */
+    fun savedLast(kind: LyricsOverrideFile.Kind?, localFile: Boolean, offline: Boolean): Boolean =
+        kind != LyricsOverrideFile.Kind.USER && providersFirst(localFile, offline, previewOnly = false)
+
     /** The provider asked for by name online: the listener's own earlier pick, fetched fresh. */
     fun preselected(kind: LyricsOverrideFile.Kind?, source: LyricsSource?): LyricsSource? =
         source.takeIf { kind == LyricsOverrideFile.Kind.USER }

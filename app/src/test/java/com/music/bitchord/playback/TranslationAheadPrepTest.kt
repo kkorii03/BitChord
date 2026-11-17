@@ -2,6 +2,7 @@ package com.music.bitchord.playback
 
 import android.content.Context
 import com.music.bitchord.data.lyrics.LyricLine
+import com.music.bitchord.data.lyrics.LyricsMismatch
 import com.music.bitchord.data.lyrics.LyricsOverrideFile
 import com.music.bitchord.data.lyrics.LyricsOverrideStore
 import com.music.bitchord.data.lyrics.LyricsSource
@@ -15,6 +16,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -91,6 +93,25 @@ class TranslationAheadPrepTest {
         val found = TranslationAhead.lyricsForPrep(context, song, allowHeavy = false)
 
         assertEquals(lines, found.lines)
+        assertFalse(found.recheckOverride)
+    }
+
+    /** LYR7-A: the screen and the lock screen pass over a copy the words rejected; so must the bundle. */
+    @Test
+    fun `a rechecked copy the words rejected is not prepared`() = runBlocking {
+        val id = "video-rejected-copy"
+        LyricsOverrideStore.write(context, id, lines, LyricsSource.LRCLIB, kind = LyricsOverrideFile.Kind.RECHECK)
+        LyricsMismatch.rememberRejected(
+            id,
+            LyricsSource.LRCLIB,
+            lines,
+            LyricsMismatch.Verdict(heardWords = 60, matchedLines = 0, totalLines = lines.size, rejected = true),
+        )
+        val song = Song(videoId = id, title = "Song", artist = "Artist", thumbnailUrl = null, localUri = "file:///tmp/video.m4a")
+
+        val found = TranslationAhead.lyricsForPrep(context, song, allowHeavy = false)
+
+        assertNull(found.lines)
         assertFalse(found.recheckOverride)
     }
 }

@@ -12436,8 +12436,8 @@ class PlaybackService : MediaLibraryService() {
                 }
             }
             // [KO] LYR6: online a downloaded song asks the providers first, as the lyrics screen does; the listener's own pick stays first.
-            val savedLast = override?.kind != com.music.bitchord.data.lyrics.LyricsOverrideFile.Kind.USER &&
-                com.music.bitchord.ko.KoSavedLyrics.providersFirst(localUri != null, com.music.bitchord.ko.KoNetworkPolicy.isOffline(this@PlaybackService), previewOnly = false)
+            val savedLast = com.music.bitchord.ko.KoSavedLyrics.savedLast(
+                override?.kind, localUri != null, com.music.bitchord.ko.KoNetworkPolicy.isOffline(this@PlaybackService))
             if (!savedLast) readSaved()
             if (lines == null) {
                 val found = LyricsRepository.lyrics(

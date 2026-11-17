@@ -160,8 +160,12 @@ internal object TranslationAhead {
         // on a song whose displayed lyrics were already decided. A re-check
         // writes its fresh sheet to the override store instead of rewriting the
         // audio file, so the bundle reads it the same way the player does.
-        LyricsOverrideStore.read(app, song.videoId)?.let { override ->
-            if (override.lines.any { it.text.isNotBlank() }) {
+        // [KO] LYR7-A/LYR6: by the screen's and the lock screen's rules. A copy the words rejected
+        // is passed over, and online a downloaded song asks the providers first (savedLast).
+        val override = LyricsOverrideStore.read(app, song.videoId)
+            ?.takeUnless { com.music.bitchord.ko.KoSavedLyrics.rejectedCopy(song.videoId, it) }
+        suspend fun saved(): AheadLyrics? {
+            if (override != null && override.lines.any { it.text.isNotBlank() }) {
                 return AheadLyrics(
                     lines = override.lines,
                     source = override.source,
@@ -170,19 +174,24 @@ internal object TranslationAhead {
                     recheckOverride = override.kind == LyricsOverrideFile.Kind.RECHECK,
                 )
             }
-        }
-        song.localUri?.let { uri ->
-            val embedded = EmbeddedLyrics.withSource(app, uri)
-            if (embedded != null && embedded.lines.any { it.text.isNotBlank() }) {
-                return AheadLyrics(
-                    lines = embedded.lines,
-                    source = embedded.source,
-                    searchedAs = null,
-                    fromFile = true,
-                )
+            song.localUri?.let { uri ->
+                val embedded = EmbeddedLyrics.withSource(app, uri)
+                if (embedded != null && embedded.lines.any { it.text.isNotBlank() }) {
+                    return AheadLyrics(
+                        lines = embedded.lines,
+                        source = embedded.source,
+                        searchedAs = null,
+                        fromFile = true,
+                    )
+                }
             }
+            return null
         }
+        val savedLast = com.music.bitchord.ko.KoSavedLyrics.savedLast(
+            override?.kind, song.localUri != null, com.music.bitchord.ko.KoNetworkPolicy.isOffline(app))
+        if (!savedLast) saved()?.let { return it }
         val found = lookUp(song, transcribe = allowHeavy && song.localUri == null)
+        if (found == null && savedLast) saved()?.let { return it } // every provider missed
         return AheadLyrics(
             lines = found?.lines,
             source = found?.source,

@@ -25,6 +25,16 @@ class KoSavedLyricsTest {
         assertFalse(KoSavedLyrics.providersFirst(localFile = false, offline = false, previewOnly = false))
     }
 
+    /** The lock screen's and the next-song prep's one rule: the listener's own pick stays first. */
+    @Test
+    fun `the saved copy is the last fallback online unless it is the listener's own pick`() {
+        assertTrue(KoSavedLyrics.savedLast(Kind.RECHECK, localFile = true, offline = false))
+        assertTrue(KoSavedLyrics.savedLast(null, localFile = true, offline = false))
+        assertFalse(KoSavedLyrics.savedLast(Kind.USER, localFile = true, offline = false))
+        assertFalse(KoSavedLyrics.savedLast(Kind.RECHECK, localFile = true, offline = true))
+        assertFalse(KoSavedLyrics.savedLast(null, localFile = false, offline = false))
+    }
+
     @Test
     fun `only the listener's own pick names the provider to ask for`() {
         assertEquals(LyricsSource.VIBE, KoSavedLyrics.preselected(Kind.USER, LyricsSource.VIBE))
