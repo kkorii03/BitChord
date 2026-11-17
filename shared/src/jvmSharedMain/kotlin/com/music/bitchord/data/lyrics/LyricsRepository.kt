@@ -850,7 +850,14 @@ object LyricsRepository {
             }
             return null
         }
-        val extra = variants.drop(1)
+        // [KO] cover-lyrics: no original artist named -> the title's resolved original first, never the singer's names.
+        val resolved = if (artistKnown) null else aheadName().also {
+            TrackLog.i(TAG, com.music.bitchord.ko.KoCoverLyrics.logLine(title, artist, it), about = videoId)
+        }
+        com.music.bitchord.ko.KoCoverLyrics.resolvedFirst(artistKnown, resolved)?.let { name ->
+            retry(name)?.let { return it }
+        }
+        val extra = com.music.bitchord.ko.KoCoverLyrics.variantsToRetry(variants.drop(1), artistKnown) // [KO] cover-lyrics
         if (extra.isNotEmpty()) {
             TrackLog.i(TAG, "lyrics: query variants for $videoId: n=${extra.size}", about = videoId)
         }
@@ -872,11 +879,8 @@ object LyricsRepository {
             }
         }
         // A cover with no original artist named: the singer was never going to
-        // find it. Find the song by its title, then search under its real name.
+        // find it. Its title's resolved name was tried above; ask the catalogue.
         if (!artistKnown) {
-            aheadName()?.let { name ->
-                retry(name.title to name.artist)?.let { return it }
-            }
             retryCatalogOriginal()?.let { return it }
             return deadlineResult()
         }
