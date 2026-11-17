@@ -850,16 +850,27 @@ object LyricsRepository {
             }
             return null
         }
-        // [KO] cover-lyrics: no original artist named -> the title's resolved original first, never the singer's names.
-        val resolved = if (artistKnown) null else aheadName().also {
-            TrackLog.i(TAG, com.music.bitchord.ko.KoCoverLyrics.logLine(title, artist, it), about = videoId)
-        }
-        com.music.bitchord.ko.KoCoverLyrics.resolvedFirst(artistKnown, resolved)?.let { name ->
-            retry(name)?.let { return it }
-        }
         val extra = com.music.bitchord.ko.KoCoverLyrics.variantsToRetry(variants.drop(1), artistKnown) // [KO] cover-lyrics
         if (extra.isNotEmpty()) {
             TrackLog.i(TAG, "lyrics: query variants for $videoId: n=${extra.size}", about = videoId)
+        }
+        // A cover with no original artist named: the singer was never going to
+        // find it. Its swapped reading, then its title's resolved name (waited
+        // for at most 2 s more), then the title alone; then the catalogue.
+        if (!artistKnown) {
+            // [KO] cover-lyrics: COV7 order, never the singer's names.
+            com.music.bitchord.ko.KoCoverLyrics.retryWithoutArtist(
+                alternatives = alternatives,
+                resolve = { aheadName() },
+                variants = extra,
+                retry = { retry(it) },
+                onResolved = { resolved, late ->
+                    val line = com.music.bitchord.ko.KoCoverLyrics.logLine(title, artist, resolved, late)
+                    TrackLog.i(TAG, line, about = videoId)
+                },
+            )?.let { return it }
+            retryCatalogOriginal()?.let { return it }
+            return deadlineResult()
         }
         // A cover's other reading — the swapped artist/song order — is sharper
         // than the title-only variant, which can find a different song of the
@@ -877,12 +888,6 @@ object LyricsRepository {
                 )
                 return found
             }
-        }
-        // A cover with no original artist named: the singer was never going to
-        // find it. Its title's resolved name was tried above; ask the catalogue.
-        if (!artistKnown) {
-            retryCatalogOriginal()?.let { return it }
-            return deadlineResult()
         }
         retryCatalogOriginal()?.let { return it }
         // Still nothing, and the name is written in Hangul: very often a Korean
