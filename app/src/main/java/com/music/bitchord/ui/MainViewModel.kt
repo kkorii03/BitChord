@@ -3588,7 +3588,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // A page without ytcfg is not a failed login: the cookie jar can be
         // complete while the WebView sits on YouTube's Premium paywall or a
         // plain home page. Only a jar with no signing secret is unusable.
-        if (!session.loggedIn && !session.hasSessionCookie) {
+        // A channel switch still needs the page's identity (see usableFor).
+        if (!session.usableFor(mode)) {
             onComplete(false)
             return
         }
@@ -3605,8 +3606,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // selected. A paywall or plain home page is just a landing over a
             // valid jar, so the desktop shell is asked with those cookies and
             // the answer is used below.
-            val pageHasIdentity = session.loggedIn &&
-                (session.pageId != null || session.dataSyncId != null)
+            val pageHasIdentity = session.hasPageIdentity
             if (pageHasIdentity) {
                 Innertube.adoptSessionScope(
                     pageId = session.pageId,

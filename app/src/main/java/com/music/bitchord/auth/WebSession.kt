@@ -54,6 +54,20 @@ data class CapturedSession(
 ) {
     /** Whether [cookie] alone is a complete, request-signing YouTube login. */
     val hasSessionCookie: Boolean get() = YouTubeWebLogin.isSessionComplete(cookie)
+
+    /** Whether the page itself said which identity it is showing. */
+    val hasPageIdentity: Boolean get() = loggedIn && (pageId != null || dataSyncId != null)
+
+    /**
+     * Whether this capture can finish [mode]. A sign-in needs only a complete
+     * jar. A channel switch needs the page's own identity: a paywall over an
+     * unchanged jar says nothing about which channel was picked, and the shell
+     * or the old scope would only be a guess (the current channel stays).
+     */
+    fun usableFor(mode: WebSessionMode): Boolean = when (mode) {
+        WebSessionMode.SIGN_IN -> loggedIn || hasSessionCookie
+        WebSessionMode.SWITCH_CHANNEL -> hasPageIdentity
+    }
 }
 
 /**

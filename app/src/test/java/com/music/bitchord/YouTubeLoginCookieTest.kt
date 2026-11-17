@@ -1,5 +1,7 @@
 package com.music.bitchord
 
+import com.music.bitchord.auth.CapturedSession
+import com.music.bitchord.auth.WebSessionMode
 import com.music.bitchord.auth.YouTubeWebLogin
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -48,6 +50,25 @@ class YouTubeLoginCookieTest {
         assertFalse(YouTubeWebLogin.isSessionComplete(null))
         assertFalse(YouTubeWebLogin.isSessionComplete(""))
         assertFalse(YouTubeWebLogin.isSessionComplete("SID=; SAPISID=; LOGIN_INFO="))
+    }
+
+    private fun capture(loggedIn: Boolean, pageId: String? = null, dataSyncId: String? = null) =
+        CapturedSession(
+            cookie = "SID=abc; SAPISID=secret",
+            pageId = pageId, dataSyncId = dataSyncId, authUser = null,
+            visitorData = null, clientVersion = null, loggedIn = loggedIn,
+        )
+
+    @Test
+    fun `a paywall capture signs in but cannot switch the channel`() {
+        // The jar alone is a login, but it does not say which channel was
+        // picked; a switch from it would adopt the shell default or old scope.
+        val paywall = capture(loggedIn = false)
+        assertTrue(paywall.usableFor(WebSessionMode.SIGN_IN))
+        assertFalse(paywall.usableFor(WebSessionMode.SWITCH_CHANNEL))
+        assertFalse(capture(loggedIn = true).usableFor(WebSessionMode.SWITCH_CHANNEL))
+        assertTrue(capture(loggedIn = true, dataSyncId = "me").usableFor(WebSessionMode.SWITCH_CHANNEL))
+        assertTrue(capture(loggedIn = true, pageId = "brand").usableFor(WebSessionMode.SWITCH_CHANNEL))
     }
 
     @Test
