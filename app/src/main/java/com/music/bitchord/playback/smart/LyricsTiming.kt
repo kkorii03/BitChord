@@ -3275,6 +3275,9 @@ object LyricsTiming {
         val started = System.currentTimeMillis()
         // The flight this runs in: a 429 backoff stops once no caller waits on it.
         val flightJob = currentCoroutineContext()[Job]
+        // [KO] TR7 T2: a file replaced while this hears it (resetSongCheck) takes this ask's writes with it.
+        val generation = songSyncGenerationOf(videoId)
+        suspend fun write(change: (Entry) -> Entry): Boolean = updateForGeneration(context, videoId, generation, change)
         // The next-song bundle honours the existing 429 hold: a previous
         // playback may have been turned away, and asking again before the
         // server's wait has passed would spend the same key.
@@ -3334,7 +3337,7 @@ object LyricsTiming {
         var rateLimitedWaitMs: Long? = null
         suspend fun persistAttempts() {
             if (probe == null || pendingAttempts.isEmpty()) return
-            store(context).update(videoId) { entry ->
+            write { entry ->
                 val sameLyrics = entry.aiAttemptedKey == key
                 entry.copy(
                     aiAttemptedKey = key,
@@ -3350,7 +3353,7 @@ object LyricsTiming {
                 pendingAttempts += name
                 return
             }
-            store(context).update(videoId) { entry ->
+            write { entry ->
                 val sameLyrics = entry.aiAttemptedKey == key
                 entry.copy(
                     aiAttemptedKey = key,
@@ -3419,7 +3422,7 @@ object LyricsTiming {
                     noteAttempt(name)
                     if (name == ENGINE_WHISPER) {
                         if (probe == null) {
-                            store(context).update(videoId) { it.copy(whisperKey = key) }
+                            write { it.copy(whisperKey = key) }
                         } else {
                             pendingWhisper = true
                         }
@@ -3540,11 +3543,11 @@ object LyricsTiming {
                 // This key is what tells Gemini it was asked; a pass that left it
                 // out must not use up its turn.
                 if (anyEngineAnswered && ENGINE_GEMINI in engines) {
-                    store(context).update(videoId) { it.copy(aiFailedKey = key) }
+                    write { it.copy(aiFailedKey = key) }
                 }
             }
             rejectedHeard?.let { heard ->
-                store(context).update(videoId) {
+                write {
                     it.copy(
                         clockVersion = CLOCK_VERSION,
                         heardCheckKey = key,
@@ -3563,7 +3566,7 @@ object LyricsTiming {
         val accepted = acceptedHeard.orEmpty()
             .take(MAX_HEARD_WORDS)
             .map { word -> SavedWord(t = word.text, s = word.startMs, e = word.endMs) }
-        store(context).update(videoId) {
+        val written = write {
             // The transcript words belong to this answer: another engine's
             // answer (or Gemini's, which hears no words) replaces them, and
             // old words for other lyrics must not outlive their answer. The
@@ -3592,6 +3595,10 @@ object LyricsTiming {
                 aiEngine = engine,
                 aiRough = false,
             )
+        }
+        if (!written) { // [KO] TR7 T2
+            TrackLog.i(TAG, "AI timing dropped: file replaced while it listened", videoId)
+            return null
         }
         sampleBias(context, videoId, lines, key)
         _changes.tryEmit(videoId)
@@ -3622,6 +3629,7 @@ object LyricsTiming {
         // sheet's language or in "multi" (any): a mixed title asked Groq a second time for
         // the same words (n5: 66/66, 118/118 and 228/228 words, 5 of 9 rows).
         val language = SongCheckWindow.quickLanguage(startLanguages[videoId], sheetLanguage)
+        val generation = songSyncGenerationOf(videoId) // [KO] TR7 T2
         try {
             val quick = hearThrough429(
                 context,
@@ -3660,12 +3668,12 @@ object LyricsTiming {
                     // Words that do not fit this sheet may prove it is another song's, the way a
                     // song check's do; the whole-song answer was a minute or more away from that
                     // (11-08 KChyOsjqmfM: no fit at 14 s, wrong sheet shown for the whole play).
-                    if (heard.size >= MIN_AI_LINES && keepQuickVideoEvidence(context, videoId, key, heard, quick.clock, quick.rough)) {
+                    if (heard.size >= MIN_AI_LINES && keepQuickVideoEvidence(context, videoId, key, heard, quick.clock, quick.rough, generation)) {
                         refitEvent(videoId)
                     }
                     return@fitAndKeep
                 }
-                if (keepQuickVideoAnswer(context, videoId, key, fitted, heard, quick.clock, quick.rough)) {
+                if (keepQuickVideoAnswer(context, videoId, key, fitted, heard, quick.clock, quick.rough, generation)) {
                     // Lands after the flight now (F1), so its one event must not be lost either.
                     refitEvent(videoId)
                 }
@@ -3708,17 +3716,21 @@ object LyricsTiming {
         heard: List<LyricsWordAlign.Heard>,
         clock: Clock,
         rough: Boolean,
+        /** [KO] TR7 T2: the song check's generation when these words were heard; a replaced file drops them. */
+        generation: Long = songSyncGenerationOf(videoId),
     ): Boolean {
+        if (songSyncGenerationOf(videoId) != generation) return false // [KO] TR7 T2
         if (replacedSheet(videoId, key)) {
             // Held before the screen is asked: its refresh may show this very sheet next.
-            keepDroppedQuick(videoId, DroppedQuick(key, fitted, heard, clock, rough))
+            keepDroppedQuick(videoId, DroppedQuick(key, fitted, heard, clock, rough, generation))
             _changes.tryEmit(videoId)
             return false
         }
         var kept = false
         store(context).update(videoId) { entry ->
             val sameSheet = entry.aiTextKey == key
-            kept = SongCheckWindow.roughMayApply(sameSheet, entry.ai != null, entry.aiRough) &&
+            kept = songSyncGenerationOf(videoId) == generation && // [KO] TR7 T2
+                SongCheckWindow.roughMayApply(sameSheet, entry.ai != null, entry.aiRough) &&
                 !(entry.aiPreferred && sameSheet)
             if (!kept) {
                 entry
@@ -3763,6 +3775,7 @@ object LyricsTiming {
         val heard: List<LyricsWordAlign.Heard>,
         val clock: Clock,
         val rough: Boolean,
+        val generation: Long, // [KO] TR7 T2
     )
 
     private val droppedQuick = ConcurrentHashMap<String, DroppedQuick>()
@@ -3780,7 +3793,7 @@ object LyricsTiming {
     private suspend fun takeBackDroppedQuick(context: Context, videoId: String, key: Int): Boolean {
         val dropped = droppedQuick[videoId]?.takeIf { it.key == key } ?: return false
         droppedQuick.remove(videoId, dropped)
-        val kept = keepQuickVideoAnswer(context, videoId, key, dropped.fitted, dropped.heard, dropped.clock, dropped.rough)
+        val kept = keepQuickVideoAnswer(context, videoId, key, dropped.fitted, dropped.heard, dropped.clock, dropped.rough, dropped.generation)
         if (kept) TrackLog.d(TAG, "video quick answer taken back: its sheet is on screen now", videoId)
         return kept
     }
@@ -3804,7 +3817,8 @@ object LyricsTiming {
         val kept = store(context).get(videoId)
             ?.takeIf { it.aiTextKey == key && it.aiClock == saved }
             ?.ai?.toAdjustment(byAi = true)
-        val answer = kept ?: droppedQuick[videoId]?.takeIf { it.key == key && it.clock.saved() == saved }?.fitted
+        val answer = kept ?: droppedQuick[videoId]
+            ?.takeIf { it.key == key && it.clock.saved() == saved && it.generation == songSyncGenerationOf(videoId) }?.fitted // [KO] TR7 T2
         return answer?.takeIf { it.matchPercent != null && aiMayApply(lines, it, isVideo) }?.map
     }
 
@@ -3821,13 +3835,14 @@ object LyricsTiming {
         heard: List<LyricsWordAlign.Heard>,
         clock: Clock,
         rough: Boolean,
+        generation: Long = songSyncGenerationOf(videoId), // [KO] TR7 T2: as keepQuickVideoAnswer
     ): Boolean {
         if (replacedSheet(videoId, key)) return false
         var kept = false
         store(context).update(videoId) { entry ->
             val answered = entry.aiTextKey == key && entry.ai != null
             val exactKept = entry.heardCheckKey == key && entry.heardCheckWords.isNotEmpty() && !entry.heardCheckRough
-            kept = !answered && !(exactKept && rough)
+            kept = songSyncGenerationOf(videoId) == generation && !answered && !(exactKept && rough) // [KO] TR7 T2
             if (!kept) {
                 entry
             } else {
