@@ -9524,6 +9524,11 @@ class PlaybackService : MediaLibraryService() {
             format?.channelCount,
             format?.pcmEncoding,
             mediaId?.let { localBitrateCache.get(it) },
+            // [KO] SW7ps-2: measuredStreamKbps fills its cache off the main
+            // thread (and starts only once the duration is known); without
+            // these the card froze on its first, unmeasured build.
+            player.currentMediaItem?.localConfiguration?.uri?.toString()?.let { measuredBitrateCache.get(it) },
+            player.duration.let { it != C.TIME_UNSET && it > 0 },
         )
         if (formatKey == lastNerdStatsKey) return
         lastNerdStatsKey = formatKey
