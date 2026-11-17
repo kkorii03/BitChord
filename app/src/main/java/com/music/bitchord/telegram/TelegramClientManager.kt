@@ -229,8 +229,31 @@ object TelegramClientManager {
     /** Runs on [work]. Only the last lease releases playback and the holder. */
     private fun releaseCountedLease(reason: String, end: () -> Boolean) {
         val last = end()
+        if (last) trimStorageWhileIdle() // [KO] C3b-1: no reader holds a file now
         if (last) gate.release(STREAM_HOLDER)
         applyGate(reason)
+    }
+
+    /** [KO] See [TelegramStorageCap]. */
+    private val storageCap = TelegramStorageCap()
+
+    /**
+     * [KO] Asks TDLib to trim its downloaded audio, at most once a day. Called
+     * only when the last stream, metadata or search lease has just ended, so no
+     * reader is in a file, and before that release may close the client: a
+     * Close would abort the pass. Bounded by [TelegramStorageCap.TIMEOUT_MS];
+     * a failure is logged and waits for the next day. Runs on [work] only.
+     */
+    private fun trimStorageWhileIdle() {
+        val target = client ?: return
+        if (closing || auth !is TdApi.AuthorizationStateReady) return
+        if (!storageCap.takeDue(System.nanoTime() / 1_000_000)) return
+        try {
+            val kept = call(target, TelegramStorageCap.request(), TelegramStorageCap.TIMEOUT_MS)
+            TelegramLog.storage(kept.size, kept.count)
+        } catch (e: Throwable) {
+            TelegramLog.failure("optimize storage", describeFailure(e))
+        }
     }
 
     private fun runOnWorker(block: () -> Unit) {

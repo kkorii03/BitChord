@@ -80,6 +80,12 @@ object TelegramLog {
     fun download(fileId: Int, bytes: Long, millis: Long, reason: String) =
         write(downloadLine(fileId, bytes, millis, reason))
 
+    /** [KO] What TDLib keeps after a storage pass; counts only, built outside [line]'s redaction. */
+    internal fun storageLine(bytes: Long, files: Int): String =
+        "telegram: storage kept bytes=$bytes files=$files"
+
+    fun storage(bytes: Long, files: Int) = write(storageLine(bytes, files))
+
     /** A stable short hash, so log lines can be matched without naming a file id. */
     fun fileHash(fileId: Int): String =
         Integer.toHexString(fileId * -1640531535).padStart(8, '0')

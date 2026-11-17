@@ -92,7 +92,8 @@ class TelegramSource(
         return SourceStream(
             url = TelegramStreamUri.of(track.id),
             format = TelegramTrackMapper.streamFormat(track),
-            durationSec = track.durationSec.takeIf { it > 0 },
+            durationSec = track.durationSec.takeIf { it > 0 }
+                ?: com.music.bitchord.ko.KoTelegramDocumentLength.seconds(track.id), // [KO] measured document length
             trackTitle = track.title,
             trackArtist = track.artist,
         )

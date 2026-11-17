@@ -1832,7 +1832,7 @@ object SourceResolver {
             }
             var conclusive = true
             val candidates = if (cached != null) {
-                cached
+                com.music.bitchord.ko.KoTelegramDocumentLength.known(source, cached) // [KO] telegram document length
             } else {
                 val rows = attempt(source) {
                     source.search(
@@ -1861,7 +1861,7 @@ object SourceResolver {
                     if (searchAnswers.size >= SEARCH_MEMO_MAX) searchAnswers.clear()
                     searchAnswers[key] = SearchAnswer(rows, System.currentTimeMillis())
                 }
-                rows
+                com.music.bitchord.ko.KoTelegramDocumentLength.measure(source, rows, target, strictLength && (target.durationSec != null || lengthLater != null)) // [KO] telegram document length
             }
             // A runtime the queue row never carried, looked up beside the
             // search by the caller and asked for only now that the search has
