@@ -2,7 +2,11 @@ package com.music.bitchord.playback.smart
 
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsWordAlign
+import com.music.bitchord.data.lyrics.RefinePolicy
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** The per-line layer is applied through [LyricsTiming.apply], after refine and under the hand. */
@@ -20,6 +24,32 @@ class LyricsTimingPerLineTest {
             position += text.length
             LyricsWordAlign.Heard(text, start, start + 200L)
         }
+    }
+
+    /**
+     * OPT1 lyrics-path-refine-memo: the screen's timing, its refine and the
+     * service's timing fit the same sheet to the same words, each in new list
+     * instances. Equal content reuses the fit; any change computes again.
+     */
+    @Test
+    fun `an equal sheet and equal words reuse the refine fit`() {
+        val lines = List(8) { index -> line(10_000L + index * 10_000L, "word$index") }
+        val heard = lines.mapIndexed { index, it -> LyricsWordAlign.Heard("word$index", it.timeMs + 200L, it.timeMs + 500L) }
+
+        val first = LyricsTiming.refineFit(lines, heard, lineLevel = false, videoId = "v")
+        assertTrue(first.applied)
+        assertEquals(200L, first.medianMs)
+        assertSame(
+            "equal content in new lists is the same fit",
+            first,
+            LyricsTiming.refineFit(lines.map { it.copy() }, heard.map { it.copy() }, lineLevel = false, videoId = "v"),
+        )
+
+        val later = heard.map { it.copy(startMs = it.startMs + 100L, endMs = it.endMs + 100L) }
+        val moved = LyricsTiming.refineFit(lines, later, lineLevel = false, videoId = "v")
+        assertNotSame(first, moved)
+        assertEquals(300L, moved.medianMs)
+        assertEquals(RefinePolicy.compute(lines, later, lineLevelWords = true), LyricsTiming.refineFit(lines, later, lineLevel = true, videoId = "v"))
     }
 
     @Test

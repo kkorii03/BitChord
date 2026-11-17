@@ -533,7 +533,7 @@ object LyricsTiming {
             }
         }
         val refine = if (baseAllowed && refineClock.isNotEmpty()) {
-            RefinePolicy.compute(
+            refineFit(
                 apply(
                     lines,
                     timing.copy(
@@ -544,7 +544,8 @@ object LyricsTiming {
                     ),
                 ),
                 refineClock,
-                lineLevelWords = refineSource.lineLevel,
+                lineLevel = refineSource.lineLevel,
+                videoId = videoId,
             )
         } else {
             RefinePolicy.Result.NONE
@@ -1418,6 +1419,43 @@ object LyricsTiming {
     }
 
     /**
+     * [KO] OPT1: the last refine fit, by content. One lyrics change fits the same
+     * sheet to the same words in the screen's timing, its refine and the service's
+     * timing; the drift path is a whole-song alignment each time. Equal content,
+     * never a hash, so a different sheet can never get another sheet's fit.
+     */
+    private class RefineMemo(
+        val lines: List<LyricLine>,
+        val heard: List<LyricsWordAlign.Heard>,
+        val lineLevel: Boolean,
+        val result: RefinePolicy.Result,
+    )
+
+    @Volatile
+    private var refineMemo: RefineMemo? = null
+
+    /** [RefinePolicy.compute], memoised on equal inputs; logs one line when it is computed. */
+    internal fun refineFit(
+        lines: List<LyricLine>,
+        heard: List<LyricsWordAlign.Heard>,
+        lineLevel: Boolean,
+        videoId: String?,
+    ): RefinePolicy.Result {
+        refineMemo?.let { memo ->
+            if (memo.lineLevel == lineLevel && memo.heard == heard && memo.lines == lines) return memo.result
+        }
+        val started = System.nanoTime()
+        val result = RefinePolicy.compute(lines, heard, lineLevelWords = lineLevel)
+        TrackLog.d(
+            "BitChord",
+            "refine-fit: computed lines=${lines.size} words=${heard.size} ms=${(System.nanoTime() - started) / 1_000_000}",
+            videoId,
+        )
+        refineMemo = RefineMemo(lines, heard, lineLevel, result)
+        return result
+    }
+
+    /**
      * The YouTube → high-quality map for the stream serving [videoId], when it
      * is a substitute that was verified. Read from [StreamChoice] rather than
      * passed by every caller: the player and the lyrics screen both already
@@ -1621,7 +1659,7 @@ object LyricsTiming {
         val source = refineWords(entry, key, base)
         val words = refineWordsOnClock(context, timing.videoId, source, timing)
         if (words.isEmpty()) return@withContext RefinePolicy.Result.NONE
-        RefinePolicy.compute(
+        refineFit(
             apply(
                 lines,
                 timing.copy(
@@ -1632,7 +1670,8 @@ object LyricsTiming {
                 ),
             ),
             words,
-            lineLevelWords = source.lineLevel,
+            lineLevel = source.lineLevel,
+            videoId = timing.videoId,
         )
     }
 
