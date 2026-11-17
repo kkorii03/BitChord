@@ -13,7 +13,8 @@ import com.music.bitchord.playback.smart.AutomixWorkPolicy
  * [KO] crossfade-rearm
  *
  * Reloads an armed standby when the verified lossless copy lands between arming
- * and the fade. The controller keeps only the public entry point.
+ * and the fade. The controller keeps only the public entry point. Same
+ * recording only: a different one needs its own plan, so its caller bails.
  */
 internal fun CrossfadeController.koRearmIncoming(
     replacement: MediaItem,
@@ -24,6 +25,8 @@ internal fun CrossfadeController.koRearmIncoming(
     val into = incoming ?: return false
     if (index !in 0 until out.mediaItemCount) return false
     if (out.getMediaItemAt(index).mediaId != replacement.mediaId) return false
+    // NR2a-1: the armed cue, rate and fade belong to this recording only.
+    if (into.currentMediaItem?.mediaId != replacement.mediaId) return false
     if (into.currentMediaItem?.localConfiguration?.uri == replacement.localConfiguration?.uri) {
         return false
     }

@@ -2,6 +2,7 @@ package com.music.bitchord.ko
 
 import android.util.Log
 import androidx.media3.exoplayer.ExoPlayer
+import com.music.bitchord.data.TrackLog
 import com.music.bitchord.playback.CrossfadeController
 import com.music.bitchord.playback.HandoffQueuePolicy
 import com.music.bitchord.playback.handoffKey
@@ -39,20 +40,26 @@ internal fun CrossfadeController.koIncomingQueueChanged(): Boolean {
             outgoingCurrentIndex = out.currentMediaItemIndex,
         )
     ) {
+        // Review NR2a-1: a different recording (a video row swapped for its
+        // song) needs its own plan. The armed cue, rate and fade came from the
+        // old row's analysis; reloading the standby with them started the song
+        // 10-20 s into its first verse. Drop the arm; the next tick plans the
+        // new row through begin(), which also picks its lossless copy.
         val index = HandoffQueuePolicy.incomingIndex(
             outgoingKeys = keys,
             incomingKey = incomingKey,
             incomingIndexHint = ko.incomingItemIndex,
             outgoingCurrentIndex = out.currentMediaItemIndex,
         )
-        val replacement = index?.let { out.getMediaItemAt(it) }
-        if (phase == CrossfadeController.Phase.ARMING && index != null && replacement != null &&
-            rearmIncoming(replacement, index)
-        ) {
-            wakeTicker()
-            return true
-        }
+        val armedId = into.currentMediaItem?.mediaId
+        val newId = index?.let { out.getMediaItemAt(it).mediaId }
+        TrackLog.d(
+            "BitChord",
+            "crossfade: next row swapped $armedId -> $newId while $phase, re-planning",
+            about = newId,
+        )
         bail()
+        wakeTicker()
         return true
     }
     return false
