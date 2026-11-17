@@ -712,10 +712,11 @@ internal object KoTrackMatcher {
      * its single) are still the one song, and the nearest of them is taken.
      */
     internal fun titleUnverifiedAdoption(candidates: List<Song>, target: Target): Song? {
-        val rows = candidates.filter {
-            isAudioSwitchTitleUnverified(it, target) && !refusedAsVersion(target, it, candidates)
-        }
-        if (rows.map { parseTitle(it.title, it.artist).core }.distinct().size != 1) return null
+        val passing = candidates.filter { isAudioSwitchTitleUnverified(it, target) }
+        // [KO] Ambiguity is judged before refusal: a refused row says it is
+        // not a recording to play, not that the page names only one song.
+        if (passing.map { parseTitle(it.title, it.artist).core }.distinct().size != 1) return null
+        val rows = passing.filter { !refusedAsVersion(target, it, candidates) }
         val wanted = target.durationSec ?: return null
         return rows.minByOrNull { abs(wanted - (secondsOf(it.durationText) ?: Int.MAX_VALUE)) }
     }

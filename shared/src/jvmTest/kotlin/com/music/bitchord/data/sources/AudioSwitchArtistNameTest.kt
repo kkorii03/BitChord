@@ -505,6 +505,31 @@ class AudioSwitchArtistNameTest {
         assertNull(TrackMatcher.titleUnverifiedAdoption(listOf(one, other), target))
     }
 
+    /**
+     * c3-service-paths-1: a refused row (here another act's lead credit) is
+     * still a second song on the page. Dropping it before the one-title check
+     * adopted the other row on a page that cannot say which song the video is.
+     */
+    @Test
+    fun `a refused second song still makes the page ambiguous`() {
+        val target = arrestTarget()
+        val one = arrestAudio()
+        val guestLed = arrestAudio().copy(
+            videoId = "GUESTLED001",
+            title = "빌려온 고양이",
+            artist = "Foo, ILLIT",
+            durationText = "3:06",
+        )
+        val page = listOf(one, guestLed)
+        assertTrue(TrackMatcher.isAudioSwitchTitleUnverified(guestLed, target))
+        assertTrue(KoTrackMatcher.refusedAsVersion(target, guestLed, page))
+        assertNull(TrackMatcher.titleUnverifiedAdoption(page, target))
+        // A refused row is never the one adopted, even when it is the only song.
+        val refusedCopy = guestLed.copy(title = one.title)
+        assertTrue(KoTrackMatcher.refusedAsVersion(target, refusedCopy, listOf(refusedCopy)))
+        assertNull(TrackMatcher.titleUnverifiedAdoption(listOf(refusedCopy), target))
+    }
+
     @Test
     fun `copies of one title are still one song and the nearest runtime wins`() {
         val target = arrestTarget()
