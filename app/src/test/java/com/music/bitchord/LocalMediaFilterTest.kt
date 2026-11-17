@@ -147,6 +147,37 @@ class LocalMediaFilterTest {
         )
     }
 
+    // Sweep 11-18 (SW7-2): with the filter off the scan had no format gate at
+    // all, so WMA/AIFF rows were listed and failed to open.
+    @Test
+    fun `filter off still keeps formats that cannot play out of the scan`() {
+        assertFalse(
+            LocalMediaRepository.acceptsLocalRow(
+                filterNonMusic = false,
+                durationMs = 200_000,
+                displayName = "a.wma",
+                path = "/storage/emulated/0/Music/a.wma",
+            ),
+        )
+        assertTrue(
+            LocalMediaRepository.acceptsLocalRow(
+                filterNonMusic = false,
+                durationMs = 5_000,
+                displayName = "memo.m4a",
+                path = "/storage/emulated/0/Recordings/memo.m4a",
+            ),
+        )
+        val scan = java.io.File(
+            generateSequence(java.io.File(System.getProperty("user.dir")).absoluteFile) { it.parentFile }
+                .first { java.io.File(it, "settings.gradle.kts").isFile },
+            "app/src/main/java/com/music/bitchord/data/LocalMediaRepository.kt",
+        ).readText()
+        assertTrue(
+            "the scan must use the row gate for both filter states",
+            "if (!acceptsLocalRow(filterNonMusic, durationMs, displayName, path)) continue" in scan,
+        )
+    }
+
     @Test
     fun `filter off brings back wav and 3gp audio`() {
         // The subtitle names WAV as something the filter hides, so switching

@@ -298,7 +298,7 @@ object LocalMediaRepository {
                     val durationMs = cursor.getLong(columns.duration)
                     val path = cursor.getString(columns.data)
 
-                    if (filterNonMusic && !isEligibleLocalMusic(durationMs, displayName, path)) continue
+                    if (!acceptsLocalRow(filterNonMusic, durationMs, displayName, path)) continue
                     if (treeUri.isNotBlank() && !isInFolder(path, chosen)) continue
 
                     songs.add(columns.song(cursor, videoIdByUri, isVideoByUri))
@@ -543,6 +543,22 @@ object LocalMediaRepository {
     /** The wider container gate used when the non-music filter is off. */
     internal fun hasPlayableAudioExtension(displayName: String, path: String?): Boolean =
         localExtensionOf(displayName, path) in localPlayableAudioExtensions
+
+    /**
+     * One scanned row's gate. With the filter off, recordings come back, but a
+     * format this build cannot open (WMA, AIFF, MIDI…) still stays out: listing
+     * it only produced rows that failed and skipped (SW7-2).
+     */
+    internal fun acceptsLocalRow(
+        filterNonMusic: Boolean,
+        durationMs: Long,
+        displayName: String,
+        path: String?,
+    ): Boolean = if (filterNonMusic) {
+        isEligibleLocalMusic(durationMs, displayName, path)
+    } else {
+        hasPlayableAudioExtension(displayName, path)
+    }
 
     private fun localExtensionOf(displayName: String, path: String?): String {
         val fileName = path?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
