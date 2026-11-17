@@ -59,7 +59,36 @@ class TelegramClientGate {
     private fun beginLease(): Boolean {
         val first = streamLeases == 0
         streamLeases++
+        if (walks > 0) holdForWalks()
         return first
+    }
+
+    /** [KO] Source walks in flight, and whether they hold one lease between them. */
+    private var walks = 0
+    private var walkLease = false
+
+    private fun holdForWalks() {
+        if (walkLease || streamLeases == 0) return
+        walkLease = true
+        streamLeases++
+    }
+
+    /**
+     * [KO] A source walk (search, length probe, metadata) began. An open client stays open
+     * between its steps instead of closing and starting a new session for the next one; a
+     * closed client is not opened by this alone, so a walk answered from memo costs nothing.
+     */
+    fun beginWalk() {
+        walks++
+        holdForWalks()
+    }
+
+    /** @return true when the walks' lease was the last outstanding lease. */
+    fun endWalk(): Boolean {
+        if (walks > 0) walks--
+        if (walks > 0 || !walkLease) return false
+        walkLease = false
+        return endLease()
     }
 
     /**

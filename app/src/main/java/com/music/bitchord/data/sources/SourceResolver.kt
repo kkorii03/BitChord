@@ -1531,20 +1531,23 @@ object SourceResolver {
                         sourceLookupTimeoutMsFor(source, lookupTimeoutMs)
                     }
                     val answer = withTimeoutOrNull(sourceTimeout) {
-                        matchAndStream(
-                            source,
-                            target,
-                            request,
-                            waitForAll,
-                            strictLength,
-                            requireSharedArtist,
-                            strictOriginal,
-                            manual,
-                            allowArtistUnverified,
-                            driftSec,
-                            lengthLater,
-                            checkFileLength,
-                        )
+                        // [KO] OPT1: one Telegram session across the walk's search, length probe and metadata steps.
+                        com.music.bitchord.telegram.TelegramClientManager.holdingWalk(source.kind == SourceKind.TELEGRAM) {
+                            matchAndStream(
+                                source,
+                                target,
+                                request,
+                                waitForAll,
+                                strictLength,
+                                requireSharedArtist,
+                                strictOriginal,
+                                manual,
+                                allowArtistUnverified,
+                                driftSec,
+                                lengthLater,
+                                checkFileLength,
+                            )
+                        }
                     }
                     if (answer == null) {
                         // A timeout while the device is offline (or behind a

@@ -203,6 +203,22 @@ object TelegramClientManager {
         }
     }
 
+    /**
+     * [KO] Runs [block] as one source walk: the client a step opens stays open for the next
+     * step (see [TelegramClientGate.beginWalk]). Queued, not awaited: [work] runs in order, so
+     * the walk is counted before any lease its steps take, and the walk never waits on the
+     * worker. The end runs on every exit, cancellation and timeout included.
+     */
+    suspend fun <T> holdingWalk(hold: Boolean, block: suspend () -> T): T {
+        if (!hold || context == null) return block()
+        work.execute { gate.beginWalk() }
+        try {
+            return block()
+        } finally {
+            work.execute { releaseCountedLease("walk close") { gate.endWalk() } }
+        }
+    }
+
     /** Runs on [work]. A metadata lookup is a lease just like an open stream. */
     private fun acquireStreamLease(reason: String) =
         acquireCountedLease(reason) { gate.beginStreamLease() }
