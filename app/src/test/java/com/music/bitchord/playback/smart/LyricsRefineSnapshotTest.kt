@@ -262,4 +262,20 @@ class LyricsRefineSnapshotTest {
         val text = awaitFile { it.contains("\"refineMs\":$shiftMs") }
         assertTrue("the just written entry must not be the one evicted", text.contains("\"video\""))
     }
+
+    // Review TR2 T4: once a tagged base was carried onto the substitute clock
+    // the HQ map was dropped, and untagged (legacy) refine words, made on the
+    // upload, were then left on the YouTube clock.
+    @Test
+    fun `untagged refine words keep the upload's HQ map after the base drops it`() {
+        var root = File(System.getProperty("user.dir")).absoluteFile
+        while (!File(root, "settings.gradle.kts").isFile) root = root.parentFile ?: error("repo root not found")
+        val source = File(root, "app/src/main/java/com/music/bitchord/playback/smart/LyricsTiming.kt")
+            .readText().replace("\r\n", "\n")
+        assertTrue("val hqOfUpload = hq" in source)
+        assertTrue(
+            Regex("""refineSource\.clock is Clock\.Unknown \|\| playing is Clock\.Unknown ->\s*onHqClock\(refineSource\.words, timing\.copy\(hq = hqOfUpload\)\)""")
+                .containsMatchIn(source),
+        )
+    }
 }

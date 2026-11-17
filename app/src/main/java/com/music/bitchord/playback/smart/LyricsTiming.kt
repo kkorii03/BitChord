@@ -433,6 +433,9 @@ object LyricsTiming {
             else -> clockOf(entry.autoClock)
         }
         var hq = hqAdjustment(context, videoId)
+        // [KO] T4: untagged refine words were made on the upload, like an
+        // untagged base; they still need this map after the base drops it.
+        val hqOfUpload = hq
         // A substitute is not refused here: its clock is a clock like any
         // other. What is refused is an answer that cannot be placed on the
         // playing one — dropped, never shown on the wrong clock.
@@ -516,7 +519,7 @@ object LyricsTiming {
         val refineClock = when {
             refineSource.words.isEmpty() -> emptyList()
             refineSource.clock is Clock.Unknown || playing is Clock.Unknown ->
-                onHqClock(refineSource.words, timing)
+                onHqClock(refineSource.words, timing.copy(hq = hqOfUpload))
             refineSource.clock == playing -> refineSource.words
             else -> {
                 val conversion = conversion(context, videoId, refineSource.clock, playing)
