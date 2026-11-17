@@ -780,32 +780,40 @@ object Downloads {
      */
     suspend fun delete(context: Context, videoId: String): Boolean = withContext(Dispatchers.IO) {
         open()
-        val wasSuspect = mvSoundSuspectMs(videoId) != null
-        val uri = _saved.value[videoId]?.toUri() ?: return@withContext false
-        if (!DownloadStore.exists(context, uri)) {
-            Log.d(TAG, "$videoId was already gone; forgetting the record")
-            forget(videoId)
-            if (wasSuspect) {
+        val uriString = _saved.value[videoId] ?: return@withContext false
+        val uri = uriString.toUri()
+        // [KO] review R2: an MV download is filed under the video and its song;
+        // forgetting only the asked id left the other one saying "downloaded",
+        // so playlist sync and liked auto-download never fetched it again.
+        val ids = idsSharingFile(_saved.value, videoId)
+        val suspects = ids.filter { mvSoundSuspectMs(it) != null }
+        val forgetAll = {
+            ids.forEach(::forget)
+            suspects.forEach { id ->
                 runCatching {
-                    com.music.bitchord.ko.downloads.KoDownloadPipeline.forgetAlignment(videoId) // [KO] align-revision
-                    com.music.bitchord.playback.smart.LyricsTiming.resetSongCheck(context, videoId)
+                    com.music.bitchord.ko.downloads.KoDownloadPipeline.forgetAlignment(id) // [KO] align-revision
+                    com.music.bitchord.playback.smart.LyricsTiming.resetSongCheck(context, id)
                 }
             }
+        }
+        if (!DownloadStore.exists(context, uri)) {
+            Log.d(TAG, "$videoId was already gone; forgetting the record")
+            forgetAll()
             return@withContext true
         }
         val deleted = DownloadStore.delete(context, uri)
         if (deleted) {
-            forget(videoId)
-            if (wasSuspect) {
-                runCatching {
-                    com.music.bitchord.ko.downloads.KoDownloadPipeline.forgetAlignment(videoId) // [KO] align-revision
-                    com.music.bitchord.playback.smart.LyricsTiming.resetSongCheck(context, videoId)
-                }
-            }
+            forgetAll()
         } else {
             Log.w(TAG, "$videoId could not be deleted; keeping the record")
         }
         deleted
+    }
+
+    /** [videoId] and every other id whose record names the same file. */
+    internal fun idsSharingFile(saved: Map<String, String>, videoId: String): Set<String> {
+        val file = saved[videoId] ?: return setOf(videoId)
+        return saved.filterValues { it == file }.keys + videoId
     }
 
     private fun forget(videoId: String) {
